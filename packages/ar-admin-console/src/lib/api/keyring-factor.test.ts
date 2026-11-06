@@ -54,6 +54,34 @@ describe('httpKeyringFactor', () => {
 		expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/me/keyring/step-up/g1%3Aapac%3A0%3Avp_1');
 	});
 
+	it('asks for a browser request and submits the answer the browser gave', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				json(201, {
+					request_id: 'r1',
+					dc_request: { protocol: 'openid4vp-v1-signed', data: { request: 'h.p.s' } },
+					expires_at: 1
+				})
+			)
+			.mockResolvedValueOnce(json(200, { status: 'verified', verified_at: 2 }));
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(httpKeyringFactor.startStepUpInBrowser()).resolves.toEqual({
+			requestId: 'r1',
+			expiresAt: 1,
+			dcRequest: { protocol: 'openid4vp-v1-signed', data: { request: 'h.p.s' } }
+		});
+		expect(JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body))).toEqual({
+			mode: 'dc_api'
+		});
+		await expect(httpKeyringFactor.submitStepUp('r1', { response: 'jwe' })).resolves.toEqual({
+			status: 'verified'
+		});
+		const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+		expect(url).toBe('/api/admin/me/keyring/step-up/r1/response');
+		expect(JSON.parse(String(init.body))).toEqual({ response: { response: 'jwe' } });
+	});
+
 	it('sends the step-up receipt with an enrolment', async () => {
 		const fetchMock = vi.fn().mockResolvedValueOnce(json(201, START));
 		vi.stubGlobal('fetch', fetchMock);

@@ -28,6 +28,7 @@ import type {
   StoreChallengeRequest,
 } from '@authrim/ar-lib-core';
 import {
+  ADMIN_KEYRING_DC_API_KEY,
   ADMIN_SECOND_FACTOR_MINIMUM,
   ADMIN_UI_BFF_MODE_HEADER,
   ADMIN_UI_FORWARDED_ORIGIN_HEADER,
@@ -45,6 +46,7 @@ import {
   isAdminStepUpHumanSession,
   requireDedicatedAdminDatabaseAdapter,
   resolveAdminWebAuthnBrowserOrigin,
+  resolveEffectiveSettings,
 } from '@authrim/ar-lib-core';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import type { RegistrationResponseJSON } from '@simplewebauthn/server';
@@ -214,11 +216,18 @@ mySecondFactorsRouter.get('/', async (c) => {
     const repo = repository(c);
     const state = await enrollmentState(repo, auth.userId, Date.now());
     const factors = await repo.listByUser(auth.userId);
+    // Whether Keyring may also be presented through the browser (Digital Credentials API).
+    const dcApi = await resolveEffectiveSettings(c.env, 'security', {
+      tenantId: auth.sessionTenantId,
+    })
+      .then((settings) => settings[ADMIN_KEYRING_DC_API_KEY] === true)
+      .catch(() => false);
     return c.json({
       second_factors: factors.map(presentSecondFactor),
       active_count: state.active.length,
       minimum: ADMIN_SECOND_FACTOR_MINIMUM,
       enrollment: { mode: state.mode, first_enrollment_ends_at: state.graceEndsAt },
+      keyring: { dc_api: dcApi },
     });
   } catch (error) {
     secondFactorLog(c).error('Failed to list second factors', {

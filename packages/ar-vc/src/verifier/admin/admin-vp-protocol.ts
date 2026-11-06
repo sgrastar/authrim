@@ -9,6 +9,7 @@
 
 import {
   calculateJwkThumbprint,
+  compactDecrypt,
   decodeProtectedHeader,
   importJWK,
   jwtVerify,
@@ -79,6 +80,8 @@ export interface AdminVPTransactionDetails {
   /** Shown in the wallet: which tenant the admin is acting in. */
   tenant: string;
   requestedAt: number;
+  /** Whether the wallet must ask for the code shown in the console (QR requests only). */
+  matchCodeRequired: boolean;
 }
 
 /** The single `transaction_data` entry, base64url-encoded JSON (OpenID4VP 1.0 section 8.4). */
@@ -91,28 +94,53 @@ export function encodeTransactionData(details: AdminVPTransactionDetails): strin
         purpose: details.purpose,
         tenant: details.tenant.slice(0, 200),
         requested_at: details.requestedAt,
-        match_code_required: true,
+        // Only a QR request shows a match code; the browser itself binds a DC API one.
+        match_code_required: details.matchCodeRequired,
       })
     )
   );
 }
 
+/** Content encryptions accepted for a Digital Credentials API answer (JWE `enc`). */
+export const ADMIN_VP_RESPONSE_ENC_VALUES = ['A128GCM', 'A256GCM'] as const;
+/** Protocol identifier of a signed OpenID4VP request in the Digital Credentials API. */
+export const ADMIN_VP_DC_API_PROTOCOL = 'openid4vp-v1-signed';
+
+export type AdminVPRequestTransport =
+  | { mode: 'direct_post'; state: string }
+  /** The console origin the browser binds the answer to, and the key it is encrypted to. */
+  | { mode: 'dc_api'; expectedOrigin: string; encryptionKey: JWK };
+
 export function buildAdminVPRequestPayload(input: {
   credentialIssuer: string;
   vct: string;
   nonce: string;
-  state: string;
   transactionData: string;
   now: number;
+  transport: AdminVPRequestTransport;
 }): JWTPayload {
+  const transport: JWTPayload =
+    input.transport.mode === 'direct_post'
+      ? {
+          response_mode: 'direct_post',
+          response_uri: adminVPResponseUri(input.credentialIssuer),
+          state: input.transport.state,
+        }
+      : {
+          // OpenID4VP 1.0 Appendix A: the wallet answers only for this origin, encrypted.
+          response_mode: 'dc_api.jwt',
+          expected_origins: [input.transport.expectedOrigin],
+          client_metadata: {
+            jwks: { keys: [input.transport.encryptionKey] },
+            encrypted_response_enc_values_supported: [...ADMIN_VP_RESPONSE_ENC_VALUES],
+          },
+        };
   return {
     aud: 'https://self-issued.me/v2',
     client_id: adminVPClientId(input.credentialIssuer),
     response_type: 'vp_token',
-    response_mode: 'direct_post',
-    response_uri: adminVPResponseUri(input.credentialIssuer),
+    ...transport,
     nonce: input.nonce,
-    state: input.state,
     iat: input.now,
     exp: input.now + ADMIN_VP_REQUEST_TTL_SECONDS,
     dcql_query: {
@@ -172,13 +200,16 @@ function refuse(code: AdminVPErrorCode): never {
 
 /** The one presentation of the response: `vp_token` is `{ "admin": ["<SD-JWT+KB>"] }`. */
 export function extractAdminPresentation(vpToken: unknown): string {
-  if (typeof vpToken !== 'string' || vpToken.length > MAX_VP_TOKEN_LENGTH) {
-    refuse('invalid_vp_token');
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(vpToken) as unknown;
-  } catch {
+  // A form post carries the vp_token as JSON text; a Digital Credentials API answer as an object.
+  let parsed: unknown = vpToken;
+  if (typeof vpToken === 'string') {
+    if (vpToken.length > MAX_VP_TOKEN_LENGTH) refuse('invalid_vp_token');
+    try {
+      parsed = JSON.parse(vpToken) as unknown;
+    } catch {
+      refuse('invalid_vp_token');
+    }
+  } else if (JSON.stringify(vpToken ?? null).length > MAX_VP_TOKEN_LENGTH) {
     refuse('invalid_vp_token');
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
@@ -234,6 +265,45 @@ function statusEntry(
   const listId = decodeURIComponent(status.uri.slice(prefix.length));
   if (!listId || listId.includes('/')) refuse('invalid_credential');
   return { listId, idx: status.idx as number };
+}
+
+/**
+ * The vp_token of a Digital Credentials API answer (`{ response: <JWE> }`), decrypted with the
+ * request's ephemeral key. Anything else is refused as `invalid_vp_token`.
+ */
+export async function decryptDcApiAnswer(data: unknown, privateJwk: string): Promise<unknown> {
+  try {
+    return await decrypt(data, privateJwk);
+  } catch (error) {
+    if (error instanceof Refusal) throw error;
+    refuse('invalid_vp_token');
+  }
+}
+
+async function decrypt(data: unknown, privateJwk: string): Promise<unknown> {
+  const response = (data as { response?: unknown } | null)?.response;
+  if (typeof response !== 'string' || response.length > MAX_VP_TOKEN_LENGTH * 2) {
+    refuse('invalid_vp_token');
+  }
+  const header = decodeProtectedHeader(response);
+  if (
+    header.alg !== 'ECDH-ES' ||
+    !ADMIN_VP_RESPONSE_ENC_VALUES.includes(
+      header.enc as (typeof ADMIN_VP_RESPONSE_ENC_VALUES)[number]
+    )
+  ) {
+    refuse('invalid_vp_token');
+  }
+  const key = await importJWK(JSON.parse(privateJwk) as JWK, 'ECDH-ES');
+  const { plaintext } = await compactDecrypt(response, key, {
+    keyManagementAlgorithms: ['ECDH-ES'],
+    contentEncryptionAlgorithms: [...ADMIN_VP_RESPONSE_ENC_VALUES],
+  });
+  const payload = JSON.parse(new TextDecoder().decode(plaintext)) as { vp_token?: unknown };
+  if (typeof payload !== 'object' || payload === null || payload.vp_token === undefined) {
+    refuse('invalid_vp_token');
+  }
+  return payload.vp_token;
 }
 
 /**
@@ -342,11 +412,18 @@ async function verify(
     refuse('invalid_key_binding');
   }
   if (kbHeader.alg !== 'ES256' || kbHeader.typ !== 'kb+jwt') refuse('invalid_key_binding');
+  // Through the Digital Credentials API the audience is the browser-verified origin, even for a
+  // signed request (OpenID4VP 1.0 Appendix A.4); over direct_post it is the client_id.
+  let audience = request.clientId;
+  if (request.mode === 'dc_api') {
+    if (!request.expectedOrigin) refuse('invalid_key_binding');
+    audience = `origin:${request.expectedOrigin}`;
+  }
   let kb: JWTPayload;
   try {
     ({ payload: kb } = await jwtVerify(kbJwt, await importJWK(holderJwk, 'ES256'), {
       algorithms: ['ES256'],
-      audience: request.clientId,
+      audience,
       currentDate: new Date(now * 1000),
       clockTolerance: CLOCK_SKEW_SECONDS,
       requiredClaims: ['iat'],
@@ -378,10 +455,13 @@ async function verify(
     refuse('transaction_data_mismatch');
   }
 
-  // 7. The number shown in the console, typed by the admin and signed with the holder key.
-  const code = kb[ADMIN_VP_MATCH_CODE_CLAIM];
-  if (typeof code !== 'string' || !timingSafeEqual(code, request.matchCode)) {
-    refuse('match_code_mismatch');
+  // 7. The number shown in the console, typed by the admin and signed with the holder key. A
+  // Digital Credentials API answer has none: the browser bound it to the console origin.
+  if (request.mode === 'direct_post') {
+    const code = kb[ADMIN_VP_MATCH_CODE_CLAIM];
+    if (typeof code !== 'string' || !timingSafeEqual(code, request.matchCode)) {
+      refuse('match_code_mismatch');
+    }
   }
 
   return { ok: true, holderJkt, credentialId: record.publicId };

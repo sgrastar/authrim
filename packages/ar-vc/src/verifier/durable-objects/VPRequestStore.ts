@@ -11,6 +11,7 @@ import { createLogger } from '@authrim/ar-lib-core';
 import type { Env, VPRequestState } from '../../types';
 import {
   AdminVPRequestTable,
+  type AdminVPMode,
   type AdminVPRequestInput,
   type AdminVPResult,
   type AdminVPStatus,
@@ -171,8 +172,15 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
     tenantId: string;
     responseFingerprint: string;
     now: number;
+    mode?: AdminVPMode;
   }): ReserveAdminVPResult {
-    return this.admin.reserve(input.id, input.tenantId, input.responseFingerprint, input.now);
+    return this.admin.reserve(
+      input.id,
+      input.tenantId,
+      input.responseFingerprint,
+      input.now,
+      input.mode ?? 'direct_post'
+    );
   }
 
   completeAdminResponseRpc(input: {

@@ -101,6 +101,7 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
     'guarded:rpc:VCIssuerEntrypoint.createCredentialOffer',
     'guarded:rpc:VCIssuerEntrypoint.getAdminCredentialOfferStatus',
     'guarded:rpc:VCIssuerEntrypoint.getAdminPresentationStatus',
+    'guarded:rpc:VCIssuerEntrypoint.submitAdminPresentationResponse',
     'readonly:do:KeyManager.exportTenantBackupStateRpc',
     'readonly:do:KeyManager.getExistingSecretRpc',
     'readonly:do:KeyManager.verifyTenantBackupStateRpc',

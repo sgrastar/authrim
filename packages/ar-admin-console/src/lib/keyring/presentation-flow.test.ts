@@ -171,3 +171,109 @@ describe('KeyringPresentationFlow', () => {
 		expect(flow.matchCode).toBe('');
 	});
 });
+
+describe('through the browser', () => {
+	function browserFlow(get = vi.fn(async () => ({ response: 'jwe' }))) {
+		const onverified = vi.fn();
+		const browser = {
+			start: vi.fn(async () => ({
+				requestId: 'req-b',
+				expiresAt: T0 + 300_000,
+				dcRequest: { protocol: 'openid4vp-v1-signed', data: { request: 'h.p.s' } }
+			})),
+			submit: vi.fn(async () => ({ status: 'verified' as const })),
+			get
+		};
+		const flow = new KeyringPresentationFlow({
+			start: vi.fn(),
+			progress: vi.fn(),
+			onverified,
+			browser,
+			now: () => clock
+		});
+		return { flow, browser, get, onverified };
+	}
+
+	it('prepares the request and opens the browser only on the next click', async () => {
+		const { flow, browser, get, onverified } = browserFlow();
+
+		await flow.start();
+		expect(flow.phase).toBe('ready');
+		expect(get).not.toHaveBeenCalled();
+
+		const opened = flow.openBrowser();
+		// Asked synchronously, inside the click that called openBrowser.
+		expect(get).toHaveBeenCalledOnce();
+		expect(flow.phase).toBe('browser');
+		await opened;
+		expect(browser.submit).toHaveBeenCalledWith('req-b', { response: 'jwe' });
+		expect(flow.phase).toBe('verified');
+		expect(onverified).toHaveBeenCalledOnce();
+	});
+
+	it('opens nothing outside the ready step, and nothing twice', async () => {
+		const { flow, get } = browserFlow(vi.fn(() => new Promise(() => undefined)));
+
+		await flow.openBrowser();
+		expect(get).not.toHaveBeenCalled();
+		await flow.start();
+		void flow.openBrowser();
+		void flow.openBrowser();
+		expect(get).toHaveBeenCalledOnce();
+	});
+
+	it('forgets the prepared request when closed', async () => {
+		const { flow, get } = browserFlow();
+
+		await flow.start();
+		flow.destroy();
+		await flow.openBrowser();
+		expect(get).not.toHaveBeenCalled();
+		expect(flow.phase).toBe('idle');
+	});
+});
+
+describe('a prepared browser request past its lifetime', () => {
+	function prepared() {
+		const get = vi.fn(async () => ({ response: 'jwe' }));
+		const flow = new KeyringPresentationFlow({
+			start: vi.fn(),
+			progress: vi.fn(),
+			browser: {
+				start: vi.fn(async () => ({
+					requestId: 'req-b',
+					expiresAt: T0 + 300_000,
+					dcRequest: { protocol: 'openid4vp-v1-signed', data: { request: 'h.p.s' } }
+				})),
+				submit: vi.fn(async () => ({ status: 'verified' as const })),
+				get
+			},
+			now: () => clock
+		});
+		return { flow, get };
+	}
+
+	it('ends as expired while waiting for the click', async () => {
+		const { flow, get } = prepared();
+		await flow.start();
+
+		await advance(300_000);
+
+		expect(flow.phase).toBe('ended');
+		expect(flow.endReason).toBe('expired');
+		await flow.openBrowser();
+		expect(get).not.toHaveBeenCalled();
+	});
+
+	it('never opens the browser for it, even before the timer noticed', async () => {
+		const { flow, get } = prepared();
+		await flow.start();
+
+		clock += 300_000;
+		await flow.openBrowser();
+
+		expect(get).not.toHaveBeenCalled();
+		expect(flow.phase).toBe('ended');
+		expect(flow.endReason).toBe('expired');
+	});
+});

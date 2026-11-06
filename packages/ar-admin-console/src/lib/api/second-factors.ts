@@ -33,6 +33,8 @@ export interface SecondFactorState {
 	active_count: number;
 	minimum: number;
 	enrollment: { mode: EnrollmentMode; first_enrollment_ends_at: number | null };
+	/** Whether Keyring may be presented through the browser (Digital Credentials API). */
+	keyring?: { dc_api: boolean };
 }
 
 export interface SecondFactorRecovery {

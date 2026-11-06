@@ -34,6 +34,11 @@ export const deKeyringPresentation = {
 	'kp.error.unavailable': 'Keyring ist in dieser Umgebung nicht verfügbar.',
 	'kp.error.recovery':
 		'Kein zweiter Faktor ist registriert und die Frist für die erste Registrierung ist abgelaufen: Beantragen Sie eine Wiederherstellung.',
+	'kp.browser': 'Bestätigen Sie im Fenster Ihres Browsers mit Authrim Keyring.',
+	'kp.browser.note':
+		'Der Browser prüft, dass die Anfrage von dieser Konsole kommt, daher ist keine Zahl nötig.',
+	'kp.openBrowser': 'Mit Keyring bestätigen',
+	'kp.useQr': 'Stattdessen QR-Code verwenden',
 	'kp.again': 'Erneut beginnen',
 	'kp.prompt.title': 'Mit dem zweiten Faktor bestätigen',
 	'kp.prompt.desc': 'Für diesen Vorgang ist neben Ihrem Passkey eine zweite Bestätigung nötig.',

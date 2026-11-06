@@ -142,27 +142,14 @@ export function adminVPRequestDid(payload: JWTPayload, now: number): string | nu
   if (!clientId.startsWith(ADMIN_VP_CLIENT_ID_PREFIX)) return null;
   const did = clientId.slice(ADMIN_VP_CLIENT_ID_PREFIX.length);
   if (!DID_WEB_HOST.test(did)) return null;
-  let responseUri: URL;
-  try {
-    responseUri = new URL(String(payload.response_uri));
-  } catch {
-    return null;
-  }
   const iat = payload.iat;
   const exp = payload.exp;
   const transactionData = payload.transaction_data;
-  const valid =
+  const common =
     payload.response_type === 'vp_token' &&
-    payload.response_mode === 'direct_post' &&
-    responseUri.protocol === 'https:' &&
-    responseUri.hostname === did.slice('did:web:'.length) &&
-    responseUri.port === '' &&
     typeof payload.nonce === 'string' &&
     payload.nonce.length >= 16 &&
     payload.nonce.length <= 128 &&
-    typeof payload.state === 'string' &&
-    payload.state.length > 0 &&
-    payload.state.length <= 256 &&
     typeof iat === 'number' &&
     Math.abs(iat - now) <= 300 &&
     typeof exp === 'number' &&
@@ -175,7 +162,73 @@ export function adminVPRequestDid(payload: JWTPayload, now: number): string | nu
     typeof transactionData[0] === 'string' &&
     transactionData[0].length <= 4096 &&
     JSON.stringify(payload).length <= 16 * 1024;
-  return valid ? did : null;
+  if (!common) return null;
+
+  if (payload.response_mode === 'direct_post') {
+    // Cross-device: posted back to the DID's own host.
+    let responseUri: URL;
+    try {
+      responseUri = new URL(String(payload.response_uri));
+    } catch {
+      return null;
+    }
+    const valid =
+      responseUri.protocol === 'https:' &&
+      responseUri.hostname === did.slice('did:web:'.length) &&
+      responseUri.port === '' &&
+      typeof payload.state === 'string' &&
+      payload.state.length > 0 &&
+      payload.state.length <= 256;
+    return valid ? did : null;
+  }
+
+  if (payload.response_mode === 'dc_api.jwt') {
+    // Digital Credentials API (OpenID4VP 1.0 Appendix A): the browser hands the request to the
+    // wallet only for the one origin named here, and the answer comes back encrypted to the
+    // single ephemeral key of client_metadata.
+    const origins = payload.expected_origins;
+    const metadata = payload.client_metadata as
+      | { jwks?: { keys?: unknown }; encrypted_response_enc_values_supported?: unknown }
+      | undefined;
+    const keys = metadata?.jwks?.keys;
+    if (
+      !Array.isArray(origins) ||
+      origins.length !== 1 ||
+      typeof origins[0] !== 'string' ||
+      !isHttpsOrigin(origins[0]) ||
+      'response_uri' in payload ||
+      !Array.isArray(keys) ||
+      keys.length !== 1 ||
+      !isEncryptionPublicKey(keys[0])
+    ) {
+      return null;
+    }
+    return did;
+  }
+  return null;
+}
+
+function isHttpsOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
+function isEncryptionPublicKey(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const jwk = value as Record<string, unknown>;
+  return (
+    jwk.kty === 'EC' &&
+    jwk.crv === 'P-256' &&
+    typeof jwk.x === 'string' &&
+    typeof jwk.y === 'string' &&
+    !('d' in jwk) &&
+    jwk.use === 'enc' &&
+    jwk.alg === 'ECDH-ES'
+  );
 }
 
 export interface SignStatusListCredentialResult {

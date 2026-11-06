@@ -8,7 +8,10 @@
 	import { ApiError } from '#lib/api/api-error.js';
 	import { httpKeyringFactor, type KeyringFactorClient } from '#lib/api/keyring-factor.js';
 	import KeyringPresentationDialog from '#lib/keyring/KeyringPresentationDialog.svelte';
-	import { KeyringPresentationFlow } from '#lib/keyring/presentation-flow.svelte.js';
+	import {
+		browserSupportsDigitalCredentials,
+		KeyringPresentationFlow
+	} from '#lib/keyring/presentation-flow.svelte.js';
 	import type {
 		SecondFactor,
 		SecondFactorRecovery,
@@ -138,6 +141,15 @@
 		const flow = new KeyringPresentationFlow({
 			start: () => withStepUp((receipt) => keyring.startEnroll(receipt)),
 			progress: (id) => keyring.enrollProgress(id),
+			// Through the browser when the platform allows it and the browser can; the QR code stays.
+			...(keyState?.keyring?.dc_api && browserSupportsDigitalCredentials()
+				? {
+						browser: {
+							start: () => withStepUp((receipt) => keyring.startEnrollInBrowser(receipt)),
+							submit: (id: string, data: unknown) => keyring.submitEnroll(id, data)
+						}
+					}
+				: {}),
 			onverified: () => {
 				closeKeyring();
 				toast.success(t('kp.enroll.added'));
@@ -343,6 +355,7 @@
 	description={`${t('kp.enroll.body')} ${t('kp.enroll.needCredential')}`}
 	flow={enrolling}
 	onretry={() => void enrolling?.start()}
+	onqr={() => void enrolling?.start({ qr: true })}
 	oncancel={closeKeyring}
 />
 

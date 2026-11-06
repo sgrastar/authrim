@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   writeAdminAuditLog: vi.fn(),
   credentialRow: vi.fn(),
   sessionTenants: [] as string[],
+  settings: vi.fn(),
+  browserOrigin: vi.fn(),
   auth: {},
 }));
 
@@ -59,6 +61,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     AdminSessionRepository: MockAdminSessionRepository,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({ queryOne: mocks.homeTenant })),
     evaluateAdminCredentialEligibility: mocks.eligibility,
+    resolveEffectiveSettings: mocks.settings,
+    resolveAdminWebAuthnBrowserOrigin: mocks.browserOrigin,
     resolveTenantMetadataContext: vi.fn(async () => ({ coreDb: 'core-db' })),
     ensureDatabaseAdapter: vi.fn(() => ({ queryOne: mocks.credentialRow })),
     adminAuthMiddleware:
@@ -76,6 +80,7 @@ const vc = {
   createAdminPresentationRequest: vi.fn(),
   getAdminPresentationStatus: vi.fn(),
   consumeAdminPresentation: vi.fn(),
+  submitAdminPresentationResponse: vi.fn(),
 };
 
 function human(overrides: Record<string, unknown> = {}) {
@@ -120,11 +125,21 @@ function keyringFactor(overrides: Record<string, unknown> = {}) {
 function call(
   method: 'GET' | 'POST',
   path: string,
-  env: Partial<Env> = { VC_ISSUER: vc as never }
+  env: Partial<Env> = { VC_ISSUER: vc as never },
+  body?: unknown
 ) {
   const app = new Hono<{ Bindings: Env }>();
   app.route('/api/admin/me/keyring', myKeyringFactorRouter);
-  return app.request(`/api/admin/me/keyring${path}`, { method }, env);
+  return app.request(
+    `/api/admin/me/keyring${path}`,
+    {
+      method,
+      ...(body === undefined
+        ? {}
+        : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
+    },
+    env
+  );
 }
 
 beforeEach(() => {
@@ -144,6 +159,9 @@ beforeEach(() => {
   mocks.touch.mockResolvedValue(true);
   mocks.recordSecondFactorVerification.mockResolvedValue(true);
   mocks.credentialRow.mockResolvedValue({ status: 'active' });
+  mocks.settings.mockResolvedValue({ 'security.admin_keyring_dc_api': false });
+  mocks.browserOrigin.mockReturnValue('https://console.example.com');
+  vc.submitAdminPresentationResponse.mockResolvedValue({ outcome: 'verified' });
   vc.createAdminPresentationRequest.mockResolvedValue({
     requestId: 'g1:apac:0:vp_1',
     qr: 'openid4vp://?client_id=x&request_uri=y',
@@ -179,6 +197,7 @@ describe('POST /step-up', () => {
       credentialIssuer: 'https://home.example.com',
       tenantLabel: 'home.example.com',
       context: {},
+      mode: 'direct_post',
     });
     expect(response.headers.get('Cache-Control')).toBe('no-store');
   });
@@ -480,5 +499,91 @@ describe('GET /enroll/:id', () => {
     expect(mocks.insertKeyringHolderKey).toHaveBeenCalledWith(expect.anything(), {
       firstOnly: true,
     });
+  });
+});
+
+describe('Digital Credentials API mode', () => {
+  beforeEach(() => {
+    vc.createAdminPresentationRequest.mockResolvedValue({
+      requestId: 'g1:apac:0:vp_1',
+      dcRequest: { protocol: 'openid4vp-v1-signed', data: { request: 'h.p.s' } },
+      expiresAt: NOW + 300_000,
+    });
+  });
+
+  it('is refused while the platform switch is off, before anything starts', async () => {
+    const response = await call('POST', '/step-up', undefined, { mode: 'dc_api' });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'keyring_dc_api_disabled' });
+    expect(vc.createAdminPresentationRequest).not.toHaveBeenCalled();
+  });
+
+  it('starts a request bound to the console origin when the switch is on', async () => {
+    mocks.settings.mockResolvedValue({ 'security.admin_keyring_dc_api': true });
+    const response = await call('POST', '/step-up', undefined, { mode: 'dc_api' });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({
+      request_id: 'g1:apac:0:vp_1',
+      dc_request: { protocol: 'openid4vp-v1-signed', data: { request: 'h.p.s' } },
+      expires_at: NOW + 300_000,
+    });
+    expect(vc.createAdminPresentationRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'dc_api', origin: 'https://console.example.com' })
+    );
+  });
+
+  it('refuses a console origin that is not https, and an unknown mode', async () => {
+    mocks.settings.mockResolvedValue({ 'security.admin_keyring_dc_api': true });
+    mocks.browserOrigin.mockReturnValue(null);
+    expect((await call('POST', '/step-up', undefined, { mode: 'dc_api' })).status).toBe(400);
+    expect((await call('POST', '/step-up', undefined, { mode: 'carrier-pigeon' })).status).toBe(
+      400
+    );
+    expect(vc.createAdminPresentationRequest).not.toHaveBeenCalled();
+  });
+
+  it('asks for the enrolment step-up only after the transport was accepted', async () => {
+    const response = await call('POST', '/enroll', undefined, { mode: 'dc_api' });
+    expect(response.status).toBe(409);
+    expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+  });
+
+  it('submits the browser answer for this session and records the verified factor', async () => {
+    const response = await call('POST', '/step-up/g1:apac:0:vp_1/response', undefined, {
+      response: { response: 'jwe' },
+    });
+    expect(await response.json()).toMatchObject({ status: 'verified' });
+    expect(vc.submitAdminPresentationResponse).toHaveBeenCalledWith({
+      tenantId: 'home-tenant',
+      adminUserId: 'admin-1',
+      sessionId: 'sess-1',
+      requestId: 'g1:apac:0:vp_1',
+      data: { response: 'jwe' },
+    });
+    expect(mocks.recordSecondFactorVerification).toHaveBeenCalled();
+  });
+
+  it('reports a refused, unknown or replayed answer without recording anything', async () => {
+    vc.submitAdminPresentationResponse.mockResolvedValueOnce({
+      outcome: 'refused',
+      error: 'invalid_vp_token',
+    });
+    expect(
+      await (
+        await call('POST', '/step-up/g1:apac:0:vp_1/response', undefined, { response: {} })
+      ).json()
+    ).toEqual({ status: 'failed', error: 'invalid_vp_token' });
+    vc.submitAdminPresentationResponse.mockResolvedValueOnce({ outcome: 'unknown' });
+    expect(
+      (await call('POST', '/step-up/g1:apac:0:vp_1/response', undefined, { response: {} })).status
+    ).toBe(404);
+    vc.submitAdminPresentationResponse.mockResolvedValueOnce({ outcome: 'replayed' });
+    expect(
+      (await call('POST', '/step-up/g1:apac:0:vp_1/response', undefined, { response: {} })).status
+    ).toBe(409);
+    expect((await call('POST', '/step-up/g1:apac:0:vp_1/response', undefined, {})).status).toBe(
+      400
+    );
+    expect(mocks.recordSecondFactorVerification).not.toHaveBeenCalled();
   });
 });

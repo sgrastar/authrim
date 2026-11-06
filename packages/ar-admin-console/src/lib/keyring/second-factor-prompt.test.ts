@@ -13,12 +13,23 @@ function client(status: 'verified' | 'pending' = 'verified'): KeyringFactorClien
 		})),
 		stepUpProgress: vi.fn(async () => ({ status })),
 		startEnroll: vi.fn(),
-		enrollProgress: vi.fn()
+		enrollProgress: vi.fn(),
+		startStepUpInBrowser: vi.fn(async () => ({
+			requestId: 'req-b',
+			expiresAt: Date.now() + 300_000,
+			dcRequest: { protocol: 'openid4vp-v1-signed', data: { request: 'h.p.s' } }
+		})),
+		submitStepUp: vi.fn(async () => ({ status })),
+		startEnrollInBrowser: vi.fn(),
+		submitEnroll: vi.fn()
 	};
 }
 
 beforeEach(() => vi.useFakeTimers());
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+	vi.useRealTimers();
+	vi.unstubAllGlobals();
+});
 
 describe('SecondFactorPromptState', () => {
 	it('answers security_key when the admin picks the security key', async () => {
@@ -80,6 +91,61 @@ describe('SecondFactorPromptState', () => {
 		prompt.back();
 		expect(prompt.flow).toBeNull();
 		expect(prompt.open).toBe(true);
+		prompt.cancel();
+	});
+
+	it('presents through the browser when the platform allows it and the browser can', async () => {
+		const get = vi.fn(async () => ({ data: { response: 'jwe' } }));
+		vi.stubGlobal('DigitalCredential', class {});
+		vi.stubGlobal('navigator', { credentials: { get } });
+		const prompt = new SecondFactorPromptState();
+		const keyring = client();
+		const answer = prompt.ask({ hasSecurityKey: false, client: keyring, dcApi: true });
+		await vi.advanceTimersByTimeAsync(0);
+		// Prepared, then opened by the admin's click (the dialog needs a fresh user action).
+		expect(prompt.flow?.phase).toBe('ready');
+		expect(get).not.toHaveBeenCalled();
+		void prompt.flow?.openBrowser();
+		await expect(answer).resolves.toBe('keyring_verified');
+		expect(keyring.startStepUp).not.toHaveBeenCalled();
+		expect(get).toHaveBeenCalledWith({
+			mediation: 'required',
+			digital: { requests: [{ protocol: 'openid4vp-v1-signed', data: { request: 'h.p.s' } }] }
+		});
+		expect(keyring.submitStepUp).toHaveBeenCalledWith('req-b', { response: 'jwe' });
+	});
+
+	it('falls back to the QR code when the browser cannot, or the switch is off', async () => {
+		const prompt = new SecondFactorPromptState();
+		const keyring = client('pending');
+		// No DigitalCredential in this browser.
+		void prompt.ask({ hasSecurityKey: false, client: keyring, dcApi: true }).catch(() => undefined);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(keyring.startStepUp).toHaveBeenCalledTimes(1);
+		expect(keyring.startStepUpInBrowser).not.toHaveBeenCalled();
+		prompt.cancel();
+	});
+
+	it('switches to the QR code after the browser dialog was cancelled', async () => {
+		vi.stubGlobal('DigitalCredential', class {});
+		vi.stubGlobal('navigator', {
+			credentials: {
+				get: vi.fn(async () => {
+					throw Object.assign(new Error('cancelled'), { name: 'NotAllowedError' });
+				})
+			}
+		});
+		const prompt = new SecondFactorPromptState();
+		const keyring = client('pending');
+		void prompt.ask({ hasSecurityKey: false, client: keyring, dcApi: true }).catch(() => undefined);
+		await vi.advanceTimersByTimeAsync(0);
+		void prompt.flow?.openBrowser();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(prompt.flow?.phase).toBe('error');
+		prompt.useQr();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(prompt.flow?.phase).toBe('waiting');
+		expect(keyring.startStepUp).toHaveBeenCalledTimes(1);
 		prompt.cancel();
 	});
 });

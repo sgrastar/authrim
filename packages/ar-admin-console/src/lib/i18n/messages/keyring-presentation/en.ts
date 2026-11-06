@@ -33,6 +33,11 @@ export const enKeyringPresentation = {
 	'kp.error.unavailable': 'Keyring is not available in this environment.',
 	'kp.error.recovery':
 		'No second factor is registered and the first-registration period has ended: request a recovery.',
+	'kp.browser': 'Approve in your browser’s window with Authrim Keyring.',
+	'kp.browser.note':
+		'The browser checks that this request comes from this console, so no number is needed.',
+	'kp.openBrowser': 'Approve with Keyring',
+	'kp.useQr': 'Use a QR code instead',
 	'kp.again': 'Start again',
 	'kp.prompt.title': 'Confirm with your second factor',
 	'kp.prompt.desc': 'This operation needs a second confirmation besides your passkey.',

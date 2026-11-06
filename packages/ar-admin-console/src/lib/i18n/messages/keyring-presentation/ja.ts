@@ -32,6 +32,11 @@ export const jaKeyringPresentation = {
 	'kp.error.unavailable': 'この環境では Keyring を使えません。',
 	'kp.error.recovery':
 		'2 つ目の要素がなく、最初の登録の期間も過ぎています。復旧を申請してください。',
+	'kp.browser': 'ブラウザの画面の案内に従って、Authrim Keyring で承認してください。',
+	'kp.browser.note':
+		'この要求がこのコンソールから出たものかをブラウザが確かめるので、番号の入力は要りません。',
+	'kp.openBrowser': 'Keyring で承認する',
+	'kp.useQr': 'QR コードで続ける',
 	'kp.again': 'もう一度始める',
 	'kp.prompt.title': '2 つ目の要素で確認',
 	'kp.prompt.desc': 'この操作には、パスキーに加えてもう 1 つの確認が必要です。',

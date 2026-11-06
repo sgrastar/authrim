@@ -11,6 +11,7 @@
 import { adminFetch, API_BASE_URL } from '#lib/api/admin-request.js';
 import { errorFromResponse } from '#lib/api/api-error.js';
 import type {
+	BrowserPresentationStart,
 	PresentationProgress,
 	PresentationStart
 } from '#lib/keyring/presentation-flow.svelte.js';
@@ -60,7 +61,27 @@ function parseProgress(body: unknown): PresentationProgress {
 	};
 }
 
-async function post(path: string, receipt?: string): Promise<PresentationStart> {
+function parseBrowserStart(body: unknown): BrowserPresentationStart {
+	const dc = isRecord(body) ? body.dc_request : null;
+	if (
+		!isRecord(body) ||
+		typeof body.request_id !== 'string' ||
+		typeof body.expires_at !== 'number' ||
+		!isRecord(dc) ||
+		typeof dc.protocol !== 'string' ||
+		!isRecord(dc.data) ||
+		typeof dc.data.request !== 'string'
+	) {
+		throw new Error('Unexpected Keyring browser request');
+	}
+	return {
+		requestId: body.request_id,
+		expiresAt: body.expires_at,
+		dcRequest: { protocol: dc.protocol, data: { request: dc.data.request } }
+	};
+}
+
+async function postJson(path: string, body: unknown, receipt?: string): Promise<unknown> {
 	const response = await adminFetch(`${BASE}${path}`, {
 		method: 'POST',
 		credentials: 'include',
@@ -68,10 +89,25 @@ async function post(path: string, receipt?: string): Promise<PresentationStart> 
 			'Content-Type': 'application/json',
 			...(receipt ? { 'authrim-step-up-receipt': receipt } : {})
 		},
-		body: '{}'
+		body: JSON.stringify(body)
 	});
-	if (!response.ok) throw await errorFromResponse(response);
-	return parseStart(await response.json().catch(() => null));
+	// A refusal of the final step answers with its status in the body.
+	const parsed: unknown = await response
+		.clone()
+		.json()
+		.catch(() => null);
+	if (!response.ok && !(isRecord(parsed) && parsed.status === 'failed')) {
+		throw await errorFromResponse(response);
+	}
+	return parsed;
+}
+
+async function post(path: string, receipt?: string): Promise<PresentationStart> {
+	return parseStart(await postJson(path, {}, receipt));
+}
+
+async function postInBrowser(path: string, receipt?: string): Promise<BrowserPresentationStart> {
+	return parseBrowserStart(await postJson(path, { mode: 'dc_api' }, receipt));
 }
 
 async function get(path: string): Promise<PresentationProgress> {
@@ -92,11 +128,24 @@ export interface KeyringFactorClient {
 	stepUpProgress(requestId: string): Promise<PresentationProgress>;
 	startEnroll(receipt?: string): Promise<PresentationStart>;
 	enrollProgress(requestId: string): Promise<PresentationProgress>;
+	/** Digital Credentials API: a request for the browser, and the answer it gave. */
+	startStepUpInBrowser(): Promise<BrowserPresentationStart>;
+	submitStepUp(requestId: string, data: unknown): Promise<PresentationProgress>;
+	startEnrollInBrowser(receipt?: string): Promise<BrowserPresentationStart>;
+	submitEnroll(requestId: string, data: unknown): Promise<PresentationProgress>;
 }
 
 export const httpKeyringFactor: KeyringFactorClient = {
 	startStepUp: () => post('/step-up'),
 	stepUpProgress: (id) => get(`/step-up/${encodeURIComponent(id)}`),
 	startEnroll: (receipt) => post('/enroll', receipt),
-	enrollProgress: (id) => get(`/enroll/${encodeURIComponent(id)}`)
+	enrollProgress: (id) => get(`/enroll/${encodeURIComponent(id)}`),
+	startStepUpInBrowser: () => postInBrowser('/step-up'),
+	submitStepUp: async (id, data) =>
+		parseProgress(
+			await postJson(`/step-up/${encodeURIComponent(id)}/response`, { response: data })
+		),
+	startEnrollInBrowser: (receipt) => postInBrowser('/enroll', receipt),
+	submitEnroll: async (id, data) =>
+		parseProgress(await postJson(`/enroll/${encodeURIComponent(id)}/response`, { response: data }))
 };

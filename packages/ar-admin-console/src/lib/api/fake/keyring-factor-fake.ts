@@ -56,10 +56,31 @@ export function createFakeKeyringFactor(
 		return { status: 'failed', error: outcome };
 	}
 
+	// The browser path: the request for navigator.credentials.get, and the verdict on its answer.
+	async function startInBrowser() {
+		const started = await start();
+		return {
+			requestId: started.requestId,
+			expiresAt: started.expiresAt,
+			dcRequest: { protocol: 'openid4vp-v1-signed', data: { request: 'header.payload.signature' } }
+		};
+	}
+
+	async function submit(): Promise<PresentationProgress> {
+		const outcome = options.outcome ?? 'verified';
+		if (outcome === 'verified' || outcome === 'pending') return { status: 'verified' };
+		if (outcome === 'expired') return { status: 'expired' };
+		return { status: 'failed', error: outcome };
+	}
+
 	return {
 		startStepUp: start,
 		stepUpProgress: progress,
 		startEnroll: start,
-		enrollProgress: progress
+		enrollProgress: progress,
+		startStepUpInBrowser: startInBrowser,
+		submitStepUp: submit,
+		startEnrollInBrowser: startInBrowser,
+		submitEnroll: submit
 	};
 }

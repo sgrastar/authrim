@@ -137,6 +137,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     security.admin_step_up_enforced
+    security.admin_keyring_dc_api
     security.fapi_enabled
     security.fapi_strict_dpop
     security.fapi_allow_public_clients

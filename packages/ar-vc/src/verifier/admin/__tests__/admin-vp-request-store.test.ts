@@ -192,6 +192,54 @@ describe('AdminVPRequestTable', () => {
     expect(table.requestObject('req-1', 'tenant-1', T0 + 300_001)).toBeNull();
   });
 
+  it('keeps a Digital Credentials API request off the QR paths', () => {
+    expect(() => table.create(input({ mode: 'dc_api' }))).toThrow(
+      'admin_vp_invalid_dc_api_request'
+    );
+    table.create(
+      input({
+        mode: 'dc_api',
+        matchCode: '',
+        expectedOrigin: 'https://console.example.com',
+        encryptionJwk: '{"kty":"EC"}',
+      })
+    );
+    // Never fetched by reference, never answered by a wallet's direct_post.
+    expect(table.requestObject('req-1', 'tenant-1', T0)).toBeNull();
+    expect(table.reserve('req-1', 'tenant-1', 'fp', T0 + 1_000)).toEqual({
+      reserved: false,
+      reason: 'not_found',
+    });
+    const reserved = table.reserve('req-1', 'tenant-1', 'fp', T0 + 1_000, 'dc_api');
+    expect(reserved).toMatchObject({
+      reserved: true,
+      request: {
+        mode: 'dc_api',
+        encryptionJwk: '{"kty":"EC"}',
+        expectedOrigin: 'https://console.example.com',
+        matchCode: '',
+      },
+    });
+  });
+
+  it('adds the Digital Credentials API columns to a table created before them', () => {
+    const { state, db } = createSqliteState();
+    db.exec(`CREATE TABLE admin_vp_requests (
+      id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, admin_user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL, purpose TEXT NOT NULL, holder_jkts_json TEXT NOT NULL,
+      nonce TEXT NOT NULL, match_code TEXT NOT NULL, client_id TEXT NOT NULL,
+      credential_issuer TEXT NOT NULL, transaction_data TEXT NOT NULL, request_object TEXT NOT NULL,
+      context_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL, reservation_id TEXT,
+      lease_expires_at INTEGER, response_fingerprint TEXT, result_holder_jkt TEXT,
+      result_credential_id TEXT, error_code TEXT, created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL, verified_at INTEGER, consumed_at INTEGER)`);
+    const old = new AdminVPRequestTable(state.storage.sql);
+    old.initialize();
+    old.initialize();
+    old.create(input());
+    expect(old.requestObject('req-1', 'tenant-1', T0)).toBe('header.payload.signature');
+  });
+
   it('sweeps due requests and plans the next look', () => {
     table.create(input());
     table.create(input({ id: 'req-2', expiresAt: T0 + 600_000 }));

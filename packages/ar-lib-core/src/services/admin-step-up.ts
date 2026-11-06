@@ -93,6 +93,9 @@ export const ADMIN_STEP_UP_ALWAYS_ENFORCED: ReadonlySet<AdminStepUpOperation> = 
 /** The platform setting that turns route enforcement on (default) or, during a migration, off. */
 export const ADMIN_STEP_UP_ENFORCED_KEY = 'security.admin_step_up_enforced';
 
+/** The platform setting that lets admins present Keyring through the browser's DC API. */
+export const ADMIN_KEYRING_DC_API_KEY = 'security.admin_keyring_dc_api';
+
 /**
  * The permission that lets a machine principal perform one operation without a human step-up.
  * Held by exact name only: no wildcard (`*`, `admin:*`) carries it.

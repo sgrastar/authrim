@@ -98,14 +98,28 @@ export interface CreateAdminPresentationInput {
   tenantLabel: string;
   /** Opaque to ar-vc, returned with the result (string values, at most 2 KiB as JSON). */
   context?: Record<string, string | null>;
+  /**
+   * `direct_post` (default): QR code and match code. `dc_api`: through the browser's Digital
+   * Credentials API, bound to `origin` (the console origin, https).
+   */
+  mode?: 'direct_post' | 'dc_api';
+  origin?: string;
+}
+
+/** A request for `navigator.credentials.get({ digital: { requests: [dcRequest] } })`. */
+export interface AdminPresentationDigitalCredentialRequest {
+  protocol: string;
+  data: { request: string };
 }
 
 export interface CreateAdminPresentationResult {
   requestId: string;
-  /** `openid4vp://` value for the QR code. */
-  qr: string;
-  /** The two digits the console shows and the admin types into the wallet. */
-  matchCode: string;
+  /** direct_post: `openid4vp://` value for the QR code. */
+  qr?: string;
+  /** direct_post: the two digits the console shows and the admin types into the wallet. */
+  matchCode?: string;
+  /** dc_api: the request the console hands the browser. */
+  dcRequest?: AdminPresentationDigitalCredentialRequest;
   expiresAt: number;
 }
 
@@ -145,6 +159,14 @@ export interface VCIssuerServiceBinding {
   ): Promise<{ status: AdminPresentationStatus; expiresAt: number; errorCode?: string } | null>;
   /** The verified result, handed over once; null otherwise. */
   consumeAdminPresentation(input: AdminPresentationRef): Promise<AdminPresentationResult | null>;
+  /**
+   * The answer the browser gave the console for a `dc_api` request (the `data` of the
+   * DigitalCredential), verified for the admin session that asked for it.
+   */
+  submitAdminPresentationResponse(input: AdminPresentationRef & { data: unknown }): Promise<{
+    outcome: 'verified' | 'refused' | 'unknown' | 'replayed' | 'unavailable';
+    error?: string;
+  }>;
 
   createCredentialOffer(
     input: CreateCredentialOfferServiceInput

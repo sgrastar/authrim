@@ -5,7 +5,10 @@
  * so the API layer can ask it from inside withStepUp.
  */
 import type { KeyringFactorClient } from '#lib/api/keyring-factor.js';
-import { KeyringPresentationFlow } from './presentation-flow.svelte.js';
+import {
+	browserSupportsDigitalCredentials,
+	KeyringPresentationFlow
+} from './presentation-flow.svelte.js';
 
 export type SecondFactorAnswer = 'security_key' | 'keyring_verified';
 
@@ -24,6 +27,7 @@ export class SecondFactorPromptState {
 	flow = $state<KeyringPresentationFlow | null>(null);
 
 	#client: KeyringFactorClient | null = null;
+	#dcApi = false;
 	#resolve: ((answer: SecondFactorAnswer) => void) | null = null;
 	#reject: ((error: Error) => void) | null = null;
 
@@ -34,10 +38,13 @@ export class SecondFactorPromptState {
 	ask(options: {
 		hasSecurityKey: boolean;
 		client: KeyringFactorClient;
+		/** The platform lets Keyring answer through the browser (Digital Credentials API). */
+		dcApi?: boolean;
 	}): Promise<SecondFactorAnswer> {
 		// A prompt already open is closed as cancelled: one question at a time.
 		this.cancel();
 		this.#client = options.client;
+		this.#dcApi = options.dcApi === true;
 		this.hasSecurityKey = options.hasSecurityKey;
 		this.open = true;
 		const answer = new Promise<SecondFactorAnswer>((resolve, reject) => {
@@ -60,7 +67,16 @@ export class SecondFactorPromptState {
 		this.flow = new KeyringPresentationFlow({
 			start: () => client.startStepUp(),
 			progress: (id) => client.stepUpProgress(id),
-			onverified: () => this.#settle('keyring_verified')
+			onverified: () => this.#settle('keyring_verified'),
+			// Through the browser when the platform allows it and the browser can; the QR code stays.
+			...(this.#dcApi && browserSupportsDigitalCredentials()
+				? {
+						browser: {
+							start: () => client.startStepUpInBrowser(),
+							submit: (id: string, data: unknown) => client.submitStepUp(id, data)
+						}
+					}
+				: {})
 		});
 		void this.flow.start();
 	}
@@ -68,6 +84,11 @@ export class SecondFactorPromptState {
 	/** Start the Keyring presentation again (after a failure or the end of the time). */
 	retry(): void {
 		void this.flow?.start();
+	}
+
+	/** Leave the browser path for the QR code. */
+	useQr(): void {
+		void this.flow?.start({ qr: true });
 	}
 
 	/** Back to the choice of factor, when there is one. */

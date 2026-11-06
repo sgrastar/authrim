@@ -7,6 +7,7 @@ import {
   generateKeyPair,
   SignJWT,
   type JWK,
+  CompactEncrypt,
 } from 'jose';
 import {
   ADMIN_VP_MATCH_CODE_CLAIM,
@@ -15,6 +16,7 @@ import {
   adminVPRequestUri,
   base64url,
   buildAdminVPRequestPayload,
+  decryptDcApiAnswer,
   encodeTransactionData,
   generateMatchCode,
   sha256Base64url,
@@ -62,12 +64,14 @@ function request(overrides: Partial<AdminVPRequest> = {}): AdminVPRequest {
     holderJkts: [keys.holderJkt],
     nonce: 'nonce-0123456789abcdef',
     matchCode: '42',
+    mode: 'direct_post',
     clientId: adminVPClientId(ISSUER),
     credentialIssuer: ISSUER,
     transactionData: encodeTransactionData({
       purpose: 'step_up',
       tenant: 'Example',
       requestedAt: NOW,
+      matchCodeRequired: true,
     }),
     status: 'processing',
     createdAt: NOW * 1000,
@@ -175,14 +179,15 @@ describe('request object', () => {
       purpose: 'step_up',
       tenant: 'Example',
       requestedAt: NOW,
+      matchCodeRequired: true,
     });
     const payload = buildAdminVPRequestPayload({
       credentialIssuer: ISSUER,
       vct: VCT,
       nonce: 'n'.repeat(43),
-      state: 'state-1',
       transactionData,
       now: NOW,
+      transport: { mode: 'direct_post', state: 'state-1' },
     });
     expect(payload).toMatchObject({
       client_id: 'decentralized_identifier:did:web:idp.example.com',
@@ -229,6 +234,129 @@ describe('request object', () => {
 
   it('draws two-digit match codes', () => {
     for (let i = 0; i < 200; i++) expect(generateMatchCode()).toMatch(/^\d{2}$/);
+  });
+});
+
+describe('Digital Credentials API mode', () => {
+  it('builds an origin-bound request answered encrypted, with no response_uri', async () => {
+    const pair = await generateKeyPair('ECDH-ES', { crv: 'P-256', extractable: true });
+    const encryptionKey = { ...(await exportJWK(pair.publicKey)), use: 'enc', alg: 'ECDH-ES' };
+    const payload = buildAdminVPRequestPayload({
+      credentialIssuer: ISSUER,
+      vct: VCT,
+      nonce: 'n'.repeat(43),
+      transactionData: 'td',
+      now: NOW,
+      transport: { mode: 'dc_api', expectedOrigin: 'https://console.example.com', encryptionKey },
+    });
+    expect(payload).toMatchObject({
+      client_id: 'decentralized_identifier:did:web:idp.example.com',
+      response_mode: 'dc_api.jwt',
+      expected_origins: ['https://console.example.com'],
+      client_metadata: {
+        jwks: { keys: [encryptionKey] },
+        encrypted_response_enc_values_supported: ['A128GCM', 'A256GCM'],
+      },
+    });
+    expect(payload).not.toHaveProperty('response_uri');
+    expect(payload).not.toHaveProperty('state');
+  });
+
+  async function encryptedAnswer(vpToken: unknown, enc = 'A128GCM') {
+    const pair = await generateKeyPair('ECDH-ES', { crv: 'P-256', extractable: true });
+    const response = await new CompactEncrypt(
+      new TextEncoder().encode(JSON.stringify({ vp_token: vpToken }))
+    )
+      .setProtectedHeader({ alg: 'ECDH-ES', enc })
+      .encrypt(pair.publicKey);
+    return { data: { response }, privateJwk: JSON.stringify(await exportJWK(pair.privateKey)) };
+  }
+
+  it('decrypts the answer with the request key and verifies it without a match code', async () => {
+    const req = request({
+      mode: 'dc_api',
+      matchCode: '',
+      expectedOrigin: 'https://console.example.com',
+    });
+    const presentationText = await presentation(
+      req,
+      {},
+      { matchCode: null, aud: 'origin:https://console.example.com' }
+    );
+    const { data, privateJwk } = await encryptedAnswer({ admin: [presentationText] });
+    const vpToken = await decryptDcApiAnswer(data, privateJwk);
+    await expect(verify(vpToken as string, req)).resolves.toMatchObject({ ok: true });
+  });
+
+  it('binds the answer to the console origin, not the client_id (Appendix A.4)', async () => {
+    const req = request({
+      mode: 'dc_api',
+      matchCode: '',
+      expectedOrigin: 'https://console.example.com',
+    });
+    for (const aud of [
+      req.clientId,
+      'origin:https://evil.example',
+      'https://console.example.com',
+    ]) {
+      const text = await presentation(req, {}, { matchCode: null, aud });
+      await expect(verify(vpToken(text), req)).resolves.toMatchObject({
+        ok: false,
+        error: 'invalid_key_binding',
+      });
+    }
+    // A DC API request without its origin accepts nothing.
+    const { expectedOrigin: _omit, ...withoutOrigin } = req;
+    const text = await presentation(req, {}, { matchCode: null, aud: req.clientId });
+    await expect(verify(vpToken(text), withoutOrigin)).resolves.toMatchObject({
+      ok: false,
+      error: 'invalid_key_binding',
+    });
+  });
+
+  it('asks the wallet for the match code only over QR', () => {
+    const decode = (value: string) =>
+      JSON.parse(new TextDecoder().decode(Buffer.from(value, 'base64url'))) as Record<
+        string,
+        unknown
+      >;
+    const qr = encodeTransactionData({
+      purpose: 'step_up',
+      tenant: 'Example',
+      requestedAt: NOW,
+      matchCodeRequired: true,
+    });
+    const dc = encodeTransactionData({
+      purpose: 'step_up',
+      tenant: 'Example',
+      requestedAt: NOW,
+      matchCodeRequired: false,
+    });
+    expect(decode(qr).match_code_required).toBe(true);
+    expect(decode(dc).match_code_required).toBe(false);
+  });
+
+  it('refuses an answer that is not encrypted to the request key, or not as asked', async () => {
+    const { data } = await encryptedAnswer({ admin: ['x'] });
+    const other = JSON.stringify(
+      await exportJWK(
+        (await generateKeyPair('ECDH-ES', { crv: 'P-256', extractable: true })).privateKey
+      )
+    );
+    await expect(decryptDcApiAnswer(data, other)).rejects.toThrow('invalid_vp_token');
+    const wrongEnc = await encryptedAnswer({ admin: ['x'] }, 'A192GCM');
+    await expect(decryptDcApiAnswer(wrongEnc.data, wrongEnc.privateJwk)).rejects.toThrow(
+      'invalid_vp_token'
+    );
+    await expect(decryptDcApiAnswer({ vp_token: {} }, other)).rejects.toThrow('invalid_vp_token');
+    await expect(decryptDcApiAnswer(null, other)).rejects.toThrow('invalid_vp_token');
+  });
+
+  it('still requires the match code of a QR request', async () => {
+    const req = request();
+    await expect(
+      verify(vpToken(await presentation(req, {}, { matchCode: null })), req)
+    ).resolves.toEqual({ ok: false, error: 'match_code_mismatch' });
   });
 });
 

@@ -14,7 +14,7 @@
 			docs: {
 				description: {
 					component:
-						'Keyring as a step-up second factor (OpenID4VP, cross-device). The admin scans the QR code with Authrim Keyring, checks what is being approved, types the two-digit number shown here and confirms with Face ID. The number is never in the QR code, so a photo of the screen is not enough to approve another request; a wrong number ends the request for good. Shown inside the step-up dialog and when registering Keyring; the flow polls every two seconds while the page is visible.'
+						'Keyring as a step-up second factor (OpenID4VP, cross-device). The admin scans the QR code with Authrim Keyring, checks what is being approved, types the two-digit number shown here and confirms with Face ID. The number is never in the QR code, so a photo of the screen is not enough to approve another request; a wrong number ends the request for good. Shown inside the step-up dialog and when registering Keyring; the flow polls every two seconds while the page is visible. Where the platform switch allows it and the browser supports the Digital Credentials API, the browser’s own dialog is used instead (no number: the browser binds the answer to the console origin), with the QR code as the fallback. The request is prepared first and the browser’s dialog opens on the admin’s click, since the browser asks for a fresh user action.'
 				}
 			}
 		}
@@ -85,5 +85,38 @@
 >
 	{#snippet template()}
 		<PresentationPanelDemo client={createFakeKeyringFactor({ refuse: 'keyring_not_registered' })} />
+	{/snippet}
+</Story>
+
+<Story name="Browser request prepared, waiting for a click">
+	{#snippet template()}
+		<PresentationPanelDemo client={createFakeKeyringFactor()} browser="waits" />
+	{/snippet}
+</Story>
+
+<Story
+	name="Through the browser"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		(await canvas.findByRole('button', { name: t('kp.openBrowser') }, { timeout: 5_000 })).click();
+		await canvas.findByText(t('kp.browser.note'));
+	}}
+>
+	{#snippet template()}
+		<PresentationPanelDemo client={createFakeKeyringFactor()} browser="waits" />
+	{/snippet}
+</Story>
+
+<Story
+	name="Browser dialog cancelled, QR code offered"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		(await canvas.findByRole('button', { name: t('kp.openBrowser') }, { timeout: 5_000 })).click();
+		await canvas.findByRole('button', { name: t('kp.again') }, { timeout: 5_000 });
+		await canvas.findByRole('button', { name: t('kp.useQr') });
+	}}
+>
+	{#snippet template()}
+		<PresentationPanelDemo client={createFakeKeyringFactor()} browser="cancelled" />
 	{/snippet}
 </Story>

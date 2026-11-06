@@ -26,6 +26,9 @@ import type {
 } from '@authrim/ar-lib-core';
 import {
   AR_ERROR_CODES,
+  ADMIN_KEYRING_DC_API_KEY,
+  ADMIN_UI_BFF_MODE_HEADER,
+  ADMIN_UI_FORWARDED_ORIGIN_HEADER,
   AdminSecondFactorRepository,
   AdminSessionRepository,
   adminAuthMiddleware,
@@ -37,6 +40,8 @@ import {
   getLogger,
   isAdminStepUpHumanSession,
   requireDedicatedAdminDatabaseAdapter,
+  resolveAdminWebAuthnBrowserOrigin,
+  resolveEffectiveSettings,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { refuseAdminFreshAuth, requireAdminStepUp } from '../../admin-step-up-gate';
@@ -113,13 +118,58 @@ async function prepareStart(c: AdminContext, auth: HumanSession): Promise<Starte
   return { tenantId, credentialIssuer: issuer.origin };
 }
 
+type Transport = { mode: 'direct_post' } | { mode: 'dc_api'; origin: string };
+
+/** Whether admins may present Keyring through the browser (platform switch, off by default). */
+export async function keyringDcApiEnabled(env: Env, tenantId: string): Promise<boolean> {
+  try {
+    const settings = await resolveEffectiveSettings(env, 'security', { tenantId });
+    return settings[ADMIN_KEYRING_DC_API_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * How the console asks for the presentation: a QR code by default, or `{ "mode": "dc_api" }`
+ * for the browser's Digital Credentials API, bound to the console origin the request came from.
+ */
+async function requestedTransport(
+  c: AdminContext,
+  auth: HumanSession
+): Promise<Transport | Response> {
+  let body: unknown = null;
+  try {
+    const text = await c.req.text();
+    body = text ? (JSON.parse(text) as unknown) : null;
+  } catch {
+    return refuse(c, 400, 'invalid_request');
+  }
+  const mode = (body as { mode?: unknown } | null)?.mode;
+  if (mode === undefined || mode === 'direct_post') return { mode: 'direct_post' };
+  if (mode !== 'dc_api') return refuse(c, 400, 'invalid_request');
+  if (!(await keyringDcApiEnabled(c.env, auth.sessionTenantId))) {
+    return refuse(c, 409, 'keyring_dc_api_disabled');
+  }
+  // The admin console origin, as WebAuthn checks it: the answer is bound to exactly this one.
+  const origin = resolveAdminWebAuthnBrowserOrigin({
+    env: c.env,
+    originHeader: c.req.header('origin'),
+    bffModeHeader: c.req.header(ADMIN_UI_BFF_MODE_HEADER),
+    forwardedOriginHeader: c.req.header(ADMIN_UI_FORWARDED_ORIGIN_HEADER),
+  });
+  if (!origin || !origin.startsWith('https://')) return refuse(c, 400, 'invalid_origin');
+  return { mode: 'dc_api', origin };
+}
+
 async function startPresentation(
   c: AdminContext,
   auth: HumanSession,
   started: Started,
   purpose: AdminPresentationPurpose,
   holderJkts: string[],
-  context: Record<string, string | null>
+  context: Record<string, string | null>,
+  transport: Transport
 ): Promise<Response> {
   const request = await c.env.VC_ISSUER!.createAdminPresentationRequest({
     tenantId: started.tenantId,
@@ -130,8 +180,20 @@ async function startPresentation(
     credentialIssuer: started.credentialIssuer,
     tenantLabel: new URL(started.credentialIssuer).hostname,
     context,
+    mode: transport.mode,
+    ...(transport.mode === 'dc_api' ? { origin: transport.origin } : {}),
   });
   setNoStore(c);
+  if (request.dcRequest) {
+    return c.json(
+      {
+        request_id: request.requestId,
+        dc_request: request.dcRequest,
+        expires_at: request.expiresAt,
+      },
+      201
+    );
+  }
   return c.json(
     {
       request_id: request.requestId,
@@ -141,6 +203,61 @@ async function startPresentation(
     },
     201
   );
+}
+
+/**
+ * POST …/:id/response — the answer the browser gave the console for a Digital Credentials API
+ * request (`{ "response": <DigitalCredential.data> }`). Once ar-vc verified it, the result is
+ * collected and recorded like a QR presentation's.
+ */
+async function submitBrowserAnswer(
+  c: AdminContext,
+  complete: () => Promise<Response>
+): Promise<Response> {
+  const auth = humanSession(c.get('adminAuth'));
+  if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  const requestId = c.req.param('id') ?? '';
+  if (!REQUEST_ID.test(requestId)) return refuse(c, 404, 'not_found');
+  if (!c.env.VC_ISSUER) return refuse(c, 503, 'keyring_unavailable');
+  let body: { response?: unknown } | null;
+  try {
+    const text = await c.req.text();
+    if (text.length > 96 * 1024) return refuse(c, 400, 'invalid_request');
+    body = JSON.parse(text) as { response?: unknown } | null;
+  } catch {
+    return refuse(c, 400, 'invalid_request');
+  }
+  if (!body || body.response === undefined) return refuse(c, 400, 'invalid_request');
+  try {
+    const tenantId = await homeTenantOf(c, auth.userId);
+    if (!tenantId) return refuse(c, 404, 'not_found');
+    const submitted = await c.env.VC_ISSUER.submitAdminPresentationResponse({
+      tenantId,
+      adminUserId: auth.userId,
+      sessionId: auth.sessionId,
+      requestId,
+      data: body.response,
+    });
+    setNoStore(c);
+    switch (submitted.outcome) {
+      case 'verified':
+        return complete();
+      case 'refused':
+        return c.json({ status: 'failed', error: submitted.error ?? 'invalid_vp_token' });
+      case 'unknown':
+        return refuse(c, 404, 'not_found');
+      case 'replayed':
+        return refuse(c, 409, 'replayed');
+      default:
+        return refuse(c, 503, 'keyring_unavailable');
+    }
+  } catch (error) {
+    log(c).error('Failed to submit a Keyring browser answer', {
+      action: 'admin_keyring_dc_api_submit',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
 }
 
 /**
@@ -205,6 +322,8 @@ myKeyringFactorRouter.post('/step-up', async (c) => {
   const auth = humanSession(c.get('adminAuth'));
   if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   try {
+    const transport = await requestedTransport(c, auth);
+    if (transport instanceof Response) return transport;
     const started = await prepareStart(c, auth);
     if (started instanceof Response) return started;
     const factors = (
@@ -217,7 +336,8 @@ myKeyringFactorRouter.post('/step-up', async (c) => {
       started,
       'step_up',
       factors.map((factor) => factor.holder_jkt!),
-      {}
+      {},
+      transport
     );
   } catch (error) {
     log(c).error('Failed to start a Keyring step-up', {
@@ -232,7 +352,7 @@ myKeyringFactorRouter.post('/step-up', async (c) => {
  * GET /api/admin/me/keyring/step-up/:id
  * Once verified, records the Keyring factor on the session as its second-factor evidence.
  */
-myKeyringFactorRouter.get('/step-up/:id', async (c) => {
+async function completeStepUp(c: AdminContext): Promise<Response> {
   const auth = humanSession(c.get('adminAuth'));
   if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   try {
@@ -274,7 +394,12 @@ myKeyringFactorRouter.get('/step-up/:id', async (c) => {
     });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
-});
+}
+
+myKeyringFactorRouter.get('/step-up/:id', (c) => completeStepUp(c));
+myKeyringFactorRouter.post('/step-up/:id/response', (c) =>
+  submitBrowserAnswer(c, () => completeStepUp(c))
+);
 
 /**
  * POST /api/admin/me/keyring/enroll
@@ -286,6 +411,8 @@ myKeyringFactorRouter.post('/enroll', async (c) => {
   const auth = humanSession(c.get('adminAuth'));
   if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   try {
+    const transport = await requestedTransport(c, auth);
+    if (transport instanceof Response) return transport;
     const started = await prepareStart(c, auth);
     if (started instanceof Response) return started;
     const repo = new AdminSecondFactorRepository(adminAdapter(c));
@@ -323,10 +450,18 @@ myKeyringFactorRouter.post('/enroll', async (c) => {
     const registered = (await repo.listByUser(auth.userId)).flatMap((factor) =>
       factor.holder_jkt ? [factor.holder_jkt] : []
     );
-    return startPresentation(c, auth, started, 'enroll', registered, {
-      mode: state.mode,
-      approving_factor_id: state.mode === 'step_up' ? (auth.secondFactorId ?? null) : null,
-    });
+    return startPresentation(
+      c,
+      auth,
+      started,
+      'enroll',
+      registered,
+      {
+        mode: state.mode,
+        approving_factor_id: state.mode === 'step_up' ? (auth.secondFactorId ?? null) : null,
+      },
+      transport
+    );
   } catch (error) {
     log(c).error('Failed to start a Keyring enrolment', {
       action: 'admin_keyring_enroll_start',
@@ -340,7 +475,7 @@ myKeyringFactorRouter.post('/enroll', async (c) => {
  * GET /api/admin/me/keyring/enroll/:id
  * Once verified, registers the presented holder key as a second factor.
  */
-myKeyringFactorRouter.get('/enroll/:id', async (c) => {
+async function completeEnroll(c: AdminContext): Promise<Response> {
   const auth = humanSession(c.get('adminAuth'));
   if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   try {
@@ -423,4 +558,9 @@ myKeyringFactorRouter.get('/enroll/:id', async (c) => {
     });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
-});
+}
+
+myKeyringFactorRouter.get('/enroll/:id', (c) => completeEnroll(c));
+myKeyringFactorRouter.post('/enroll/:id/response', (c) =>
+  submitBrowserAnswer(c, () => completeEnroll(c))
+);
