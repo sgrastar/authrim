@@ -11,6 +11,7 @@
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import { useChangeMark } from '#lib/ui/save/save-scope.js';
+	import JsonSettingField from './JsonSettingField.svelte';
 	import { formatSetting } from './setting-format';
 	import { settingText } from './setting-text';
 	import { fieldOf, type Entry, type FallbackSource } from './settings-model';
@@ -116,7 +117,7 @@
 				>
 				<span class="setting__default">{fallbackText}</span>
 			</div>
-			<div class="setting__control">
+			<div class="setting__control" class:setting__control--wide={meta.type === 'json'}>
 				{#if meta.type === 'boolean'}
 					<Select
 						{label}
@@ -159,6 +160,15 @@
 						min={meta.min}
 						max={meta.max}
 						bind:value={() => numberOf(entry.v), (next) => (entry.v = next)}
+					/>
+				{:else if meta.type === 'json'}
+					<JsonSettingField
+						{label}
+						{error}
+						{changed}
+						disabled={inherited}
+						value={entry.v}
+						onvalue={(next) => (entry.v = next)}
 					/>
 				{:else if meta.type === 'enum'}
 					<Select
@@ -234,5 +244,10 @@
 	/* Lists and text as wide as a duration field, not the whole column. */
 	.setting__control {
 		width: min(16rem, 100%);
+	}
+
+	/* JSON is long text: it takes the column. */
+	.setting__control--wide {
+		width: 100%;
 	}
 </style>

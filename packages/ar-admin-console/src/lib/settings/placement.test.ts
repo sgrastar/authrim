@@ -1,4 +1,9 @@
-import { ALL_CATEGORY_META } from '@authrim/ar-lib-core/types/settings/catalog';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+	ALL_CATEGORY_META,
+	CATEGORY_SCOPE_CONFIG
+} from '@authrim/ar-lib-core/types/settings/catalog';
 import { describe, expect, it } from 'vitest';
 import { hasMessage } from '#lib/i18n/i18n.svelte.js';
 import { PLATFORM_AREAS, TENANT_AREAS } from '#lib/shell/nav-data.js';
@@ -352,6 +357,30 @@ describe('where settings live', () => {
 			const meta = ALL_CATEGORY_META[categoryOf(key)].settings[key];
 			for (const choice of meta.enum ?? []) {
 				expect(hasMessage(settingText(key).choice(choice)), `${key}: ${choice}`).toBe(true);
+			}
+		}
+	});
+
+	it('gives every built settings page a route of its own', () => {
+		// A page in SETTINGS_PAGES without a route falls through to the placeholder: its settings
+		// would be placed, and so out of the draft, yet nowhere an admin can change them.
+		const routes = join(import.meta.dirname, '../../routes/admin/(console)');
+		for (const page of SETTINGS_PAGES) {
+			expect(existsSync(join(routes, page.nav, '+page.svelte')), page.nav).toBe(true);
+		}
+	});
+
+	it('places each setting where the API lets it be set', () => {
+		for (const page of SETTINGS_PAGES) {
+			for (const section of page.sections) {
+				// Built pages are tenant pages; a platform section is read at the platform.
+				const level = section.level ?? 'tenant';
+				for (const { key } of section.settings) {
+					const category = categoryOf(key);
+					const meta = ALL_CATEGORY_META[category].settings[key] as { scopes?: string[] };
+					expect(CATEGORY_SCOPE_CONFIG[category].allowedScopes, key).toContain(level);
+					if (meta.scopes) expect(meta.scopes, `${page.id}: ${key}`).toContain(level);
+				}
 			}
 		}
 	});

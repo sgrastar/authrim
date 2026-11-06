@@ -10,6 +10,7 @@ import { jaKeyringPresentation } from './keyring-presentation/ja';
 import { jaNotices } from './notices/ja';
 import { jaCustomization } from './customization/ja';
 import { jaStepUp } from './step-up/ja';
+import { jaAdminAudit } from './admin-audit/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -28,6 +29,7 @@ export const ja = {
 	...jaNotices,
 	...jaCustomization,
 	...jaStepUp,
+	...jaAdminAudit,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',

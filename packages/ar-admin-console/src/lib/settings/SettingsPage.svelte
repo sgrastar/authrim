@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { CategoryName } from '@authrim/ar-lib-core/types/settings/catalog';
 	import { settingsLevel, widest, type AccessLevel, type AdminAccess } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { ApiError, ConflictError, RejectedError } from '#lib/api/api-error.js';
@@ -28,7 +27,15 @@
 	import SaveScope from '#lib/ui/save/SaveScope.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import ConflictDialog, { type ConflictChoice } from './ConflictDialog.svelte';
-	import { categoriesOf, categoryOf, type PlacedSetting, type SettingsPageDef } from './placement';
+	import {
+		partIdOf,
+		partOfKey,
+		partsOf,
+		type PlacedSetting,
+		type SettingsPageDef,
+		type SettingsPart,
+		type SettingsSection
+	} from './placement';
 	import SettingField from './SettingField.svelte';
 	import { formatSetting } from './setting-format';
 	import { settingText } from './setting-text';
@@ -37,6 +44,7 @@
 		changes,
 		fallbackOf,
 		fieldOf,
+		keyOf,
 		metaOf,
 		readBadge,
 		sectionView,
@@ -54,6 +62,8 @@
 	 * - which value applies (set here / the deployment's / Authrim's default) and going back;
 	 * - saving per category with the version read, refused values shown on their field, and
 	 *   someone else having saved first (ConflictDialog: the admin chooses).
+	 * A `level: 'platform'` section is read and saved at the platform scope, whatever `target`
+	 * is, and is left out for admins who may not see platform settings.
 	 */
 	interface Props {
 		page: SettingsPageDef;
@@ -66,22 +76,21 @@
 	let { page, client, target, access }: Props = $props();
 
 	const who = $derived(access ?? adminAccess.current);
-	const categories = $derived(categoriesOf(page));
+	const parts = $derived(partsOf(page));
+	const partTarget = (part: SettingsPart): SettingsTarget =>
+		part.platform ? { level: 'platform' } : target;
 	const allowed = $derived(
 		Object.fromEntries(
-			categories.map((category) => [category, settingsLevel(who, category, target.level)])
-		) as Record<CategoryName, AccessLevel>
+			parts.map((part) => [part.id, settingsLevel(who, part.category, partTarget(part).level)])
+		) as Record<string, AccessLevel>
 	);
 
-	/** Categories the API refused although the rules above allowed them (a custom role…). */
-	let refused = $state<CategoryName[]>([]);
+	/** Parts the API refused although the rules above allowed them (a custom role…). */
+	let refused = $state<string[]>([]);
 	const levels = $derived(
 		Object.fromEntries(
-			categories.map((category) => [
-				category,
-				refused.includes(category) ? 'none' : allowed[category]
-			])
-		) as Record<CategoryName, AccessLevel>
+			parts.map((part) => [part.id, refused.includes(part.id) ? 'none' : allowed[part.id]])
+		) as Record<string, AccessLevel>
 	);
 	const pageLevel = $derived(widest(Object.values(levels)));
 
@@ -96,16 +105,16 @@
 	);
 
 	async function fetchAll(): Promise<Loaded> {
-		const readable = categories.filter((category) => allowed[category] !== 'none');
+		const readable = parts.filter((part) => allowed[part.id] !== 'none');
 		const results = await Promise.allSettled(
-			readable.map((category) => client.get(target, category))
+			readable.map((part) => client.get(partTarget(part), part.category))
 		);
 		const next: Loaded = {};
-		const denied: CategoryName[] = [];
+		const denied: string[] = [];
 		results.forEach((result, i) => {
-			if (result.status === 'fulfilled') next[readable[i]] = result.value;
+			if (result.status === 'fulfilled') next[readable[i].id] = result.value;
 			else if (result.reason instanceof ApiError && result.reason.forbidden)
-				denied.push(readable[i]);
+				denied.push(readable[i].id);
 			else throw result.reason;
 		});
 		refused = denied;
@@ -143,13 +152,13 @@
 		return [...Object.keys(request.set ?? {}), ...(request.clear ?? [])].map(fieldOf);
 	}
 
-	function only(values: Values, category: CategoryName): Values {
+	function only(values: Values, part: string): Values {
 		return Object.fromEntries(
-			Object.entries(values).filter(
-				([field]) => categoryOf(field.replaceAll(':', '.')) === category
-			)
+			Object.entries(values).filter(([field]) => partOfKey(page, keyOf(field)) === part)
 		);
 	}
+
+	const partById = (id: string): SettingsPart => parts.find((part) => part.id === id)!;
 
 	async function save(screen: Values): Promise<void> {
 		if (!draft) return;
@@ -166,8 +175,13 @@
 				hold(fieldOf(key));
 			}
 		};
-		const patch = (category: CategoryName, version: string): Promise<SettingsPatchResult> =>
-			client.patch(target, category, { ifMatch: version, ...plan.get(category) });
+		const patch = (id: string, version: string): Promise<SettingsPatchResult> => {
+			const part = partById(id);
+			return client.patch(partTarget(part), part.category, {
+				ifMatch: version,
+				...plan.get(id)
+			});
+		};
 
 		let stopped = false;
 		let failure: unknown = null;
@@ -182,7 +196,8 @@
 				if (error instanceof RejectedError) {
 					refuse(error.rejected);
 				} else if (error instanceof ConflictError) {
-					const latest = await client.get(target, category);
+					const part = partById(category);
+					const latest = await client.get(partTarget(part), part.category);
 					const theirs = changedBetween(
 						only(draft.saved, category),
 						valuesFrom(page, { [category]: latest })
@@ -265,7 +280,7 @@
 								</div>
 							{/if}
 							<div class="settings__fields">
-								{@render rows(view.primary)}
+								{@render rows(section, view.primary)}
 								{#if view.advanced.length > 0}
 									<div class="settings__more">
 										<Disclosure
@@ -278,7 +293,7 @@
 													<Badge>{t('settings.setHere', { n: view.setHere })}</Badge>
 												{/if}
 											{/snippet}
-											{@render rows(view.advanced)}
+											{@render rows(section, view.advanced)}
 										</Disclosure>
 									</div>
 								{/if}
@@ -298,32 +313,33 @@
 
 <!-- A section's settings as table rows: a ruled list when the admin may only look, form rows
      (FieldRow, inside SettingField) when they may change them. -->
-{#snippet rows(settings: PlacedSetting[])}
+{#snippet rows(section: SettingsSection, settings: PlacedSetting[])}
 	{#if pageLevel === 'view'}
 		<DetailList ruled>
 			{#each settings as setting (setting.key)}
-				{@render one(setting)}
+				{@render one(section, setting)}
 			{/each}
 		</DetailList>
 	{:else}
 		<div class="settings__rows">
 			{#each settings as setting (setting.key)}
-				{@render one(setting)}
+				{@render one(section, setting)}
 			{/each}
 		</div>
 	{/if}
 {/snippet}
 
-{#snippet one(setting: PlacedSetting)}
+{#snippet one(section: SettingsSection, setting: PlacedSetting)}
 	{@const meta = metaOf(setting.key)!}
 	{@const field = fieldOf(setting.key)}
-	{#if levels[categoryOf(setting.key)] === 'edit'}
+	{@const part = partById(partIdOf(section, setting.key))}
+	{#if levels[part.id] === 'edit'}
 		<SettingField
 			key={setting.key}
 			{meta}
 			bind:entry={draft!.value[field]}
-			fallback={fallbackOf(setting.key, loaded)}
-			level={target.level}
+			fallback={fallbackOf(setting.key, loaded, part.id)}
+			level={partTarget(part).level}
 			decimal={setting.decimal}
 			error={refusals[setting.key]
 				? t('settings.rejected', { reason: refusals[setting.key] })

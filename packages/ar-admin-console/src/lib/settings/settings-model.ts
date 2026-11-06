@@ -11,7 +11,7 @@
  * Keys are stored with ':' instead of '.', because the SaveScope draft reads fields as dotted
  * paths ("session:default_ttl.v").
  */
-import { ALL_CATEGORY_META, type CategoryName } from '@authrim/ar-lib-core/types/settings/catalog';
+import { ALL_CATEGORY_META } from '@authrim/ar-lib-core/types/settings/catalog';
 import type {
 	InheritedSettingSource,
 	SettingMeta
@@ -20,8 +20,10 @@ import type { AccessLevel } from '#lib/access/access.js';
 import type { SettingsGetResult, SettingsPatchRequest } from '#lib/api/settings.js';
 import { sameValue } from '#lib/ui/save/draft.svelte.js';
 import {
-	categoriesOf,
 	categoryOf,
+	partIdOf,
+	partOfKey,
+	partsOf,
 	type PlacedSetting,
 	type SettingsPageDef,
 	type SettingsSection
@@ -36,7 +38,8 @@ export interface Entry {
 
 export type Values = Record<string, Entry>;
 
-export type Loaded = Partial<Record<CategoryName, SettingsGetResult>>;
+/** What a page read, by part (`SettingsPart.id`: the category, or `platform/<category>`). */
+export type Loaded = Partial<Record<string, SettingsGetResult>>;
 
 export const fieldOf = (key: string): string => key.replaceAll('.', ':');
 export const keyOf = (field: string): string => field.replaceAll(':', '.');
@@ -64,7 +67,7 @@ export function valuesFrom(page: SettingsPageDef, loaded: Loaded): Values {
 	const values: Values = {};
 	for (const section of page.sections) {
 		for (const { key } of section.settings) {
-			const result = loaded[categoryOf(key)];
+			const result = loaded[partIdOf(section, key)];
 			if (!result || !(key in result.values)) continue;
 			values[fieldOf(key)] = {
 				v: result.values[key],
@@ -82,9 +85,10 @@ export type FallbackSource = InheritedSettingSource;
 /** What applies when the setting is not set here, and where it comes from. */
 export function fallbackOf(
 	key: string,
-	loaded: Loaded
+	loaded: Loaded,
+	part: string = categoryOf(key)
 ): { value: unknown; source: FallbackSource } {
-	const result = loaded[categoryOf(key)];
+	const result = loaded[part];
 	if (!result) return { value: metaOf(key)?.default, source: 'default' };
 	return { value: result.inherited.values[key], source: result.inherited.sources[key] };
 }
@@ -106,19 +110,19 @@ export interface SectionView {
 }
 
 /**
- * What a section shows now. `levels` leaves out settings of categories the admin cannot see;
+ * What a section shows now. `levels` (by part) leaves out settings the admin cannot see;
  * a `search` setting shows (in Advanced) only while it is set here, now or as saved.
  */
 export function sectionView(
 	section: SettingsSection,
 	values: Values,
-	levels: Partial<Record<CategoryName, AccessLevel>>,
+	levels: Partial<Record<string, AccessLevel>>,
 	saved: Values = values
 ): SectionView {
 	const visible = section.settings.filter((setting) => {
 		const field = fieldOf(setting.key);
 		if (!(field in values)) return false;
-		if ((levels[categoryOf(setting.key)] ?? 'none') === 'none') return false;
+		if ((levels[partIdOf(section, setting.key)] ?? 'none') === 'none') return false;
 		return applies(setting, metaOf(setting.key), values);
 	});
 	const primary = visible.filter((s) => s.depth === 'primary');
@@ -135,19 +139,19 @@ export function sectionView(
 	};
 }
 
-/** Per category, what to send to save the screen: changed values set, released ones cleared. */
+/** Per part, what to send to save the screen: changed values set, released ones cleared. */
 export function changes(
 	page: SettingsPageDef,
 	saved: Values,
 	current: Values
-): Map<CategoryName, Omit<SettingsPatchRequest, 'ifMatch'>> {
-	const result = new Map<CategoryName, Omit<SettingsPatchRequest, 'ifMatch'>>();
-	for (const category of categoriesOf(page)) result.set(category, {});
+): Map<string, Omit<SettingsPatchRequest, 'ifMatch'>> {
+	const result = new Map<string, Omit<SettingsPatchRequest, 'ifMatch'>>();
+	for (const part of partsOf(page)) result.set(part.id, {});
 	for (const [field, now] of Object.entries(current)) {
 		const before = saved[field];
 		if (!before) continue;
 		const key = keyOf(field);
-		const request = result.get(categoryOf(key));
+		const request = result.get(partOfKey(page, key));
 		if (!request) continue;
 		if (now.here && (!before.here || !sameValue(now.v, before.v))) {
 			request.set = { ...request.set, [key]: now.v };
@@ -155,8 +159,8 @@ export function changes(
 			request.clear = [...(request.clear ?? []), key];
 		}
 	}
-	for (const [category, request] of result) {
-		if (!request.set && !request.clear) result.delete(category);
+	for (const [part, request] of result) {
+		if (!request.set && !request.clear) result.delete(part);
 	}
 	return result;
 }
