@@ -81,6 +81,7 @@ import {
 } from '@simplewebauthn/server';
 
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
+import { readLiteMode } from './lite-mode';
 
 import type {
   VerifiedRegistrationResponse,
@@ -1174,6 +1175,11 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     const isAdminContext = referer.includes('/admin');
     const isAdminSessionContext =
       isAdminContext && accountAuthenticationRecord.accountType === 'admin';
+    // A tenant in lite mode signs its users in only through the lite Login UI (with its human
+    // verification): here, only an administrator signing in to the admin console is let through.
+    if (!isAdminSessionContext && (await readLiteMode(c.env, tenantId)) !== 'off') {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
     const sessionTtl = await resolveSessionTtl(
       c.env,
       tenantId,

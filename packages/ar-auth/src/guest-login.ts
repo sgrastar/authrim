@@ -37,6 +37,7 @@ import { provisionGuestAccount, resolveGuestAccountRoute } from './account-provi
 import { resolveSessionTtl } from './session-ttl';
 import { getDirectAuthWebAuthnOrigin, validateDirectAuthClient } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
+import { readLiteMode } from './lite-mode';
 
 export { GUEST_RESUME_COOKIE } from '@authrim/ar-lib-core';
 const RESUME_TTL_SECONDS = 180 * 86400;
@@ -190,10 +191,14 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
       !proof.consumed &&
       proof.expiresAt > Date.now();
     if (!hasProof) {
+      // A guest sign-in creates an account: for a tenant in lite mode the sign-up requirement
+      // applies too (the proof is still for the sign-in screen).
+      const lite = (await readLiteMode(c.env, tenantId)) !== 'off';
       const verificationError = await verifyHumanVerificationForAction(
         c,
         'login',
-        body.human_verification_response
+        body.human_verification_response,
+        lite ? ['signup'] : []
       );
       if (verificationError) return verificationError;
       await proofStore.storeChallengeRpc({

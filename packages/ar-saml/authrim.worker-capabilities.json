@@ -91,6 +91,11 @@
       "required": true
     },
     {
+      "name": "LITE_POLICY_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
       "name": "DIAGNOSTIC_LOGS",
       "kind": "r2_bucket",
       "required": false

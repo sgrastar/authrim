@@ -207,3 +207,14 @@ describe('LitePolicyStore keepLease', () => {
     vi.useRealTimers();
   });
 });
+
+describe('LitePolicyStore outage marker', () => {
+  it('is set once, never cleared, and serves one tenant', async () => {
+    const { store } = createStore();
+    expect(await store.isEverLiteRpc('tenant-a')).toBe(false);
+    await expect(store.markEverLiteRpc('tenant-a')).resolves.toEqual({ marked: true });
+    await store.markEverLiteRpc('tenant-a');
+    expect(await store.isEverLiteRpc('tenant-a')).toBe(true);
+    await expect(store.isEverLiteRpc('tenant-b')).rejects.toThrow('lite_policy_tenant_mismatch');
+  });
+});

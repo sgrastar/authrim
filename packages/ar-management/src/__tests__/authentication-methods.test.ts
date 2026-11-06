@@ -396,6 +396,52 @@ describe('Authentication Methods API', () => {
       });
     });
 
+    it('keeps only an answer whose lite mode was read from the store', async () => {
+      const liteStore = (snapshotFails: boolean) => ({
+        idFromName: (name: string) => name,
+        get: (name: string) =>
+          name.startsWith('lite-policy-marker:')
+            ? { isEverLiteRpc: async () => true }
+            : {
+                getSnapshotRpc: async (tenantId: string) => {
+                  if (snapshotFails) throw new Error('down');
+                  return {
+                    tenantId,
+                    liteMode: 'always',
+                    humanVerificationRequired: { login: true, signup: false, reauth: false },
+                    policyRevision: 'rev-1',
+                    generation: 1,
+                    updatedAt: 1,
+                  };
+                },
+              },
+      });
+      const run = async (snapshotFails: boolean) => {
+        const edgeCache = createMockEdgeCache();
+        (globalThis as unknown as { caches: unknown }).caches = { default: edgeCache };
+        const settingsKV = createMockKV({
+          'cache:authentication-methods:v1:revision:tenant:default': 'tenant-rev-1',
+        });
+        const { app, mockEnv } = createTestApp({ settingsKV });
+        const res = await app.request(
+          'https://first.test.authrim.com/api/auth/authentication-methods',
+          { method: 'GET' },
+          { ...mockEnv, LITE_POLICY_STORE: liteStore(snapshotFails) }
+        );
+        return { res, edgeCache };
+      };
+
+      const read = await run(false);
+      await expect(read.res.json()).resolves.toMatchObject({ ui: { lite: { mode: 'always' } } });
+      expect(read.edgeCache.put).toHaveBeenCalledTimes(1);
+
+      // The policy cannot be read: the runtimes' answer (unknown, for an ever-lite tenant) is
+      // served, but not kept.
+      const unread = await run(true);
+      await expect(unread.res.json()).resolves.toMatchObject({ ui: { lite: { mode: 'unknown' } } });
+      expect(unread.edgeCache.put).not.toHaveBeenCalled();
+    });
+
     it('should emit diagnostic timing when diagnostics are enabled and a session header is present', async () => {
       const edgeCache = createMockEdgeCache();
       const globalWithCaches = globalThis as unknown as {

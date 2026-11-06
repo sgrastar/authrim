@@ -62,6 +62,8 @@ interface StoredLitePolicy {
   lease: StoredLease | null;
 }
 
+const MARKER_KEY = 'ever-lite';
+
 export type LitePolicyLeaseResult =
   | { acquired: true; token: string; generation: number; expiresAt: number }
   | { acquired: false; reason: 'busy'; retryAfterMs: number };
@@ -157,6 +159,26 @@ export class LitePolicyStore extends DurableObject<Env> {
       snapshot: LitePolicyStore.snapshotOf(state),
       changeInProgress: state.lease !== null && state.lease.expiresAt > Date.now(),
     };
+  }
+
+  /**
+   * The outage marker, kept in the tenant's separate marker instance (`lite-policy-marker:<tenant>`):
+   * set before the tenant is first switched on and never cleared. A runtime that cannot read the
+   * policy instance asks this one whether the tenant was ever in lite mode.
+   */
+  async markEverLiteRpc(tenantId: string): Promise<{ marked: true }> {
+    assertTenantId(tenantId);
+    const marker = await this.ctx.storage.get<{ tenantId: string }>(MARKER_KEY);
+    if (marker && marker.tenantId !== tenantId) throw new Error('lite_policy_tenant_mismatch');
+    if (!marker) await this.ctx.storage.put(MARKER_KEY, { tenantId, markedAt: Date.now() });
+    return { marked: true };
+  }
+
+  async isEverLiteRpc(tenantId: string): Promise<boolean> {
+    assertTenantId(tenantId);
+    const marker = await this.ctx.storage.get<{ tenantId: string }>(MARKER_KEY);
+    if (marker && marker.tenantId !== tenantId) throw new Error('lite_policy_tenant_mismatch');
+    return Boolean(marker);
   }
 
   async acquireLeaseRpc(tenantId: string): Promise<LitePolicyLeaseResult> {

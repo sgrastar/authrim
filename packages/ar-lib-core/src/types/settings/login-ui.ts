@@ -914,7 +914,7 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     default: 'off',
     label: 'Lite Login UI',
     description:
-      'Whether the tenant uses the lite Login UI (server-rendered, for very poor networks): off or always. Changed only through PUT /api/admin/tenants/{tenantId}/login-ui/lite-mode, which checks that the lite UI can do everything the tenant uses; this setting records what that route published',
+      "Whether the tenant uses the lite Login UI (server-rendered, for very poor networks): off or always. Changed only through PUT /api/admin/login-ui/lite-mode, which checks that the lite UI can do everything the tenant uses and publishes the mode to the tenant's policy store. This setting records the mode for the console and backups; the runtimes read the policy store",
     enum: ['off', 'always'],
     scopes: ['tenant'],
     visibility: 'page',

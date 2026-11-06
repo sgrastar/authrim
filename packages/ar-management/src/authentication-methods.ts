@@ -22,7 +22,10 @@
  */
 
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
-import { readLitePolicySnapshot } from '@authrim/ar-lib-core/services/lite-policy';
+import {
+  readLiteModeAuthoritative,
+  readLiteModeState,
+} from '@authrim/ar-lib-core/services/lite-policy';
 import { checkLiteLogoDataUri } from '@authrim/ar-lib-core/utils/lite-logo';
 import type { Context } from 'hono';
 import type {
@@ -2523,22 +2526,25 @@ async function resolveSelfServiceUIConfig(
  * Priority: KV (SETTINGS) → env (AUTHENTICATION_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
  */
 /**
- * The tenant's lite Login UI mode for the Login UI's routing. `unknown` when the policy store is
- * bound but cannot be read: the Login UI must not guess which UI to serve.
+ * The tenant's lite Login UI mode for the Login UI's routing. The answer is kept (edge cache, per
+ * revision), so it is read from the store, not from a runtime cache that can be seconds behind a
+ * switch. When the store cannot be read, the runtimes' answer is used (`authoritative: false`) and
+ * the response is not kept: `unknown` when even that cannot tell (the Login UI must not guess
+ * which UI to serve), `off` for a tenant that was never lite.
  */
 async function readLiteModeForResponse(
   env: Env,
   tenantId: string
-): Promise<UIConfig['lite']['mode']> {
+): Promise<{ mode: UIConfig['lite']['mode']; authoritative: boolean }> {
   try {
-    return (await readLitePolicySnapshot(env, tenantId)).liteMode;
+    return { mode: await readLiteModeAuthoritative(env, tenantId), authoritative: true };
   } catch (error) {
     createLogger()
       .module('LOGIN-METHODS')
       .warn('Lite policy unreadable for the authentication methods answer', {
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
-    return 'unknown';
+    return { mode: await readLiteModeState(env, tenantId), authoritative: false };
   }
 }
 
@@ -2781,7 +2787,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     };
 
     // Resolve Login UI settings and cache TTL in parallel (tenant-aware)
-    const [loginUISettings, selfServiceUI, cacheTTL, liteMode] =
+    const [loginUISettings, selfServiceUI, cacheTTL, liteRead] =
       await measureAuthenticationMethodsTiming(timing, 'ui_config', () =>
         samlDrAll([
           getLoginUISettings(env, tenantId, requestedClientId),
@@ -2790,12 +2796,14 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
           readLiteModeForResponse(env, tenantId),
         ])
       );
+    const liteMode = liteRead.mode;
     const ui = {
       ...buildUIConfig(loginUISettings, liteMode),
       selfService: selfServiceUI,
     };
-    // An answer that could not read the lite policy is not kept: it would serve 503 until it expires.
-    const uncacheable = samlAvailability.unreadable || liteMode === 'unknown';
+    // An answer that could not read the lite policy is not kept: it would serve 503, or a mode the
+    // store did not say, until it expires.
+    const uncacheable = samlAvailability.unreadable || !liteRead.authoritative;
 
     const response: AuthenticationMethodsResponse = {
       methods,

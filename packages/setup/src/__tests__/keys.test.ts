@@ -34,6 +34,8 @@ import {
   ensureSupplementalKeyFiles,
   isValidTombstoneHmacKeyring,
   isValidInvestigationSubjectHmacKeyring,
+  isValidHumanVerificationPowHmacKeyring,
+  generateHumanVerificationPowHmacKeyring,
 } from '../core/keys.js';
 import { AUTHRIM_KEYS_DIR, AUTHRIM_DIR, LEGACY_KEYS_DIR } from '../core/paths.js';
 
@@ -265,6 +267,11 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(
       isValidInvestigationSubjectHmacKeyring(
         readFileSync(join(keysDir, 'investigation_subject_hmac_keyring.json'), 'utf-8')
+      )
+    ).toBe(true);
+    expect(
+      isValidHumanVerificationPowHmacKeyring(
+        readFileSync(join(keysDir, 'human_verification_pow_hmac_keyring.json'), 'utf-8')
       )
     ).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
@@ -701,7 +708,7 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(27);
+    expect(result.createdFiles).toHaveLength(28);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
@@ -717,6 +724,10 @@ describe('ensureSupplementalKeyFiles', () => {
     // Failed sign-in attempts' subject hashes get a keyring of the same shape.
     expect(
       JSON.parse(readFileSync(join(keysDir, 'investigation_subject_hmac_keyring.json'), 'utf-8'))
+    ).toEqual({ current: 1, keys: { '1': expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) } });
+    // The lite Login UI's proof of work gets a keyring of the same shape (32-byte keys).
+    expect(
+      JSON.parse(readFileSync(join(keysDir, 'human_verification_pow_hmac_keyring.json'), 'utf-8'))
     ).toEqual({ current: 1, keys: { '1': expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) } });
     expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
@@ -1097,5 +1108,33 @@ describe('generateWranglerSecretCommands', () => {
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/plugin_encryption_key.txt)" | wrangler secret put PLUGIN_ENCRYPTION_KEY --env dev'
     );
+  });
+});
+
+describe('isValidHumanVerificationPowHmacKeyring', () => {
+  const key = (fill: number) => Buffer.alloc(32, fill).toString('base64url');
+  it('accepts what ar-auth accepts', () => {
+    expect(isValidHumanVerificationPowHmacKeyring(generateHumanVerificationPowHmacKeyring())).toBe(
+      true
+    );
+    expect(
+      isValidHumanVerificationPowHmacKeyring(
+        JSON.stringify({ current: '2', keys: { '1': key(1), '2': key(2) } })
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    JSON.stringify({ current: 1, keys: { '1': Buffer.alloc(31).toString('base64url') } }),
+    JSON.stringify({ current: 1, keys: { '1': Buffer.alloc(48).toString('base64url') } }),
+    JSON.stringify({
+      current: 1,
+      keys: Object.fromEntries(Array.from({ length: 9 }, (_, i) => [String(i + 1), key(i)])),
+    }),
+    JSON.stringify({ current: 3, keys: { '1': key(1) } }),
+    JSON.stringify({ current: 1, keys: { '1': key(1) }, extra: 1 }),
+    'not json',
+  ])('refuses %s', (value) => {
+    expect(isValidHumanVerificationPowHmacKeyring(value)).toBe(false);
   });
 });

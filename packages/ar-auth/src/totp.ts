@@ -53,6 +53,7 @@ import {
   type AuthorizationChallengeContinuation,
 } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
+import { readLiteMode } from './lite-mode';
 import {
   isDeletedDestinationRouteError,
   provisionTenantD1EmailAccount,
@@ -979,6 +980,7 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
       const body = await c.req.json<{
         identifier?: unknown;
         authorization_challenge_id?: unknown;
+        human_verification_response?: unknown;
       }>();
       const identifier = normalizeIdentifier(body.identifier);
       const authorizationChallengeId =
@@ -1044,6 +1046,17 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
         `start:${identifierHash}:${ipHash}`
       );
       if (rateLimited) return rateLimited;
+
+      // A tenant in lite mode asks for the lite Login UI's proof of work before a TOTP sign-in
+      // challenge is made, for the action the server decided (sign-in or re-authentication).
+      if ((await readLiteMode(c.env, tenantId)) !== 'off') {
+        const humanVerificationError = await verifyHumanVerificationForAction(
+          c,
+          usage,
+          body.human_verification_response
+        );
+        if (humanVerificationError) return humanVerificationError;
+      }
 
       let accountRouteAvailable = true;
       if (usesRoutedAccountStorage(c)) {
