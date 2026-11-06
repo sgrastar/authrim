@@ -1,4 +1,10 @@
 import { Context } from 'hono';
+import { runLiteGuardedWrite } from './lite-mode-guard';
+import {
+  liteIssuesOfScreen,
+  liteIssuesOfScreenRemoval,
+  resolveLiteMethodState,
+} from './lite-mode-readiness';
 import type {
   Env,
   ScreenDisplayCondition,
@@ -1394,7 +1400,7 @@ function defaultAuthenticationFields(screenKind: 'registration' | 'login'): Scre
   ];
 }
 
-const DEFAULT_SCREENS: Array<{
+export const DEFAULT_SCREENS: Array<{
   screen_key: string;
   display_name: string;
   description: string;
@@ -2588,7 +2594,7 @@ export async function adminScreenGetHandler(c: AdminContext) {
   }
 }
 
-export async function adminScreenCreateHandler(c: AdminContext) {
+async function adminScreenCreateUnguarded(c: AdminContext) {
   const log = getLogger(c).module('ADMIN_SCREENS');
   try {
     const tenantId = getTenantIdFromContext(c);
@@ -2667,7 +2673,7 @@ export async function adminScreenCreateHandler(c: AdminContext) {
   }
 }
 
-export async function adminScreenUpdateHandler(c: AdminContext) {
+async function adminScreenUpdateUnguarded(c: AdminContext) {
   const log = getLogger(c).module('ADMIN_SCREENS');
   try {
     const tenantId = getTenantIdFromContext(c);
@@ -2777,7 +2783,7 @@ export async function adminScreenUpdateHandler(c: AdminContext) {
   }
 }
 
-export async function adminScreenDeleteHandler(c: AdminContext) {
+async function adminScreenDeleteUnguarded(c: AdminContext) {
   const log = getLogger(c).module('ADMIN_SCREENS');
   try {
     const tenantId = getTenantIdFromContext(c);
@@ -2839,4 +2845,106 @@ export async function adminScreenDeleteHandler(c: AdminContext) {
     log.error('Failed to delete screen', { action: 'delete' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to delete screen' }, 500);
   }
+}
+
+/**
+ * Screens of a tenant in lite mode: a screen that would be active with a block the lite Login UI
+ * cannot render is refused (lite-mode-guard.ts). Every active screen is judged, used or not, the
+ * same as the switch to lite mode judges them.
+ */
+async function liteScreenCandidateIssues(
+  c: AdminContext,
+  tenantId: string,
+  candidate: {
+    screen_key: string;
+    screen_kind: string;
+    fields: ScreenField[] | null;
+    active: boolean;
+  }
+) {
+  if (!candidate.active || !candidate.fields) return [];
+  const methods = await resolveLiteMethodState(c.env, tenantId);
+  return liteIssuesOfScreen({ ...candidate, fields: candidate.fields }, methods.enabled);
+}
+
+export async function adminScreenCreateHandler(c: AdminContext) {
+  const tenantId = getTenantIdFromContext(c);
+  return runLiteGuardedWrite(c, tenantId, {
+    check: async () => {
+      const body = await c.req.json<Row>().catch(() => null);
+      if (!body) return [];
+      const rawKey = readTrimmed(body.screen_key) ?? readTrimmed(body.display_name);
+      return liteScreenCandidateIssues(c, tenantId, {
+        screen_key: rawKey ? normalizeScreenKey(rawKey) : '',
+        screen_kind: typeof body.screen_kind === 'string' ? body.screen_kind : '',
+        fields: normalizeFields(body.fields),
+        active: body.is_active === undefined ? true : readBoolean(body.is_active, true),
+      });
+    },
+    write: () => adminScreenCreateUnguarded(c),
+  });
+}
+
+export async function adminScreenUpdateHandler(c: AdminContext) {
+  const tenantId = getTenantIdFromContext(c);
+  return runLiteGuardedWrite(c, tenantId, {
+    check: async () => {
+      const body = await c.req.json<Row>().catch(() => null);
+      const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+      const existing = await db.queryOne<Row>(
+        'SELECT id, screen_key, screen_kind, fields_json, is_active, is_system FROM screens WHERE tenant_id = ? AND id = ?',
+        [tenantId, c.req.param('id')]
+      );
+      if (!body || !existing || readBoolean(existing.is_system, false)) return [];
+      const screenKey = typeof existing.screen_key === 'string' ? existing.screen_key : '';
+      const wasActive = readBoolean(existing.is_active, false);
+      // Read as the save reads it (adminScreenUpdateUnguarded), so the two cannot disagree.
+      const active = body.is_active !== undefined ? readBoolean(body.is_active, true) : wasActive;
+      if (wasActive && !active) {
+        return liteIssuesOfScreenRemoval(db, tenantId, {
+          id: String(existing.id),
+          screen_key: screenKey,
+        });
+      }
+      return liteScreenCandidateIssues(c, tenantId, {
+        screen_key: screenKey,
+        screen_kind:
+          typeof body.screen_kind === 'string'
+            ? body.screen_kind
+            : typeof existing.screen_kind === 'string'
+              ? existing.screen_kind
+              : '',
+        fields:
+          body.fields !== undefined
+            ? normalizeFields(body.fields)
+            : parseJson<ScreenField[]>(existing.fields_json, []),
+        active,
+      });
+    },
+    write: () => adminScreenUpdateUnguarded(c),
+  });
+}
+
+/**
+ * Deleting a screen of a tenant in lite mode: refused when an assigned sign-in or sign-up Flow
+ * would then name a screen that does not resolve.
+ */
+export async function adminScreenDeleteHandler(c: AdminContext) {
+  const tenantId = getTenantIdFromContext(c);
+  return runLiteGuardedWrite(c, tenantId, {
+    check: async () => {
+      const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+      const existing = await db.queryOne<Row>(
+        'SELECT id, screen_key, is_active, is_system FROM screens WHERE tenant_id = ? AND id = ?',
+        [tenantId, c.req.param('id')]
+      );
+      if (!existing || readBoolean(existing.is_system, false)) return [];
+      if (!readBoolean(existing.is_active, false)) return [];
+      return liteIssuesOfScreenRemoval(db, tenantId, {
+        id: String(existing.id),
+        screen_key: typeof existing.screen_key === 'string' ? existing.screen_key : '',
+      });
+    },
+    write: () => adminScreenDeleteUnguarded(c),
+  });
 }

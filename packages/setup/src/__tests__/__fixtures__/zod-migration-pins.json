@@ -1234,6 +1234,11 @@
           },
           {
             "kind": "durable_object_namespace",
+            "name": "LITE_POLICY_STORE",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
             "name": "DIRECTORY_CONNECTOR_RELAY",
             "required": true
           },

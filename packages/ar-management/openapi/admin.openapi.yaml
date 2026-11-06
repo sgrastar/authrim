@@ -33708,6 +33708,145 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/login-ui/lite-mode:
+    get:
+      tags:
+        - Login UI Lite Mode
+      operationId: getApiAdminLoginUiLiteMode
+      summary: Read the tenant's lite Login UI policy and readiness
+      description: >-
+        The published lite Login UI policy (from the tenant's policy store), the mode the settings
+        record, and whether the tenant could switch to `always` now, with the reasons it cannot.
+        Requires settings read permission.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The policy and the readiness.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - mode
+                  - change_in_progress
+                  - recorded_mode
+                  - readiness
+                properties:
+                  mode:
+                    type: string
+                    enum: ['off', always]
+                  policy_revision:
+                    type: [string, 'null']
+                  generation:
+                    type: integer
+                  updated_at:
+                    type: [string, 'null']
+                    format: date-time
+                  human_verification_required:
+                    $ref: '#/components/schemas/LiteHumanVerificationRequired'
+                  change_in_progress:
+                    type: boolean
+                  recorded_mode:
+                    type: string
+                    enum: ['off', always]
+                  readiness:
+                    type: object
+                    required:
+                      - ready
+                      - issues
+                    properties:
+                      ready:
+                        type: boolean
+                      issues:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/LiteModeIssue'
+        '503':
+          description: lite_policy_unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Login UI Lite Mode
+      operationId: putApiAdminLoginUiLiteMode
+      summary: Switch the tenant's lite Login UI on or off
+      description: >-
+        Switches the tenant to the lite Login UI (`always`) or back (`off`). Switching on checks
+        that the lite Login UI can do everything the tenant uses and is refused with the reasons
+        otherwise; until the lite Login UI is released, switching on is refused everywhere except
+        an environment that allows the pre-release. The mode and the actions that require human
+        verification are published together under the policy store's lease, then recorded in the
+        setting `login-ui.lite_mode` (which the settings PATCH refuses). Requires settings write
+        permission for both the Login UI and the authentication methods.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mode
+              properties:
+                mode:
+                  type: string
+                  enum: ['off', always]
+      responses:
+        '200':
+          description: The published policy; `recorded` is false when the setting was not written.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - mode
+                  - policy_revision
+                  - generation
+                  - recorded
+                properties:
+                  mode:
+                    type: string
+                    enum: ['off', always]
+                  policy_revision:
+                    type: string
+                  generation:
+                    type: integer
+                  updated_at:
+                    type: [string, 'null']
+                    format: date-time
+                  human_verification_required:
+                    $ref: '#/components/schemas/LiteHumanVerificationRequired'
+                  recorded:
+                    type: boolean
+        '400':
+          description: invalid_request (mode is not off or always).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            lite_mode_unsupported with `issues`, or lite_mode_change_in_progress (with Retry-After).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiteModeUnsupportedError'
+        '503':
+          description: lite_policy_unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/login-ui/themes:
     get:
       tags:
@@ -78793,6 +78932,60 @@ components:
           type: string
         version:
           type: integer
+    LiteHumanVerificationRequired:
+      type: object
+      description: Per action, whether the lite Login UI requires its proof of work.
+      required:
+        - login
+        - signup
+        - reauth
+      properties:
+        login:
+          type: boolean
+        signup:
+          type: boolean
+        reauth:
+          type: boolean
+    LiteModeIssue:
+      type: object
+      description: >-
+        One reason the lite Login UI cannot serve the tenant. `subject` and `detail` are
+        identifiers from the tenant's configuration (a method, a Flow ID, a screen key, a client
+        ID, a component or block type), never personal data.
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          enum:
+            - not_released
+            - policy_store_unavailable
+            - method_unsupported
+            - flow_component_unsupported
+            - flow_screen_missing
+            - screen_block_unsupported
+            - screen_method_unsupported
+            - account_block_unsupported
+            - client_login_ui_url
+            - issuer_origin_mismatch
+        subject:
+          type: string
+        detail:
+          type: string
+    LiteModeUnsupportedError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          enum: [lite_mode_unsupported, lite_mode_change_in_progress]
+        error_description:
+          type: string
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/LiteModeIssue'
     LoginUIThemeSummary:
       type: object
       required:

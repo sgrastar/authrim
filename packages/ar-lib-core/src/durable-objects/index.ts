@@ -31,6 +31,7 @@ export { SAMLRequestStore } from './SAMLRequestStore';
 export { SAMLAggregateMetadataStore } from './SAMLAggregateMetadataStore';
 export { PermissionChangeHub } from './PermissionChangeHub';
 export { UserCodeRateLimiter } from './UserCodeRateLimiter';
+export { LitePolicyStore } from './LitePolicyStore';
 export { FlowStateStore } from './FlowStateStore';
 export { DeviceSecretRouteStore } from './DeviceSecretRouteStore';
 export type { DeviceSecretRouteHint } from './DeviceSecretRouteStore';

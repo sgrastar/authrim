@@ -35,7 +35,8 @@ export type BulkApplyRefusalReason =
   | 'key_reference'
   | 'tenant_ui_routing'
   | 'tenant_identifier'
-  | 'tenant_brand_text';
+  | 'tenant_brand_text'
+  | 'dedicated_route';
 
 export type BulkApplyVerdict =
   | { ok: true }
@@ -92,6 +93,14 @@ export const BULK_APPLY_EXCLUDED_KEYS: Readonly<
       explanation: "Text that names the tenant to its users: each tenant's own.",
     },
   ]),
+  [
+    'login-ui.lite_mode',
+    {
+      reason: 'dedicated_route',
+      explanation:
+        'Switched only through the lite Login UI route, which checks each tenant before it publishes the policy.',
+    },
+  ],
 ]) as Record<string, { reason: BulkApplyRefusalReason; explanation: string }>;
 
 /**

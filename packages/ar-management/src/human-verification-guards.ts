@@ -238,3 +238,23 @@ export async function humanVerificationDocumentRefusal(
     settings: newlyRequired.map(humanVerificationSettingKey),
   };
 }
+
+/**
+ * The actions the tenant's settings require human verification for, judged on both the canonical
+ * document and the KV copy (either requiring an action counts: a pending projection must not
+ * make the lite UI's policy weaker than what was saved). Throws
+ * {@link HumanVerificationGuardUnavailableError} when a read fails.
+ */
+export async function requiredHumanVerificationActions(
+  env: Env,
+  tenantId: string
+): Promise<Record<(typeof HUMAN_VERIFICATION_FLOWS)[number], boolean>> {
+  const required = { login: false, signup: false, reauth: false };
+  for (const document of await readRequirementDocuments(env, tenantId)) {
+    const selection = humanVerificationSelectionFromSettings(document);
+    for (const flow of HUMAN_VERIFICATION_FLOWS) {
+      if (selection.required[flow]) required[flow] = true;
+    }
+  }
+  return required;
+}

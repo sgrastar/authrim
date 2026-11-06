@@ -67,6 +67,7 @@ import {
   type Session,
   isSAMLAuthorizationChallenge,
 } from '@authrim/ar-lib-core';
+import { resolveRuntimeScreenRow } from '@authrim/ar-lib-core/services/runtime-screen-resolution';
 
 type AuthContext = Context<{ Bindings: Env }>;
 type FlowRuntimeEnv = Env & {
@@ -252,17 +253,6 @@ interface RuntimeDestinationFieldConsentContent extends FlowRuntimeJsonObject {
   }>;
 }
 
-interface RuntimeScreenRow {
-  id: string;
-  screen_key: string;
-  display_name: string;
-  description: string | null;
-  screen_kind: string;
-  fields_json: string | null;
-  localizations_json: string | null;
-  settings_json: string | null;
-}
-
 interface RuntimeScreenFieldLocalization {
   label?: string;
   text?: string;
@@ -275,14 +265,6 @@ interface RuntimeScreenLocalization {
   description?: string;
   fields?: Record<string, RuntimeScreenFieldLocalization>;
 }
-
-const DEFAULT_RUNTIME_SCREEN_KEYS = new Set([
-  'login',
-  'registration',
-  'profile_completion',
-  'code_input',
-  'consent',
-]);
 
 type RuntimeConsentRecordBindingType =
   | 'subject'
@@ -1711,27 +1693,7 @@ async function resolveRuntimeScreenContent(
   component: string | undefined,
   requestContext: FlowRequestContext
 ): Promise<FlowRuntimeJsonObject | null> {
-  if (!screenRef) return null;
-  const queryScreen = (scopeTenantId: string, ref: string, systemOnly = false) =>
-    db.queryOne<RuntimeScreenRow>(
-      `SELECT id, screen_key, display_name, description, screen_kind, fields_json,
-            localizations_json, settings_json
-       FROM screens
-      WHERE tenant_id = ?
-        AND is_active = 1
-        ${systemOnly ? 'AND is_system = 1' : ''}
-        AND (id = ? OR screen_key = ?)
-      LIMIT 1`,
-      [scopeTenantId, ref, ref]
-    );
-  const fallbackScreenRef =
-    screenRef === 'basic_profile' ? defaultScreenKeyForRuntimeComponent(component) : screenRef;
-  const row =
-    (await queryScreen(tenantId, screenRef)) ??
-    (screenRef === 'basic_profile' ? await queryScreen(tenantId, fallbackScreenRef) : null) ??
-    (DEFAULT_RUNTIME_SCREEN_KEYS.has(fallbackScreenRef)
-      ? await queryScreen('default', fallbackScreenRef, true)
-      : null);
+  const row = await resolveRuntimeScreenRow(db, tenantId, screenRef, component);
   if (!row) return null;
   let fields = applyRuntimeScreenDefaultMetadata(
     row.screen_key,
@@ -1993,15 +1955,6 @@ function readDestinationFieldReleasePolicies(
     }
   }
   return policies;
-}
-
-function defaultScreenKeyForRuntimeComponent(component?: string): string {
-  if (component === 'registration_method_selector') return 'registration';
-  if (component === 'authentication_method_selector') return 'login';
-  if (component === 'email_verification') return 'code_input';
-  if (component === 'screen') return 'profile_completion';
-  if (component === 'consent_policy') return 'consent';
-  return 'profile_completion';
 }
 
 async function hydrateRuntimeContract(

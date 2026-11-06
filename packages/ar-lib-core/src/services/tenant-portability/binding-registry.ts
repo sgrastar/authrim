@@ -102,6 +102,13 @@ const groups: Array<{
   },
   {
     kind: 'DurableObjectNamespace',
+    disposition: 'rebuild',
+    names: 'LITE_POLICY_STORE',
+    reason:
+      'Start restored tenants in the normal Login UI; re-apply the saved login-ui.lite_mode through the lite-mode route, whose guard re-checks the restored configuration.',
+  },
+  {
+    kind: 'DurableObjectNamespace',
     disposition: 'ephemeral',
     names:
       'AUTHORIZATION_CODE_STORE AUTH_CODE_STORE CHALLENGE_STORE CIBA_REQUEST_STORE CREDENTIAL_OFFER_STORE DEVICE_CODE_STORE DPOP_JTI_STORE FLOW_STATE_STORE PAR_REQUEST_STORE PERMISSION_CHANGE_HUB SAML_AGGREGATE_METADATA_STORE SAML_REQUEST_STORE SESSION_CLIENT_STORE SESSION_STORE USER_CODE_RATE_LIMITER VP_REQUEST_STORE',

@@ -18,7 +18,10 @@ import type {
   FlowRuntimeContractPackage,
   FlowValidationIssue,
 } from '@authrim/ar-lib-core';
+import { runLiteGuardedWrite } from './lite-mode-guard';
+import { liteIssuesOfFlowRuntime, liteIssuesOfFlowSteps } from './lite-mode-readiness';
 import {
+  LITE_FLOW_KINDS,
   FLOW_NODE_DEFINITIONS,
   FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
   createAuthContextFromHono,
@@ -1120,7 +1123,7 @@ export async function adminFlowValidateHandler(c: AdminContext) {
   }
 }
 
-export async function adminFlowPublishHandler(c: AdminContext) {
+async function adminFlowPublishUnguarded(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = getCoreAdapter(asBaseContext(c), tenantId);
@@ -1412,7 +1415,7 @@ export async function adminFlowAssignmentsListHandler(c: BaseContext) {
   }
 }
 
-export async function adminFlowAssignmentUpsertHandler(c: AdminContext) {
+async function adminFlowAssignmentUpsertUnguarded(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const db = getCoreAdapter(asBaseContext(c), tenantId);
@@ -1668,4 +1671,63 @@ export async function adminFlowCopyHandler(c: AdminContext) {
 
 export async function adminFlowCompileHandler(c: AdminContext) {
   return adminFlowPublishHandler(c);
+}
+
+/**
+ * Publishing a sign-in or sign-up Flow of a tenant in lite mode: refused when the new version has
+ * a component the lite Login UI cannot drive (lite-mode-guard.ts).
+ */
+export async function adminFlowPublishHandler(c: AdminContext) {
+  const tenantId = getTenantIdFromContext(asBaseContext(c));
+  return runLiteGuardedWrite(asBaseContext(c), tenantId, {
+    check: async () => {
+      const flowId = getPathId(c);
+      if (!flowId) return [];
+      const db = getCoreAdapter(asBaseContext(c), tenantId);
+      const existing = await getFlowRow(db, tenantId, flowId);
+      const kind = (existing?.kind || 'login') as FlowKind;
+      const editor = parseJson<FlowEditorState | null>(existing?.draft_editor_json, null);
+      if (!existing || !editor || !(LITE_FLOW_KINDS as readonly string[]).includes(kind)) return [];
+      const runtime = normalizeRuntime(
+        flowId,
+        kind,
+        editor,
+        parseJson<FlowRuntimeContract | null>(existing.draft_runtime_base_json, null)
+      );
+      return liteIssuesOfFlowSteps(db, tenantId, flowId, runtime.ui.steps);
+    },
+    write: () => adminFlowPublishUnguarded(c),
+  });
+}
+
+/**
+ * Assigning a Flow for sign-in or sign-up in a tenant in lite mode: refused when its published
+ * version has a component the lite Login UI cannot drive.
+ */
+export async function adminFlowAssignmentUpsertHandler(c: AdminContext) {
+  const tenantId = getTenantIdFromContext(asBaseContext(c));
+  return runLiteGuardedWrite(asBaseContext(c), tenantId, {
+    check: async () => {
+      const body = await c.req
+        .json<{ flow_kind?: unknown; flow_id?: unknown; enabled?: unknown }>()
+        .catch(() => null);
+      if (
+        !body ||
+        body.enabled === false ||
+        typeof body.flow_id !== 'string' ||
+        !(LITE_FLOW_KINDS as readonly string[]).includes(String(body.flow_kind))
+      ) {
+        return [];
+      }
+      const db = getCoreAdapter(asBaseContext(c), tenantId);
+      const flow = await getFlowRow(db, tenantId, body.flow_id);
+      if (!flow?.published_version_id) return [];
+      const version = await db.queryOne<{ runtime_snapshot_json: string | null }>(
+        'SELECT runtime_snapshot_json FROM flow_versions WHERE tenant_id = ? AND flow_id = ? AND id = ?',
+        [tenantId, flow.id, flow.published_version_id]
+      );
+      return liteIssuesOfFlowRuntime(db, tenantId, flow.id, version?.runtime_snapshot_json ?? null);
+    },
+    write: () => adminFlowAssignmentUpsertUnguarded(c),
+  });
 }
