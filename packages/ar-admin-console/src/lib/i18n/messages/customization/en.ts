@@ -80,6 +80,7 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.palette.flat.d': 'White and thin lines. No shadow, no frost.',
 	'th.g.colours': 'Colours',
 	'th.g.colours.d': 'An empty colour uses the standard one, which the field shows.',
+	'th.c.reset': 'Reset to default colours',
 	'th.c.background': 'Background',
 	'th.c.card': 'Form area',
 	'th.c.accent': 'Accent (buttons, links)',

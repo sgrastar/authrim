@@ -9,13 +9,15 @@
 	interface Props {
 		title: string;
 		info?: string;
+		/** A control at the right end of the title (such as a reset for the whole group). */
+		actions?: Snippet;
 		children: Snippet;
 	}
 
-	let { title, info, children }: Props = $props();
+	let { title, info, actions, children }: Props = $props();
 </script>
 
-<Card {title} {info}>
+<Card {title} {info} {actions}>
 	<div class="fields">{@render children()}</div>
 </Card>
 

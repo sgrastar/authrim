@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
 	import ColorField from '#lib/ui/primitives/ColorField.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import ThemeGroup from './ThemeGroup.svelte';
@@ -25,6 +26,21 @@
 	const modes: readonly ColourMode[] = ['auto', 'light', 'dark'];
 	const fontScales: readonly FontScale[] = ['compact', 'comfortable', 'spacious'];
 	const defaults = $derived(paletteColours(draft.palette, scheme));
+
+	// An empty colour is the palette's own (the field shows it), so going back to the palette's
+	// colours is emptying them. Nothing changes until the theme is saved.
+	const COLOUR_FIELDS = [
+		'background',
+		'cardColor',
+		'accent',
+		'titleColor',
+		'textColor',
+		'copyColor'
+	] as const;
+	const customised = $derived(COLOUR_FIELDS.some((field) => draft[field] !== ''));
+	function resetColours() {
+		for (const field of COLOUR_FIELDS) draft[field] = '';
+	}
 	// "Form bottom" places the choices on Split's form side, so only Split offers it (a value it
 	// already has stays listed, so the field never shows blank).
 	const topbars = $derived(
@@ -36,6 +52,11 @@
 </script>
 
 <ThemeGroup title={t('th.g.colours')} info={t('th.g.colours.d')}>
+	{#snippet actions()}
+		<Button variant="ghost" size="sm" icon="reset" disabled={!customised} onclick={resetColours}
+			>{t('th.c.reset')}</Button
+		>
+	{/snippet}
 	<div class="colours">
 		<ColorField
 			label={t('th.c.background')}
