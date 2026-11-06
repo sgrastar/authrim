@@ -1,9 +1,9 @@
 /**
  * ar-auth for tenants in lite mode (the lite Login UI).
  *
- * - `readLiteMode`: the tenant's mode from its policy store. When the store cannot be read, the
- *   saved record of the mode decides: a tenant recorded as lite reads as `unknown` (refused, as a
- *   lite tenant would be), any other as `off`.
+ * - `readLiteMode`: the tenant's mode, as ar-lib-core readLiteRuntimeState tells it (cached per
+ *   isolate; a tenant that was never lite is `off` without reading its policy; `unknown`, refused
+ *   as a lite tenant would be, when it cannot be told).
  * - `refuseForLiteTenant`: the endpoints the lite UI does not use are refused for a lite tenant
  *   (`lite_mode_endpoint_unavailable`): the older email-code and passkey-registration endpoints,
  *   which create accounts without human verification, and the sign-in methods the lite UI does
@@ -21,7 +21,7 @@ import {
   getTenantIdFromContext,
   loadPowKeyringFromEnv,
   readLiteModeState,
-  readLitePolicySnapshot,
+  readLiteRuntimeState,
   readLitePowSettings,
   type Env,
   type LiteModeState,
@@ -131,13 +131,9 @@ export async function litePowChallengeHandler(c: AnyContext): Promise<Response> 
     return c.json({ error: 'invalid_request', error_description: 'Unknown action' }, 400);
   }
   if (!c.env.LITE_POLICY_STORE) return c.json({ error: 'not_found' }, 404);
-  let snapshot;
-  try {
-    snapshot = await readLitePolicySnapshot(c.env, tenantId);
-  } catch {
-    return c.json({ error: 'temporarily_unavailable' }, 503);
-  }
-  if (snapshot.liteMode !== 'always') return c.json({ error: 'not_found' }, 404);
+  const snapshot = await readLiteRuntimeState(c.env, tenantId);
+  if (snapshot === 'unknown') return c.json({ error: 'temporarily_unavailable' }, 503);
+  if (snapshot === 'off') return c.json({ error: 'not_found' }, 404);
 
   let keyring;
   try {

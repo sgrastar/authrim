@@ -178,6 +178,8 @@ describe('lite Login UI switch route', () => {
     const response = await call('PUT', { mode: 'always' });
     expect(response.status).toBe(200);
     expect(await store.isEverLiteRpc('tenant-a')).toBe(true);
+    // The outage record for runtimes that cannot reach any policy store object (never cleared).
+    expect(kv.get('login_ui_lite_ever:tenant-a')).toBe('1');
     const body = await response.json<Record<string, unknown>>();
     expect(body).toMatchObject({
       mode: 'always',
@@ -213,6 +215,27 @@ describe('lite Login UI switch route', () => {
     store.markEverLiteRpc = async () => {
       throw new Error('down');
     };
+    expect((await call('PUT', { mode: 'always' })).status).toBe(503);
+    expect((await store.getStatusRpc('tenant-a')).snapshot.liteMode).toBe('off');
+    expect((await store.getStatusRpc('tenant-a')).changeInProgress).toBe(false);
+  });
+
+  it('does not publish always when the KV outage record cannot be written', async () => {
+    const marked = vi.spyOn(store, 'markEverLiteRpc');
+    env.SETTINGS = {
+      get: async (key: string) => kv.get(key) ?? null,
+      put: async () => {
+        throw new Error('kv down');
+      },
+    };
+    expect((await call('PUT', { mode: 'always' })).status).toBe(503);
+    expect(marked).not.toHaveBeenCalled();
+    expect((await store.getStatusRpc('tenant-a')).snapshot.liteMode).toBe('off');
+    expect((await store.getStatusRpc('tenant-a')).changeInProgress).toBe(false);
+  });
+
+  it('does not publish always without a KV namespace for the outage record', async () => {
+    delete env.SETTINGS;
     expect((await call('PUT', { mode: 'always' })).status).toBe(503);
     expect((await store.getStatusRpc('tenant-a')).snapshot.liteMode).toBe('off');
   });

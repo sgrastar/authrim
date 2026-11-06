@@ -5,6 +5,7 @@ import { LitePolicyStore } from '../../durable-objects/LitePolicyStore';
 import { verifyHumanVerificationWithRunner } from '../human-verification-runner';
 import { createPowChallenge, parsePowKeyring, type PowChallenge } from '../human-verification-pow';
 import { litePowSettingsFrom } from '../lite-human-verification';
+import { resetLitePolicyRuntimeCache } from '../lite-policy';
 
 class Storage {
   readonly data = new Map<string, unknown>();
@@ -66,6 +67,10 @@ async function setPolicy(
   liteMode: 'off' | 'always',
   required = { login: true, signup: false, reauth: false }
 ) {
+  // As the switch route does: the marker before `always` (the same object stands for both
+  // instances here). The runtimes cache what they read; a test reads the change at once.
+  if (liteMode === 'always') await policy.markEverLiteRpc('tenant-a');
+  resetLitePolicyRuntimeCache();
   const lease = await policy.acquireLeaseRpc('tenant-a');
   if (!lease.acquired) throw new Error('lease');
   const result = await policy.commitRpc({
@@ -80,6 +85,7 @@ async function setPolicy(
 }
 
 beforeEach(() => {
+  resetLitePolicyRuntimeCache();
   policy = new LitePolicyStore({ storage: new Storage() } as never, {} as never);
   const challengeStores = new Map<string, ChallengeStore>();
   kv = new Map([
@@ -153,6 +159,22 @@ describe('human verification of a tenant in lite mode', () => {
       required: true,
       verified: true,
     });
+  });
+
+  it('applies requirements made stricter at once, with the runtime cache warm', async () => {
+    await setPolicy('always', { login: false, signup: false, reauth: false });
+    await expect(verify('')).resolves.toEqual({ required: false, verified: true });
+    // Stricter, mode unchanged, and the runtime cache not reset: the runner reads the policy.
+    const lease = await policy.acquireLeaseRpc('tenant-a');
+    if (!lease.acquired) throw new Error('lease');
+    await policy.commitRpc({
+      tenantId: 'tenant-a',
+      token: lease.token,
+      expectedGeneration: lease.generation,
+      liteMode: 'always',
+      humanVerificationRequired: { login: true, signup: false, reauth: false },
+    });
+    await expect(verify('')).resolves.toEqual({ required: true, verified: false });
   });
 
   it('refuses a proof for another action', async () => {

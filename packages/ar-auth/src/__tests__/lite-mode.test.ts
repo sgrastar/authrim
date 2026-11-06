@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LitePolicyStore } from '@authrim/ar-lib-core/durable-objects/LitePolicyStore';
+import { resetLitePolicyRuntimeCache } from '@authrim/ar-lib-core/services/lite-policy';
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -31,6 +32,10 @@ let counts: Map<string, number>;
 let env: Record<string, unknown>;
 
 async function goLite() {
+  // As the switch route does: the marker before `always` (one object stands for both instances
+  // here). The runtimes cache what they read; a test reads the switch at once.
+  await policy.markEverLiteRpc('tenant-a');
+  resetLitePolicyRuntimeCache();
   const lease = await policy.acquireLeaseRpc('tenant-a');
   if (!lease.acquired) throw new Error('lease');
   await policy.commitRpc({
@@ -43,6 +48,7 @@ async function goLite() {
 }
 
 beforeEach(() => {
+  resetLitePolicyRuntimeCache();
   policy = new LitePolicyStore({ storage: new Storage() } as never, {} as never);
   counts = new Map();
   env = {
@@ -148,8 +154,7 @@ describe('endpoints closed for lite tenants', () => {
   });
 
   it('asks the marker instance when the policy instance is down', async () => {
-    let everLite = true;
-    env.LITE_POLICY_STORE = {
+    const storeWith = (everLite: boolean) => ({
       idFromName: (n: string) => n,
       get: (id: string) =>
         id.startsWith('lite-policy-marker:')
@@ -159,14 +164,15 @@ describe('endpoints closed for lite tenants', () => {
                 throw new Error('down');
               },
             },
-    };
+    });
+    env.LITE_POLICY_STORE = storeWith(true);
     expect((await request('/legacy', { method: 'POST' })).status).toBe(403);
-    everLite = false;
+    env.LITE_POLICY_STORE = storeWith(false);
     expect((await request('/legacy', { method: 'POST' })).status).toBe(200);
   });
 
-  it('refuses when neither the policy nor the marker can be read', async () => {
-    env.LITE_POLICY_STORE = {
+  it('decides by the KV record when neither the policy nor the marker can be read', async () => {
+    const down = () => ({
       idFromName: (n: string) => n,
       get: () => ({
         getSnapshotRpc: async () => {
@@ -176,8 +182,56 @@ describe('endpoints closed for lite tenants', () => {
           throw new Error('down');
         },
       }),
+    });
+    const settings = env.SETTINGS as { get: (key: string) => Promise<string | null> };
+    // A tenant never switched on keeps working through an outage of the whole store.
+    env.LITE_POLICY_STORE = down();
+    expect((await request('/legacy', { method: 'POST' })).status).toBe(200);
+    // One that was switched on at some point is refused, as it would be in lite mode.
+    env.LITE_POLICY_STORE = down();
+    env.SETTINGS = {
+      get: async (key: string) => (key === 'login_ui_lite_ever:tenant-a' ? '1' : settings.get(key)),
     };
     expect((await request('/legacy', { method: 'POST' })).status).toBe(403);
+    // And so is any tenant when KV cannot answer either.
+    env.LITE_POLICY_STORE = down();
+    env.SETTINGS = {
+      get: async () => {
+        throw new Error('kv down');
+      },
+    };
+    expect((await request('/legacy', { method: 'POST' })).status).toBe(403);
+  });
+});
+
+describe('the cost of the lite checks on a tenant that never used lite mode', () => {
+  it('reads one Durable Object, once, across many sign-in requests', async () => {
+    const calls = { snapshot: 0, marker: 0 };
+    const counting = new LitePolicyStore({ storage: new Storage() } as never, {} as never);
+    env.LITE_POLICY_STORE = {
+      idFromName: (n: string) => n,
+      get: (id: string) =>
+        id.startsWith('lite-policy-marker:')
+          ? {
+              isEverLiteRpc: async (tenantId: string) => {
+                calls.marker += 1;
+                return counting.isEverLiteRpc(tenantId);
+              },
+            }
+          : {
+              getSnapshotRpc: async (tenantId: string) => {
+                calls.snapshot += 1;
+                return counting.getSnapshotRpc(tenantId);
+              },
+            },
+    };
+    // Each request passes a refusal check and the lite budget, as a sign-in path does.
+    for (let i = 0; i < 25; i++) {
+      expect((await request('/legacy', { method: 'POST' })).status).toBe(200);
+      expect((await request('/budgeted', { method: 'POST' })).status).toBe(200);
+    }
+    expect(calls).toEqual({ snapshot: 0, marker: 1 });
+    expect(counts.size).toBe(0);
   });
 });
 

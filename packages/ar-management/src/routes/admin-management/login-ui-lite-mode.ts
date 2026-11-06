@@ -6,7 +6,8 @@
  *   whether the tenant could switch to `always` now (`readiness.issues`).
  * PUT /api/admin/login-ui/lite-mode   { "mode": "off" | "always" }
  *   Switches the tenant. Under the policy store's lease: the compatibility check (for `always`),
- *   the outage marker (switching on: set in the tenant's marker instance, never cleared), the
+ *   the outage markers (switching on: a KV record, then the tenant's marker instance; neither is
+ *   ever cleared), the
  *   policy commit (mode and the actions that require human verification, as one value), then the
  *   setting `login-ui.lite_mode` as the record shown in the console. The settings PATCH refuses
  *   that setting: this route is the only way to change it.
@@ -21,6 +22,7 @@ import {
   createErrorResponse,
   getLitePolicyStore,
   getLitePolicyMarkerStore,
+  liteEverKvKey,
   getLogger,
   getRateLimitProfileAsync,
   getTenantIdFromContext,
@@ -190,7 +192,10 @@ loginUILiteModeRouter.put('/', async (c) => {
       // the tenant's separate marker instance (strongly consistent) before `always` is published,
       // and never cleared, so it is never behind the policy.
       const marker = getLitePolicyMarkerStore(c.env, tenantId);
-      if (!marker) return litePolicyUnavailableResponse(c);
+      if (!marker || !c.env.SETTINGS) return litePolicyUnavailableResponse(c);
+      // First the KV record, what a runtime asks when no policy store object can be reached at
+      // all (ar-lib-core readLiteRuntimeState); then the marker instance. Neither is cleared.
+      await c.env.SETTINGS.put(liteEverKvKey(tenantId), '1');
       await marker.markEverLiteRpc(tenantId);
     }
     const required = await requiredHumanVerificationActions(c.env, tenantId);
