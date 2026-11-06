@@ -72,6 +72,29 @@
 </Story>
 
 <Story
+	name="Reset the colours to the palette's"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		const reset = await canvas.findByRole('button', { name: t('th.c.reset') });
+		// Nothing to reset while the palette's colours are in use.
+		await expect(reset).toBeDisabled();
+		const picker = canvas.getByLabelText(t('color.pick', { name: t('th.c.accent') }));
+		await fireEvent.input(picker, { target: { value: '#ff0000' } });
+		await waitFor(() => expect(reset).toBeEnabled());
+		await userEvent.click(reset);
+		await waitFor(() => expect(reset).toBeDisabled());
+		// The field is empty again: it shows the palette's colour as its placeholder.
+		const hex = canvasElement.querySelectorAll<HTMLInputElement>('.color__hex');
+		for (const field of hex) await expect(field.value).toBe('');
+	}}
+>
+	{#snippet template()}
+		<Page><ThemeEditor /></Page>
+	{/snippet}
+</Story>
+
+<Story
 	name="The header name is its own, apart from the brand name"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
