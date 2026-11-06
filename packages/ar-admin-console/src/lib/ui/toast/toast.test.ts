@@ -23,6 +23,12 @@ describe('toast', () => {
 		expect(toast.error('Failed')).not.toBeNull();
 	});
 
+	it('shows the same message again at once after everything is dismissed', () => {
+		expect(toast.success('Saved')).not.toBeNull();
+		toast.dismissAll();
+		expect(toast.success('Saved')).not.toBeNull();
+	});
+
 	it('keeps at most four on screen, dropping the oldest', () => {
 		for (let i = 0; i < 6; i++) toast.info(`Message ${i}`);
 		expect(toast.items).toHaveLength(MAX_VISIBLE_TOASTS);
