@@ -1,5 +1,6 @@
 <script module lang="ts">
 	import Toaster from '#lib/ui/toast/Toaster.svelte';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { ADMIN_ROLES } from '@authrim/ar-lib-core/constants/admin-roles';
@@ -223,6 +224,9 @@
 	name="Choices and their labels"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		// Toasts are shared by the stories of a run: start from none.
+		toast.dismissAll();
+		await waitFor(() => expect(toast.items.length).toBe(0));
 		await canvas.findByRole('heading', { level: 1, name: 'Department' });
 		// Each choice has its stored value and a default label; the labels by language sit under.
 		const first = canvas.getByRole('textbox', {
@@ -250,6 +254,9 @@
 	name="A choice users hold cannot be removed"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		// Toasts are shared by the stories of a run: start from none.
+		toast.dismissAll();
+		await waitFor(() => expect(toast.items.length).toBe(0));
 		await canvas.findByRole('heading', { level: 1, name: 'Department' });
 		// "Sales" (the second choice) is held by 12 users in the fake.
 		await userEvent.click(
