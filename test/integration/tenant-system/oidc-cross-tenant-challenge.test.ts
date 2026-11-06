@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import { getChallengeStoreByChallengeId } from '@authrim/ar-lib-core';
 import { loginChallengeGetHandler } from '../../../packages/ar-auth/src/login-challenge';
-import { load as loginLoad } from '../../../packages/ar-login-ui/src/routes/login/+page.server';
+import { load as loginLoad } from '../../../packages/ar-login-ui/src/routes/(main)/login/+page.server';
 import {
   buildEnvForTopology,
   createTenantSystemApiFetch,

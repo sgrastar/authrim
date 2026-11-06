@@ -26,7 +26,7 @@
 			docs: {
 				description: {
 					component:
-						'Where a person types the code shown on a TV or command line, then approves or denies the device. The route (`src/routes/device`) owns the requests; this view draws the step it is given.'
+						'Where a person types the code shown on a TV or command line, then approves or denies the device. The route (`src/routes/(main)/device`) owns the requests; this view draws the step it is given.'
 				}
 			}
 		}

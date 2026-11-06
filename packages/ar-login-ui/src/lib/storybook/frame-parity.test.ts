@@ -19,7 +19,7 @@ function bound(tag: string, pattern: RegExp): string[] {
 }
 
 describe('Storybook frame', () => {
-	const layout = boundaryTag(read('../../routes/+layout.svelte'));
+	const layout = boundaryTag(read('../../routes/(main)/+layout.svelte'));
 	const frame = boundaryTag(read('./LoginUIFrame.svelte'));
 
 	it('carries the same data-* attributes as the layout boundary', () => {

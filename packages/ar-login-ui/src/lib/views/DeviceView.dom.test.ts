@@ -10,7 +10,7 @@ import {
 	createDeviceFlow,
 	type DeviceDecisionApi,
 	type DeviceFlowState
-} from '../../routes/device/device-decision';
+} from '../../routes/(main)/device/device-decision';
 import { handleCodeEnterKey } from '#lib/utils/code-enter-key.js';
 import DeviceView from './DeviceView.svelte';
 

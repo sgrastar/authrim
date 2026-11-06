@@ -162,7 +162,7 @@
 			docs: {
 				description: {
 					component:
-						'The sign-in page. With an Admin console screen for the current flow step it draws that screen; without one it falls back to the classic layout (passkey, directory password, email code, authenticator app, external providers). The route (`src/routes/login`) loads the methods and the flow, runs WebAuthn and the requests, and redirects; this view draws what it is given.'
+						'The sign-in page. With an Admin console screen for the current flow step it draws that screen; without one it falls back to the classic layout (passkey, directory password, email code, authenticator app, external providers). The route (`src/routes/(main)/login`) loads the methods and the flow, runs WebAuthn and the requests, and redirects; this view draws what it is given.'
 				}
 			}
 		}

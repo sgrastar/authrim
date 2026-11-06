@@ -4,7 +4,10 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const callbackSource = readFileSync(resolve(__dirname, '../routes/callback/+page.svelte'), 'utf8');
+const callbackSource = readFileSync(
+	resolve(__dirname, '../routes/(main)/callback/+page.svelte'),
+	'utf8'
+);
 const callbackViewSource = readFileSync(
 	resolve(__dirname, '../lib/views/CallbackView.svelte'),
 	'utf8'

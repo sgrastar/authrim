@@ -58,7 +58,7 @@
 <script lang="ts">
 	/**
 	 * The account-creation page, as the person sees it inside the page shell. The route
-	 * (`src/routes/signup`) owns the state, validation, the requests, WebAuthn and the redirects;
+	 * (`src/routes/(main)/signup`) owns the state, validation, the requests, WebAuthn and the redirects;
 	 * this view only draws what it is given and reports what the person does.
 	 */
 	import { Button, Input, Card, Alert } from '#lib/components/index.js';

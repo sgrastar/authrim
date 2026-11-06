@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { actions as rootActions, load as rootLoad } from '../routes/+page.server';
-import { actions as loginActions, load as loginLoad } from '../routes/login/+page.server';
-import { load as discoverLoad } from '../routes/discover/+page.server';
-import { load as signupLoad } from '../routes/signup/+page.server';
+import { actions as rootActions, load as rootLoad } from '../routes/(main)/+page.server';
+import { actions as loginActions, load as loginLoad } from '../routes/(main)/login/+page.server';
+import { load as discoverLoad } from '../routes/(main)/discover/+page.server';
+import { load as signupLoad } from '../routes/(main)/signup/+page.server';
 import { LOGIN_TENANT_HOST_COOKIE } from '../lib/discovery-session';
 import { clearLoginDiscoveryConfigCacheForTests } from '../lib/login-discovery-config-cache';
 import { clearAuthenticationMethodsServerCache } from '../lib/server/authentication-methods-cache';

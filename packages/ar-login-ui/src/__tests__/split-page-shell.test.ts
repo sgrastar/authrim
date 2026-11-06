@@ -20,9 +20,9 @@ function expectPageShellOrder(pageSource: string) {
 }
 
 const SHELL_PAGES = [
-	'routes/login/+page.svelte',
-	'routes/signup/+page.svelte',
-	'routes/verify-email-code/+page.svelte'
+	'routes/(main)/login/+page.svelte',
+	'routes/(main)/signup/+page.svelte',
+	'routes/(main)/verify-email-code/+page.svelte'
 ];
 
 /** The custom properties of the rule that starts a line with `selector`. */
@@ -104,12 +104,12 @@ describe('split page shell', () => {
 		const shell = source('lib/components/AuthPageShell.svelte');
 
 		for (const pagePath of [
-			'routes/callback/+page.svelte',
-			'routes/ciba/+page.svelte',
-			'routes/consent/+page.svelte',
-			'routes/device/+page.svelte',
-			'routes/error/+page.svelte',
-			'routes/reauth/+page.svelte'
+			'routes/(main)/callback/+page.svelte',
+			'routes/(main)/ciba/+page.svelte',
+			'routes/(main)/consent/+page.svelte',
+			'routes/(main)/device/+page.svelte',
+			'routes/(main)/error/+page.svelte',
+			'routes/(main)/reauth/+page.svelte'
 		]) {
 			const page = source(pagePath);
 
@@ -119,8 +119,8 @@ describe('split page shell', () => {
 			expect(page).not.toContain('<footer class="auth-footer">');
 		}
 		for (const pagePath of [
-			'routes/logged-out/+page.svelte',
-			'routes/logout-complete/+page.svelte'
+			'routes/(main)/logged-out/+page.svelte',
+			'routes/(main)/logout-complete/+page.svelte'
 		]) {
 			expect(source(pagePath)).toContain(
 				"import LogoutCompletePage from '#lib/components/LogoutCompletePage.svelte'"
@@ -198,13 +198,13 @@ describe('split page shell', () => {
 		expect(source('lib/components/AuthPageShell.svelte')).toContain(
 			'class:auth-container--wide={wide}'
 		);
-		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+		for (const page of ['routes/(main)/login/+page.svelte', 'routes/(main)/signup/+page.svelte']) {
 			expect(source(page)).toContain('wide={runtimeScreenWide}');
 		}
 	});
 
 	it('keeps the shared email widget available when either email method is enabled', () => {
-		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+		for (const page of ['routes/(main)/login/+page.svelte', 'routes/(main)/signup/+page.svelte']) {
 			expect(source(page)).toContain('mail_otp_totp: showRuntimeEmailCode || showRuntimeTotp');
 		}
 	});
@@ -407,7 +407,7 @@ describe('split page shell', () => {
 		);
 		for (const file of [
 			'lib/components/AuthPageShell.svelte',
-			'routes/+layout.svelte',
+			'routes/(main)/+layout.svelte',
 			'lib/storybook/LoginUIFrame.svelte'
 		]) {
 			expect(source(file)).toContain(
@@ -604,7 +604,7 @@ describe('split page shell', () => {
 	});
 
 	it('shows one generic accepted status on the email-code screen without branching on identity', () => {
-		const page = source('routes/verify-email-code/+page.svelte');
+		const page = source('routes/(main)/verify-email-code/+page.svelte');
 		const view = source('lib/views/VerifyEmailCodeView.svelte');
 
 		expect(page).toContain('<VerifyEmailCodeView');
@@ -617,8 +617,8 @@ describe('split page shell', () => {
 
 	it('announces email-code send progress on both login and signup', () => {
 		for (const [pagePath, viewPath] of [
-			['routes/login/+page.svelte', 'lib/views/LoginView.svelte'],
-			['routes/signup/+page.svelte', 'lib/views/SignupView.svelte']
+			['routes/(main)/login/+page.svelte', 'lib/views/LoginView.svelte'],
+			['routes/(main)/signup/+page.svelte', 'lib/views/SignupView.svelte']
 		]) {
 			const page = source(pagePath);
 			const view = source(viewPath);

@@ -6,9 +6,9 @@ import {
 	isCurrentSessionActive,
 	verifyLoginChallengeForCurrentTenant,
 	verifyDiscoveryGrant
-} from '../../lib/discovery-entry';
-import { fetchCachedLoginDiscoveryConfig } from '../../lib/login-discovery-config-cache';
-import { shouldUseFastPlainLoginShell } from '../../lib/server/login-entry-fast-path';
+} from '../../../lib/discovery-entry';
+import { fetchCachedLoginDiscoveryConfig } from '../../../lib/login-discovery-config-cache';
+import { shouldUseFastPlainLoginShell } from '../../../lib/server/login-entry-fast-path';
 
 const DISCOVERY_GRANT_VERIFIED_COOKIE = 'authrim_discovery_grant_verified';
 const INVALID_CHALLENGE_ERROR_URL = '/error?error=invalid_request';

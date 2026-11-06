@@ -64,7 +64,7 @@
 
 <script lang="ts">
 	/**
-	 * The sign-in page, as the person sees it inside the page shell. The route (`src/routes/login`)
+	 * The sign-in page, as the person sees it inside the page shell. The route (`src/routes/(main)/login`)
 	 * owns the state, the requests, WebAuthn and the redirects; this view only draws what it is
 	 * given and reports what the person does.
 	 */

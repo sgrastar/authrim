@@ -9,8 +9,8 @@ import {
 	verifyDiscoveryEmail,
 	type DiscoveryCandidate,
 	type DiscoveryConfigResponse
-} from '../../lib/discovery-entry';
-import { REMEMBERED_TENANT_COOKIE, readRememberedTenant } from '../../lib/discovery-session';
+} from '../../../lib/discovery-entry';
+import { REMEMBERED_TENANT_COOKIE, readRememberedTenant } from '../../../lib/discovery-session';
 import { normalizeLoginUILocale } from '#lib/i18n/locales.js';
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const MAX_DISCOVERY_RESPONSE_BYTES = 256 * 1024;

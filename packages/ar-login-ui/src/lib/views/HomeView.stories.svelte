@@ -20,7 +20,7 @@
 			docs: {
 				description: {
 					component:
-						'The landing page at `/`, shown when nothing sends the visitor straight to sign-in. The route (`src/routes/+page.svelte`) reads the session and the account-page setting; this view draws the actions they allow.'
+						'The landing page at `/`, shown when nothing sends the visitor straight to sign-in. The route (`src/routes/(main)/+page.svelte`) reads the session and the account-page setting; this view draws the actions they allow.'
 				}
 			}
 		}

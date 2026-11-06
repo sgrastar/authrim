@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const page = readFileSync(resolve(__dirname, '+page.svelte'), 'utf8');
-const view = readFileSync(resolve(__dirname, '../../lib/views/ReauthView.svelte'), 'utf8');
+const view = readFileSync(resolve(__dirname, '../../../lib/views/ReauthView.svelte'), 'utf8');
 
 describe('re-authentication by email code starts from a typed address', () => {
 	it('asks for the address when the challenge does not name it, and binds it to the page', () => {

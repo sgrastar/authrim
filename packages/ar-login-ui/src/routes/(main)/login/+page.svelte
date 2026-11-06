@@ -45,6 +45,12 @@
 		type FlowRuntimeStep
 	} from '#lib/api/flow-runtime.js';
 	import {
+		MAX_RUNTIME_AUTO_ADVANCE_STEPS,
+		runtimeAutoSubmitHandle,
+		runtimeContinuationString,
+		runtimeSamlContinuationPath
+	} from '#lib/authrim/flow-runtime-steps.js';
+	import {
 		clearExternalFlowRuntimeHandoff,
 		consumeFlowRuntimeState,
 		peekFlowRuntimeState,
@@ -1001,28 +1007,11 @@
 		return true;
 	}
 
-	function hasInteractiveAccountActionUi(step: FlowRuntimeStep): boolean {
-		return (
-			step.config?.interaction_ui === true ||
-			step.config?.render_ui === true ||
-			typeof step.config?.screen_ref === 'string'
-		);
-	}
-
-	function getRuntimeAutoSubmitHandle(step: FlowRuntimeStep): string | undefined | null {
-		if (step.component === 'completion') return 'completed';
-		if (step.component === 'account_action' && !hasInteractiveAccountActionUi(step)) {
-			return 'completed';
-		}
-		if (step.render === false) return undefined;
-		return null;
-	}
-
 	async function advanceRuntimePastNonRenderedSteps(options: { stopAtCompletion?: boolean } = {}) {
 		let guard = 0;
-		while (runtimeFlow && runtimeFlowStep && guard < 10) {
+		while (runtimeFlow && runtimeFlowStep && guard < MAX_RUNTIME_AUTO_ADVANCE_STEPS) {
 			if (options.stopAtCompletion && runtimeFlowStep.component === 'completion') return;
-			const autoSubmitHandle = getRuntimeAutoSubmitHandle(runtimeFlowStep);
+			const autoSubmitHandle = runtimeAutoSubmitHandle(runtimeFlowStep);
 			if (autoSubmitHandle === null) return;
 			guard += 1;
 			const ok = await submitRuntimeStep(autoSubmitHandle);
@@ -1248,14 +1237,6 @@
 		return pendingPostAuthRedirect || (await buildPostAuthRedirect(redirectUrl));
 	}
 
-	function readRuntimeContinuationString(
-		continuation: Record<string, unknown> | undefined,
-		key: string
-	): string {
-		const value = continuation?.[key];
-		return typeof value === 'string' ? value : '';
-	}
-
 	async function resolveRuntimeCompletionRedirect(
 		output: {
 			action: string;
@@ -1267,23 +1248,9 @@
 			return output.redirect_url;
 		}
 		const continuation = output?.protocol_continuation;
-		const protocol = readRuntimeContinuationString(continuation, 'protocol');
-		if (protocol === 'saml') {
-			const requestId =
-				readRuntimeContinuationString(continuation, 'saml_request_id') || samlRequestId;
-			const spEntityId =
-				readRuntimeContinuationString(continuation, 'saml_sp_entity_id') ||
-				readRuntimeContinuationString(continuation, 'saml_sp_id') ||
-				samlSpEntityId;
-			if (requestId && spEntityId) {
-				const params = new SvelteURLSearchParams({
-					saml_request_id: requestId,
-					saml_sp_entity_id: spEntityId,
-					return_to: 'saml_sso'
-				});
-				return `/saml/idp/sso?${params.toString()}`;
-			}
-		}
+		const samlPath = runtimeSamlContinuationPath(continuation, { samlRequestId, samlSpEntityId });
+		if (samlPath) return samlPath;
+		const protocol = runtimeContinuationString(continuation, 'protocol');
 		if (protocol === 'direct' || output?.action === 'complete') {
 			return buildPostAuthRedirect();
 		}

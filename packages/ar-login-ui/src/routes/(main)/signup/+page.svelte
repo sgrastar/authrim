@@ -41,6 +41,10 @@
 		type FlowRuntimeStep
 	} from '#lib/api/flow-runtime.js';
 	import {
+		MAX_RUNTIME_AUTO_ADVANCE_STEPS,
+		runtimeAutoSubmitHandle
+	} from '#lib/authrim/flow-runtime-steps.js';
+	import {
 		clearExternalFlowRuntimeHandoff,
 		consumeFlowRuntimeState,
 		peekFlowRuntimeState,
@@ -891,28 +895,11 @@
 			: null;
 	}
 
-	function hasInteractiveAccountActionUi(step: FlowRuntimeStep): boolean {
-		return (
-			step.config?.interaction_ui === true ||
-			step.config?.render_ui === true ||
-			typeof step.config?.screen_ref === 'string'
-		);
-	}
-
-	function getRuntimeAutoSubmitHandle(step: FlowRuntimeStep): string | undefined | null {
-		if (step.component === 'completion') return 'completed';
-		if (step.component === 'account_action' && !hasInteractiveAccountActionUi(step)) {
-			return 'completed';
-		}
-		if (step.render === false) return undefined;
-		return null;
-	}
-
 	async function advanceRuntimePastNonRenderedSteps(options: { stopAtCompletion?: boolean } = {}) {
 		let guard = 0;
-		while (runtimeFlow && runtimeFlowStep && guard < 10) {
+		while (runtimeFlow && runtimeFlowStep && guard < MAX_RUNTIME_AUTO_ADVANCE_STEPS) {
 			if (options.stopAtCompletion && runtimeFlowStep.component === 'completion') return;
-			const autoSubmitHandle = getRuntimeAutoSubmitHandle(runtimeFlowStep);
+			const autoSubmitHandle = runtimeAutoSubmitHandle(runtimeFlowStep);
 			if (autoSubmitHandle === null) return;
 			guard += 1;
 			const ok = await submitRuntimeStep(autoSubmitHandle);

@@ -111,7 +111,7 @@ controls:
     status: covered
     rationale: The Login UI directory password field is rendered with type=password.
     evidence:
-      - path: packages/ar-login-ui/src/routes/login/+page.svelte
+      - path: packages/ar-login-ui/src/routes/(main)/login/+page.svelte
         line: 640
         note: Directory password input is configured with type=password.
 
@@ -124,7 +124,7 @@ controls:
     status: covered
     rationale: The Login UI directory password input does not block paste and advertises current-password autocomplete.
     evidence:
-      - path: packages/ar-login-ui/src/routes/login/+page.svelte
+      - path: packages/ar-login-ui/src/routes/(main)/login/+page.svelte
         line: 640
         note: Directory password input has autocomplete=current-password and no paste blocker.
 

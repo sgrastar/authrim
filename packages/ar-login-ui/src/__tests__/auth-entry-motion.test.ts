@@ -9,8 +9,8 @@ function source(path: string): string {
 describe('login and signup entry motion', () => {
 	it('enables the shared staggered reveal on both authentication forms', () => {
 		for (const [page, view] of [
-			['routes/login/+page.svelte', 'lib/views/LoginView.svelte'],
-			['routes/signup/+page.svelte', 'lib/views/SignupView.svelte']
+			['routes/(main)/login/+page.svelte', 'lib/views/LoginView.svelte'],
+			['routes/(main)/signup/+page.svelte', 'lib/views/SignupView.svelte']
 		]) {
 			const pageSource = source(page);
 			const viewSource = source(view);

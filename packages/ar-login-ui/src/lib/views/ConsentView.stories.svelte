@@ -22,7 +22,7 @@
 			docs: {
 				description: {
 					component:
-						'What an application is asking to access. Parts appear by tenant and client settings: trusted badge, delegated access warning, organisation picker, roles, and consent items (required items block Allow until given). The route (`src/routes/consent`) owns the requests.'
+						'What an application is asking to access. Parts appear by tenant and client settings: trusted badge, delegated access warning, organisation picker, roles, and consent items (required items block Allow until given). The route (`src/routes/(main)/consent`) owns the requests.'
 				}
 			}
 		}
