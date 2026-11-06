@@ -16,6 +16,7 @@ import {
   type SDJWTVCCreateOptions,
 } from '../sd-jwt-vc';
 import { generateECKeySet } from '../../utils/ec-keys';
+import { SignJWT } from 'jose';
 
 describe('SD-JWT VC', () => {
   describe('isSDJWTVC', () => {
@@ -363,6 +364,176 @@ describe('SD-JWT VC', () => {
       const lastNonEmpty = parts.filter((p) => p !== '').pop();
       expect(lastNonEmpty).toBeDefined();
       expect(lastNonEmpty!.split('.').length).toBe(3); // JWT format
+    });
+  });
+
+  describe('key binding (RFC 9901)', () => {
+    async function issued() {
+      const issuerKeySet = await generateECKeySet('issuer-key', 'ES256');
+      const holderKeySet = await generateECKeySet('holder-key', 'ES256');
+      const sdjwtvc = await createSDJWTVC(
+        { given_name: 'Alice', age: 30 },
+        'https://issuer.example.com',
+        issuerKeySet.privateKey,
+        'ES256',
+        'issuer-key',
+        {
+          vct: 'test-vct',
+          selectiveDisclosureClaims: ['given_name', 'age'],
+          holderBinding: holderKeySet.publicJWK,
+        }
+      );
+      return { issuerKeySet, holderKeySet, sdjwtvc };
+    }
+    const verifyOptions = {
+      issuer: 'https://issuer.example.com',
+      nonce: 'nonce-1',
+      audience: 'https://verifier.example.com',
+    };
+
+    it('verifies a presentation `jwt~d~<KB-JWT>` with the holder key', async () => {
+      const { issuerKeySet, holderKeySet, sdjwtvc } = await issued();
+      const presentation = await createVCPresentation(
+        sdjwtvc,
+        ['given_name'],
+        holderKeySet.privateKey,
+        'ES256',
+        'nonce-1',
+        'https://verifier.example.com'
+      );
+      expect(presentation.endsWith('~')).toBe(false);
+      const parsed = await parseSDJWTVC(presentation);
+      expect(parsed?.kbJwt).toBe(presentation.split('~').pop());
+      expect(parsed?.disclosures.map((d) => d.claimName)).toEqual(['given_name']);
+
+      const result = await verifySDJWTVC(
+        presentation,
+        issuerKeySet.publicKey,
+        holderKeySet.publicKey,
+        verifyOptions
+      );
+      expect(result.holderBindingVerified).toBe(true);
+      expect(result.disclosedClaims.given_name).toBe('Alice');
+      expect(result.disclosedClaims.age).toBeUndefined();
+    });
+
+    it('computes sd_hash over the presentation including the last tilde', async () => {
+      const { holderKeySet, sdjwtvc } = await issued();
+      const presentation = await createVCPresentation(
+        sdjwtvc,
+        [],
+        holderKeySet.privateKey,
+        'ES256',
+        'nonce-1',
+        'https://verifier.example.com'
+      );
+      const kb = presentation.split('~').at(-1) ?? '';
+      const payload = JSON.parse(atob(kb.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as {
+        sd_hash: string;
+      };
+      const prefix = presentation.slice(0, presentation.length - kb.length);
+      expect(prefix.endsWith('~')).toBe(true);
+      const digest = new Uint8Array(
+        await crypto.subtle.digest('SHA-256', new TextEncoder().encode(prefix))
+      );
+      const expected = btoa(String.fromCharCode(...digest))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+      expect(payload.sd_hash).toBe(expected);
+    });
+
+    it('refuses a key binding over a hash without the last tilde, or for another nonce', async () => {
+      const { issuerKeySet, holderKeySet, sdjwtvc } = await issued();
+      const withoutKb = `${sdjwtvc.issuerJwt}~`;
+      const legacy = await createKeyBindingJWT(
+        holderKeySet.privateKey,
+        'ES256',
+        'nonce-1',
+        'https://verifier.example.com',
+        sdjwtvc.issuerJwt
+      );
+      await expect(
+        verifySDJWTVC(
+          withoutKb + legacy,
+          issuerKeySet.publicKey,
+          holderKeySet.publicKey,
+          verifyOptions
+        )
+      ).rejects.toThrow('Invalid Key Binding JWT');
+
+      const otherNonce = await createKeyBindingJWT(
+        holderKeySet.privateKey,
+        'ES256',
+        'nonce-2',
+        'https://verifier.example.com',
+        withoutKb
+      );
+      await expect(
+        verifySDJWTVC(
+          withoutKb + otherNonce,
+          issuerKeySet.publicKey,
+          holderKeySet.publicKey,
+          verifyOptions
+        )
+      ).rejects.toThrow('Invalid Key Binding JWT');
+    });
+
+    it('refuses a key binding signed by another key', async () => {
+      const { issuerKeySet, holderKeySet, sdjwtvc } = await issued();
+      const other = await generateECKeySet('other', 'ES256');
+      const withoutKb = `${sdjwtvc.issuerJwt}~`;
+      const kb = await createKeyBindingJWT(
+        other.privateKey,
+        'ES256',
+        'nonce-1',
+        'https://verifier.example.com',
+        withoutKb
+      );
+      await expect(
+        verifySDJWTVC(withoutKb + kb, issuerKeySet.publicKey, holderKeySet.publicKey, verifyOptions)
+      ).rejects.toThrow('Invalid Key Binding JWT');
+    });
+
+    it('accepts a key binding from a holder whose clock runs a little ahead', async () => {
+      const { issuerKeySet, holderKeySet, sdjwtvc } = await issued();
+      const withoutKb = `${sdjwtvc.issuerJwt}~`;
+      const kb = await createKeyBindingJWT(
+        holderKeySet.privateKey,
+        'ES256',
+        'nonce-1',
+        'https://verifier.example.com',
+        withoutKb
+      );
+      const now = Math.floor(Date.now() / 1000);
+      const at = (currentTime: number) =>
+        verifySDJWTVC(withoutKb + kb, issuerKeySet.publicKey, holderKeySet.publicKey, {
+          ...verifyOptions,
+          currentTime,
+        });
+      await expect(at(now - 30)).resolves.toMatchObject({ holderBindingVerified: true });
+      await expect(at(now - 120)).rejects.toThrow('Invalid Key Binding JWT');
+    });
+
+    it('refuses a credential whose disclosure digests use another algorithm', async () => {
+      const { issuerKeySet } = await issued();
+      const jwt = await new SignJWT({ vct: 'test-vct', _sd_alg: 'sha-512', _sd: [] })
+        .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: 'issuer-key' })
+        .setIssuer('https://issuer.example.com')
+        .sign(issuerKeySet.privateKey);
+      await expect(
+        verifySDJWTVC(`${jwt}~`, issuerKeySet.publicKey, null, verifyOptions)
+      ).rejects.toThrow('Unsupported _sd_alg');
+    });
+
+    it('reads a credential without key binding and refuses malformed forms', async () => {
+      const { sdjwtvc } = await issued();
+      const plain = await parseSDJWTVC(`${sdjwtvc.issuerJwt}~`);
+      expect(plain?.kbJwt).toBeUndefined();
+      // An empty disclosure, a trailing part that is not a JWT, an undecodable disclosure.
+      expect(await parseSDJWTVC(`${sdjwtvc.issuerJwt}~~`)).toBeNull();
+      expect(await parseSDJWTVC(`${sdjwtvc.issuerJwt}~not-a-jwt`)).toBeNull();
+      expect(await parseSDJWTVC(`${sdjwtvc.issuerJwt}~%%%~`)).toBeNull();
     });
   });
 
