@@ -199,6 +199,38 @@ describe('decideLiteStep', () => {
 	});
 });
 
+describe('a yes/no field', () => {
+	it("keeps an identity field's boolean value type, and only an identity field's", () => {
+		const decision = decideLiteStep(
+			step({
+				config: {
+					screen: {
+						fields: [
+							{ field: 'newsletter', label: 'News', required: false, value_type: 'boolean' },
+							{ block_type: 'text', field: 't', label: '', text: 'x', value_type: 'boolean' }
+						]
+					}
+				}
+			})
+		);
+		expect(decision.kind === 'screen' && decision.fields.map((f) => f.valueType)).toEqual([
+			'boolean',
+			null
+		]);
+	});
+
+	it('still refuses the checkbox and choice parts (their answers have nowhere to go yet)', () => {
+		const decision = decideLiteStep(
+			step({
+				config: {
+					screen: { fields: [{ block_type: 'checkbox', field: 'c', label: 'C', required: true }] }
+				}
+			})
+		);
+		expect(decision).toEqual({ kind: 'unsupported', reasons: ['block:checkbox'] });
+	});
+});
+
 describe('the kept Flow', () => {
 	it('reads back only a complete one', () => {
 		expect(

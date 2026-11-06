@@ -426,14 +426,18 @@ export class LiteTxnStore extends DurableObject<Env> {
   /** Applies a move to a loaded transaction (not yet saved), or says why it cannot. */
   #move(
     txn: StoredTxn,
-    move: { expectedVersion: number; to: LiteTxnState; patch?: LiteTxnDataPatch }
+    move: { expectedVersion: number; to: LiteTxnState; patch?: LiteTxnDataPatch },
+    /** The move made with an operation's completion: it uses the update the start reserved. */
+    reserved = false
   ): LiteTxnRefusal | null {
     if (isFinished(txn)) return 'finished';
     if (txn.version !== move.expectedVersion) return 'version_mismatch';
     if (!isLiteTxnTransitionAllowed(txn.state, move.to)) return 'invalid_transition';
-    // Finishing is never refused for the budget: a finished transaction must not stay live.
+    // Finishing is never refused for the budget: a finished transaction must not stay live. Nor
+    // is the move an operation's completion makes: its update was counted when it started (the
+    // side effect is carried out by then, so what it leaves must be recordable).
     const finishing = move.to === 'completed' || move.to === 'abandoned';
-    if (txn.updates >= LITE_TXN_MAX_UPDATES && !finishing) return 'budget_exceeded';
+    if (txn.updates >= LITE_TXN_MAX_UPDATES && !finishing && !reserved) return 'budget_exceeded';
     let data: Record<string, unknown>;
     try {
       data = applyPatch(txn.data, move.patch);
@@ -444,7 +448,7 @@ export class LiteTxnStore extends DurableObject<Env> {
     txn.data = data;
     txn.state = move.to;
     txn.version += 1;
-    txn.updates += 1;
+    if (!reserved) txn.updates += 1;
     return null;
   }
 
@@ -535,7 +539,7 @@ export class LiteTxnStore extends DurableObject<Env> {
       } else {
         const moved = structuredClone(txn);
         moved.operations[request.operationId] = { ...done, moveOutcome: 'moved' };
-        const refused = this.#move(moved, request.transition);
+        const refused = this.#move(moved, request.transition, true);
         if (!refused && fitsRecord(moved)) {
           await this.ctx.storage.put(TXN_PREFIX + moved.id, moved);
           return { ok: true, txn: snapshotOf(moved) };

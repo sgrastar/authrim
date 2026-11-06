@@ -1,61 +1,52 @@
 /**
- * The lite sign-in page (plan §14, PR4a: the driver).
+ * The lite sign-in page (plan §14: PR4a the driver, PR4b the email code and guest sign-in).
  *
  * A page view (GET):
  * 1. makes or reuses the browser's lite transaction (ar-auth checks the tenant, its lite policy,
  *    the canonical issuer origin and the budgets; a reload with the same request reuses it);
  * 2. starts the sign-in Flow, or resumes the one the transaction keeps (`start` only: a page view
  *    submits nothing, and consumes nothing single-use);
- * 3. draws the step the Flow is on: its screen, a one-click Continue form for a step the SPA
- *    would submit on its own, or an error page for anything the lite UI cannot do.
+ * 3. draws what comes next: the code entry once a code was sent, a one-click Continue form once a
+ *    sign-in is done (or for a step the SPA would submit on its own), the step's screen, or an
+ *    error page for anything the lite UI cannot do.
  * A form that may need a proof of work carries the challenge, solved by the fixed script.
  *
- * Actions (verified form posts only, the lite guard checked the Origin):
- * - `continue`: the SPA's own advance (not-rendered steps, the completion once signed in).
- * - `send_code`, `guest`: PR4b.
+ * The actions (verified form posts only) are lib/server/lite/login-actions.ts.
  */
-import { error, fail, redirect, type RequestEvent } from '@sveltejs/kit';
+import { error, redirect, type RequestEvent } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
-import { localizeRuntimeScreen } from '#lib/i18n/runtime-screen-localization.js';
 import { LITE_POW_SOLVER_SCRIPT } from '#lib/lite/pow-solver.js';
 import { cspHashSource } from '#lib/server/lite/csp.js';
 import { liteBackendForEvent } from '#lib/server/lite/backend-for-event.js';
-import { advanceLiteFlow } from '#lib/server/lite/advance.js';
-import { liteCompletionDestination } from '#lib/server/lite/completion.js';
-import { forwardSetCookies } from '#lib/server/lite/cookies.js';
 import {
-	decideLiteStep,
-	liteMethodAvailability,
 	readKeptFlow,
 	resumeLiteFlow,
 	startLiteLoginFlow,
-	type LiteFlowView,
 	type LiteLoginTarget,
-	type LiteTenantMethods,
 	type LiteStepDecision
 } from '#lib/server/lite/flow-driver.js';
-import { readLiteForm } from '#lib/server/lite/form.js';
+import {
+	LITE_CODE_RESEND_MS,
+	keepLiteFlow,
+	liteContinueAction,
+	liteGuestAction,
+	liteLoginStepDecision,
+	liteResendCodeAction,
+	liteRestartAction,
+	liteSendCodeAction,
+	liteTenantMethods,
+	liteVerifyCodeAction,
+	newOperationNonce,
+	pageSearch,
+	readCheckedCode,
+	readPendingCode,
+	readSignedIn,
+	stepHasCodeInput
+} from '#lib/server/lite/login-actions.js';
 import { liteMessages } from '#lib/server/lite/messages.js';
 import { fetchLitePowChallenge, type LitePowChallenge } from '#lib/server/lite/pow.js';
-import { liteTxnClient, type LiteTxnView } from '#lib/server/lite/txn-client.js';
-import { getPlatformEnv } from '#lib/server/platform-env.js';
-import { getCachedAuthenticationMethodsForRequest } from '../../../hooks.server';
+import { liteTxnClient } from '#lib/server/lite/txn-client.js';
 
-/** What this page does in PR4: no consent (PR5), only the email code among the sign-in methods. */
-const PAGE_BLOCKS: ReadonlySet<string> = new Set([
-	'identity_field',
-	'auth_widget',
-	'guest_login_widget',
-	'code_input_widget',
-	'heading',
-	'text',
-	'security_verification',
-	'divider',
-	'layout_row',
-	'link'
-]);
-const PAGE_METHODS: ReadonlySet<string> = new Set(['mail_otp']);
 /** The blocks whose forms send something human verification may guard. */
 const PROOF_BLOCKS: ReadonlySet<string> = new Set([
 	'auth_widget',
@@ -68,17 +59,6 @@ const AUTHORIZATION_EXPIRED = new Set([
 	'authorization_challenge_mismatch'
 ]);
 
-/**
- * The page's own query, without SvelteKit's action key (`/continue`): where a post goes back to,
- * and what a form's action keeps, so a post never drops the request the page continues.
- */
-function pageSearch(url: URL): string {
-	const params = new URLSearchParams();
-	for (const [key, value] of url.searchParams) if (!key.startsWith('/')) params.append(key, value);
-	const search = params.toString();
-	return search ? `?${search}` : '';
-}
-
 function queryValue(event: RequestEvent, name: string): string | null {
 	const value = event.url.searchParams.get(name);
 	return value && value.length <= 2048 ? value : null;
@@ -87,21 +67,6 @@ function queryValue(event: RequestEvent, name: string): string | null {
 async function sha256Hex(value: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
 	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function withLocalizedScreen(step: FlowRuntimeStep | null, locale: string): FlowRuntimeStep | null {
-	if (!step) return null;
-	const localize = (screen: unknown) =>
-		screen && typeof screen === 'object'
-			? localizeRuntimeScreen(screen as Record<string, unknown>, locale)
-			: screen;
-	return {
-		...step,
-		config: step.config ? { ...step.config, screen: localize(step.config.screen) } : step.config,
-		content: step.content
-			? { ...step.content, screen: localize(step.content.screen) }
-			: step.content
-	};
 }
 
 /** A page that says what went wrong, in the lite frame (never the raw backend error). */
@@ -117,7 +82,9 @@ async function errorPage(event: RequestEvent, kind: 'expired' | 'busy' | 'unavai
 		page: 'error' as const,
 		title: LL.error_title(),
 		message,
-		back: LL.common_backToLogin()
+		back: LL.common_backToLogin(),
+		// Back to the same request (what a retry needs); an expired one starts plain.
+		backHref: kind === 'expired' ? '/login' : `/login${pageSearch(event.url)}`
 	};
 }
 
@@ -191,40 +158,95 @@ export const load: PageServerLoad = async (event) => {
 	const locale = event.locals.locale ?? 'en';
 	const kept = readKeptFlow(txn.data);
 	let flow = kept ? await resumeLiteFlow(backend, kept, locale) : null;
+	// A resume that fails for a moment (the backend, a limit) starts nothing new: what the
+	// transaction holds for its interaction (a code sent, a sign-in made) is still to be used. One
+	// the Flow refuses (the interaction is gone) starts afresh.
+	if (flow && !flow.ok && (flow.status >= 500 || flow.status === 429)) {
+		return errorPage(event, flow.status === 429 ? 'busy' : 'unavailable');
+	}
 	if (!flow || !flow.ok) flow = await startLiteLoginFlow(backend, target, locale);
 	if (!flow.ok) {
 		return errorPage(event, AUTHORIZATION_EXPIRED.has(flow.error) ? 'expired' : 'unavailable');
 	}
-	const kept2 = await keepFlow(txns, txn, flow.view);
+	const kept2 = await keepLiteFlow(txns, txn, flow.view);
 	if (!kept2) return errorPage(event, 'unavailable');
 
-	const methods = (
-		event.locals.authenticationMethods ??
-		(await getCachedAuthenticationMethodsForRequest(event, getPlatformEnv(event)).catch(() => null))
-	)?.methods as LiteTenantMethods | undefined;
-	const decision = decideLiteStep(withLocalizedScreen(flow.view.step, locale), {
-		blocks: PAGE_BLOCKS,
-		methods: PAGE_METHODS,
-		isAvailable: liteMethodAvailability(methods, flow.view.step),
-		guestEnabled: methods?.guest?.enabled === true
-	});
+	const { LL } = await liteMessages(event.locals.locale);
+	const step = flow.view.step;
+	const interactionId = flow.view.state.interactionId;
+	// What the transaction says has happened comes first: a sign-in done (only the Flow's part is
+	// left: Continue), then a code sent (its entry), then the step itself.
+	const signedIn = readSignedIn(kept2.data, interactionId);
+	const pending =
+		signedIn || readCheckedCode(kept2.data, interactionId, Number.NEGATIVE_INFINITY)
+			? null
+			: readPendingCode(kept2.data, interactionId);
+	// The step itself first: what the lite UI cannot go on with stops the page, whatever the
+	// transaction says has happened.
+	let decision = liteLoginStepDecision(step, await liteTenantMethods(event), locale);
+	if (decision.kind === 'unsupported') {
+		// Nothing to draw over it.
+	} else if (signedIn || readCheckedCode(kept2.data, interactionId, Number.NEGATIVE_INFINITY)) {
+		// A sign-in made, or half made (a code checked, its session still to be made).
+		decision = { kind: 'continue' };
+	} else if (pending && !stepHasCodeInput(step)) {
+		// The Flow has no step of its own for the code (it waits at its completion, or the choice
+		// is still to be submitted): the entry /verify-email-code would draw.
+		decision = {
+			kind: 'screen',
+			title: LL.emailCode_title(),
+			description: null,
+			fields: [
+				{
+					blockType: 'code_input_widget',
+					field: 'code',
+					label: LL.emailCode_codeLabel(),
+					required: true,
+					authMethod: null,
+					text: null,
+					helpText: null,
+					placeholder: null,
+					valueType: null,
+					href: null
+				}
+			]
+		};
+	} else if (
+		!pending &&
+		decision.kind === 'screen' &&
+		decision.fields.some((field) => field.blockType === 'code_input_widget')
+	) {
+		// A step asking for a code no one sent (the transaction that sent it is gone): nothing on
+		// it can be done here.
+		decision = { kind: 'unsupported', reasons: ['code_not_sent'] };
+	}
 	let pow: LitePowChallenge | null = null;
-	if (decision.kind === 'screen' && decision.fields.some((f) => PROOF_BLOCKS.has(f.blockType))) {
-		// A lite page never draws such a form without its proof: no challenge (the tenant left
-		// lite mode, or none could be issued) is an error page, not a form without one.
+	const needsProof =
+		(pending !== null && decision.kind === 'screen') ||
+		(decision.kind === 'screen' && decision.fields.some((f) => PROOF_BLOCKS.has(f.blockType)));
+	if (needsProof) {
+		// A lite page never draws such a form without its proof (the resend, for a code entry): no
+		// challenge (the tenant left lite mode, or none could be issued) is an error page.
 		const challenge = await fetchLitePowChallenge(backend, 'login');
 		if (!challenge.ok) return errorPage(event, 'unavailable');
 		pow = challenge.challenge;
 	}
 	if (pow) event.locals.liteCsp = { scriptHashes: [await cspHashSource(LITE_POW_SOLVER_SCRIPT)] };
+	const resendWait = pending
+		? Math.max(0, Math.ceil((pending.sentAt + LITE_CODE_RESEND_MS - Date.now()) / 1000))
+		: 0;
 
-	const { LL } = await liteMessages(event.locals.locale);
 	return {
 		page: 'step' as const,
 		search: pageSearch(event.url),
 		txnId: kept2.id,
 		csrfToken: kept2.csrfToken,
+		op: newOperationNonce(),
 		decision: decision satisfies LiteStepDecision,
+		codeEntry:
+			pending && decision.kind === 'screen'
+				? { maskedEmail: pending.maskedEmail, resendWait }
+				: null,
 		pow,
 		text: {
 			title: LL.login_title(),
@@ -234,103 +256,29 @@ export const load: PageServerLoad = async (event) => {
 			guest: LL.login_guestContinue(),
 			javascriptRequired: LL.lite_javascriptRequired(),
 			unsupported: LL.error_temporarily_unavailable(),
-			back: LL.common_backToLogin()
+			back: LL.common_backToLogin(),
+			codeSentTo: LL.emailCode_subtitle(),
+			code: LL.emailCode_codeLabel(),
+			verify: LL.emailCode_verifyButton(),
+			resend: LL.emailCode_resendButton(),
+			resendWait: LL.emailCode_resendTimer({ seconds: resendWait }),
+			restart: LL.common_backToLogin(),
+			errors: {
+				email_invalid: LL.login_errorEmailInvalid(),
+				code_invalid: LL.emailCode_errorInvalid(),
+				busy: LL.error_rateLimited(),
+				resend_wait: LL.emailCode_resendTimer({ seconds: Math.max(resendWait, 1) }),
+				retry: LL.error_temporarily_unavailable()
+			}
 		}
 	};
 };
 
-/** Keeps the Flow's (new) hash and signature in the transaction; the stored transaction, or null. */
-async function keepFlow(
-	txns: NonNullable<ReturnType<typeof liteTxnClient>>,
-	txn: LiteTxnView,
-	view: LiteFlowView
-): Promise<LiteTxnView | null> {
-	const kept = readKeptFlow(txn.data);
-	if (
-		kept &&
-		kept.interactionId === view.state.interactionId &&
-		kept.contractHash === view.state.contractHash &&
-		kept.signature === view.state.signature
-	) {
-		return txn;
-	}
-	const moved = await txns.transition(txn.id, {
-		expectedVersion: txn.version,
-		to: 'pending',
-		patch: { flow: view.state }
-	});
-	return moved.ok ? moved.txn : null;
-}
-
-function sameToken(a: string, b: string): boolean {
-	if (a.length !== b.length) return false;
-	let diff = 0;
-	for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-	return diff === 0;
-}
-
-/** The transaction a form post names, checked against its form token; or null. */
-async function postedTxn(event: RequestEvent) {
-	const txns = liteTxnClient(event);
-	const form = await readLiteForm(event.request);
-	if (!txns || !form.ok) return null;
-	const txnId = form.fields.get('txn');
-	const token = form.fields.get('csrf');
-	if (!txnId || !token) return null;
-	// Against the tenant's current policy: a post under an earlier revision stops here.
-	const read = await txns.get(txnId, { current: true });
-	if (!read.ok || !sameToken(read.txn.csrfToken, token)) return null;
-	// A sign-in transaction still going on: not another purpose's, not a finished one.
-	if (read.txn.bound.purpose !== 'login') return null;
-	if (read.txn.state === 'completed' || read.txn.state === 'abandoned') return null;
-	return { txns, txn: read.txn, fields: form.fields };
-}
-
 export const actions: Actions = {
-	/** The steps the SPA takes on its own, inside this verified post (never from a page view). */
-	continue: async (event) => {
-		const posted = await postedTxn(event);
-		const backend = liteBackendForEvent(event, 'form_post');
-		if (!posted || !backend) return fail(403, { restart: true });
-		const kept = readKeptFlow(posted.txn.data);
-		if (!kept) redirect(303, `${event.url.pathname}${pageSearch(event.url)}`);
-		const flow = await resumeLiteFlow(backend, kept, event.locals.locale ?? 'en');
-		if (!flow.ok) return fail(409, { restart: true });
-		// The resume signed the contract again: keep the new hash and signature before going on.
-		const txn = await keepFlow(posted.txns, posted.txn, flow.view);
-		if (!txn) return fail(409, { restart: true });
-
-		const result = await advanceLiteFlow(backend, flow.view.state, flow.view.step, {
-			signedIn: event.cookies.get('authrim_session') !== undefined
-		});
-		forwardSetCookies(event, backend.setCookies());
-		if (result.kind === 'completed') {
-			const saml = (txn.data.saml ?? {}) as { requestId?: string; spEntityId?: string };
-			const destination = liteCompletionDestination(result.output, {
-				publicOrigin: txn.bound.publicOrigin,
-				returnTo: txn.bound.returnTo,
-				samlRequestId: saml.requestId ?? null,
-				samlSpEntityId: saml.spEntityId ?? null
-			});
-			// Finished for good, in one move (never refused for the budget): it no longer counts as
-			// live, and a reload does not resume it. The sign-in itself is done at the backend, so
-			// the relay goes on whatever the move answers, a failed call included.
-			await posted.txns
-				.transition(txn.id, {
-					expectedVersion: txn.version,
-					to: 'completed',
-					patch: { completedTo: destination }
-				})
-				.catch(() => null);
-			const { LL } = await liteMessages(event.locals.locale);
-			event.locals.liteRelay = { url: destination, continueLabel: LL.common_continue() };
-			return { completed: true };
-		}
-		if (result.kind === 'draw') redirect(303, `${event.url.pathname}${pageSearch(event.url)}`);
-		return fail(result.kind === 'sign_in_required' ? 401 : 409, { restart: true });
-	},
-	/** PR4b. */
-	send_code: () => fail(503, { restart: false }),
-	/** PR4b. */
-	guest: () => fail(503, { restart: false })
+	continue: liteContinueAction,
+	send_code: liteSendCodeAction,
+	resend: liteResendCodeAction,
+	verify_code: liteVerifyCodeAction,
+	guest: liteGuestAction,
+	restart: liteRestartAction
 };
