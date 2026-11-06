@@ -20,6 +20,7 @@ export * from './types/approval';
 export * from './types/screens';
 export * from './types/login-ui-languages';
 export * from './types/login-ui-lite';
+export * from './types/login-ui-lite-txn';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
 export * from './services/notification-intent-routing';
