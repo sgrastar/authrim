@@ -15,6 +15,7 @@ import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 import {
   AdminUserRepository,
+  AdminRoleChangedError,
   AdminRoleRepository,
   AdminRoleAssignmentRepository,
   createErrorResponse,
@@ -32,6 +33,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { ensureCrossTenantPlacement } from './cross-tenant-placement';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
 import {
   callerOutranks,
   callerOutranksGlobally,
@@ -353,6 +355,20 @@ adminRolesRouter.post('/:id/assignments', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
+    // Validated and not a duplicate: the receipt is spent here, right before the grant.
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'admin.role.grant',
+      targetTenantId: tenantId,
+      targetIds: [body.admin_user_id, id],
+      params: {
+        role: id,
+        scope_type: normalizedScope.scopeType,
+        scope_id: normalizedScope.scopeId ?? null,
+        expires_at: body.expires_at ?? null,
+      },
+    });
+    if (stepUpRefused) return stepUpRefused;
+
     const assignment = await roleAssignmentRepo.assignRole({
       tenant_id: tenantId,
       admin_user_id: body.admin_user_id,
@@ -506,6 +522,20 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
+    // Any change to an assignment is treated as a grant (it may widen the scope or extend it).
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'admin.role.grant',
+      targetTenantId: tenantId,
+      targetIds: [assignment.admin_user_id, id, assignmentId],
+      params: {
+        role: id,
+        scope_type: normalizedScope.scopeType,
+        scope_id: normalizedScope.scopeId ?? null,
+        expires_at: body.expires_at === undefined ? 'unchanged' : body.expires_at,
+      },
+    });
+    if (stepUpRefused) return stepUpRefused;
+
     const updated = await roleAssignmentRepo.updateAssignment(
       assignmentId,
       {
@@ -588,6 +618,18 @@ adminRolesRouter.delete('/:id/assignments/:assignmentId', async (c) => {
     if (tenantAdminRefusal) {
       return tenantAdminRefusal;
     }
+
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'admin.role.revoke',
+      targetTenantId: tenantId,
+      targetIds: [assignment.admin_user_id, id, assignmentId],
+      params: {
+        role: id,
+        scope_type: assignment.scope_type,
+        scope_id: assignment.scope_id ?? null,
+      },
+    });
+    if (stepUpRefused) return stepUpRefused;
 
     const removed = await roleAssignmentRepo.removeAssignmentById(
       assignmentId,
@@ -836,13 +878,70 @@ adminRolesRouter.patch('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
-    const role = await roleRepo.updateRole(id, {
-      display_name: body.display_name,
-      description: body.description,
-      permissions: body.permissions,
-      hierarchy_level: body.hierarchy_level,
-      inherits_from: body.inherits_from === undefined ? undefined : body.inherits_from || null,
-    });
+    // Adding permissions, pointing the role at another parent or raising its level gives more to
+    // every admin who already holds it (directly or through inheritance), so it is a role grant.
+    // Removing permissions only, lowering the level or editing text stays ungated. Spent right
+    // before the write.
+    const heldPermissions = new Set(existing.permissions);
+    const addsPermissions =
+      body.permissions !== undefined &&
+      body.permissions.some((permission) => !heldPermissions.has(permission));
+    // A higher level lets every holder act on more admins' accounts.
+    const raisesLevel =
+      body.hierarchy_level !== undefined && body.hierarchy_level > existing.hierarchy_level;
+    if (addsPermissions || inheritanceChanges || raisesLevel) {
+      const stepUpRefused = await requireAdminStepUp(c as never, {
+        operation: 'admin.role.grant',
+        targetTenantId: tenantId,
+        targetIds: [id],
+        // Bound to what the role ends up as, whatever made the change need a step-up: a receipt
+        // for one shape of the role does not save another.
+        params: {
+          role_definition: id,
+          permissions: [...new Set(body.permissions ?? existing.permissions)].sort(),
+          inherits_from:
+            body.inherits_from === undefined
+              ? (existing.inherits_from ?? null)
+              : body.inherits_from || null,
+          hierarchy_level: body.hierarchy_level ?? existing.hierarchy_level,
+        },
+      });
+      if (stepUpRefused) return stepUpRefused;
+    }
+
+    // What it grants is written only while the role still grants what the step-up decision above
+    // was made against: a change in between (another request) is a conflict, not overwritten.
+    const changesGrant =
+      body.permissions !== undefined ||
+      body.hierarchy_level !== undefined ||
+      body.inherits_from !== undefined;
+    let role;
+    try {
+      role = await roleRepo.updateRole(
+        id,
+        {
+          display_name: body.display_name,
+          description: body.description,
+          permissions: body.permissions,
+          hierarchy_level: body.hierarchy_level,
+          inherits_from: body.inherits_from === undefined ? undefined : body.inherits_from || null,
+        },
+        changesGrant
+          ? {
+              expected: {
+                permissions: existing.permissions,
+                hierarchy_level: existing.hierarchy_level,
+                inherits_from: existing.inherits_from ?? null,
+              },
+            }
+          : {}
+      );
+    } catch (error) {
+      if (error instanceof AdminRoleChangedError) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+      }
+      throw error;
+    }
 
     if (!role) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);

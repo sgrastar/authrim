@@ -1,3 +1,5 @@
+import { formatLogArchiveFailure, type LogArchiveFailureDetail } from '../core/log-archive.js';
+
 /** Pure helpers shared by browser markup and offline unit tests. No token values in messages. */
 export function logArchiveInputError(input: {
   mode?: string;
@@ -61,12 +63,19 @@ export function withLogArchiveCliErrors<T>(locale: string, action: () => T): T {
       typeof candidate === 'string' && /^log_archive_[a-z0-9_]+$/u.test(candidate)
         ? candidate
         : 'log_archive_token_issuance_failed';
+    const refusal = (error as { detail?: LogArchiveFailureDetail; status?: unknown } | null)
+      ?.detail;
+    const status = (error as { status?: unknown } | null)?.status;
     throw new Error(
       logArchiveErrorMessage(
         code,
         locale,
         detail?.cleanupRequired === true || detail?.childCleanupRequired === true
-      )
+      ) +
+        // Which step Cloudflare refused and what it said: the cause, not only the code.
+        (refusal && typeof status === 'number'
+          ? ` [${formatLogArchiveFailure(status, refusal)}]`
+          : '')
     );
   };
   try {
@@ -213,8 +222,8 @@ const messages = [
   ],
   [
     ['log_archive_permission_or_subscription_required'],
-    'Cloudflareのトークン権限とR2・Catalogの契約を確認してください。手動で入力したトークンを検証する場合は、ログイン中の認証情報にAPI Tokensの読み取り権限が必要です。',
-    'Check Cloudflare token permissions and R2 / Catalog subscriptions. Verifying manually entered tokens also needs a login credential that can read API Tokens.',
+    'Cloudflareが要求を拒否しました。権限不足か、契約が必要な機能の可能性があります。括弧内の step と Cloudflare のエラーで、拒否された呼び出しを確認してください。Pipelineによるログ保存にはWorkers Paid、R2 Data CatalogにはR2の契約が必要です。手動で入力したトークンを検証する場合は、ログイン中の認証情報にAPI Tokensの読み取り権限も必要です。',
+    'Cloudflare refused the request: a missing permission, or a feature that needs a plan. The step and the Cloudflare error in brackets show which call was refused. Pipeline log storage needs Workers Paid and R2 Data Catalog needs R2. Verifying manually entered tokens also needs a login credential that can read API Tokens.',
   ],
   [
     [

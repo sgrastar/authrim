@@ -162,6 +162,17 @@ export function getDefaultDestinationCapabilities(
   return [...DESTINATION_PROVIDER_SCHEMAS[provider].defaultCapabilities];
 }
 
+/**
+ * Health states a destination is used in. A destination that has not been checked yet (`unknown`,
+ * the state it is created in) is used, as a `configured` one always was; one a check found
+ * degraded, failing or unreachable is not. The admin API assigns by the same list.
+ */
+export const SELECTABLE_DESTINATION_HEALTH_STATUSES: readonly DestinationHealthStatus[] = [
+  'unknown',
+  'configured',
+  'healthy',
+];
+
 export function isDestinationSelectableForTenant(input: {
   destination: LoggingDestination;
   tenantId: string;
@@ -176,7 +187,7 @@ export function isDestinationSelectableForTenant(input: {
   if (destination.lifecycleStatus !== 'active') {
     return false;
   }
-  if (!['configured', 'healthy'].includes(destination.healthStatus)) {
+  if (!SELECTABLE_DESTINATION_HEALTH_STATUSES.includes(destination.healthStatus)) {
     return false;
   }
   if (

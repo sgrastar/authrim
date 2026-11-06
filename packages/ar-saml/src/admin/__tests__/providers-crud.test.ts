@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
+  stepUp: vi.fn(async (..._args: unknown[]): Promise<Response | null> => null),
   adapter: null as ReturnType<typeof createAdapter> | null,
   audit: vi.fn(async () => undefined),
   safeFetchText: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    requireAdminStepUp: mocks.stepUp,
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
     requireAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
@@ -57,6 +59,9 @@ import {
   handleListProviders,
   handleRefreshMetadata,
   handleRefreshFederationMetadataSource,
+  handlePromoteSigningNext,
+  handlePublishSigningNext,
+  handleRetireSigningBackup,
   handleUpdateProvider,
   listIdPConfigs,
   listSPConfigs,
@@ -1094,14 +1099,17 @@ describe('SAML provider CRUD boundaries', () => {
   });
 
   it('distinguishes a missing provider from a successful deletion', async () => {
-    mocks.adapter!.execute.mockResolvedValueOnce({ rowsAffected: 0, insertId: undefined });
     expect((await handleDeleteProvider(context({ id: 'missing' }))).status).toBe(404);
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    expect(mocks.stepUp).not.toHaveBeenCalled();
 
+    mocks.adapter!.queryOne.mockResolvedValueOnce({ id: 'provider-a' });
     mocks.adapter!.execute.mockResolvedValueOnce({ rowsAffected: 1, insertId: undefined });
     expect((await handleDeleteProvider(context({ id: 'provider-a' }))).status).toBe(200);
   });
 
   it('does not expose provider deletion storage errors', async () => {
+    mocks.adapter!.queryOne.mockResolvedValueOnce({ id: 'provider-a' });
     mocks.adapter!.execute.mockRejectedValue(new Error('database unavailable'));
     expect((await handleDeleteProvider(context({ id: 'provider-a' }))).status).toBe(500);
   });
@@ -1647,6 +1655,31 @@ describe('SAML provider CRUD boundaries', () => {
     expect(mocks.adapter!.execute).toHaveBeenCalled();
   });
 
+  it('writes nothing when a fetch from a different URL fails (the refresh policy is kept)', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          metadataUrl: 'https://metadata.example.test/original.xml',
+          metadataRefreshPolicy: { mode: 'manual' },
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      })
+    );
+    mocks.safeFetchText.mockRejectedValue(new Error('unreachable'));
+
+    const response = await handleRefreshMetadata(
+      context({
+        id: 'provider-a',
+        body: { metadataUrl: 'https://metadata.example.test/other.xml' },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+  });
+
   it('keeps configured-URL refresh available to a refresh-only administrator', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(
       providerRow({
@@ -1812,6 +1845,36 @@ describe('SAML provider CRUD boundaries', () => {
     expect(mocks.adapter!.execute.mock.calls.at(-1)?.[1]?.[1]).toBe(0);
   });
 
+  it('saves nothing when expired metadata comes from another URL (the refresh policy is kept)', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/old-acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          metadataRefreshPolicy: { mode: 'manual' },
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      })
+    );
+    mocks.safeFetchText.mockResolvedValue(
+      validSpMetadata().replace(
+        'entityID="https://sp.example.test"',
+        'entityID="https://sp.example.test" validUntil="2020-01-01T00:00:00Z"'
+      )
+    );
+
+    const response = await handleRefreshMetadata(
+      context({
+        id: 'provider-a',
+        body: { metadataUrl: 'https://metadata.example.test/other.xml' },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+  });
+
   it('rejects and records an unexpected entityID change during manual refresh', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(
       providerRow({
@@ -1859,7 +1922,9 @@ describe('SAML provider CRUD boundaries', () => {
       expect.anything(),
       'source-a',
       'tenant-a',
-      'manual'
+      'manual',
+      undefined,
+      expect.any(Function)
     );
   });
 
@@ -1945,3 +2010,409 @@ function aggregateMetadata() {
     ${validSpMetadata().replace('<?xml version="1.0"?>', '')}
   </md:EntitiesDescriptor>`;
 }
+
+describe('SAML trust changes need a step-up', () => {
+  const refusal = () =>
+    new Response(JSON.stringify({ error: 'step_up_required' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  const HEX64 = /^[0-9a-f]{64}$/;
+  const spConfig = {
+    entityId: 'https://sp-new.example.test',
+    acsUrl: 'https://sp-new.example.test/acs',
+    identityMapping: {
+      fieldMappingSetId: 'saml-sp',
+      destinationFieldPolicies: {
+        mail: 'optional',
+        displayName: 'optional',
+        eduPersonAffiliation: 'optional',
+      },
+    },
+  };
+  const updatedAt = new Date(1_700_000_001_000).toISOString();
+  const rolloverRow = () =>
+    providerRow({
+      config_json: JSON.stringify({
+        entityId: 'https://sp.example.test',
+        acsUrl: 'https://sp.example.test/acs',
+        signingKeyPolicy: {
+          active: { slot: 'active', keyRef: 'tenant:tenant-a:saml:idp:signing', state: 'active' },
+          next: {
+            slot: 'next',
+            keyRef: 'tenant:tenant-a:saml:idp:next:signing',
+            certificate: 'NEXT-CERT',
+            state: 'published_next',
+          },
+        },
+      }),
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.adapter = createAdapter();
+    mocks.stepUp.mockResolvedValue(null);
+    mocks.runtimeBinding = {
+      fieldMappingSetId: 'saml-sp',
+      fieldMappingVersionId: 'version-1',
+      destinationProfileId: 'destination-profile-saml',
+      destinationProfileIds: ['destination-profile-saml'],
+    };
+    mocks.destinationDescriptor = {
+      profileId: 'destination-profile-saml',
+      profileVersionId: 'destination-profile-saml-v1',
+      destinationType: 'saml',
+      fields: [{ key: 'mail' }, { key: 'displayName' }, { key: 'eduPersonAffiliation' }],
+    };
+  });
+
+  describe('create', () => {
+    const request = () =>
+      context({ body: { name: 'New SP', providerType: 'saml_sp', config: spConfig } });
+
+    it('writes nothing while the gate refuses', async () => {
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handleCreateProvider(request());
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'step_up_required' });
+      expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    });
+
+    it('goes ahead when the gate lets it, with a descriptor built from the request', async () => {
+      const response = await handleCreateProvider(request());
+      expect(response.status).toBe(201);
+      expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        params: {
+          action: 'provider.create',
+          providerType: 'saml_sp',
+          name: 'New SP',
+          enabled: true,
+          request_sha256: expect.stringMatching(HEX64) as string,
+        },
+      });
+    });
+
+    it('builds the same descriptor for the same request', async () => {
+      await handleCreateProvider(request());
+      await handleCreateProvider(request());
+      expect(mocks.stepUp.mock.calls[1]?.[1]).toEqual(mocks.stepUp.mock.calls[0]?.[1]);
+    });
+
+    it('does not call the gate for an invalid request or a conflict', async () => {
+      expect(
+        (await handleCreateProvider(context({ body: { name: 'x', providerType: 'nope' } }))).status
+      ).toBe(400);
+      mocks.adapter!.query.mockResolvedValue([
+        { id: 'other', config_json: JSON.stringify({ entityId: spConfig.entityId }) },
+      ]);
+      expect((await handleCreateProvider(request())).status).toBe(409);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+      expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('update', () => {
+    it('writes nothing while the gate refuses', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handleUpdateProvider(
+        context({
+          id: 'provider-a',
+          body: { expectedUpdatedAt: updatedAt, config: { acsUrl: 'https://sp.example.test/new' } },
+        })
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    });
+
+    it('goes ahead when the gate lets it, with the config as a digest', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      const response = await handleUpdateProvider(
+        context({
+          id: 'provider-a',
+          body: { expectedUpdatedAt: updatedAt, config: { acsUrl: 'https://sp.example.test/new' } },
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        targetIds: ['provider-a'],
+        params: {
+          action: 'provider.update',
+          expectedUpdatedAt: updatedAt,
+          config_sha256: expect.stringMatching(HEX64) as string,
+        },
+      });
+    });
+
+    it('does not call the gate before the stale-edit and not-found checks', async () => {
+      expect((await handleUpdateProvider(context({ id: 'missing', body: {} }))).status).toBe(404);
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      expect(
+        (
+          await handleUpdateProvider(
+            context({
+              id: 'provider-a',
+              body: { expectedUpdatedAt: new Date(1).toISOString(), config: {} },
+            })
+          )
+        ).status
+      ).toBe(409);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
+
+    it('lets a rename or a disable through without the gate', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      let response = await handleUpdateProvider(
+        context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, name: 'Renamed' } })
+      );
+      expect(response.status).toBe(200);
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      response = await handleUpdateProvider(
+        context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, enabled: false } })
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
+
+    it('gates an enable', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow({ enabled: 0 }));
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handleUpdateProvider(
+        context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, enabled: true } })
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('delete', () => {
+    it('deletes nothing while the gate refuses', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue({ id: 'provider-a' });
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handleDeleteProvider(context({ id: 'provider-a' }));
+      expect(response.status).toBe(403);
+      expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    });
+
+    it('deletes when the gate lets it, naming the provider', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue({ id: 'provider-a' });
+      const response = await handleDeleteProvider(context({ id: 'provider-a' }));
+      expect(response.status).toBe(200);
+      expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        targetIds: ['provider-a'],
+        params: { action: 'provider.delete' },
+      });
+    });
+  });
+
+  describe('import metadata', () => {
+    it('writes nothing while the gate refuses', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handleImportMetadata(
+        context({ id: 'provider-a', body: { metadataXml: validSpMetadata() } })
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    });
+
+    it('goes ahead when the gate lets it, with the metadata as a digest', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      const response = await handleImportMetadata(
+        context({ id: 'provider-a', body: { metadataXml: validSpMetadata() } })
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
+      const descriptor = mocks.stepUp.mock.calls[0]?.[1] as {
+        targetIds: string[];
+        params: Record<string, unknown>;
+      };
+      expect(descriptor.targetIds).toEqual(['provider-a']);
+      expect(descriptor.params.action).toBe('provider.import_metadata');
+      expect(descriptor.params.metadata_sha256).toMatch(HEX64);
+      expect(JSON.stringify(descriptor)).not.toContain('EntityDescriptor');
+    });
+
+    it('binds the URL, not the fetched document, when importing from a URL', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+      const response = await handleImportMetadata(
+        context({ id: 'provider-a', body: { metadataUrl: 'https://metadata.example.test/sp.xml' } })
+      );
+      expect(response.status).toBe(200);
+      const descriptor = mocks.stepUp.mock.calls[0]?.[1] as { params: Record<string, unknown> };
+      // A document re-signed between the refused request and its repeat still matches.
+      expect(descriptor.params).not.toHaveProperty('metadata_sha256');
+      expect(descriptor.params.metadataUrl).toBe('https://metadata.example.test/sp.xml');
+    });
+
+    it('does not call the gate for invalid metadata', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      const response = await handleImportMetadata(
+        context({ id: 'provider-a', body: { metadataXml: '<not-metadata/>' } })
+      );
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('refresh metadata', () => {
+    const refreshRow = () =>
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/old-acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      });
+
+    it('writes nothing while the gate refuses', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(refreshRow());
+      mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handleRefreshMetadata(context({ id: 'provider-a', body: {} }));
+      expect(response.status).toBe(403);
+      expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    });
+
+    it('goes ahead when the gate lets it, with the request inputs only', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(refreshRow());
+      mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+      const response = await handleRefreshMetadata(context({ id: 'provider-a', body: {} }));
+      expect(response.status).toBe(200);
+      expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        targetIds: ['provider-a'],
+        params: {
+          action: 'provider.refresh_metadata',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          allowEntityIdChange: false,
+        },
+      });
+    });
+
+    it('does not call the gate when the fetch fails or the URL is missing', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+      expect((await handleRefreshMetadata(context({ id: 'provider-a', body: {} }))).status).toBe(
+        400
+      );
+      mocks.adapter!.queryOne.mockResolvedValue(refreshRow());
+      mocks.safeFetchText.mockRejectedValue(new Error('upstream unavailable'));
+      expect((await handleRefreshMetadata(context({ id: 'provider-a', body: {} }))).status).toBe(
+        400
+      );
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('refresh federation source', () => {
+    // The real refresh finds the source, then calls the hook, then fetches and writes.
+    function refreshThroughHook(writes: { count: number }, exists = true) {
+      mocks.refreshFederationSource.mockImplementation(async (...args: unknown[]) => {
+        if (!exists) throw new Error('federation_source_not_found');
+        const hook = args[5];
+        if (typeof hook === 'function') await (hook as () => Promise<void>)();
+        writes.count += 1;
+        return { sourceId: 'source-a', changed: true, entityCount: 1 };
+      });
+    }
+
+    it('fetches and writes nothing while the gate refuses', async () => {
+      const writes = { count: 0 };
+      refreshThroughHook(writes);
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handleRefreshFederationMetadataSource(context({ id: 'source-a' }));
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'step_up_required' });
+      expect(writes.count).toBe(0);
+    });
+
+    it('goes ahead when the gate lets it, naming the source', async () => {
+      const writes = { count: 0 };
+      refreshThroughHook(writes);
+      const response = await handleRefreshFederationMetadataSource(context({ id: 'source-a' }));
+      expect(response.status).toBe(200);
+      expect(writes.count).toBe(1);
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        targetIds: ['source-a'],
+        params: { action: 'federation_source.refresh_metadata' },
+      });
+    });
+
+    it('does not call the gate for a missing source', async () => {
+      refreshThroughHook({ count: 0 }, false);
+      const response = await handleRefreshFederationMetadataSource(context({ id: 'missing' }));
+      expect(response.status).toBe(404);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('signing rollover', () => {
+    const cases = [
+      [
+        'publish_next',
+        handlePublishSigningNext,
+        {
+          certificate: 'CERT-PEM-BODY',
+          kid: 'next-kid',
+          keyRef: 'tenant:tenant-a:saml:idp:next-2:signing',
+        },
+      ],
+      ['promote_next', handlePromoteSigningNext, { keepPreviousAsBackup: true }],
+      ['retire_backup', handleRetireSigningBackup, {}],
+    ] as const;
+
+    it.each(cases)('%s writes nothing while the gate refuses', async (_step, handler, body) => {
+      mocks.adapter!.queryOne.mockResolvedValue(rolloverRow());
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handler(context({ id: 'provider-a', body }));
+      expect(response.status).toBe(403);
+      expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+    });
+
+    it.each(cases)('%s goes ahead when the gate lets it', async (step, handler, body) => {
+      mocks.adapter!.queryOne.mockResolvedValue(rolloverRow());
+      const response = await handler(context({ id: 'provider-a', body }));
+      expect(response.status).not.toBe(403);
+      if (response.status === 200) expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
+      const descriptor = mocks.stepUp.mock.calls[0]?.[1] as {
+        params: Record<string, unknown>;
+      };
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toMatchObject({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        targetIds: ['provider-a'],
+      });
+      expect(descriptor.params.action).toBe(`provider.signing_rollover.${step}`);
+      expect(descriptor.params.request_sha256).toMatch(HEX64);
+      expect(JSON.stringify(descriptor)).not.toContain('CERT-PEM-BODY');
+    });
+
+    it('does not call the gate for a missing certificate or provider', async () => {
+      mocks.adapter!.queryOne.mockResolvedValue(rolloverRow());
+      expect((await handlePublishSigningNext(context({ id: 'provider-a', body: {} }))).status).toBe(
+        400
+      );
+      mocks.adapter!.queryOne.mockResolvedValue(null);
+      expect((await handleRetireSigningBackup(context({ id: 'missing', body: {} }))).status).toBe(
+        404
+      );
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
+  });
+});

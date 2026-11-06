@@ -6,7 +6,6 @@ import {
   ApprovalRequestApprovalRepository,
   ApprovalRequestRepository,
   AdminPasskeyRepository,
-  AdminSessionRepository,
   ElevationGrantRepository,
   adminAuthMiddleware,
   createErrorResponse,
@@ -33,7 +32,12 @@ import type { AuthenticationResponseJSON, AuthenticatorTransport } from '@simple
 import {
   getApprovalCompletionArtifact,
   consumeApprovalCompletionArtifact,
+  discardApprovalCompletionProof,
+  findApprovalCompletionProof,
+  recordApprovalCompletionProof,
+  type ApprovalCompletionProof,
 } from '../approval-completion-artifact';
+import { isFreshAdminHuman } from '../agent-fresh-auth';
 import { issueApprovalDecisionReceipt } from '../approval-completion-receipt';
 import {
   buildApprovalCompletionRequirements,
@@ -59,7 +63,10 @@ import {
   dispatchApprovalCibaUserCode,
   recordApprovalCibaNotificationDispatch,
 } from '../approval-ciba-notification';
-import { resolveApprovalNotificationPolicy } from '../approval-notification-policy';
+import {
+  requiresVerifiedApproval,
+  resolveApprovalNotificationPolicy,
+} from '../approval-notification-policy';
 import { verifyApprovalOtpChallenge } from '../approval-otp';
 import { ApprovalWorkflowPolicyError, applyApprovalDecisionForRequest } from '../approval-workflow';
 
@@ -335,22 +342,32 @@ approvalArtifactsRouter.post('/:artifactId/reauth/assert', adminAuthMiddleware({
       );
     }
 
-    const adminSessionRepo = new AdminSessionRepository(state.adapter, state.request.tenant_id);
-    await adminSessionRepo.setMfaVerified(adminAuth.sessionId);
-
-    return c.json({
-      completion_assertion: {
-        method: 'reauth',
-        actor_subject_type: 'admin_user',
-        actor_subject_id: adminAuth.userId,
-        verified_at: Date.now(),
-        metadata: {
-          session_id: adminAuth.sessionId,
-          auth_method: adminAuth.authMethod,
-          source: 'admin_session_reauth',
+    // Reauth means the approver authenticated recently: this endpoint checks that, and never
+    // renews the session's authentication time itself (that would let any session look fresh).
+    const now = Date.now();
+    if (!isFreshAdminHuman(adminAuth, now)) {
+      return c.json(
+        {
+          error: 'approval_reauth_required',
+          error_description: 'Sign in again, then complete this approval within five minutes.',
         },
+        403
+      );
+    }
+
+    const completionAssertion: ApprovalCompletionProof = {
+      method: 'reauth',
+      actor_subject_type: 'admin_user',
+      actor_subject_id: adminAuth.userId,
+      verified_at: now,
+      metadata: {
+        session_id: adminAuth.sessionId,
+        auth_method: adminAuth.authMethod,
+        source: 'admin_session_reauth',
       },
-    });
+    };
+    await recordApprovalCompletionProof(c.env, state.artifact, completionAssertion);
+    return c.json({ completion_assertion: completionAssertion });
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -598,19 +615,19 @@ approvalArtifactsRouter.post('/:artifactId/passkey/verify', async (c) => {
     await passkeyRepo.updateCounter(passkey.id, verification.authenticationInfo.newCounter);
     await c.env.AUTHRIM_CONFIG.delete(`approval_passkey:challenge:${body.challenge_id}`);
 
-    return c.json({
-      completion_assertion: {
-        method: 'passkey',
-        actor_subject_type: 'admin_user',
-        actor_subject_id: state.approval.subject_id,
-        verified_at: Date.now(),
-        metadata: {
-          challenge_id: body.challenge_id,
-          credential_id: passkey.credential_id,
-          source: 'admin_passkey',
-        },
+    const completionAssertion: ApprovalCompletionProof = {
+      method: 'passkey',
+      actor_subject_type: 'admin_user',
+      actor_subject_id: state.approval.subject_id,
+      verified_at: Date.now(),
+      metadata: {
+        challenge_id: body.challenge_id,
+        credential_id: passkey.credential_id,
+        source: 'admin_passkey',
       },
-    });
+    };
+    await recordApprovalCompletionProof(c.env, state.artifact, completionAssertion);
+    return c.json({ completion_assertion: completionAssertion });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
@@ -669,18 +686,18 @@ approvalArtifactsRouter.post('/:artifactId/otp/verify', async (c) => {
       target: state.approval.transport_channel,
     });
 
-    return c.json({
-      completion_assertion: {
-        method: state.artifact.method,
-        actor_subject_type: state.approval.subject_type,
-        actor_subject_id: state.approval.subject_id ?? undefined,
-        verified_at: verification.verifiedAt,
-        metadata: {
-          source: 'approval_otp',
-          target: state.approval.transport_channel,
-        },
+    const completionAssertion: ApprovalCompletionProof = {
+      method: state.artifact.method,
+      actor_subject_type: state.approval.subject_type,
+      actor_subject_id: state.approval.subject_id ?? null,
+      verified_at: verification.verifiedAt,
+      metadata: {
+        source: 'approval_otp',
+        target: state.approval.transport_channel,
       },
-    });
+    };
+    await recordApprovalCompletionProof(c.env, state.artifact, completionAssertion);
+    return c.json({ completion_assertion: completionAssertion });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
@@ -1136,8 +1153,56 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
     const grantRepo = new ElevationGrantRepository(state.adapter);
 
     const completionMode = resolveApprovalCompletionMode(previewArtifact.method);
+    // A person's step is never approved by holding its artifact (an earlier policy may have
+    // issued one): such an artifact reaches its approver only through an admin.
+    if (
+      completionMode === 'artifact_only' &&
+      body.decision === 'approved' &&
+      requiresVerifiedApproval({
+        side: previewArtifact.approver_side,
+        subject_type: previewArtifact.approver_subject_type,
+      })
+    ) {
+      return createStepUpErrorResponse(
+        {
+          error: 'step_up_required',
+          error_description: 'This approval needs the approver to verify, not just hold the link.',
+          code: 'step_up_required',
+          status: buildApprovalStepUpStatus(state, 'failed'),
+        },
+        409
+      );
+    }
+    // The evidence of a step-up completion is what the server recorded when it verified the
+    // method; a completion assertion in the request body is never trusted on its own.
+    let verifiedAssertion: ApprovalCompletionProof | null = null;
     if (completionMode === 'step_up_required' && body.decision === 'approved') {
-      if (!body.completion_assertion) {
+      if (previewArtifact.method === 'ciba') {
+        const ciba = await getApprovalCibaStatus({
+          env: c.env,
+          tenantId: state.request.tenant_id,
+          artifactId: previewArtifact.artifact_id,
+        });
+        if (ciba?.status === 'approved') {
+          verifiedAssertion = {
+            method: 'ciba',
+            actor_subject_type: state.approval.subject_type,
+            actor_subject_id: state.approval.subject_id ?? null,
+            verified_at: ciba.decisionAt ?? Date.now(),
+            metadata: { source: 'approval_ciba', auth_req_id: ciba.authReqId },
+          };
+        }
+      } else {
+        const proof = await findApprovalCompletionProof(
+          c.env,
+          previewArtifact.artifact_id,
+          state.request.tenant_id
+        );
+        if (proof && proof.method === previewArtifact.method) {
+          verifiedAssertion = proof;
+        }
+      }
+      if (!verifiedAssertion) {
         return createStepUpErrorResponse(
           {
             error: 'step_up_required',
@@ -1149,23 +1214,9 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
           409
         );
       }
-      if (body.completion_assertion.method !== previewArtifact.method) {
-        return createStepUpErrorResponse(
-          {
-            error: 'invalid_step_up_input',
-            error_description:
-              'The completion assertion method does not match the artifact method.',
-            code: 'invalid_step_up_input',
-            field: 'completion_assertion.method',
-            status: buildApprovalStepUpStatus(state),
-          },
-          409
-        );
-      }
       if (
         previewArtifact.approver_subject_id &&
-        body.completion_assertion.actor_subject_id &&
-        body.completion_assertion.actor_subject_id !== previewArtifact.approver_subject_id
+        verifiedAssertion.actor_subject_id !== previewArtifact.approver_subject_id
       ) {
         return createStepUpErrorResponse(
           {
@@ -1184,35 +1235,23 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
           403
         );
       }
-      if (
-        body.completion_assertion.actor_subject_type &&
-        body.completion_assertion.actor_subject_type !== previewArtifact.approver_subject_type
-      ) {
-        return createStepUpErrorResponse(
-          {
-            error: 'invalid_step_up_input',
-            error_description:
-              'The completion assertion actor does not match the intended approver.',
-            code: 'invalid_step_up_input',
-            field: 'completion_assertion.actor_subject_type',
-            details: {
-              retryable: false,
-              user_action: 'reauthenticate',
-              severity: 'error',
-            },
-            status: buildApprovalStepUpStatus(state, 'failed'),
-          },
-          403
-        );
-      }
     }
 
     const occurredAt = Date.now();
+    // The artifact's consumption is the single-use step; its proof is dropped only afterwards, so
+    // a failure before it leaves both for a retry.
     const artifact = await consumeApprovalCompletionArtifact(
       c.env,
       c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
+    if (verifiedAssertion && previewArtifact.method !== 'ciba') {
+      await discardApprovalCompletionProof(
+        c.env,
+        previewArtifact.artifact_id,
+        state.request.tenant_id
+      ).catch(() => undefined);
+    }
 
     const result = await applyApprovalDecisionForRequest(
       c,
@@ -1249,7 +1288,7 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
           },
           metadata: {
             completion_source: 'approval_artifact',
-            completion_assertion: body.completion_assertion ?? null,
+            completion_assertion: verifiedAssertion,
           },
         },
         occurredAt,
@@ -1335,15 +1374,8 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         },
       });
     }
-    if (error instanceof Error && /already consumed|invalid|expired/i.test(error.message)) {
-      return c.json(
-        {
-          error: 'invalid_approval_artifact',
-          error_description: 'The approval completion artifact is invalid, expired, or consumed.',
-        },
-        410
-      );
-    }
+    // A policy refusal is told apart first: its message may name a resource class that happens
+    // to contain "invalid" or "expired".
     if (error instanceof ApprovalWorkflowPolicyError) {
       return c.json(
         {
@@ -1351,6 +1383,15 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
           error_description: error.message,
         },
         error.status as 409
+      );
+    }
+    if (error instanceof Error && /already consumed|invalid|expired/i.test(error.message)) {
+      return c.json(
+        {
+          error: 'invalid_approval_artifact',
+          error_description: 'The approval completion artifact is invalid, expired, or consumed.',
+        },
+        410
       );
     }
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

@@ -306,6 +306,34 @@ async function verifyImportedKeyPair(
 }
 
 /**
+ * The checks `importKey` makes on a key before storing it, without touching any state: the kid,
+ * the public JWK, the private PEM and certificate shapes, and that the two halves are one pair.
+ * Lets a restore validate every key before it changes anything (or spends a step-up receipt).
+ * @returns The public JWK as `importKey` would store it
+ */
+export async function assertImportableSigningKey(input: {
+  kid: unknown;
+  publicJWK: unknown;
+  privatePEM: unknown;
+  certificatePEM?: unknown;
+}): Promise<JWK> {
+  const kid = typeof input.kid === 'string' ? input.kid.trim() : '';
+  if (!kid || kid.length > 256 || /[\u0000-\u001f\u007f]/.test(kid)) {
+    throw new Error('Invalid key ID');
+  }
+  if (!isImportablePublicJWK(input.publicJWK)) {
+    throw new Error('Invalid public JWK');
+  }
+  if (!isImportablePrivatePEM(input.privatePEM)) {
+    throw new Error('Invalid private PEM');
+  }
+  if (input.certificatePEM && !isImportableCertificatePEM(input.certificatePEM)) {
+    throw new Error('Invalid certificate PEM');
+  }
+  return verifyImportedKeyPair(kid, input.publicJWK, input.privatePEM);
+}
+
+/**
  * KeyManager Durable Object
  *
  * Manages cryptographic keys for JWT signing with automatic rotation support.
@@ -2073,20 +2101,8 @@ export class KeyManager extends DurableObject<Env> {
     return runSamlDrCoveredOperation(this.env, undefined, async () => {
       await this.#initializeState();
 
-      const kid = typeof input.kid === 'string' ? input.kid.trim() : '';
-      if (!kid || kid.length > 256 || /[\u0000-\u001f\u007f]/.test(kid)) {
-        throw new Error('Invalid key ID');
-      }
-      if (!isImportablePublicJWK(input.publicJWK)) {
-        throw new Error('Invalid public JWK');
-      }
-      if (!isImportablePrivatePEM(input.privatePEM)) {
-        throw new Error('Invalid private PEM');
-      }
-      if (input.certificatePEM && !isImportableCertificatePEM(input.certificatePEM)) {
-        throw new Error('Invalid certificate PEM');
-      }
-      const verifiedPublicJWK = await verifyImportedKeyPair(kid, input.publicJWK, input.privatePEM);
+      const verifiedPublicJWK = await assertImportableSigningKey(input);
+      const kid = input.kid.trim();
 
       const state = this.#getState();
       const status = normalizeImportedKeyStatus(input.status);

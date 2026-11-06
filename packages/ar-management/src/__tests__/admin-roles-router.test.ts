@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const stepUp = vi.hoisted(() => ({ gate: vi.fn(async (): Promise<Response | null> => null) }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: stepUp.gate,
+  refuseAdminFreshAuth: vi.fn(),
+}));
 import { Hono } from 'hono';
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
@@ -1148,7 +1154,9 @@ describe('adminRolesRouter', () => {
     expect(response.status).toBe(200);
     expect(repoMocks.updateRole).toHaveBeenCalledWith(
       'role_custom',
-      expect.objectContaining({ display_name: 'Updated', hierarchy_level: 10 })
+      expect.objectContaining({ display_name: 'Updated', hierarchy_level: 10 }),
+      // Written only while the role still grants what the decision was made against.
+      { expected: expect.objectContaining({ hierarchy_level: 5 }) as unknown }
     );
     expect(repoMocks.createAuditLog).toHaveBeenCalled();
   });
@@ -1555,5 +1563,307 @@ describe('adminRolesRouter', () => {
 
     expect(response.status).toBe(403);
     expect(repoMocks.createAuditLog).not.toHaveBeenCalled();
+  });
+  describe('admin step-up on assignment changes', () => {
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-test-permissions': `${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+      'x-test-hierarchy-level': '50',
+    };
+    const base = '/api/admin/admin-roles/role_ar_support/assignments';
+
+    beforeEach(() => {
+      repoMocks.getRole.mockResolvedValue({
+        id: 'role_ar_support',
+        tenant_id: 'tenant_123',
+        is_system: false,
+        hierarchy_level: 10,
+        name: 'support',
+      });
+      repoMocks.findAdminUserByTenantAndId.mockResolvedValue({ id: 'admin_2' });
+      repoMocks.assignmentExists.mockResolvedValue(false);
+      repoMocks.assignRole.mockResolvedValue({ id: 'assignment_1' });
+      repoMocks.getAssignment.mockResolvedValue({
+        id: 'assignment_1',
+        admin_role_id: 'role_ar_support',
+        admin_user_id: 'admin_2',
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+      });
+      repoMocks.updateAssignment.mockResolvedValue({ id: 'assignment_1' });
+      repoMocks.removeAssignmentById.mockResolvedValue(true);
+    });
+
+    const post = (body: unknown) => {
+      const { app, env } = createTestApp();
+      return app.request(base, { method: 'POST', headers, body: JSON.stringify(body) }, env);
+    };
+
+    it('grants only with step-up, naming the user, role, scope and expiry', async () => {
+      const response = await post({ admin_user_id: 'admin_2', expires_at: 4102444800000 });
+
+      expect(response.status).toBe(201);
+      expect(stepUp.gate).toHaveBeenCalledTimes(1);
+      expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'admin.role.grant',
+        targetTenantId: 'tenant_123',
+        targetIds: ['admin_2', 'role_ar_support'],
+        params: {
+          role: 'role_ar_support',
+          scope_type: 'tenant',
+          scope_id: 'tenant_123',
+          expires_at: 4102444800000,
+        },
+      });
+    });
+
+    it('does not grant when step-up is refused', async () => {
+      stepUp.gate.mockResolvedValueOnce(refusal());
+
+      const response = await post({ admin_user_id: 'admin_2' });
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'step_up_required' });
+      expect(repoMocks.assignRole).not.toHaveBeenCalled();
+    });
+
+    it('does not spend a receipt on a grant that fails validation', async () => {
+      expect((await post({})).status).toBe(400);
+      expect((await post({ admin_user_id: 'admin_2', expires_at: -5 })).status).toBe(400);
+      repoMocks.assignmentExists.mockResolvedValueOnce(true);
+      expect((await post({ admin_user_id: 'admin_2' })).status).toBe(409);
+
+      expect(stepUp.gate).not.toHaveBeenCalled();
+    });
+
+    it('treats a change to an assignment as a grant, after its checks', async () => {
+      const { app, env } = createTestApp();
+      const patch = (body: unknown) =>
+        app.request(
+          `${base}/assignment_1`,
+          { method: 'PATCH', headers, body: JSON.stringify(body) },
+          env
+        );
+
+      expect((await patch({ expires_at: -1 })).status).toBe(400);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+
+      stepUp.gate.mockResolvedValueOnce(refusal());
+      expect((await patch({ expires_at: 2000 })).status).toBe(403);
+      expect(repoMocks.updateAssignment).not.toHaveBeenCalled();
+
+      expect((await patch({ expires_at: 2000 })).status).toBe(200);
+      expect(stepUp.gate).toHaveBeenLastCalledWith(expect.anything(), {
+        operation: 'admin.role.grant',
+        targetTenantId: 'tenant_123',
+        targetIds: ['admin_2', 'role_ar_support', 'assignment_1'],
+        params: {
+          role: 'role_ar_support',
+          scope_type: 'tenant',
+          scope_id: 'tenant_123',
+          expires_at: 2000,
+        },
+      });
+    });
+
+    it('removes an assignment only with step-up', async () => {
+      const { app, env } = createTestApp();
+      stepUp.gate.mockResolvedValueOnce(refusal());
+
+      const refused = await app.request(`${base}/assignment_1`, { method: 'DELETE', headers }, env);
+      expect(refused.status).toBe(403);
+      expect(repoMocks.removeAssignmentById).not.toHaveBeenCalled();
+
+      const allowed = await app.request(`${base}/assignment_1`, { method: 'DELETE', headers }, env);
+      expect(allowed.status).toBe(200);
+      expect(stepUp.gate).toHaveBeenLastCalledWith(expect.anything(), {
+        operation: 'admin.role.revoke',
+        targetTenantId: 'tenant_123',
+        targetIds: ['admin_2', 'role_ar_support', 'assignment_1'],
+        params: { role: 'role_ar_support', scope_type: 'tenant', scope_id: 'tenant_123' },
+      });
+    });
+
+    it('keeps refusing the last platform admin before the gate', async () => {
+      repoMocks.getRole.mockResolvedValue({
+        id: 'role_ar_support',
+        tenant_id: 'default',
+        is_system: true,
+        name: 'ar_super_admin',
+      });
+      repoMocks.adminAdapterQueryOne.mockResolvedValue({ count: 1 });
+      const { app, env } = createTestApp();
+
+      const response = await app.request(
+        `${base}/assignment_1`,
+        { method: 'DELETE', headers },
+        env
+      );
+
+      expect(response.status).toBe(409);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+      expect(repoMocks.removeAssignmentById).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('admin step-up on role definition changes', () => {
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-test-permissions': '*',
+      'x-test-hierarchy-level': '50',
+    };
+    const patch = (body: unknown) => {
+      const { app, env } = createTestApp();
+      return app.request(
+        '/api/admin/admin-roles/role_custom',
+        { method: 'PATCH', headers, body: JSON.stringify(body) },
+        env
+      );
+    };
+
+    beforeEach(() => {
+      stepUp.gate.mockReset();
+      stepUp.gate.mockResolvedValue(null);
+      repoMocks.getRole.mockResolvedValue({
+        id: 'role_custom',
+        tenant_id: 'tenant_123',
+        is_system: false,
+        role_type: 'custom',
+        hierarchy_level: 5,
+        permissions: ['admin:users:read'],
+        inherits_from: null,
+      });
+      repoMocks.updateRole.mockResolvedValue({ id: 'role_custom' });
+    });
+
+    it('adding permissions is gated, bound to the role and the sorted new permissions', async () => {
+      const response = await patch({ permissions: ['admin:users:write', 'admin:users:read'] });
+
+      expect(response.status).toBe(200);
+      expect(stepUp.gate).toHaveBeenCalledTimes(1);
+      expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'admin.role.grant',
+        targetTenantId: 'tenant_123',
+        targetIds: ['role_custom'],
+        params: {
+          role_definition: 'role_custom',
+          permissions: ['admin:users:read', 'admin:users:write'],
+          inherits_from: null,
+          hierarchy_level: 5,
+        },
+      });
+    });
+
+    it('does not change the role when the step-up is refused', async () => {
+      stepUp.gate.mockResolvedValueOnce(refusal());
+
+      const response = await patch({ permissions: ['admin:users:write'] });
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'step_up_required' });
+      expect(repoMocks.updateRole).not.toHaveBeenCalled();
+    });
+
+    it('changing inherits_from is gated and bound to the new parent', async () => {
+      repoMocks.getRole.mockImplementation(async (id: string) =>
+        id === 'role_custom'
+          ? {
+              id: 'role_custom',
+              tenant_id: 'tenant_123',
+              is_system: false,
+              hierarchy_level: 5,
+              permissions: [],
+              inherits_from: null,
+            }
+          : { id, tenant_id: 'tenant_123', is_system: false, hierarchy_level: 5, permissions: [] }
+      );
+      stepUp.gate.mockResolvedValueOnce(refusal());
+
+      const response = await patch({ inherits_from: 'role_parent' });
+
+      expect(response.status).toBe(403);
+      expect(repoMocks.updateRole).not.toHaveBeenCalled();
+      expect(stepUp.gate).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          operation: 'admin.role.grant',
+          params: {
+            role_definition: 'role_custom',
+            permissions: [],
+            inherits_from: 'role_parent',
+            hierarchy_level: 5,
+          },
+        })
+      );
+    });
+
+    it('raising hierarchy_level is gated and bound to the new level', async () => {
+      stepUp.gate.mockResolvedValueOnce(refusal());
+
+      const response = await patch({ hierarchy_level: 20 });
+
+      expect(response.status).toBe(403);
+      expect(repoMocks.updateRole).not.toHaveBeenCalled();
+      expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'admin.role.grant',
+        targetTenantId: 'tenant_123',
+        targetIds: ['role_custom'],
+        params: {
+          role_definition: 'role_custom',
+          permissions: ['admin:users:read'],
+          inherits_from: null,
+          hierarchy_level: 20,
+        },
+      });
+    });
+
+    it('binds the whole resulting role, so a receipt for one shape does not save another', async () => {
+      stepUp.gate.mockResolvedValue(refusal());
+      const paramsOf = async (body: unknown) => {
+        stepUp.gate.mockClear();
+        await patch(body);
+        return (stepUp.gate.mock.calls as unknown as [unknown, { params: unknown }][])[0]?.[1]
+          .params;
+      };
+      const lowered = await paramsOf({ permissions: ['admin:users:write'], hierarchy_level: 1 });
+      const kept = await paramsOf({ permissions: ['admin:users:write'] });
+      expect(lowered).not.toEqual(kept);
+    });
+
+    it('lowering or keeping hierarchy_level stays ungated', async () => {
+      expect((await patch({ hierarchy_level: 1 })).status).toBe(200);
+      expect((await patch({ hierarchy_level: 5 })).status).toBe(200);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+    });
+
+    it('a role changed by another request since it was read is a conflict, not overwritten', async () => {
+      const { AdminRoleChangedError } = await import('@authrim/ar-lib-core');
+      repoMocks.updateRole.mockRejectedValueOnce(new AdminRoleChangedError());
+      const response = await patch({ permissions: [] });
+      expect(response.status).toBe(409);
+    });
+
+    it('removing permissions only, or editing text, stays ungated', async () => {
+      expect((await patch({ permissions: [] })).status).toBe(200);
+      expect((await patch({ permissions: ['admin:users:read'] })).status).toBe(200);
+      expect((await patch({ display_name: 'Renamed' })).status).toBe(200);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+    });
+
+    it('does not call the gate when validation fails', async () => {
+      expect((await patch({ permissions: 'admin:users:write' })).status).toBe(400);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+      expect(repoMocks.updateRole).not.toHaveBeenCalled();
+    });
   });
 });

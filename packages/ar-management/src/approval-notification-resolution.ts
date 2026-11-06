@@ -48,15 +48,32 @@ export async function resolveApprovalNotificationTransport(
   });
 
   const preferredMethod = policy.method;
-  const candidateMethods = input.strictMethod
+  // Strict only for a method the caller asked for and policy still allows: a retired one (a
+  // person's portal_confirm) was replaced, so the verified methods are tried in order.
+  const requestedMethod = input.overrideMethod ?? input.approval.method ?? null;
+  const strict = !!input.strictMethod && requestedMethod === preferredMethod;
+  const candidateMethods = strict
     ? [preferredMethod]
     : dedupeMethods([preferredMethod, ...policy.acceptableMethods]);
 
   let lastResolutionError: ApprovalTransportChannelResolutionError | null = null;
 
+  // For an OTP the destination is the approver's verified contact; only a channel the caller
+  // supplied now is checked against it. The step's stored channel (a label such as `ciba`, or a
+  // contact since changed) is not the caller's choice and must not fail the resolution.
+  const storedChannel = input.approval.transport_channel?.trim() || null;
+  const callerChannel = input.overrideTransportChannel?.trim() || null;
+  const callerSuppliedChannel =
+    callerChannel && callerChannel !== storedChannel ? callerChannel : null;
+
   for (const candidateMethod of candidateMethods) {
+    const isOtp = candidateMethod === 'email_otp' || candidateMethod === 'sms_otp';
     const candidateTransportChannel =
-      candidateMethod === preferredMethod ? policy.transportChannel : null;
+      candidateMethod !== preferredMethod
+        ? null
+        : isOtp
+          ? callerSuppliedChannel
+          : policy.transportChannel;
 
     try {
       const transportChannel = await resolveApprovalTransportChannel(
@@ -87,7 +104,7 @@ export async function resolveApprovalNotificationTransport(
       }
 
       lastResolutionError = error;
-      if (input.strictMethod) {
+      if (strict) {
         throw error;
       }
     }

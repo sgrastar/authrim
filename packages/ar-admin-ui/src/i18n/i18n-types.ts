@@ -13272,6 +13272,10 @@ type RootTranslation = {
 	 */
 	admin_tenant_discovery_dark: string;
 	/**
+	 * auto
+	 */
+	admin_tenant_discovery_auto: string;
+	/**
 	 * B​r​a​n​d​ ​N​a​m​e
 	 */
 	admin_tenant_discovery_brand_name: string;
@@ -47313,6 +47317,10 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * dark
 	 */
 	admin_tenant_discovery_dark: () => LocalizedString;
+	/**
+	 * auto
+	 */
+	admin_tenant_discovery_auto: () => LocalizedString;
 	/**
 	 * Brand Name
 	 */

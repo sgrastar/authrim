@@ -25,6 +25,8 @@
 		/** Only allow tick values (overrides `step`). */
 		snapToTicks?: boolean;
 		showValue?: boolean;
+		/** One line: the track with its value after it, the label for screen readers only. */
+		compact?: boolean;
 		format?: 'number' | 'percent';
 		unit?: string;
 		hint?: string;
@@ -46,6 +48,7 @@
 		tickLabels = false,
 		snapToTicks = false,
 		showValue = true,
+		compact = false,
 		format = 'number',
 		unit,
 		hint,
@@ -111,9 +114,14 @@
 	}
 </script>
 
-<div class="slider" class:is-disabled={off} class:is-changed={isChanged}>
+<div
+	class="slider"
+	class:slider--compact={compact}
+	class:is-disabled={off}
+	class:is-changed={isChanged}
+>
 	<div class="slider__top">
-		<label class="slider__label" for="{uid}-input"
+		<label class="slider__label" class:sr-only={compact} for="{uid}-input"
 			>{label}{#if isChanged}<span class="sr-only"> ({t('common.changed')})</span>{/if}</label
 		>
 		{#if showValue}<output class="slider__value" for="{uid}-input">{display(value)}</output>{/if}
@@ -149,6 +157,31 @@
 		--thumb: 18px;
 		display: grid;
 		gap: 6px;
+	}
+
+	/* One line: the value sits after the track (the label is for screen readers). */
+	.slider--compact {
+		--thumb: 14px;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.slider--compact .slider__top {
+		order: 2;
+	}
+
+	.slider--compact .slider__value {
+		min-width: 3.2ch;
+		font-size: var(--fs-caption);
+		font-weight: var(--fw-medium);
+		text-align: end;
+	}
+
+	.slider--compact .slider__control {
+		flex: 1;
+		min-width: 0;
+		padding-bottom: 0;
 	}
 
 	.slider.is-disabled {

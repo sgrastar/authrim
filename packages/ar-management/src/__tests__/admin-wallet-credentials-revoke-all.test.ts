@@ -4,7 +4,10 @@ const mocks = vi.hoisted(() => ({
   coreQuery: vi.fn(),
   transition: vi.fn(),
   audit: vi.fn(),
+  stepUp: vi.fn(async (_c: unknown, _descriptor: unknown): Promise<Response | null> => null),
 }));
+
+vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: mocks.stepUp }));
 
 vi.mock('../admin-shared', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../admin-shared')>();
@@ -41,6 +44,39 @@ describe('POST /api/admin/admins/:id/wallet-credentials/revoke', () => {
     vi.clearAllMocks();
     mocks.coreQuery.mockResolvedValue([{ public_id: 'c1' }, { public_id: 'c2' }]);
     mocks.transition.mockResolvedValue({ outcome: 'changed', previous: 'active' });
+    mocks.stepUp.mockResolvedValue(null);
+  });
+
+  it('asks for an admin_credential.revoke step-up bound to the target admin', async () => {
+    const context = setup();
+    const actor = signIn(context.db, TENANT_SUPER_ADMIN);
+    const target = signIn(context.db, []);
+
+    await context.call(actor.cookie, 'POST', path(target.userId));
+
+    expect(mocks.stepUp).toHaveBeenCalledTimes(1);
+    expect(mocks.stepUp.mock.calls[0][1]).toEqual({
+      operation: 'admin_credential.revoke',
+      targetTenantId: expect.any(String) as unknown,
+      targetIds: [target.userId],
+      params: { scope: 'wallet_credentials' },
+    });
+  });
+
+  it('revokes nothing when the step-up refuses the request', async () => {
+    mocks.stepUp.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+    );
+    const context = setup();
+    const actor = signIn(context.db, TENANT_SUPER_ADMIN);
+    const target = signIn(context.db, []);
+
+    const response = await context.call(actor.cookie, 'POST', path(target.userId));
+
+    expect(response.status).toBe(403);
+    expect(mocks.coreQuery).not.toHaveBeenCalled();
+    expect(mocks.transition).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 
   it('revokes every pending/active/suspended credential and answers 200', async () => {

@@ -21,6 +21,7 @@ import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
 import { hasPlatformAuthorityForTenantEdit } from './settings-authorization';
 import {
   createAuthContextFromHono,
@@ -175,13 +176,13 @@ async function getCurrentSnapshot(
   }
 
   // List all keys for this category
-  const keys = await kv.list({ prefix: kvPrefix });
+  const keyNames = await listCategoryKeyNames(kv, kvPrefix);
   const snapshot: Record<string, unknown> = {};
 
-  for (const key of keys.keys) {
-    const value = await kv.get(key.name);
+  for (const keyName of keyNames) {
+    const value = await kv.get(keyName);
     if (value !== null) {
-      const shortKey = key.name.replace(kvPrefix, '');
+      const shortKey = keyName.replace(kvPrefix, '');
       try {
         snapshot[shortKey] = JSON.parse(value);
       } catch {
@@ -208,18 +209,33 @@ async function applySnapshot(
     throw new Error('KV namespace not available');
   }
 
-  // First, delete all existing keys for this category
-  const existingKeys = await kv.list({ prefix: kvPrefix });
-  for (const key of existingKeys.keys) {
-    await kv.delete(key.name);
-  }
-
-  // Then, write all keys from snapshot
+  // Write the snapshot's keys first, then delete only the keys it does not have: a failure part
+  // way leaves the category with its old or new values, never emptied.
+  const existingKeyNames = await listCategoryKeyNames(kv, kvPrefix);
+  const snapshotKeyNames = new Set<string>();
   for (const [key, value] of Object.entries(snapshot)) {
     const kvKey = `${kvPrefix}${key}`;
+    snapshotKeyNames.add(kvKey);
     const kvValue = typeof value === 'string' ? value : JSON.stringify(value);
     await kv.put(kvKey, kvValue);
   }
+  for (const keyName of existingKeyNames) {
+    if (!snapshotKeyNames.has(keyName)) {
+      await kv.delete(keyName);
+    }
+  }
+}
+
+/** Every key under the prefix, following the list cursor (one list returns at most 1000). */
+async function listCategoryKeyNames(kv: KVNamespace, prefix: string): Promise<string[]> {
+  const names: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await kv.list({ prefix, cursor });
+    names.push(...page.keys.map((key) => key.name));
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return names;
 }
 
 // =============================================================================
@@ -391,6 +407,11 @@ export async function getSettingsVersion(c: SettingsContext) {
  *   "reason": "Optional reason for rollback"
  * }
  */
+/** Rollbackable categories that hold a step-up policy (`security`); the retention ones are not rollbackable. */
+const ROLLBACK_STEP_UP_OPERATIONS: Record<string, 'admin_step_up.policy.relax' | undefined> = {
+  security: 'admin_step_up.policy.relax',
+};
+
 export async function rollbackSettings(c: SettingsContext) {
   const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
   const category = c.req.param('category')!;
@@ -440,7 +461,11 @@ export async function rollbackSettings(c: SettingsContext) {
     );
   }
 
-  if (typeof body.targetVersion !== 'number' || body.targetVersion < 1) {
+  if (
+    typeof body.targetVersion !== 'number' ||
+    !Number.isSafeInteger(body.targetVersion) ||
+    body.targetVersion < 1
+  ) {
     return c.json(
       {
         error: 'invalid_request',
@@ -459,6 +484,48 @@ export async function rollbackSettings(c: SettingsContext) {
 
       try {
         const historyManager = getHistoryManager(c);
+
+        // Validate the target before anything can be spent: it must exist and hold a snapshot
+        // that can be restored.
+        const target = await historyManager.getVersion(category, body.targetVersion);
+        if (!target) {
+          return c.json(
+            {
+              error: 'not_found',
+              error_description: `Version ${body.targetVersion} not found for category ${category}`,
+            },
+            404
+          );
+        }
+        if (
+          !target.snapshot ||
+          typeof target.snapshot !== 'object' ||
+          Array.isArray(target.snapshot)
+        ) {
+          return c.json(
+            {
+              error: 'invalid_request',
+              error_description: `Version ${body.targetVersion} cannot be restored`,
+            },
+            400
+          );
+        }
+
+        // A rollback restores a whole earlier document, which may carry a weaker step-up policy:
+        // for the category that holds it, it is gated as relaxing the policy.
+        const guardedOperation = ROLLBACK_STEP_UP_OPERATIONS[category];
+        if (guardedOperation) {
+          const refused = await requireAdminStepUp(c, {
+            operation: guardedOperation,
+            targetTenantId: tenantId,
+            params: {
+              kind: 'settings.rollback',
+              category,
+              target_version: body.targetVersion,
+            },
+          });
+          if (refused) return refused;
+        }
 
         // Publish rollback started event
         await publishEvent(c as unknown as BaseContext, {

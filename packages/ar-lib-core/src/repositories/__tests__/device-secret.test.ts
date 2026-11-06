@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MockDatabaseAdapter } from './mock-adapter';
+import { sqliteAdapter } from './sqlite-core-schema';
 import { DeviceSecretRepository } from '../core/device-secret';
 import type { CreateDeviceSecretInput } from '../../types/oidc';
 
@@ -229,6 +230,45 @@ describe('DeviceSecretRepository', () => {
         expect(validateResult.entity.use_count).toBe(1);
         expect(validateResult.entity.last_used_at).toBeDefined();
       }
+    });
+
+    it('lets only one of concurrent uses take the last allowed use', async () => {
+      // On the real schema: the use count is checked again by the UPDATE itself.
+      const schema = sqliteAdapter('core');
+      // Only the secret's own row matters here, not the user and session it would refer to.
+      schema.db.exec('PRAGMA foreign_keys = OFF');
+      // Both uses read the secret before either writes, as concurrent requests can.
+      let reads = 0;
+      let bothRead: () => void = () => {};
+      const bothReadPromise = new Promise<void>((resolve) => (bothRead = resolve));
+      const adapter = {
+        ...schema.adapter,
+        queryOne: async <T>(sql: string, params?: unknown[]) => {
+          const row = await schema.adapter.queryOne<T>(sql, params);
+          if (sql.includes('FROM device_secrets') && sql.includes('secret_hash')) {
+            reads += 1;
+            if (reads === 2) bothRead();
+            await bothReadPromise;
+          }
+          return row;
+        },
+      };
+      const sqlite = new DeviceSecretRepository(adapter, 'default');
+      const createResult = await sqlite.createSecret({
+        user_id: 'user-123',
+        session_id: 'session-456',
+      });
+      if (!('secret' in createResult)) throw new Error('secret not created');
+
+      const results = await Promise.all([
+        sqlite.validateAndUse(createResult.secret, { maxUseCount: 1 }),
+        sqlite.validateAndUse(createResult.secret, { maxUseCount: 1 }),
+      ]);
+
+      expect(results.filter((result) => result.ok)).toHaveLength(1);
+      expect(results.filter((result) => !result.ok)).toEqual([
+        { ok: false, reason: 'limit_exceeded' },
+      ]);
     });
 
     it('should return not_found for invalid secret', async () => {

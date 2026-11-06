@@ -223,6 +223,55 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/my-reauth.ts',
+        receiverPrefixes: {
+          myReauthRouter: '/api/admin/me/reauth',
+        },
+      },
+      {
+        file: 'packages/ar-management/src/routes/admin-management/my-step-up.ts',
+        receiverPrefixes: {
+          myStepUpRouter: '/api/admin/me/step-up',
+        },
+      },
+      {
+        file: 'packages/ar-management/src/routes/admin-management/my-second-factors.ts',
+        receiverPrefixes: {
+          mySecondFactorsRouter: '/api/admin/me/second-factors',
+        },
+      },
+      {
+        file: 'packages/ar-management/src/routes/admin-management/my-second-factor-recovery.ts',
+        receiverPrefixes: {
+          mySecondFactorRecoveryRouter: '/api/admin/me/second-factor-recovery',
+        },
+      },
+      {
+        file: 'packages/ar-management/src/routes/admin-management/admin-second-factor-recoveries.ts',
+        receiverPrefixes: {
+          adminSecondFactorRecoveriesRouter: '/api/admin/admin-second-factor-recoveries',
+        },
+      },
+      {
+        file: 'packages/ar-management/src/routes/admin-management/admin-notice-delivery.ts',
+        receiverPrefixes: {
+          myNoticePreferencesRouter: '/api/admin/me/notice-preferences',
+          adminNoticeChannelsRouter: '/api/admin/notice-channels',
+        },
+      },
+      {
+        file: 'packages/ar-management/src/routes/admin-management/admin-second-factors.ts',
+        receiverPrefixes: {
+          adminSecondFactorsRouter: '/api/admin/admins/:id/second-factors',
+        },
+      },
+      {
+        file: 'packages/ar-management/src/routes/admin-management/admin-notices.ts',
+        receiverPrefixes: {
+          adminNoticesRouter: '/api/admin/notices',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/operational-logs.ts',
         receiverPrefixes: {
           operationalLogsRouter: '/api/admin/operational-logs',

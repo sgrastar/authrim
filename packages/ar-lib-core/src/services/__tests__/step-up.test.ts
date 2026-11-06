@@ -247,6 +247,30 @@ describe('Step-Up service', () => {
     });
   });
 
+  it('never completes reauth on the client saying it re-authenticated', async () => {
+    const { env } = createEnv();
+    const requirement = await issueStepUpToken(env, {
+      tenantId: 'tenant-a',
+      actorId: 'actor-1',
+      subjectId: 'user-1',
+      operationHash: 'op-hash-1',
+      acceptableMethods: { methods: ['reauth'] },
+    });
+    const action = await startStepUpAction(env, {
+      stepUpToken: requirement.step_up_token,
+      tenantId: 'tenant-a',
+    });
+
+    await expect(
+      completeStepUpAction(env, {
+        actionId: action.action_id,
+        tenantId: 'tenant-a',
+        method: 'reauth',
+        input: { confirmed: true },
+      })
+    ).rejects.toMatchObject({ error: 'invalid_step_up_input' });
+  });
+
   it('tracks invalid input attempts and returns retryable machine-readable state', async () => {
     const { env } = createEnv({
       'settings:tenant:tenant-a:step-up': JSON.stringify({

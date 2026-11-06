@@ -37,7 +37,9 @@ const {
   mockD1AdapterQueryOne,
   mockD1AdapterExecute,
   mockGrantRepo,
+  mockRequireAdminStepUp,
 } = vi.hoisted(() => ({
+  mockRequireAdminStepUp: vi.fn(),
   mockCreateAuditLogFromContext: vi.fn(),
   mockCreateAuthContextFromHono: vi.fn(),
   mockValidateEventPattern: vi.fn(),
@@ -54,6 +56,7 @@ const {
   }),
   mockEmitRuntimeLogRecords: vi.fn(),
   mockWebhookRegistry: {
+    validateInput: vi.fn(),
     register: vi.fn(),
     get: vi.fn(),
     list: vi.fn(),
@@ -119,12 +122,23 @@ function resetMocks() {
   mockGrantRepo.getElevationGrantByPublicId.mockReset();
   mockGrantRepo.listActiveElevationGrants.mockReset();
   mockGrantRepo.listActiveElevationGrants.mockResolvedValue([]);
+
+  mockRequireAdminStepUp.mockReset();
+  mockRequireAdminStepUp.mockResolvedValue(null);
 }
+
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mockRequireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
+}));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    // The grant's request and approvers are read from the Admin DB, which is mocked here; the
+    // check itself is covered in admin-approvals-resource-binding.test.ts.
+    isElevationGrantBindingIntact: vi.fn(async () => true),
     createAuditLogFromContext: mockCreateAuditLogFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     validateEventPattern: mockValidateEventPattern,
@@ -2521,5 +2535,184 @@ describe('Webhook API - Error Handling', () => {
     await deleteWebhook(c);
 
     expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'server_error' }), 500);
+  });
+});
+
+// =============================================================================
+// Step-up (webhook.destination.update)
+// =============================================================================
+
+type StepUpCtx = Parameters<typeof createWebhook>[0] & {
+  json: { mock: { calls: Array<[unknown, number]> } };
+};
+const makeCtx = (options: Parameters<typeof createMockContext>[0]): StepUpCtx =>
+  createMockContext(options) as StepUpCtx;
+
+describe('Webhook Admin API - step-up', () => {
+  const refusal = () =>
+    new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 });
+  const digest: unknown = expect.stringMatching(/^[0-9a-f]{64}$/);
+
+  beforeEach(() => {
+    resetMocks();
+    mockValidateEventPattern.mockReturnValue({ valid: true });
+  });
+
+  const createBody = {
+    name: 'My Webhook',
+    url: 'https://example.com/webhook',
+    secret: 'whsec_super_secret',
+    events: ['user.created'],
+  };
+
+  it('create: refused without step-up and nothing is registered', async () => {
+    mockRequireAdminStepUp.mockResolvedValue(refusal());
+    const c = makeCtx({ method: 'POST', body: createBody });
+    const response = await createWebhook(c);
+    expect(response?.status).toBe(403);
+    expect(mockWebhookRegistry.register).not.toHaveBeenCalled();
+  });
+
+  it('create: gated with digests of the URL and secret, never their values', async () => {
+    mockWebhookRegistry.register.mockResolvedValue('w1');
+    mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'w1' }));
+    const c = makeCtx({ method: 'POST', body: createBody });
+    await createWebhook(c);
+    expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+    const descriptor: unknown = (mockRequireAdminStepUp.mock.calls[0] as [unknown, unknown])[1];
+    expect(descriptor).toEqual({
+      operation: 'webhook.destination.update',
+      targetTenantId: 'test-tenant',
+      params: {
+        kind: 'webhook.create',
+        client_id: null,
+        url_sha256: digest,
+        secret_sha256: digest,
+        headers_sha256: null,
+      },
+    });
+    expect(JSON.stringify(descriptor)).not.toContain('example.com');
+    expect(JSON.stringify(descriptor)).not.toContain('whsec_super_secret');
+    expect(mockWebhookRegistry.register).toHaveBeenCalledTimes(1);
+  });
+
+  it('create: a validation error does not reach the gate', async () => {
+    const c = makeCtx({ method: 'POST', body: { ...createBody, events: [] } });
+    await createWebhook(c);
+    expect(c.json.mock.calls[0][1]).toBe(400);
+    expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+  });
+
+  it('update: a changed URL is gated and refused without step-up', async () => {
+    mockRequireAdminStepUp.mockResolvedValue(refusal());
+    mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'w1' }));
+    const c = makeCtx({
+      method: 'PUT',
+      params: { id: 'w1' },
+      body: { url: 'https://other.example.com/hook' },
+    });
+    const response = await updateWebhook(c);
+    expect(response?.status).toBe(403);
+    expect(mockWebhookRegistry.update).not.toHaveBeenCalled();
+    expect((mockRequireAdminStepUp.mock.calls[0] as [unknown, unknown])[1]).toEqual({
+      operation: 'webhook.destination.update',
+      targetTenantId: 'test-tenant',
+      targetIds: ['w1'],
+      params: {
+        kind: 'webhook.update',
+        url_sha256: digest,
+        secret_sha256: null,
+        headers_sha256: null,
+      },
+    });
+  });
+
+  it('update: a new signing secret is gated', async () => {
+    mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'w1' }));
+    const c = makeCtx({ method: 'PUT', params: { id: 'w1' }, body: { secret: 'new' } });
+    await updateWebhook(c);
+    expect(
+      (mockRequireAdminStepUp.mock.calls[0] as [unknown, { params: unknown }])[1].params
+    ).toEqual({
+      kind: 'webhook.update',
+      url_sha256: null,
+      secret_sha256: digest,
+      headers_sha256: null,
+    });
+    expect(mockWebhookRegistry.update).toHaveBeenCalled();
+  });
+
+  it('update: changed delivery headers are gated and bound as a digest', async () => {
+    mockRequireAdminStepUp.mockResolvedValue(refusal());
+    mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'w1' }));
+    const c = makeCtx({
+      method: 'PUT',
+      params: { id: 'w1' },
+      body: { headers: { Authorization: 'Bearer other-account' } },
+    });
+    const response = await updateWebhook(c);
+    expect(response?.status).toBe(403);
+    expect(mockWebhookRegistry.update).not.toHaveBeenCalled();
+    const params = (mockRequireAdminStepUp.mock.calls[0] as [unknown, { params: unknown }])[1]
+      .params;
+    expect(params).toMatchObject({ headers_sha256: digest });
+    expect(JSON.stringify(params)).not.toContain('other-account');
+  });
+
+  it('update: the same URL, or an unrelated field, is not gated', async () => {
+    mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'w1' }));
+    await updateWebhook(
+      makeCtx({
+        method: 'PUT',
+        params: { id: 'w1' },
+        body: { url: 'https://example.com/webhook', name: 'x' },
+      })
+    );
+    await updateWebhook(makeCtx({ method: 'PUT', params: { id: 'w1' }, body: { active: false } }));
+    expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    expect(mockWebhookRegistry.update).toHaveBeenCalledTimes(2);
+    // The unchanged URL is not written back (it could undo a gated change made meanwhile).
+    const firstInput = (
+      mockWebhookRegistry.update.mock.calls[0] as [unknown, unknown, Record<string, unknown>]
+    )[2];
+    expect(firstInput.url).toBeUndefined();
+    expect(firstInput.name).toBe('x');
+  });
+
+  it('a URL or events the registry refuses never reach the gate (create and update)', async () => {
+    mockWebhookRegistry.validateInput.mockImplementation(() => {
+      throw new Error('Invalid webhook URL: private address');
+    });
+    const created = makeCtx({
+      method: 'POST',
+      body: { ...createBody, url: 'https://169.254.169.254/latest/meta-data' },
+    });
+    await createWebhook(created);
+    expect(created.json.mock.calls[0][1]).toBe(400);
+
+    mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'w1' }));
+    const updated = makeCtx({
+      method: 'PUT',
+      params: { id: 'w1' },
+      body: { url: 'https://169.254.169.254/latest/meta-data' },
+    });
+    await updateWebhook(updated);
+    expect(updated.json.mock.calls[0][1]).toBe(400);
+
+    expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    expect(mockWebhookRegistry.register).not.toHaveBeenCalled();
+    expect(mockWebhookRegistry.update).not.toHaveBeenCalled();
+  });
+
+  it('update: a missing webhook is 404 without calling the gate', async () => {
+    mockWebhookRegistry.get.mockResolvedValue(null);
+    const c = makeCtx({
+      method: 'PUT',
+      params: { id: 'nope' },
+      body: { url: 'https://a.example.com' },
+    });
+    await updateWebhook(c);
+    expect(c.json.mock.calls[0][1]).toBe(404);
+    expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
   });
 });

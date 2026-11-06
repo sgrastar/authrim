@@ -327,6 +327,8 @@ async function runSharedSave(
             identityMappingHistory: { via: 'bulk_apply', bulkId: input.bulkId },
           }
         : {}),
+      // One request cannot carry a step-up receipt for each item, nor stop halfway safely.
+      refuseStepUp: true,
       dryRun: input.dryRun,
     });
     let json: Record<string, unknown> = {};

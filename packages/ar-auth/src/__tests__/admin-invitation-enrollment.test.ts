@@ -96,6 +96,7 @@ function createEnv() {
   } as unknown as Env;
 }
 
+const secondFactorCredentials = new Set<string>();
 describe('Admin invitation enrollment', () => {
   beforeEach(async () => {
     emitter.rows.length = 0;
@@ -114,12 +115,16 @@ describe('Admin invitation enrollment', () => {
       );
     vi.clearAllMocks();
     enrollments.clear();
+    secondFactorCredentials.clear();
     adapter.queryOne.mockImplementation(async (sql: string, params: unknown[] = []) => {
       if (sql.includes('FROM admin_invitation_enrollments')) {
         const enrollment = enrollments.get(String(params[0]));
         return enrollment && enrollment.expires_at > Number(params[1])
           ? { state_json: enrollment.state_json }
           : null;
+      }
+      if (sql.includes('FROM admin_second_factors')) {
+        return secondFactorCredentials.has(String(params[0])) ? { id: 'second-factor' } : null;
       }
       return invitation;
     });
@@ -708,6 +713,59 @@ describe('Admin invitation enrollment', () => {
     );
 
     expect(response.status).toBe(409);
+    expect(response.headers.get('set-cookie')).toBeNull();
+    expect(enrollments.has(await hashToken('enrollment-token'))).toBe(true);
+  });
+
+  it('refuses a Passkey that is registered as a step-up second factor', async () => {
+    const env = createEnv();
+    await seedEnrollment('enrollment-token', {
+      invitationId: invitation.id,
+      phase: 'authentication',
+      clientIp: '203.0.113.42',
+      authentication: {
+        challengeId: 'challenge-id',
+        challenge: 'authentication-challenge',
+        rpID: 'admin.example.com',
+        origin: 'https://admin.example.com',
+        credentialId: 'credential-id',
+        publicKey: 'AQID',
+        counter: 1,
+        transports: ['internal'],
+        aaguid: null,
+      },
+    });
+    secondFactorCredentials.add('credential-id');
+
+    const response = await adminInvitationEnrollmentApp.request(
+      '/api/admin/invitations/activate',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'cf-connecting-ip': '203.0.113.42',
+        },
+        body: JSON.stringify({
+          enrollment_token: 'enrollment-token',
+          challenge_id: 'challenge-id',
+          credential: {
+            id: 'credential-id',
+            rawId: 'credential-id',
+            response: {
+              clientDataJSON: 'client-data',
+              authenticatorData: 'authenticator-data',
+              signature: 'signature',
+            },
+            type: 'public-key',
+            clientExtensionResults: {},
+          },
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(401);
+    expect(adapter.batch).not.toHaveBeenCalled();
     expect(response.headers.get('set-cookie')).toBeNull();
     expect(enrollments.has(await hashToken('enrollment-token'))).toBe(true);
   });

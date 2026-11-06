@@ -3,18 +3,17 @@
  *
  * Phase 8.3: Real-time Check API Model
  *
- * Implements sliding window rate limiting using KV storage:
- * - Tracks request counts per client/API key
+ * Implements fixed-window rate limiting in the RateLimiterCounter Durable Object:
+ * - Tracks request counts per client/API key, atomically
  * - Supports multiple rate limit tiers (strict, moderate, lenient), each a fixed limit
  *
  * Security features:
  * - Per-client isolation
  * - Tenant-aware rate limiting
- * - Graceful degradation when KV is unavailable
+ * - Fails closed when the limiter is unavailable
  */
 
-import type { KVNamespace } from '@cloudflare/workers-types';
-import type { RateLimitTier } from '@authrim/ar-lib-core';
+import type { Env, RateLimiterCounter, RateLimitTier } from '@authrim/ar-lib-core';
 import { createLogger } from '@authrim/ar-lib-core';
 import type { CheckAuthResult } from './check-auth';
 
@@ -56,8 +55,8 @@ export interface RateLimitResult {
  * Rate limit context
  */
 export interface RateLimitContext {
-  /** KV namespace for rate limit storage */
-  cache?: KVNamespace;
+  /** The atomic rate limiter (RATE_LIMITER binding) */
+  limiter?: Env['RATE_LIMITER'];
 }
 
 // =============================================================================
@@ -73,9 +72,6 @@ export const DEFAULT_RATE_LIMIT_CONFIG: Record<RateLimitTier, RateLimitConfig> =
 
 /** KV key prefix for rate limit counters */
 const RATE_LIMIT_KEY_PREFIX = 'ratelimit:check:';
-
-/** Counter expiration padding (extra time after window expires) */
-const COUNTER_EXPIRATION_PADDING_MS = 5000;
 
 // =============================================================================
 // Configuration Helpers
@@ -121,89 +117,55 @@ function getRateLimitKey(auth: CheckAuthResult): string {
   return components.join(':');
 }
 
-/**
- * Get current window timestamp
- */
-function getWindowTimestamp(windowMs: number): number {
-  return Math.floor(Date.now() / windowMs) * windowMs;
+/** The atomic rate limiter is unbound or failed: the request is refused (fail closed). */
+export class RateLimiterUnavailableError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super('Check API rate limiter is unavailable', options);
+    this.name = 'RateLimiterUnavailableError';
+  }
 }
 
 /**
  * Check rate limit for a request
  *
- * Uses a simple sliding window algorithm:
- * - Count requests in the current window
- * - If count exceeds limit, deny the request
+ * Counts in the RateLimiterCounter Durable Object, one instance per client key, so concurrent
+ * requests cannot read the same count (a KV read-modify-write would let them, and KV allows
+ * about one write per second per key). Without the limiter, or when it fails, the request is
+ * refused with RateLimiterUnavailableError.
  */
 export async function checkRateLimit(
   auth: CheckAuthResult,
   ctx: RateLimitContext
 ): Promise<RateLimitResult> {
-  // Get tier and configuration
   const tier = auth.rateLimitTier || 'strict';
   const config = getRateLimitConfig(tier);
 
-  // If no cache available, allow but log warning
-  if (!ctx.cache) {
-    log.warn('KV cache not available - rate limiting disabled', {});
-    return {
-      allowed: true,
-      current: 0,
-      limit: config.requests,
-      remaining: config.requests,
-      resetAt: getWindowTimestamp(config.windowMs) + config.windowMs,
-    };
+  if (!ctx.limiter) {
+    log.error('RATE_LIMITER binding is not configured; refusing Check API request', {});
+    throw new RateLimiterUnavailableError();
   }
 
   const key = getRateLimitKey(auth);
-  const windowStart = getWindowTimestamp(config.windowMs);
-  const windowKey = `${key}:${windowStart}`;
-
+  let result: Awaited<ReturnType<RateLimiterCounter['incrementRpc']>>;
   try {
-    // Get current count
-    const currentStr = await ctx.cache.get(windowKey);
-    let current = currentStr ? parseInt(currentStr, 10) : 0;
-
-    // Check if over limit
-    if (current >= config.requests) {
-      const resetAt = windowStart + config.windowMs;
-      const retryAfter = Math.ceil((resetAt - Date.now()) / 1000);
-
-      return {
-        allowed: false,
-        current,
-        limit: config.requests,
-        remaining: 0,
-        resetAt,
-        retryAfter: Math.max(1, retryAfter),
-      };
-    }
-
-    // Increment counter
-    current += 1;
-
-    // Store with expiration (window duration + padding)
-    const expirationTtl = Math.ceil((config.windowMs + COUNTER_EXPIRATION_PADDING_MS) / 1000);
-    await ctx.cache.put(windowKey, current.toString(), { expirationTtl });
-
-    return {
-      allowed: true,
-      current,
-      limit: config.requests,
-      remaining: Math.max(0, config.requests - current),
-      resetAt: windowStart + config.windowMs,
-    };
+    const stub = ctx.limiter.get(ctx.limiter.idFromName(key));
+    result = await stub.incrementRpc(key, {
+      windowSeconds: Math.ceil(config.windowMs / 1000),
+      maxRequests: config.requests,
+    });
   } catch (error) {
-    // On error, allow the request but log
-    log.error('Error checking rate limit', { error: String(error) }, error as Error);
-    return {
-      allowed: true,
-      current: 0,
-      limit: config.requests,
-      remaining: config.requests,
-      resetAt: getWindowTimestamp(config.windowMs) + config.windowMs,
-    };
+    log.error('Error checking rate limit', {}, error as Error);
+    throw new RateLimiterUnavailableError({ cause: error });
   }
+
+  return {
+    allowed: result.allowed,
+    current: result.current,
+    limit: config.requests,
+    remaining: Math.max(0, config.requests - result.current),
+    resetAt: result.resetAt * 1000,
+    ...(result.allowed ? {} : { retryAfter: Math.max(1, result.retryAfter) }),
+  };
 }
 
 /**

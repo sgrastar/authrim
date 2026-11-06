@@ -127,7 +127,7 @@
 		display: flex;
 		align-items: flex-start;
 		gap: var(--space-grid);
-		padding: 14px 16px;
+		padding: var(--choice-pad-y) var(--choice-pad-x);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-panel);
 		background: var(--bg-card);

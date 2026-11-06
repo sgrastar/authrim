@@ -426,6 +426,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/complete', async (c) => {
       public_key: publicKeyB64,
       counter,
       transports,
+      aaguid: verification.registrationInfo.aaguid || undefined,
       device_name: 'Admin UI Setup Passkey',
     });
 
@@ -770,6 +771,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
         // A verified passkey assertion includes required user verification and
         // is the fresh MFA event used by high-risk Admin operations.
         mfa_verified: true,
+        passkey_credential_id: passkey.credential_id,
       });
     } catch (error) {
       logger.error('Failed to create admin session', { action: 'session_create' }, error as Error);

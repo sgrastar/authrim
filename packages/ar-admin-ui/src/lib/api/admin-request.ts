@@ -1,4 +1,9 @@
 import { getLocale } from '$i18n/i18n-svelte';
+import {
+	createBrowserSteps,
+	runWithStepUp,
+	STEP_UP_RECEIPT_HEADER
+} from '#lib/api/admin-step-up.js';
 import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -67,14 +72,62 @@ export function buildAdminHeaders(
 	return resolvedHeaders;
 }
 
+type AdminFetchOptions = RequestInit & {
+	tenantId?: string;
+	includeJsonContentType?: boolean;
+	skipTenantHeader?: boolean;
+	/** Set false for the step-up calls themselves. */
+	stepUp?: boolean;
+};
+
+async function postStepUpJson(path: string, body: unknown): Promise<Record<string, unknown>> {
+	const response = await adminFetch(`${API_BASE_URL}${path}`, {
+		method: 'POST',
+		includeJsonContentType: true,
+		stepUp: false,
+		body: JSON.stringify(body)
+	});
+	const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+	if (!response.ok) throw new Error(`Step-up request failed (${response.status})`);
+	return payload;
+}
+
+const browserSteps = createBrowserSteps(postStepUpJson);
+
+/** A request body that can be sent twice: streams are read into memory first. */
+async function makeReplayable(options: RequestInit): Promise<RequestInit> {
+	if (typeof ReadableStream !== 'undefined' && options.body instanceof ReadableStream) {
+		return { ...options, body: await new Response(options.body).arrayBuffer() };
+	}
+	return options;
+}
+
+/**
+ * Admin API fetch. A 403 asking for fresh authentication or step-up is met here (passkey,
+ * security key, receipt) and the request is repeated once, so callers need no step-up code.
+ */
 export async function adminFetch(
 	input: string,
-	options: RequestInit & {
-		tenantId?: string;
-		includeJsonContentType?: boolean;
-		skipTenantHeader?: boolean;
-	} = {}
+	options: AdminFetchOptions = {}
 ): Promise<Response> {
+	const { stepUp = true, ...rest } = options;
+	if (!stepUp) {
+		return sendAdminFetch(input, rest);
+	}
+	const replayable = await makeReplayable(rest);
+	let attempt = 0;
+	return runWithStepUp((receipt) => {
+		attempt += 1;
+		const headers = new Headers(replayable.headers);
+		// A repeat (after a receipt, or after a passkey re-authentication alone) is a new request:
+		// reusing the first attempt's idempotency key would replay its stored refusal.
+		if (attempt > 1) headers.delete('Idempotency-Key');
+		if (receipt) headers.set(STEP_UP_RECEIPT_HEADER, receipt);
+		return sendAdminFetch(input, { ...replayable, headers });
+	}, browserSteps);
+}
+
+async function sendAdminFetch(input: string, options: AdminFetchOptions): Promise<Response> {
 	const {
 		tenantId,
 		includeJsonContentType = false,

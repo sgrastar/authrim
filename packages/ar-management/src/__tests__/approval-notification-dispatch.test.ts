@@ -30,12 +30,28 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-vi.mock('../approval-completion-artifact', () => ({
+vi.mock('../approval-completion-artifact', async (importOriginal) => ({
+  approvalArtifactReference: (
+    await importOriginal<typeof import('../approval-completion-artifact')>()
+  ).approvalArtifactReference,
   issueApprovalCompletionArtifact: mockIssueApprovalCompletionArtifact,
 }));
 
 vi.mock('../approval-otp', () => ({
   issueApprovalOtpChallenge: mockIssueApprovalOtpChallenge,
+}));
+
+// The approver's verified contact comes from their account; these tests use the step's channel.
+vi.mock('../approval-approver-contact', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../approval-approver-contact')>()),
+  resolveApprovalTransportChannel: vi.fn(
+    async (
+      _c: unknown,
+      _request: unknown,
+      approval: { transport_channel: string | null },
+      overrides?: { transportChannel?: string | null }
+    ) => overrides?.transportChannel ?? approval.transport_channel
+  ),
 }));
 
 import { dispatchApprovalNotification } from '../approval-notification-dispatch';
@@ -149,11 +165,14 @@ describe('approval notification dispatch', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.method).toBe('portal_confirm');
-    expect(result.transportChannel).toBe('portal_confirm');
-    expect(result.summary.provider).toBe('authrim.portal_confirm');
+    // An admin step stored with portal_confirm still completes with the approver's passkey.
+    expect(result.method).toBe('passkey');
+    expect(result.transportChannel).toBe('passkey');
+    expect(result.summary.provider).toBe('authrim.passkey');
     expect(result.summary.delivery_status).toBe('recorded');
-    expect(result.summary.transport_request_id).toBe('apc_1');
+    // A reference that does not reveal the artifact (which approves a link-confirmed step).
+    expect(result.summary.transport_request_id).toMatch(/^apref_[0-9a-f]{32}$/);
+    expect(JSON.stringify(result.detail)).not.toContain('apc_1');
   });
 
   it('sends email notifications through the configured notifier', async () => {
@@ -255,7 +274,10 @@ describe('approval notification dispatch', () => {
     );
     expect(result.summary.provider).toBe('notifier.email');
     expect(result.summary.delivery_status).toBe('sent');
-    expect(result.summary.transport_request_id).toBe('approval-notification:apc_1');
+    expect(result.summary.transport_request_id).toMatch(/^approval-notification:apref_/);
+    // Kept as evidence: neither the artifact nor the delivered OTP.
+    expect(JSON.stringify(result.detail)).not.toContain('apc_1');
+    expect(JSON.stringify(result.detail)).not.toContain('123456');
     expect(result.completionArtifact).toEqual({
       artifactId: 'apc_1',
       path: '/api/approval-artifacts/apc_1/portal',

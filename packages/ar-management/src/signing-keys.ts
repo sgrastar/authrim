@@ -8,6 +8,7 @@
  * - POST /api/admin/signing-keys/vc/:kid/revoke - Revoke one VC issuer key by kid
  */
 
+import { requireAdminStepUp } from './admin-step-up-gate';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
@@ -87,6 +88,12 @@ export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }
   try {
     const tenantId = getTenantIdFromContext(c);
     // Perform normal rotation via per-tenant KeyManager DO
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'signing_key.rotate',
+      targetTenantId: tenantId,
+      params: { mode: 'normal' },
+    });
+    if (stepUpRefused) return stepUpRefused;
     const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
@@ -161,6 +168,12 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
 
     const tenantId = getTenantIdFromContext(c);
     // Execute emergency rotation via per-tenant KeyManager DO
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'signing_key.rotate',
+      targetTenantId: tenantId,
+      params: { mode: 'emergency', reason: body.reason },
+    });
+    if (stepUpRefused) return stepUpRefused;
     const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
@@ -237,6 +250,13 @@ export async function adminVcIssuerKeyRevokeHandler(c: Context<{ Bindings: Env }
     }
 
     const tenantId = getTenantIdFromContext(c);
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'signing_key.rotate',
+      targetTenantId: tenantId,
+      targetIds: [kid],
+      params: { mode: 'vc_issuer_revoke', reason },
+    });
+    if (stepUpRefused) return stepUpRefused;
     const keyManager = c.env.KEY_MANAGER.get(c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`));
     const result = await keyManager.revokeVcIssuerKeyRpc(kid, reason);
     if (!result.revoked) {

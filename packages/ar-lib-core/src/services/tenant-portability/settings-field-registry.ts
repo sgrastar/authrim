@@ -136,6 +136,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'boolean',
       'value',
       `
+    security.admin_step_up_enforced
     security.fapi_enabled
     security.fapi_strict_dpop
     security.fapi_allow_public_clients
@@ -511,6 +512,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'admin-notices',
+      'number',
+      'value',
+      `
+    admin-notices.retention_days
+  `,
+    ],
+    [
       'dcr',
       'boolean',
       'value',
@@ -536,6 +545,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     login-ui.theme
+    login-ui.template
+    login-ui.palette
     login-ui.theme_template
     login-ui.page_layout
     login-ui.font_family
@@ -548,6 +559,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.footer_style
     login-ui.logo_layout
     login-ui.split_frame
+    login-ui.form_frame
+    login-ui.brand_panel_logo_display
     login-ui.split_panel_side
     login-ui.split_panel_width
     login-ui.split_background_mode
@@ -563,6 +576,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     login-ui.published_version
     login-ui.login_panel_background_opacity
+    login-ui.background_image_opacity
+    login-ui.brand_panel_image_opacity
     login-ui.account_page_published_version
   `,
     ],
@@ -577,7 +592,9 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.title_color
     login-ui.text_color
     login-ui.copy_color
+    login-ui.form_area_color
     login-ui.brand_name
+    login-ui.header_name
     login-ui.brand_panel_title
     login-ui.brand_panel_text
     login-ui.supported_locales
@@ -615,6 +632,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.thumbnail_url
     login-ui.background_image_url
     login-ui.login_panel_background_image_url
+    login-ui.brand_panel_image_url
   `,
     ],
     [
@@ -631,6 +649,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     login-ui.show_english_language_names
+    login-ui.theme_fixed
     login-ui.header_enabled
     login-ui.subtitle_enabled
     login-ui.footer_enabled
@@ -986,6 +1005,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'url_or_asset',
       `
     security.dpop_nonce_resource_overrides
+  `,
+    ],
+    [
+      'security',
+      'json',
+      'structured',
+      `
+    security.admin_step_up_overrides
   `,
     ],
     [

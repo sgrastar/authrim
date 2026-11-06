@@ -139,14 +139,29 @@ export interface AuthenticationMethods {
 }
 
 export interface LoginUIConfig {
+	/** `auto` follows the visitor's system setting; `light` and `dark` are the tenant's default. */
 	theme: string;
+	/** When true the visitor cannot change the colour mode. Absent on older servers. */
+	themeFixed?: boolean;
+	/** @deprecated Derived server-side from `pageTemplate.palette` and `.template`. */
 	themeTemplate?: 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
 	branding: {
 		logoUrl: string | null;
 		faviconUrl?: string | null;
 		brandName: string;
+		/** Name shown in the page header; empty when none is set. */
+		headerName?: string;
 	};
 	pageTemplate?: {
+		/** Page structure. Absent on older servers, which send only `layout`. */
+		template?: 'standard' | 'split' | 'minimal';
+		/** Built-in colour and shape set. Absent on older servers. */
+		palette?: 'meridian' | 'classic' | 'glass' | 'flat';
+		formFrame?: 'card' | 'full';
+		/** Hex colour with an optional alpha channel; empty when none is set. */
+		formAreaColor?: string;
+		brandPanelLogoDisplay?: 'inherit' | 'auto' | 'image' | 'text' | 'hidden';
+		/** @deprecated Derived from `template`. */
 		layout: 'centered_card' | 'split_panel' | 'fullbleed_card';
 		fontFamily: 'system' | 'rounded' | 'serif' | 'mono';
 		fontScale: 'compact' | 'comfortable' | 'spacious';
@@ -169,6 +184,9 @@ export interface LoginUIConfig {
 			| 'bottom_left'
 			| 'bottom_center'
 			| 'bottom_right'
+			| 'form_bottom_left'
+			| 'form_bottom_center'
+			| 'form_bottom_right'
 			| 'hidden';
 		themeToggleEnabled?: boolean;
 		languageSelectEnabled?: boolean;
@@ -190,7 +208,12 @@ export interface LoginUIConfig {
 	};
 	appearance?: {
 		backgroundImageUrl: string | null;
+		/** Percentage, 0-100. */
+		backgroundImageOpacity?: number;
 		loginPanelBackgroundImageUrl?: string | null;
+		brandPanelImageUrl?: string | null;
+		/** Percentage, 0-100. */
+		brandPanelImageOpacity?: number;
 		thumbnailUrl?: string | null;
 		customCss: string | null;
 		headerText: string | null;

@@ -254,7 +254,8 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
           ip_address TEXT, user_agent TEXT, created_at INTEGER NOT NULL,
           expires_at INTEGER NOT NULL, last_activity_at INTEGER,
           mfa_verified INTEGER NOT NULL, mfa_verified_at INTEGER,
-          parent_session_id TEXT, derived_target_tenant_id TEXT
+          parent_session_id TEXT, derived_target_tenant_id TEXT,
+          passkey_verified_at INTEGER, passkey_credential_id TEXT
         );
         CREATE TABLE admin_users (
           id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
@@ -505,6 +506,7 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
           createdAt: 150,
           expiresAt: 1000,
           mfaVerifiedAt: 150,
+          passkeyCredentialId: 'credential-1',
         },
         audit: audit('agent.login_handoff.consumed', 'audit-consumed', 220),
       })
@@ -549,12 +551,20 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
         id: string;
         parent_session_id: string;
         derived_target_tenant_id: string;
-      }>('SELECT id, parent_session_id, derived_target_tenant_id FROM admin_sessions')
+        passkey_verified_at: number;
+        passkey_credential_id: string;
+      }>(
+        `SELECT id, parent_session_id, derived_target_tenant_id, passkey_verified_at,
+                passkey_credential_id FROM admin_sessions`
+      )
     ).toEqual([
       {
         id: 'target-session-1',
         parent_session_id: 'admin-session-secret',
         derived_target_tenant_id: 'tenant-1',
+        // The handoff session carries the source session's passkey evidence, not a new one.
+        passkey_verified_at: 150,
+        passkey_credential_id: 'credential-1',
       },
     ]);
   });

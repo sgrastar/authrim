@@ -127,12 +127,166 @@ export function hasCompleteLogArchiveState(input: {
   return true;
 }
 
+/** What Cloudflare said about a refused request. Only fixed labels, numbers and a redacted text. */
+export interface LogArchiveFailureDetail {
+  /** Which call failed, as a fixed label (never a path: paths hold resource ids). */
+  step: string;
+  /** Cloudflare's error codes and, when safe to show, their redacted messages. */
+  cloudflare: Array<{ code?: number; message?: string }>;
+}
+
+/**
+ * The fixed label of the call a path belongs to, so a refusal says which step Cloudflare refused
+ * (a token check, enabling the Catalog, creating the stream, ...) instead of one code for all.
+ */
+export function logArchiveStepLabel(path: string): string {
+  const bare = path.split('?')[0];
+  if (bare === 'tokens/verify') return 'token_verify';
+  if (bare === 'tokens/permission_groups') return 'token_permission_groups';
+  if (bare.startsWith('tokens/')) return 'token_policy_read';
+  if (bare.startsWith('basin-catalog/')) {
+    if (bare.endsWith('/enable')) return 'catalog_enable';
+    if (bare.endsWith('/disable')) return 'catalog_disable';
+    return bare.includes('/maintenance-configs') ? 'table_maintenance' : 'catalog_read';
+  }
+  const pipeline = /^pipelines\/v1\/(streams|sinks|pipelines)(?:\/|$)/u.exec(bare);
+  if (pipeline) return `pipeline_${pipeline[1].slice(0, -1)}`;
+  return 'cloudflare_api';
+}
+
+/**
+ * Everything but letters and digits is removed on both sides of the comparison, so a credential
+ * that something (a space, a dash, a dot) was put inside of is still found.
+ */
+const TEXT_SEPARATORS = /[^A-Za-z0-9]/gu;
+const TEXT_WHITESPACE = /\s+/gu;
+
+/**
+ * Whether a copy of the credential is in the text split by separators: more copies once the
+ * separators are ignored than copies that are whole. A credential with no letters or digits
+ * (symbols, another script) is compared with only its whitespace ignored.
+ */
+function hasSplitCopy(text: string, credential: string): boolean {
+  const strip = credential.replace(TEXT_SEPARATORS, '') ? TEXT_SEPARATORS : TEXT_WHITESPACE;
+  const bare = credential.replace(strip, '');
+  if (!bare) return false;
+  return text.replace(strip, '').split(bare).length > text.split(credential).length;
+}
+
+/** Longest Cloudflare message that is read at all; a longer one is dropped, the code is kept. */
+const MAX_CLOUDFLARE_TEXT_TO_SCAN = 1000;
+
+/**
+ * The steps whose Cloudflare text may be shown. Anything not listed here (the Pipeline sink, which
+ * carries a credential, and any step added later or not recognised) shows codes only: showing
+ * text is opted into, never the default.
+ */
+const STEPS_WITH_CLOUDFLARE_TEXT = new Set([
+  'token_verify',
+  'token_permission_groups',
+  'token_policy_read',
+  'catalog_read',
+  'catalog_enable',
+  'catalog_disable',
+  'table_maintenance',
+  'pipeline_stream',
+  'pipeline_pipeline',
+]);
+
+/**
+ * The credential values a request carries: its tokens and any secret-looking field of its body.
+ * Cloudflare's text is stripped of exactly these first, so a value is removed whatever its length
+ * or alphabet, then pattern redaction catches what the request did not carry.
+ */
+function credentialValues(tokens: readonly string[], body: unknown): string[] {
+  const values = new Set(tokens.filter((value) => value.length > 0));
+  const visit = (value: unknown, depth: number) => {
+    if (depth > 4 || typeof value !== 'object' || value === null) return;
+    for (const [key, child] of Object.entries(value)) {
+      if (typeof child === 'string' && /token|secret|password|credential|key/iu.test(key)) {
+        if (child.length > 0) values.add(child);
+      } else visit(child, depth + 1);
+    }
+  };
+  visit(body, 0);
+  return [...values].sort((left, right) => right.length - left.length);
+}
+
+/**
+ * A message Cloudflare returned, made safe to print: the request's own credentials, bearer
+ * values, JWT-shaped and token-like runs removed; one line; short.
+ */
+function redactCloudflareText(value: unknown, credentials: readonly string[]): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  // A text this long is not a diagnosis. It is left out whole rather than cut first (a cut could
+  // leave part of a credential) or scanned (the patterns below are quadratic on long runs).
+  if (value.length > MAX_CLOUDFLARE_TEXT_TO_SCAN) return undefined;
+  // Whitespace is collapsed first, so every later step reads the text as it will be printed. A
+  // message with control or format characters (zero-width ones included) is never a diagnosis.
+  const oneLine = value.replace(/\s+/gu, ' ').trim();
+  if (/[\p{Cc}\p{Cf}]/u.test(oneLine)) return undefined;
+  // A credential split by whitespace or any other separator would slip past an exact match. Each
+  // credential is checked on its own, before anything is replaced (a short credential replaced
+  // inside a longer one would hide the longer one); a split copy drops the message whole, even
+  // when another copy is whole.
+  if (credentials.some((credential) => hasSplitCopy(oneLine, credential))) return undefined;
+  let text = oneLine;
+  for (const credential of credentials) text = text.split(credential).join('[redacted]');
+  text = text
+    .replace(/\bBearer\s+\S+/giu, 'Bearer [redacted]')
+    .replace(/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, '[redacted]')
+    .replace(/[A-Za-z0-9+/=_-]{24,}/gu, '[redacted]');
+  // What is printed is checked once more: a replacement puts `[redacted]` between its neighbours,
+  // which can join them into a credential that was not in the text (`prefix` + `abc` + `suffix`
+  // around a short credential). Nothing that is left may contain one, whole or split.
+  if (credentials.some((credential) => text.includes(credential) || hasSplitCopy(text, credential)))
+    return undefined;
+  text = text.slice(0, 200).trim();
+  return text || undefined;
+}
+
+function cloudflareErrorsFrom(
+  step: string,
+  errors: unknown,
+  credentials: readonly string[]
+): LogArchiveFailureDetail['cloudflare'] {
+  if (!Array.isArray(errors)) return [];
+  const showText = STEPS_WITH_CLOUDFLARE_TEXT.has(step);
+  return errors.slice(0, 3).flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const { code, message } = entry as { code?: unknown; message?: unknown };
+    const text = showText ? redactCloudflareText(message, credentials) : undefined;
+    const safe = {
+      ...(typeof code === 'number' && Number.isFinite(code) ? { code } : {}),
+      ...(text ? { message: text } : {}),
+    };
+    return Object.keys(safe).length ? [safe] : [];
+  });
+}
+
+/** One line for logs and the CLI: which step, which HTTP status, what Cloudflare said. */
+export function formatLogArchiveFailure(status: number, detail: LogArchiveFailureDetail): string {
+  const said = detail.cloudflare
+    .map((entry) =>
+      [entry.code === undefined ? '' : `code ${entry.code}`, entry.message ?? '']
+        .filter(Boolean)
+        .join(': ')
+    )
+    .filter(Boolean)
+    .join('; ');
+  return `step ${detail.step}, HTTP ${status}${said ? `, Cloudflare: ${said}` : ''}`;
+}
+
 export class LogArchiveApiError extends Error {
+  /** The stable code; `message` also carries the detail, so match on `code`. */
+  readonly code: string;
   constructor(
     readonly status: number,
-    readonly code: string
+    code: string,
+    readonly detail?: LogArchiveFailureDetail
   ) {
-    super(code);
+    super(detail ? `${code} (${formatLogArchiveFailure(status, detail)})` : code);
+    this.code = code;
   }
 }
 
@@ -160,11 +314,17 @@ export class LogArchiveApi {
     if (response.status === 404)
       throw new LogArchiveApiError(404, 'log_archive_resource_not_found');
     if (response.status === 204 && response.ok) return undefined as T;
-    let payload: { success?: boolean; result?: T };
+    const step = logArchiveStepLabel(path);
+    let payload: { success?: boolean; result?: T; errors?: unknown };
     try {
-      payload = (await response.json()) as { success?: boolean; result?: T };
+      // A body that is not an object (`null`, a string) is an answer that proves nothing.
+      const parsed: unknown = await response.json();
+      payload = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as typeof payload;
     } catch {
-      throw new LogArchiveApiError(response.status, 'log_archive_cloudflare_response_invalid');
+      throw new LogArchiveApiError(response.status, 'log_archive_cloudflare_response_invalid', {
+        step,
+        cloudflare: [],
+      });
     }
     if (
       !response.ok ||
@@ -174,12 +334,21 @@ export class LogArchiveApi {
         !path.split('?')[0].endsWith('/disable') &&
         !path.split('?')[0].endsWith('/delete'))
     ) {
-      // Never interpolate the provider response: Sink errors can contain credentials.
+      // The provider's text is never passed on as it is: Sink errors can contain credentials. Only
+      // numeric codes and a redacted, short message of steps that carry no credential are kept.
       throw new LogArchiveApiError(
         response.status,
         response.status === 401 || response.status === 403
           ? 'log_archive_permission_or_subscription_required'
-          : 'log_archive_cloudflare_request_failed'
+          : 'log_archive_cloudflare_request_failed',
+        {
+          step,
+          cloudflare: cloudflareErrorsFrom(
+            step,
+            payload.errors,
+            credentialValues([this.token, token], body)
+          ),
+        }
       );
     }
     return payload.result as T;
@@ -264,39 +433,6 @@ export class LogArchiveApi {
       )
         throw new Error('log_archive_catalog_write_token_permission_missing');
     }
-  }
-
-  /**
-   * Billing is not readable with an OAuth login (401/403). That is reported as `unverifiable`
-   * rather than a refusal: Pipeline creation itself is rejected by Cloudflare without the plan,
-   * and the rejection is recorded so setup can resume.
-   */
-  async requireWorkersPaid(): Promise<'confirmed' | 'unverifiable'> {
-    let subscriptions: Array<{ rate_plan?: { id?: string }; state?: string }>;
-    try {
-      subscriptions = await this.request('subscriptions');
-    } catch (error) {
-      if (error instanceof LogArchiveApiError && (error.status === 401 || error.status === 403))
-        return 'unverifiable';
-      throw error;
-    }
-    const accepted = new Set([
-      'WORKERS_PAID',
-      'PARTNERS_WORKERS_ENT',
-      'PARTNERS_WORKERS_SS',
-      'PARTNERS_WORKERS_BASIC',
-    ]);
-    if (
-      !Array.isArray(subscriptions) ||
-      !subscriptions.some(
-        (subscription) =>
-          accepted.has(subscription.rate_plan?.id?.toUpperCase() ?? '') &&
-          ['paid', 'provisioned'].includes(subscription.state?.toLowerCase() ?? '')
-      )
-    ) {
-      throw new Error('log_archive_workers_paid_required');
-    }
-    return 'confirmed';
   }
 }
 
@@ -460,10 +596,6 @@ export async function preflightLogArchive(
       options.catalogSinkToken === options.catalogWriteToken
     )
       throw new Error('log_archive_distinct_sink_credential_required');
-    if ((await options.api.requireWorkersPaid()) === 'unverifiable')
-      options.onProgress?.(
-        'Workers Paid could not be confirmed with this login. Pipeline creation will fail if the account is not on Workers Paid.'
-      );
   }
   await options.api.verifyCatalogCredentials(
     options.catalogReadToken,

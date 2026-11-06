@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createRateLimiterStub } from './rate-limiter-stub';
 import app from '../index';
 import { createPolicyRuntimeEnv } from './helpers/runtime-env';
 
@@ -38,6 +39,7 @@ const createMockEnv = () =>
         })),
       },
       CODE_VERSION_UUID: '',
+      RATE_LIMITER: createRateLimiterStub(),
       CHECK_CACHE_KV: {
         get: vi.fn(() => Promise.resolve(null)),
         put: vi.fn(() => Promise.resolve()),

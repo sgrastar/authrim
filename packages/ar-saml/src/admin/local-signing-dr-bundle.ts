@@ -1,3 +1,4 @@
+import { assertImportableSigningKey } from '@authrim/ar-lib-core';
 import type { Env, SAMLSigningKeyPolicy, SAMLSigningRole } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import {
@@ -155,7 +156,8 @@ export async function buildEncryptedSAMLLocalSigningSecretDRBundle(
 export async function restoreSAMLLocalSigningSecretDRBundle(
   env: Env,
   tenantId: string,
-  input: unknown
+  input: unknown,
+  beforeApply?: () => Promise<void>
 ): Promise<{ importedKeys: number; restoredRoles: string[] }> {
   const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML local signing DR bundle tenant');
   const bundle = runSAMLDRBundleSyncStage('validate_bundle', () =>
@@ -171,10 +173,35 @@ export async function restoreSAMLLocalSigningSecretDRBundle(
   runSAMLDRBundleSyncStage('validate_bundle', () =>
     validateRestoredSigningKeyPolicies(bundle, resolvedTenantId)
   );
+  // Every key, not only the ones a policy names: its tenant, that it is a usable key pair, and that
+  // the bundle does not carry two different keys under one key manager and kid (the second
+  // import would fail after the first was written).
+  await runSAMLDRBundleStage('validate_bundle', async () => {
+    const seen = new Map<string, string>();
+    for (const key of bundle.keys) {
+      const slot = `${key.keyRef}\u0000${key.kid}`;
+      const material = seen.get(slot);
+      if (material !== undefined && material !== key.privateKeyPem) {
+        throw new Error(
+          'SAML DR bundle carries two different keys with the same key reference and kid'
+        );
+      }
+      seen.set(slot, key.privateKeyPem);
+      assertSAMLKeyRefTenantBound(key.keyRef, resolvedTenantId);
+      await assertImportableSigningKey({
+        kid: key.kid,
+        publicJWK: key.publicJWK,
+        privatePEM: key.privateKeyPem,
+        certificatePEM: key.certificate,
+      });
+    }
+  });
+
+  // The bundle is valid: the last point to refuse before any key or setting is written.
+  await beforeApply?.();
 
   await runSAMLDRBundleStage('import_signing_keys', async () => {
     for (const key of bundle.keys) {
-      assertSAMLKeyRefTenantBound(key.keyRef, resolvedTenantId);
       await importSigningKeyWithPrivateMaterial(env, resolvedTenantId, key);
     }
   });
@@ -236,7 +263,8 @@ export async function restoreEncryptedSAMLLocalSigningSecretDRBundle(
   env: Env,
   tenantId: string,
   input: unknown,
-  passphrase: unknown
+  passphrase: unknown,
+  beforeApply?: () => Promise<void>
 ): Promise<{ importedKeys: number; restoredRoles: string[] }> {
   const normalizedPassphrase = runSAMLDRBundleSyncStage('validate_passphrase', () =>
     normalizeDRBundlePassphrase(passphrase)
@@ -244,7 +272,7 @@ export async function restoreEncryptedSAMLLocalSigningSecretDRBundle(
   const bundle = await runSAMLDRBundleStage('decrypt_bundle', () =>
     decryptSAMLLocalSigningSecretDRBundle(input, normalizedPassphrase)
   );
-  return restoreSAMLLocalSigningSecretDRBundle(env, tenantId, bundle);
+  return restoreSAMLLocalSigningSecretDRBundle(env, tenantId, bundle, beforeApply);
 }
 
 async function encryptSAMLLocalSigningSecretDRBundle(

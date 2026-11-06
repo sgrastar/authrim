@@ -14,9 +14,10 @@ const FALLBACK_REVISION = '0';
  * whenever the response gains, loses or changes a field.
  *
  * 1: the methods and the UI config; 2: `humanVerification` carries `required`, `requiredFor`,
- * `available` and `reason`.
+ * `available` and `reason`; 3: the UI config gains the template, palette and theme parity fields
+ * (`template`, `palette`, `themeFixed`, `formAreaColor`, `formFrame`, `headerName`, ...).
  */
-export const AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION = 2;
+export const AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION = 3;
 
 type SettingsEnv = Pick<Env, 'SETTINGS'>;
 

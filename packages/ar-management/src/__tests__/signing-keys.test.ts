@@ -8,6 +8,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const stepUp = vi.hoisted(() => ({ gate: vi.fn(async (): Promise<Response | null> => null) }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: stepUp.gate,
+  refuseAdminFreshAuth: vi.fn(),
+}));
 import { Hono } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
@@ -576,6 +582,83 @@ describe('Signing Keys Admin API', () => {
       expect(keyManager.getStatusRpc).toHaveBeenCalled();
     });
   });
+  describe('admin step-up on rotation', () => {
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    const post = (path: string, body: unknown, env: Env) =>
+      createTestApp().fetch(
+        new Request(`http://localhost/api/admin/signing-keys/${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+        env
+      );
+
+    it('rotates only after the gate lets the request through', async () => {
+      const env = createMockEnv();
+      const response = await post('rotate', {}, env);
+
+      expect(response.status).toBe(200);
+      expect(stepUp.gate).toHaveBeenCalledTimes(1);
+      expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'signing_key.rotate',
+        targetTenantId: 'default',
+        params: { mode: 'normal' },
+      });
+    });
+
+    it('does not rotate when step-up is refused', async () => {
+      stepUp.gate.mockResolvedValueOnce(refusal());
+      const env = createMockEnv();
+      const response = await post('rotate', {}, env);
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'step_up_required' });
+      expect(env.KEY_MANAGER.get).not.toHaveBeenCalled();
+    });
+
+    it('binds the emergency rotation to its reason', async () => {
+      const env = createMockEnv();
+      const response = await post(
+        'emergency-rotate',
+        { reason: 'Key compromise detected in audit' },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'signing_key.rotate',
+        targetTenantId: 'default',
+        params: { mode: 'emergency', reason: 'Key compromise detected in audit' },
+      });
+    });
+
+    it('does not run an emergency rotation when step-up is refused', async () => {
+      stepUp.gate.mockResolvedValueOnce(refusal());
+      const env = createMockEnv();
+      const response = await post(
+        'emergency-rotate',
+        { reason: 'Key compromise detected in audit' },
+        env
+      );
+
+      expect(response.status).toBe(403);
+      expect(env.KEY_MANAGER.get).not.toHaveBeenCalled();
+    });
+
+    it('does not spend a receipt on an emergency rotation without a valid reason', async () => {
+      const env = createMockEnv();
+      const response = await post('emergency-rotate', { reason: 'short' }, env);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('POST /api/admin/signing-keys/vc/:kid/revoke', () => {
@@ -605,6 +688,7 @@ describe('POST /api/admin/signing-keys/vc/:kid/revoke', () => {
   }
 
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -649,5 +733,34 @@ describe('POST /api/admin/signing-keys/vc/:kid/revoke', () => {
 
     expect(response.status).toBe(400);
     expect(revokeVcIssuerKeyRpc).not.toHaveBeenCalled();
+    expect(stepUp.gate).not.toHaveBeenCalled();
+  });
+
+  it('binds the step-up to the kid and the reason', async () => {
+    const { app, env } = createRevokeApp({ revoked: true });
+    await app.fetch(revokeRequest('vc-key-1', { reason: 'Leaked in a support bundle' }), env);
+
+    expect(stepUp.gate).toHaveBeenCalledTimes(1);
+    expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+      operation: 'signing_key.rotate',
+      targetTenantId: 'default',
+      targetIds: ['vc-key-1'],
+      params: { mode: 'vc_issuer_revoke', reason: 'Leaked in a support bundle' },
+    });
+  });
+
+  it('does not revoke when step-up is refused', async () => {
+    stepUp.gate.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+    );
+    const { app, env, revokeVcIssuerKeyRpc } = createRevokeApp({ revoked: true });
+    const response = await app.fetch(
+      revokeRequest('vc-key-1', { reason: 'Leaked in a support bundle' }),
+      env
+    );
+
+    expect(response.status).toBe(403);
+    expect(revokeVcIssuerKeyRpc).not.toHaveBeenCalled();
+    expect(audit.write).not.toHaveBeenCalled();
   });
 });

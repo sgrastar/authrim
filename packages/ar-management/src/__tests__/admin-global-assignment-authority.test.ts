@@ -1,7 +1,13 @@
 import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
 
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// These tests are about other behaviour: the step-up gate (tested on its own) lets the request through.
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: vi.fn(async () => null),
+  refuseAdminFreshAuth: vi.fn(),
+}));
 import { Hono } from 'hono';
 import { adminAuthMiddleware, type DatabaseAdapter, type Env } from '@authrim/ar-lib-core';
 import { adminRolesRouter } from '../routes/admin-management/admin-roles';

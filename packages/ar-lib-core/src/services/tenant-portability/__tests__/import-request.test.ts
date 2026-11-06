@@ -375,6 +375,43 @@ it('binds one accepted content key to each input before starting a multi-bundle 
   const challengeA = await accept('upload-a', 'first durable import password');
   const challengeB = await accept('upload-b', 'second durable import password');
   const requests = new TenantBackupRequestStore(database);
+  // The read-only pre-check agrees with the write, before anything is changed.
+  const startable = (challenges: { inputId: string; challengeId: string }[], revision = 0) =>
+    requests.importStartable({
+      tenantId: 'tenant-a',
+      operationId: 'operation-a',
+      actorId: 'admin',
+      revision,
+      now: 203,
+      challenges,
+    });
+  expect(
+    await startable([
+      { inputId: 'upload-a', challengeId: challengeB },
+      { inputId: 'upload-b', challengeId: challengeA },
+    ])
+  ).toBe(false);
+  expect(await startable([{ inputId: 'upload-a', challengeId: challengeA }])).toBe(false);
+  expect(
+    await startable(
+      [
+        { inputId: 'upload-a', challengeId: challengeA },
+        { inputId: 'upload-b', challengeId: challengeB },
+      ],
+      1
+    )
+  ).toBe(false);
+  expect(
+    await startable([
+      { inputId: 'upload-a', challengeId: challengeA },
+      { inputId: 'upload-b', challengeId: challengeB },
+    ])
+  ).toBe(true);
+  expect(
+    sqlite
+      .prepare("SELECT state, revision FROM tenant_backup_operations WHERE id='operation-a'")
+      .get()
+  ).toMatchObject({ state: 'waiting', revision: 0 });
   expect(
     await requests.startImport({
       tenantId: 'tenant-a',

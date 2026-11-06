@@ -51,11 +51,13 @@ import {
 import { sanitizeColor } from '#lib/utils/url-validation.js';
 import { getPlatformEnv } from '#lib/server/platform-env.js';
 import {
+	buildFirstPaintThemeScript,
 	LOGIN_UI_THEME_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
 	normalizeLoginUIThemeMode,
 	resolveLoginUIThemeBackground
 } from '#lib/theme-bootstrap.js';
+import { readPalette } from '#lib/palettes.js';
 
 type ContentSecurityPolicyHumanVerificationProvider = HumanVerificationProvider | 'all';
 
@@ -598,11 +600,17 @@ export function shouldBootstrapLoginUIThemeForRequest(
 export function resolveInitialLoginUIAppearance(
 	authenticationMethods: AuthenticationMethodsResponse | null | undefined,
 	themeHint?: { theme?: string | null }
-): { background: string; colorScheme: 'light' | 'dark' | 'light dark' } {
+): {
+	background: string;
+	colorScheme: 'light' | 'dark' | 'light dark';
+	/** Set when the mode is not known yet (`auto`, no hint): the dark first-frame colour for the script. */
+	darkBackground?: string;
+} {
 	const ui = authenticationMethods?.ui;
 	const configuredBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
 	// The page background of the theme template in the mode the page opens in.
-	const template = ui?.themeTemplate;
+	// The palette names the colours; `themeTemplate` is its pre-palette name, kept for old servers.
+	const template = readPalette(ui?.pageTemplate?.palette) ?? ui?.themeTemplate;
 	const theme = ui?.theme?.trim().toLowerCase();
 	if (theme === 'dark') {
 		return {
@@ -611,10 +619,20 @@ export function resolveInitialLoginUIAppearance(
 		};
 	}
 	if (theme === 'auto') {
-		return {
-			background: resolveLoginUIThemeBackground('light', template, configuredBackground),
-			colorScheme: 'light dark'
-		};
+		// A tenant that names no mode opens in the mode the visitor's last page resolved to (`auto`
+		// cannot be fixed, so the hint is always the visitor's to give). With no hint the page
+		// opens light and takes the system's colour scheme.
+		const hinted = normalizeLoginUIThemeMode(themeHint?.theme);
+		return hinted
+			? {
+					background: resolveLoginUIThemeBackground(hinted, template, configuredBackground),
+					colorScheme: hinted
+				}
+			: {
+					background: resolveLoginUIThemeBackground('light', template, configuredBackground),
+					colorScheme: 'light dark',
+					darkBackground: resolveLoginUIThemeBackground('dark', template, configuredBackground)
+				};
 	}
 	if (theme === 'light') {
 		return {
@@ -1266,6 +1284,12 @@ export const localeHandle: Handle = async ({ event, resolve }) => {
 					.replace('__AUTHRIM_DOCUMENT_DIRECTION__', toDocumentDirection(locale))
 					.replaceAll('__AUTHRIM_INITIAL_BACKGROUND__', initialAppearance.background)
 					.replaceAll('__AUTHRIM_INITIAL_COLOR_SCHEME__', initialAppearance.colorScheme)
+					.replace(
+						'__AUTHRIM_THEME_FIRST_PAINT__',
+						initialAppearance.darkBackground !== undefined
+							? buildFirstPaintThemeScript(initialAppearance.darkBackground)
+							: ''
+					)
 		});
 	};
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AdminPasskeyRepository } from '../admin/admin-passkey';
+import { AdminPasskeyNotFirstError, AdminPasskeyRepository } from '../admin/admin-passkey';
 import type { DatabaseAdapter, ExecuteResult, TransactionContext } from '../../db/adapter';
 
 function createAdapter(rowsAffected: number): DatabaseAdapter & {
@@ -34,6 +34,33 @@ describe('AdminPasskeyRepository', () => {
       'passkey-a',
     ]);
     expect(adapter.execute.mock.calls[0][0]).toContain('id <> ?');
+  });
+
+  it('inserts a first passkey only while the admin has none', async () => {
+    const adapter = createAdapter(1);
+    const repository = new AdminPasskeyRepository(adapter);
+    const input = { admin_user_id: 'admin-user-a', credential_id: 'cred-a', public_key: 'pk' };
+
+    await repository.createPasskey(input, { onlyIfFirst: true });
+
+    const [sql, params] = adapter.execute.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('NOT EXISTS (SELECT 1 FROM admin_passkeys WHERE admin_user_id = ?)');
+    expect(params.at(-1)).toBe('admin-user-a');
+  });
+
+  it('reports a first-passkey insert that lost to another registration', async () => {
+    const adapter = createAdapter(0);
+    (adapter.query as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'passkey-b', admin_user_id: 'admin-user-a', credential_id: 'cred-b' },
+    ]);
+    const repository = new AdminPasskeyRepository(adapter);
+
+    await expect(
+      repository.createPasskey(
+        { admin_user_id: 'admin-user-a', credential_id: 'cred-a', public_key: 'pk' },
+        { onlyIfFirst: true }
+      )
+    ).rejects.toBeInstanceOf(AdminPasskeyNotFirstError);
   });
 
   it('returns false when the conditional delete affects no rows', async () => {

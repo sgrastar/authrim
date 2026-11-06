@@ -48,7 +48,9 @@ import {
 import {
   checkRateLimit,
   addRateLimitHeaders,
+  RateLimiterUnavailableError,
   type RateLimitContext,
+  type RateLimitResult,
 } from '../middleware/rate-limit';
 import { createPolicyReBACService, getPolicyCoreAdapter } from '../rebac-storage-adapter';
 import { resolveTenantPolicy } from '../tenant-policy';
@@ -152,6 +154,28 @@ async function isCheckApiEnabled(env: Env): Promise<boolean> {
 /** The most checks in one batch request (see readCheckApiSettings). */
 async function getBatchSizeLimit(env: Env): Promise<number> {
   return (await readCheckApiSettings(env)).batchSizeLimit;
+}
+
+/** The rate limit, or a 503 when the atomic limiter is unavailable (fail closed). */
+async function checkRateLimitOrUnavailable(
+  auth: Parameters<typeof checkRateLimit>[0],
+  ctx: RateLimitContext
+): Promise<RateLimitResult | Response> {
+  try {
+    return await checkRateLimit(auth, ctx);
+  } catch (error) {
+    if (!(error instanceof RateLimiterUnavailableError)) throw error;
+    return new Response(
+      JSON.stringify({
+        error: 'temporarily_unavailable',
+        error_description: 'The service is temporarily unavailable. Please try again later.',
+      }),
+      {
+        status: 503,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      }
+    );
+  }
 }
 
 /**
@@ -308,9 +332,12 @@ checkRoutes.post('/', async (c) => {
 
   // Check rate limit
   const rateLimitCtx: RateLimitContext = {
-    cache: c.env.CHECK_CACHE_KV,
+    limiter: c.env.RATE_LIMITER,
   };
-  const rateLimitResult = await checkRateLimit(auth, rateLimitCtx);
+  const rateLimitResult = await checkRateLimitOrUnavailable(auth, rateLimitCtx);
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult;
+  }
 
   // Add rate limit headers to response
   const responseHeaders = new Headers();
@@ -482,9 +509,12 @@ checkRoutes.post('/batch', async (c) => {
 
   // Check rate limit
   const rateLimitCtx: RateLimitContext = {
-    cache: c.env.CHECK_CACHE_KV,
+    limiter: c.env.RATE_LIMITER,
   };
-  const rateLimitResult = await checkRateLimit(auth, rateLimitCtx);
+  const rateLimitResult = await checkRateLimitOrUnavailable(auth, rateLimitCtx);
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult;
+  }
 
   // Add rate limit headers to response
   const responseHeaders = new Headers();

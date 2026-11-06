@@ -4,6 +4,7 @@ import {
   ElevationGrantRepository,
   getTenantIdFromContext,
   hasAdminPermission,
+  isElevationGrantBindingIntact,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from './admin-shared';
@@ -97,9 +98,11 @@ function matchesScope(
     return false;
   }
 
+  // The requested ids are the names of one resource (its id, artifact id, catalog id), so any of
+  // them will do. A grant that names no resource opens none, not all.
   const requestedIds = normalizeIds(requirement.resourceIds);
-  if (requestedIds.length > 0 && scope.resource_ids?.length) {
-    const allowedIds = new Set(scope.resource_ids);
+  if (requestedIds.length > 0) {
+    const allowedIds = new Set(normalizeIds(scope.resource_ids));
     if (!requestedIds.some((value) => allowedIds.has(value))) {
       return false;
     }
@@ -163,7 +166,10 @@ async function findMatchingGrant(
     if (grant.expires_at <= Date.now() || grant.revoked_at) {
       return null;
     }
-    return matchesScope(grant, requirement, tenantId) ? grant : null;
+    return matchesScope(grant, requirement, tenantId) &&
+      (await isElevationGrantBindingIntact(adapter, grant))
+      ? grant
+      : null;
   }
 
   const candidates = await grantRepo.listActiveElevationGrants({
@@ -175,9 +181,16 @@ async function findMatchingGrant(
     now: Date.now(),
   });
 
-  return (
-    candidates.find((grant: ElevationGrant) => matchesScope(grant, requirement, tenantId)) ?? null
-  );
+  // A grant issued before its scope had to match its approvers is checked again here.
+  for (const grant of candidates) {
+    if (
+      matchesScope(grant, requirement, tenantId) &&
+      (await isElevationGrantBindingIntact(adapter, grant))
+    ) {
+      return grant;
+    }
+  }
+  return null;
 }
 
 export async function requireAdminPermissionOrElevationGrant(

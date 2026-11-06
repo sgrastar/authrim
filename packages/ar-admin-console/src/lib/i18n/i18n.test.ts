@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { tIn } from './i18n.svelte';
 import { ar } from './messages/ar';
 import { de } from './messages/de';
 import { en } from './messages/en';
@@ -31,5 +32,11 @@ describe('message catalogs', () => {
 				expect(value).not.toMatch(/<[a-z/]/i);
 			}
 		}
+	});
+
+	it('translates into a given locale regardless of the console language', () => {
+		expect(tIn('ja', 'th.screen.signIn')).toBe(ja['th.screen.signIn']);
+		expect(tIn('en', 'th.screen.signIn')).toBe(en['th.screen.signIn']);
+		expect(tIn('ja', 'th.screen.signIn')).not.toBe(tIn('en', 'th.screen.signIn'));
 	});
 });

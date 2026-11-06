@@ -35,6 +35,8 @@ import {
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
+import { sendAdminEmailChangeNotices } from './admin-email-change-notice';
 import {
   endedRevoked,
   listRevocableAdminCredentialIds,
@@ -503,6 +505,29 @@ adminUsersRouter.patch('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
+    // A new email address redirects the account's notices (recovery requests among them), so it
+    // is checked, must be free in the tenant, and needs L2 below.
+    let newEmail: string | undefined;
+    if (body.email !== undefined) {
+      const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+      }
+      if (email !== existing.email.toLowerCase()) {
+        const taken = await adapter.queryOne<{ id: string }>(
+          'SELECT id FROM admin_users WHERE tenant_id = ? AND email = ? AND id <> ?',
+          [tenantId, email, id]
+        );
+        if (taken) {
+          return c.json(
+            { error: 'email_in_use', error_description: 'Another admin account uses this address' },
+            409
+          );
+        }
+        newEmail = email;
+      }
+    }
+
     // Making an account unable to sign in is held to the same protections as the suspend route.
     const suspending = body.status === 'suspended' && existing.status === 'active';
     if (suspending) {
@@ -523,11 +548,22 @@ adminUsersRouter.patch('/:id', async (c) => {
       }
     }
 
+    // The receipt is spent here, after every check that can still refuse the request.
+    if (newEmail !== undefined) {
+      const stepUpRefused = await requireAdminStepUp(c as never, {
+        operation: 'admin.email.update',
+        targetTenantId: tenantId,
+        targetIds: [id],
+        params: { email: newEmail },
+      });
+      if (stepUpRefused) return stepUpRefused;
+    }
+
     const user = await userRepo.updateAdminUser(
       id,
       {
         name: body.name,
-        email: body.email?.toLowerCase(),
+        email: newEmail,
         status: body.status,
         mfa_enabled: body.mfa_enabled,
       },
@@ -544,6 +580,21 @@ adminUsersRouter.patch('/:id', async (c) => {
     await createAuditLog(c, 'admin_user.update', id, 'success', {
       changes: body,
     });
+
+    // The old address hears about the change (and the new one), after it took effect.
+    if (newEmail !== undefined) {
+      try {
+        await sendAdminEmailChangeNotices(c.env, {
+          tenantId,
+          adminUserId: id,
+          previousEmail: existing.email,
+          newEmail,
+          changedBy: authContext.userId,
+        });
+      } catch {
+        // The change stands; its notices are best effort.
+      }
+    }
 
     return c.json(sanitizeAdminUser(user));
   } catch (error) {
@@ -738,6 +789,17 @@ adminUsersRouter.post('/:id/wallet-credentials/revoke', async (c) => {
     );
     if (authorityResponse) {
       return authorityResponse;
+    }
+
+    // The receipt is spent here, after every check that can still refuse the request.
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'admin_credential.revoke',
+      targetTenantId: tenantId,
+      targetIds: [id],
+      params: { scope: 'wallet_credentials' },
+    });
+    if (stepUpRefused) {
+      return stepUpRefused;
     }
 
     const coreAdapter = createAuthContextFromHono(
@@ -975,6 +1037,20 @@ adminUsersRouter.post('/:id/roles', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
+    // Validated and not a duplicate: the receipt is spent here, right before the grant.
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'admin.role.grant',
+      targetTenantId: tenantId,
+      targetIds: [id, body.role_id],
+      params: {
+        role: body.role_id,
+        scope_type: normalizedScope.scopeType,
+        scope_id: normalizedScope.scopeId ?? null,
+        expires_at: body.expires_at ?? null,
+      },
+    });
+    if (stepUpRefused) return stepUpRefused;
+
     // Create assignment
     const assignment = await roleAssignmentRepo.assignRole({
       tenant_id: tenantId,
@@ -1057,6 +1133,19 @@ adminUsersRouter.delete('/:id/role-assignments/:assignmentId', async (c) => {
     if (tenantAdminRefusal) {
       return tenantAdminRefusal;
     }
+
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'admin.role.revoke',
+      targetTenantId: tenantId,
+      targetIds: [id, role.id],
+      params: {
+        role: role.id,
+        assignment_id: assignmentId,
+        scope_type: assignment.scope_type,
+        scope_id: assignment.scope_id ?? null,
+      },
+    });
+    if (stepUpRefused) return stepUpRefused;
 
     const removed = await roleAssignmentRepo.removeAssignmentById(
       assignmentId,
@@ -1160,6 +1249,18 @@ adminUsersRouter.delete('/:id/roles/:roleId', async (c) => {
         return tenantAdminRefusal;
       }
     }
+
+    if (held.length === 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'admin.role.revoke',
+      targetTenantId: tenantId,
+      targetIds: [id, roleId],
+      params: { role: roleId },
+    });
+    if (stepUpRefused) return stepUpRefused;
 
     const removed = await roleAssignmentRepo.removeAssignment(
       id,

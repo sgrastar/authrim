@@ -468,6 +468,7 @@ place('customization/branding', 'Brand', {
 	primary: [
 		'tenant.logo_uri',
 		'login-ui.brand_name',
+		'login-ui.header_name',
 		'login-ui.logo_url',
 		'login-ui.logo_display',
 		'login-ui.favicon_url'
@@ -477,6 +478,9 @@ place('customization/branding', 'Brand', {
 place('customization/login-ui', 'Theme', {
 	primary: [
 		'login-ui.theme',
+		'login-ui.theme_fixed',
+		'login-ui.template',
+		'login-ui.palette',
 		'login-ui.theme_template',
 		'login-ui.page_layout',
 		'login-ui.font_family',
@@ -490,7 +494,8 @@ place('customization/login-ui', 'Colours', {
 		'login-ui.accent_color',
 		'login-ui.title_color',
 		'login-ui.text_color',
-		'login-ui.copy_color'
+		'login-ui.copy_color',
+		'login-ui.form_area_color'
 	]
 });
 place('customization/login-ui', 'Layout', {
@@ -507,7 +512,9 @@ place('customization/login-ui', 'Layout', {
 		'login-ui.header_style',
 		'login-ui.footer_style',
 		'login-ui.logo_layout',
-		'login-ui.background_image_url'
+		'login-ui.form_frame',
+		'login-ui.background_image_url',
+		'login-ui.background_image_opacity'
 	]
 });
 place('customization/login-ui', 'Split layout', {
@@ -522,7 +529,10 @@ place('customization/login-ui', 'Split layout', {
 		'login-ui.login_panel_background_image_url',
 		'login-ui.brand_content_mode',
 		'login-ui.brand_position',
-		'login-ui.brand_align'
+		'login-ui.brand_align',
+		'login-ui.brand_panel_logo_display',
+		'login-ui.brand_panel_image_url',
+		'login-ui.brand_panel_image_opacity'
 	]
 });
 place('customization/login-ui', 'Text', {
@@ -616,6 +626,9 @@ place('monitoring/log-settings', 'Permission check logs', {
 place('monitoring/log-settings', 'Log storage', {
 	primary: ['log-storage.d1_retention_days']
 });
+place('monitoring/log-settings', 'Console notices', {
+	advanced: ['admin-notices.retention_days']
+});
 place(
 	'monitoring/destinations',
 	'Backups',
@@ -689,7 +702,11 @@ place('authentication/staying-signed-in', 'Logout channels and webhook', {
 	]
 });
 place('settings/team', 'Admin sign-in', {
-	advanced: ['session.ttl.admin_passkey']
+	advanced: [
+		'session.ttl.admin_passkey',
+		'security.admin_step_up_overrides',
+		'security.admin_step_up_enforced'
+	]
 });
 
 // ---------------------------------------------------------------------------------------------

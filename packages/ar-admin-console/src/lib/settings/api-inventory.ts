@@ -594,6 +594,22 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		note: 'Platform plugins (…/platform/plugins) are the same page in platform scope.'
 	},
 	{
+		id: 'notices',
+		name: 'Header notices and announcements',
+		kind: 'records',
+		page: 'integrations/notifications',
+		paths: [`${A}/notices`],
+		note: 'What the header’s notification area reads: open notices for the signed-in admin, dismissed (information) or resolved (the rest), and announcements admins publish.'
+	},
+	{
+		id: 'notice-channels',
+		name: 'Slack channels for notices',
+		kind: 'records',
+		page: 'integrations/notifications',
+		paths: [`${A}/notice-channels`],
+		note: 'Incoming Webhook channels that receive notices; the webhook URL is write-only and never returned.'
+	},
+	{
 		id: 'notifications',
 		name: 'Notification center and delivery routes',
 		kind: 'records',
@@ -675,6 +691,13 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'settings/team',
 		paths: [`${A}/admin-invitations`]
+	},
+	{
+		id: 'admin-second-factor-recoveries',
+		name: 'Admin security key recoveries',
+		kind: 'records',
+		page: 'settings/team',
+		paths: [`${A}/admin-second-factor-recoveries`]
 	},
 
 	// -------------------------------------------------------------------------------------------

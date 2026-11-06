@@ -17,7 +17,10 @@ const mocks = vi.hoisted(() => ({
   seedBuiltinProfileClaimSchemas: vi.fn(),
   rollback: vi.fn(),
   logger: { error: vi.fn() },
+  stepUp: vi.fn(async (): Promise<Response | null> => null),
 }));
+
+vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: mocks.stepUp }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -722,6 +725,111 @@ describe('admin tenant clone', () => {
       ['a set whose owner cannot be looked up', { 'set-source': new Error('d1 unavailable') }],
     ])('does not copy a default that names %s', async (_name, owners) => {
       expect(JSON.parse((await cloneWith('set-source', owners))!)).toEqual({});
+    });
+  });
+
+  it('the source snapshot changes when a copied admin assignment changes what it grants', async () => {
+    const snapshotOf = async (expiresAt: number | null) => {
+      mocks.beginProvisioning.mockClear();
+      mocks.admin.query.mockImplementation(async (sql: string) =>
+        String(sql).includes('FROM admin_role_assignments')
+          ? [
+              {
+                id: 'a1',
+                admin_user_id: 'u1',
+                admin_role_id: 'r1',
+                scope_type: 'tenant',
+                scope_id: null,
+                expires_at: expiresAt,
+              },
+            ]
+          : []
+      );
+      await publicAdminTenantCloneHandler(
+        context(
+          {
+            id: 'destination',
+            name: 'Destination',
+            copy: { settings: false, roles: false, admin_access: true },
+          },
+          { SETTINGS: kvNamespace(), AUTHRIM_CONFIG: kvNamespace(), ENVIRONMENT: 'test' }
+        )
+      );
+      return (
+        mocks.beginProvisioning.mock.calls[0] as [
+          unknown,
+          { preparationPayload: { source_snapshot: { database_version: string } } },
+        ]
+      )[1].preparationPayload.source_snapshot.database_version;
+    };
+    const timeLimited = await snapshotOf(4_102_444_800_000);
+    const permanent = await snapshotOf(null);
+    expect(timeLimited).not.toBe(permanent);
+    mocks.admin.query.mockReset();
+    mocks.admin.query.mockResolvedValue([]);
+  });
+
+  describe('admin step-up', () => {
+    const start = (copy: Record<string, unknown>) =>
+      publicAdminTenantCloneHandler(
+        context(
+          { id: 'destination', name: 'Destination', copy },
+          { SETTINGS: kvNamespace(), AUTHRIM_CONFIG: kvNamespace(), ENVIRONMENT: 'test' }
+        )
+      );
+
+    beforeEach(() => {
+      mocks.stepUp.mockReset();
+      mocks.stepUp.mockResolvedValue(null);
+    });
+
+    it('copying admin access is a role grant: refused without step-up, nothing provisioned', async () => {
+      mocks.stepUp.mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+      );
+      const response = await start({ settings: false, roles: false, admin_access: true });
+
+      expect(response.status).toBe(403);
+      expect(mocks.beginProvisioning).not.toHaveBeenCalled();
+      expect(mocks.stepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          operation: 'admin.role.grant',
+          targetIds: ['destination'],
+          params: expect.objectContaining({
+            kind: 'tenant.clone',
+            source_tenant_id: 'source',
+            copy: expect.objectContaining({ admin_access: true }) as unknown,
+            source_snapshot: expect.objectContaining({ tenant_updated_at: 1 }) as unknown,
+          }) as unknown,
+        })
+      );
+    });
+
+    it('copying webhooks is gated as a webhook destination change', async () => {
+      expect((await start({ settings: false, roles: false, webhooks: true })).status).toBe(202);
+      expect(mocks.stepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ operation: 'webhook.destination.update' })
+      );
+    });
+
+    it('a clone that needs both step-ups is refused before either', async () => {
+      const response = await start({
+        settings: false,
+        roles: false,
+        admin_access: true,
+        webhooks: true,
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'step_up_separate_operations' });
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+      expect(mocks.beginProvisioning).not.toHaveBeenCalled();
+    });
+
+    it('a clone without admin access or webhooks is not gated', async () => {
+      expect((await start({ settings: false, roles: false })).status).toBe(202);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
     });
   });
 
@@ -1948,6 +2056,8 @@ describe('admin tenant clone', () => {
   });
 
   it('cleans partially copied Admin access when its copy step fails', async () => {
+    // The first read is the source snapshot's digest of the assignments.
+    mocks.admin.query.mockResolvedValueOnce([]);
     mocks.admin.query.mockResolvedValueOnce([
       {
         id: 'custom-admin',

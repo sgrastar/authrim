@@ -251,6 +251,10 @@ export interface AdminSession {
   mfa_verified: boolean;
   /** When MFA was verified (Unix milliseconds) */
   mfa_verified_at: number | null;
+  /** When the session last verified a passkey with user verification (Unix milliseconds) */
+  passkey_verified_at: number | null;
+  /** Credential ID (base64url) of that passkey */
+  passkey_credential_id: string | null;
 }
 
 /**
@@ -265,6 +269,8 @@ export interface AdminSessionCreateInput {
   user_agent?: string;
   expires_at: number;
   mfa_verified?: boolean;
+  /** The passkey verified at sign-in, recorded as the session's first passkey verification */
+  passkey_credential_id?: string;
 }
 
 // =============================================================================
@@ -813,8 +819,14 @@ export const ADMIN_PERMISSIONS = {
  */
 export type AdminPermission = (typeof ADMIN_PERMISSIONS)[keyof typeof ADMIN_PERMISSIONS] | string;
 
-/** Permissions under these prefixes are never granted by a wildcard, only by their exact name. */
-const EXACT_MATCH_ONLY_PERMISSION_PREFIXES: readonly string[] = ['admin:support_ops:break_glass:'];
+/**
+ * Permissions under these prefixes are never granted by a wildcard, only by their exact name:
+ * break-glass access, and a machine principal's exemption from an operation's admin step-up.
+ */
+const EXACT_MATCH_ONLY_PERMISSION_PREFIXES: readonly string[] = [
+  'admin:support_ops:break_glass:',
+  'admin:step_up_exempt:',
+];
 
 /**
  * Check if a set of permissions includes a specific permission
@@ -824,8 +836,9 @@ const EXACT_MATCH_ONLY_PERMISSION_PREFIXES: readonly string[] = ['admin:support_
  * - "admin:users:*" matches "admin:users:read", "admin:users:write", etc.
  */
 export function hasAdminPermission(permissions: string[], required: string): boolean {
-  // Break-glass permissions are held by name only. `*`, `admin:*` and `admin:support_ops:*`
-  // do not carry them: emergency access is not something a broad role picks up as a side effect.
+  // Break-glass and step-up exemption permissions are held by name only. `*`, `admin:*` and
+  // the like do not carry them: neither is something a broad role picks up as a side effect, and
+  // a token cannot be issued with them from a wildcard grant either (scopes are intersected here).
   if (EXACT_MATCH_ONLY_PERMISSION_PREFIXES.some((prefix) => required.startsWith(prefix))) {
     return permissions.includes(required);
   }

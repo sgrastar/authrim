@@ -600,6 +600,8 @@ describe('Support Ops under routed account storage', () => {
           'subject-user-q-' || i, 1, 1 FROM n`);
     });
 
+    // 1,010 accounts exceed the 1,000-target run cap, so this needs several job runs. It takes
+    // about 1 s locally but has passed 5 s on the CI runners, so it gets a bounded longer timeout.
     it('suspends all of them, with their subjects', async () => {
       const created = await post('/cohorts', { resource: 'User', intent: { action: 'suspend' } });
       expect(created.status).toBe(201);
@@ -616,7 +618,7 @@ describe('Support Ops under routed account storage', () => {
         { lifecycle_state: 'active', count: 5 },
         { lifecycle_state: 'suspended', count: 1022 },
       ]);
-    });
+    }, 30_000);
 
     it('keeps each failed account and result atomic while preserving earlier completed accounts', async () => {
       const created = await post('/cohorts', { resource: 'User', intent: { action: 'suspend' } });

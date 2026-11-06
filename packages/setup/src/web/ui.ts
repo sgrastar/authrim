@@ -11040,12 +11040,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           if (!manual && source !== 'staged' && document.getElementById('log-archive-bootstrap-token').dataset?.stagedForMode !== archiveMode) {
             const issued = await api('/log-archive/issue-tokens', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, bootstrapToken: document.getElementById('log-archive-bootstrap-token').value.trim() }) });
             document.getElementById('log-archive-bootstrap-token').value = '';
-            if (!issued.success) { alert(logArchiveErrorMessage(issued.error || 'log_archive_configuration_invalid', _currentLocale, issued.cleanupRequired === true || issued.childCleanupRequired === true)); return; }
+            if (!issued.success) { alert(logArchiveErrorMessage(issued.error || 'log_archive_configuration_invalid', _currentLocale, issued.cleanupRequired === true || issued.childCleanupRequired === true) + (issued.detail ? ' [' + issued.detail + ']' : '')); return; }
             if (issued.warning) document.getElementById('log-archive-bootstrap-status').textContent = logArchiveErrorMessage(issued.warning, _currentLocale);
             document.getElementById('log-archive-bootstrap-token').dataset.stagedForMode = archiveMode;
           }
           result = await api('/log-archive/configure', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, ...(archiveMode === 'scheduled' ? { dbRetentionDays: Number(document.getElementById('log-archive-retention').value) } : {}), ...(manual ? { readToken: fields.readToken.trim(), writeToken: fields.writeToken.trim(), ...(fields.sinkToken ? { sinkToken: fields.sinkToken.trim() } : {}) } : { tokenSource: 'staged' }) }) });
-          if (!result.success) { alert(logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale)); return; }
+          if (!result.success) { alert(logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale) + (result.detail ? ' [' + result.detail + ']' : '')); return; }
         } catch { alert(logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale)); return; }
         finally { btn.disabled = false; }
         config.logging = { archive: result.archive };

@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createRateLimiterStub } from '../../__tests__/rate-limiter-stub';
 import app from '../../index';
 import { createPolicyRuntimeEnv } from '../../__tests__/helpers/runtime-env';
 
@@ -82,6 +83,7 @@ const baseMockEnv = {
   POLICY_API_SECRET: 'test-secret-key',
   VERSION_MANAGER: createMockVersionManager(),
   CODE_VERSION_UUID: '',
+  RATE_LIMITER: createRateLimiterStub(),
 };
 
 function createEnv(coreDb: D1Database, values: Record<string, unknown> = {}) {

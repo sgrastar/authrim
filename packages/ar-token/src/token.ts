@@ -82,6 +82,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   resolveElevationGrantSubjectToken,
   ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
+  ELEVATION_GRANT_SUBJECT_TOKEN_USE,
   getTenantSettingsDocument,
   TENANT_DEFAULTS,
   getDeviceSecretInstallationId,
@@ -189,6 +190,7 @@ import {
   type DPoPMode,
 } from '@authrim/ar-lib-core';
 import { parseDeviceCodeId, getDeviceCodeStoreById } from '@authrim/ar-lib-core';
+import { isReplayJtiRecorded, recordReplayJti } from '@authrim/ar-lib-core';
 import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/ar-lib-core';
 import { timeTokenRequestDiagnosticOperation } from './request-diagnostics';
 // Custom Claim Schema Resolver
@@ -7130,6 +7132,20 @@ async function handleTokenExchangeGrant(
     );
   }
 
+  // An elevation grant subject token is exchanged only as one. Declared as another type it would
+  // skip the grant checks below and be honoured as the target user's own token.
+  if (
+    subjectTokenPayload.token_use === ELEVATION_GRANT_SUBJECT_TOKEN_USE &&
+    !isElevationGrantSubjectTokenRequest
+  ) {
+    return oauthError(
+      c,
+      'invalid_grant',
+      'Elevation grant subject tokens must be exchanged as elevation grant tokens',
+      400
+    );
+  }
+
   let elevationGrantContext: Awaited<ReturnType<typeof resolveElevationGrantSubjectToken>> | null =
     null;
   if (isElevationGrantSubjectTokenRequest) {
@@ -7969,87 +7985,74 @@ async function handleNativeSSOTokenExchange(
   }
 
   // 3b. Rate limiting for brute-force protection (checked BEFORE validation)
-  // Use client_id + IP as key since we don't know user_id until validation
-  if (c.env.AUTHRIM_CONFIG) {
+  // Use client_id + IP as key since we don't know user_id until validation. Counted in the
+  // RateLimiter Durable Object (a KV read-modify-write lets parallel attempts read the same
+  // count); without it the exchange is refused rather than left unlimited.
+  {
     const clientIP =
       c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || 'unknown';
-    const rateLimitKey = `native-sso:ratelimit:${clientId}:${clientIP}`;
+    const rateLimitKey = `native-sso:${tenantId}:${clientId}:${clientIP}`;
+    const blockKey = `${rateLimitKey}:blocked`;
+    const { maxAttemptsPerMinute, blockDurationMinutes } = nativeSSOConfig.rateLimit;
 
+    let blockedForSeconds = 0;
     try {
-      const rateLimitData = await c.env.AUTHRIM_CONFIG.get(rateLimitKey);
-      const { maxAttemptsPerMinute, blockDurationMinutes } = nativeSSOConfig.rateLimit;
-
-      if (rateLimitData) {
-        const { count, blockedUntil } = JSON.parse(rateLimitData) as {
-          count: number;
-          blockedUntil?: number;
-        };
-
-        // Check if currently blocked
-        if (blockedUntil && Date.now() < blockedUntil) {
-          const remainingSeconds = Math.ceil((blockedUntil - Date.now()) / 1000);
-          log.warn('Rate limit blocked', {
-            clientId,
-            clientIP,
-            remainingSeconds,
-            action: 'NativeSSO',
-          });
-          return exchangeError(
-            'slow_down',
-            `Too many attempts. Please wait ${remainingSeconds} seconds.`,
-            'native_sso_rate_limited',
-            429,
-            'retry',
-            {
-              retryable: true,
-              severity: 'warning',
-              retryAfterSeconds: remainingSeconds,
-            }
-          );
-        }
-
-        // Check if approaching limit
-        if (count >= maxAttemptsPerMinute) {
+      const limiter = c.env.RATE_LIMITER.get(c.env.RATE_LIMITER.idFromName(rateLimitKey));
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const block = await limiter.getStatusRpc(blockKey);
+      if (block && block.resetAt > nowSeconds) {
+        blockedForSeconds = block.resetAt - nowSeconds;
+      } else {
+        const attempt = await limiter.incrementRpc(rateLimitKey, {
+          windowSeconds: 60,
+          maxRequests: maxAttemptsPerMinute,
+        });
+        if (!attempt.allowed) {
           // Block for the configured duration
-          const blockedUntilTime = Date.now() + blockDurationMinutes * 60 * 1000;
-          await c.env.AUTHRIM_CONFIG.put(
-            rateLimitKey,
-            JSON.stringify({ count: count + 1, blockedUntil: blockedUntilTime }),
-            { expirationTtl: blockDurationMinutes * 60 + 60 }
-          );
+          await limiter.incrementRpc(blockKey, {
+            windowSeconds: blockDurationMinutes * 60,
+            maxRequests: 1,
+          });
+          blockedForSeconds = blockDurationMinutes * 60;
           log.warn('Rate limit triggered', {
             clientId,
             clientIP,
             blockDurationMinutes,
             action: 'NativeSSO',
           });
-          return exchangeError(
-            'slow_down',
-            `Too many attempts. Please wait ${blockDurationMinutes} minutes.`,
-            'native_sso_rate_limited',
-            429,
-            'retry',
-            {
-              retryable: true,
-              severity: 'warning',
-              retryAfterSeconds: blockDurationMinutes * 60,
-            }
-          );
         }
-
-        // Increment counter
-        await c.env.AUTHRIM_CONFIG.put(rateLimitKey, JSON.stringify({ count: count + 1 }), {
-          expirationTtl: 60,
-        });
-      } else {
-        // First attempt in this window
-        await c.env.AUTHRIM_CONFIG.put(rateLimitKey, JSON.stringify({ count: 1 }), {
-          expirationTtl: 60,
-        });
       }
     } catch (error) {
-      // Log but don't block on rate limit errors (fail-open for availability)
       log.error('Rate limit check error', { action: 'NativeSSO' }, error as Error);
+      return exchangeError(
+        'temporarily_unavailable',
+        'The service is temporarily unavailable. Please try again later.',
+        'native_sso_server_error',
+        503,
+        'retry',
+        { retryable: true, severity: 'error' }
+      );
+    }
+
+    if (blockedForSeconds > 0) {
+      log.warn('Rate limit blocked', {
+        clientId,
+        clientIP,
+        remainingSeconds: blockedForSeconds,
+        action: 'NativeSSO',
+      });
+      return exchangeError(
+        'slow_down',
+        `Too many attempts. Please wait ${blockedForSeconds} seconds.`,
+        'native_sso_rate_limited',
+        429,
+        'retry',
+        {
+          retryable: true,
+          severity: 'warning',
+          retryAfterSeconds: blockedForSeconds,
+        }
+      );
     }
   }
 
@@ -8226,13 +8229,32 @@ async function handleNativeSSOTokenExchange(
   // 5b. ID Token jti replay attack prevention
   // The jti is looked up here and recorded once the device secret's use is consumed below, so an
   // exchange refused before that leaves both the ID token and the secret's use count untouched.
+  // The record is an atomic check-and-store: of two concurrent exchanges with one ID token, only
+  // the first records it (a KV get and put would let both pass).
   const idTokenJti = idTokenPayload.jti as string | undefined;
-  if (idTokenJti && c.env.AUTHRIM_CONFIG) {
-    const existingJti = await c.env.AUTHRIM_CONFIG.get(`native-sso:jti:${idTokenJti}`);
+  const replayJti = idTokenJti
+    ? // Placed by the jti itself, so every client presenting the token reaches the same record.
+      { tenantId, shardKey: idTokenJti, jti: `native-sso-id-token:${idTokenJti}` }
+    : null;
+  if (replayJti) {
+    let recorded: boolean;
+    try {
+      recorded = await isReplayJtiRecorded(c.env, replayJti);
+    } catch (error) {
+      log.error('ID token replay check failed', { action: 'NativeSSO' }, error as Error);
+      return exchangeError(
+        'temporarily_unavailable',
+        'The service is temporarily unavailable. Please try again later.',
+        'native_sso_server_error',
+        503,
+        'retry',
+        { retryable: true, severity: 'error' }
+      );
+    }
 
-    if (existingJti) {
+    if (recorded) {
       log.warn('ID Token replay detected', {
-        jtiPrefix: idTokenJti.substring(0, 8),
+        jtiPrefix: (idTokenJti ?? '').substring(0, 8),
         action: 'NativeSSO',
       });
       return exchangeInvalidGrant('ID token has already been used', 'id_token_replayed');
@@ -8285,13 +8307,31 @@ async function handleNativeSSOTokenExchange(
   if (deviceSecretUserId !== idTokenUserId) {
     return exchangeInvalidGrant('Device secret validation failed', 'device_secret_binding_failed');
   }
-  if (idTokenJti && c.env.AUTHRIM_CONFIG) {
-    // Store jti with expiration = remaining ID token lifetime + 60s buffer
-    // This prevents replay but doesn't waste storage after token expires
+  if (replayJti) {
+    // Kept for the ID token's remaining lifetime + 60s buffer: replay is refused while the token
+    // could still be presented, and nothing is stored after it expires.
     const ttlSeconds = idTokenExp ? Math.max(60, idTokenExp - now + 60) : 3600;
-    await c.env.AUTHRIM_CONFIG.put(`native-sso:jti:${idTokenJti}`, '1', {
-      expirationTtl: ttlSeconds,
-    });
+    let outcome: 'recorded' | 'replayed';
+    try {
+      outcome = await recordReplayJti(c.env, { ...replayJti, issuedAt: now, ttlSeconds });
+    } catch (error) {
+      log.error('ID token replay record failed', { action: 'NativeSSO' }, error as Error);
+      return exchangeError(
+        'temporarily_unavailable',
+        'The service is temporarily unavailable. Please try again later.',
+        'native_sso_server_error',
+        503,
+        'retry',
+        { retryable: true, severity: 'error' }
+      );
+    }
+    if (outcome === 'replayed') {
+      log.warn('ID Token replay detected', {
+        jtiPrefix: (idTokenJti ?? '').substring(0, 8),
+        action: 'NativeSSO',
+      });
+      return exchangeInvalidGrant('ID token has already been used', 'id_token_replayed');
+    }
   }
 
   // A device secret issued before the user withdrew this client's consent, or the consent of the

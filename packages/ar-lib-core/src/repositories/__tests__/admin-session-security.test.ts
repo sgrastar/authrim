@@ -58,14 +58,79 @@ describe('AdminSessionRepository tenant isolation', () => {
       expect.any(Number),
       1,
       expect.any(Number),
+      null,
+      null,
     ]);
+  });
+
+  it('records the sign-in passkey as the first passkey evidence', async () => {
+    const db = adapter();
+    const repository = new AdminSessionRepository(db, 'tenant-a');
+
+    const session = await repository.createSession({
+      id: 'session-1',
+      tenant_id: 'tenant-a',
+      admin_user_id: 'admin-1',
+      expires_at: Date.now() + 60_000,
+      mfa_verified: true,
+      passkey_credential_id: 'credential-1',
+    });
+
+    expect(session.passkey_credential_id).toBe('credential-1');
+    expect(session.passkey_verified_at).toBe(session.created_at);
+    const params = vi.mocked(db.execute).mock.calls[0]?.[1] ?? [];
+    expect(params.slice(-2)).toEqual([session.created_at, 'credential-1']);
+  });
+
+  it('records an in-session passkey verification only on a live session of its tenant', async () => {
+    const db = adapter();
+    const repository = new AdminSessionRepository(db, 'tenant-a');
+
+    await expect(
+      repository.recordPasskeyVerification('session-1', 'credential-2', 1_000)
+    ).resolves.toBe(true);
+    const [sql, params] = vi.mocked(db.execute).mock.calls[0] ?? [];
+    expect(sql).toContain('tenant_id = ?');
+    expect(sql).toContain('expires_at > ?');
+    expect(params).toEqual([1_000, 'credential-2', 'tenant-a', 'session-1', 1_000]);
+
+    vi.mocked(db.execute).mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    await expect(
+      repository.recordPasskeyVerification('session-1', 'credential-2', 2_000)
+    ).resolves.toBe(false);
+  });
+
+  it('does not let a generic session update forge passkey evidence', async () => {
+    const db = adapter();
+    const repository = new AdminSessionRepository(db, 'tenant-a');
+    vi.mocked(db.queryOne).mockResolvedValue({
+      id: 'session-1',
+      tenant_id: 'tenant-a',
+      admin_user_id: 'admin-1',
+      created_at: 1,
+      expires_at: Date.now() + 60_000,
+      last_activity_at: 1,
+      mfa_verified: 1,
+      mfa_verified_at: 1,
+      passkey_verified_at: null,
+      passkey_credential_id: null,
+    });
+
+    await repository.update('session-1', {
+      last_activity_at: 2,
+      passkey_verified_at: Date.now(),
+      passkey_credential_id: 'credential-x',
+    });
+
+    const updates = vi.mocked(db.execute).mock.calls.map(([sql]) => sql);
+    expect(updates).toEqual([expect.stringContaining('last_activity_at = ?')]);
+    expect(updates[0]).not.toContain('passkey_');
   });
 
   it.each([
     ['getSession', ['session-1']],
     ['getSessionIncludingExpired', ['session-1']],
     ['updateActivity', ['session-1']],
-    ['setMfaVerified', ['session-1']],
     ['extendSession', ['session-1', Date.now() + 60_000]],
     ['deleteSession', ['session-1']],
     ['deleteAllByUser', ['admin-1']],

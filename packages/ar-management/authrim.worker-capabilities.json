@@ -181,6 +181,11 @@
       "required": true
     },
     {
+      "name": "EXTERNAL_IDP_ADMIN",
+      "kind": "service",
+      "required": true
+    },
+    {
       "name": "CONTROL",
       "kind": "service",
       "required": true,

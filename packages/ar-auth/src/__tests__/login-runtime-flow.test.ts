@@ -809,7 +809,7 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
     : {};
 }
 
-/** The statements run inside the interaction's transactions since the last reset. */
+/** The statements run in the interaction's batches since the last reset. */
 const txExecuteCalls: Array<[string, unknown[] | undefined]> = [];
 
 /**
@@ -912,6 +912,14 @@ function resetAdapter() {
       } as unknown as DatabaseAdapter;
       return fn(tx);
     }
+  );
+  // The interaction's writes go in one batch (atomic, one round trip).
+  mocks.coreAdapter.batch.mockImplementation(
+    async (statements: Array<{ sql: string; params?: unknown[] }>) =>
+      statements.map((statement) => {
+        txExecuteCalls.push([statement.sql, statement.params]);
+        return { success: true, rowsAffected: 1 };
+      })
   );
   mocks.coreAdapter.query.mockResolvedValue([]);
   mocks.coreAdapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
@@ -1045,7 +1053,7 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(response.status).toBe(400);
     expect(data.error).toBe('unsupported_flow_kind');
     expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
   });
 
   it('creates an interaction from the tenant default published Flow assignment', async () => {
@@ -1060,7 +1068,7 @@ describe('LoginUI runtime Flow handlers', () => {
       current_node_id: 'auth',
       current_step_id: 'auth:step',
     });
-    expect(mocks.coreAdapter.transaction).toHaveBeenCalledTimes(2);
+    expect(mocks.coreAdapter.batch).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -1121,7 +1129,7 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(data.error).toBe('authorization_challenge_mismatch');
     expect(data.error_code).toBe('AR_FLOW_AUTH_CHALLENGE_MISMATCH');
     expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
   });
 
   it('rejects a missing authorization challenge before creating a runtime interaction', async () => {
@@ -1142,7 +1150,7 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(data.error).toBe('authorization_request_expired');
     expect(data.error_code).toBe('AR_FLOW_AUTH_REQUEST_EXPIRED');
     expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
   });
 
   it('includes bridge external IdP providers in authentication runtime handles', async () => {
@@ -1213,7 +1221,7 @@ describe('LoginUI runtime Flow handlers', () => {
       current_node_id: 'auth',
       current_step_id: 'auth:step',
     });
-    expect(mocks.coreAdapter.transaction).toHaveBeenCalledTimes(2);
+    expect(mocks.coreAdapter.batch).toHaveBeenCalledTimes(2);
   });
 
   it('uses the active-session branch while auto-advancing session check during start', async () => {
@@ -2790,7 +2798,7 @@ describe('LoginUI runtime Flow handlers', () => {
       source_node_id: 'auth',
       component: 'authentication_method_selector',
     });
-    expect(mocks.coreAdapter.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.coreAdapter.batch).toHaveBeenCalledTimes(1);
   });
 
   it('uses editor edge handles after the clock advances without changing the signed expiry', async () => {
@@ -3467,7 +3475,7 @@ describe('LoginUI runtime Flow handlers', () => {
       expect.stringContaining('INSERT INTO consent_records'),
       expect.anything()
     );
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
   });
 
   it('records selected User Decision radio values for SAML attribute release consent', async () => {
@@ -4128,7 +4136,7 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(data.error).toBe('invalid_flow_branch');
     expect(data.error_code).toBe('AR_FLOW_INVALID_SELECTED_HANDLE');
     expect(data.category).toBe('security_error');
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
   });
 
   it('returns protocol continuation metadata when the completion step finishes', async () => {
@@ -4525,7 +4533,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const transactionStatements = () => txExecuteCalls;
 
     const expectNothingWritten = () => {
-      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
       expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
       expect(
         mocks.coreAdapter.execute.mock.calls.filter(([sql]) =>
@@ -4596,7 +4604,7 @@ describe('LoginUI runtime Flow handlers', () => {
         category: 'reauthentication_required',
         action: 'reauthenticate',
       });
-      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
       expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
       expect(auditEventTypes()).toEqual([]);
     });
@@ -4803,7 +4811,7 @@ describe('LoginUI runtime Flow handlers', () => {
 
       expect(response.status).toBe(401);
       expect(data.error).toBe('authentication_required');
-      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
       expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
       expect(auditEventTypes()).toEqual([]);
     });
@@ -4827,7 +4835,7 @@ describe('LoginUI runtime Flow handlers', () => {
       expect(response.status).toBe(503);
       expect(data.error).toBe('temporarily_unavailable');
       // Nothing is saved as complete or audited as a success: the browser can submit again.
-      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
       expect(auditEventTypes()).toEqual([]);
     });
 
@@ -4911,7 +4919,7 @@ describe('LoginUI runtime Flow handlers', () => {
 
         expect(response.status).toBe(400);
         expect(data.error).toBe('consent_required');
-        expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+        expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
       });
 
       it('keeps what was given until someone is signed in, recording nothing for anyone yet', async () => {
@@ -5066,7 +5074,7 @@ describe('LoginUI runtime Flow handlers', () => {
 
         expect(response.status, JSON.stringify(data)).toBe(403);
         expect(consentRecords()).toEqual([]);
-        expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+        expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
       });
 
       it('still asks whom the interaction is about when what was held is already recorded', async () => {
@@ -5095,7 +5103,7 @@ describe('LoginUI runtime Flow handlers', () => {
 
         expect(response.status).toBe(403);
         expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
-        expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+        expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
       });
 
       it('is recorded when the Flow ends at a step after the completion was reached', async () => {
@@ -5342,7 +5350,7 @@ describe('LoginUI runtime Flow handlers', () => {
       expect(response.status).toBe(503);
       expect(data).toMatchObject({ error: 'temporarily_unavailable', action: 'retry_step' });
       expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
-      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
     });
 
     it('does not use a re-authentication session that records no method', async () => {
@@ -5405,7 +5413,7 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(response.status).toBe(403);
     expect(data.category).toBe('security_error');
     expect(data.action).toBe('restart_interaction');
-    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
   });
 
   it('expires stale interactions before accepting submitted step data', async () => {
@@ -5565,7 +5573,7 @@ describe('the re-authentication challenge of a SAML request', () => {
       expect(response.status).toBe(403);
       expect(data.error).toBe('authorization_challenge_mismatch');
       expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
-      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
     });
 
     it('is not accepted for an OIDC client', async () => {
@@ -5580,7 +5588,7 @@ describe('the re-authentication challenge of a SAML request', () => {
 
       expect(response.status).toBe(403);
       expect(data.error).toBe('authorization_challenge_mismatch');
-      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
     });
 
     it('is not accepted for a Flow that is for no client or SP', async () => {

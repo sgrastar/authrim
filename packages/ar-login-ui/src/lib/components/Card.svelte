@@ -43,7 +43,9 @@
 	/* The --card-* and --surface-* properties are unset (so the fallbacks apply) except where a
 	   page asks for flat, still surfaces: the account page (AccountShell) sets them. */
 	.card {
-		background: var(--card-surface, var(--bg-card));
+		/* A page that sets its own surface (the account page) keeps it; otherwise the tenant's form
+		   area colour, then the palette's. */
+		background: var(--card-surface, var(--login-form-area-color, var(--bg-card)));
 		backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
 		-webkit-backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
 		border-radius: var(--card-radius, var(--radius-xl));

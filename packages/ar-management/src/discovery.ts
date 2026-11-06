@@ -384,7 +384,7 @@ function assertDynamicAliasRouteNotAhead(
 type DiscoveryMethod = DiscoveryConfigResponse['config']['discovery_methods'][number];
 type DiscoveryUIConfig = DiscoveryConfigResponse['ui'];
 
-const DISCOVERY_UI_THEME_OPTIONS = ['light', 'dark'] as const;
+const DISCOVERY_UI_THEME_OPTIONS = ['light', 'dark', 'auto'] as const;
 
 async function readSettingsRecord(
   kv: KVNamespace | undefined,

@@ -1,4 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const stepUp = vi.hoisted(() => ({ gate: vi.fn(async (): Promise<Response | null> => null) }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: stepUp.gate,
+  refuseAdminFreshAuth: vi.fn(),
+}));
+const emailNotices = vi.hoisted(() => ({ send: vi.fn(async () => 2) }));
+vi.mock('../routes/admin-management/admin-email-change-notice', () => ({
+  sendAdminEmailChangeNotices: emailNotices.send,
+}));
 import { Hono } from 'hono';
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
@@ -591,6 +601,10 @@ describe('adminUsersRouter', () => {
 
   it('updates the caller account and normalizes its email', async () => {
     repoMocks.findByTenantAndId.mockResolvedValue({ id: 'admin_1', email: 'old@example.com' });
+    // No other account uses the new address.
+    mockAdminAdapter.queryOne.mockImplementation(async (sql: string) =>
+      sql.includes('email = ? AND id <>') ? null : { count: 2 }
+    );
     repoMocks.updateAdminUser.mockResolvedValue({
       id: 'admin_1',
       email: 'new@example.com',
@@ -1127,6 +1141,9 @@ describe('adminUsersRouter', () => {
   it('removes a normal role by role id and audits it', async () => {
     repoMocks.findByTenantAndId.mockResolvedValue({ id: 'admin_target' });
     repoMocks.getRole.mockResolvedValue({ id: 'role_ar_support', name: 'ar_support' });
+    repoMocks.getAssignmentsByUser.mockResolvedValue([
+      { id: 'assignment_1', admin_role_id: 'role_ar_support', scope_type: 'tenant' },
+    ]);
     repoMocks.removeAssignment.mockResolvedValue(true);
     const { app, env } = createTestApp();
 
@@ -1257,5 +1274,246 @@ describe('adminUsersRouter', () => {
     );
 
     expect(response.status).toBe(404);
+  });
+  describe('admin step-up on role changes', () => {
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+      'x-test-tenant-id': 'tenant_123',
+      'x-test-hierarchy-level': '10',
+    };
+    const supportRole = {
+      id: 'role_ar_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      hierarchy_level: 1,
+      name: 'ar_support',
+    };
+
+    beforeEach(() => {
+      repoMocks.findByTenantAndId.mockResolvedValue({ id: 'admin_target' });
+      repoMocks.getRole.mockResolvedValue(supportRole);
+      repoMocks.assignmentExists.mockResolvedValue(false);
+      repoMocks.assignRole.mockResolvedValue({ id: 'assignment_new' });
+      repoMocks.getAssignment.mockResolvedValue({
+        id: 'assignment_1',
+        admin_user_id: 'admin_target',
+        admin_role_id: 'role_ar_support',
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+      });
+      repoMocks.getAssignmentsByUser.mockResolvedValue([
+        { id: 'assignment_1', admin_role_id: 'role_ar_support', scope_type: 'tenant' },
+      ]);
+      repoMocks.removeAssignmentById.mockResolvedValue(true);
+      repoMocks.removeAssignment.mockResolvedValue(true);
+    });
+
+    const grant = (body: unknown) => {
+      const { app, env } = createTestApp();
+      return app.request(
+        '/api/admin/admins/admin_target/roles',
+        { method: 'POST', headers, body: JSON.stringify(body) },
+        env
+      );
+    };
+
+    it('grants only with step-up, naming the role, scope and expiry', async () => {
+      const response = await grant({ role_id: 'role_ar_support', expires_at: 4102444800000 });
+
+      expect(response.status).toBe(201);
+      expect(stepUp.gate).toHaveBeenCalledTimes(1);
+      expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'admin.role.grant',
+        targetTenantId: 'tenant_123',
+        targetIds: ['admin_target', 'role_ar_support'],
+        params: {
+          role: 'role_ar_support',
+          scope_type: 'tenant',
+          scope_id: 'tenant_123',
+          expires_at: 4102444800000,
+        },
+      });
+    });
+
+    it('does not grant when step-up is refused', async () => {
+      stepUp.gate.mockResolvedValueOnce(refusal());
+
+      const response = await grant({ role_id: 'role_ar_support' });
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'step_up_required' });
+      expect(repoMocks.assignRole).not.toHaveBeenCalled();
+    });
+
+    it('does not spend a receipt on a request that fails validation', async () => {
+      expect((await grant({})).status).toBe(400);
+      expect((await grant({ role_id: 'role_ar_support', expires_at: -1 })).status).toBe(400);
+      repoMocks.assignmentExists.mockResolvedValueOnce(true);
+      expect((await grant({ role_id: 'role_ar_support' })).status).toBe(409);
+
+      expect(stepUp.gate).not.toHaveBeenCalled();
+    });
+
+    it('removes an assignment only with step-up', async () => {
+      const { app, env } = createTestApp();
+      const url = '/api/admin/admins/admin_target/role-assignments/assignment_1';
+      stepUp.gate.mockResolvedValueOnce(refusal());
+
+      const refused = await app.request(url, { method: 'DELETE', headers }, env);
+      expect(refused.status).toBe(403);
+      expect(repoMocks.removeAssignmentById).not.toHaveBeenCalled();
+
+      const allowed = await app.request(url, { method: 'DELETE', headers }, env);
+      expect(allowed.status).toBe(200);
+      expect(stepUp.gate).toHaveBeenLastCalledWith(expect.anything(), {
+        operation: 'admin.role.revoke',
+        targetTenantId: 'tenant_123',
+        targetIds: ['admin_target', 'role_ar_support'],
+        params: {
+          role: 'role_ar_support',
+          assignment_id: 'assignment_1',
+          scope_type: 'tenant',
+          scope_id: 'tenant_123',
+        },
+      });
+    });
+
+    it('removes a role by id only with step-up', async () => {
+      const { app, env } = createTestApp();
+      const url = '/api/admin/admins/admin_target/roles/role_ar_support';
+      stepUp.gate.mockResolvedValueOnce(refusal());
+
+      const refused = await app.request(url, { method: 'DELETE', headers }, env);
+      expect(refused.status).toBe(403);
+      expect(repoMocks.removeAssignment).not.toHaveBeenCalled();
+
+      const allowed = await app.request(url, { method: 'DELETE', headers }, env);
+      expect(allowed.status).toBe(200);
+      expect(stepUp.gate).toHaveBeenLastCalledWith(expect.anything(), {
+        operation: 'admin.role.revoke',
+        targetTenantId: 'tenant_123',
+        targetIds: ['admin_target', 'role_ar_support'],
+        params: { role: 'role_ar_support' },
+      });
+    });
+
+    it('keeps refusing the last platform admin before the gate', async () => {
+      repoMocks.getRole.mockResolvedValue({ id: 'role_ar_super_admin', name: 'ar_super_admin' });
+      mockAdminAdapter.queryOne.mockResolvedValue({ count: 1 });
+      const { app, env } = createTestApp();
+
+      const response = await app.request(
+        '/api/admin/admins/admin_target/roles/role_ar_super_admin',
+        { method: 'DELETE', headers },
+        env
+      );
+
+      // Refused even though the gate would let it through; no receipt is spent on it.
+      expect(response.status).toBe(409);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+      expect(repoMocks.removeAssignment).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('admin email change', () => {
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-test-user-id': 'admin_actor',
+      'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_USERS_WRITE,
+      'x-test-tenant-id': 'tenant_123',
+      'x-test-hierarchy-level': '10',
+    };
+    const patch = (body: unknown) => {
+      const { app, env } = createTestApp();
+      return app.request(
+        '/api/admin/admins/admin_target',
+        { method: 'PATCH', headers, body: JSON.stringify(body) },
+        env
+      );
+    };
+    let emailTaken = false;
+
+    beforeEach(() => {
+      emailTaken = false;
+      repoMocks.findByTenantAndId.mockResolvedValue({
+        id: 'admin_target',
+        email: 'old@example.com',
+        status: 'active',
+      });
+      repoMocks.updateAdminUser.mockResolvedValue({
+        id: 'admin_target',
+        email: 'new@example.com',
+        status: 'active',
+      });
+      mockAdminAdapter.queryOne.mockImplementation(async (sql: string) =>
+        sql.includes('email = ? AND id <>')
+          ? emailTaken
+            ? { id: 'admin_other' }
+            : null
+          : { count: 2 }
+      );
+    });
+
+    it('changes the address only with L2 and tells both addresses', async () => {
+      const response = await patch({ email: ' New@Example.com ' });
+
+      expect(response.status).toBe(200);
+      expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'admin.email.update',
+        targetTenantId: 'tenant_123',
+        targetIds: ['admin_target'],
+        params: { email: 'new@example.com' },
+      });
+      expect(repoMocks.updateAdminUser).toHaveBeenCalledWith(
+        'admin_target',
+        expect.objectContaining({ email: 'new@example.com' }),
+        undefined
+      );
+      expect(emailNotices.send).toHaveBeenCalledWith(expect.anything(), {
+        tenantId: 'tenant_123',
+        adminUserId: 'admin_target',
+        previousEmail: 'old@example.com',
+        newEmail: 'new@example.com',
+        changedBy: 'admin_actor',
+      });
+    });
+
+    it('changes nothing until the step-up is met', async () => {
+      stepUp.gate.mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+      );
+
+      expect((await patch({ email: 'new@example.com' })).status).toBe(403);
+      expect(repoMocks.updateAdminUser).not.toHaveBeenCalled();
+      expect(emailNotices.send).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an invalid address', { email: 'not-an-address' }, 400],
+      ['an address another admin uses', { email: 'taken@example.com' }, 409],
+    ])('refuses %s before any step-up', async (label, body, status) => {
+      emailTaken = label.includes('another');
+      expect((await patch(body)).status).toBe(status);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+      expect(repoMocks.updateAdminUser).not.toHaveBeenCalled();
+    });
+
+    it('needs no step-up for other fields, or for the same address', async () => {
+      expect((await patch({ name: 'New name' })).status).toBe(200);
+      expect((await patch({ email: 'OLD@example.com', name: 'x' })).status).toBe(200);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+      expect(emailNotices.send).not.toHaveBeenCalled();
+    });
+
+    it('keeps the change when its notices fail', async () => {
+      emailNotices.send.mockRejectedValueOnce(new Error('delivery down'));
+      expect((await patch({ email: 'new@example.com' })).status).toBe(200);
+    });
   });
 });

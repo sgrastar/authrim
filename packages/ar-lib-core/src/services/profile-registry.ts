@@ -18,6 +18,59 @@ export interface ProfileRegistryBackend {
   delete(kind: RuntimeProfileKind, id: string): Promise<boolean>;
 }
 
+/**
+ * A stored profile with the exact payload text it was read as. Conditional writes compare this
+ * text, so a change made after the read (even one that leaves the profile equal in value) is not
+ * overwritten by a decision made on the older read.
+ */
+export interface StoredRuntimeProfile<T extends RuntimeProfile = RuntimeProfile> {
+  /** Null for a deleted profile (its tombstone row). */
+  profile: T | null;
+  /** The payload as stored; pass it back as `expected` to a conditional write. */
+  payload: string;
+}
+
+/**
+ * The payload a deleted profile's row keeps. The row stays so a stale copy of the profile (a KV
+ * projection not yet expired at another location) is never adopted back into D1; reads treat it
+ * as absent, and creating the profile again replaces it conditionally.
+ */
+export const PROFILE_REGISTRY_TOMBSTONE = '{"__authrim_profile_deleted":true}';
+
+/**
+ * A backend that can write only if the stored profile is still the one a decision was made on.
+ * `expectedPayload` is null for "no such profile" (a create). Returns false when the stored
+ * profile is no longer that one, and writes nothing.
+ */
+export interface ProfileWriteGuard {
+  kind: RuntimeProfileKind;
+  id: string;
+  /** The payload that must still be stored (null: the profile must still not exist). */
+  expectedPayload: string | null;
+}
+
+export interface ConditionalProfileRegistryBackend extends ProfileRegistryBackend {
+  getStored(kind: RuntimeProfileKind, id: string): Promise<StoredRuntimeProfile | null>;
+  /** Every stored row, tombstones included (for reconciling the KV projection). */
+  listStored(): Promise<Array<{ kind: RuntimeProfileKind; id: string; payload: string }>>;
+  /**
+   * `guards`: other profiles the decision was made on; the write happens only if each is still
+   * stored as it was read, in the same statement.
+   */
+  putIfUnchanged(
+    profile: RuntimeProfile,
+    expectedPayload: string | null,
+    guards?: ProfileWriteGuard[]
+  ): Promise<boolean>;
+  /** Insert a payload exactly as given unless the profile exists (adopting a KV-only profile). */
+  insertRawIfAbsent(kind: RuntimeProfileKind, id: string, payload: string): Promise<boolean>;
+  deleteIfUnchanged(
+    kind: RuntimeProfileKind,
+    id: string,
+    expectedPayload: string
+  ): Promise<boolean>;
+}
+
 export interface EnvironmentProfileDefaults {
   auditProfileId: string;
   residencyProfileId: string;
@@ -98,7 +151,7 @@ export class KVProfileRegistryBackend implements ProfileRegistryBackend {
   }
 }
 
-export class DatabaseProfileRegistryBackend implements ProfileRegistryBackend {
+export class DatabaseProfileRegistryBackend implements ConditionalProfileRegistryBackend {
   constructor(
     private readonly adapter: DatabaseAdapter,
     private readonly tableName: string = 'profile_registry'
@@ -109,13 +162,16 @@ export class DatabaseProfileRegistryBackend implements ProfileRegistryBackend {
       `SELECT payload_json FROM ${this.tableName} WHERE kind = ? AND id = ?`,
       [kind, id]
     );
-    return row ? parseProfilePayload<T>(row.payload_json) : null;
+    return row && row.payload_json !== PROFILE_REGISTRY_TOMBSTONE
+      ? parseProfilePayload<T>(row.payload_json)
+      : null;
   }
 
   async list<T extends RuntimeProfile>(kind: T['kind']): Promise<T[]> {
     const rows = await this.adapter.query<{ payload_json: string }>(
-      `SELECT payload_json FROM ${this.tableName} WHERE kind = ? ORDER BY id ASC`,
-      [kind]
+      `SELECT payload_json FROM ${this.tableName}
+        WHERE kind = ? AND payload_json <> ? ORDER BY id ASC`,
+      [kind, PROFILE_REGISTRY_TOMBSTONE]
     );
     return rows.map((row) => parseProfilePayload<T>(row.payload_json));
   }
@@ -123,28 +179,15 @@ export class DatabaseProfileRegistryBackend implements ProfileRegistryBackend {
   async put(profile: RuntimeProfile): Promise<void> {
     const payload = JSON.stringify(profile);
     const now = new Date().toISOString();
-    const updated = await this.adapter.execute(
-      `UPDATE ${this.tableName} SET payload_json = ?, updated_at = ? WHERE kind = ? AND id = ?`,
-      [payload, now, profile.kind, profile.id]
+    // One statement: an update, then an insert, then an update again could overwrite a profile
+    // created in between.
+    await this.adapter.execute(
+      `INSERT INTO ${this.tableName} (id, kind, payload_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (kind, id) DO UPDATE SET payload_json = excluded.payload_json,
+         updated_at = excluded.updated_at`,
+      [profile.id, profile.kind, payload, now, now]
     );
-    if (updated.rowsAffected > 0) {
-      return;
-    }
-
-    try {
-      await this.adapter.execute(
-        `INSERT INTO ${this.tableName} (id, kind, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-        [profile.id, profile.kind, payload, now, now]
-      );
-    } catch (error) {
-      const retried = await this.adapter.execute(
-        `UPDATE ${this.tableName} SET payload_json = ?, updated_at = ? WHERE kind = ? AND id = ?`,
-        [payload, now, profile.kind, profile.id]
-      );
-      if (retried.rowsAffected === 0) {
-        throw error;
-      }
-    }
   }
 
   async delete(kind: RuntimeProfileKind, id: string): Promise<boolean> {
@@ -153,6 +196,95 @@ export class DatabaseProfileRegistryBackend implements ProfileRegistryBackend {
       [kind, id]
     );
     return result.rowsAffected > 0;
+  }
+
+  async getStored(kind: RuntimeProfileKind, id: string): Promise<StoredRuntimeProfile | null> {
+    const row = await this.adapter.queryOne<{ payload_json: string }>(
+      `SELECT payload_json FROM ${this.tableName} WHERE kind = ? AND id = ?`,
+      [kind, id]
+    );
+    if (!row) return null;
+    return {
+      profile:
+        row.payload_json === PROFILE_REGISTRY_TOMBSTONE
+          ? null
+          : parseProfilePayload<RuntimeProfile>(row.payload_json),
+      payload: row.payload_json,
+    };
+  }
+
+  async listStored(): Promise<Array<{ kind: RuntimeProfileKind; id: string; payload: string }>> {
+    const rows = await this.adapter.query<{
+      kind: RuntimeProfileKind;
+      id: string;
+      payload_json: string;
+    }>(`SELECT kind, id, payload_json FROM ${this.tableName} ORDER BY kind, id`);
+    return rows.map((row) => ({ kind: row.kind, id: row.id, payload: row.payload_json }));
+  }
+
+  async putIfUnchanged(
+    profile: RuntimeProfile,
+    expectedPayload: string | null,
+    guards: ProfileWriteGuard[] = []
+  ): Promise<boolean> {
+    const payload = JSON.stringify(profile);
+    const now = new Date().toISOString();
+    const guardSql = guards
+      .map((guard) =>
+        guard.expectedPayload === null
+          ? `AND NOT EXISTS (SELECT 1 FROM ${this.tableName} WHERE kind = ? AND id = ?)`
+          : `AND EXISTS (SELECT 1 FROM ${this.tableName} WHERE kind = ? AND id = ? AND payload_json = ?)`
+      )
+      .join(' ');
+    const guardParams = guards.flatMap((guard) =>
+      guard.expectedPayload === null
+        ? [guard.kind, guard.id]
+        : [guard.kind, guard.id, guard.expectedPayload]
+    );
+    const result =
+      expectedPayload === null
+        ? await this.adapter.execute(
+            `INSERT INTO ${this.tableName} (id, kind, payload_json, created_at, updated_at)
+             SELECT ?, ?, ?, ?, ? WHERE 1 = 1 ${guardSql} ON CONFLICT (kind, id) DO NOTHING`,
+            [profile.id, profile.kind, payload, now, now, ...guardParams]
+          )
+        : await this.adapter.execute(
+            `UPDATE ${this.tableName} SET payload_json = ?, updated_at = ?
+             WHERE kind = ? AND id = ? AND payload_json = ? ${guardSql}`,
+            [payload, now, profile.kind, profile.id, expectedPayload, ...guardParams]
+          );
+    return result.rowsAffected === 1;
+  }
+
+  async insertRawIfAbsent(kind: RuntimeProfileKind, id: string, payload: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const result = await this.adapter.execute(
+      `INSERT INTO ${this.tableName} (id, kind, payload_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT (kind, id) DO NOTHING`,
+      [id, kind, payload, now, now]
+    );
+    return result.rowsAffected === 1;
+  }
+
+  async deleteIfUnchanged(
+    kind: RuntimeProfileKind,
+    id: string,
+    expectedPayload: string
+  ): Promise<boolean> {
+    // The row becomes a tombstone rather than going: see PROFILE_REGISTRY_TOMBSTONE.
+    const result = await this.adapter.execute(
+      `UPDATE ${this.tableName} SET payload_json = ?, updated_at = ?
+        WHERE kind = ? AND id = ? AND payload_json = ? AND payload_json <> ?`,
+      [
+        PROFILE_REGISTRY_TOMBSTONE,
+        new Date().toISOString(),
+        kind,
+        id,
+        expectedPayload,
+        PROFILE_REGISTRY_TOMBSTONE,
+      ]
+    );
+    return result.rowsAffected === 1;
   }
 }
 

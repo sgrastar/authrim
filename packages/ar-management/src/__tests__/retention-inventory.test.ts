@@ -23,6 +23,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     readTenantSessionSettingsStrict: mocks.readTenantSessionSettingsStrict,
     loadTenantProfileStrict: mocks.loadTenantProfileStrict,
     resolveTenantRuntimeProfilesFromEnv: mocks.resolveTenantRuntimeProfilesFromEnv,
+    // The audit profile is resolved on its own; this delegates to the set the tests describe.
+    resolveTenantAuditProfileFromEnv: async (...args: unknown[]) =>
+      ((await mocks.resolveTenantRuntimeProfilesFromEnv(...args)) as { auditProfile: unknown })
+        .auditProfile,
     resolveAccountTombstonePolicy: mocks.resolveAccountTombstonePolicy,
   };
 });
