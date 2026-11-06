@@ -31,6 +31,8 @@ export type StepUpFactor = 'passkey' | 'second_factor';
 export interface StepUpRequired {
 	stepUpId: string;
 	missing: StepUpFactor[];
+	/** The level the refusal names (`required_level`), when it names one. */
+	level?: StepUpPromptLevel;
 }
 
 /** What a refusal asks for, when it is a step-up refusal. */
@@ -45,7 +47,43 @@ export function stepUpRequired(error: unknown): StepUpRequired | null {
 				(factor): factor is StepUpFactor => factor === 'passkey' || factor === 'second_factor'
 			)
 		: [];
-	return { stepUpId, missing };
+	const level = error.body.required_level;
+	return level === 'L1' || level === 'L2' ? { stepUpId, missing, level } : { stepUpId, missing };
+}
+
+export type StepUpPromptLevel = 'L1' | 'L2';
+
+/** What the admin is asked before a step-up: the operation's level and the checks it takes. */
+export interface StepUpPromptRequest {
+	level: StepUpPromptLevel;
+	factors: StepUpFactor[];
+}
+
+/** Asks the admin whether to go on; resolves false when they decline. */
+export type StepUpPrompt = (request: StepUpPromptRequest) => Promise<boolean>;
+
+let activePrompt: StepUpPrompt | null = null;
+
+/**
+ * Register the dialog that asks before a step-up (the console mounts one). Returns the function
+ * that unregisters it. Without one, a step-up runs without asking.
+ */
+export function setStepUpPrompt(prompt: StepUpPrompt): () => void {
+	activePrompt = prompt;
+	return () => {
+		if (activePrompt === prompt) activePrompt = null;
+	};
+}
+
+/**
+ * The admin declined the step-up: neither the checks nor the operation ran. Named as a declined
+ * WebAuthn ceremony is (`NotAllowedError`), so that the pages report it as they report one.
+ */
+export class StepUpCancelledError extends Error {
+	constructor() {
+		super('The step-up was cancelled');
+		this.name = 'NotAllowedError';
+	}
 }
 
 /** Verify one of the admin's registered security keys and record it on the session. */
@@ -73,37 +111,138 @@ export interface StepUpSteps {
 	reauthenticate: () => Promise<unknown>;
 	verifySecondFactor: () => Promise<unknown>;
 	issueReceipt: (stepUpId: string) => Promise<string>;
+	/** Loads the tenant's requirements, for asking before the operation is sent. */
+	requirements?: () => Promise<StepUpRequirements>;
+	/** Asks the admin before the checks; omitted, the registered dialog (if any) asks. */
+	prompt?: StepUpPrompt | null;
 }
 
 const BROWSER_STEPS: StepUpSteps = {
 	reauthenticate: reauthenticateWithPasskey,
 	verifySecondFactor,
-	issueReceipt: issueStepUpReceipt
+	issueReceipt: issueStepUpReceipt,
+	requirements: () => fetchStepUpRequirements()
 };
+
+export interface StepUpOptions {
+	/**
+	 * The operation's name in the step-up catalog (e.g. `admin.passkey.add`). Given, the admin is
+	 * asked and the checks are made before the operation is sent; the refusal still decides.
+	 */
+	operation?: string;
+}
 
 /**
  * Run an operation, meeting a step-up refusal once. `operation` receives the receipt to send
  * (undefined on the first try). A second refusal is passed on as it is.
+ *
+ * Before any check the admin is asked (the operation's level and the checks it takes); declining
+ * throws StepUpCancelledError and nothing runs. With `options.operation` the tenant's requirements
+ * say beforehand what the operation will take; otherwise, or when they could not be loaded or
+ * have gone stale, the refusal does.
  */
 export async function withStepUp<T>(
 	operation: (receipt?: string) => Promise<T>,
-	steps: StepUpSteps = BROWSER_STEPS
+	steps: StepUpSteps = BROWSER_STEPS,
+	options: StepUpOptions = {}
 ): Promise<T> {
+	const prompt = steps.prompt === undefined ? activePrompt : steps.prompt;
+	const ask = async (request: StepUpPromptRequest) => {
+		if (!prompt || request.factors.length === 0) return;
+		if (!(await prompt(request))) throw new StepUpCancelledError();
+	};
+	const check = async (factors: StepUpFactor[]) => {
+		if (factors.includes('passkey')) await steps.reauthenticate();
+		if (factors.includes('second_factor')) await steps.verifySecondFactor();
+	};
+	/** Ask for what a refusal is missing (nothing when the checks made beforehand still hold). */
+	const meet = async (required: StepUpRequired) => {
+		await ask({ level: required.level ?? 'L2', factors: required.missing });
+		await check(required.missing);
+	};
+
+	if (options.operation && steps.requirements) {
+		// Only a hint: when it cannot be loaded or read, the refusal decides as before.
+		const loaded = await steps.requirements().catch(() => null);
+		const requirements =
+			loaded &&
+			typeof loaded.operations === 'object' &&
+			loaded.operations !== null &&
+			loaded.evidence
+				? loaded
+				: null;
+		const level = requirements?.operations[options.operation]?.level;
+		if (requirements && (level === 'L1' || level === 'L2')) {
+			const factors = stepUpFactorsNeeded(requirements, options.operation);
+			await ask({ level, factors });
+			await check(factors);
+		}
+	}
+
+	// A refusal after checks made beforehand means they went stale meanwhile: it is asked again,
+	// for what the refusal names.
 	let required: StepUpRequired | null;
 	try {
 		return await operation();
 	} catch (error) {
 		if (isFreshAuthRequired(error)) {
+			await ask({ level: 'L1', factors: ['passkey'] });
 			await steps.reauthenticate();
 			return operation();
 		}
 		required = stepUpRequired(error);
 		if (!required) throw error;
 	}
-	if (required.missing.includes('passkey')) await steps.reauthenticate();
-	if (required.missing.includes('second_factor')) await steps.verifySecondFactor();
-	const receipt = await steps.issueReceipt(required.stepUpId);
-	return operation(receipt);
+	await meet(required);
+	// The admin may take a while to answer and verify: by then another check may have gone stale,
+	// or the step-up itself may have expired (it lives a few minutes). Either is met once or twice
+	// more; past that the refusal is passed on.
+	let stepUpId = required.stepUpId;
+	for (let retries = 0; ; retries++) {
+		let receipt: string;
+		try {
+			receipt = await steps.issueReceipt(stepUpId);
+		} catch (error) {
+			if (retries >= MAX_RECEIPT_RETRIES) throw error;
+			const missing = evidenceMissing(error);
+			if (missing) {
+				// The step-up still stands: verify what went stale and ask for its receipt again.
+				await meet({ stepUpId, missing, level: required.level });
+				continue;
+			}
+			if (!isUnknownStepUp(error)) throw error;
+			// The step-up is gone: the operation is sent once more for a new one.
+			let renewed: StepUpRequired | null;
+			try {
+				return await operation();
+			} catch (again) {
+				renewed = stepUpRequired(again);
+				if (!renewed) throw again;
+			}
+			await meet(renewed);
+			stepUpId = renewed.stepUpId;
+			continue;
+		}
+		return operation(receipt);
+	}
+}
+
+const MAX_RECEIPT_RETRIES = 2;
+
+/** Whether a receipt was refused because its step-up is gone (expired, or not found). */
+function isUnknownStepUp(error: unknown): boolean {
+	return error instanceof ApiError && error.code === 'invalid_step_up';
+}
+
+/** The checks a receipt was refused for (`step_up_evidence_required`), or null. */
+function evidenceMissing(error: unknown): StepUpFactor[] | null {
+	if (!(error instanceof ApiError) || error.code !== 'step_up_evidence_required') return null;
+	const missing = Array.isArray(error.body.missing)
+		? error.body.missing.filter(
+				(factor): factor is StepUpFactor => factor === 'passkey' || factor === 'second_factor'
+			)
+		: [];
+	return missing.length > 0 ? missing : null;
 }
 
 /** Headers carrying a receipt, or none. */

@@ -9,6 +9,7 @@ import { deTenantGeneral } from './tenant-general/de';
 import { deSecurityKeys } from './security-keys/de';
 import { deNotices } from './notices/de';
 import { deCustomization } from './customization/de';
+import { deStepUp } from './step-up/de';
 
 export const de = {
 	...deSettings,
@@ -21,6 +22,7 @@ export const de = {
 	...deSecurityKeys,
 	...deNotices,
 	...deCustomization,
+	...deStepUp,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',

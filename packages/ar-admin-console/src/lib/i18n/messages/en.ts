@@ -9,6 +9,7 @@ import { enTenantGeneral } from './tenant-general/en';
 import { enSecurityKeys } from './security-keys/en';
 import { enNotices } from './notices/en';
 import { enCustomization } from './customization/en';
+import { enStepUp } from './step-up/en';
 
 export const en = {
 	...enSettings,
@@ -21,6 +22,7 @@ export const en = {
 	...enSecurityKeys,
 	...enNotices,
 	...enCustomization,
+	...enStepUp,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
