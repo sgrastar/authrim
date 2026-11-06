@@ -216,6 +216,7 @@ describe('mySecondFactorsRouter', () => {
         active_count: 1,
         minimum: 1,
         enrollment: { mode: 'step_up', first_enrollment_ends_at: NOW - 1 },
+        keyring: { dc_api: false },
       });
     });
 

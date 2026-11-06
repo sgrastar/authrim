@@ -5,6 +5,8 @@
  *   idle → starting → waiting → verified
  *                       └──→ ended (failed | expired)
  *   starting → error (the request itself was refused)
+ *   starting → ready → browser → verified (Digital Credentials API; `ready` waits for a click,
+ *                                          since the browser's dialog needs a fresh user action)
  *
  * While waiting, the QR code and the two-digit match code are on screen; the admin scans the
  * code with Keyring, types the number there and confirms with Face ID. The server is asked for
@@ -12,7 +14,53 @@
  * are dropped once the presentation is over.
  */
 
-export type PresentationPhase = 'idle' | 'starting' | 'waiting' | 'verified' | 'ended' | 'error';
+export type PresentationPhase =
+	| 'idle'
+	| 'starting'
+	| 'waiting'
+	/** The browser request is prepared; the admin opens the browser's dialog with a click. */
+	| 'ready'
+	/** The browser's own dialog is open (Digital Credentials API). */
+	| 'browser'
+	| 'verified'
+	| 'ended'
+	| 'error';
+
+/** A request for the browser's Digital Credentials API. */
+export interface BrowserPresentationStart {
+	requestId: string;
+	dcRequest: { protocol: string; data: { request: string } };
+	expiresAt: number;
+}
+
+/**
+ * Present through the browser instead of a QR code: the browser shows its own dialog, finds
+ * Keyring and binds the answer to this origin. `get` stands for navigator.credentials.get.
+ */
+export interface BrowserPresentationOptions {
+	start: () => Promise<BrowserPresentationStart>;
+	submit: (requestId: string, data: unknown) => Promise<PresentationProgress>;
+	get?: (request: BrowserPresentationStart['dcRequest']) => Promise<unknown>;
+}
+
+/** Whether this browser can ask for a credential through the Digital Credentials API. */
+export function browserSupportsDigitalCredentials(): boolean {
+	return (
+		typeof window !== 'undefined' &&
+		'DigitalCredential' in window &&
+		typeof navigator !== 'undefined' &&
+		typeof navigator.credentials?.get === 'function'
+	);
+}
+
+async function askBrowser(request: BrowserPresentationStart['dcRequest']): Promise<unknown> {
+	const credential = (await navigator.credentials.get({
+		mediation: 'required',
+		digital: { requests: [request] }
+	} as CredentialRequestOptions)) as { data?: unknown } | null;
+	if (!credential || credential.data === undefined) throw new Error('No credential was returned');
+	return credential.data;
+}
 export type PresentationEndReason = 'failed' | 'expired';
 
 export interface PresentationStart {
@@ -33,6 +81,8 @@ export interface PresentationFlowOptions {
 	progress: (requestId: string) => Promise<PresentationProgress>;
 	/** Called once, when the server reports the presentation verified and recorded. */
 	onverified?: () => void;
+	/** Present through the browser first (falling back to the QR code on request). */
+	browser?: BrowserPresentationOptions;
 	now?: () => number;
 }
 
@@ -70,6 +120,8 @@ export class KeyringPresentationFlow {
 	/** The server was asked after the local deadline (the flow never ends before that). */
 	#askedAfterDeadline = false;
 	#generation = 0;
+	#prepared: { browser: BrowserPresentationOptions; started: BrowserPresentationStart } | null =
+		null;
 
 	constructor(options: PresentationFlowOptions) {
 		this.#options = options;
@@ -80,8 +132,84 @@ export class KeyringPresentationFlow {
 		return this.phase === 'waiting';
 	}
 
-	/** Start a presentation (or a new one, starting over). */
-	async start(): Promise<void> {
+	/** Whether the browser path is offered (and the QR code is the fallback). */
+	get canUseBrowser(): boolean {
+		return this.#options.browser !== undefined;
+	}
+
+	/**
+	 * Start: through the browser when it is offered, otherwise (or with `qr`) with a QR code.
+	 */
+	async start(options: { qr?: boolean } = {}): Promise<void> {
+		if (this.#options.browser && !options.qr) return this.#startInBrowser(this.#options.browser);
+		return this.#startWithQr();
+	}
+
+	async #startInBrowser(browser: BrowserPresentationOptions): Promise<void> {
+		this.#reset();
+		const generation = ++this.#generation;
+		this.phase = 'starting';
+		let started: BrowserPresentationStart;
+		try {
+			started = await browser.start();
+		} catch (error) {
+			if (generation !== this.#generation) return;
+			this.error = error;
+			this.phase = 'error';
+			return;
+		}
+		if (generation !== this.#generation) return;
+		// The request (and any step-up before it) took time, and may have used the click that
+		// started it: the browser's dialog is opened by the next one, in openBrowser().
+		this.#prepared = { browser, started };
+		this.#expiresAt = started.expiresAt;
+		this.phase = 'ready';
+		// A request left unopened past its lifetime is over: offer a fresh attempt instead.
+		this.#tickTimer = setInterval(() => {
+			if (this.phase === 'ready' && this.#now() >= this.#expiresAt) this.#end('expired');
+		}, COUNTDOWN_INTERVAL_MS);
+	}
+
+	/**
+	 * Open the browser's dialog for the prepared request. Call it straight from a click handler:
+	 * the Digital Credentials API needs a transient user activation, so nothing is awaited before
+	 * the browser is asked.
+	 */
+	async openBrowser(): Promise<void> {
+		const prepared = this.#prepared;
+		if (this.phase !== 'ready' || !prepared) return;
+		if (this.#now() >= prepared.started.expiresAt) {
+			this.#end('expired');
+			return;
+		}
+		this.#prepared = null;
+		if (this.#tickTimer !== undefined) clearInterval(this.#tickTimer);
+		this.#tickTimer = undefined;
+		const { browser, started } = prepared;
+		const generation = this.#generation;
+		this.phase = 'browser';
+		let progress: PresentationProgress;
+		try {
+			const data = await (browser.get ?? askBrowser)(started.dcRequest);
+			if (generation !== this.#generation) return;
+			progress = await browser.submit(started.requestId, data);
+		} catch (error) {
+			if (generation !== this.#generation) return;
+			// Cancelled in the browser's dialog, or the browser could not do it: the QR code remains.
+			this.error = error;
+			this.phase = 'error';
+			return;
+		}
+		if (generation !== this.#generation) return;
+		if (progress.status === 'verified') {
+			this.phase = 'verified';
+			this.#options.onverified?.();
+		} else {
+			this.#end('failed', progress.error ?? null);
+		}
+	}
+
+	async #startWithQr(): Promise<void> {
 		this.#reset();
 		const generation = ++this.#generation;
 		this.phase = 'starting';
@@ -135,6 +263,7 @@ export class KeyringPresentationFlow {
 		this.remainingMs = 0;
 		this.failure = null;
 		this.error = null;
+		this.#prepared = null;
 		this.#requestId = '';
 		this.#failures = 0;
 		this.#polling = false;
@@ -165,6 +294,7 @@ export class KeyringPresentationFlow {
 
 	#end(reason: PresentationEndReason, failure: string | null = null): void {
 		this.#clearPoll();
+		this.#prepared = null;
 		if (this.#tickTimer !== undefined) clearInterval(this.#tickTimer);
 		this.#tickTimer = undefined;
 		this.qr = '';

@@ -46,3 +46,45 @@ describe('adminVPRequestDid', () => {
     expect(adminVPRequestDid(payload(overrides), NOW)).toBeNull();
   });
 });
+
+describe('adminVPRequestDid for the Digital Credentials API', () => {
+  const encryptionKey = { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', use: 'enc', alg: 'ECDH-ES' };
+  function dcPayload(overrides: Record<string, unknown> = {}) {
+    const base: Record<string, unknown> = {
+      ...payload(),
+      response_mode: 'dc_api.jwt',
+      expected_origins: ['https://console.example.com'],
+      client_metadata: {
+        jwks: { keys: [encryptionKey] },
+        encrypted_response_enc_values_supported: ['A128GCM'],
+      },
+    };
+    delete base.response_uri;
+    delete base.state;
+    return { ...base, ...overrides };
+  }
+
+  it('signs an origin-bound request answered encrypted', () => {
+    expect(adminVPRequestDid(dcPayload(), NOW)).toBe('did:web:idp.example.com');
+  });
+
+  it.each([
+    ['no expected origin', { expected_origins: [] }],
+    ['two origins', { expected_origins: ['https://a.example', 'https://b.example'] }],
+    ['an http origin', { expected_origins: ['http://console.example.com'] }],
+    ['an origin with a path', { expected_origins: ['https://console.example.com/x'] }],
+    ['a response_uri as well', { response_uri: 'https://idp.example.com/vp' }],
+    ['no encryption key', { client_metadata: { jwks: { keys: [] } } }],
+    [
+      'a private encryption key',
+      { client_metadata: { jwks: { keys: [{ ...encryptionKey, d: 'secret' }] } } },
+    ],
+    [
+      'a signing key in place of the encryption key',
+      { client_metadata: { jwks: { keys: [{ ...encryptionKey, use: 'sig' }] } } },
+    ],
+    ['an unencrypted answer', { response_mode: 'dc_api' }],
+  ])('refuses %s', (_label, overrides) => {
+    expect(adminVPRequestDid(dcPayload(overrides), NOW)).toBeNull();
+  });
+});

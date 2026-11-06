@@ -36,6 +36,8 @@ describe('tenant request path classification', () => {
     '/api/admin/me/keyring/step-up/g1:apac:0:vp_x',
     '/api/admin/me/keyring/enroll',
     '/api/admin/me/keyring/enroll/g1:apac:0:vp_x',
+    '/api/admin/me/keyring/step-up/g1:apac:0:vp_x/response',
+    '/api/admin/me/keyring/enroll/g1:apac:0:vp_x/response',
   ])('keeps Admin identity operations platform-owned: %s', (path) => {
     expect(classifyTenantRequestPath(path)).toBe('platform_admin');
   });

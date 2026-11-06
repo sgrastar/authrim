@@ -19,6 +19,7 @@ import {
   consumeAdminPresentation,
   createAdminPresentationRequest,
   getAdminPresentationStatus,
+  submitAdminPresentationResponse,
 } from '../verifier/admin/admin-vp-service';
 import type {
   AdminOfferProgress,
@@ -350,6 +351,20 @@ export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
     );
   }
 
+  /** The browser's answer to a Digital Credentials API request, for the session that asked. */
+  async submitAdminPresentationResponse(input: AdminPresentationRef & { data: unknown }): Promise<{
+    outcome: 'verified' | 'refused' | 'unknown' | 'replayed' | 'unavailable';
+    error?: string;
+  }> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      const { data, ...ref } = input;
+      const outcome = await submitAdminPresentationResponse(env, ref, data);
+      return outcome.kind === 'refused'
+        ? { outcome: 'refused', error: outcome.error }
+        : { outcome: outcome.kind };
+    });
+  }
+
   /** Null unless the offer is an admin offer of exactly this tenant and administrator. */
   async getAdminCredentialOfferStatus(input: {
     tenantId: string;
@@ -397,4 +412,5 @@ export const SAML_DR_WRITER_SURFACES = [
   'rpc:VCIssuerEntrypoint.createCredentialOffer',
   'rpc:VCIssuerEntrypoint.getAdminCredentialOfferStatus',
   'rpc:VCIssuerEntrypoint.getAdminPresentationStatus',
+  'rpc:VCIssuerEntrypoint.submitAdminPresentationResponse',
 ] as const;

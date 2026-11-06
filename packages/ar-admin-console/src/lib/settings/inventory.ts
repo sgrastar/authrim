@@ -705,7 +705,8 @@ place('settings/team', 'Admin sign-in', {
 	advanced: [
 		'session.ttl.admin_passkey',
 		'security.admin_step_up_overrides',
-		'security.admin_step_up_enforced'
+		'security.admin_step_up_enforced',
+		'security.admin_keyring_dc_api'
 	]
 });
 

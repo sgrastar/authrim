@@ -32573,6 +32573,12 @@ paths:
         the QR value and the two-digit match code the admin types into Keyring. Human admin
         sessions only. 409 keyring_not_registered without a Keyring factor; 403
         keyring_not_eligible for an admin no longer eligible for the admin credential.
+        With a body of {"mode": "dc_api"} (when the platform setting
+        security.admin_keyring_dc_api is on; 409 keyring_dc_api_disabled otherwise) the
+        presentation goes through the browser's Digital Credentials API instead: the answer is
+        bound to the console origin and encrypted, the response carries dc_request (for
+        navigator.credentials.get) in place of qr and match_code, and the browser's answer is
+        submitted to …/{id}/response.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '201':
@@ -32625,6 +32631,60 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/me/keyring/step-up/{id}/response:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeKeyringStepUpByIdResponse
+      summary: Submit the browser's answer to a Keyring step-up presentation
+      description: >-
+        The answer the browser gave the console for a Digital Credentials API request (the data
+        of the DigitalCredential, as {"response": <data>}). It is decrypted with the request's
+        ephemeral key and verified for the admin session that asked for it; once verified, the
+        result is collected and recorded as for GET …/step-up/{id}. A refused answer ends the
+        request (status failed, with the reason in error).
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - response
+              properties:
+                response:
+                  description: DigitalCredential.data, passed on unchanged.
+      responses:
+        '200':
+          description: The progress after the answer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminKeyringPresentationProgress'
+        '201':
+          description: The holder key was registered (enrolment).
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/me/keyring/enroll:
     post:
       tags:
@@ -32637,6 +32697,12 @@ paths:
         authrim-step-up-receipt once a factor is active, a fresh passkey inside the
         first-enrollment window, otherwise 403 second_factor_recovery_required. A holder key
         registered before (revoked ones included) is refused by the wallet response.
+        With a body of {"mode": "dc_api"} (when the platform setting
+        security.admin_keyring_dc_api is on; 409 keyring_dc_api_disabled otherwise) the
+        presentation goes through the browser's Digital Credentials API instead: the answer is
+        bound to the console origin and encrypted, the response carries dc_request (for
+        navigator.credentials.get) in place of qr and match_code, and the browser's answer is
+        submitted to …/{id}/response.
       parameters:
         - name: authrim-step-up-receipt
           in: header
@@ -32714,6 +32780,60 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/me/keyring/enroll/{id}/response:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeKeyringEnrollByIdResponse
+      summary: Submit the browser's answer to a Keyring enrolment presentation
+      description: >-
+        The answer the browser gave the console for a Digital Credentials API request (the data
+        of the DigitalCredential, as {"response": <data>}). It is decrypted with the request's
+        ephemeral key and verified for the admin session that asked for it; once verified, the
+        result is collected and recorded as for GET …/enroll/{id}. A refused answer ends the
+        request (status failed, with the reason in error).
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - response
+              properties:
+                response:
+                  description: DigitalCredential.data, passed on unchanged.
+      responses:
+        '200':
+          description: The progress after the answer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminKeyringPresentationProgress'
+        '201':
+          description: The holder key was registered (enrolment).
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/me/second-factors:
     get:
       tags:
@@ -32764,6 +32884,14 @@ paths:
                           - integer
                           - 'null'
                         description: End of the first-enrollment window, in milliseconds since the epoch.
+                  keyring:
+                    type: object
+                    properties:
+                      dc_api:
+                        type: boolean
+                        description: >-
+                          Whether Keyring may also be presented through the browser (Digital
+                          Credentials API; platform setting security.admin_keyring_dc_api).
         default:
           $ref: '#/components/responses/Error'
       security:
@@ -50909,10 +51037,14 @@ components:
       type: object
       required:
         - request_id
-        - qr
-        - match_code
         - expires_at
       properties:
+        dc_request:
+          type: object
+          description: >-
+            Digital Credentials API mode only: the request for navigator.credentials.get
+            ({ protocol: openid4vp-v1-signed, data: { request: <signed request object> } }).
+          additionalProperties: true
         request_id:
           type: string
         qr:

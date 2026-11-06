@@ -14,10 +14,11 @@
 		description?: string;
 		flow: KeyringPresentationFlow | null;
 		onretry: () => void;
+		onqr?: () => void;
 		oncancel: () => void;
 	}
 
-	let { open, title, description, flow, onretry, oncancel }: Props = $props();
+	let { open, title, description, flow, onretry, onqr, oncancel }: Props = $props();
 
 	let dialog = $state<HTMLDialogElement>();
 	const uid = $props.id();
@@ -42,7 +43,7 @@
 	{#if description}<p>{description}</p>{/if}
 	<div class="dialog__body">
 		{#if open && flow}
-			<KeyringPresentationPanel {flow} {onretry} />
+			<KeyringPresentationPanel {flow} {onretry} {onqr} />
 		{/if}
 	</div>
 	<div class="dialog__actions">

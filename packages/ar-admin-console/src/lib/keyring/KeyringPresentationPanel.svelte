@@ -17,9 +17,11 @@
 		flow: KeyringPresentationFlow;
 		/** Start over after a failure or the end of the time. */
 		onretry: () => void;
+		/** Leave the browser path for a QR code (offered when the flow went through the browser). */
+		onqr?: () => void;
 	}
 
-	let { flow, onretry }: Props = $props();
+	let { flow, onretry, onqr }: Props = $props();
 
 	let qrDataUrl = $state('');
 
@@ -97,6 +99,10 @@
 				return t('kp.starting');
 			case 'waiting':
 				return flow.checking ? t('kp.checking') : t('kp.scan');
+			case 'ready':
+				return t('kp.openBrowser');
+			case 'browser':
+				return t('kp.browser');
 			// The verified, failed and refused states show a live callout, which is announced
 			// already; saying it here too would read it twice.
 			default:
@@ -140,17 +146,44 @@
 		{/if}
 		<p class="presentation__countdown">{t('kp.expiresIn', { time: countdown })}</p>
 	</div>
+{:else if flow.phase === 'ready'}
+	<div class="presentation">
+		<p class="presentation__note">{t('kp.browser.note')}</p>
+		<div class="presentation__actions">
+			<Button size="sm" icon="deviceMobile" onclick={() => void flow.openBrowser()}>
+				{t('kp.openBrowser')}
+			</Button>
+			{#if onqr}
+				<Button size="sm" variant="ghost" onclick={onqr}>{t('kp.useQr')}</Button>
+			{/if}
+		</div>
+	</div>
+{:else if flow.phase === 'browser'}
+	<div class="presentation">
+		<LoadingState label={t('kp.browser')} />
+		<p class="presentation__note">{t('kp.browser.note')}</p>
+	</div>
 {:else if flow.phase === 'verified'}
 	<Callout tone="info" icon="check" live>{t('kp.verified')}</Callout>
 {:else if flow.phase === 'ended'}
 	<div class="presentation">
 		<Callout tone="warning" live>{failureText}</Callout>
-		<div><Button size="sm" onclick={onretry}>{t('kp.again')}</Button></div>
+		<div class="presentation__actions">
+			<Button size="sm" onclick={onretry}>{t('kp.again')}</Button>
+			{#if flow.canUseBrowser && onqr}
+				<Button size="sm" variant="ghost" onclick={onqr}>{t('kp.useQr')}</Button>
+			{/if}
+		</div>
 	</div>
 {:else}
 	<div class="presentation">
 		<Callout tone="danger" live>{startErrorText}</Callout>
-		<div><Button size="sm" onclick={onretry}>{t('kp.again')}</Button></div>
+		<div class="presentation__actions">
+			<Button size="sm" onclick={onretry}>{t('kp.again')}</Button>
+			{#if flow.canUseBrowser && onqr}
+				<Button size="sm" variant="ghost" onclick={onqr}>{t('kp.useQr')}</Button>
+			{/if}
+		</div>
 	</div>
 {/if}
 
@@ -158,6 +191,12 @@
 	.presentation {
 		display: flex;
 		flex-direction: column;
+		gap: var(--space-related);
+	}
+
+	.presentation__actions {
+		display: flex;
+		flex-wrap: wrap;
 		gap: var(--space-related);
 	}
 

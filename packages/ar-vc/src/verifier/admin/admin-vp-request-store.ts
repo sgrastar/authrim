@@ -14,6 +14,12 @@
 import type { SqlStorageValue } from '@cloudflare/workers-types';
 
 export type AdminVPPurpose = 'step_up' | 'enroll';
+/**
+ * How the wallet answers: `direct_post` (QR, cross-device, with a match code) or `dc_api` (the
+ * browser's Digital Credentials API, bound to the console origin, answer encrypted to the
+ * request's ephemeral key).
+ */
+export type AdminVPMode = 'direct_post' | 'dc_api';
 export type AdminVPStatus =
   | 'pending'
   | 'processing'
@@ -37,6 +43,9 @@ CREATE TABLE IF NOT EXISTS admin_vp_requests (
   transaction_data TEXT NOT NULL,
   request_object TEXT NOT NULL,
   context_json TEXT NOT NULL DEFAULT '{}',
+  mode TEXT NOT NULL DEFAULT 'direct_post',
+  expected_origin TEXT,
+  encryption_jwk TEXT,
   status TEXT NOT NULL CHECK (status IN
     ('pending', 'processing', 'verified', 'failed', 'expired', 'consumed')),
   reservation_id TEXT,
@@ -72,7 +81,13 @@ export interface AdminVPRequestInput {
    */
   holderJkts: string[];
   nonce: string;
+  /** direct_post: the two digits; dc_api: empty (the origin binding replaces it). */
   matchCode: string;
+  mode?: AdminVPMode;
+  /** dc_api: the console origin the browser binds the answer to. */
+  expectedOrigin?: string;
+  /** dc_api: the ephemeral private key (JWK) the answer is encrypted to. */
+  encryptionJwk?: string;
   clientId: string;
   credentialIssuer: string;
   transactionData: string;
@@ -92,6 +107,10 @@ export interface AdminVPRequest {
   holderJkts: string[];
   nonce: string;
   matchCode: string;
+  mode: AdminVPMode;
+  encryptionJwk?: string;
+  /** Digital Credentials API: the console origin the answer is bound to. */
+  expectedOrigin?: string;
   clientId: string;
   credentialIssuer: string;
   transactionData: string;
@@ -128,6 +147,9 @@ interface Row {
   transaction_data: string;
   request_object: string;
   context_json: string;
+  mode: AdminVPMode;
+  expected_origin: string | null;
+  encryption_jwk: string | null;
   status: AdminVPStatus;
   reservation_id: string | null;
   lease_expires_at: number | null;
@@ -151,6 +173,9 @@ function toRequest(row: Row): AdminVPRequest {
     holderJkts: JSON.parse(row.holder_jkts_json) as string[],
     nonce: row.nonce,
     matchCode: row.match_code,
+    mode: row.mode === 'dc_api' ? 'dc_api' : 'direct_post',
+    ...(row.encryption_jwk ? { encryptionJwk: row.encryption_jwk } : {}),
+    ...(row.expected_origin ? { expectedOrigin: row.expected_origin } : {}),
     clientId: row.client_id,
     credentialIssuer: row.credential_issuer,
     transactionData: row.transaction_data,
@@ -172,13 +197,40 @@ export class AdminVPRequestTable {
 
   initialize(): void {
     this.sql.exec(ADMIN_VP_SCHEMA);
+    // Tables created before the Digital Credentials API mode get its columns.
+    const columns = new Set(
+      this.sql
+        .exec<{ name: string }>("SELECT name FROM pragma_table_info('admin_vp_requests')")
+        .toArray()
+        .map((column) => column.name)
+    );
+    if (!columns.has('mode')) {
+      this.sql.exec(
+        "ALTER TABLE admin_vp_requests ADD COLUMN mode TEXT NOT NULL DEFAULT 'direct_post'"
+      );
+    }
+    if (!columns.has('expected_origin')) {
+      this.sql.exec('ALTER TABLE admin_vp_requests ADD COLUMN expected_origin TEXT');
+    }
+    if (!columns.has('encryption_jwk')) {
+      this.sql.exec('ALTER TABLE admin_vp_requests ADD COLUMN encryption_jwk TEXT');
+    }
   }
 
   create(input: AdminVPRequestInput): void {
     if (input.purpose !== 'step_up' && input.purpose !== 'enroll') {
       throw new Error('admin_vp_invalid_purpose');
     }
-    if (!/^\d{2}$/u.test(input.matchCode)) throw new Error('admin_vp_invalid_match_code');
+    const mode = input.mode ?? 'direct_post';
+    if (mode === 'direct_post') {
+      if (!/^\d{2}$/u.test(input.matchCode)) throw new Error('admin_vp_invalid_match_code');
+    } else if (mode === 'dc_api') {
+      if (input.matchCode !== '' || !input.expectedOrigin || !input.encryptionJwk) {
+        throw new Error('admin_vp_invalid_dc_api_request');
+      }
+    } else {
+      throw new Error('admin_vp_invalid_mode');
+    }
     if (input.expiresAt <= input.createdAt) throw new Error('admin_vp_invalid_expiry');
     if (!Array.isArray(input.holderJkts) || input.holderJkts.length > 32) {
       throw new Error('admin_vp_invalid_holder_keys');
@@ -198,9 +250,9 @@ export class AdminVPRequestTable {
     this.sql.exec(
       `INSERT INTO admin_vp_requests
          (id, tenant_id, admin_user_id, session_id, purpose, holder_jkts_json, nonce, match_code,
-          client_id, credential_issuer, transaction_data, request_object, context_json, status,
-          created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+          client_id, credential_issuer, transaction_data, request_object, context_json, mode,
+          expected_origin, encryption_jwk, status, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       nonEmpty(input.id, 'id'),
       nonEmpty(input.tenantId, 'tenant_id'),
       nonEmpty(input.adminUserId, 'admin_user_id'),
@@ -214,6 +266,9 @@ export class AdminVPRequestTable {
       nonEmpty(input.transactionData, 'transaction_data'),
       nonEmpty(input.requestObject, 'request_object'),
       context,
+      mode,
+      input.expectedOrigin ?? null,
+      input.encryptionJwk ?? null,
       input.createdAt,
       input.expiresAt
     );
@@ -222,12 +277,22 @@ export class AdminVPRequestTable {
   /** The signed request object while a wallet may still answer it, else null. */
   requestObject(id: string, tenantId: string, now: number): string | null {
     const row = this.expireIfDue(this.row(id, tenantId), now);
-    return row && row.status === 'pending' ? row.request_object : null;
+    // A Digital Credentials API request goes through the browser, never by reference.
+    return row && row.status === 'pending' && row.mode === 'direct_post'
+      ? row.request_object
+      : null;
   }
 
-  reserve(id: string, tenantId: string, fingerprint: string, now: number): ReserveAdminVPResult {
+  reserve(
+    id: string,
+    tenantId: string,
+    fingerprint: string,
+    now: number,
+    mode: AdminVPMode = 'direct_post'
+  ): ReserveAdminVPResult {
     let row = this.row(id, tenantId);
-    if (!row) return { reserved: false, reason: 'not_found' };
+    // An answer arrives only the way the request asked for it.
+    if (!row || row.mode !== mode) return { reserved: false, reason: 'not_found' };
     if (row.status === 'processing' && (row.lease_expires_at ?? 0) <= now) {
       this.sql.exec(
         `UPDATE admin_vp_requests SET status = 'pending', reservation_id = NULL,

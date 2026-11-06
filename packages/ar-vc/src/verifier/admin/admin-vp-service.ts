@@ -3,7 +3,7 @@
  * public wallet endpoints (`GET /vp/admin/request/:id`, `POST /vp/admin/response`).
  */
 
-import type { JWK, JWTPayload } from 'jose';
+import { exportJWK, generateKeyPair, type JWK, type JWTPayload } from 'jose';
 import {
   ADMIN_CREDENTIAL_CONFIGURATION_ID,
   ensureDatabaseAdapter,
@@ -24,7 +24,9 @@ import {
   getVPRequestStoreForNewRequest,
 } from '../../utils/vp-request-sharding';
 import {
+  ADMIN_VP_DC_API_PROTOCOL,
   ADMIN_VP_REQUEST_TTL_SECONDS,
+  decryptDcApiAnswer,
   adminVPClientId,
   adminVPQrValue,
   adminVPRequestUri,
@@ -37,6 +39,8 @@ import {
   type AdminCredentialRecord,
 } from './admin-vp-protocol';
 import type {
+  AdminVPMode,
+  AdminVPRequest,
   AdminVPRequestInput,
   AdminVPResult,
   AdminVPStatus,
@@ -56,6 +60,7 @@ interface AdminVPStoreStub {
     tenantId: string;
     responseFingerprint: string;
     now: number;
+    mode?: AdminVPMode;
   }): Promise<ReserveAdminVPResult>;
   completeAdminResponseRpc(input: {
     id: string;
@@ -184,19 +189,47 @@ export async function createAdminPresentationRequest(
   );
   const nowSeconds = Math.floor(now / 1000);
   const nonce = base64url(crypto.getRandomValues(new Uint8Array(32)));
-  const matchCode = generateMatchCode();
+  const mode = input.mode ?? 'direct_post';
+  if (mode !== 'direct_post' && mode !== 'dc_api') throw new Error('invalid_mode');
+  // The Digital Credentials API binds the answer to the console origin and encrypts it to a key
+  // of this request only; a QR code needs the number the admin types instead.
+  const matchCode = mode === 'direct_post' ? generateMatchCode() : '';
+  let expectedOrigin: string | undefined;
+  let encryption: { publicJwk: JWK; privateJwk: string } | undefined;
+  if (mode === 'dc_api') {
+    expectedOrigin = httpsOrigin(input.origin);
+    const pair = await generateKeyPair('ECDH-ES', { crv: 'P-256', extractable: true });
+    const kid = base64url(crypto.getRandomValues(new Uint8Array(12)));
+    const publicJwk = await exportJWK(pair.publicKey);
+    encryption = {
+      publicJwk: {
+        kty: 'EC',
+        crv: 'P-256',
+        x: publicJwk.x,
+        y: publicJwk.y,
+        kid,
+        use: 'enc',
+        alg: 'ECDH-ES',
+      },
+      privateJwk: JSON.stringify({ ...(await exportJWK(pair.privateKey)), kid }),
+    };
+  }
   const transactionData = encodeTransactionData({
     purpose: input.purpose,
     tenant: tenantLabel,
     requestedAt: nowSeconds,
+    matchCodeRequired: mode === 'direct_post',
   });
   const payload = buildAdminVPRequestPayload({
     credentialIssuer,
     vct: adminCredentialVct(),
     nonce,
-    state: requestId,
     transactionData,
     now: nowSeconds,
+    transport:
+      mode === 'direct_post'
+        ? { mode, state: requestId }
+        : { mode, expectedOrigin: expectedOrigin!, encryptionKey: encryption!.publicJwk },
   });
   const { token: requestObject } = await keyManager(env, input.tenantId).signAdminVPRequestRpc(
     payload
@@ -218,16 +251,34 @@ export async function createAdminPresentationRequest(
     transactionData,
     requestObject,
     context: input.context ?? {},
+    mode,
+    ...(expectedOrigin ? { expectedOrigin } : {}),
+    ...(encryption ? { encryptionJwk: encryption.privateJwk } : {}),
     createdAt: now,
     expiresAt,
   });
 
+  if (mode === 'dc_api') {
+    return {
+      requestId,
+      expiresAt,
+      dcRequest: { protocol: ADMIN_VP_DC_API_PROTOCOL, data: { request: requestObject } },
+    };
+  }
   return {
     requestId,
     qr: adminVPQrValue(clientId, adminVPRequestUri(credentialIssuer, requestId)),
     matchCode,
     expiresAt,
   };
+}
+
+/** `https://host[:port]` as the console sent it; nothing else is a request origin. */
+function httpsOrigin(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('invalid_origin');
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.origin !== value) throw new Error('invalid_origin');
+  return value;
 }
 
 function checkRef(ref: AdminPresentationRef): void {
@@ -280,6 +331,43 @@ export async function getAdminRequestObject(
   const store = await storeFor(env, requestId, tenantId);
   if (!store) return null;
   return store.getAdminRequestObjectRpc({ id: requestId, tenantId, now });
+}
+
+/**
+ * The answer the browser handed the console for a Digital Credentials API request, submitted by
+ * Management for the admin session that asked for it. Verified like a wallet's direct_post, after
+ * decryption with the request's ephemeral key; no match code (the browser bound it to the origin).
+ */
+export async function submitAdminPresentationResponse(
+  env: Env,
+  ref: AdminPresentationRef,
+  data: unknown,
+  now: number = Date.now()
+): Promise<AdminResponseOutcome> {
+  checkRef(ref);
+  const store = await storeFor(env, ref.requestId, ref.tenantId);
+  if (!store) return { kind: 'unknown' };
+  // Only the session that asked may answer, and only while it can.
+  const status = await store.getAdminStatusRpc({
+    id: ref.requestId,
+    tenantId: ref.tenantId,
+    adminUserId: ref.adminUserId,
+    sessionId: ref.sessionId,
+    now,
+  });
+  if (!status) return { kind: 'unknown' };
+  const serialized = JSON.stringify(data ?? null);
+  if (serialized.length > 96 * 1024) return { kind: 'refused', error: 'invalid_vp_token' };
+  return verifyReserved(
+    env,
+    store,
+    ref.tenantId,
+    ref.requestId,
+    now,
+    'dc_api',
+    serialized,
+    async (request) => decryptDcApiAnswer(data, request.encryptionJwk ?? '')
+  );
 }
 
 export type AdminResponseOutcome =
@@ -340,11 +428,39 @@ export async function acceptAdminResponse(
 ): Promise<AdminResponseOutcome> {
   const store = await storeFor(env, requestId, tenantId);
   if (!store) return { kind: 'unknown' };
+  return verifyReserved(
+    env,
+    store,
+    tenantId,
+    requestId,
+    now,
+    'direct_post',
+    vpToken,
+    async () => vpToken
+  );
+}
+
+/**
+ * Reserve the request for one answer (so it is verified at most once), read its vp_token,
+ * verify it, and record the outcome. A refusal fails the request for good; an infrastructure
+ * error gives it back so the answer can be sent again.
+ */
+async function verifyReserved(
+  env: Env,
+  store: AdminVPStoreStub,
+  tenantId: string,
+  requestId: string,
+  now: number,
+  mode: AdminVPMode,
+  fingerprintInput: string,
+  readVpToken: (request: AdminVPRequest) => Promise<unknown>
+): Promise<AdminResponseOutcome> {
   const reservation = await store.reserveAdminResponseRpc({
     id: requestId,
     tenantId,
-    responseFingerprint: await sha256Base64url(`${requestId}\u0000${vpToken}`),
+    responseFingerprint: await sha256Base64url(`${requestId}\u0000${fingerprintInput}`),
     now,
+    mode,
   });
   if (!reservation.reserved) {
     if (reservation.reason === 'not_found' || reservation.reason === 'expired') {
@@ -354,7 +470,17 @@ export async function acceptAdminResponse(
   }
 
   const { reservationId, request } = reservation;
+  const fail = async (error: string): Promise<AdminResponseOutcome> => {
+    await store.failAdminResponseRpc({ id: requestId, tenantId, reservationId, errorCode: error });
+    return { kind: 'refused', error };
+  };
   try {
+    let vpToken: unknown;
+    try {
+      vpToken = await readVpToken(request);
+    } catch {
+      return await fail('invalid_vp_token');
+    }
     const result = await verifyAdminPresentation(
       vpToken,
       request,
@@ -365,15 +491,7 @@ export async function acceptAdminResponse(
       },
       Math.floor(now / 1000)
     );
-    if (!result.ok) {
-      await store.failAdminResponseRpc({
-        id: requestId,
-        tenantId,
-        reservationId,
-        errorCode: result.error,
-      });
-      return { kind: 'refused', error: result.error };
-    }
+    if (!result.ok) return await fail(result.error);
     const completed = await store.completeAdminResponseRpc({
       id: requestId,
       tenantId,

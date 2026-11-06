@@ -89,22 +89,24 @@ export class StepUpCancelledError extends Error {
 }
 
 /** The kinds of second factor the admin has active; empty when they cannot be read. */
-async function activeSecondFactorKinds(): Promise<Set<string>> {
+async function activeSecondFactorKinds(): Promise<{ kinds: Set<string>; dcApi: boolean }> {
 	try {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/second-factors`, {
 			credentials: 'include'
 		});
-		if (!response.ok) return new Set();
+		if (!response.ok) return { kinds: new Set(), dcApi: false };
 		const body = (await response.json()) as {
 			second_factors?: Array<{ kind?: unknown; revoked_at?: unknown }>;
+			keyring?: { dc_api?: unknown };
 		};
-		return new Set(
+		const kinds = new Set(
 			(body.second_factors ?? []).flatMap((factor) =>
 				factor.revoked_at == null && typeof factor.kind === 'string' ? [factor.kind] : []
 			)
 		);
+		return { kinds, dcApi: body.keyring?.dc_api === true };
 	} catch {
-		return new Set();
+		return { kinds: new Set(), dcApi: false };
 	}
 }
 
@@ -113,11 +115,12 @@ async function activeSecondFactorKinds(): Promise<Set<string>> {
  * chooses (Keyring, or a security key when there is one); otherwise a security key is asked for.
  */
 export async function verifySecondFactor(): Promise<void> {
-	const kinds = await activeSecondFactorKinds();
+	const { kinds, dcApi } = await activeSecondFactorKinds();
 	if (kinds.has('keyring_holder_key')) {
 		const answer = await secondFactorPrompt.ask({
 			hasSecurityKey: kinds.has('webauthn_credential'),
-			client: httpKeyringFactor
+			client: httpKeyringFactor,
+			dcApi
 		});
 		if (answer === 'keyring_verified') return;
 	}

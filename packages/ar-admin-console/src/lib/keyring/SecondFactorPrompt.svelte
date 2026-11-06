@@ -47,7 +47,11 @@
 	<p>{prompt.flow ? t('kp.prompt.keyringDesc') : t('kp.prompt.desc')}</p>
 	<div class="dialog__body">
 		{#if prompt.flow}
-			<KeyringPresentationPanel flow={prompt.flow} onretry={() => prompt.retry()} />
+			<KeyringPresentationPanel
+				flow={prompt.flow}
+				onretry={() => prompt.retry()}
+				onqr={() => prompt.useQr()}
+			/>
 		{:else if prompt.open}
 			<ChoiceCards
 				label={t('kp.prompt.choose')}

@@ -25,6 +25,7 @@ export interface SecuritySettings {
   // Admin step-up
   'security.admin_step_up_enforced': boolean;
   'security.admin_step_up_overrides': Record<string, 'L1' | 'L2'>;
+  'security.admin_keyring_dc_api': boolean;
 
   // OAuth Security Requirements
   'security.pkce_required': boolean;
@@ -131,6 +132,19 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     label: 'Enforce Admin Step-up',
     description:
       'Whether sensitive admin operations require a recent passkey (L1) or a passkey and second factor (L2). Turn off only for a migration; turning it off itself requires L2, and the second-factor operations stay protected',
+    visibility: 'admin',
+  },
+  'security.admin_keyring_dc_api': {
+    key: 'security.admin_keyring_dc_api',
+    // The browsers and the wallet must support it: one switch for the whole deployment.
+    scopes: ['platform'],
+    type: 'boolean',
+    default: false,
+    envKey: 'ADMIN_KEYRING_DC_API',
+    envBoolean: 'exactly-true',
+    label: 'Keyring through the Digital Credentials API',
+    description:
+      'Let admins present their Keyring credential through the browser (Digital Credentials API, OpenID4VP) instead of a QR code, where the browser supports it. The browser binds the answer to the console origin. Off until the wallet supports it',
     visibility: 'admin',
   },
   'security.admin_step_up_overrides': {
@@ -359,6 +373,7 @@ export const SECURITY_DEFAULTS: SecuritySettings = {
   'security.dpop_nonce_resource_overrides': {},
   'security.admin_step_up_enforced': true,
   'security.admin_step_up_overrides': {},
+  'security.admin_keyring_dc_api': false,
   // New settings
   'security.pkce_required': false,
   'security.par_required': false,
