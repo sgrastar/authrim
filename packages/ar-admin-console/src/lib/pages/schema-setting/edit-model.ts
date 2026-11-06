@@ -98,8 +98,12 @@ export function changeOf(schema: Schema, form: EditForm): SchemaChange {
 	const description = form.description.trim() === '' ? null : form.description.trim();
 	if (description !== schema.description) change.description = description;
 	// The rules are sent when they differ, or when the type changed (they are for the new type).
+	// Rules whose fields were not touched are not sent, even when the form would tidy them
+	// (values trimmed): an untouched form is the one the saved rules open as.
 	const rules = rulesFromForm(form.type, form.rules);
-	if (!sameRules(rules, schema.validation) || (!schema.isSystem && form.type !== schema.type))
+	const typeChanged = !schema.isSystem && form.type !== schema.type;
+	const untouched = !typeChanged && sameValue(form.rules, formFromRules(schema.validation));
+	if (!untouched && (!sameRules(rules, schema.validation) || typeChanged))
 		change.validation = rules;
 	if (form.isSearchable !== schema.isSearchable) change.isSearchable = form.isSearchable;
 	if (form.isExportable !== schema.isExportable) change.isExportable = form.isExportable;

@@ -8,6 +8,10 @@
 	}
 
 	export interface TranslationLocale {
+		/**
+		 * The language's code (BCP 47). For the source it may be empty: texts that are no one
+		 * language (a default for every language) are then not marked with a language.
+		 */
 		code: string;
 		/** Name of the language, in its own language. */
 		name: string;
@@ -40,9 +44,22 @@
 		source: TranslationLocale;
 		values?: Translations;
 		field?: string;
+		/** Shown, not edited (no permission to change it). */
+		disabled?: boolean;
+		/** The longest text that can be typed in an entry. */
+		maxLength?: number;
 	}
 
-	let { label, rows, locales, source, values = $bindable({}), field }: Props = $props();
+	let {
+		label,
+		rows,
+		locales,
+		source,
+		values = $bindable({}),
+		field,
+		disabled = false,
+		maxLength
+	}: Props = $props();
 
 	const busy = useBusy();
 	const changes = useChangeMark();
@@ -94,7 +111,7 @@
 					<tr>
 						<th scope="row" class="sticky">
 							<span class="row-role">{row.label}</span>
-							<span class="row-source" lang={source.code}>{row.source}</span>
+							<span class="row-source" lang={source.code || undefined}>{row.source}</span>
 						</th>
 						{#each locales as locale (locale.code)}
 							{@const changed = isChanged(row.id, locale.code)}
@@ -105,7 +122,8 @@
 									placeholder={row.source}
 									lang={locale.code}
 									dir="auto"
-									readonly={busy()}
+									readonly={busy() || disabled}
+									maxlength={maxLength}
 									aria-label="{row.label} — {locale.name}{changed
 										? ` (${t('common.changed')})`
 										: ''}"

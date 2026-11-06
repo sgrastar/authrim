@@ -57,7 +57,7 @@ export async function countUsersWithPiiCustomClaimData(
   tenantId: string
 ): Promise<number> {
   const piiAdapter = ensureDatabaseAdapter(dbPii, 'custom-claims-storage-admin-pii');
-  const result = await piiAdapter.query<{ count: number }>(
+  const result = await piiAdapter.query<{ count: number | string }>(
     `SELECT COUNT(*) as count
        FROM identity_sensitive_values
       WHERE tenant_id = ?
@@ -68,7 +68,8 @@ export async function countUsersWithPiiCustomClaimData(
         AND value_json != '{}'`,
     [tenantId]
   );
-  return result[0]?.count || 0;
+  // PostgreSQL answers COUNT as text.
+  return Number(result[0]?.count) || 0;
 }
 
 export async function listNonPiiFieldUsage(
@@ -93,11 +94,85 @@ export async function countUsersWithNonPiiFieldData(
   fieldKey: string
 ): Promise<number> {
   const adapter = ensureDatabaseAdapter(db, 'custom-claims-storage-admin-core');
-  const result = await adapter.query<{ count: number }>(
+  const result = await adapter.query<{ count: number | string }>(
     'SELECT COUNT(DISTINCT user_id) as count FROM user_custom_fields WHERE tenant_id = ? AND field_name = ?',
     [tenantId, fieldKey]
   );
-  return result[0]?.count || 0;
+  // PostgreSQL answers COUNT as text.
+  return Number(result[0]?.count) || 0;
+}
+
+/** Rows read per page while looking for held values (bounded statements, bounded memory). */
+const HELD_PAGE = 500;
+
+/**
+ * The values users hold in a non-PII attribute that `allowed` does not contain, with how many
+ * users hold each: at most `limit` values, or exactly the values in `only` (to count values found
+ * elsewhere, such as in another store). A single value is stored as it is, several as a JSON
+ * array (write-validator); a user has one row per attribute, so a value counts once per row. Reads
+ * page by page and keeps one number per value, so memory stays bounded.
+ */
+export async function findHeldNonPiiValuesOutside(
+  db: DatabaseSource,
+  tenantId: string,
+  fieldKey: string,
+  allowed: readonly string[],
+  cardinality: 'single' | 'multi',
+  options: { limit?: number; only?: readonly string[] } = {}
+): Promise<Map<string, number>> {
+  const adapter = ensureDatabaseAdapter(db, 'custom-claims-storage-admin-core');
+  const allowedSet = new Set(allowed);
+  const only = options.only ? new Set(options.only) : null;
+  const limit = only ? Number.POSITIVE_INFINITY : (options.limit ?? 20);
+  const counts = new Map<string, number>();
+  const take = (value: unknown, users: number) => {
+    if (typeof value !== 'string' || value === '' || allowedSet.has(value)) return;
+    if (only && !only.has(value)) return;
+    if (!counts.has(value) && counts.size >= limit) return;
+    counts.set(value, (counts.get(value) ?? 0) + users);
+  };
+  if (cardinality === 'single') {
+    let after = '';
+    for (;;) {
+      const rows = await adapter.query<{ field_value: string | null; count: number | string }>(
+        `SELECT field_value, COUNT(DISTINCT user_id) AS count
+           FROM user_custom_fields
+          WHERE tenant_id = ? AND field_name = ? AND field_value > ?
+          GROUP BY field_value
+          ORDER BY field_value
+          LIMIT ${HELD_PAGE}`,
+        [tenantId, fieldKey, after]
+      );
+      // PostgreSQL answers COUNT as text.
+      for (const row of rows) take(row.field_value, Number(row.count) || 0);
+      if (rows.length < HELD_PAGE || (!only && counts.size >= limit)) break;
+      after = rows[rows.length - 1].field_value ?? '';
+    }
+    return counts;
+  }
+  let afterUser = '';
+  for (;;) {
+    const rows = await adapter.query<{ user_id: string; field_value: string | null }>(
+      `SELECT user_id, field_value
+         FROM user_custom_fields
+        WHERE tenant_id = ? AND field_name = ? AND user_id > ?
+        ORDER BY user_id
+        LIMIT ${HELD_PAGE}`,
+      [tenantId, fieldKey, afterUser]
+    );
+    for (const row of rows) {
+      let held: unknown;
+      try {
+        held = JSON.parse(row.field_value ?? '');
+      } catch {
+        held = row.field_value;
+      }
+      for (const value of new Set(Array.isArray(held) ? held : [held])) take(value, 1);
+    }
+    if (rows.length < HELD_PAGE) break;
+    afterUser = rows[rows.length - 1].user_id;
+  }
+  return counts;
 }
 
 export async function countUsersWithPiiFieldData(
@@ -106,7 +181,7 @@ export async function countUsersWithPiiFieldData(
   fieldKey: string
 ): Promise<number> {
   const piiAdapter = ensureDatabaseAdapter(dbPii, 'custom-claims-storage-admin-pii');
-  const result = await piiAdapter.query<{ count: number }>(
+  const result = await piiAdapter.query<{ count: number | string }>(
     `SELECT COUNT(DISTINCT owner_id) as count
        FROM identity_sensitive_values
       WHERE tenant_id = ?
@@ -116,7 +191,8 @@ export async function countUsersWithPiiFieldData(
         AND value_json IS NOT NULL`,
     [tenantId, customAttributeValueKey(fieldKey)]
   );
-  return result[0]?.count || 0;
+  // PostgreSQL answers COUNT as text.
+  return Number(result[0]?.count) || 0;
 }
 
 export async function deleteStoredCustomClaimData(

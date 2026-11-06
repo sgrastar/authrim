@@ -26,6 +26,33 @@ describe('the change Save sends', () => {
 		expect(changeOf(reordered, form)).toEqual({ label: 'Staff ID' });
 	});
 
+	it('does not send enum rules the form only tidies, when they were not edited', async () => {
+		const schema = await load('s-department');
+		const untidy = { ...schema, validation: { enum_values: [' Engineering', 'Sales '] } };
+		const form = formOf(untidy);
+		form.description = 'Where the person works';
+		expect(changeOf(untidy, form)).toEqual({ description: 'Where the person works' });
+	});
+
+	it('sends a choice whose spaces the admin removed', async () => {
+		const schema = await load('s-department');
+		const untidy = { ...schema, validation: { enum_values: [' Engineering', 'Sales'] } };
+		const form = formOf(untidy);
+		form.rules.enumOptions[0].value = 'Engineering';
+		expect(changeOf(untidy, form).validation).toEqual({ enum_values: ['Engineering', 'Sales'] });
+	});
+
+	it('sends the choices with their labels once a label is added', async () => {
+		const schema = await load('s-department');
+		const form = formOf(schema);
+		const first = form.rules.enumOptions[0];
+		form.rules.enumLabels[first.key!] = { ja: 'エンジニアリング' };
+		expect(changeOf(schema, form).validation?.enum_options?.[0]).toEqual({
+			value: 'Engineering',
+			labels: { ja: 'エンジニアリング' }
+		});
+	});
+
 	it('has only what differs', async () => {
 		const schema = await load('s-employee');
 		const form = formOf(schema);

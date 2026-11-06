@@ -781,10 +781,10 @@ describe('Custom Claims Admin API', () => {
         body: {
           field_key: 'test_field',
           display_label: 'Test',
-          field_type: 'enum',
-          validation_rules: {
-            enum_values: Array.from({ length: 200 }, (_, i) => `val_${i}_${'x'.repeat(20)}`),
-          },
+          field_type: 'number',
+          validation_rules: Object.fromEntries(
+            Array.from({ length: 300 }, (_, i) => [`k${i}_${'x'.repeat(10)}`, i])
+          ),
         },
       });
 
@@ -1224,6 +1224,268 @@ describe('Custom Claims Admin API', () => {
   // ===========================================================================
   // UPDATE
   // ===========================================================================
+
+  describe('enum choices and their labels', () => {
+    const enumRow = (overrides: Record<string, unknown> = {}) =>
+      createSchemaRow({
+        field_key: 'gender',
+        field_type: 'enum',
+        validation_rules: JSON.stringify({
+          enum_values: ['female', 'male', 'other'],
+        }),
+        ...overrides,
+      });
+
+    /** Answers by statement: the schema row, and the users holding values. */
+    function respond(row: Record<string, unknown>, held: { field_value: string; count: number }[]) {
+      mockDbQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM user_custom_fields')) return held;
+        if (sql.includes('custom_claim_schemas')) return [row];
+        return [];
+      });
+    }
+
+    /** The validation rules the handler wrote, as stored. */
+    const storedRules = (): Record<string, unknown> | undefined => {
+      const calls = mockDbExecute.mock.calls as unknown as [string, unknown[] | undefined][];
+      const call = calls.find(([sql]) => sql.includes('custom_claim_schemas'));
+      const json = call?.[1]?.find(
+        (value): value is string => typeof value === 'string' && value.includes('enum_values')
+      );
+      return json ? (JSON.parse(json) as Record<string, unknown>) : undefined;
+    };
+
+    type HandlerContext = Parameters<typeof adminCustomClaimUpdateHandler>[0];
+    /** The mock context, typed as the handlers take it. */
+    const context = (options: Parameters<typeof createMockContext>[0]): HandlerContext =>
+      createMockContext(options) as HandlerContext;
+
+    /** The answer of a handler, typed. */
+    const read = async (
+      response: Response | void
+    ): Promise<{ status: number; body: Record<string, unknown> }> => {
+      if (!response) throw new Error('No response');
+      return {
+        status: response.status,
+        body: await response.json<Record<string, unknown>>(),
+      };
+    };
+
+    it('stores the values of enum_options as enum_values, labels trimmed', async () => {
+      // No attribute has the key yet.
+      mockDbQuery.mockResolvedValue([]);
+      const c = context({
+        method: 'POST',
+        body: {
+          field_key: 'country',
+          display_label: 'Country',
+          field_type: 'enum',
+          validation_rules: {
+            enum_options: [
+              { value: ' jp ', label: ' Japan ', labels: { ja: '日本', fr: ' ' } },
+              { value: 'us', labels: { ja: 'アメリカ合衆国' } },
+            ],
+          },
+        },
+      });
+      const { body, status } = await read(await adminCustomClaimCreateHandler(c));
+      expect(status, JSON.stringify(body)).toBe(201);
+      expect(storedRules()).toEqual({
+        enum_values: ['jp', 'us'],
+        enum_options: [
+          { value: 'jp', label: 'Japan', labels: { ja: '日本' } },
+          { value: 'us', labels: { ja: 'アメリカ合衆国' } },
+        ],
+      });
+    });
+
+    it.each([
+      ['a value listed twice', { enum_options: [{ value: 'a' }, { value: ' a' }] }],
+      ['an unknown language', { enum_options: [{ value: 'a', labels: { xx: 'A' } }] }],
+      ['an empty value', { enum_values: ['a', ' '] }],
+      [
+        'enum_values that disagree with the options',
+        { enum_values: ['b'], enum_options: [{ value: 'a' }] },
+      ],
+    ])('refuses %s', async (_name, rules) => {
+      const c = context({
+        method: 'POST',
+        body: {
+          field_key: 'country',
+          display_label: 'Country',
+          field_type: 'enum',
+          validation_rules: rules,
+        },
+      });
+      const { status } = await read(await adminCustomClaimCreateHandler(c));
+      expect(status).toBe(400);
+    });
+
+    it('refuses to remove a choice users hold, with how many hold it', async () => {
+      respond(enumRow(), [
+        { field_value: 'female', count: 3 },
+        { field_value: 'other', count: 1200 },
+      ]);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { validation_rules: { enum_values: ['female', 'male'] } },
+      });
+      const { body, status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(409);
+      expect(body).toMatchObject({
+        error: 'enum_value_in_use',
+        reason: 'held',
+        values: [{ value: 'other', users: 1200 }],
+      });
+      expect(storedRules()).toBeUndefined();
+    });
+
+    it('removes a choice nobody holds, and adds labels to the others', async () => {
+      respond(enumRow(), []);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: {
+          validation_rules: {
+            enum_options: [
+              { value: 'female', labels: { ja: '女性' } },
+              { value: 'male', labels: { ja: '男性' } },
+            ],
+          },
+        },
+      });
+      const { status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(200);
+      expect(storedRules()?.enum_values).toEqual(['female', 'male']);
+    });
+
+    it('refuses to remove a choice of an encrypted attribute while anyone holds it', async () => {
+      respond(enumRow({ is_pii: 1 }), []);
+      mockCountUsersWithPiiFieldData.mockResolvedValueOnce(2);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { validation_rules: { enum_values: ['female', 'male'] } },
+      });
+      const { body, status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(409);
+      expect(body).toMatchObject({ error: 'enum_value_in_use', reason: 'encrypted', holders: 2 });
+    });
+
+    it('reads stored rules that come back as an object (PostgreSQL jsonb)', async () => {
+      respond(enumRow({ validation_rules: { enum_values: ['female', 'male', 'other'] } }), [
+        { field_value: 'other', count: 5 },
+      ]);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { validation_rules: { enum_values: ['female', 'male'] } },
+      });
+      const { status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(409);
+    });
+
+    it('refuses to constrain an enum that allowed any value when users hold others', async () => {
+      respond(enumRow({ validation_rules: null }), [{ field_value: 'b', count: 4 }]);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { validation_rules: { enum_values: ['a'] } },
+      });
+      const { body, status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(409);
+      expect(body.values).toEqual([{ value: 'b', users: 4 }]);
+    });
+
+    it('refuses to make an attribute an enum that leaves out held values', async () => {
+      respond(createSchemaRow({ field_key: 'plan', field_type: 'string' }), [
+        { field_value: 'gold', count: 2 },
+      ]);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { field_type: 'enum', validation_rules: { enum_values: ['silver'] } },
+      });
+      const { status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(409);
+    });
+
+    it('lets choices be added without reading who holds what', async () => {
+      respond(enumRow(), [{ field_value: 'other', count: 9 }]);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { validation_rules: { enum_values: ['female', 'male', 'other', 'unspecified'] } },
+      });
+      const { status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(200);
+    });
+
+    it('limits the stored rules by their UTF-8 bytes, not their characters', async () => {
+      respond(enumRow(), []);
+      // About 41,000 characters (under 64K) but about 121,000 bytes (over 64KB).
+      const labels = Object.fromEntries(
+        ['ja', 'ko', 'zh-CN', 'zh-TW'].map((locale) => [locale, 'あ'.repeat(100)])
+      );
+      const rules = {
+        enum_options: Array.from({ length: 100 }, (_, index) => ({ value: `v${index}`, labels })),
+      };
+      expect(JSON.stringify(rules).length).toBeLessThan(64 * 1024);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { validation_rules: rules },
+      });
+      const { status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(400);
+    });
+
+    it('limits the rules as stored, with the enum_values normalizing adds', async () => {
+      respond(enumRow(), []);
+      // Under 64KB as sent; the enum_values added on normalizing take it over.
+      const rules = {
+        enum_options: Array.from({ length: 100 }, (_, index) => ({
+          value: `${String(index).padStart(3, '0')}${'v'.repeat(125)}`,
+          label: 'l'.repeat(100),
+          labels: { en: 'e'.repeat(100), fr: 'f'.repeat(100), de: 'd'.repeat(100) },
+        })),
+      };
+      const sent = JSON.stringify(rules).length;
+      expect(sent).toBeLessThan(64 * 1024);
+      expect(sent + 100 * 131).toBeGreaterThan(64 * 1024);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { validation_rules: rules },
+      });
+      const { status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(400);
+    });
+
+    it('reads a PostgreSQL count of 0 (text) as no holder of an encrypted attribute', async () => {
+      respond(enumRow({ is_pii: 1 }), []);
+      mockCountUsersWithPiiFieldData.mockResolvedValueOnce('0');
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { validation_rules: { enum_values: ['female', 'male'] } },
+      });
+      const { status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(200);
+    });
+
+    it('checks the stored rules against a new field type', async () => {
+      respond(enumRow(), []);
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { field_type: 'string' },
+      });
+      const { status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(400);
+    });
+  });
 
   describe('PUT /api/admin/custom-claims/:id (Update)', () => {
     it('should update schema fields', async () => {

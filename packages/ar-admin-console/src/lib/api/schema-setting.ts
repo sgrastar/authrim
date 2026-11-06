@@ -23,6 +23,16 @@ export type OperationStatus = 'active' | 'deleting' | 'renaming' | 'reconfigurin
 
 export const FIELD_TYPES: readonly FieldType[] = ['string', 'number', 'boolean', 'date', 'enum'];
 
+/**
+ * One choice of an enum attribute: the stored value, the label in every language without one of
+ * its own, and labels by Login UI locale. A label is shown as labels[locale], label, or the value.
+ */
+export interface EnumOption {
+	value: string;
+	label?: string;
+	labels?: Record<string, string>;
+}
+
 /** How an attribute's value is checked. Keys are the API's own; which apply depends on the type. */
 export interface ValidationRules {
 	min_length?: number;
@@ -31,6 +41,8 @@ export interface ValidationRules {
 	min?: number;
 	max?: number;
 	enum_values?: string[];
+	/** The choices with their labels (the same values as `enum_values`, in the same order). */
+	enum_options?: EnumOption[];
 	min_date?: string;
 	max_date?: string;
 }
@@ -337,7 +349,15 @@ export type SchemaFailureKind =
 	| 'not_found'
 	/** Some people's values could not be moved or deleted; the attribute is marked as failed. */
 	| 'partial'
+	/** Choices being removed are still held by users (see `values`). */
+	| 'values_in_use'
 	| 'failed';
+
+/** A choice that could not be removed, and how many users hold it (null: cannot be counted). */
+export interface HeldValue {
+	value: string;
+	users: number | null;
+}
 
 export interface SchemaFailure {
 	kind: SchemaFailureKind;
@@ -345,6 +365,18 @@ export interface SchemaFailure {
 	usage: UsageBinding[];
 	/** For `partial` and `forbidden`: the API's own explanation, when it gave a readable one. */
 	detail: string;
+	/** For `values_in_use`: the choices still held; `encrypted` when they cannot be counted. */
+	held?: { values: HeldValue[]; encrypted: boolean };
+}
+
+function heldValuesFrom(value: unknown): HeldValue[] {
+	if (!Array.isArray(value)) return [];
+	return value.flatMap((entry) => {
+		if (!entry || typeof entry !== 'object') return [];
+		const row = entry as Record<string, unknown>;
+		if (typeof row.value !== 'string') return [];
+		return [{ value: row.value, users: typeof row.users === 'number' ? row.users : null }];
+	});
 }
 
 export function failureOf(error: unknown): SchemaFailure {
@@ -360,6 +392,13 @@ export function failureOf(error: unknown): SchemaFailure {
 		case 404:
 			return { ...none, kind: 'not_found' };
 		case 409:
+			if (body.error === 'enum_value_in_use') {
+				return {
+					...none,
+					kind: 'values_in_use',
+					held: { values: heldValuesFrom(body.values), encrypted: body.reason === 'encrypted' }
+				};
+			}
 			return body.error === 'field_in_use'
 				? { ...none, kind: 'in_use', usage: usageFrom(body.usage_bindings) }
 				: { ...none, kind: 'conflict' };

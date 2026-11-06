@@ -10257,7 +10257,12 @@ paths:
       description: >-
         Updates mutable custom claim schema fields. Field key and PII classification are
         intentionally immutable through this endpoint. Built-in system profile schemas also keep
-        their display label, field type, and cardinality immutable.
+        their display label, field type, and cardinality immutable. A changed field type must suit
+        the stored validation rules. Enum choices that leave out values users hold are refused
+        (409 enum_value_in_use with those values and how many users hold each): removing a held
+        choice, constraining an enum that allowed any value, or making an attribute an enum. For
+        an encrypted (PII) attribute, values cannot be read, so narrower choices are refused while
+        any user holds the attribute.
       responses:
         '200':
           $ref: '#/components/responses/CustomClaimMutation'
@@ -10270,7 +10275,13 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          description: >-
+            enum_value_in_use (reason held: the values left out, with their user counts; reason
+            encrypted: the attribute's holders), or another conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -60608,9 +60619,71 @@ components:
         - number
         - boolean
         - date
-        - json
-        - string_array
-        - number_array
+        - enum
+    CustomClaimValidationRules:
+      type:
+        - object
+        - 'null'
+      description: >-
+        Rules for the field type. string: min_length, max_length, pattern. number: min, max.
+        date: min_date, max_date (ISO 8601). boolean: none. enum: enum_values and, optionally,
+        enum_options (the same values in the same order, with labels); when enum_options is
+        given, enum_values is derived from it. At most 4KB of JSON, 64KB for enum.
+      properties:
+        min_length:
+          type: integer
+          minimum: 0
+        max_length:
+          type: integer
+          minimum: 1
+        pattern:
+          type: string
+          maxLength: 128
+        min:
+          type: number
+        max:
+          type: number
+        min_date:
+          type: string
+        max_date:
+          type: string
+        enum_values:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        enum_options:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CustomClaimEnumOption'
+    CustomClaimEnumOption:
+      type: object
+      additionalProperties: false
+      required:
+        - value
+      description: >-
+        One choice of an enum attribute. A label is shown as labels[locale], else label, else
+        the value.
+      properties:
+        value:
+          type: string
+          minLength: 1
+          maxLength: 128
+        label:
+          type: string
+          maxLength: 100
+          description: The label in every language without one of its own.
+        labels:
+          type: object
+          description: Labels by Login UI locale (en, ja, zh-CN, ...).
+          additionalProperties:
+            type: string
+            maxLength: 100
     CustomClaimOperationStatus:
       type: string
       enum:
@@ -60780,6 +60853,8 @@ components:
             - multi
         is_pii:
           type: boolean
+        validation_rules:
+          $ref: '#/components/schemas/CustomClaimValidationRules'
         required_scopes:
           type: array
           maxItems: 50
@@ -60806,6 +60881,8 @@ components:
           type: boolean
         is_active:
           type: boolean
+        validation_rules:
+          $ref: '#/components/schemas/CustomClaimValidationRules'
         required_scopes:
           type:
             - array

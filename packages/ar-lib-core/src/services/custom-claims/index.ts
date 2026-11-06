@@ -46,6 +46,7 @@ export {
   listNonPiiFieldUsage,
   countUsersWithNonPiiFieldData,
   countUsersWithPiiFieldData,
+  findHeldNonPiiValuesOutside,
   deleteStoredCustomClaimData,
   renameStoredCustomClaimData,
   type NonPiiFieldUsageRow,
@@ -53,6 +54,17 @@ export {
   type RenameStoredCustomClaimDataParams,
   type StoredCustomClaimMutationResult,
 } from './storage-admin';
+export {
+  MAX_ENUM_LABEL_LENGTH,
+  MAX_ENUM_OPTIONS,
+  MAX_ENUM_VALUE_LENGTH,
+  enumOptionLabel,
+  enumOptionsOf,
+  normalizeEnumRules,
+  enumValuesOf,
+  type EnumOption,
+  type EnumRulesResult,
+} from './enum-options';
 export {
   upsertUserCustomFieldValue,
   type UpsertUserCustomFieldValueParams,

@@ -1,4 +1,5 @@
 <script module lang="ts">
+	import Toaster from '#lib/ui/toast/Toaster.svelte';
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { ADMIN_ROLES } from '@authrim/ar-lib-core/constants/admin-roles';
@@ -214,6 +215,64 @@
 			tenantId={TENANT}
 			access={EDITOR}
 			initialId="s-employee"
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Choices and their labels"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { level: 1, name: 'Department' });
+		// Each choice has its stored value and a default label; the labels by language sit under.
+		const first = canvas.getByRole('textbox', {
+			name: `${t('options.text')} — ${t('options.item', { n: 1 })}`
+		});
+		await userEvent.type(first, 'Engineering team');
+		const table = await canvas.findByRole('region', { name: t('ss.rules.enumLabels') });
+		await expect(within(table).getByText('Engineering')).toBeInTheDocument();
+		await userEvent.click(await canvas.findByRole('button', { name: t('common.save') }));
+		await body().findByText(t('ss.saved'));
+	}}
+>
+	{#snippet template()}
+		<Toaster />
+		<SchemaSetting
+			client={createFakeSchemaSetting()}
+			tenantId={TENANT}
+			access={EDITOR}
+			initialId="s-department"
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="A choice users hold cannot be removed"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { level: 1, name: 'Department' });
+		// "Sales" (the second choice) is held by 12 users in the fake.
+		await userEvent.click(
+			canvas.getByRole('button', {
+				name: t('options.remove', { name: t('options.item', { n: 2 }) })
+			})
+		);
+		await userEvent.click(await canvas.findByRole('button', { name: t('common.save') }));
+		// The save is refused: the toast names the choice and how many hold it.
+		await body().findByText(
+			t('ss.error.valuesInUse', {
+				values: t('ss.error.valueHeld', { value: 'Sales', count: (12).toLocaleString('en') })
+			})
+		);
+	}}
+>
+	{#snippet template()}
+		<Toaster />
+		<SchemaSetting
+			client={createFakeSchemaSetting()}
+			tenantId={TENANT}
+			access={EDITOR}
+			initialId="s-department"
 		/>
 	{/snippet}
 </Story>
