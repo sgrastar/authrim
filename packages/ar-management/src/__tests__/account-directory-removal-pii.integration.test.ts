@@ -11,7 +11,12 @@ import type {
 } from '@authrim/ar-lib-core';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { eraseAccountPiiAfterDirectoryRemovalPrepared } from '../account-directory-removal-producer';
+import {
+  AccountDeletionHeldError,
+  eraseAccountPiiAfterDirectoryRemovalPrepared,
+  fenceAccountDeletion,
+  hasUnfinishedAccountDeletion,
+} from '../account-directory-removal-producer';
 
 type SqliteValue = string | number | bigint | null | Uint8Array;
 
@@ -244,5 +249,95 @@ describe('account directory removal PII erasure', () => {
     expect(
       database.prepare('SELECT id FROM pairwise_subject_identifiers ORDER BY id').all()
     ).toEqual([{ id: 'pairwise-b' }]);
+  });
+});
+
+/** What the fence tests use of node:sqlite (whose types this package does not load). */
+interface FenceDatabase {
+  exec(sql: string): void;
+  prepare(sql: string): { get(...params: unknown[]): unknown };
+  close(): void;
+}
+
+function openFenceDatabase(): FenceDatabase {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return -- node:sqlite is untyped here
+  return new DatabaseSync(':memory:');
+}
+
+/** The governance writes run only on D1 or PostgreSQL; SQLite here is D1's engine. */
+class D1LikeAdapter extends SqliteAdapter {
+  getType(): string {
+    return 'd1';
+  }
+}
+
+describe('account deletion fence', () => {
+  let database: FenceDatabase;
+  let adapter: D1LikeAdapter;
+
+  beforeEach(() => {
+    database = openFenceDatabase();
+    database.exec(`
+      CREATE TABLE identity_accounts (id TEXT PRIMARY KEY, tenant_id TEXT, legacy_user_id TEXT,
+        account_type TEXT, registration_state TEXT, lifecycle_state TEXT,
+        directory_publication_state TEXT, updated_at INTEGER, deleted_at INTEGER);
+      CREATE TABLE account_legal_hold_states (tenant_id TEXT, account_id TEXT,
+        projection_state TEXT, active_hold_id TEXT, updated_at INTEGER);
+      CREATE TABLE legal_holds (id TEXT PRIMARY KEY, tenant_id TEXT, subject_id TEXT,
+        subject_type TEXT, state TEXT);
+      CREATE TABLE account_routing_outbox (outbox_id TEXT PRIMARY KEY, tenant_id TEXT,
+        account_id TEXT, event_kind TEXT, status TEXT);
+      INSERT INTO identity_accounts VALUES ('account:user-a', 'tenant-a', 'user-a', 'user',
+        'registered', 'active', 'active', 1, NULL);
+      INSERT INTO account_legal_hold_states VALUES ('tenant-a', 'account:user-a', 'inactive',
+        NULL, 1);
+    `);
+    adapter = new D1LikeAdapter(database);
+  });
+
+  afterEach(() => database.close());
+
+  const lifecycle = () =>
+    (
+      database
+        .prepare("SELECT lifecycle_state FROM identity_accounts WHERE id = 'account:user-a'")
+        .get() as { lifecycle_state: string }
+    ).lifecycle_state;
+
+  it('moves the account to deleting before anything is erased, and again on a retry', async () => {
+    await fenceAccountDeletion(adapter, { tenantId: 'tenant-a', userId: 'user-a' });
+    expect(lifecycle()).toBe('deleting');
+    await fenceAccountDeletion(adapter, { tenantId: 'tenant-a', userId: 'user-a' });
+    expect(lifecycle()).toBe('deleting');
+  });
+
+  it('stops at a hold placed after the deletion checked for one', async () => {
+    database.exec(`INSERT INTO legal_holds VALUES ('hold-1', 'tenant-a', 'account:user-a',
+      'account', 'active')`);
+    await expect(
+      fenceAccountDeletion(adapter, { tenantId: 'tenant-a', userId: 'user-a' })
+    ).rejects.toBeInstanceOf(AccountDeletionHeldError);
+    expect(lifecycle()).toBe('active');
+  });
+
+  it('has nothing to fence for a deleted account or one that is not there', async () => {
+    database.exec("UPDATE identity_accounts SET lifecycle_state = 'deleted'");
+    await fenceAccountDeletion(adapter, { tenantId: 'tenant-a', userId: 'user-a' });
+    expect(lifecycle()).toBe('deleted');
+    await fenceAccountDeletion(adapter, { tenantId: 'tenant-a', userId: 'user-missing' });
+  });
+
+  it('tells a deletion that stopped before its directory removal became pending', async () => {
+    const unfinished = () =>
+      hasUnfinishedAccountDeletion(adapter, { tenantId: 'tenant-a', userId: 'user-a' });
+    await expect(unfinished()).resolves.toBe(false);
+    database.exec(`INSERT INTO account_routing_outbox VALUES ('o-1', 'tenant-a',
+      'account:user-a', 'account_deleted', 'prepared')`);
+    await expect(unfinished()).resolves.toBe(true);
+    await expect(
+      hasUnfinishedAccountDeletion(adapter, { tenantId: 'tenant-b', userId: 'user-a' })
+    ).resolves.toBe(false);
+    database.exec("UPDATE account_routing_outbox SET status = 'pending'");
+    await expect(unfinished()).resolves.toBe(false);
   });
 });

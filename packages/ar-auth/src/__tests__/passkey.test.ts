@@ -139,6 +139,11 @@ const registrationCheck = vi.hoisted(() => ({
 }));
 // Makes the address's account-route lookup fail with this error for one test (null: the real one).
 const adminAuditSpy = vi.hoisted(() => ({ schedule: vi.fn() }));
+// Work the handlers leave running after their response: what they hand to waitUntil and the
+// events they publish without awaiting them. It logs through the real ar-lib-core logger, so each
+// test waits for it; a log that lands after the file's last test reaches Vitest while the worker
+// is closing and fails the run as an unhandled error.
+const backgroundWork = vi.hoisted(() => ({ pending: [] as Promise<unknown>[] }));
 const routeLookup = vi.hoisted(() => ({
   failure: null as null | { message: string; cause?: string },
 }));
@@ -148,6 +153,11 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     scheduleAdminAuthenticationAudit: adminAuditSpy.schedule,
+    publishEvent: (...args: Parameters<typeof import('@authrim/ar-lib-core').publishEvent>) => {
+      const delivery = (actual as typeof import('@authrim/ar-lib-core')).publishEvent(...args);
+      backgroundWork.pending.push(delivery);
+      return delivery;
+    },
     resolveAccountDataContextByIdentifierFromHono: async (...args: unknown[]) => {
       if (routeLookup.failure) {
         throw new Error(
@@ -473,7 +483,9 @@ function createMockContext(options: {
     get: vi.fn((key: string) => contextStore.get(key)),
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
     executionCtx: {
-      waitUntil: vi.fn(),
+      waitUntil: vi.fn((promise: Promise<unknown>) => {
+        backgroundWork.pending.push(promise);
+      }),
       passThroughOnException: vi.fn(),
       props: {},
     },
@@ -643,7 +655,10 @@ describe('Passkey Handlers', () => {
     mockCoreAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    while (backgroundWork.pending.length > 0) {
+      await Promise.allSettled(backgroundWork.pending.splice(0));
+    }
     vi.restoreAllMocks();
   });
 

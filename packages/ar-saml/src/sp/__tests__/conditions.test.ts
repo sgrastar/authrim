@@ -13,7 +13,7 @@
  * @see https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { buildPolicyConstrainedRegionShardConfig, type Env } from '@authrim/ar-lib-core';
 
 type SamlTestEnv = Partial<Env> & {
@@ -278,6 +278,17 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
   // Model the tenant/IdP-scoped SAMLRequestStore atomic assertion consume operation.
   let usedAssertions: Set<string>;
 
+  // Work the handler hands to waitUntil (the audit log). It logs through the real ar-lib-core
+  // logger, so each test waits for it: a log that lands after the file's last test reaches
+  // Vitest while the worker is closing and fails the run as an unhandled error.
+  const pendingWork: Promise<unknown>[] = [];
+
+  afterEach(async () => {
+    while (pendingWork.length > 0) {
+      await Promise.allSettled(pendingWork.splice(0));
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     usedAssertions = new Set();
@@ -403,7 +414,9 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
         key === 'tenantId' ? (options.tenantId ?? 'tenant-a') : undefined
       ),
       executionCtx: {
-        waitUntil: vi.fn(), // Mock waitUntil for async operations
+        waitUntil: vi.fn((promise: Promise<unknown>) => {
+          pendingWork.push(promise);
+        }),
       },
     };
 

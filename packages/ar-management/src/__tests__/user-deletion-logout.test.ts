@@ -201,6 +201,9 @@ vi.mock('../account-directory-removal-producer', () => ({
   eraseAccountPiiAfterDirectoryRemovalPrepared: vi.fn(async () => undefined),
   markAccountDirectoryRemovalsReady: vi.fn(async () => undefined),
   attemptImmediateAccountDirectoryRemovals: vi.fn(async () => undefined),
+  fenceAccountDeletion: vi.fn(async () => undefined),
+  hasUnfinishedAccountDeletion: vi.fn(async () => false),
+  AccountDeletionHeldError: class AccountDeletionHeldError extends Error {},
 }));
 
 vi.mock('../tenant-routed-storage', () => ({
