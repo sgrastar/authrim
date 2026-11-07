@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../../db';
-import { upsertUserCustomFieldValue } from '../non-pii-storage';
+import { CustomFieldAccountRemovedError, upsertUserCustomFieldValue } from '../non-pii-storage';
 
 function createMockAdapter(): DatabaseAdapter {
   return {
@@ -30,8 +30,8 @@ describe('non-pii-storage', () => {
     });
 
     expect(adapter.execute).toHaveBeenCalledWith(
-      'UPDATE user_custom_fields SET field_value = ?, field_type = ? WHERE tenant_id = ? AND user_id = ? AND field_name = ?',
-      ['Sales', 'string', 'tenant-1', 'user-1', 'department']
+      expect.stringContaining('UPDATE user_custom_fields SET field_value = ?'),
+      ['Sales', 'string', 'tenant-1', 'user-1', 'department', 'tenant-1', 'user-1']
     );
   });
 
@@ -51,8 +51,8 @@ describe('non-pii-storage', () => {
     });
 
     expect(adapter.execute).toHaveBeenCalledWith(
-      'INSERT INTO user_custom_fields (tenant_id, user_id, field_name, field_value, field_type) VALUES (?, ?, ?, ?, ?)',
-      ['tenant-1', 'user-1', 'department', 'Sales', 'string']
+      expect.stringContaining('INSERT INTO user_custom_fields'),
+      ['tenant-1', 'user-1', 'department', 'Sales', 'string', 'tenant-1', 'user-1']
     );
   });
 
@@ -73,13 +73,13 @@ describe('non-pii-storage', () => {
 
     expect(adapter.execute).toHaveBeenNthCalledWith(
       1,
-      'UPDATE user_custom_fields SET field_value = ?, field_type = ? WHERE tenant_id = ? AND user_id = ? AND field_name = ?',
-      ['Sales', 'string', 'tenant-1', 'user-1', 'department']
+      expect.stringContaining('UPDATE user_custom_fields SET field_value = ?'),
+      ['Sales', 'string', 'tenant-1', 'user-1', 'department', 'tenant-1', 'user-1']
     );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       2,
-      'INSERT INTO user_custom_fields (tenant_id, user_id, field_name, field_value, field_type) VALUES (?, ?, ?, ?, ?)',
-      ['tenant-1', 'user-1', 'department', 'Sales', 'string']
+      expect.stringContaining('INSERT INTO user_custom_fields'),
+      ['tenant-1', 'user-1', 'department', 'Sales', 'string', 'tenant-1', 'user-1']
     );
   });
 
@@ -102,18 +102,18 @@ describe('non-pii-storage', () => {
 
     expect(adapter.execute).toHaveBeenNthCalledWith(
       1,
-      'UPDATE user_custom_fields SET field_value = ?, field_type = ? WHERE tenant_id = ? AND user_id = ? AND field_name = ?',
-      ['Sales', 'string', 'tenant-1', 'user-1', 'department']
+      expect.stringContaining('UPDATE user_custom_fields SET field_value = ?'),
+      ['Sales', 'string', 'tenant-1', 'user-1', 'department', 'tenant-1', 'user-1']
     );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       2,
-      'INSERT INTO user_custom_fields (tenant_id, user_id, field_name, field_value, field_type) VALUES (?, ?, ?, ?, ?)',
-      ['tenant-1', 'user-1', 'department', 'Sales', 'string']
+      expect.stringContaining('INSERT INTO user_custom_fields'),
+      ['tenant-1', 'user-1', 'department', 'Sales', 'string', 'tenant-1', 'user-1']
     );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       3,
-      'UPDATE user_custom_fields SET field_value = ?, field_type = ? WHERE tenant_id = ? AND user_id = ? AND field_name = ?',
-      ['Sales', 'string', 'tenant-1', 'user-1', 'department']
+      expect.stringContaining('UPDATE user_custom_fields SET field_value = ?'),
+      ['Sales', 'string', 'tenant-1', 'user-1', 'department', 'tenant-1', 'user-1']
     );
   });
 
@@ -135,5 +135,66 @@ describe('non-pii-storage', () => {
         fieldType: 'string',
       })
     ).rejects.toThrow(insertError);
+  });
+
+  it('writes nothing for an account being deleted (the guarded statements match no row)', async () => {
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.execute)
+      .mockResolvedValueOnce({ success: true, rowsAffected: 0 })
+      .mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    vi.mocked(adapter.queryOne).mockResolvedValueOnce({ lifecycle_state: 'deleting' });
+
+    await expect(
+      upsertUserCustomFieldValue({
+        adapter,
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        fieldName: 'department',
+        fieldValue: 'Sales',
+        fieldType: 'string',
+      })
+    ).rejects.toBeInstanceOf(CustomFieldAccountRemovedError);
+    // The guard is in the statements themselves (D1 runs them one at a time).
+    expect(vi.mocked(adapter.execute).mock.calls[0][0]).toContain(
+      "lifecycle_state IN ('deleting', 'deleted')"
+    );
+  });
+
+  it('locks the account row for the write on PostgreSQL, refusing a removed account', async () => {
+    const tx = { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() };
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.getType).mockReturnValue('postgres');
+    vi.mocked(adapter.transaction).mockImplementation(async (fn) => fn(tx as never));
+    const write = () =>
+      upsertUserCustomFieldValue({
+        adapter,
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        fieldName: 'department',
+        fieldValue: 'Sales',
+        fieldType: 'string',
+      });
+
+    tx.queryOne.mockResolvedValueOnce({ lifecycle_state: 'active' });
+    tx.execute.mockResolvedValueOnce({ success: true, rowsAffected: 1 });
+    await write();
+    expect(String(tx.queryOne.mock.calls[0][0])).toContain('FOR SHARE');
+    // One upsert statement (a duplicate key would fail the transaction).
+    expect(tx.execute).toHaveBeenCalledTimes(1);
+    expect(String(tx.execute.mock.calls[0][0])).toContain(
+      'ON CONFLICT (tenant_id, user_id, field_name)'
+    );
+    expect(tx.execute.mock.calls[0][1]).toEqual([
+      'tenant-1',
+      'user-1',
+      'department',
+      'Sales',
+      'string',
+    ]);
+
+    tx.execute.mockClear();
+    tx.queryOne.mockResolvedValueOnce({ lifecycle_state: 'deleted' });
+    await expect(write()).rejects.toBeInstanceOf(CustomFieldAccountRemovedError);
+    expect(tx.execute).not.toHaveBeenCalled();
   });
 });

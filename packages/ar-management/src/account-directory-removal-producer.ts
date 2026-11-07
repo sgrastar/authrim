@@ -294,6 +294,42 @@ export async function hasUnfinishedAccountDeletion(
   return row !== null;
 }
 
+/** How many times an erasure batch PostgreSQL broke a deadlock with runs, in all. */
+const ERASURE_DEADLOCK_ATTEMPTS = 3;
+
+function isPostgresDeadlock(error: unknown): boolean {
+  for (let current: unknown = error, depth = 0; current && depth < 3; depth++) {
+    if (typeof current === 'object' && (current as { code?: unknown }).code === '40P01')
+      return true;
+    current = typeof current === 'object' ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return false;
+}
+
+/**
+ * Runs the erasure batch, again when PostgreSQL broke a deadlock with it (the batch takes the
+ * epoch before the rows, a write the row before the epoch). The batch is rolled back whole and
+ * does the same again (the marker is inserted once, the rest erases).
+ */
+async function runErasureBatch(
+  pii: DatabaseAdapter,
+  statements: Parameters<DatabaseAdapter['batch']>[0]
+): Promise<Awaited<ReturnType<DatabaseAdapter['batch']>>> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await pii.batch(statements);
+    } catch (error) {
+      if (
+        attempt >= ERASURE_DEADLOCK_ATTEMPTS ||
+        pii.getType() !== 'postgres' ||
+        !isPostgresDeadlock(error)
+      ) {
+        throw error;
+      }
+    }
+  }
+}
+
 export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
   pii: DatabaseAdapter,
   input: { tenantId: string; userId: string; core: DatabaseAdapter },
@@ -310,6 +346,13 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
   if (account) await captureAccountDeletionSnapshot(pii, account);
   const accountId = `account:${input.userId}`;
   const statements = [
+    {
+      // The fence, in the batch that erases: from here no write puts a value back for the account
+      // (the PII database's triggers refuse it; see 004_account_pii_erasure_markers.sql).
+      sql: `INSERT INTO account_pii_erasure_markers (tenant_id, user_id, created_at)
+        VALUES (?, ?, ?) ON CONFLICT (tenant_id, user_id) DO NOTHING`,
+      params: [input.tenantId, input.userId, now],
+    },
     {
       sql: `UPDATE guest_upgrade_operations SET state = CASE WHEN state = 'completed' THEN state ELSE 'canceled' END, proof_payload_json = NULL, reservation_publication_json = NULL, challenge_verifier = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE tenant_id = ? AND user_id = ?`,
       params: [now, input.tenantId, input.userId],
@@ -385,11 +428,27 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
     // late audit write does not create the mapping again.
     deleteAnonymizationMappingStatement(input.tenantId, input.userId),
   ];
-  const results = await pii.batch(statements);
+  // On PostgreSQL the batch first takes the PII mutation epoch exclusively: a write under way
+  // finishes before it (and is erased), and one after it sees the marker (the fence's triggers
+  // share the epoch). The epoch only moves forward (its guard allows +1 alone), as a guest
+  // erasure moves it. D1 runs the batch with no other write in between.
+  if (pii.getType() === 'postgres') {
+    statements.unshift({
+      sql: 'UPDATE guest_pii_mutation_epoch SET revision = revision + 1 WHERE id = 1',
+      params: [],
+    });
+  }
+  const results = await runErasureBatch(pii, statements);
   if (results.length !== statements.length || results.some((result) => !result.success)) {
     throw new Error('account_pii_erasure_batch_failed');
   }
   forgetCachedAnonymizedUserId(input.tenantId, input.userId);
+  // The account's custom attributes, in its core database (a trigger there refuses writing them
+  // again once the account is being deleted).
+  await input.core.execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
+    input.tenantId,
+    input.userId,
+  ]);
 }
 
 export async function attemptImmediateAccountDirectoryRemovals(

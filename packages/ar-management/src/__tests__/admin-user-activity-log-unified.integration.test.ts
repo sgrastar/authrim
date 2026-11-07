@@ -134,7 +134,8 @@ function database(family: 'core' | 'pii'): {
   databases.push(db);
   const dir = new URL(`../../../../migrations/${family}/d1/`, import.meta.url);
   const files = [`001_0_5_0_${family}_baseline.sql`];
-  if (family === 'pii') files.push('003_screen_responses.sql');
+  if (family === 'pii')
+    files.push('003_screen_responses.sql', '004_account_pii_erasure_markers.sql');
   for (const file of files) {
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, dir), 'utf8'), 'sqlite'));
   }

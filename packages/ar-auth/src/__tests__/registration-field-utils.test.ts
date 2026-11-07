@@ -450,7 +450,7 @@ describe('registration-field-utils', () => {
 
     expect(adapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE user_custom_fields SET field_value = ?'),
-      ['Sales', 'string', 'tenant-1', 'user-1', 'department']
+      ['Sales', 'string', 'tenant-1', 'user-1', 'department', 'tenant-1', 'user-1']
     );
   });
 
@@ -485,7 +485,7 @@ describe('registration-field-utils', () => {
 
     expect(coreAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE user_custom_fields SET field_value = ?'),
-      ['Sales', 'string', 'tenant-1', 'user-1', 'department']
+      ['Sales', 'string', 'tenant-1', 'user-1', 'department', 'tenant-1', 'user-1']
     );
     const piiStatements = vi.mocked(piiAdapter.batch).mock.calls[0]?.[0] ?? [];
     expect(piiStatements).toEqual(
@@ -534,7 +534,7 @@ describe('registration-field-utils', () => {
     });
     expect(adapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE user_custom_fields SET field_value = ?'),
-      ['["admin","auditor"]', 'enum', 'tenant-1', 'user-1', 'roles']
+      ['["admin","auditor"]', 'enum', 'tenant-1', 'user-1', 'roles', 'tenant-1', 'user-1']
     );
   });
 });
