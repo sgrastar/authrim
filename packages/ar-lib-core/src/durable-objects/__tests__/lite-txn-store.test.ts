@@ -426,6 +426,13 @@ describe('LiteTxnStore: idempotent operations', () => {
       })
     ).resolves.toEqual({ ok: false, reason: 'too_large' });
     await expect(
+      store.issueStartGrantRpc({
+        ...ref(txn.id),
+        spec: { provider: 'google', action: 'login', policyRevision: 'rev-1' },
+        start: { clientId: 'login-ui', interactionId: null, inviteToken: 'i'.repeat(300) },
+      })
+    ).resolves.toEqual({ ok: false, reason: 'too_large' });
+    await expect(
       store.createTxnRpc({
         tenantId: 'tenant-a',
         bindingHash: BINDING,

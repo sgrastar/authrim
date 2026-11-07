@@ -99,14 +99,15 @@ export const LITE_LOGIN_PAGE_METHODS: ReadonlySet<string> = new Set([
 	'external_idp'
 ]);
 /**
- * The sign-up page's: by email code (PR6a), passkey or authenticator (PR6a-2). An external sign-up
- * is not drawn yet (PR6c): such a part stops the page.
+ * The sign-up page's: by email code (PR6a), passkey or authenticator (PR6a-2), an external
+ * provider (PR6c; its start carries the sign-up's invitation).
  */
 export const LITE_SIGNUP_PAGE_METHODS: ReadonlySet<string> = new Set([
 	'mail_otp',
 	'mail_otp_totp',
 	'passkey',
-	'totp'
+	'totp',
+	'external_idp'
 ]);
 /** The sign-up page's blocks: the sign-in page's, no guest (the SPA's sign-up has none). */
 export const LITE_SIGNUP_PAGE_BLOCKS: ReadonlySet<string> = new Set(
@@ -708,7 +709,8 @@ type OperationKind =
 	| 'totp'
 	| 'passkey'
 	| 'social'
-	| 'continue';
+	| 'continue'
+	| 'invite';
 
 /**
  * Starts the post's operation. `started`: carry it out, then `finishOperation`. Otherwise the
@@ -1758,7 +1760,8 @@ const FORM_OWN_NAMES: ReadonlySet<string> = new Set([
 	'provider',
 	'human_verification_response',
 	'consent-key',
-	'step-key'
+	'step-key',
+	'verification'
 ]);
 
 /** The step a page was drawn on, by its interaction: a Continue posts it (`step_continue`). */

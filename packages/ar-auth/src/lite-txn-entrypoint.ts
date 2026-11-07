@@ -451,10 +451,20 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
         action: purpose,
         policyRevision: context.policyRevision,
       };
+      // A sign-up's invitation, as its transaction keeps it (the page checked it once when the
+      // transaction took it): the start reserves its use, as the SPA's start does.
+      const invite = read.txn.data.invite;
+      const inviteToken =
+        purpose === 'signup' &&
+        invite !== null &&
+        typeof invite === 'object' &&
+        typeof (invite as { token?: unknown }).token === 'string'
+          ? (invite as { token: string }).token
+          : null;
       return context.store.issueStartGrantRpc({
         ...ref,
         spec,
-        start: { clientId: call.clientId, interactionId },
+        start: { clientId: call.clientId, interactionId, inviteToken },
       });
     });
   }

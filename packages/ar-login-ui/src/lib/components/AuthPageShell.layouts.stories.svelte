@@ -128,6 +128,27 @@
 	{/snippet}
 </Story>
 
+<!-- Clear glass over a picture: the header, the link under the form and the footer bar take no
+     pane of their own (the form card is the pane, the footer is a square bar). -->
+<Story name="Split panel: clear glass over a picture">
+	{#snippet template()}
+		<ShellGallery
+			columns={2}
+			height={560}
+			cells={(['light', 'dark'] as const).map((scheme) => ({
+				label: scheme,
+				template: 'split' as const,
+				palette: 'clear-glass' as const,
+				scheme,
+				ui: {
+					...split({ template: 'split', formFrame: 'card', footerStyle: 'bar' }),
+					appearance: { backgroundImageUrl: SAMPLE_BACKGROUND_URL }
+				}
+			}))}
+		/>
+	{/snippet}
+</Story>
+
 <Story name="Split panel: background modes">
 	{#snippet template()}
 		<ShellGallery

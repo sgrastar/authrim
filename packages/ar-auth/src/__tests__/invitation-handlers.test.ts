@@ -20,6 +20,18 @@ const mocks = vi.hoisted(() => ({
   incrementRpc: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
+  readLiteMode: vi.fn(),
+  verifyHumanVerification: vi.fn(),
+  tenantFromContext: vi.fn(),
+}));
+
+vi.mock('../lite-mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lite-mode')>()),
+  readLiteMode: mocks.readLiteMode,
+}));
+vi.mock('../human-verification', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../human-verification')>()),
+  verifyHumanVerificationForAction: mocks.verifyHumanVerification,
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -35,6 +47,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getLogger: vi.fn(() => ({
       module: () => ({ warn: mocks.warn, error: mocks.error }),
     })),
+    getTenantIdFromContext: mocks.tenantFromContext,
   };
 });
 
@@ -116,6 +129,9 @@ describe('public invitation handlers', () => {
     mocks.store.deleteChallengeRpc.mockResolvedValue(undefined);
     mocks.produceNotificationDelivery.mockResolvedValue({ delivery: 'delivered' });
     mocks.incrementRpc.mockResolvedValue({ allowed: true });
+    mocks.readLiteMode.mockResolvedValue('off');
+    mocks.verifyHumanVerification.mockResolvedValue(null);
+    mocks.tenantFromContext.mockReturnValue('tenant-1');
   });
 
   describe('GET /validate', () => {
@@ -263,6 +279,33 @@ describe('public invitation handlers', () => {
 
       expect(response.status).toBe(404);
       expect(mocks.produceNotificationDelivery).not.toHaveBeenCalled();
+    });
+
+    it("sends a lite tenant's code only behind a sign-up's proof of work, for its own tenant", async () => {
+      mocks.readLiteMode.mockResolvedValue('always');
+      mocks.verifyHumanVerification.mockResolvedValue(new Response(null, { status: 403 }));
+      expect((await post('/email-verification/send', { token })).status).toBe(403);
+      expect(mocks.verifyHumanVerification).toHaveBeenCalledWith(
+        expect.anything(),
+        'signup',
+        undefined
+      );
+      mocks.tenantFromContext.mockReturnValue('other-tenant');
+      mocks.verifyHumanVerification.mockResolvedValue(null);
+      expect((await post('/email-verification/send', { token })).status).not.toBe(200);
+      expect(mocks.produceNotificationDelivery).not.toHaveBeenCalled();
+      mocks.tenantFromContext.mockReturnValue('tenant-1');
+      const response = await post('/email-verification/send', {
+        token,
+        human_verification_response: 'proof',
+      });
+      expect(response.status).toBe(200);
+      expect(mocks.verifyHumanVerification).toHaveBeenLastCalledWith(
+        expect.anything(),
+        'signup',
+        'proof'
+      );
+      expect(mocks.produceNotificationDelivery).toHaveBeenCalledTimes(1);
     });
 
     it('stops sending once the invitation reaches its send limit', async () => {

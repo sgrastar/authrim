@@ -124,6 +124,12 @@ export interface LiteStartGrantStart {
   clientId: string;
   /** The Flow interaction the sign-in belongs to, when a Flow runs (checked again by the start). */
   interactionId: string | null;
+  /**
+   * A sign-up's invitation (its token, as the sign-up's transaction keeps it, never the start's
+   * query): the start reserves its use as the SPA's start with `invite_token` does. Absent on a
+   * grant stored before it carried one.
+   */
+  inviteToken?: string | null;
 }
 
 export type LiteTxnRefusal =

@@ -223,7 +223,8 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     // A sign-in started from an invitation reserves one use now, held by this request for as
     // long as the IdP may take to answer it, so the ACS can apply it to the account it creates.
     // A re-authentication creates no account, so it carries no invitation.
-    const inviteToken = query('invite_token');
+    // A lite start's invitation is the one its sign-up's transaction keeps (its grant carries it).
+    const inviteToken = lite ? (lite.start.inviteToken ?? undefined) : query('invite_token');
     let invitation: ExternalSignupInvitation | null = null;
     if (inviteToken !== undefined && !reauthentication) {
       if (!isUsableInvitationToken(inviteToken)) {
