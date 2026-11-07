@@ -20,7 +20,9 @@
  * - After it (`eraseRetainedAccountPii`): every value the account keeps in
  *   `identity_sensitive_values` (the writer only moves the profile fields' lifecycle, and leaves
  *   the per-field PII custom attributes active), the linked
- *   identities' provider profile (address, name, raw attributes and claims, profile data), the
+ *   identities' provider profile (address, name, raw attributes and claims, profile data) and
+ *   their stored provider tokens (with which the profile could be fetched again; a sign-in
+ *   through the provider gets new ones), the
  *   raw values of finished identifier changes, of identifier change challenges (an unused one
  *   can no longer be verified) and of finished or stopped external identifier unlinkings, the
  *   proofs of finished guest registrations, the screen response records and the core custom
@@ -114,7 +116,9 @@ export async function eraseRetainedAccountPii(
     {
       sql: `UPDATE linked_identities
           SET provider_email = NULL, provider_name = NULL, raw_attributes = NULL,
-              raw_claims = NULL, profile_data = NULL, updated_at = ?
+              raw_claims = NULL, profile_data = NULL,
+              access_token_encrypted = NULL, refresh_token_encrypted = NULL,
+              token_expires_at = NULL, updated_at = ?
         WHERE tenant_id = ? AND user_id = ? AND provisioning_state = 'active'`,
       params: [nowMs, input.tenantId, input.userId],
     },
