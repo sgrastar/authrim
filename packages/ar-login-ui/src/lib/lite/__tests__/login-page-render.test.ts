@@ -153,8 +153,7 @@ describe('the lite sign-in page as drawn', () => {
 				codeEntry: {
 					kind: 'mail_otp',
 					maskedEmail: 'p***n@example.com',
-					resendWait: 42,
-					resendable: true
+					resendWait: 42
 				}
 			}
 		);

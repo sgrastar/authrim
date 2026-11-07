@@ -47,7 +47,6 @@ import {
 	liteStepConsent,
 	liteGuestAction,
 	liteAnswerScreen,
-	liteSignupCodeResendable,
 	liteStepKey,
 	liteLoginStepDecision,
 	litePagePath,
@@ -225,6 +224,10 @@ export async function liteStepPage(event: RequestEvent) {
 				external: [origin]
 			});
 		}
+		// A re-authentication challenge: its own page (with the challenge only).
+		if (created.reason === 'reauth_challenge' && target.authorizationChallengeId) {
+			redirect(303, `/reauth?challenge_id=${encodeURIComponent(target.authorizationChallengeId)}`);
+		}
 		if (created.reason === 'budget_exceeded') return errorPage(event, 'busy');
 		if (created.reason === 'invalid_return_to') error(400, 'invalid_request');
 		return errorPage(event, 'unavailable');
@@ -261,7 +264,13 @@ export async function liteStepPage(event: RequestEvent) {
 	// A resume that fails for a moment (the backend, a limit) starts nothing new: what the
 	// transaction holds for its interaction (a code sent, a sign-in made) is still to be used. One
 	// the Flow refuses (the interaction is gone) starts afresh.
-	if (flow && !flow.ok && (flow.status >= 500 || flow.status === 429)) {
+	// A resume answered `step_conflict` (a submit of the step is still being saved) is one of those:
+	// the interaction is still this one, drawn where that submit leaves it on the next view.
+	if (
+		flow &&
+		!flow.ok &&
+		(flow.status >= 500 || flow.status === 429 || flow.error === 'step_conflict')
+	) {
 		return errorPage(event, flow.status === 429 ? 'busy' : 'unavailable');
 	}
 	if (!flow || !flow.ok) {
@@ -368,8 +377,8 @@ export async function liteStepPage(event: RequestEvent) {
 	// A passkey challenge got: its ceremony is drawn (on a step the lite UI can go on with).
 	const passkey = pendingPasskey && decision.kind === 'screen' ? pendingPasskey : null;
 	let pow: LitePowChallenge | null = null;
-	// A code entry's proof is its resend's: none where its code is not sent again.
-	const resendable = purpose === 'login' || liteSignupCodeResendable(methods, pending);
+	// A code entry's proof is its resend's (a sign-up's code is sent again as that sign-up, with
+	// its profile: ar-auth keeps it with the account its first code made).
 	// The invited address's code asked for: its entry (drawn instead) posts no proof.
 	const proofAsked =
 		purpose === 'signup' &&
@@ -394,7 +403,7 @@ export async function liteStepPage(event: RequestEvent) {
 		held !== null ||
 		(!passkey &&
 			!proofAsked &&
-			((pending !== null && decision.kind === 'screen' && resendable) ||
+			((pending !== null && decision.kind === 'screen') ||
 				(!codeAsked &&
 					decision.kind === 'screen' &&
 					decision.fields.some((f) => PROOF_BLOCKS.has(f.blockType)))));
@@ -444,9 +453,7 @@ export async function liteStepPage(event: RequestEvent) {
 					? {
 							kind: 'mail_otp' as const,
 							maskedEmail: pending.maskedEmail,
-							resendWait,
-							// A sign-up's code is sent again only where ar-auth will (see the action).
-							resendable
+							resendWait
 						}
 					: pendingTotp
 						? {

@@ -353,7 +353,10 @@ const pt = createTranslation({
 		'O login com chave de acesso não foi concluído. Tente novamente ou escolha outra forma de entrar.',
 	lite_provisioningWait:
 		'Sua conta está sendo configurada. Aguarde um momento e selecione Continuar.',
-	lite_provisioningFailed: 'Não foi possível configurar sua conta. Comece novamente.'
+	lite_provisioningFailed: 'Não foi possível configurar sua conta. Comece novamente.',
+	lite_reauthSessionEnded:
+		'A sessão para a qual esta página foi aberta terminou ou mudou. Entre novamente.',
+	lite_reauthAnotherWay: 'Usar outra forma'
 });
 
 export default pt;

@@ -23,6 +23,9 @@ import {
   checkRateLimit,
   checkedLiteBrowserBinding,
   readAuthorizationChallengeKind,
+  readAuthorizationChallengeKindChecked,
+  readAccountSession,
+  readReauthChallengeUser,
   liteBrowserBindingHash,
   liteTxnStoreFor,
   verifyHumanVerificationWithRunner,
@@ -68,6 +71,8 @@ export type LiteTxnEntryRefusal =
   | 'budget_exceeded'
   | 'invalid_request'
   | 'human_verification_failed'
+  | 'session_invalid'
+  | 'reauth_challenge'
   | 'unavailable';
 
 type Refused = { ok: false; reason: LiteTxnEntryRefusal };
@@ -87,8 +92,11 @@ export interface LiteTxnCreateCall extends LiteTxnCall {
   clientId?: string | null;
   challengeId?: string | null;
   returnTo?: string | null;
+  /**
+   * The browser's session (the value of its `authrim_session` cookie), for a re-authentication:
+   * checked here, never taken as given. The user is the session's.
+   */
   sessionId?: string | null;
-  userId?: string | null;
   data?: Record<string, unknown>;
   reuseKey?: string;
   /** Only the live transaction of `reuseKey` (none is made, nor counted against the limits). */
@@ -222,9 +230,9 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
 
   create(call: LiteTxnCreateCall): Promise<LiteTxnCreateResult | Refused> {
     return this.#covered(async () => {
-      // An account action or a re-authentication acts for the signed-in session and user, which
-      // this entrypoint does not check yet: both are refused until it does (lite plan PR7).
-      if (call.purpose !== 'login' && call.purpose !== 'signup') {
+      // An account action acts for the signed-in session and user, which this entrypoint does
+      // not check for it yet: refused until it does (lite plan PR7b).
+      if (call.purpose !== 'login' && call.purpose !== 'signup' && call.purpose !== 'reauth') {
         this.#authorize();
         return { ok: false, reason: 'unsupported_purpose' } as const;
       }
@@ -252,6 +260,39 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
       const returnTo = checkedReturnTo(call.returnTo, call.publicOrigin);
       if (returnTo === undefined) {
         return { ok: false, reason: 'invalid_return_to' } as const;
+      }
+      // A re-authentication is for the challenge's user, in the browser's session of that user:
+      // the transaction is bound to both (a page of another session or user is refused).
+      let session: { sessionId: string; userId: string } | null = null;
+      // A sign-in or sign-up page given a re-authentication challenge: the re-authentication
+      // page is its own (the challenge is for the signed-in user, not anyone who signs in).
+      // A challenge whose kind cannot be read is not taken for one that is no re-authentication.
+      if (call.purpose !== 'reauth' && call.challengeId) {
+        const kind = await readAuthorizationChallengeKindChecked(
+          this.env,
+          context.tenantId,
+          call.challengeId
+        );
+        if (kind === 'unavailable') return { ok: false, reason: 'unavailable' } as const;
+        if (kind === 'reauth') return { ok: false, reason: 'reauth_challenge' } as const;
+      }
+      if (call.purpose === 'reauth') {
+        const reauthUser = await readReauthChallengeUser(
+          this.env,
+          context.tenantId,
+          call.challengeId
+        );
+        if (!reauthUser) return { ok: false, reason: 'invalid_request' } as const;
+        let live: Awaited<ReturnType<typeof readAccountSession>>;
+        try {
+          live = await readAccountSession(this.env, context.tenantId, call.sessionId);
+        } catch {
+          return { ok: false, reason: 'unavailable' } as const;
+        }
+        if (!live || live.userId !== reauthUser) {
+          return { ok: false, reason: 'session_invalid' } as const;
+        }
+        session = { sessionId: live.sessionId, userId: live.userId };
       }
       const limits = await readLiteTxnLimits(this.env, context.tenantId);
       const reuseOnly = call.reuseOnly === true;
@@ -288,9 +329,9 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
         challengeId: call.challengeId ?? null,
         returnTo,
         policyRevision: context.policyRevision,
-        // Only login and signup reach here (see above): neither acts for a session or user yet.
-        sessionId: null,
-        userId: null,
+        // A sign-in or sign-up acts for no session or user; a re-authentication for its own.
+        sessionId: session?.sessionId ?? null,
+        userId: session?.userId ?? null,
       };
       return context.store.createTxnRpc({
         tenantId: context.tenantId,
@@ -309,14 +350,37 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
    * (`current: true`) the tenant's current policy is read, so a post under an earlier revision is
    * refused before any backend call.
    */
-  get(call: LiteTxnCall & { txnId: string; current?: boolean }): Promise<LiteTxnResult | Refused> {
+  get(
+    call: LiteTxnCall & {
+      txnId: string;
+      current?: boolean;
+      /**
+       * The browser's session (its `authrim_session` cookie). A transaction bound to a session (a
+       * re-authentication) is read only while that session is the browser's, live, and its user's.
+       */
+      sessionId?: string | null;
+    }
+  ): Promise<LiteTxnResult | Refused> {
     return this.#covered(async () => {
       const context = await this.#context(call, {
         current: call.current === true,
         requireLite: true,
       });
       if (!context.ok) return context;
-      return context.store.getTxnRpc(this.#ref(context, call.txnId));
+      const read = (await context.store.getTxnRpc(this.#ref(context, call.txnId))) as LiteTxnResult;
+      if (!read.ok || read.txn.bound.sessionId === null) return read;
+      const bound = read.txn.bound;
+      if (call.sessionId !== bound.sessionId)
+        return { ok: false, reason: 'session_invalid' } as const;
+      let live: Awaited<ReturnType<typeof readAccountSession>>;
+      try {
+        live = await readAccountSession(this.env, context.tenantId, call.sessionId);
+      } catch {
+        return { ok: false, reason: 'unavailable' } as const;
+      }
+      return live && live.sessionId === bound.sessionId && live.userId === bound.userId
+        ? read
+        : ({ ok: false, reason: 'session_invalid' } as const);
     });
   }
 

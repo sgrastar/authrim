@@ -60,13 +60,47 @@ export async function startLiteTotp(
 }
 
 /**
+ * Starts a re-authentication with an authenticator app (`/api/auth/totp/login/start` with the
+ * challenge only: ar-auth takes the challenge's user, never an identifier from the page).
+ */
+export async function startLiteReauthTotp(
+	backend: LiteBackendClient,
+	input: { authorizationChallengeId: string; proof: string | null }
+): Promise<
+	| { ok: true; challengeId: string; expiresIn: number }
+	| { ok: false; error: string; status: number }
+> {
+	const answer = await backend.request('/api/auth/totp/login/start', {
+		json: {
+			authorization_challenge_id: input.authorizationChallengeId,
+			...(input.proof ? { human_verification_response: input.proof } : {})
+		}
+	});
+	const json = record(answer.json);
+	if (answer.status !== 200 || typeof json.challenge_id !== 'string' || !json.challenge_id) {
+		return { ok: false, error: errorOf(answer), status: answer.status };
+	}
+	const expiresIn =
+		typeof json.expires_in === 'number' && Number.isFinite(json.expires_in) && json.expires_in > 0
+			? Math.min(json.expires_in, 600)
+			: 300;
+	return { ok: true, challengeId: json.challenge_id, expiresIn };
+}
+
+/**
  * Checks an authenticator code. ar-auth spends the challenge on the first check, a wrong code
  * included: a refused check needs a new start. A right one sets the session cookies itself (no
  * artifact); the authorization request is left to the Flow (`defer_authorization_continuation`).
  */
 export async function verifyLiteTotp(
 	backend: LiteBackendClient,
-	input: { challengeId: string; code: string; authorizationChallengeId: string | null }
+	input: {
+		challengeId: string;
+		code: string;
+		authorizationChallengeId: string | null;
+		/** The answer continues the authorization request itself (a re-authentication). */
+		continueAuthorization?: boolean;
+	}
 ): Promise<
 	| { ok: true; redirectUrl: string | null }
 	| { ok: false; error: string; invalidCode: boolean; status: number }
@@ -78,7 +112,7 @@ export async function verifyLiteTotp(
 			...(input.authorizationChallengeId
 				? { authorization_challenge_id: input.authorizationChallengeId }
 				: {}),
-			defer_authorization_continuation: true
+			defer_authorization_continuation: input.continueAuthorization !== true
 		}
 	});
 	const json = record(answer.json);
@@ -163,7 +197,8 @@ export async function startLitePasskey(
 		codeChallenge: string;
 		proof: string | null;
 		authorizationChallengeId: string | null;
-		interactionId: string;
+		/** The Flow's interaction (none for a re-authentication). */
+		interactionId: string | null;
 	}
 ): Promise<
 	| { ok: true; challengeId: string; options: LitePasskeyOptions }
@@ -180,7 +215,7 @@ export async function startLitePasskey(
 				: {}),
 			...(input.proof ? { human_verification_response: input.proof } : {})
 		},
-		headers: interactionHeaders(input.interactionId)
+		headers: input.interactionId ? interactionHeaders(input.interactionId) : {}
 	});
 	const json = record(answer.json);
 	const options = readLitePasskeyOptions(json.options);

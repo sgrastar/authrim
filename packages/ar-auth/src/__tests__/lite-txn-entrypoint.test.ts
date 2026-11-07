@@ -6,11 +6,23 @@ import { tenantPrimaryVanityDomainCacheKey } from '@authrim/ar-lib-core/services
 import { consumeLiteStartGrant } from '@authrim/ar-lib-core';
 import { LITE_TXN_AUDIENCE, LiteTxnEntrypoint, checkedReturnTo } from '../lite-txn-entrypoint';
 
-const humanVerification = vi.hoisted(() => ({ verify: vi.fn(), challengeKind: vi.fn() }));
+const humanVerification = vi.hoisted(() => ({
+  verify: vi.fn(),
+  challengeKind: vi.fn(),
+  challengeKindChecked: vi.fn(),
+  reauthUser: vi.fn(),
+  accountSession: vi.fn(),
+}));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
   verifyHumanVerificationWithRunner: humanVerification.verify,
   readAuthorizationChallengeKind: humanVerification.challengeKind,
+  // The checked read answers as the plain one in these tests (an unreadable store: its own test).
+  readAuthorizationChallengeKindChecked: (...args: unknown[]): unknown =>
+    (humanVerification.challengeKindChecked(...args) as unknown) ??
+    (humanVerification.challengeKind(...args) as unknown),
+  readReauthChallengeUser: humanVerification.reauthUser,
+  readAccountSession: humanVerification.accountSession,
 }));
 
 class Storage {
@@ -375,20 +387,105 @@ describe('LiteTxnEntrypoint', () => {
     expect(record.operations.op).toMatchObject({ status: 'done', result: 'sent' });
   });
 
-  it('refuses account and re-authentication transactions until their session check exists', async () => {
+  it('refuses account transactions until their session check exists', async () => {
     await setPolicy('always');
-    for (const purpose of ['account', 'reauth'] as const) {
-      await expect(
-        entry().create({
-          ...call,
-          clientIp: null,
-          purpose,
-          sessionId: 'someone-else',
-          userId: 'u-other',
-        })
-      ).resolves.toEqual({ ok: false, reason: 'unsupported_purpose' });
-    }
+    await expect(
+      entry().create({ ...call, clientIp: null, purpose: 'account', sessionId: 'someone-else' })
+    ).resolves.toEqual({ ok: false, reason: 'unsupported_purpose' });
     expect(txnStores.size).toBe(0);
+  });
+
+  it('sends a sign-in or sign-up page given a re-authentication challenge to its own page', async () => {
+    await setPolicy('always');
+    humanVerification.challengeKind.mockResolvedValue('reauth');
+    for (const purpose of ['login', 'signup'] as const) {
+      await expect(
+        entry().create({ ...call, clientIp: null, purpose, challengeId: 'ch-reauth' })
+      ).resolves.toEqual({ ok: false, reason: 'reauth_challenge' });
+    }
+    humanVerification.challengeKind.mockResolvedValue('login');
+    await expect(
+      entry().create({ ...call, clientIp: null, purpose: 'login', challengeId: 'ch-login' })
+    ).resolves.toMatchObject({ ok: true });
+    // A challenge whose kind cannot be read is not taken for a sign-in one.
+    humanVerification.challengeKindChecked.mockResolvedValueOnce('unavailable');
+    await expect(
+      entry().create({ ...call, clientIp: null, purpose: 'login', challengeId: 'ch-unread' })
+    ).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    humanVerification.challengeKind.mockReset();
+  });
+
+  it("binds a re-authentication to its challenge's user and that user's live session", async () => {
+    await setPolicy('always');
+    const reauth = (sessionId: string | null) =>
+      entry().create({
+        ...call,
+        clientIp: null,
+        purpose: 'reauth',
+        challengeId: 'ch-reauth',
+        sessionId,
+      });
+    humanVerification.reauthUser.mockResolvedValue('user-a');
+    // The challenge's user's live session: bound to both.
+    humanVerification.accountSession.mockResolvedValueOnce({ sessionId: 's-a', userId: 'user-a' });
+    await expect(reauth('s-a')).resolves.toMatchObject({
+      ok: true,
+      txn: { bound: { purpose: 'reauth', sessionId: 's-a', userId: 'user-a' } },
+    });
+    expect(humanVerification.accountSession).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'default',
+      's-a'
+    );
+    // Another user's session, or none (signed out, expired): refused.
+    humanVerification.accountSession.mockResolvedValueOnce({ sessionId: 's-b', userId: 'user-b' });
+    await expect(reauth('s-b')).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    humanVerification.accountSession.mockResolvedValueOnce(null);
+    await expect(reauth(null)).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    // A session the store could not read: unavailable, not signed out.
+    humanVerification.accountSession.mockRejectedValueOnce(new Error('down'));
+    await expect(reauth('s-a')).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    // No re-authentication challenge (a sign-in one, another tenant's, none): refused.
+    humanVerification.reauthUser.mockResolvedValueOnce(null);
+    await expect(reauth('s-a')).resolves.toEqual({ ok: false, reason: 'invalid_request' });
+    humanVerification.reauthUser.mockReset();
+    humanVerification.accountSession.mockReset();
+  });
+
+  it("reads a re-authentication only with its session, live and its user's", async () => {
+    await setPolicy('always');
+    humanVerification.reauthUser.mockResolvedValue('user-a');
+    humanVerification.accountSession.mockResolvedValue({ sessionId: 's-a', userId: 'user-a' });
+    const created = await entry().create({
+      ...call,
+      clientIp: null,
+      purpose: 'reauth',
+      challengeId: 'ch-reauth',
+      sessionId: 's-a',
+    });
+    if (!created.ok) throw new Error(created.reason);
+    const read = (sessionId?: string | null) =>
+      entry().get({ ...call, txnId: created.txn.id, current: true, sessionId });
+    await expect(read('s-a')).resolves.toMatchObject({ ok: true });
+    // Another session, or none.
+    await expect(read('s-b')).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    await expect(read(undefined)).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    // The same session, ended (or another user's by now).
+    humanVerification.accountSession.mockResolvedValueOnce(null);
+    await expect(read('s-a')).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    humanVerification.accountSession.mockResolvedValueOnce({ sessionId: 's-a', userId: 'user-b' });
+    await expect(read('s-a')).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    humanVerification.accountSession.mockRejectedValueOnce(new Error('down'));
+    await expect(read('s-a')).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    humanVerification.reauthUser.mockReset();
+    humanVerification.accountSession.mockReset();
+    // A sign-in's transaction is bound to no session: read without one.
+    const login = await entry().create({ ...call, clientIp: null, purpose: 'login' });
+    if (!login.ok) throw new Error(login.reason);
+    await expect(entry().get({ ...call, txnId: login.txn.id })).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(humanVerification.accountSession).not.toHaveBeenCalled();
   });
 
   it('keeps only a return target of the public origin or a local path', async () => {
@@ -510,7 +607,6 @@ describe('LiteTxnEntrypoint refusals before the store', () => {
         clientIp: null,
         purpose,
         sessionId: 'asserted-session',
-        userId: 'asserted-user',
       });
       expect(created).toMatchObject({
         ok: true,
@@ -640,7 +736,8 @@ describe('LiteTxnEntrypoint start grants', () => {
     'makes no grant for a sign-in that answers a %s challenge, spending no proof',
     async (kind) => {
       await setPolicy('always');
-      humanVerification.challengeKind.mockResolvedValue(kind);
+      // (A transaction is made only for a sign-in challenge: the challenge reads otherwise later.)
+      humanVerification.challengeKind.mockResolvedValue('login');
       const created = await entry().create({
         ...call,
         clientIp: null,
@@ -648,6 +745,7 @@ describe('LiteTxnEntrypoint start grants', () => {
         challengeId: 'challenge-1',
       });
       if (!created.ok) throw new Error(created.reason);
+      humanVerification.challengeKind.mockResolvedValue(kind);
       await expect(
         entry().issueStartGrant({
           ...call,

@@ -1871,6 +1871,14 @@ type RootTranslation = {
 	 * Y​o​u​r​ ​a​c​c​o​u​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​e​t​ ​u​p​.​ ​S​t​a​r​t​ ​a​g​a​i​n​.
 	 */
 	lite_provisioningFailed: string;
+	/**
+	 * T​h​e​ ​s​e​s​s​i​o​n​ ​t​h​i​s​ ​p​a​g​e​ ​w​a​s​ ​o​p​e​n​e​d​ ​f​o​r​ ​h​a​s​ ​e​n​d​e​d​ ​o​r​ ​c​h​a​n​g​e​d​.​ ​S​i​g​n​ ​i​n​ ​a​g​a​i​n​.
+	 */
+	lite_reauthSessionEnded: string;
+	/**
+	 * U​s​e​ ​a​n​o​t​h​e​r​ ​w​a​y
+	 */
+	lite_reauthAnotherWay: string;
 };
 
 export type TranslationFunctions = {
@@ -3685,6 +3693,14 @@ export type TranslationFunctions = {
 	 * Your account could not be set up. Start again.
 	 */
 	lite_provisioningFailed: () => LocalizedString;
+	/**
+	 * The session this page was opened for has ended or changed. Sign in again.
+	 */
+	lite_reauthSessionEnded: () => LocalizedString;
+	/**
+	 * Use another way
+	 */
+	lite_reauthAnotherWay: () => LocalizedString;
 };
 
 export type Formatters = {};

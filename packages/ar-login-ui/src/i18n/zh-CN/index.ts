@@ -317,7 +317,9 @@ const zhCN = createTranslation({
 	lite_socialStarted: '已从此页面开始使用外部账户登录。要使用其他方式登录，请重新开始。',
 	lite_passkeyFailed: '通行密钥登录未完成。请重试，或选择其他登录方式。',
 	lite_provisioningWait: '正在准备您的账户。请稍候，然后选择“继续”。',
-	lite_provisioningFailed: '无法准备您的账户。请重新开始。'
+	lite_provisioningFailed: '无法准备您的账户。请重新开始。',
+	lite_reauthSessionEnded: '打开此页面时的会话已结束或已更改。请重新登录。',
+	lite_reauthAnotherWay: '使用其他方式'
 });
 
 export default zhCN;

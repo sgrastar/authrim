@@ -485,7 +485,10 @@ const ar = createTranslation({
 	lite_passkeyFailed:
 		'لم يكتمل تسجيل الدخول بمفتاح المرور. حاول مرة أخرى، أو اختر طريقة أخرى لتسجيل الدخول.',
 	lite_provisioningWait: 'يجري إعداد حسابك. انتظر لحظة، ثم اختر متابعة.',
-	lite_provisioningFailed: 'تعذّر إعداد حسابك. ابدأ من جديد.'
+	lite_provisioningFailed: 'تعذّر إعداد حسابك. ابدأ من جديد.',
+	lite_reauthSessionEnded:
+		'انتهت الجلسة التي فُتحت لها هذه الصفحة أو تغيّرت. سجّل الدخول مرة أخرى.',
+	lite_reauthAnotherWay: 'استخدم طريقة أخرى'
 });
 
 export default ar;
