@@ -14,6 +14,10 @@
 		type FlowEditorAuthProfileOption,
 		type FlowEditorOption
 	} from '#lib/admin/flow-i18n.js';
+	import {
+		screenAnswerDraftToValues,
+		screenAnswerValuesToDraft
+	} from '#lib/admin/flow-screen-answer-condition.js';
 	import { getNewFlowTemplate, type NewFlowTemplate } from '#lib/admin/new-flow-templates.js';
 	import {
 		adminAuthenticationMethodsAPI,
@@ -75,7 +79,8 @@
 		| 'saml_sp_id'
 		| 'flow_kind'
 		| 'requested_scope'
-		| 'authentication_method';
+		| 'authentication_method'
+		| 'screen.answer';
 	type ConditionOtherwiseMode = 'output' | 'terminal_error';
 
 	interface ConditionRowDraft {
@@ -83,6 +88,8 @@
 		label: string;
 		type: ConditionDraftType;
 		value: string;
+		/** The answer key a screen answer condition compares. */
+		attribute?: string;
 		outputHandle: string;
 	}
 
@@ -1538,7 +1545,8 @@
 			value === 'saml_sp_id' ||
 			value === 'flow_kind' ||
 			value === 'requested_scope' ||
-			value === 'authentication_method'
+			value === 'authentication_method' ||
+			value === 'screen.answer'
 		);
 	}
 
@@ -1579,6 +1587,11 @@
 			{
 				value: 'authentication_method',
 				label: $LL.admin_flows_condition_type_authentication_method()
+			},
+
+			{
+				value: 'screen.answer',
+				label: ft('スクリーンの答え', 'Screen answer')
 			}
 		];
 	}
@@ -1608,7 +1621,11 @@
 					outputs.find((output) => output.id === outputHandle)?.label ||
 					$LL.admin_flows_output_matched(),
 				type: isConditionDraftType(condition.type) ? condition.type : 'always',
-				value: conditionValueToDraft(condition),
+				value:
+					condition.type === 'screen.answer'
+						? screenAnswerValuesToDraft(condition)
+						: conditionValueToDraft(condition),
+				attribute: getConfigString(condition, 'attribute', ''),
 				outputHandle
 			};
 		});
@@ -1675,6 +1692,15 @@
 				value: row.value.trim().toLowerCase() === 'false' ? false : true
 			};
 		}
+		// A screen answer condition names the answer key (a part's own key on a screen) it compares,
+		// and its values are one per line (a choice's value may hold spaces or commas).
+		if (row.type === 'screen.answer') {
+			return {
+				type: row.type,
+				attribute: (row.attribute ?? '').trim(),
+				...screenAnswerDraftToValues(row.value)
+			};
+		}
 		const values = row.value
 			.split(/[\s,]+/)
 			.map((value) => value.trim())
@@ -1721,6 +1747,7 @@
 						label: getConfigString(row, 'label', $LL.admin_flows_output_matched()),
 						type,
 						value: getConfigString(row, 'value', ''),
+						attribute: getConfigString(row, 'attribute', ''),
 						outputHandle: getConfigString(row, 'outputHandle', `matched-${index + 1}`)
 					};
 				})
@@ -3300,6 +3327,19 @@
 										{/each}
 									</select>
 								</label>
+								{#if row.type === 'screen.answer'}
+									<label class="field">
+										<span>{ft('回答のキー', 'Answer key')}</span>
+										<input
+											class="admin-input"
+											placeholder={ft(
+												'スクリーンの部品の回答のキー',
+												'The answer key of a screen part'
+											)}
+											bind:value={row.attribute}
+										/>
+									</label>
+								{/if}
 								<label class="field">
 									<span>{$LL.admin_flows_condition_value_label()}</span>
 									{#if row.type === 'protocol'}
@@ -3307,6 +3347,16 @@
 											<option value="saml">SAML</option>
 											<option value="oidc">OIDC</option>
 										</select>
+									{:else if row.type === 'screen.answer'}
+										<textarea
+											class="admin-input"
+											rows="2"
+											placeholder={ft(
+												'値を 1 行に 1 つ（値の中の改行は \\n）',
+												'One value per line (a line break inside a value is \\n)'
+											)}
+											bind:value={row.value}
+										></textarea>
 									{:else}
 										<input
 											class="admin-input"

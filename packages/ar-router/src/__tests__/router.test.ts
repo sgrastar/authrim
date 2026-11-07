@@ -1055,6 +1055,20 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('opens public Login UI images to other origins and keeps the rest same-origin', async () => {
+        const asset = await app.fetch(
+          new Request('https://example.com/api/assets/first/login-ui/logo/logo-123.png'),
+          mockEnv
+        );
+        expect(asset.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
+
+        const other = await app.fetch(
+          new Request('https://example.com/api/avatars/u.png'),
+          mockEnv
+        );
+        expect(other.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+      });
+
       it('should route /scim/v2/* to OP_MANAGEMENT', async () => {
         const req = new Request('https://example.com/scim/v2/Users');
         await app.fetch(req, mockEnv);
@@ -1867,6 +1881,225 @@ describe('Router Worker', () => {
       expect(new URL(proxiedRequest.url).search).toBe('?client_id=test');
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
       expect(proxiedRequest.headers.get('X-Authrim-Shared-Login-Host')).toBeNull();
+    });
+
+    it('passes the Router edge context to the Login UI edge entrypoint when bound', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const handle = vi.fn(async (_request: Request, _context: unknown) => new Response('edge'));
+      const env = {
+        ...mockEnv,
+        // A sibling origin the Router's own CSRF check allows, but not this request's origin.
+        ALLOWED_ORIGINS: 'https://first.example.com,https://rp.example.com',
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'first',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        LOGIN_UI_EDGE: { handle, ping: async () => 'ok' },
+      };
+      const post = (headers: Record<string, string>) =>
+        app.fetch(
+          new Request('https://first.example.com/login', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'CF-Connecting-IP': '203.0.113.5',
+              'x-authrim-edge-context': '{"v":1,"originVerified":true}',
+              ...headers,
+            },
+            body: 'a=1',
+          }),
+          env
+        );
+
+      const sameOrigin = await post({ Origin: 'https://first.example.com' });
+      expect(await sameOrigin.text()).toBe('edge');
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+      const [request, context] = handle.mock.calls[0] ?? [];
+      expect(context).toEqual({
+        originVerified: true,
+        clientIp: '203.0.113.5',
+        publicOrigin: 'https://first.example.com',
+      });
+      expect(request?.headers.get('origin')).toBe('https://phase9-ar-login-ui.example.workers.dev');
+      expect(request?.headers.get('x-authrim-edge-context')).toBeNull();
+
+      await post({ Origin: 'https://rp.example.com' });
+      expect(handle.mock.calls[1]?.[1]).toMatchObject({ originVerified: false });
+      expect(handle.mock.calls[1]?.[0].headers.get('origin')).toBe('https://rp.example.com');
+      // Without Origin, a Referer does not count (SvelteKit refuses such a form POST anyway).
+      await post({ Referer: 'https://first.example.com/login?x=1' });
+      expect(handle.mock.calls[2]?.[1]).toMatchObject({ originVerified: false });
+      // An opaque Origin never reaches the Login UI (the Router's own CSRF check refuses it).
+      const opaque = await post({ Origin: 'null', Referer: 'https://first.example.com/login' });
+      expect(opaque.status).toBe(403);
+      expect(handle).toHaveBeenCalledTimes(3);
+
+      await app.fetch(new Request('https://first.example.com/login'), env);
+      expect(handle.mock.calls[3]?.[1]).toMatchObject({ originVerified: null });
+    });
+
+    it('uses the plain Login UI binding while the deployed UI lacks the edge entrypoint', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const handle = vi.fn(async (_request: Request, _context: unknown) => new Response('edge'));
+      const ping = vi.fn(async () => {
+        throw new Error('no such entrypoint');
+      });
+      const env = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://first.example.com',
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'first',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        LOGIN_UI_EDGE: { handle, ping },
+      };
+      for (let i = 0; i < 3; i++) {
+        const res = await app.fetch(new Request('https://first.example.com/login'), env);
+        expect(res.status).toBe(200);
+      }
+      expect(handle).not.toHaveBeenCalled();
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(3);
+      // Asked once, then remembered for a while.
+      expect(ping).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes a POST from the Login UI origin itself as an opaque origin', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const env = {
+        ...mockEnv,
+        // The Router's own CSRF check allows the UI origin in this configuration.
+        ALLOWED_ORIGINS: 'https://first.example.com,https://phase9-ar-login-ui.example.workers.dev',
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'first',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+      await app.fetch(
+        new Request('https://first.example.com/login', {
+          method: 'POST',
+          headers: {
+            Origin: 'https://phase9-ar-login-ui.example.workers.dev',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: 'a=1',
+        }),
+        env
+      );
+      expect(loginUiWorker.fetch.mock.calls[0][0].headers.get('origin')).toBe('null');
+    });
+
+    it('asks again after the edge entrypoint fails, sending a GET the plain way', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const handle = vi.fn(async (_request: Request, _context: unknown): Promise<Response> => {
+        throw new Error('entrypoint gone');
+      });
+      const ping = vi.fn(async () => 'ok');
+      const env = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://first.example.com',
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'first',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+        LOGIN_UI_EDGE: { handle, ping },
+      };
+      const res = await app.fetch(new Request('https://first.example.com/login'), env);
+      expect(res.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+      ping.mockImplementation(async () => {
+        throw new Error('missing');
+      });
+      await app.fetch(new Request('https://first.example.com/login'), env);
+      // The next request asked again, found it missing, and used the plain binding.
+      expect(ping).toHaveBeenCalledTimes(2);
+      expect(handle).toHaveBeenCalledTimes(1);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('never sends a request other than GET or HEAD again after the edge entrypoint fails', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const env = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://first.example.com',
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'first',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+      for (const init of [
+        { method: 'POST' },
+        { method: 'POST', body: 'a=1' },
+        { method: 'DELETE' },
+      ]) {
+        const handle = vi.fn(async (_request: Request, _context: unknown): Promise<Response> => {
+          throw new Error('call failed');
+        });
+        const res = await app.fetch(
+          new Request('https://first.example.com/login', {
+            ...init,
+            headers: {
+              Origin: 'https://first.example.com',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+          }),
+          { ...env, LOGIN_UI_EDGE: { handle, ping: async () => 'ok' } }
+        );
+        expect(res.status).toBeGreaterThanOrEqual(500);
+        expect(handle).toHaveBeenCalledTimes(1);
+      }
+      expect(loginUiWorker.fetch).not.toHaveBeenCalled();
+    });
+
+    it('does not rewrite a cross-origin Origin or Referer to the Login UI origin', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const env = {
+        ...mockEnv,
+        // A sibling origin the Router's own CSRF check allows, but not this request's origin.
+        ALLOWED_ORIGINS: 'https://first.example.com,https://rp.example.com',
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: 'first',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+      await app.fetch(
+        new Request('https://first.example.com/login', {
+          method: 'POST',
+          headers: {
+            Origin: 'https://rp.example.com',
+            Referer: 'https://rp.example.com/page',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: 'a=1',
+        }),
+        env
+      );
+      const crossSite = loginUiWorker.fetch.mock.calls[0][0];
+      expect(crossSite.headers.get('origin')).toBe('https://rp.example.com');
+      expect(crossSite.headers.get('referer')).toBe('https://rp.example.com/page');
+
+      await app.fetch(
+        new Request('https://first.example.com/login', {
+          method: 'POST',
+          headers: {
+            Origin: 'https://first.example.com',
+            Referer: 'https://first.example.com/login?x=1',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: 'a=1',
+        }),
+        env
+      );
+      const sameSite = loginUiWorker.fetch.mock.calls[1][0];
+      expect(sameSite.headers.get('origin')).toBe('https://phase9-ar-login-ui.example.workers.dev');
+      expect(sameSite.headers.get('referer')).toBe(
+        'https://phase9-ar-login-ui.example.workers.dev/login?x=1'
+      );
     });
 
     it('should serve canonical Login UI paths without replacing the API response at the Router root', async () => {

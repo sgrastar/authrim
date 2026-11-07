@@ -2012,7 +2012,7 @@ export class AdminAgentAccessRepository {
     const roles = await this.adapter.query<AdminPermissionRow>(
       `WITH RECURSIVE effective_roles(id, permissions_json, inherits_from) AS (
          SELECT r.id, r.permissions_json, r.inherits_from
-         FROM admin_role_assignments ra
+         FROM admin_effective_role_assignments ra
          JOIN admin_roles r ON r.id = ra.admin_role_id
          WHERE ra.admin_user_id = ? AND ra.tenant_id = ?
            AND (r.tenant_id = ? OR (r.tenant_id = 'default' AND r.is_system = 1))

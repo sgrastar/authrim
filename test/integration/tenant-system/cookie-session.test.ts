@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   actions as discoverActions,
   load as discoverLoad,
-} from '../../../packages/ar-login-ui/src/routes/discover/+page.server';
-import { load as loginLoad } from '../../../packages/ar-login-ui/src/routes/login/+page.server';
+} from '../../../packages/ar-login-ui/src/routes/(main)/discover/+page.server';
+import { load as loginLoad } from '../../../packages/ar-login-ui/src/routes/(main)/login/+page.server';
 import { REMEMBERED_TENANT_COOKIE } from '../../../packages/ar-login-ui/src/lib/discovery-session';
 import { tenantSystemProfiles } from './fixtures/profiles';
 import {

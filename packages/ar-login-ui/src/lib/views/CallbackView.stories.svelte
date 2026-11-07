@@ -17,7 +17,7 @@
 			docs: {
 				description: {
 					component:
-						'Where a sign-in through another service (single sign-on, an external IdP) comes back. The route (`src/routes/callback`) finishes the handoff and any provisioning; this view draws its status.'
+						'Where a sign-in through another service (single sign-on, an external IdP) comes back. The route (`src/routes/(main)/callback`) finishes the handoff and any provisioning; this view draws its status.'
 				}
 			}
 		}

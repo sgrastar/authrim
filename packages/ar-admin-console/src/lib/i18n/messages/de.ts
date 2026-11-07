@@ -10,7 +10,10 @@ import { deSecurityKeys } from './security-keys/de';
 import { deKeyringPresentation } from './keyring-presentation/de';
 import { deNotices } from './notices/de';
 import { deCustomization } from './customization/de';
+import { deScreens } from './screens/de';
 import { deStepUp } from './step-up/de';
+import { deAdminAudit } from './admin-audit/de';
+import { deTeam } from './team/de';
 
 export const de = {
 	...deSettings,
@@ -24,7 +27,10 @@ export const de = {
 	...deKeyringPresentation,
 	...deNotices,
 	...deCustomization,
+	...deScreens,
 	...deStepUp,
+	...deAdminAudit,
+	...deTeam,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
@@ -87,7 +93,8 @@ export const de = {
 	'nav.set.domains': 'Eigene Domains',
 	'nav.set.compliance': 'Compliance',
 	'nav.set.team': 'Administratoren',
-	'nav.set.teamRoles': 'Rollenzuweisung',
+	'nav.set.teamGroups': 'Administratorgruppen',
+	'nav.set.teamRoles': 'Administratorrollen',
 	'nav.plat.tenants': 'Mandanten',
 	'nav.plat.releases': 'Steuerungsebene',
 	'nav.plat.scale': 'Skalierung',
@@ -934,6 +941,11 @@ export const de = {
 	'keyring.credentials.noExpiry': 'Nicht festgelegt',
 	'keyring.credentials.revoke': 'Widerrufen',
 	'keyring.credentials.revokeTitle': 'Berechtigung {code} widerrufen?',
+	'keyring.issued.factorNote':
+		'Hat Keyring Ihren Nachweis erneuert, bleibt der Bestätigungscode des Schlüssels gleich und Ihr zweiter Faktor funktioniert weiter. Hat sich der Code geändert, ist dies ein neuer Schlüssel: Fügen Sie Keyring unter „Mein Konto“ als zweiten Faktor hinzu.',
+	'keyring.credentials.secondFactor': 'Zweiter Faktor',
+	'keyring.credentials.revokeRemovesFactor':
+		'Der Schlüssel dieses Nachweises ist als zweiter Faktor registriert. Wenn Sie ihn widerrufen, wird dieser zweite Faktor für alle Nachweise mit demselben Schlüssel entfernt (auch erneuerte). Ein alter Nachweis wird mit seinem Ablauf ungültig, auch wenn Sie ihn nicht widerrufen.',
 	'keyring.credentials.revokeBody':
 		'Die Berechtigung funktioniert sofort nicht mehr und kann nicht wiederhergestellt werden. Um Keyring wieder zu nutzen, müssen Sie eine neue Berechtigung hinzufügen.',
 	'keyring.credentials.revoked': 'Berechtigung widerrufen.',

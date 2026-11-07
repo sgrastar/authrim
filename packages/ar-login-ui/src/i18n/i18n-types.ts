@@ -1847,6 +1847,18 @@ type RootTranslation = {
 	 * @param {number} position
 	 */
 	emailCode_digitLabel: RequiredParams<'position'>;
+	/**
+	 * T​h​i​s​ ​p​a​g​e​ ​r​u​n​s​ ​a​ ​s​e​c​u​r​i​t​y​ ​c​h​e​c​k​ ​i​n​ ​y​o​u​r​ ​b​r​o​w​s​e​r​.​ ​T​u​r​n​ ​o​n​ ​J​a​v​a​S​c​r​i​p​t​,​ ​t​h​e​n​ ​r​e​l​o​a​d​ ​t​h​e​ ​p​a​g​e​.
+	 */
+	lite_javascriptRequired: string;
+	/**
+	 * T​h​i​s​ ​b​r​o​w​s​e​r​ ​c​a​n​n​o​t​ ​u​s​e​ ​a​ ​p​a​s​s​k​e​y​ ​h​e​r​e​.​ ​C​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​w​a​y​ ​t​o​ ​s​i​g​n​ ​i​n​.
+	 */
+	lite_passkeyUnsupported: string;
+	/**
+	 * T​h​e​ ​p​a​s​s​k​e​y​ ​s​i​g​n​-​i​n​ ​d​i​d​ ​n​o​t​ ​f​i​n​i​s​h​.​ ​T​r​y​ ​a​g​a​i​n​,​ ​o​r​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​w​a​y​ ​t​o​ ​s​i​g​n​ ​i​n​.
+	 */
+	lite_passkeyFailed: string;
 };
 
 export type TranslationFunctions = {
@@ -3637,6 +3649,18 @@ export type TranslationFunctions = {
 	 * Digit {position} of 6
 	 */
 	emailCode_digitLabel: (arg: { position: number }) => LocalizedString;
+	/**
+	 * This page runs a security check in your browser. Turn on JavaScript, then reload the page.
+	 */
+	lite_javascriptRequired: () => LocalizedString;
+	/**
+	 * This browser cannot use a passkey here. Choose another way to sign in.
+	 */
+	lite_passkeyUnsupported: () => LocalizedString;
+	/**
+	 * The passkey sign-in did not finish. Try again, or choose another way to sign in.
+	 */
+	lite_passkeyFailed: () => LocalizedString;
 };
 
 export type Formatters = {};

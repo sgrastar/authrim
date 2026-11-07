@@ -27,6 +27,7 @@ import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 import { adminUsersRouter } from './admins';
 import { adminInvitationsRouter } from './admin-invitations';
 import { adminRolesRouter } from './admin-roles';
+import { adminGroupsRouter } from './admin-groups';
 import { ipAllowlistRouter } from './ip-allowlist';
 import { adminAuditRouter } from './admin-audit';
 import { adminAbacRouter } from './admin-abac';
@@ -38,11 +39,13 @@ import { myStepUpRouter } from './my-step-up';
 import { mySecondFactorsRouter } from './my-second-factors';
 import { myKeyringFactorRouter } from './my-keyring-factor';
 import { mySecondFactorRecoveryRouter } from './my-second-factor-recovery';
+import { adminLastResortRecoveryRouter } from './admin-last-resort-recovery';
 import { adminSecondFactorRecoveriesRouter } from './admin-second-factor-recoveries';
 import { adminSecondFactorsRouter } from './admin-second-factors';
 import { adminNoticesRouter } from './admin-notices';
 import { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
 import { loginUIThemesRouter } from './login-ui-themes';
+import { loginUILiteModeRouter } from './login-ui-lite-mode';
 import { myAgentConsentsRouter } from './my-agent-consents';
 import { myWalletCredentialsRouter } from './my-wallet-credentials';
 import { adminAccessControlRouter } from './admin-access-control';
@@ -93,6 +96,7 @@ adminManagementRouter.route('/admins/:id/second-factors', adminSecondFactorsRout
 adminManagementRouter.route('/admins', adminUsersRouter);
 adminManagementRouter.route('/admin-invitations', adminInvitationsRouter);
 adminManagementRouter.route('/admin-roles', adminRolesRouter);
+adminManagementRouter.route('/admin-groups', adminGroupsRouter);
 adminManagementRouter.route('/ip-allowlist', ipAllowlistRouter);
 adminManagementRouter.route('/admin-audit-log', adminAuditRouter);
 adminManagementRouter.route('/me/passkeys', myPasskeysRouter);
@@ -105,6 +109,7 @@ adminManagementRouter.route('/admin-second-factor-recoveries', adminSecondFactor
 adminManagementRouter.route('/notices', adminNoticesRouter);
 adminManagementRouter.route('/notice-channels', adminNoticeChannelsRouter);
 adminManagementRouter.route('/login-ui/themes', loginUIThemesRouter);
+adminManagementRouter.route('/login-ui/lite-mode', loginUILiteModeRouter);
 adminManagementRouter.route('/me/notice-preferences', myNoticePreferencesRouter);
 adminManagementRouter.route('/me/agent-consents', myAgentConsentsRouter);
 adminManagementRouter.route('/me/wallet-credentials', myWalletCredentialsRouter);
@@ -134,6 +139,7 @@ adminManagementRouter.route('/agent-templates', agentTemplatesRouter);
 adminManagementRouter.route('/agent-baselines', agentBaselinesRouter);
 adminManagementRouter.route('/platform/read-replication', readReplicationRouter);
 adminManagementRouter.route('/platform/control-plane', controlPlaneOperationsRouter);
+adminManagementRouter.route('/platform/last-resort-recovery', adminLastResortRecoveryRouter);
 
 // Mount sub-routers - Admin ABAC/ReBAC/Policies (these also have /admins/:userId subroutes)
 adminManagementRouter.route('/', adminAbacRouter);
@@ -145,6 +151,7 @@ export { adminAccessControlRouter } from './admin-access-control';
 export { adminUsersRouter } from './admins';
 export { adminInvitationsRouter } from './admin-invitations';
 export { adminRolesRouter } from './admin-roles';
+export { adminGroupsRouter } from './admin-groups';
 export { ipAllowlistRouter } from './ip-allowlist';
 export { adminAuditRouter } from './admin-audit';
 export { adminAbacRouter } from './admin-abac';
@@ -161,6 +168,7 @@ export { adminSecondFactorsRouter } from './admin-second-factors';
 export { adminNoticesRouter } from './admin-notices';
 export { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
 export { loginUIThemesRouter } from './login-ui-themes';
+export { loginUILiteModeRouter } from './login-ui-lite-mode';
 export { myAgentConsentsRouter } from './my-agent-consents';
 export { myWalletCredentialsRouter } from './my-wallet-credentials';
 export { adminApprovalsRouter } from './admin-approvals';
@@ -184,6 +192,7 @@ export { agentBulkPlansRouter } from './agent-bulk';
 export { agentBaselinesRouter, agentTemplatesRouter } from './agent-baselines';
 export { readReplicationRouter } from './read-replication';
 export { controlPlaneOperationsRouter } from './control-plane-operations';
+export { adminLastResortRecoveryRouter } from './admin-last-resort-recovery';
 export {
   adminLoggingRouter,
   destinationsRouter,

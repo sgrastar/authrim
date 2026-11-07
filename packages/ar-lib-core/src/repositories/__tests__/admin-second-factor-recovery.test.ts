@@ -23,6 +23,7 @@ const SCHEMA_FILES = [
   '004_admin_second_factors.sql',
   '005_admin_second_factor_recoveries.sql',
   '010_keyring_second_factor_recoveries.sql',
+  '011_admin_second_factor_reenroll_window.sql',
 ];
 
 function adminSchema(files: string[] = SCHEMA_FILES): {
@@ -194,6 +195,33 @@ describe('AdminSecondFactorRecoveryRepository in the real admin schema', () => {
       completed: false,
       reason: 'not_found',
     });
+  });
+
+  it('uses up a re-enrolment window the last-resort recovery opened when it completes', async () => {
+    await oldFactor();
+    await file();
+    db.prepare("UPDATE admin_users SET second_factor_reenroll_until = ? WHERE id = 'admin-1'").run(
+      AFTER_WAIT + 60_000
+    );
+
+    expect((await recoveries.complete('admin-1', 'sess-1', AFTER_WAIT)).completed).toBe(true);
+    expect(
+      db
+        .prepare(
+          "SELECT second_factor_reenroll_until AS until FROM admin_users WHERE id = 'admin-1'"
+        )
+        .get()
+    ).toEqual({ until: null });
+  });
+
+  it('files nothing for a session that has ended meanwhile (the last-resort recovery ended it)', async () => {
+    db.prepare("DELETE FROM admin_sessions WHERE id = 'sess-1'").run();
+
+    expect(await recoveries.create(request(), T0)).toEqual({
+      created: false,
+      reason: 'session_ended',
+    });
+    expect(await recoveries.findOpenByUser('admin-1', T0)).toBeNull();
   });
 
   it('changes nothing when the request was cancelled before completion', async () => {

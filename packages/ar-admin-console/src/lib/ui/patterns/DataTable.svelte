@@ -55,6 +55,8 @@
 		onrowopen?: (row: Row) => void;
 		/** Accessible name of the row's open button ("Open {name}"). */
 		rowOpenLabel?: (row: Row) => string;
+		/** Rows with less space above and below, for long lists read at a glance. */
+		dense?: boolean;
 	}
 
 	let {
@@ -72,7 +74,8 @@
 		bulkActions,
 		rowChanged,
 		onrowopen,
-		rowOpenLabel
+		rowOpenLabel,
+		dense = false
 	}: Props = $props();
 
 	const keys = $derived(rows.map(rowKey));
@@ -132,7 +135,7 @@
 {/if}
 
 <div class="table-wrap">
-	<table class="data" class:data--many={columns.length >= 6}>
+	<table class="data" class:data--many={columns.length >= 6} class:data--dense={dense}>
 		<caption class="sr-only">{caption}</caption>
 		<colgroup>
 			{#if selectable}<col class="data__select-col" />{/if}
@@ -264,6 +267,15 @@
 		border-bottom: 1px solid var(--border-subtle);
 		vertical-align: middle;
 		overflow-wrap: anywhere;
+	}
+
+	/* Dense: the same columns, rows closer together. */
+	.data--dense th {
+		padding-block: 6px;
+	}
+
+	.data--dense td {
+		padding-block: 7px;
 	}
 
 	th.data__select,

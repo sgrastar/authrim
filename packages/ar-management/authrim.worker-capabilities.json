@@ -2,12 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@authrim/ar-management",
   "worker": "ar-management",
-  "requiredDataRoles": [
-    "tenant_core/default",
-    "tenant_core/users",
-    "tenant_pii",
-    "lookup"
-  ],
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "lookupBlindIndex": true,
   "bindings": [
     {
@@ -122,6 +117,11 @@
     },
     {
       "name": "DPOP_JTI_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "LITE_POLICY_STORE",
       "kind": "durable_object_namespace",
       "required": true
     },

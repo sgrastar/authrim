@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { actions, load } from '../routes/discover/+page.server';
+import { actions, load } from '../routes/(main)/discover/+page.server';
 
 // The conformance shape: the host is a tenant's own host (is_common_entry_host is false) and the
 // common discovery URL is a /discover on that same host. The POST a discover form makes goes to

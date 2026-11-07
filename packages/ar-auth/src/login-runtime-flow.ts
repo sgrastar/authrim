@@ -44,6 +44,10 @@ import {
   toOidcIdentityMappingRuntimeError,
   requireDedicatedAdminDatabaseAdapter,
   CanonicalRuntimeUserStore,
+  ensureDatabaseAdapter,
+  persistCustomClaimWrite,
+  resolveCustomClaimRuntimeSourcesFromHono,
+  validateCustomClaimWrite,
   resolveAccountCoreDataContext,
   resolveSubjectOrganizations,
   resolveSubjectRoles,
@@ -65,8 +69,26 @@ import {
   type DestinationProfileConsentDescriptor,
   type DestinationFieldReleasePolicies,
   type Session,
+  type FlowScreenSubmittedEventData,
+  FLOW_EVENTS,
+  contextWithoutScreenAnswers,
+  expireFlowInteractions,
+  screenAnswerEntriesOf,
+  screenAnswersOf,
+  publishEvent,
   isSAMLAuthorizationChallenge,
 } from '@authrim/ar-lib-core';
+import { resolveRuntimeScreenRow } from '@authrim/ar-lib-core/services/runtime-screen-resolution';
+import { applyRuntimeScreenOptions, runtimeAttributeKey } from './runtime-screen-options';
+import {
+  readRuntimeScreenAnswers,
+  splitOffProfileAnswers,
+  splitProfileAnswers,
+  type OffProfileScreenAnswers,
+  type RuntimeScreenAnswer,
+  type RuntimeScreenAnswerProblem,
+  type ScreenAnswerValue,
+} from './runtime-screen-answers';
 
 type AuthContext = Context<{ Bindings: Env }>;
 type FlowRuntimeEnv = Env & {
@@ -252,17 +274,6 @@ interface RuntimeDestinationFieldConsentContent extends FlowRuntimeJsonObject {
   }>;
 }
 
-interface RuntimeScreenRow {
-  id: string;
-  screen_key: string;
-  display_name: string;
-  description: string | null;
-  screen_kind: string;
-  fields_json: string | null;
-  localizations_json: string | null;
-  settings_json: string | null;
-}
-
 interface RuntimeScreenFieldLocalization {
   label?: string;
   text?: string;
@@ -275,14 +286,6 @@ interface RuntimeScreenLocalization {
   description?: string;
   fields?: Record<string, RuntimeScreenFieldLocalization>;
 }
-
-const DEFAULT_RUNTIME_SCREEN_KEYS = new Set([
-  'login',
-  'registration',
-  'profile_completion',
-  'code_input',
-  'consent',
-]);
 
 type RuntimeConsentRecordBindingType =
   | 'subject'
@@ -586,10 +589,15 @@ function normalizeRegistrationFieldKey(field: string): string {
     : normalized;
 }
 
+/** The input parts that answer an attribute of the profile. */
+const PROFILE_INPUT_BLOCK_TYPES = new Set(['identity_field', 'select', 'radio', 'checkbox']);
+
 function registrationIdentityFieldKey(field: FlowRuntimeJsonObject): string | null {
   const fieldName = readString(field.field, 200);
   const blockType = readString(field.block_type, 80) ?? 'identity_field';
-  if (blockType !== 'identity_field' || !fieldName) return null;
+  if (!PROFILE_INPUT_BLOCK_TYPES.has(blockType) || !fieldName) return null;
+  // An answer not stored to the profile is not an attribute, whatever its key.
+  if (field.store_to_profile === false) return null;
   return normalizeRegistrationFieldKey(fieldName);
 }
 
@@ -1711,27 +1719,7 @@ async function resolveRuntimeScreenContent(
   component: string | undefined,
   requestContext: FlowRequestContext
 ): Promise<FlowRuntimeJsonObject | null> {
-  if (!screenRef) return null;
-  const queryScreen = (scopeTenantId: string, ref: string, systemOnly = false) =>
-    db.queryOne<RuntimeScreenRow>(
-      `SELECT id, screen_key, display_name, description, screen_kind, fields_json,
-            localizations_json, settings_json
-       FROM screens
-      WHERE tenant_id = ?
-        AND is_active = 1
-        ${systemOnly ? 'AND is_system = 1' : ''}
-        AND (id = ? OR screen_key = ?)
-      LIMIT 1`,
-      [scopeTenantId, ref, ref]
-    );
-  const fallbackScreenRef =
-    screenRef === 'basic_profile' ? defaultScreenKeyForRuntimeComponent(component) : screenRef;
-  const row =
-    (await queryScreen(tenantId, screenRef)) ??
-    (screenRef === 'basic_profile' ? await queryScreen(tenantId, fallbackScreenRef) : null) ??
-    (DEFAULT_RUNTIME_SCREEN_KEYS.has(fallbackScreenRef)
-      ? await queryScreen('default', fallbackScreenRef, true)
-      : null);
+  const row = await resolveRuntimeScreenRow(db, tenantId, screenRef, component);
   if (!row) return null;
   let fields = applyRuntimeScreenDefaultMetadata(
     row.screen_key,
@@ -1741,11 +1729,16 @@ async function resolveRuntimeScreenContent(
     fields = await applyRegistrationSchemaRequirements(db, tenantId, fields);
   }
   const localizations = parseRuntimeJsonObject(row.localizations_json);
-  const localized = applyRuntimeScreenLocalization(
-    fields,
+  const language = requestedLanguage(requestContext);
+  const localized = applyRuntimeScreenLocalization(fields, localizations, language, 'en');
+  // The choices of the select and radio parts: the Identity Schema's now, or the part's own.
+  const withOptions = await applyRuntimeScreenOptions(
+    db,
+    tenantId,
+    localized.fields,
     localizations,
-    requestedLanguage(requestContext),
-    'en'
+    language,
+    screenLocalizationKey
   );
   return {
     id: row.id,
@@ -1753,7 +1746,7 @@ async function resolveRuntimeScreenContent(
     display_name: localized.displayName ?? row.display_name,
     description: localized.description ?? row.description,
     screen_kind: row.screen_kind,
-    fields: localized.fields,
+    fields: withOptions,
     localizations,
     settings: parseRuntimeJsonObject(row.settings_json),
   };
@@ -1993,15 +1986,6 @@ function readDestinationFieldReleasePolicies(
     }
   }
   return policies;
-}
-
-function defaultScreenKeyForRuntimeComponent(component?: string): string {
-  if (component === 'registration_method_selector') return 'registration';
-  if (component === 'authentication_method_selector') return 'login';
-  if (component === 'email_verification') return 'code_input';
-  if (component === 'screen') return 'profile_completion';
-  if (component === 'consent_policy') return 'consent';
-  return 'profile_completion';
 }
 
 async function hydrateRuntimeContract(
@@ -2610,6 +2594,8 @@ async function buildConditionEvaluationContext(
     user: interaction.user_id
       ? await getFlowConditionUserContext(c, db, tenantId, interaction.user_id)
       : undefined,
+    // The choices screen steps sent to the Flow (a screen answer condition reads them).
+    screen_answers: screenAnswersOf(requestContext.screen_answers),
   };
 }
 
@@ -4194,6 +4180,294 @@ export async function insertDestinationFieldConsentRecord(input: {
   );
 }
 
+/**
+ * Prepares the profile answers of a `screen` step for `userId`: everything is checked first (the
+ * Identity Schema's type and rules for a custom attribute, the user's profile for a standard
+ * field), with nothing written; `write` then stores them (standard profile fields with
+ * `updateProfileFields`, custom attributes through the schema's checked write). Writing the same
+ * answers again (a retried submit) leaves the same values. Answers kept off the profile are
+ * never passed here.
+ */
+async function prepareRuntimeScreenProfileAnswers(input: {
+  c: AuthContext;
+  tenantId: string;
+  userId: string;
+  answers: RuntimeScreenAnswer[];
+}): Promise<{ ok: true; write: () => Promise<void> } | { ok: false; error: string }> {
+  const { c, tenantId, userId, answers } = input;
+  await resolveAccountDataContextFromHono(c, userId);
+  const sources = await resolveCustomClaimRuntimeSourcesFromHono(c, tenantId);
+  const schemaRows = await ensureDatabaseAdapter(
+    sources.schemaDb,
+    'flow-screen-answer-schemas'
+  ).query<{ field_key: string }>(
+    `SELECT field_key FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = 1`,
+    [tenantId]
+  );
+  const customKeys = new Map(
+    schemaRows.map((row) => [runtimeAttributeKey(row.field_key), row.field_key] as const)
+  );
+  const split = splitProfileAnswers(answers, customKeys);
+  if (split.skipped.length > 0) {
+    getLogger(c).module('LOGIN-RUNTIME-FLOW').info('Screen answers not stored to the profile', {
+      action: 'flow_screen_answers',
+      skipped_fields: split.skipped,
+    });
+  }
+
+  const validation =
+    Object.keys(split.custom).length > 0
+      ? await validateCustomClaimWrite({
+          db: sources.nonPiiDb,
+          dbPii: sources.piiDb,
+          schemaDb: sources.schemaDb,
+          tenantId,
+          userId,
+          submitted: split.custom,
+          requireCompleteRecord: false,
+          mergeExistingValues: false,
+        })
+      : null;
+  if (validation && !validation.ok) return { ok: false, error: validation.error };
+  // An answer never clears a stored value: one the schema reads as empty (such as `[]`) is not
+  // an answer, and is refused rather than deleting what is stored.
+  if (
+    validation &&
+    (validation.nonPiiKeysToDelete.length > 0 || validation.piiKeysToDelete.length > 0)
+  ) {
+    const key = [...validation.nonPiiKeysToDelete, ...validation.piiKeysToDelete][0];
+    return { ok: false, error: `The answer for ${key} is empty` };
+  }
+
+  const hasProfile = Object.keys(split.profile).length > 0;
+  const users = new CanonicalRuntimeUserStore({
+    coreAdapter: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+    piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+    tenantId,
+  });
+  if (hasProfile && !(await users.hasProfile(userId))) {
+    return { ok: false, error: 'The profile cannot be updated' };
+  }
+
+  return {
+    ok: true,
+    write: async () => {
+      if (hasProfile && !(await users.updateProfileFields(userId, split.profile))) {
+        throw new Error('flow_screen_profile_unavailable');
+      }
+      if (validation) {
+        await persistCustomClaimWrite({
+          db: sources.nonPiiDb,
+          dbPii: sources.piiDb,
+          schemaDb: sources.schemaDb,
+          tenantId,
+          userId,
+          validation,
+        });
+      }
+    },
+  };
+}
+
+/** The interaction's context with a screen step's choices set (an empty set removes them). */
+function withRuntimeScreenAnswers(
+  context: Record<string, unknown>,
+  stepId: string,
+  answers: Record<string, ScreenAnswerValue>
+): Record<string, unknown> {
+  // The step moves to the end each time it is answered: the list is in the order of the last
+  // answers, and a key answered on two steps reads the latest (see screenAnswerEntriesOf).
+  const entries = screenAnswerEntriesOf(context.screen_answers).filter(
+    (entry) => entry.step_id !== stepId
+  );
+  if (Object.keys(answers).length > 0) entries.push({ step_id: stepId, answers });
+  const next = { ...context };
+  if (entries.length > 0) next.screen_answers = entries;
+  else delete next.screen_answers;
+  return next;
+}
+
+/** The interaction's context without any screen step's choices. */
+function withoutRuntimeScreenAnswers(context: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...context };
+  delete next.screen_answers;
+  return next;
+}
+
+/**
+ * Publishes `flow.screen.submitted` for a saved screen step, without being waited for (its
+ * failure is logged). It carries the answers going to the Flow, free text included, so it is not
+ * written to the audit log (which keeps an event's data).
+ */
+function scheduleScreenSubmittedEvent(
+  c: AuthContext,
+  input: {
+    tenantId: string;
+    interaction: FlowInteractionRow;
+    step: FlowRuntimeStep;
+    userId: string | null;
+    submissionId: string;
+    answers: Record<string, ScreenAnswerValue>;
+  }
+): void {
+  const screen = runtimeStepScreenIdentity(input.step);
+  if (!screen) return;
+  const warn = (failure: string) =>
+    getLogger(c).module('LOGIN-RUNTIME-FLOW').warn('Failed to publish flow.screen.submitted', {
+      action: 'event_publish',
+      interaction_id: input.interaction.id,
+      failure,
+    });
+  const delivery = publishEvent(
+    c,
+    {
+      type: FLOW_EVENTS.SCREEN_SUBMITTED,
+      tenantId: input.tenantId,
+      data: {
+        interactionId: input.interaction.id,
+        flowId: input.interaction.flow_id,
+        flowVersionId: input.interaction.flow_version_id,
+        stepId: input.step.id,
+        submissionId: input.submissionId,
+        screenId: screen.id,
+        screenKey: screen.screen_key,
+        userId: input.userId,
+        answers: input.answers,
+      } satisfies FlowScreenSubmittedEventData,
+    },
+    { skipAuditLog: true }
+  )
+    .then((result) => {
+      // Never the answers: what failed, and where.
+      if (!result.success) {
+        warn((result.errors ?? []).map((failure) => `${failure.target}:${failure.name}`).join(','));
+      }
+    })
+    .catch((error: unknown) => warn(error instanceof Error ? error.name : 'unknown'));
+  if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
+    c.executionCtx.waitUntil(delivery);
+  }
+}
+
+/** Whether `userId` is a registered account (not a guest, and known to the profile store). */
+async function isRegisteredRuntimeUser(
+  c: AuthContext,
+  tenantId: string,
+  userId: string
+): Promise<boolean> {
+  await resolveAccountDataContextFromHono(c, userId);
+  const user = await new CanonicalRuntimeUserStore({
+    coreAdapter: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+    piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+    tenantId,
+  }).findById(userId);
+  return user?.registration_state === 'registered';
+}
+
+/**
+ * Stores a screen step's response record for `userId`, in their PII database: one row per visit
+ * of the step (keyed by the step's row), so a retried submit replaces its own answers instead of
+ * adding a row, and a row is never moved to another user or tenant.
+ */
+async function writeRuntimeScreenResponse(input: {
+  c: AuthContext;
+  tenantId: string;
+  userId: string;
+  screen: { id: string; screen_key: string };
+  interaction: FlowInteractionRow;
+  stepId: string;
+  stepRowId: string;
+  answers: Record<string, ScreenAnswerValue>;
+}): Promise<void> {
+  const { c, tenantId, userId } = input;
+  await resolveAccountDataContextFromHono(c, userId);
+  const pii = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
+  const now = Date.now();
+  // Not for an account being deleted: its tombstone is written before its PII is erased, so a
+  // record written first is erased with the rest, and none is written after. Nor for a guest
+  // being erased (the handler keeps no guest record; the database refuses one under erasure).
+  await pii.execute(
+    `INSERT INTO screen_responses (
+       id, tenant_id, user_id, screen_id, screen_key, flow_id, flow_version_id, interaction_id,
+       step_id, answers_json, created_at, updated_at
+     )
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM users_pii_tombstone WHERE tenant_id = ? AND id = ?
+      ) AND NOT EXISTS (
+        SELECT 1 FROM guest_pii_erasure_markers WHERE tenant_id = ? AND user_id = ?
+      )
+     ON CONFLICT (id) DO UPDATE SET answers_json = excluded.answers_json,
+       updated_at = excluded.updated_at
+     WHERE screen_responses.tenant_id = excluded.tenant_id
+       AND screen_responses.user_id = excluded.user_id`,
+    [
+      input.stepRowId,
+      tenantId,
+      userId,
+      input.screen.id,
+      input.screen.screen_key,
+      input.interaction.flow_id,
+      input.interaction.flow_version_id,
+      input.interaction.id,
+      input.stepId,
+      JSON.stringify(input.answers),
+      now,
+      now,
+      tenantId,
+      userId,
+      tenantId,
+      userId,
+    ]
+  );
+}
+
+/** Removes what an earlier submit of this visit of a step kept for `userId` (a visit left empty). */
+async function clearRuntimeScreenResponse(
+  c: AuthContext,
+  tenantId: string,
+  userId: string,
+  stepRowId: string
+): Promise<void> {
+  await resolveAccountDataContextFromHono(c, userId);
+  await createPIIContextFromHono(c, tenantId).defaultPiiAdapter.execute(
+    `DELETE FROM screen_responses WHERE tenant_id = ? AND user_id = ? AND id = ?`,
+    [tenantId, userId, stepRowId]
+  );
+}
+
+/** The screen a step shows, as the server resolved it: its id and key (null if it has none). */
+function runtimeStepScreenIdentity(
+  step: FlowRuntimeStep
+): { id: string; screen_key: string } | null {
+  const screen = parseJsonRecord(parseJsonRecord(step.config).screen);
+  const id = readString(screen.id, 200);
+  const key = readString(screen.screen_key, 200);
+  return id && key ? { id, screen_key: key } : null;
+}
+
+function screenAnswerError(
+  c: AuthContext,
+  interactionId: string,
+  problem: RuntimeScreenAnswerProblem | 'invalid_profile_value',
+  field: string | null,
+  description: string
+) {
+  return c.json(
+    {
+      error: 'invalid_screen_answers',
+      error_description: description,
+      error_code: 'AR_FLOW_SCREEN_ANSWERS_INVALID',
+      category: 'recoverable' satisfies FlowRuntimeErrorCategory,
+      action: 'retry_step' satisfies FlowRuntimeErrorAction,
+      interaction_id: interactionId,
+      problem,
+      field,
+    },
+    400
+  );
+}
+
 async function persistRuntimeConsentStep(input: {
   c: AuthContext;
   db: DatabaseAdapter;
@@ -4541,7 +4815,10 @@ async function consentChangedResponse(
   interaction: FlowInteractionRow
 ) {
   await db.execute(
-    `UPDATE flow_interactions SET context_json = ?, updated_at = ? WHERE tenant_id = ? AND id = ?`,
+    // Only while it is open: a context read before it ended is not written back over the one it
+    // ended with (its screen answers are removed then).
+    `UPDATE flow_interactions SET context_json = ?, updated_at = ?
+      WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
     [
       JSON.stringify({
         ...parseJsonObject(interaction.context_json),
@@ -4686,14 +4963,8 @@ export async function cleanupExpiredFlowInteractions(
   const now = options.now ?? nowSeconds();
   const retentionSeconds = Math.max(0, options.retentionSeconds ?? 24 * 60 * 60);
   const cutoff = now - retentionSeconds;
-  const expiredResult = await db.execute(
-    `UPDATE flow_interactions
-     SET state = 'expired', updated_at = ?
-     WHERE tenant_id = ?
-       AND state IN ('created', 'active')
-       AND expires_at <= ?`,
-    [now, tenantId, now]
-  );
+  // Expired with their screen answers removed, as the scheduled maintenance does.
+  const expired = await expireFlowInteractions(db, tenantId, now);
   const deletedStepsResult = await db.execute(
     `DELETE FROM flow_interaction_steps
      WHERE tenant_id = ?
@@ -4708,7 +4979,7 @@ export async function cleanupExpiredFlowInteractions(
   );
 
   return {
-    expired: expiredResult.rowsAffected ?? 0,
+    expired,
     deletedSteps: deletedStepsResult.rowsAffected ?? 0,
   };
 }
@@ -4845,7 +5116,7 @@ async function resumeInteraction(
   await db.execute(
     `UPDATE flow_interactions
 			 SET context_json = ?, contract_hash = ?, signature = ?, updated_at = ?
-		 WHERE tenant_id = ? AND id = ?`,
+		 WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
     [
       // What this contract asks consent to is what the browser is shown from now on.
       JSON.stringify({ ...nextContextBase, consent_presented: consentPresentedKeys(contract) }),
@@ -5623,11 +5894,22 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   }
 
   if (interaction.expires_at <= now) {
+    // Expired with its screen answers removed: they served the steps that never came. Only over
+    // the context read: one a concurrent submit changed since is left open, and the scheduled
+    // maintenance expires it with its answers removed.
     await db.execute(
       `UPDATE flow_interactions
-       SET state = 'expired', updated_at = ?
-       WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
-      [now, tenantId, interactionId]
+       SET state = 'expired', updated_at = ?,
+           context_json = COALESCE(?, context_json)
+       WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+         AND context_json ${db.getType() === 'postgres' ? 'IS NOT DISTINCT FROM' : 'IS'} ?`,
+      [
+        now,
+        contextWithoutScreenAnswers(interaction.context_json),
+        tenantId,
+        interactionId,
+        interaction.context_json,
+      ]
     );
     await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
@@ -5959,6 +6241,109 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
 
+  // A screen's answers, when it is submitted: checked against the screen the step shows (the
+  // server's), and its profile answers prepared for the signed-in user, before anything is
+  // recorded (a refused submit changes nothing, not even whom the interaction is about).
+  let screenAnswers: {
+    userId: string;
+    /** Null when nothing goes to the profile. */
+    writeProfile: (() => Promise<void>) | null;
+    /** Null when the visit keeps no record. */
+    writeRecord: (() => Promise<void>) | null;
+  } | null = null;
+  let offProfileAnswers: OffProfileScreenAnswers | null = null;
+  let clearRecordFor: string | null = null;
+  if (current.step.component === 'screen' && effectiveSelectedHandle === 'submitted') {
+    const read = readRuntimeScreenAnswers(parseJsonRecord(current.step.config).screen, body.input);
+    if (!read.ok) {
+      return screenAnswerError(
+        c,
+        interactionId,
+        read.problem,
+        read.field,
+        read.field ? `The answer for ${read.field} is not valid` : 'The answers are not valid'
+      );
+    }
+    offProfileAnswers = splitOffProfileAnswers(read.answers);
+    const hasProfileAnswers = read.answers.some(
+      (answer) => answer.storeToProfile && answer.value !== null
+    );
+    const recordAnswers = offProfileAnswers.record;
+    const hasRecordAnswers = Object.keys(recordAnswers).length > 0;
+    // A visit left all empty replaces what an earlier submit of it kept: nothing is asked of the
+    // person for it (no sign-in, no claim), the record is only cleared for whom it was kept.
+    if (offProfileAnswers.hasRecordPart && !hasRecordAnswers && challengeSession?.userId) {
+      clearRecordFor = challengeSession.userId;
+    }
+    const screen = runtimeStepScreenIdentity(current.step);
+    if (hasRecordAnswers && !screen) {
+      // A record names its screen; a step whose screen has no identity cannot keep one.
+      return screenAnswerError(c, interactionId, 'invalid_input', null, 'The screen is not known');
+    }
+    if (hasProfileAnswers || hasRecordAnswers) {
+      // Only for the person signed in, and only on an interaction about them (or no one yet): the
+      // profile and the response record are that person's.
+      const sessionUserId = challengeSession?.userId ?? null;
+      if (!sessionUserId) {
+        return runtimeError(
+          c,
+          401,
+          'authentication_required',
+          'Sign in to continue',
+          'AR_FLOW_SCREEN_ANSWERS_AUTH_REQUIRED',
+          'reauthentication_required',
+          'reauthenticate',
+          interactionId
+        );
+      }
+      if (interaction.user_id && interaction.user_id !== sessionUserId) {
+        return sessionUserMismatch(c, interactionId);
+      }
+      let writeProfile: (() => Promise<void>) | null = null;
+      let writeRecord: (() => Promise<void>) | null = null;
+      if (hasProfileAnswers) {
+        const prepared = await prepareRuntimeScreenProfileAnswers({
+          c,
+          tenantId,
+          userId: sessionUserId,
+          answers: read.answers,
+        });
+        if (!prepared.ok) {
+          return screenAnswerError(c, interactionId, 'invalid_profile_value', null, prepared.error);
+        }
+        writeProfile = prepared.write;
+      }
+      if (
+        hasRecordAnswers &&
+        screen &&
+        !(await isRegisteredRuntimeUser(c, tenantId, sessionUserId))
+      ) {
+        // A guest's answers are not kept as a record: a guest's PII is erased under a fence that
+        // knows only its own tables, and a record outliving the guest would be personal data
+        // nobody erases. The Flow goes on; the answers still reach the Flow and its event.
+        getLogger(c)
+          .module('LOGIN-RUNTIME-FLOW')
+          .info('Screen response record not kept for a guest', {
+            action: 'flow_screen_answers',
+            interaction_id: interactionId,
+          });
+      } else if (hasRecordAnswers && screen) {
+        writeRecord = () =>
+          writeRuntimeScreenResponse({
+            c,
+            tenantId,
+            userId: sessionUserId,
+            screen,
+            interaction,
+            stepId: current.step.id,
+            stepRowId: stepState.id,
+            answers: recordAnswers,
+          });
+      }
+      screenAnswers = { userId: sessionUserId, writeProfile, writeRecord };
+    }
+  }
+
   const consentResult = await persistRuntimeConsentStep({
     c,
     db,
@@ -6002,6 +6387,20 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     }
   }
 
+  // A screen's profile answers and response record, checked and prepared before anything is
+  // recorded: stored once the interaction is about the person signed in.
+  if (screenAnswers && resolvedUserId && resolvedUserId !== screenAnswers.userId) {
+    return sessionUserMismatch(c, interactionId);
+  }
+  if (screenAnswers?.writeProfile) {
+    if (!(await claimInteractionUser(db, tenantId, interaction, screenAnswers.userId))) {
+      return sessionUserMismatch(c, interactionId);
+    }
+    resolvedUserId = screenAnswers.userId;
+    // Before the next steps are judged: a condition after the screen may read what it stored.
+    await screenAnswers.writeProfile();
+  }
+
   const visibleStepResolution =
     current.step.component === 'completion'
       ? {
@@ -6014,7 +6413,20 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
           c,
           db,
           tenantId,
-          interaction,
+          // The choices this submit sends to the Flow count for the conditions after it (they are
+          // written with the step).
+          interaction: offProfileAnswers?.hasFlowContextPart
+            ? {
+                ...interaction,
+                context_json: JSON.stringify(
+                  withRuntimeScreenAnswers(
+                    parseJsonObject(interaction.context_json),
+                    current.step.id,
+                    offProfileAnswers.flowContext
+                  )
+                ),
+              }
+            : interaction,
           runtime,
           editor,
           requestContext,
@@ -6075,6 +6487,22 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     return sessionUserMismatch(c, interactionId);
   }
 
+  // The response record, once the steps after the screen accepted the submit (a condition that
+  // ends the interaction keeps none, and the interaction is not claimed for it before then).
+  if (screenAnswers?.writeRecord) {
+    if (resolvedUserId && resolvedUserId !== screenAnswers.userId) {
+      return sessionUserMismatch(c, interactionId);
+    }
+    if (!(await claimInteractionUser(db, tenantId, interaction, screenAnswers.userId))) {
+      return sessionUserMismatch(c, interactionId);
+    }
+    resolvedUserId = screenAnswers.userId;
+    await screenAnswers.writeRecord();
+  }
+  if (clearRecordFor && resolvedUserId === clearRecordFor) {
+    await clearRuntimeScreenResponse(c, tenantId, clearRecordFor, stepState.id);
+  }
+
   const nextStep = visibleStepResolution.step;
   const terminalStep = visibleStepResolution.terminalStep;
   const outputStep = terminalStep ?? current.step;
@@ -6122,6 +6550,18 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     }
   }
 
+  // The choices a screen sends to the Flow are kept with the interaction, by step (a step shown
+  // again replaces its own), so a later step can be chosen by them. They serve the steps still to
+  // come: an interaction that ends here keeps none (it outlives the person's account otherwise).
+  const storedContext = parseJsonObject(interaction.context_json);
+  const keptContext = offProfileAnswers?.hasFlowContextPart
+    ? withRuntimeScreenAnswers(storedContext, current.step.id, offProfileAnswers.flowContext)
+    : storedContext;
+  const nextContextJson =
+    offProfileAnswers?.hasFlowContextPart || (completed && 'screen_answers' in storedContext)
+      ? JSON.stringify(completed ? withoutRuntimeScreenAnswers(keptContext) : keptContext)
+      : null;
+
   await writeAtomically(db, (write) => {
     write(
       `UPDATE flow_interaction_steps
@@ -6140,6 +6580,16 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
         stepState.id,
       ]
     );
+
+    if (nextContextJson !== null) {
+      // Only while the interaction is still at this step: a late copy of a submit already taken
+      // does not undo what later steps keep.
+      write(
+        `UPDATE flow_interactions SET context_json = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ? AND current_step_id = ?`,
+        [nextContextJson, now, tenantId, interactionId, current.step.id]
+      );
+    }
 
     if (nextStep) {
       const nextStepRowId = generateId();
@@ -6213,6 +6663,16 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     });
   }
   await scheduleRuntimeAuditEvents(c, tenantId, interaction, completionAudit, 'submit_completion');
+  if (offProfileAnswers?.hasFlowEventPart) {
+    scheduleScreenSubmittedEvent(c, {
+      tenantId,
+      interaction,
+      step: current.step,
+      userId: resolvedUserId ?? null,
+      submissionId: stepState.id,
+      answers: offProfileAnswers.flowEvent,
+    });
+  }
 
   getLogger(c)
     .module('LOGIN-RUNTIME-FLOW')

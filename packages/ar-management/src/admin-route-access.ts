@@ -643,6 +643,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   }),
   // Saved Login UI themes: reading is settings read; saving, deleting and applying one is the
   // same authority as the login-ui settings PATCH (applying writes that document).
+  // The lite Login UI switch: reading is settings read; switching changes the Login UI and the
+  // human verification provider, so it needs settings write (the route checks both categories).
+  rule({
+    pattern: '/api/admin/login-ui/lite-mode',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'lite login UI policy and readiness read',
+  }),
+  rule({
+    pattern: '/api/admin/login-ui/lite-mode',
+    methods: ['PUT'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'lite login UI switch',
+  }),
   rule({
     pattern: '/api/admin/login-ui/themes',
     methods: READ_METHODS,
@@ -1153,6 +1167,14 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'screens',
     TENANT_ADMIN_ROLES
   ),
+  // Before `/api/admin/screens/*`: the answers people gave are theirs (personal data).
+  rule({
+    pattern: '/api/admin/screens/:id/responses',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.USERS_READ],
+    roles: TENANT_ADMIN_ROLES,
+    description: 'screen response records read',
+  }),
   ...byMethod(
     '/api/admin/screens/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -1426,6 +1448,22 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ADMIN_ROLES_DELETE,
     'admin roles'
   ),
+  // Admin groups: read with admin users read; every change gives or takes roles away, so it is
+  // held to admin roles write as a direct assignment is (and to the role checks in the handler).
+  ...byMethod(
+    '/api/admin/admin-groups',
+    ADMIN_PERMISSIONS.ADMIN_USERS_READ,
+    ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+    ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+    'admin groups'
+  ),
+  ...byMethod(
+    '/api/admin/admin-groups/*',
+    ADMIN_PERMISSIONS.ADMIN_USERS_READ,
+    ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+    ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+    'admin groups'
+  ),
   ...byMethod(
     '/api/admin/ip-allowlist',
     ADMIN_PERMISSIONS.IP_ALLOWLIST_READ,
@@ -1612,6 +1650,14 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_ROTATE],
     roles: PLATFORM_ADMIN_ROLES,
     description: 'platform control plane lookup HMAC generation observation',
+  }),
+  // The last-resort second-factor recovery: only the exact permission, which the setup tool's
+  // short-lived principal holds (no role, no wildcard); the handler also requires a machine token.
+  rule({
+    pattern: '/api/admin/platform/last-resort-recovery/second-factors',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.ADMIN_LAST_RESORT_RECOVERY],
+    description: 'last-resort admin second-factor recovery',
   }),
   ...byMethod(
     '/api/admin/platform/control-plane/*',

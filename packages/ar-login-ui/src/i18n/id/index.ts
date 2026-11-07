@@ -339,7 +339,13 @@ const id = createTranslation({
 	login_extError_reauthNotProven_message:
 		'Penyedia masuk Anda tidak mengonfirmasi bahwa Anda masuk lagi. Masuk lagi atau pilih metode lain.',
 	login_extError_default_title: 'Kesalahan autentikasi',
-	login_extError_default_message: 'Terjadi kesalahan saat autentikasi eksternal.'
+	login_extError_default_message: 'Terjadi kesalahan saat autentikasi eksternal.',
+	lite_javascriptRequired:
+		'Halaman ini menjalankan pemeriksaan keamanan di peramban Anda. Aktifkan JavaScript, lalu muat ulang halaman.',
+	lite_passkeyUnsupported:
+		'Peramban ini tidak dapat menggunakan passkey di sini. Pilih cara lain untuk masuk.',
+	lite_passkeyFailed:
+		'Masuk dengan passkey tidak selesai. Coba lagi, atau pilih cara lain untuk masuk.'
 });
 
 export default id;

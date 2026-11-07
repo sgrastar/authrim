@@ -23,6 +23,10 @@
             {
               "path": "003_credential_status_list_formats.sql",
               "checksum": "153c234a21fc2ef4f4249b7715e1a71f8dc0c0a5e6d52fc97fc420ab8fe09a7a"
+            },
+            {
+              "path": "004_screens_version.sql",
+              "checksum": "a71542865d5aa467253b0e54822d4527aded649027e12f9c4f09aad59342e1f7"
             }
           ]
         },
@@ -35,7 +39,12 @@
             "pii",
             "tenant_pii"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "003_screen_responses.sql",
+              "checksum": "3042f0a094d1888288992b9c67bd7badd33743443b4a54ea2f9789e83f79e024"
+            }
+          ]
         },
         {
           "id": "admin-d1",
@@ -77,6 +86,14 @@
             {
               "path": "010_keyring_second_factor_recoveries.sql",
               "checksum": "3a266ffccf0d21d2c197638b717944edb4f268e37169ff8972eb7c228f6fc093"
+            },
+            {
+              "path": "011_admin_second_factor_reenroll_window.sql",
+              "checksum": "f5593e9e1d5884d26320391ca02bca66f56ce13b37e983ed7f43b13ca0625c44"
+            },
+            {
+              "path": "012_admin_groups.sql",
+              "checksum": "7ae1ed299a343913d59766635841c1fc87ed41c3c2188dc4891c41efadce5861"
             }
           ]
         },
@@ -120,7 +137,12 @@
             "custom",
             "policy"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "004_screens_version.sql",
+              "checksum": "2cc347a913f919408ff92c6e36df016061d50f2aacb1b2cadcc9afc163a7c51d"
+            }
+          ]
         },
         {
           "id": "pii-postgresql",
@@ -130,7 +152,12 @@
           "logicalRoles": [
             "pii"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "003_screen_responses.sql",
+              "checksum": "07eae09b39f1c590833504629f80817367f79f59111799c03203d92b641f6bef"
+            }
+          ]
         }
       ]
     }
@@ -158,6 +185,10 @@
         {
           "path": "003_credential_status_list_formats.sql",
           "checksum": "153c234a21fc2ef4f4249b7715e1a71f8dc0c0a5e6d52fc97fc420ab8fe09a7a"
+        },
+        {
+          "path": "004_screens_version.sql",
+          "checksum": "a71542865d5aa467253b0e54822d4527aded649027e12f9c4f09aad59342e1f7"
         }
       ]
     },
@@ -174,6 +205,10 @@
         {
           "path": "001_0_5_0_pii_baseline.sql",
           "checksum": "ce422a267ab9255b6ea660d7ebf73529fc4f88def5b14f47e25b2fb724150742"
+        },
+        {
+          "path": "003_screen_responses.sql",
+          "checksum": "3042f0a094d1888288992b9c67bd7badd33743443b4a54ea2f9789e83f79e024"
         }
       ]
     },
@@ -221,6 +256,14 @@
         {
           "path": "010_keyring_second_factor_recoveries.sql",
           "checksum": "3a266ffccf0d21d2c197638b717944edb4f268e37169ff8972eb7c228f6fc093"
+        },
+        {
+          "path": "011_admin_second_factor_reenroll_window.sql",
+          "checksum": "f5593e9e1d5884d26320391ca02bca66f56ce13b37e983ed7f43b13ca0625c44"
+        },
+        {
+          "path": "012_admin_groups.sql",
+          "checksum": "7ae1ed299a343913d59766635841c1fc87ed41c3c2188dc4891c41efadce5861"
         }
       ]
     },
@@ -283,6 +326,10 @@
         {
           "path": "001_0_5_0_core_baseline.sql",
           "checksum": "3466d97fc87ce485505bdf0bffbd5702aa6ec89f7728bce8ce4ebd720ea4a62b"
+        },
+        {
+          "path": "004_screens_version.sql",
+          "checksum": "2cc347a913f919408ff92c6e36df016061d50f2aacb1b2cadcc9afc163a7c51d"
         }
       ]
     },
@@ -298,6 +345,10 @@
         {
           "path": "001_0_5_0_pii_baseline.sql",
           "checksum": "ae851b69f10b4a67c987f207dcc0c0cbac48fbaa7b9828c757f35a9e0330118f"
+        },
+        {
+          "path": "003_screen_responses.sql",
+          "checksum": "07eae09b39f1c590833504629f80817367f79f59111799c03203d92b641f6bef"
         }
       ]
     }

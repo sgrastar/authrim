@@ -12,6 +12,7 @@
  * - DELETE /clients/:client_id - Delete client registration
  */
 
+import { runLiteGuardedWrite } from './lite-mode-guard';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type { ClientRegistrationResponse, ClientMetadata } from '@authrim/ar-lib-core';
@@ -650,7 +651,7 @@ export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Pro
  * The request body contains the complete updated client metadata.
  * Requires valid registration_access_token in Authorization header.
  */
-export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+async function clientConfigUpdateUnguarded(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
     const tenantId = getTenantIdFromContext(c);
     const issuerUrl = getRequestAwareIssuerUrl(c, tenantId);
@@ -1078,4 +1079,23 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
     log.error('Client config DELETE error', { action: 'config_delete' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+/**
+ * RFC 7592 client update. Setting `login_ui_url` (the application's own Login UI) is refused for a
+ * tenant in lite mode (lite-mode-guard.ts); the registration access token is checked first, so a
+ * caller without it learns nothing about the tenant.
+ */
+export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const body = (await c.req.json().catch(() => null)) as { login_ui_url?: unknown } | null;
+  const loginUiUrl = body?.login_ui_url;
+  if (typeof loginUiUrl !== 'string' || loginUiUrl.trim() === '') {
+    return clientConfigUpdateUnguarded(c);
+  }
+  const clientId = await validateRegistrationAccessToken(c).catch(() => null);
+  if (!clientId) return clientConfigUpdateUnguarded(c);
+  return runLiteGuardedWrite(c, getTenantIdFromContext(c), {
+    check: async () => [{ code: 'client_login_ui_url', subject: clientId }],
+    write: () => clientConfigUpdateUnguarded(c),
+  });
 }

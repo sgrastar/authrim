@@ -568,6 +568,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.brand_content_mode
     login-ui.brand_position
     login-ui.brand_align
+    login-ui.lite_mode
   `,
     ],
     [
@@ -636,6 +637,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.background_image_url
     login-ui.login_panel_background_image_url
     login-ui.brand_panel_image_url
+    login-ui.lite_logo
   `,
     ],
     [
@@ -690,6 +692,20 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     authentication-methods.human_verification.signup_enabled
     authentication-methods.human_verification.reauth_enabled
     authentication-methods.directory_password.enabled
+  `,
+    ],
+    [
+      'authentication-methods',
+      'number',
+      'value',
+      `
+    authentication-methods.human_verification.pow_max_number
+    authentication-methods.human_verification.pow_challenge_ttl
+    authentication-methods.human_verification.pow_issue_per_ip_per_minute
+    authentication-methods.human_verification.pow_issue_per_tenant_per_minute
+    authentication-methods.human_verification.lite_txn_per_ip_per_minute
+    authentication-methods.human_verification.lite_txn_per_tenant_per_minute
+    authentication-methods.human_verification.lite_txn_per_browser
   `,
     ],
     [
@@ -1029,6 +1045,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     security.request_object_max_age_seconds
     security.request_object_max_lifetime_seconds
     security.request_object_clock_skew_seconds
+    security.admin_last_resort_reenroll_window_seconds
   `,
     ],
     [

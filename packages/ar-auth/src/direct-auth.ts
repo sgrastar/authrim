@@ -150,6 +150,7 @@ import {
   verifyHumanVerificationForAction,
   type HumanVerificationAction,
 } from './human-verification';
+import { readLiteMode } from './lite-mode';
 import { resolveSessionTtl } from './session-ttl';
 import {
   continueSAMLChallenge,
@@ -3337,8 +3338,11 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         ? { authorizationChallengeId: authorization_challenge_id }
         : {}),
     });
+    // A tenant in lite mode does not let the resume record (made of values that are not secret)
+    // stand in for human verification: a resumed send needs a proof again (lite-mode.ts).
+    const liteTenant = (await readLiteMode(c.env, tenantId)) !== 'off';
     const resumedSend =
-      user && challengeType !== 'reauth'
+      user && challengeType !== 'reauth' && !liteTenant
         ? await consumeDirectEmailSendResume(c.env, tenantId, resumeKey)
         : null;
     const emailCodeUsage: HumanVerificationAction =

@@ -101,16 +101,70 @@ describe('the rules of a type', () => {
 		expect(checkRules('string', emptyRulesForm())).toEqual({});
 	});
 
-	it('wants an enum to have values, without repeats, up to 100', () => {
-		expect(checkRules('enum', emptyRulesForm()).enumValues).toBe('enum_empty');
-		expect(checkRules('enum', { ...emptyRulesForm(), enumValues: ['a', 'a'] }).enumValues).toBe(
-			'enum_duplicate'
-		);
+	it('wants an enum to have values, without repeats or blanks, up to 100', () => {
+		const choices = (...values: string[]) =>
+			values.map((value, index) => ({ key: `k${index}`, value, label: '' }));
+		const form = (...values: string[]) => ({
+			...emptyRulesForm(),
+			enumOptions: choices(...values)
+		});
+		expect(checkRules('enum', emptyRulesForm()).enumOptions).toBe('enum_empty');
+		expect(checkRules('enum', form('a', ' a')).enumOptions).toBe('enum_duplicate');
+		expect(checkRules('enum', form('a', ' ')).enumOptions).toBe('enum_value_empty');
+		expect(checkRules('enum', form('x'.repeat(129))).enumOptions).toBe('enum_value_too_long');
 		const many = Array.from({ length: 101 }, (_, index) => `v${index}`);
-		expect(checkRules('enum', { ...emptyRulesForm(), enumValues: many }).enumValues).toBe(
-			'enum_too_many'
+		expect(checkRules('enum', form(...many)).enumOptions).toBe('enum_too_many');
+		expect(checkRules('enum', form('a', 'b'))).toEqual({});
+		expect(
+			checkRules('enum', {
+				...form('a'),
+				enumLabels: { k0: { ja: 'x'.repeat(101) } }
+			}).enumLabels
+		).toBe('enum_label_too_long');
+	});
+
+	it('measures the rules in UTF-8 bytes, as the API does', () => {
+		// About 41,000 characters, about 121,000 bytes.
+		const enumOptions = Array.from({ length: 100 }, (_, index) => ({
+			key: `k${index}`,
+			value: `v${index}`,
+			label: ''
+		}));
+		const enumLabels = Object.fromEntries(
+			enumOptions.map((option) => [
+				option.key,
+				Object.fromEntries(['ja', 'ko', 'zh-CN', 'zh-TW'].map((l) => [l, 'あ'.repeat(100)]))
+			])
 		);
-		expect(checkRules('enum', { ...emptyRulesForm(), enumValues: ['a', 'b'] })).toEqual({});
+		expect(checkRules('enum', { ...emptyRulesForm(), enumOptions, enumLabels }).rules).toBe(
+			'too_large'
+		);
+	});
+
+	it('sends bare values until a choice has a label, then the options with their labels', () => {
+		const rules = formFromRules({ enum_values: ['jp', 'us'] });
+		expect(rulesFromForm('enum', rules)).toEqual({ enum_values: ['jp', 'us'] });
+		rules.enumOptions[0].label = ' Japan ';
+		rules.enumLabels[rules.enumOptions[0].key!] = { ja: '日本', fr: ' ' };
+		expect(rulesFromForm('enum', rules)).toEqual({
+			enum_values: ['jp', 'us'],
+			enum_options: [{ value: 'jp', label: 'Japan', labels: { ja: '日本' } }, { value: 'us' }]
+		});
+	});
+
+	it('keeps the labels with their choice when choices move', () => {
+		const rules = formFromRules({
+			enum_values: ['a', 'b'],
+			enum_options: [
+				{ value: 'a', labels: { ja: 'エー' } },
+				{ value: 'b', labels: { ja: 'ビー' } }
+			]
+		});
+		rules.enumOptions.reverse();
+		expect(rulesFromForm('enum', rules)?.enum_options).toEqual([
+			{ value: 'b', labels: { ja: 'ビー' } },
+			{ value: 'a', labels: { ja: 'エー' } }
+		]);
 	});
 
 	it('checks the order of two dates', () => {

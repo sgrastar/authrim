@@ -13,6 +13,7 @@ import type { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  AdminGroupRepository,
   getTenantIdFromContext,
   parseAllowedOrigins,
   isAllowedOrigin,
@@ -136,8 +137,9 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Check admin role from admin_role_assignments (DB_ADMIN), scoped to the session tenant.
-    const nowSeconds = Math.floor(Date.now() / 1000);
+    // The admin's roles (DB_ADMIN), their own and their groups', scoped to the session tenant.
+    // Assignment expiry is in milliseconds, as the request authorization reads it.
+    const nowMs = Date.now();
 
     const rolesResult = await adminAdapter.query<AdminSessionRoleRow>(
       `SELECT
@@ -147,7 +149,7 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
          r.hierarchy_level,
          r.inherits_from,
          MAX(CASE WHEN ra.scope_type = 'global' THEN 1 ELSE 0 END) as has_global_scope
-       FROM admin_role_assignments ra
+       FROM admin_effective_role_assignments ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
        WHERE ra.admin_user_id = ?
          AND ra.tenant_id = ?
@@ -168,7 +170,7 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        GROUP BY r.id, r.name, r.permissions_json, r.hierarchy_level, r.inherits_from
        ORDER BY r.name ASC`,
-      [session.admin_user_id, session.tenant_id, session.tenant_id, session.tenant_id, nowSeconds]
+      [session.admin_user_id, session.tenant_id, session.tenant_id, session.tenant_id, nowMs]
     );
     const allTenantRoles = await adminAdapter.query<AdminSessionRoleRow>(
       `SELECT id, name, permissions_json, hierarchy_level, inherits_from
@@ -247,6 +249,17 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // The admin groups the admin belongs to, for the console; their roles are already in `roles`.
+    let groups: Array<{ id: string; group_key: string; display_name: string }> = [];
+    try {
+      groups =
+        (await new AdminGroupRepository(adminAdapter, session.tenant_id).groupsOfUser(
+          session.admin_user_id
+        )) ?? [];
+    } catch {
+      log.warn('Failed to read admin groups', { action: 'fetch_admin_groups' });
+    }
+
     return c.json({
       active: true,
       user_id: session.admin_user_id,
@@ -254,6 +267,7 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       email: userEmail,
       name: userName,
       roles,
+      groups,
       permissions: Array.from(permissions).sort(),
       admin_scope: isPlatformAdmin ? 'platform' : 'tenant',
       is_platform_admin: isPlatformAdmin,

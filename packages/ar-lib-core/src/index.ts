@@ -19,6 +19,8 @@ export * from './types/runtime-profile';
 export * from './types/approval';
 export * from './types/screens';
 export * from './types/login-ui-languages';
+export * from './types/login-ui-lite';
+export * from './types/login-ui-lite-txn';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
 export * from './services/notification-intent-routing';
@@ -41,6 +43,7 @@ export * from './services/external-signup-availability';
 export * from './services/authorization-challenge-kind';
 export * from './services/saml-authorization-challenge';
 export * from './services/sign-in-limits';
+export * from './services/flow-screen-answer-cleanup';
 export * from './services/ciba-config';
 export * from './services/device-flow-settings';
 export * from './services/dcr-default-target';
@@ -62,6 +65,11 @@ export * from './services/plugin-installation-id';
 export * from './services/plugin-host-interface-contract.js';
 export * from './services/human-verification-runner';
 export * from './services/human-verification-policy';
+export * from './services/lite-policy';
+export * from './services/human-verification-pow';
+export * from './services/lite-human-verification';
+export * from './services/lite-compatibility';
+export * from './services/runtime-screen-resolution';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -558,6 +566,7 @@ export type {
   SecurityEventData,
   DomainEventData,
   SettingsEventData,
+  FlowScreenSubmittedEventData,
 } from './types/events';
 export {
   createUnifiedEvent,
@@ -573,6 +582,7 @@ export {
   SECURITY_EVENTS,
   DOMAIN_EVENTS,
   SETTINGS_EVENTS,
+  FLOW_EVENTS,
   EVENT_TYPES,
 } from './types/events';
 export * from './services/event-handler-registry';
@@ -595,6 +605,7 @@ export * from './middleware/deprecation-headers';
 export * from './middleware/sdk-compatibility';
 export * from './middleware/idempotency';
 export * from './middleware/diagnostic-logging-middleware';
+export * from './middleware/public-asset-resource-policy';
 export * from './middleware/csrf';
 
 // Plugin Context (Phase 9 - Plugin Architecture)

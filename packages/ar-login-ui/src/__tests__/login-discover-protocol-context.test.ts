@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { load as loginLoad } from '../routes/login/+page.server';
-import { actions as discoverActions, load as discoverLoad } from '../routes/discover/+page.server';
+import { load as loginLoad } from '../routes/(main)/login/+page.server';
+import {
+	actions as discoverActions,
+	load as discoverLoad
+} from '../routes/(main)/discover/+page.server';
 import { clearLoginDiscoveryConfigCacheForTests } from '../lib/login-discovery-config-cache';
 import { resolveDiscoveryHiddenFields } from '../lib/discovery-ui';
 

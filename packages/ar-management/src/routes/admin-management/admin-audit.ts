@@ -50,6 +50,9 @@ adminAuditRouter.use(
   })
 );
 
+/** `end_date` given as a day (`2026-11-07`) rather than an instant. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
  * Helper to get DB_ADMIN adapter
  */
@@ -187,8 +190,8 @@ export async function listAdminAuditLogs(c: AdminContext) {
     if (endDate) {
       const parsed = Date.parse(endDate);
       if (!isNaN(parsed)) {
-        // Include the entire day
-        endTimestamp = parsed + 24 * 60 * 60 * 1000 - 1;
+        // A date alone includes that whole day; a timestamp is the inclusive end itself.
+        endTimestamp = DATE_ONLY.test(endDate) ? parsed + 24 * 60 * 60 * 1000 - 1 : parsed;
       }
     }
 

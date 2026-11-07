@@ -79,6 +79,17 @@ export const arNotices: Record<keyof typeof jaNotices, string> = {
 	'nt.pub.err.invalid':
 		'Check the form. A headline is required, and so is the ID when you choose an app or an admin.',
 	'nt.pub.err.expiry': 'The expiry must be later than now.',
+	'notice.msg.admin_group_role_granted': 'Administrator group {group} now gives {role}',
+	'notice.msg.admin_group_role_revoked': 'Administrator group {group} no longer gives {role}',
+	'notice.msg.admin_group_role_expiry_changed':
+		'The end of {role} in administrator group {group} changed',
+	'notice.msg.admin_group_member_added': '{email} joined administrator group {group}',
+	'notice.msg.admin_group_member_removed': '{email} left administrator group {group}',
+	'notice.msg.admin_group_deleted': 'Administrator group {group} was deleted',
+	'notice.msg.admin_group_invitation_not_joined':
+		'{email} accepted the invitation but did not join the administrator groups ({groups})',
+	'notice.msg.second_factor_last_resort_recovery':
+		'The step-up security keys of {email} were reset by the environment owner',
 	'notice.msg.second_factor_recovery_requested': '{email} asked to recover a security key',
 	'notice.msg.storage_registry_security': 'A security problem was found in the storage registry',
 	'notice.msg.storage_registry_health': 'The storage registry has a health problem',

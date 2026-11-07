@@ -81,6 +81,7 @@ export const jaCustomization = {
 	'th.palette.flat.d': '白と細い線。影もすりガラスも使いません。',
 	'th.g.colours': '色',
 	'th.g.colours.d': '空のままにすると、欄に出ている標準の色を使います。',
+	'th.c.reset': 'デフォルト色に戻す',
 	'th.c.background': '背景',
 	'th.c.card': 'フォームエリア',
 	'th.c.accent': 'アクセント（ボタン・リンク）',

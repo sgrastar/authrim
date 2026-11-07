@@ -104,7 +104,11 @@ describe('account directory removal PII erasure', () => {
       readMigrationSource(
         new URL('../../../../migrations/pii/d1/', import.meta.url),
         '004_account_webhook_snapshots.sql'
-      )
+      ) +
+        readMigrationSource(
+          new URL('../../../../migrations/pii/d1/', import.meta.url),
+          '003_screen_responses.sql'
+        )
     );
     database.exec(`
       CREATE TABLE identity_accounts (id TEXT, tenant_id TEXT, legacy_user_id TEXT,
@@ -170,6 +174,11 @@ describe('account directory removal PII erasure', () => {
       INSERT INTO subject_identifiers (id, tenant_id, subject_id) VALUES
         ('subject-a', 'tenant-a', 'user-a'),
         ('subject-b', 'tenant-b', 'user-b');
+      INSERT INTO screen_responses
+        (id, tenant_id, user_id, screen_id, screen_key, answers_json, created_at, updated_at)
+      VALUES ('response-a', 'tenant-a', 'user-a', 'screen-1', 'survey', '{"plan":"pro"}', 1, 1),
+             ('response-a-other-tenant', 'tenant-b', 'user-a', 'screen-1', 'survey', '{}', 1, 1),
+             ('response-b', 'tenant-b', 'user-b', 'screen-1', 'survey', '{}', 1, 1);
     `);
     database.exec(`INSERT INTO identity_sensitive_values
       (id,tenant_id,owner_type,owner_id,value_key,value_json,lifecycle_state,updated_at)
@@ -217,6 +226,11 @@ describe('account directory removal PII erasure', () => {
     expect(database.prepare('SELECT id FROM user_anonymization_map ORDER BY id').all()).toEqual([
       { id: 'map-a-other-tenant' },
       { id: 'map-b' },
+    ]);
+    // What the person answered to login screens goes with them.
+    expect(await adapter.query('SELECT id FROM screen_responses ORDER BY id')).toEqual([
+      { id: 'response-a-other-tenant' },
+      { id: 'response-b' },
     ]);
 
     await eraseAccountPiiAfterDirectoryRemovalPrepared(

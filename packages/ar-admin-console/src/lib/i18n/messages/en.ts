@@ -10,7 +10,10 @@ import { enSecurityKeys } from './security-keys/en';
 import { enKeyringPresentation } from './keyring-presentation/en';
 import { enNotices } from './notices/en';
 import { enCustomization } from './customization/en';
+import { enScreens } from './screens/en';
 import { enStepUp } from './step-up/en';
+import { enAdminAudit } from './admin-audit/en';
+import { enTeam } from './team/en';
 
 export const en = {
 	...enSettings,
@@ -24,7 +27,10 @@ export const en = {
 	...enKeyringPresentation,
 	...enNotices,
 	...enCustomization,
+	...enScreens,
 	...enStepUp,
+	...enAdminAudit,
+	...enTeam,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
@@ -87,7 +93,8 @@ export const en = {
 	'nav.set.domains': 'Custom domains',
 	'nav.set.compliance': 'Compliance',
 	'nav.set.team': 'Administrators',
-	'nav.set.teamRoles': 'Role assignment',
+	'nav.set.teamGroups': 'Administrator groups',
+	'nav.set.teamRoles': 'Administrator roles',
 	'nav.plat.tenants': 'Tenants',
 	'nav.plat.releases': 'Control plane',
 	'nav.plat.scale': 'Scale',
@@ -914,6 +921,11 @@ export const en = {
 	'keyring.credentials.noExpiry': 'Not set',
 	'keyring.credentials.revoke': 'Revoke',
 	'keyring.credentials.revokeTitle': 'Revoke the credential {code}?',
+	'keyring.issued.factorNote':
+		'If Keyring renewed your credential, the key confirmation code is the same as before and your second factor keeps working. If the code changed, this is a new key: add Keyring as a second factor in My account.',
+	'keyring.credentials.secondFactor': 'Second factor',
+	'keyring.credentials.revokeRemovesFactor':
+		'This credential’s key is registered as a second factor. Revoking it also removes that second factor, for every credential using the same key (renewed ones included). An old credential stops working at its expiry even if you do not revoke it.',
 	'keyring.credentials.revokeBody':
 		'The credential stops working at once and cannot be restored. To use Keyring again, you need to add a new credential.',
 	'keyring.credentials.revoked': 'Credential revoked.',

@@ -499,7 +499,13 @@ const translation = {
 	login_signingInTo: 'Giriş yapılan uygulama:',
 	common_contactSupport: 'Destek ekibiyle iletişime geçin',
 	common_dismissAlert: 'Uyarıyı kapat',
-	emailCode_digitLabel: '6 hanenin {position}. hanesi'
+	emailCode_digitLabel: '6 hanenin {position}. hanesi',
+	lite_javascriptRequired:
+		"Bu sayfa tarayıcınızda bir güvenlik denetimi çalıştırır. JavaScript'i açın, ardından sayfayı yeniden yükleyin.",
+	lite_passkeyUnsupported:
+		'Bu tarayıcı burada geçiş anahtarı kullanamıyor. Başka bir oturum açma yöntemi seçin.',
+	lite_passkeyFailed:
+		'Geçiş anahtarıyla oturum açma tamamlanmadı. Yeniden deneyin veya başka bir oturum açma yöntemi seçin.'
 } satisfies Translation;
 
 export default translation;

@@ -186,7 +186,8 @@ async function startPresentation(
   purpose: AdminPresentationPurpose,
   holderJkts: string[],
   context: Record<string, string | null>,
-  transport: Transport
+  transport: Transport,
+  walletMode?: 'recovery'
 ): Promise<Response> {
   const request = await c.env.VC_ISSUER!.createAdminPresentationRequest({
     tenantId: started.tenantId,
@@ -196,6 +197,7 @@ async function startPresentation(
     holderJkts,
     credentialIssuer: started.credentialIssuer,
     tenantLabel: new URL(started.credentialIssuer).hostname,
+    ...(walletMode ? { walletMode } : {}),
     context,
     mode: transport.mode,
     ...(transport.mode === 'dc_api' ? { origin: transport.origin } : {}),
@@ -492,7 +494,8 @@ myKeyringFactorRouter.post('/enroll', async (c) => {
         'enroll',
         registered,
         { mode: 'recovery', approving_factor_id: null },
-        transport
+        transport,
+        'recovery'
       );
     }
     const state = await enrollmentState(repo, auth.userId, now);
@@ -586,6 +589,7 @@ async function completeEnroll(c: AdminContext): Promise<Response> {
       { admin_user_id: auth.userId, holder_jkt: result.holderJkt, label: KEYRING_LABEL },
       {
         firstOnly: mode === 'first',
+        sessionId: auth.sessionId,
         ...(mode === 'step_up' && approving
           ? { approvedBy: { factorId: approving, sessionId: auth.sessionId } }
           : {}),
@@ -593,6 +597,9 @@ async function completeEnroll(c: AdminContext): Promise<Response> {
     );
     if (!inserted.inserted && inserted.reason === 'approval_revoked') {
       return c.json({ status: 'failed', error: 'step_up_required' }, 403);
+    }
+    if (!inserted.inserted && inserted.reason === 'session_ended') {
+      return c.json({ status: 'failed', error: 'session_ended' }, 401);
     }
     if (!inserted.inserted) {
       const error =

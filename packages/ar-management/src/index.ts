@@ -3,7 +3,11 @@ import {
   environmentReplicationMachineRouter,
   isEnvironmentReplicationControlRequest,
 } from './routes/replication-environments';
-import { reconcileProfileRegistryProjection } from '@authrim/ar-lib-core';
+import {
+  publicLoginUiAssetResourcePolicy,
+  reconcileProfileRegistryProjection,
+  expireFlowInteractions,
+} from '@authrim/ar-lib-core';
 import { processTenantBackupMaintenance } from './tenant-backup-services';
 import { processTenantBackupOperations } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupExportAdapter } from './tenant-backup-production-export';
@@ -558,6 +562,7 @@ import {
   adminScreensListHandler,
   adminScreenUpdateHandler,
 } from './admin-screens';
+import { adminScreenResponsesHandler } from './admin-screen-responses';
 import {
   adminLauncherCreateHandler,
   adminLauncherDeleteHandler,
@@ -1196,6 +1201,10 @@ app.use(
 );
 app.use('/api/auth/discovery', authBootstrapPluginContextMiddleware);
 app.use('/api/auth/discovery/*', authBootstrapPluginContextMiddleware);
+
+// Public Login UI images may be shown by other origins (the admin console served apart from the
+// API, vanity domains). Registered before the security headers so it has the last word on CORP.
+app.use('/api/assets/*', publicLoginUiAssetResourcePolicy());
 
 // Enhanced security headers
 app.use(
@@ -2647,6 +2656,12 @@ app.get(
   '/api/admin/screens/:id',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminScreenGetHandler
+);
+// What people answered is their personal data: read with the permission to read users.
+app.get(
+  '/api/admin/screens/:id/responses',
+  requireAdminPermissions([ADMIN_PERMISSIONS.USERS_READ]),
+  adminScreenResponsesHandler
 );
 app.put(
   '/api/admin/screens/:id',
@@ -4647,15 +4662,8 @@ async function handleCoveredScheduled(
     try {
       for (const target of maintenanceTargets) {
         for (const { adapter } of target.adapters) {
-          const expiredResult = await adapter.execute(
-            `UPDATE flow_interactions
-           SET state = 'expired', updated_at = ?
-           WHERE tenant_id = ?
-             AND state IN ('created', 'active')
-             AND expires_at <= ?`,
-            [now, target.tenantId, now]
-          );
-          flowInteractionsExpired += expiredResult.rowsAffected || 0;
+          // Expired with their screen answers removed (they served the steps that never came).
+          flowInteractionsExpired += await expireFlowInteractions(adapter, target.tenantId, now);
 
           const deletedStepsResult = await adapter.execute(
             `DELETE FROM flow_interaction_steps

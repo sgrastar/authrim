@@ -125,7 +125,7 @@
 			docs: {
 				description: {
 					component:
-						'The account-creation page. With an Admin console screen for the current flow step it draws that screen; without one it falls back to the classic layout: the registration fields the tenant asks for, then passkey, email code, authenticator app and external providers, and the terms note. The route (`src/routes/signup`) loads the fields and methods, validates, runs WebAuthn and the requests; this view draws what it is given.'
+						'The account-creation page. With an Admin console screen for the current flow step it draws that screen; without one it falls back to the classic layout: the registration fields the tenant asks for, then passkey, email code, authenticator app and external providers, and the terms note. The route (`src/routes/(main)/signup`) loads the fields and methods, validates, runs WebAuthn and the requests; this view draws what it is given.'
 				}
 			}
 		}

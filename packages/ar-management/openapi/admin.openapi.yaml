@@ -29,6 +29,7 @@ tags:
   - name: Admin Access Control
   - name: Admin Attributes
   - name: Admin Audit
+  - name: Admin Groups
   - name: Admin IP Allowlist
   - name: Admin Invitations
   - name: Admin Miscellaneous
@@ -3969,6 +3970,13 @@ paths:
       tags:
         - Admin Invitations
       summary: Replace and resend an Admin invitation code.
+      description: >-
+        Issues a new code and a new validity window, which brings an expired invitation back, so
+        it grants the invitation's role again: the caller must be allowed to invite that role as
+        it is now (ranking below them, a global one below their global rank; a peer
+        ar_super_admin invitation needs the wildcard from a global assignment), and to give the
+        roles of the admin groups it names. 403 `insufficient_permissions` otherwise; 404
+        `role_not_found` when the role is gone.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
@@ -3987,6 +3995,8 @@ paths:
                   expires_at:
                     type: integer
                     format: int64
+        '403':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -4065,7 +4075,9 @@ paths:
           $ref: '#/components/responses/AdminManagementUserDetail'
         '404':
           $ref: '#/components/responses/Error'
-      description: Return one Admin Console user with role assignments and passkey count.
+      description: >-
+        Return one Admin Console user with every role they hold (their own and their admin groups'),
+        their groups, and the passkey count.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -10257,7 +10269,12 @@ paths:
       description: >-
         Updates mutable custom claim schema fields. Field key and PII classification are
         intentionally immutable through this endpoint. Built-in system profile schemas also keep
-        their display label, field type, and cardinality immutable.
+        their display label, field type, and cardinality immutable. A changed field type must suit
+        the stored validation rules. Enum choices that leave out values users hold are refused
+        (409 enum_value_in_use with those values and how many users hold each): removing a held
+        choice, constraining an enum that allowed any value, or making an attribute an enum. For
+        an encrypted (PII) attribute, values cannot be read, so narrower choices are refused while
+        any user holds the attribute.
       responses:
         '200':
           $ref: '#/components/responses/CustomClaimMutation'
@@ -10270,7 +10287,14 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          description: >-
+            enum_value_in_use (reason held: the values left out, with their user counts; reason
+            encrypted: the attribute's holders; reason unverifiable: too many users to check every
+            value), or another conflict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -15050,7 +15074,8 @@ paths:
       description: >-
         Lists reusable screens for Flow screen nodes. Built-in registration, profile
         completion, login, code input, and consent screens are created lazily for the
-        tenant when missing.
+        tenant when missing. Each screen carries its version and how many flows (drafts or
+        published versions) and account pages use it.
       responses:
         '200':
           description: Screens for the current tenant.
@@ -15061,11 +15086,32 @@ paths:
                 required:
                   - screens
                 properties:
+                  usages_complete:
+                    type: boolean
+                    description: >-
+                      False when a stored flow or settings document could not be read in full;
+                      the usage counts are then at least those shown.
                   screens:
                     type: array
                     items:
                       type: object
                       additionalProperties: true
+                      properties:
+                        version:
+                          type: integer
+                          minimum: 1
+                        usage:
+                          type: object
+                          required:
+                            - flows
+                            - account_pages
+                          properties:
+                            flows:
+                              type: integer
+                              minimum: 0
+                            account_pages:
+                              type: integer
+                              minimum: 0
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -15129,8 +15175,14 @@ paths:
                         type: boolean
                       block_type:
                         type: string
+                        description: >-
+                          The part's type. Omitted, it is identity_field (an attribute's text
+                          input); a value not listed here is refused.
                         enum:
                           - identity_field
+                          - select
+                          - radio
+                          - checkbox
                           - auth_widget
                           - guest_login_widget
                           - code_input_widget
@@ -15157,6 +15209,9 @@ paths:
                         type:
                           - string
                           - 'null'
+                        description: >-
+                          Legacy: boolean on an identity_field stored to the profile asks yes or
+                          no (a checkbox part does the same). Ignored on other parts.
                         enum:
                           - text
                           - boolean
@@ -15229,8 +15284,58 @@ paths:
                         maximum: 4
                       order:
                         type: integer
+                      show_label:
+                        type: boolean
+                        description: >-
+                          Input parts (identity_field, select, radio, checkbox): false hides the
+                          label on screen (it is still read out). Default true.
+                      store_to_profile:
+                        type: boolean
+                        description: >-
+                          Input parts: whether the answer is the user's attribute named by
+                          `field` (default true). A select or radio part stored to the profile
+                          needs a single-valued active enum attribute, a checkbox a
+                          single-valued active boolean one; their choices come from the Identity
+                          Schema at run time. When false, `field` is the answer's own key (a
+                          letter followed by letters, digits or _, at most 64; not an
+                          attribute's key or a standard claim's name, and not used twice on the
+                          screen).
+                      answer_targets:
+                        type: array
+                        description: >-
+                          Only when store_to_profile is false (required then): where the answer
+                          goes. flow_event is the Flow context and a flow.screen.submitted event;
+                          record is the screen's response record.
+                        minItems: 1
+                        items:
+                          type: string
+                          enum:
+                            - flow_event
+                            - record
+                      options:
+                        type: array
+                        description: >-
+                          Only for a select or radio part not stored to the profile (required
+                          then). Values are unique, at most 128 characters; labels at most 100.
+                        minItems: 1
+                        maxItems: 100
+                        items:
+                          type: object
+                          required:
+                            - value
+                          properties:
+                            value:
+                              type: string
+                              maxLength: 128
+                            label:
+                              type: string
+                              maxLength: 100
                 localizations:
                   type: object
+                  description: >-
+                    By language. `fields[key]` (the part's block_id, else its field and
+                    position) translates label, text, help_text and placeholder, and `options`
+                    the labels of the part's own options by option value.
                   additionalProperties: true
                 settings:
                   type: object
@@ -15245,7 +15350,12 @@ paths:
                   type: boolean
       responses:
         '201':
-          description: Created screen.
+          description: Created screen, at version 1 (also in the ETag header).
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: The screen version, for example "1".
           content:
             application/json:
               schema:
@@ -15260,6 +15370,14 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          description: >-
+            screen_key_taken when another screen of the tenant has the key, or the key is one
+            of the built-in screens'.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/Error'
       security:
@@ -15271,12 +15389,17 @@ paths:
         - Flows
       operationId: getApiAdminScreensById
       summary: Get a screen.
-      description: Returns one tenant screen by id.
+      description: Returns one tenant screen by id, with its version and where it is used.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
           description: Screen.
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: The screen version, for example "3".
           content:
             application/json:
               schema:
@@ -15285,6 +15408,51 @@ paths:
                   screen:
                     type: object
                     additionalProperties: true
+                  usages_complete:
+                    type: boolean
+                    description: >-
+                      False when a stored flow or settings document could not be read in full;
+                      the screen is then not deleted.
+                  usages:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - kind
+                      description: >-
+                        A flow node that shows the screen (in the flow's draft, in its published
+                        version, or in an older published version that sign-ins in progress
+                        still run) or an account page whose draft places it.
+                      properties:
+                        kind:
+                          type: string
+                          enum:
+                            - flow
+                            - account_page
+                        flow_id:
+                          type: string
+                        flow_name:
+                          type: string
+                        node_id:
+                          type:
+                            - string
+                            - 'null'
+                        node_title:
+                          type:
+                            - string
+                            - 'null'
+                        stage:
+                          type: string
+                          enum:
+                            - draft
+                            - published
+                            - running
+                        page_id:
+                          type:
+                            - string
+                            - 'null'
+                        page_name:
+                          type: string
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -15301,9 +15469,17 @@ paths:
         - Flows
       operationId: putApiAdminScreensById
       summary: Update a screen.
-      description: Updates mutable fields for a tenant screen.
+      description: >-
+        Updates mutable fields for a tenant screen and raises its version. If-Match with the
+        screen's current version is required; a stale version is refused with ADMIN_CONFLICT.
       parameters:
         - $ref: '#/components/parameters/Id'
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          description: The screen version, for example "3".
       requestBody:
         required: true
         content:
@@ -15344,8 +15520,14 @@ paths:
                         type: boolean
                       block_type:
                         type: string
+                        description: >-
+                          The part's type. Omitted, it is identity_field (an attribute's text
+                          input); a value not listed here is refused.
                         enum:
                           - identity_field
+                          - select
+                          - radio
+                          - checkbox
                           - auth_widget
                           - guest_login_widget
                           - code_input_widget
@@ -15372,6 +15554,9 @@ paths:
                         type:
                           - string
                           - 'null'
+                        description: >-
+                          Legacy: boolean on an identity_field stored to the profile asks yes or
+                          no (a checkbox part does the same). Ignored on other parts.
                         enum:
                           - text
                           - boolean
@@ -15444,8 +15629,58 @@ paths:
                         maximum: 4
                       order:
                         type: integer
+                      show_label:
+                        type: boolean
+                        description: >-
+                          Input parts (identity_field, select, radio, checkbox): false hides the
+                          label on screen (it is still read out). Default true.
+                      store_to_profile:
+                        type: boolean
+                        description: >-
+                          Input parts: whether the answer is the user's attribute named by
+                          `field` (default true). A select or radio part stored to the profile
+                          needs a single-valued active enum attribute, a checkbox a
+                          single-valued active boolean one; their choices come from the Identity
+                          Schema at run time. When false, `field` is the answer's own key (a
+                          letter followed by letters, digits or _, at most 64; not an
+                          attribute's key or a standard claim's name, and not used twice on the
+                          screen).
+                      answer_targets:
+                        type: array
+                        description: >-
+                          Only when store_to_profile is false (required then): where the answer
+                          goes. flow_event is the Flow context and a flow.screen.submitted event;
+                          record is the screen's response record.
+                        minItems: 1
+                        items:
+                          type: string
+                          enum:
+                            - flow_event
+                            - record
+                      options:
+                        type: array
+                        description: >-
+                          Only for a select or radio part not stored to the profile (required
+                          then). Values are unique, at most 128 characters; labels at most 100.
+                        minItems: 1
+                        maxItems: 100
+                        items:
+                          type: object
+                          required:
+                            - value
+                          properties:
+                            value:
+                              type: string
+                              maxLength: 128
+                            label:
+                              type: string
+                              maxLength: 100
                 localizations:
                   type: object
+                  description: >-
+                    By language. `fields[key]` (the part's block_id, else its field and
+                    position) translates label, text, help_text and placeholder, and `options`
+                    the labels of the part's own options by option value.
                   additionalProperties: true
                 settings:
                   type: object
@@ -15460,7 +15695,12 @@ paths:
                   type: boolean
       responses:
         '200':
-          description: Updated screen.
+          description: Updated screen, at its new version (also in the ETag header).
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: The screen version, for example "4".
           content:
             application/json:
               schema:
@@ -15477,6 +15717,18 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+        '409':
+          description: ADMIN_CONFLICT with current_version when the version is stale.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '428':
+          description: If-Match is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/Error'
       security:
@@ -15487,9 +15739,18 @@ paths:
         - Flows
       operationId: deleteApiAdminScreensById
       summary: Delete a screen.
-      description: Deletes a custom screen. Built-in system screens cannot be deleted.
+      description: >-
+        Deletes a custom screen. Built-in system screens cannot be deleted, nor can a screen
+        that a flow (draft or published version) or an account page still uses. If-Match is
+        optional; when sent, a stale version is refused with ADMIN_CONFLICT.
       parameters:
         - $ref: '#/components/parameters/Id'
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+          description: The screen version, for example "3".
       responses:
         '200':
           description: Screen deletion result.
@@ -15502,6 +15763,119 @@ paths:
                 properties:
                   success:
                     type: boolean
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: >-
+            screen_in_use (with the usages) while flows or account pages use the screen,
+            screen_usage_unknown when where it is used could not be read in full, or
+            ADMIN_CONFLICT with current_version when If-Match names a stale version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/screens/{id}/responses':
+    get:
+      tags:
+        - Flows
+      operationId: getApiAdminScreensByIdResponses
+      summary: List a screen's response records.
+      description: >-
+        What signed-in people answered to the screen's parts whose answers go to the response
+        record (answer_targets includes record), newest first. One record per visit of a Flow
+        screen step; a submit sent again replaces its own record. The answers are personal data,
+        so reading them needs the permission to read users. Records are deleted with the person's
+        account and with the tenant.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          description: The next_cursor of the previous page.
+          schema:
+            type: string
+            maxLength: 600
+      responses:
+        '200':
+          description: A page of response records.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - responses
+                  - next_cursor
+                properties:
+                  responses:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - user_id
+                        - screen_key
+                        - answers
+                        - created_at
+                        - updated_at
+                      properties:
+                        id:
+                          type: string
+                        user_id:
+                          type: string
+                        screen_key:
+                          type: string
+                        flow_id:
+                          type: string
+                          nullable: true
+                        flow_version_id:
+                          type: string
+                          nullable: true
+                        interaction_id:
+                          type: string
+                          nullable: true
+                        step_id:
+                          type: string
+                          nullable: true
+                        answers:
+                          type: object
+                          description: The answers by part field (a checkbox as a boolean).
+                          additionalProperties:
+                            oneOf:
+                              - type: string
+                              - type: boolean
+                        created_at:
+                          type: integer
+                          description: Unix time in milliseconds.
+                        updated_at:
+                          type: integer
+                          description: Unix time in milliseconds.
+                  next_cursor:
+                    type: string
+                    nullable: true
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -17599,6 +17973,137 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/platform/last-resort-recovery/second-factors:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminPlatformLastResortRecoverySecondFactors
+      summary: Last-resort recovery of an admin's step-up second factors
+      description: >-
+        For an admin who lost every step-up second factor when the recovery request cannot be used
+        (for example the only administrator in the system). Only a machine token holding
+        admin:last_resort_recovery by its exact name may call it: no wildcard carries the
+        permission, and granting it to a machine principal needs L2 (machine.permission.grant).
+        The setup tool (authrim admin recover-second-factor) holds it for one command through a
+        short-lived principal written with Cloudflare access to the environment. In one batch it
+        revokes every active second factor of the admin (the rows stay, so they are never
+        registered again), ends all their sessions (and with them step-up requirements, receipts
+        and Keyring presentations), cancels an open recovery request, and opens a re-enrolment
+        window (platform setting security.admin_last_resort_reenroll_window_seconds, env
+        ADMIN_LAST_RESORT_REENROLL_WINDOW_SECONDS, default 86400) in which the admin may register a
+        first second factor with a fresh passkey alone, once. It is written to the audit log as
+        admin.second_factor.last_resort_recovery, emailed to the admin and every active
+        administrator, and shown as console notices; the notices are best effort and the response
+        says which went out.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  maxLength: 320
+                  description: The admin's email (compared without case).
+                tenant_id:
+                  type: string
+                  description: The admin's tenant, when admins of several tenants share the email.
+                reason:
+                  type: string
+                  maxLength: 200
+                  description: Recorded in the audit log.
+      responses:
+        '200':
+          description: The admin's factors were revoked and the re-enrolment window is open.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - admin
+                  - revoked_second_factors
+                  - ended_sessions
+                  - cancelled_recovery_requests
+                  - reenroll_until
+                  - sole_admin
+                  - audit_logged
+                  - notices
+                properties:
+                  admin:
+                    type: object
+                    required:
+                      - id
+                      - email
+                      - tenant_id
+                    properties:
+                      id:
+                        type: string
+                      email:
+                        type: string
+                      tenant_id:
+                        type: string
+                  revoked_second_factors:
+                    type: integer
+                  ended_sessions:
+                    type: integer
+                  cancelled_recovery_requests:
+                    type: integer
+                  reenroll_until:
+                    type: integer
+                    description: End of the re-enrolment window, in milliseconds since the epoch.
+                  sole_admin:
+                    type: boolean
+                    description: Whether the admin is the only active administrator in the system.
+                  audit_logged:
+                    type: boolean
+                  notices:
+                    type: object
+                    required:
+                      - emailed
+                      - email_recipients
+                      - console
+                    properties:
+                      emailed:
+                        type: boolean
+                        description: Whether every email was accepted for delivery.
+                      email_recipients:
+                        type: integer
+                      console:
+                        type: boolean
+        '400':
+          description: >-
+            Invalid body, or target_not_human_admin when the ID belongs to a machine principal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not a machine token holding admin:last_resort_recovery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No administrator has this email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            admin_ambiguous (admins of several tenants share the email; tenant_ids lists them) or
+            admin_not_active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
   /api/admin/platform/control-plane/lookup-hmac/rotations:
     post:
       tags:
@@ -31941,7 +32446,10 @@ paths:
         The signed-in Admin's own admin credentials (active, suspended or revoked; never pending)
         in the home tenant, newest first, at most 50. Requires the Admin's own home-tenant session.
         holderKeyThumbprint is the RFC 7638 SHA-256 thumbprint of the stored holder key and is
-        absent for older credentials without one. The response is never cached.
+        absent for older credentials without one. secondFactor is true when that holder key is one
+        of the Admin's active Keyring second factors (several credentials can share one key when
+        Keyring renewed them). Revoking any credential that carries a registered key also revokes
+        that key as a second factor. The response is never cached.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':
@@ -31968,6 +32476,7 @@ paths:
                         - status
                         - issuedAt
                         - expiresAt
+                        - secondFactor
                       properties:
                         id:
                           type: string
@@ -31986,6 +32495,9 @@ paths:
                           description: Expiry in epoch milliseconds, null when unknown.
                         holderKeyThumbprint:
                           type: string
+                        secondFactor:
+                          type: boolean
+                          description: Whether the holder key is one of the Admin's active second factors.
         '403':
           $ref: '#/components/responses/Error'
         default:
@@ -32107,7 +32619,12 @@ paths:
                     type: string
                   credentialOffer:
                     type: string
-                    description: openid-credential-offer:// URI carrying credential_offer_uri.
+                    description: >-
+                      openid-credential-offer:// URI carrying credential_offer_uri. When the Admin
+                      has active Keyring second factors, it also carries authrim_renew_holder_jkt
+                      (comma-separated RFC 7638 thumbprints): Keyring then renews with a key it
+                      already holds for this issuer, so the second factor carries over to the new
+                      credential. Other wallets ignore the parameter.
                   transactionCode:
                     type: string
                     description: One-time code the wallet asks for; shown only after the wallet fetched the offer.
@@ -32912,7 +33429,19 @@ paths:
                         type:
                           - integer
                           - 'null'
-                        description: End of the first-enrollment window, in milliseconds since the epoch.
+                        description: >-
+                          End of the window that allows a first registration with a fresh
+                          passkey alone (the first-enrollment window, or the re-enrolment window
+                          while that one applies), in milliseconds since the epoch.
+                      reenroll_until:
+                        type:
+                          - integer
+                          - 'null'
+                        description: >-
+                          End of the re-enrolment window the last-resort recovery opened, in
+                          milliseconds since the epoch; null when none is open. Inside it an admin
+                          with no active second factor may register one with a fresh passkey
+                          alone, once.
                   keyring:
                     type: object
                     properties:
@@ -32921,6 +33450,21 @@ paths:
                         description: >-
                           Whether Keyring may also be presented through the browser (Digital
                           Credentials API; platform setting security.admin_keyring_dc_api).
+                  recovery:
+                    type: object
+                    required:
+                      - available
+                    description: >-
+                      Whether a second-factor recovery can be requested. A sole administrator
+                      (no other active administrator anywhere) cannot: nobody could cancel the
+                      request, so they recover with the environment owner procedure.
+                    properties:
+                      available:
+                        type: boolean
+                      reason:
+                        type: string
+                        enum:
+                          - sole_admin
         default:
           $ref: '#/components/responses/Error'
       security:
@@ -33572,6 +34116,149 @@ paths:
                     type: string
         '404':
           description: Not found in the admin's tenant (or not a platform admin's).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/login-ui/lite-mode:
+    get:
+      tags:
+        - Login UI Lite Mode
+      operationId: getApiAdminLoginUiLiteMode
+      summary: Read the tenant's lite Login UI policy and readiness
+      description: >-
+        The published lite Login UI policy (from the tenant's policy store), the mode the settings
+        record (`recorded_mode`), and whether the tenant could switch to `always` now, with the
+        reasons it cannot.
+        Requires settings read permission.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The policy and the readiness.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - mode
+                  - change_in_progress
+                  - recorded_mode
+                  - readiness
+                properties:
+                  mode:
+                    type: string
+                    enum: ['off', always]
+                  policy_revision:
+                    type: [string, 'null']
+                  generation:
+                    type: integer
+                  updated_at:
+                    type: [string, 'null']
+                    format: date-time
+                  human_verification_required:
+                    $ref: '#/components/schemas/LiteHumanVerificationRequired'
+                  change_in_progress:
+                    type: boolean
+                  recorded_mode:
+                    type: string
+                    enum: ['off', always]
+                  readiness:
+                    type: object
+                    required:
+                      - ready
+                      - issues
+                    properties:
+                      ready:
+                        type: boolean
+                      issues:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/LiteModeIssue'
+        '503':
+          description: lite_policy_unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Login UI Lite Mode
+      operationId: putApiAdminLoginUiLiteMode
+      summary: Switch the tenant's lite Login UI on or off
+      description: >-
+        Switches the tenant to the lite Login UI (`always`) or back (`off`). Switching on checks
+        that the lite Login UI can do everything the tenant uses and is refused with the reasons
+        otherwise; until the lite Login UI is released, switching on is refused everywhere except
+        an environment that allows the pre-release. The mode and the actions that require human
+        verification are published together under the policy store's lease. Switching on first
+        sets the tenant's outage marker (what the runtimes ask when they cannot read the policy;
+        it is never cleared); a marker that cannot be set stops the switch (503). The mode is
+        recorded in the setting `login-ui.lite_mode` for the console (the settings PATCH refuses
+        it). Requires settings write permission for both the Login UI and
+        the authentication methods.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mode
+              properties:
+                mode:
+                  type: string
+                  enum: ['off', always]
+      responses:
+        '200':
+          description: The published policy; `recorded` is false when the console record was not written.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - mode
+                  - policy_revision
+                  - generation
+                  - recorded
+                properties:
+                  mode:
+                    type: string
+                    enum: ['off', always]
+                  policy_revision:
+                    type: string
+                  generation:
+                    type: integer
+                  updated_at:
+                    type: [string, 'null']
+                    format: date-time
+                  human_verification_required:
+                    $ref: '#/components/schemas/LiteHumanVerificationRequired'
+                  recorded:
+                    type: boolean
+        '400':
+          description: invalid_request (mode is not off or always).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            lite_mode_unsupported with `issues`, or lite_mode_change_in_progress (with Retry-After).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiteModeUnsupportedError'
+        '503':
+          description: lite_policy_unavailable.
           content:
             application/json:
               schema:
@@ -38651,6 +39338,385 @@ paths:
           'security': [{ 'replicationExportCredential': [] }],
         },
     }
+
+  /api/admin/admin-groups:
+    get:
+      tags:
+        - Admin Groups
+      summary: List admin groups.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      responses:
+        '200':
+          description: Admin groups.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupList'
+      description: >-
+        The tenant's admin groups with their member and grant counts. Needs admin users read.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Admin Groups
+      summary: Create an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminGroupCreate'
+      responses:
+        '201':
+          description: The group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroup'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Create an empty group; it gives nothing until a role is granted to it. Needs admin roles write. 409 when the tenant already has the key.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}':
+    get:
+      tags:
+        - Admin Groups
+      summary: Get an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupDetail'
+        '404':
+          $ref: '#/components/responses/Error'
+      description: >-
+        The group with its members and the roles it gives.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    patch:
+      tags:
+        - Admin Groups
+      summary: Rename an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminGroupUpdate'
+      responses:
+        '200':
+          description: The group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroup'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Change the display name or description (the key stays). Changes no one's roles.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Admin Groups
+      summary: Delete an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupSuccess'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Delete the group with its members and grants: every member loses what it gave. Judged as removing those assignments (the caller may remove each role; L2 as admin.role.revoke); 409 last_tenant_admin when it would leave the tenant without an administrator.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}/members':
+    get:
+      tags:
+        - Admin Groups
+      summary: List the members of an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Members.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupMemberList'
+        '404':
+          $ref: '#/components/responses/Error'
+      description: >-
+        The group's members (the tenant's administrators).
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}/members/{adminUserId}':
+    put:
+      tags:
+        - Admin Groups
+      summary: Add an admin to a group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: adminUserId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Already a member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupMemberAdded'
+        '201':
+          description: Added.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupMemberAdded'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Add one of the tenant's administrators. They get every role the group gives, so the caller must outrank each (L2 as admin.role.grant). 409 admin_group_changed when the group's roles changed while the request was checked. Already a member: 200 with added false.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Admin Groups
+      summary: Remove an admin from a group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: adminUserId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupSuccess'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        They lose what the group gave them. L2 as admin.role.revoke; 409 last_tenant_admin when it would leave the tenant without an administrator.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}/role-grants':
+    get:
+      tags:
+        - Admin Groups
+      summary: List the roles an admin group gives.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Grants.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupRoleGrantList'
+        '404':
+          $ref: '#/components/responses/Error'
+      description: >-
+        The group's grants, for its tenant.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Admin Groups
+      summary: Give an admin group a role.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminGroupRoleGrantCreate'
+      responses:
+        '201':
+          description: The grant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupRoleGrant'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Every member gets the role for the tenant. Judged as granting it directly (the caller must outrank it; L2 as admin.role.grant). The platform role is not given through groups (400). 409 when the group already gives it, or admin_group_changed.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}/role-grants/{grantId}':
+    patch:
+      tags:
+        - Admin Groups
+      summary: Change when an admin group's role ends.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminGroupRoleGrantUpdate'
+      responses:
+        '200':
+          description: The grant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupRoleGrant'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        A later end, or none, gives the role for longer and is judged as granting it (admin.role.grant); an earlier one is judged as removing it (admin.role.revoke, and 409 last_tenant_admin).
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Admin Groups
+      summary: Take a role from an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupSuccess'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Every member loses the role (unless they hold it otherwise). L2 as admin.role.revoke; 409 last_tenant_admin.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
 
 components:
   headers:
@@ -51062,6 +52128,201 @@ components:
                 type: boolean
                 const: false
   schemas:
+    AdminGroup:
+      type: object
+      required:
+        [id, tenant_id, group_key, display_name, description, revision, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        group_key:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9_-]{0,63}$'
+        display_name:
+          type: string
+          maxLength: 100
+        description:
+          type: [string, 'null']
+          maxLength: 500
+        revision:
+          type: integer
+          description: Goes up whenever the roles the group gives change.
+        created_by:
+          type: [string, 'null']
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+    AdminGroupList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/AdminGroup'
+              - type: object
+                required: [member_count, grant_count]
+                properties:
+                  member_count:
+                    type: integer
+                  grant_count:
+                    type: integer
+        total:
+          type: integer
+    AdminGroupMember:
+      type: object
+      required: [id, admin_group_id, admin_user_id, created_at]
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        admin_group_id:
+          type: string
+        admin_user_id:
+          type: string
+        added_by:
+          type: [string, 'null']
+        created_at:
+          type: integer
+          format: int64
+        email:
+          type: [string, 'null']
+        name:
+          type: [string, 'null']
+        status:
+          type: [string, 'null']
+        is_active:
+          type: boolean
+    AdminGroupMemberList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminGroupMember'
+        total:
+          type: integer
+    AdminGroupRoleGrant:
+      type: object
+      required: [id, admin_group_id, admin_role_id, scope_type, scope_id, expires_at, created_at]
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        admin_group_id:
+          type: string
+        admin_role_id:
+          type: string
+        scope_type:
+          type: string
+          enum: [tenant]
+        scope_id:
+          type: string
+        expires_at:
+          type: [integer, 'null']
+          format: int64
+        assigned_by:
+          type: [string, 'null']
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+        role_name:
+          type: string
+        role_display_name:
+          type: [string, 'null']
+        hierarchy_level:
+          type: integer
+    AdminGroupRoleGrantList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminGroupRoleGrant'
+        total:
+          type: integer
+    AdminGroupDetail:
+      allOf:
+        - $ref: '#/components/schemas/AdminGroup'
+        - type: object
+          required: [members, grants]
+          properties:
+            members:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminGroupMember'
+            grants:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminGroupRoleGrant'
+    AdminGroupCreate:
+      type: object
+      required: [group_key, display_name]
+      properties:
+        group_key:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9_-]{0,63}$'
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: [string, 'null']
+          maxLength: 500
+    AdminGroupUpdate:
+      type: object
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: [string, 'null']
+          maxLength: 500
+    AdminGroupRoleGrantCreate:
+      type: object
+      required: [role_id]
+      properties:
+        role_id:
+          type: string
+        expires_at:
+          type: [integer, 'null']
+          format: int64
+          description: A future time in epoch milliseconds; null or absent for permanent.
+    AdminGroupRoleGrantUpdate:
+      type: object
+      required: [expires_at]
+      properties:
+        expires_at:
+          type: [integer, 'null']
+          format: int64
+    AdminGroupMemberAdded:
+      type: object
+      required: [success, added]
+      properties:
+        success:
+          type: boolean
+        added:
+          type: boolean
+    AdminGroupSuccess:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
     AdminKeyringPresentationStart:
       type: object
       required:
@@ -51714,6 +52975,15 @@ components:
         role_expires_at:
           type: integer
           format: int64
+        group_ids:
+          type: array
+          maxItems: 10
+          description: >-
+            Admin groups the admin joins on enrolment. The caller must outrank every role each
+            group gives. A group whose roles change before enrolment is not joined (the tenant's
+            administrators get a console notice).
+          items:
+            type: string
         expires_in_hours:
           type: number
           exclusiveMinimum: 0
@@ -52369,8 +53639,23 @@ components:
           type: string
         roles:
           type: array
+          description: Every role the admin holds, their own and through their admin groups.
           items:
             type: string
+        groups:
+          type: array
+          description: The admin groups the admin belongs to.
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, group_key, display_name]
+            properties:
+              id:
+                type: string
+              group_key:
+                type: string
+              display_name:
+                type: string
         permissions:
           type: array
           items:
@@ -57287,9 +58572,36 @@ components:
           properties:
             roles:
               type: array
+              description: >-
+                Every role the admin holds: their own assignments (source direct, removable by
+                assignment_id) and the ones their admin groups give (source group, assignment_id
+                null; changed through the group).
               items:
                 type: object
                 additionalProperties: true
+                properties:
+                  assignment_id:
+                    type: [string, 'null']
+                  source:
+                    type: string
+                    enum: [direct, group]
+                  admin_group_id:
+                    type: [string, 'null']
+                  admin_group_name:
+                    type: [string, 'null']
+            groups:
+              type: array
+              description: The admin groups the admin belongs to.
+              items:
+                type: object
+                required: [id, group_key, display_name]
+                properties:
+                  id:
+                    type: string
+                  group_key:
+                    type: string
+                  display_name:
+                    type: string
             passkey_count:
               type: integer
               minimum: 0
@@ -60341,9 +61653,71 @@ components:
         - number
         - boolean
         - date
-        - json
-        - string_array
-        - number_array
+        - enum
+    CustomClaimValidationRules:
+      type:
+        - object
+        - 'null'
+      description: >-
+        Rules for the field type. string: min_length, max_length, pattern. number: min, max.
+        date: min_date, max_date (ISO 8601). boolean: none. enum: enum_values and, optionally,
+        enum_options (the same values in the same order, with labels); when enum_options is
+        given, enum_values is derived from it. At most 4KB of JSON, 64KB for enum.
+      properties:
+        min_length:
+          type: integer
+          minimum: 0
+        max_length:
+          type: integer
+          minimum: 1
+        pattern:
+          type: string
+          maxLength: 128
+        min:
+          type: number
+        max:
+          type: number
+        min_date:
+          type: string
+        max_date:
+          type: string
+        enum_values:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        enum_options:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CustomClaimEnumOption'
+    CustomClaimEnumOption:
+      type: object
+      additionalProperties: false
+      required:
+        - value
+      description: >-
+        One choice of an enum attribute. A label is shown as labels[locale], else label, else
+        the value.
+      properties:
+        value:
+          type: string
+          minLength: 1
+          maxLength: 128
+        label:
+          type: string
+          maxLength: 100
+          description: The label in every language without one of its own.
+        labels:
+          type: object
+          description: Labels by Login UI locale (en, ja, zh-CN, ...).
+          additionalProperties:
+            type: string
+            maxLength: 100
     CustomClaimOperationStatus:
       type: string
       enum:
@@ -60513,6 +61887,8 @@ components:
             - multi
         is_pii:
           type: boolean
+        validation_rules:
+          $ref: '#/components/schemas/CustomClaimValidationRules'
         required_scopes:
           type: array
           maxItems: 50
@@ -60539,6 +61915,8 @@ components:
           type: boolean
         is_active:
           type: boolean
+        validation_rules:
+          $ref: '#/components/schemas/CustomClaimValidationRules'
         required_scopes:
           type:
             - array
@@ -78665,6 +80043,60 @@ components:
           type: string
         version:
           type: integer
+    LiteHumanVerificationRequired:
+      type: object
+      description: Per action, whether the lite Login UI requires its proof of work.
+      required:
+        - login
+        - signup
+        - reauth
+      properties:
+        login:
+          type: boolean
+        signup:
+          type: boolean
+        reauth:
+          type: boolean
+    LiteModeIssue:
+      type: object
+      description: >-
+        One reason the lite Login UI cannot serve the tenant. `subject` and `detail` are
+        identifiers from the tenant's configuration (a method, a Flow ID, a screen key, a client
+        ID, a component or block type), never personal data.
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          enum:
+            - not_released
+            - policy_store_unavailable
+            - method_unsupported
+            - flow_component_unsupported
+            - flow_screen_missing
+            - screen_block_unsupported
+            - screen_method_unsupported
+            - account_block_unsupported
+            - client_login_ui_url
+            - issuer_origin_mismatch
+        subject:
+          type: string
+        detail:
+          type: string
+    LiteModeUnsupportedError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          enum: [lite_mode_unsupported, lite_mode_change_in_progress]
+        error_description:
+          type: string
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/LiteModeIssue'
     LoginUIThemeSummary:
       type: object
       required:

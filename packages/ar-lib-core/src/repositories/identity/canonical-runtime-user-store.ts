@@ -505,6 +505,11 @@ export class CanonicalRuntimeUserStore {
     });
   }
 
+  /** Whether an existing user has a profile that `updateProfileFields` can write. */
+  async hasProfile(userId: string): Promise<boolean> {
+    return this.writer.hasProfile(userId);
+  }
+
   /** Write only the given profile fields of an existing user (see the writer). */
   async updateProfileFields(
     userId: string,

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import {
 		failureOf,
 		type SchemaDetail as Detail,
@@ -108,8 +108,22 @@
 			attempted = false;
 			toast.success(t('ss.saved'));
 		} catch (failure) {
-			throw new Error(t(FAILURE_KEY[failureOf(failure).kind]));
+			throw new Error(failureText(failure));
 		}
+	}
+
+	/** What a failed save says: which choices are still held, and by how many people. */
+	function failureText(failure: unknown): string {
+		const found = failureOf(failure);
+		if (found.kind !== 'values_in_use' || !found.held) return t(FAILURE_KEY[found.kind]);
+		if (found.held.encrypted) return t('ss.error.valuesInUseEncrypted');
+		if (found.held.unverifiable) return t('ss.error.valuesInUseUnverifiable');
+		const list = found.held.values
+			.map(({ value, users }) =>
+				t('ss.error.valueHeld', { value, count: (users ?? 0).toLocaleString(i18n.locale) })
+			)
+			.join(t('ss.error.listSeparator'));
+		return t('ss.error.valuesInUse', { values: list });
 	}
 
 	function goBack() {

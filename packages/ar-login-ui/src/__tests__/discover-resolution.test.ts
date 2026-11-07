@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { actions } from '../routes/discover/+page.server';
+import { actions } from '../routes/(main)/discover/+page.server';
 
 function createCookies(initial: Record<string, string> = {}) {
 	const store = new Map<string, string>(Object.entries(initial));

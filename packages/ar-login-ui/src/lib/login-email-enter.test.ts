@@ -92,7 +92,7 @@ describe('combineEntryMethods', () => {
 const read = (path: string) => readFileSync(resolve(__dirname, path), 'utf8');
 
 describe('wiring on the login page', () => {
-	const page = read('../routes/login/+page.svelte');
+	const page = read('../routes/(main)/login/+page.svelte');
 	const runtimeScreen = read('./components/RuntimeScreen.svelte');
 	const loginView = read('./views/LoginView.svelte');
 	const shown = 'shownEntryMethods,';

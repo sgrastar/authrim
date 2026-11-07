@@ -3,12 +3,7 @@
   "packageName": "@authrim/ar-lib-core",
   "worker": "ar-lib-core",
   "lookupBlindIndex": true,
-  "requiredDataRoles": [
-    "tenant_core/default",
-    "tenant_core/users",
-    "tenant_pii",
-    "lookup"
-  ],
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "bindings": [
     {
       "name": "DB",
@@ -136,6 +131,16 @@
     },
     {
       "name": "USER_CODE_RATE_LIMITER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "LITE_POLICY_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "LITE_TXN_STORE",
       "kind": "durable_object_namespace",
       "required": true
     },

@@ -94,7 +94,11 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'settings/signing-keys', scope: 'tenant' },
 	{ id: 'settings/compliance', scope: 'tenant' },
 	{ id: 'settings/runtime', scope: 'tenant' },
-	{ id: 'settings/team', scope: 'tenant' },
+	{
+		id: 'settings/team',
+		scope: 'tenant',
+		note: 'A built page (Admin sign-in); the list of administrators is not built yet.'
+	},
 	{ id: 'plat-tenants/discovery', scope: 'platform' },
 	{
 		id: 'plat-tenants/bulk-apply',
@@ -244,6 +248,25 @@ place('authentication/protection', 'Bot protection', {
 		'authentication-methods.human_verification.provider'
 	]
 });
+place(
+	'authentication/protection',
+	'Lite Login UI proof of work',
+	{
+		advanced: [
+			'authentication-methods.human_verification.pow_max_number',
+			'authentication-methods.human_verification.pow_challenge_ttl',
+			'authentication-methods.human_verification.pow_issue_per_ip_per_minute',
+			'authentication-methods.human_verification.pow_issue_per_tenant_per_minute',
+			'authentication-methods.human_verification.lite_txn_per_ip_per_minute',
+			'authentication-methods.human_verification.lite_txn_per_tenant_per_minute',
+			'authentication-methods.human_verification.lite_txn_per_browser'
+		]
+	},
+	{
+		'authentication-methods.human_verification.pow_max_number':
+			'Used only while the tenant is in lite mode; provisional until measured on low-end phones.'
+	}
+);
 place('authentication/protection', 'API rate limits', {
 	advanced: [
 		'rate_limit.strict',
@@ -551,6 +574,17 @@ place('customization/login-ui', 'Languages', {
 	primary: ['login-ui.supported_locales', 'login-ui.default_locale'],
 	advanced: ['login-ui.primary_locales', 'login-ui.show_english_language_names']
 });
+place(
+	'customization/login-ui',
+	'Lite Login UI',
+	{ primary: ['login-ui.lite_mode', 'login-ui.lite_logo'] },
+	{
+		'login-ui.lite_mode':
+			'Switched with PUT /api/admin/login-ui/lite-mode (a compatibility check, then the policy); the settings PATCH refuses it. Show the readiness issues from the GET of that route.',
+		'login-ui.lite_logo':
+			'A still PNG or WebP of at most 8 KB and 640x160 px, saved as a data: URI.'
+	}
+);
 place('customization/login-ui', 'Custom CSS and themes', {
 	advanced: ['login-ui.custom_css', 'login-ui.custom_themes']
 });
@@ -702,14 +736,6 @@ place('authentication/staying-signed-in', 'Logout channels and webhook', {
 		'session.backchannel_include_sid',
 		'session.logout_webhook_include_sub',
 		'session.logout_webhook_include_sid'
-	]
-});
-place('settings/team', 'Admin sign-in', {
-	advanced: [
-		'session.ttl.admin_passkey',
-		'security.admin_step_up_overrides',
-		'security.admin_step_up_enforced',
-		'security.admin_keyring_dc_api'
 	]
 });
 

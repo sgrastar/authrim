@@ -101,6 +101,11 @@
       "required": true
     },
     {
+      "name": "LITE_POLICY_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
       "name": "RATE_LIMITER",
       "kind": "durable_object_namespace",
       "required": true
@@ -119,6 +124,11 @@
       "name": "DPOP_JTI_STORE",
       "kind": "durable_object_namespace",
       "required": true
+    },
+    {
+      "name": "LITE_TXN_STORE",
+      "kind": "durable_object_namespace",
+      "required": false
     },
     {
       "name": "DIRECTORY_CONNECTOR_RELAY",
@@ -259,6 +269,11 @@
     {
       "name": "INVESTIGATION_SUBJECT_HMAC_KEYRING",
       "capability": "sign_in_attempt.subject_hash",
+      "required": false
+    },
+    {
+      "name": "HUMAN_VERIFICATION_POW_HMAC_KEYRING",
+      "capability": "human_verification.lite_proof_of_work",
       "required": false
     },
     {

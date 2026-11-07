@@ -1,19 +1,40 @@
 import { Context } from 'hono';
+import { runLiteGuardedWrite } from './lite-mode-guard';
+import {
+  liteIssuesOfScreen,
+  liteIssuesOfScreenRemoval,
+  resolveLiteMethodState,
+} from './lite-mode-readiness';
+import {
+  MAX_SCREEN_FIELD_OPTIONS,
+  MAX_SCREEN_OPTION_LABEL_LENGTH,
+  OIDC_STANDARD_CLAIM_SCOPE,
+  MAX_SCREEN_OPTION_VALUE_LENGTH,
+  RESERVED_CLAIMS,
+  SCREEN_ANSWER_TARGETS,
+  SCREEN_CHOICE_BLOCK_TYPES,
+  SCREEN_INPUT_BLOCK_TYPES,
+} from '@authrim/ar-lib-core';
 import type {
   Env,
+  ScreenAnswerTarget,
   ScreenDisplayCondition,
   ScreenField,
+  ScreenFieldOption,
   ScreenKind,
   ScreenLocalization,
   ScreenResponse,
   ScreenSettings,
 } from '@authrim/ar-lib-core';
 import {
+  AR_ERROR_CODES,
   createAuditLogFromContext,
   createAuthContextFromHono,
+  createErrorResponse,
   getLogger,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
+import { collectScreenUsages, usageCounts } from './admin-screen-usage';
 
 type AdminContext = Context<{ Bindings: Env }>;
 type Row = Record<string, unknown>;
@@ -48,6 +69,9 @@ const SCREEN_KINDS = new Set<ScreenKind>([
 ]);
 const SCREEN_BLOCK_TYPES = new Set([
   'identity_field',
+  'select',
+  'radio',
+  'checkbox',
   'auth_widget',
   'guest_login_widget',
   'code_input_widget',
@@ -1391,7 +1415,7 @@ function defaultAuthenticationFields(screenKind: 'registration' | 'login'): Scre
   ];
 }
 
-const DEFAULT_SCREENS: Array<{
+export const DEFAULT_SCREENS: Array<{
   screen_key: string;
   display_name: string;
   description: string;
@@ -1692,6 +1716,9 @@ const DEFAULT_SCREENS: Array<{
   },
 ];
 
+/** The keys of the built-in screens: a custom screen cannot take one. */
+const RESERVED_SCREEN_KEYS = new Set(DEFAULT_SCREENS.map((screen) => screen.screen_key));
+
 function invalid(c: AdminContext, error_description: string): Response {
   return c.json({ error: 'invalid_request', error_description }, 400);
 }
@@ -1702,6 +1729,59 @@ function notFound(c: AdminContext, error_description: string): Response {
 
 function nowMs(): number {
   return Date.now();
+}
+
+/** A row's version: rows from before the column existed read as version 1. */
+function readVersion(row: Row): number {
+  const version = Number(row.version);
+  return Number.isSafeInteger(version) && version > 0 ? version : 1;
+}
+
+const versionEtag = (version: number) => `"${version}"`;
+
+/** The version in If-Match: "3", 3 or "v3"; null when absent, NaN when unreadable. */
+function parseIfMatchVersion(c: AdminContext): number | null {
+  const raw = typeof c.req.header === 'function' ? c.req.header('if-match') : undefined;
+  if (!raw) return null;
+  const normalized = raw.trim().replace(/^W\//, '').replace(/^"|"$/g, '').replace(/^v/, '');
+  const version = /^\d+$/.test(normalized) ? Number.parseInt(normalized, 10) : Number.NaN;
+  return Number.isSafeInteger(version) && version > 0 ? version : Number.NaN;
+}
+
+function setEtag(c: AdminContext, version: number): void {
+  if (typeof c.header === 'function') c.header('ETag', versionEtag(version));
+}
+
+function screenKeyTaken(c: AdminContext): Response {
+  return c.json(
+    { error: 'screen_key_taken', error_description: 'A screen with this key already exists' },
+    409
+  );
+}
+
+/** A unique-index refusal, as D1 (SQLite) and PostgreSQL word it. */
+function isUniqueViolation(error: unknown): boolean {
+  const record = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    record.code === '23505' ||
+    /UNIQUE constraint failed|duplicate key value violates unique constraint/i.test(message)
+  );
+}
+
+function conflict(c: AdminContext, currentVersion: number): Promise<Response> {
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+    extensions: {
+      details: {
+        conflict: {
+          reason: 'concurrent_modification',
+          actual_version: currentVersion,
+          current_etag: versionEtag(currentVersion),
+        },
+      },
+      current_version: currentVersion,
+    },
+  });
 }
 
 function readTrimmed(value: unknown): string | null {
@@ -1723,10 +1803,17 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
-function readBlockType(value: unknown): ScreenField['block_type'] {
-  return typeof value === 'string' && SCREEN_BLOCK_TYPES.has(value)
-    ? (value as ScreenField['block_type'])
-    : 'identity_field';
+/**
+ * A part's type. No type is an attribute's input (`identity_field`, as screens always saved them);
+ * a type that is not one of the parts is refused when saving (`strict`), and read as an input when
+ * reading a stored screen (screens saved before the check).
+ */
+function readBlockType(value: unknown, strict: boolean): ScreenField['block_type'] | null {
+  if (value === undefined || value === null || value === '') return 'identity_field';
+  if (typeof value === 'string' && SCREEN_BLOCK_TYPES.has(value)) {
+    return value as ScreenField['block_type'];
+  }
+  return strict ? null : 'identity_field';
 }
 
 function readValueType(value: unknown): ScreenField['value_type'] {
@@ -1821,25 +1908,190 @@ function parseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
-function normalizeFields(value: unknown): ScreenField[] | null {
-  if (!Array.isArray(value)) return null;
+/** The key of an answer not stored to the profile: a plain identifier, never an attribute path. */
+const ANSWER_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
+
+/**
+ * Names an answer of its own may not take: the standard claims, the claims a token reserves, and
+ * Authrim's own. An answer so named could later be read as that claim.
+ */
+function isReservedAnswerKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return (
+    lower in OIDC_STANDARD_CLAIM_SCOPE ||
+    (RESERVED_CLAIMS as readonly string[]).includes(lower) ||
+    lower.startsWith('authrim_')
+  );
+}
+
+type FieldsResult = { ok: true; fields: ScreenField[] } | { ok: false; error: string };
+
+function readAnswerTargets(value: unknown): ScreenAnswerTarget[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const targets: ScreenAnswerTarget[] = [];
+  for (const target of value) {
+    if (!SCREEN_ANSWER_TARGETS.includes(target as ScreenAnswerTarget)) return null;
+    if (!targets.includes(target as ScreenAnswerTarget)) targets.push(target as ScreenAnswerTarget);
+  }
+  // In a fixed order, so the same choice is saved the same way.
+  return SCREEN_ANSWER_TARGETS.filter((target) => targets.includes(target));
+}
+
+function readFieldOptions(value: unknown, where: string): ScreenFieldOption[] | string {
+  if (!Array.isArray(value) || value.length === 0)
+    return `${where}: options must list at least one choice`;
+  if (value.length > MAX_SCREEN_FIELD_OPTIONS) {
+    return `${where}: at most ${MAX_SCREEN_FIELD_OPTIONS} options`;
+  }
+  const options: ScreenFieldOption[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return `${where}: each option must be an object`;
+    }
+    const option = raw as Row;
+    const optionValue = readTrimmed(option.value);
+    const label = readTrimmed(option.label) ?? optionValue;
+    if (!optionValue) return `${where}: an option value must not be empty`;
+    if (optionValue.length > MAX_SCREEN_OPTION_VALUE_LENGTH) {
+      return `${where}: option values must be at most ${MAX_SCREEN_OPTION_VALUE_LENGTH} characters`;
+    }
+    if (label && label.length > MAX_SCREEN_OPTION_LABEL_LENGTH) {
+      return `${where}: option labels must be at most ${MAX_SCREEN_OPTION_LABEL_LENGTH} characters`;
+    }
+    if (options.some((existing) => existing.value === optionValue)) {
+      return `${where}: option "${optionValue}" is listed twice`;
+    }
+    options.push({ value: optionValue, label: label ?? optionValue });
+  }
+  return options;
+}
+
+/**
+ * What an input part answers: an attribute of the profile (the default), or an answer of its own
+ * with where it goes. Null for a part that is not an input. A string is why it cannot be saved.
+ */
+function readInputAnswer(
+  record: Row,
+  blockType: NonNullable<ScreenField['block_type']>,
+  field: string,
+  strict: boolean
+):
+  | Pick<ScreenField, 'show_label' | 'store_to_profile' | 'answer_targets' | 'options'>
+  | string
+  | null {
+  if (!(SCREEN_INPUT_BLOCK_TYPES as readonly string[]).includes(blockType)) return null;
+  const where = `Field "${field}"`;
+  const showLabel =
+    record.show_label === undefined ? undefined : readBoolean(record.show_label, true);
+  const storeToProfile =
+    record.store_to_profile === undefined ? true : readBoolean(record.store_to_profile, true);
+  const isChoice = (SCREEN_CHOICE_BLOCK_TYPES as readonly string[]).includes(blockType);
+  if (storeToProfile) {
+    if (strict && record.answer_targets !== undefined && record.answer_targets !== null) {
+      return `${where}: answer_targets is only for a part not stored to the profile`;
+    }
+    if (strict && record.options !== undefined && record.options !== null) {
+      return `${where}: a part stored to the profile takes its options from the Identity Schema`;
+    }
+    return { ...(showLabel === false ? { show_label: false } : {}) };
+  }
+  if (strict && !ANSWER_KEY_PATTERN.test(field)) {
+    return `${where}: the key of an answer not stored to the profile must be a letter followed by letters, digits or _ (at most 64)`;
+  }
+  if (strict && isReservedAnswerKey(field)) {
+    return `${where}: an answer not stored to the profile must not use a standard claim's name`;
+  }
+  const targets = readAnswerTargets(record.answer_targets);
+  if (!targets) {
+    if (strict) return `${where}: answer_targets must list flow_event, record or both`;
+  }
+  let options: ScreenFieldOption[] | undefined;
+  if (isChoice) {
+    const read = readFieldOptions(record.options, where);
+    if (typeof read === 'string') {
+      if (strict) return read;
+    } else {
+      options = read;
+    }
+  } else if (strict && record.options !== undefined && record.options !== null) {
+    return `${where}: only a select or radio part has options`;
+  }
+  return {
+    ...(showLabel === false ? { show_label: false } : {}),
+    store_to_profile: false,
+    answer_targets: targets ?? [...SCREEN_ANSWER_TARGETS],
+    ...(options ? { options } : {}),
+  };
+}
+
+/**
+ * The parts of a screen as they are saved: each one checked and with only the properties it has.
+ * `strict` (a save) refuses what cannot be saved, with the reason; reading a stored screen is not
+ * strict, so a screen saved before a check still opens.
+ */
+function normalizeFieldsDetailed(value: unknown, strict = true): FieldsResult {
+  if (!Array.isArray(value)) return { ok: false, error: 'fields must be an array' };
   const fields: ScreenField[] = [];
+  const answerKeys = new Set<string>();
+  const profileKeys = new Set<string>();
   for (const item of value) {
-    if (!item || typeof item !== 'object') return null;
+    if (!item || typeof item !== 'object')
+      return { ok: false, error: 'Each field must be an object' };
     const record = item as Row;
     const field = readTrimmed(record.field);
     const label = readTrimmed(record.label);
-    if (!field || !label) return null;
-    const blockType = readBlockType(record.block_type);
+    if (!field || !label) return { ok: false, error: 'Each field needs a field and a label' };
+    const blockType = readBlockType(record.block_type, strict);
+    if (!blockType) return { ok: false, error: `Field "${field}": unknown block_type` };
     const href = readSafeLinkHref(record.href);
-    if (blockType === 'link' && !href) return null;
+    if (blockType === 'link' && !href) {
+      return {
+        ok: false,
+        error: `Field "${field}": a link needs an https URL or a path on this site`,
+      };
+    }
+    const answer = readInputAnswer(record, blockType, field, strict);
+    if (typeof answer === 'string') return { ok: false, error: answer };
+    // An answer of its own must not share a key with another answer, nor with an attribute the
+    // screen asks (the two could not be told apart), in any spelling of the key.
+    if (answer) {
+      const key = attributeKeyOf(field);
+      if (answer.store_to_profile === false) {
+        if (answerKeys.has(key)) {
+          return {
+            ok: false,
+            error: `Field "${field}": two parts of the screen use the same answer key`,
+          };
+        }
+        if (profileKeys.has(key)) {
+          return {
+            ok: false,
+            error: `Field "${field}": an answer not stored to the profile shares its key with an attribute the screen asks`,
+          };
+        }
+        answerKeys.add(key);
+      } else {
+        if (answerKeys.has(key)) {
+          return {
+            ok: false,
+            error: `Field "${field}": an answer not stored to the profile shares its key with an attribute the screen asks`,
+          };
+        }
+        profileKeys.add(key);
+      }
+    }
     fields.push({
       field,
       label: label.slice(0, 200),
       required: readBoolean(record.required, false),
       block_type: blockType,
       block_id: readTrimmed(record.block_id) ?? undefined,
-      value_type: readValueType(record.value_type),
+      // The legacy yes/no input: only on a text input stored to the profile (a checkbox needs
+      // none, and an answer of its own is asked with a checkbox).
+      value_type:
+        blockType === 'identity_field' && answer?.store_to_profile !== false
+          ? readValueType(record.value_type)
+          : undefined,
       auth_method: readTrimmed(record.auth_method),
       code_input_mode: readCodeInputMode(record.code_input_mode),
       external_idp_show_action_text:
@@ -1858,9 +2110,91 @@ function normalizeFields(value: unknown): ScreenField[] | null {
         typeof record.order === 'number' && Number.isInteger(record.order)
           ? record.order
           : undefined,
+      ...(answer ?? {}),
     });
   }
-  return fields;
+  return { ok: true, fields };
+}
+
+/** An attribute key as the run time reads it from a part (`field.canonical.` names the same one). */
+function attributeKeyOf(field: string): string {
+  const normalized = field.trim().toLowerCase();
+  return normalized.startsWith('field.canonical.')
+    ? normalized.slice('field.canonical.'.length)
+    : normalized;
+}
+
+/**
+ * The checks a save makes against the tenant's Identity Schema: a choice part stored to the
+ * profile names a single-valued enum attribute, a checkbox a single-valued boolean one; and an
+ * answer not stored to the profile does not take an attribute's key (it would then be read as
+ * that attribute). A text input stays as lenient as before (screens name attributes that are not
+ * custom ones, such as the standard claims). Null when the parts pass.
+ */
+async function schemaProblemOf(
+  db: { query<T>(sql: string, params: unknown[]): Promise<T[]> },
+  tenantId: string,
+  fields: ScreenField[]
+): Promise<string | null> {
+  const needsSchema = fields.some(
+    (field) =>
+      field.store_to_profile === false ||
+      field.block_type === 'select' ||
+      field.block_type === 'radio' ||
+      field.block_type === 'checkbox'
+  );
+  if (!needsSchema) return null;
+  const rows = await db.query<{
+    field_key: string;
+    field_type: string;
+    cardinality: string | null;
+    is_active: number | boolean;
+  }>(
+    `SELECT field_key, field_type, cardinality, is_active
+       FROM custom_claim_schemas WHERE tenant_id = ?`,
+    [tenantId]
+  );
+  // Every key, active or not, for the answers of their own; the active attribute of a key for
+  // the parts that answer one (a key may have an inactive row beside its active one).
+  const allKeys = new Set(rows.map((row) => attributeKeyOf(row.field_key)));
+  const schemas = new Map(
+    rows
+      .filter((row) => readBoolean(row.is_active, false))
+      .map((row) => [attributeKeyOf(row.field_key), row])
+  );
+  for (const field of fields) {
+    const where = `Field "${field.field}"`;
+    if (field.store_to_profile === false) {
+      if (allKeys.has(attributeKeyOf(field.field))) {
+        return `${where}: an answer not stored to the profile must not use an attribute's key`;
+      }
+      continue;
+    }
+    const wanted =
+      field.block_type === 'select' || field.block_type === 'radio'
+        ? 'enum'
+        : field.block_type === 'checkbox'
+          ? 'boolean'
+          : null;
+    if (!wanted) continue;
+    const schema = schemas.get(attributeKeyOf(field.field));
+    if (!schema) {
+      return `${where}: names no active attribute of the Identity Schema`;
+    }
+    if (schema.field_type !== wanted) {
+      return `${where}: a ${field.block_type} part needs an attribute of type ${wanted}`;
+    }
+    if (schema.cardinality === 'multi') {
+      return `${where}: a ${field.block_type} part cannot answer a multi-valued attribute`;
+    }
+  }
+  return null;
+}
+
+/** The parts of a screen as a save would keep them, or null when they cannot be saved. */
+function normalizeFields(value: unknown): ScreenField[] | null {
+  const result = normalizeFieldsDetailed(value, true);
+  return result.ok ? result.fields : null;
 }
 
 function validateAccountScreenFields(fields: ScreenField[]): string | null {
@@ -1874,6 +2208,28 @@ function validateAccountScreenFields(fields: ScreenField[]): string | null {
     return 'Account screens may contain at most one primary Account Widget';
   }
   return null;
+}
+
+/** The translated labels of a part's own options: by option value, the labels kept short. */
+function localizedOptionsOf(value: unknown): { options?: Record<string, string> } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const options: Record<string, string> = {};
+  for (const [optionValue, label] of Object.entries(value as Row).slice(
+    0,
+    MAX_SCREEN_FIELD_OPTIONS
+  )) {
+    if (!optionValue || optionValue.length > MAX_SCREEN_OPTION_VALUE_LENGTH) continue;
+    if (
+      optionValue === '__proto__' ||
+      optionValue === 'constructor' ||
+      optionValue === 'prototype'
+    ) {
+      continue;
+    }
+    if (typeof label !== 'string' || !label.trim()) continue;
+    options[optionValue] = label.trim().slice(0, MAX_SCREEN_OPTION_LABEL_LENGTH);
+  }
+  return Object.keys(options).length > 0 ? { options } : {};
 }
 
 function normalizeLocalizations(value: unknown): Record<string, ScreenLocalization> {
@@ -1904,6 +2260,7 @@ function normalizeLocalizations(value: unknown): Record<string, ScreenLocalizati
           ...(typeof field.placeholder === 'string'
             ? { placeholder: field.placeholder.trim().slice(0, 500) }
             : {}),
+          ...localizedOptionsOf(field.options),
         };
       }
     }
@@ -2374,13 +2731,17 @@ function toResponse(row: Row): ScreenResponse {
     display_name: String(row.display_name),
     description: typeof row.description === 'string' ? row.description : null,
     screen_kind: String(row.screen_kind) as ScreenKind,
-    fields: normalizeFields(parsedFields) ?? [],
+    fields: (() => {
+      const read = normalizeFieldsDetailed(parsedFields, false);
+      return read.ok ? read.fields : [];
+    })(),
     localizations: normalizeLocalizations(
       parseJson<Record<string, ScreenLocalization>>(row.localizations_json, {})
     ),
     settings: normalizeSettings(parseJson<ScreenSettings | null>(row.settings_json, null)),
     is_active: row.is_active as number | boolean,
     is_system: row.is_system as number | boolean,
+    version: readVersion(row),
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   };
@@ -2410,7 +2771,7 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
         if (serializeJson(mergedFields) !== serializeJson(fields)) {
           await authCtx.coreAdapter.execute(
             `UPDATE screens
-                SET fields_json = ?, updated_at = ?
+                SET fields_json = ?, updated_at = ?, version = version + 1
               WHERE tenant_id = ? AND id = ?`,
             [serializeJson(mergedFields), nowMs(), tenantId, existing.id]
           );
@@ -2418,7 +2779,7 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
         if (serializeJson(mergedLocalizations) !== serializeJson(currentLocalizations)) {
           await authCtx.coreAdapter.execute(
             `UPDATE screens
-                SET localizations_json = ?, updated_at = ?
+                SET localizations_json = ?, updated_at = ?, version = version + 1
               WHERE tenant_id = ? AND id = ?`,
             [serializeJson(mergedLocalizations), nowMs(), tenantId, existing.id]
           );
@@ -2426,7 +2787,7 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
         if (existing.screen_kind !== screen.screen_kind) {
           await authCtx.coreAdapter.execute(
             `UPDATE screens
-                SET screen_kind = ?, updated_at = ?
+                SET screen_kind = ?, updated_at = ?, version = version + 1
               WHERE tenant_id = ? AND id = ?`,
             [screen.screen_kind, nowMs(), tenantId, existing.id]
           );
@@ -2479,13 +2840,27 @@ export async function adminScreensListHandler(c: AdminContext) {
     const tenantId = getTenantIdFromContext(c);
     await ensureDefaultScreens(c, tenantId);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const rows = await authCtx.coreAdapter.query(
+    const rows = await authCtx.coreAdapter.query<Row>(
       `SELECT * FROM screens
        WHERE tenant_id = ?
        ORDER BY is_system DESC, screen_kind ASC, display_name ASC`,
       [tenantId]
     );
-    return c.json({ screens: (rows as Row[]).map(toResponse) });
+    const screens = rows.map(toResponse);
+    const { usages, complete } = await collectScreenUsages(
+      c.env,
+      authCtx.coreAdapter,
+      tenantId,
+      screens
+    );
+    return c.json({
+      screens: screens.map((screen) => ({
+        ...screen,
+        usage: usageCounts(usages.get(screen.id) ?? []),
+      })),
+      // False when a stored document could not be read: the counts are then at least these.
+      usages_complete: complete,
+    });
   } catch (error) {
     log.error('Failed to list screens', { action: 'list' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to list screens' }, 500);
@@ -2502,14 +2877,19 @@ export async function adminScreenGetHandler(c: AdminContext) {
       [tenantId, c.req.param('id')]
     );
     if (!row) return notFound(c, 'Screen not found');
-    return c.json({ screen: toResponse(row) });
+    const screen = toResponse(row);
+    const { usages, complete } = await collectScreenUsages(c.env, authCtx.coreAdapter, tenantId, [
+      screen,
+    ]);
+    setEtag(c, screen.version);
+    return c.json({ screen, usages: usages.get(screen.id) ?? [], usages_complete: complete });
   } catch (error) {
     log.error('Failed to get screen', { action: 'get' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to get screen' }, 500);
   }
 }
 
-export async function adminScreenCreateHandler(c: AdminContext) {
+async function adminScreenCreateUnguarded(c: AdminContext) {
   const log = getLogger(c).module('ADMIN_SCREENS');
   try {
     const tenantId = getTenantIdFromContext(c);
@@ -2519,39 +2899,62 @@ export async function adminScreenCreateHandler(c: AdminContext) {
     const rawKey = readTrimmed(body.screen_key) ?? displayName;
     const screenKey = rawKey ? normalizeScreenKey(rawKey) : '';
     const screenKind = body.screen_kind;
-    const fields = normalizeFields(body.fields);
+    const read = normalizeFieldsDetailed(body.fields);
     if (!displayName) return invalid(c, 'display_name is required');
     if (!screenKey) return invalid(c, 'screen_key is required');
     if (!SCREEN_KINDS.has(screenKind as ScreenKind)) return invalid(c, 'Invalid screen_kind');
-    if (!fields || fields.length === 0) return invalid(c, 'fields must contain at least one field');
+    if (!read.ok) return invalid(c, read.error);
+    const fields = read.fields;
+    if (fields.length === 0) return invalid(c, 'fields must contain at least one field');
     if (screenKind === 'account') {
       const accountValidationError = validateAccountScreenFields(fields);
       if (accountValidationError) return invalid(c, accountValidationError);
     }
+    const schemaProblem = await schemaProblemOf(authCtx.coreAdapter, tenantId, fields);
+    if (schemaProblem) return invalid(c, schemaProblem);
+    // The built-in keys belong to the system screens (also when a tenant has not got them yet):
+    // the run time falls back to them, so a custom screen must not take one.
+    const taken =
+      RESERVED_SCREEN_KEYS.has(screenKey) ||
+      (await authCtx.coreAdapter.queryOne<Row>(
+        'SELECT id FROM screens WHERE tenant_id = ? AND screen_key = ?',
+        [tenantId, screenKey]
+      ));
+    if (taken) return screenKeyTaken(c);
 
     const now = nowMs();
     const id = crypto.randomUUID();
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO screens
+    const inserted = await authCtx.coreAdapter
+      .execute(
+        `INSERT INTO screens
        (id, tenant_id, screen_key, display_name, description, screen_kind, fields_json,
-        localizations_json, settings_json, is_active, is_system, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        tenantId,
-        screenKey,
-        displayName,
-        readTrimmed(body.description),
-        screenKind,
-        serializeJson(fields),
-        serializeJson(normalizeLocalizations(body.localizations)),
-        serializeJson(normalizeSettings(body.settings)),
-        readBoolean(body.is_active, true) ? 1 : 0,
-        0,
-        now,
-        now,
-      ]
-    );
+        localizations_json, settings_json, is_active, is_system, created_at, updated_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [
+          id,
+          tenantId,
+          screenKey,
+          displayName,
+          readTrimmed(body.description),
+          screenKind,
+          serializeJson(fields),
+          serializeJson(normalizeLocalizations(body.localizations)),
+          serializeJson(normalizeSettings(body.settings)),
+          readBoolean(body.is_active, true) ? 1 : 0,
+          0,
+          now,
+          now,
+        ]
+      )
+      .then(
+        () => true,
+        (error: unknown) => {
+          // Another request took the key in between: the unique index refuses the second.
+          if (isUniqueViolation(error)) return false;
+          throw error;
+        }
+      );
+    if (!inserted) return screenKeyTaken(c);
     const row = await authCtx.coreAdapter.queryOne<Row>(
       'SELECT * FROM screens WHERE tenant_id = ? AND id = ?',
       [tenantId, id]
@@ -2561,6 +2964,7 @@ export async function adminScreenCreateHandler(c: AdminContext) {
       screen_kind: screenKind,
       base_preset_key: normalizeSettings(body.settings).base_preset_key ?? null,
     });
+    setEtag(c, 1);
     return c.json({ screen: row ? toResponse(row) : null }, 201);
   } catch (error) {
     log.error('Failed to create screen', { action: 'create' }, error as Error);
@@ -2568,7 +2972,7 @@ export async function adminScreenCreateHandler(c: AdminContext) {
   }
 }
 
-export async function adminScreenUpdateHandler(c: AdminContext) {
+async function adminScreenUpdateUnguarded(c: AdminContext) {
   const log = getLogger(c).module('ADMIN_SCREENS');
   try {
     const tenantId = getTenantIdFromContext(c);
@@ -2576,13 +2980,26 @@ export async function adminScreenUpdateHandler(c: AdminContext) {
     if (!id) return invalid(c, 'Screen id is required');
     const authCtx = createAuthContextFromHono(c, tenantId);
     const existing = await authCtx.coreAdapter.queryOne<Row>(
-      'SELECT id, is_system, screen_kind, fields_json FROM screens WHERE tenant_id = ? AND id = ?',
+      `SELECT id, is_system, screen_kind, fields_json, version
+         FROM screens WHERE tenant_id = ? AND id = ?`,
       [tenantId, id]
     );
     if (!existing) return notFound(c, 'Screen not found');
     if (readBoolean(existing.is_system, false)) {
       return invalid(c, 'System screens are immutable; create a custom copy before editing');
     }
+    const expected = parseIfMatchVersion(c);
+    if (expected === null) {
+      return c.json(
+        {
+          error: 'precondition_required',
+          error_description: 'If-Match with the screen version is required',
+        },
+        428
+      );
+    }
+    if (Number.isNaN(expected)) return invalid(c, 'If-Match must be a screen version');
+    if (readVersion(existing) !== expected) return conflict(c, readVersion(existing));
     const body = await c.req.json<Row>();
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -2604,8 +3021,10 @@ export async function adminScreenUpdateHandler(c: AdminContext) {
       params.push(body.screen_kind);
     }
     if (body.fields !== undefined) {
-      const fields = normalizeFields(body.fields);
-      if (!fields || fields.length === 0) {
+      const read = normalizeFieldsDetailed(body.fields);
+      if (!read.ok) return invalid(c, read.error);
+      const fields = read.fields;
+      if (fields.length === 0) {
         return invalid(c, 'fields must contain at least one field');
       }
       const effectiveKind = (body.screen_kind ?? existing.screen_kind) as ScreenKind;
@@ -2613,6 +3032,8 @@ export async function adminScreenUpdateHandler(c: AdminContext) {
         const accountValidationError = validateAccountScreenFields(fields);
         if (accountValidationError) return invalid(c, accountValidationError);
       }
+      const schemaProblem = await schemaProblemOf(authCtx.coreAdapter, tenantId, fields);
+      if (schemaProblem) return invalid(c, schemaProblem);
       sets.push('fields_json = ?');
       params.push(serializeJson(fields));
     } else if (body.screen_kind === 'account') {
@@ -2633,49 +3054,200 @@ export async function adminScreenUpdateHandler(c: AdminContext) {
       params.push(readBoolean(body.is_active, true) ? 1 : 0);
     }
     if (sets.length === 0) return invalid(c, 'No fields to update');
-    sets.push('updated_at = ?');
-    params.push(nowMs(), tenantId, id);
-    await authCtx.coreAdapter.execute(
-      `UPDATE screens SET ${sets.join(', ')} WHERE tenant_id = ? AND id = ?`,
+    sets.push('updated_at = ?', 'version = version + 1');
+    params.push(nowMs(), tenantId, id, expected);
+    // The version named in If-Match must still be the row's: a change saved in between wins.
+    const result = await authCtx.coreAdapter.execute(
+      `UPDATE screens SET ${sets.join(', ')}
+        WHERE tenant_id = ? AND id = ? AND version = ?`,
       params
     );
     const row = await authCtx.coreAdapter.queryOne<Row>(
       'SELECT * FROM screens WHERE tenant_id = ? AND id = ?',
       [tenantId, id]
     );
+    if (!(result.rowsAffected > 0)) {
+      if (!row) return notFound(c, 'Screen not found');
+      return conflict(c, readVersion(row));
+    }
     await recordScreenAudit(c, 'screen.updated', id, {
       changed_fields: Object.keys(body).sort(),
       base_preset_key: normalizeSettings(body.settings).base_preset_key ?? null,
+      version: expected + 1,
     });
-    return c.json({ screen: row ? toResponse(row) : null });
+    // The row as read after the change: its content and its version belong together (another
+    // change may already have followed, and then both are that change's).
+    const screen = row ? toResponse(row) : null;
+    if (screen) setEtag(c, screen.version);
+    return c.json({ screen });
   } catch (error) {
     log.error('Failed to update screen', { action: 'update' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to update screen' }, 500);
   }
 }
 
-export async function adminScreenDeleteHandler(c: AdminContext) {
+async function adminScreenDeleteUnguarded(c: AdminContext) {
   const log = getLogger(c).module('ADMIN_SCREENS');
   try {
     const tenantId = getTenantIdFromContext(c);
     const id = c.req.param('id');
     if (!id) return invalid(c, 'Screen id is required');
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const existing = await authCtx.coreAdapter.queryOne<{ is_system: number | boolean }>(
-      'SELECT is_system FROM screens WHERE tenant_id = ? AND id = ?',
+    const existing = await authCtx.coreAdapter.queryOne<Row>(
+      'SELECT id, screen_key, is_system, version FROM screens WHERE tenant_id = ? AND id = ?',
       [tenantId, id]
     );
     if (!existing) return notFound(c, 'Screen not found');
     if (readBoolean(existing.is_system, false))
       return invalid(c, 'System screens cannot be deleted');
-    await authCtx.coreAdapter.execute('DELETE FROM screens WHERE tenant_id = ? AND id = ?', [
-      tenantId,
-      id,
-    ]);
-    await recordScreenAudit(c, 'screen.deleted', id, {});
+    // If-Match is optional here (a delete names no content), but honoured when sent.
+    const expected = parseIfMatchVersion(c);
+    if (Number.isNaN(expected)) return invalid(c, 'If-Match must be a screen version');
+    if (expected !== null && readVersion(existing) !== expected) {
+      return conflict(c, readVersion(existing));
+    }
+    const screen = { id: String(existing.id), screen_key: String(existing.screen_key) };
+    const found = await collectScreenUsages(c.env, authCtx.coreAdapter, tenantId, [screen]);
+    if (!found.complete) {
+      return c.json(
+        {
+          error: 'screen_usage_unknown',
+          error_description:
+            'Where the screen is used could not be read in full, so it is not deleted',
+        },
+        409
+      );
+    }
+    const usages = found.usages.get(screen.id) ?? [];
+    if (usages.length > 0) {
+      return c.json(
+        {
+          error: 'screen_in_use',
+          error_description: 'The screen is used by flows or account pages',
+          usages,
+        },
+        409
+      );
+    }
+    const result = await authCtx.coreAdapter.execute(
+      `DELETE FROM screens
+        WHERE tenant_id = ? AND id = ?${expected === null ? '' : ' AND version = ?'}`,
+      expected === null ? [tenantId, id] : [tenantId, id, expected]
+    );
+    if (!(result.rowsAffected > 0)) {
+      const current = await authCtx.coreAdapter.queryOne<Row>(
+        'SELECT version FROM screens WHERE tenant_id = ? AND id = ?',
+        [tenantId, id]
+      );
+      if (!current) return notFound(c, 'Screen not found');
+      return conflict(c, readVersion(current));
+    }
+    await recordScreenAudit(c, 'screen.deleted', id, { screen_key: screen.screen_key });
     return c.json({ success: true });
   } catch (error) {
     log.error('Failed to delete screen', { action: 'delete' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to delete screen' }, 500);
   }
+}
+
+/**
+ * Screens of a tenant in lite mode: a screen that would be active with a block the lite Login UI
+ * cannot render is refused (lite-mode-guard.ts). Every active screen is judged, used or not, the
+ * same as the switch to lite mode judges them.
+ */
+async function liteScreenCandidateIssues(
+  c: AdminContext,
+  tenantId: string,
+  candidate: {
+    screen_key: string;
+    screen_kind: string;
+    fields: ScreenField[] | null;
+    active: boolean;
+  }
+) {
+  if (!candidate.active || !candidate.fields) return [];
+  const methods = await resolveLiteMethodState(c.env, tenantId);
+  return liteIssuesOfScreen({ ...candidate, fields: candidate.fields }, methods.enabled);
+}
+
+export async function adminScreenCreateHandler(c: AdminContext) {
+  const tenantId = getTenantIdFromContext(c);
+  return runLiteGuardedWrite(c, tenantId, {
+    check: async () => {
+      const body = await c.req.json<Row>().catch(() => null);
+      if (!body) return [];
+      const rawKey = readTrimmed(body.screen_key) ?? readTrimmed(body.display_name);
+      return liteScreenCandidateIssues(c, tenantId, {
+        screen_key: rawKey ? normalizeScreenKey(rawKey) : '',
+        screen_kind: typeof body.screen_kind === 'string' ? body.screen_kind : '',
+        fields: normalizeFields(body.fields),
+        active: body.is_active === undefined ? true : readBoolean(body.is_active, true),
+      });
+    },
+    write: () => adminScreenCreateUnguarded(c),
+  });
+}
+
+export async function adminScreenUpdateHandler(c: AdminContext) {
+  const tenantId = getTenantIdFromContext(c);
+  return runLiteGuardedWrite(c, tenantId, {
+    check: async () => {
+      const body = await c.req.json<Row>().catch(() => null);
+      const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+      const existing = await db.queryOne<Row>(
+        'SELECT id, screen_key, screen_kind, fields_json, is_active, is_system FROM screens WHERE tenant_id = ? AND id = ?',
+        [tenantId, c.req.param('id')]
+      );
+      if (!body || !existing || readBoolean(existing.is_system, false)) return [];
+      const screenKey = typeof existing.screen_key === 'string' ? existing.screen_key : '';
+      const wasActive = readBoolean(existing.is_active, false);
+      // Read as the save reads it (adminScreenUpdateUnguarded), so the two cannot disagree.
+      const active = body.is_active !== undefined ? readBoolean(body.is_active, true) : wasActive;
+      if (wasActive && !active) {
+        return liteIssuesOfScreenRemoval(db, tenantId, {
+          id: String(existing.id),
+          screen_key: screenKey,
+        });
+      }
+      return liteScreenCandidateIssues(c, tenantId, {
+        screen_key: screenKey,
+        screen_kind:
+          typeof body.screen_kind === 'string'
+            ? body.screen_kind
+            : typeof existing.screen_kind === 'string'
+              ? existing.screen_kind
+              : '',
+        fields:
+          body.fields !== undefined
+            ? normalizeFields(body.fields)
+            : parseJson<ScreenField[]>(existing.fields_json, []),
+        active,
+      });
+    },
+    write: () => adminScreenUpdateUnguarded(c),
+  });
+}
+
+/**
+ * Deleting a screen of a tenant in lite mode: refused when an assigned sign-in or sign-up Flow
+ * would then name a screen that does not resolve.
+ */
+export async function adminScreenDeleteHandler(c: AdminContext) {
+  const tenantId = getTenantIdFromContext(c);
+  return runLiteGuardedWrite(c, tenantId, {
+    check: async () => {
+      const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+      const existing = await db.queryOne<Row>(
+        'SELECT id, screen_key, is_active, is_system FROM screens WHERE tenant_id = ? AND id = ?',
+        [tenantId, c.req.param('id')]
+      );
+      if (!existing || readBoolean(existing.is_system, false)) return [];
+      if (!readBoolean(existing.is_active, false)) return [];
+      return liteIssuesOfScreenRemoval(db, tenantId, {
+        id: String(existing.id),
+        screen_key: typeof existing.screen_key === 'string' ? existing.screen_key : '',
+      });
+    },
+    write: () => adminScreenDeleteUnguarded(c),
+  });
 }

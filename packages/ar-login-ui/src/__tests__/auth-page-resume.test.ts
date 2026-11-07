@@ -8,8 +8,8 @@ function source(path: string): string {
 
 describe('auth page resume recovery', () => {
 	for (const [page, view] of [
-		['routes/login/+page.svelte', 'lib/views/LoginView.svelte'],
-		['routes/signup/+page.svelte', 'lib/views/SignupView.svelte']
+		['routes/(main)/login/+page.svelte', 'lib/views/LoginView.svelte'],
+		['routes/(main)/signup/+page.svelte', 'lib/views/SignupView.svelte']
 	]) {
 		it(`waits for the initial runtime contract without hiding the ${page} card on resume`, () => {
 			const pageSource = source(page);
@@ -30,10 +30,10 @@ describe('auth page resume recovery', () => {
 	}
 
 	it('preserves the authorization context in both auth switch links', () => {
-		expect(source('routes/login/+page.svelte')).toContain(
+		expect(source('routes/(main)/login/+page.svelte')).toContain(
 			"buildAuthSwitchHref('/signup', page.url.searchParams)"
 		);
-		expect(source('routes/signup/+page.svelte')).toContain(
+		expect(source('routes/(main)/signup/+page.svelte')).toContain(
 			"buildAuthSwitchHref('/login', page.url.searchParams)"
 		);
 	});

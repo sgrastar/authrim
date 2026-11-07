@@ -482,7 +482,12 @@ const th = createTranslation({
 	login_signingInTo: 'กำลังเข้าสู่ระบบ',
 	common_contactSupport: 'ติดต่อฝ่ายสนับสนุน',
 	common_dismissAlert: 'ปิดการแจ้งเตือน',
-	emailCode_digitLabel: 'หลักที่ {position} จาก 6'
+	emailCode_digitLabel: 'หลักที่ {position} จาก 6',
+	lite_javascriptRequired:
+		'หน้านี้จะตรวจสอบความปลอดภัยในเบราว์เซอร์ของคุณ เปิด JavaScript แล้วโหลดหน้านี้ใหม่',
+	lite_passkeyUnsupported: 'เบราว์เซอร์นี้ใช้พาสคีย์ที่นี่ไม่ได้ เลือกวิธีอื่นในการลงชื่อเข้าใช้',
+	lite_passkeyFailed:
+		'การลงชื่อเข้าใช้ด้วยพาสคีย์ไม่เสร็จสมบูรณ์ ลองอีกครั้ง หรือเลือกวิธีอื่นในการลงชื่อเข้าใช้'
 });
 
 export default th;

@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
+  AdminGroupRepository,
   AdminRoleRepository,
   AdminUserRepository,
   generateAdminInvitationCode,
@@ -20,13 +21,27 @@ import {
 import { ensureCrossTenantPlacement } from './cross-tenant-placement';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
-import { callerOutranksGlobally } from './admin-role-authority';
+import { callerOutranks, callerOutranksGlobally } from './admin-role-authority';
 
 const DEFAULT_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_EMAIL_LENGTH = 320;
 const MAX_ADMIN_NAME_LENGTH = 200;
 const MAX_IDENTIFIER_LENGTH = 256;
+const MAX_INVITATION_GROUPS = 10;
+
+/** The admin groups named by an invitation: distinct IDs, at most a few; null when malformed. */
+function readGroupIds(value: unknown): string[] | null {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > MAX_INVITATION_GROUPS) return null;
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string' || !item.trim() || item.length > MAX_IDENTIFIER_LENGTH)
+      return null;
+    ids.add(item.trim());
+  }
+  return [...ids];
+}
 
 interface AdminInvitationRow {
   id: string;
@@ -77,6 +92,26 @@ function hasInvitationWritePermission(auth: AdminAuthContext): boolean {
     hasAdminPermission(permissions, ADMIN_PERMISSIONS.ADMIN_USERS_WRITE) &&
     hasAdminPermission(permissions, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE)
   );
+}
+
+/**
+ * Whether the caller may hand out `role` by invitation, for `scopeType`: the role ranks below
+ * them, and a global one below their global rank. The one exception is a peer `ar_super_admin`
+ * invitation from a caller holding the wildcard from a global assignment. Creating and resending
+ * an invitation both ask it (a resend brings the invitation back, so it grants the role again).
+ */
+function callerMayInviteRole(
+  auth: AdminAuthContext,
+  role: { name: string; hierarchy_level: number },
+  scopeType: 'tenant' | 'global'
+): boolean {
+  const invitingPeerSuperAdmin =
+    role.name === ADMIN_ROLES.SUPER_ADMIN && hasGlobalAdminPermission(auth, '*');
+  if (invitingPeerSuperAdmin) return true;
+  if (auth.hierarchyLevel !== undefined && role.hierarchy_level >= auth.hierarchyLevel) {
+    return false;
+  }
+  return scopeType !== 'global' || callerOutranksGlobally(auth, role.hierarchy_level);
 }
 
 function formatInvitation(row: AdminInvitationRow) {
@@ -261,7 +296,9 @@ adminInvitationsRouter.post('/', async (c) => {
   const roleExpiresAt = body.role_expires_at;
   const expiresInHours = body.expires_in_hours;
   const restrictionRequested = body.ip_restriction_enabled;
+  const groupIds = readGroupIds(body.group_ids);
   if (
+    groupIds === null ||
     !email ||
     email.length > MAX_EMAIL_LENGTH ||
     !/^\S+@\S+\.\S+$/.test(email) ||
@@ -301,12 +338,7 @@ adminInvitationsRouter.post('/', async (c) => {
   // A global invitation (and an ar_super_admin one is always global) takes effect for every tenant,
   // so it needs the wildcard from a global assignment, not one that is only held for this tenant.
   const wildcardAuthority = hasGlobalAdminPermission(auth, '*');
-  const invitingPeerSuperAdmin = role.name === ADMIN_ROLES.SUPER_ADMIN && wildcardAuthority;
-  if (
-    auth.hierarchyLevel !== undefined &&
-    role.hierarchy_level >= auth.hierarchyLevel &&
-    !invitingPeerSuperAdmin
-  ) {
+  if (!callerMayInviteRole(auth, role, 'tenant')) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
 
@@ -322,11 +354,7 @@ adminInvitationsRouter.post('/', async (c) => {
   }
   // A global invitation is a global assignment once accepted, so the role is measured by the
   // caller's global hierarchy (a peer ar_super_admin invitation is the one exception, as above).
-  if (
-    scopeType === 'global' &&
-    !invitingPeerSuperAdmin &&
-    !callerOutranksGlobally(auth, role.hierarchy_level)
-  ) {
+  if (!callerMayInviteRole(auth, role, scopeType)) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
   // The invited admin is homed in this (request) tenant.
@@ -335,6 +363,22 @@ adminInvitationsRouter.post('/', async (c) => {
     homeTenantId: tenantId,
   });
   if (placementRefusal) return placementRefusal;
+  // The groups the admin joins on enrolment: the caller must be able to give every role each one
+  // gives now, and the invitation keeps the version judged, so a group whose grants change before
+  // enrolment is not joined.
+  const groups = new AdminGroupRepository(adapter, tenantId);
+  const groupRevisions: Array<{ id: string; name: string; revision: number }> = [];
+  for (const groupId of groupIds) {
+    const [group, snapshot] = await Promise.all([
+      groups.get(groupId),
+      groups.grantSnapshot(groupId),
+    ]);
+    if (!group || !snapshot) return c.json({ error: 'admin_group_not_found' }, 404);
+    if (!snapshot.grants.every((grant) => callerOutranks(auth, grant.hierarchy_level))) {
+      return c.json({ error: 'insufficient_permissions' }, 403);
+    }
+    groupRevisions.push({ id: groupId, name: group.display_name, revision: snapshot.revision });
+  }
   if (roleExpiresAt !== undefined && (!Number.isFinite(roleExpiresAt) || roleExpiresAt <= now)) {
     return c.json({ error: 'invalid_role_expiry' }, 400);
   }
@@ -387,6 +431,7 @@ adminInvitationsRouter.post('/', async (c) => {
       expires_in_hours: expiresInHours ?? null,
       ip_restriction_enabled: restrictionEnabled,
       allowed_ip_ranges: [...allowedIpRanges].sort(),
+      ...(groupIds.length > 0 ? { admin_groups: [...groupIds].sort() } : {}),
     },
   });
   if (stepUpRefused) return stepUpRefused;
@@ -405,15 +450,15 @@ adminInvitationsRouter.post('/', async (c) => {
   const adminUserId = generateId();
 
   try {
-    await adapter.execute(
-      `INSERT INTO admin_invitations (
+    const invitationInsert = {
+      sql: `INSERT INTO admin_invitations (
          id, tenant_id, admin_user_id, email, name, code_hash, status, admin_role_id,
          scope_type, scope_id, role_expires_at, ip_restriction_enabled,
          allowed_ip_ranges_json, expires_at, last_sent_at,
          last_delivery_status, created_by, created_at, updated_at, pending_email_key,
          admin_role_name, admin_role_display_name
        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
-      [
+      params: [
         invitationId,
         tenantId,
         adminUserId,
@@ -434,8 +479,23 @@ adminInvitationsRouter.post('/', async (c) => {
         email,
         role.name,
         role.display_name,
-      ]
-    );
+      ],
+    };
+    if (groupRevisions.length === 0) {
+      await adapter.execute(invitationInsert.sql, invitationInsert.params);
+    } else {
+      // The invitation and the groups it names go in together.
+      await adapter.batch([
+        invitationInsert,
+        ...groupRevisions.map((group) => ({
+          sql: `INSERT INTO admin_invitation_groups
+                  (id, tenant_id, invitation_id, admin_group_id, group_display_name, group_revision,
+                   created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          params: [generateId(), tenantId, invitationId, group.id, group.name, group.revision, now],
+        })),
+      ]);
+    }
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       return c.json(
@@ -524,6 +584,34 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
   });
   if (placementRefusal) return placementRefusal;
 
+  // The invitation's own role, as it is now (its rank may have changed since): bringing the
+  // invitation back grants it again, so the caller must be allowed to, as when creating it.
+  const role = await new AdminRoleRepository(adapter).getRole(invitation.admin_role_id);
+  if (!role || (role.tenant_id !== tenantId && !(role.tenant_id === 'default' && role.is_system))) {
+    return c.json({ error: 'role_not_found' }, 404);
+  }
+  if (!callerMayInviteRole(auth, role, invitation.scope_type === 'global' ? 'global' : 'tenant')) {
+    return c.json({ error: 'insufficient_permissions' }, 403);
+  }
+
+  // The groups the invitation names hand out their roles on enrolment, as long as each is still
+  // the version it was made with: bringing it back is giving those roles again, so the caller must
+  // outrank them, as when adding a member. A group that changed since will not be joined anyway.
+  const invitationGroups = await adapter.query<{ admin_group_id: string; group_revision: number }>(
+    `SELECT admin_group_id, group_revision FROM admin_invitation_groups
+      WHERE invitation_id = ? AND tenant_id = ?
+      ORDER BY admin_group_id`,
+    [invitation.id, tenantId]
+  );
+  const groups = new AdminGroupRepository(adapter, tenantId);
+  for (const named of invitationGroups) {
+    const snapshot = await groups.grantSnapshot(named.admin_group_id);
+    if (!snapshot || snapshot.revision !== Number(named.group_revision)) continue;
+    if (!snapshot.grants.every((grant) => callerOutranks(auth, grant.hierarchy_level))) {
+      return c.json({ error: 'insufficient_permissions' }, 403);
+    }
+  }
+
   // A resend issues a new code and a new validity window, bringing an expired invitation back, so
   // it is a role grant again. Spent right before the update.
   const stepUpRefused = await requireAdminStepUp(c as never, {
@@ -538,6 +626,13 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
       scope_type: invitation.scope_type,
       scope_id: invitation.scope_id,
       role_expires_at: invitation.role_expires_at,
+      ...(invitationGroups.length > 0
+        ? {
+            admin_groups: invitationGroups.map(
+              (group) => `${group.admin_group_id}@${Number(group.group_revision)}`
+            ),
+          }
+        : {}),
     },
   });
   if (stepUpRefused) return stepUpRefused;

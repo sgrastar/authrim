@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { apiAssetUrl } from '#lib/api/assets.js';
 	import ImageUpload from '#lib/ui/patterns/ImageUpload.svelte';
 	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
 	import Slider from '#lib/ui/primitives/Slider.svelte';
@@ -18,6 +19,7 @@
 
 <ThemeGroup title={t('th.g.logo')} info={t('th.g.logo.d')}>
 	<ImageUpload
+		resolveUrl={apiAssetUrl}
 		label={t('th.i.logo')}
 		shape="square"
 		maxBytes={512 * 1024}
@@ -27,6 +29,7 @@
 
 <ThemeGroup title={t('th.g.favicon')} info={t('th.g.favicon.d')}>
 	<ImageUpload
+		resolveUrl={apiAssetUrl}
 		label={t('th.i.favicon')}
 		shape="square"
 		accept="image/png,image/svg+xml,.ico"
@@ -37,6 +40,7 @@
 
 <ThemeGroup title={t('th.g.bgImage')} info={t('th.g.bgImage.d')}>
 	<ImageUpload
+		resolveUrl={apiAssetUrl}
 		label={t('th.i.bgImage')}
 		shape="square"
 		maxBytes={2 * 1024 * 1024}
@@ -55,6 +59,7 @@
 {#if split}
 	<ThemeGroup title={t('th.g.panelImage')} info={t('th.g.panelImage.d')}>
 		<ImageUpload
+			resolveUrl={apiAssetUrl}
 			label={t('th.i.panelImage')}
 			shape="square"
 			maxBytes={2 * 1024 * 1024}
@@ -78,6 +83,7 @@
 {#if hasCard}
 	<ThemeGroup title={t('th.g.cardImage')} info={t('th.g.cardImage.d')}>
 		<ImageUpload
+			resolveUrl={apiAssetUrl}
 			label={t('th.i.cardImage')}
 			shape="square"
 			maxBytes={2 * 1024 * 1024}

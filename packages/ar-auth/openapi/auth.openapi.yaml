@@ -808,6 +808,61 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/DIDUnlink'
+  /api/auth/human-verification/pow-challenge:
+    get:
+      tags:
+        - Human Verification
+      operationId: getApiAuthHumanVerificationPowChallenge
+      summary: Issue a lite Login UI proof-of-work challenge
+      description: >-
+        For a tenant in lite mode only (404 otherwise). Returns an ALTCHA v1 challenge bound to
+        the tenant, the action and the tenant's current lite policy revision. The browser finds the
+        hidden number and sends base64(JSON {algorithm, challenge, number, salt, signature}) as
+        `human_verification_response`; each proof is accepted once, until it expires. Issues are
+        limited per IP and per tenant, atomically (429, or 503 when the counter is unavailable).
+        Never cached.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [login, signup, reauth]
+      responses:
+        '200':
+          description: The challenge.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge, policy_revision]
+                properties:
+                  challenge:
+                    type: object
+                    required: [algorithm, challenge, maxnumber, salt, signature]
+                    properties:
+                      algorithm:
+                        type: string
+                        enum: [SHA-256]
+                      challenge:
+                        type: string
+                      maxnumber:
+                        type: integer
+                      salt:
+                        type: string
+                      signature:
+                        type: string
+                  policy_revision:
+                    type: string
+        '400':
+          description: invalid_request (unknown action).
+        '404':
+          description: The tenant is not in lite mode.
+        '429':
+          description: rate_limit_exceeded (with Retry-After).
+        '503':
+          description: temporarily_unavailable (no keyring, or the policy or counter cannot be read).
   /api/auth/guest/login:
     post:
       tags:
@@ -1431,7 +1486,21 @@ paths:
         Advances the active runtime Flow step after verifying CSRF, interaction state, expiry,
         contract hash, HMAC signature, and current step identity. Step input is interpreted by the
         active runtime component; consent-policy input records consent item decisions and
-        Destination Profile field selections for the authenticated user.
+        Destination Profile field selections for the authenticated user. A `screen` step submitted
+        with `submitted` checks `input.fields` against the step's screen as the server resolves it
+        (only the input parts it shows, required parts, choice values, types) and stores the
+        answers of parts kept on the profile for the signed-in user: the standard profile fields a
+        login may update, and custom attributes through the Identity Schema's checked write.
+        Identifiers and contacts (email, phone, preferred_username) are never written this way,
+        and an answer kept off the profile is never written to the profile: it goes where its
+        part's `answer_targets` say. With `flow_event`, a choice (select, radio, checkbox) is kept
+        with the interaction by step, and every answer, free text included, is carried by the
+        `flow.screen.submitted` webhook event only (not written to the audit log). With `record`,
+        the answers are kept as the signed-in user's response record (one per visit of the step,
+        replaced by a submit sent again). Profile and record answers need a session (401
+        `AR_FLOW_SCREEN_ANSWERS_AUTH_REQUIRED` otherwise). A screen with a sign-in part (an auth
+        widget, a code input, a guest sign-in) is a sign-in, not a form: its `submitted` reads no
+        answers.
       parameters:
         - name: interaction_id
           in: path
@@ -1483,6 +1552,22 @@ paths:
                         must be true; optional fields set to false are omitted from release.
                       additionalProperties:
                         type: boolean
+                    fields:
+                      type: object
+                      description: >
+                        A `screen` step's answers, keyed by each input part's `field`. A checkbox
+                        is a boolean (or 'true'/'false'); a select or radio part one of its
+                        choices' values; a text part a string of at most 1000 characters; null
+                        leaves a part empty (and changes nothing stored). A key the screen does
+                        not show refuses the submit with 400 `invalid_screen_answers`, with
+                        `problem` (unknown_field, required, invalid_value, too_long,
+                        invalid_input, invalid_profile_value) and `field`. A profile answer
+                        without a signed-in session is answered 401 `authentication_required`.
+                      additionalProperties:
+                        type:
+                          - string
+                          - boolean
+                          - 'null'
       responses:
         '200':
           description: Updated runtime interaction state and next step.
@@ -1526,6 +1611,8 @@ paths:
                         additionalProperties: true
                         description: Protocol-specific continuation metadata for OIDC, SAML, or direct flows.
         '400':
+          $ref: '#/components/responses/Error'
+        '401':
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
@@ -4098,6 +4185,13 @@ components:
           type: string
           minLength: 1
           description: Email address or username/user identifier.
+        human_verification_response:
+          type: string
+          maxLength: 2048
+          description: >-
+            Required for a tenant in lite mode when its policy requires human verification for
+            sign-in (or re-authentication): the lite Login UI's proof of work, base64 of the
+            ALTCHA v1 JSON. Ignored otherwise.
         authorization_challenge_id:
           type: string
           minLength: 1

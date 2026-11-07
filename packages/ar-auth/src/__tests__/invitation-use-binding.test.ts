@@ -23,7 +23,7 @@ describe('invitation use is bound to the account being signed up', () => {
       'packages/ar-router/src/index.ts',
       'packages/ar-auth/openapi/auth.openapi.yaml',
       'packages/ar-auth/src/invitation-handlers.ts',
-      'packages/ar-login-ui/src/routes/signup/+page.svelte',
+      'packages/ar-login-ui/src/routes/(main)/signup/+page.svelte',
     ]) {
       expect(readRepositoryFile(path), path).not.toContain(publicUsePath);
     }

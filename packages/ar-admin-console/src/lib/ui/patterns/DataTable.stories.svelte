@@ -98,6 +98,30 @@
 	{/snippet}
 </Story>
 
+<Story name="Dense rows">
+	{#snippet template()}
+		<Card flush>
+			<DataTable
+				caption={sample('flowsTitle')}
+				columns={columns()}
+				rows={flows}
+				rowKey={(row) => row.id}
+				dense
+			>
+				{#snippet cell(row, column)}
+					{#if column.key === 'name'}<strong>{sample(row.name as 'flowLogin')}</strong>
+					{:else if column.key === 'protocol'}<code>{row.protocol}</code>
+					{:else if column.key === 'status'}
+						<Badge tone={row.on ? 'success' : 'neutral'} dot>
+							{row.on ? sample('enabled') : sample('disabled')}
+						</Badge>
+					{:else}{row.todo === 0 ? sample('configured') : sample('missing')}{/if}
+				{/snippet}
+			</DataTable>
+		</Card>
+	{/snippet}
+</Story>
+
 <Story name="Empty">
 	{#snippet template()}
 		<Card flush>

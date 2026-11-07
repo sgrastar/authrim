@@ -34,7 +34,18 @@ export interface FakeSchemaSettingOptions {
 	/** This many more attributes of the tenant's own, to see a long list. */
 	extra?: number;
 	now?: number;
+	/**
+	 * How many users hold each value of an enum attribute, by attribute key: removing a held
+	 * choice is refused, as at the API. Default: 12 users hold "Sales" of `department`.
+	 */
+	heldValues?: Record<string, Record<string, number>>;
 }
+
+/** The values of enum rules (their options, else their bare values). */
+const enumValuesOf = (rules: Schema['validation']) =>
+	rules?.enum_options?.length
+		? rules.enum_options.map((option) => option.value)
+		: (rules?.enum_values ?? []);
 
 const DAY = 86_400_000;
 
@@ -317,6 +328,7 @@ export function createFakeSchemaSetting(
 	let schemas = options.empty ? [] : [...sampleSchemas(now), ...filler(now, options.extra ?? 0)];
 	const history = new Map<string, HistoryDetail[]>();
 	let failPartially = options.failPartially ?? false;
+	const heldValues = options.heldValues ?? { department: { Sales: 12 } };
 	let counter = 100;
 
 	const pause = () =>
@@ -447,6 +459,19 @@ export function createFakeSchemaSetting(
 				});
 			if (change.label !== undefined && (!change.label.trim() || change.label.length > 255))
 				throw invalid();
+			// A choice users hold cannot be taken out (as at the API).
+			if (schema.type === 'enum' && change.validation !== undefined) {
+				const kept = new Set(enumValuesOf(change.validation));
+				const held = Object.entries(heldValues[schema.fieldKey] ?? {}).filter(
+					([value, users]) => users > 0 && kept.size > 0 && !kept.has(value)
+				);
+				if (held.length > 0)
+					throw new ApiError(409, 'enum_value_in_use', 'Users still hold some choices.', {
+						error: 'enum_value_in_use',
+						reason: 'held',
+						values: held.map(([value, users]) => ({ value, users }))
+					});
+			}
 			if (change.cardinality && change.cardinality !== schema.cardinality && usersWith(schema) > 0)
 				throw new ApiError(409, 'invalid_request', 'The request conflicts with existing data.', {
 					error: 'invalid_request'

@@ -145,13 +145,49 @@ describe('listCredentials', () => {
 				]
 			})
 		);
+		// An older server sends no second-factor field: it reads as false.
 		await expect(httpWalletCredentials.listCredentials()).resolves.toEqual([
-			{ id: 'c2', status: 'active', issuedAt: 2, expiresAt: 9, holderKeyThumbprint: 'abc' },
-			{ id: 'c1', status: 'revoked', issuedAt: 1, expiresAt: null }
+			{
+				id: 'c2',
+				status: 'active',
+				issuedAt: 2,
+				expiresAt: 9,
+				holderKeyThumbprint: 'abc',
+				secondFactor: false
+			},
+			{
+				id: 'c1',
+				status: 'revoked',
+				issuedAt: 1,
+				expiresAt: null,
+				secondFactor: false
+			}
 		]);
 		expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
 			'/api/admin/me/wallet-credentials'
 		);
+	});
+
+	it('passes on which credentials carry a second factor', async () => {
+		stubFetch(
+			json(200, {
+				items: [
+					{
+						id: 'c2',
+						status: 'active',
+						issuedAt: 2,
+						expiresAt: 9,
+						holderKeyThumbprint: 'abc',
+						secondFactor: true
+					},
+					// Anything but `true` is false.
+					{ id: 'c1', status: 'active', issuedAt: 1, expiresAt: 9, secondFactor: 'yes' }
+				]
+			})
+		);
+		const [first, second] = await httpWalletCredentials.listCredentials();
+		expect(first).toMatchObject({ secondFactor: true });
+		expect(second).toMatchObject({ secondFactor: false });
 	});
 
 	it('rejects a malformed list or an unknown status', async () => {

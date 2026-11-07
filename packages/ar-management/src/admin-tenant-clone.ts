@@ -624,7 +624,43 @@ async function estimateSelectedDatabaseQueries(
       (byte) => byte.toString(16).padStart(2, '0')
     ).join('');
     total += 1;
+    // The admin groups and the roles they give are copied too (not their members): what they
+    // give is part of what the receipt and the source check cover.
+    const groupRows = await admin.query<Record<string, unknown>>(
+      `SELECT grp.group_key, grp.display_name, grp.description, g.admin_role_id, g.expires_at
+         FROM admin_groups grp
+         LEFT JOIN admin_group_role_grants g
+           ON g.admin_group_id = grp.id AND g.tenant_id = grp.tenant_id
+          AND (g.expires_at IS NULL OR g.expires_at > ?)
+        WHERE grp.tenant_id = ?
+        ORDER BY grp.group_key, g.admin_role_id`,
+      [Date.now(), tenantId]
+    );
+    const groupsDigest = Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          'SHA-256',
+          new TextEncoder().encode(
+            JSON.stringify(
+              groupRows.map((row) => [
+                row.group_key,
+                row.display_name,
+                row.description ?? null,
+                row.admin_role_id ?? null,
+                row.expires_at ?? null,
+              ])
+            )
+          )
+        )
+      ),
+      (byte) => byte.toString(16).padStart(2, '0')
+    ).join('');
+    // One INSERT per group and one per grant the copy makes, and the reads that list them.
+    const groupCount = new Set(groupRows.map((row) => row.group_key)).size;
+    const grantCount = groupRows.filter((row) => row.admin_role_id != null).length;
+    total += 3 + groupCount + grantCount;
     Object.assign(sourceState, {
+      admin_groups_digest: groupsDigest,
       admin_roles: Number(adminCounts?.roles ?? 0),
       admin_roles_updated: adminCounts?.roles_updated ?? null,
       admin_assignments: Number(adminCounts?.assignments ?? 0),
@@ -1325,6 +1361,8 @@ async function cloneAdminAccess(
   assignments: number;
   skippedAssignments: number;
   unresolvedInheritance: number;
+  groups: number;
+  groupGrants: number;
 }> {
   const roles = await adapter.query<Record<string, unknown>>(
     `SELECT id, name, display_name, description, permissions_json, hierarchy_level, role_type,
@@ -1415,11 +1453,71 @@ async function cloneAdminAccess(
     );
     copied += 1;
   }
+  // Admin groups with the roles they give; their members are the source tenant's administrators
+  // and stay behind (a group holds its own tenant's administrators only).
+  const groups = await adapter.query<Record<string, unknown>>(
+    `SELECT id, group_key, display_name, description FROM admin_groups WHERE tenant_id = ?`,
+    [sourceTenantId]
+  );
+  const groupIdMap = new Map(groups.map((group) => [String(group.id), crypto.randomUUID()]));
+  for (const group of groups) {
+    await adapter.execute(
+      `INSERT INTO admin_groups
+         (id, tenant_id, group_key, display_name, description, revision, created_by, created_at,
+          updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, NULL, ?, ?)`,
+      [
+        groupIdMap.get(String(group.id)),
+        targetTenantId,
+        group.group_key,
+        group.display_name,
+        group.description ?? null,
+        now,
+        now,
+      ]
+    );
+  }
+  const grants = await adapter.query<Record<string, unknown>>(
+    `SELECT g.admin_group_id, g.admin_role_id, g.expires_at, g.assigned_by, r.is_system
+       FROM admin_group_role_grants g
+       JOIN admin_roles r ON r.id = g.admin_role_id
+      WHERE g.tenant_id = ? AND (g.expires_at IS NULL OR g.expires_at > ?)`,
+    [sourceTenantId, now]
+  );
+  let groupGrants = 0;
+  for (const grant of grants) {
+    const groupId = groupIdMap.get(String(grant.admin_group_id));
+    const roleId =
+      Number(grant.is_system) === 1
+        ? String(grant.admin_role_id)
+        : idMap.get(String(grant.admin_role_id));
+    if (!groupId || !roleId) continue;
+    await adapter.execute(
+      `INSERT INTO admin_group_role_grants
+         (id, tenant_id, admin_group_id, admin_role_id, scope_type, scope_id, expires_at,
+          assigned_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'tenant', ?, ?, ?, ?, ?)`,
+      [
+        crypto.randomUUID(),
+        targetTenantId,
+        groupId,
+        roleId,
+        targetTenantId,
+        grant.expires_at ?? null,
+        grant.assigned_by ?? null,
+        now,
+        now,
+      ]
+    );
+    groupGrants += 1;
+  }
   return {
     roles: roles.length,
     assignments: copied,
     skippedAssignments: skipped,
     unresolvedInheritance,
+    groups: groups.length,
+    groupGrants,
   };
 }
 
@@ -1733,6 +1831,8 @@ async function executeTenantCloneHandler(
       admin_role_assignments: 0,
       admin_role_assignments_skipped: 0,
       admin_role_inheritance_unresolved: 0,
+      admin_groups: 0,
+      admin_group_role_grants: 0,
       webhooks: 0,
       client_webhooks_skipped: 0,
     };
@@ -1918,6 +2018,8 @@ async function executeTenantCloneHandler(
       summary.admin_role_assignments = cloned.assignments;
       summary.admin_role_assignments_skipped = cloned.skippedAssignments;
       summary.admin_role_inheritance_unresolved = cloned.unresolvedInheritance;
+      summary.admin_groups = cloned.groups;
+      summary.admin_group_role_grants = cloned.groupGrants;
     }
     if (options.webhooks) {
       const cloned = await cloneWebhooks(
@@ -2098,6 +2200,10 @@ async function executeTenantCloneHandler(
             'DELETE FROM admin_role_assignments WHERE tenant_id = ?',
             [targetTenantId]
           );
+          // With their members and grants.
+          await internal.adminAdapter.execute('DELETE FROM admin_groups WHERE tenant_id = ?', [
+            targetTenantId,
+          ]);
           await internal.adminAdapter.execute(
             'DELETE FROM admin_roles WHERE tenant_id = ? AND is_system = 0',
             [targetTenantId]
@@ -2194,6 +2300,7 @@ export async function prepareTenantCloneForProvisioning(
   await adminAdapter.execute('DELETE FROM admin_role_assignments WHERE tenant_id = ?', [
     operation.tenantId,
   ]);
+  await adminAdapter.execute('DELETE FROM admin_groups WHERE tenant_id = ?', [operation.tenantId]);
   await adminAdapter.execute('DELETE FROM admin_roles WHERE tenant_id = ? AND is_system = 0', [
     operation.tenantId,
   ]);

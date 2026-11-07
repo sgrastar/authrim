@@ -109,6 +109,11 @@ export const deSchemaSetting: Record<keyof typeof jaSchemaSetting, string> = {
 	'ss.rules.enum_empty': 'Fügen Sie mindestens eine Auswahlmöglichkeit hinzu.',
 	'ss.rules.enum_too_many': 'Bis zu 100 Auswahlmöglichkeiten.',
 	'ss.rules.enum_duplicate': 'Eine Auswahlmöglichkeit kommt doppelt vor.',
+	'ss.rules.enum_value_empty': 'Eine Auswahlmöglichkeit hat keinen Wert.',
+	'ss.rules.enum_value_too_long': 'Ein Wert darf höchstens 128 Zeichen haben.',
+	'ss.rules.enum_label_too_long': 'Eine Bezeichnung darf höchstens 100 Zeichen haben.',
+	'ss.rules.enumLabels': 'Bezeichnungen nach Sprache',
+	'ss.rules.enumDefaultLabel': 'Standardbezeichnung',
 	'ss.rules.date_order': 'Das späteste Datum muss am oder nach dem frühesten Datum liegen.',
 	'ss.rules.too_large': 'Die Validierungsregeln sind zu umfangreich.',
 	'ss.section.identity': 'Identität',
@@ -239,6 +244,14 @@ export const deSchemaSetting: Record<keyof typeof jaSchemaSetting, string> = {
 	'ss.error.partial':
 		'Die Werte einiger Benutzer konnten nicht verarbeitet werden. Das Attribut ist als „Fehlgeschlagen“ markiert: Versuchen Sie es erneut.',
 	'ss.error.failed': 'Es ist fehlgeschlagen. Versuchen Sie es erneut.',
+	'ss.error.valuesInUse':
+		'Nutzer haben {values} gewählt, daher können diese Auswahlmöglichkeiten nicht entfernt werden. Ändern Sie zuerst deren Werte.',
+	'ss.error.valueHeld': '„{value}“ ({count} Nutzer)',
+	'ss.error.listSeparator': ', ',
+	'ss.error.valuesInUseEncrypted':
+		'Dieses Attribut ist verschlüsselt, daher lassen sich seine Nutzer nicht nach Wert zählen. Auswahlmöglichkeiten können nicht entfernt werden, solange ein Nutzer das Attribut hat.',
+	'ss.error.valuesInUseUnverifiable':
+		'Dieses Attribut hat zu viele Nutzer, um alle Werte zu prüfen, daher lassen sich die Auswahlmöglichkeiten hier nicht einschränken. Wenden Sie sich an den Support.',
 	'ss.usage.col.type': 'Art',
 	'ss.usage.col.target': 'Verwendet von',
 	'ss.usage.col.protection': 'Löschen',

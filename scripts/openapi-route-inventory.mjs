@@ -178,6 +178,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/admin-groups.ts',
+        receiverPrefixes: {
+          adminGroupsRouter: '/api/admin/admin-groups',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-approvals.ts',
         receiverPrefixes: {
           adminApprovalsRouter: '/api/admin/approvals',
@@ -253,6 +259,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/admin-last-resort-recovery.ts',
+        receiverPrefixes: {
+          adminLastResortRecoveryRouter: '/api/admin/platform/last-resort-recovery',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-second-factor-recoveries.ts',
         receiverPrefixes: {
           adminSecondFactorRecoveriesRouter: '/api/admin/admin-second-factor-recoveries',
@@ -269,6 +281,12 @@ const packageSpecs = [
         file: 'packages/ar-management/src/routes/admin-management/login-ui-themes.ts',
         receiverPrefixes: {
           loginUIThemesRouter: '/api/admin/login-ui/themes',
+        },
+      },
+      {
+        file: 'packages/ar-management/src/routes/admin-management/login-ui-lite-mode.ts',
+        receiverPrefixes: {
+          loginUILiteModeRouter: '/api/admin/login-ui/lite-mode',
         },
       },
       {

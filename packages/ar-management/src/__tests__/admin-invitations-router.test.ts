@@ -124,6 +124,8 @@ describe('adminInvitationsRouter', () => {
       is_system: false,
     });
     adapter.queryOne.mockResolvedValue(null);
+    // No admin groups named by default
+    adapter.query.mockResolvedValue([]);
     adapter.execute.mockResolvedValue({ rowsAffected: 1 });
     adapter.batch.mockResolvedValue([{ rowsAffected: 1 }, { rowsAffected: 0 }]);
     notifier.send.mockResolvedValue({ success: true });
@@ -509,6 +511,132 @@ describe('adminInvitationsRouter', () => {
     await expect(response.json()).resolves.toEqual({ error: 'invitation_resend_conflict' });
     expect(notifier.send).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
+  });
+
+  describe('a resend grants the role again, so it is held to the caller as creating it is', () => {
+    const pendingInvitation = (partial: Record<string, unknown> = {}) => ({
+      id: 'invitation_1',
+      tenant_id: 'tenant_123',
+      email: 'admin@example.com',
+      name: null,
+      code_hash: 'previous-code-hash',
+      status: 'pending',
+      admin_role_id: 'role_ar_tenant_admin',
+      role_name: 'ar_tenant_admin',
+      role_display_name: 'Administrator',
+      scope_type: 'tenant',
+      scope_id: 'tenant_123',
+      role_expires_at: null,
+      ip_restriction_enabled: 0,
+      allowed_ip_ranges_json: '[]',
+      expires_at: Date.now() - 60_000,
+      last_sent_at: Date.now(),
+      last_delivery_status: 'sent',
+      accepted_at: null,
+      created_by: 'admin_actor',
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      ...partial,
+    });
+    const resend = (
+      app: ReturnType<typeof createTestApp>['app'],
+      env: ReturnType<typeof createTestApp>['env'],
+      headers: Record<string, string> = {}
+    ) =>
+      app.request(
+        '/api/admin/admin-invitations/invitation_1/resend',
+        {
+          method: 'POST',
+          headers: { 'x-test-permissions': invitationPermissions(), ...headers },
+        },
+        env
+      );
+
+    it("refuses a caller who does not outrank the invitation's role", async () => {
+      adapter.queryOne.mockResolvedValueOnce(pendingInvitation());
+      repo.getRole.mockResolvedValue({
+        id: 'role_ar_tenant_admin',
+        tenant_id: 'tenant_123',
+        name: 'ar_tenant_admin',
+        display_name: 'Administrator',
+        hierarchy_level: 80,
+        is_system: false,
+      });
+      const { app, env } = createTestApp();
+
+      const response = await resend(app, env, { 'x-test-hierarchy-level': '80' });
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: 'insufficient_permissions' });
+      expect(gate).not.toHaveBeenCalled();
+      expect(adapter.batch).not.toHaveBeenCalled();
+      expect(notifier.send).not.toHaveBeenCalled();
+    });
+
+    it('measures the role as it is now, not as it was when invited', async () => {
+      adapter.queryOne.mockResolvedValueOnce(pendingInvitation());
+      // Raised since the invitation was made.
+      repo.getRole.mockResolvedValue({
+        id: 'role_ar_tenant_admin',
+        tenant_id: 'tenant_123',
+        name: 'ar_tenant_admin',
+        display_name: 'Administrator',
+        hierarchy_level: 120,
+        is_system: false,
+      });
+      const { app, env } = createTestApp();
+
+      const response = await resend(app, env);
+
+      expect(response.status).toBe(403);
+      expect(adapter.batch).not.toHaveBeenCalled();
+    });
+
+    it('answers role_not_found when the role is gone', async () => {
+      adapter.queryOne.mockResolvedValueOnce(pendingInvitation());
+      repo.getRole.mockResolvedValue(null);
+      const { app, env } = createTestApp();
+
+      const response = await resend(app, env);
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toEqual({ error: 'role_not_found' });
+      expect(adapter.batch).not.toHaveBeenCalled();
+    });
+
+    it('still lets a wildcard-authorized Admin resend a peer ar_super_admin invitation', async () => {
+      adapter.queryOne.mockResolvedValueOnce(
+        pendingInvitation({
+          admin_role_id: 'role_ar_super_admin',
+          role_name: 'ar_super_admin',
+          scope_type: 'global',
+          scope_id: null,
+        })
+      );
+      repo.getRole.mockResolvedValue({
+        id: 'role_ar_super_admin',
+        tenant_id: 'default',
+        name: 'ar_super_admin',
+        display_name: 'Super Admin',
+        hierarchy_level: 0,
+        is_system: true,
+      });
+      const { app, env } = createTestApp();
+
+      const response = await resend(
+        app,
+        { ...env, DEFAULT_TENANT_ID: 'tenant_123' },
+        {
+          'x-test-permissions': invitationPermissions(['*']),
+          'x-test-global-permissions': '*',
+          'x-test-tenant-scope': '*',
+          'x-test-hierarchy-level': '0',
+        }
+      );
+
+      expect(response.status).toBe(200);
+      expect(adapter.batch).toHaveBeenCalledOnce();
+    });
   });
 
   it('never resends a global invitation for a home tenant other than the default', async () => {

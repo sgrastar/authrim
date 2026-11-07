@@ -21,7 +21,7 @@ const referenceSeeds: Readonly<Record<string, { rows: number; sha256: string }>>
   },
   screens: {
     rows: 4,
-    sha256: 'e6143abf08624b9b718ec0b32d90f01ecc9bc22f0a880903bbaa580edcacf841',
+    sha256: 'e965562e5f5113494e0a70e5a6ce29dc2dab50696dbaa3be6f912933df4650d7',
   },
 };
 

@@ -28,7 +28,7 @@ describe('UI URL sink guards', () => {
 		expect(discoverSource).toContain('class="tenant-option" {href}');
 		expect(discoverSource).not.toContain('href={candidate.login_url}');
 		expect(discoverSource).not.toContain('return candidate.login_url;');
-		expect(source('routes/discover/+page.svelte')).not.toContain('href=');
+		expect(source('routes/(main)/discover/+page.svelte')).not.toContain('href=');
 	});
 
 	it('guards external provider image URLs before using them as img src values', () => {
@@ -43,7 +43,7 @@ describe('UI URL sink guards', () => {
 			expect(componentSource).toContain('src={provider.iconUrl}');
 		}
 		// The routes hand the views (and the runtime screen) only an icon URL that passed the check.
-		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+		for (const page of ['routes/(main)/login/+page.svelte', 'routes/(main)/signup/+page.svelte']) {
 			const pageSource = source(page);
 
 			expect(pageSource).toContain(

@@ -20,6 +20,10 @@ export type ScreenBlockType =
 	| 'divider'
 	| 'layout_row'
 	| 'link'
+	/** Parts of the new admin console: shown here, edited there. */
+	| 'select'
+	| 'radio'
+	| 'checkbox'
 	| 'account_upgrade_widget'
 	| 'account_profile_widget'
 	| 'account_device_list_widget'
@@ -72,6 +76,31 @@ export interface ScreenField {
 	layout_columns?: number | null;
 	layout_column?: number | null;
 	order?: number;
+	/** Set by the new admin console only (this editor keeps a screen that has them read-only). */
+	show_label?: boolean;
+	store_to_profile?: boolean;
+	answer_targets?: string[];
+	options?: { value: string; label: string }[];
+}
+
+/** Block types only the new admin console edits. */
+const NEW_CONSOLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['select', 'radio', 'checkbox']);
+
+/**
+ * Whether a screen uses what only the new admin console edits: a choice or checkbox part, a hidden
+ * label, an answer kept off the profile, its own options, or a row of three columns. This editor
+ * would lose them on save (it knows none of them), so it shows such a screen without editing it.
+ */
+export function screenNeedsNewConsole(fields: readonly ScreenField[]): boolean {
+	return fields.some(
+		(field) =>
+			NEW_CONSOLE_BLOCK_TYPES.has(String(field.block_type ?? '')) ||
+			field.show_label === false ||
+			field.store_to_profile === false ||
+			(field.answer_targets?.length ?? 0) > 0 ||
+			(field.options?.length ?? 0) > 0 ||
+			(field.block_type === 'layout_row' && (field.layout_columns ?? 1) > 2)
+	);
 }
 
 export interface ScreenLocalization {
@@ -95,6 +124,8 @@ export interface Screen {
 	settings: ScreenSettings;
 	is_active: boolean | number;
 	is_system: boolean | number;
+	/** The change counter the API checks (If-Match) before saving over the screen. */
+	version?: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -114,11 +145,17 @@ async function parseResponse<T>(response: Response): Promise<T> {
 	return response.json() as Promise<T>;
 }
 
-function jsonRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
+function jsonRequest<T>(
+	path: string,
+	method: string,
+	body?: unknown,
+	headers?: Record<string, string>
+): Promise<T> {
 	return adminFetch(`${API_BASE_URL}${path}`, {
 		method,
 		includeJsonContentType: body !== undefined,
-		body: body === undefined ? undefined : JSON.stringify(body)
+		body: body === undefined ? undefined : JSON.stringify(body),
+		headers
 	}).then(parseResponse<T>);
 }
 
@@ -148,8 +185,10 @@ export const adminScreensAPI = {
 		return jsonRequest<{ screen: Screen }>('/api/admin/screens', 'POST', body);
 	},
 
+	/** `version` is the one the screen was read at: a change saved since then is refused (409). */
 	async update(
 		id: string,
+		version: number,
 		body: Partial<{
 			display_name: string;
 			description: string | null;
@@ -163,11 +202,17 @@ export const adminScreensAPI = {
 		return jsonRequest<{ screen: Screen }>(
 			`/api/admin/screens/${encodeURIComponent(id)}`,
 			'PUT',
-			body
+			body,
+			{ 'If-Match': `"${version}"` }
 		);
 	},
 
-	async delete(id: string) {
-		return jsonRequest<{ success: true }>(`/api/admin/screens/${encodeURIComponent(id)}`, 'DELETE');
+	async delete(id: string, version?: number) {
+		return jsonRequest<{ success: true }>(
+			`/api/admin/screens/${encodeURIComponent(id)}`,
+			'DELETE',
+			undefined,
+			version === undefined ? undefined : { 'If-Match': `"${version}"` }
+		);
 	}
 };

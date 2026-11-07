@@ -501,7 +501,13 @@ const translation = {
 	login_signingInTo: 'Inaingia kwenye:',
 	common_contactSupport: 'Wasiliana na msaada',
 	common_dismissAlert: 'Funga tahadhari',
-	emailCode_digitLabel: 'Tarakimu ya {position} kati ya 6'
+	emailCode_digitLabel: 'Tarakimu ya {position} kati ya 6',
+	lite_javascriptRequired:
+		'Ukurasa huu huendesha ukaguzi wa usalama katika kivinjari chako. Washa JavaScript, kisha pakia upya ukurasa.',
+	lite_passkeyUnsupported:
+		'Kivinjari hiki hakiwezi kutumia passkey hapa. Chagua njia nyingine ya kuingia.',
+	lite_passkeyFailed:
+		'Kuingia kwa passkey hakukukamilika. Jaribu tena, au chagua njia nyingine ya kuingia.'
 } satisfies Translation;
 
 export default translation;

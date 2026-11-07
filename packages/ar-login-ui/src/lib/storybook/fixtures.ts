@@ -149,7 +149,28 @@ export const blocks = {
 		value_type: 'boolean',
 		placeholder
 	}),
-	row: (columns: 1 | 2, id = 'row-1'): SampleField => ({
+	/** A checkbox part (its label is the box's text). */
+	tick: (field: string, label: string, extra: Record<string, unknown> = {}): SampleField => ({
+		field,
+		label,
+		block_type: 'checkbox',
+		...extra
+	}),
+	/** A select or radio part with its choices (as the run time sends them). */
+	choice: (
+		blockType: 'select' | 'radio',
+		field: string,
+		label: string,
+		options: Array<[string, string]>,
+		extra: Record<string, unknown> = {}
+	): SampleField => ({
+		field,
+		label,
+		block_type: blockType,
+		options: options.map(([value, optionLabel]) => ({ value, label: optionLabel })),
+		...extra
+	}),
+	row: (columns: 1 | 2 | 3, id = 'row-1'): SampleField => ({
 		field: `layout.${id}`,
 		label: 'Layout row',
 		block_type: 'layout_row',
@@ -233,7 +254,7 @@ const providers: ExternalProvider[] = [
 	}
 ];
 
-/** What routes/login maps `visibleExternalProviders` to before handing them to RuntimeScreen. */
+/** What routes/(main)/login maps `visibleExternalProviders` to before handing them to RuntimeScreen. */
 export const externalProviders = providers.map((provider) => ({
 	id: provider.id,
 	label: provider.name,

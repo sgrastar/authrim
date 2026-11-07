@@ -26,7 +26,7 @@
 			docs: {
 				description: {
 					component:
-						'Where a person types the six-digit code sent to their email. It shows the same accepted status whether or not the address has an account. The route (`src/routes/verify-email-code`) owns the requests and the resend countdown.'
+						'Where a person types the six-digit code sent to their email. It shows the same accepted status whether or not the address has an account. The route (`src/routes/(main)/verify-email-code`) owns the requests and the resend countdown.'
 				}
 			}
 		}

@@ -203,6 +203,7 @@
 					</p>
 					<p class="keyring__note">{t('keyring.confirm.check')}</p>
 					<Callout tone="warning">{t('keyring.confirm.mismatch')}</Callout>
+					<p class="keyring__note">{t('keyring.issued.factorNote')}</p>
 				{:else}
 					<Callout tone="warning">{t('keyring.confirm.mismatch')}</Callout>
 				{/if}

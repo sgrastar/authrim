@@ -9,7 +9,10 @@ import { jaSecurityKeys } from './security-keys/ja';
 import { jaKeyringPresentation } from './keyring-presentation/ja';
 import { jaNotices } from './notices/ja';
 import { jaCustomization } from './customization/ja';
+import { jaScreens } from './screens/ja';
 import { jaStepUp } from './step-up/ja';
+import { jaAdminAudit } from './admin-audit/ja';
+import { jaTeam } from './team/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -27,7 +30,10 @@ export const ja = {
 	...jaKeyringPresentation,
 	...jaNotices,
 	...jaCustomization,
+	...jaScreens,
 	...jaStepUp,
+	...jaAdminAudit,
+	...jaTeam,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
@@ -90,7 +96,8 @@ export const ja = {
 	'nav.set.domains': 'カスタムドメイン',
 	'nav.set.compliance': 'コンプライアンス',
 	'nav.set.team': '管理者ユーザー',
-	'nav.set.teamRoles': '役割の割り当て',
+	'nav.set.teamGroups': '管理者グループ',
+	'nav.set.teamRoles': '管理者ロール',
 	'nav.plat.tenants': 'テナント',
 	'nav.plat.releases': 'コントロールプレーン',
 	'nav.plat.scale': 'スケール',
@@ -915,6 +922,11 @@ export const ja = {
 	'keyring.credentials.noExpiry': '設定なし',
 	'keyring.credentials.revoke': '取り消す',
 	'keyring.credentials.revokeTitle': '資格情報 {code} を取り消しますか？',
+	'keyring.issued.factorNote':
+		'Keyring が今の資格情報を更新した場合は、鍵の確認コードが前と同じになり、2 つ目の要素もそのまま使えます。コードが変わった場合は新しい鍵なので、個人設定で Keyring を 2 つ目の要素として追加してください。',
+	'keyring.credentials.secondFactor': '2 つ目の要素',
+	'keyring.credentials.revokeRemovesFactor':
+		'この資格情報の鍵は 2 つ目の要素として登録されています。取り消すと、同じ鍵を使う資格情報（更新したものを含む）でも、2 つ目の要素として使えなくなります。古い資格情報は、取り消さなくても期限で使えなくなります。',
 	'keyring.credentials.revokeBody':
 		'この資格情報はすぐに使えなくなり、元に戻せません。Keyring をもう一度使うには、新しい資格情報を追加する必要があります。',
 	'keyring.credentials.revoked': '資格情報を取り消しました。',

@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Renders its children the way `src/routes/+layout.svelte` does: Login UI stores in context
+	 * Renders its children the way `src/routes/(main)/+layout.svelte` does: Login UI stores in context
 	 * and a `.login-ui-theme-boundary` carrying the data-* attributes that app.css keys on.
 	 *
 	 * The boundary is repeated here instead of imported because the layout owns it inline; the

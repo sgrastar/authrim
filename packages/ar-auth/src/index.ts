@@ -79,6 +79,10 @@ import {
   didUnlinkHandler,
 } from './did-link';
 import { guestLoginHandler } from './guest-login';
+import { litePowChallengeHandler, liteTenantBudget, refuseForLiteTenant } from './lite-mode';
+
+/** The atomic budget of endpoints a lite tenant reaches before human verification. */
+const LITE_LEGACY_BUDGET = { perIpPerMinute: 20, perTenantPerMinute: 2000 };
 import { setupApp } from './setup';
 import { adminSetupApiApp } from './admin-setup-api';
 import { adminInvitationEnrollmentApp } from './admin-invitation-enrollment';
@@ -574,6 +578,16 @@ app.use('/api/sessions/*', csrfProtectionMiddleware());
 app.use('/api/v1/auth/direct/*', csrfProtectionMiddleware());
 app.use('/api/v1/login/interactions/*', csrfProtectionMiddleware());
 app.use('/api/v1/login/interactions/start', authRequestDiagnosticCheckpoint('auth_csrf'));
+// A lite tenant's Flow interactions and their email verification challenges are written before
+// any human verification: counted atomically.
+app.use(
+  '/api/v1/login/interactions/start',
+  liteTenantBudget('liteFlowStart', { perIpPerMinute: 30, perTenantPerMinute: 3000 })
+);
+app.use(
+  '/api/v1/login/interactions/:interaction_id/email-verification/challenge',
+  liteTenantBudget('liteFlowEmailChallenge', { perIpPerMinute: 30, perTenantPerMinute: 3000 })
+);
 app.use('/auth/consent', csrfProtectionMiddleware());
 app.use('/api/flow/*', csrfProtectionMiddleware());
 app.use('/api/v1/invitations/email-verification/*', csrfProtectionMiddleware());
@@ -610,14 +624,25 @@ app.get('/par', (c) => {
 });
 
 // Passkey/WebAuthn endpoints
-app.post('/api/auth/passkeys/register/options', passkeyRegisterOptionsHandler);
-app.post('/api/auth/passkeys/register/verify', passkeyRegisterVerifyHandler);
-app.post('/api/auth/passkeys/login/options', passkeyLoginOptionsHandler);
+// The older registration and email-code endpoints create accounts without human verification:
+// a tenant in lite mode refuses them (lite-mode.ts). Passkey sign-in stays for the admin console
+// (passkey.ts limits it to administrators there); its challenges are counted atomically.
+app.post(
+  '/api/auth/passkeys/register/options',
+  refuseForLiteTenant(),
+  passkeyRegisterOptionsHandler
+);
+app.post('/api/auth/passkeys/register/verify', refuseForLiteTenant(), passkeyRegisterVerifyHandler);
+app.post(
+  '/api/auth/passkeys/login/options',
+  liteTenantBudget('litePasskeyOptions', LITE_LEGACY_BUDGET),
+  passkeyLoginOptionsHandler
+);
 app.post('/api/auth/passkeys/login/verify', passkeyLoginVerifyHandler);
 
 // Email Code (OTP) endpoints
-app.post('/api/auth/email-codes/send', emailCodeSendHandler);
-app.post('/api/auth/email-codes/verify', emailCodeVerifyHandler);
+app.post('/api/auth/email-codes/send', refuseForLiteTenant(), emailCodeSendHandler);
+app.post('/api/auth/email-codes/verify', refuseForLiteTenant(), emailCodeVerifyHandler);
 
 // TOTP endpoints
 app.post('/api/auth/totp/login/start', totpLoginStartHandler);
@@ -625,7 +650,8 @@ app.post('/api/auth/totp/login/verify', totpLoginVerifyHandler);
 app.post('/api/auth/totp/signup/options', totpSignupOptionsHandler);
 app.post('/api/auth/totp/signup/activate', totpSignupActivateHandler);
 
-// Directory Password endpoint
+// Directory Password endpoint (not in the lite Login UI)
+app.use('/api/auth/directory-password/*', refuseForLiteTenant());
 app.post('/api/auth/directory-password/login', directoryPasswordLoginHandler);
 app.post(
   '/api/auth/directory-password/migration/passkey/options',
@@ -651,8 +677,9 @@ app.get('/api/auth/directory-relay/connect/:tenantId/:connectorId', directoryRel
 
 // DID Authentication endpoints (Phase 9)
 // Challenge-response pattern for DID-based authentication
-app.post('/api/auth/dids/challenge', didAuthChallengeHandler);
-app.post('/api/auth/dids/verify', didAuthVerifyHandler);
+// DID sign-in is not in the lite Login UI.
+app.post('/api/auth/dids/challenge', refuseForLiteTenant(), didAuthChallengeHandler);
+app.post('/api/auth/dids/verify', refuseForLiteTenant(), didAuthVerifyHandler);
 
 // DID Link Management endpoints (Phase 9)
 // Register new DID to existing account (requires authenticated session)
@@ -665,6 +692,9 @@ app.delete('/api/auth/dids/:did', didUnlinkHandler);
 
 // Browser guest login. The private resume credential is stored only in an HttpOnly cookie.
 app.post('/api/auth/guest/login', guestLoginHandler);
+
+// The lite Login UI's proof of work (a tenant in lite mode only; 404 otherwise).
+app.get('/api/auth/human-verification/pow-challenge', litePowChallengeHandler);
 
 // OAuth Consent endpoints (API)
 app.get('/api/auth/consents', consentGetHandler);
@@ -862,3 +892,4 @@ app.fetch = (request, env, context) =>
 export default app;
 export { DirectoryConnectorRelay } from './directory-connector-relay';
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';
+export { LiteTxnEntrypoint } from './lite-txn-entrypoint';

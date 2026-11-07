@@ -114,7 +114,10 @@ async function keyringCredentialIsActive(
 }
 
 /** Whether anyone other than this admin is an active administrator anywhere. */
-async function hasAnotherAdmin(adapter: DatabaseAdapter, adminUserId: string): Promise<boolean> {
+export async function hasAnotherAdmin(
+  adapter: DatabaseAdapter,
+  adminUserId: string
+): Promise<boolean> {
   const row = await adapter.queryOne<{ id: string }>(
     `SELECT id FROM admin_users
       WHERE id <> ? AND is_active = 1 AND status = 'active' LIMIT 1`,
@@ -204,6 +207,12 @@ export async function fileRecoveryRequest(
       now
     );
     if (!result.created) {
+      if (result.reason === 'session_ended') {
+        return c.json(
+          { error: 'session_ended', error_description: 'This session has ended: sign in again' },
+          401
+        );
+      }
       return result.reason === 'already_pending'
         ? c.json(
             { error: 'recovery_pending', error_description: 'A recovery request is already open' },

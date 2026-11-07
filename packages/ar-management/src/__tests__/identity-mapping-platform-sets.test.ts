@@ -55,12 +55,9 @@ const PLATFORM_CATALOG_VERSION = 'platform_default_canonical_catalog_v1';
 
 function openAdminDatabase(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
-  db.exec(
-    readRenderedMigrationSql(
-      resolve(REPO_ROOT, 'migrations/admin/d1/'),
-      '001_0_5_0_admin_baseline.sql'
-    )
-  );
+  for (const file of ['001_0_5_0_admin_baseline.sql', '012_admin_groups.sql']) {
+    db.exec(readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/admin/d1/'), file));
+  }
 
   // The settings documents the reference search reads (the default Mapping Set lives there).
 

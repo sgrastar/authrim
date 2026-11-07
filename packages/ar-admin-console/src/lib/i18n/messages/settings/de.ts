@@ -1,6 +1,32 @@
 import type { jaSettings } from './ja';
 
 export const deSettings: Record<keyof typeof jaSettings, string> = {
+	'set.page.team': 'Administratoren',
+	'set.page.team.desc': 'Wie sich Administratoren bei dieser Konsole anmelden.',
+	'set.section.adminSignIn': 'Anmeldung der Administratoren',
+	'set.section.adminSignIn.desc':
+		'Wie lange die Administratoren dieses Mandanten angemeldet bleiben und welche Prüfungen vor einem Vorgang verlangt werden.',
+	'set.section.adminSignInPlatform': 'Anmeldung der Administratoren für alle Mandanten',
+	'set.section.adminSignInPlatform.desc':
+		'Gilt für die Administratoren aller Mandanten. Nur Plattform-Administratoren können es ändern.',
+	'set.k.session.ttl.admin_passkey': 'Anmeldedauer für Administratoren mit Passkey',
+	'set.k.session.ttl.admin_passkey.desc':
+		'Wie lange nach der Anmeldung mit einem Passkey ein Administrator erneut zur Anmeldung aufgefordert wird.',
+	'set.k.security.admin_step_up_overrides': 'Erhöhte Prüfungen je Vorgang',
+	'set.k.security.admin_step_up_overrides.desc':
+		'Vorgangsnamen mit der verlangten Prüfung (L1: ein Passkey; L2: ein Passkey und ein zweiter Faktor), zum Beispiel {"client.secret.rotate": "L2"}. Eine Stufe kann nicht unter die eingebaute fallen.',
+	'set.k.security.admin_step_up_enforced':
+		'Zusätzliche Prüfungen vor Verwaltungsvorgängen verlangen',
+	'set.k.security.admin_step_up_enforced.desc':
+		'Aus entfallen die Prüfungen mit Passkey und zweitem Faktor vor sensiblen Verwaltungsvorgängen. Schalten Sie es nur während einer Migration aus; das Ausschalten selbst verlangt eine L2-Prüfung.',
+	'set.k.security.admin_keyring_dc_api': 'Keyring über den Browser vorlegen',
+	'set.k.security.admin_keyring_dc_api.desc':
+		'Wo der Browser es unterstützt, legen Administratoren ihren Keyring-Nachweis über die Digital Credentials API statt per QR-Code vor.',
+	'set.k.security.admin_last_resort_reenroll_window_seconds':
+		'Zeitraum für die Neuregistrierung nach der Notfallwiederherstellung',
+	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
+		'Wie lange ein Administrator nach der Notfallwiederherstellung, die seine zweiten Faktoren widerrufen hat, allein mit einem Passkey wieder einen ersten registrieren darf.',
+	'settings.json.object': 'Geben Sie ein JSON-Objekt ein (in geschweiften Klammern { }).',
 	'set.page.stayingSignedIn': 'Angemeldet bleiben',
 	'set.page.stayingSignedIn.desc':
 		'Wie lange Personen nach der Anmeldung angemeldet bleiben und wie lange ihre Apps diese Anmeldung behalten.',

@@ -27,9 +27,20 @@ export function formatDuration(ms: number, locale: string): string {
 	);
 }
 
+function isEmptyObject(value: unknown): boolean {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		!Array.isArray(value) &&
+		Object.keys(value).length === 0
+	);
+}
+
 export function formatSetting(key: string, meta: SettingMeta, value: unknown): string {
 	const locale = i18n.locale;
 	if (value === null || value === undefined || value === '') return t('settings.value.empty');
+	// An empty map (no operation raised, say) reads as nothing set, not as `{}`.
+	if (meta.type === 'json' && isEmptyObject(value)) return t('settings.value.empty');
 	switch (meta.type) {
 		case 'duration':
 			return typeof value === 'number'

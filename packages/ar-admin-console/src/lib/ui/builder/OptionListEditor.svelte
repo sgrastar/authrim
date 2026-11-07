@@ -4,6 +4,11 @@
 		value: string;
 		/** What people see (translatable). */
 		label: string;
+		/**
+		 * A stable identity, for what is kept beside the option (its translations): it stays the
+		 * same when the value or the label is edited or the option moves. Added options get one.
+		 */
+		key?: string;
 	}
 </script>
 
@@ -24,9 +29,29 @@
 		label?: string;
 		options?: ChoiceItem[];
 		field?: string;
+		/** Shown, not edited (no permission to change it). */
+		disabled?: boolean;
+		/** The longest value and label that can be typed. */
+		valueMaxLength?: number;
+		labelMaxLength?: number;
+		/**
+		 * What is wrong with the options, said in place of the hint; `invalid` marks the values it
+		 * is about (their fields are invalid and point at it).
+		 */
+		error?: string;
+		invalid?: (value: string) => boolean;
 	}
 
-	let { label = t('options.legend'), options = $bindable([]), field }: Props = $props();
+	let {
+		label = t('options.legend'),
+		options = $bindable([]),
+		field,
+		disabled = false,
+		valueMaxLength,
+		labelMaxLength,
+		error,
+		invalid
+	}: Props = $props();
 
 	const uid = $props.id();
 	const busy = useBusy();
@@ -59,7 +84,7 @@
 	function add() {
 		let n = options.length + 1;
 		while (options.some((option) => option.value === `option_${n}`)) n++;
-		options = [...options, { value: `option_${n}`, label: '' }];
+		options = [...options, { value: `option_${n}`, label: '', key: crypto.randomUUID() }];
 	}
 </script>
 
@@ -74,41 +99,45 @@
 		<ol class="options__list">
 			{#each options as option, index (index)}
 				{@const name = nameOf(option, index)}
+				{@const bad = duplicates.includes(option.value.trim()) || !!invalid?.(option.value)}
 				<li class="options__row">
 					<input
 						value={option.label}
+						maxlength={labelMaxLength}
 						aria-label="{t('options.text')} — {t('options.item', { n: index + 1 })}"
-						readonly={busy()}
+						readonly={busy() || disabled}
 						oninput={(event) => update(index, { label: event.currentTarget.value })}
 					/>
 					<input
 						class="options__value"
-						class:is-duplicate={duplicates.includes(option.value.trim())}
+						class:is-duplicate={bad}
 						value={option.value}
+						maxlength={valueMaxLength}
 						aria-label="{t('options.value')} — {name}"
-						aria-invalid={duplicates.includes(option.value.trim()) || undefined}
-						aria-describedby={duplicates.length ? `${uid}-error` : `${uid}-hint`}
+						aria-invalid={bad || undefined}
+						aria-describedby={duplicates.length || error ? `${uid}-error` : `${uid}-hint`}
 						spellcheck="false"
 						autocomplete="off"
-						readonly={busy()}
+						readonly={busy() || disabled}
 						oninput={(event) => update(index, { value: event.currentTarget.value })}
 					/>
 					<span class="options__actions">
 						<IconButton
 							icon="arrowUp"
 							label={t('options.moveUp', { name })}
-							disabled={index === 0}
+							disabled={disabled || index === 0}
 							onclick={() => move(index, -1)}
 						/>
 						<IconButton
 							icon="arrowDown"
 							label={t('options.moveDown', { name })}
-							disabled={index === options.length - 1}
+							disabled={disabled || index === options.length - 1}
 							onclick={() => move(index, 1)}
 						/>
 						<IconButton
 							icon="trash"
 							label={t('options.remove', { name })}
+							{disabled}
 							onclick={() => (options = options.filter((_, i) => i !== index))}
 						/>
 					</span>
@@ -122,11 +151,15 @@
 		<p class="options__error" id="{uid}-error" role="alert">
 			{t('options.duplicate', { value: duplicates[0] })}
 		</p>
+	{:else if error}
+		<p class="options__error" id="{uid}-error" role="alert">{error}</p>
 	{:else}
 		<p class="options__hint" id="{uid}-hint">{t('options.valueHint')}</p>
 	{/if}
 	<div>
-		<Button size="sm" variant="secondary" icon="plus" onclick={add}>{t('options.add')}</Button>
+		<Button size="sm" variant="secondary" icon="plus" {disabled} onclick={add}
+			>{t('options.add')}</Button
+		>
 	</div>
 </fieldset>
 

@@ -303,6 +303,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'screens',
 				label: 'nav.custom.screens',
 				icon: 'list',
+				// The screen builder: …/screens/new and …/screens/<screen id>.
+				details: true,
 				legacyRoutes: ['/admin/screens']
 			},
 			{
@@ -354,6 +356,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'admin-activity',
 				label: 'nav.mon.adminActivity',
 				icon: 'shield',
+				requires: { permission: 'admin:admin_audit:read' },
 				legacyRoutes: ['/admin/admin-audit']
 			},
 			{
@@ -470,13 +473,30 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				label: 'nav.set.team',
 				icon: 'users',
 				platform: 'tenant',
+				// The administrators (their read permission) or how they sign in (those settings).
+				requires: { settings: ['session', 'security'], permission: 'admin:admin_users:read' },
+				// …/team/invite (later, an administrator's page).
+				details: true,
 				legacyRoutes: ['/admin/admins (このテナントの管理者のみ)']
+			},
+			{
+				id: 'team-groups',
+				label: 'nav.set.teamGroups',
+				icon: 'users',
+				platform: 'tenant',
+				requires: { permission: 'admin:admin_users:read' },
+				// …/team-groups/<id>: a group's page.
+				details: true,
+				legacyRoutes: ['(new) 管理者グループ']
 			},
 			{
 				id: 'team-roles',
 				label: 'nav.set.teamRoles',
 				icon: 'shield',
 				platform: 'tenant',
+				requires: { permission: 'admin:admin_roles:read' },
+				// …/team-roles/<id> and …/team-roles/new: a role's page.
+				details: true,
 				legacyRoutes: ['/admin/admin-roles (このテナントへの割り当てのみ)']
 			}
 		],

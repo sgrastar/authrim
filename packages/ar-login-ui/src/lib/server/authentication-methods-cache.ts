@@ -33,7 +33,9 @@ export async function getCachedAuthenticationMethods(
 	}
 
 	const data = await loader();
-	if (data) {
+	// An answer the server marks as not to be kept (cacheTTL 0: a setting it could not read) is
+	// used for this request only, or it would be served until a default lifetime runs out.
+	if (data && Number(data.meta?.cacheTTL) !== 0) {
 		cache.set(cacheKey, {
 			data,
 			expiresAt: Date.now() + getCacheTtlMs(data)

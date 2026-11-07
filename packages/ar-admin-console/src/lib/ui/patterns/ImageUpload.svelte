@@ -33,6 +33,11 @@
 		 * to `pick`, which checks it like a file from disk and clears an earlier error.
 		 */
 		actions?: Snippet<[pick: (file: File) => void]>;
+		/**
+		 * Where a stored URL is loaded from, when that is not the URL itself (a path on another
+		 * origin, such as the API's). The value stays as stored.
+		 */
+		resolveUrl?: (url: string) => string;
 	}
 
 	let {
@@ -45,7 +50,8 @@
 		onremove,
 		field,
 		changed,
-		actions
+		actions,
+		resolveUrl = (url: string) => url
 	}: Props = $props();
 
 	const changes = useChangeMark();
@@ -66,7 +72,7 @@
 		};
 	});
 
-	const shown = $derived(previewUrl ?? (typeof value === 'string' ? value : null));
+	const shown = $derived(previewUrl ?? (typeof value === 'string' ? resolveUrl(value) : null));
 
 	const limits = $derived.by(() => {
 		const types = describeAccept(accept);

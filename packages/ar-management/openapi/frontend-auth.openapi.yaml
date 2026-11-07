@@ -1347,6 +1347,26 @@ components:
               type: boolean
               default: false
               description: Display English names alongside native names in the language selector.
+            lite:
+              type: object
+              required:
+                - mode
+                - logo
+              description: >-
+                The tenant's lite Login UI (server-rendered, for very poor networks). `mode` is
+                `unknown` when the tenant's policy could not be read; that answer is not cached.
+              properties:
+                mode:
+                  type: string
+                  enum:
+                    - 'off'
+                    - always
+                    - unknown
+                logo:
+                  type: [string, 'null']
+                  description: >-
+                    The lite logo as a data: URI (a still PNG or WebP image of at most 8 KB and
+                    640x160 pixels), only while `mode` is `always`.
             theme:
               type: string
               enum:

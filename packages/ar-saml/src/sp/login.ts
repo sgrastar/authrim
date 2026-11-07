@@ -27,6 +27,7 @@ import {
   resolveSignInAttemptInteraction,
   resolveSamlRequestTtlSeconds,
   verifyHumanVerificationWithRunner,
+  readLiteModeState,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
@@ -97,6 +98,18 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     // Get IdP ID from query parameter
     const idpId = c.req.query('idp');
     const tenantId = resolveSAMLTenantIdFromContext(c);
+    // A tenant in lite mode starts SAML sign-in only from the lite Login UI, which proves human
+    // verification first; until that start is wired, it is refused here.
+    if (env.LITE_POLICY_STORE && (await readLiteModeState(env, tenantId)) !== 'off') {
+      c.header('Cache-Control', 'no-store');
+      return c.json(
+        {
+          error: 'lite_mode_endpoint_unavailable',
+          error_description: 'This tenant starts SAML sign-in from the lite Login UI',
+        },
+        403
+      );
+    }
     const turnstileError = await verifySPLoginHumanVerification(c, tenantId);
     if (turnstileError) return turnstileError;
     const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);

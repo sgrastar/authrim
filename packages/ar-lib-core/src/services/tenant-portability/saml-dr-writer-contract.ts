@@ -158,7 +158,17 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
     'read-only:rpc:PluginRunnerWorker.resolveNotificationProviderOrder',
     'read-only:rpc:PluginRunnerWorker.verifyDynamicPluginBackup',
   ],
-  'ar-auth': ['guarded:do:DirectoryConnectorRelay.webSocketMessage', 'guarded:fetch'],
+  'ar-auth': [
+    'guarded:do:DirectoryConnectorRelay.webSocketMessage',
+    'guarded:fetch',
+    // The lite Login UI's transactions (writes only the transient LiteTxnStore and rate counter).
+    'guarded:rpc:LiteTxnEntrypoint.beginOperation',
+    'guarded:rpc:LiteTxnEntrypoint.completeOperation',
+    'guarded:rpc:LiteTxnEntrypoint.create',
+    'guarded:rpc:LiteTxnEntrypoint.get',
+    'guarded:rpc:LiteTxnEntrypoint.issueStartGrant',
+    'guarded:rpc:LiteTxnEntrypoint.transition',
+  ],
   'ar-saml': ['guarded:fetch', 'guarded:scheduled'],
   'ar-lib-core': [
     'guarded:rpc:LogArchiveWriteEntrypoint.registerPiiPurgeScope',
@@ -187,6 +197,8 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
     'excluded-transient:do:SessionStore',
     'excluded-transient:do:TokenRevocationStore',
     'excluded-transient:do:UserCodeRateLimiter',
+    'excluded-reapplied-setting:do:LitePolicyStore',
+    'excluded-transient:do:LiteTxnStore',
     'excluded-transient:do:SAMLRequestStore',
     'excluded-transient:do:SAMLAggregateMetadataStore',
     'excluded-transient:do:PermissionChangeHub',

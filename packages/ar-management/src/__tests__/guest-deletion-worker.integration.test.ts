@@ -12,6 +12,7 @@ import {
   GuestUpgradeRepository,
   parseGuestDeletionProgress,
   createLookupBlindIndexes,
+  passkeyCredentialLookupSubject,
   type Env,
   type GuestDeletionReceiptV2,
   type PreparedStatement,
@@ -817,6 +818,29 @@ describe('Guest bounded erasure with current Core, PII and Lookup SQL', () => {
     expect(
       (await f.request('/cleanup', 'POST', { dry_run: false, cursor: crossTenant })).status
     ).toBe(400);
+  });
+  it('captures and erases a WebAuthn-maximum (1,364-character) passkey credential', async () => {
+    const f = await fixture(0);
+    const credentialId = `${'Q'.repeat(1363)}w`;
+    f.core.db
+      .prepare(
+        `INSERT INTO passkeys(id,tenant_id,user_id,credential_id,public_key,created_at,rp_id) VALUES('passkey-long',?,?,?,?,1,'passkey.example.invalid')`
+      )
+      .run(f.route.tenantId, f.route.userId, credentialId, 'public-key');
+    await f.admit();
+    await f.finish();
+    expect(f.core.db.prepare('SELECT * FROM passkeys').all()).toEqual([]);
+    // The removal names the credential's own index, not a skipped or truncated one.
+    const [index] = await createLookupBlindIndexes(
+      'external_subject',
+      passkeyCredentialLookupSubject({ rpId: 'passkey.example.invalid', credentialId }),
+      [{ generation: 1, secret: '0123456789abcdef0123456789abcdef' }]
+    );
+    const removals = f.core.db
+      .prepare("SELECT payload_json FROM account_routing_outbox WHERE event_kind='account_deleted'")
+      .all() as Array<{ payload_json: string }>;
+    expect(removals.some((row) => row.payload_json.includes(index.digest))).toBe(true);
+    expect(removals.some((row) => row.payload_json.includes(credentialId))).toBe(false);
   });
   it('advances past seventeen RP-less passkeys, captures a later valid RP and drains every credential', async () => {
     const f = await fixture(0);

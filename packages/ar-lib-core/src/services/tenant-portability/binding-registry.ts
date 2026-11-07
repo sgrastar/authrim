@@ -102,9 +102,16 @@ const groups: Array<{
   },
   {
     kind: 'DurableObjectNamespace',
+    disposition: 'rebuild',
+    names: 'LITE_POLICY_STORE',
+    reason:
+      'Start restored tenants in the normal Login UI; re-apply lite mode through the lite-mode route (its guard re-checks the restored configuration) for a tenant whose saved login-ui.lite_mode says always.',
+  },
+  {
+    kind: 'DurableObjectNamespace',
     disposition: 'ephemeral',
     names:
-      'AUTHORIZATION_CODE_STORE AUTH_CODE_STORE CHALLENGE_STORE CIBA_REQUEST_STORE CREDENTIAL_OFFER_STORE DEVICE_CODE_STORE DPOP_JTI_STORE FLOW_STATE_STORE PAR_REQUEST_STORE PERMISSION_CHANGE_HUB SAML_AGGREGATE_METADATA_STORE SAML_REQUEST_STORE SESSION_CLIENT_STORE SESSION_STORE USER_CODE_RATE_LIMITER VP_REQUEST_STORE',
+      'AUTHORIZATION_CODE_STORE AUTH_CODE_STORE CHALLENGE_STORE CIBA_REQUEST_STORE CREDENTIAL_OFFER_STORE DEVICE_CODE_STORE DPOP_JTI_STORE FLOW_STATE_STORE LITE_TXN_STORE PAR_REQUEST_STORE PERMISSION_CHANGE_HUB SAML_AGGREGATE_METADATA_STORE SAML_REQUEST_STORE SESSION_CLIENT_STORE SESSION_STORE USER_CODE_RATE_LIMITER VP_REQUEST_STORE',
     reason:
       'Reinitialize transient protocol/transport state. Restored credential/issuance policy must not reactivate old sessions or in-flight requests.',
   },

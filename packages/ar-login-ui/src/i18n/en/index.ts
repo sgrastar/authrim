@@ -525,7 +525,12 @@ const en = {
 	common_dismissAlert: 'Dismiss alert',
 
 	// Accessibility
-	emailCode_digitLabel: 'Digit {position:number} of 6'
+	emailCode_digitLabel: 'Digit {position:number} of 6',
+	lite_javascriptRequired:
+		'This page runs a security check in your browser. Turn on JavaScript, then reload the page.',
+	lite_passkeyUnsupported: 'This browser cannot use a passkey here. Choose another way to sign in.',
+	lite_passkeyFailed:
+		'The passkey sign-in did not finish. Try again, or choose another way to sign in.'
 } satisfies BaseTranslation;
 
 export default en;

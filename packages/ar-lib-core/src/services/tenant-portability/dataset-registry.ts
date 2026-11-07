@@ -126,7 +126,7 @@ const TABLE_GROUPS: Partial<
     users: `
       account_webhook_delivery_fields account_webhook_outbox account_webhook_snapshots external_identifier_unlink_operations
       guest_upgrade_operations guest_pii_erasure_markers identity_identifier_replacement_challenges identity_identifier_replacement_operations identity_sensitive_values linked_identities
-      pairwise_subject_identifiers pii_log_purge_operations service_group_inputs service_group_write_boundaries subject_identifiers user_anonymization_map
+      pairwise_subject_identifiers pii_log_purge_operations screen_responses service_group_inputs service_group_write_boundaries subject_identifiers user_anonymization_map
       users_pii users_pii_tombstone
     `,
     sensitive_logs: `
@@ -149,7 +149,8 @@ const TABLE_GROUPS: Partial<
     delivery_state: 'internal_notification_delivery_attempts internal_notification_events',
     admin: `
       admin_agent_grants admin_agent_token_revocation_outbox admin_attribute_values admin_attributes admin_audit_receipts
-      admin_database_connection_usages admin_invitations admin_jobs admin_relationships
+      admin_database_connection_usages admin_group_members admin_group_role_grants admin_groups
+      admin_invitation_groups admin_invitations admin_jobs admin_relationships
       admin_role_assignments admin_storage_destination_usages admin_users agent_bulk_plans
       agent_bulk_tenant_executions agent_configuration_plan_steps agent_configuration_plans agent_consents
       agent_management_executions agent_plan_confirmations approval_request_approvals approval_requests

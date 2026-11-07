@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   listByUser: vi.fn(),
   getEnrollmentGraceEndsAt: vi.fn(),
   hasEverEnrolled: vi.fn(),
+  getReenrollWindowEndsAt: vi.fn(async (): Promise<number | null> => null),
   isActive: vi.fn(),
   insertKeyringHolderKey: vi.fn(),
   findActiveKeyringFactor: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     listByUser = mocks.listByUser;
     getEnrollmentGraceEndsAt = mocks.getEnrollmentGraceEndsAt;
     hasEverEnrolled = mocks.hasEverEnrolled;
+    getReenrollWindowEndsAt = mocks.getReenrollWindowEndsAt;
     isActive = mocks.isActive;
     insertKeyringHolderKey = mocks.insertKeyringHolderKey;
     findActiveKeyringFactor = mocks.findActiveKeyringFactor;
@@ -430,7 +432,11 @@ describe('GET /enroll/:id', () => {
     });
     expect(mocks.insertKeyringHolderKey).toHaveBeenCalledWith(
       { admin_user_id: 'admin-1', holder_jkt: 'N'.repeat(43), label: 'Keyring' },
-      { firstOnly: false, approvedBy: { factorId: 'sf-1', sessionId: 'sess-1' } }
+      {
+        firstOnly: false,
+        sessionId: 'sess-1',
+        approvedBy: { factorId: 'sf-1', sessionId: 'sess-1' },
+      }
     );
     expect(mocks.writeAdminAuditLog).toHaveBeenCalledWith(
       expect.anything(),
@@ -445,6 +451,7 @@ describe('GET /enroll/:id', () => {
     expect(await response.json()).toEqual({ status: 'failed', error: 'step_up_required' });
     expect(mocks.insertKeyringHolderKey).toHaveBeenCalledWith(expect.anything(), {
       firstOnly: false,
+      sessionId: 'sess-1',
       approvedBy: { factorId: 'sf-1', sessionId: 'sess-1' },
     });
   });
@@ -511,6 +518,7 @@ describe('GET /enroll/:id', () => {
     await call('GET', '/enroll/g1:apac:0:vp_1');
     expect(mocks.insertKeyringHolderKey).toHaveBeenCalledWith(expect.anything(), {
       firstOnly: true,
+      sessionId: 'sess-1',
     });
   });
 });
@@ -623,9 +631,22 @@ describe('recovery with Keyring', () => {
       expect.objectContaining({
         purpose: 'enroll',
         holderJkts: [JKT],
+        // Keyring is told it is a recovery request, so it can say so.
+        walletMode: 'recovery',
         context: { mode: 'recovery', approving_factor_id: null },
       })
     );
+  });
+
+  it('does not mark an ordinary enrolment as a recovery', async () => {
+    mocks.listActiveByUser.mockResolvedValue([]);
+    mocks.hasEverEnrolled.mockResolvedValue(false);
+    const response = await call('POST', '/enroll', undefined, {});
+    expect(response.status).toBe(201);
+    expect(vc.createAdminPresentationRequest).toHaveBeenCalledOnce();
+    const [input] = vc.createAdminPresentationRequest.mock.calls[0] as [Record<string, unknown>];
+    expect(input.purpose).toBe('enroll');
+    expect(input).not.toHaveProperty('walletMode');
   });
 
   it('starts nothing when a recovery request may not be filed', async () => {

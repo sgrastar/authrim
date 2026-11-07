@@ -42,7 +42,7 @@ The four pre-palette names (Meridian, Classic, Split brand panel, Full-bleed gla
 
 ## How a story is set up
 
-Every story wraps its content in `LoginUIFrame` (`src/lib/storybook`). It does what `src/routes/+layout.svelte` does: it provides the Login UI stores and the `login-ui-theme-boundary` element with the `data-*` attributes `app.css` keys on. Stories describe a tenant the way the Admin console saves it:
+Every story wraps its content in `LoginUIFrame` (`src/lib/storybook`). It does what `src/routes/(main)/+layout.svelte` does: it provides the Login UI stores and the `login-ui-theme-boundary` element with the `data-*` attributes `app.css` keys on. Stories describe a tenant the way the Admin console saves it:
 
 ```svelte
 <LoginUIFrame template="split" palette="glass" ui={{ pageTemplate: { formFrame: 'card' } }}>
