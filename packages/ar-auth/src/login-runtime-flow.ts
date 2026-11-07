@@ -53,6 +53,7 @@ import {
   resolveSubjectRoles,
   type DatabaseAdapter,
   type PreparedStatement,
+  type ExecuteResult,
   type Env,
   type TenantRBACDatabases,
   type Challenge,
@@ -376,12 +377,151 @@ export function clearLoginRuntimeFlowVersionCacheForTests(): void {
 async function writeAtomically(
   db: DatabaseAdapter,
   build: (write: (sql: string, params: unknown[]) => void) => void
-): Promise<void> {
+): Promise<ExecuteResult[]> {
   const statements: PreparedStatement[] = [];
   build((sql, params) => {
     statements.push({ sql, params });
   });
-  await db.batch(statements);
+  return db.batch(statements);
+}
+
+/**
+ * How long a submit holds its interaction (claimRuntimeSubmit) at most, in seconds: a submit that
+ * neither saves its step nor lets go of it (a request cut off) keeps the step from being submitted
+ * again only until then.
+ */
+const FLOW_SUBMIT_CLAIM_TTL_SECONDS = 60;
+/**
+ * How long after its claim a submit may still start recording anything (consent, profile answers,
+ * a response record, the authorization continuation, the step), in milliseconds. Past it the
+ * submit stops (step_conflict) and records nothing more; what it started before has the rest of
+ * the claim (50 seconds) to finish, so it does not overlap a submit that takes the step after the
+ * claim lapsed. This is a bound in time, not a fence the other stores check: a write started in
+ * the window and held up past the claim's expiry could still land after such a submit. The
+ * interaction itself (its step, its context) is only ever written under the claim.
+ */
+const FLOW_SUBMIT_CLAIM_ACT_WINDOW_MS = 10_000;
+
+/** A runtime submit's hold on its interaction (see claimRuntimeSubmit). */
+interface RuntimeSubmitClaim {
+  id: string;
+  /** Set once the step is saved under the claim; otherwise the claim is let go of. */
+  saved: boolean;
+  /** Until when (Date.now()) the submit may still start recording. */
+  actBeforeMs: number;
+}
+
+/** Whether a submit's claim is too old for it to start recording anything more. */
+function runtimeSubmitClaimLapsed(claim: RuntimeSubmitClaim): boolean {
+  return Date.now() >= claim.actBeforeMs;
+}
+
+/** `IS` for a comparison that holds for two nulls, in the database's dialect. */
+function nullSafeEquals(db: DatabaseAdapter): string {
+  const type = db.getType();
+  return type === 'postgres' || type === 'aurora-dsql' ? 'IS NOT DISTINCT FROM' : 'IS';
+}
+
+/** A write refused because a concurrent one changed the same row (PostgreSQL, Aurora DSQL). */
+function isSerializationConflict(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === '40001'
+  );
+}
+
+/**
+ * The submit of a step holds its interaction before anything is recorded: one conditional UPDATE,
+ * which only one of two submits of the same step (two tabs, a retried request) can make while the
+ * other's claim is held. The other is answered `step_conflict` and records nothing; its browser
+ * picks the interaction up again (where the winner left it). The claim is taken only over the
+ * interaction as the submit read it (step, context, contract), the interaction is written only
+ * under it, and a submit that does not save its step lets go of it.
+ */
+async function claimRuntimeSubmit(
+  db: DatabaseAdapter,
+  tenantId: string,
+  interaction: FlowInteractionRow,
+  claimId: string,
+  now: number
+): Promise<'claimed' | 'conflict' | 'not_active'> {
+  let claimed: ExecuteResult;
+  try {
+    claimed = await db.execute(
+      `UPDATE flow_interactions
+          SET submit_claim_id = ?, submit_claim_expires_at = ?
+        WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+          AND current_step_id = ?
+          AND context_json ${nullSafeEquals(db)} ? AND contract_hash = ? AND signature = ?
+          AND (submit_claim_expires_at IS NULL OR submit_claim_expires_at <= ?)`,
+      [
+        claimId,
+        now + FLOW_SUBMIT_CLAIM_TTL_SECONDS,
+        tenantId,
+        interaction.id,
+        interaction.current_step_id,
+        // As it was read and verified: a resume that wrote since (a new contract, the context
+        // it shows) is not written over with what this submit read before it.
+        interaction.context_json,
+        interaction.contract_hash,
+        interaction.signature,
+        now,
+      ]
+    );
+  } catch (error) {
+    // Aurora DSQL refuses the second of two concurrent claims at its commit.
+    if (isSerializationConflict(error)) return 'conflict';
+    throw error;
+  }
+  if ((claimed.rowsAffected ?? 0) > 0) return 'claimed';
+  const current = await db.queryOne<{ state: string }>(
+    'SELECT state FROM flow_interactions WHERE tenant_id = ? AND id = ?',
+    [tenantId, interaction.id]
+  );
+  return current && (current.state === 'created' || current.state === 'active')
+    ? 'conflict'
+    : 'not_active';
+}
+
+/** Lets go of a claim whose submit did not save its step (a refusal, a failure). */
+async function releaseRuntimeSubmitClaim(
+  c: AuthContext,
+  db: DatabaseAdapter,
+  tenantId: string,
+  interactionId: string,
+  claimId: string
+): Promise<void> {
+  try {
+    await db.execute(
+      `UPDATE flow_interactions SET submit_claim_id = NULL, submit_claim_expires_at = NULL
+        WHERE tenant_id = ? AND id = ? AND submit_claim_id = ?`,
+      [tenantId, interactionId, claimId]
+    );
+  } catch (error) {
+    // The claim lapses at its expiry: the answer already decided is not replaced by this failure.
+    getLogger(c)
+      .module('LOGIN-RUNTIME-FLOW')
+      .warn('Failed to release the Flow submit claim', {
+        action: 'flow_submit_claim_release',
+        interaction_id: interactionId,
+        error: error instanceof Error ? error.name : 'unknown',
+      });
+  }
+}
+
+function stepConflictError(c: AuthContext, interactionId: string) {
+  return runtimeError(
+    c,
+    409,
+    'step_conflict',
+    'This step was submitted at the same time from elsewhere; load the interaction again',
+    'AR_FLOW_STEP_CONFLICT',
+    'recoverable',
+    'retry_step',
+    interactionId
+  );
 }
 
 function nowSeconds(): number {
@@ -4590,6 +4730,8 @@ async function persistRuntimeConsentStep(input: {
   submitInput: unknown;
   /** The session the challenge accepts as proof, if any (see resolveSessionForChallenge). */
   session: Session | null;
+  /** The submit's claim on the interaction (claimRuntimeSubmit). */
+  claimId: string;
 }): Promise<{
   ok: boolean;
   response?: Response;
@@ -4665,7 +4807,13 @@ async function persistRuntimeConsentStep(input: {
   ) {
     return {
       ok: false,
-      response: await consentChangedResponse(input.c, input.db, input.tenantId, input.interaction),
+      response: await consentChangedResponse(
+        input.c,
+        input.db,
+        input.tenantId,
+        input.interaction,
+        input.claimId
+      ),
     };
   }
 
@@ -4925,13 +5073,16 @@ async function consentChangedResponse(
   c: AuthContext,
   db: DatabaseAdapter,
   tenantId: string,
-  interaction: FlowInteractionRow
+  interaction: FlowInteractionRow,
+  claimId: string
 ) {
-  await db.execute(
+  const written = await db.execute(
     // Only while it is open: a context read before it ended is not written back over the one it
-    // ended with (its screen answers are removed then).
+    // ended with (its screen answers are removed then). And only under the submit's claim: the
+    // context it read is then still the one stored.
     `UPDATE flow_interactions SET context_json = ?, updated_at = ?
-      WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
+      WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+        AND submit_claim_id = ? AND submit_claim_expires_at IS NOT NULL`,
     [
       JSON.stringify({
         ...parseJsonObject(interaction.context_json),
@@ -4940,8 +5091,10 @@ async function consentChangedResponse(
       nowSeconds(),
       tenantId,
       interaction.id,
+      claimId,
     ]
   );
+  if ((written.rowsAffected ?? 0) === 0) return stepConflictError(c, interaction.id);
   return runtimeError(
     c,
     400,
@@ -4968,6 +5121,8 @@ async function recordHeldRuntimeConsent(input: {
   runtime: FlowRuntimeContract;
   requestContext: FlowRequestContext;
   session: Session;
+  /** The submit's claim on the interaction (claimRuntimeSubmit). */
+  claimId: string;
 }): Promise<{ response?: Response }> {
   const rows = await input.db.query<{ id: string; step_id: string; state_json: string | null }>(
     `SELECT id, step_id, state_json
@@ -5014,28 +5169,52 @@ async function recordHeldRuntimeConsent(input: {
           )))
     ) {
       // The consent is asked for again: the interaction goes back to the step that took it (the
-      // signed-in browser resumes there), with nothing held.
-      await writeAtomically(input.db, (write) => {
-        write(
-          `UPDATE flow_interaction_steps
-              SET state = 'waiting_input', selected_handle = NULL, state_json = NULL, updated_at = ?
-            WHERE tenant_id = ? AND id = ?`,
-          [nowSeconds(), input.tenantId, row.id]
-        );
+      // signed-in browser resumes there), with nothing held. Only under the submit's claim, as
+      // its step is saved: the interaction first, the step row only if it was moved.
+      const rewound = await writeAtomically(input.db, (write) => {
         write(
           `UPDATE flow_interactions
               SET state = 'active', current_node_id = ?, current_step_id = ?, updated_at = ?,
                   completed_at = NULL
-            WHERE tenant_id = ? AND id = ?`,
-          [step.source_node_id, step.id, nowSeconds(), input.tenantId, input.interaction.id]
+            WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+              AND submit_claim_id = ? AND submit_claim_expires_at IS NOT NULL`,
+          [
+            step.source_node_id,
+            step.id,
+            nowSeconds(),
+            input.tenantId,
+            input.interaction.id,
+            input.claimId,
+          ]
+        );
+        write(
+          `UPDATE flow_interaction_steps
+              SET state = 'waiting_input', selected_handle = NULL, state_json = NULL, updated_at = ?
+            WHERE tenant_id = ? AND id = ?
+              AND EXISTS (
+                SELECT 1 FROM flow_interactions
+                 WHERE tenant_id = ? AND id = ? AND submit_claim_id = ?
+                   AND submit_claim_expires_at IS NOT NULL)`,
+          [
+            nowSeconds(),
+            input.tenantId,
+            row.id,
+            input.tenantId,
+            input.interaction.id,
+            input.claimId,
+          ]
         );
       });
+      if ((rewound[0]?.rowsAffected ?? 0) === 0) {
+        return { response: stepConflictError(input.c, input.interaction.id) };
+      }
       return {
         response: await consentChangedResponse(
           input.c,
           input.db,
           input.tenantId,
-          input.interaction
+          input.interaction,
+          input.claimId
         ),
       };
     }
@@ -5054,16 +5233,27 @@ async function recordHeldRuntimeConsent(input: {
       userId: input.session.userId,
     });
     if (!recorded.ok) return { response: recorded.response };
-    await input.db.execute(
+    // Over the state read, only under the submit's claim (nothing else writes the row then).
+    const marked = await input.db.execute(
       `UPDATE flow_interaction_steps SET state_json = ?, updated_at = ?
-        WHERE tenant_id = ? AND id = ?`,
+        WHERE tenant_id = ? AND id = ?
+          AND EXISTS (
+            SELECT 1 FROM flow_interactions
+             WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+               AND submit_claim_id = ? AND submit_claim_expires_at IS NOT NULL)`,
       [
         JSON.stringify({ ...state, held_consent_recorded: true }),
         nowSeconds(),
         input.tenantId,
         row.id,
+        input.tenantId,
+        input.interaction.id,
+        input.claimId,
       ]
     );
+    if ((marked.rowsAffected ?? 0) === 0) {
+      return { response: stepConflictError(input.c, input.interaction.id) };
+    }
   }
   return {};
 }
@@ -5097,6 +5287,9 @@ export async function cleanupExpiredFlowInteractions(
   };
 }
 
+/** The waits (ms) before a resume reads its interaction again (see resumeInteractionOnce). */
+const RESUME_RETRY_DELAYS_MS = [100, 200, 400, 800];
+
 async function resumeInteraction(
   c: AuthContext,
   db: DatabaseAdapter,
@@ -5106,10 +5299,46 @@ async function resumeInteraction(
   submittedSignature: string | null,
   requestedLocale: string | null
 ) {
+  for (let attempt = 0; ; attempt += 1) {
+    const resumed = await resumeInteractionOnce(
+      c,
+      db,
+      tenantId,
+      interactionId,
+      submittedContractHash,
+      submittedSignature,
+      requestedLocale
+    );
+    if (resumed !== 'busy') return resumed;
+    const delay = RESUME_RETRY_DELAYS_MS[attempt];
+    // A submit that keeps the step longer than this: the browser loads the interaction again.
+    if (delay === undefined) return stepConflictError(c, interactionId);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+}
+
+/**
+ * One reading of the interaction for a resume. `busy` when a submit holds the interaction or it
+ * changed after it was read: what the resume writes (the context, the contract) is written over
+ * what it read only, never over what a submit saved meanwhile, and a submit's own write is not
+ * undone by it while the submit holds the step.
+ */
+async function resumeInteractionOnce(
+  c: AuthContext,
+  db: DatabaseAdapter,
+  tenantId: string,
+  interactionId: string,
+  submittedContractHash: string | null,
+  submittedSignature: string | null,
+  requestedLocale: string | null
+): Promise<Response | 'busy'> {
   const now = nowSeconds();
-  const interaction = await db.queryOne<FlowInteractionRow>(
+  const interaction = await db.queryOne<
+    FlowInteractionRow & { submit_claim_expires_at: number | null }
+  >(
     `SELECT id, flow_id, flow_version_id, user_id, client_id, saml_sp_id, state, current_node_id,
-            current_step_id, context_json, contract_hash, signature, expires_at
+            current_step_id, context_json, contract_hash, signature, expires_at,
+            submit_claim_expires_at
      FROM flow_interactions
      WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active') AND expires_at > ?`,
     [tenantId, interactionId, now]
@@ -5152,6 +5381,10 @@ async function resumeInteraction(
       'restart_interaction',
       interactionId
     );
+  }
+  // A submit is saving the step: it is read again once the submit is done.
+  if (interaction.submit_claim_expires_at !== null && interaction.submit_claim_expires_at > now) {
+    return 'busy';
   }
 
   const version = await getFlowVersion(
@@ -5226,20 +5459,35 @@ async function resumeInteraction(
     expiresAt: interaction.expires_at,
     secret,
   });
-  await db.execute(
-    `UPDATE flow_interactions
+  // Only over what was read, and not while a submit holds the step (it may be saving a context
+  // read before this one).
+  let written: ExecuteResult;
+  try {
+    written = await db.execute(
+      `UPDATE flow_interactions
 			 SET context_json = ?, contract_hash = ?, signature = ?, updated_at = ?
-		 WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
-    [
-      // What this contract asks consent to is what the browser is shown from now on.
-      JSON.stringify({ ...nextContextBase, consent_presented: consentPresentedKeys(contract) }),
-      contractHash,
-      signature,
-      now,
-      tenantId,
-      interaction.id,
-    ]
-  );
+		 WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+		   AND current_step_id ${nullSafeEquals(db)} ? AND context_json ${nullSafeEquals(db)} ?
+		   AND (submit_claim_expires_at IS NULL OR submit_claim_expires_at <= ?)`,
+      [
+        // What this contract asks consent to is what the browser is shown from now on.
+        JSON.stringify({ ...nextContextBase, consent_presented: consentPresentedKeys(contract) }),
+        contractHash,
+        signature,
+        now,
+        tenantId,
+        interaction.id,
+        interaction.current_step_id,
+        interaction.context_json,
+        now,
+      ]
+    );
+  } catch (error) {
+    // Aurora DSQL: a concurrent write (a submit's claim) refused this one; it is read again.
+    if (isSerializationConflict(error)) return 'busy';
+    throw error;
+  }
+  if ((written.rowsAffected ?? 0) === 0) return 'busy';
 
   return c.json({
     schema_version: FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
@@ -6015,7 +6263,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
        SET state = 'expired', updated_at = ?,
            context_json = COALESCE(?, context_json)
        WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
-         AND context_json ${db.getType() === 'postgres' ? 'IS NOT DISTINCT FROM' : 'IS'} ?`,
+         AND context_json ${nullSafeEquals(db)} ?`,
       [
         now,
         contextWithoutScreenAnswers(interaction.context_json),
@@ -6105,6 +6353,72 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
 
+  // From here on this submit holds the interaction: a second submit of the same step (another
+  // tab, a retried request) is answered step_conflict before it records anything.
+  // The claim's expiry and the window to act in are counted from the same moment, the claim's.
+  const claimedAtMs = Date.now();
+  const claim: RuntimeSubmitClaim = {
+    id: crypto.randomUUID(),
+    saved: false,
+    actBeforeMs: claimedAtMs + FLOW_SUBMIT_CLAIM_ACT_WINDOW_MS,
+  };
+  const claimed = await claimRuntimeSubmit(
+    db,
+    tenantId,
+    interaction,
+    claim.id,
+    Math.floor(claimedAtMs / 1000)
+  );
+  if (claimed === 'not_active') {
+    return runtimeError(
+      c,
+      409,
+      'interaction_not_active',
+      'Flow interaction is no longer active',
+      'AR_FLOW_NOT_ACTIVE',
+      'restart_required',
+      'restart_interaction',
+      interactionId
+    );
+  }
+  if (claimed === 'conflict') return stepConflictError(c, interactionId);
+  try {
+    return await submitClaimedRuntimeStep({
+      c,
+      db,
+      tenantId,
+      interactionId,
+      interaction,
+      body,
+      selectedHandle,
+      now,
+      claim,
+    });
+  } catch (error) {
+    // Aurora DSQL: a write to the interaction refused because a concurrent one changed it.
+    if (!claim.saved && isSerializationConflict(error)) return stepConflictError(c, interactionId);
+    throw error;
+  } finally {
+    if (!claim.saved) await releaseRuntimeSubmitClaim(c, db, tenantId, interactionId, claim.id);
+  }
+}
+
+/**
+ * The submit of a step, once it holds its interaction (claimRuntimeSubmit): `claim.saved` is set
+ * when the step is saved under the claim; otherwise the caller lets go of it.
+ */
+async function submitClaimedRuntimeStep(input: {
+  c: AuthContext;
+  db: DatabaseAdapter;
+  tenantId: string;
+  interactionId: string;
+  interaction: FlowInteractionRow;
+  body: SubmitRequest;
+  selectedHandle: string | null;
+  now: number;
+  claim: RuntimeSubmitClaim;
+}): Promise<Response> {
+  const { c, db, tenantId, interactionId, interaction, body, selectedHandle, now, claim } = input;
   const stepState = await db.queryOne<FlowInteractionStepRow>(
     `SELECT id, interaction_id, node_id, step_id, state, selected_handle, state_json
      FROM flow_interaction_steps
@@ -6457,6 +6771,9 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     }
   }
 
+  // Before each thing this submit records: only within its claim's window (see
+  // FLOW_SUBMIT_CLAIM_ACT_WINDOW_MS).
+  if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
   const consentResult = await persistRuntimeConsentStep({
     c,
     db,
@@ -6465,6 +6782,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     step: current.step,
     submitInput: body.input,
     session: challengeSession,
+    claimId: claim.id,
   });
   if (!consentResult.ok) {
     return (
@@ -6492,6 +6810,9 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   ) {
     // Not a session the challenge would refuse: that one is not this sign-in.
     resolvedUserId = challengeSession?.userId ?? null;
+    if (resolvedUserId && runtimeSubmitClaimLapsed(claim)) {
+      return stepConflictError(c, interactionId);
+    }
     if (
       resolvedUserId &&
       !(await claimInteractionUser(db, tenantId, interaction, resolvedUserId))
@@ -6506,9 +6827,11 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     return sessionUserMismatch(c, interactionId);
   }
   if (screenAnswers?.writeProfile) {
+    if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
     if (!(await claimInteractionUser(db, tenantId, interaction, screenAnswers.userId))) {
       return sessionUserMismatch(c, interactionId);
     }
+    if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
     resolvedUserId = screenAnswers.userId;
     // Before the next steps are judged: a condition after the screen may read what it stored.
     await screenAnswers.writeProfile();
@@ -6592,6 +6915,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
   resolvedUserId = visibleStepResolution.userId ?? resolvedUserId;
+  if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
   if (
     visibleStepResolution.userId &&
     visibleStepResolution.userId !== interaction.user_id &&
@@ -6602,6 +6926,9 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
 
   // The response record, once the steps after the screen accepted the submit (a condition that
   // ends the interaction keeps none, and the interaction is not claimed for it before then).
+  if ((screenAnswers?.writeRecord || clearRecordFor) && runtimeSubmitClaimLapsed(claim)) {
+    return stepConflictError(c, interactionId);
+  }
   if (screenAnswers?.writeRecord) {
     if (resolvedUserId && resolvedUserId !== screenAnswers.userId) {
       return sessionUserMismatch(c, interactionId);
@@ -6609,6 +6936,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     if (!(await claimInteractionUser(db, tenantId, interaction, screenAnswers.userId))) {
       return sessionUserMismatch(c, interactionId);
     }
+    if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
     resolvedUserId = screenAnswers.userId;
     await screenAnswers.writeRecord();
   }
@@ -6630,12 +6958,14 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   // submit again.
   let completedProtocolRedirect: { redirectUrl?: string; response?: Response } = {};
   if (completed) {
+    if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
     if (challengeSession) {
       // Whatever was recorded before, the interaction ends for the user whose session ends it, and
       // for that user alone: the claim is made (and the user checked) here, every time.
       if (!(await claimInteractionUser(db, tenantId, interaction, challengeSession.userId))) {
         return sessionUserMismatch(c, interactionId);
       }
+      if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
       resolvedUserId = challengeSession.userId;
       const heldConsent = await recordHeldRuntimeConsent({
         c,
@@ -6645,9 +6975,11 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
         runtime,
         requestContext,
         session: challengeSession,
+        claimId: claim.id,
       });
       if (heldConsent.response) return heldConsent.response;
     }
+    if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
     completedProtocolRedirect = await resolveCompletedProtocolRedirect({
       c,
       db,
@@ -6675,71 +7007,105 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       ? JSON.stringify(completed ? withoutRuntimeScreenAnswers(keptContext) : keptContext)
       : null;
 
-  await writeAtomically(db, (write) => {
-    write(
-      `UPDATE flow_interaction_steps
-       SET state = 'completed', selected_handle = ?, state_json = ?, updated_at = ?
-       WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'waiting_input', 'processing')`,
-      [
-        effectiveSelectedHandle,
-        JSON.stringify({
-          selected_handle: effectiveSelectedHandle,
-          submitted_handle: selectedHandle,
-          completed_at: now,
-          // The order of the visits within a second (`created_at` counts seconds): a sign-up
-          // resent from a later step finds the step it started on by it (resolveSignUpScreen).
-          completed_at_ms: Date.now(),
-          ...(consentResult.held ? { held_consent: consentResult.held } : {}),
-        }),
-        now,
-        tenantId,
-        stepState.id,
-      ]
-    );
-
-    if (nextContextJson !== null) {
-      // Only while the interaction is still at this step: a late copy of a submit already taken
-      // does not undo what later steps keep.
+  // Saved only under this submit's claim, still at its step: the interaction first (the claim's
+  // expiry cleared, its id kept), then the step rows, each written only if the interaction was.
+  // A claim lost meanwhile (held past its expiry and taken by another submit) saves nothing.
+  const heldByThisSubmit = `EXISTS (
+         SELECT 1 FROM flow_interactions
+          WHERE tenant_id = ? AND id = ? AND submit_claim_id = ? AND submit_claim_expires_at IS NULL)`;
+  if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
+  let saved: ExecuteResult[];
+  try {
+    saved = await writeAtomically(db, (write) => {
       write(
-        `UPDATE flow_interactions SET context_json = ?, updated_at = ?
-          WHERE tenant_id = ? AND id = ? AND current_step_id = ?`,
-        [nextContextJson, now, tenantId, interactionId, current.step.id]
-      );
-    }
-
-    if (nextStep) {
-      const nextStepRowId = generateId();
-      write(
-        `INSERT INTO flow_interaction_steps (
-          id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+        `UPDATE flow_interactions
+            SET state = ?, current_node_id = ?, current_step_id = ?, updated_at = ?,
+                completed_at = ?, context_json = COALESCE(?, context_json),
+                submit_claim_expires_at = NULL
+          WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+            AND current_step_id = ? AND submit_claim_id = ?
+            AND submit_claim_expires_at IS NOT NULL`,
         [
-          nextStepRowId,
+          nextState,
+          nextStep?.source_node_id ?? null,
+          nextStep?.id ?? null,
+          now,
+          completedAt,
+          // The choices a screen sends to the Flow: kept only while the interaction is still at
+          // this step (the condition above), so a late copy of a submit already taken does not
+          // undo what later steps keep.
+          nextContextJson,
           tenantId,
           interactionId,
-          nextStep.source_node_id,
-          nextStep.id,
-          getStepStateForRuntimeStep(nextStep),
-          now,
-          now,
+          current.step.id,
+          claim.id,
         ]
       );
       write(
-        `UPDATE flow_interactions
-         SET state = ?, current_node_id = ?, current_step_id = ?, updated_at = ?, completed_at = NULL
-         WHERE tenant_id = ? AND id = ?`,
-        [nextState, nextStep.source_node_id, nextStep.id, now, tenantId, interactionId]
+        `UPDATE flow_interaction_steps
+         SET state = 'completed', selected_handle = ?, state_json = ?, updated_at = ?
+         WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'waiting_input', 'processing')
+           AND ${heldByThisSubmit}`,
+        [
+          effectiveSelectedHandle,
+          JSON.stringify({
+            selected_handle: effectiveSelectedHandle,
+            submitted_handle: selectedHandle,
+            completed_at: now,
+            // The order of the visits within a second (`created_at` counts seconds): a sign-up
+            // resent from a later step finds the step it started on by it (resolveSignUpScreen).
+            completed_at_ms: Date.now(),
+            ...(consentResult.held ? { held_consent: consentResult.held } : {}),
+          }),
+          now,
+          tenantId,
+          stepState.id,
+          tenantId,
+          interactionId,
+          claim.id,
+        ]
       );
-    } else {
-      write(
-        `UPDATE flow_interactions
-         SET state = ?, current_node_id = NULL, current_step_id = NULL, updated_at = ?, completed_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-        [nextState, now, completedAt, tenantId, interactionId]
-      );
-    }
-  });
+
+      if (nextStep) {
+        write(
+          `INSERT INTO flow_interaction_steps (
+          id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
+          created_at, updated_at
+        ) SELECT ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?
+           WHERE ${heldByThisSubmit}`,
+          [
+            generateId(),
+            tenantId,
+            interactionId,
+            nextStep.source_node_id,
+            nextStep.id,
+            getStepStateForRuntimeStep(nextStep),
+            now,
+            now,
+            tenantId,
+            interactionId,
+            claim.id,
+          ]
+        );
+      }
+    });
+  } catch (error) {
+    // Aurora DSQL: a concurrent write to the interaction refused this one at its commit.
+    if (isSerializationConflict(error)) return stepConflictError(c, interactionId);
+    throw error;
+  }
+  if ((saved[0]?.rowsAffected ?? 0) === 0) {
+    // Nothing was saved, and none of the audit below is written: the step was taken by another
+    // submit after this one's claim expired.
+    getLogger(c)
+      .module('LOGIN-RUNTIME-FLOW')
+      .warn('Flow submit claim lost before the step was saved', {
+        action: 'flow_submit_claim_lost',
+        interaction_id: interactionId,
+      });
+    return stepConflictError(c, interactionId);
+  }
+  claim.saved = true;
 
   // The audit of a step that is saved is written without being waited for, and its failure is
   // logged, not answered: the step is saved and, if it was the last, so is the continuation, which
