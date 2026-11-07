@@ -7,7 +7,12 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
-import type { ExternalIdpAuthState, UpstreamProvider } from '../types';
+import {
+  ExternalIdPError,
+  ExternalIdPErrorCode,
+  type ExternalIdpAuthState,
+  type UpstreamProvider,
+} from '../types';
 
 const lite = vi.hoisted((): { mode: 'off' | 'always' | 'unknown' } => ({ mode: 'always' }));
 const mocks = vi.hoisted(() => ({
@@ -221,6 +226,33 @@ describe('external callback for a tenant in lite mode', () => {
         accountCreationAllowed: false,
       });
     }
+  });
+
+  it("sends a lite sign-in's failure to its lite callback page, not the sign-in page", async () => {
+    const liteReturn = 'https://auth.example.com/callback?lite_txn=txn-1&lite_grant=grant-1';
+    lite.mode = 'always';
+    mocks.consumeAuthState.mockResolvedValue(
+      signInState({ flowId: `${LITE_EXTERNAL_FLOW_PREFIX}flow-a`, redirectUri: liteReturn })
+    );
+    mocks.handleIdentity.mockRejectedValue(
+      new ExternalIdPError(ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED, 'no')
+    );
+    const response = await callback();
+    const location = new URL(response.headers.get('location') ?? '');
+    expect(`${location.origin}${location.pathname}`).toBe('https://auth.example.com/callback');
+    expect(location.searchParams.get('lite_txn')).toBe('txn-1');
+    expect(location.searchParams.get('lite_grant')).toBe('grant-1');
+    expect(location.searchParams.get('error')).toBeTruthy();
+  });
+
+  it("sends any other sign-in's failure to the sign-in page as before", async () => {
+    lite.mode = 'off';
+    mocks.consumeAuthState.mockResolvedValue(signInState({ flowId: 'flow-a' }));
+    mocks.handleIdentity.mockRejectedValue(
+      new ExternalIdPError(ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED, 'no')
+    );
+    const response = await callback();
+    expect(new URL(response.headers.get('location') ?? '').pathname).toBe('/login');
   });
 
   it('leaves a tenant not in lite mode as it was', async () => {

@@ -59,6 +59,11 @@ import {
 import { liteMessages } from '#lib/server/lite/messages.js';
 import { fetchLitePowChallenge, type LitePowChallenge } from '#lib/server/lite/pow.js';
 import { liteTxnClient } from '#lib/server/lite/txn-client.js';
+import {
+	liteSocialProviders,
+	liteSocialStartAction,
+	readPendingSocial
+} from '#lib/server/lite/social-actions.js';
 
 /** The blocks whose forms send something human verification may guard. */
 const PROOF_BLOCKS: ReadonlySet<string> = new Set([
@@ -216,8 +221,15 @@ export const load: PageServerLoad = async (event) => {
 	// transaction says has happened.
 	const methods = await liteTenantMethods(event);
 	let decision = liteLoginStepDecision(step, methods, locale);
+	// The providers of a social part (one offering a SAML provider stopped the page above).
+	const social = liteSocialProviders(methods, step);
+	// An external sign-in started from here and not finished: its callback may still come back;
+	// until then (or a Start again) nothing else is started over it.
+	const socialStarted = !madeOrHalfMade && readPendingSocial(kept2.data, interactionId) !== null;
 	if (decision.kind === 'unsupported') {
 		// Nothing to draw over it.
+	} else if (socialStarted) {
+		decision = { kind: 'unsupported', reasons: ['social_started'] };
 	} else if (madeOrHalfMade || lapsed) {
 		// A sign-in made, or half made (a code or passkey checked, its session still to be made).
 		decision = { kind: 'continue' };
@@ -305,7 +317,13 @@ export const load: PageServerLoad = async (event) => {
 		continueChallenge: lapsed?.challenge ?? null,
 		// Which halves of an email-code-or-authenticator part the step offers.
 		available: { mailOtp: available('mail_otp'), totp: available('totp') },
+		// A button per provider of a social part (its own text, else "Continue with <name>").
+		providers: social.providers.map((provider) => ({
+			id: provider.id,
+			label: provider.buttonText ?? LL.login_continueWith({ provider: provider.name })
+		})),
 		pow,
+		socialStarted,
 		text: {
 			title: LL.login_title(),
 			continue: LL.common_continue(),
@@ -321,6 +339,7 @@ export const load: PageServerLoad = async (event) => {
 			passkeyFailed: LL.lite_passkeyFailed(),
 			javascriptRequired: LL.lite_javascriptRequired(),
 			unsupported: LL.error_temporarily_unavailable(),
+			socialStarted: LL.lite_socialStarted(),
 			back: LL.common_backToLogin(),
 			codeSentTo: LL.emailCode_subtitle(),
 			code: LL.emailCode_codeLabel(),
@@ -352,5 +371,6 @@ export const actions: Actions = {
 	totp_verify: liteTotpVerifyAction,
 	passkey_start: litePasskeyStartAction,
 	passkey_finish: litePasskeyFinishAction,
+	social_start: liteSocialStartAction,
 	restart: liteRestartAction
 };

@@ -301,7 +301,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     const redirectUri = link
       ? await accountPageLinkResultUrl(c.env, tenantIdResolved, { linked: true })
       : lite
-        ? liteExternalCallbackUrl(lite.txn)
+        ? liteExternalCallbackUrl(lite.txn, lite.grantId)
         : await validateRedirectUri(
             requestedRedirectUri,
             c.env,
@@ -313,8 +313,6 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 2. Get provider configuration (by slug or ID)
     let provider = await getProviderByIdOrSlug(c.env, providerIdOrName, tenantIdResolved);
 
-    // A lite grant names the provider by its ID (the lite UI's start uses it).
-    if (lite && provider && provider.id !== providerIdOrName) provider = null;
     // A lite sign-in returns by a handoff (the lite UI finalizes it). A provider without SSO
     // answers with an authorization code instead, for a PKCE verifier no one holds here.
     if (lite && provider && provider.enabled && provider.enableSso === false) {
