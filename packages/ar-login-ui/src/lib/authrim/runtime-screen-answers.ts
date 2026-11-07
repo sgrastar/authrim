@@ -95,6 +95,18 @@ export function offProfileFieldKeys(screen: unknown): Set<string> {
 	);
 }
 
+/**
+ * The parts a screen shows whose answers are stored to the profile: the only attributes a sign-up
+ * on that screen sends (the server refuses any other, see ar-auth signup-screen-check).
+ */
+export function profileFieldKeys(screen: unknown): Set<string> {
+	return new Set(
+		shownScreenInputParts(screen)
+			.filter((part) => part.store_to_profile !== false)
+			.map((part) => text(part.field) as string)
+	);
+}
+
 /** Whether a value counts as an answer to a part (a ticked box, a non-empty text or choice). */
 export function hasScreenAnswer(part: JsonObject, value: unknown): boolean {
 	if (isCheckboxPart(part)) return value === true || value === 'true';

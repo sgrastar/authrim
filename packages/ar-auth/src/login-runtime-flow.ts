@@ -71,12 +71,17 @@ import {
   type Session,
   type FlowScreenSubmittedEventData,
   FLOW_EVENTS,
+  contextWithoutScreenAnswers,
+  expireFlowInteractions,
+  screenAnswerEntriesOf,
+  screenAnswersOf,
   publishEvent,
   isSAMLAuthorizationChallenge,
 } from '@authrim/ar-lib-core';
 import { resolveRuntimeScreenRow } from '@authrim/ar-lib-core/services/runtime-screen-resolution';
 import { applyRuntimeScreenOptions, runtimeAttributeKey } from './runtime-screen-options';
 import {
+  hasSignInMethodPart,
   readRuntimeScreenAnswers,
   splitOffProfileAnswers,
   splitProfileAnswers,
@@ -1748,6 +1753,118 @@ async function resolveRuntimeScreenContent(
   };
 }
 
+/** The step components that sign a person in or up on the built-in form when they name no screen. */
+const SIGN_IN_SELECTOR_COMPONENTS: ReadonlySet<string> = new Set([
+  'authentication_method_selector',
+  'registration_method_selector',
+]);
+
+/** How many of an interaction's latest step visits a sign-up looks back through. */
+const SIGN_UP_STEP_LOOKBACK = 20;
+/** The most visits of one second read at the edge of that look-back. */
+const SIGN_UP_SAME_SECOND_LIMIT = 200;
+
+/** The screen a sign-up started from a Flow is checked against (see resolveSignUpScreen). */
+export type SignUpFlowScreen =
+  | { kind: 'screen'; stepId: string; screen: FlowRuntimeJsonObject }
+  /** A sign-in step that shows the built-in form: the Identity Schema alone says what is asked. */
+  | { kind: 'built_in' }
+  | { kind: 'invalid'; reason: 'interaction_not_found' | 'not_a_sign_up_step' };
+
+/**
+ * The screen a sign-up told about the Flow interaction `interactionId` was entered on, as the
+ * server resolves it (never what the browser says the screen was). It is the screen of the
+ * interaction's current step when that step is one a person signs in or up on (its screen has a
+ * sign-in part, or it is a method selector showing the built-in form); otherwise that of the
+ * latest step visited that is one (a code resent from the code step after the choice: the
+ * registration's values are still those entered before it). An interaction that is not live, or
+ * has no such step, is no place to sign up from.
+ */
+export async function resolveSignUpScreen(
+  c: AuthContext,
+  tenantId: string,
+  interactionId: string
+): Promise<SignUpFlowScreen> {
+  const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+  const interaction = await db.queryOne<FlowInteractionRow>(
+    `SELECT id, flow_id, flow_version_id, user_id, client_id, saml_sp_id, state, current_node_id,
+            current_step_id, context_json, contract_hash, signature, expires_at
+       FROM flow_interactions
+      WHERE tenant_id = ? AND id = ?`,
+    [tenantId, interactionId]
+  );
+  if (
+    !interaction ||
+    (interaction.state !== 'created' && interaction.state !== 'active') ||
+    interaction.expires_at <= nowSeconds()
+  ) {
+    return { kind: 'invalid', reason: 'interaction_not_found' };
+  }
+  const version = await getFlowVersion(
+    db,
+    tenantId,
+    interaction.flow_id,
+    interaction.flow_version_id
+  );
+  const runtime = version ? parseRuntimeSnapshot(version.runtime_snapshot_json) : null;
+  if (!runtime) return { kind: 'invalid', reason: 'not_a_sign_up_step' };
+
+  type Visit = { step_id: string; created_at: number; state_json: string | null };
+  let visits = await db.query<Visit>(
+    `SELECT step_id, created_at, state_json FROM flow_interaction_steps
+      WHERE tenant_id = ? AND interaction_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${SIGN_UP_STEP_LOOKBACK}`,
+    [tenantId, interaction.id]
+  );
+  // The visits of the oldest second listed may go on past the limit: all of that second are read
+  // instead, so the order below never misses a later one of it.
+  if (visits.length === SIGN_UP_STEP_LOOKBACK) {
+    const boundary = visits[visits.length - 1].created_at;
+    const sameSecond = await db.query<Visit>(
+      `SELECT step_id, created_at, state_json FROM flow_interaction_steps
+        WHERE tenant_id = ? AND interaction_id = ? AND created_at = ?
+        LIMIT ${SIGN_UP_SAME_SECOND_LIMIT + 1}`,
+      [tenantId, interaction.id, boundary]
+    );
+    // More than that in one second is no order to tell the step a sign-up started on by.
+    if (sameSecond.length > SIGN_UP_SAME_SECOND_LIMIT) {
+      return { kind: 'invalid', reason: 'not_a_sign_up_step' };
+    }
+    visits = [...visits.filter((visit) => visit.created_at !== boundary), ...sameSecond];
+  }
+  // Latest first: by when each visit was completed, to the millisecond where it was recorded
+  // (two steps can be passed within the second `created_at` counts), else by its second.
+  const visitedAt = (visit: { created_at: number; state_json: string | null }) => {
+    const ms = parseJsonObject(visit.state_json).completed_at_ms;
+    return typeof ms === 'number' && Number.isFinite(ms) ? ms : Number(visit.created_at) * 1000;
+  };
+  const visited = [...visits].sort((a, b) => visitedAt(b) - visitedAt(a));
+  const candidates: string[] = [];
+  for (const stepId of [interaction.current_step_id, ...visited.map((row) => row.step_id)]) {
+    if (stepId && !candidates.includes(stepId)) candidates.push(stepId);
+  }
+  const requestContext = getRequestContextFromInteraction(interaction);
+  for (const stepId of candidates) {
+    const step = runtime.ui.steps.find((candidate) => candidate.id === stepId);
+    if (!step) continue;
+    const screenRef = readString(parseJsonRecord(step.config).screen_ref, 200);
+    if (!screenRef) {
+      if (SIGN_IN_SELECTOR_COMPONENTS.has(step.component)) return { kind: 'built_in' };
+      continue;
+    }
+    const screen = await resolveRuntimeScreenContent(
+      db,
+      tenantId,
+      screenRef,
+      step.component,
+      requestContext
+    );
+    if (screen && hasSignInMethodPart(screen)) return { kind: 'screen', stepId, screen };
+  }
+  return { kind: 'invalid', reason: 'not_a_sign_up_step' };
+}
+
 async function resolveRuntimeDestinationFieldConsent(
   c: AuthContext,
   db: DatabaseAdapter,
@@ -2590,6 +2707,8 @@ async function buildConditionEvaluationContext(
     user: interaction.user_id
       ? await getFlowConditionUserContext(c, db, tenantId, interaction.user_id)
       : undefined,
+    // The choices screen steps sent to the Flow (a screen answer condition reads them).
+    screen_answers: screenAnswersOf(requestContext.screen_answers),
   };
 }
 
@@ -4269,11 +4388,14 @@ function withRuntimeScreenAnswers(
   stepId: string,
   answers: Record<string, ScreenAnswerValue>
 ): Record<string, unknown> {
-  const byStep = { ...parseJsonRecord(context.screen_answers) };
-  if (Object.keys(answers).length > 0) byStep[stepId] = answers;
-  else delete byStep[stepId];
+  // The step moves to the end each time it is answered: the list is in the order of the last
+  // answers, and a key answered on two steps reads the latest (see screenAnswerEntriesOf).
+  const entries = screenAnswerEntriesOf(context.screen_answers).filter(
+    (entry) => entry.step_id !== stepId
+  );
+  if (Object.keys(answers).length > 0) entries.push({ step_id: stepId, answers });
   const next = { ...context };
-  if (Object.keys(byStep).length > 0) next.screen_answers = byStep;
+  if (entries.length > 0) next.screen_answers = entries;
   else delete next.screen_answers;
   return next;
 }
@@ -4806,7 +4928,10 @@ async function consentChangedResponse(
   interaction: FlowInteractionRow
 ) {
   await db.execute(
-    `UPDATE flow_interactions SET context_json = ?, updated_at = ? WHERE tenant_id = ? AND id = ?`,
+    // Only while it is open: a context read before it ended is not written back over the one it
+    // ended with (its screen answers are removed then).
+    `UPDATE flow_interactions SET context_json = ?, updated_at = ?
+      WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
     [
       JSON.stringify({
         ...parseJsonObject(interaction.context_json),
@@ -4951,14 +5076,8 @@ export async function cleanupExpiredFlowInteractions(
   const now = options.now ?? nowSeconds();
   const retentionSeconds = Math.max(0, options.retentionSeconds ?? 24 * 60 * 60);
   const cutoff = now - retentionSeconds;
-  const expiredResult = await db.execute(
-    `UPDATE flow_interactions
-     SET state = 'expired', updated_at = ?
-     WHERE tenant_id = ?
-       AND state IN ('created', 'active')
-       AND expires_at <= ?`,
-    [now, tenantId, now]
-  );
+  // Expired with their screen answers removed, as the scheduled maintenance does.
+  const expired = await expireFlowInteractions(db, tenantId, now);
   const deletedStepsResult = await db.execute(
     `DELETE FROM flow_interaction_steps
      WHERE tenant_id = ?
@@ -4973,7 +5092,7 @@ export async function cleanupExpiredFlowInteractions(
   );
 
   return {
-    expired: expiredResult.rowsAffected ?? 0,
+    expired,
     deletedSteps: deletedStepsResult.rowsAffected ?? 0,
   };
 }
@@ -5110,7 +5229,7 @@ async function resumeInteraction(
   await db.execute(
     `UPDATE flow_interactions
 			 SET context_json = ?, contract_hash = ?, signature = ?, updated_at = ?
-		 WHERE tenant_id = ? AND id = ?`,
+		 WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
     [
       // What this contract asks consent to is what the browser is shown from now on.
       JSON.stringify({ ...nextContextBase, consent_presented: consentPresentedKeys(contract) }),
@@ -5888,11 +6007,22 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   }
 
   if (interaction.expires_at <= now) {
+    // Expired with its screen answers removed: they served the steps that never came. Only over
+    // the context read: one a concurrent submit changed since is left open, and the scheduled
+    // maintenance expires it with its answers removed.
     await db.execute(
       `UPDATE flow_interactions
-       SET state = 'expired', updated_at = ?
-       WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
-      [now, tenantId, interactionId]
+       SET state = 'expired', updated_at = ?,
+           context_json = COALESCE(?, context_json)
+       WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+         AND context_json ${db.getType() === 'postgres' ? 'IS NOT DISTINCT FROM' : 'IS'} ?`,
+      [
+        now,
+        contextWithoutScreenAnswers(interaction.context_json),
+        tenantId,
+        interactionId,
+        interaction.context_json,
+      ]
     );
     await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
@@ -6396,7 +6526,20 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
           c,
           db,
           tenantId,
-          interaction,
+          // The choices this submit sends to the Flow count for the conditions after it (they are
+          // written with the step).
+          interaction: offProfileAnswers?.hasFlowContextPart
+            ? {
+                ...interaction,
+                context_json: JSON.stringify(
+                  withRuntimeScreenAnswers(
+                    parseJsonObject(interaction.context_json),
+                    current.step.id,
+                    offProfileAnswers.flowContext
+                  )
+                ),
+              }
+            : interaction,
           runtime,
           editor,
           requestContext,
@@ -6543,6 +6686,9 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
           selected_handle: effectiveSelectedHandle,
           submitted_handle: selectedHandle,
           completed_at: now,
+          // The order of the visits within a second (`created_at` counts seconds): a sign-up
+          // resent from a later step finds the step it started on by it (resolveSignUpScreen).
+          completed_at_ms: Date.now(),
           ...(consentResult.held ? { held_consent: consentResult.held } : {}),
         }),
         now,
