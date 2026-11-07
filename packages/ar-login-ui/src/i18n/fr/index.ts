@@ -350,7 +350,11 @@ const fr = createTranslation({
 	login_extError_default_title: 'Erreur d’authentification',
 	login_extError_default_message: 'Une erreur s’est produite pendant l’authentification externe.',
 	lite_javascriptRequired:
-		'Cette page effectue une vérification de sécurité dans votre navigateur. Activez JavaScript, puis rechargez la page.'
+		'Cette page effectue une vérification de sécurité dans votre navigateur. Activez JavaScript, puis rechargez la page.',
+	lite_passkeyUnsupported:
+		"Ce navigateur ne peut pas utiliser de clé d'accès ici. Choisissez un autre moyen de vous connecter.",
+	lite_passkeyFailed:
+		"La connexion par clé d'accès n'a pas abouti. Réessayez ou choisissez un autre moyen de vous connecter."
 });
 
 export default fr;

@@ -87,6 +87,11 @@ export interface LiteFlowView {
 	step: FlowRuntimeStep | null;
 	/** The interaction's state (`active`, `completed`, …). */
 	interactionState: string;
+	/**
+	 * Whether the contract asks for a code on a step other than this one (the SPA's
+	 * `runtimeFlowHasCodeInputStep`): an authenticator code is then entered there, after its choice.
+	 */
+	codeInputElsewhere: boolean;
 }
 
 export type LiteFlowFailure = { ok: false; error: string; status: number };
@@ -124,10 +129,24 @@ export function readFlowStartAnswer(json: unknown): LiteFlowView | null {
 		(steps.find((candidate) => isRecord(candidate) && candidate.id === currentStepId) as
 			| FlowRuntimeStep
 			| undefined) ?? null;
+	const asksForCode = (candidate: unknown) =>
+		isRecord(candidate) &&
+		[candidate.config, candidate.content].some(
+			(part) =>
+				isRecord(part) &&
+				isRecord(part.screen) &&
+				Array.isArray(part.screen.fields) &&
+				part.screen.fields.some(
+					(field) => isRecord(field) && field.block_type === 'code_input_widget'
+				)
+		);
 	return {
 		state: { interactionId, contractHash, signature },
 		step,
-		interactionState: readString(json.interaction.state) ?? 'active'
+		interactionState: readString(json.interaction.state) ?? 'active',
+		codeInputElsewhere: steps.some(
+			(candidate) => isRecord(candidate) && candidate.id !== currentStepId && asksForCode(candidate)
+		)
 	};
 }
 
@@ -218,6 +237,8 @@ export interface LiteScreenField {
 	valueType: string | null;
 	/** A link block's destination, checked (safeLinkHref); null for any other block. */
 	href: string | null;
+	/** Whether the label is shown; `show_label: false` keeps it for screen readers only. */
+	showLabel: boolean;
 }
 
 /**
@@ -331,7 +352,8 @@ export function decideLiteStep(
 			helpText: readString(raw.help_text),
 			placeholder: readString(raw.placeholder),
 			valueType: blockType === 'identity_field' ? readString(raw.value_type) : null,
-			href: blockType === 'link' ? safeLinkHref(raw.href) : null
+			href: blockType === 'link' ? safeLinkHref(raw.href) : null,
+			showLabel: raw.show_label !== false
 		});
 	}
 	if (reasons.length > 0) return { kind: 'unsupported', reasons };
@@ -359,7 +381,8 @@ export function decideLiteStep(
 			helpText: null,
 			placeholder: null,
 			valueType: null,
-			href: null
+			href: null,
+			showLabel: true
 		});
 	}
 	return {

@@ -841,7 +841,7 @@ describe('LiteTxnStore: completions that could not be stored as given', () => {
     await expect(store.beginOperationRpc(op)).resolves.toMatchObject({ attempt: 2 });
     await expect(
       store.completeOperationRpc({ ...op, attempt: 1, result: 'failed' })
-    ).resolves.toEqual({ ok: false, reason: 'version_mismatch' });
+    ).resolves.toEqual({ ok: false, reason: 'superseded' });
     await expect(
       store.completeOperationRpc({ ...op, attempt: 2, result: 'sent' })
     ).resolves.toMatchObject({ ok: true });
@@ -850,6 +850,26 @@ describe('LiteTxnStore: completions that could not be stored as given', () => {
       status: 'done',
       result: 'sent',
     });
+  });
+
+  it("refuses a late completion from an earlier attempt after the retry's own completion", async () => {
+    const { store } = createStore();
+    const txn = await create(store);
+    const op = { ...ref(txn.id), operationId: 'op' };
+    await store.beginOperationRpc(op);
+    vi.advanceTimersByTime(LITE_TXN_OPERATION_LEASE_MS);
+    await store.beginOperationRpc(op);
+    await expect(
+      store.completeOperationRpc({ ...op, attempt: 2, result: 'sent' })
+    ).resolves.toMatchObject({ ok: true });
+    // Not the later attempt's answer: the earlier one learns it lost the operation.
+    await expect(
+      store.completeOperationRpc({ ...op, attempt: 1, result: 'late' })
+    ).resolves.toEqual({ ok: false, reason: 'superseded' });
+    // The later attempt's own resend still reads its completion back.
+    await expect(
+      store.completeOperationRpc({ ...op, attempt: 2, result: 'sent' })
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it('refuses a session or user on a sign-in or sign-up', async () => {
