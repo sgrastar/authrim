@@ -1,0 +1,162 @@
+/**
+ * 設定 → 管理者ユーザー（`pages/team`）の文言：管理者の一覧、招待、サインインの設定のタブ。
+ */
+export const jaTeam = {
+	'tm.page.desc':
+		'このテナントの管理者と、送った招待です。管理者は招待で追加します。招待された人がパスキーを登録すると、管理者になります。',
+	'tm.tab.admins': '管理者',
+	'tm.tab.invitations': '招待',
+	'tm.tab.signin': 'サインインの設定',
+	'tm.invite': '管理者を招待',
+
+	'tm.admins.title': '管理者',
+	'tm.admins.search': 'メールアドレスで検索',
+	'tm.admins.filter.status': '状態',
+	'tm.admins.filter.mfa': '2 段階認証',
+	'tm.admins.filter.all': 'すべて',
+	'tm.admins.filter.mfaOn': '設定あり',
+	'tm.admins.filter.mfaOff': '設定なし',
+	'tm.admins.col.admin': '管理者',
+	'tm.admins.col.status': '状態',
+	'tm.admins.col.mfa': '2 段階認証',
+	'tm.admins.col.lastLogin': '最後のログイン',
+	'tm.admins.col.actions': '{name} の操作',
+	'tm.admins.never': 'まだありません',
+	'tm.admins.empty': '条件に合う管理者はいません',
+	'tm.admins.emptyBody': '検索や絞り込みの条件を変えてください。',
+	'tm.admins.noAccess': '管理者の一覧を見る権限がありません。',
+	'tm.admins.loadFailed': '管理者の一覧を読み込めませんでした。',
+	'tm.admins.homeNote':
+		'このテナントに所属する管理者です。全テナントに効くロールを持つ管理者も、所属するテナントにだけ表示されます。',
+
+	'tm.status.active': '有効',
+	'tm.status.suspended': '停止中',
+	'tm.status.locked': 'ロック中',
+	'tm.mfa.on': '設定あり',
+	'tm.mfa.off': '設定なし',
+
+	'tm.action.suspend': '停止',
+	'tm.action.activate': '再開',
+	'tm.action.unlock': 'ロックを解除',
+	'tm.suspend.title': '{name} を停止しますか？',
+	'tm.suspend.body':
+		'停止すると、この管理者はコンソールにログインできなくなり、今のセッションも終わります。あとで「再開」で戻せます。',
+	'tm.activate.title': '{name} を再開しますか？',
+	'tm.activate.body': 'この管理者は、ふたたびコンソールにログインできるようになります。',
+	'tm.unlock.title': '{name} のロックを解除しますか？',
+	'tm.unlock.body': 'ログインの失敗が続いたためのロックを解除します。失敗の回数も 0 に戻ります。',
+	'tm.toast.suspended': '{name} を停止しました',
+	'tm.toast.activated': '{name} を再開しました',
+	'tm.toast.unlocked': '{name} のロックを解除しました',
+
+	'tm.inv.title': '招待',
+	'tm.inv.showCompleted': '受け付け済み・取り消し済み・期限切れも表示',
+	'tm.inv.limitNote': '新しいものから 100 件まで表示します。',
+	'tm.inv.col.invitee': '招待した人',
+	'tm.inv.col.role': 'ロール',
+	'tm.inv.col.status': '状態',
+	'tm.inv.col.delivery': 'メール',
+	'tm.inv.col.expires': '受け付けの期限',
+	'tm.inv.col.actions': '{name} への招待の操作',
+	'tm.inv.empty': '受け付けを待っている招待はありません',
+	'tm.inv.emptyBody': '「管理者を招待」から、新しい管理者を招待できます。',
+	'tm.inv.emptyAll': '招待はまだありません',
+	'tm.inv.noAccess': '招待を見る権限がありません。',
+	'tm.inv.loadFailed': '招待を読み込めませんでした。',
+	'tm.inv.status.pending': '受け付け待ち',
+	'tm.inv.status.expired': '期限切れ',
+	'tm.inv.status.accepted': '受け付け済み',
+	'tm.inv.status.revoked': '取り消し済み',
+	'tm.inv.delivery.pending': '送信中',
+	'tm.inv.delivery.sent': '送信済み',
+	'tm.inv.delivery.failed': '送れませんでした',
+	'tm.inv.scope.global': '全テナント',
+	'tm.inv.action.resend': '招待をもう一度送る',
+	'tm.inv.action.revoke': '招待を取り消す',
+	'tm.resend.title': '{email} に招待をもう一度送りますか？',
+	'tm.resend.body':
+		'新しいコードを送ります。前に送ったコードは使えなくなり、受け付けの期限も今から数え直します。',
+	'tm.revoke.title': '{email} への招待を取り消しますか？',
+	'tm.revoke.body': '送ったコードは使えなくなります。もう一度招待するには、新しく招待します。',
+	'tm.toast.resent': '{email} に招待を送り直しました',
+	'tm.toast.resentNotDelivered':
+		'{email} への招待は新しくしましたが、メールを送れませんでした。メールの設定を確かめて、もう一度送ってください。',
+	'tm.toast.revoked': '{email} への招待を取り消しました',
+
+	'tm.new.title': '管理者を招待',
+	'tm.new.desc':
+		'招待のメールを送ります。受け取った人がコードを入れてパスキーを登録すると、ここで決めたロールを持つ管理者になります。',
+	'tm.new.back': '管理者ユーザーに戻る',
+	'tm.new.who': '招待する人',
+	'tm.new.email': 'メールアドレス',
+	'tm.new.name': '名前',
+	'tm.new.nameHint': '空のときは、招待された人が登録のときに入れます。',
+	'tm.new.access': '与える権限',
+	'tm.new.role': 'ロール',
+	'tm.new.roleHint':
+		'自分より上のロールは選べても、送るときに断られます。全テナントの管理者（ar_super_admin）は、全テナントの範囲だけで招待できます。',
+	'tm.new.scope': 'ロールが効く範囲',
+	'tm.new.scope.tenant': 'このテナント',
+	'tm.new.scope.tenantBody': '今選んでいるテナントでだけ、このロールを持ちます。',
+	'tm.new.scope.global': '全テナント',
+	'tm.new.scope.globalBody':
+		'すべてのテナントで、このロールを持ちます。所属がデプロイの既定のテナントの管理者だけに与えられます。',
+	'tm.new.globalElsewhere':
+		'全テナントのロールは、デプロイの既定のテナントを選んでいるときだけ与えられます。このテナントでは、このテナントの範囲で招待します。',
+	'tm.new.roleEnds': 'ロールの期限',
+	'tm.new.roleEndsHint': '空のときは、期限なしで与えます。',
+	'tm.new.groups': '入るグループ',
+	'tm.new.groupsHint':
+		'受け付けたときに、選んだグループに入ります（10 個まで）。グループのロールも持つことになります。',
+	'tm.new.groupsNone': 'このテナントには、まだ管理者グループがありません。',
+	'tm.new.groupsChanged':
+		'招待を送ってから受け付けるまでに、グループのメンバーやロールが変わると、そのグループには入りません。あとでグループに追加してください。',
+	'tm.new.groupMeta': 'メンバー {members} 人・ロール {grants} 個',
+	'tm.new.groupsTooMany': 'グループは 10 個まで選べます。',
+	'tm.new.limits': '受け付けの条件',
+	'tm.new.expiresIn': '受け付けの期限',
+	'tm.new.expires.24': '24 時間',
+	'tm.new.expires.72': '3 日',
+	'tm.new.expires.168': '7 日',
+	'tm.new.ip': 'IP アドレスで制限する',
+	'tm.new.ipBody': '招待を受け付けるときと、その後のログインを、決めたアドレスからだけにします。',
+	'tm.new.ipRanges': '許可するアドレス',
+	'tm.new.ipRangesHint': 'IP アドレスか CIDR（203.0.113.0/24）で入れます。',
+	'tm.new.ipRequired': '許可するアドレスを 1 つ以上入れてください。',
+	'tm.new.emailRequired': 'メールアドレスを入れてください。',
+	'tm.new.emailInvalid': 'メールアドレスの形になっていません。',
+	'tm.new.roleRequired': 'ロールを選んでください。',
+	'tm.new.roleEndsPast': 'ロールの期限には、これから先の日時を入れてください。',
+	'tm.new.roleEndsInvalid': 'ロールの期限が日時として読めません。入れ直してください。',
+	'tm.new.submit': '招待を送る',
+	'tm.new.sending': '送っています…',
+	'tm.new.loadFailed': 'ロールやグループを読み込めませんでした。',
+	'tm.new.noAccess': '管理者を招待する権限がありません。',
+	'tm.toast.invited': '{email} に招待を送りました',
+	'tm.toast.invitedNotDelivered':
+		'{email} への招待は作りましたが、メールを送れませんでした。「招待」のタブから、もう一度送ってください。',
+
+	'tm.error.generic': 'うまくいきませんでした。もう一度試してください。',
+	'tm.error.forbidden':
+		'この操作の権限がありません。自分と同じか上のロールを持つ管理者は、操作できないことがあります。',
+	'tm.error.lastTenantAdmin':
+		'このテナントの最後の管理者は、停止も、権限を外すこともできません。先にほかの管理者を加えてください。',
+	'tm.error.lastPlatformAdmin':
+		'最後の全テナントの管理者は、停止も、権限を外すこともできません。先にほかの全テナントの管理者を加えてください。',
+	'tm.error.invitationExists': 'このメールアドレスには、受け付け待ちの招待がすでにあります。',
+	'tm.error.adminExists': 'このメールアドレスは、すでに管理者が使っています。',
+	'tm.error.invalidScope':
+		'このロールと範囲の組み合わせでは招待できません。全テナントの範囲には、全テナントの管理者の権限が要ります。',
+	'tm.error.crossTenant':
+		'全テナントのロールは、所属がデプロイの既定のテナントの管理者にだけ与えられます。既定のテナントを選んでから招待してください。',
+	'tm.error.roleNotFound': '選んだロールが見つかりません。読み直してから選び直してください。',
+	'tm.error.groupNotFound': '選んだグループが見つかりません。読み直してから選び直してください。',
+	'tm.error.invalidIpRanges': '許可するアドレスに、正しくない値があります。',
+	'tm.error.invalidRequest': '入力に正しくない値があります。',
+	'tm.error.resendConflict':
+		'ほかの操作と重なりました。一覧を読み直してから、もう一度試してください。',
+	'tm.error.changed':
+		'ほかの人が先に変更しました。読み直して内容を確かめてから、もう一度操作してください。',
+	'tm.error.notFound': '見つかりません。すでに変わったかもしれません。一覧を読み直してください。',
+	'tm.error.cancelled': '本人確認を中止したので、送っていません。'
+};

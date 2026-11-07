@@ -9,7 +9,7 @@
 	import TeamSettings from './TeamSettings.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Pages/Settings/Administrators',
+		title: 'Pages/Settings/Administrators/Sign-in settings',
 		component: TeamSettings,
 		tags: ['autodocs'],
 		parameters: {
