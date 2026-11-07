@@ -103,7 +103,13 @@ async function notice(
   adapter: DatabaseAdapter,
   tenantId: string,
   groupId: string,
-  input: { messageKey: string; title: string; params: Record<string, unknown> }
+  input: {
+    messageKey: string;
+    title: string;
+    params: Record<string, unknown>;
+    /** The group's page (the list, for a group that is gone). */
+    link?: string;
+  }
 ): Promise<void> {
   try {
     await new AdminNoticeRepository(adapter).create({
@@ -115,7 +121,7 @@ async function notice(
       message_key: input.messageKey,
       params: input.params,
       title: input.title,
-      link: `/admin/team/groups/${encodeURIComponent(groupId)}`,
+      link: input.link ?? `/admin/settings/team-groups/${encodeURIComponent(groupId)}`,
       required_permission: ADMIN_PERMISSIONS.ADMIN_USERS_READ,
       source_ref: groupId,
     });
@@ -324,6 +330,7 @@ adminGroupsRouter.delete('/:id', async (c) => {
     if (snapshot.grants.length > 0) {
       await notice(adapter, tenantId, groupId, {
         messageKey: 'admin_group_deleted',
+        link: '/admin/settings/team-groups',
         title: `Admin group ${group.display_name} was deleted`,
         params: { group: group.display_name },
       });

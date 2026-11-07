@@ -100,6 +100,8 @@
 	function step(event: KeyboardEvent) {
 		if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
 		event.preventDefault();
+		// Read only while the form is busy, and when disabled: the keys change nothing either.
+		if (busy() || disabled) return;
 		const by = (event.shiftKey ? 10 : 1) * (event.key === 'ArrowUp' ? 1 : -1);
 		let next = (value ?? min ?? 0) + by;
 		if (min !== undefined) next = Math.max(min, next);

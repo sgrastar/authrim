@@ -5,6 +5,9 @@ import { ApiError, ConflictError } from '#lib/api/api-error.js';
 import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
 import {
 	adminLabel,
+	readRoleEnd,
+	grantableRoles,
+	roleLabel,
 	inputTimeToMs,
 	invitableRoles,
 	invitationProblems,
@@ -55,6 +58,11 @@ describe('what an invitation offers', () => {
 		expect(invitableRoles(sampleRoles(), true)[0].name).toBe('ar_super_admin');
 	});
 
+	it('never offers the super administrator for a direct grant', () => {
+		expect(grantableRoles(sampleRoles()).map((role) => role.name)).not.toContain('ar_super_admin');
+		expect(roleLabel({ name: 'ar_support', display_name: ' ' })).toBe('ar_support');
+	});
+
 	it('always makes a super admin invitation global', () => {
 		const [superAdmin, tenantAdmin] = sampleRoles();
 		expect(scopeFor(superAdmin, 'tenant')).toBe('global');
@@ -99,6 +107,17 @@ describe('checking an invitation before it is sent', () => {
 		expect(invitationProblems(invitation(), NOW, '').roleEnds).toBeUndefined();
 	});
 
+	it('reads a typed role end, or says what is wrong with it', () => {
+		expect(readRoleEnd('', false, 'utc', NOW)).toEqual({});
+		expect(readRoleEnd('', true, 'utc', NOW)).toEqual({ problem: 'tm.new.roleEndsInvalid' });
+		expect(readRoleEnd('2020-01-01T00:00', false, 'utc', NOW)).toEqual({
+			problem: 'tm.new.roleEndsPast'
+		});
+		expect(readRoleEnd('2030-01-01T00:00', false, 'utc', NOW)).toEqual({
+			ms: Date.UTC(2030, 0, 1)
+		});
+	});
+
 	it('reads the role end in the zone the admin chose', () => {
 		expect(inputTimeToMs('2026-12-01T09:30', 'utc')).toBe(Date.UTC(2026, 11, 1, 9, 30));
 		expect(inputTimeToMs('2026-12-01T09:30:30', 'utc')).toBe(Date.UTC(2026, 11, 1, 9, 30));
@@ -133,6 +152,20 @@ describe('what a refusal tells the admin', () => {
 		expect(teamErrorKey(new ConflictError('x', { error: 'something_new' }))).toBe(
 			'tm.error.changed'
 		);
+	});
+
+	it('reads the shared invalid_request as bad input only on a 400', () => {
+		expect(
+			teamErrorKey(new ApiError(400, 'invalid_request', 'x', { error: 'invalid_request' }))
+		).toBe('tm.error.invalidRequest');
+		// The API's generic conflict (409) also says invalid_request: here, a role already held.
+		expect(
+			teamErrorKey(
+				new ConflictError('x', { error: 'invalid_request' }),
+				'tm.error.generic',
+				'tm.error.roleHeld'
+			)
+		).toBe('tm.error.roleHeld');
 	});
 
 	it('falls back on the status, and says a cancelled step-up sent nothing', () => {

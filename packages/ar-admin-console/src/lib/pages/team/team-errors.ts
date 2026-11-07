@@ -18,23 +18,31 @@ const BY_CODE: Readonly<Record<string, MessageKey>> = {
 	role_not_found: 'tm.error.roleNotFound',
 	admin_group_not_found: 'tm.error.groupNotFound',
 	invalid_ip_ranges: 'tm.error.invalidIpRanges',
-	invalid_request: 'tm.error.invalidRequest',
 	invalid_role_expiry: 'tm.new.roleEndsPast',
 	invitation_resend_conflict: 'tm.error.resendConflict',
 	invitation_not_found: 'tm.error.notFound',
 	insufficient_permissions: 'tm.error.forbidden',
-	admin_group_changed: 'tm.error.changed'
+	admin_group_changed: 'tm.error.changed',
+	email_in_use: 'tm.error.emailInUse'
 };
 
 export function teamErrorKey(
 	error: unknown,
-	fallback: MessageKey = 'tm.error.generic'
+	fallback: MessageKey = 'tm.error.generic',
+	/** What a 409 without a code of its own means for this action (a role already held…). */
+	conflict: MessageKey = 'tm.error.changed'
 ): MessageKey {
 	if (error instanceof StepUpCancelledError) return 'tm.error.cancelled';
-	const known = BY_CODE[teamErrorCode(error)];
+	const code = teamErrorCode(error);
+	const known = BY_CODE[code];
 	if (known) return known;
+	// Shared error responses carry the OAuth code: `invalid_request` is bad input only on a 400
+	// (the API's generic conflict, a 409, says `invalid_request` too).
+	if (error instanceof ApiError && error.status === 400 && code === 'invalid_request') {
+		return 'tm.error.invalidRequest';
+	}
 	// Another 409: something changed since it was read. Reload and check; never repeat on its own.
-	if (error instanceof ConflictError) return 'tm.error.changed';
+	if (error instanceof ConflictError) return conflict;
 	if (error instanceof ApiError) {
 		if (error.status === 403) return 'tm.error.forbidden';
 		if (error.status === 404) return 'tm.error.notFound';
