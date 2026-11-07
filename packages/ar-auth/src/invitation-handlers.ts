@@ -283,6 +283,14 @@ export async function verifyInvitationEmailCodeHandler(c: Context<{ Bindings: En
     if (!invitation) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    // A tenant in lite mode proves an invitation's address only for a request of its own tenant
+    // (as its code was sent).
+    if (
+      (await readLiteMode(c.env, invitation.tenant_id)) !== 'off' &&
+      getTenantIdFromContext(c) !== invitation.tenant_id
+    ) {
+      return liteModeEndpointUnavailable(c);
+    }
     const tenantId = invitation.tenant_id;
     const hmacSecret = c.env.OTP_HMAC_SECRET;
     if (!hmacSecret) {
