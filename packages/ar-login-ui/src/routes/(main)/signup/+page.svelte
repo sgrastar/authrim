@@ -871,11 +871,13 @@
 			input
 		});
 		if (apiError) {
-			if (apiError.error === 'consent_changed') {
+			if (apiError.error === 'consent_changed' || apiError.error === 'step_conflict') {
 				// The terms changed after they were accepted: the interaction is back at the step that
 				// asks for them. This same interaction is resumed here, with the id and signature
 				// held in memory (a new one, which a signed-in browser would pass through without
 				// the terms, is never started), which draws that step with the terms as they are now.
+				// The same for a step submitted at the same time from elsewhere (another tab): the
+				// interaction is drawn where that submit left it.
 				const { data: resumed, error: resumeError } = await flowRuntimeAPI.start({
 					resume_interaction_id: flow.interaction.id,
 					contract_hash: flow.contract_hash,
@@ -1777,7 +1779,9 @@
 				provider.startMode,
 				turnstileRequired ? { token: cfTurnstileResponse } : undefined,
 				undefined,
-				inviteToken || undefined
+				inviteToken || undefined,
+				undefined,
+				'signup'
 			);
 
 			if (!isValidRedirectUrl(url)) {
