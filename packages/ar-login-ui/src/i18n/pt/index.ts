@@ -350,7 +350,10 @@ const pt = createTranslation({
 	lite_socialStarted:
 		'O acesso com uma conta externa foi iniciado nesta página. Para entrar de outra forma, comece de novo.',
 	lite_passkeyFailed:
-		'O login com chave de acesso não foi concluído. Tente novamente ou escolha outra forma de entrar.'
+		'O login com chave de acesso não foi concluído. Tente novamente ou escolha outra forma de entrar.',
+	lite_provisioningWait:
+		'Sua conta está sendo configurada. Aguarde um momento e selecione Continuar.',
+	lite_provisioningFailed: 'Não foi possível configurar sua conta. Comece novamente.'
 });
 
 export default pt;

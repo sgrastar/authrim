@@ -409,8 +409,31 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     let user: { id: string; email: string | null; name: string | null } | null = null;
 
     const runtimeUser = normalizedEmail ? await runtimeUsers?.findByEmail(normalizedEmail) : null;
-    if (runtimeUser || blocked) {
+    // The account a resumed provisioning made (the user its server-issued token names, never one
+    // the request names alone) is that sign-up's own, while it still has no passkey: it goes on
+    // with it. Any other account at the address, or one already with a passkey, is in use.
+    const resumedAccount =
+      runtimeUser !== null &&
+      runtimeUser !== undefined &&
+      resumedUserId !== null &&
+      runtimeUser.id === resumedUserId &&
+      !blocked &&
+      (
+        await (
+          tenantD1 && accountRoute
+            ? createAccountAuthContextFromHono(c, tenantId)
+            : createAuthContextFromHono(c, tenantId)
+        ).repositories.passkey.findByUserId(runtimeUser.id)
+      ).length === 0;
+    if ((runtimeUser && !resumedAccount) || blocked) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+    if (runtimeUser && resumedAccount) {
+      user = {
+        id: runtimeUser.id,
+        email: normalizedEmail,
+        name: name || normalizedEmail?.split('@')[0] || runtimeUser.id,
+      };
     }
 
     // If user doesn't exist, create a new canonical runtime user.

@@ -1863,6 +1863,14 @@ type RootTranslation = {
 	 * T​h​e​ ​p​a​s​s​k​e​y​ ​s​i​g​n​-​i​n​ ​d​i​d​ ​n​o​t​ ​f​i​n​i​s​h​.​ ​T​r​y​ ​a​g​a​i​n​,​ ​o​r​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​w​a​y​ ​t​o​ ​s​i​g​n​ ​i​n​.
 	 */
 	lite_passkeyFailed: string;
+	/**
+	 * Y​o​u​r​ ​a​c​c​o​u​n​t​ ​i​s​ ​b​e​i​n​g​ ​s​e​t​ ​u​p​.​ ​W​a​i​t​ ​a​ ​m​o​m​e​n​t​,​ ​t​h​e​n​ ​s​e​l​e​c​t​ ​C​o​n​t​i​n​u​e​.
+	 */
+	lite_provisioningWait: string;
+	/**
+	 * Y​o​u​r​ ​a​c​c​o​u​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​e​t​ ​u​p​.​ ​S​t​a​r​t​ ​a​g​a​i​n​.
+	 */
+	lite_provisioningFailed: string;
 };
 
 export type TranslationFunctions = {
@@ -3669,6 +3677,14 @@ export type TranslationFunctions = {
 	 * The passkey sign-in did not finish. Try again, or choose another way to sign in.
 	 */
 	lite_passkeyFailed: () => LocalizedString;
+	/**
+	 * Your account is being set up. Wait a moment, then select Continue.
+	 */
+	lite_provisioningWait: () => LocalizedString;
+	/**
+	 * Your account could not be set up. Start again.
+	 */
+	lite_provisioningFailed: () => LocalizedString;
 };
 
 export type Formatters = {};

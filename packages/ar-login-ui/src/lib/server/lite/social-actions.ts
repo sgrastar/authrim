@@ -35,6 +35,7 @@ import {
 	readProof,
 	relayCompletion,
 	retryLater,
+	heldForAccount,
 	signInStarted,
 	signInUnderway,
 	submitOrNull,
@@ -156,7 +157,8 @@ export const liteSocialStartAction = guarded(async (event) => {
 	// with, or restarted): the same form posted again was answered above.
 	if (
 		signInStarted(post.txn.data, state.interactionId) ||
-		signInUnderway(post.txn.data, state.interactionId)
+		signInUnderway(post.txn.data, state.interactionId) ||
+		heldForAccount(post.txn.data, state.interactionId)
 	) {
 		await finishOperation(post, post.txn, operation, { error: 'sign_in_begun' });
 		backToPage(event);
@@ -207,6 +209,7 @@ export const liteSocialStartAction = guarded(async (event) => {
 				readKeptFlow(now.data)?.interactionId === state.interactionId &&
 				!signInStarted(now.data, state.interactionId) &&
 				!signInUnderway(now.data, state.interactionId) &&
+				!heldForAccount(now.data, state.interactionId) &&
 				!readPendingSocial(now.data, null)
 		}
 	);

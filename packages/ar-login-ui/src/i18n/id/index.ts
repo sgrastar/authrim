@@ -347,7 +347,9 @@ const id = createTranslation({
 	lite_socialStarted:
 		'Masuk dengan akun eksternal telah dimulai dari halaman ini. Untuk masuk dengan cara lain, mulai lagi.',
 	lite_passkeyFailed:
-		'Masuk dengan passkey tidak selesai. Coba lagi, atau pilih cara lain untuk masuk.'
+		'Masuk dengan passkey tidak selesai. Coba lagi, atau pilih cara lain untuk masuk.',
+	lite_provisioningWait: 'Akun Anda sedang disiapkan. Tunggu sebentar, lalu pilih Lanjutkan.',
+	lite_provisioningFailed: 'Akun Anda tidak dapat disiapkan. Mulai lagi.'
 });
 
 export default id;

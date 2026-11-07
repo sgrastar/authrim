@@ -465,7 +465,9 @@ const translation = {
 	lite_javascriptRequired: 'ይህ ገጽ በአሳሽዎ ውስጥ የደህንነት ፍተሻ ያካሂዳል። JavaScriptን ያብሩ፣ ከዚያ ገጹን እንደገና ይጫኑ።',
 	lite_passkeyUnsupported: 'ይህ አሳሽ እዚህ የይለፍ ቁልፍ መጠቀም አይችልም። ሌላ የመግቢያ መንገድ ይምረጡ።',
 	lite_socialStarted: 'ከዚህ ገጽ በውጭ መለያ መግባት ተጀምሯል። በሌላ መንገድ ለመግባት እንደገና ይጀምሩ።',
-	lite_passkeyFailed: 'በይለፍ ቁልፍ መግባት አልተጠናቀቀም። እንደገና ይሞክሩ፣ ወይም ሌላ የመግቢያ መንገድ ይምረጡ።'
+	lite_passkeyFailed: 'በይለፍ ቁልፍ መግባት አልተጠናቀቀም። እንደገና ይሞክሩ፣ ወይም ሌላ የመግቢያ መንገድ ይምረጡ።',
+	lite_provisioningWait: 'መለያዎ እየተዘጋጀ ነው። ትንሽ ይጠብቁ፣ ከዚያ ቀጥል የሚለውን ይምረጡ።',
+	lite_provisioningFailed: 'መለያዎን ማዘጋጀት አልተቻለም። እንደገና ይጀምሩ።'
 } satisfies Translation;
 
 export default translation;

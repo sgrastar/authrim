@@ -54,6 +54,9 @@ import {
 	againOnPage,
 	noteConsentKept,
 	flowConsentPatch,
+	heldForAccount,
+	MAX_SIGNUP_PROFILE_BYTES,
+	holdForAccount,
 	releaseCookies,
 	liteLoginStepDecision,
 	liteTenantMethods,
@@ -78,6 +81,7 @@ import {
 	type LitePost,
 	type LiteSignedIn
 } from './login-actions';
+import { readLiteProvisioning, type LiteProvisioningAnswer } from './provisioning';
 import {
 	finishLitePasskey,
 	readLitePasskeyCredential,
@@ -119,6 +123,14 @@ function signupAccountOf(
 	if (displayName.length > MAX_SIGNUP_DISPLAY_NAME) {
 		return { failure: fail(400, { error: 'answer_invalid' }) };
 	}
+	// Kept in the transaction while its account is being made (a 202 hold), within its room: a
+	// profile larger than the email code's is refused before the account is made.
+	if (
+		new TextEncoder().encode(JSON.stringify({ displayName, customFields: profile.customFields }))
+			.length > MAX_SIGNUP_PROFILE_BYTES
+	) {
+		return { failure: fail(400, { error: 'answer_invalid' }) };
+	}
 	const invite = readLiteInvite(post.txn.data);
 	return {
 		account: {
@@ -131,17 +143,17 @@ function signupAccountOf(
 	};
 }
 
+/** Whether a post took the send of a code within the last minute (its send is underway). */
+function liteInviteSendTaken(invite: LiteInvite, now = Date.now()): boolean {
+	return typeof invite.proofSendAt === 'number' && now - invite.proofSendAt < LITE_CODE_RESEND_MS;
+}
+
 /**
  * A passkey's or authenticator's sign-up from an invitation that asks its address proved first,
  * with no proof yet: the code is sent to the invited address instead (the page then asks for it,
  * `invite_proof_verify`), as the SPA holds such a sign-up back. Null when no proof is asked or one
  * is at hand.
  */
-/** Whether a post took the send of a code within the last minute (its send is underway). */
-function liteInviteSendTaken(invite: LiteInvite, now = Date.now()): boolean {
-	return typeof invite.proofSendAt === 'number' && now - invite.proofSendAt < LITE_CODE_RESEND_MS;
-}
-
 async function inviteProofFirst(post: LitePost, account: LiteSignupAccount) {
 	const invite = readLiteInvite(post.txn.data);
 	if (!invite?.emailProofRequired || account.inviteProof) return null;
@@ -361,7 +373,11 @@ async function offers(post: LitePost, method: 'totp' | 'passkey') {
 function oneAtATime(post: LitePost) {
 	const { data } = post.txn;
 	const interactionId = post.flow.state.interactionId;
-	if (signInStarted(data, interactionId) || signInUnderway(data, interactionId)) {
+	if (
+		signInStarted(data, interactionId) ||
+		signInUnderway(data, interactionId) ||
+		heldForAccount(data, interactionId)
+	) {
 		backToPage(post.event);
 	}
 }
@@ -369,6 +385,9 @@ function oneAtATime(post: LitePost) {
 const noneBegun = (post: LitePost) => (now: { data: Record<string, unknown> }) =>
 	!signInStarted(now.data, post.flow.state.interactionId) &&
 	!signInUnderway(now.data, post.flow.state.interactionId);
+/** No sign-in begun, nor a sign-up held for its account (a start of its own). */
+const noneBegunOrHeld = (post: LitePost) => (now: { data: Record<string, unknown> }) =>
+	noneBegun(post)(now) && !heldForAccount(now.data, post.flow.state.interactionId);
 
 /** `totp_start`: starts the authenticator-app sign-in for the address. */
 export const liteTotpStartAction = guarded(async (event) => {
@@ -441,7 +460,7 @@ export const liteTotpStartAction = guarded(async (event) => {
 		{
 			to: 'pending',
 			patch: { totp, passkey: null, ...flowConsentPatch(post, post.txn.data) },
-			stillApplies: noneBegun(post)
+			stillApplies: noneBegunOrHeld(post)
 		}
 	);
 	if (!kept) return retryLater();
@@ -714,8 +733,23 @@ export const litePasskeyStartAction = guarded(async (event) => {
 		? await startLitePasskeySignup(post.backend, { ...account.account, ...request })
 		: await startLitePasskey(post.backend, request);
 	if (!started.ok) {
+		// An account still being made (a routed tenant database): the start is held, to be sent
+		// again once it exists (as the account it made).
+		const resume =
+			'resume' in started ? (started.resume as LiteProvisioningAnswer | undefined) : undefined;
+		if (account && resume?.resumeUserId) {
+			return holdForAccount(post, operation, resume, {
+				kind: 'passkey',
+				choiceStepId: offered.step.id,
+				email: account.account.email,
+				displayName: account.account.displayName,
+				customFields: account.account.customFields,
+				inviteToken: account.account.inviteToken,
+				inviteProof: account.account.inviteProof,
+				resumeUserId: resume.resumeUserId
+			});
+		}
 		await finishOperation(post, post.txn, operation, { error: started.error });
-		// An account still being made (a routed tenant database): the same start again later.
 		if ('provisioning' in started && started.provisioning) return retryLater();
 		// An account the address already has (one a sign-up left unfinished among them): signed in
 		// to, not signed up again (the page links the sign-in page).
@@ -724,23 +758,41 @@ export const litePasskeyStartAction = guarded(async (event) => {
 			? fail(429, { error: 'busy' as const })
 			: fail(400, { error: 'passkey_failed' as const });
 	}
-	const registration = account ? (started.options as LitePasskeyCreationOptions) : null;
+	return keepPasskeyStart(post, offered.step.id, operation, started, pkce.verifier, !!account);
+});
+
+/**
+ * Keeps a passkey challenge got (with the operation that got it): the page draws its ceremony.
+ * `held`: the hold of the account the start was sent again for (kept only over it).
+ */
+export async function keepPasskeyStart(
+	post: LitePost,
+	choiceStepId: string,
+	operation: { operationId: string; attempt: number },
+	started: { challengeId: string; options: unknown },
+	verifier: string,
+	signup: boolean,
+	held: string | null = null
+) {
+	const registration = signup ? (started.options as LitePasskeyCreationOptions) : null;
 	// Kept in the transaction (its few kilobytes of data): options too large for it are refused.
 	if (registration && JSON.stringify(registration).length > MAX_REGISTRATION_CHARS) {
 		await finishOperation(post, post.txn, operation, { error: 'options_too_large' });
 		return fail(400, { error: 'passkey_failed' as const });
 	}
+	const interactionId = post.flow.state.interactionId;
 	const passkey: LitePendingPasskey = {
-		interactionId: post.flow.state.interactionId,
-		choiceStepId: offered.step.id,
+		interactionId,
+		choiceStepId,
 		challengeId: started.challengeId,
-		verifier: pkce.verifier,
+		verifier,
 		options: registration ? null : (started.options as LitePasskeyOptions),
 		registration,
 		// ar-auth keeps the challenge 5 minutes from its start (the options' timeout is the
 		// browser's, counted from the press): the transaction keeps it as long.
 		expiresAt: Date.now() + PASSKEY_CHALLENGE_TTL_MS
 	};
+	const none = noneBegun(post);
 	const kept = await finishOperation(
 		post,
 		post.txn,
@@ -749,14 +801,20 @@ export const litePasskeyStartAction = guarded(async (event) => {
 		// Over an expired authenticator start, if any (an unexpired one was refused above).
 		{
 			to: 'pending',
-			patch: { passkey, totp: null, ...flowConsentPatch(post, post.txn.data) },
-			stillApplies: noneBegun(post)
+			patch: {
+				passkey,
+				totp: null,
+				provisioning: null,
+				...flowConsentPatch(post, post.txn.data)
+			},
+			stillApplies: (now) =>
+				none(now) && (readLiteProvisioning(now.data, interactionId)?.id ?? null) === held
 		}
 	);
-	forwardSetCookies(event, post.backend.setCookies());
+	forwardSetCookies(post.event, post.backend.setCookies());
 	if (!kept) return retryLater();
-	backToPage(event);
-});
+	backToPage(post.event);
+}
 
 /** `passkey_finish`: checks the signed assertion, keeps its artifact, then makes the session. */
 export const litePasskeyFinishAction = guarded(async (event) => {
