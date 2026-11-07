@@ -19,14 +19,14 @@ const selection = {
 
 describe('Phase 8 SQLite modules', () => {
   it('pins the reviewed selectable SQL inventory without duplicates', () => {
-    expect(PHASE8_SQLITE_DATASET_REGISTRATIONS).toHaveLength(199);
-    expect(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS).toHaveLength(324);
+    expect(PHASE8_SQLITE_DATASET_REGISTRATIONS).toHaveLength(200);
+    expect(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS).toHaveLength(325);
     expect(
       new Set(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map(({ dataset }) => dataset.id)).size
     ).toBe(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length);
     expect(
       createHash('sha256').update(JSON.stringify(PHASE8_SQLITE_DATASET_REGISTRATIONS)).digest('hex')
-    ).toBe('08716996a3d41de97f9934b3c67d75f08d59ef569a87f81e395af9af3468d4bc');
+    ).toBe('ba2888bafff8d43aeef8f465c86616163c49545cfd34610a5b06f47b42a674e6');
   });
 
   it('covers every reviewed Phase 8 SQL classification exactly once', () => {

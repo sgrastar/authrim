@@ -39,6 +39,17 @@ const mocks = vi.hoisted(() => {
     getType: vi.fn(() => 'mock'),
     close: vi.fn(),
   };
+  const piiAdapter = {
+    execute: vi.fn(async (..._args: unknown[]) => ({ rowsAffected: 1 })),
+  };
+  const publishEvent = vi.fn(
+    async (
+      ..._args: unknown[]
+    ): Promise<{
+      success: boolean;
+      errors?: Array<{ target: string; name: string; error: string; retryable: boolean }>;
+    }> => ({ success: true })
+  );
   const sessionStore = {
     getSessionRpc: vi.fn(),
   };
@@ -54,6 +65,8 @@ const mocks = vi.hoisted(() => {
   const idQueue = ['interaction_1', 'step_1', 'audit_1', 'audit_2', 'step_2', 'audit_3'];
 
   return {
+    piiAdapter,
+    publishEvent,
     coreAdapter,
     emitLog: vi.fn(
       async (
@@ -95,7 +108,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
     resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
-    createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
+    createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: mocks.piiAdapter })),
+    publishEvent: mocks.publishEvent,
     CanonicalRuntimeUserStore: class {
       findById(...args: unknown[]) {
         return mocks.runtimeUsers.findById(...args);
@@ -899,6 +913,8 @@ function resetAdapter() {
   mocks.runtimeUsers.findById.mockReset();
   mocks.runtimeUsers.updateProfileFields.mockReset().mockResolvedValue(true);
   mocks.runtimeUsers.hasProfile.mockReset().mockResolvedValue(true);
+  mocks.piiAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
+  mocks.publishEvent.mockReset().mockResolvedValue({ success: true });
   mocks.resolveCustomClaimRuntimeSourcesFromHono.mockReset().mockResolvedValue({
     schemaDb: mocks.coreAdapter,
     nonPiiDb: mocks.coreAdapter,
@@ -5246,9 +5262,9 @@ describe('LoginUI runtime Flow handlers', () => {
           ],
         },
       };
-      const readsScreen = () => {
+      const readsScreen = (screen: Record<string, unknown> = profileScreen) => {
         mocks.coreAdapter.queryOne.mockImplementation(async (sql: string) =>
-          String(sql).includes('FROM screens') ? profileScreen : undefined
+          String(sql).includes('FROM screens') ? screen : undefined
         );
         mocks.coreAdapter.query.mockImplementation(async (sql: string) => {
           if (String(sql).includes('FROM custom_claim_schemas')) {
@@ -5267,7 +5283,8 @@ describe('LoginUI runtime Flow handlers', () => {
         fields: unknown,
         withSession = true,
         alsoReads?: () => void,
-        userId: string | undefined = 'user_1'
+        userId: string | undefined = 'user_1',
+        screen: Record<string, unknown> = profileScreen
       ) =>
         submitStep({
           runtime: screenRuntime,
@@ -5277,10 +5294,53 @@ describe('LoginUI runtime Flow handlers', () => {
           userId,
           body: { input: { fields } },
           beforeSubmit: () => {
-            readsScreen();
+            readsScreen(screen);
             alsoReads?.();
           },
         });
+      /** A survey kept off the profile, whose answers go to the Flow and its event. */
+      const flowScreen = {
+        ...profileScreen,
+        id: 'screen_survey',
+        screen_key: 'survey',
+        screen_kind: 'custom',
+        fields_json: JSON.stringify([
+          {
+            field: 'plan',
+            label: 'Plan',
+            block_type: 'select',
+            store_to_profile: false,
+            answer_targets: ['flow_event'],
+            options: [
+              { value: 'free', label: 'Free' },
+              { value: 'pro', label: 'Pro' },
+            ],
+          },
+          {
+            field: 'note',
+            label: 'Note',
+            store_to_profile: false,
+            answer_targets: ['flow_event'],
+          },
+          {
+            field: 'newsletter',
+            label: 'Newsletter',
+            block_type: 'checkbox',
+            store_to_profile: false,
+            answer_targets: ['flow_event'],
+          },
+        ]),
+      };
+      const contextWrites = () =>
+        transactionStatements()
+          .filter(([sql]) => String(sql).includes('SET context_json'))
+          .map(
+            ([, params]) => JSON.parse(String((params as unknown[])[0])) as Record<string, unknown>
+          );
+      const screenResponseWrites = () =>
+        mocks.piiAdapter.execute.mock.calls.filter(([sql]) =>
+          String(sql).includes('INSERT INTO screen_responses')
+        );
 
       it('stores the profile answers for the signed-in user, never one kept off the profile', async () => {
         const { response } = await submitAnswers({
@@ -5297,6 +5357,296 @@ describe('LoginUI runtime Flow handlers', () => {
           expect.objectContaining({ userId: 'user_1', submitted: { department: 'dev' } })
         );
         expect(mocks.persistCustomClaimWrite).toHaveBeenCalledTimes(1);
+      });
+
+      it('keeps the choices sent to the Flow with the interaction, never the free text', async () => {
+        const { response } = await submitAnswers(
+          { plan: 'pro', note: 'Call me later', newsletter: true },
+          false,
+          undefined,
+          undefined,
+          flowScreen
+        );
+
+        expect(response.status).toBe(200);
+        const [context] = contextWrites();
+        expect(context?.screen_answers).toEqual({
+          'screen:step': { plan: 'pro', newsletter: true },
+        });
+        expect(JSON.stringify(context)).not.toContain('Call me later');
+        expect(screenResponseWrites()).toEqual([]);
+        expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
+      });
+
+      it('carries every answer sent to the Flow on flow.screen.submitted, outside the audit log', async () => {
+        const { response } = await submitAnswers(
+          { plan: 'pro', note: 'Call me later', newsletter: null },
+          false,
+          undefined,
+          undefined,
+          flowScreen
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.publishEvent).toHaveBeenCalledTimes(1);
+        const [, payload, options] = mocks.publishEvent.mock.calls[0] as [
+          unknown,
+          { type: string; data: Record<string, unknown> },
+          { skipAuditLog?: boolean },
+        ];
+        expect(payload.type).toBe('flow.screen.submitted');
+        expect(payload.data).toMatchObject({
+          stepId: 'screen:step',
+          screenId: 'screen_survey',
+          screenKey: 'survey',
+          // The interaction is already about the user (no session is needed for Flow answers).
+          userId: 'user_1',
+          answers: { plan: 'pro', note: 'Call me later' },
+        });
+        expect(options).toEqual({ skipAuditLog: true });
+        // One visit of the step, the same for a submit sent again: a receiver can drop a repeat.
+        expect(typeof payload.data.submissionId).toBe('string');
+        // The box left untouched is no answer: the step's choices are the plan alone.
+        expect(contextWrites()[0]?.screen_answers).toEqual({ 'screen:step': { plan: 'pro' } });
+      });
+
+      it('keeps no choices once the interaction ends at the screen', async () => {
+        const { response } = await submitStep({
+          runtime: { flow_kind: 'login', ui: { steps: [screenRuntime.ui.steps[0]] } },
+          currentStep: { node: 'screen', step: 'screen:step' },
+          handle: 'submitted',
+          withSession: true,
+          userId: 'user_1',
+          body: { input: { fields: { plan: 'pro' } } },
+          beforeSubmit: () => readsScreen(flowScreen),
+        });
+
+        expect(response.status).toBe(200);
+        const [context] = contextWrites();
+        expect(context).toBeDefined();
+        expect(context).not.toHaveProperty('screen_answers');
+        // The event still carries the answer.
+        expect(mocks.publishEvent).toHaveBeenCalledTimes(1);
+      });
+
+      it('keeps the choices only while the interaction is still at the step', async () => {
+        await submitAnswers({ plan: 'pro' }, false, undefined, undefined, flowScreen);
+
+        const [statement] = transactionStatements().filter(([sql]) =>
+          String(sql).includes('SET context_json')
+        );
+        expect(String(statement?.[0])).toContain('current_step_id = ?');
+        expect((statement?.[1] as unknown[]).slice(-1)).toEqual(['screen:step']);
+      });
+
+      it('logs a delivery the event dispatcher refused, never the answers', async () => {
+        const { response } = await submitAnswers(
+          { note: 'Call me later' },
+          false,
+          () =>
+            mocks.publishEvent.mockResolvedValue({
+              success: false,
+              errors: [
+                { target: 'webhook', name: 'wh_1', error: 'Call me later', retryable: true },
+              ],
+            }),
+          undefined,
+          flowScreen
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(response.status).toBe(200);
+        expect(mocks.warn).toHaveBeenCalledWith(
+          'Failed to publish flow.screen.submitted',
+          expect.objectContaining({ failure: 'webhook:wh_1' })
+        );
+        expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain('Call me later');
+      });
+
+      it('publishes nothing for a screen that sends nothing to the Flow', async () => {
+        const { response } = await submitAnswers({ given_name: 'Ada' });
+
+        expect(response.status).toBe(200);
+        expect(mocks.publishEvent).not.toHaveBeenCalled();
+        expect(contextWrites()).toEqual([]);
+      });
+
+      const registered = () =>
+        mocks.runtimeUsers.findById.mockResolvedValue({
+          id: 'user_1',
+          registration_state: 'registered',
+        });
+
+      it('keeps a response record for the signed-in user, one per visit of the step', async () => {
+        const { response } = await submitAnswers(
+          { given_name: 'Ada', survey: 'web' },
+          true,
+          registered
+        );
+
+        expect(response.status).toBe(200);
+        const writes = screenResponseWrites();
+        expect(writes).toHaveLength(1);
+        const params = writes[0][1] as unknown[];
+        expect(params.slice(1, 5)).toEqual([
+          'tenant_test',
+          'user_1',
+          'screen_profile',
+          'profile_completion',
+        ]);
+        expect(params[8]).toBe('screen:step');
+        expect(JSON.parse(String(params[9]))).toEqual({ survey: 'web' });
+        expect(String(writes[0][0])).toContain('ON CONFLICT (id) DO UPDATE');
+        // Never for an account being deleted (its tombstone comes before its PII is erased).
+        expect(String(writes[0][0])).toContain('NOT EXISTS');
+        expect(String(writes[0][0])).toContain('users_pii_tombstone');
+        expect(params.slice(12)).toEqual(['tenant_test', 'user_1', 'tenant_test', 'user_1']);
+        // Nor for a guest under erasure (the database refuses it, whatever the handler judged).
+        expect(String(writes[0][0])).toContain('guest_pii_erasure_markers');
+        expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
+          expect.anything(),
+          'user_1'
+        );
+      });
+
+      it('keeps no response record for a guest, and the Flow goes on', async () => {
+        const { response } = await submitAnswers({ given_name: 'Ada', survey: 'web' }, true, () =>
+          mocks.runtimeUsers.findById.mockResolvedValue({
+            id: 'user_1',
+            registration_state: 'guest',
+          })
+        );
+
+        expect(response.status).toBe(200);
+        expect(screenResponseWrites()).toEqual([]);
+        expect(mocks.runtimeUsers.updateProfileFields).toHaveBeenCalledWith('user_1', {
+          given_name: 'Ada',
+        });
+      });
+
+      it('clears what an earlier submit of the visit kept when it is sent again all empty', async () => {
+        const { response } = await submitAnswers({ given_name: 'Ada' }, true, registered);
+
+        expect(response.status).toBe(200);
+        expect(screenResponseWrites()).toEqual([]);
+        const clears = mocks.piiAdapter.execute.mock.calls.filter(([sql]) =>
+          String(sql).includes('DELETE FROM screen_responses')
+        );
+        expect(clears).toHaveLength(1);
+        expect((clears[0][1] as unknown[]).slice(0, 2)).toEqual(['tenant_test', 'user_1']);
+      });
+
+      it('keeps no response record when a condition after the screen ends the interaction', async () => {
+        const endingRuntime: FlowRuntimeContract = {
+          flow_kind: 'login',
+          ui: {
+            steps: [
+              screenRuntime.ui.steps[0],
+              {
+                id: 'gate:step',
+                source_node_id: 'gate',
+                component: 'condition',
+                render: false,
+                config: {
+                  conditions: { rows: [], otherwise: { terminal_error: { error: 'not_allowed' } } },
+                },
+              },
+            ],
+          },
+        };
+        const { response } = await submitStep({
+          runtime: endingRuntime,
+          currentStep: { node: 'screen', step: 'screen:step' },
+          handle: 'submitted',
+          withSession: true,
+          userId: 'user_1',
+          body: { input: { fields: { given_name: 'Ada', survey: 'web' } } },
+          beforeSubmit: () => {
+            readsScreen();
+            registered();
+          },
+        });
+
+        expect(response.status).toBe(409);
+        expect(screenResponseWrites()).toEqual([]);
+        expect(mocks.publishEvent).not.toHaveBeenCalled();
+      });
+
+      it('does not make the interaction about anyone for a record a later condition refuses', async () => {
+        const { response } = await submitStep({
+          runtime: {
+            flow_kind: 'login',
+            ui: {
+              steps: [
+                screenRuntime.ui.steps[0],
+                {
+                  id: 'gate:step',
+                  source_node_id: 'gate',
+                  component: 'condition',
+                  render: false,
+                  config: {
+                    conditions: {
+                      rows: [],
+                      otherwise: { terminal_error: { error: 'not_allowed' } },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          currentStep: { node: 'screen', step: 'screen:step' },
+          handle: 'submitted',
+          withSession: true,
+          userId: undefined,
+          body: { input: { fields: { survey: 'web' } } },
+          beforeSubmit: () => {
+            readsScreen({
+              ...profileScreen,
+              fields_json: JSON.stringify([
+                (JSON.parse(profileScreen.fields_json) as unknown[])[2],
+              ]),
+            });
+            registered();
+          },
+        });
+
+        expect(response.status).toBe(409);
+        expect(screenResponseWrites()).toEqual([]);
+        expectNothingWritten();
+      });
+
+      it('asks for a sign-in before keeping a response record', async () => {
+        const { response, data } = await submitAnswers(
+          { survey: 'web' },
+          false,
+          undefined,
+          undefined,
+          {
+            ...profileScreen,
+            fields_json: JSON.stringify([(JSON.parse(profileScreen.fields_json) as unknown[])[2]]),
+          }
+        );
+
+        expect(response.status).toBe(401);
+        expect(data.error_code).toBe('AR_FLOW_SCREEN_ANSWERS_AUTH_REQUIRED');
+        expect(screenResponseWrites()).toEqual([]);
+        expectNothingWritten();
+      });
+
+      it('keeps no response record when a profile answer is refused', async () => {
+        const { response } = await submitAnswers(
+          { given_name: 'Ada', department: 'dev', survey: 'web' },
+          true,
+          () =>
+            mocks.validateCustomClaimWrite.mockResolvedValueOnce({
+              ok: false,
+              error: 'Department must be one of the allowed values',
+            })
+        );
+
+        expect(response.status).toBe(400);
+        expect(screenResponseWrites()).toEqual([]);
+        expect(mocks.publishEvent).not.toHaveBeenCalled();
       });
 
       it('refuses answers the screen does not allow, before anything is stored', async () => {

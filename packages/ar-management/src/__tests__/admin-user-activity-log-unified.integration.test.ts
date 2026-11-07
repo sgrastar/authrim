@@ -133,7 +133,9 @@ function database(family: 'core' | 'pii'): {
   const db = new DatabaseSync(':memory:');
   databases.push(db);
   const dir = new URL(`../../../../migrations/${family}/d1/`, import.meta.url);
-  for (const file of [`001_0_5_0_${family}_baseline.sql`]) {
+  const files = [`001_0_5_0_${family}_baseline.sql`];
+  if (family === 'pii') files.push('003_screen_responses.sql');
+  for (const file of files) {
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, dir), 'utf8'), 'sqlite'));
   }
   const adapter = {

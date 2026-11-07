@@ -1167,6 +1167,14 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'screens',
     TENANT_ADMIN_ROLES
   ),
+  // Before `/api/admin/screens/*`: the answers people gave are theirs (personal data).
+  rule({
+    pattern: '/api/admin/screens/:id/responses',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.USERS_READ],
+    roles: TENANT_ADMIN_ROLES,
+    description: 'screen response records read',
+  }),
   ...byMethod(
     '/api/admin/screens/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
