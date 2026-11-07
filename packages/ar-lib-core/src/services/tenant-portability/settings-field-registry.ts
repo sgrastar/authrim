@@ -660,6 +660,9 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.auth_switch_link_enabled
     login-ui.theme_toggle_enabled
     login-ui.language_select_enabled
+    login-ui.background_image_grayscale
+    login-ui.brand_panel_image_grayscale
+    login-ui.login_panel_background_grayscale
   `,
     ],
     [

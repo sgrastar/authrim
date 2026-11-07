@@ -1433,6 +1433,10 @@ components:
                   maximum: 100
                   default: 100
                   description: Opacity of the page background image, as a percentage.
+                backgroundImageGrayscale:
+                  type: boolean
+                  default: false
+                  description: Whether the page background image is shown in grayscale.
                 brandPanelImageUrl:
                   type:
                     - string
@@ -1446,6 +1450,10 @@ components:
                   maximum: 100
                   default: 100
                   description: Opacity of the brand panel image, as a percentage.
+                brandPanelImageGrayscale:
+                  type: boolean
+                  default: false
+                  description: Whether the brand panel image is shown in grayscale.
                 headerText:
                   type:
                     - string

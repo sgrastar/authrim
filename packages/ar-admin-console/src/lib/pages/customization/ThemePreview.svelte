@@ -96,7 +96,9 @@
 
 	// The brand side's picture is its own; the background image runs behind the whole screen.
 	const brandLayer = $derived(
-		panelUrl ? { url: panelUrl, opacity: draft.panelImageOpacity } : null
+		panelUrl
+			? { url: panelUrl, opacity: draft.panelImageOpacity, gray: draft.panelImageGrayscale }
+			: null
 	);
 </script>
 
@@ -216,6 +218,7 @@
 						class="outline__image"
 						style:background-image={`url("${backgroundUrl}")`}
 						style:opacity={draft.backgroundOpacity / 100}
+						style:filter={draft.backgroundGrayscale ? 'grayscale(1)' : undefined}
 					></span>
 				{/if}
 				<!-- The header runs along the top of the whole screen, over the brand panel too, as the footer
@@ -244,6 +247,7 @@
 									class="outline__image"
 									style:background-image={`url("${brandLayer.url}")`}
 									style:opacity={brandLayer.opacity / 100}
+									style:filter={brandLayer.gray ? 'grayscale(1)' : undefined}
 								></span>
 							{/if}
 							{#if draft.brandLogoDisplay !== 'none'}
@@ -269,6 +273,7 @@
 											class="outline__image"
 											style:background-image={`url("${cardUrl}")`}
 											style:opacity={draft.cardImageOpacity / 100}
+											style:filter={draft.cardImageGrayscale ? 'grayscale(1)' : undefined}
 										></span>
 									{/if}
 									{#if showTools && topbar === 'in_card'}{@render tools()}{/if}

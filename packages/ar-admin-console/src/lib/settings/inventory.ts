@@ -514,7 +514,8 @@ place('customization/login-ui', 'Layout', {
 		'login-ui.logo_layout',
 		'login-ui.form_frame',
 		'login-ui.background_image_url',
-		'login-ui.background_image_opacity'
+		'login-ui.background_image_opacity',
+		'login-ui.background_image_grayscale'
 	]
 });
 place('customization/login-ui', 'Split layout', {
@@ -526,13 +527,15 @@ place('customization/login-ui', 'Split layout', {
 		'login-ui.login_panel_background_color',
 		'login-ui.login_panel_background_gradient_color',
 		'login-ui.login_panel_background_opacity',
+		'login-ui.login_panel_background_grayscale',
 		'login-ui.login_panel_background_image_url',
 		'login-ui.brand_content_mode',
 		'login-ui.brand_position',
 		'login-ui.brand_align',
 		'login-ui.brand_panel_logo_display',
 		'login-ui.brand_panel_image_url',
-		'login-ui.brand_panel_image_opacity'
+		'login-ui.brand_panel_image_opacity',
+		'login-ui.brand_panel_image_grayscale'
 	]
 });
 place('customization/login-ui', 'Text', {

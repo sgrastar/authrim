@@ -115,6 +115,9 @@
 	data-logo-display={loginUIPageStore.logoDisplay}
 	data-brand-panel-logo-display={loginUIPageStore.brandPanelLogoDisplay}
 	data-has-brand-panel-image={loginUIPageStore.brandPanelImageUrl ? 'true' : 'false'}
+	data-page-background-grayscale={String(loginUIPageStore.backgroundImageGrayscale)}
+	data-login-panel-background-grayscale={String(loginUIPageStore.loginPanelBackgroundGrayscale)}
+	data-brand-panel-image-grayscale={String(loginUIPageStore.brandPanelImageGrayscale)}
 	data-has-form-area-color={loginUIPageStore.formAreaColor ? 'true' : 'false'}
 	data-has-accent-color={loginUIPageStore.accentColor ? 'true' : 'false'}
 	data-branding-loaded={brandingStore.isLoaded ? '' : undefined}

@@ -757,7 +757,10 @@ tr.expired {
 			transparent
 		)
 	);
-	background-image: var(--login-page-image-veil), var(--login-page-background-layer, none);
+	background-image:
+		var(--login-page-image-veil), var(--login-page-image-tone, none),
+		var(--login-page-background-layer, none);
+	background-blend-mode: normal, saturation, normal;
 	background-position: center;
 	background-size: cover;
 	display: flex;
@@ -1362,7 +1365,10 @@ tr.expired {
 
 [data-page-layout='split_panel'][data-has-page-background-image='true'][data-split-background-mode='brand']
 	.auth-brand-panel {
-	background-image: var(--login-page-image-veil), var(--login-page-background-layer);
+	background-image:
+		var(--login-page-image-veil), var(--login-page-image-tone, none),
+		var(--login-page-background-layer);
+	background-blend-mode: normal, saturation, normal;
 }
 
 [data-page-layout='split_panel'] .auth-brand-panel::before {
@@ -1435,6 +1441,7 @@ tr.expired {
 	background-size: cover;
 	background-repeat: no-repeat;
 	opacity: var(--login-panel-background-opacity, 0.7);
+	filter: var(--login-panel-background-filter, none);
 }
 
 /* The form side scrolls when its form is taller than the screen: its parts keep their height (a
@@ -1542,7 +1549,9 @@ tr.expired {
 			color-mix(in srgb, var(--bg-glass) 70%, transparent),
 			color-mix(in srgb, var(--bg-glass) 70%, transparent)
 		),
-		var(--login-page-image-veil), var(--login-page-background-layer, none);
+		var(--login-page-image-veil), var(--login-page-image-tone, none),
+		var(--login-page-background-layer, none);
+	background-blend-mode: normal, normal, saturation, normal;
 	box-shadow: var(--shadow-xl);
 	overflow: hidden;
 }
@@ -2641,6 +2650,7 @@ tr.expired {
 		background-size: cover;
 		background-repeat: no-repeat;
 		opacity: var(--login-panel-background-opacity, 0.7);
+		filter: var(--login-panel-background-filter, none);
 	}
 
 	[data-page-layout='split_panel'] .auth-main > * {
@@ -2873,6 +2883,7 @@ tr.expired {
 	background-position: center;
 	background-size: cover;
 	opacity: var(--login-brand-panel-image-opacity, 1);
+	filter: var(--login-brand-panel-image-filter, none);
 }
 
 /* The language and mode switches in the split template's form row: at the foot of the form side,
@@ -2966,6 +2977,22 @@ tr.expired {
 		max-height: calc(100% - 128px);
 		margin-block: 32px 96px;
 	}
+}
+
+/* Grayscale pictures (login-ui.*_grayscale). The page picture is painted under the page's own
+   content, so a filter would gray the form too: a neutral layer in saturation blend takes the
+   colour out of the layers under it instead, keeping their lightness. The panel pictures are
+   their own pseudo-elements and take a filter. */
+[data-page-background-grayscale='true'] {
+	--login-page-image-tone: linear-gradient(#808080, #808080);
+}
+
+[data-login-panel-background-grayscale='true'] {
+	--login-panel-background-filter: grayscale(1);
+}
+
+[data-brand-panel-image-grayscale='true'] {
+	--login-brand-panel-image-filter: grayscale(1);
 }
 
 /* The veil over the page background image takes only the page colour's channels, so a translucent
@@ -3279,7 +3306,10 @@ tr.expired {
 /* The page: its light, over the page colour; under a tenant's own picture when there is one. */
 :is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page {
 	background-image:
-		var(--login-page-image-veil), var(--login-page-background-layer, var(--glass-backdrop));
+		var(--login-page-image-veil), var(--login-page-image-tone, none),
+		var(--login-page-background-layer, var(--glass-backdrop));
+	/* With no picture the glass light is three layers: each is drawn normally. */
+	background-blend-mode: normal, saturation, normal, normal, normal;
 }
 
 :is([data-login-theme='glass'], [data-login-theme='clear-glass']) .card {

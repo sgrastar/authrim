@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import ImageUpload from '#lib/ui/patterns/ImageUpload.svelte';
+	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
 	import Slider from '#lib/ui/primitives/Slider.svelte';
+	import BgPresetButton from './BgPresetButton.svelte';
 	import ThemeGroup from './ThemeGroup.svelte';
 	import type { ThemeDraft } from './theme-draft';
 
@@ -39,9 +41,14 @@
 		shape="square"
 		maxBytes={2 * 1024 * 1024}
 		bind:value={draft.backgroundImage}
-	/>
+	>
+		{#snippet actions(pick)}<BgPresetButton value={draft.backgroundImage} onpick={pick} />{/snippet}
+	</ImageUpload>
 	{#if draft.backgroundImage}
 		<Slider label={t('th.i.bgOpacity')} format="percent" bind:value={draft.backgroundOpacity} />
+		<Checkbox size="sm" bind:checked={draft.backgroundGrayscale}>
+			{t('th.i.grayscale')}
+		</Checkbox>
 	{/if}
 </ThemeGroup>
 
@@ -52,13 +59,18 @@
 			shape="square"
 			maxBytes={2 * 1024 * 1024}
 			bind:value={draft.panelImage}
-		/>
+		>
+			{#snippet actions(pick)}<BgPresetButton value={draft.panelImage} onpick={pick} />{/snippet}
+		</ImageUpload>
 		{#if draft.panelImage}
 			<Slider
 				label={t('th.i.panelOpacity')}
 				format="percent"
 				bind:value={draft.panelImageOpacity}
 			/>
+			<Checkbox size="sm" bind:checked={draft.panelImageGrayscale}>
+				{t('th.i.grayscale')}
+			</Checkbox>
 		{/if}
 	</ThemeGroup>
 {/if}
@@ -70,9 +82,14 @@
 			shape="square"
 			maxBytes={2 * 1024 * 1024}
 			bind:value={draft.cardImage}
-		/>
+		>
+			{#snippet actions(pick)}<BgPresetButton value={draft.cardImage} onpick={pick} />{/snippet}
+		</ImageUpload>
 		{#if draft.cardImage}
 			<Slider label={t('th.i.cardOpacity')} format="percent" bind:value={draft.cardImageOpacity} />
+			<Checkbox size="sm" bind:checked={draft.cardImageGrayscale}>
+				{t('th.i.grayscale')}
+			</Checkbox>
 		{/if}
 	</ThemeGroup>
 {/if}

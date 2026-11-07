@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import Icon from '../icons/Icon.svelte';
 	import { formatBytes } from '../format';
@@ -27,6 +28,11 @@
 		field?: string;
 		/** Mark as changed explicitly. */
 		changed?: boolean;
+		/**
+		 * More buttons after Choose / Remove (another way to pick the image). They hand the file
+		 * to `pick`, which checks it like a file from disk and clears an earlier error.
+		 */
+		actions?: Snippet<[pick: (file: File) => void]>;
 	}
 
 	let {
@@ -38,7 +44,8 @@
 		disabled = false,
 		onremove,
 		field,
-		changed
+		changed,
+		actions
 	}: Props = $props();
 
 	const changes = useChangeMark();
@@ -68,11 +75,15 @@
 			: t('file.limits', { types, max: formatBytes(maxBytes, i18n.locale) });
 	});
 
-	function choose(list: FileList | null) {
-		if (!list?.length) return;
-		const result = partitionFiles([list[0]], { accept, maxBytes });
+	function pick(chosen: File) {
+		const result = partitionFiles([chosen], { accept, maxBytes });
 		rejected = result.rejected[0] ?? null;
 		if (result.accepted[0]) value = result.accepted[0];
+	}
+
+	function choose(list: FileList | null) {
+		if (!list?.length) return;
+		pick(list[0]);
 		if (input) input.value = '';
 	}
 
@@ -126,6 +137,7 @@
 						onchange={(event) => choose(event.currentTarget.files)}
 					/>
 				</label>
+				{@render actions?.(pick)}
 				{#if shown}
 					<IconButton icon="trash" label={t('image.remove')} {disabled} onclick={remove} />
 				{/if}
