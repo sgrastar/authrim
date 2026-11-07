@@ -40,7 +40,6 @@ import {
 import {
 	decideLiteStep,
 	liteMethodAvailability,
-	liteSocialProviders,
 	readKeptFlow,
 	resumeLiteFlow,
 	type LiteFlowView,
@@ -387,22 +386,12 @@ export function liteLoginStepDecision(
 	methods: LiteTenantMethods | null,
 	locale: string
 ): LiteStepDecision {
-	const decision = decideLiteStep(withLocalizedScreen(step, locale), {
+	return decideLiteStep(withLocalizedScreen(step, locale), {
 		blocks: LITE_LOGIN_PAGE_BLOCKS,
 		methods: LITE_LOGIN_PAGE_METHODS,
 		isAvailable: liteMethodAvailability(methods, step),
 		guestEnabled: methods?.guest?.enabled === true
 	});
-	// A SAML provider is not started by the lite UI yet (plan PR5b-3): a social part that offers
-	// one stops the page (and every post on it) rather than leaving it out unsaid.
-	if (
-		decision.kind === 'screen' &&
-		decision.fields.some((f) => f.blockType === 'auth_widget' && f.authMethod === 'external_idp') &&
-		liteSocialProviders(methods, step).samlOffered
-	) {
-		return { kind: 'unsupported', reasons: ['provider:saml_sp'] };
-	}
-	return decision;
 }
 
 /** Keeps the Flow's (new) hash and signature in the transaction; the stored transaction, or null. */
