@@ -453,6 +453,25 @@ describe('CanonicalRuntimeUserWriter', () => {
       expect(JSON.stringify(emailValue())).toBe(before);
     });
 
+    it('writes no profile values when the deletion began after the read', async () => {
+      await create();
+      const before = JSON.stringify(emailValue());
+      identityRepository.touchAccountUnlessRemoved = async (accountId) => {
+        const row = adapter.getById('identity_accounts', accountId);
+        adapter.seed('identity_accounts', [{ ...row, lifecycle_state: 'deleting' }]);
+        return false;
+      };
+
+      await expect(
+        writer.updateProfileFields({
+          userId: 'user-1',
+          tenantId: 'tenant-a',
+          values: { email: 'again@example.test' },
+        })
+      ).rejects.toBeInstanceOf(CanonicalAccountRemovedError);
+      expect(JSON.stringify(emailValue())).toBe(before);
+    });
+
     it('goes on when its update missed for another reason (the account is still live)', async () => {
       await create();
       identityRepository.updateAccountRuntimeFields = async () => false;

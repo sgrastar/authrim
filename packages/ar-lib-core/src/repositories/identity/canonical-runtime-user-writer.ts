@@ -293,9 +293,17 @@ export class CanonicalRuntimeUserWriter {
     if (!account?.primary_subject_id) {
       return false;
     }
-    // An account being deleted (or deleted) gets no profile values again.
+    // An account being deleted (or deleted) gets no profile values again, also when its deletion
+    // began after the read (the guarded claim misses; the account is then read again, as for a
+    // sync).
     if (isRemovedLifecycleState(account.lifecycle_state)) {
       throw new CanonicalAccountRemovedError();
+    }
+    if (!(await this.repository.touchAccountUnlessRemoved(account.id))) {
+      const now = await this.repository.findAccountById(account.id, { includeInactive: true });
+      if (now && isRemovedLifecycleState(now.lifecycle_state)) {
+        throw new CanonicalAccountRemovedError();
+      }
     }
     const profile = (
       await this.repository.findProfilesForSubject(account.primary_subject_id, {
