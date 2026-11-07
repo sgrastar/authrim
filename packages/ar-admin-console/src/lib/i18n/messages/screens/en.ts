@@ -238,6 +238,8 @@ export const enScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.responses.noAccess': 'You cannot view responses',
 	'sc.responses.yes': 'Yes',
 	'sc.responses.no': 'No',
+	'sc.set.checkboxText': 'Text beside the box',
+	'sc.set.checkboxTextHint': 'The label shows as the question; this text shows beside the box.',
 	'sc.set.answerTargets': 'Where the answer goes',
 	'sc.set.targetFlow': 'Send to the flow and its event (webhook)',
 	'sc.set.targetFlowHint':

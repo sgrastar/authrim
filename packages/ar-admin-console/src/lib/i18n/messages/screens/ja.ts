@@ -238,6 +238,8 @@ export const jaScreens = {
 	'sc.responses.noAccess': '回答を見る権限がありません',
 	'sc.responses.yes': 'はい',
 	'sc.responses.no': 'いいえ',
+	'sc.set.checkboxText': 'チェックボックス横の文言',
+	'sc.set.checkboxTextHint': 'ラベルは質問として表示され、この文言がチェックボックスの横に出ます。',
 	'sc.set.answerTargets': '回答の保存先',
 	'sc.set.targetFlow': 'フローとイベント（Webhook）に送る',
 	'sc.set.targetFlowHint':

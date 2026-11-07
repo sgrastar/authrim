@@ -60,8 +60,11 @@ function readCondition(value: unknown): DisplayCondition {
 	return { mode, feature };
 }
 
-/** The parts whose placeholder the builder edits (a checkbox keeps a legacy one as read). */
-const PLACEHOLDER_KINDS: ReadonlySet<string> = new Set(['identity_field', 'select']);
+/**
+ * The parts whose placeholder the builder edits. A checkbox's is the text beside the box of a
+ * legacy yes/no question (edited as such, see PartSettingsPanel); a checkbox part ignores it.
+ */
+const PLACEHOLDER_KINDS: ReadonlySet<string> = new Set(['identity_field', 'select', 'checkbox']);
 /** The parts whose `text` the builder edits (a divider's is its label). */
 const TEXT_KINDS: ReadonlySet<string> = new Set([
 	'heading',
@@ -231,7 +234,16 @@ function removed(kind: string, settings: PartSettings): string[] {
 }
 
 /** The legacy yes/no form, as read: an identity field of value type boolean. */
-function isLegacyYesNo(field: ScreenField | undefined): boolean {
+/** The parts read in the legacy yes/no form (saved back in it while stored to the profile). */
+export function legacyYesNoIds(origins: BuilderScreen['origins']): Set<string> {
+	return new Set(
+		Object.entries(origins)
+			.filter(([, field]) => isLegacyYesNo(field))
+			.map(([id]) => id)
+	);
+}
+
+export function isLegacyYesNo(field: ScreenField | undefined): boolean {
 	return (
 		!!field &&
 		(field.block_type ?? 'identity_field') === 'identity_field' &&

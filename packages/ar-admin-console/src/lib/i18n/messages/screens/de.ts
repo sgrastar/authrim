@@ -242,6 +242,9 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.responses.noAccess': 'Sie dürfen Antworten nicht ansehen',
 	'sc.responses.yes': 'Ja',
 	'sc.responses.no': 'Nein',
+	'sc.set.checkboxText': 'Text neben dem Kästchen',
+	'sc.set.checkboxTextHint':
+		'Die Beschriftung erscheint als Frage, dieser Text neben dem Kästchen.',
 	'sc.set.answerTargets': 'Wohin die Antwort geht',
 	'sc.set.targetFlow': 'An den Ablauf und sein Ereignis (Webhook) senden',
 	'sc.set.targetFlowHint':

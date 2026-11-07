@@ -58,6 +58,11 @@
 		schemaHref?: string;
 		/** Shown, not edited (a built-in screen, or no permission to change it). */
 		readonly?: boolean;
+		/**
+		 * The part is a legacy yes/no question saved in that form: its label is the question and
+		 * its placeholder the text beside the box, as the Login UI shows them.
+		 */
+		legacyYesNo?: boolean;
 	}
 
 	let {
@@ -72,7 +77,8 @@
 		schemaFields = [],
 		choices = () => [],
 		schemaHref,
-		readonly = false
+		readonly = false,
+		legacyYesNo = false
 	}: Props = $props();
 
 	// A new part has no saved settings: compare its fields with themselves, so none is marked.
@@ -210,7 +216,14 @@
 						</Checkbox>
 					</div>
 				{/if}
-				{#if part.kind === 'identity_field'}
+				{#if part.kind === 'checkbox' && legacyYesNo && settings.linked}
+					<TextField
+						field="{path}.placeholder"
+						label={setting('checkboxText')}
+						hint={setting('checkboxTextHint')}
+						bind:value={settings.placeholder}
+					/>
+				{:else if part.kind === 'identity_field'}
 					<TextField
 						field="{path}.placeholder"
 						label={setting('placeholder')}

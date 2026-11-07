@@ -22,9 +22,11 @@
 		settings?: Record<string, PartSettings>;
 		rowSettings?: Record<string, DisplayCondition>;
 		choices?: ChoiceSource;
+		/** The parts read in the legacy yes/no form (see `legacyYesNoIds`). */
+		legacyYesNo?: ReadonlySet<string>;
 	}
 
-	let { rows, settings = {}, rowSettings = {}, choices }: Props = $props();
+	let { rows, settings = {}, rowSettings = {}, choices, legacyYesNo }: Props = $props();
 
 	const shownRows = $derived(rows.filter((row) => rowSettings[row.id]?.mode !== 'hidden'));
 </script>
@@ -70,9 +72,20 @@
 								{#if extra?.helpText}<small>{extra.helpText}</small>{/if}
 							</span>
 						{:else if part.kind === 'checkbox'}
-							<span class="screen__check">
-								<i></i>{part.label}{extra?.required ? ' *' : ''}
-							</span>
+							<!-- A legacy yes/no question with words of its own beside the box: the label is
+							     the question above it, as the Login UI shows it. -->
+							{#if legacyYesNo?.has(part.id) && extra?.linked && extra.placeholder && extra.placeholder !== part.label}
+								<span class="screen__field">
+									{#if extra.showLabel !== false}<span
+											>{part.label}{extra.required ? ' *' : ''}</span
+										>{/if}
+									<span class="screen__check"><i></i>{extra.placeholder}</span>
+								</span>
+							{:else}
+								<span class="screen__check">
+									<i></i>{part.label}{extra?.required ? ' *' : ''}
+								</span>
+							{/if}
 						{:else if part.kind === 'auth_widget'}
 							<span class="screen__button">{part.label}</span>
 						{:else if part.kind === 'code_input_widget'}

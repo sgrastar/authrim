@@ -26,7 +26,7 @@
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { screenErrorKey } from './screen-errors';
-	import { fieldsToBuilder } from './screen-layout';
+	import { fieldsToBuilder, legacyYesNoIds } from './screen-layout';
 	import type { ChoiceSource } from './screen-model';
 	import ScreenPreview from './ScreenPreview.svelte';
 
@@ -308,6 +308,7 @@
 							rows={preview.rows}
 							settings={preview.settings}
 							rowSettings={preview.rowSettings}
+							legacyYesNo={legacyYesNoIds(preview.origins)}
 							{choices}
 						/>
 					{/if}

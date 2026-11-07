@@ -54,7 +54,13 @@
 	} from './screen-builder';
 	import { partName } from './screen-copy';
 	import { screenErrorKey } from './screen-errors';
-	import { builderToFields, fieldsToBuilder, type BuilderScreen } from './screen-layout';
+	import {
+		builderToFields,
+		fieldsToBuilder,
+		isLegacyYesNo,
+		legacyYesNoIds,
+		type BuilderScreen
+	} from './screen-layout';
 	import {
 		ACCOUNT_KINDS,
 		INPUT_KINDS,
@@ -122,7 +128,8 @@
 	let draft = $state(new Draft<EditorValue>(newScreenValue()));
 	/** The screen as loaded (none for a new one), and the field each part was read from. */
 	let loaded = $state<Screen | null>(null);
-	let origins: BuilderScreen['origins'] = {};
+	// Plain objects (raw state): what a part was read from goes back to the API as it was.
+	let origins = $state.raw<BuilderScreen['origins']>({});
 	let version = 0;
 	let usages = $state<ScreenUsage[]>([]);
 	let usagesComplete = $state(true);
@@ -654,6 +661,7 @@
 										{schemaFields}
 										{choices}
 										{schemaHref}
+										legacyYesNo={isLegacyYesNo(origins[chosen.id])}
 									/>
 								{:else if rowIndex >= 0}
 									{@const row = value.rows[rowIndex]}
@@ -672,6 +680,7 @@
 						{:else if current === 'preview'}
 							<PreviewFrame label={title} bind:width={previewWidth}>
 								<ScreenPreview
+									legacyYesNo={legacyYesNoIds(origins)}
 									rows={value.rows}
 									settings={value.settings}
 									rowSettings={value.rowSettings}

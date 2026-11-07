@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ScreenField } from '@authrim/ar-lib-core/types/screens';
-import { builderToFields, fieldsToBuilder, kindOfField } from './screen-layout';
+import { builderToFields, fieldsToBuilder, kindOfField, legacyYesNoIds } from './screen-layout';
 
 const ids = () => {
 	let n = 0;
@@ -318,6 +318,44 @@ describe('builderToFields', () => {
 		});
 		expect(news.block_type).toBe('checkbox');
 		expect(news).not.toHaveProperty('value_type');
+	});
+
+	it('knows the parts read in the legacy yes/no form, and no longer once saved as a checkbox', () => {
+		const read = fieldsToBuilder(
+			[
+				part({ block_id: 'terms', field: 'terms', value_type: 'boolean', placeholder: 'I agree' }),
+				part({ block_type: 'checkbox', block_id: 'news', field: 'news', placeholder: 'left over' })
+			],
+			ids()
+		);
+		expect([...legacyYesNoIds(read.origins)]).toEqual(['terms']);
+
+		// Moved off the profile and saved: a checkbox from then on, whatever its placeholder.
+		read.settings.terms.linked = false;
+		read.settings.terms.field = 'terms_answer';
+		const again = fieldsToBuilder(builderToFields(read), ids());
+		expect([...legacyYesNoIds(again.origins)]).toEqual([]);
+	});
+
+	it("writes a legacy yes/no question's edited box text", () => {
+		const screen = fieldsToBuilder(
+			[
+				part({
+					block_id: 'terms',
+					field: 'terms',
+					label: 'Terms of use',
+					placeholder: 'I have read and agree',
+					value_type: 'boolean'
+				})
+			],
+			ids()
+		);
+		screen.settings.terms.placeholder = 'I agree to the new terms';
+
+		expect(builderToFields(screen)[0]).toMatchObject({
+			block_type: 'identity_field',
+			placeholder: 'I agree to the new terms'
+		});
 	});
 
 	it('reads an older code input that named its code by auth_method', () => {

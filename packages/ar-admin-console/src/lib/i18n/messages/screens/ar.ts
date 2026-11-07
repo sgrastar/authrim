@@ -227,6 +227,8 @@ export const arScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.responses.noAccess': 'لا يمكنك عرض الإجابات',
 	'sc.responses.yes': 'نعم',
 	'sc.responses.no': 'لا',
+	'sc.set.checkboxText': 'النص بجانب المربع',
+	'sc.set.checkboxTextHint': 'تظهر التسمية كسؤال، ويظهر هذا النص بجانب المربع.',
 	'sc.set.answerTargets': 'أين تذهب الإجابة',
 	'sc.set.targetFlow': 'الإرسال إلى التدفق وحدثه (Webhook)',
 	'sc.set.targetFlowHint':
