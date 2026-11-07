@@ -12,6 +12,7 @@ import { jaCustomization } from './customization/ja';
 import { jaScreens } from './screens/ja';
 import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
+import { jaTeam } from './team/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -32,6 +33,7 @@ export const ja = {
 	...jaScreens,
 	...jaStepUp,
 	...jaAdminAudit,
+	...jaTeam,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
