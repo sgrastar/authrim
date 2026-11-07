@@ -119,3 +119,35 @@ export function widest(levels: readonly AccessLevel[]): AccessLevel {
 	if (levels.includes('view')) return 'view';
 	return 'none';
 }
+
+/**
+ * What the admin can do on the team pages (Settings → Administrators), as the Admin API checks it.
+ * The API also measures the caller's rank against the role and the admin concerned, and whether a
+ * permission comes from a global assignment; the console cannot see either, so a control shown
+ * here can still be refused, and the page says why.
+ */
+export interface TeamAccess {
+	/** See the administrators and invitations (`admin:admin_users:read`). */
+	read: boolean;
+	/** Suspend, reactivate and unlock administrators (`admin:admin_users:write`). */
+	manage: boolean;
+	/** Invite, resend and revoke: also the roles' write permission, since an invitation is a grant. */
+	invite: boolean;
+	/** Fill in a new invitation: inviting, and reading the roles to offer (`admin:admin_roles:read`). */
+	inviteForm: boolean;
+	/** Offer a global (every tenant) role: the wildcard from a global assignment. */
+	global: boolean;
+}
+
+export function teamAccess(access: AdminAccess): TeamAccess {
+	const read = hasPermission(access, 'admin:admin_users:read');
+	const manage = read && hasPermission(access, 'admin:admin_users:write');
+	const invite = manage && hasPermission(access, 'admin:admin_roles:write');
+	return {
+		read,
+		manage,
+		invite,
+		inviteForm: invite && hasPermission(access, 'admin:admin_roles:read'),
+		global: access.platform && access.permissions.includes('*')
+	};
+}

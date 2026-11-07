@@ -12,6 +12,7 @@ import { enNotices } from './notices/en';
 import { enCustomization } from './customization/en';
 import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
+import { enTeam } from './team/en';
 
 export const en = {
 	...enSettings,
@@ -27,6 +28,7 @@ export const en = {
 	...enCustomization,
 	...enStepUp,
 	...enAdminAudit,
+	...enTeam,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',

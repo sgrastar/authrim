@@ -12,6 +12,7 @@ import { arNotices } from './notices/ar';
 import { arCustomization } from './customization/ar';
 import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
+import { arTeam } from './team/ar';
 
 export const ar = {
 	...arSettings,
@@ -27,6 +28,7 @@ export const ar = {
 	...arCustomization,
 	...arStepUp,
 	...arAdminAudit,
+	...arTeam,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
