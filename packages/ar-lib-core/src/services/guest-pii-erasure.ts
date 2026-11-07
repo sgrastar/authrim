@@ -91,6 +91,8 @@ const PG_SCHEMA_TABLES = new Set([
   // Registered accounts' screen response records: a guest's answers are never kept as one, so
   // the table is not part of the guest erasure profile.
   'screen_responses',
+  // The fence of a fully deleted registered account (a guest has its own markers).
+  'account_pii_erasure_markers',
   // Installation bookkeeping can exist in either provider profile.
   'authrim_migrations',
   'authrim_runtime_probes',
