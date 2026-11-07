@@ -75,7 +75,7 @@ import {
   generateSecureRandomString,
   getSessionCookieSameSite,
 } from '@authrim/ar-lib-core';
-import { redirectWithError } from './authorize';
+import { answerFormPostAsData, formPostAnsweredAsData, redirectWithError } from './authorize';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 
 // Scope descriptions (human-readable)
@@ -741,6 +741,8 @@ async function changedConsentDocument(
  * acknowledged_policy_versions, consent_item_decisions }. Responds with { redirect_url }.
  */
 export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
+  // The lite Login UI's server sends a form post itself (its relay page): it asks for the data.
+  if (c.req.header('X-Authrim-Relay') === 'structured') answerFormPostAsData(c);
   const log = getLogger(c).module('CONSENT');
 
   try {
@@ -965,6 +967,19 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           return c.json({ redirect_url: location });
         }
         return response;
+      }
+
+      // A form post response mode, for a caller that sends the form itself (the lite Login UI's
+      // relay): the destination and its fields. The SPA follows `redirect_url` as before.
+      if (responseMode === 'form_post' && formPostAnsweredAsData(c)) {
+        return await redirectWithError(
+          c,
+          redirectUri,
+          'access_denied',
+          'User denied the consent request',
+          metadata.state,
+          { responseMode, cancelUri, isUserCancellation: true }
+        );
       }
 
       // Use cancel_uri for user-initiated denial, fallback to redirect_uri

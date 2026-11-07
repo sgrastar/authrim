@@ -86,6 +86,7 @@ function createMockCoreDb(
             const [lifecycleState, _updatedAt, accountId] = args;
             const userId = String(accountId).replace(/^account-/, '');
             state.lifecycleStates.set(userId, lifecycleState);
+            return { success: true, meta: { changes: 1 } };
           }
 
           return { success: true };
@@ -166,6 +167,27 @@ describe('user-lifecycle', () => {
     expect(result.lifecycleState).toBe('active');
     expect(result.missingRequiredFields).toEqual([]);
     expect(state.lifecycleStates.get('user-1')).toBe('active');
+  });
+
+  it('never moves an account being deleted, or deleted, back to another state', async () => {
+    for (const removed of ['deleting', 'deleted']) {
+      const state = {
+        schemas: [makeSchema()],
+        userCustomFields: new Map<string, Record<string, string>>([
+          ['user-1', { department: 'Engineering' }],
+        ]),
+        lifecycleStates: new Map<string, string | null>([['user-1', removed]]),
+      };
+
+      await expect(
+        syncUserLifecycleState({
+          db: createMockCoreDb(state),
+          tenantId: 'default',
+          userId: 'user-1',
+        })
+      ).rejects.toThrow('canonical_account_removed');
+      expect(state.lifecycleStates.get('user-1')).toBe(removed);
+    }
   });
 
   it('can read schemas and custom data separately from the lifecycle state backend', async () => {
