@@ -1635,6 +1635,14 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     roles: PLATFORM_ADMIN_ROLES,
     description: 'platform control plane lookup HMAC generation observation',
   }),
+  // The last-resort second-factor recovery: only the exact permission, which the setup tool's
+  // short-lived principal holds (no role, no wildcard); the handler also requires a machine token.
+  rule({
+    pattern: '/api/admin/platform/last-resort-recovery/second-factors',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.ADMIN_LAST_RESORT_RECOVERY],
+    description: 'last-resort admin second-factor recovery',
+  }),
   ...byMethod(
     '/api/admin/platform/control-plane/*',
     ADMIN_PERMISSIONS.CONTROL_PLANE_READ,

@@ -207,6 +207,12 @@ export async function fileRecoveryRequest(
       now
     );
     if (!result.created) {
+      if (result.reason === 'session_ended') {
+        return c.json(
+          { error: 'session_ended', error_description: 'This session has ended: sign in again' },
+          401
+        );
+      }
       return result.reason === 'already_pending'
         ? c.json(
             { error: 'recovery_pending', error_description: 'A recovery request is already open' },

@@ -253,6 +253,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/admin-last-resort-recovery.ts',
+        receiverPrefixes: {
+          adminLastResortRecoveryRouter: '/api/admin/platform/last-resort-recovery',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-second-factor-recoveries.ts',
         receiverPrefixes: {
           adminSecondFactorRecoveriesRouter: '/api/admin/admin-second-factor-recoveries',

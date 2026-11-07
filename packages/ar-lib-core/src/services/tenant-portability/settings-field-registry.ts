@@ -1042,6 +1042,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     security.request_object_max_age_seconds
     security.request_object_max_lifetime_seconds
     security.request_object_clock_skew_seconds
+    security.admin_last_resort_reenroll_window_seconds
   `,
     ],
     [

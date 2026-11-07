@@ -6117,14 +6117,24 @@ export async function ensureSetupMachineAccessInD1(
   config: AuthrimConfig,
   keysDir: string,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
+  options: {
+    databaseIdentifier?: string;
+    target?: LocalWranglerTarget;
+    /** The principal's permissions instead of the default setup scopes (least privilege). */
+    permissions?: readonly string[];
+    /** Reach every tenant (a platform-wide operation checked at the global scope). */
+    allTenants?: boolean;
+  } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
 
   try {
     await ensureSetupMachineKeyFiles(keysDir);
     const publicJwk = await loadSetupMachinePublicJwk(keysDir);
-    const sql = buildSetupMachineAccessBootstrapSql(config, publicJwk);
+    const sql = buildSetupMachineAccessBootstrapSql(config, publicJwk, {
+      ...(options.permissions ? { permissions: options.permissions } : {}),
+      ...(options.allTenants ? { allTenants: true } : {}),
+    });
 
     onProgress?.(`🔧 Ensuring setup machine access exists in ${dbName}...`);
     const { stdout, stderr } = await executeD1Command(dbName, sql, {

@@ -26,6 +26,7 @@ export interface SecuritySettings {
   'security.admin_step_up_enforced': boolean;
   'security.admin_step_up_overrides': Record<string, 'L1' | 'L2'>;
   'security.admin_keyring_dc_api': boolean;
+  'security.admin_last_resort_reenroll_window_seconds': number;
 
   // OAuth Security Requirements
   'security.pkce_required': boolean;
@@ -145,6 +146,24 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     label: 'Keyring through the Digital Credentials API',
     description:
       'Let admins present their Keyring credential through the browser (Digital Credentials API, OpenID4VP) instead of a QR code, where the browser supports it. The browser binds the answer to the console origin. Off until the wallet supports it',
+    visibility: 'admin',
+  },
+  'security.admin_last_resort_reenroll_window_seconds': {
+    key: 'security.admin_last_resort_reenroll_window_seconds',
+    // Set by whoever runs the platform: the last-resort recovery acts across tenants.
+    scopes: ['platform'],
+    type: 'number',
+    default: 86400,
+    envKey: 'ADMIN_LAST_RESORT_REENROLL_WINDOW_SECONDS',
+    // A malformed or out-of-range value falls back to the default rather than to a long window.
+    envNumber: 'strict-in-range',
+    label: 'Last-resort Re-enrolment Window',
+    description:
+      'After the last-resort recovery (setup tool, Cloudflare authority) revoked an admin’s second factors, how long they may register a first one again with a fresh passkey alone',
+    unit: 'seconds',
+    min: 900,
+    max: 259200,
+    integer: true,
     visibility: 'admin',
   },
   'security.admin_step_up_overrides': {
@@ -374,6 +393,7 @@ export const SECURITY_DEFAULTS: SecuritySettings = {
   'security.admin_step_up_enforced': true,
   'security.admin_step_up_overrides': {},
   'security.admin_keyring_dc_api': false,
+  'security.admin_last_resort_reenroll_window_seconds': 86400,
   // New settings
   'security.pkce_required': false,
   'security.par_required': false,

@@ -19,7 +19,12 @@ export const ADMIN_SECOND_FACTOR_RECOVERY_WAIT_MS = 24 * 60 * 60 * 1000;
 export const ADMIN_SECOND_FACTOR_RECOVERY_COMPLETION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type AdminSecondFactorRecoveryStatus = 'pending' | 'completed' | 'cancelled' | 'expired';
-export type AdminSecondFactorRecoveryCancelReason = 'requester' | 'admin' | 'notification_failed';
+export type AdminSecondFactorRecoveryCancelReason =
+  | 'requester'
+  | 'admin'
+  | 'notification_failed'
+  // Cancelled by the last-resort recovery, which revoked every factor and opened re-enrolment
+  | 'last_resort';
 
 export interface AdminSecondFactorRecovery {
   id: string;
@@ -79,7 +84,7 @@ export type AdminSecondFactorRecoveryInput =
 
 export type AdminSecondFactorRecoveryCreateResult =
   | { created: true; recovery: AdminSecondFactorRecovery }
-  | { created: false; reason: 'already_pending' | 'credential_in_use' };
+  | { created: false; reason: 'already_pending' | 'credential_in_use' | 'session_ended' };
 
 export type AdminSecondFactorRecoveryCompleteResult =
   | { completed: true; secondFactorId: string; recovery: AdminSecondFactorRecovery }
@@ -166,7 +171,13 @@ export class AdminSecondFactorRecoveryRepository {
             )
             AND NOT EXISTS (SELECT 1 FROM admin_passkeys WHERE credential_id = ?)
             AND NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE credential_id = ?)
-            AND NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE holder_jkt = ?)`,
+            AND NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE holder_jkt = ?)
+            -- The session that asked must still be the admin's: the last-resort recovery ends
+            -- every session and cancels open requests, and a request in flight then must not
+            -- land after it.
+            AND EXISTS (
+              SELECT 1 FROM admin_sessions WHERE id = ? AND admin_user_id = ? AND expires_at > ?
+            )`,
         params: [
           id,
           input.admin_user_id,
@@ -188,6 +199,9 @@ export class AdminSecondFactorRecoveryRepository {
           credentialId,
           credentialId,
           holderJkt,
+          input.requested_session_id,
+          input.admin_user_id,
+          now,
         ],
       },
     ]);
@@ -196,7 +210,12 @@ export class AdminSecondFactorRecoveryRepository {
         `SELECT id FROM admin_second_factor_recoveries WHERE admin_user_id = ? AND ${PENDING_SQL}`,
         [input.admin_user_id]
       );
-      return { created: false, reason: pending ? 'already_pending' : 'credential_in_use' };
+      if (pending) return { created: false, reason: 'already_pending' };
+      const session = await this.adapter.queryOne<{ id: string }>(
+        'SELECT id FROM admin_sessions WHERE id = ? AND admin_user_id = ? AND expires_at > ?',
+        [input.requested_session_id, input.admin_user_id, now]
+      );
+      return { created: false, reason: session ? 'credential_in_use' : 'session_ended' };
     }
     return {
       created: true,
@@ -312,6 +331,13 @@ export class AdminSecondFactorRecoveryRepository {
           WHERE admin_user_id = ? AND id = ? AND ${completedHere}`,
         params: [adminUserId, currentSessionId, open.id, now],
       },
+      {
+        // A factor is registered: a re-enrolment window the last-resort recovery opened is used
+        // up too, as when a factor is registered through it.
+        sql: `UPDATE admin_users SET second_factor_reenroll_until = NULL
+          WHERE id = ? AND second_factor_reenroll_until IS NOT NULL AND ${completedHere}`,
+        params: [adminUserId, open.id, now],
+      },
     ]);
     if (!completed || completed.rowsAffected === 0) {
       const again = await this.findOpenByUser(adminUserId, now);
@@ -355,7 +381,10 @@ export class AdminSecondFactorRecoveryRepository {
       cancelled_at: num(row.cancelled_at),
       cancelled_by: str(row.cancelled_by),
       cancel_reason:
-        reason === 'requester' || reason === 'admin' || reason === 'notification_failed'
+        reason === 'requester' ||
+        reason === 'admin' ||
+        reason === 'notification_failed' ||
+        reason === 'last_resort'
           ? reason
           : null,
     };

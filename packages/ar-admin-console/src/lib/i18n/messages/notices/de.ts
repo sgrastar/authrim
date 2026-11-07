@@ -77,6 +77,8 @@ export const deNotices: Record<keyof typeof jaNotices, string> = {
 	'nt.pub.err.invalid':
 		'Prüfen Sie die Eingaben. Eine Überschrift ist Pflicht, bei App oder Admin auch die ID.',
 	'nt.pub.err.expiry': 'Das Ablaufdatum muss in der Zukunft liegen.',
+	'notice.msg.second_factor_last_resort_recovery':
+		'Die Step-up-Sicherheitsschlüssel von {email} wurden vom Betreiber der Umgebung zurückgesetzt',
 	'notice.msg.second_factor_recovery_requested':
 		'{email} hat die Wiederherstellung eines Sicherheitsschlüssels beantragt',
 	'notice.msg.storage_registry_security':
