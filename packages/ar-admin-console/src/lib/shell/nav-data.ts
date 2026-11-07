@@ -303,6 +303,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'screens',
 				label: 'nav.custom.screens',
 				icon: 'list',
+				// The screen builder: …/screens/new and …/screens/<screen id>.
+				details: true,
 				legacyRoutes: ['/admin/screens']
 			},
 			{

@@ -1,30 +1,32 @@
 <script lang="ts">
-	import Icon from '../icons/Icon.svelte';
-	import type { LayoutRow } from '../builder/layout-model';
+	import type { LayoutRow } from '#lib/ui/builder/layout-model.js';
+	import Icon from '#lib/ui/icons/Icon.svelte';
 	import {
 		ACCOUNT_KINDS,
 		choicesOf,
-		partDef,
+		partKind,
+		type ChoiceSource,
 		type DisplayCondition,
 		type PartSettings
-	} from './screen-parts';
+	} from './screen-model';
 
 	/**
-	 * Storybook demo: a rough picture of a sign-in page built from layout rows. Real previews
-	 * come from the Login UI itself; this shows rows, columns and what each part roughly looks
-	 * like. Hidden parts and rows are left out; "when a feature is on" is shown as on.
-	 *
-	 * TODO(runtime): the Login UI (RuntimeScreen.svelte) needs the same: select / radio /
-	 * checkbox blocks, options resolved as in choicesOf(), and show_label false rendered as a
-	 * visually hidden label (here the label is simply left out, since this is only a picture).
+	 * A rough picture of a Login UI page built from layout rows: rows, columns and what each part
+	 * roughly looks like (the Login UI draws the real page). Hidden parts and rows are left out;
+	 * "when a feature is on" is shown as on; a hidden label is left out (the Login UI keeps it for
+	 * screen readers). A choice part linked to an attribute shows the attribute's choices, from
+	 * `choices` (none when not given).
 	 */
 	interface Props {
 		rows: readonly LayoutRow[];
 		settings?: Record<string, PartSettings>;
 		rowSettings?: Record<string, DisplayCondition>;
+		choices?: ChoiceSource;
+		/** The parts read in the legacy yes/no form (see `legacyYesNoIds`). */
+		legacyYesNo?: ReadonlySet<string>;
 	}
 
-	let { rows, settings = {}, rowSettings = {} }: Props = $props();
+	let { rows, settings = {}, rowSettings = {}, choices, legacyYesNo }: Props = $props();
 
 	const shownRows = $derived(rows.filter((row) => rowSettings[row.id]?.mode !== 'hidden'));
 </script>
@@ -54,7 +56,9 @@
 								{#if extra?.showLabel !== false}<span
 										>{part.label}{extra?.required ? ' *' : ''}</span
 									>{/if}
-								<i class="screen__select">{extra?.placeholder || choicesOf(extra)[0]?.label}</i>
+								<i class="screen__select"
+									>{extra?.placeholder || choicesOf(extra, choices)[0]?.label}</i
+								>
 								{#if extra?.helpText}<small>{extra.helpText}</small>{/if}
 							</span>
 						{:else if part.kind === 'radio'}
@@ -62,15 +66,26 @@
 								{#if extra?.showLabel !== false}<span
 										>{part.label}{extra?.required ? ' *' : ''}</span
 									>{/if}
-								{#each choicesOf(extra) as option (option.value)}
+								{#each choicesOf(extra, choices) as option (option.value)}
 									<span class="screen__check"><i class="screen__dot"></i>{option.label}</span>
 								{/each}
 								{#if extra?.helpText}<small>{extra.helpText}</small>{/if}
 							</span>
 						{:else if part.kind === 'checkbox'}
-							<span class="screen__check">
-								<i></i>{part.label}{extra?.required ? ' *' : ''}
-							</span>
+							<!-- A legacy yes/no question with words of its own beside the box: the label is
+							     the question above it, as the Login UI shows it. -->
+							{#if legacyYesNo?.has(part.id) && extra?.linked && extra.placeholder && extra.placeholder !== part.label}
+								<span class="screen__field">
+									{#if extra.showLabel !== false}<span
+											>{part.label}{extra.required ? ' *' : ''}</span
+										>{/if}
+									<span class="screen__check"><i></i>{extra.placeholder}</span>
+								</span>
+							{:else}
+								<span class="screen__check">
+									<i></i>{part.label}{extra?.required ? ' *' : ''}
+								</span>
+							{/if}
 						{:else if part.kind === 'auth_widget'}
 							<span class="screen__button">{part.label}</span>
 						{:else if part.kind === 'code_input_widget'}
@@ -88,7 +103,7 @@
 						{:else if part.kind === 'guest_login_widget'}
 							<span class="screen__button screen__button--quiet">{part.label}</span>
 						{:else if ACCOUNT_KINDS.has(part.kind)}
-							{@const def = partDef(part.kind)}
+							{@const def = partKind(part.kind)}
 							<span class="screen__widget">
 								{#if def}<Icon name={def.icon} />{/if}
 								<span>{part.label}</span>

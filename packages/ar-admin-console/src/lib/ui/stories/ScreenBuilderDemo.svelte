@@ -18,21 +18,23 @@
 	import Tabs from '../patterns/Tabs.svelte';
 	import { Draft, sameValue } from '../save/draft.svelte';
 	import SaveScope from '../save/SaveScope.svelte';
-	import PartSettingsPanel from './PartSettingsPanel.svelte';
-	import { localized, sample } from './sample';
-	import ScreenPreview from './ScreenPreview.svelte';
+	import PartSettingsPanel from '#lib/pages/customization/screens/PartSettingsPanel.svelte';
+	import ScreenPreview from '#lib/pages/customization/screens/ScreenPreview.svelte';
 	import {
-		PART_DEFS,
-		PART_GROUPS,
+		paletteEntries,
+		paletteGroups,
+		roleOf as partRole,
+		translationRows
+	} from '#lib/pages/customization/screens/screen-builder.js';
+	import { partName } from '#lib/pages/customization/screens/screen-copy.js';
+	import {
+		PART_KINDS,
 		defaultSettings,
-		kindDefaults,
-		METHODS,
-		partName,
-		setting,
 		type DisplayCondition,
-		type PartGroup,
 		type PartSettings
-	} from './screen-parts';
+	} from '#lib/pages/customization/screens/screen-model.js';
+	import { sample } from './sample';
+	import { demoSchemaFields, kindDefaults, schemaChoices } from './screen-parts';
 
 	/**
 	 * Storybook demo after the legacy screen editor (/admin/screens): parts on the left, the
@@ -93,21 +95,10 @@
 	let selectedRow = $state<string | null>(null);
 	let previewWidth = $state<'mobile' | 'desktop'>('mobile');
 
-	const groups = $derived(
-		(Object.keys(PART_GROUPS) as PartGroup[]).map((id) => ({
-			id,
-			label: localized(PART_GROUPS[id])
-		}))
-	);
-	const entries = $derived<PaletteEntry[]>(
-		PART_DEFS.map((def) => ({
-			kind: def.kind,
-			label: localized(def.name),
-			description: localized(def.description),
-			icon: def.icon,
-			group: def.group
-		}))
-	);
+	const allKinds = PART_KINDS.map((def) => def.kind);
+	const groups = $derived(paletteGroups(allKinds));
+	const entries = $derived<PaletteEntry[]>(paletteEntries(allKinds));
+	const schemaFields = $derived(demoSchemaFields());
 
 	const place = $derived(selected ? findPart(screen.value.rows, selected) : null);
 	const rowIndex = $derived(
@@ -119,11 +110,7 @@
 		screen.saved.rows.flatMap((row) => row.columns.flat()).find((p) => p.id === id);
 
 	/** What a part is: an auth widget by its method ("Passkey"), others by their type. */
-	const roleOf = (p: LayoutPart) => {
-		const method = screen.value.settings[p.id]?.method;
-		const known = p.kind === 'auth_widget' && METHODS.find(([value]) => value === method);
-		return known ? setting(known[1]) : partName(p.kind);
-	};
+	const roleOf = (p: LayoutPart) => partRole(p, screen.value.settings[p.id]);
 
 	/** New since saving, or its label or settings changed. */
 	const partChanged = (p: LayoutPart) => {
@@ -172,46 +159,7 @@
 
 	/** Every text of the page: labels, and the other texts a part has. */
 	const texts = $derived<TranslationRow[]>(
-		screen.value.rows.flatMap((row) =>
-			row.columns.flat().flatMap((p) => {
-				const extra = screen.value.settings[p.id];
-				const name = roleOf(p);
-				/** "Input field · Placeholder": which text of the part this is. */
-				const of = (what: string) => `${name} · ${what}`;
-				const rowsOf: TranslationRow[] = [];
-				if (p.label) rowsOf.push({ id: p.id, label: name, source: p.label });
-				if (extra?.text) {
-					rowsOf.push({ id: `${p.id}.text`, label: of(setting('body')), source: extra.text });
-				}
-				if (extra?.placeholder) {
-					rowsOf.push({
-						id: `${p.id}.placeholder`,
-						label: of(setting('placeholder')),
-						source: extra.placeholder
-					});
-				}
-				if (extra?.helpText) {
-					rowsOf.push({
-						id: `${p.id}.helpText`,
-						label: of(setting('helpText')),
-						source: extra.helpText
-					});
-				}
-				// Linked choices are translated on the schema, with the values they label.
-				// TODO(api): screen-local option labels go to
-				// ScreenLocalization.fields[block_id].options[value]; the other rows here map to
-				// fields[block_id].label / text / placeholder / help_text as today.
-				for (const option of extra && !extra.linked ? extra.options : []) {
-					if (!option.label) continue;
-					rowsOf.push({
-						id: `${p.id}.option.${option.value}`,
-						label: of(t('options.legend')),
-						source: option.label
-					});
-				}
-				return rowsOf;
-			})
-		)
+		translationRows(screen.value.rows, screen.value.settings)
 	);
 
 	const languageName = (code: string) =>
@@ -240,7 +188,7 @@
 			{#if current === 'items'}
 				<p class="hint">{sample('builderHint')}</p>
 				<div class="builder">
-					<Card title={localized(['部品', 'Parts', 'Bausteine', 'الأجزاء'])}>
+					<Card title={t('sc.editor.parts')}>
 						<PartPalette {entries} {groups} onadd={add} />
 					</Card>
 					<LayoutCanvas
@@ -255,6 +203,8 @@
 					{#if place}
 						{@const chosen = screen.value.rows[place.row].columns[place.column][place.index]}
 						<PartSettingsPanel
+							{schemaFields}
+							choices={schemaChoices}
 							bind:part={screen.value.rows[place.row].columns[place.column][place.index]}
 							bind:settings={screen.value.settings[chosen.id]}
 							isNew={!savedPart(chosen.id)}
@@ -277,6 +227,7 @@
 			{:else if current === 'preview'}
 				<PreviewFrame label={sample('screenName')} bind:width={previewWidth}>
 					<ScreenPreview
+						choices={schemaChoices}
 						rows={screen.value.rows}
 						settings={screen.value.settings}
 						rowSettings={screen.value.rowSettings}
