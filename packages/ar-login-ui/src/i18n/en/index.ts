@@ -529,6 +529,8 @@ const en = {
 	lite_javascriptRequired:
 		'This page runs a security check in your browser. Turn on JavaScript, then reload the page.',
 	lite_passkeyUnsupported: 'This browser cannot use a passkey here. Choose another way to sign in.',
+	lite_socialStarted:
+		'Sign-in with an external account was started from this page. To sign in another way, start again.',
 	lite_passkeyFailed:
 		'The passkey sign-in did not finish. Try again, or choose another way to sign in.'
 } satisfies BaseTranslation;

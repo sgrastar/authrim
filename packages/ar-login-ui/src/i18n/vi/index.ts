@@ -505,6 +505,8 @@ const vi = createTranslation({
 		'Trang này chạy một bước kiểm tra bảo mật trong trình duyệt của bạn. Hãy bật JavaScript, rồi tải lại trang.',
 	lite_passkeyUnsupported:
 		'Trình duyệt này không thể dùng khóa truy cập ở đây. Hãy chọn cách đăng nhập khác.',
+	lite_socialStarted:
+		'Đăng nhập bằng tài khoản bên ngoài đã được bắt đầu từ trang này. Để đăng nhập theo cách khác, hãy bắt đầu lại.',
 	lite_passkeyFailed:
 		'Đăng nhập bằng khóa truy cập chưa hoàn tất. Hãy thử lại hoặc chọn cách đăng nhập khác.'
 });

@@ -355,6 +355,8 @@ const de = createTranslation({
 		'Diese Seite führt in Ihrem Browser eine Sicherheitsprüfung durch. Aktivieren Sie JavaScript und laden Sie die Seite dann neu.',
 	lite_passkeyUnsupported:
 		'Dieser Browser kann hier keinen Passkey verwenden. Wählen Sie eine andere Anmeldemethode.',
+	lite_socialStarted:
+		'Die Anmeldung mit einem externen Konto wurde auf dieser Seite gestartet. Um dich anders anzumelden, beginne von vorn.',
 	lite_passkeyFailed:
 		'Die Anmeldung mit Passkey wurde nicht abgeschlossen. Versuchen Sie es erneut oder wählen Sie eine andere Anmeldemethode.'
 });

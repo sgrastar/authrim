@@ -509,6 +509,8 @@ const it = createTranslation({
 		'Questa pagina esegue un controllo di sicurezza nel browser. Attiva JavaScript, quindi ricarica la pagina.',
 	lite_passkeyUnsupported:
 		'Questo browser non può usare una passkey qui. Scegli un altro modo per accedere.',
+	lite_socialStarted:
+		"L'accesso con un account esterno è stato avviato da questa pagina. Per accedere in un altro modo, ricomincia.",
 	lite_passkeyFailed:
 		"L'accesso con passkey non è stato completato. Riprova o scegli un altro modo per accedere."
 });

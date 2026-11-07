@@ -247,7 +247,7 @@ describe('external start for a tenant in lite mode', () => {
     expect(stored).toMatchObject({
       clientId: 'login-ui',
       providerId: 'provider-a',
-      redirectUri: `${ORIGIN}/callback?lite_txn=txn-1`,
+      redirectUri: `${ORIGIN}/callback?lite_txn=txn-1&lite_grant=grant-1`,
       attemptInteractionId: 'interaction-1',
     });
     expect(stored.userId).toBeUndefined();
@@ -280,10 +280,12 @@ describe('external start for a tenant in lite mode', () => {
     expect(mocks.storeAuthState).not.toHaveBeenCalled();
   });
 
-  it('takes the provider only by the ID the grant names (not its slug)', async () => {
+  it('takes the provider by the ID or slug its grant was made for, as the SPA start does', async () => {
     const response = await start('corp', 'lite_txn=txn-1&lite_grant=grant-1');
-    expect(response.status).toBe(404);
-    expect(mocks.storeAuthState).not.toHaveBeenCalled();
+    expect(response.status).toBe(302);
+    // The grant is consumed for the name in the path, the one the lite page's grant named.
+    expect(mocks.consumeGrant.mock.calls[0][1]).toMatchObject({ provider: 'corp' });
+    expect(storedAuthState()).toMatchObject({ providerId: 'provider-a' });
   });
 });
 

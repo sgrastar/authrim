@@ -49,7 +49,9 @@
 	<LiteShell title={data.text.title} brandName={data.brandName} logo={data.logo}>
 		{#if (form && 'restart' in form && form.restart) || data.decision.kind === 'unsupported'}
 			<h1>{data.text.title}</h1>
-			<p role="alert">{data.text.unsupported}</p>
+			<p role="alert">
+				{data.socialStarted ? data.text.socialStarted : data.text.unsupported}
+			</p>
 			<!-- Back to the start of this request: the transaction is given up, so it starts afresh. -->
 			<form method="post" action={actionOf(data.search, 'restart')}>
 				<input type="hidden" name="txn" value={data.txnId} />
@@ -205,6 +207,17 @@
 								formaction={actionOf(data.search, 'passkey_start')}
 								>{field.label || data.text.passkey}</button
 							>
+						{:else if field.authMethod === 'external_idp'}
+							<!-- A button per provider; a provider needs no address (formnovalidate). -->
+							{#each data.providers as provider (provider.id)}
+								<button
+									type="submit"
+									formnovalidate
+									formaction={actionOf(data.search, 'social_start')}
+									name="provider"
+									value={provider.id}>{provider.label}</button
+								>
+							{/each}
 						{:else if field.authMethod === 'totp'}
 							<button type="submit" formaction={actionOf(data.search, 'totp_start')}
 								>{field.label || data.text.totp}</button

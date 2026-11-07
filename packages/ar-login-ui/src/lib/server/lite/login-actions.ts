@@ -40,6 +40,7 @@ import {
 import {
 	decideLiteStep,
 	liteMethodAvailability,
+	liteSocialProviders,
 	readKeptFlow,
 	resumeLiteFlow,
 	type LiteFlowView,
@@ -47,11 +48,12 @@ import {
 	type LiteTenantMethods
 } from './flow-driver';
 import { readLiteForm } from './form';
+import { readPendingSocial } from './social-state';
 import { readLitePasskeyOptions, type LitePasskeyOptions } from './totp-passkey';
 import { liteMessages } from './messages';
 import { liteTxnClient, type LiteTxnClient, type LiteTxnView } from './txn-client';
 
-/** What the sign-in page draws: no consent (PR5c); among the sign-in methods, not social (PR5b). */
+/** What the sign-in page draws: no consent (PR5c). Social sign-in is by redirect (not SAML yet). */
 export const LITE_LOGIN_PAGE_BLOCKS: ReadonlySet<string> = new Set([
 	'identity_field',
 	'auth_widget',
@@ -68,7 +70,8 @@ export const LITE_LOGIN_PAGE_METHODS: ReadonlySet<string> = new Set([
 	'mail_otp',
 	'totp',
 	'mail_otp_totp',
-	'passkey'
+	'passkey',
+	'external_idp'
 ]);
 
 /** How long before a code can be sent again (the SPA's `MAIL_OTP_RESEND_SECONDS`). */
@@ -95,8 +98,14 @@ export interface LitePendingCode {
  * A sign-in done whose Flow part is still to come: the choice (`handle` on `stepId`) when the
  * Flow is still on that step, then, for an email code, the step asking for the code.
  */
-export type LiteSignInMethod = 'mail_otp' | 'guest' | 'totp' | 'passkey';
-const SIGN_IN_METHODS: ReadonlySet<string> = new Set(['mail_otp', 'guest', 'totp', 'passkey']);
+export type LiteSignInMethod = 'mail_otp' | 'guest' | 'totp' | 'passkey' | 'social';
+const SIGN_IN_METHODS: ReadonlySet<string> = new Set([
+	'mail_otp',
+	'guest',
+	'totp',
+	'passkey',
+	'social'
+]);
 
 export interface LiteSignedIn {
 	interactionId: string;
@@ -267,16 +276,23 @@ export function readPendingPasskey(
 }
 
 /**
- * Whether a sign-in has been started here (a code sent, an authenticator or a passkey begun). An
- * authenticator or passkey start counts expired too: a check of it may still be out (its answer
- * would set a session), so it is cleared only through that check (the page's Continue posts to it,
- * and the check's operation waits for one still running), never replaced by another start.
+ * Whether a sign-in has been started here (a code sent, an authenticator, a passkey or an external
+ * provider begun). An authenticator or passkey start counts expired too: a check of it may still
+ * be out (its answer would set a session), so it is cleared only through that check (the page's
+ * Continue posts to it, and the check's operation waits for one still running), never replaced by
+ * another start. An external start lasts until its callback, or a restart. `exceptSocial`: the
+ * callback's own view (the external start is the one it finishes).
  */
-export function signInStarted(data: Record<string, unknown>, interactionId: string): boolean {
+export function signInStarted(
+	data: Record<string, unknown>,
+	interactionId: string,
+	options: { exceptSocial?: boolean } = {}
+): boolean {
 	return (
 		readPendingCode(data, interactionId) !== null ||
 		readPendingTotp(data, interactionId, Number.NEGATIVE_INFINITY) !== null ||
-		readPendingPasskey(data, interactionId, Number.NEGATIVE_INFINITY) !== null
+		readPendingPasskey(data, interactionId, Number.NEGATIVE_INFINITY) !== null ||
+		(options.exceptSocial !== true && readPendingSocial(data, interactionId) !== null)
 	);
 }
 
@@ -337,7 +353,7 @@ export function newOperationNonce(): string {
 		.replace(/=+$/u, '');
 }
 
-function readOperationNonce(fields: ReadonlyMap<string, string>): string | null {
+export function readOperationNonce(fields: ReadonlyMap<string, string>): string | null {
 	const op = fields.get('op');
 	return op && /^[A-Za-z0-9_-]{22}$/u.test(op) ? op : null;
 }
@@ -371,12 +387,22 @@ export function liteLoginStepDecision(
 	methods: LiteTenantMethods | null,
 	locale: string
 ): LiteStepDecision {
-	return decideLiteStep(withLocalizedScreen(step, locale), {
+	const decision = decideLiteStep(withLocalizedScreen(step, locale), {
 		blocks: LITE_LOGIN_PAGE_BLOCKS,
 		methods: LITE_LOGIN_PAGE_METHODS,
 		isAvailable: liteMethodAvailability(methods, step),
 		guestEnabled: methods?.guest?.enabled === true
 	});
+	// A SAML provider is not started by the lite UI yet (plan PR5b-3): a social part that offers
+	// one stops the page (and every post on it) rather than leaving it out unsaid.
+	if (
+		decision.kind === 'screen' &&
+		decision.fields.some((f) => f.blockType === 'auth_widget' && f.authMethod === 'external_idp') &&
+		liteSocialProviders(methods, step).samlOffered
+	) {
+		return { kind: 'unsupported', reasons: ['provider:saml_sp'] };
+	}
+	return decision;
 }
 
 /** Keeps the Flow's (new) hash and signature in the transaction; the stored transaction, or null. */
@@ -457,7 +483,7 @@ export async function openPost(
 	return { post: { event, txns, txn, fields: form.fields, backend, flow: flow.view, locale } };
 }
 
-type OperationKind = 'send' | 'resend' | 'verify' | 'guest' | 'totp' | 'passkey';
+type OperationKind = 'send' | 'resend' | 'verify' | 'guest' | 'totp' | 'passkey' | 'social';
 
 /**
  * Starts the post's operation. `started`: carry it out, then `finishOperation`. Otherwise the
@@ -620,6 +646,7 @@ export async function relayCompletion(
 				code: null,
 				totp: null,
 				passkey: null,
+				social: null,
 				checked: null,
 				signedIn: null,
 				signInRedirect: null
@@ -696,8 +723,9 @@ export async function advanceAfterSignIn(post: LitePost, txn: LiteTxnView) {
 			.transition(current.id, {
 				expectedVersion: current.version,
 				to: 'verified',
-				// Its destination stays for the completion (a later post may reach it).
-				patch: { signedIn: null, signInRedirect: signedIn.redirectUrl }
+				// Its destination stays for the completion (a later post may reach it). A social
+				// sign-in's start is over with it (its callback reads it until then).
+				patch: { signedIn: null, social: null, signInRedirect: signedIn.redirectUrl }
 			})
 			.catch(() => null);
 		if (cleared?.ok) current = cleared.txn;
@@ -1151,14 +1179,17 @@ export const liteGuestAction = guarded(async (event) => {
 	const begun = await beginOperation(post, 'guest');
 	if ('failure' in begun) return begun.failure;
 	const operation = begun.operation;
+	// The guest's session goes to the browser once the sign-in is recorded as this attempt's (a
+	// sign-in another post recorded meanwhile is the one that goes on), as a session call's does.
+	holdCookies(event);
 	const guest = await liteGuestLogin(post.backend, {
 		authorizationChallengeId: post.txn.bound.challengeId,
 		proof: readProof(post)
 	});
-	// The session, or on a failure the guest's resume cookie (set before the account is made, so
-	// a retry with it makes the same guest, not a second one).
-	forwardSetCookies(event, post.backend.setCookies());
 	if (!guest.ok) {
+		// The guest's resume cookie (set before the account is made, so a retry with it makes the
+		// same guest, not a second one).
+		releaseCookies(post);
 		await finishOperation(post, post.txn, operation, { error: guest.error });
 		return sendFailure(guest.status);
 	}
@@ -1168,7 +1199,7 @@ export const liteGuestAction = guarded(async (event) => {
 		choice: { stepId: step.id, handle: 'guest' },
 		redirectUrl: null
 	};
-	const txn = await finishOperation(
+	const finished = await finishOperationOutcome(
 		post,
 		post.txn,
 		operation,
@@ -1181,8 +1212,9 @@ export const liteGuestAction = guarded(async (event) => {
 				!signInUnderway(now.data, post.flow.state.interactionId)
 		}
 	);
-	if (!txn) return retryLater();
-	return advanceAfterSignIn(post, txn);
+	if (!('txn' in finished) || !finished.txn) return retryLater();
+	releaseCookies(post);
+	return advanceAfterSignIn(post, finished.txn);
 });
 
 /**

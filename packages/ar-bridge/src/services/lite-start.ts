@@ -27,7 +27,7 @@ import {
 export const LITE_EXTERNAL_FLOW_PREFIX = 'lite:';
 
 export type LiteExternalStart =
-  | { ok: true; txn: LiteTxnSnapshot; start: LiteStartGrantStart }
+  | { ok: true; txn: LiteTxnSnapshot; start: LiteStartGrantStart; grantId: string }
   | { ok: false; response: Response };
 
 /**
@@ -59,7 +59,7 @@ export async function consumeLiteExternalStart(
     grantId: c.req.query('lite_grant'),
     provider,
   });
-  if (consumed.ok) return consumed;
+  if (consumed.ok) return { ...consumed, grantId: String(c.req.query('lite_grant')) };
   return {
     ok: false,
     response: c.json(
@@ -72,10 +72,15 @@ export async function consumeLiteExternalStart(
   };
 }
 
-/** Where a lite start's sign-in returns: the lite Login UI's callback page for its transaction. */
-export function liteExternalCallbackUrl(txn: LiteTxnSnapshot): string {
+/**
+ * Where a lite start's sign-in returns: the lite Login UI's callback page for its transaction,
+ * naming the grant it started from (the page finishes a sign-in only for the start its
+ * transaction made: another start's handoff brought to it is refused).
+ */
+export function liteExternalCallbackUrl(txn: LiteTxnSnapshot, grantId: string): string {
   const url = new URL('/callback', txn.bound.publicOrigin);
   url.searchParams.set('lite_txn', txn.id);
+  url.searchParams.set('lite_grant', grantId);
   return url.toString();
 }
 

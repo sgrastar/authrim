@@ -22,10 +22,11 @@ paths:
         linking. The optional interaction association does not alter provider selection,
         client redirect validation, PKCE, or the normal authorization redirect. A tenant in lite
         Login UI mode starts only with lite_txn and lite_grant (a one-time start grant of the
-        browser's lite transaction, bound to its __Host-authrim_lite cookie, the provider id and
-        the tenant's current lite policy revision); such a start ignores every other query
+        browser's lite transaction, bound to its __Host-authrim_lite cookie, the provider as named
+        in the path and the tenant's current lite policy revision); such a start ignores every other query
         parameter and takes the client, the authorization challenge and the interaction from the
-        transaction and the grant.
+        transaction and the grant, and returns to the lite /callback with lite_txn and lite_grant
+        (its failures too).
       parameters:
         - name: provider
           in: path
@@ -120,10 +121,11 @@ paths:
         linking. The optional interaction association does not alter provider selection,
         client redirect validation, PKCE, or the normal authorization redirect. A tenant in lite
         Login UI mode starts only with lite_txn and lite_grant (a one-time start grant of the
-        browser's lite transaction, bound to its __Host-authrim_lite cookie, the provider id and
-        the tenant's current lite policy revision); such a start ignores every other query
+        browser's lite transaction, bound to its __Host-authrim_lite cookie, the provider as named
+        in the path and the tenant's current lite policy revision); such a start ignores every other query
         parameter and takes the client, the authorization challenge and the interaction from the
-        transaction and the grant.
+        transaction and the grant, and returns to the lite /callback with lite_txn and lite_grant
+        (its failures too).
       parameters:
         - name: provider
           in: path

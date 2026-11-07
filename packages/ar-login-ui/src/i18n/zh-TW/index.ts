@@ -315,6 +315,7 @@ const zhTW = createTranslation({
 	login_extError_default_message: '外部驗證期間發生錯誤。',
 	lite_javascriptRequired: '此頁面會在瀏覽器中進行安全檢查。請啟用 JavaScript，然後重新載入頁面。',
 	lite_passkeyUnsupported: '此瀏覽器無法在此處使用通行密鑰。請選擇其他登入方式。',
+	lite_socialStarted: '已從此頁面開始使用外部帳戶登入。若要使用其他方式登入，請重新開始。',
 	lite_passkeyFailed: '通行密鑰登入未完成。請再試一次，或選擇其他登入方式。'
 });
 
