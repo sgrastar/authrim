@@ -285,3 +285,30 @@ export function liteAccountActivity(
 			pagination.has_more !== false && cursor && /^[A-Za-z0-9_.~=-]+$/u.test(cursor) ? cursor : null
 	};
 }
+
+export interface LiteAccountPasskeyItem {
+	id: string;
+	name: string;
+	createdAt: string;
+}
+
+/** The passkeys (named by their provider, as the SPA; their device name and ID not shown). */
+export function liteAccountPasskeys(
+	json: Record<string, unknown>,
+	LL: LL,
+	locale: string
+): LiteAccountPasskeyItem[] {
+	const rows = Array.isArray(json.passkeys) ? json.passkeys : [];
+	return rows.flatMap((raw) => {
+		const row = record(raw);
+		const id = liteAccountItemId(row.id);
+		if (!id) return [];
+		return [
+			{
+				id,
+				name: text(record(row.provider).name) ?? LL.account_passkeys(),
+				createdAt: formatTimestamp(row.created_at as number | null, locale)
+			}
+		];
+	});
+}

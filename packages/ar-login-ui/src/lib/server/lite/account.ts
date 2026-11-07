@@ -26,22 +26,30 @@ import {
 	type LiteAccountField,
 	type LiteAccountWidget
 } from './account-page';
-import type { LiteBackendClient } from './backend-client';
 import { liteBackendForEvent } from './backend-for-event';
 import { forwardSetCookies } from './cookies';
-import { readLiteForm } from './form';
+import { openAccountPost, read, type LiteAccountPost } from './account-post';
+import {
+	liteAccountSecurityActions,
+	liteAccountStepUpView,
+	readLiteAccountPasskeyCreate,
+	readLiteAccountStepUp
+} from './account-security';
+import { cspHashSource } from './csp';
+import { LITE_PASSKEY_SCRIPT } from '#lib/lite/passkey-ceremony.js';
 import {
 	liteAccountActivity,
 	liteAccountConsents,
 	liteAccountDevices,
 	liteAccountItemId,
+	liteAccountPasskeys,
 	liteAccountProfile,
 	liteAccountSessions
 } from './account-widgets';
-import { newOperationNonce, sameToken } from './login-actions';
+import { newOperationNonce } from './login-actions';
 import { liteMessages } from './messages';
 import { record } from './totp-passkey';
-import { liteTxnClient, type LiteTxnView } from './txn-client';
+import { liteTxnClient } from './txn-client';
 
 const SESSION_COOKIE = 'authrim_session';
 
@@ -114,21 +122,6 @@ function widgetDefaults(LL: Awaited<ReturnType<typeof liteMessages>>['LL']) {
 		account_social_account_widget: LL.account_socialAccounts(),
 		account_launcher_widget: LL.account_launcherTitle()
 	} satisfies Record<LiteAccountWidget, string>;
-}
-
-/** GET of an account API (its JSON, or null with the status for a failure). */
-async function read(
-	backend: LiteBackendClient,
-	path: string,
-	headers?: Record<string, string>
-): Promise<
-	{ ok: true; json: Record<string, unknown> } | { ok: false; status: number; error: string | null }
-> {
-	const answer = await backend.request(path, headers ? { headers } : {}).catch(() => null);
-	if (!answer) return { ok: false, status: 503, error: null };
-	if (answer.status === 200) return { ok: true, json: record(answer.json) };
-	const code = record(answer.json).error;
-	return { ok: false, status: answer.status, error: typeof code === 'string' ? code : null };
 }
 
 export async function liteAccountPage(event: RequestEvent) {
@@ -272,7 +265,7 @@ export async function liteAccountPage(event: RequestEvent) {
 		)
 	);
 	const cursor = event.url.searchParams.get('activity_cursor');
-	const [sessionList, deviceList, consentList, activityList] = await Promise.all([
+	const [sessionList, deviceList, consentList, activityList, passkeyList] = await Promise.all([
 		drawn.has('account_session_widget')
 			? (sessions ?? read(backend, '/api/account/sessions'))
 			: null,
@@ -289,7 +282,8 @@ export async function liteAccountPage(event: RequestEvent) {
 							: ''
 					}`
 				)
-			: null
+			: null,
+		drawn.has('account_passkey_widget') ? read(backend, '/api/account/passkeys') : null
 	]);
 	const widgets = {
 		profile: liteAccountProfile(profile.json),
@@ -299,9 +293,30 @@ export async function liteAccountPage(event: RequestEvent) {
 		activity: activityList?.ok ? liteAccountActivity(activityList.json, LL, locale) : null,
 		// The activity's next page: the page's own query with its cursor (the language kept).
 		activityNextHref: null as string | null,
+		passkeys: passkeyList?.ok ? liteAccountPasskeys(passkeyList.json, LL, locale) : null,
+		// A passkey being added: its ceremony.
+		passkeyCreate: (() => {
+			const create = drawn.has('account_passkey_widget')
+				? readLiteAccountPasskeyCreate(txn.data)
+				: null;
+			return create ? { registration: create.registration, challenge: create.challengeId } : null;
+		})(),
 		activityIncomplete:
 			activityList !== null && !activityList.ok && activityList.error === 'log_query_incomplete'
 	};
+	// A change held for a step-up: the panel that asks for it.
+	const held = readLiteAccountStepUp(txn.data);
+	const stepUp = held
+		? await liteAccountStepUpView({ backend }, held, {
+				methods: m,
+				profile: widgets.profile
+			})
+		: null;
+	// A passkey ceremony drawn (a step-up's, or one adding a passkey): its fixed script, allowed by
+	// its hash.
+	if (stepUp?.passkey || widgets.passkeyCreate) {
+		event.locals.liteCsp = { scriptHashes: [await cspHashSource(LITE_PASSKEY_SCRIPT)] };
+	}
 	if (widgets.activity?.nextCursor) {
 		widgets.activityNextHref = `${event.url.pathname}${pageQuery(event, {
 			activity_cursor: widgets.activity.nextCursor
@@ -319,6 +334,7 @@ export async function liteAccountPage(event: RequestEvent) {
 			false,
 		placements,
 		widgets,
+		stepUp,
 		text: {
 			title: words.title ?? LL.account_title(),
 			description: words.description,
@@ -346,41 +362,32 @@ export async function liteAccountPage(event: RequestEvent) {
 			consentDescription: LL.account_consentDescription(),
 			consentEmpty: LL.account_consentEmpty(),
 			activityMore: LL.account_activityLoadMore(),
-			activityIncomplete: LL.account_activityIncomplete()
+			activityIncomplete: LL.account_activityIncomplete(),
+			stepUpTitle: LL.account_reauthTitle(),
+			stepUpDescription: LL.account_reauthDescription(),
+			stepUpNoMethods: LL.account_reauthNoMethods(),
+			stepUpPasskey: LL.account_reauthWithPasskey(),
+			stepUpEmail: LL.account_reauthWithEmailCode(),
+			stepUpEmailSent: LL.account_reauthEmailCodeSent({
+				email: stepUp?.email?.maskedEmail ?? ''
+			}),
+			stepUpCode: LL.emailCode_codeLabel(),
+			stepUpVerify: LL.account_reauthVerifyEmailCode(),
+			stepUpTotpCode: LL.login_totpCodeLabel(),
+			stepUpTotp: LL.account_reauthWithTotp(),
+			stepUpFailed: LL.account_actionFailed(),
+			codeInvalid: LL.emailCode_errorInvalid(),
+			busy: LL.error_rateLimited(),
+			passkeyName: LL.account_passkeyName(),
+			addPasskey: LL.account_addPasskey(),
+			deletePasskey: LL.account_delete(),
+			remainingMethod: LL.account_remainingLoginMethodRequired(),
+			passkeyFailed: LL.account_passkeyRegistrationFailed(),
+			passkeyUnsupported: LL.lite_passkeyUnsupported(),
+			passkeyCeremonyFailed: LL.lite_passkeyFailed(),
+			javascriptRequired: LL.lite_javascriptRequired()
 		}
 	};
-}
-
-/** A post of the page: its transaction (form token, current policy), the browser's session. */
-export async function openAccountPost(event: RequestEvent): Promise<
-	| {
-			post: {
-				txns: NonNullable<ReturnType<typeof liteTxnClient>>;
-				backend: LiteBackendClient;
-				txn: LiteTxnView;
-				fields: ReadonlyMap<string, string>;
-			};
-	  }
-	| { failure: ReturnType<typeof fail> }
-> {
-	const refused = { failure: fail(403, { restart: true }) };
-	const txns = liteTxnClient(event, { session: true });
-	const backend = liteBackendForEvent(event, 'form_post');
-	const form = await readLiteForm(event.request);
-	if (!txns || !backend || !form.ok) return refused;
-	const txnId = form.fields.get('txn');
-	const token = form.fields.get('csrf');
-	if (!txnId || !token) return refused;
-	// Read only while the browser's session is the one it was made for, live, and its user's
-	// (ar-auth checks): another tab's sign-in as someone else is not acted on from this page.
-	const got = await txns.get(txnId, { current: true });
-	if (!got.ok && got.reason === 'session_invalid') {
-		return { failure: fail(409, { error: 'session_changed' as const }) };
-	}
-	if (!got.ok || !sameToken(got.txn.csrfToken, token)) return refused;
-	if (got.txn.bound.purpose !== 'account') return refused;
-	if (got.txn.state === 'completed' || got.txn.state === 'abandoned') return refused;
-	return { post: { txns, backend, txn: got.txn, fields: form.fields } };
 }
 
 /** `sign_out`: the session ended (a guest is asked first: its account cannot be come back to). */
@@ -403,10 +410,7 @@ export async function liteAccountSignOutAction(event: RequestEvent) {
 }
 
 /** Signs the session out (the transaction given up first), then home. */
-async function endSession(
-	event: RequestEvent,
-	post: Extract<Awaited<ReturnType<typeof openAccountPost>>, { post: unknown }>['post']
-) {
+async function endSession(event: RequestEvent, post: LiteAccountPost) {
 	const ended = await post.txns
 		.transition(post.txn.id, { expectedVersion: post.txn.version, to: 'abandoned' })
 		.catch(() => null);
@@ -473,6 +477,7 @@ export async function liteAccountSessionRevokeAction(event: RequestEvent) {
 }
 
 export const liteAccountActions = {
+	...liteAccountSecurityActions,
 	sign_out: liteAccountSignOutAction,
 	profile_save: liteAccountProfileSaveAction,
 	session_revoke: liteAccountSessionRevokeAction

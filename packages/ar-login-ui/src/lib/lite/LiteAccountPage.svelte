@@ -1,6 +1,7 @@
 <script lang="ts">
 	import LiteAccountWidget from './LiteAccountWidget.svelte';
 	import LiteShell from './LiteShell.svelte';
+	import { LITE_PASSKEY_SCRIPT } from './passkey-ceremony.js';
 	import type { ActionData, PageData } from '../../routes/__lite/account/$types';
 
 	// The lite account page (lib/server/lite/account.ts): the tenant's placements, in order.
@@ -12,6 +13,16 @@
 
 	const formError = $derived(
 		form && 'error' in form && typeof form.error === 'string' ? form.error : null
+	);
+	// A constant script, never data: its exact text is what the page's CSP allows by hash.
+	const passkeyTag = '<scr' + `ipt>${LITE_PASSKEY_SCRIPT}</scr` + 'ipt>';
+	const stepUpError = $derived(
+		form &&
+			'widget' in form &&
+			(form as { widget?: unknown }).widget === 'account' &&
+			'error' in form
+			? String((form as { error?: unknown }).error)
+			: null
 	);
 	const confirmGuest = $derived(
 		Boolean(form && 'confirmGuestSignOut' in form && form.confirmGuestSignOut)
@@ -51,6 +62,93 @@
 				</form>
 			{/if}
 		</header>
+		{#if data.stepUp}
+			<!-- A change held for a step-up: the person proves it is them, then it is made. -->
+			<section class="account-widget" id="step-up">
+				<h2>{data.text.stepUpTitle}</h2>
+				<p>{data.text.stepUpDescription}</p>
+				{#if stepUpError === 'code_invalid'}
+					<p role="alert">{data.text.codeInvalid}</p>
+				{:else if stepUpError === 'busy'}
+					<p role="alert">{data.text.busy}</p>
+				{:else if stepUpError}
+					<p role="alert">{data.text.stepUpFailed}</p>
+				{/if}
+				{#if data.stepUp.passkey}
+					<form
+						method="post"
+						action={actionOf(data.search, 'stepup_passkey_finish')}
+						data-lite-passkey={JSON.stringify(data.stepUp.passkey.options)}
+						data-lite-passkey-unsupported={data.text.passkeyUnsupported}
+						data-lite-passkey-error={data.text.passkeyCeremonyFailed}
+					>
+						{@render hidden(data.txnId, data.csrfToken, data.op)}
+						<input type="hidden" name="step_up" value={data.stepUp.at} />
+						<input type="hidden" name="challenge" value={data.stepUp.passkey.challenge} />
+						<input type="hidden" name="credential" value="" />
+						<button type="submit">{data.text.stepUpPasskey}</button>
+					</form>
+				{:else if data.stepUp.email}
+					<p>{data.text.stepUpEmailSent}</p>
+					<form method="post" action={actionOf(data.search, 'stepup_email_verify')}>
+						{@render hidden(data.txnId, data.csrfToken, data.op)}
+						<input type="hidden" name="step_up" value={data.stepUp.at} />
+						<label>
+							{data.text.stepUpCode}
+							<input
+								name="code"
+								inputmode="numeric"
+								autocomplete="one-time-code"
+								pattern={'[0-9]{6}'}
+								maxlength="6"
+								required
+							/>
+						</label>
+						<button type="submit">{data.text.stepUpVerify}</button>
+					</form>
+				{:else if !data.stepUp.methods.passkey && !data.stepUp.methods.email && !data.stepUp.methods.totp}
+					<p role="alert">{data.text.stepUpNoMethods}</p>
+				{:else}
+					{#if data.stepUp.methods.passkey}
+						<form method="post" action={actionOf(data.search, 'stepup_passkey_start')}>
+							{@render hidden(data.txnId, data.csrfToken, data.op)}
+							<input type="hidden" name="step_up" value={data.stepUp.at} />
+							<button type="submit">{data.text.stepUpPasskey}</button>
+						</form>
+					{/if}
+					{#if data.stepUp.methods.email}
+						<form method="post" action={actionOf(data.search, 'stepup_email_send')}>
+							{@render hidden(data.txnId, data.csrfToken, data.op)}
+							<input type="hidden" name="step_up" value={data.stepUp.at} />
+							<button type="submit">{data.text.stepUpEmail}</button>
+						</form>
+					{/if}
+					{#if data.stepUp.methods.totp}
+						<form method="post" action={actionOf(data.search, 'stepup_totp')}>
+							{@render hidden(data.txnId, data.csrfToken, data.op)}
+							<input type="hidden" name="step_up" value={data.stepUp.at} />
+							<label>
+								{data.text.stepUpTotpCode}
+								<input
+									name="code"
+									inputmode="numeric"
+									autocomplete="one-time-code"
+									pattern={'[0-9]{6,8}'}
+									maxlength="8"
+									required
+								/>
+							</label>
+							<button type="submit">{data.text.stepUpTotp}</button>
+						</form>
+					{/if}
+				{/if}
+				<form method="post" action={actionOf(data.search, 'stepup_cancel')}>
+					{@render hidden(data.txnId, data.csrfToken, data.op)}
+					<input type="hidden" name="step_up" value={data.stepUp.at} />
+					<button type="submit">{data.text.cancel}</button>
+				</form>
+			</section>
+		{/if}
 		{#if formError === 'session_changed'}
 			<p role="alert">{data.text.sessionChanged}</p>
 		{:else if formError}
@@ -86,5 +184,10 @@
 				</section>
 			{/each}
 		</div>
+		{#if data.stepUp?.passkey || data.widgets.passkeyCreate}
+			<noscript><p role="alert">{data.text.javascriptRequired}</p></noscript>
+			<!-- eslint-disable-next-line svelte/no-at-html-tags -- a constant, allowed by its CSP hash -->
+			{@html passkeyTag}
+		{/if}
 	</LiteShell>
 {/if}

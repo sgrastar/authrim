@@ -79,6 +79,57 @@
 				{/each}
 			</ul>
 		{/if}
+	{:else if widget === 'account_passkey_widget'}
+		{#if failed('passkeys') === 'remaining_method'}
+			<p role="alert">{data.text.remainingMethod}</p>
+		{:else if failed('passkeys') === 'passkey_failed'}
+			<p role="alert">{data.text.passkeyFailed}</p>
+		{:else if failed('passkeys')}
+			<p role="alert">{data.text.actionFailed}</p>
+		{/if}
+		{#if data.widgets.passkeyCreate}
+			<!-- The new passkey's ceremony: the fixed script creates it on the button's press. -->
+			<form
+				method="post"
+				action={actionOf(data.search, 'passkey_add_finish')}
+				data-lite-passkey-create={JSON.stringify(data.widgets.passkeyCreate.registration)}
+				data-lite-passkey-unsupported={data.text.passkeyUnsupported}
+				data-lite-passkey-error={data.text.passkeyCeremonyFailed}
+			>
+				{@render hidden()}
+				<input type="hidden" name="challenge" value={data.widgets.passkeyCreate.challenge} />
+				<input type="hidden" name="credential" value="" />
+				<button type="submit">{data.text.addPasskey}</button>
+			</form>
+		{:else}
+			<form method="post" action={actionOf(data.search, 'passkey_add')}>
+				{@render hidden()}
+				<label>
+					{data.text.passkeyName}
+					<input name="device_name" maxlength="100" />
+				</label>
+				<button type="submit">{data.text.addPasskey}</button>
+			</form>
+		{/if}
+		{#if data.widgets.passkeys === null}
+			<p role="alert">{data.text.loadFailed}</p>
+		{:else if data.widgets.passkeys.length === 0}
+			<p>{data.text.empty}</p>
+		{:else}
+			<ul>
+				{#each data.widgets.passkeys as passkey (passkey.id)}
+					<li>
+						<strong>{passkey.name}</strong>
+						<p class="muted">{passkey.createdAt}</p>
+						<form method="post" action={actionOf(data.search, 'passkey_delete')}>
+							{@render hidden()}
+							<input type="hidden" name="passkey" value={passkey.id} />
+							<button type="submit">{data.text.deletePasskey}</button>
+						</form>
+					</li>
+				{/each}
+			</ul>
+		{/if}
 	{:else if widget === 'account_device_list_widget'}
 		<p class="muted">{data.text.devicesDescription}</p>
 		{#if data.widgets.devices === null}

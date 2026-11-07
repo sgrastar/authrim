@@ -540,4 +540,171 @@ describe('the lite account page', () => {
 			expect(store.txn.state).toBe('abandoned');
 		});
 	});
+
+	describe('passkeys, and the step-up a change of them asks for', () => {
+		const passkeyPage = () => {
+			methods = {
+				passkey: { enabled: true },
+				emailCode: { enabled: true, reauthEnabled: true },
+				totp: { enabled: true },
+				external: { enabled: false }
+			};
+			routes['/api/account/capabilities'] = () =>
+				json({
+					account_page: {
+						definition: {
+							screens: [{ id: 'passkeys', screen_key: 'k', condition: 'passkey_enabled' }]
+						},
+						screens: [
+							{
+								screen_key: 'k',
+								fields: [{ block_type: 'account_passkey_widget', field: 'account.passkeys' }]
+							}
+						]
+					}
+				});
+			routes['/api/account/profile'] = () =>
+				json({
+					profile: {
+						user_id: 'user-a',
+						registration_state: 'registered',
+						email: 'a@example.com',
+						email_verified: true
+					},
+					session: { id: 's-a', amr: ['pwd'] }
+				});
+			routes['/api/account/passkeys'] = () =>
+				json({ passkeys: [{ id: 'pk1', provider: { name: 'iCloud Keychain' }, created_at: 1 }] });
+			routes['/api/account/totp'] = () => json({ credentials: [{ id: 't1', status: 'active' }] });
+		};
+		type Page = {
+			widgets: { passkeys: Array<{ id: string; name: string }>; passkeyCreate: unknown };
+			stepUp: null | {
+				at: string;
+				methods: Record<string, boolean>;
+				email: { maskedEmail: string } | null;
+			};
+		};
+
+		it('holds a removal the API asks a step-up for, and makes it once the code is checked', async () => {
+			passkeyPage();
+			let deletes = 0;
+			let recent = false;
+			routes['/api/account/passkeys/pk1'] = (_body, init) => {
+				if (init.method !== 'DELETE') return json({}, 405);
+				deletes++;
+				return recent
+					? json({ ok: true, passkey: { id: 'pk1', deleted: true } })
+					: json({ error: 'reauth_required', reauth_required: true }, 403);
+			};
+			routes['/api/account/reauth/email-code/send'] = () =>
+				json({ challenge_id: 'rc-1', expires_in: 300, masked_email: 'a***@example.com' });
+			routes['/api/account/reauth/email-code/complete'] = (body) => {
+				if (body.code !== '123456' || body.challenge_id !== 'rc-1') {
+					return json({ error: 'invalid_code' }, 400);
+				}
+				recent = true;
+				return json({ ok: true, reauth: {} });
+			};
+			const page = (await view()) as Page;
+			expect(page.widgets.passkeys).toEqual([
+				expect.objectContaining({ id: 'pk1', name: 'iCloud Keychain' })
+			]);
+			expect(page.stepUp).toBeNull();
+			await expect(post('passkey_delete', { passkey: 'pk1' })).resolves.toMatchObject({
+				status: 403,
+				data: { stepUp: true, widget: 'passkeys' }
+			});
+			const held = (await view()) as Page;
+			// The methods on for re-authentication: a passkey, the verified address, an authenticator.
+			expect(held.stepUp?.methods).toEqual({ passkey: true, email: true, totp: true });
+			const at = held.stepUp!.at;
+			// A form of another step-up (an older page) does nothing.
+			await expect(post('stepup_email_send', { step_up: '1' })).resolves.toMatchObject({
+				status: 409,
+				data: { error: 'step_up_gone' }
+			});
+			await expect(post('stepup_email_send', { step_up: at })).resolves.toMatchObject({
+				notice: 'step_up_code_sent'
+			});
+			expect(((await view()) as Page).stepUp?.email).toEqual({ maskedEmail: 'a***@example.com' });
+			await expect(
+				post('stepup_email_verify', { step_up: at, code: '000000' })
+			).resolves.toMatchObject({
+				status: 400,
+				data: { error: 'code_invalid' }
+			});
+			// Proven: the held removal is made (once), the step-up given up.
+			await expect(post('stepup_email_verify', { step_up: at, code: '123456' })).resolves.toEqual({
+				notice: 'passkey_deleted',
+				widget: 'passkeys'
+			});
+			expect(deletes).toBe(2);
+			expect(store.txn.data.accountStepUp).toBeUndefined();
+			expect(((await view()) as Page).stepUp).toBeNull();
+		});
+
+		it('offers the authenticator only with an active one, and gives a held change up', async () => {
+			passkeyPage();
+			routes['/api/account/totp'] = () => json({ credentials: [{ id: 't1', status: 'pending' }] });
+			routes['/api/account/passkeys/pk1'] = () =>
+				json({ error: 'reauth_required', reauth_required: true }, 403);
+			await view();
+			await post('passkey_delete', { passkey: 'pk1' });
+			const held = (await view()) as Page;
+			expect(held.stepUp?.methods.totp).toBe(false);
+			await expect(post('stepup_cancel', { step_up: held.stepUp!.at })).resolves.toMatchObject({
+				notice: 'step_up_cancelled'
+			});
+			expect(store.txn.data.accountStepUp).toBeUndefined();
+		});
+
+		it('adds a passkey through its ceremony, and keeps the last way to sign in', async () => {
+			passkeyPage();
+			routes['/api/account/passkeys/options'] = (body) =>
+				json({
+					challenge_id: 'pc-1',
+					options: {
+						rp: { id: 'id.example', name: 'Authrim' },
+						user: { id: 'dXNlci0x', name: 'a@example.com', displayName: 'a' },
+						challenge: 'Y2hhbGxlbmdl',
+						pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+						timeout: 60000,
+						excludeCredentials: [],
+						authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+						attestation: 'none',
+						name: body.device_name
+					}
+				});
+			let completed: Record<string, unknown> | null = null;
+			routes['/api/account/passkeys/complete'] = (body) => {
+				completed = body;
+				return json({ ok: true, passkey: { id: 'pk2' } });
+			};
+			routes['/api/account/passkeys/pk1'] = () =>
+				json({ error: 'remaining_login_method_required' }, 409);
+			await view();
+			await expect(post('passkey_add', { device_name: 'Laptop' })).resolves.toEqual({
+				notice: 'passkey_ceremony',
+				widget: 'passkeys'
+			});
+			const ceremony = (await view()) as { widgets: { passkeyCreate: { challenge: string } } };
+			expect(ceremony.widgets.passkeyCreate.challenge).toBe('pc-1');
+			const registration = JSON.stringify({
+				id: 'Y3JlZA',
+				rawId: 'Y3JlZA',
+				type: 'public-key',
+				response: { clientDataJSON: 'e30', attestationObject: 'o2Nm', transports: ['internal'] }
+			});
+			await expect(
+				post('passkey_add_finish', { challenge: 'pc-1', credential: registration })
+			).resolves.toEqual({ notice: 'passkey_added', widget: 'passkeys' });
+			expect(completed).toMatchObject({ challenge_id: 'pc-1', device_name: 'Laptop' });
+			expect(store.txn.data.accountPasskeyCreate).toBeUndefined();
+			await expect(post('passkey_delete', { passkey: 'pk1' })).resolves.toMatchObject({
+				status: 409,
+				data: { error: 'remaining_method' }
+			});
+		});
+	});
 });
