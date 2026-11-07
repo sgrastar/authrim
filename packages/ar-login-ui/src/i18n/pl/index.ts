@@ -509,7 +509,9 @@ const translation = {
 	lite_socialStarted:
 		'Logowanie kontem zewnętrznym zostało rozpoczęte na tej stronie. Aby zalogować się w inny sposób, zacznij od nowa.',
 	lite_passkeyFailed:
-		'Logowanie kluczem dostępu nie zostało ukończone. Spróbuj ponownie lub wybierz inny sposób logowania.'
+		'Logowanie kluczem dostępu nie zostało ukończone. Spróbuj ponownie lub wybierz inny sposób logowania.',
+	lite_provisioningWait: 'Trwa przygotowywanie konta. Poczekaj chwilę, a następnie wybierz Dalej.',
+	lite_provisioningFailed: 'Nie udało się przygotować konta. Zacznij od nowa.'
 } satisfies Translation;
 
 export default translation;

@@ -509,7 +509,9 @@ const translation = {
 	lite_socialStarted:
 		'Kuingia kwa akaunti ya nje kumeanzishwa kutoka ukurasa huu. Ili kuingia kwa njia nyingine, anza upya.',
 	lite_passkeyFailed:
-		'Kuingia kwa passkey hakukukamilika. Jaribu tena, au chagua njia nyingine ya kuingia.'
+		'Kuingia kwa passkey hakukukamilika. Jaribu tena, au chagua njia nyingine ya kuingia.',
+	lite_provisioningWait: 'Akaunti yako inaandaliwa. Subiri kidogo, kisha chagua Endelea.',
+	lite_provisioningFailed: 'Akaunti yako haikuweza kuandaliwa. Anza upya.'
 } satisfies Translation;
 
 export default translation;

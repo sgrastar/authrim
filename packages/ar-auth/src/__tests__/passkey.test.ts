@@ -850,6 +850,55 @@ describe('Passkey Handlers', () => {
       expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
     });
 
+    it("goes on with a resumed sign-up's own account at its address, while it has no passkey", async () => {
+      const found = () => {
+        mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
+          id: 'user_first',
+          email: 'newuser@example.com',
+        });
+        mockUserCoreRepository.findById.mockResolvedValueOnce({
+          id: 'user_first',
+          is_active: true,
+        });
+      };
+      const resumed = (resumeUserId: string) =>
+        passkeyRegisterOptionsHandler(
+          createMockContext({
+            body: {
+              email: 'newuser@example.com',
+              provisioning_token: 'A'.repeat(43),
+              resume_user_id: resumeUserId,
+            },
+            headers: { origin: 'https://example.com' },
+          }) as Parameters<typeof passkeyRegisterOptionsHandler>[0]
+        );
+
+      // The user its server-issued token names: that sign-up's account, gone on with.
+      found();
+      signUpMocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
+      expect((await resumed('user_first')).status).toBe(200);
+      expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
+      expect(mockPasskeyRepository.findByUserId).toHaveBeenCalledWith('user_first');
+
+      // Another user than the account at the address: in use.
+      found();
+      signUpMocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_other');
+      expect((await resumed('user_other')).status).toBe(409);
+
+      // An account that already has a passkey: in use.
+      found();
+      signUpMocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
+      mockPasskeyRepository.findByUserId.mockResolvedValueOnce([
+        { credential_id: 'cred-1', transports: [] },
+      ]);
+      expect((await resumed('user_first')).status).toBe(409);
+
+      // A user no token stands for: refused before anything.
+      signUpMocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce(null);
+      expect((await resumed('user_first')).status).toBe(400);
+      expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
+    });
+
     it('refuses a recently deleted address as it refuses an address in use, creating nothing', async () => {
       // The address in use, for the reply to compare with.
       mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({

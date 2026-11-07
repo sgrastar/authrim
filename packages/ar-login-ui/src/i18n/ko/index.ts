@@ -336,7 +336,9 @@ const ko = createTranslation({
 	lite_socialStarted:
 		'이 페이지에서 외부 계정 로그인을 시작했습니다. 다른 방법으로 로그인하려면 처음부터 다시 시작하세요.',
 	lite_passkeyFailed:
-		'패스키 로그인을 완료하지 못했습니다. 다시 시도하거나 다른 로그인 방법을 선택하세요.'
+		'패스키 로그인을 완료하지 못했습니다. 다시 시도하거나 다른 로그인 방법을 선택하세요.',
+	lite_provisioningWait: '계정을 준비하고 있습니다. 잠시 기다린 후 계속을 선택하세요.',
+	lite_provisioningFailed: '계정을 준비하지 못했습니다. 처음부터 다시 시작하세요.'
 });
 
 export default ko;

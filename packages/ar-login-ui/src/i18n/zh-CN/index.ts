@@ -315,7 +315,9 @@ const zhCN = createTranslation({
 	lite_javascriptRequired: '此页面会在浏览器中进行安全检查。请启用 JavaScript，然后重新加载页面。',
 	lite_passkeyUnsupported: '此浏览器无法在此处使用通行密钥。请选择其他登录方式。',
 	lite_socialStarted: '已从此页面开始使用外部账户登录。要使用其他方式登录，请重新开始。',
-	lite_passkeyFailed: '通行密钥登录未完成。请重试，或选择其他登录方式。'
+	lite_passkeyFailed: '通行密钥登录未完成。请重试，或选择其他登录方式。',
+	lite_provisioningWait: '正在准备您的账户。请稍候，然后选择“继续”。',
+	lite_provisioningFailed: '无法准备您的账户。请重新开始。'
 });
 
 export default zhCN;
