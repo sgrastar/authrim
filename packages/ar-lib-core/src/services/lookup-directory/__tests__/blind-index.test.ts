@@ -3,11 +3,15 @@ import {
   createLookupAliasIndex,
   createLookupBlindIndex,
   createLookupBlindIndexes,
+  LOOKUP_PASSKEY_SUBJECT_MAX_BYTES,
   normalizeLookupEmail,
   lookupVirtualBucket,
 } from '../blind-index';
 
 const KEY = { generation: 7, secret: '0123456789abcdef0123456789abcdef' };
+const PASSKEY_ISSUER = 'urn:authrim:passkey:login.example.com';
+/** The longest WebAuthn credential ID (1,023 raw bytes) in base64url: 1,364 characters. */
+const LONGEST_WEBAUTHN_CREDENTIAL_ID = `${'A'.repeat(1363)}w`;
 
 describe('lookup blind indexes', () => {
   it('reuses canonical exact-email normalization without provider-specific rewriting', async () => {
@@ -85,6 +89,66 @@ describe('lookup blind indexes', () => {
     await expect(
       createLookupBlindIndex('external_subject', { issuer: '', subject: 'raw-subject' }, KEY)
     ).rejects.toThrow('lookup_external_subject_issuer_invalid');
+  });
+
+  it('indexes WebAuthn-maximum passkey credential IDs, which exceed the general subject limit', async () => {
+    expect(LONGEST_WEBAUTHN_CREDENTIAL_ID).toHaveLength(1364);
+    const subject = { issuer: PASSKEY_ISSUER, subject: LONGEST_WEBAUTHN_CREDENTIAL_ID };
+    // Registration publishes, and sign-in looks up, the same index.
+    const published = await createLookupBlindIndexes('external_subject', subject, [KEY]);
+    const lookedUp = await createLookupBlindIndexes('external_subject', { ...subject }, [KEY]);
+    expect(published).toEqual(lookedUp);
+    expect(published[0].digest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(JSON.stringify(published)).not.toContain(LONGEST_WEBAUTHN_CREDENTIAL_ID);
+
+    await expect(
+      createLookupBlindIndex(
+        'external_subject',
+        { issuer: PASSKEY_ISSUER, subject: 'A'.repeat(LOOKUP_PASSKEY_SUBJECT_MAX_BYTES) },
+        KEY
+      )
+    ).resolves.toMatchObject({ indexKind: 'external_subject' });
+    await expect(
+      createLookupBlindIndex(
+        'external_subject',
+        { issuer: PASSKEY_ISSUER, subject: 'A'.repeat(LOOKUP_PASSKEY_SUBJECT_MAX_BYTES + 1) },
+        KEY
+      )
+    ).rejects.toThrow('lookup_external_subject_value_invalid');
+  });
+
+  it('keeps the 1,024-byte limit for subjects outside the passkey namespace', async () => {
+    for (const issuer of ['https://issuer.example', 'did', 'urn:authrim:passkeys']) {
+      await expect(
+        createLookupBlindIndex('external_subject', { issuer, subject: 'A'.repeat(1024) }, KEY)
+      ).resolves.toMatchObject({ indexKind: 'external_subject' });
+      await expect(
+        createLookupBlindIndex('external_subject', { issuer, subject: 'A'.repeat(1025) }, KEY)
+      ).rejects.toThrow('lookup_external_subject_value_invalid');
+    }
+  });
+
+  it('keeps the digests of passkey credentials indexed before the limit was raised', async () => {
+    // HMAC-SHA256 over the documented message, computed outside this module: existing index
+    // entries stay valid, so current users need no re-index.
+    expect(
+      (
+        await createLookupBlindIndex(
+          'external_subject',
+          { issuer: PASSKEY_ISSUER, subject: 'Abc_123-xyz' },
+          KEY
+        )
+      ).digest
+    ).toBe('47f534cd0bd6a58940852ef1ff5b6286cc04384fde4a41113e6b29edcbd9e135');
+    expect(
+      (
+        await createLookupBlindIndex(
+          'external_subject',
+          { issuer: PASSKEY_ISSUER, subject: 'A'.repeat(1024) },
+          KEY
+        )
+      ).digest
+    ).toBe('55edc52692a950f2bde07b7ee8f28b232cc450989b6434d4fe333bf9913889e7');
   });
 
   it('uses the documented first 12 SHA-256 bits for identifier and alias buckets', async () => {

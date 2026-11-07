@@ -41,6 +41,8 @@ const NEW_USER = 'user_signed_up';
 const NEW_EMAIL = 'new@example.com';
 const EMAIL = 'routed@example.com';
 const CREDENTIAL_ID = 'Y3JlZGVudGlhbC1pZC0x';
+/** The longest WebAuthn credential ID (1,023 raw bytes) in base64url: 1,364 characters. */
+const LONGEST_CREDENTIAL_ID = `${'Q'.repeat(1363)}w`;
 const PUBLIC_KEY = btoa('public-key-bytes');
 const PII_ENCRYPTION_KEY = 'a'.repeat(64);
 const TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
@@ -63,6 +65,8 @@ const world = vi.hoisted(() => ({
   accountPii: undefined as unknown,
   /** Lookup's identifier routes: identifier -> legacy user id. */
   identifierRoutes: new Map<string, string>(),
+  /** The credential ID the authenticator answers at registration (default CREDENTIAL_ID). */
+  registeredCredentialId: undefined as string | undefined,
   challenge: undefined as undefined | Record<string, unknown>,
   storedChallenges: [] as Array<Record<string, unknown>>,
   /** The SessionStore's live sessions. */
@@ -102,6 +106,11 @@ async function attachAccount(c: { set(key: string, value: unknown): void }, user
   c.set('accountDataContext', context);
   return context;
 }
+
+const LOOKUP_KEY = vi.hoisted(() => ({
+  generation: 1,
+  secret: '0123456789abcdef0123456789abcdef',
+}));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -151,8 +160,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAccountDataContextByIdentifierFromHono: vi.fn(
       async (
         c: { set(key: string, value: unknown): void },
-        input: { identifier: string | { issuer: string; subject: string } }
+        input: {
+          indexKind: 'email_exact' | 'external_subject';
+          identifier: string | { issuer: string; subject: string };
+        }
       ) => {
+        // Lookup finds an account by the identifier's blind index, so an identifier it cannot
+        // index fails as it does there.
+        await actual.createLookupBlindIndexes(input.indexKind, input.identifier, [LOOKUP_KEY]);
         const key =
           typeof input.identifier === 'string'
             ? input.identifier
@@ -180,7 +195,7 @@ vi.mock('@simplewebauthn/server', async (importOriginal) => ({
     verified: true,
     registrationInfo: {
       credential: {
-        id: CREDENTIAL_ID,
+        id: world.registeredCredentialId ?? CREDENTIAL_ID,
         publicKey: Uint8Array.from(atob(PUBLIC_KEY), (char) => char.charCodeAt(0)),
         counter: 0,
       },
@@ -205,8 +220,18 @@ vi.mock('../session-ttl', () => ({
 
 vi.mock('../account-provisioning', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../account-provisioning')>()),
-  // Publishing the credential's Lookup route goes through the Control Plane provisioner.
-  publishTenantD1PasskeyRoute: vi.fn(async () => 201),
+  // Publishing the credential's Lookup route goes through the Control Plane provisioner, which
+  // indexes the credential under its RP ID.
+  publishTenantD1PasskeyRoute: vi.fn(
+    async (_c: unknown, input: { userId: string; credentialId: string; rpId: string }) => {
+      const lib =
+        await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+      const subject = lib.passkeyCredentialLookupSubject(input);
+      await lib.createLookupBlindIndexes('external_subject', subject, [LOOKUP_KEY]);
+      world.identifierRoutes.set(`${subject.issuer}|${subject.subject}`, input.userId);
+      return 201;
+    }
+  ),
   // The Control Plane provisioner: it creates the account at its destination (the account
   // databases) and publishes its address route.
   provisionTenantD1EmailAccount: vi.fn(
@@ -457,6 +482,7 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       world.accountCore = databases.accountCore;
       world.accountPii = databases.accountPii;
       world.identifierRoutes.clear();
+      world.registeredCredentialId = undefined;
       world.challenge = undefined;
       world.storedChallenges = [];
       world.sessions.clear();
@@ -671,6 +697,65 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       const body = (await response.json()) as { userId?: string; user?: { email?: string } };
       expect(body.user?.email ?? null).toBe(EMAIL);
       expect(count(databases.metadata.raw, 'SELECT COUNT(*) AS n FROM passkeys')).toBe(0);
+    });
+
+    it('registers and signs in with a WebAuthn-maximum (1,364-character) credential ID', async () => {
+      expect(LONGEST_CREDENTIAL_ID).toHaveLength(1364);
+      world.registeredCredentialId = LONGEST_CREDENTIAL_ID;
+      world.challenge = { challenge: 'registration-challenge', userId: USER };
+      const hono = app(allocationScope, databases, (h) => {
+        h.post('/api/auth/passkeys/register/verify', passkeyRegisterVerifyHandler);
+        h.post('/api/auth/passkeys/login/verify', passkeyLoginVerifyHandler);
+      });
+      const credential = (response: Record<string, unknown>) => ({
+        id: LONGEST_CREDENTIAL_ID,
+        rawId: LONGEST_CREDENTIAL_ID,
+        response,
+        type: 'public-key',
+      });
+
+      const registered = await hono.request(
+        '/api/auth/passkeys/register/verify',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+          body: JSON.stringify({ userId: USER, credential: credential({}) }),
+        },
+        env(),
+        executionCtx
+      );
+      expect(registered.status).toBe(200);
+      expect(
+        count(
+          databases.accountCore.raw,
+          'SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ? AND credential_id = ?',
+          USER,
+          LONGEST_CREDENTIAL_ID
+        )
+      ).toBe(1);
+      const subject = passkeyCredentialLookupSubject({
+        credentialId: LONGEST_CREDENTIAL_ID,
+        rpId: 'login.example.com',
+      });
+      expect(world.identifierRoutes.get(`${subject.issuer}|${subject.subject}`)).toBe(USER);
+
+      world.challenge = { challenge: 'authentication-challenge' };
+      const signedIn = await hono.request(
+        '/api/auth/passkeys/login/verify',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+          body: JSON.stringify({
+            challengeId: 'challenge-1',
+            credential: credential({ userHandle: btoa(USER).replace(/=+$/u, '') }),
+          }),
+        },
+        env(),
+        executionCtx
+      );
+      expect(signedIn.status).toBe(200);
+      const body = await signedIn.json<{ user?: { email?: string } }>();
+      expect(body.user?.email ?? null).toBe(EMAIL);
     });
 
     it('signs in with a TOTP credential kept in the account database', async () => {

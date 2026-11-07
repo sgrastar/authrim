@@ -219,6 +219,25 @@ describe('a yes/no field', () => {
 		]);
 	});
 
+	it('shows a label unless the part says show_label: false', () => {
+		const decision = decideLiteStep(
+			step({
+				config: {
+					screen: {
+						fields: [
+							{ field: 'nickname', label: 'Nickname', show_label: false },
+							{ field: 'city', label: 'City' }
+						]
+					}
+				}
+			})
+		);
+		expect(decision.kind === 'screen' && decision.fields.map((f) => f.showLabel)).toEqual([
+			false,
+			true
+		]);
+	});
+
 	it('still refuses the checkbox and choice parts (their answers have nowhere to go yet)', () => {
 		const decision = decideLiteStep(
 			step({

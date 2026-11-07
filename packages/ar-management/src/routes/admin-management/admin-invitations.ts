@@ -94,6 +94,26 @@ function hasInvitationWritePermission(auth: AdminAuthContext): boolean {
   );
 }
 
+/**
+ * Whether the caller may hand out `role` by invitation, for `scopeType`: the role ranks below
+ * them, and a global one below their global rank. The one exception is a peer `ar_super_admin`
+ * invitation from a caller holding the wildcard from a global assignment. Creating and resending
+ * an invitation both ask it (a resend brings the invitation back, so it grants the role again).
+ */
+function callerMayInviteRole(
+  auth: AdminAuthContext,
+  role: { name: string; hierarchy_level: number },
+  scopeType: 'tenant' | 'global'
+): boolean {
+  const invitingPeerSuperAdmin =
+    role.name === ADMIN_ROLES.SUPER_ADMIN && hasGlobalAdminPermission(auth, '*');
+  if (invitingPeerSuperAdmin) return true;
+  if (auth.hierarchyLevel !== undefined && role.hierarchy_level >= auth.hierarchyLevel) {
+    return false;
+  }
+  return scopeType !== 'global' || callerOutranksGlobally(auth, role.hierarchy_level);
+}
+
 function formatInvitation(row: AdminInvitationRow) {
   return {
     id: row.id,
@@ -318,12 +338,7 @@ adminInvitationsRouter.post('/', async (c) => {
   // A global invitation (and an ar_super_admin one is always global) takes effect for every tenant,
   // so it needs the wildcard from a global assignment, not one that is only held for this tenant.
   const wildcardAuthority = hasGlobalAdminPermission(auth, '*');
-  const invitingPeerSuperAdmin = role.name === ADMIN_ROLES.SUPER_ADMIN && wildcardAuthority;
-  if (
-    auth.hierarchyLevel !== undefined &&
-    role.hierarchy_level >= auth.hierarchyLevel &&
-    !invitingPeerSuperAdmin
-  ) {
+  if (!callerMayInviteRole(auth, role, 'tenant')) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
 
@@ -339,11 +354,7 @@ adminInvitationsRouter.post('/', async (c) => {
   }
   // A global invitation is a global assignment once accepted, so the role is measured by the
   // caller's global hierarchy (a peer ar_super_admin invitation is the one exception, as above).
-  if (
-    scopeType === 'global' &&
-    !invitingPeerSuperAdmin &&
-    !callerOutranksGlobally(auth, role.hierarchy_level)
-  ) {
+  if (!callerMayInviteRole(auth, role, scopeType)) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
   // The invited admin is homed in this (request) tenant.
@@ -572,6 +583,16 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
     homeTenantId: tenantId,
   });
   if (placementRefusal) return placementRefusal;
+
+  // The invitation's own role, as it is now (its rank may have changed since): bringing the
+  // invitation back grants it again, so the caller must be allowed to, as when creating it.
+  const role = await new AdminRoleRepository(adapter).getRole(invitation.admin_role_id);
+  if (!role || (role.tenant_id !== tenantId && !(role.tenant_id === 'default' && role.is_system))) {
+    return c.json({ error: 'role_not_found' }, 404);
+  }
+  if (!callerMayInviteRole(auth, role, invitation.scope_type === 'global' ? 'global' : 'tenant')) {
+    return c.json({ error: 'insufficient_permissions' }, 403);
+  }
 
   // The groups the invitation names hand out their roles on enrolment, as long as each is still
   // the version it was made with: bringing it back is giving those roles again, so the caller must

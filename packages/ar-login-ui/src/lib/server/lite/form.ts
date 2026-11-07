@@ -9,6 +9,13 @@ export const LITE_FORM_MAX_BYTES = 16 * 1024;
 export const LITE_FORM_MAX_FIELDS = 32;
 export const LITE_FORM_MAX_VALUE_LENGTH = 4096;
 
+/**
+ * Fields whose value may be longer: a passkey assertion (`credential`, its JSON), whose parts
+ * the action bounds one by one (totp-passkey.ts `readLitePasskeyCredential`: up to two 1,364-character
+ * credential IDs and an RSA-4096 signature). The whole body stays within LITE_FORM_MAX_BYTES.
+ */
+const LITE_FORM_LONG_VALUE_LENGTHS: ReadonlyMap<string, number> = new Map([['credential', 9216]]);
+
 export type LiteFormRefusal = 'unsupported_media_type' | 'too_large' | 'malformed';
 
 export type LiteFormResult =
@@ -78,7 +85,8 @@ export async function readLiteForm(request: Request): Promise<LiteFormResult> {
 		} catch {
 			return { ok: false, reason: 'malformed' };
 		}
-		if (!name || fields.has(name) || value.length > LITE_FORM_MAX_VALUE_LENGTH) {
+		const limit = LITE_FORM_LONG_VALUE_LENGTHS.get(name) ?? LITE_FORM_MAX_VALUE_LENGTH;
+		if (!name || fields.has(name) || value.length > limit) {
 			return { ok: false, reason: 'malformed' };
 		}
 		fields.set(name, value);

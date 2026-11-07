@@ -47,10 +47,11 @@ import {
 	type LiteTenantMethods
 } from './flow-driver';
 import { readLiteForm } from './form';
+import { readLitePasskeyOptions, type LitePasskeyOptions } from './totp-passkey';
 import { liteMessages } from './messages';
 import { liteTxnClient, type LiteTxnClient, type LiteTxnView } from './txn-client';
 
-/** What the sign-in page draws: no consent (PR5); among the sign-in methods, the email code. */
+/** What the sign-in page draws: no consent (PR5c); among the sign-in methods, not social (PR5b). */
 export const LITE_LOGIN_PAGE_BLOCKS: ReadonlySet<string> = new Set([
 	'identity_field',
 	'auth_widget',
@@ -63,7 +64,12 @@ export const LITE_LOGIN_PAGE_BLOCKS: ReadonlySet<string> = new Set([
 	'layout_row',
 	'link'
 ]);
-export const LITE_LOGIN_PAGE_METHODS: ReadonlySet<string> = new Set(['mail_otp']);
+export const LITE_LOGIN_PAGE_METHODS: ReadonlySet<string> = new Set([
+	'mail_otp',
+	'totp',
+	'mail_otp_totp',
+	'passkey'
+]);
 
 /** How long before a code can be sent again (the SPA's `MAIL_OTP_RESEND_SECONDS`). */
 export const LITE_CODE_RESEND_MS = 60_000;
@@ -89,9 +95,12 @@ export interface LitePendingCode {
  * A sign-in done whose Flow part is still to come: the choice (`handle` on `stepId`) when the
  * Flow is still on that step, then, for an email code, the step asking for the code.
  */
+export type LiteSignInMethod = 'mail_otp' | 'guest' | 'totp' | 'passkey';
+const SIGN_IN_METHODS: ReadonlySet<string> = new Set(['mail_otp', 'guest', 'totp', 'passkey']);
+
 export interface LiteSignedIn {
 	interactionId: string;
-	method: 'mail_otp' | 'guest';
+	method: LiteSignInMethod;
 	choice: { stepId: string; handle: string };
 	/** Where the session call says a direct sign-in goes (the completion's last fallback). */
 	redirectUrl: string | null;
@@ -131,34 +140,39 @@ export function readSignedIn(
 ): LiteSignedIn | null {
 	const signedIn = data.signedIn;
 	if (!isRecord(signedIn) || signedIn.interactionId !== interactionId) return null;
-	if (signedIn.method !== 'mail_otp' && signedIn.method !== 'guest') return null;
+	if (typeof signedIn.method !== 'string' || !SIGN_IN_METHODS.has(signedIn.method)) return null;
 	const choice = signedIn.choice;
 	if (!isRecord(choice) || !nonEmpty(choice.stepId) || !nonEmpty(choice.handle)) return null;
 	return {
 		interactionId,
-		method: signedIn.method,
+		method: signedIn.method as LiteSignInMethod,
 		choice: { stepId: choice.stepId, handle: choice.handle },
 		redirectUrl: nonEmpty(signedIn.redirectUrl) ? signedIn.redirectUrl : null
 	};
 }
 
 /**
- * A code checked whose session is still to be made: the check's one-time artifact (with the
- * verifier it needs), kept so a failed session call is tried again without the spent code.
+ * A sign-in checked whose session is still to be made (an email code, a passkey): the check's
+ * one-time artifact (with the verifier it needs), kept so a failed session call is tried again
+ * without a second check.
  */
 export interface LiteCheckedCode {
 	interactionId: string;
+	/** How the person signed in: the Flow choice submitted once the session is made. */
+	method: 'mail_otp' | 'passkey';
 	choiceStepId: string;
 	artifact: string;
 	verifier: string;
 	expiresAt: number;
-	/** The code it was checked from: put back (spent) when the artifact turns out to be spent. */
-	code: LitePendingCode;
+	/** What was checked (the code's attempt, the passkey's challenge): names the session tries. */
+	attemptKey: string;
+	/** An email code's code: put back (spent) when the artifact turns out to be spent. */
+	code: LitePendingCode | null;
 	/** Session calls that failed so far: names the next one's operation (one at a time). */
 	tries: number;
 }
 
-/** A checked code of this interaction whose artifact has not expired; or null. */
+/** A checked sign-in of this interaction whose artifact has not expired; or null. */
 export function readCheckedCode(
 	data: Record<string, unknown>,
 	interactionId: string,
@@ -169,14 +183,20 @@ export function readCheckedCode(
 	if (!nonEmpty(checked.choiceStepId) || !nonEmpty(checked.artifact)) return null;
 	if (!nonEmpty(checked.verifier)) return null;
 	if (typeof checked.expiresAt !== 'number' || !(checked.expiresAt > now)) return null;
-	const code = readPendingCode({ code: checked.code }, interactionId);
-	if (!code) return null;
+	const method = checked.method === 'passkey' ? 'passkey' : 'mail_otp';
+	const code =
+		method === 'mail_otp' ? readPendingCode({ code: checked.code }, interactionId) : null;
+	if (method === 'mail_otp' && !code) return null;
+	const attemptKey = code ? code.attemptId : checked.attemptKey;
+	if (!nonEmpty(attemptKey)) return null;
 	return {
 		interactionId,
+		method,
 		choiceStepId: checked.choiceStepId,
 		artifact: checked.artifact,
 		verifier: checked.verifier,
 		expiresAt: checked.expiresAt,
+		attemptKey,
 		code,
 		tries:
 			typeof checked.tries === 'number' && Number.isSafeInteger(checked.tries) && checked.tries >= 0
@@ -185,8 +205,83 @@ export function readCheckedCode(
 	};
 }
 
+/**
+ * An authenticator-app sign-in started and its code not yet entered. `choiceStepId`: the step it
+ * was chosen on (its choice is submitted at the start when the Flow has a step of its own for the
+ * code, otherwise after the sign-in).
+ */
+export interface LitePendingTotp {
+	interactionId: string;
+	choiceStepId: string;
+	challengeId: string;
+	expiresAt: number;
+}
+
+export function readPendingTotp(
+	data: Record<string, unknown>,
+	interactionId: string,
+	now = Date.now()
+): LitePendingTotp | null {
+	const totp = data.totp;
+	if (!isRecord(totp) || totp.interactionId !== interactionId) return null;
+	if (!nonEmpty(totp.choiceStepId) || !nonEmpty(totp.challengeId)) return null;
+	if (typeof totp.expiresAt !== 'number' || !(totp.expiresAt > now)) return null;
+	return {
+		interactionId,
+		choiceStepId: totp.choiceStepId,
+		challengeId: totp.challengeId,
+		expiresAt: totp.expiresAt
+	};
+}
+
+/** A passkey sign-in started: the challenge the page's ceremony signs, with its verifier. */
+export interface LitePendingPasskey {
+	interactionId: string;
+	choiceStepId: string;
+	challengeId: string;
+	verifier: string;
+	options: LitePasskeyOptions;
+	expiresAt: number;
+}
+
+export function readPendingPasskey(
+	data: Record<string, unknown>,
+	interactionId: string,
+	now = Date.now()
+): LitePendingPasskey | null {
+	const passkey = data.passkey;
+	if (!isRecord(passkey) || passkey.interactionId !== interactionId) return null;
+	if (!nonEmpty(passkey.choiceStepId) || !nonEmpty(passkey.challengeId)) return null;
+	if (!nonEmpty(passkey.verifier)) return null;
+	if (typeof passkey.expiresAt !== 'number' || !(passkey.expiresAt > now)) return null;
+	const options = readLitePasskeyOptions(passkey.options);
+	if (!options) return null;
+	return {
+		interactionId,
+		choiceStepId: passkey.choiceStepId,
+		challengeId: passkey.challengeId,
+		verifier: passkey.verifier,
+		options,
+		expiresAt: passkey.expiresAt
+	};
+}
+
+/**
+ * Whether a sign-in has been started here (a code sent, an authenticator or a passkey begun). An
+ * authenticator or passkey start counts expired too: a check of it may still be out (its answer
+ * would set a session), so it is cleared only through that check (the page's Continue posts to it,
+ * and the check's operation waits for one still running), never replaced by another start.
+ */
+export function signInStarted(data: Record<string, unknown>, interactionId: string): boolean {
+	return (
+		readPendingCode(data, interactionId) !== null ||
+		readPendingTotp(data, interactionId, Number.NEGATIVE_INFINITY) !== null ||
+		readPendingPasskey(data, interactionId, Number.NEGATIVE_INFINITY) !== null
+	);
+}
+
 /** Whether a sign-in has been made, or is half made, for this interaction. */
-function signInUnderway(data: Record<string, unknown>, interactionId: string): boolean {
+export function signInUnderway(data: Record<string, unknown>, interactionId: string): boolean {
 	// A checked code counts expired or not: only Continue settles it (a try may have made the
 	// session), never a send or a resend over it.
 	return (
@@ -229,7 +324,7 @@ export function pageSearch(url: URL): string {
 	return search ? `?${search}` : '';
 }
 
-function backToPage(event: RequestEvent): never {
+export function backToPage(event: RequestEvent): never {
 	redirect(303, `${event.url.pathname}${pageSearch(event.url)}`);
 }
 
@@ -315,7 +410,7 @@ function sameToken(a: string, b: string): boolean {
 	return diff === 0;
 }
 
-interface LitePost {
+export interface LitePost {
 	event: RequestEvent;
 	txns: LiteTxnClient;
 	txn: LiteTxnView;
@@ -329,7 +424,7 @@ interface LitePost {
  * The post's transaction (checked against its form token and the current policy; a sign-in
  * still going on), and its Flow resumed and kept. A failure is the action's answer.
  */
-async function openPost(
+export async function openPost(
 	event: RequestEvent
 ): Promise<
 	{ post: LitePost } | { failure: ActionFailure<{ restart: boolean } | { error: 'retry' }> }
@@ -362,22 +457,25 @@ async function openPost(
 	return { post: { event, txns, txn, fields: form.fields, backend, flow: flow.view, locale } };
 }
 
-type OperationKind = 'send' | 'resend' | 'verify' | 'guest';
+type OperationKind = 'send' | 'resend' | 'verify' | 'guest' | 'totp' | 'passkey';
 
 /**
  * Starts the post's operation. `started`: carry it out, then `finishOperation`. Otherwise the
  * action's answer: the same form posted again goes back to the page (which draws how it went).
+ * The operation is named by the form's nonce, or by `key` when what it acts on is single-use (a
+ * challenge checked once whatever form, or tab, posts it).
  */
-async function beginOperation(
+export async function beginOperation(
 	post: LitePost,
-	kind: OperationKind
+	kind: OperationKind,
+	key?: string
 ): Promise<
 	| { operation: { operationId: string; attempt: number } }
 	| { failure: ActionFailure<{ restart: boolean } | { error: 'busy' }> }
 > {
 	const nonce = readOperationNonce(post.fields);
 	if (!nonce) return { failure: fail(400, { restart: true }) };
-	const operationId = `${kind}:${nonce}`;
+	const operationId = `${kind}:${key ?? nonce}`;
 	const begun = await post.txns.beginOperation(post.txn.id, operationId);
 	if (!begun.ok) {
 		return {
@@ -398,25 +496,66 @@ async function beginOperation(
  * says the change still fits it (never over what a concurrent post did since). The stored
  * transaction, or null.
  */
-async function finishOperation(
+export async function finishOperation(
 	post: LitePost,
 	txn: LiteTxnView,
 	operation: { operationId: string; attempt: number },
 	result: Record<string, unknown>,
-	move?: {
-		to: 'pending' | 'verified';
-		patch: Record<string, unknown>;
-		stillApplies: (now: LiteTxnView) => boolean;
-	}
+	move?: OperationMove
 ): Promise<LiteTxnView | null> {
+	const finished = await finishOperationOutcome(post, txn, operation, result, move);
+	return 'txn' in finished ? finished.txn : null;
+}
+
+type OperationMove = {
+	to: 'pending' | 'verified';
+	patch: Record<string, unknown>;
+	stillApplies: (now: LiteTxnView) => boolean;
+};
+
+/**
+ * `finishOperation`, telling apart a result not recorded as this attempt's: one another attempt
+ * took over (its lease ran out, `superseded`), or a record that failed (`unrecorded`). Its caller
+ * must not act on what it did (pass on a session it got).
+ */
+export async function finishOperationOutcome(
+	post: LitePost,
+	txn: LiteTxnView,
+	operation: { operationId: string; attempt: number },
+	result: Record<string, unknown>,
+	move?: OperationMove
+): Promise<{ txn: LiteTxnView | null } | { superseded: true } | { unrecorded: true }> {
 	const transition = move
 		? { expectedVersion: txn.version, to: move.to, patch: move.patch }
 		: undefined;
 	const done = await post.txns
 		.completeOperation(txn.id, operation.operationId, operation.attempt, result, transition)
 		.catch(() => null);
-	if (done?.ok) return done.txn;
-	if (!move || done?.reason !== 'version_mismatch') return null;
+	if (done?.ok) return { txn: done.txn };
+	if (done?.reason === 'superseded') return { superseded: true };
+	// Recorded, its move refused (the store's move refusals); anything else (a failed call, a
+	// transaction gone or expired, an operation unknown) recorded nothing.
+	if (!done || !MOVE_REFUSALS.has(done.reason)) return { unrecorded: true };
+	return { txn: await reapply(post, txn, done.reason, move) };
+}
+
+/** The refusals of a completion that recorded its result and refused only its move. */
+const MOVE_REFUSALS: ReadonlySet<string> = new Set([
+	'finished',
+	'version_mismatch',
+	'invalid_transition',
+	'budget_exceeded',
+	'too_large',
+	'policy_changed'
+]);
+
+async function reapply(
+	post: LitePost,
+	txn: LiteTxnView,
+	reason: string | undefined,
+	move: OperationMove | undefined
+): Promise<LiteTxnView | null> {
+	if (!move || reason !== 'version_mismatch') return null;
 	// A few times: each concurrent change (a page view keeping the Flow's new signature) moves
 	// the version on once.
 	for (let i = 0; i < 3; i++) {
@@ -431,7 +570,7 @@ async function finishOperation(
 	return null;
 }
 
-function readEmail(post: LitePost, decision: LiteStepDecision): string | null {
+export function readEmail(post: LitePost, decision: LiteStepDecision): string | null {
 	if (decision.kind !== 'screen') return null;
 	const field = decision.fields.find(
 		(candidate) =>
@@ -443,17 +582,17 @@ function readEmail(post: LitePost, decision: LiteStepDecision): string | null {
 	return value && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value) ? value : null;
 }
 
-function readProof(post: LitePost): string | null {
+export function readProof(post: LitePost): string | null {
 	return post.fields.get('human_verification_response') || null;
 }
 
 /** A send (or a guest sign-in) refused: a limit says to wait; anything else, to try again. */
-function sendFailure(status: number) {
+export function sendFailure(status: number) {
 	return status === 429 ? fail(429, { error: 'busy' as const }) : retryLater();
 }
 
 /** The Flow completed: the transaction finishes, and the page draws the relay to where it goes. */
-async function relayCompletion(
+export async function relayCompletion(
 	post: LitePost,
 	txn: LiteTxnView,
 	output: Record<string, unknown> | null
@@ -479,6 +618,8 @@ async function relayCompletion(
 			patch: {
 				completedTo: destination,
 				code: null,
+				totp: null,
+				passkey: null,
 				checked: null,
 				signedIn: null,
 				signInRedirect: null
@@ -492,12 +633,12 @@ async function relayCompletion(
 }
 
 /** A post that cannot go on just now; what it did is kept, and the page draws what is left. */
-function retryLater() {
+export function retryLater() {
 	return fail(409, { error: 'retry' as const });
 }
 
 /** Submits a step's handle; null when the call failed (an answer or an exception). */
-async function submitOrNull(post: LitePost, step: FlowRuntimeStep, handle: string) {
+export async function submitOrNull(post: LitePost, step: FlowRuntimeStep, handle: string) {
 	const submitted = await submitLiteStep(post.backend, post.flow.state, step, handle).catch(
 		() => null
 	);
@@ -510,7 +651,7 @@ async function submitOrNull(post: LitePost, step: FlowRuntimeStep, handle: strin
  * of a recorded sign-in is submitted only while the Flow is on its step, so a retry submits
  * nothing twice.
  */
-async function advanceAfterSignIn(post: LitePost, txn: LiteTxnView) {
+export async function advanceAfterSignIn(post: LitePost, txn: LiteTxnView) {
 	// The session is the browser's from here, whatever happens next.
 	forwardSetCookies(post.event, post.backend.setCookies());
 	let step = post.flow.step;
@@ -526,15 +667,28 @@ async function advanceAfterSignIn(post: LitePost, txn: LiteTxnView) {
 			if (submitted.completed) return relayCompletion(post, current, submitted.output);
 			step = submitted.step;
 		}
-		// An email code: the step asking for it is submitted as checked (SPA
-		// `getRuntimeCodeInputSuccessHandle`, /verify-email-code).
-		const codeHandle = signedIn.method === 'mail_otp' && step ? codeSuccessHandle(step) : null;
-		if (step && codeHandle) {
-			if (await stepUnsupported(post, step)) return fail(409, { restart: true });
-			const submitted = await submitOrNull(post, step, codeHandle);
-			if (!submitted) return retryLater();
-			if (submitted.completed) return relayCompletion(post, current, submitted.output);
-			step = submitted.step;
+		// A code (emailed, or from an authenticator app): the step asking for it is submitted as
+		// checked (SPA `getRuntimeCodeInputSuccessHandle`, /verify-email-code), once the steps not
+		// drawn before it are taken. The sign-in stays recorded until then: a retry still knows it.
+		if (signedIn.method === 'mail_otp' || signedIn.method === 'totp') {
+			if (step && !codeSuccessHandle(step)) {
+				const walked = await advanceLiteFlow(post.backend, post.flow.state, step, {
+					signedIn: hasSession(post)
+				});
+				if (walked.kind === 'completed') return relayCompletion(post, current, walked.output);
+				forwardSetCookies(post.event, post.backend.setCookies());
+				if (walked.kind === 'sign_in_required') return fail(401, { restart: true });
+				if (walked.kind === 'failed') return retryLater();
+				step = walked.step;
+			}
+			const codeHandle = step ? codeSuccessHandle(step) : null;
+			if (step && codeHandle) {
+				if (await stepUnsupported(post, step)) return fail(409, { restart: true });
+				const submitted = await submitOrNull(post, step, codeHandle);
+				if (!submitted) return retryLater();
+				if (submitted.completed) return relayCompletion(post, current, submitted.output);
+				step = submitted.step;
+			}
 		}
 		// Submitted: a retry must not submit it again (should this move fail, the Flow has moved
 		// on, so the step checks above stop a second submit all the same).
@@ -549,8 +703,7 @@ async function advanceAfterSignIn(post: LitePost, txn: LiteTxnView) {
 		if (cleared?.ok) current = cleared.txn;
 	}
 	const result = await advanceLiteFlow(post.backend, post.flow.state, step, {
-		signedIn:
-			post.event.cookies.get(SESSION_COOKIE) !== undefined || post.backend.hasCookie(SESSION_COOKIE)
+		signedIn: hasSession(post)
 	});
 	if (result.kind === 'completed') return relayCompletion(post, current, result.output);
 	forwardSetCookies(post.event, post.backend.setCookies());
@@ -558,21 +711,46 @@ async function advanceAfterSignIn(post: LitePost, txn: LiteTxnView) {
 	return result.kind === 'sign_in_required' ? fail(401, { restart: true }) : retryLater();
 }
 
+/** Whether the browser has a session (sent with the post, or set by a call it made). */
+function hasSession(post: LitePost): boolean {
+	return (
+		post.event.cookies.get(SESSION_COOKIE) !== undefined || post.backend.hasCookie(SESSION_COOKIE)
+	);
+}
+
 /** The backends of the posts in flight: what a post that throws still passes on (its cookies). */
 const POST_BACKENDS = new WeakMap<RequestEvent, LiteBackendClient>();
+
+/**
+ * Posts whose cookies are held back: a session call (a direct session, an authenticator check) is
+ * out, and its cookies go to the browser only once its result is recorded as this attempt's. An
+ * exception meanwhile passes none of them on.
+ */
+const HELD = new WeakSet<RequestEvent>();
+
+/** Holds the post's cookies back until `releaseCookies` (see HELD). */
+export function holdCookies(event: RequestEvent): void {
+	HELD.add(event);
+}
+
+/** Passes the post's cookies on, and no longer holds them. */
+export function releaseCookies(post: LitePost): void {
+	HELD.delete(post.event);
+	forwardSetCookies(post.event, post.backend.setCookies());
+}
 
 /**
  * An action whose unexpected failure (a backend call that throws) still passes on the cookies its
  * calls set (a session made before it threw), and answers a retry, never SvelteKit's 500 page.
  */
-function guarded<T>(handler: (event: RequestEvent) => Promise<T>) {
+export function guarded<T>(handler: (event: RequestEvent) => Promise<T>) {
 	return async (event: RequestEvent) => {
 		try {
 			return await handler(event);
 		} catch (thrown) {
 			if (isRedirect(thrown) || isHttpError(thrown)) throw thrown;
 			const backend = POST_BACKENDS.get(event);
-			if (backend) forwardSetCookies(event, backend.setCookies());
+			if (backend && !HELD.has(event)) forwardSetCookies(event, backend.setCookies());
 			return fail(503, { error: 'retry' as const });
 		}
 	};
@@ -598,16 +776,19 @@ function sessionMove(
 	if (outcome === 'signed_in') {
 		const signedIn: LiteSignedIn = {
 			interactionId: checked.interactionId,
-			method: 'mail_otp',
-			choice: { stepId: checked.choiceStepId, handle: 'mail_otp' },
+			method: checked.method,
+			choice: { stepId: checked.choiceStepId, handle: checked.method },
 			redirectUrl
 		};
 		return { to: 'verified' as const, patch: { checked: null, signedIn }, stillApplies };
 	}
 	if (outcome === 'spent') {
+		// An email code's entry comes back (a new code at once); a passkey's sign-in starts again.
 		return {
 			to: 'pending' as const,
-			patch: { checked: null, code: { ...checked.code, sentAt: 0 } },
+			patch: checked.code
+				? { checked: null, code: { ...checked.code, sentAt: 0 } }
+				: { checked: null },
 			stillApplies
 		};
 	}
@@ -616,6 +797,22 @@ function sessionMove(
 		patch: { checked: { ...checked, tries: checked.tries + 1 } },
 		stillApplies
 	};
+}
+
+/**
+ * A destination as an operation's result records it: the store keeps a result of at most 1 KiB
+ * (its JSON's UTF-8 bytes), so a long one is left out (it is only the completion's last fallback).
+ */
+export function recordableUrl(url: string | null): string | null {
+	// Measured as the store measures: the UTF-8 bytes of its JSON.
+	return url && new TextEncoder().encode(JSON.stringify(url)).length <= 512 ? url : null;
+}
+
+/** What a spent artifact says: the code (sent again at once), or the passkey (signed again). */
+function spentFailure(checked: LiteCheckedCode) {
+	return checked.method === 'passkey'
+		? fail(400, { error: 'passkey_failed' as const })
+		: fail(400, { error: 'code_invalid' as const });
 }
 
 function readSessionOutcome(result: unknown): SessionOutcome | null {
@@ -629,11 +826,15 @@ function readSessionOutcome(result: unknown): SessionOutcome | null {
  * and the change it makes are recorded together. A try that finished without its change saved
  * (a failed save) has the change made from its recorded outcome by the next post.
  */
-async function finishCheckedSignIn(post: LitePost, txn: LiteTxnView, checked: LiteCheckedCode) {
+export async function finishCheckedSignIn(
+	post: LitePost,
+	txn: LiteTxnView,
+	checked: LiteCheckedCode
+) {
 	// Never a session for a Flow that stops right after (plan R3-2): the step the resume reached
 	// must be one the lite UI can go on with, as for the check itself.
 	if (await stepUnsupported(post)) return fail(409, { restart: true });
-	const operationId = `session:${checked.code.attemptId}:${checked.tries}`;
+	const operationId = `session:${checked.attemptKey}:${checked.tries}`;
 	const begun = await post.txns.beginOperation(txn.id, operationId);
 	if (!begun.ok) {
 		return begun.reason === 'budget_exceeded'
@@ -665,14 +866,14 @@ async function finishCheckedSignIn(post: LitePost, txn: LiteTxnView, checked: Li
 			{ outcome: 'spent' },
 			sessionMove(checked, 'spent')
 		);
-		return fail(400, { error: 'code_invalid' as const });
+		return spentFailure(checked);
 	}
+	holdCookies(post.event);
 	const session = await createLiteDirectSession(post.backend, {
 		artifact: checked.artifact,
 		codeVerifier: checked.verifier,
 		authorizationChallengeId: post.txn.bound.challengeId
 	}).catch(() => ({ ok: false as const, error: 'unreachable', status: 0 }));
-	forwardSetCookies(post.event, post.backend.setCookies());
 	// A refused artifact is spent (the session call used it and failed after, or it expired): no
 	// retry can use it. The backend making the session idempotently is a separate change.
 	const outcome: SessionOutcome = session.ok
@@ -681,19 +882,25 @@ async function finishCheckedSignIn(post: LitePost, txn: LiteTxnView, checked: Li
 			? 'spent'
 			: 'failed';
 	const redirectUrl = session.ok ? session.redirectUrl : null;
-	const moved = await finishOperation(
+	const recorded = await finishOperationOutcome(
 		post,
 		txn,
 		operation,
-		{ outcome, redirectUrl },
+		{ outcome, redirectUrl: recordableUrl(redirectUrl) },
 		sessionMove(checked, outcome, redirectUrl)
 	);
+	// A try not recorded as this attempt's (another took it over after its lease ran out, or the
+	// record failed): its session is never passed on, so it cannot replace one made since.
+	if (!('txn' in recorded)) return retryLater();
+	// Recorded: the session (if any) is the browser's from here.
+	releaseCookies(post);
+	const moved = recorded.txn;
 	if (outcome === 'signed_in') {
 		// Not saved: the session is the browser's; Continue makes the change from the outcome.
 		if (!moved) return retryLater();
 		return advanceAfterSignIn(post, moved);
 	}
-	if (outcome === 'spent') return fail(400, { error: 'code_invalid' as const });
+	if (outcome === 'spent') return spentFailure(checked);
 	return !session.ok && session.status === 429
 		? fail(429, { error: 'busy' as const })
 		: retryLater();
@@ -715,7 +922,7 @@ export const liteContinueAction = guarded(async (event) => {
 });
 
 /** Stops a post on a step the lite UI cannot go on with (plan R3-2), before any side effect. */
-async function stepUnsupported(
+export async function stepUnsupported(
 	post: LitePost,
 	step: FlowRuntimeStep | null = post.flow.step
 ): Promise<boolean> {
@@ -733,13 +940,21 @@ export const liteSendCodeAction = guarded(async (event) => {
 	const post = opened.post;
 	const state = post.flow.state;
 	const step = post.flow.step;
-	if (readPendingCode(post.txn.data, state.interactionId)) backToPage(event);
+	// One sign-in at a time: a code, an authenticator or a passkey already begun is gone on with
+	// (or given up by a restart), never a second one over it.
+	if (signInStarted(post.txn.data, state.interactionId)) backToPage(event);
 	if (signInUnderway(post.txn.data, state.interactionId)) backToPage(event);
 	const decision = liteLoginStepDecision(step, await liteTenantMethods(event), post.locale);
+	// The email code alone, or the email-code half of the email-code-or-authenticator part.
 	const offered =
 		step !== null &&
 		decision.kind === 'screen' &&
-		decision.fields.some((f) => f.blockType === 'auth_widget' && f.authMethod === 'mail_otp');
+		decision.fields.some(
+			(f) =>
+				f.blockType === 'auth_widget' &&
+				(f.authMethod === 'mail_otp' || f.authMethod === 'mail_otp_totp')
+		) &&
+		liteMethodAvailability(await liteTenantMethods(event), step)('mail_otp');
 	if (!offered || !step) return fail(409, { restart: true });
 	const email = readEmail(post, decision);
 	if (!email) return fail(400, { error: 'email_invalid' as const });
@@ -776,10 +991,11 @@ export const liteSendCodeAction = guarded(async (event) => {
 		{ sent: true },
 		{
 			to: 'pending',
-			patch: { code },
+			// Over an expired authenticator or passkey start, if any (an unexpired one was refused).
+			patch: { code, totp: null, passkey: null },
 			// Never over a code or a sign-in a concurrent post made meanwhile.
 			stillApplies: (now) =>
-				!readPendingCode(now.data, state.interactionId) &&
+				!signInStarted(now.data, state.interactionId) &&
 				!signInUnderway(now.data, state.interactionId)
 		}
 	);
@@ -886,10 +1102,12 @@ export const liteVerifyCodeAction = guarded(async (event) => {
 	// The code is spent: its artifact is what makes the session now.
 	const checked: LiteCheckedCode = {
 		interactionId: pending.interactionId,
+		method: 'mail_otp',
 		choiceStepId: pending.choiceStepId,
 		artifact: verified.artifact,
 		verifier: pending.verifier,
 		expiresAt: Date.now() + verified.expiresIn * 1000,
+		attemptKey: pending.attemptId,
 		code: pending,
 		tries: 0
 	};
@@ -901,8 +1119,12 @@ export const liteVerifyCodeAction = guarded(async (event) => {
 		{
 			to: 'verified',
 			patch: { code: null, checked },
+			// Only over the code it checked, and never next to another sign-in begun or made.
 			stillApplies: (now) =>
-				readPendingCode(now.data, pending.interactionId)?.attemptId === pending.attemptId
+				readPendingCode(now.data, pending.interactionId)?.attemptId === pending.attemptId &&
+				!readPendingTotp(now.data, pending.interactionId, Number.NEGATIVE_INFINITY) &&
+				!readPendingPasskey(now.data, pending.interactionId, Number.NEGATIVE_INFINITY) &&
+				!signInUnderway(now.data, pending.interactionId)
 		}
 	);
 	if (!txn) return fail(409, { restart: true });
@@ -915,6 +1137,8 @@ export const liteGuestAction = guarded(async (event) => {
 	if ('failure' in opened) return opened.failure;
 	const post = opened.post;
 	const step = post.flow.step;
+	// Never over a sign-in begun or made here (an old form from another tab): restart is the way.
+	if (signInStarted(post.txn.data, post.flow.state.interactionId)) backToPage(event);
 	if (signInUnderway(post.txn.data, post.flow.state.interactionId)) backToPage(event);
 	const decision = liteLoginStepDecision(step, await liteTenantMethods(event), post.locale);
 	const offered =
@@ -951,8 +1175,10 @@ export const liteGuestAction = guarded(async (event) => {
 		{ signedIn: true },
 		{
 			to: 'verified',
-			patch: { code: null, signedIn },
-			stillApplies: (now) => !signInUnderway(now.data, post.flow.state.interactionId)
+			patch: { signedIn },
+			stillApplies: (now) =>
+				!signInStarted(now.data, post.flow.state.interactionId) &&
+				!signInUnderway(now.data, post.flow.state.interactionId)
 		}
 	);
 	if (!txn) return retryLater();
