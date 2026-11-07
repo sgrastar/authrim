@@ -27,6 +27,8 @@ export interface LiteSignupAccount {
 	displayName: string | null;
 	customFields: Record<string, string>;
 	inviteToken: string | null;
+	/** The proof of the invited address, when the invitation asks one first. */
+	inviteProof: string | null;
 }
 
 /** An answer that the account is still being made (a routed tenant database): try again later. */
@@ -164,7 +166,8 @@ export async function startLitePasskeySignup(
 				? { authorization_challenge_id: input.authorizationChallengeId }
 				: {}),
 			...(input.proof ? { human_verification_response: input.proof } : {}),
-			...(input.inviteToken ? { invite_token: input.inviteToken } : {})
+			...(input.inviteToken ? { invite_token: input.inviteToken } : {}),
+			...(input.inviteProof ? { invitation_email_proof: input.inviteProof } : {})
 		},
 		headers: interactionHeaders(input.interactionId)
 	});
@@ -302,7 +305,8 @@ export async function startLiteTotpSignup(
 				? { authorization_challenge_id: input.authorizationChallengeId }
 				: {}),
 			...(input.proof ? { human_verification_response: input.proof } : {}),
-			...(input.inviteToken ? { invite_token: input.inviteToken } : {})
+			...(input.inviteToken ? { invite_token: input.inviteToken } : {}),
+			...(input.inviteProof ? { invitation_email_proof: input.inviteProof } : {})
 		},
 		headers: interactionHeaders(input.interactionId)
 	});

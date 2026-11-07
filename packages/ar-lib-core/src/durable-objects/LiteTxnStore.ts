@@ -578,9 +578,11 @@ export class LiteTxnStore extends DurableObject<Env> {
     if (!isKey(request.spec.provider)) return { ok: false, reason: 'too_large' };
     const clientId = request.start?.clientId;
     const interactionId = request.start?.interactionId ?? null;
+    const inviteToken = request.start?.inviteToken ?? null;
     if (!isKey(clientId) || (interactionId !== null && !isKey(interactionId))) {
       return { ok: false, reason: 'too_large' };
     }
+    if (inviteToken !== null && !isKey(inviteToken)) return { ok: false, reason: 'too_large' };
     const txn = await this.#load(request);
     if (typeof txn === 'string') return { ok: false, reason: txn };
     if (isFinished(txn)) return { ok: false, reason: 'finished' };
@@ -592,7 +594,7 @@ export class LiteTxnStore extends DurableObject<Env> {
     const grantId = randomToken();
     txn.grants[grantId] = {
       spec: asJson(request.spec),
-      start: { clientId, interactionId },
+      start: { clientId, interactionId, inviteToken },
       consumed: false,
     };
     if (!(await this.#save(txn))) return { ok: false, reason: 'too_large' };
@@ -632,7 +634,11 @@ export class LiteTxnStore extends DurableObject<Env> {
     return {
       ok: true,
       txn: snapshotOf(txn),
-      start: { clientId: grant.start.clientId, interactionId: grant.start.interactionId },
+      start: {
+        clientId: grant.start.clientId,
+        interactionId: grant.start.interactionId,
+        inviteToken: grant.start.inviteToken ?? null,
+      },
     };
   }
 

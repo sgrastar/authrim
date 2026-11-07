@@ -72,7 +72,7 @@ async function failurePage(
 	event: RequestEvent,
 	back: string,
 	code: string | null = null,
-	restart: { txn: LiteTxnView; search: string } | null = null
+	restart: { txn: LiteTxnView; search: string; path: string } | null = null
 ) {
 	const { LL } = await liteMessages(event.locals.locale);
 	const known = code && KNOWN_ERRORS.has(code) ? code : null;
@@ -86,7 +86,7 @@ async function failurePage(
 		backHref: back,
 		restart: restart
 			? {
-					action: `/login${restart.search || '?'}${restart.search ? '&' : ''}/restart`,
+					action: `${restart.path}${restart.search || '?'}${restart.search ? '&' : ''}/restart`,
 					txnId: restart.txn.id,
 					csrfToken: restart.txn.csrfToken
 				}
@@ -175,21 +175,23 @@ export const load: PageServerLoad = async (event) => {
 	const read = await txns.get(txnId, { current: true }).catch(() => null);
 	if (
 		!read?.ok ||
-		read.txn.bound.purpose !== 'login' ||
+		(read.txn.bound.purpose !== 'login' && read.txn.bound.purpose !== 'signup') ||
 		read.txn.state === 'completed' ||
 		read.txn.state === 'abandoned'
 	) {
 		return failurePage(event, '/login');
 	}
 	const txn = read.txn;
+	// Back to the page the start was made from: the sign-in page, or the sign-up page.
+	const path = txn.bound.purpose === 'signup' ? '/signup' : '/login';
 	const social = readPendingSocial(txn.data, null);
-	if (!social) return failurePage(event, '/login');
+	if (!social) return failurePage(event, path);
 	// The start of the Flow the transaction is on now; one of a Flow since replaced is not.
 	if (readKeptFlow(txn.data)?.interactionId !== social.interactionId) {
-		return failurePage(event, `/login${social.search}`);
+		return failurePage(event, `${path}${social.search}`);
 	}
-	const back = `/login${social.search}`;
-	const again = { txn, search: social.search };
+	const back = `${path}${social.search}`;
+	const again = { txn, search: social.search, path };
 	// ar-bridge's return names the grant the start was made with: another start's return (its
 	// handoff) is not this one's.
 	// (No Start again here: the transaction's own start, or a sign-in it made, is not undone.)

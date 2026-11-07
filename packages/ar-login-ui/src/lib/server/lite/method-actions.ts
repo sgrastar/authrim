@@ -19,7 +19,12 @@ import { advanceLiteFlow } from './advance';
 import { forwardSetCookies } from './cookies';
 import { pkcePair } from './email-code';
 import { liteMethodAvailability, type LiteStepDecision } from './flow-driver';
-import { readLiteInvite } from './invite';
+import {
+	checkLiteInviteProofCode,
+	liteInviteEmailProof,
+	readLiteInvite,
+	sendLiteInviteProofCode
+} from './invite';
 import { liteMessages } from './messages';
 import { readLiteSignupProfile } from './signup';
 import {
@@ -108,24 +113,172 @@ function signupAccountOf(
 	if (displayName.length > MAX_SIGNUP_DISPLAY_NAME) {
 		return { failure: fail(400, { error: 'answer_invalid' }) };
 	}
+	const invite = readLiteInvite(post.txn.data);
 	return {
 		account: {
 			email,
 			displayName,
 			customFields: profile.customFields,
-			inviteToken: readLiteInvite(post.txn.data)?.token ?? null
+			inviteToken: invite?.token ?? null,
+			inviteProof: liteInviteEmailProof(invite)
 		}
 	};
 }
+
+/**
+ * A passkey's or authenticator's sign-up from an invitation that asks its address proved first,
+ * with no proof yet: the code is sent to the invited address instead (the page then asks for it,
+ * `invite_proof_verify`), as the SPA holds such a sign-up back. Null when no proof is asked or one
+ * is at hand.
+ */
+async function inviteProofFirst(post: LitePost, account: LiteSignupAccount) {
+	const invite = readLiteInvite(post.txn.data);
+	if (!invite?.emailProofRequired || account.inviteProof) return null;
+	const begun = await beginOperation(post, 'invite');
+	if ('failure' in begun) return begun.failure;
+	const sent = await sendLiteInviteProofCode(post.backend, {
+		token: invite.token,
+		proof: readProof(post)
+	});
+	if (!sent.ok) {
+		await finishOperation(post, post.txn, begun.operation, { error: `status_${sent.status}` });
+		return sent.status === 429 ? fail(429, { error: 'busy' as const }) : retryLater();
+	}
+	const kept = await finishOperation(
+		post,
+		post.txn,
+		begun.operation,
+		{ sent: true },
+		{
+			to: 'pending',
+			patch: {
+				invite: {
+					...invite,
+					proofPending: {
+						verificationId: sent.verificationId,
+						maskedEmail: sent.maskedEmail,
+						sentAt: Date.now(),
+						tries: 0
+					},
+					emailProof: null
+				}
+			},
+			// Only over the same invitation as it was when the code went out (never one a restart
+			// replaced, a proof another tab got meanwhile, or a sign-up begun since).
+			stillApplies: (now) => {
+				const held = readLiteInvite(now.data);
+				return (
+					held?.token === invite.token &&
+					liteInviteEmailProof(held) === null &&
+					(held.proofPending?.verificationId ?? null) ===
+						(invite.proofPending?.verificationId ?? null) &&
+					now.state !== 'verified' &&
+					!signInStarted(now.data, post.flow.state.interactionId) &&
+					!signInUnderway(now.data, post.flow.state.interactionId)
+				);
+			}
+		}
+	);
+	if (!kept) return retryLater();
+	backToPage(post.event);
+}
+
+/** `invite_proof_verify`: the invited address's code, exchanged for its proof. */
+export const liteInviteProofVerifyAction = guarded(async (event) => {
+	const opened = await openPost(event);
+	if ('failure' in opened) return opened.failure;
+	const post = opened.post;
+	const invite = readLiteInvite(post.txn.data);
+	const pending = invite?.proofPending;
+	if (post.purpose !== 'signup' || !invite || !pending) backToPage(event);
+	// A form drawn for another code (one sent again since, from another tab), or over a sign-in
+	// begun or made meanwhile: the page again.
+	if (post.fields.get('verification') !== pending.verificationId) backToPage(event);
+	if (
+		post.txn.state === 'verified' ||
+		signInStarted(post.txn.data, post.flow.state.interactionId) ||
+		signInUnderway(post.txn.data, post.flow.state.interactionId)
+	) {
+		backToPage(event);
+	}
+	const code = (post.fields.get('code') ?? '').replace(/\s+/gu, '');
+	if (!/^\d{6}$/u.test(code)) return fail(400, { error: 'code_invalid' as const });
+	// Each try a check of its own (ar-auth spends the code on its right answer, and allows a few
+	// wrong ones): its result holds the proof, so a change not saved is made from it later.
+	const tries = pending.tries;
+	// Only over the same code and try, and never over a sign-in another tab began or made meanwhile
+	// (a verified transaction is never moved back).
+	const samePending = (now: { state?: string; data: Record<string, unknown> }) => {
+		const held = readLiteInvite(now.data);
+		return (
+			now.state !== 'verified' &&
+			!signInStarted(now.data, post.flow.state.interactionId) &&
+			!signInUnderway(now.data, post.flow.state.interactionId) &&
+			held?.token === invite.token &&
+			held.proofPending?.verificationId === pending.verificationId &&
+			held.proofPending.tries === tries
+		);
+	};
+	const provedMove = (proof: { value: string; expiresAt: number }) => ({
+		to: 'pending' as const,
+		patch: { invite: { ...invite, proofPending: null, emailProof: proof } }
+	});
+	const retryMove = {
+		to: 'pending' as const,
+		patch: { invite: { ...invite, proofPending: { ...pending, tries: tries + 1 } } }
+	};
+	const begun = await beginCheck(
+		post,
+		`invite:${pending.verificationId}:${tries}`,
+		async (result) => {
+			if (typeof result.proof === 'string' && typeof result.expiresAt === 'number') {
+				await remake(
+					post,
+					provedMove({ value: result.proof, expiresAt: result.expiresAt }),
+					samePending
+				);
+			} else if (result.retry === true) {
+				await remake(post, retryMove, samePending);
+			}
+			backToPage(event);
+		}
+	);
+	if ('answer' in begun) return begun.answer;
+	const checked = await checkLiteInviteProofCode(post.backend, {
+		token: invite.token,
+		verificationId: pending.verificationId,
+		code
+	});
+	if (!checked.ok) {
+		// A wrong code (or a limit): the next try is a check of its own.
+		await finishOperation(
+			post,
+			post.txn,
+			begun.operation,
+			{ error: `status_${checked.status}`, retry: true },
+			{ ...retryMove, stillApplies: samePending }
+		);
+		return checked.status === 429
+			? fail(429, { error: 'busy' as const })
+			: fail(400, { error: 'code_invalid' as const });
+	}
+	const proof = { value: checked.proof, expiresAt: checked.expiresAt };
+	const saved = await finishOperation(
+		post,
+		post.txn,
+		begun.operation,
+		{ proof: proof.value, expiresAt: proof.expiresAt },
+		{ ...provedMove(proof), stillApplies: samePending }
+	);
+	if (!saved) return retryLater();
+	backToPage(event);
+});
 
 /** How long ar-auth keeps a passkey sign-in challenge (direct-auth.ts, 5 minutes). */
 const PASSKEY_CHALLENGE_TTL_MS = 300_000;
 
 /** Whether the step the post is on offers this method (on, allowed, and drawn as a button). */
 async function offers(post: LitePost, method: 'totp' | 'passkey') {
-	// An invitation that asks a sign-up to prove its address first: a passkey's or authenticator's
-	// sign-up (which proves none) is not offered (PR6c).
-	if (post.purpose === 'signup' && readLiteInvite(post.txn.data)?.emailProofRequired) return null;
 	const step = post.flow.step;
 	const methods = await liteTenantMethods(post.event);
 	const decision = liteLoginStepDecision(step, methods, post.locale, post.purpose);
@@ -167,6 +320,11 @@ export const liteTotpStartAction = guarded(async (event) => {
 	// A sign-up's account: its profile (required parts answered) and invitation.
 	const account = signupAccountOf(post, offered);
 	if (account && 'failure' in account) return account.failure;
+	// An invitation that asks its address proved first: the code goes out instead.
+	if (account) {
+		const held = await inviteProofFirst(post, account.account);
+		if (held) return held;
+	}
 
 	// The step's consent, accepted first (nothing is started without it).
 	const unconsented = await acceptFlowConsent(post);
@@ -197,6 +355,9 @@ export const liteTotpStartAction = guarded(async (event) => {
 	if (!started.ok) {
 		await finishOperation(post, post.txn, operation, { error: started.error });
 		if (started.provisioning) return retryLater();
+		// An account the address already has (one a sign-up left unfinished among them): signed in
+		// to, not signed up again (the page links the sign-in page).
+		if (account && started.status === 409) return fail(409, { error: 'account_exists' as const });
 		return started.status === 429
 			? fail(429, { error: 'busy' as const })
 			: fail(400, { error: 'totp_failed' as const });
@@ -466,6 +627,11 @@ export const litePasskeyStartAction = guarded(async (event) => {
 	// A sign-up's account: its address, its profile (required parts answered), its invitation.
 	const account = signupAccountOf(post, offered);
 	if (account && 'failure' in account) return account.failure;
+	// An invitation that asks its address proved first: the code goes out instead.
+	if (account) {
+		const held = await inviteProofFirst(post, account.account);
+		if (held) return held;
+	}
 
 	// The step's consent, accepted first (nothing is started without it).
 	const unconsented = await acceptFlowConsent(post);
@@ -488,6 +654,9 @@ export const litePasskeyStartAction = guarded(async (event) => {
 		await finishOperation(post, post.txn, operation, { error: started.error });
 		// An account still being made (a routed tenant database): the same start again later.
 		if ('provisioning' in started && started.provisioning) return retryLater();
+		// An account the address already has (one a sign-up left unfinished among them): signed in
+		// to, not signed up again (the page links the sign-in page).
+		if (account && started.status === 409) return fail(409, { error: 'account_exists' as const });
 		return started.status === 429
 			? fail(429, { error: 'busy' as const })
 			: fail(400, { error: 'passkey_failed' as const });

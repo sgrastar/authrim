@@ -683,6 +683,17 @@ describe('the lite callback', () => {
 		});
 	});
 
+	it("brings a sign-up's external sign-in back to the sign-up page", async () => {
+		await started();
+		// The transaction a sign-up page made (its start is the same).
+		store.set({ bound: { ...store.txn.bound, purpose: 'signup' } });
+		await expect(
+			callbackView(`lite_txn=txn-1&lite_grant=grant-1&handoff_token=${HANDOFF}&state=st-1`)
+		).rejects.toMatchObject({ status: 303, location: expect.stringMatching(/^\/signup/u) });
+		const page = await callbackView('lite_txn=txn-1&lite_grant=grant-1&error=access_denied');
+		expect(page).toMatchObject({ page: 'error', backHref: expect.stringMatching(/^\/signup/u) });
+	});
+
 	it('finalizes a handoff once: a reload reads how it went', async () => {
 		await started();
 		const q = `lite_txn=txn-1&lite_grant=grant-1&handoff_token=${HANDOFF}&state=st-1`;
