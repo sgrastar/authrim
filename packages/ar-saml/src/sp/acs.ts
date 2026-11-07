@@ -313,7 +313,15 @@ async function handleSPACSFor(
       );
       return recordFailure(samlUsageUnavailableResponse(c), 'service_unavailable');
     }
-    if (!reauthentication && !usagePolicy.loginEnabled) {
+    // A response to a start of ours was checked at the start against the switch for what it was
+    // for (sign-in or sign-up); here either still on lets it go on, and what it then does (sign in
+    // to an existing account, create one) is checked against that use's own switch. A response
+    // nobody asked for (IdP-initiated) is a sign-in.
+    if (
+      !reauthentication &&
+      !usagePolicy.loginEnabled &&
+      !(validatedRequest && usagePolicy.signupEnabled)
+    ) {
       log.warn('SAML sign-in refused: the tenant turned sign-in off for this IdP', { issuer });
       return recordFailure(
         createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED),
@@ -376,7 +384,10 @@ async function handleSPACSFor(
       idpConfig,
       tenantId,
       signupAllowed,
-      invitationRequirement
+      invitationRequirement,
+      // A re-authentication has its own switch; any other sign-in to an existing account needs
+      // the sign-in one.
+      reauthentication !== undefined || usagePolicy.loginEnabled
     );
     const userId = identityResolution.userId;
     attemptUserId = userId;
@@ -500,8 +511,10 @@ async function handleSPACSFor(
       sessionId,
       userId,
       returnUrl,
-      // Redeeming a sign-in's artifact checks the IdP's sign-in switch again.
+      // Redeeming a sign-in's artifact checks the IdP's sign-in switch again (either switch for
+      // an account this sign-in created).
       reauthentication ? null : usageKey,
+      identityResolution.action === 'jit_create',
       lite.returnUrl,
       validatedRequest?.context?.liteClientId ?? null
     );
@@ -570,6 +583,13 @@ async function handleSPACSFor(
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
     }
 
+    if (error instanceof SamlLoginDisabledError) {
+      log.warn('SAML sign-in refused: the tenant turned sign-in off for this IdP', {
+        issuer: auditProviderId,
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
+    }
+
     if (error instanceof SamlAttributeMappingError) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: {
@@ -615,6 +635,7 @@ function samlSignInAttemptReason(error: unknown): SignInAttemptReasonCode {
   if (error instanceof SamlRegistrationBlockedError || error instanceof SamlSignupDisabledError) {
     return 'signup_disabled';
   }
+  if (error instanceof SamlLoginDisabledError) return 'method_disabled';
   if (error instanceof SamlProvisioningError || error instanceof SamlAttributeMappingError) {
     return 'provisioning_failed';
   }
@@ -681,6 +702,8 @@ async function createSessionHandoffResponse(
   userId: string,
   returnUrl: string,
   usageKey: { providerId: string; ids: string[] } | null,
+  /** Whether the sign-in created the account (a sign-up): its redemption takes either switch. */
+  createdAccount: boolean,
   /** A lite sign-in's return: the handoff goes there, the same origin or not. */
   liteReturn: string | null = null,
   /** A lite sign-in's client (its grant's): its handoff is finalized only for it. */
@@ -715,6 +738,7 @@ async function createSessionHandoffResponse(
     }
     if (usageKey) {
       metadata.external_provider_usage_key = usageKey;
+      if (createdAccount) metadata.external_provider_usage = 'signup';
     }
 
     await handoffStore.storeChallengeRpc({
@@ -1603,6 +1627,17 @@ class SamlSignupDisabledError extends Error {
   }
 }
 
+/**
+ * The tenant turned sign-in off for the IdP, so a sign-in (a sign-up's included) that finds an
+ * existing account cannot sign in to it.
+ */
+class SamlLoginDisabledError extends Error {
+  constructor() {
+    super('SAML sign-in is turned off for this IdP');
+    this.name = 'SamlLoginDisabledError';
+  }
+}
+
 class SamlAttributeMappingError extends Error {
   constructor(message: string) {
     super(message);
@@ -1791,7 +1826,8 @@ async function findOrCreateUser(
   idpConfig: SAMLIdPConfig,
   tenantId: string,
   signupEnabled: boolean,
-  invitation?: ExternalSignupInvitationRequirement | null
+  invitation: ExternalSignupInvitationRequirement | null | undefined,
+  loginEnabled: boolean
 ): Promise<SAMLIdentityResolution> {
   const providerId = idpConfig.entityId;
   const providerUserKey = buildSAMLProviderUserKey(userInfo);
@@ -1854,6 +1890,9 @@ async function findOrCreateUser(
       allowSyntheticEmailFallback: idpConfig.allowSyntheticEmailFallback === true,
     });
   }
+  // From here the sign-in is for an existing account (by its subject or its email): only with an
+  // IdP the tenant lets sign people in, decided before anything is written.
+  if (!loginEnabled) throw new SamlLoginDisabledError();
   const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(account.coreDb, 'saml-acs-core');
   const piiAdapter = ensureDatabaseAdapter(account.piiDb, 'saml-acs-pii');
   const runtimeUsers = new CanonicalRuntimeUserStore({

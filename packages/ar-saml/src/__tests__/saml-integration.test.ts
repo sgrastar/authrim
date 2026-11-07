@@ -2575,6 +2575,130 @@ describe('SAML Integration', () => {
       expect(mockProvisionAuthAccount).toHaveBeenCalledOnce();
     });
 
+    describe('a response to our request, whose start checked the switch for its purpose', () => {
+      const serveRequest = () => {
+        const requestId = `_${'a'.repeat(32)}`;
+        const createdAt = Date.now() - 5_000;
+        mockEnv.SAML_REQUEST_STORE = {
+          idFromName: vi.fn((name: string) => name),
+          get: vi.fn(() => ({
+            fetch: vi.fn().mockResolvedValue(
+              Response.json({
+                requestId,
+                issuer: 'https://idp.example.com',
+                destination: 'https://idp.example.com/sso',
+                binding: 'post',
+                used: true,
+                type: 'authn_request',
+                createdAt,
+                expiresAt: createdAt + 300_000,
+              })
+            ),
+          })),
+        } as unknown as Env['SAML_REQUEST_STORE'];
+        return requestId;
+      };
+      const handoffMetadata = (token: string | null) =>
+        (mockChallengeStore.get(`handoff:${token}`) as { metadata: Record<string, unknown> })
+          .metadata;
+      const respond = (nameId: string, email?: string) =>
+        callACSDirectly(
+          createMockSAMLResponse({
+            inResponseTo: serveRequest(),
+            nameId,
+            nameIdFormat,
+            ...(email ? { attributes: [{ name: 'email', value: email }] } : {}),
+          }),
+          'https://ui.example.com/'
+        );
+      const linkedUser = () => {
+        mockRuntimeUsersById.set('linked-user-001', {
+          id: 'linked-user-001',
+          email: 'linked@example.com',
+          active: true,
+          lifecycle_state: 'active',
+          email_verified: true,
+        });
+        mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
+          coreDb: createMockAdapter({
+            queryOne: (sql) =>
+              sql.includes('SELECT id, email_verified FROM users_core WHERE id')
+                ? { id: 'linked-user-001', email_verified: 1 }
+                : null,
+          }),
+          piiDb: createMockAdapter({
+            queryOne: (sql) =>
+              sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')
+                ? { id: 'saml-link-001', user_id: 'linked-user-001' }
+                : null,
+          }),
+        });
+      };
+
+      it('creates the account with an IdP for sign-up only, its artifact marked a sign-up', async () => {
+        useSettings(entry({ loginEnabled: false, signupEnabled: true }));
+
+        const res = await respond('persistent-subject-signup-only', 'signup-only@example.com');
+
+        expect(res.status).toBe(302);
+        expect(mockProvisionAuthAccount).toHaveBeenCalledOnce();
+        const token = new URL(res.headers.get('Location')!).searchParams.get('handoff_token');
+        expect(handoffMetadata(token)).toEqual(
+          expect.objectContaining({
+            external_provider_usage_key: IDP_ROW,
+            external_provider_usage: 'signup',
+          })
+        );
+      });
+
+      it('does not sign in to an existing account with an IdP for sign-up only', async () => {
+        useSettings(entry({ loginEnabled: false, signupEnabled: true }));
+        linkedUser();
+
+        const res = await respond('persistent-subject-123');
+
+        expect(res.status).toBe(403);
+        expect(res.headers.get('Set-Cookie')).toBeNull();
+        expect(mockSessionStoreFetch).not.toHaveBeenCalled();
+        expect(mockProvisionAuthAccount).not.toHaveBeenCalled();
+      });
+
+      it("signs in an existing account with an IdP for sign-in only, its artifact a sign-in's", async () => {
+        useSettings(entry({ loginEnabled: true, signupEnabled: false }));
+        linkedUser();
+
+        const res = await respond('persistent-subject-123');
+
+        expect(res.status).toBe(302);
+        expect(mockProvisionAuthAccount).not.toHaveBeenCalled();
+        const location = new URL(res.headers.get('Location')!);
+        const token = location.searchParams.get('handoff_token');
+        expect(token).toBeTruthy();
+        expect(handoffMetadata(token)).toEqual(
+          expect.objectContaining({ external_provider_usage_key: IDP_ROW })
+        );
+        expect(handoffMetadata(token)).not.toHaveProperty('external_provider_usage');
+      });
+
+      it('refuses with an IdP turned off for both, making nothing', async () => {
+        useSettings(entry({ loginEnabled: false, signupEnabled: false }));
+
+        const res = await respond('persistent-subject-both-off', 'both-off@example.com');
+
+        expect(res.status).toBe(403);
+        expectNothingMade();
+      });
+    });
+
+    it('takes a response nobody asked for as a sign-in: an IdP for sign-up only refuses it', async () => {
+      useSettings(entry({ loginEnabled: false, signupEnabled: true }));
+
+      const res = await newUser();
+
+      expect(res.status).toBe(403);
+      expectNothingMade();
+    });
+
     it("names the IdP in a sign-in's handoff artifact, so redeeming it checks the switch again", async () => {
       useSettings(entry({ loginEnabled: true }));
 

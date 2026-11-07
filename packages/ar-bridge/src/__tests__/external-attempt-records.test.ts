@@ -393,7 +393,7 @@ describe('external callback: recording a failed sign-in', () => {
   it('records a provider the tenant turned off after the start as a disabled method', async () => {
     const response = await callback(
       WITH_CODE,
-      envWith([{ id: 'corp', providerId: 'provider-a', loginEnabled: false }])
+      envWith([{ id: 'corp', providerId: 'provider-a', loginEnabled: false, signupEnabled: false }])
     );
 
     expect(errorOf(response)).toBe('access_denied');

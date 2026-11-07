@@ -1779,7 +1779,9 @@
 				provider.startMode,
 				turnstileRequired ? { token: cfTurnstileResponse } : undefined,
 				undefined,
-				inviteToken || undefined
+				inviteToken || undefined,
+				undefined,
+				'signup'
 			);
 
 			if (!isValidRedirectUrl(url)) {

@@ -138,7 +138,22 @@ paths:
         of the browser's lite transaction for saml:<idp>, bound to its __Host-authrim_lite cookie
         and the tenant's current lite policy revision); such a start ignores every other query
         parameter, and the ACS answers it with a handoff to the lite /callback (its failures too).
+        The start checks the IdP's sign-in switch, or its sign-up switch for purpose=signup (a lite
+        start takes the purpose of its transaction); the ACS then lets a response to it sign in to
+        an existing account only while sign-in is on, and create one only while sign-up is on.
       parameters:
+        - name: purpose
+          in: query
+          required: false
+          description: >-
+            signup when started from the sign-up screen: the start checks the IdP's sign-up switch
+            and verifies human verification for sign-up (with the sign-in requirement as well).
+            Any other value, or none, is a sign-in. Ignored for a lite Login UI tenant.
+          schema:
+            type: string
+            enum:
+              - login
+              - signup
         - name: lite_txn
           in: query
           required: false
@@ -177,7 +192,8 @@ paths:
           description: Redirects to the selected identity provider using the SAML redirect binding.
         '403':
           description: >-
-            A lite Login UI tenant's start has no start grant it can consume
+            The tenant turned the IdP off for the start's purpose (sign-in or sign-up), or a lite
+            Login UI tenant's start has no start grant it can consume
             (lite_mode_endpoint_unavailable).
   /saml/sp/acs:
     post:

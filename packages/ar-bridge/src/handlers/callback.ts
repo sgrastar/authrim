@@ -421,9 +421,15 @@ async function completeExternalAuthentication(
         aud: 'handoff',
         created_at: Date.now(),
         // A sign-in's artifact names its provider, so that redeeming it checks the tenant's
-        // sign-in switch again. A re-authentication has its own switch.
+        // switches again: the sign-in one, or for an account this sign-in created or finished
+        // creating, either (it was a sign-up). A re-authentication has its own switch.
         ...(input.reauthProvenAt === undefined && authState.reauthRequestedAt === undefined
-          ? { external_provider_usage_key: externalProviderUsageKey(provider) }
+          ? {
+              external_provider_usage_key: externalProviderUsageKey(provider),
+              ...(result.isNewUser || result.finishedAccountCreation === true
+                ? { external_provider_usage: 'signup' }
+                : {}),
+            }
           : {}),
       },
     });
@@ -779,11 +785,9 @@ export async function handleExternalProvisioningResume(
     if (!provider || provider.id !== expected.providerId) {
       throw new Error('external_idp_provisioning_provider_mismatch');
     }
-    // The tenant may have turned the provider's sign-in or sign-up off since the account was
-    // provisioned: decided before its identity is activated and a session is made.
-    if (loaded.continuation.authState.reauthRequestedAt === undefined) {
-      await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'login');
-    }
+    // The tenant may have turned the provider's sign-up off since the account was provisioned:
+    // decided before its identity is activated and a session is made. Finishing the account is
+    // its creation, which only the sign-up switch decides (a sign-up-only provider finishes it).
     await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'signup');
     // Finishing the account is still its creation: a tenant in lite mode lets only a sign-in begun
     // at a lite start do it (one provisioned before the switch is not finished here).
@@ -1079,11 +1083,18 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       };
     }
 
-    // 2b. The tenant may have turned this provider's sign-in off since the sign-in started. Before
-    // the code is exchanged and before any account, session or artifact is made. A link and a
+    // 2b. The tenant may have turned this provider's sign-in and sign-up off since the sign-in
+    // started. Before the code is exchanged and before any account, session or artifact is made.
+    // Which of the two the sign-in is decides its own switch once it is known (identity
+    // resolution: an existing account needs sign-in, a new one sign-up). A link and a
     // re-authentication have their own switches.
     if (!link && authState.reauthRequestedAt === undefined) {
-      await assertExternalProviderUsageAllowed(c.env, authState.tenantId, provider, 'login');
+      await assertExternalProviderUsageAllowed(
+        c.env,
+        authState.tenantId,
+        provider,
+        'login_or_signup'
+      );
     }
 
     const flowId = authState.flowId;
@@ -1693,6 +1704,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       tenantId: authState.tenantId,
       ...(invitation ? { invitation } : {}),
       ...(accountCreationAllowed ? {} : { accountCreationAllowed: false }),
+      // A re-authentication has its own switch (checked at the start).
+      ...(authState.reauthRequestedAt === undefined ? {} : { reauthentication: true }),
     });
     // Created here (now or once provisioning finishes): the use goes to that account.
     if (result.isNewUser) unsettledInvitation = null;

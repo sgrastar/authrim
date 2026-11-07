@@ -32,6 +32,20 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     getChallengeStoreByChallengeId: vi.fn(async () => mocks.challengeStore),
+    // A sign-in through a provider with SSO makes its session (the handoff names it).
+    getSessionStoreForNewSession: vi.fn(async () => ({
+      sessionId: 'session-a',
+      stub: { createSessionRpc: vi.fn().mockResolvedValue(undefined) },
+    })),
+    resolveSessionTtl: vi.fn().mockResolvedValue({ seconds: 3600 }),
+    registerExternalProviderSession: vi.fn().mockResolvedValue(undefined),
+    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+    createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
+    CanonicalRuntimeUserStore: class {
+      async findById(id: string) {
+        return { id, email: 'person@example.com' };
+      }
+    },
     getTenantIdFromContext: vi.fn(() => 'default'),
     resolveAccountDataContextByIdentifier: vi.fn().mockResolvedValue({
       tenantId: 'default',
@@ -202,6 +216,8 @@ describe('external callback for a tenant in lite mode', () => {
     const response = await callback();
     expect(response.status).toBe(302);
     expect(mocks.handleIdentity.mock.calls[0][1]).not.toHaveProperty('accountCreationAllowed');
+    // A sign-in, not a re-authentication: an existing account it finds needs the sign-in switch.
+    expect(mocks.handleIdentity.mock.calls[0][1]).not.toHaveProperty('reauthentication');
   });
 
   it.each(['always', 'unknown'] as const)(
@@ -260,5 +276,59 @@ describe('external callback for a tenant in lite mode', () => {
     mocks.consumeAuthState.mockResolvedValue(signInState({ flowId: 'flow-a' }));
     await callback();
     expect(mocks.handleIdentity.mock.calls[0][1]).not.toHaveProperty('accountCreationAllowed');
+  });
+});
+
+describe("external callback: the use a sign-in's handoff artifact records", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lite.mode = 'off';
+    mocks.getProvider.mockResolvedValue(provider);
+    mocks.exchangeCode.mockResolvedValue({
+      tokens: { access_token: 'upstream-access', token_type: 'Bearer', expires_in: 3600 },
+      requestContext: {
+        tokenEndpoint: 'https://idp.example.com/token',
+        authMethod: 'client_secret_basic',
+        authHeaderPresent: true,
+      },
+    });
+    mocks.fetchUserInfo.mockResolvedValue({
+      userInfo: { sub: 'external-subject-a', email: 'new@example.com', email_verified: true },
+      endpoint: 'https://idp.example.com/userinfo',
+      signedResponse: false,
+    });
+    mocks.challengeStore.storeChallengeRpc.mockResolvedValue(undefined);
+    mocks.consumeAuthState.mockResolvedValue(signInState({ enableSso: true }));
+  });
+
+  const handoffMetadata = () =>
+    (
+      mocks.challengeStore.storeChallengeRpc.mock.calls
+        .map(([request]) => request as { type: string; metadata: Record<string, unknown> })
+        .find((request) => request.type === 'handoff') ?? { metadata: undefined }
+    ).metadata;
+
+  it.each([
+    ['created the account', { ...identityResult(true) }, 'signup'],
+    [
+      'finished creating one an earlier sign-in provisioned',
+      { ...identityResult(false), finishedAccountCreation: true },
+      'signup',
+    ],
+    ['signed in to an existing account', { ...identityResult(false) }, undefined],
+  ])('marks a sign-in that %s', async (_label, result, usage) => {
+    mocks.handleIdentity.mockResolvedValue(result);
+
+    const response = await callback();
+
+    expect(
+      new URL(response.headers.get('location') ?? '').searchParams.get('handoff_token')
+    ).toBeTruthy();
+    const metadata = handoffMetadata();
+    expect(metadata).toMatchObject({
+      external_provider_usage_key: { providerId: 'provider-a', ids: ['provider-a', 'corp'] },
+    });
+    if (usage) expect(metadata).toMatchObject({ external_provider_usage: usage });
+    else expect(metadata).not.toHaveProperty('external_provider_usage');
   });
 });

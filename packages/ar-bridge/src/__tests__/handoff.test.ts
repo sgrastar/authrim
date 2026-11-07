@@ -401,6 +401,38 @@ describe('handleHandoffVerify', () => {
       expect(mocks.createSessionRpc).toHaveBeenCalledOnce();
     });
 
+    it.each([
+      ['a sign-up-only provider', { loginEnabled: false, signupEnabled: true }, 'signup', 200],
+      ['a sign-in-only provider', { loginEnabled: true, signupEnabled: false }, 'signup', 200],
+      [
+        'a provider turned off for both',
+        { loginEnabled: false, signupEnabled: false },
+        'signup',
+        403,
+      ],
+      ['a sign-up-only provider', { loginEnabled: false, signupEnabled: true }, undefined, 403],
+      ['a sign-up-only provider', { loginEnabled: false, signupEnabled: true }, 'login', 403],
+    ])(
+      'with %s, answers an artifact whose sign-in usage is %s with %i',
+      async (_label, fields, usage, status) => {
+        mocks.consumeChallengeRpc.mockResolvedValue(
+          artifact({
+            external_provider_usage_key: usageKey,
+            ...(usage === undefined ? {} : { external_provider_usage: usage }),
+          })
+        );
+
+        const response = await handleHandoffVerify(
+          createContext(url, settingsWith(entry(fields))) as Parameters<
+            typeof handleHandoffVerify
+          >[0]
+        );
+
+        expect(response.status).toBe(status);
+        expect(mocks.createSessionRpc).toHaveBeenCalledTimes(status === 200 ? 1 : 0);
+      }
+    );
+
     it('does not check an artifact that names no provider (a re-authentication or a silent sign-in)', async () => {
       mocks.consumeChallengeRpc.mockResolvedValue(artifact({}));
 
