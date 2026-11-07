@@ -6,6 +6,7 @@
 	import { localized } from '../stories/sample';
 	import DurationField from './DurationField.svelte';
 	import NumberField from './NumberField.svelte';
+	import BusyScope from '../busy/BusyScope.svelte';
 
 	named(NumberField, 'NumberField');
 
@@ -69,6 +70,25 @@
 >
 	{#snippet template()}
 		<DurationField label={lifetime()} value={86_400} min={300} max={2_592_000} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Busy"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const input = canvas.getByRole('textbox');
+		// While the form is saving the field is read only, arrow keys included.
+		input.focus();
+		await userEvent.keyboard('{ArrowUp}{ArrowUp}');
+		await expect(input).toHaveValue('5');
+		await expect(input).toHaveAttribute('readonly');
+	}}
+>
+	{#snippet template()}
+		<BusyScope busy>
+			<NumberField label={sessions()} unit={unit()} min={1} max={100} value={5} />
+		</BusyScope>
 	{/snippet}
 </Story>
 

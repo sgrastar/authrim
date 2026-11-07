@@ -94,7 +94,7 @@ export const ar = {
 	'nav.set.compliance': 'الامتثال',
 	'nav.set.team': 'المسؤولون',
 	'nav.set.teamGroups': 'مجموعات المسؤولين',
-	'nav.set.teamRoles': 'إسناد الأدوار',
+	'nav.set.teamRoles': 'أدوار المسؤولين',
 	'nav.plat.tenants': 'المستأجرون',
 	'nav.plat.releases': 'مستوى التحكم',
 	'nav.plat.scale': 'التوسع',

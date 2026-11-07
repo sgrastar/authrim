@@ -94,7 +94,7 @@ export const en = {
 	'nav.set.compliance': 'Compliance',
 	'nav.set.team': 'Administrators',
 	'nav.set.teamGroups': 'Administrator groups',
-	'nav.set.teamRoles': 'Role assignment',
+	'nav.set.teamRoles': 'Administrator roles',
 	'nav.plat.tenants': 'Tenants',
 	'nav.plat.releases': 'Control plane',
 	'nav.plat.scale': 'Scale',

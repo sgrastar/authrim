@@ -159,6 +159,10 @@ export interface TeamAccess {
 	groupsEdit: boolean;
 	/** Give a group a role: also the roles' read permission, to offer them. */
 	groupsGrant: boolean;
+	/** See the roles and what they allow (`admin:admin_roles:read`). */
+	roles: boolean;
+	/** Make, change and delete custom roles (`admin:admin_roles:write`, with read). */
+	rolesEdit: boolean;
 }
 
 export function teamAccess(access: AdminAccess): TeamAccess {
@@ -181,6 +185,8 @@ export function teamAccess(access: AdminAccess): TeamAccess {
 		revokeGlobal: usersDelete && rolesWrite && access.platform,
 		expiry: read && rolesRead && rolesWrite,
 		groupsEdit: read && rolesWrite,
-		groupsGrant: read && rolesWrite && rolesRead
+		groupsGrant: read && rolesWrite && rolesRead,
+		roles: rolesRead,
+		rolesEdit: rolesRead && rolesWrite
 	};
 }
