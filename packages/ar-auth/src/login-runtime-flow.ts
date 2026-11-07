@@ -71,6 +71,8 @@ import {
   type Session,
   type FlowScreenSubmittedEventData,
   FLOW_EVENTS,
+  contextWithoutScreenAnswers,
+  expireFlowInteractions,
   publishEvent,
   isSAMLAuthorizationChallenge,
 } from '@authrim/ar-lib-core';
@@ -4806,7 +4808,10 @@ async function consentChangedResponse(
   interaction: FlowInteractionRow
 ) {
   await db.execute(
-    `UPDATE flow_interactions SET context_json = ?, updated_at = ? WHERE tenant_id = ? AND id = ?`,
+    // Only while it is open: a context read before it ended is not written back over the one it
+    // ended with (its screen answers are removed then).
+    `UPDATE flow_interactions SET context_json = ?, updated_at = ?
+      WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
     [
       JSON.stringify({
         ...parseJsonObject(interaction.context_json),
@@ -4951,14 +4956,8 @@ export async function cleanupExpiredFlowInteractions(
   const now = options.now ?? nowSeconds();
   const retentionSeconds = Math.max(0, options.retentionSeconds ?? 24 * 60 * 60);
   const cutoff = now - retentionSeconds;
-  const expiredResult = await db.execute(
-    `UPDATE flow_interactions
-     SET state = 'expired', updated_at = ?
-     WHERE tenant_id = ?
-       AND state IN ('created', 'active')
-       AND expires_at <= ?`,
-    [now, tenantId, now]
-  );
+  // Expired with their screen answers removed, as the scheduled maintenance does.
+  const expired = await expireFlowInteractions(db, tenantId, now);
   const deletedStepsResult = await db.execute(
     `DELETE FROM flow_interaction_steps
      WHERE tenant_id = ?
@@ -4973,7 +4972,7 @@ export async function cleanupExpiredFlowInteractions(
   );
 
   return {
-    expired: expiredResult.rowsAffected ?? 0,
+    expired,
     deletedSteps: deletedStepsResult.rowsAffected ?? 0,
   };
 }
@@ -5110,7 +5109,7 @@ async function resumeInteraction(
   await db.execute(
     `UPDATE flow_interactions
 			 SET context_json = ?, contract_hash = ?, signature = ?, updated_at = ?
-		 WHERE tenant_id = ? AND id = ?`,
+		 WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
     [
       // What this contract asks consent to is what the browser is shown from now on.
       JSON.stringify({ ...nextContextBase, consent_presented: consentPresentedKeys(contract) }),
@@ -5888,11 +5887,22 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   }
 
   if (interaction.expires_at <= now) {
+    // Expired with its screen answers removed: they served the steps that never came. Only over
+    // the context read: one a concurrent submit changed since is left open, and the scheduled
+    // maintenance expires it with its answers removed.
     await db.execute(
       `UPDATE flow_interactions
-       SET state = 'expired', updated_at = ?
-       WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
-      [now, tenantId, interactionId]
+       SET state = 'expired', updated_at = ?,
+           context_json = COALESCE(?, context_json)
+       WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+         AND context_json ${db.getType() === 'postgres' ? 'IS NOT DISTINCT FROM' : 'IS'} ?`,
+      [
+        now,
+        contextWithoutScreenAnswers(interaction.context_json),
+        tenantId,
+        interactionId,
+        interaction.context_json,
+      ]
     );
     await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',

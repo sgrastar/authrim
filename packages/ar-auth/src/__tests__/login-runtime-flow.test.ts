@@ -1751,6 +1751,12 @@ describe('LoginUI runtime Flow handlers', () => {
       expect.stringContaining('SET context_json = ?'),
       expect.arrayContaining([expect.stringContaining('"locale":"ko"')])
     );
+    // Written back only while it is open: a context read before it ended (its screen answers
+    // removed then) is not written over the one it ended with.
+    const writeBack = mocks.coreAdapter.execute.mock.calls.find(([sql]) =>
+      String(sql).includes('SET context_json = ?')
+    );
+    expect(String(writeBack?.[0])).toContain("state IN ('created', 'active')");
   });
 
   it('hydrates screen steps with the active screen snapshot', async () => {
@@ -6028,6 +6034,37 @@ describe('LoginUI runtime Flow handlers', () => {
       expect.stringContaining("SET state = 'expired'"),
       expect.arrayContaining(['tenant_test', 'interaction_1'])
     );
+  });
+
+  it('expires a stale interaction with its screen answers removed', async () => {
+    const { data: startData } = await startInteraction();
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      expiresAt: Math.floor(Date.now() / 1000) - 1,
+      context: { screen_answers: { 'survey:step': { plan: 'pro' } } },
+    });
+
+    await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        body: {
+          step_id: 'entry:step',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+
+    const expiry = mocks.coreAdapter.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET state = 'expired'")
+    );
+    const context = JSON.parse(String((expiry?.[1] as unknown[])[1])) as Record<string, unknown>;
+    expect(context).not.toHaveProperty('screen_answers');
+    // Only over the context read: a concurrent submit's answers are left to the maintenance.
+    expect(String(expiry?.[0])).toContain('AND context_json IS ?');
+    expect(JSON.parse(String((expiry?.[1] as unknown[])[4]))).toHaveProperty('screen_answers');
   });
 
   it('marks expired Flow interactions and deletes stale step rows during cleanup', async () => {
