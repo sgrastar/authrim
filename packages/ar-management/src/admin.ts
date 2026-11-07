@@ -91,6 +91,8 @@ import { getAuditJsonTextExpr } from './audit-sql-dialect';
 import {
   attemptImmediateAccountDirectoryRemovals,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
+  fenceAccountDeletion,
+  AccountDeletionHeldError,
   markAccountDirectoryRemovalsReady,
   prepareAccountDirectoryRemoval,
 } from './account-directory-removal-producer';
@@ -1187,6 +1189,8 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
           core: target.core,
           pii: target.pii,
         });
+        // Holds fenced off before anything is erased (see fenceAccountDeletion).
+        await fenceAccountDeletion(target.core, { tenantId, userId });
 
         {
           const tombstone = await writeAccountTombstone(target.pii, {
@@ -1303,6 +1307,16 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       message: 'User data has been permanently deleted',
     });
   } catch (error) {
+    // A hold placed after the check above: the anonymization stopped before anything was erased.
+    if (error instanceof AccountDeletionHeldError) {
+      return c.json(
+        {
+          error: 'legal_hold_active',
+          error_description: 'User is under legal hold and cannot be anonymized',
+        },
+        409
+      );
+    }
     const incomplete = logQueryErrorResponse(c, error);
     if (incomplete) return incomplete;
     logSanitizedError('Admin anonymize user error', error);

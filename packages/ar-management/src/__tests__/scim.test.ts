@@ -120,6 +120,8 @@ const accountRemovalState = vi.hoisted(() => ({
   ready: vi.fn(),
   attempt: vi.fn(),
   erase: vi.fn(),
+  fence: vi.fn(async () => undefined),
+  unfinished: vi.fn(async () => false),
 }));
 
 vi.mock('../cross-shard-account-list', () => ({
@@ -214,6 +216,9 @@ vi.mock('../account-directory-removal-producer', () => ({
   markAccountDirectoryRemovalsReady: accountRemovalState.ready,
   attemptImmediateAccountDirectoryRemovals: accountRemovalState.attempt,
   eraseAccountPiiAfterDirectoryRemovalPrepared: accountRemovalState.erase,
+  fenceAccountDeletion: accountRemovalState.fence,
+  hasUnfinishedAccountDeletion: accountRemovalState.unfinished,
+  AccountDeletionHeldError: class AccountDeletionHeldError extends Error {},
 }));
 
 vi.mock('../account-creation-operation', async (importOriginal) => {
@@ -344,6 +349,8 @@ vi.mock('@authrim/ar-lib-scim', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-scim')>();
   return {
     ...actual,
+    // The audit as it is written, watched (which deletion completes is recorded).
+    logScimAudit: vi.fn(actual.logScimAudit),
     scimAuthMiddleware: vi.fn().mockImplementation(async (c: any, next: () => Promise<void>) => {
       // Allow all requests by default; specific tests override this
       const authHeader = c.req.header('Authorization');
@@ -2283,6 +2290,61 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(mockUsers.get('user-001')).toMatchObject({ active: 1 });
     });
 
+    it('stops before erasing anything when a hold is placed during the deletion', async () => {
+      const { AccountDeletionHeldError } = await import('../account-directory-removal-producer');
+      scimTombstoneInserts.length = 0;
+      accountRemovalState.fence.mockRejectedValueOnce(new AccountDeletionHeldError());
+
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001', { method: 'DELETE' }),
+        mockEnv
+      );
+
+      expect(res.status).toBe(409);
+      expect(accountRemovalState.fence).toHaveBeenCalledWith(expect.anything(), {
+        tenantId: 'default',
+        userId: 'user-001',
+      });
+      expect(scimTombstoneInserts).toHaveLength(0);
+      expect(accountRemovalState.erase).not.toHaveBeenCalled();
+      expect(accountRemovalState.ready).not.toHaveBeenCalled();
+    });
+
+    it('finishes a deletion that stopped after the user could no longer be read', async () => {
+      // The runtime user was deleted (it no longer reads) while its removal is still prepared.
+      (
+        canonicalRuntimeState.users.get('user-001') as { lifecycle_state?: string }
+      ).lifecycle_state = 'deleted';
+      accountRemovalState.unfinished.mockResolvedValueOnce(true);
+
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001', { method: 'DELETE' }),
+        mockEnv
+      );
+
+      expect(res.status).toBe(204);
+      expect(accountRemovalState.unfinished).toHaveBeenCalledWith(expect.anything(), {
+        tenantId: 'default',
+        userId: 'user-001',
+      });
+      // The deletion is recorded as completed (the first attempt stopped before its audit).
+      const { logScimAudit } = await import('@authrim/ar-lib-scim');
+      expect(vi.mocked(logScimAudit)).toHaveBeenCalledWith(
+        expect.anything(),
+        'scim.user.delete',
+        'scim_user',
+        'user-001',
+        { resumed: true },
+        'warning'
+      );
+      expect(accountRemovalState.erase).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: 'user-001' }),
+        expect.any(Number)
+      );
+      expect(accountRemovalState.ready).toHaveBeenCalled();
+    });
+
     it('should delete user', async () => {
       scimTombstoneInserts.length = 0;
       const req = createRequest('/scim/v2/Users/user-001', {
@@ -3082,6 +3144,74 @@ describe('SCIM 2.0 Endpoints', () => {
 
       expect(body.Operations.length).toBe(1);
       expect(body.Operations[0].status).toBe('204');
+      // The whole deletion, as DELETE /Users/:id does: the account's PII and its directory routes
+      // too, not only the runtime user.
+      expect(accountRemovalState.prepare).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: 'user-001' })
+      );
+      expect(accountRemovalState.erase).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: 'user-001' }),
+        expect.any(Number)
+      );
+      expect(accountRemovalState.ready).toHaveBeenCalled();
+      expect(accountRemovalState.attempt).toHaveBeenCalled();
+      expect(accountRemovalState.prepare.mock.invocationCallOrder[0]).toBeLessThan(
+        accountRemovalState.erase.mock.invocationCallOrder[0]
+      );
+      // Holds are fenced off after the removal is prepared and before anything is erased.
+      expect(accountRemovalState.prepare.mock.invocationCallOrder[0]).toBeLessThan(
+        accountRemovalState.fence.mock.invocationCallOrder[0]
+      );
+      expect(accountRemovalState.fence.mock.invocationCallOrder[0]).toBeLessThan(
+        accountRemovalState.erase.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('answers 409 for a bulk deletion a hold reaches during it, erasing nothing', async () => {
+      const { AccountDeletionHeldError } = await import('../account-directory-removal-producer');
+      accountRemovalState.fence.mockRejectedValueOnce(new AccountDeletionHeldError());
+      const res = await app.fetch(
+        createRequest('/scim/v2/Bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+            Operations: [{ method: 'DELETE', path: '/Users/user-001' }],
+          }),
+        }),
+        mockEnv
+      );
+      const body = await res.json<{ Operations: Array<{ status: string }> }>();
+
+      expect(res.status).toBe(200);
+      expect(body.Operations[0].status).toBe('409');
+      expect(accountRemovalState.erase).not.toHaveBeenCalled();
+    });
+
+    it('finishes a bulk deletion that stopped after the user could no longer be read', async () => {
+      (
+        canonicalRuntimeState.users.get('user-001') as { lifecycle_state?: string }
+      ).lifecycle_state = 'deleted';
+      accountRemovalState.unfinished.mockResolvedValueOnce(true);
+      const res = await app.fetch(
+        createRequest('/scim/v2/Bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+            Operations: [{ method: 'DELETE', path: '/Users/user-001' }],
+          }),
+        }),
+        mockEnv
+      );
+      const body = await res.json<{ Operations: Array<{ status: string }> }>();
+
+      expect(body.Operations[0].status).toBe('204');
+      expect(accountRemovalState.erase).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: 'user-001' }),
+        expect.any(Number)
+      );
     });
 
     it('should return 404 for non-existent resources', async () => {

@@ -244,6 +244,56 @@ export async function markAccountDirectoryRemovalsReady(
   }
 }
 
+/** A legal hold stands on the account a deletion was about to erase. */
+export class AccountDeletionHeldError extends Error {
+  constructor() {
+    super('account_deletion_legal_hold');
+    this.name = 'AccountDeletionHeldError';
+  }
+}
+
+/**
+ * Moves the account to `deleting` before any of its PII is erased, so a legal hold placed after the
+ * deletion's own hold check cannot be placed any more (holds are refused for an account being
+ * deleted), and one placed before it refuses the move: then nothing is erased
+ * (AccountDeletionHeldError). Called after the directory removal is prepared (which reads the
+ * account while it is still active). An account already deleted, or none at all (rows from before
+ * canonical accounts), has nothing to fence.
+ */
+export async function fenceAccountDeletion(
+  core: DatabaseAdapter,
+  input: { tenantId: string; userId: string }
+): Promise<void> {
+  const repository = new CanonicalIdentityRepository(core, input.tenantId);
+  const account = await repository.findAccountByLegacyUserId(input.userId, {
+    includeInactive: true,
+    consistencyClass: 'primary_required',
+  });
+  if (!account || account.lifecycle_state === 'deleted') return;
+  if (!(await repository.transitionAccountLifecycle(account.id, 'deleting'))) {
+    throw new AccountDeletionHeldError();
+  }
+}
+
+/**
+ * Whether a deletion of the account stopped part way: its directory removal is still only
+ * prepared (it becomes pending at the end of the deletion), so a retried deletion goes on with it
+ * even after the user can no longer be read.
+ */
+export async function hasUnfinishedAccountDeletion(
+  core: DatabaseAdapter,
+  input: { tenantId: string; userId: string }
+): Promise<boolean> {
+  const row = await core.queryOne<{ found: number }>(
+    `SELECT 1 AS found FROM account_routing_outbox
+      WHERE tenant_id = ? AND account_id = ? AND event_kind = 'account_deleted'
+        AND status = 'prepared'
+      LIMIT 1`,
+    [input.tenantId, `account:${input.userId}`]
+  );
+  return row !== null;
+}
+
 export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
   pii: DatabaseAdapter,
   input: { tenantId: string; userId: string; core: DatabaseAdapter },
