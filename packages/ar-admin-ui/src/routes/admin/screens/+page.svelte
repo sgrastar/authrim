@@ -36,7 +36,8 @@
 		type ScreenKind,
 		type ScreenLocalization,
 		type ScreenSettings,
-		type ScreenValueType
+		type ScreenValueType,
+		screenNeedsNewConsole
 	} from '#lib/api/admin-screens.js';
 	import {
 		AdminDataTable,
@@ -1373,7 +1374,7 @@
 	}
 
 	function editScreen() {
-		if (!selectedScreen) return;
+		if (!selectedScreen || screenNeedsNewConsole(selectedScreen.fields)) return;
 		selectScreen(selectedScreen);
 		if (selectedScreen.is_system) {
 			const baseKey = selectedScreen.screen_key;
@@ -1725,11 +1726,24 @@
 										{/if}
 									</div>
 								</div>
-								<button class="btn-edit" type="button" onclick={editScreen}>
+								<button
+									class="btn-edit"
+									type="button"
+									onclick={editScreen}
+									disabled={screenNeedsNewConsole(selectedScreen.fields)}
+								>
 									<span class="i-ph-pencil-simple"></span>
 									{$LL.admin_screens_edit()}
 								</button>
 							</div>
+							{#if screenNeedsNewConsole(selectedScreen.fields)}
+								<p class="new-console-note" role="note">
+									{t(
+										'この画面には、新しい管理画面でしか編集できない部品（選択肢、チェックボックス、3 列の行など）が含まれます。編集は新しい管理画面で行ってください。',
+										'This screen has parts only the new admin console edits (choices, checkboxes, three-column rows and more). Edit it in the new admin console.'
+									)}
+								</p>
+							{/if}
 
 							<div
 								class:wide-canvas={normalizeSettings(selectedScreen.settings).canvas_layout ===
@@ -3570,6 +3584,19 @@
 		border-radius: 6px;
 		background: transparent;
 		color: inherit;
+	}
+	.new-console-note {
+		margin: 0.75rem 0 0;
+		padding: 0.65rem 0.8rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-muted, var(--color-surface));
+		color: var(--color-text-secondary, inherit);
+		line-height: 1.5;
+	}
+	.btn-edit:disabled {
+		cursor: not-allowed;
+		opacity: 0.55;
 	}
 	.btn-primary,
 	.btn-secondary,
