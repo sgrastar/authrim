@@ -45,7 +45,7 @@ import {
   readExternalProviderUsagePolicy,
   resolveSessionTtl,
   checkEmailRegistration,
-  readLiteModeState,
+  readLiteModeAuthoritative,
 } from '@authrim/ar-lib-core';
 import {
   applyExternalSignupInvitation,
@@ -76,6 +76,7 @@ import {
 } from '../common/signature';
 import { getIdPConfigByEntityId, getIdPUsageKeyByEntityId } from '../admin/providers';
 import { samlUsageUnavailableResponse } from './usage-gate';
+import { liteSamlErrorRedirect, samlSignInMayCreateAccount } from './lite-start';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
 import {
@@ -98,6 +99,75 @@ const NO_STORE_HEADERS = {
  * Handle ACS request (receive SAML Response from IdP)
  */
 export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // A sign-in begun at a lite start reports its failures to its lite callback page (which clears
+  // the start for its transaction), not as an error page: known once its request is consumed.
+  const lite: LiteAcsState = { returnUrl: null, failureXml: null };
+  const response = await handleSPACSFor(c, lite);
+  if (response.status < 400) return response;
+  if (lite.returnUrl) return liteSamlErrorRedirect(lite.returnUrl, response.status);
+  // Refused before its request was consumed (an IdP's answer that is not a success carries no
+  // assertion to verify), in a tenant in lite mode (read from the store now): the request this
+  // browser started, named by the answer and proven by the browser's binding cookie for it, says
+  // where a lite sign-in goes. Only a lite start's request is consumed (the sign-in is over either
+  // way); any other (one made before the switch, another tenant's) is left as it is.
+  const failure = lite.failureXml ? unverifiedResponseOrigin(lite.failureXml) : null;
+  if (failure && hasSAMLRequestBrowserBinding(c.req.header('Cookie'), failure.inResponseTo)) {
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const mode = await readLiteModeAuthoritative(c.env, tenantId).catch(() => 'unknown' as const);
+    if (mode !== 'off') {
+      const request = await consumeInResponseTo(
+        c.env,
+        tenantId,
+        failure.inResponseTo,
+        failure.issuer,
+        { onlyLite: true }
+      ).catch(() => null);
+      const liteReturn = request?.context?.liteReturn;
+      if (liteReturn) return liteSamlErrorRedirect(liteReturn, response.status);
+    }
+  }
+  return response;
+}
+
+/** What the ACS learns of a lite sign-in for its failures (see handleSPACS). */
+interface LiteAcsState {
+  /** The lite return of the consumed request, once it is consumed. */
+  returnUrl: string | null;
+  /** The answer as decoded, before it is verified (only to route its failure). */
+  failureXml: string | null;
+}
+
+/**
+ * The request and the IdP an answer names, read without verifying it (only to route a failure),
+ * by the SAML XML parser and its size and complexity limits; null when it names none.
+ */
+function unverifiedResponseOrigin(xml: string): { inResponseTo: string; issuer: string } | null {
+  try {
+    const root = parseSAMLXml(xml).documentElement;
+    if (!root || root.namespaceURI !== SAML_NAMESPACES.SAML2P || root.localName !== 'Response') {
+      return null;
+    }
+    const inResponseTo = getAttribute(root, 'InResponseTo');
+    let issuer: string | null = null;
+    for (let node = root.firstChild; node; node = node.nextSibling) {
+      const element = node as Element;
+      if (element.nodeType === 1 && element.localName === 'Issuer') {
+        issuer = element.textContent?.trim() ?? null;
+        break;
+      }
+    }
+    return inResponseTo && inResponseTo.length <= 256 && issuer && issuer.length <= 1024
+      ? { inResponseTo, issuer }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function handleSPACSFor(
+  c: Context<{ Bindings: Env }>,
+  lite: LiteAcsState
+): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
@@ -141,6 +211,15 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const formData = await parsePostBindingFormDataWithLimit(c.req);
     const samlResponse = formData.get('SAMLResponse') as string;
     const relayState = formData.get('RelayState') as string | null;
+    // Kept first: a refusal of anything below (the RelayState included) still finds a lite
+    // sign-in's return from the answer (handleSPACS).
+    if (samlResponse) {
+      try {
+        lite.failureXml = decodePostBindingMessage(samlResponse, 'SAML Response');
+      } catch {
+        lite.failureXml = null;
+      }
+    }
     assertSAMLRelayStateSize(relayState);
 
     if (!samlResponse) {
@@ -150,7 +229,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     }
 
     // Decode SAML Response
-    const responseXml = decodePostBindingMessage(samlResponse, 'SAML Response');
+    const responseXml = lite.failureXml ?? decodePostBindingMessage(samlResponse, 'SAML Response');
 
     // Parse and validate Response
     const preliminaryResponse = parseAndValidateResponse(responseXml, issuerUrl, spEntityId);
@@ -200,12 +279,15 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       }
       unsettledInvitation = validatedRequest.context?.invitation ?? null;
       attemptInteractionId = validatedRequest.context?.attemptInteractionId ?? null;
+      lite.returnUrl = validatedRequest.context?.liteReturn ?? null;
       attemptRequestId = validatedRequest.requestId;
     } else if (
       (await getStrictInResponseToSetting(env)) ||
       // A tenant in lite mode takes no unsolicited response, whatever the global setting says:
       // its sign-ins start from the lite Login UI, behind human verification.
-      (env.LITE_POLICY_STORE !== undefined && (await readLiteModeState(env, tenantId)) !== 'off')
+      // (Read from the store now: a runtime cache can still say `off` just after a switch; a
+      // mode that cannot be read is taken as lite.)
+      (await readLiteModeAuthoritative(env, tenantId).catch(() => 'unknown' as const)) !== 'off'
     ) {
       log.error('SAML Response missing InResponseTo while strict mode is enabled', {});
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -282,12 +364,18 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
           }
         )
       : null;
+    // A tenant in lite mode (or whose mode cannot be read) creates an account only for a sign-in
+    // begun at a lite start: its grant was made after a proof that also met the sign-up
+    // requirement. A sign-in begun before the tenant switched creates none.
+    const signupAllowed =
+      usagePolicy.signupEnabled &&
+      (await samlSignInMayCreateAccount(env, tenantId, lite.returnUrl));
     const identityResolution = await findOrCreateUser(
       env,
       userInfo,
       idpConfig,
       tenantId,
-      usagePolicy.signupEnabled,
+      signupAllowed,
       invitationRequirement
     );
     const userId = identityResolution.userId;
@@ -413,8 +501,15 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       userId,
       returnUrl,
       // Redeeming a sign-in's artifact checks the IdP's sign-in switch again.
-      reauthentication ? null : usageKey
+      reauthentication ? null : usageKey,
+      lite.returnUrl,
+      validatedRequest?.context?.liteClientId ?? null
     );
+    // A lite sign-in returns only by its handoff (the lite callback finalizes it): never by a
+    // session cookie set here.
+    if (lite.returnUrl && !handoffResponse) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
     if (handoffResponse) {
       if (inResponseTo) {
         handoffResponse.headers.append(
@@ -585,16 +680,24 @@ async function createSessionHandoffResponse(
   sessionId: string,
   userId: string,
   returnUrl: string,
-  usageKey: { providerId: string; ids: string[] } | null
+  usageKey: { providerId: string; ids: string[] } | null,
+  /** A lite sign-in's return: the handoff goes there, the same origin or not. */
+  liteReturn: string | null = null,
+  /** A lite sign-in's client (its grant's): its handoff is finalized only for it. */
+  liteClientId: string | null = null
 ): Promise<Response | null> {
   const env = c.env;
-  if (!shouldUseSessionHandoff(env, getRequestUrl(c), returnUrl)) {
+  if (liteReturn) {
+    returnUrl = liteReturn;
+  } else if (!shouldUseSessionHandoff(env, getRequestUrl(c), returnUrl)) {
     return null;
   }
 
   const token = createHandoffToken();
   const state = createHandoffToken();
-  const clientId = resolveLoginUiClientId(env);
+  // A lite handoff names its grant's client, always (finalizing checks it); none, nothing.
+  if (liteReturn && !liteClientId) return null;
+  const clientId = liteReturn ? liteClientId : resolveLoginUiClientId(env);
   const returnOrigin = getUrlOrigin(returnUrl);
 
   try {
@@ -630,10 +733,11 @@ async function createSessionHandoffResponse(
     return null;
   }
 
-  const callbackUrl = new URL('/callback', returnUrl);
+  // A lite return is the lite callback itself (its transaction and grant in its query).
+  const callbackUrl = liteReturn ? new URL(liteReturn) : new URL('/callback', returnUrl);
   callbackUrl.searchParams.set('handoff_token', token);
   callbackUrl.searchParams.set('state', state);
-  callbackUrl.searchParams.set('return_url', returnUrl);
+  if (!liteReturn) callbackUrl.searchParams.set('return_url', returnUrl);
 
   return new Response(null, {
     status: 302,
@@ -1249,7 +1353,9 @@ async function consumeInResponseTo(
   env: Env,
   tenantId: string,
   inResponseTo: string,
-  issuer: string
+  issuer: string,
+  /** Only a lite start's request (any other is left unconsumed). */
+  options: { onlyLite?: boolean } = {}
 ): Promise<SAMLRequestData | null> {
   try {
     const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
@@ -1258,7 +1364,7 @@ async function consumeInResponseTo(
     const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
 
     const response = await samlRequestStore.fetch(
-      `https://saml-request-store/consume/${inResponseTo}`,
+      `https://saml-request-store/consume/${inResponseTo}${options.onlyLite ? '?only=lite' : ''}`,
       {
         method: 'POST',
       }

@@ -133,8 +133,27 @@ paths:
         With an idp parameter, creates an SP-initiated authentication request and starts the
         configured redirect or POST binding. Without idp, returns the provider selection page.
         A well-formed runtime_interaction_id is retained on its provider links as an opaque hint;
-        the selected start checks the interaction's tenant, live state and expiry again.
+        the selected start checks the interaction's tenant, live state and expiry again. A tenant
+        in lite Login UI mode starts only with idp, lite_txn and lite_grant (a one-time start grant
+        of the browser's lite transaction for saml:<idp>, bound to its __Host-authrim_lite cookie
+        and the tenant's current lite policy revision); such a start ignores every other query
+        parameter, and the ACS answers it with a handoff to the lite /callback (its failures too).
       parameters:
+        - name: lite_txn
+          in: query
+          required: false
+          description: Lite Login UI tenants only, the browser's lite transaction holding the grant.
+          schema:
+            type: string
+        - name: lite_grant
+          in: query
+          required: false
+          description: >-
+            Lite Login UI tenants only, the one-time start grant to consume. Without a grant that
+            can be consumed for this browser and IdP, the start answers 403
+            lite_mode_endpoint_unavailable before anything else is done.
+          schema:
+            type: string
         - name: runtime_interaction_id
           in: query
           required: false
@@ -156,6 +175,10 @@ paths:
                 type: string
         '302':
           description: Redirects to the selected identity provider using the SAML redirect binding.
+        '403':
+          description: >-
+            A lite Login UI tenant's start has no start grant it can consume
+            (lite_mode_endpoint_unavailable).
   /saml/sp/acs:
     post:
       tags:
