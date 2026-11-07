@@ -355,6 +355,9 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
   });
   if (account) await captureAccountDeletionSnapshot(pii, account);
   const accountId = `account:${input.userId}`;
+  // The identifier change tables name the account by its user id (self-service, SCIM) or by its
+  // account id: both are matched.
+  const accountIds = [input.userId, accountId];
   const statements = [
     {
       // The fence, in the batch that erases: from here no write puts a value back for the account
@@ -371,38 +374,38 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
       sql: `UPDATE identity_identifier_replacement_operations
           SET state = 'canceled', error_code = 'account_deleted', lease_owner = NULL,
               lease_expires_at = NULL, next_attempt_at = NULL, updated_at = ?
-        WHERE tenant_id = ? AND account_id = ? AND state NOT IN ('completed', 'canceled')`,
-      params: [now, input.tenantId, accountId],
+        WHERE tenant_id = ? AND account_id IN (?, ?) AND state NOT IN ('completed', 'canceled')`,
+      params: [now, input.tenantId, ...accountIds],
     },
     {
       sql: `UPDATE identity_identifier_replacement_outbox
           SET status = 'blocked', error_code = 'account_deleted', lease_owner = NULL,
               lease_expires_at = NULL, next_attempt_at = NULL, updated_at = ?
-        WHERE tenant_id = ? AND account_id = ? AND status IN ('pending', 'leased', 'retry')`,
-      params: [now, input.tenantId, accountId],
+        WHERE tenant_id = ? AND account_id IN (?, ?) AND status IN ('pending', 'leased', 'retry')`,
+      params: [now, input.tenantId, ...accountIds],
     },
     {
       sql: `UPDATE identity_identifier_replacement_history
           SET old_value_json = NULL, new_value_json = NULL, raw_values_erased_at = ?
         WHERE raw_values_erased_at IS NULL AND operation_id IN (
           SELECT operation_id FROM identity_identifier_replacement_operations
-           WHERE tenant_id = ? AND account_id = ? AND state IN ('completed', 'canceled')
+           WHERE tenant_id = ? AND account_id IN (?, ?) AND state IN ('completed', 'canceled')
         )`,
-      params: [now, input.tenantId, accountId],
+      params: [now, input.tenantId, ...accountIds],
     },
     {
       sql: `UPDATE identity_identifier_replacement_challenges
           SET normalized_value_json = 'null', raw_value_erased_at = ?, updated_at = ?
-        WHERE tenant_id = ? AND account_id = ? AND raw_value_erased_at IS NULL`,
-      params: [now, now, input.tenantId, accountId],
+        WHERE tenant_id = ? AND account_id IN (?, ?) AND raw_value_erased_at IS NULL`,
+      params: [now, now, input.tenantId, ...accountIds],
     },
     {
       sql: `UPDATE external_identifier_unlink_operations
           SET state = 'blocked', issuer_json = NULL, subject_json = NULL,
               raw_values_erased_at = ?, error_code = 'account_deleted',
               lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = NULL, updated_at = ?
-        WHERE tenant_id = ? AND account_id = ? AND state <> 'completed'`,
-      params: [now, now, input.tenantId, accountId],
+        WHERE tenant_id = ? AND account_id IN (?, ?) AND state <> 'completed'`,
+      params: [now, now, input.tenantId, ...accountIds],
     },
     {
       sql: `UPDATE identity_sensitive_values

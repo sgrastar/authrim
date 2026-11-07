@@ -36,6 +36,7 @@ import {
   insertFlowConsentRecords,
 } from '../login-runtime-flow';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import { freshInstallMigrationFiles } from './helpers/real-sql';
 import { ChallengeStore } from '../../../ar-lib-core/dist/durable-objects/ChallengeStore';
 import { renderPortableMigrationSql } from '../../../ar-lib-core/dist/migrations/sql-portability';
 
@@ -232,7 +233,7 @@ function createSessionStore() {
 function createCoreDatabase(): DatabaseAdapter {
   const db = new DatabaseSync(':memory:');
   const folder = path.resolve(__dirname, '../../../../migrations/core/d1');
-  for (const file of ['001_0_5_0_core_baseline.sql']) {
+  for (const file of freshInstallMigrationFiles('core')) {
     db.exec(renderPortableMigrationSql(readFileSync(path.join(folder, file), 'utf8'), 'sqlite'));
   }
   const bind = (params: unknown[] = []) =>
@@ -1187,6 +1188,267 @@ describe('sign-in sequences through the real handlers', () => {
     });
   });
 
+  describe('one step submitted twice at the same time (two tabs, a retried request)', () => {
+    /**
+     * Holds the next request whose statement matches `pattern` right after that statement. Resolves,
+     * once it is held, to the function that lets it go on.
+     */
+    function holdAfter(pattern: RegExp): Promise<() => void> {
+      return new Promise((held) => {
+        world.afterStatement = async (sql) => {
+          if (!pattern.test(sql)) return;
+          world.afterStatement = undefined;
+          await new Promise<void>((release) => held(release));
+        };
+      });
+    }
+
+    /** The completion step of the default login Flow the core migrations seed. */
+    const COMPLETION_STEP = 'oidc-authorization-complete:step';
+    const db = () => world.db as DatabaseAdapter;
+    const interactionRow = (interactionId: string) =>
+      db().queryOne<{
+        state: string;
+        current_step_id: string | null;
+        submit_claim_expires_at: number | null;
+      }>(
+        'SELECT state, current_step_id, submit_claim_expires_at FROM flow_interactions WHERE id = ?',
+        [interactionId]
+      );
+    const stepRows = (interactionId: string) =>
+      db().query<{ step_id: string; state: string }>(
+        `SELECT step_id, state FROM flow_interaction_steps WHERE interaction_id = ?
+          ORDER BY created_at, step_id, state`,
+        [interactionId]
+      );
+    const selectorRows = async (interactionId: string) =>
+      (await stepRows(interactionId)).filter((row) => row.step_id !== COMPLETION_STEP);
+    const completionRows = async (interactionId: string) =>
+      (await stepRows(interactionId)).filter((row) => row.step_id === COMPLETION_STEP);
+
+    it('advances once: the second is answered step_conflict and records nothing', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, {});
+      const stepsBefore = await stepRows(interaction.id);
+
+      // The first submit stops right after it claimed the interaction.
+      const held = holdAfter(/SET submit_claim_id = \?/);
+      const firstDone = selectMethod(browser, start, 'mail_otp');
+      const release = await held;
+      const second = await selectMethod(browserWith(), start, 'mail_otp');
+      // Nothing of the second is recorded: the step rows are as the first left them so far.
+      expect(await stepRows(interaction.id)).toEqual(stepsBefore);
+      release();
+      const first = await firstDone;
+
+      expect(first.status).toBe(200);
+      expect(first.json.completed).toBe(false);
+      expect([second.status, second.json]).toEqual([
+        409,
+        expect.objectContaining({
+          error: 'step_conflict',
+          error_code: 'AR_FLOW_STEP_CONFLICT',
+          category: 'recoverable',
+          action: 'retry_step',
+          interaction_id: interaction.id,
+        }),
+      ]);
+      // Advanced once: the selection completed once, one completion step entered, and the claim
+      // let go of.
+      expect(await completionRows(interaction.id)).toEqual([
+        { step_id: COMPLETION_STEP, state: 'waiting_input' },
+      ]);
+      expect(
+        (await selectorRows(interaction.id)).filter((row) => row.state !== 'completed')
+      ).toEqual([]);
+      expect(await interactionRow(interaction.id)).toEqual({
+        state: 'active',
+        current_step_id: COMPLETION_STEP,
+        submit_claim_expires_at: null,
+      });
+
+      // The browser told to load the interaction again finds it where the winner left it.
+      const resumed = await resume(browser, start, interaction.id);
+      expect((resumed.json.interaction as { current_step_id: string }).current_step_id).toBe(
+        COMPLETION_STEP
+      );
+    });
+
+    it('saves nothing for a submit whose claim lapsed and was taken by another', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, {});
+
+      // The first submit stops after it read its step (claimed), and is held past its claim.
+      const held = holdAfter(/SELECT id, interaction_id, node_id, step_id, state/);
+      const firstDone = selectMethod(browser, start, 'mail_otp');
+      const release = await held;
+      await db().execute('UPDATE flow_interactions SET submit_claim_expires_at = 1 WHERE id = ?', [
+        interaction.id,
+      ]);
+      const second = await selectMethod(browserWith(), start, 'mail_otp');
+      expect(second.status).toBe(200);
+      release();
+      const first = await firstDone;
+
+      expect([first.status, first.json.error]).toEqual([409, 'step_conflict']);
+      expect(await completionRows(interaction.id)).toEqual([
+        { step_id: COMPLETION_STEP, state: 'waiting_input' },
+      ]);
+      expect(await interactionRow(interaction.id)).toMatchObject({
+        current_step_id: COMPLETION_STEP,
+        submit_claim_expires_at: null,
+      });
+    });
+
+    it('still saves a step held past its claim when no other submit took it', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, {});
+
+      const held = holdAfter(/SELECT id, interaction_id, node_id, step_id, state/);
+      const firstDone = selectMethod(browser, start, 'mail_otp');
+      const release = await held;
+      await db().execute('UPDATE flow_interactions SET submit_claim_expires_at = 1 WHERE id = ?', [
+        interaction.id,
+      ]);
+      release();
+
+      expect((await firstDone).status).toBe(200);
+      expect(await completionRows(interaction.id)).toHaveLength(1);
+    });
+
+    it('records nothing once its claim is too old to act on, and lets go of the step', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, {});
+      const stepsBefore = await stepRows(interaction.id);
+
+      const held = holdAfter(/SET submit_claim_id = \?/);
+      const firstDone = selectMethod(browser, start, 'mail_otp');
+      const release = await held;
+      // Later than the claim by more than its window: past the window to start recording.
+      const realNow = Date.now.bind(Date);
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 11_000);
+      try {
+        release();
+        const first = await firstDone;
+        expect([first.status, first.json.error]).toEqual([409, 'step_conflict']);
+      } finally {
+        clock.mockRestore();
+      }
+
+      expect(await stepRows(interaction.id)).toEqual(stepsBefore);
+      expect(await interactionRow(interaction.id)).toMatchObject({ submit_claim_expires_at: null });
+      // Let go of: the step can be submitted at once.
+      expect((await selectMethod(browser, start, 'mail_otp')).status).toBe(200);
+    });
+
+    it('serves a resume made while a submit holds the step where the submit left it', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, {});
+
+      const held = holdAfter(/SET submit_claim_id = \?/);
+      const firstDone = selectMethod(browser, start, 'mail_otp');
+      const release = await held;
+      const resumed = resume(browserWith(), start, interaction.id);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      release();
+
+      expect((await firstDone).status).toBe(200);
+      expect(
+        ((await resumed).json.interaction as { current_step_id: string }).current_step_id
+      ).toBe(COMPLETION_STEP);
+    });
+
+    it('answers a resume step_conflict when a submit keeps holding the step', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, {});
+      await db().execute(
+        "UPDATE flow_interactions SET submit_claim_id = 'other', submit_claim_expires_at = ? WHERE id = ?",
+        [Math.floor(Date.now() / 1000) + 60, interaction.id]
+      );
+
+      const resumed = await browser.post('/api/v1/login/interactions/start', {
+        resume_interaction_id: interaction.id,
+        contract_hash: start.json.contract_hash,
+        signature: start.json.signature,
+      });
+
+      expect([resumed.status, resumed.json.error]).toEqual([409, 'step_conflict']);
+    });
+
+    it('does not write a resume over a context saved after the resume read it', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, {});
+
+      // The resume stops right after it read the interaction; a submit then saves its context.
+      const held = holdAfter(/submit_claim_expires_at\s+FROM flow_interactions/);
+      const resumed = resume(browser, start, interaction.id);
+      const release = await held;
+      const read = await db().queryOne<{ context_json: string }>(
+        'SELECT context_json FROM flow_interactions WHERE id = ?',
+        [interaction.id]
+      );
+      await db().execute('UPDATE flow_interactions SET context_json = ? WHERE id = ?', [
+        JSON.stringify({ ...JSON.parse(read?.context_json ?? '{}'), saved_by_submit: true }),
+        interaction.id,
+      ]);
+      release();
+      expect((await resumed).status).toBe(200);
+
+      const after = await db().queryOne<{ context_json: string }>(
+        'SELECT context_json FROM flow_interactions WHERE id = ?',
+        [interaction.id]
+      );
+      expect(JSON.parse(after?.context_json ?? '{}')).toMatchObject({ saved_by_submit: true });
+    });
+
+    it('does not save a submit over a resume written after the submit read the interaction', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, {});
+      const stepsBefore = await stepRows(interaction.id);
+
+      // The submit stops right after it read the interaction; a resume then writes its context.
+      const held = holdAfter(/SELECT id, flow_id[\s\S]*FROM flow_interactions/);
+      const firstDone = selectMethod(browser, start, 'mail_otp');
+      const release = await held;
+      const resumed = await browserWith().post('/api/v1/login/interactions/start', {
+        resume_interaction_id: interaction.id,
+        contract_hash: start.json.contract_hash,
+        signature: start.json.signature,
+        locale: 'ja',
+      });
+      expect(resumed.status).toBe(200);
+      release();
+      const first = await firstDone;
+
+      expect([first.status, first.json.error]).toEqual([409, 'step_conflict']);
+      expect(await stepRows(interaction.id)).toEqual(stepsBefore);
+      const row = await db().queryOne<{ context_json: string }>(
+        'SELECT context_json FROM flow_interactions WHERE id = ?',
+        [interaction.id]
+      );
+      expect(JSON.parse(row?.context_json ?? '{}')).toMatchObject({ locale: 'ja' });
+    });
+
+    it('lets go of the step when the submit is refused, so it can be submitted again at once', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, {});
+      expect((await selectMethod(browser, start, 'mail_otp')).status).toBe(200);
+
+      // The completion, before anyone has signed in: refused after it was claimed.
+      const refused = await resumeAndComplete(browser, start, interaction.id);
+      expect(refused.final?.status).toBe(401);
+      expect(await interactionRow(interaction.id)).toMatchObject({
+        current_step_id: COMPLETION_STEP,
+        submit_claim_expires_at: null,
+      });
+      const again = await resumeAndComplete(browser, start, interaction.id);
+      expect([again.final?.status, again.final?.json.error]).toEqual([
+        401,
+        'authentication_required',
+      ]);
+    });
+  });
+
   describe('a SAML request', () => {
     it('completes with the SAML continuation after the code, not before', async () => {
       const browser = browserWith();
@@ -1431,21 +1693,20 @@ describe('sign-in sequences through the real handlers', () => {
       ]);
 
       // Which one wins, and where the other is stopped, depends on how the requests interleave:
-      // before the winner has finished (the interaction is another user's), after it (the
-      // interaction is no longer open), or in between (its step was completed after the other read
-      // the interaction). The three tests below pin each order down.
+      // while the winner holds the step (its submit claimed the interaction), or after it (the
+      // interaction is no longer open, whether or not the other had read it before). The three
+      // tests below pin each order down.
       const winner = results.findIndex((result) => result.final?.status === 200);
       expect(winner).not.toBe(-1);
       const loser = results[1 - winner].final;
       expect([
-        [403, 'access_denied'],
+        [409, 'step_conflict'],
         [409, 'interaction_not_active'],
-        [409, 'step_not_active'],
       ]).toContainEqual([loser?.status, loser?.json.error]);
       await expectCompletedFor(interactionId, winner === 0 ? 'user_existing' : 'user_other');
     });
 
-    it('refuses the other user while the first one is completing the interaction', async () => {
+    it('holds the other user off while the first one is completing the interaction', async () => {
       const { start, interactionId, first, second } = await twoUsersAtOneInteraction();
       // The first completion stops right after it made the interaction its user's.
       const held = holdAfter(/SET user_id = \?/);
@@ -1456,7 +1717,9 @@ describe('sign-in sequences through the real handlers', () => {
       release();
       const done = await firstDone;
 
-      expect([refused.final?.status, refused.final?.json.error]).toEqual([403, 'access_denied']);
+      // The first submit holds the step: the other is told to load the interaction again, and
+      // records nothing.
+      expect([refused.final?.status, refused.final?.json.error]).toEqual([409, 'step_conflict']);
       expect(done.final?.status).toBe(200);
       await expectCompletedFor(interactionId, 'user_existing');
     });
@@ -1473,7 +1736,11 @@ describe('sign-in sequences through the real handlers', () => {
       const refused = await secondDone;
 
       expect(done.final?.status).toBe(200);
-      expect([refused.final?.status, refused.final?.json.error]).toEqual([409, 'step_not_active']);
+      // What it read is out of date: its claim finds the interaction completed.
+      expect([refused.final?.status, refused.final?.json.error]).toEqual([
+        409,
+        'interaction_not_active',
+      ]);
       await expectCompletedFor(interactionId, 'user_existing');
     });
 
@@ -1610,6 +1877,79 @@ describe('sign-in sequences through the real handlers', () => {
           statement_version: '20260901',
         }),
       ]);
+    });
+
+    it('does not mark the held consent recorded for a submit that lost its hold on the step', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, { oidcClientId: 'consent-client' });
+      await selectMethod(browser, start, 'mail_otp', given);
+      browser.cookies.set('authrim_session', signedIn());
+      const db = world.db as DatabaseAdapter;
+
+      // The completion stops once it recorded the consent; meanwhile another submit took the step.
+      const held = holdAfter(/INSERT INTO consent_records/);
+      const refusedDone = resumeAndComplete(browser, start, interaction.id);
+      const release = await held;
+      await db.execute(
+        "UPDATE flow_interactions SET submit_claim_id = 'other', submit_claim_expires_at = ? WHERE id = ?",
+        [Math.floor(Date.now() / 1000) + 60, interaction.id]
+      );
+      release();
+      const refused = await refusedDone;
+
+      expect([refused.final?.status, refused.final?.json.error]).toEqual([409, 'step_conflict']);
+      const [selection] = await db.query<{ state_json: string }>(
+        "SELECT state_json FROM flow_interaction_steps WHERE interaction_id = ? AND step_id = 'auth:step'",
+        [interaction.id]
+      );
+      expect(JSON.parse(selection.state_json)).not.toHaveProperty('held_consent_recorded');
+    });
+
+    it('does not go back to the consent for a submit that lost its hold on the step', async () => {
+      const browser = browserWith();
+      const { start, interaction } = await startFlow(browser, { oidcClientId: 'consent-client' });
+      await selectMethod(browser, start, 'mail_otp', given);
+      const db = world.db as DatabaseAdapter;
+      const now = Math.floor(Date.now() / 1000);
+      await db.execute(
+        "UPDATE consent_statement_versions SET is_current = 0 WHERE id = 'version_terms_1'"
+      );
+      await db.execute(
+        `INSERT INTO consent_statement_versions (id, tenant_id, statement_id, version, effective_at,
+                                                 is_current, status, created_at, updated_at)
+         VALUES ('version_terms_2', ?, 'statement_terms', '20260901', ?, 1, 'active', ?, ?)`,
+        [TENANT, now, now, now]
+      );
+      browser.cookies.set('authrim_session', signedIn());
+      const before = await db.queryOne<{ current_step_id: string }>(
+        'SELECT current_step_id FROM flow_interactions WHERE id = ?',
+        [interaction.id]
+      );
+
+      // The completion stops once it made the interaction its user's; meanwhile its claim lapsed
+      // and another submit took the step.
+      const held = holdAfter(/SET user_id = \?/);
+      const refusedDone = resumeAndComplete(browser, start, interaction.id);
+      const release = await held;
+      await db.execute(
+        "UPDATE flow_interactions SET submit_claim_id = 'other', submit_claim_expires_at = ? WHERE id = ?",
+        [now + 60, interaction.id]
+      );
+      release();
+      const refused = await refusedDone;
+
+      expect([refused.final?.status, refused.final?.json.error]).toEqual([409, 'step_conflict']);
+      expect(
+        await db.queryOne('SELECT current_step_id FROM flow_interactions WHERE id = ?', [
+          interaction.id,
+        ])
+      ).toEqual(before);
+      expect(
+        await db.query(
+          "SELECT state FROM flow_interaction_steps WHERE interaction_id = ? AND step_id = 'auth:step'",
+          [interaction.id]
+        )
+      ).toEqual([{ state: 'completed' }]);
     });
 
     it('refuses what was accepted on a contract prepared before the terms changed, and serves a new one', async () => {

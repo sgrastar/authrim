@@ -507,7 +507,9 @@ const translation = {
 	lite_socialStarted:
 		'Bu sayfadan harici bir hesapla oturum açma başlatıldı. Başka bir yolla oturum açmak için baştan başlayın.',
 	lite_passkeyFailed:
-		'Geçiş anahtarıyla oturum açma tamamlanmadı. Yeniden deneyin veya başka bir oturum açma yöntemi seçin.'
+		'Geçiş anahtarıyla oturum açma tamamlanmadı. Yeniden deneyin veya başka bir oturum açma yöntemi seçin.',
+	lite_provisioningWait: "Hesabınız hazırlanıyor. Biraz bekleyin, ardından Devam'ı seçin.",
+	lite_provisioningFailed: 'Hesabınız hazırlanamadı. Baştan başlayın.'
 } satisfies Translation;
 
 export default translation;

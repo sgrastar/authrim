@@ -512,7 +512,10 @@ const it = createTranslation({
 	lite_socialStarted:
 		"L'accesso con un account esterno è stato avviato da questa pagina. Per accedere in un altro modo, ricomincia.",
 	lite_passkeyFailed:
-		"L'accesso con passkey non è stato completato. Riprova o scegli un altro modo per accedere."
+		"L'accesso con passkey non è stato completato. Riprova o scegli un altro modo per accedere.",
+	lite_provisioningWait:
+		'Il tuo account è in fase di configurazione. Attendi un momento, poi seleziona Continua.',
+	lite_provisioningFailed: 'Non è stato possibile configurare il tuo account. Ricomincia.'
 });
 
 export default it;

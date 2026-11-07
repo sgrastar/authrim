@@ -279,6 +279,53 @@ describe('the lite sign-in page as drawn', () => {
 		expect(body).toContain('&quot;rpId&quot;:&quot;id.example&quot;');
 	});
 
+	it('draws a sign-up held for its account: its Continue (with a proof) and a way out', () => {
+		const held = (form: unknown) =>
+			render(LoginPage, {
+				props: {
+					data: {
+						brandName: 'Acme',
+						logo: null,
+						page: 'step',
+						search: '?challenge_id=ch-1',
+						txnId: 'txn-1',
+						csrfToken: 'csrf-1',
+						op: 'o'.repeat(22),
+						decision: { kind: 'screen', title: 'Sign in', description: null, fields: [] },
+						codeEntry: null,
+						passkey: null,
+						provisioning: { id: 'hold-1' },
+						available: { mailOtp: true, totp: true, passkey: true },
+						purpose: 'signup',
+						pow: POW,
+						text: {
+							...text,
+							provisioningWait: 'Being set up',
+							errors: {
+								...text.errors,
+								provisioning_wait: 'Still being set up',
+								provisioning_failed: 'Could not be set up'
+							}
+						}
+					} as never,
+					form: form as never
+				}
+			}).body;
+		const body = held(null);
+		const forms = body.match(/<form[^>]*>/gu) ?? [];
+		expect(forms[0]).toContain('/provisioning_continue"');
+		expect(forms[0]).toContain('data-lite-pow="');
+		expect(body).toContain('name="provisioning" value="hold-1"');
+		expect(body).toContain('Being set up');
+		expect(forms[1]).toContain('/restart"');
+		expect(body).toContain(`<script>${LITE_POW_SOLVER_SCRIPT}</script>`);
+		// Still being made: said so, the Continue kept; failed: only the way out.
+		expect(held({ error: 'provisioning_wait' })).toContain('Still being set up');
+		const failed = held({ error: 'provisioning_failed' });
+		expect(failed).toContain('Could not be set up');
+		expect(failed).not.toContain('/provisioning_continue"');
+	});
+
 	it('goes back from a step it cannot draw by giving the transaction up (a restart post)', () => {
 		const { body } = render(LoginPage, {
 			props: {
