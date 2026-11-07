@@ -175,7 +175,7 @@ export async function loadAdminStanding(
 ): Promise<AdminStanding> {
   const rows = await adapter.query<{ scope_type: string; hierarchy_level: number | null }>(
     `SELECT ra.scope_type AS scope_type, r.hierarchy_level AS hierarchy_level
-       FROM admin_role_assignments ra
+       FROM admin_effective_role_assignments ra
        JOIN admin_roles r
          ON r.id = ra.admin_role_id
         AND (r.tenant_id = ra.tenant_id OR (r.tenant_id = 'default' AND r.is_system = 1))

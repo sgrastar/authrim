@@ -18,6 +18,7 @@ import {
   AdminRoleChangedError,
   AdminRoleRepository,
   AdminRoleAssignmentRepository,
+  AdminGroupRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
@@ -993,7 +994,7 @@ adminRolesRouter.delete('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
-    // Check if role has assignments
+    // Check if role has assignments (own or through a group)
     const assignedUsers = await roleAssignmentRepo.getUsersByRole(id);
     if (assignedUsers.length > 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
@@ -1008,6 +1009,12 @@ adminRolesRouter.delete('/:id', async (c) => {
       [tenantId, id, Date.now()]
     );
     if (pendingInvitation) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+
+    // A group that gives the role, even with no members yet, would lose it without anyone
+    // deciding so: the grant has to be taken away first.
+    if (await new AdminGroupRepository(adapter, tenantId).roleIsGranted(id)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 

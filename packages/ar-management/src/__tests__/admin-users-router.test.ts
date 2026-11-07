@@ -33,6 +33,7 @@ const { repoMocks, mockAdminAdapter } = vi.hoisted(() => ({
     countByUser: vi.fn(),
     getPasskeysByUser: vi.fn(),
     getAssignmentsByUser: vi.fn(),
+    getEffectiveAssignmentsByUser: vi.fn(),
     getUsersByRole: vi.fn(),
     createAuditLog: vi.fn(),
   },
@@ -68,6 +69,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     removeAssignment = repoMocks.removeAssignment;
     removeAssignmentById = repoMocks.removeAssignmentById;
     getAssignmentsByUser = repoMocks.getAssignmentsByUser;
+    getEffectiveAssignmentsByUser = repoMocks.getEffectiveAssignmentsByUser;
     getUsersByRole = repoMocks.getUsersByRole;
   }
 
@@ -509,7 +511,7 @@ describe('adminUsersRouter', () => {
       password_hash: 'secret-hash',
       totp_secret_encrypted: 'secret-totp',
     });
-    repoMocks.getAssignmentsByUser.mockResolvedValue([
+    repoMocks.getEffectiveAssignmentsByUser.mockResolvedValue([
       {
         id: 'assignment_1',
         admin_role_id: 'role_1',
@@ -519,7 +521,26 @@ describe('adminUsersRouter', () => {
         created_at: 10,
         expires_at: null,
         assigned_by: 'admin_1',
+        source: 'direct',
+        admin_group_id: null,
+        admin_group_name: null,
       },
+      {
+        id: 'group:member_1:grant_1',
+        admin_role_id: 'role_2',
+        role: { name: 'ar_support', display_name: 'Support' },
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+        created_at: 11,
+        expires_at: null,
+        assigned_by: 'admin_1',
+        source: 'group',
+        admin_group_id: 'group_1',
+        admin_group_name: 'Help desk',
+      },
+    ]);
+    mockAdminAdapter.query.mockResolvedValueOnce([
+      { id: 'group_1', group_key: 'help-desk', display_name: 'Help desk' },
     ]);
     repoMocks.getPasskeysByUser.mockResolvedValue([
       {
@@ -538,8 +559,25 @@ describe('adminUsersRouter', () => {
 
     expect(response.status).toBe(200);
     expect(body).not.toHaveProperty('password_hash');
-    expect(body.roles[0]).toMatchObject({ role_id: 'role_1', name: 'auditor' });
-    expect(body.passkeys[0]).not.toHaveProperty('public_key');
+    const roles = body.roles as Array<Record<string, unknown>>;
+    expect(roles[0]).toMatchObject({
+      role_id: 'role_1',
+      name: 'auditor',
+      assignment_id: 'assignment_1',
+      source: 'direct',
+    });
+    // A role a group gives is changed through the group: it has no assignment to remove.
+    expect(roles[1]).toMatchObject({
+      role_id: 'role_2',
+      assignment_id: null,
+      source: 'group',
+      admin_group_id: 'group_1',
+      admin_group_name: 'Help desk',
+    });
+    expect(body.groups).toEqual([
+      { id: 'group_1', group_key: 'help-desk', display_name: 'Help desk' },
+    ]);
+    expect((body.passkeys as unknown[])[0]).not.toHaveProperty('public_key');
     expect(body.passkey_count).toBe(1);
   });
 

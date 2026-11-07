@@ -25,12 +25,9 @@ const REPO_ROOT = resolve(__dirname, '../../../..');
 
 function openAdminDatabase(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
-  db.exec(
-    readRenderedMigrationSql(
-      resolve(REPO_ROOT, 'migrations/admin/d1/'),
-      '001_0_5_0_admin_baseline.sql'
-    )
-  );
+  for (const file of ['001_0_5_0_admin_baseline.sql', '012_admin_groups.sql']) {
+    db.exec(readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/admin/d1/'), file));
+  }
 
   return db;
 }

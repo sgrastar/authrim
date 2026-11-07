@@ -5,7 +5,8 @@
  * or deleting the account) would leave the tenant with nobody who can manage its admins, so it is
  * refused with 409 `last_tenant_admin`. Only the tenant's own administrators count: the
  * assignments of the tenant (`scope_type = 'tenant'`) and the global ones held by an account of
- * the tenant. An administrator of another tenant does not. Two things are kept: the tenant must
+ * the tenant, held by the account itself or through one of its admin groups
+ * (`admin_effective_role_assignments`). An administrator of another tenant does not. Two things are kept: the tenant must
  * not be left without a current administrator, and, when it has a permanent one, it must not be
  * left without a permanent one, because an assignment that has an expiry ends by itself. Giving a
  * permanent assignment an expiry is therefore held to the same rule as removing it.
@@ -36,8 +37,60 @@ export type LastTenantAdminExclusion =
        */
       newExpiresAt?: number;
     }
-  /** An account is going away (suspended, deleted) or loses the role under every scope. */
-  | { adminUserId: string };
+  /** An account is going away (suspended, deleted): every assignment it holds, own or group. */
+  | { adminUserId: string }
+  /** An account loses the role under every scope it holds it itself; its groups' stay. */
+  | { adminUserId: string; directOnly: true }
+  /** A member leaves a group: what came to them through that membership. */
+  | { groupMemberId: string }
+  /**
+   * A group's grant goes away, or, with `newExpiresAt`, is given an expiry: what every member
+   * holds through it.
+   */
+  | { groupGrantId: string; newExpiresAt?: number }
+  /** A group goes away: everything its members hold through it. */
+  | { adminGroupId: string };
+
+/** The SQL that leaves `exclusion` out of the count, with its parameter. */
+function exclusionClause(exclusion: LastTenantAdminExclusion): { sql: string; param: string } {
+  if ('assignmentId' in exclusion) {
+    return { sql: 'AND ra.id <> ?', param: exclusion.assignmentId };
+  }
+  if ('groupMemberId' in exclusion) {
+    // A direct assignment has no membership (NULL) and always stays.
+    return {
+      sql: 'AND (ra.group_member_id IS NULL OR ra.group_member_id <> ?)',
+      param: exclusion.groupMemberId,
+    };
+  }
+  if ('groupGrantId' in exclusion) {
+    return {
+      sql: 'AND (ra.group_grant_id IS NULL OR ra.group_grant_id <> ?)',
+      param: exclusion.groupGrantId,
+    };
+  }
+  if ('adminGroupId' in exclusion) {
+    return {
+      sql: 'AND (ra.admin_group_id IS NULL OR ra.admin_group_id <> ?)',
+      param: exclusion.adminGroupId,
+    };
+  }
+  if ('directOnly' in exclusion) {
+    return {
+      sql: "AND NOT (ra.source = 'direct' AND ra.admin_user_id = ?)",
+      param: exclusion.adminUserId,
+    };
+  }
+  return { sql: 'AND au.id <> ?', param: exclusion.adminUserId };
+}
+
+/** The expiry an exclusion gives what it covers, when it is not taken away but shortened. */
+function exclusionNewExpiry(exclusion: LastTenantAdminExclusion): number | undefined {
+  if ('assignmentId' in exclusion || 'groupGrantId' in exclusion) {
+    return exclusion.newExpiresAt;
+  }
+  return undefined;
+}
 
 /** The count of the tenant's administrators as a SELECT, with the parameters it binds. */
 function tenantAdminCount(
@@ -60,16 +113,14 @@ function tenantAdminCount(
     }
   }
   let exclude = '';
-  if (exclusion && 'assignmentId' in exclusion) {
-    exclude = 'AND ra.id <> ?';
-    params.push(exclusion.assignmentId);
-  } else if (exclusion) {
-    exclude = 'AND au.id <> ?';
-    params.push(exclusion.adminUserId);
+  if (exclusion) {
+    const clause = exclusionClause(exclusion);
+    exclude = clause.sql;
+    params.push(clause.param);
   }
   return {
     sql: `SELECT COUNT(DISTINCT au.id) AS count
-       FROM admin_role_assignments ra
+       FROM admin_effective_role_assignments ra
        JOIN admin_roles r
          ON r.id = ra.admin_role_id
         AND (r.tenant_id = ra.tenant_id OR (r.tenant_id = 'default' AND r.is_system = 1))
@@ -121,10 +172,10 @@ export function tenantKeepsAdminGuard(
       params: [...others.params, ...all.params],
     };
   };
-  const newExpiresAt = 'assignmentId' in exclusion ? exclusion.newExpiresAt : undefined;
+  const newExpiresAt = exclusionNewExpiry(exclusion);
   let current: AdminWriteGuard | undefined;
   if (newExpiresAt !== undefined) {
-    // The assignment stays an administrator only while its new expiry is still to come, which
+    // What it covers stays an administrator only while its new expiry is still to come, which
     // is the database's call when the write runs.
     const others = keeps(false);
     current = {
@@ -147,8 +198,12 @@ export async function wouldLeaveNoTenantAdmin(
   tenantId: string,
   exclusion: LastTenantAdminExclusion
 ): Promise<boolean> {
-  // The tenant must not end up with nobody at all.
-  const stillCurrent = 'assignmentId' in exclusion && exclusion.stillCurrent === true;
+  // The tenant must not end up with nobody at all. What is only given an expiry (still to come)
+  // stays an administrator until then.
+  const newExpiry = exclusionNewExpiry(exclusion);
+  const stillCurrent =
+    ('assignmentId' in exclusion && exclusion.stillCurrent === true) ||
+    (newExpiry !== undefined && newExpiry > Date.now());
   if (!stillCurrent && (await countTenantAdmins(adapter, tenantId, false, exclusion)) === 0) {
     if ((await countTenantAdmins(adapter, tenantId, false)) > 0) {
       return true;

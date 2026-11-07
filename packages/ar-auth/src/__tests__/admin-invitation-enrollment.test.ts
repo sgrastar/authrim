@@ -5,6 +5,7 @@ import type { Env } from '@authrim/ar-lib-core';
 const { adapter, enrollments, webauthn } = vi.hoisted(() => ({
   adapter: {
     queryOne: vi.fn(),
+    query: vi.fn(async (): Promise<unknown[]> => []),
     execute: vi.fn(),
     batch: vi.fn<(statements: Array<{ sql: string; params?: unknown[] }>) => Promise<unknown[]>>(),
   },
@@ -506,6 +507,21 @@ describe('Admin invitation enrollment', () => {
 
   it('activates Admin, Passkey, role, session, invitation, and audit in one batch', async () => {
     const env = createEnv();
+    // The invitation names two groups: one unchanged since, one whose roles changed.
+    adapter.query.mockResolvedValueOnce([
+      {
+        admin_group_id: 'group-a',
+        group_display_name: 'A',
+        group_revision: 2,
+        current_revision: 2,
+      },
+      {
+        admin_group_id: 'group-b',
+        group_display_name: 'B',
+        group_revision: 1,
+        current_revision: 3,
+      },
+    ]);
     await seedEnrollment('enrollment-token', {
       invitationId: invitation.id,
       phase: 'authentication',
@@ -554,7 +570,7 @@ describe('Admin invitation enrollment', () => {
     expect(response.status).toBe(200);
     expect(adapter.batch).toHaveBeenCalledOnce();
     const statements = adapter.batch.mock.calls[0][0];
-    expect(statements).toHaveLength(10);
+    expect(statements).toHaveLength(12);
     for (const statement of statements) {
       expect(statement.sql.match(/\?/gu) ?? []).toHaveLength(statement.params?.length ?? 0);
     }
@@ -562,6 +578,9 @@ describe('Admin invitation enrollment', () => {
       expect.stringContaining('INSERT INTO admin_users'),
       expect.stringContaining('INSERT INTO admin_passkeys'),
       expect.stringContaining('INSERT INTO admin_role_assignments'),
+      // The joined group is checked again in the batch, then the groups are joined.
+      expect.stringContaining("'invitation-conflict:'"),
+      expect.stringContaining('INSERT INTO admin_group_members'),
       expect.stringContaining('INSERT INTO admin_sessions'),
       expect.stringContaining('UPDATE admin_invitations'),
       expect.stringContaining('INSERT INTO log_iceberg_retention_jobs'),
@@ -570,7 +589,7 @@ describe('Admin invitation enrollment', () => {
       expect.stringContaining('INSERT INTO log_iceberg_record_parts'),
       expect.stringContaining('DELETE FROM admin_invitation_enrollments'),
     ]);
-    expect(statements[5].params).toEqual([
+    expect(statements[7].params).toEqual([
       expect.stringMatching(/^[a-f0-9]{64}$/u),
       logging.config.tableUuid,
       logging.config.generation,
@@ -578,7 +597,7 @@ describe('Admin invitation enrollment', () => {
       'key-invitation',
       'admin.admin_audit_log',
     ]);
-    expect(statements[5].sql).toContain('ON CONFLICT(id) DO NOTHING');
+    expect(statements[7].sql).toContain('ON CONFLICT(id) DO NOTHING');
     expect(statements[0].sql).toContain('EXISTS');
     expect(statements[0].params).toContain(await hashToken('enrollment-token'));
     expect(enrollments.has(await hashToken('enrollment-token'))).toBe(false);
@@ -587,10 +606,16 @@ describe('Admin invitation enrollment', () => {
       response.headers.get('set-cookie') ?? ''
     )?.[1];
     expect(sessionId).toBeTruthy();
-    expect(statements[3].params).toContain(sessionId);
+    expect(statements[5].params).toContain(sessionId);
     // The audit overview is stored unencrypted, so it may only carry a digest of the session.
     const [{ row }] = emitter.rows;
     expect(row.session_id).toBe(await adminSessionAuditDigest(String(sessionId)));
+    expect(
+      (JSON.parse(String(row.metadata_json)) as { admin_groups?: unknown }).admin_groups
+    ).toEqual([
+      { admin_group_id: 'group-a', name: 'A', outcome: 'joined' },
+      { admin_group_id: 'group-b', name: 'B', outcome: 'not_joined_changed' },
+    ]);
     expect(JSON.stringify(row)).not.toContain(String(sessionId));
   });
 

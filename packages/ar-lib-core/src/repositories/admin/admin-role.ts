@@ -17,7 +17,9 @@ import type {
   AdminRoleAssignment,
   AdminRoleAssignmentCreateInput,
   AdminRoleAssignmentScopeType,
+  AdminEffectiveRoleAssignment,
 } from '../../types/admin-user';
+import { ADMIN_EFFECTIVE_ROLE_ASSIGNMENTS } from './admin-group';
 
 /**
  * Admin role entity (extends BaseEntity for repository compatibility)
@@ -629,7 +631,8 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
   }
 
   /**
-   * Get all roles assigned to an Admin user
+   * Get the roles assigned to an Admin user themselves (the assignments that can be edited one by
+   * one). What their admin groups give is not among them: see `getEffectiveAssignmentsByUser`.
    *
    * @param adminUserId - Admin user ID
    * @param includeExpired - Include expired assignments (default: false)
@@ -639,11 +642,36 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
     adminUserId: string,
     includeExpired: boolean = false
   ): Promise<Array<AdminRoleAssignment & { role: AdminRole }>> {
+    return this.readAssignmentsByUser('admin_role_assignments', adminUserId, includeExpired);
+  }
+
+  /**
+   * Every role an Admin user holds: their own assignments and the ones their admin groups give
+   * (`source` says which, and a group's names it). This is what authorization reads.
+   */
+  async getEffectiveAssignmentsByUser(
+    adminUserId: string,
+    includeExpired: boolean = false
+  ): Promise<Array<AdminEffectiveRoleAssignment & { role: AdminRole }>> {
+    return this.readAssignmentsByUser(
+      ADMIN_EFFECTIVE_ROLE_ASSIGNMENTS,
+      adminUserId,
+      includeExpired
+    ) as Promise<Array<AdminEffectiveRoleAssignment & { role: AdminRole }>>;
+  }
+
+  private async readAssignmentsByUser(
+    source: 'admin_role_assignments' | typeof ADMIN_EFFECTIVE_ROLE_ASSIGNMENTS,
+    adminUserId: string,
+    includeExpired: boolean
+  ): Promise<Array<AdminRoleAssignment & { role: AdminRole }>> {
     const now = getCurrentTimestamp();
+    const effective = source === ADMIN_EFFECTIVE_ROLE_ASSIGNMENTS;
 
     let sql = `
       SELECT
         ra.*,
+        ${effective ? 'grp.display_name as admin_group_name,' : ''}
         r.tenant_id as role_tenant_id,
         r.name as role_name,
         r.display_name as role_display_name,
@@ -655,8 +683,9 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
         r.inherits_from,
         r.created_at as role_created_at,
         r.updated_at as role_updated_at
-      FROM admin_role_assignments ra
+      FROM ${source} ra
       JOIN admin_roles r ON ra.admin_role_id = r.id
+      ${effective ? 'LEFT JOIN admin_groups grp ON grp.id = ra.admin_group_id' : ''}
       WHERE ra.tenant_id = ? AND ra.admin_user_id = ?
     `;
     const params: unknown[] = [this.tenantId, adminUserId];
@@ -688,6 +717,13 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
         expires_at: row.expires_at as number | null,
         assigned_by: row.assigned_by as string | null,
         created_at: row.created_at as number,
+        ...(effective
+          ? {
+              source: row.source as 'direct' | 'group',
+              admin_group_id: (row.admin_group_id as string | null) ?? null,
+              admin_group_name: (row.admin_group_name as string | null) ?? null,
+            }
+          : {}),
         role: {
           id: row.admin_role_id as string,
           tenant_id: row.role_tenant_id as string,
@@ -765,7 +801,7 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
    * @returns Set of permission strings
    */
   async getPermissionsByUser(adminUserId: string): Promise<Set<string>> {
-    const assignments = await this.getAssignmentsByUser(adminUserId);
+    const assignments = await this.getEffectiveAssignmentsByUser(adminUserId);
     const permissions = new Set<string>();
 
     for (const assignment of assignments) {
@@ -786,7 +822,7 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
   async getUsersByRole(roleId: string): Promise<string[]> {
     const now = getCurrentTimestamp();
     const rows = await this.adapter.query<{ admin_user_id: string }>(
-      `SELECT DISTINCT admin_user_id FROM admin_role_assignments
+      `SELECT DISTINCT admin_user_id FROM ${ADMIN_EFFECTIVE_ROLE_ASSIGNMENTS}
        WHERE tenant_id = ? AND admin_role_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
       [this.tenantId, roleId, now]
     );
@@ -803,7 +839,7 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
   async hasRole(adminUserId: string, roleName: string): Promise<boolean> {
     const now = getCurrentTimestamp();
     const row = await this.adapter.queryOne<{ id: string }>(
-      `SELECT ra.id FROM admin_role_assignments ra
+      `SELECT ra.id FROM ${ADMIN_EFFECTIVE_ROLE_ASSIGNMENTS} ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
        WHERE ra.tenant_id = ? AND ra.admin_user_id = ? AND r.name = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
