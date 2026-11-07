@@ -359,15 +359,19 @@ describe('the social sign-in page', () => {
 		expect(page.pow).not.toBeNull();
 	});
 
-	it('stops a part offering a SAML provider (not lite yet), rather than leaving it out', async () => {
+	it('draws a SAML IdP as a button too', async () => {
 		tenantMethods = {
 			external: {
 				enabled: true,
-				providers: [GOOGLE, { id: 'saml-1', name: 'Corp', startMode: 'saml_sp', enabled: true }]
+				providers: [GOOGLE, { id: 'saml:idp-1', name: 'Corp', startMode: 'saml_sp', enabled: true }]
 			}
 		};
 		const page = await view();
-		expect(page.decision).toEqual({ kind: 'unsupported', reasons: ['provider:saml_sp'] });
+		expect(page.decision).toMatchObject({ kind: 'screen' });
+		expect(page.providers).toEqual([
+			{ id: 'provider-google', label: 'Continue with Google' },
+			{ id: 'saml:idp-1', label: 'Continue with Corp' }
+		]);
 	});
 });
 
@@ -427,16 +431,32 @@ describe('social_start', () => {
 		expect(store.txn.data.social).toBeUndefined();
 	});
 
-	it('starts nothing from a part that also offers a SAML provider (not lite yet)', async () => {
+	it("starts a SAML IdP at ar-saml's SP start, its grant naming the IdP", async () => {
 		tenantMethods = {
 			external: {
 				enabled: true,
-				providers: [GOOGLE, { id: 'saml-1', name: 'Corp', startMode: 'saml_sp', enabled: true }]
+				providers: [{ id: 'saml:idp-1', name: 'Corp', startMode: 'saml_sp', enabled: true }]
 			}
 		};
-		await expect(started()).resolves.toMatchObject({ status: 409, data: { restart: true } });
-		expect(grantCalls()).toEqual([]);
-		expect(submits()).toEqual([]);
+		routes['/api/v1/login/interactions/int-1/submit'] = () =>
+			json({ completed: false, step: COMPLETION, interaction: { current_step_id: 'done' } });
+		const ev = event({
+			action: 'social_start',
+			form: {
+				txn: 'txn-1',
+				csrf: 'csrf-1',
+				op: OP,
+				provider: 'saml:idp-1',
+				human_verification_response: 'proof-1'
+			}
+		});
+		await expect(
+			(actions as Record<string, (e: RequestEvent) => Promise<unknown>>).social_start(ev)
+		).resolves.toEqual({ started: true });
+		expect(grantCalls()[0]).toMatchObject({ provider: 'saml:idp-1' });
+		expect((ev.locals as { liteRelay?: { url: string } }).liteRelay?.url).toBe(
+			'https://id.example/saml/sp/login?idp=idp-1&lite_txn=txn-1&lite_grant=grant-1'
+		);
 	});
 
 	it('refuses a provider the part does not offer, asking for no grant', async () => {
@@ -607,6 +627,17 @@ describe('the lite callback', () => {
 			'x1',
 			expect.objectContaining({ path: '/' })
 		);
+	});
+
+	it('finalizes an ar-saml handoff too (32 bytes in hex)', async () => {
+		await started();
+		const samlHandoff = 'ab'.repeat(32);
+		await expect(
+			callbackView(`lite_txn=txn-1&lite_grant=grant-1&handoff_token=${samlHandoff}&state=st-1`)
+		).rejects.toMatchObject({ status: 303 });
+		expect(calls.find((call) => call.path === '/handoff/finalize')?.body).toMatchObject({
+			handoff_token: samlHandoff
+		});
 	});
 
 	it('finalizes a handoff once: a reload reads how it went', async () => {

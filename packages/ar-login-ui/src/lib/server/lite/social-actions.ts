@@ -69,14 +69,21 @@ export function liteLoginUiClientId(): string {
 	return configured && configured.length <= 128 ? configured : 'login-ui';
 }
 
-/** ar-bridge's start for the provider, with the transaction and its grant (nothing else). */
+/**
+ * The provider's start, with the transaction and its grant (nothing else): ar-bridge's, or for a
+ * SAML IdP (`saml:<IdP ID>`) ar-saml's SP start.
+ */
 export function liteSocialStartUrl(
 	publicOrigin: string,
 	provider: string,
 	txnId: string,
 	grantId: string
 ): string {
-	const url = new URL(`/api/external/${encodeURIComponent(provider)}/start`, publicOrigin);
+	const saml = /^saml:([^/?#\\]+)$/u.exec(provider);
+	const url = saml
+		? new URL('/saml/sp/login', publicOrigin)
+		: new URL(`/api/external/${encodeURIComponent(provider)}/start`, publicOrigin);
+	if (saml) url.searchParams.set('idp', saml[1]);
 	url.searchParams.set('lite_txn', txnId);
 	url.searchParams.set('lite_grant', grantId);
 	return url.toString();
