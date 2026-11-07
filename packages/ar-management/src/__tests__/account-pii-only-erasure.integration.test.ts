@@ -204,8 +204,8 @@ describe('PII-only deletion erasure', () => {
         )
         .all()
     ).toEqual([
-      // A value entered again since (active) is the person's own and stays.
-      { id: 'v-again', value_json: '"new"', lifecycle_state: 'active' },
+      // Every value the account keeps, as a full deletion erases them.
+      { id: 'v-again', value_json: null, lifecycle_state: 'deleted' },
       { id: 'v-email', value_json: null, lifecycle_state: 'deleted' },
       // A per-field PII custom attribute: erased and no longer read (readers take active rows).
       { id: 'v-field', value_json: null, lifecycle_state: 'deleted' },

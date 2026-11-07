@@ -8,7 +8,8 @@
  *   registration under way (its proof holds the address), or an external identity provider's
  *   account creation pending (its encrypted plan is the linked identity's profile data). The
  *   check is not a fence: an operation started right after it keeps its values until it has
- *   finished, and a deletion run again then erases them.
+ *   finished. The handler checks again once it has erased, and answers 409 then (the deletion is
+ *   run again once the operation has finished).
  * - The identifier change tables name the account by its user id (self-service, SCIM) or by its
  *   account id (`account:<user id>`): both are matched.
  * - Before the profile is changed (`redactEarlierWebhookEmailSnapshots`): the addresses earlier
@@ -16,8 +17,9 @@
  *   delivery still sends). A notice that an address was removed (`email_after_json` null) keeps
  *   the removed address until it expires as any snapshot does: so the deletion's own notice,
  *   written after this, still reaches the webhooks, also when the deletion is retried.
- * - After it (`eraseRetainedAccountPii`): the raw values of the profile fields marked deleted
- *   (the writer only moves their lifecycle), the per-field PII custom attributes, the linked
+ * - After it (`eraseRetainedAccountPii`): every value the account keeps in
+ *   `identity_sensitive_values` (the writer only moves the profile fields' lifecycle, and leaves
+ *   the per-field PII custom attributes active), the linked
  *   identities' provider profile (address, name, raw attributes and claims, profile data), the
  *   raw values of finished identifier changes, of identifier change challenges (an unused one
  *   can no longer be verified) and of finished or stopped external identifier unlinkings, the
@@ -28,7 +30,6 @@
  * afterwards (or bring one from an identity provider).
  */
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
-import { CUSTOM_ATTRIBUTE_VALUE_KEY_PREFIX } from '@authrim/ar-lib-core/services/custom-claims/pii-field-storage';
 
 export type PiiOnlyErasureBlocker =
   | 'identifier_change_in_progress'
@@ -101,28 +102,14 @@ export async function eraseRetainedAccountPii(
   const ids = accountIds(input.userId);
   const statements = [
     {
-      // Only the values the deletion (or an earlier one) marked deleted: a value entered again
-      // since is the person's own and stays.
-      sql: `UPDATE identity_sensitive_values SET value_json = NULL, updated_at = ?
-        WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-          AND lifecycle_state = 'deleted' AND value_json IS NOT NULL`,
-      params: [nowMs, input.tenantId, input.userId],
-    },
-    {
-      // The PII custom attributes, kept one row per field (the writer marks only their
-      // aggregate deleted); a reader takes active rows alone.
+      // Every value the account keeps (as a full deletion erases them): the profile fields the
+      // writer marked deleted, the per-field PII custom attributes it does not touch, and any
+      // value kind added later. A value entered again afterwards is the person's own.
       sql: `UPDATE identity_sensitive_values
           SET value_json = NULL, lifecycle_state = 'deleted', updated_at = ?
         WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-          AND substr(value_key, 1, ?) = ?
           AND (value_json IS NOT NULL OR lifecycle_state <> 'deleted')`,
-      params: [
-        nowMs,
-        input.tenantId,
-        input.userId,
-        CUSTOM_ATTRIBUTE_VALUE_KEY_PREFIX.length,
-        CUSTOM_ATTRIBUTE_VALUE_KEY_PREFIX,
-      ],
+      params: [nowMs, input.tenantId, input.userId],
     },
     {
       sql: `UPDATE linked_identities

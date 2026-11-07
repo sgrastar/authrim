@@ -2527,16 +2527,36 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     // custom attributes and the screen response records (the tombstone written above keeps a
     // later screen from recording new ones). The sign-in identifiers stay.
     await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
+    // An operation started since the check above keeps its values until it has finished: the
+    // deletion is not reported done (running it again then erases them). One that finished in
+    // the meantime is erased by a second pass (the erasure is idempotent).
+    const startedSince = await findPiiOnlyErasureBlocker(accountPii, { tenantId, userId });
+    if (!startedSince) {
+      // A change finished in the meantime also kept its addresses in a webhook snapshot (the
+      // deletion's own removal notice stays, as above).
+      await redactEarlierWebhookEmailSnapshots(accountPii, { tenantId, userId });
+      await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
+    }
 
     await invalidateUserCache(c.env, tenantId, userId);
-    await createAuditLogFromContext(c, 'user.pii_deleted', 'user', userId, {
+    // Recorded also when an operation holds part of it: the PII was erased.
+    const auditDetails = {
       reason: deletionReason,
       retention_days: retentionDays,
-    });
-    scheduleAdminAuditLog(c, 'user.pii_deleted', userId, 'success', {
-      reason: deletionReason,
-      retention_days: retentionDays,
-    });
+      ...(startedSince ? { retry_required: true, waiting_for: startedSince } : {}),
+    };
+    await createAuditLogFromContext(c, 'user.pii_deleted', 'user', userId, auditDetails);
+    scheduleAdminAuditLog(c, 'user.pii_deleted', userId, 'success', auditDetails);
+
+    if (startedSince) {
+      return c.json(
+        {
+          error: startedSince,
+          error_description: `${PII_ONLY_ERASURE_BLOCKER_DESCRIPTIONS[startedSince]} (PII was erased; run the deletion again then)`,
+        },
+        409
+      );
+    }
 
     return c.json({
       success: true,
