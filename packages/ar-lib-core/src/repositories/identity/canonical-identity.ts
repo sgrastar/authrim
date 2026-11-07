@@ -622,6 +622,28 @@ function activeClause(includeInactive: boolean | undefined, tableAlias?: string)
  * Runtime protocol code should use CanonicalRuntimeUserStore so graph rows remain in the
  * core database and sensitive values remain in the PII database.
  */
+/**
+ * The account (or subject) is being deleted, or deleted: a normal update may not move it back to
+ * another state, nor write its PII again (the deletion erased it). Raised instead of updating.
+ */
+export class CanonicalAccountRemovedError extends Error {
+  constructor() {
+    super('canonical_account_removed');
+    this.name = 'CanonicalAccountRemovedError';
+  }
+}
+
+/** Whether a lifecycle state is one only a deletion moves to (and never away from). */
+export function isRemovedLifecycleState(state: string | null | undefined): boolean {
+  return state === 'deleting' || state === 'deleted';
+}
+
+/**
+ * The guard a normal (non-deletion) lifecycle update carries: it never moves an account or
+ * subject out of deletion (a deletion's own moves go through transitionCanonicalAccountDeletion).
+ */
+const NOT_REMOVED_SQL = "AND lifecycle_state NOT IN ('deleting', 'deleted')";
+
 export class CanonicalIdentityRepository {
   private readonly tenantId: string;
 
@@ -884,8 +906,31 @@ export class CanonicalIdentityRepository {
     const result = await this.adapter.execute(
       `UPDATE identity_subjects
           SET lifecycle_state = ?, ${SUBJECT_UPDATED_AT_FORWARD_SQL}, deleted_at = ?
-        WHERE id = ? AND tenant_id = ?`,
+        WHERE id = ? AND tenant_id = ? ${isRemovedLifecycleState(lifecycleState) ? '' : NOT_REMOVED_SQL}`,
       [lifecycleState, now, now, deletedAt, subjectId, this.tenantId]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /**
+   * Marks the subject deleted with its account, unless another account that is not being
+   * deleted shares it (as a guest deletion keeps a subject another account still uses): that
+   * account's own updates keep it alive. False when it was kept.
+   */
+  async deleteSubjectWithAccount(subjectId: string, accountId: string): Promise<boolean> {
+    const now = getCurrentTimestamp();
+    const result = await this.adapter.execute(
+      `UPDATE identity_subjects
+          SET lifecycle_state = 'deleted', ${SUBJECT_UPDATED_AT_FORWARD_SQL}, deleted_at = ?
+        WHERE id = ? AND tenant_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM identity_accounts other
+             WHERE other.tenant_id = identity_subjects.tenant_id
+               AND other.primary_subject_id = identity_subjects.id
+               AND other.id <> ?
+               AND other.lifecycle_state NOT IN ('deleting', 'deleted')
+          )`,
+      [now, now, now, subjectId, this.tenantId, accountId]
     );
     return result.rowsAffected > 0;
   }
@@ -903,7 +948,7 @@ export class CanonicalIdentityRepository {
     const result = await this.adapter.execute(
       `UPDATE identity_subjects
           SET lifecycle_state = ?, display_label = ?, ${SUBJECT_UPDATED_AT_FORWARD_SQL}, deleted_at = ?
-        WHERE id = ? AND tenant_id = ?`,
+        WHERE id = ? AND tenant_id = ? ${isRemovedLifecycleState(input.lifecycleState) ? '' : NOT_REMOVED_SQL}`,
       [
         input.lifecycleState,
         input.displayLabel ?? null,
@@ -963,7 +1008,7 @@ export class CanonicalIdentityRepository {
     const result = await this.adapter.execute(
       `UPDATE identity_accounts
           SET lifecycle_state = ?, updated_at = ?, deleted_at = ?
-        WHERE id = ? AND tenant_id = ?`,
+        WHERE id = ? AND tenant_id = ? ${NOT_REMOVED_SQL}`,
       [lifecycleState, now, deletedAt, accountId, this.tenantId]
     );
     return result.rowsAffected > 0;
@@ -981,11 +1026,12 @@ export class CanonicalIdentityRepository {
     const deletedAt =
       input.lifecycleState === 'deleted' || input.lifecycleState === 'deleting' ? now : null;
     const hasMetadata = Object.prototype.hasOwnProperty.call(input, 'metadata');
+    const guard = isRemovedLifecycleState(input.lifecycleState) ? '' : NOT_REMOVED_SQL;
     const result = hasMetadata
       ? await this.adapter.execute(
           `UPDATE identity_accounts
               SET lifecycle_state = ?, display_label = ?, metadata_json = ?, updated_at = ?, deleted_at = ?
-            WHERE id = ? AND tenant_id = ?`,
+            WHERE id = ? AND tenant_id = ? ${guard}`,
           [
             input.lifecycleState,
             input.displayLabel ?? null,
@@ -999,7 +1045,7 @@ export class CanonicalIdentityRepository {
       : await this.adapter.execute(
           `UPDATE identity_accounts
               SET lifecycle_state = ?, display_label = ?, updated_at = ?, deleted_at = ?
-            WHERE id = ? AND tenant_id = ?`,
+            WHERE id = ? AND tenant_id = ? ${guard}`,
           [
             input.lifecycleState,
             input.displayLabel ?? null,

@@ -1,6 +1,7 @@
 import type { AccountGovernanceMutationCapability } from '../../db/adapter';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  CanonicalAccountRemovedError,
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
@@ -383,6 +384,110 @@ describe('CanonicalRuntimeUserWriter', () => {
       piiAdapter.getById('identity_sensitive_values', 'sensitive-value:user-1:email')
     ).toMatchObject({
       lifecycle_state: 'deleted',
+    });
+  });
+
+  describe('an account being deleted', () => {
+    const create = () =>
+      writer.createFromRuntimeUser({
+        userId: 'user-1',
+        tenantId: 'tenant-a',
+        active: true,
+        emailVerified: true,
+        displayName: 'Example Person',
+        piiFields: { email: true },
+        sensitiveValues: { email: 'person@example.test' },
+      });
+    const emailValue = () =>
+      piiAdapter.getById('identity_sensitive_values', 'sensitive-value:user-1:email');
+
+    it('is not brought back to life, nor given PII again, by a later write', async () => {
+      await create();
+      await writer.deleteRuntimeUser('user-1');
+
+      await expect(
+        writer.syncFromRuntimeUser({
+          userId: 'user-1',
+          tenantId: 'tenant-a',
+          active: true,
+          emailVerified: true,
+          piiFields: { email: true },
+          sensitiveValues: { email: 'again@example.test' },
+        })
+      ).rejects.toBeInstanceOf(CanonicalAccountRemovedError);
+      await expect(
+        writer.updateProfileFields({
+          userId: 'user-1',
+          tenantId: 'tenant-a',
+          values: { email: 'again@example.test' },
+        })
+      ).rejects.toBeInstanceOf(CanonicalAccountRemovedError);
+      expect(adapter.getById('identity_accounts', 'account:user-1')).toMatchObject({
+        lifecycle_state: 'deleted',
+      });
+      expect(emailValue()).toMatchObject({ lifecycle_state: 'deleted' });
+      expect(JSON.stringify(emailValue())).not.toContain('again@example.test');
+    });
+
+    it('writes no PII when its deletion began after the account was read', async () => {
+      await create();
+      const before = JSON.stringify(emailValue());
+      // The account moved to deleting between the read and the guarded update, which then
+      // matches nothing.
+      identityRepository.updateAccountRuntimeFields = async (accountId) => {
+        const row = adapter.getById('identity_accounts', accountId);
+        adapter.seed('identity_accounts', [{ ...row, lifecycle_state: 'deleting' }]);
+        return false;
+      };
+
+      await expect(
+        writer.syncFromRuntimeUser({
+          userId: 'user-1',
+          tenantId: 'tenant-a',
+          active: true,
+          emailVerified: true,
+          piiFields: { email: true },
+          sensitiveValues: { email: 'again@example.test' },
+        })
+      ).rejects.toBeInstanceOf(CanonicalAccountRemovedError);
+      expect(JSON.stringify(emailValue())).toBe(before);
+    });
+
+    it('writes no profile values when the deletion began after the read', async () => {
+      await create();
+      const before = JSON.stringify(emailValue());
+      // The account moves to deleting between the first read and the write of the values.
+      const findAccountById = identityRepository.findAccountById.bind(identityRepository);
+      identityRepository.findAccountById = async (accountId, options) => {
+        const row = adapter.getById('identity_accounts', accountId);
+        adapter.seed('identity_accounts', [{ ...row, lifecycle_state: 'deleting' }]);
+        return findAccountById(accountId, options);
+      };
+
+      await expect(
+        writer.updateProfileFields({
+          userId: 'user-1',
+          tenantId: 'tenant-a',
+          values: { email: 'again@example.test' },
+        })
+      ).rejects.toBeInstanceOf(CanonicalAccountRemovedError);
+      expect(JSON.stringify(emailValue())).toBe(before);
+    });
+
+    it('goes on when its update missed for another reason (the account is still live)', async () => {
+      await create();
+      identityRepository.updateAccountRuntimeFields = async () => false;
+
+      await expect(
+        writer.syncFromRuntimeUser({
+          userId: 'user-1',
+          tenantId: 'tenant-a',
+          active: true,
+          emailVerified: true,
+          piiFields: { email: true },
+          sensitiveValues: { email: 'again@example.test' },
+        })
+      ).resolves.toMatchObject({ created: false });
     });
   });
 });

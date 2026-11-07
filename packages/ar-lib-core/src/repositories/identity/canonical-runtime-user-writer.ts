@@ -8,7 +8,9 @@ import type { DatabaseAdapter } from '../../db/adapter';
 import { getCurrentTimestamp } from '../base';
 import { createLogger } from '../../utils/logger';
 import {
+  CanonicalAccountRemovedError,
   CanonicalIdentityRepository,
+  isRemovedLifecycleState,
   type CanonicalIdentityGraph,
   type CreateProfileAttributeValueInput,
   type IdentityLifecycleState,
@@ -202,6 +204,10 @@ export class CanonicalRuntimeUserWriter {
     if (!account) {
       return this.createFromRuntimeUserInternal(input);
     }
+    // An account being deleted (or deleted) is not written back to life, nor given PII again.
+    if (isRemovedLifecycleState(account.lifecycle_state)) {
+      throw new CanonicalAccountRemovedError();
+    }
 
     const lifecycleState = toLifecycleState(input.active);
     const accountRuntimeUpdate: {
@@ -216,7 +222,15 @@ export class CanonicalRuntimeUserWriter {
     if (Object.keys(accountMetadata).length > 0) {
       accountRuntimeUpdate.metadata = accountMetadata;
     }
-    await this.repository.updateAccountRuntimeFields(account.id, accountRuntimeUpdate);
+    // Refused once a deletion began since the read above (its lifecycle guard): nothing more is
+    // written, the profile values least of all.
+    if (!(await this.repository.updateAccountRuntimeFields(account.id, accountRuntimeUpdate))) {
+      const now = await this.repository.findAccountById(account.id, { includeInactive: true });
+      // A row gone since the read is no account to write to either.
+      if (!now || isRemovedLifecycleState(now.lifecycle_state)) {
+        throw new CanonicalAccountRemovedError();
+      }
+    }
     if (account.primary_subject_id) {
       await this.repository.updateSubjectRuntimeFields(account.primary_subject_id, {
         lifecycleState,
@@ -279,6 +293,10 @@ export class CanonicalRuntimeUserWriter {
     if (!account?.primary_subject_id) {
       return false;
     }
+    // An account being deleted (or deleted) gets no profile values again.
+    if (isRemovedLifecycleState(account.lifecycle_state)) {
+      throw new CanonicalAccountRemovedError();
+    }
     const profile = (
       await this.repository.findProfilesForSubject(account.primary_subject_id, {
         includeInactive: true,
@@ -286,6 +304,12 @@ export class CanonicalRuntimeUserWriter {
     )[0];
     if (!profile) {
       return false;
+    }
+    // Read again just before the values are written: a deletion that began since the read above
+    // stops it. (The PII database's erasure fence refuses what would still slip between.)
+    const current = await this.repository.findAccountById(account.id, { includeInactive: true });
+    if (!current || isRemovedLifecycleState(current.lifecycle_state)) {
+      throw new CanonicalAccountRemovedError();
     }
     const fields = Object.keys(input.values) as CanonicalSensitiveUserField[];
     await this.upsertPiiProfileAttributeRefs(
@@ -324,7 +348,8 @@ export class CanonicalRuntimeUserWriter {
     );
     if (!accountTransitioned) throw new Error('account_deletion_not_admitted');
     if (account.primary_subject_id) {
-      await this.repository.transitionSubjectLifecycle(account.primary_subject_id, 'deleted');
+      // Kept when another live account shares it (see deleteSubjectWithAccount).
+      await this.repository.deleteSubjectWithAccount(account.primary_subject_id, account.id);
     }
     await this.sensitiveValueAdapter.execute(
       `UPDATE identity_sensitive_values SET lifecycle_state = ?, updated_at = ?
