@@ -510,7 +510,7 @@
 						>{data.text.continue}</button
 					>
 				{/if}
-				{#if data.codeEntry?.kind === 'mail_otp' && data.codeEntry.resendable}
+				{#if data.codeEntry?.kind === 'mail_otp'}
 					<!-- In the code's form: the consent choices drawn with it go with it (kept to draw the
 					     page again), the required ones not asked for yet. -->
 					{#if data.codeEntry.resendWait > 0}<p class="muted">{data.text.resendWait}</p>{/if}

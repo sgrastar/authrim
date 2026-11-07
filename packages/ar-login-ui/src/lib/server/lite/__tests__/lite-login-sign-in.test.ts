@@ -461,6 +461,39 @@ describe('the code entry', () => {
 		expect(page).toMatchObject({ decision: { kind: 'unsupported', reasons: ['code_not_sent'] } });
 	});
 
+	it('draws the page where the interaction is when another submit of the step took it', async () => {
+		currentStep = CODE_STEP;
+		store.set({ state: 'pending', data: { ...store.txn.data, code: pendingCode() } });
+		routes['/api/v1/login/interactions/int-1/submit'] = () =>
+			json({ error: 'step_conflict', error_code: 'AR_FLOW_STEP_CONFLICT' }, 409);
+		const e = event({
+			action: 'verify_code',
+			form: { txn: 'txn-1', csrf: 'csrf-1', op: OP, code: '123456' }
+		});
+		await expect(
+			(actions as Record<string, (e: RequestEvent) => Promise<unknown>>).verify_code(e)
+		).rejects.toMatchObject({ status: 303 });
+		// The session made goes to the browser all the same; the sign-in stays recorded.
+		expect(e.cookies.set).toHaveBeenCalledWith('authrim_session', 's1', expect.anything());
+		expect(store.txn.data.signedIn).toBeDefined();
+	});
+
+	it('starts no new Flow over one whose resume is answered step_conflict', async () => {
+		currentStep = CODE_STEP;
+		store.set({ state: 'pending', data: { ...store.txn.data, code: pendingCode() } });
+		const start = routes['/api/v1/login/interactions/start'];
+		routes['/api/v1/login/interactions/start'] = (body, init) =>
+			body.resume_interaction_id ? json({ error: 'step_conflict' }, 409) : start(body, init);
+		const page = await view();
+		expect(page).toMatchObject({ page: 'error' });
+		expect(
+			calls.filter(
+				(c) => c.path === '/api/v1/login/interactions/start' && !c.body.resume_interaction_id
+			)
+		).toEqual([]);
+		expect(store.txn.data.code).toMatchObject({ attemptId: 'attempt-1' });
+	});
+
 	it('checks the code, makes the session, and completes the Flow with it', async () => {
 		currentStep = CODE_STEP;
 		store.set({ state: 'pending', data: { ...store.txn.data, code: pendingCode() } });

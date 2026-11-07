@@ -217,7 +217,8 @@ export const liteSocialStartAction = guarded(async (event) => {
 	// The SPA's `submitRuntimeStep(providerId, …, { awaitingSignIn: true })`: the choice, then the
 	// steps not drawn, stopping at the completion (it waits for the sign-in). Should it fail, the
 	// sign-in's Continue submits the choice.
-	const submitted = await submitOrNull(post, step, provider);
+	// (Another submit of the step meanwhile changes nothing here: the relay is what is left to do.)
+	const submitted = await submitOrNull(post, step, provider, {}, { redrawOnConflict: false });
 	if (submitted?.completed) {
 		// A session the authorization request accepts already existed: the provider is not needed.
 		return relayCompletion(post, kept, submitted.output);
