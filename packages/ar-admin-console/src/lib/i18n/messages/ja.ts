@@ -9,6 +9,7 @@ import { jaSecurityKeys } from './security-keys/ja';
 import { jaKeyringPresentation } from './keyring-presentation/ja';
 import { jaNotices } from './notices/ja';
 import { jaCustomization } from './customization/ja';
+import { jaScreens } from './screens/ja';
 import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
 
@@ -28,6 +29,7 @@ export const ja = {
 	...jaKeyringPresentation,
 	...jaNotices,
 	...jaCustomization,
+	...jaScreens,
 	...jaStepUp,
 	...jaAdminAudit,
 	'app.adminLabel': '管理コンソール',

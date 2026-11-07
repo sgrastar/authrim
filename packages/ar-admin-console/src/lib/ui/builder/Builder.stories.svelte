@@ -2,12 +2,15 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { named, subcomponents } from '../stories/subcomponents';
 	import PartPalette from './PartPalette.svelte';
-	import { localized } from '../stories/sample';
-	import { PART_DEFS, PART_GROUPS, type PartGroup } from '../stories/screen-parts';
+	import {
+		paletteEntries as screenPaletteEntries,
+		paletteGroups as screenPaletteGroups
+	} from '#lib/pages/customization/screens/screen-builder.js';
+	import { PART_KINDS } from '#lib/pages/customization/screens/screen-model.js';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import ScreenBuilderDemo from '../stories/ScreenBuilderDemo.svelte';
-	import ScreenPreview from '../stories/ScreenPreview.svelte';
+	import ScreenPreview from '#lib/pages/customization/screens/ScreenPreview.svelte';
 	import { sample } from '../stories/sample';
 	import type { LayoutRow } from './layout-model';
 	import LayoutCanvas from './LayoutCanvas.svelte';
@@ -54,19 +57,9 @@
 	>);
 
 	/** The screen builder's parts, as the palette shows them. */
-	const paletteGroups = () =>
-		(Object.keys(PART_GROUPS) as PartGroup[]).map((id) => ({
-			id,
-			label: localized(PART_GROUPS[id])
-		}));
-	const paletteEntries = () =>
-		PART_DEFS.map((def) => ({
-			kind: def.kind,
-			label: localized(def.name),
-			description: localized(def.description),
-			icon: def.icon,
-			group: def.group
-		}));
+	const allKinds = PART_KINDS.map((def) => def.kind);
+	const paletteGroups = () => screenPaletteGroups(allKinds);
+	const paletteEntries = () => screenPaletteEntries(allKinds);
 </script>
 
 <Story name="Screen builder">

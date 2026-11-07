@@ -10,6 +10,7 @@ import { deSecurityKeys } from './security-keys/de';
 import { deKeyringPresentation } from './keyring-presentation/de';
 import { deNotices } from './notices/de';
 import { deCustomization } from './customization/de';
+import { deScreens } from './screens/de';
 import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 
@@ -25,6 +26,7 @@ export const de = {
 	...deKeyringPresentation,
 	...deNotices,
 	...deCustomization,
+	...deScreens,
 	...deStepUp,
 	...deAdminAudit,
 	'app.adminLabel': 'Verwaltungskonsole',
