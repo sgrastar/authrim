@@ -597,6 +597,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.text_color
     login-ui.copy_color
     login-ui.form_area_color
+    login-ui.field_color
+    login-ui.secondary_button_color
     login-ui.brand_name
     login-ui.header_name
     login-ui.brand_panel_title
@@ -616,6 +618,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.published_snapshot
     login-ui.rollback_snapshot
     login-ui.custom_css
+    login-ui.background_image_filters
     login-ui.text_localizations
     login-ui.footer_text
     login-ui.footer_links

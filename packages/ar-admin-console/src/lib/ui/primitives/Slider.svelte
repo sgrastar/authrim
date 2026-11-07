@@ -27,6 +27,8 @@
 		showValue?: boolean;
 		/** One line: the track with its value after it, the label for screen readers only. */
 		compact?: boolean;
+		/** Label and track closer together, for a stack of sliders that belong together. */
+		dense?: boolean;
 		format?: 'number' | 'percent';
 		unit?: string;
 		hint?: string;
@@ -49,6 +51,7 @@
 		snapToTicks = false,
 		showValue = true,
 		compact = false,
+		dense = false,
 		format = 'number',
 		unit,
 		hint,
@@ -117,6 +120,7 @@
 <div
 	class="slider"
 	class:slider--compact={compact}
+	class:slider--dense={dense}
 	class:is-disabled={off}
 	class:is-changed={isChanged}
 >
@@ -157,6 +161,15 @@
 		--thumb: 18px;
 		display: grid;
 		gap: 6px;
+	}
+
+	.slider--dense {
+		--thumb: 16px;
+		gap: 0;
+	}
+
+	.slider--dense .slider__value {
+		font-size: var(--fs-label);
 	}
 
 	/* One line: the value sits after the track (the label is for screen readers). */

@@ -149,6 +149,43 @@
 	{/snippet}
 </Story>
 
+<!-- Filters on the page picture (hue 200°, blur 4px): the picture changes, the form does not. Each box
+     that paints the picture filters it: the page, the framed split's frame, the brand panel. -->
+<Story name="Page picture filters">
+	{#snippet template()}
+		<ShellGallery
+			columns={3}
+			height={520}
+			cells={[
+				{ label: 'standard', template: 'standard' as const, ui: {} },
+				{
+					label: 'split, framed',
+					template: 'split' as const,
+					ui: split({ template: 'split', splitFrame: 'card' })
+				},
+				{
+					label: 'split, brand only',
+					template: 'split' as const,
+					ui: split({ template: 'split', splitBackgroundMode: 'brand' })
+				}
+			].map((cell) => ({
+				...cell,
+				palette: 'clear-glass' as const,
+				ui: {
+					...cell.ui,
+					appearance: {
+						backgroundImageUrl: SAMPLE_BACKGROUND_URL,
+						backgroundImageFilters: [
+							{ name: 'hue-rotate', value: 200 },
+							{ name: 'blur', value: 4 }
+						]
+					}
+				}
+			}))}
+		/>
+	{/snippet}
+</Story>
+
 <Story name="Split panel: background modes">
 	{#snippet template()}
 		<ShellGallery

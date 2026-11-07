@@ -7,6 +7,21 @@ import type {
 } from '#lib/api/authentication-methods.js';
 import { syncLoginUIDocumentSurface } from '#lib/document-surface.js';
 import {
+	loginUIImageFilterCss,
+	type LoginUIImageFilter
+} from '@authrim/ar-lib-core/utils/login-ui-image-filters';
+
+/** Black or white, whichever reads better on a tenant's colour; its alpha, if any, left aside. */
+const labelColorOn = (colour: string) =>
+	accentTextColor(/^#[0-9a-f]{8}$/i.test(colour) ? colour.slice(0, 7) : colour);
+
+/** A tenant's colour that text is laid on: kept only when a label colour can be chosen for it (hex
+ *  or rgb(); a named colour is dropped, and the palette's own applies). */
+function labelledColor(colour: string | undefined): string {
+	const safe = sanitizeColor(colour);
+	return safe && labelColorOn(safe) ? safe : '';
+}
+import {
 	cssUrl,
 	isValidImageUrl,
 	isValidLinkUrl,
@@ -282,10 +297,13 @@ export function createLoginUIPageStore() {
 	let palette = $state<PaletteId>(DEFAULT_PALETTE);
 	let formFrame = $state<FormFrame>('full');
 	let formAreaColor = $state('');
+	let fieldColor = $state('');
+	let secondaryButtonColor = $state('');
 	let headerName = $state('');
 	let brandPanelLogoDisplay = $state<BrandPanelLogoDisplay>('inherit');
 	let backgroundImageOpacity = $state(100);
 	let backgroundImageGrayscale = $state(false);
+	let backgroundImageFilter = $state('');
 	let brandPanelImageUrl = $state<string | null>(null);
 	let brandPanelImageOpacity = $state(100);
 	let brandPanelImageGrayscale = $state(false);
@@ -442,10 +460,16 @@ export function createLoginUIPageStore() {
 		themeTemplate = servedPalette ? legacyThemeFor(servedPalette, template) : legacyTheme;
 		formFrame = readFormFrame(page?.formFrame);
 		formAreaColor = sanitizeColor(page?.formAreaColor) || '';
+		fieldColor = labelledColor(page?.fieldColor);
+		secondaryButtonColor = labelledColor(page?.secondaryButtonColor);
 		headerName = readOptionalText(ui?.branding?.headerName) ?? '';
 		brandPanelLogoDisplay = readBrandPanelLogoDisplay(page?.brandPanelLogoDisplay);
 		backgroundImageOpacity = readPercentage(appearance?.backgroundImageOpacity, 100);
 		backgroundImageGrayscale = readBoolean(appearance?.backgroundImageGrayscale, false);
+		// Built from the known filters only, each value checked against its range.
+		backgroundImageFilter = Array.isArray(appearance?.backgroundImageFilters)
+			? loginUIImageFilterCss(appearance.backgroundImageFilters as LoginUIImageFilter[])
+			: '';
 		brandPanelImageUrl =
 			appearance?.brandPanelImageUrl && isValidImageUrl(appearance.brandPanelImageUrl)
 				? appearance.brandPanelImageUrl
@@ -530,6 +554,22 @@ export function createLoginUIPageStore() {
 		get formAreaColor() {
 			return formAreaColor;
 		},
+		/** The text input colour (hex with optional alpha); empty while the palette's applies. */
+		get fieldColor() {
+			return fieldColor;
+		},
+		/** Black or white, whichever reads better on the input colour; null while none is set. */
+		get fieldTextColor() {
+			return labelColorOn(fieldColor);
+		},
+		/** The secondary button colour (hex with optional alpha); empty while the palette's applies. */
+		get secondaryButtonColor() {
+			return secondaryButtonColor;
+		},
+		/** Black or white, whichever reads better on the secondary button colour. */
+		get secondaryButtonTextColor() {
+			return labelColorOn(secondaryButtonColor);
+		},
 		/** The name shown in the page header; empty when none is set. */
 		get headerName() {
 			return headerName;
@@ -554,6 +594,10 @@ export function createLoginUIPageStore() {
 		/** The page picture is shown in grayscale (only while there is one). */
 		get backgroundImageGrayscale() {
 			return pageBackgroundGray();
+		},
+		/** The CSS filter on the page picture ('' when there is none, or no picture). */
+		get backgroundImageFilter() {
+			return backgroundImageUrl ? backgroundImageFilter : '';
 		},
 		get brandPanelImageGrayscale() {
 			return brandPanelImageGray();

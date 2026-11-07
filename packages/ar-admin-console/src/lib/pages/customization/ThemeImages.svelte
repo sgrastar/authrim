@@ -4,7 +4,9 @@
 	import ImageUpload from '#lib/ui/patterns/ImageUpload.svelte';
 	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
 	import Slider from '#lib/ui/primitives/Slider.svelte';
+	import ActionMenu from '#lib/ui/primitives/ActionMenu.svelte';
 	import BgPresetButton from './BgPresetButton.svelte';
+	import ImageFilters, { addFilterActions } from './ImageFilters.svelte';
 	import { apiBgPresets, type BgPresetSource } from './bg-presets';
 	import ThemeGroup from './ThemeGroup.svelte';
 	import type { ThemeDraft } from './theme-draft';
@@ -54,13 +56,27 @@
 				value={draft.backgroundImage}
 				source={presets}
 				onchoose={pick}
+			/><ActionMenu
+				size="sm"
+				framed
+				disabled={!draft.backgroundImage}
+				label={t('th.f.add')}
+				actions={addFilterActions(draft.backgroundFilters, (filter) => {
+					draft.backgroundFilters = [...draft.backgroundFilters, filter];
+				})}
 			/>{/snippet}
 	</ImageUpload>
 	{#if draft.backgroundImage}
-		<Slider label={t('th.i.bgOpacity')} format="percent" bind:value={draft.backgroundOpacity} />
-		<Checkbox size="sm" bind:checked={draft.backgroundGrayscale}>
-			{t('th.i.grayscale')}
-		</Checkbox>
+		<!-- The opacity and the filters are one stack of sliders, closer together. -->
+		<div class="sliders">
+			<Slider
+				label={t('th.i.bgOpacity')}
+				format="percent"
+				dense
+				bind:value={draft.backgroundOpacity}
+			/>
+			<ImageFilters bind:filters={draft.backgroundFilters} />
+		</div>
 	{/if}
 </ThemeGroup>
 
@@ -115,3 +131,10 @@
 		{/if}
 	</ThemeGroup>
 {/if}
+
+<style>
+	.sliders {
+		display: grid;
+		gap: var(--space-related);
+	}
+</style>

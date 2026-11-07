@@ -13,14 +13,43 @@ function declarationsReading(css: string, needle: string): string[] {
 	return found;
 }
 
+/** The rules of `css` (innermost blocks: selector and body), comments taken out. */
+function rules(css: string): { selector: string; body: string }[] {
+	const plain = css.replace(/\/\*[\s\S]*?\*\//g, '');
+	return [...plain.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((match) => ({
+		selector: match[1].trim(),
+		body: match[2]
+	}));
+}
+
+/** A box with a filtered picture: its veil is painted by its .auth-image-filter layer instead. */
+const FILTERED = "[data-page-image-filter='true']";
+
 describe('page background image opacity', () => {
 	it('is applied wherever the page background image is painted', () => {
-		const readers = declarationsReading(app, 'var(--login-page-background-layer').filter((d) =>
-			d.startsWith('background')
-		);
+		const readers = rules(app)
+			.filter(({ selector }) => !selector.includes(FILTERED))
+			.flatMap(({ body }) => declarationsReading(body, 'var(--login-page-background-layer'))
+			.filter((d) => d.startsWith('background'));
 		expect(readers.length).toBeGreaterThan(0);
 		for (const declaration of readers) {
 			expect(declaration, declaration).toContain('--login-page-image-veil');
+		}
+	});
+
+	it('is painted over a filtered picture by its filter layer', () => {
+		const filtered = rules(app).filter(
+			({ selector, body }) =>
+				selector.includes(FILTERED) && body.includes('var(--login-page-background-layer')
+		);
+		expect(filtered.length).toBeGreaterThan(0);
+		for (const { body } of filtered) expect(body).not.toContain('--login-page-image-veil');
+		const layers = rules(app).filter(
+			({ selector, body }) => selector.includes('.auth-image-filter') && /background/.test(body)
+		);
+		expect(layers.length).toBeGreaterThan(0);
+		for (const { selector, body } of layers) {
+			expect(body, selector).toContain('var(--login-page-image-veil)');
 		}
 	});
 });

@@ -73,6 +73,60 @@ describe('theme values', () => {
 		expect(valuesToDraft(draftToValues(newThemeDraft()))).toEqual(newThemeDraft());
 	});
 
+	it('saves the background image filters in order and opens them again', () => {
+		const draft: ThemeDraft = {
+			...newThemeDraft(),
+			backgroundFilters: [
+				{ name: 'hue-rotate', value: 200 },
+				{ name: 'blur', value: 4 }
+			]
+		};
+		const values = draftToValues(draft);
+		expect(values['login-ui.background_image_filters']).toBe('hue-rotate:200;blur:4');
+		expect(valuesToDraft(values).backgroundFilters).toEqual(draft.backgroundFilters);
+		// None is written as an empty value, which clears filters a theme had.
+		expect(draftToValues(newThemeDraft())['login-ui.background_image_filters']).toBe('');
+		// A stored value the editor does not know reads as no filters, or only its valid ones.
+		expect(
+			valuesToDraft({ 'login-ui.background_image_filters': 'blur:99;sepia:30;nope:1' })
+				.backgroundFilters
+		).toEqual([{ name: 'sepia', value: 30 }]);
+	});
+
+	it('opens the older grayscale switch as a grayscale filter, and saves it as one', () => {
+		const stored = openStored({
+			'login-ui.background_image_grayscale': true,
+			'login-ui.background_image_filters': 'blur:2'
+		});
+		expect(stored.opened.backgroundFilters).toEqual([
+			{ name: 'grayscale', value: 100 },
+			{ name: 'blur', value: 2 }
+		]);
+		// Not changed: kept as stored, the switch included.
+		const kept = draftToValues(valuesToDraft(stored.values), stored);
+		expect(kept['login-ui.background_image_grayscale']).toBe(true);
+		expect(kept['login-ui.background_image_filters']).toBe('blur:2');
+		// Changed: the filters carry the grayscale, and the switch is turned off.
+		const draft = valuesToDraft(stored.values);
+		draft.backgroundFilters[0].value = 40;
+		const changed = draftToValues(draft, stored);
+		expect(changed['login-ui.background_image_filters']).toBe('grayscale:40;blur:2');
+		expect(changed['login-ui.background_image_grayscale']).toBe(false);
+	});
+
+	it('saves the input field and secondary button colours', () => {
+		const draft = { ...newThemeDraft(), fieldColor: '#fafafa', secondaryButtonColor: '#12345680' };
+		const values = draftToValues(draft);
+		expect(values['login-ui.field_color']).toBe('#fafafa');
+		expect(values['login-ui.secondary_button_color']).toBe('#12345680');
+		expect(valuesToDraft(values)).toMatchObject({
+			fieldColor: '#fafafa',
+			secondaryButtonColor: '#12345680'
+		});
+		// Empty is not written: the palette's own colours apply.
+		expect(draftToValues(newThemeDraft())).not.toHaveProperty('login-ui.field_color');
+	});
+
 	it('shows nothing of the brand on the panel as brand_content_mode none', () => {
 		const values = draftToValues({ ...newThemeDraft(), brandLogoDisplay: 'none' });
 		expect(values['login-ui.brand_content_mode']).toBe('none');
