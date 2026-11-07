@@ -248,6 +248,7 @@ export const COMMON_EVENT_PATTERNS = [
 	{ pattern: 'token.revoked', description: 'Token revocation' },
 	{ pattern: 'client.*', description: 'All client events' },
 	{ pattern: 'consent.*', description: 'All consent events' },
+	{ pattern: 'flow.screen.submitted', description: 'Screen submitted (with its Flow answers)' },
 	{ pattern: 'webhook.test', description: 'Test event for validation' }
 ];
 

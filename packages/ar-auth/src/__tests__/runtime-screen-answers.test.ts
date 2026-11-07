@@ -3,7 +3,9 @@ import {
   MAX_SCREEN_TEXT_ANSWER_LENGTH,
   readRuntimeScreenAnswers,
   shownScreenInputParts,
+  splitOffProfileAnswers,
   splitProfileAnswers,
+  type RuntimeScreenAnswer,
 } from '../runtime-screen-answers';
 
 const options = [
@@ -193,5 +195,56 @@ describe('splitProfileAnswers', () => {
     expect(split.profile).toEqual({ given_name: 'Ada' });
     expect(split.custom).toEqual({ department: 'dev', newsletter: false });
     expect(split.skipped).toEqual(['preferred_username', 'email', 'gone']);
+  });
+});
+
+describe('splitOffProfileAnswers', () => {
+  const answer = (
+    field: string,
+    blockType: RuntimeScreenAnswer['blockType'],
+    answerTargets: string[],
+    value: RuntimeScreenAnswer['value'],
+    storeToProfile = false
+  ): RuntimeScreenAnswer => ({ field, blockType, storeToProfile, answerTargets, value });
+
+  it('sends choices to the Flow, every Flow answer to its event and the rest to the record', () => {
+    const split = splitOffProfileAnswers([
+      answer('plan', 'select', ['flow_event', 'record'], 'pro'),
+      answer('note', 'identity_field', ['flow_event'], 'Call me'),
+      answer('agree', 'checkbox', ['flow_event'], false),
+      answer('source', 'radio', ['record'], 'web'),
+      answer('given_name', 'identity_field', [], 'Ada', true),
+    ]);
+
+    expect(split.flowContext).toEqual({ plan: 'pro', agree: false });
+    expect(split.flowEvent).toEqual({ plan: 'pro', note: 'Call me', agree: false });
+    expect(split.record).toEqual({ plan: 'pro', source: 'web' });
+    expect(split.hasFlowEventPart).toBe(true);
+    expect(split.hasFlowContextPart).toBe(true);
+  });
+
+  it('keeps nothing for a part left empty, and knows the screen sends to the Flow all the same', () => {
+    const split = splitOffProfileAnswers([
+      answer('plan', 'select', ['flow_event'], null),
+      answer('note', 'identity_field', ['record'], null),
+    ]);
+
+    expect(split).toEqual({
+      hasFlowEventPart: true,
+      hasFlowContextPart: true,
+      hasRecordPart: true,
+      flowEvent: {},
+      flowContext: {},
+      record: {},
+    });
+  });
+
+  it('sends nothing anywhere for a screen whose answers all go to the profile', () => {
+    const split = splitOffProfileAnswers([
+      answer('given_name', 'identity_field', ['flow_event'], 'Ada', true),
+    ]);
+
+    expect(split.hasFlowEventPart).toBe(false);
+    expect(split.flowEvent).toEqual({});
   });
 });

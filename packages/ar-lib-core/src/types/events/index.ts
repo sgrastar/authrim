@@ -132,6 +132,7 @@ export {
   SECURITY_EVENTS,
   DOMAIN_EVENTS,
   SETTINGS_EVENTS,
+  FLOW_EVENTS,
   EVENT_TYPES,
 } from './event-types';
 
@@ -146,6 +147,7 @@ export type {
   SecurityEventType,
   DomainEventType,
   SettingsEventType,
+  FlowEventType,
   EventType,
   BaseEventData,
   AuthEventData,
@@ -159,4 +161,5 @@ export type {
   SecurityEventData,
   DomainEventData,
   SettingsEventData,
+  FlowScreenSubmittedEventData,
 } from './event-types';

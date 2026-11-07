@@ -69,15 +69,21 @@ import {
   type DestinationProfileConsentDescriptor,
   type DestinationFieldReleasePolicies,
   type Session,
+  type FlowScreenSubmittedEventData,
+  FLOW_EVENTS,
+  publishEvent,
   isSAMLAuthorizationChallenge,
 } from '@authrim/ar-lib-core';
 import { resolveRuntimeScreenRow } from '@authrim/ar-lib-core/services/runtime-screen-resolution';
 import { applyRuntimeScreenOptions, runtimeAttributeKey } from './runtime-screen-options';
 import {
   readRuntimeScreenAnswers,
+  splitOffProfileAnswers,
   splitProfileAnswers,
+  type OffProfileScreenAnswers,
   type RuntimeScreenAnswer,
   type RuntimeScreenAnswerProblem,
+  type ScreenAnswerValue,
 } from './runtime-screen-answers';
 
 type AuthContext = Context<{ Bindings: Env }>;
@@ -4257,6 +4263,180 @@ async function prepareRuntimeScreenProfileAnswers(input: {
   };
 }
 
+/** The interaction's context with a screen step's choices set (an empty set removes them). */
+function withRuntimeScreenAnswers(
+  context: Record<string, unknown>,
+  stepId: string,
+  answers: Record<string, ScreenAnswerValue>
+): Record<string, unknown> {
+  const byStep = { ...parseJsonRecord(context.screen_answers) };
+  if (Object.keys(answers).length > 0) byStep[stepId] = answers;
+  else delete byStep[stepId];
+  const next = { ...context };
+  if (Object.keys(byStep).length > 0) next.screen_answers = byStep;
+  else delete next.screen_answers;
+  return next;
+}
+
+/** The interaction's context without any screen step's choices. */
+function withoutRuntimeScreenAnswers(context: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...context };
+  delete next.screen_answers;
+  return next;
+}
+
+/**
+ * Publishes `flow.screen.submitted` for a saved screen step, without being waited for (its
+ * failure is logged). It carries the answers going to the Flow, free text included, so it is not
+ * written to the audit log (which keeps an event's data).
+ */
+function scheduleScreenSubmittedEvent(
+  c: AuthContext,
+  input: {
+    tenantId: string;
+    interaction: FlowInteractionRow;
+    step: FlowRuntimeStep;
+    userId: string | null;
+    submissionId: string;
+    answers: Record<string, ScreenAnswerValue>;
+  }
+): void {
+  const screen = runtimeStepScreenIdentity(input.step);
+  if (!screen) return;
+  const warn = (failure: string) =>
+    getLogger(c).module('LOGIN-RUNTIME-FLOW').warn('Failed to publish flow.screen.submitted', {
+      action: 'event_publish',
+      interaction_id: input.interaction.id,
+      failure,
+    });
+  const delivery = publishEvent(
+    c,
+    {
+      type: FLOW_EVENTS.SCREEN_SUBMITTED,
+      tenantId: input.tenantId,
+      data: {
+        interactionId: input.interaction.id,
+        flowId: input.interaction.flow_id,
+        flowVersionId: input.interaction.flow_version_id,
+        stepId: input.step.id,
+        submissionId: input.submissionId,
+        screenId: screen.id,
+        screenKey: screen.screen_key,
+        userId: input.userId,
+        answers: input.answers,
+      } satisfies FlowScreenSubmittedEventData,
+    },
+    { skipAuditLog: true }
+  )
+    .then((result) => {
+      // Never the answers: what failed, and where.
+      if (!result.success) {
+        warn((result.errors ?? []).map((failure) => `${failure.target}:${failure.name}`).join(','));
+      }
+    })
+    .catch((error: unknown) => warn(error instanceof Error ? error.name : 'unknown'));
+  if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
+    c.executionCtx.waitUntil(delivery);
+  }
+}
+
+/** Whether `userId` is a registered account (not a guest, and known to the profile store). */
+async function isRegisteredRuntimeUser(
+  c: AuthContext,
+  tenantId: string,
+  userId: string
+): Promise<boolean> {
+  await resolveAccountDataContextFromHono(c, userId);
+  const user = await new CanonicalRuntimeUserStore({
+    coreAdapter: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+    piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+    tenantId,
+  }).findById(userId);
+  return user?.registration_state === 'registered';
+}
+
+/**
+ * Stores a screen step's response record for `userId`, in their PII database: one row per visit
+ * of the step (keyed by the step's row), so a retried submit replaces its own answers instead of
+ * adding a row, and a row is never moved to another user or tenant.
+ */
+async function writeRuntimeScreenResponse(input: {
+  c: AuthContext;
+  tenantId: string;
+  userId: string;
+  screen: { id: string; screen_key: string };
+  interaction: FlowInteractionRow;
+  stepId: string;
+  stepRowId: string;
+  answers: Record<string, ScreenAnswerValue>;
+}): Promise<void> {
+  const { c, tenantId, userId } = input;
+  await resolveAccountDataContextFromHono(c, userId);
+  const pii = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
+  const now = Date.now();
+  // Not for an account being deleted: its tombstone is written before its PII is erased, so a
+  // record written first is erased with the rest, and none is written after. Nor for a guest
+  // being erased (the handler keeps no guest record; the database refuses one under erasure).
+  await pii.execute(
+    `INSERT INTO screen_responses (
+       id, tenant_id, user_id, screen_id, screen_key, flow_id, flow_version_id, interaction_id,
+       step_id, answers_json, created_at, updated_at
+     )
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM users_pii_tombstone WHERE tenant_id = ? AND id = ?
+      ) AND NOT EXISTS (
+        SELECT 1 FROM guest_pii_erasure_markers WHERE tenant_id = ? AND user_id = ?
+      )
+     ON CONFLICT (id) DO UPDATE SET answers_json = excluded.answers_json,
+       updated_at = excluded.updated_at
+     WHERE screen_responses.tenant_id = excluded.tenant_id
+       AND screen_responses.user_id = excluded.user_id`,
+    [
+      input.stepRowId,
+      tenantId,
+      userId,
+      input.screen.id,
+      input.screen.screen_key,
+      input.interaction.flow_id,
+      input.interaction.flow_version_id,
+      input.interaction.id,
+      input.stepId,
+      JSON.stringify(input.answers),
+      now,
+      now,
+      tenantId,
+      userId,
+      tenantId,
+      userId,
+    ]
+  );
+}
+
+/** Removes what an earlier submit of this visit of a step kept for `userId` (a visit left empty). */
+async function clearRuntimeScreenResponse(
+  c: AuthContext,
+  tenantId: string,
+  userId: string,
+  stepRowId: string
+): Promise<void> {
+  await resolveAccountDataContextFromHono(c, userId);
+  await createPIIContextFromHono(c, tenantId).defaultPiiAdapter.execute(
+    `DELETE FROM screen_responses WHERE tenant_id = ? AND user_id = ? AND id = ?`,
+    [tenantId, userId, stepRowId]
+  );
+}
+
+/** The screen a step shows, as the server resolved it: its id and key (null if it has none). */
+function runtimeStepScreenIdentity(
+  step: FlowRuntimeStep
+): { id: string; screen_key: string } | null {
+  const screen = parseJsonRecord(parseJsonRecord(step.config).screen);
+  const id = readString(screen.id, 200);
+  const key = readString(screen.screen_key, 200);
+  return id && key ? { id, screen_key: key } : null;
+}
+
 function screenAnswerError(
   c: AuthContext,
   interactionId: string,
@@ -6047,7 +6227,15 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   // A screen's answers, when it is submitted: checked against the screen the step shows (the
   // server's), and its profile answers prepared for the signed-in user, before anything is
   // recorded (a refused submit changes nothing, not even whom the interaction is about).
-  let screenAnswers: { userId: string; write: () => Promise<void> } | null = null;
+  let screenAnswers: {
+    userId: string;
+    /** Null when nothing goes to the profile. */
+    writeProfile: (() => Promise<void>) | null;
+    /** Null when the visit keeps no record. */
+    writeRecord: (() => Promise<void>) | null;
+  } | null = null;
+  let offProfileAnswers: OffProfileScreenAnswers | null = null;
+  let clearRecordFor: string | null = null;
   if (current.step.component === 'screen' && effectiveSelectedHandle === 'submitted') {
     const read = readRuntimeScreenAnswers(parseJsonRecord(current.step.config).screen, body.input);
     if (!read.ok) {
@@ -6059,8 +6247,25 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
         read.field ? `The answer for ${read.field} is not valid` : 'The answers are not valid'
       );
     }
-    if (read.answers.some((answer) => answer.storeToProfile && answer.value !== null)) {
-      // Only for the person signed in, and only on an interaction about them (or no one yet).
+    offProfileAnswers = splitOffProfileAnswers(read.answers);
+    const hasProfileAnswers = read.answers.some(
+      (answer) => answer.storeToProfile && answer.value !== null
+    );
+    const recordAnswers = offProfileAnswers.record;
+    const hasRecordAnswers = Object.keys(recordAnswers).length > 0;
+    // A visit left all empty replaces what an earlier submit of it kept: nothing is asked of the
+    // person for it (no sign-in, no claim), the record is only cleared for whom it was kept.
+    if (offProfileAnswers.hasRecordPart && !hasRecordAnswers && challengeSession?.userId) {
+      clearRecordFor = challengeSession.userId;
+    }
+    const screen = runtimeStepScreenIdentity(current.step);
+    if (hasRecordAnswers && !screen) {
+      // A record names its screen; a step whose screen has no identity cannot keep one.
+      return screenAnswerError(c, interactionId, 'invalid_input', null, 'The screen is not known');
+    }
+    if (hasProfileAnswers || hasRecordAnswers) {
+      // Only for the person signed in, and only on an interaction about them (or no one yet): the
+      // profile and the response record are that person's.
       const sessionUserId = challengeSession?.userId ?? null;
       if (!sessionUserId) {
         return runtimeError(
@@ -6077,16 +6282,48 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       if (interaction.user_id && interaction.user_id !== sessionUserId) {
         return sessionUserMismatch(c, interactionId);
       }
-      const prepared = await prepareRuntimeScreenProfileAnswers({
-        c,
-        tenantId,
-        userId: sessionUserId,
-        answers: read.answers,
-      });
-      if (!prepared.ok) {
-        return screenAnswerError(c, interactionId, 'invalid_profile_value', null, prepared.error);
+      let writeProfile: (() => Promise<void>) | null = null;
+      let writeRecord: (() => Promise<void>) | null = null;
+      if (hasProfileAnswers) {
+        const prepared = await prepareRuntimeScreenProfileAnswers({
+          c,
+          tenantId,
+          userId: sessionUserId,
+          answers: read.answers,
+        });
+        if (!prepared.ok) {
+          return screenAnswerError(c, interactionId, 'invalid_profile_value', null, prepared.error);
+        }
+        writeProfile = prepared.write;
       }
-      screenAnswers = { userId: sessionUserId, write: prepared.write };
+      if (
+        hasRecordAnswers &&
+        screen &&
+        !(await isRegisteredRuntimeUser(c, tenantId, sessionUserId))
+      ) {
+        // A guest's answers are not kept as a record: a guest's PII is erased under a fence that
+        // knows only its own tables, and a record outliving the guest would be personal data
+        // nobody erases. The Flow goes on; the answers still reach the Flow and its event.
+        getLogger(c)
+          .module('LOGIN-RUNTIME-FLOW')
+          .info('Screen response record not kept for a guest', {
+            action: 'flow_screen_answers',
+            interaction_id: interactionId,
+          });
+      } else if (hasRecordAnswers && screen) {
+        writeRecord = () =>
+          writeRuntimeScreenResponse({
+            c,
+            tenantId,
+            userId: sessionUserId,
+            screen,
+            interaction,
+            stepId: current.step.id,
+            stepRowId: stepState.id,
+            answers: recordAnswers,
+          });
+      }
+      screenAnswers = { userId: sessionUserId, writeProfile, writeRecord };
     }
   }
 
@@ -6133,17 +6370,18 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     }
   }
 
-  // A screen's profile answers, checked and prepared before anything is recorded: stored once
-  // the interaction is about the person signed in.
-  if (screenAnswers) {
-    if (resolvedUserId && resolvedUserId !== screenAnswers.userId) {
-      return sessionUserMismatch(c, interactionId);
-    }
+  // A screen's profile answers and response record, checked and prepared before anything is
+  // recorded: stored once the interaction is about the person signed in.
+  if (screenAnswers && resolvedUserId && resolvedUserId !== screenAnswers.userId) {
+    return sessionUserMismatch(c, interactionId);
+  }
+  if (screenAnswers?.writeProfile) {
     if (!(await claimInteractionUser(db, tenantId, interaction, screenAnswers.userId))) {
       return sessionUserMismatch(c, interactionId);
     }
     resolvedUserId = screenAnswers.userId;
-    await screenAnswers.write();
+    // Before the next steps are judged: a condition after the screen may read what it stored.
+    await screenAnswers.writeProfile();
   }
 
   const visibleStepResolution =
@@ -6219,6 +6457,22 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     return sessionUserMismatch(c, interactionId);
   }
 
+  // The response record, once the steps after the screen accepted the submit (a condition that
+  // ends the interaction keeps none, and the interaction is not claimed for it before then).
+  if (screenAnswers?.writeRecord) {
+    if (resolvedUserId && resolvedUserId !== screenAnswers.userId) {
+      return sessionUserMismatch(c, interactionId);
+    }
+    if (!(await claimInteractionUser(db, tenantId, interaction, screenAnswers.userId))) {
+      return sessionUserMismatch(c, interactionId);
+    }
+    resolvedUserId = screenAnswers.userId;
+    await screenAnswers.writeRecord();
+  }
+  if (clearRecordFor && resolvedUserId === clearRecordFor) {
+    await clearRuntimeScreenResponse(c, tenantId, clearRecordFor, stepState.id);
+  }
+
   const nextStep = visibleStepResolution.step;
   const terminalStep = visibleStepResolution.terminalStep;
   const outputStep = terminalStep ?? current.step;
@@ -6266,6 +6520,18 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     }
   }
 
+  // The choices a screen sends to the Flow are kept with the interaction, by step (a step shown
+  // again replaces its own), so a later step can be chosen by them. They serve the steps still to
+  // come: an interaction that ends here keeps none (it outlives the person's account otherwise).
+  const storedContext = parseJsonObject(interaction.context_json);
+  const keptContext = offProfileAnswers?.hasFlowContextPart
+    ? withRuntimeScreenAnswers(storedContext, current.step.id, offProfileAnswers.flowContext)
+    : storedContext;
+  const nextContextJson =
+    offProfileAnswers?.hasFlowContextPart || (completed && 'screen_answers' in storedContext)
+      ? JSON.stringify(completed ? withoutRuntimeScreenAnswers(keptContext) : keptContext)
+      : null;
+
   await writeAtomically(db, (write) => {
     write(
       `UPDATE flow_interaction_steps
@@ -6284,6 +6550,16 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
         stepState.id,
       ]
     );
+
+    if (nextContextJson !== null) {
+      // Only while the interaction is still at this step: a late copy of a submit already taken
+      // does not undo what later steps keep.
+      write(
+        `UPDATE flow_interactions SET context_json = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ? AND current_step_id = ?`,
+        [nextContextJson, now, tenantId, interactionId, current.step.id]
+      );
+    }
 
     if (nextStep) {
       const nextStepRowId = generateId();
@@ -6357,6 +6633,16 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     });
   }
   await scheduleRuntimeAuditEvents(c, tenantId, interaction, completionAudit, 'submit_completion');
+  if (offProfileAnswers?.hasFlowEventPart) {
+    scheduleScreenSubmittedEvent(c, {
+      tenantId,
+      interaction,
+      step: current.step,
+      userId: resolvedUserId ?? null,
+      submissionId: stepState.id,
+      answers: offProfileAnswers.flowEvent,
+    });
+  }
 
   getLogger(c)
     .module('LOGIN-RUNTIME-FLOW')
