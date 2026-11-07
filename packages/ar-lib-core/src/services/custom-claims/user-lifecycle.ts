@@ -1,5 +1,9 @@
 import type { DatabaseSource } from '../../db';
 import { ensureDatabaseAdapter } from '../../db';
+import {
+  CanonicalAccountRemovedError,
+  isRemovedLifecycleState,
+} from '../../repositories/identity/canonical-identity';
 import type { Env } from '../../types/env';
 import type { AccountAuthenticationLifecycle } from '../../durable-objects/SessionRevocationStore';
 import {
@@ -109,6 +113,10 @@ export async function setUserLifecycleState(
   if (!currentRow) {
     return lifecycleState;
   }
+  // An account being deleted (or deleted) is not moved back to another state.
+  if (isRemovedLifecycleState(currentRow.lifecycle_state)) {
+    throw new CanonicalAccountRemovedError();
+  }
 
   const restrictiveSubjectLifecycle = (
     ['suspended', 'locked', 'deleting', 'deleted'] as const
@@ -156,10 +164,22 @@ export async function setUserLifecycleState(
     });
   }
 
-  await adapter.execute(
-    'UPDATE identity_accounts SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+  // Not once a deletion began since the read above.
+  const moved = await adapter.execute(
+    `UPDATE identity_accounts SET lifecycle_state = ?, updated_at = ?
+      WHERE id = ? AND tenant_id = ? AND lifecycle_state NOT IN ('deleting', 'deleted')`,
     [lifecycleState, sourceVersionMs, currentRow.id, tenantId]
   );
+  if (moved.rowsAffected !== 1) {
+    const now = await adapter.queryOne<{ lifecycle_state: string | null }>(
+      'SELECT lifecycle_state FROM identity_accounts WHERE id = ? AND tenant_id = ?',
+      [currentRow.id, tenantId]
+    );
+    // (A deletion keeps the row, marked: only that state stops the move.)
+    if (now && isRemovedLifecycleState(now.lifecycle_state)) {
+      throw new CanonicalAccountRemovedError();
+    }
+  }
 
   if (params.accountAuthenticationEnv && authenticationLifecycle === 'active') {
     await transitionAccountAuthenticationState(params.accountAuthenticationEnv, {
