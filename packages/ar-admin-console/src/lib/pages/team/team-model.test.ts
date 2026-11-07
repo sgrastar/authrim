@@ -5,6 +5,8 @@ import { ApiError, ConflictError } from '#lib/api/api-error.js';
 import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
 import {
 	adminLabel,
+	grantableRoles,
+	roleLabel,
 	inputTimeToMs,
 	invitableRoles,
 	invitationProblems,
@@ -53,6 +55,11 @@ describe('what an invitation offers', () => {
 		expect(tenantOnly).not.toContain('ar_super_admin');
 		expect(tenantOnly[0]).toBe('ar_tenant_admin');
 		expect(invitableRoles(sampleRoles(), true)[0].name).toBe('ar_super_admin');
+	});
+
+	it('never offers the super administrator for a direct grant', () => {
+		expect(grantableRoles(sampleRoles()).map((role) => role.name)).not.toContain('ar_super_admin');
+		expect(roleLabel({ name: 'ar_support', display_name: ' ' })).toBe('ar_support');
 	});
 
 	it('always makes a super admin invitation global', () => {
@@ -133,6 +140,20 @@ describe('what a refusal tells the admin', () => {
 		expect(teamErrorKey(new ConflictError('x', { error: 'something_new' }))).toBe(
 			'tm.error.changed'
 		);
+	});
+
+	it('reads the shared invalid_request as bad input only on a 400', () => {
+		expect(
+			teamErrorKey(new ApiError(400, 'invalid_request', 'x', { error: 'invalid_request' }))
+		).toBe('tm.error.invalidRequest');
+		// The API's generic conflict (409) also says invalid_request: here, a role already held.
+		expect(
+			teamErrorKey(
+				new ConflictError('x', { error: 'invalid_request' }),
+				'tm.error.generic',
+				'tm.error.roleHeld'
+			)
+		).toBe('tm.error.roleHeld');
 	});
 
 	it('falls back on the status, and says a cancelled step-up sent nothing', () => {

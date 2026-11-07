@@ -36,6 +36,18 @@ export function invitableRoles(roles: readonly RoleChoice[], global: boolean): R
 		.sort((a, b) => b.hierarchy_level - a.hierarchy_level || a.name.localeCompare(b.name));
 }
 
+/**
+ * Roles that can be given directly, highest first. Not the super administrator: the API gives a
+ * role only to a caller above it, and a peer super administrator is added by invitation only.
+ */
+export function grantableRoles(roles: readonly RoleChoice[]): RoleChoice[] {
+	return invitableRoles(roles, false);
+}
+
+/** A role's name on screen: its display name, else its machine name. */
+export const roleLabel = (role: { name: string; display_name: string | null }): string =>
+	role.display_name?.trim() || role.name;
+
 /** The scope an invitation for this role takes: the super admin's is always global. */
 export function scopeFor(
 	role: RoleChoice | undefined,

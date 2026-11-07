@@ -137,17 +137,41 @@ export interface TeamAccess {
 	inviteForm: boolean;
 	/** Offer a global (every tenant) role: the wildcard from a global assignment. */
 	global: boolean;
+	/** Edit an administrator's name and address (`admin:admin_users:write`). */
+	edit: boolean;
+	/** Delete an administrator (`admin:admin_users:delete`). */
+	delete: boolean;
+	/** Give a role directly: the roles' read (to offer them) and write permissions. */
+	grant: boolean;
+	/** Remove a direct assignment: a DELETE, so `admin:admin_users:delete`, and the roles' write. */
+	revoke: boolean;
+	/**
+	 * Remove a direct role for every tenant: the roles' write permission from a global assignment
+	 * (the API also measures rank). The console sees only that some assignment is global.
+	 */
+	revokeGlobal: boolean;
+	/** Change when a direct assignment ends: the roles API, read and write (`admin:admin_roles:*`). */
+	expiry: boolean;
 }
 
 export function teamAccess(access: AdminAccess): TeamAccess {
 	const read = hasPermission(access, 'admin:admin_users:read');
 	const manage = read && hasPermission(access, 'admin:admin_users:write');
-	const invite = manage && hasPermission(access, 'admin:admin_roles:write');
+	const rolesWrite = hasPermission(access, 'admin:admin_roles:write');
+	const rolesRead = hasPermission(access, 'admin:admin_roles:read');
+	const usersDelete = read && hasPermission(access, 'admin:admin_users:delete');
+	const invite = manage && rolesWrite;
 	return {
 		read,
 		manage,
 		invite,
-		inviteForm: invite && hasPermission(access, 'admin:admin_roles:read'),
-		global: access.platform && access.permissions.includes('*')
+		inviteForm: invite && rolesRead,
+		global: access.platform && access.permissions.includes('*'),
+		edit: manage,
+		delete: usersDelete,
+		grant: manage && rolesWrite && rolesRead,
+		revoke: usersDelete && rolesWrite,
+		revokeGlobal: usersDelete && rolesWrite && access.platform,
+		expiry: read && rolesRead && rolesWrite
 	};
 }
