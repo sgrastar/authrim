@@ -78,8 +78,13 @@ interface ServedLoginUi {
     textColor: string;
     copyColor: string;
     formAreaColor: string;
+    loginPanelBackgroundGrayscale: boolean;
   };
   appearance: {
+    backgroundImageUrl: string | null;
+    loginPanelBackgroundImageUrl: string | null;
+    backgroundImageGrayscale: boolean;
+    brandPanelImageGrayscale: boolean;
     backgroundImageOpacity: number;
     brandPanelImageOpacity: number;
     brandPanelImageUrl: string | null;
@@ -2552,6 +2557,30 @@ describe('Authentication Methods API', () => {
           (await getUi({ 'login-ui.brand_panel_image_url': bad })).appearance.brandPanelImageUrl
         ).toBeNull();
       }
+    });
+
+    it('accepts a shared background preset path for the images, and serves the grayscale flags', async () => {
+      const preset = '/api/assets/presets/login-ui/backgrounds/nature/hatenohama-day.webp';
+      const ui = await getUi({
+        'login-ui.background_image_url': preset,
+        'login-ui.brand_panel_image_url': preset,
+        'login-ui.login_panel_background_image_url': preset,
+        'login-ui.background_image_grayscale': true,
+        'login-ui.brand_panel_image_grayscale': 'true',
+      });
+      expect(ui.appearance.backgroundImageUrl).toBe(preset);
+      expect(ui.appearance.brandPanelImageUrl).toBe(preset);
+      expect(ui.appearance.loginPanelBackgroundImageUrl).toBe(preset);
+      expect(ui.appearance.backgroundImageGrayscale).toBe(true);
+      expect(ui.appearance.brandPanelImageGrayscale).toBe(true);
+      expect(ui.pageTemplate.loginPanelBackgroundGrayscale).toBe(false);
+      expect(
+        (
+          await getUi({
+            'login-ui.background_image_url': '/api/assets/presets/login-ui/backgrounds/x/../a.webp',
+          })
+        ).appearance.backgroundImageUrl
+      ).toBeNull();
     });
 
     it('accepts 8-digit hex for the page colours and the form area colour', async () => {

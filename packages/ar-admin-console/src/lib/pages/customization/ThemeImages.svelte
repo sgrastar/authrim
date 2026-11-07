@@ -2,12 +2,18 @@
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { apiAssetUrl } from '#lib/api/assets.js';
 	import ImageUpload from '#lib/ui/patterns/ImageUpload.svelte';
+	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
 	import Slider from '#lib/ui/primitives/Slider.svelte';
+	import BgPresetButton from './BgPresetButton.svelte';
+	import { apiBgPresets, type BgPresetSource } from './bg-presets';
 	import ThemeGroup from './ThemeGroup.svelte';
 	import type { ThemeDraft } from './theme-draft';
 
 	/** Images: the logo, the favicon, the background and (Split) the brand panel's own picture. */
-	let { draft = $bindable() }: { draft: ThemeDraft } = $props();
+	let {
+		draft = $bindable(),
+		presets = apiBgPresets
+	}: { draft: ThemeDraft; presets?: BgPresetSource } = $props();
 
 	// The brand panel exists only in the Split template, so its picture is offered only with Split.
 	const split = $derived(draft.template === 'split');
@@ -43,9 +49,18 @@
 		shape="square"
 		maxBytes={2 * 1024 * 1024}
 		bind:value={draft.backgroundImage}
-	/>
+	>
+		{#snippet actions(pick)}<BgPresetButton
+				value={draft.backgroundImage}
+				source={presets}
+				onchoose={pick}
+			/>{/snippet}
+	</ImageUpload>
 	{#if draft.backgroundImage}
 		<Slider label={t('th.i.bgOpacity')} format="percent" bind:value={draft.backgroundOpacity} />
+		<Checkbox size="sm" bind:checked={draft.backgroundGrayscale}>
+			{t('th.i.grayscale')}
+		</Checkbox>
 	{/if}
 </ThemeGroup>
 
@@ -57,13 +72,22 @@
 			shape="square"
 			maxBytes={2 * 1024 * 1024}
 			bind:value={draft.panelImage}
-		/>
+		>
+			{#snippet actions(pick)}<BgPresetButton
+					value={draft.panelImage}
+					source={presets}
+					onchoose={pick}
+				/>{/snippet}
+		</ImageUpload>
 		{#if draft.panelImage}
 			<Slider
 				label={t('th.i.panelOpacity')}
 				format="percent"
 				bind:value={draft.panelImageOpacity}
 			/>
+			<Checkbox size="sm" bind:checked={draft.panelImageGrayscale}>
+				{t('th.i.grayscale')}
+			</Checkbox>
 		{/if}
 	</ThemeGroup>
 {/if}
@@ -76,9 +100,18 @@
 			shape="square"
 			maxBytes={2 * 1024 * 1024}
 			bind:value={draft.cardImage}
-		/>
+		>
+			{#snippet actions(pick)}<BgPresetButton
+					value={draft.cardImage}
+					source={presets}
+					onchoose={pick}
+				/>{/snippet}
+		</ImageUpload>
 		{#if draft.cardImage}
 			<Slider label={t('th.i.cardOpacity')} format="percent" bind:value={draft.cardImageOpacity} />
+			<Checkbox size="sm" bind:checked={draft.cardImageGrayscale}>
+				{t('th.i.grayscale')}
+			</Checkbox>
 		{/if}
 	</ThemeGroup>
 {/if}

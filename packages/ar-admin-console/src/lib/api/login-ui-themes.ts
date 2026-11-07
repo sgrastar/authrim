@@ -165,3 +165,30 @@ export async function uploadLoginUiAsset(kind: string, file: File): Promise<stri
 	if (!url) throw new Error('The upload answered no URL');
 	return url;
 }
+
+/** A background picture shared by every tenant, placed in the public assets by the setup tool. */
+export interface LoginUiPreset {
+	/** `<category>/<name>`. */
+	id: string;
+	category: string;
+	name: string;
+	/** The path a theme stores to use it (`/api/assets/presets/login-ui/backgrounds/…`). */
+	url: string;
+}
+
+/** The background presets (`/api/admin/assets/login-ui/presets`); none when there are none. */
+export async function fetchLoginUiPresets(): Promise<LoginUiPreset[]> {
+	const body = await readJson(
+		await adminFetch(`${API_BASE_URL}/api/admin/assets/login-ui/presets`)
+	);
+	const list = Array.isArray(body.presets) ? body.presets : [];
+	return list.flatMap((entry: unknown) => {
+		if (!entry || typeof entry !== 'object') return [];
+		const row = entry as Record<string, unknown>;
+		const id = text(row.id);
+		const category = text(row.category);
+		const name = text(row.name);
+		const url = text(row.url);
+		return id && category && name && url ? [{ id, category, name, url }] : [];
+	});
+}

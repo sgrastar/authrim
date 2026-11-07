@@ -70,6 +70,9 @@ const FIELD_KEYS: readonly (readonly [keyof ThemeDraft, readonly string[]])[] = 
 	['backgroundOpacity', ['background_image_opacity']],
 	['panelImageOpacity', ['brand_panel_image_opacity']],
 	['cardImageOpacity', ['login_panel_background_opacity']],
+	['backgroundGrayscale', ['background_image_grayscale']],
+	['panelImageGrayscale', ['brand_panel_image_grayscale']],
+	['cardImageGrayscale', ['login_panel_background_grayscale']],
 	['customCss', ['custom_css']],
 	['background', ['background_color']],
 	['cardColor', ['form_area_color']],
@@ -112,6 +115,9 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 		[KEY('background_image_opacity')]: draft.backgroundOpacity,
 		[KEY('brand_panel_image_opacity')]: draft.panelImageOpacity,
 		[KEY('login_panel_background_opacity')]: draft.cardImageOpacity,
+		[KEY('background_image_grayscale')]: draft.backgroundGrayscale,
+		[KEY('brand_panel_image_grayscale')]: draft.panelImageGrayscale,
+		[KEY('login_panel_background_grayscale')]: draft.cardImageGrayscale,
 		[KEY('custom_css')]: draft.customCss
 	};
 	// The brand panel shows nothing of the brand, or its logo display apart from the header's.
@@ -317,6 +323,12 @@ export function valuesToDraft(values: ThemeValues): ThemeDraft {
 	draft.backgroundOpacity = percentOf(v('background_image_opacity'), draft.backgroundOpacity);
 	draft.panelImageOpacity = percentOf(v('brand_panel_image_opacity'), draft.panelImageOpacity);
 	draft.cardImageOpacity = percentOf(v('login_panel_background_opacity'), draft.cardImageOpacity);
+	draft.backgroundGrayscale = flagOf(v('background_image_grayscale'), draft.backgroundGrayscale);
+	draft.panelImageGrayscale = flagOf(v('brand_panel_image_grayscale'), draft.panelImageGrayscale);
+	draft.cardImageGrayscale = flagOf(
+		v('login_panel_background_grayscale'),
+		draft.cardImageGrayscale
+	);
 	draft.customCss = textOf(v('custom_css'), '');
 	for (const image of THEME_IMAGES) {
 		const url = v(image.key);

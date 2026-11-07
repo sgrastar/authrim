@@ -8243,7 +8243,7 @@ export async function putR2Object(input: {
   bucketName: string;
   objectKey: string;
   bytes: Uint8Array;
-  contentType: 'application/json' | 'application/sql';
+  contentType: 'application/json' | 'application/sql' | 'image/webp' | 'image/jpeg' | 'image/png';
 }): Promise<void> {
   if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
   assertSafeR2ObjectKey(input.objectKey);
@@ -9530,6 +9530,34 @@ export interface DeletionR2Identity {
   ownershipId?: string;
   environment?: string;
   binding?: string;
+  /** Objects the setup tool put into the bucket itself, as the lock records them. */
+  setupObjectKeys?: readonly string[];
+}
+
+/**
+ * The known objects of each bucket with the ones the setup tool put there itself (recorded in the
+ * lock) added, for buckets emptied without the R2 API. Only the buckets being deleted count.
+ */
+export function withSetupR2ObjectKeys(
+  known: ReadonlyMap<string, readonly string[]>,
+  buckets: ReadonlyArray<{ name: string }>,
+  recorded: ReadonlyArray<Pick<DeletionR2Identity, 'name' | 'setupObjectKeys'>>
+): Map<string, string[]> {
+  const targets = new Set(buckets.map((bucket) => bucket.name));
+  const result = new Map([...known].map(([name, keys]) => [name, [...keys]]));
+  for (const bucket of recorded) {
+    if (!targets.has(bucket.name) || !bucket.setupObjectKeys?.length) continue;
+    const keys = bucket.setupObjectKeys.filter((key) => {
+      try {
+        assertSafeR2ObjectKey(key);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    result.set(bucket.name, [...new Set([...(result.get(bucket.name) ?? []), ...keys])]);
+  }
+  return result;
 }
 
 export type ExactDeletionR2Identity = DeletionR2Identity &
@@ -13154,7 +13182,11 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     const r2ApiCredentials = await getR2ApiCredentials();
     const knownR2ObjectsByBucket = r2ApiCredentials
       ? new Map<string, string[]>()
-      : await collectKnownR2ObjectsByBucket(env, envInfo.r2, onProgress);
+      : withSetupR2ObjectKeys(
+          await collectKnownR2ObjectsByBucket(env, envInfo.r2, onProgress),
+          envInfo.r2,
+          options.knownR2Resources ?? []
+        );
     onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
     for (const bucket of envInfo.r2) {
       onProgress(`  ⏳ Deleting: ${bucket.name}...`);

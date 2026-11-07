@@ -24,3 +24,31 @@ describe('page background image opacity', () => {
 		}
 	});
 });
+
+describe('page background image grayscale', () => {
+	it('puts the neutral tone layer wherever the page background image is painted', () => {
+		const readers = declarationsReading(app, 'var(--login-page-background-layer').filter((d) =>
+			d.startsWith('background')
+		);
+		for (const declaration of readers) {
+			expect(declaration, declaration).toContain('var(--login-page-image-tone, none)');
+		}
+	});
+
+	it('blends only the tone layer in saturation mode', () => {
+		const modes = declarationsReading(app, 'saturation').filter((d) =>
+			d.startsWith('background-blend-mode')
+		);
+		expect(modes.length).toBeGreaterThan(0);
+		for (const declaration of modes) {
+			const values = declaration
+				.replace(/^[^:]+:\s*/, '')
+				.replace(/;$/, '')
+				.split(',');
+			expect(
+				values.filter((v) => v.trim() === 'saturation'),
+				declaration
+			).toHaveLength(1);
+		}
+	});
+});

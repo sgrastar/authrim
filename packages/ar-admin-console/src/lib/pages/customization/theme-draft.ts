@@ -98,12 +98,16 @@ export interface ThemeDraft {
 	backgroundImage: string | File | null;
 	/** 0–100: how much of the background image shows through (100 = as it is). */
 	backgroundOpacity: number;
+	/** The background image is shown in grayscale. */
+	backgroundGrayscale: boolean;
 	/** The picture on the Split template's brand panel, apart from the page background. */
 	panelImage: string | File | null;
 	panelImageOpacity: number;
+	panelImageGrayscale: boolean;
 	/** The picture inside the form area (the box with the form), for Standard and Split. */
 	cardImage: string | File | null;
 	cardImageOpacity: number;
+	cardImageGrayscale: boolean;
 	customCss: string;
 }
 
@@ -190,10 +194,13 @@ export function newThemeDraft(): ThemeDraft {
 		favicon: null,
 		backgroundImage: null,
 		backgroundOpacity: 100,
+		backgroundGrayscale: false,
 		panelImage: null,
 		panelImageOpacity: 100,
+		panelImageGrayscale: false,
 		cardImage: null,
 		cardImageOpacity: 100,
+		cardImageGrayscale: false,
 		customCss: ''
 	};
 }

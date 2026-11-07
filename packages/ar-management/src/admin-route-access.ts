@@ -484,6 +484,12 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.USERS_DELETE,
     'end users'
   ),
+  rule({
+    pattern: '/api/admin/assets/login-ui/presets',
+    methods: ['GET'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'List the Login UI background presets',
+  }),
   ...byMethod(
     '/api/admin/assets/login-ui',
     ADMIN_PERMISSIONS.SETTINGS_READ,

@@ -38,6 +38,7 @@ import {
   clearProvisionalWorkerScriptOwnership,
   withDnsOwnershipEntry,
   type AuthrimLock,
+  withR2SetupObjectKeys,
 } from '../../core/lock.js';
 import {
   getEnvironmentPaths,
@@ -123,6 +124,7 @@ import {
   registerExternalCapabilities,
 } from '../../core/external-capability-registration.js';
 import { publishDynamicPluginWorkerBundles } from '../../core/dynamic-plugin-publication.js';
+import { publishLoginUiPresetsToEnvironment } from '../../core/login-ui-preset-publication.js';
 import { publishAndActivateMigrationRelease } from '../../core/migration-release-publication.js';
 import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
 import { ensureLoginUiClient } from '../../core/login-ui-client.js';
@@ -2644,6 +2646,17 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             onProgress: (message) => {
               updateOraSpinner(inventorySpinner, message);
             },
+          });
+          await publishLoginUiPresetsToEnvironment({
+            baseDir: rootDir,
+            environment: env,
+            bucket: currentLock.r2?.PUBLIC_ASSETS,
+            recordObjectKeys: async (keys) => {
+              currentLock = withR2SetupObjectKeys(currentLock, 'PUBLIC_ASSETS', keys);
+              await saveLockFile(currentLock, lockPath);
+            },
+            onProgress: (message) => updateOraSpinner(inventorySpinner, message),
+            onWarning: (message) => console.warn(chalk.yellow(`  ${message}`)),
           });
           await registerExternalCapabilities({
             controlDatabaseName: controlDatabaseId,

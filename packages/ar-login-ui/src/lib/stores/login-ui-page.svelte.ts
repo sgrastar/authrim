@@ -285,8 +285,10 @@ export function createLoginUIPageStore() {
 	let headerName = $state('');
 	let brandPanelLogoDisplay = $state<BrandPanelLogoDisplay>('inherit');
 	let backgroundImageOpacity = $state(100);
+	let backgroundImageGrayscale = $state(false);
 	let brandPanelImageUrl = $state<string | null>(null);
 	let brandPanelImageOpacity = $state(100);
+	let brandPanelImageGrayscale = $state(false);
 	let layout = $state<PageLayout>(DEFAULT_PAGE_LAYOUT);
 	let fontFamily = $state<FontFamily>('system');
 	let fontScale = $state<FontScale>('comfortable');
@@ -300,6 +302,7 @@ export function createLoginUIPageStore() {
 	let loginPanelBackgroundColor = $state('');
 	let loginPanelBackgroundGradientColor = $state('');
 	let loginPanelBackgroundOpacity = $state(70);
+	let loginPanelBackgroundGrayscale = $state(false);
 	let headerEnabled = $state(true);
 	let subtitleEnabled = $state(true);
 	let footerEnabled = $state(true);
@@ -330,6 +333,13 @@ export function createLoginUIPageStore() {
 	let customCss = $state<string | null>(null);
 
 	/** `inherit` follows the logo display of the form side. */
+	// Grayscale counts only while there is a picture to turn gray (the glass palette's own light,
+	// shown when there is no page picture, keeps its colour).
+	const pageBackgroundGray = () => backgroundImageGrayscale && !!backgroundImageUrl;
+	const loginPanelBackgroundGray = () =>
+		loginPanelBackgroundGrayscale && !!loginPanelBackgroundImageUrl;
+	const brandPanelImageGray = () => brandPanelImageGrayscale && !!brandPanelImageUrl;
+
 	function effectiveBrandPanelLogoDisplay(): LogoDisplay {
 		return brandPanelLogoDisplay === 'inherit' ? logoDisplay : brandPanelLogoDisplay;
 	}
@@ -364,6 +374,9 @@ export function createLoginUIPageStore() {
 		html.setAttribute('data-logo-display', logoDisplay);
 		html.setAttribute('data-brand-panel-logo-display', effectiveBrandPanelLogoDisplay());
 		html.setAttribute('data-has-brand-panel-image', brandPanelImageUrl ? 'true' : 'false');
+		html.setAttribute('data-page-background-grayscale', String(pageBackgroundGray()));
+		html.setAttribute('data-login-panel-background-grayscale', String(loginPanelBackgroundGray()));
+		html.setAttribute('data-brand-panel-image-grayscale', String(brandPanelImageGray()));
 		html.setAttribute('data-has-form-area-color', sanitizeColor(formAreaColor) ? 'true' : 'false');
 		html.setAttribute('data-has-accent-color', accentColor ? 'true' : 'false');
 
@@ -432,11 +445,13 @@ export function createLoginUIPageStore() {
 		headerName = readOptionalText(ui?.branding?.headerName) ?? '';
 		brandPanelLogoDisplay = readBrandPanelLogoDisplay(page?.brandPanelLogoDisplay);
 		backgroundImageOpacity = readPercentage(appearance?.backgroundImageOpacity, 100);
+		backgroundImageGrayscale = readBoolean(appearance?.backgroundImageGrayscale, false);
 		brandPanelImageUrl =
 			appearance?.brandPanelImageUrl && isValidImageUrl(appearance.brandPanelImageUrl)
 				? appearance.brandPanelImageUrl
 				: null;
 		brandPanelImageOpacity = readPercentage(appearance?.brandPanelImageOpacity, 100);
+		brandPanelImageGrayscale = readBoolean(appearance?.brandPanelImageGrayscale, false);
 		fontFamily = readFontFamily(page?.fontFamily);
 		fontScale = readFontScale(page?.fontScale);
 		backgroundColor = sanitizeColor(page?.backgroundColor) || '';
@@ -458,6 +473,7 @@ export function createLoginUIPageStore() {
 		loginPanelBackgroundGradientColor =
 			sanitizeColor(page?.loginPanelBackgroundGradientColor) || '';
 		loginPanelBackgroundOpacity = readPercentage(page?.loginPanelBackgroundOpacity, 70);
+		loginPanelBackgroundGrayscale = readBoolean(page?.loginPanelBackgroundGrayscale, false);
 		headerEnabled = readBoolean(page?.headerEnabled, true);
 		subtitleEnabled = readBoolean(page?.subtitleEnabled, true);
 		footerEnabled = readBoolean(page?.footerEnabled, true);
@@ -534,6 +550,16 @@ export function createLoginUIPageStore() {
 		},
 		get backgroundImageOpacity() {
 			return backgroundImageOpacity;
+		},
+		/** The page picture is shown in grayscale (only while there is one). */
+		get backgroundImageGrayscale() {
+			return pageBackgroundGray();
+		},
+		get brandPanelImageGrayscale() {
+			return brandPanelImageGray();
+		},
+		get loginPanelBackgroundGrayscale() {
+			return loginPanelBackgroundGray();
 		},
 		get brandPanelImageUrl() {
 			return brandPanelImageUrl;

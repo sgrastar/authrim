@@ -205,6 +205,7 @@ export interface LoginUIConfig {
 		loginPanelBackgroundColor?: string;
 		loginPanelBackgroundGradientColor?: string;
 		loginPanelBackgroundOpacity?: number;
+		loginPanelBackgroundGrayscale?: boolean;
 		brandContentMode?: 'logo_copy' | 'logo' | 'none';
 		brandPosition?: 'top' | 'center' | 'bottom';
 		brandAlign?: 'left' | 'center' | 'right';
@@ -215,10 +216,12 @@ export interface LoginUIConfig {
 		backgroundImageUrl: string | null;
 		/** Percentage, 0-100. */
 		backgroundImageOpacity?: number;
+		backgroundImageGrayscale?: boolean;
 		loginPanelBackgroundImageUrl?: string | null;
 		brandPanelImageUrl?: string | null;
 		/** Percentage, 0-100. */
 		brandPanelImageOpacity?: number;
+		brandPanelImageGrayscale?: boolean;
 		thumbnailUrl?: string | null;
 		customCss: string | null;
 		headerText: string | null;
