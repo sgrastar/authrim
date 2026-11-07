@@ -506,7 +506,11 @@ const it = createTranslation({
 	common_dismissAlert: 'Chiudi avviso',
 	emailCode_digitLabel: 'Cifra {position} di 6',
 	lite_javascriptRequired:
-		'Questa pagina esegue un controllo di sicurezza nel browser. Attiva JavaScript, quindi ricarica la pagina.'
+		'Questa pagina esegue un controllo di sicurezza nel browser. Attiva JavaScript, quindi ricarica la pagina.',
+	lite_passkeyUnsupported:
+		'Questo browser non può usare una passkey qui. Scegli un altro modo per accedere.',
+	lite_passkeyFailed:
+		"L'accesso con passkey non è stato completato. Riprova o scegli un altro modo per accedere."
 });
 
 export default it;

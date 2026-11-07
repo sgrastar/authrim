@@ -65,8 +65,14 @@ interface ParsedSetCookie {
 	raw: string;
 }
 
-/** The request headers a call may add: the human verification screen a proof came from. */
-const EXTRA_HEADERS: ReadonlySet<string> = new Set(['x-authrim-human-verification-action']);
+/**
+ * The request headers a call may add: the human verification screen a proof came from, and the
+ * Flow interaction a sign-in attempt belongs to (its failures are recorded with it).
+ */
+const EXTRA_HEADERS: ReadonlySet<string> = new Set([
+	'x-authrim-human-verification-action',
+	'x-authrim-interaction-id'
+]);
 
 const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 

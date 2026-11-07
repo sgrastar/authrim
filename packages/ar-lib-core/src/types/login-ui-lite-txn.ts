@@ -117,6 +117,11 @@ export type LiteTxnRefusal =
   | 'expired'
   | 'finished'
   | 'version_mismatch'
+  /**
+   * An operation's completion from an attempt a later one took over (its lease ran out): the
+   * result is not recorded, and the caller must not act on what it did (another attempt owns it).
+   */
+  | 'superseded'
   | 'invalid_transition'
   | 'binding_mismatch'
   | 'too_large'

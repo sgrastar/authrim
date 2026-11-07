@@ -530,7 +530,11 @@ const ja = {
 	// Accessibility
 	emailCode_digitLabel: '6桁中{position}桁目',
 	lite_javascriptRequired:
-		'この画面では、ブラウザーでセキュリティの確認を行います。JavaScript を有効にしてから、ページを再読み込みしてください。'
+		'この画面では、ブラウザーでセキュリティの確認を行います。JavaScript を有効にしてから、ページを再読み込みしてください。',
+	lite_passkeyUnsupported:
+		'このブラウザーでは、ここでパスキーを使えません。別の方法でログインしてください。',
+	lite_passkeyFailed:
+		'パスキーでのログインを完了できませんでした。もう一度試すか、別の方法でログインしてください。'
 } satisfies Translation;
 
 export default ja;
