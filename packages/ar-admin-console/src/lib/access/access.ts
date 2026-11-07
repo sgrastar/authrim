@@ -152,6 +152,17 @@ export interface TeamAccess {
 	revokeGlobal: boolean;
 	/** Change when a direct assignment ends: the roles API, read and write (`admin:admin_roles:*`). */
 	expiry: boolean;
+	/**
+	 * Change admin groups (create, edit, members, delete): the groups API asks the roles' write
+	 * permission, since a group hands roles out.
+	 */
+	groupsEdit: boolean;
+	/** Give a group a role: also the roles' read permission, to offer them. */
+	groupsGrant: boolean;
+	/** See the roles and what they allow (`admin:admin_roles:read`). */
+	roles: boolean;
+	/** Make, change and delete custom roles (`admin:admin_roles:write`, with read). */
+	rolesEdit: boolean;
 }
 
 export function teamAccess(access: AdminAccess): TeamAccess {
@@ -172,6 +183,10 @@ export function teamAccess(access: AdminAccess): TeamAccess {
 		grant: manage && rolesWrite && rolesRead,
 		revoke: usersDelete && rolesWrite,
 		revokeGlobal: usersDelete && rolesWrite && access.platform,
-		expiry: read && rolesRead && rolesWrite
+		expiry: read && rolesRead && rolesWrite,
+		groupsEdit: read && rolesWrite,
+		groupsGrant: read && rolesWrite && rolesRead,
+		roles: rolesRead,
+		rolesEdit: rolesRead && rolesWrite
 	};
 }

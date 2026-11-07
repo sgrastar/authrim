@@ -77,6 +77,15 @@ export const deNotices: Record<keyof typeof jaNotices, string> = {
 	'nt.pub.err.invalid':
 		'Prüfen Sie die Eingaben. Eine Überschrift ist Pflicht, bei App oder Admin auch die ID.',
 	'nt.pub.err.expiry': 'Das Ablaufdatum muss in der Zukunft liegen.',
+	'notice.msg.admin_group_role_granted': 'Administratorgruppe {group} vergibt jetzt {role}',
+	'notice.msg.admin_group_role_revoked': 'Administratorgruppe {group} vergibt {role} nicht mehr',
+	'notice.msg.admin_group_role_expiry_changed':
+		'Das Ende von {role} in der Administratorgruppe {group} wurde geändert',
+	'notice.msg.admin_group_member_added': '{email} ist der Administratorgruppe {group} beigetreten',
+	'notice.msg.admin_group_member_removed': '{email} hat die Administratorgruppe {group} verlassen',
+	'notice.msg.admin_group_deleted': 'Die Administratorgruppe {group} wurde gelöscht',
+	'notice.msg.admin_group_invitation_not_joined':
+		'{email} hat die Einladung angenommen, ist den Administratorgruppen ({groups}) aber nicht beigetreten',
 	'notice.msg.second_factor_last_resort_recovery':
 		'Die Step-up-Sicherheitsschlüssel von {email} wurden vom Betreiber der Umgebung zurückgesetzt',
 	'notice.msg.second_factor_recovery_requested':

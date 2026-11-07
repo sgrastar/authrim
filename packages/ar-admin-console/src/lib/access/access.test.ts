@@ -103,7 +103,11 @@ describe('the team pages, as the admin APIs decide them', () => {
 		grant: false,
 		revoke: false,
 		revokeGlobal: false,
-		expiry: false
+		expiry: false,
+		groupsEdit: false,
+		groupsGrant: false,
+		roles: false,
+		rolesEdit: false
 	};
 	const all = { ...none, read: true, manage: true, invite: true, inviteForm: true, edit: true };
 	const of = (permissions: string[]) => teamAccess({ platform: false, roles: [], permissions });
@@ -114,7 +118,11 @@ describe('the team pages, as the admin APIs decide them', () => {
 			delete: true,
 			grant: true,
 			revoke: true,
-			expiry: true
+			expiry: true,
+			groupsEdit: true,
+			groupsGrant: true,
+			roles: true,
+			rolesEdit: true
 		});
 	});
 
@@ -140,8 +148,15 @@ describe('the team pages, as the admin APIs decide them', () => {
 			invite: true,
 			edit: true,
 			delete: true,
-			revoke: true
+			revoke: true,
+			groupsEdit: true
 		});
+	});
+
+	it('changes admin groups with the roles write permission, and gives them roles with read too', () => {
+		const access = of(['admin:admin_users:read', 'admin:admin_roles:write']);
+		expect(access.groupsEdit).toBe(true);
+		expect(access.groupsGrant).toBe(false);
 	});
 
 	it("changes a role's end only with the roles read permission too, which the roles API asks", () => {
