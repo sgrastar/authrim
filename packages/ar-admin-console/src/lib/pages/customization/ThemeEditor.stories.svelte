@@ -4,6 +4,24 @@
 	import { t, tIn } from '#lib/i18n/i18n.svelte.js';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import ThemeEditor from './ThemeEditor.svelte';
+	import type { BgPreset } from './bg-presets';
+	import { newThemeDraft } from './theme-draft';
+
+	// The presets the setup tool installs, read from where they live in the repository (the
+	// Admin API lists them from the public assets in a real console).
+	const PRESET_FILES = import.meta.glob<string>(
+		'../../../../../ar-management/assets/login-ui-presets/backgrounds/*/*.webp',
+		{ eager: true, query: '?url', import: 'default' }
+	);
+	const PAPER_PRESET =
+		Object.values(PRESET_FILES).find((url) => url.includes('indigo-washi')) ?? null;
+	const storyPresets = async (): Promise<BgPreset[]> =>
+		Object.entries(PRESET_FILES).flatMap(([path, url]) => {
+			const match = /\/backgrounds\/([^/]+)\/([^/]+)\.webp$/.exec(path);
+			return match
+				? [{ id: `${match[1]}/${match[2]}`, category: match[1], name: match[2], url }]
+				: [];
+		});
 
 	const { Story } = defineMeta({
 		title: 'Pages/Customization/Theme editor',
@@ -37,6 +55,32 @@
 >
 	{#snippet template()}
 		<Page><ThemeEditor /></Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Background presets"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.tab.images') }));
+		await userEvent.click(canvas.getAllByRole('button', { name: t('th.bg.browse') })[0]);
+		const dialog = within(canvasElement.ownerDocument.body).getByRole('dialog');
+		await waitFor(() => expect(within(dialog).getAllByRole('button').length).toBeGreaterThan(5));
+		// The picture in use is a paper preset: its category opens, not the first one.
+		await waitFor(() =>
+			expect(
+				within(dialog).getByRole('button', { name: new RegExp(`^${t('th.bg.cat.paper')}`) })
+			).toHaveAttribute('aria-pressed', 'true')
+		);
+	}}
+>
+	{#snippet template()}
+		<Page>
+			<ThemeEditor
+				presets={storyPresets}
+				draft={{ ...newThemeDraft(), backgroundImage: PAPER_PRESET }}
+			/>
+		</Page>
 	{/snippet}
 </Story>
 

@@ -227,6 +227,9 @@ export const jaCustomization = {
 	'th.bg.title': '背景画像のプリセット',
 	'th.bg.apply': 'この画像を適用',
 	'th.bg.current': '適用中の画像',
+	'th.bg.loading': '読み込んでいます…',
+	'th.bg.none':
+		'プリセット画像はまだありません。セットアップツールでインストールすると、ここに並びます。',
 	'th.bg.loadFailed': '画像を読み込めませんでした。もう一度お試しください。',
 	'th.bg.cat.paper': '和紙',
 	'th.bg.cat.fabric': '布地',
@@ -245,6 +248,7 @@ export const jaCustomization = {
 	'th.bg.img.blue-silver-brushed-metal': '青銀のヘアライン金属',
 	'th.bg.img.espresso-leather': 'エスプレッソのレザー',
 	'th.bg.img.iridescent-semiconductor-die': '虹色の半導体ダイ',
+	'th.bg.img.satin-black-leather-grain': 'サテンブラックの革のシボ',
 	'th.bg.img.natural-cork': '天然のコルク',
 	'th.bg.img.tokyo-tower-vermilion-bolts': '東京タワーの朱色のボルト',
 	'th.bg.img.hatenohama-day': 'ハテの浜（昼）',

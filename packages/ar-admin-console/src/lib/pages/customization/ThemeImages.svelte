@@ -5,11 +5,15 @@
 	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
 	import Slider from '#lib/ui/primitives/Slider.svelte';
 	import BgPresetButton from './BgPresetButton.svelte';
+	import { apiBgPresets, type BgPresetSource } from './bg-presets';
 	import ThemeGroup from './ThemeGroup.svelte';
 	import type { ThemeDraft } from './theme-draft';
 
 	/** Images: the logo, the favicon, the background and (Split) the brand panel's own picture. */
-	let { draft = $bindable() }: { draft: ThemeDraft } = $props();
+	let {
+		draft = $bindable(),
+		presets = apiBgPresets
+	}: { draft: ThemeDraft; presets?: BgPresetSource } = $props();
 
 	// The brand panel exists only in the Split template, so its picture is offered only with Split.
 	const split = $derived(draft.template === 'split');
@@ -46,7 +50,11 @@
 		maxBytes={2 * 1024 * 1024}
 		bind:value={draft.backgroundImage}
 	>
-		{#snippet actions(pick)}<BgPresetButton value={draft.backgroundImage} onpick={pick} />{/snippet}
+		{#snippet actions(pick)}<BgPresetButton
+				value={draft.backgroundImage}
+				source={presets}
+				onchoose={pick}
+			/>{/snippet}
 	</ImageUpload>
 	{#if draft.backgroundImage}
 		<Slider label={t('th.i.bgOpacity')} format="percent" bind:value={draft.backgroundOpacity} />
@@ -65,7 +73,11 @@
 			maxBytes={2 * 1024 * 1024}
 			bind:value={draft.panelImage}
 		>
-			{#snippet actions(pick)}<BgPresetButton value={draft.panelImage} onpick={pick} />{/snippet}
+			{#snippet actions(pick)}<BgPresetButton
+					value={draft.panelImage}
+					source={presets}
+					onchoose={pick}
+				/>{/snippet}
 		</ImageUpload>
 		{#if draft.panelImage}
 			<Slider
@@ -89,7 +101,11 @@
 			maxBytes={2 * 1024 * 1024}
 			bind:value={draft.cardImage}
 		>
-			{#snippet actions(pick)}<BgPresetButton value={draft.cardImage} onpick={pick} />{/snippet}
+			{#snippet actions(pick)}<BgPresetButton
+					value={draft.cardImage}
+					source={presets}
+					onchoose={pick}
+				/>{/snippet}
 		</ImageUpload>
 		{#if draft.cardImage}
 			<Slider label={t('th.i.cardOpacity')} format="percent" bind:value={draft.cardImageOpacity} />

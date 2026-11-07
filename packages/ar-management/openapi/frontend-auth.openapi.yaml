@@ -74,6 +74,49 @@ paths:
         '500':
           $ref: '#/components/responses/Error'
       security: []
+  /api/assets/presets/login-ui/backgrounds/{category}/{filename}:
+    get:
+      tags:
+        - Frontend Auth Discovery
+      operationId: getApiAssetsPresetsLoginUiBackground
+      summary: Download a shared Login UI background preset.
+      description: >-
+        Streams a background preset that the setup tool placed in the public assets bucket. Shared
+        by every tenant and cached for a day.
+      parameters:
+        - name: category
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z0-9-]{1,64}$'
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z0-9-]{1,128}\.(webp|jpe?g|png)$'
+      responses:
+        '200':
+          description: Image bytes.
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: []
   /api/auth/authentication-methods:
     get:
       tags:

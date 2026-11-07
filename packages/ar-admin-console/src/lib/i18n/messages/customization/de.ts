@@ -232,6 +232,9 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.bg.title': 'Hintergrundbild-Vorlagen',
 	'th.bg.apply': 'Dieses Bild verwenden',
 	'th.bg.current': 'Aktuelles Bild',
+	'th.bg.loading': 'Wird geladen…',
+	'th.bg.none':
+		'Noch keine Vorlagenbilder. Sie erscheinen hier, sobald das Setup-Tool sie installiert hat.',
 	'th.bg.loadFailed': 'Das Bild konnte nicht geladen werden. Bitte erneut versuchen.',
 	'th.bg.cat.paper': 'Papier',
 	'th.bg.cat.fabric': 'Stoff',
@@ -250,6 +253,7 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.bg.img.blue-silver-brushed-metal': 'Blausilbern gebürstetes Metall',
 	'th.bg.img.espresso-leather': 'Espressofarbenes Leder',
 	'th.bg.img.iridescent-semiconductor-die': 'Schillernder Halbleiterchip',
+	'th.bg.img.satin-black-leather-grain': 'Satinschwarze Ledernarbung',
 	'th.bg.img.natural-cork': 'Naturkork',
 	'th.bg.img.tokyo-tower-vermilion-bolts': 'Zinnoberrote Bolzen des Tokyo Tower',
 	'th.bg.img.hatenohama-day': 'Hatenohama (Tag)',

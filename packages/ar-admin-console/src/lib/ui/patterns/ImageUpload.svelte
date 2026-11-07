@@ -29,10 +29,11 @@
 		/** Mark as changed explicitly. */
 		changed?: boolean;
 		/**
-		 * More buttons after Choose / Remove (another way to pick the image). They hand the file
-		 * to `pick`, which checks it like a file from disk and clears an earlier error.
+		 * More buttons after Choose / Remove (another way to pick the image). They hand what they
+		 * picked to `pick`: a file is checked like one from disk; a URL (an image the API already
+		 * has) is used as it is. Either clears an earlier error.
 		 */
-		actions?: Snippet<[pick: (file: File) => void]>;
+		actions?: Snippet<[pick: (picked: File | string) => void]>;
 		/**
 		 * Where a stored URL is loaded from, when that is not the URL itself (a path on another
 		 * origin, such as the API's). The value stays as stored.
@@ -81,7 +82,13 @@
 			: t('file.limits', { types, max: formatBytes(maxBytes, i18n.locale) });
 	});
 
-	function pick(chosen: File) {
+	function pick(chosen: File | string) {
+		if (typeof chosen === 'string') {
+			rejected = null;
+			dimensions = '';
+			value = chosen;
+			return;
+		}
 		const result = partitionFiles([chosen], { accept, maxBytes });
 		rejected = result.rejected[0] ?? null;
 		if (result.accepted[0]) value = result.accepted[0];

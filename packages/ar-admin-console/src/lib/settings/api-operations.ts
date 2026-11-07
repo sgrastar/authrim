@@ -631,6 +631,7 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 		'admin'
 	],
 	['POST', '/api/admin/assets/login-ui', 'Upload a Login UI public image asset.', 'admin'],
+	['GET', '/api/admin/assets/login-ui/presets', 'List the Login UI background presets.', 'admin'],
 	['GET', '/api/admin/attributes', 'List user attributes.', 'admin'],
 	['POST', '/api/admin/attributes', 'Create or replace a user attribute.', 'admin'],
 	['DELETE', '/api/admin/attributes/expired', 'Delete expired user attributes.', 'admin'],

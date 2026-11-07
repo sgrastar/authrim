@@ -1,65 +1,48 @@
 import { hasMessage, t } from '#lib/i18n/i18n.svelte.js';
+import { fetchLoginUiPresets, type LoginUiPreset } from '#lib/api/login-ui-themes.js';
 import type { PickerGroup } from '#lib/ui/patterns/PickerDialog.svelte';
 
 /**
- * Background pictures that ship with the console, one folder per category
- * (`bg-presets/<category>/<name>.webp`). Vite fingerprints each file and gives its URL.
- * Choosing one fetches it and hands it over as a File, so it is uploaded on Save exactly
- * like a picture the admin chose from disk.
+ * Background pictures shared by every tenant. The setup tool places them in the public assets
+ * (`packages/ar-management/assets/login-ui-presets/backgrounds/<category>/<name>.webp`), and a
+ * theme uses one by storing its path: no copy is uploaded, and the picture is the same one for
+ * every tenant that picks it.
  */
-const FILES = import.meta.glob<string>('./bg-presets/*/*.webp', {
-	eager: true,
-	query: '?url',
-	import: 'default'
-});
+export type BgPreset = LoginUiPreset;
 
-/** The categories, in the order they are offered. */
-const CATEGORIES = ['nature', 'interiors', 'paper', 'fabric', 'materials'] as const;
+/** Where the presets come from: the Admin API, or (Storybook) a fixed list. */
+export type BgPresetSource = () => Promise<readonly BgPreset[]>;
 
-export interface BgPreset {
-	/** `<category>/<name>`. */
-	id: string;
-	category: string;
-	name: string;
-	url: string;
-}
+export const apiBgPresets: BgPresetSource = fetchLoginUiPresets;
 
-export const BG_PRESETS: readonly BgPreset[] = Object.entries(FILES)
-	.map(([path, url]) => {
-		const [, category, file] = path.match(/^\.\/bg-presets\/([^/]+)\/([^/]+)\.webp$/) ?? [];
-		return { id: `${category}/${file}`, category, name: file, url };
-	})
-	.filter((preset) => preset.category && preset.name)
-	.sort((a, b) => a.id.localeCompare(b.id));
+/** The categories offered first, in this order; any other category follows. */
+const CATEGORIES = ['nature', 'interiors', 'paper', 'fabric', 'materials'];
 
-const label = (key: string, fallback: string) => (hasMessage(key) ? t(key) : fallback);
+/** "misty-japanese-forest-deer" → "Misty japanese forest deer", for a name without a message. */
+const readable = (name: string) => {
+	const words = name.replaceAll('-', ' ');
+	return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+const label = (key: string, name: string) => (hasMessage(key) ? t(key) : readable(name));
 
 /** The presets as picker groups, labelled in the console's language. */
-export function bgPresetGroups(): PickerGroup[] {
-	const known: readonly string[] = CATEGORIES;
-	const extra = [...new Set(BG_PRESETS.map((p) => p.category))].filter((c) => !known.includes(c));
-	return [...CATEGORIES, ...extra]
-		.map((category) => ({
-			id: category,
-			label: label(`th.bg.cat.${category}`, category),
-			icon: 'folder' as const,
-			items: BG_PRESETS.filter((p) => p.category === category).map((p) => ({
-				value: p.id,
+export function bgPresetGroups(presets: readonly BgPreset[]): PickerGroup[] {
+	const found = [...new Set(presets.map((p) => p.category))];
+	const order = [
+		...CATEGORIES.filter((c) => found.includes(c)),
+		...found.filter((c) => !CATEGORIES.includes(c)).sort()
+	];
+	return order.map((category) => ({
+		id: category,
+		label: label(`th.bg.cat.${category}`, category),
+		icon: 'folder' as const,
+		items: presets
+			.filter((p) => p.category === category)
+			.map((p) => ({
+				value: p.url,
 				label: label(`th.bg.img.${p.name}`, p.name),
 				keywords: p.name.replaceAll('-', ' ')
 			}))
-		}))
-		.filter((group) => group.items.length > 0);
-}
-
-export const bgPresetUrl = (id: string) => BG_PRESETS.find((p) => p.id === id)?.url;
-
-/** The preset as a File, ready to go through the same upload as a picture from disk. */
-export async function bgPresetFile(id: string): Promise<File> {
-	const preset = BG_PRESETS.find((p) => p.id === id);
-	if (!preset) throw new Error(`Unknown background preset: ${id}`);
-	const response = await fetch(preset.url);
-	if (!response.ok) throw new Error(`Background preset ${id}: HTTP ${response.status}`);
-	const blob = await response.blob();
-	return new File([blob], `${preset.name}.webp`, { type: blob.type || 'image/webp' });
+	}));
 }

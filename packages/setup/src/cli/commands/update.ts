@@ -99,6 +99,7 @@ import {
   registerExternalCapabilities,
 } from '../../core/external-capability-registration.js';
 import { publishDynamicPluginWorkerBundles } from '../../core/dynamic-plugin-publication.js';
+import { publishLoginUiPresetsToEnvironment } from '../../core/login-ui-preset-publication.js';
 import {
   publishAndActivateMigrationRelease,
   type MigrationReleaseArtifactPlan,
@@ -2245,6 +2246,30 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     await saveLockFile(workingLock, lockPath);
 
     const workerOwnership = await ensureWorkerOwnership();
+
+    // The background presets are put again on every update, Workers or not, so one that failed
+    // last time (a passing R2 error) is filled in by simply running update again.
+    if (!options.databaseOnly) {
+      const presetSpinner = ora('Publishing Login UI background presets...').start();
+      const presets = await publishLoginUiPresetsToEnvironment({
+        baseDir,
+        environment: env,
+        bucket: workingLock.r2?.PUBLIC_ASSETS,
+        onProgress: (message) => {
+          presetSpinner.text = message;
+        },
+        onWarning: (message) => presetSpinner.warn(message),
+      });
+      if (presets?.published.length) {
+        presetSpinner.succeed(`Published ${presets.published.length} Login UI background presets`);
+      } else if (presets) {
+        presetSpinner.info(
+          presets.skipped === 'no_bucket'
+            ? 'Login UI background presets skipped (no PUBLIC_ASSETS bucket)'
+            : 'No Login UI background presets to publish'
+        );
+      }
+    }
 
     if (componentsToUpdate.length === 0) {
       if (controlManagedStreamIds.length > 0) {

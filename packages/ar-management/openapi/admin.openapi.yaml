@@ -561,6 +561,56 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/assets/login-ui/presets:
+    get:
+      tags:
+        - Settings - UI
+      operationId: getApiAdminAssetsLoginUiPresets
+      summary: List the Login UI background presets.
+      description: >-
+        Lists the background images the setup tool placed in the public assets bucket, shared by
+        every tenant. A theme uses one by storing its url; no copy is made.
+      responses:
+        '200':
+          description: The presets, sorted by id; empty when the bucket is not configured.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - presets
+                properties:
+                  presets:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - category
+                        - name
+                        - url
+                      properties:
+                        id:
+                          type: string
+                          description: '`<category>/<name>`.'
+                        category:
+                          type: string
+                        name:
+                          type: string
+                        url:
+                          type: string
+                          description: Path to store in Login UI settings.
+                        size:
+                          type: integer
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/logout:
     post:
       tags:

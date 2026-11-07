@@ -34,6 +34,7 @@ import type {
   LoginUITextLocalizations,
 } from '@authrim/ar-lib-core';
 import {
+  isLoginUiPresetAssetPath,
   HUMAN_VERIFICATION_FLOWS,
   humanVerificationConfigValid,
   humanVerificationProviderAvailability,
@@ -1592,6 +1593,7 @@ function isValidHttpsUrl(url: string | undefined): boolean {
 function isValidLoginUIImageUrl(url: string | undefined): boolean {
   if (!url || typeof url !== 'string') return false;
   if (url.length > MAX_URL_LENGTH) return false;
+  if (isLoginUiPresetAssetPath(url)) return true;
   if (url.startsWith('/api/assets/')) {
     return /^\/api\/assets\/[A-Za-z0-9_-]{1,128}\/login-ui\/(?:logo|background|panel-background|favicon|thumbnail)\/[A-Za-z0-9._-]+\.(?:gif|ico|jpe?g|png|webp)$/u.test(
       url

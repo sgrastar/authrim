@@ -8243,7 +8243,7 @@ export async function putR2Object(input: {
   bucketName: string;
   objectKey: string;
   bytes: Uint8Array;
-  contentType: 'application/json' | 'application/sql';
+  contentType: 'application/json' | 'application/sql' | 'image/webp' | 'image/jpeg' | 'image/png';
 }): Promise<void> {
   if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
   assertSafeR2ObjectKey(input.objectKey);

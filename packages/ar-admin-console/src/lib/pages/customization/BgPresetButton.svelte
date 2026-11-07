@@ -1,86 +1,82 @@
 <script lang="ts">
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { apiAssetUrl } from '#lib/api/assets.js';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
-	import PickerDialog from '#lib/ui/patterns/PickerDialog.svelte';
-	import { bgPresetFile, bgPresetGroups, bgPresetUrl } from './bg-presets';
+	import PickerDialog, { type PickerGroup } from '#lib/ui/patterns/PickerDialog.svelte';
+	import { apiBgPresets, bgPresetGroups, type BgPresetSource } from './bg-presets';
 
 	/**
-	 * A small folder button beside a background picture that opens the bundled presets in a
-	 * large column browser (category → picture → preview). Applying one hands it to `onpick` as
-	 * a File (ImageUpload checks it like a file from disk), so it waits for Save and is uploaded
-	 * like any other picture.
+	 * A small folder button beside a background picture that opens the shared presets in a large
+	 * column browser (category → picture → preview). Applying one hands its path to `onchoose`:
+	 * the theme refers to the shared picture, nothing is uploaded.
 	 */
 	interface Props {
-		/** The field's current picture: tells which preset, if any, is the one in use. */
+		/** The field's current picture: the preset it is, if any, is marked as the current one. */
 		value?: string | File | null;
 		disabled?: boolean;
-		onpick: (file: File) => void;
+		source?: BgPresetSource;
+		onchoose: (url: string) => void;
 	}
 
-	let { value = null, disabled = false, onpick }: Props = $props();
+	let { value = null, disabled = false, source = apiBgPresets, onchoose }: Props = $props();
 
 	let open = $state(false);
-	let loading = $state(false);
-	let failed = $state(false);
-	// Each fetch gets a number; closing or starting another makes an older one's result void.
+	let groups = $state<PickerGroup[]>([]);
+	let status = $state<'loading' | 'failed' | 'ready'>('loading');
+	// Each load gets a number; closing or opening again makes an older one's answer void.
 	let request = 0;
-	// The preset last applied here, while the picture is still that one.
-	let applied = $state<{ id: string; file: File } | null>(null);
-	const current = $derived(applied && value === applied.file ? applied.id : null);
 
-	const groups = $derived(bgPresetGroups());
+	async function show() {
+		open = true;
+		status = 'loading';
+		const mine = ++request;
+		try {
+			const presets = await source();
+			if (mine !== request) return;
+			groups = bgPresetGroups(presets);
+			status = 'ready';
+		} catch {
+			if (mine === request) status = 'failed';
+		}
+	}
+
+	// While loading, after a failure or with no presets, one column says so.
+	const shown = $derived.by((): PickerGroup[] => {
+		if (status === 'ready' && groups.length) return groups;
+		const empty =
+			status === 'loading'
+				? t('th.bg.loading')
+				: status === 'failed'
+					? t('th.bg.loadFailed')
+					: t('th.bg.none');
+		return [{ id: 'status', label: t('th.bg.title'), icon: 'image', empty, items: [] }];
+	});
 
 	function close() {
 		request++;
-		loading = false;
 		open = false;
-	}
-
-	async function choose(id: string) {
-		if (loading) return;
-		const mine = ++request;
-		loading = true;
-		failed = false;
-		try {
-			const file = await bgPresetFile(id);
-			if (mine !== request) return;
-			applied = { id, file };
-			onpick(file);
-			close();
-		} catch {
-			if (mine === request) failed = true;
-		} finally {
-			if (mine === request) loading = false;
-		}
 	}
 </script>
 
-<IconButton
-	icon="folder"
-	size="sm"
-	label={t('th.bg.browse')}
-	{disabled}
-	onclick={() => {
-		failed = false;
-		open = true;
-	}}
-/>
+<IconButton icon="folder" size="sm" label={t('th.bg.browse')} {disabled} onclick={show} />
 
 <PickerDialog
 	{open}
 	title={t('th.bg.title')}
-	{groups}
-	value={current}
+	groups={shown}
+	value={typeof value === 'string' ? value : null}
 	chooseLabel={t('th.bg.apply')}
 	currentLabel={t('th.bg.current')}
-	onchoose={choose}
+	onchoose={(url) => {
+		onchoose(url);
+		close();
+	}}
 	oncancel={close}
 >
 	{#snippet preview(item)}
-		<div class="bg-preview" aria-busy={loading}>
-			<img src={bgPresetUrl(item.value)} alt={item.label} />
+		<div class="bg-preview">
+			<img src={apiAssetUrl(item.value)} alt={item.label} />
 		</div>
-		{#if failed}<p class="bg-preview__error" role="alert">{t('th.bg.loadFailed')}</p>{/if}
 	{/snippet}
 </PickerDialog>
 
@@ -93,20 +89,10 @@
 		aspect-ratio: 16 / 10;
 	}
 
-	.bg-preview[aria-busy='true'] {
-		opacity: 0.6;
-	}
-
 	.bg-preview img {
 		display: block;
 		width: 100%;
 		height: 100%;
 		object-fit: cover;
-	}
-
-	.bg-preview__error {
-		margin: 0;
-		color: var(--danger);
-		font-size: var(--fs-caption);
 	}
 </style>
