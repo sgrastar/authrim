@@ -51,6 +51,20 @@ describe('the lite proof-of-work solver', () => {
 		expect(event.defaultPrevented).toBe(false);
 	});
 
+	it('sends a form as it is from a button that needs no proof', () => {
+		document.body.innerHTML = `
+			<form data-lite-pow='{}'>
+				<input type="hidden" name="human_verification_response" value="" />
+				<button type="submit" data-lite-pow-none>Check</button>
+			</form>`;
+		new Function(LITE_POW_SOLVER_SCRIPT)();
+		const button = document.querySelector('button') as HTMLButtonElement;
+		const event = new SubmitEvent('submit', { cancelable: true, submitter: button });
+		document.querySelector('form')?.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(false);
+		expect(button.disabled).toBe(false);
+	});
+
 	it('keeps the button pressed in a browser without requestSubmit', async () => {
 		const salt = 's';
 		const challenge = await sha256Hex(`${salt}3`);

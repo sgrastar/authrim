@@ -12,6 +12,7 @@ import {
 import { LITE_FLOW_COMPONENTS } from '@authrim/ar-lib-core/services/lite-compatibility';
 import type { LiteBackendClient } from './backend-client';
 import type { LiteFlowState } from './flow-driver';
+import { readLiteFlowConsent } from './flow-consent';
 
 export type LiteAdvanceResult =
 	/** The Flow completed: its output (the continuation). */
@@ -30,7 +31,17 @@ export async function advanceLiteFlow(
 	backend: LiteBackendClient,
 	state: LiteFlowState,
 	first: FlowRuntimeStep | null,
-	options: { signedIn: boolean; steps?: readonly FlowRuntimeStep[] }
+	options: {
+		signedIn: boolean;
+		steps?: readonly FlowRuntimeStep[];
+		/**
+		 * The consent decision a step's submit carries (the post's, or one kept for its terms): `{}`
+		 * for a step without consent; null when the step asks for consent no decision is at hand
+		 * for, which stops here for the page to ask (its Continue draws the terms). Without it, a
+		 * step with consent is never submitted.
+		 */
+		consentInput?: (step: FlowRuntimeStep) => Promise<Record<string, unknown> | null>;
+	}
 ): Promise<LiteAdvanceResult> {
 	let step = first;
 	for (let i = 0; i < MAX_RUNTIME_AUTO_ADVANCE_STEPS; i++) {
@@ -42,6 +53,12 @@ export async function advanceLiteFlow(
 		const handle = runtimeAutoSubmitHandle(step);
 		if (handle === null) return { kind: 'draw', step };
 		if (step.component === 'completion' && !options.signedIn) return { kind: 'sign_in_required' };
+		const input = options.consentInput
+			? await options.consentInput(step)
+			: readLiteFlowConsent(step) === null
+				? {}
+				: null;
+		if (!input) return { kind: 'draw', step };
 		const answer = await backend.request(
 			`/api/v1/login/interactions/${encodeURIComponent(state.interactionId)}/submit`,
 			{
@@ -51,7 +68,7 @@ export async function advanceLiteFlow(
 					selected_handle: handle,
 					contract_hash: state.contractHash,
 					signature: state.signature,
-					input: {}
+					input
 				}
 			}
 		);

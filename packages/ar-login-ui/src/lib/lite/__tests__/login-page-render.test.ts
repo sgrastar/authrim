@@ -144,24 +144,28 @@ describe('the lite sign-in page as drawn', () => {
 		expect(body).toContain('<p>Sign in to go on</p>');
 	});
 
-	it('draws the code entry: the code form without a proof, the resend form with one', () => {
+	it('draws the code entry: one form, its check with no proof, its resend with one', () => {
 		const { body } = page(
 			[field({ blockType: 'code_input_widget', field: 'code', label: 'Code' })],
 			POW,
 			{ codeEntry: { kind: 'mail_otp', maskedEmail: 'p***n@example.com', resendWait: 42 } }
 		);
 		const forms = body.match(/<form[^>]*>/gu) ?? [];
-		expect(forms).toHaveLength(3);
+		expect(forms).toHaveLength(2);
 		expect(forms[0]).toContain('action="?challenge_id=ch-1&amp;/verify_code"');
-		expect(forms[0]).not.toContain('data-lite-pow');
-		expect(forms[1]).toContain('action="?challenge_id=ch-1&amp;/resend"');
-		expect(forms[1]).toContain('data-lite-pow=');
-		expect(forms[2]).toContain('action="?challenge_id=ch-1&amp;/restart"');
+		expect(forms[0]).toContain('data-lite-pow=');
+		const buttons = body.match(/<button[^>]*>/gu) ?? [];
+		// The check first (an Enter in the code), sent with no proof; the resend with one.
+		expect(buttons[0]).toContain('data-lite-pow-none');
+		expect(buttons[1]).toContain('formaction="?challenge_id=ch-1&amp;/resend"');
+		expect(buttons[1]).toContain('formnovalidate');
+		expect(buttons[1]).not.toContain('data-lite-pow-none');
+		expect(forms[1]).toContain('action="?challenge_id=ch-1&amp;/restart"');
 		expect(body).toMatch(/<input[^>]*name="code"[^>]*autocomplete="one-time-code"/u);
 		expect(body).toContain('pattern="[0-9]{6}"');
 		expect(body).toContain('p***n@example.com');
 		expect(body).toContain('Resend in 42s');
-		expect(body.match(/name="op"/gu)).toHaveLength(2);
+		expect(body.match(/name="op"/gu)).toHaveLength(1);
 	});
 
 	it('says what was wrong with the last post', () => {

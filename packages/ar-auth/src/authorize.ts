@@ -5512,7 +5512,8 @@ function createFragmentResponse(
 /**
  * Requests whose form post responses are answered as data, not as an auto-submitting page: the
  * lite Login UI's server, which sends the form from its own relay page (its CSP allows only its own
- * fixed scripts). The data is what the page would hold: the destination and its fields.
+ * fixed scripts). The data is what the page would hold: the destination and its fields. Its header
+ * is never a CORS-allowed one (cors-headers.ts): another origin's page cannot ask for the data.
  */
 const STRUCTURED_FORM_POST = new WeakSet<Context>();
 
