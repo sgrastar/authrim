@@ -26729,7 +26729,7 @@ paths:
         Deletes only the user PII values, creates a tombstone, and leaves the account active. The
         profile values are erased (not only marked deleted), together with the custom attributes,
         the screen response records, the linked identities' provider profile (address, name, raw
-        attributes and claims, profile data), the raw values of finished identifier changes and of
+        attributes and claims, profile data) and stored provider tokens, the raw values of finished identifier changes and of
         identifier change challenges (an unused one can no longer be verified) and of finished or
         stopped external identifier unlinkings, the proofs of finished guest registrations, and
         the addresses earlier account webhook events kept (redacted; a notice that an address was
