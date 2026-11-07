@@ -18,6 +18,18 @@ import type { Env } from '@authrim/ar-lib-core/types/env';
 import scimApp from '../scim';
 import { installGroupBoundaryFixture } from './helpers/group-boundary-fixture';
 
+// SCIM audit logs the routes start without awaiting them (logScimAudit; the requests carry no
+// executionCtx for waitUntil). They log through the real ar-lib-core logger, so each test waits for
+// them; a log that lands after the file's last test reaches Vitest while the worker is closing and
+// fails the run as an unhandled error.
+const backgroundAudit = vi.hoisted(() => ({ pending: [] as Promise<unknown>[] }));
+
+async function settleBackgroundAudit(): Promise<void> {
+  while (backgroundAudit.pending.length > 0) {
+    await Promise.allSettled(backgroundAudit.pending.splice(0));
+  }
+}
+
 const canonicalRuntimeState = vi.hoisted(() => ({
   users: new Map<string, any>(),
   apply(input: any) {
@@ -582,6 +594,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const applyRuntimeUserInput = (input: any) => canonicalRuntimeState.apply(input);
   return {
     ...actual,
+    createAuditLog: (...args: Parameters<typeof actual.createAuditLog>) => {
+      const write = actual.createAuditLog(...args);
+      backgroundAudit.pending.push(write);
+      return write;
+    },
     invalidateUserCache: vi.fn().mockResolvedValue(undefined),
     getTenantIdFromContext: vi.fn(() => tenantState.tenantId),
     createAuthContextFromHono: vi.fn((c: any, tenantId = 'default') => ({
@@ -779,7 +796,10 @@ export function describeScimTestHarness(
     }
 
     let groupBoundaries: ReturnType<typeof installGroupBoundaryFixture>;
-    afterEach(() => groupBoundaries?.close());
+    afterEach(async () => {
+      await settleBackgroundAudit();
+      groupBoundaries?.close();
+    });
 
     beforeEach(() => {
       vi.clearAllMocks();
