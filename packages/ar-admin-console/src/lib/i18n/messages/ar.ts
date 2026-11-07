@@ -93,6 +93,7 @@ export const ar = {
 	'nav.set.domains': 'النطاقات المخصصة',
 	'nav.set.compliance': 'الامتثال',
 	'nav.set.team': 'المسؤولون',
+	'nav.set.teamGroups': 'مجموعات المسؤولين',
 	'nav.set.teamRoles': 'إسناد الأدوار',
 	'nav.plat.tenants': 'المستأجرون',
 	'nav.plat.releases': 'مستوى التحكم',

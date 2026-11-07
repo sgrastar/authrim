@@ -104,3 +104,21 @@ export function inputTimeToMs(value: string, zone: TimeZoneMode): number | undef
 	const iso = fromInputValue(value.slice(0, 16), zone);
 	return iso === undefined ? undefined : Date.parse(iso);
 }
+
+/**
+ * A role's end as typed (a `datetime-local` value in `zone`): the time, or what is wrong with
+ * it. Empty is no end. `incomplete` is the field's own report of a part left out.
+ */
+export function readRoleEnd(
+	text: string,
+	incomplete: boolean,
+	zone: TimeZoneMode,
+	now = Date.now()
+): { ms?: number; problem?: 'tm.new.roleEndsInvalid' | 'tm.new.roleEndsPast' } {
+	if (incomplete) return { problem: 'tm.new.roleEndsInvalid' };
+	if (!text) return {};
+	const ms = inputTimeToMs(text, zone);
+	if (ms === undefined) return { problem: 'tm.new.roleEndsInvalid' };
+	if (ms <= now) return { problem: 'tm.new.roleEndsPast' };
+	return { ms };
+}

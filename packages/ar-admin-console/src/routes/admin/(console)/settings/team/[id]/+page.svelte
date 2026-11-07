@@ -25,6 +25,7 @@
 			tenantId={tenantScope.tenantId}
 			listHref={BASE}
 			ondeleted={() => void goto(BASE)}
+			groupHref={(groupId) => `/admin/settings/team-groups/${encodeURIComponent(groupId)}`}
 		/>
 	{/key}
 {/if}

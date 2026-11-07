@@ -67,7 +67,7 @@ async function noticeGroupsNotJoined(
     message_key: 'admin_group_invitation_not_joined',
     params: { email: invitation.email, groups: groups.join(', ') },
     title: `${invitation.email} was not added to ${groups.join(', ')}: the group changed after the invitation`,
-    link: `/admin/team/groups`,
+    link: `/admin/settings/team-groups`,
     required_permission: 'admin:admin_users:read',
     source_ref: invitation.id,
     deduplication_key: `admin-group-invitation:${invitation.id}`,
