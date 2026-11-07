@@ -29,6 +29,9 @@ export const LITE_FLOW_COMPONENTS: ReadonlySet<string> = new Set([
 /** Screen blocks the lite UI renders on sign-in, sign-up, code entry and consent screens. */
 export const LITE_SCREEN_BLOCK_TYPES: ReadonlySet<string> = new Set([
   'identity_field',
+  'checkbox',
+  'select',
+  'radio',
   'auth_widget',
   'guest_login_widget',
   'code_input_widget',

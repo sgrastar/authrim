@@ -61,7 +61,7 @@ describe('liteScreenIssues', () => {
     ).toEqual([{ code: 'screen_method_unsupported', subject: 'login', detail: 'sms' }]);
   });
 
-  it('refuses the choice and checkbox parts until the lite UI draws them', () => {
+  it('takes the choice and checkbox parts, which the lite UI draws', () => {
     expect(
       liteScreenIssues(
         'profile',
@@ -71,8 +71,8 @@ describe('liteScreenIssues', () => {
           field({ block_type: 'checkbox' }),
         ],
         ON
-      ).map((issue) => issue.detail)
-    ).toEqual(['select', 'radio', 'checkbox']);
+      )
+    ).toEqual([]);
   });
 
   it('refuses a block type it does not know, unless the block is hidden', () => {

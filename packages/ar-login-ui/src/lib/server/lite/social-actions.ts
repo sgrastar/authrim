@@ -54,15 +54,19 @@ function nonEmpty(value: unknown): value is string {
 
 /** Whether the step the post is on offers this provider (on, allowed, and drawn as a button). */
 async function offersProvider(post: LitePost, provider: string) {
+	// An external sign-up is not done here yet (PR6c): never a start from the sign-up page.
+	if (post.purpose !== 'login') return null;
 	const step = post.flow.step;
 	const methods = await liteTenantMethods(post.event);
-	const decision = liteLoginStepDecision(step, methods, post.locale);
+	const decision = liteLoginStepDecision(step, methods, post.locale, post.purpose);
 	const drawn =
 		decision.kind === 'screen' &&
 		decision.fields.some(
 			(field) => field.blockType === 'auth_widget' && field.authMethod === 'external_idp'
 		);
-	if (!step || !drawn || !liteMethodAvailability(methods, step)('external_idp')) return null;
+	if (!step || !drawn || !liteMethodAvailability(methods, step, post.purpose)('external_idp')) {
+		return null;
+	}
 	const found = liteSocialProviders(methods, step).providers.find((p) => p.id === provider);
 	return found ? { step, provider: found } : null;
 }

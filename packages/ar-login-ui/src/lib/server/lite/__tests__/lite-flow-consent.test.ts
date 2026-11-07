@@ -222,7 +222,18 @@ function event(init: { action?: string; form?: Record<string, string>; query?: s
 const OP = 'o'.repeat(22);
 const post = (action: string, form: Record<string, string> = {}, query?: string) =>
 	(actions as Record<string, (e: RequestEvent) => Promise<unknown>>)[action](
-		event({ action, form: { txn: 'txn-1', csrf: 'csrf-1', op: OP, ...form }, query })
+		event({
+			action,
+			form: {
+				txn: 'txn-1',
+				csrf: 'csrf-1',
+				op: OP,
+				// A Continue names the step its page was drawn on (the one the Flow is on).
+				...(action === 'step_continue' ? { 'step-key': `int-1:${String(currentStep.id)}` } : {}),
+				...form
+			},
+			query
+		})
 	);
 const view = (query?: string) =>
 	(load as unknown as (e: RequestEvent) => Promise<Record<string, unknown>>)(event({ query }));
@@ -377,7 +388,7 @@ describe('a consent step', () => {
 	it('draws its items and fields in full, sanitized, with a Continue of its own', async () => {
 		const page = await view();
 		expect(page.decision).toMatchObject({ kind: 'screen' });
-		expect(page.consentOnly).toBe(true);
+		expect(page.stepContinue).toBe(true);
 		const consent = page.consent as {
 			items: Array<{ id: string; html: string }>;
 			fields: unknown[];
@@ -391,7 +402,7 @@ describe('a consent step', () => {
 
 	it('submits nothing until the required item and field are accepted', async () => {
 		await expect(
-			post('consent_continue', {
+			post('step_continue', {
 				'consent-key': await keyOf(CONSENT_STEP),
 				'consent-field:email': 'granted'
 			})
@@ -404,7 +415,7 @@ describe('a consent step', () => {
 
 	it('submits `accepted` with the decisions, taking only what the step offers from the form', async () => {
 		await expect(
-			post('consent_continue', {
+			post('step_continue', {
 				'consent-key': await keyOf(CONSENT_STEP),
 				'consent:tos': 'granted',
 				'consent-value:share': 'never-offered',
@@ -444,7 +455,7 @@ describe('a consent step', () => {
 		};
 		expect(await keyOf(currentStep)).not.toBe(drawn);
 		await expect(
-			post('consent_continue', {
+			post('step_continue', {
 				'consent-key': drawn,
 				'consent:tos': 'granted',
 				'consent-field:email': 'granted'
@@ -477,7 +488,7 @@ describe('a consent step', () => {
 			}
 		};
 		await expect(
-			post('consent_continue', {
+			post('step_continue', {
 				'consent-key': await keyOf(currentStep),
 				'consent:plain': 'granted'
 			})
@@ -562,18 +573,245 @@ describe('a consent step', () => {
 		expect(withItems(large.slice(0, 2))).not.toBe('unsupported');
 	});
 
-	it('does not draw a consent step with answers its Continue would not submit', async () => {
+	it('submits the answers of a screen with its consent, as the SPA does (input.fields)', async () => {
 		currentStep = {
 			...CONSENT_STEP,
 			component: 'screen',
 			config: {
 				screen: {
 					display_name: 'About you',
-					fields: [{ field: 'nickname', label: 'Nickname' }, WIDGET]
+					fields: [
+						{ field: 'nickname', label: 'Nickname', required: true },
+						{
+							block_type: 'select',
+							field: 'plan',
+							label: 'Plan',
+							options: [{ value: 'free' }, { value: 'pro', label: 'Pro' }]
+						},
+						{ block_type: 'checkbox', field: 'news', label: 'News' },
+						WIDGET
+					]
 				}
 			}
 		};
-		expect((await view()).decision).toEqual({ kind: 'unsupported', reasons: ['screen_answers'] });
+		routes['/api/v1/login/interactions/int-1/submit'] = (body) =>
+			body.selected_handle === 'submitted'
+				? json({ completed: true, output: { redirect_url: 'https://id.example/after' } })
+				: json({ error: 'invalid_handle' }, 400);
+		const page = await view();
+		console.log('DBG', JSON.stringify(page.decision));
+		expect(page.stepContinue).toBe(true);
+		const consent = {
+			'consent-key': await keyOf(currentStep),
+			'consent:tos': 'granted',
+			'consent-field:email': 'granted'
+		};
+		// The required answer missing: nothing is submitted, what was entered comes back.
+		const refused = (await post('step_continue', { ...consent, plan: 'pro' })) as {
+			status: number;
+			data: Record<string, unknown>;
+		};
+		expect(refused.status).toBe(400);
+		expect(refused.data).toMatchObject({
+			error: 'answer_required',
+			answersEcho: { stepKey: 'int-1:consent', answers: { plan: 'pro' } }
+		});
+		expect(submitted()).toEqual([]);
+		await expect(
+			post('step_continue', { ...consent, nickname: 'Kai', plan: 'pro', news: 'true' })
+		).resolves.toEqual({ completed: true });
+		expect(submitted()[0].input).toMatchObject({
+			consent_item_decisions: { tos: 'granted' },
+			fields: { nickname: 'Kai', plan: 'pro', news: true }
+		});
+	});
+
+	it('submits a box the person left unticked as false', async () => {
+		currentStep = {
+			...CONSENT_STEP,
+			component: 'screen',
+			config: {
+				screen: {
+					display_name: 'About you',
+					fields: [{ block_type: 'checkbox', field: 'news', label: 'News' }]
+				}
+			},
+			content: {}
+		};
+		routes['/api/v1/login/interactions/int-1/submit'] = () =>
+			json({ completed: true, output: { redirect_url: 'https://id.example/after' } });
+		await expect(post('step_continue')).resolves.toEqual({ completed: true });
+		expect(submitted()[0].input).toEqual({ fields: { news: false } });
+	});
+
+	it('goes on from a screen to answer between a code sign-in and its code step', async () => {
+		currentStep = SELECT_STEP;
+		const ABOUT = {
+			...CONSENT_STEP,
+			id: 'about',
+			component: 'screen',
+			config: {
+				screen: {
+					display_name: 'About you',
+					fields: [{ field: 'nickname', label: 'Nickname', required: true }]
+				}
+			},
+			content: {}
+		};
+		const choose = routes['/api/v1/login/interactions/int-1/submit'];
+		routes['/api/v1/login/interactions/int-1/submit'] = (body, init) => {
+			if (body.selected_handle === 'mail_otp') {
+				currentStep = ABOUT;
+				return json({ completed: false, step: ABOUT, interaction: { current_step_id: 'about' } });
+			}
+			if (body.selected_handle === 'submitted') {
+				currentStep = CODE_STEP;
+				return json({
+					completed: false,
+					step: CODE_STEP,
+					interaction: { current_step_id: 'code' }
+				});
+			}
+			if (body.selected_handle === 'verified') {
+				currentStep = COMPLETION;
+				return json({
+					completed: false,
+					step: COMPLETION,
+					interaction: { current_step_id: 'done' }
+				});
+			}
+			if (body.selected_handle === 'completed') {
+				return json({ completed: true, output: { redirect_url: 'https://id.example/after' } });
+			}
+			return choose(body, init);
+		};
+		await post('send_code', {
+			email: 'person@example.com',
+			human_verification_response: 'p'
+		}).catch((thrown: unknown) => thrown);
+		await post('verify_code', { code: '123456' }).catch((thrown: unknown) => thrown);
+		// Signed in: the screen is drawn with its own Continue, the sign-in still recorded.
+		const page = await view();
+		expect(page.decision).toMatchObject({ kind: 'screen' });
+		expect(page.stepContinue).toBe(true);
+		browserCookies = { authrim_session: 's1' };
+		await post('step_continue', { nickname: 'Kai' }).catch((thrown: unknown) => thrown);
+		expect(submitted().map((call) => call.handle)).toEqual([
+			'mail_otp',
+			'submitted',
+			'verified',
+			'completed'
+		]);
+	});
+
+	it('keeps a code sign-in recorded across a screen of words before its code step', async () => {
+		currentStep = SELECT_STEP;
+		const WORDS = {
+			...CONSENT_STEP,
+			id: 'words',
+			component: 'screen',
+			config: {
+				screen: {
+					display_name: 'Welcome',
+					fields: [{ block_type: 'text', field: 't', text: 'Hi' }]
+				}
+			},
+			content: {}
+		};
+		const choose = routes['/api/v1/login/interactions/int-1/submit'];
+		routes['/api/v1/login/interactions/int-1/submit'] = (body, init) => {
+			if (body.selected_handle === 'mail_otp') {
+				currentStep = WORDS;
+				return json({ completed: false, step: WORDS, interaction: { current_step_id: 'words' } });
+			}
+			if (body.selected_handle === 'submitted') {
+				currentStep = CODE_STEP;
+				return json({
+					completed: false,
+					step: CODE_STEP,
+					interaction: { current_step_id: 'code' }
+				});
+			}
+			if (body.selected_handle === 'verified') {
+				currentStep = COMPLETION;
+				return json({
+					completed: false,
+					step: COMPLETION,
+					interaction: { current_step_id: 'done' }
+				});
+			}
+			if (body.selected_handle === 'completed') {
+				return json({ completed: true, output: { redirect_url: 'https://id.example/after' } });
+			}
+			return choose(body, init);
+		};
+		await post('send_code', {
+			email: 'person@example.com',
+			human_verification_response: 'p'
+		}).catch((thrown: unknown) => thrown);
+		await post('verify_code', { code: '123456' }).catch((thrown: unknown) => thrown);
+		expect((await view()).stepContinue).toBe(true);
+		browserCookies = { authrim_session: 's1' };
+		await post('step_continue').catch((thrown: unknown) => thrown);
+		expect(submitted().map((call) => call.handle)).toEqual([
+			'mail_otp',
+			'submitted',
+			'verified',
+			'completed'
+		]);
+	});
+
+	it('takes no Continue drawn on another step: the page is drawn again', async () => {
+		currentStep = { ...CONSENT_STEP, component: 'screen', content: {} };
+		await expect(post('step_continue', { 'step-key': 'int-1:earlier' })).rejects.toMatchObject({
+			status: 303
+		});
+		expect(submitted()).toEqual([]);
+	});
+
+	it('reads no answer for a part it did not draw, whatever the form holds under its name', async () => {
+		currentStep = {
+			...CONSENT_STEP,
+			component: 'screen',
+			config: {
+				screen: {
+					display_name: 'About you',
+					fields: [
+						{ field: 'nickname', label: 'Nickname' },
+						{
+							field: 'hidden_one',
+							label: 'Hidden',
+							display_condition: { mode: 'feature_enabled', feature: 'passkey' }
+						}
+					]
+				}
+			},
+			content: {}
+		};
+		routes['/api/v1/login/interactions/int-1/submit'] = () =>
+			json({ completed: true, output: { redirect_url: 'https://id.example/after' } });
+		await post('step_continue', { nickname: 'Kai', hidden_one: 'smuggled' }).catch(
+			(thrown: unknown) => thrown
+		);
+		expect(submitted()[0].input).toEqual({ fields: { nickname: 'Kai', hidden_one: null } });
+	});
+
+	it('submits the form of a Continue once, posted twice', async () => {
+		currentStep = { ...CONSENT_STEP, component: 'screen', content: {} };
+		routes['/api/v1/login/interactions/int-1/submit'] = () => json({ error: 'server_error' }, 500);
+		await post('step_continue').catch((thrown: unknown) => thrown);
+		await post('step_continue').catch((thrown: unknown) => thrown);
+		expect(submitted()).toHaveLength(1);
+	});
+
+	it('does not draw a part posted under a name the form posts of its own', async () => {
+		currentStep = {
+			...CONSENT_STEP,
+			component: 'screen',
+			config: { screen: { display_name: 'About you', fields: [{ field: 'code', label: 'Code' }] } },
+			content: {}
+		};
+		expect((await view()).decision).toEqual({ kind: 'unsupported', reasons: ['field_name'] });
 	});
 
 	it('bounds a decision by its bytes, not its characters', async () => {
@@ -607,7 +845,7 @@ describe('a consent step', () => {
 			}
 		};
 		await expect(
-			post('consent_continue', { 'consent-key': await keyOf(currentStep) })
+			post('step_continue', { 'consent-key': await keyOf(currentStep) })
 		).resolves.toEqual({ completed: true });
 		expect(submitted()[0].input).toMatchObject({ consent_item_decisions: { tos: 'denied' } });
 	});
@@ -623,7 +861,7 @@ describe('a consent step', () => {
 	it('gives a failed post its consent choices back, for its page to draw them as made', async () => {
 		routes['/api/v1/login/interactions/int-1/submit'] = () => json({ error: 'server_error' }, 500);
 		const key = await keyOf(CONSENT_STEP);
-		const answer = (await post('consent_continue', {
+		const answer = (await post('step_continue', {
 			'consent-key': key,
 			'consent:tos': 'granted',
 			'consent-field:email': 'granted'
@@ -646,10 +884,11 @@ describe('a consent step', () => {
 				? json({ completed: true, output: { redirect_url: 'https://id.example/after' } })
 				: json({ error: 'invalid_handle' }, 400);
 		const page = await view();
-		expect(page.consentOnly).toBe(true);
+		console.log('DBG', JSON.stringify(page.decision));
+		expect(page.stepContinue).toBe(true);
 		expect(page.consent).toBeNull();
-		await expect(post('consent_continue')).resolves.toEqual({ completed: true });
-		expect(submitted()).toEqual([{ handle: 'submitted', input: {} }]);
+		await expect(post('step_continue')).resolves.toEqual({ completed: true });
+		expect(submitted()).toEqual([{ handle: 'submitted', input: { fields: {} } }]);
 	});
 
 	it('does not draw a consent its screen has no part for', async () => {

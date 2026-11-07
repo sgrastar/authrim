@@ -612,7 +612,7 @@ describe('the code entry', () => {
 			...CODE_STEP,
 			id: 'odd',
 			component: 'screen',
-			config: { screen: { fields: [{ block_type: 'checkbox', field: 'c', label: 'C' }] } }
+			config: { screen: { fields: [{ block_type: 'signature_pad', field: 'c', label: 'C' }] } }
 		};
 		store.set({ state: 'pending', data: { ...store.txn.data, code: pendingCode() } });
 		expect(await view()).toMatchObject({ decision: { kind: 'unsupported' }, codeEntry: null });
@@ -658,7 +658,7 @@ describe('what a failure leaves to finish', () => {
 			...CODE_STEP,
 			id: 'odd',
 			component: 'screen',
-			config: { screen: { fields: [{ block_type: 'checkbox', field: 'c', label: 'C' }] } }
+			config: { screen: { fields: [{ block_type: 'signature_pad', field: 'c', label: 'C' }] } }
 		};
 		store.set({
 			state: 'verified',
@@ -774,7 +774,7 @@ describe('what a failure leaves to finish', () => {
 				screen: {
 					fields: [
 						{ block_type: 'code_input_widget', field: 'code', label: 'Code' },
-						{ block_type: 'checkbox', field: 'c', label: 'C' }
+						{ block_type: 'signature_pad', field: 'c', label: 'C' }
 					]
 				}
 			}
@@ -1014,7 +1014,7 @@ describe('what a failure leaves to finish', () => {
 			...CODE_STEP,
 			id: 'odd',
 			component: 'screen',
-			config: { screen: { fields: [{ block_type: 'checkbox', field: 'c', label: 'C' }] } }
+			config: { screen: { fields: [{ block_type: 'signature_pad', field: 'c', label: 'C' }] } }
 		};
 		store.set({ state: 'pending', data: { ...store.txn.data, code: pendingCode() } });
 		expect(await post('resend', { human_verification_response: 'p' })).toMatchObject({

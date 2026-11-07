@@ -238,15 +238,49 @@ describe('a yes/no field', () => {
 		]);
 	});
 
-	it('still refuses the checkbox and choice parts (their answers have nowhere to go yet)', () => {
+	it('draws the checkbox and choice parts, with their choices', () => {
 		const decision = decideLiteStep(
 			step({
 				config: {
-					screen: { fields: [{ block_type: 'checkbox', field: 'c', label: 'C', required: true }] }
+					screen: {
+						fields: [
+							{ block_type: 'checkbox', field: 'c', label: 'C', required: true },
+							{
+								block_type: 'radio',
+								field: 'r',
+								label: 'R',
+								options: [{ value: 'a', label: 'A' }, { value: 'b' }]
+							},
+							{ block_type: 'select', field: 's', label: 'S', options: [{ value: 'x' }] }
+						]
+					}
 				}
 			})
 		);
-		expect(decision).toEqual({ kind: 'unsupported', reasons: ['block:checkbox'] });
+		expect(
+			decision.kind === 'screen' && decision.fields.map((f) => [f.blockType, f.options])
+		).toEqual([
+			['checkbox', []],
+			[
+				'radio',
+				[
+					{ value: 'a', label: 'A' },
+					{ value: 'b', label: 'b' }
+				]
+			],
+			['select', [{ value: 'x', label: 'x' }]]
+		]);
+	});
+
+	it('refuses a choice part whose choices it cannot draw in full', () => {
+		for (const options of [undefined, [], [{ value: '' }], [{ value: 'a' }, { value: 'a' }]]) {
+			const decision = decideLiteStep(
+				step({
+					config: { screen: { fields: [{ block_type: 'radio', field: 'r', label: 'R', options }] } }
+				})
+			);
+			expect(decision).toEqual({ kind: 'unsupported', reasons: ['choices:r'] });
+		}
 	});
 });
 
