@@ -161,5 +161,82 @@ export const deTeam: Record<keyof typeof jaTeam, string> = {
 	'tm.error.resendConflict': 'This ran into another change. Reload the list and try again.',
 	'tm.error.changed': 'Someone changed this meanwhile. Reload, check it, then try again.',
 	'tm.error.notFound': 'Not found. It may have changed meanwhile: reload the list.',
-	'tm.error.cancelled': 'The identity check was cancelled, so nothing was sent.'
+	'tm.error.cancelled': 'The identity check was cancelled, so nothing was sent.',
+	'tm.list.open': 'Open {name}',
+	'tm.error.emailInUse': 'Another administrator uses this address.',
+	'tm.error.roleHeld': 'This administrator already holds this role for this scope.',
+
+	'tm.d.back': 'Back to administrators',
+	'tm.d.loadFailed': 'Could not load this administrator.',
+	'tm.d.notFound':
+		'This administrator was not found. They may have been deleted, or belong to another tenant.',
+	'tm.d.profile': 'Profile',
+	'tm.d.email': 'Email address',
+	'tm.d.name': 'Name',
+	'tm.d.noName': 'Not set',
+	'tm.d.status': 'Status',
+	'tm.d.mfa': 'Two-step verification',
+	'tm.d.lastLogin': 'Last sign-in',
+	'tm.d.created': 'Added',
+	'tm.d.edit': 'Edit',
+	'tm.d.edit.title': 'Edit profile',
+	'tm.d.edit.emailHint':
+		'Changing the address asks you to confirm your identity. Both the old and the new address are told.',
+	'tm.d.edit.save': 'Save',
+	'tm.toast.saved': 'The profile is saved',
+
+	'tm.d.roles': 'Roles',
+	'tm.d.roles.desc':
+		'The roles this administrator holds. A role from a group is removed in that group.',
+	'tm.d.roles.col.role': 'Role',
+	'tm.d.roles.col.source': 'From',
+	'tm.d.roles.col.scope': 'Scope',
+	'tm.d.roles.col.ends': 'Ends',
+	'tm.d.roles.col.actions': 'Actions for {name}',
+	'tm.d.roles.empty': 'No roles',
+	'tm.d.roles.emptyBody': 'An administrator without a role can do nothing in the console.',
+	'tm.d.source.direct': 'Directly',
+	'tm.d.source.group': 'Group: {name}',
+	'tm.d.source.groupUnnamed': 'A group',
+	'tm.d.scope.tenant': 'This tenant',
+	'tm.d.scope.global': 'Every tenant',
+	'tm.d.noEnd': 'Does not end',
+	'tm.d.grant': 'Give role',
+	'tm.d.grant.title': 'Give role',
+	'tm.d.grant.desc': 'Gives this role to this administrator directly.',
+	'tm.d.grant.submit': 'Give',
+	'tm.d.grant.endedFound':
+		'This administrator held this role before, and it ended. “Renew and give” brings that assignment back with the end entered here (none when empty).',
+	'tm.d.grant.renew': 'Renew and give',
+	'tm.d.grant.globalBody':
+		'Applies in every tenant. Only administrators who belong to the deployment’s default tenant can be given it.',
+	'tm.toast.granted': '{role} is given',
+	'tm.d.action.expiry': 'Change end',
+	'tm.d.action.remove': 'Remove role',
+	'tm.d.expiry.title': 'Change when {role} ends',
+	'tm.d.expiry.desc': 'Left empty, the role does not end.',
+	'tm.d.expiry.submit': 'Change',
+	'tm.toast.expiryChanged': 'The end of {role} is changed',
+	'tm.d.remove.title': 'Remove {role}?',
+	'tm.d.remove.body':
+		'This administrator can no longer do what this role allows. The same role from a group stays.',
+	'tm.toast.removed': '{role} is removed',
+
+	'tm.d.groups': 'Groups',
+	'tm.d.groups.empty': 'Not in any group.',
+	'tm.d.passkeys': 'Passkeys',
+	'tm.d.passkeys.empty': 'No passkeys.',
+	'tm.d.passkey.unnamed': 'Unnamed passkey',
+	'tm.d.passkey.created': 'Registered',
+	'tm.d.passkey.used': 'Last used',
+	'tm.d.passkey.unused': 'Not used yet',
+
+	'tm.d.delete.title': 'Delete this administrator',
+	'tm.d.delete.desc':
+		'Removes the administrator’s account. This cannot be undone. For someone who will come back, suspend instead.',
+	'tm.d.delete.action': 'Delete administrator',
+	'tm.d.delete.confirmTitle': 'Delete {name}?',
+	'tm.d.delete.confirmBody':
+		'The account and the roles given to it directly are removed. This cannot be undone. You cannot delete yourself or the last administrator.',
+	'tm.toast.deleted': '{name} is deleted'
 };

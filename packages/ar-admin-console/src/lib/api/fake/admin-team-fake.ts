@@ -1,17 +1,20 @@
 /**
  * In-memory administrators and invitations for Storybook and tests. Follows the Admin API's
- * rules that the pages react to: the list is paged and filtered like the API's, the last active
- * tenant administrator cannot be suspended (409 `last_tenant_admin`), one pending invitation per
- * address (409 `invitation_exists`), at most ten groups, and a failed email still creates the
- * invitation (it answers "not delivered").
+ * rules that the pages react to: the list is paged and filtered like the API's, the last tenant
+ * administrator cannot be suspended, deleted or lose the role (409 `last_tenant_admin`, as
+ * `wouldLeaveNoTenantAdmin` decides), one pending invitation per address (409
+ * `invitation_exists`), at most ten groups, and a failed email still creates the invitation (it
+ * answers "not delivered").
  */
 import { StepUpCancelledError } from '../admin-step-up';
 import { ApiError, ConflictError } from '../api-error';
 import type {
+	AdminDetail,
 	AdminListPage,
 	AdminListQuery,
 	AdminTeamClient,
 	GroupChoice,
+	HeldRole,
 	InvitationCreated,
 	InvitationInput,
 	RoleChoice,
@@ -21,6 +24,13 @@ import type {
 
 export type FakeTeamCall =
 	| 'listAdmins'
+	| 'getAdmin'
+	| 'updateAdmin'
+	| 'deleteAdmin'
+	| 'grantRole'
+	| 'removeAssignment'
+	| 'setAssignmentExpiry'
+	| 'findEndedAssignment'
 	| 'suspend'
 	| 'activate'
 	| 'unlock'
@@ -47,7 +57,15 @@ export interface FakeAdminTeamOptions {
 	cancelStepUp?: boolean;
 	/** The deployment's default tenant (null: cannot be read). */
 	defaultTenant?: string | null;
+	/** The roles, groups and passkeys of each admin; defaults to `sampleHoldings()`. */
+	holdings?: Record<string, Holdings>;
+	/** The signed-in admin (cannot delete themself). */
+	self?: string;
+	/** Ended direct assignments (not shown, but counted when the role is given again). */
+	ended?: { roleId: string; adminId: string; scope: 'tenant' | 'global'; assignmentId: string }[];
 }
+
+export type Holdings = Pick<AdminDetail, 'roles' | 'groups' | 'passkeys'>;
 
 const NOW = Date.UTC(2026, 10, 7, 2, 0, 0);
 const HOUR = 3_600_000;
@@ -87,6 +105,91 @@ export function sampleAdmins(): TeamAdmin[] {
 		}),
 		admin({ id: 'adm_5', email: 'yuki.mori@example.com', name: 'Yuki Mori', last_login_at: null })
 	];
+}
+
+export function sampleHoldings(): Record<string, Holdings> {
+	const direct = (
+		assignment: string,
+		role: string,
+		name: string,
+		display: string,
+		partial: Partial<HeldRole> = {}
+	): HeldRole => ({
+		role_id: role,
+		name,
+		display_name: display,
+		scope_type: 'tenant',
+		assignment_id: assignment,
+		source: 'direct',
+		group: null,
+		assigned_at: NOW - 60 * DAY,
+		expires_at: null,
+		...partial
+	});
+	const viaGroup = (
+		role: string,
+		name: string,
+		display: string,
+		group: string,
+		groupName: string
+	): HeldRole => ({
+		role_id: role,
+		name,
+		display_name: display,
+		scope_type: 'tenant',
+		assignment_id: null,
+		source: 'group',
+		group: { id: group, name: groupName },
+		assigned_at: NOW - 20 * DAY,
+		expires_at: null
+	});
+	const ops = { id: 'grp_ops', group_key: 'ops', display_name: 'Operations' };
+	return {
+		adm_1: {
+			roles: [
+				direct('asg_1', 'role_ar_tenant_admin', 'ar_tenant_admin', 'Tenant Administrator'),
+				viaGroup(
+					'role_ar_security_admin',
+					'ar_security_admin',
+					'Security Administrator',
+					'grp_ops',
+					'Operations'
+				)
+			],
+			groups: [ops],
+			passkeys: [
+				{
+					id: 'pk_1',
+					device_name: 'Work MacBook',
+					provider: 'iCloud Keychain',
+					created_at: NOW - 80 * DAY,
+					last_used_at: NOW - 2 * HOUR
+				},
+				{
+					id: 'pk_2',
+					device_name: null,
+					provider: 'YubiKey 5',
+					created_at: NOW - 30 * DAY,
+					last_used_at: null
+				}
+			]
+		},
+		adm_2: {
+			roles: [
+				direct('asg_2', 'role_ar_support', 'ar_support', 'Support', { expires_at: NOW + 14 * DAY })
+			],
+			groups: [],
+			passkeys: [
+				{
+					id: 'pk_3',
+					device_name: 'Phone',
+					provider: 'Google Password Manager',
+					created_at: NOW - 40 * DAY,
+					last_used_at: NOW - 3 * DAY
+				}
+			]
+		}
+	};
 }
 
 export function sampleRoles(): RoleChoice[] {
@@ -193,7 +296,45 @@ export function fakeAdminTeam(options: FakeAdminTeamOptions = {}): AdminTeamClie
 	const admins = structuredClone(options.admins ?? sampleAdmins());
 	const invitations = structuredClone(options.invitations ?? sampleInvitations());
 	const roles = options.roles ?? sampleRoles();
+	const holdings = structuredClone(options.holdings ?? sampleHoldings());
+	const holdingsOf = (id: string): Holdings =>
+		(holdings[id] ??= { roles: [], groups: [], passkeys: [] });
+	/** Active admins holding a tenant admin role (directly or through a group), but this one. */
+	/** Active tenant administrators (current, or open-ended only), leaving out `except`. */
+	const countTenantAdmins = (
+		permanentOnly: boolean,
+		except: { adminId?: string; assignmentId?: string } = {}
+	) => {
+		const now = Date.now();
+		return admins.filter(
+			(admin) =>
+				admin.id !== except.adminId &&
+				admin.status === 'active' &&
+				holdingsOf(admin.id).roles.some(
+					(role) =>
+						role.name === 'ar_tenant_admin' &&
+						(role.assignment_id === null || role.assignment_id !== except.assignmentId) &&
+						(role.expires_at === null || (!permanentOnly && role.expires_at > now))
+				)
+		).length;
+	};
+	/**
+	 * The API's last-admin rule (`wouldLeaveNoTenantAdmin`): a change may not take away the last
+	 * current administrator, nor the last open-ended one while there is one. A new end still to
+	 * come keeps what it covers current until then.
+	 */
+	const wouldLeaveNoTenantAdmin = (
+		except: { adminId?: string; assignmentId?: string },
+		newExpiresAt?: number
+	) => {
+		const stillCurrent = newExpiresAt !== undefined && newExpiresAt > Date.now();
+		if (!stillCurrent && countTenantAdmins(false, except) === 0 && countTenantAdmins(false) > 0) {
+			return true;
+		}
+		return countTenantAdmins(true, except) === 0 && countTenantAdmins(true) > 0;
+	};
 	const groups = options.groups ?? sampleGroups();
+	const ended = structuredClone(options.ended ?? []);
 	let next = 100;
 
 	async function call<T>(name: FakeTeamCall, run: () => T, write = false): Promise<T> {
@@ -243,13 +384,149 @@ export function fakeAdminTeam(options: FakeAdminTeamOptions = {}): AdminTeamClie
 					totalPages: Math.ceil(matching.length / query.limit)
 				};
 			}),
+		getAdmin: (adminId) =>
+			call('getAdmin', (): AdminDetail => {
+				const admin = findAdmin(adminId);
+				return structuredClone({
+					...admin,
+					email_verified: true,
+					updated_at: admin.created_at,
+					...holdingsOf(adminId)
+				});
+			}),
+		updateAdmin: (adminId, input) =>
+			call(
+				'updateAdmin',
+				() => {
+					const admin = findAdmin(adminId);
+					const email = input.email.trim().toLowerCase();
+					if (admins.some((item) => item.id !== adminId && item.email === email)) {
+						throw failure('email_in_use');
+					}
+					admin.email = email;
+					admin.name = input.name.trim() || null;
+				},
+				true
+			),
+		deleteAdmin: (adminId) =>
+			call(
+				'deleteAdmin',
+				() => {
+					findAdmin(adminId);
+					if (adminId === options.self) throw new ApiError(403, 'access_denied', 'Not yourself');
+					if (wouldLeaveNoTenantAdmin({ adminId })) throw failure('last_tenant_admin');
+					admins.splice(
+						admins.findIndex((item) => item.id === adminId),
+						1
+					);
+				},
+				true
+			),
+		grantRole: (adminId, input) =>
+			call(
+				'grantRole',
+				() => {
+					findAdmin(adminId);
+					const role = roles.find((item) => item.id === input.role_id);
+					if (!role) throw new ApiError(404, 'not_found', 'No such role');
+					const held = holdingsOf(adminId).roles;
+					const endedOne = ended.some(
+						(item) =>
+							item.roleId === role.id && item.adminId === adminId && item.scope === input.scope_type
+					);
+					if (
+						endedOne ||
+						held.some(
+							(item) =>
+								item.source === 'direct' &&
+								item.role_id === role.id &&
+								item.scope_type === input.scope_type
+						)
+					) {
+						throw new ConflictError('conflict', { error: 'invalid_request' });
+					}
+					held.push({
+						role_id: role.id,
+						name: role.name,
+						display_name: role.display_name,
+						scope_type: input.scope_type,
+						assignment_id: `asg_${next++}`,
+						source: 'direct',
+						group: null,
+						assigned_at: NOW,
+						expires_at: input.expires_at ?? null
+					});
+				},
+				true
+			),
+		removeAssignment: (adminId, assignmentId) =>
+			call(
+				'removeAssignment',
+				() => {
+					const held = holdingsOf(adminId).roles;
+					const index = held.findIndex((item) => item.assignment_id === assignmentId);
+					if (index < 0) throw new ApiError(404, 'not_found', 'No such assignment');
+					if (held[index].name === 'ar_tenant_admin' && wouldLeaveNoTenantAdmin({ assignmentId })) {
+						throw failure('last_tenant_admin');
+					}
+					held.splice(index, 1);
+				},
+				true
+			),
+		setAssignmentExpiry: (roleId, assignmentId, expiresAt) =>
+			call(
+				'setAssignmentExpiry',
+				() => {
+					// An ended assignment (not shown) comes back as a held role.
+					const endedAt = ended.findIndex(
+						(item) => item.assignmentId === assignmentId && item.roleId === roleId
+					);
+					if (endedAt >= 0) {
+						const [back] = ended.splice(endedAt, 1);
+						const role = roles.find((item) => item.id === roleId);
+						if (!role) throw new ApiError(404, 'not_found', 'No such role');
+						holdingsOf(back.adminId).roles.push({
+							role_id: role.id,
+							name: role.name,
+							display_name: role.display_name,
+							scope_type: back.scope,
+							assignment_id: back.assignmentId,
+							source: 'direct',
+							group: null,
+							assigned_at: NOW - 90 * DAY,
+							expires_at: expiresAt
+						});
+						return;
+					}
+					const role = Object.values(holdings)
+						.flatMap((item) => item.roles)
+						.find((item) => item.assignment_id === assignmentId && item.role_id === roleId);
+					if (!role) throw new ApiError(404, 'not_found', 'No such assignment');
+					// An end on the last open-ended tenant admin role would leave the tenant without one.
+					if (
+						expiresAt !== null &&
+						role.name === 'ar_tenant_admin' &&
+						wouldLeaveNoTenantAdmin({ assignmentId }, expiresAt)
+					) {
+						throw failure('last_tenant_admin');
+					}
+					role.expires_at = expiresAt;
+				},
+				true
+			),
+		findEndedAssignment: (roleId, adminId, scope) =>
+			call('findEndedAssignment', () => {
+				const found = ended.find(
+					(item) => item.roleId === roleId && item.adminId === adminId && item.scope === scope
+				);
+				return found?.assignmentId ?? null;
+			}),
 		suspend: (adminId) =>
 			call(
 				'suspend',
 				() => {
 					const admin = findAdmin(adminId);
-					const others = admins.filter((item) => item.id !== adminId && item.status === 'active');
-					if (others.length === 0) throw failure('last_tenant_admin');
+					if (wouldLeaveNoTenantAdmin({ adminId })) throw failure('last_tenant_admin');
 					admin.status = 'suspended';
 				},
 				true

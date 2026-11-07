@@ -158,5 +158,81 @@ export const jaTeam = {
 	'tm.error.changed':
 		'ほかの人が先に変更しました。読み直して内容を確かめてから、もう一度操作してください。',
 	'tm.error.notFound': '見つかりません。すでに変わったかもしれません。一覧を読み直してください。',
-	'tm.error.cancelled': '本人確認を中止したので、送っていません。'
+	'tm.error.cancelled': '本人確認を中止したので、送っていません。',
+	'tm.list.open': '{name} を開く',
+	'tm.error.emailInUse': 'このメールアドレスは、ほかの管理者が使っています。',
+	'tm.error.roleHeld': 'この管理者は、同じ範囲でこのロールをすでに持っています。',
+
+	'tm.d.back': '管理者ユーザーに戻る',
+	'tm.d.loadFailed': 'この管理者を読み込めませんでした。',
+	'tm.d.notFound': 'この管理者は見つかりません。削除されたか、別のテナントに所属しています。',
+	'tm.d.profile': '基本情報',
+	'tm.d.email': 'メールアドレス',
+	'tm.d.name': '名前',
+	'tm.d.noName': '未設定',
+	'tm.d.status': '状態',
+	'tm.d.mfa': '2 段階認証',
+	'tm.d.lastLogin': '最後のログイン',
+	'tm.d.created': '追加した日時',
+	'tm.d.edit': '編集',
+	'tm.d.edit.title': '基本情報を編集',
+	'tm.d.edit.emailHint':
+		'メールアドレスを変えると、本人確認を求めます。新旧の両方のアドレスに知らせが届きます。',
+	'tm.d.edit.save': '保存',
+	'tm.toast.saved': '基本情報を保存しました',
+
+	'tm.d.roles': 'ロール',
+	'tm.d.roles.desc':
+		'この管理者が持つロールです。グループから得ているロールは、そのグループで外します。',
+	'tm.d.roles.col.role': 'ロール',
+	'tm.d.roles.col.source': '得ている所',
+	'tm.d.roles.col.scope': '範囲',
+	'tm.d.roles.col.ends': '期限',
+	'tm.d.roles.col.actions': '{name} の操作',
+	'tm.d.roles.empty': 'ロールがありません',
+	'tm.d.roles.emptyBody': 'ロールがない管理者は、コンソールで何もできません。',
+	'tm.d.source.direct': '直接',
+	'tm.d.source.group': 'グループ: {name}',
+	'tm.d.source.groupUnnamed': 'グループ',
+	'tm.d.scope.tenant': 'このテナント',
+	'tm.d.scope.global': '全テナント',
+	'tm.d.noEnd': '期限なし',
+	'tm.d.grant': 'ロールを付与',
+	'tm.d.grant.title': 'ロールを付与',
+	'tm.d.grant.desc': 'このロールを、この管理者に直接与えます。',
+	'tm.d.grant.submit': '付与',
+	'tm.d.grant.endedFound':
+		'この管理者には、同じロールの期限が切れた割り当てがあります。「期限を新しくして付与」で、その割り当てを、ここで入れた期限（空なら期限なし）で戻します。',
+	'tm.d.grant.renew': '期限を新しくして付与',
+	'tm.d.grant.globalBody':
+		'全テナントで効きます。所属がデプロイの既定のテナントの管理者にだけ与えられます。',
+	'tm.toast.granted': '{role} を付与しました',
+	'tm.d.action.expiry': '期限を変更',
+	'tm.d.action.remove': 'ロールを外す',
+	'tm.d.expiry.title': '{role} の期限を変更',
+	'tm.d.expiry.desc': '空にすると、期限なしになります。',
+	'tm.d.expiry.submit': '変更',
+	'tm.toast.expiryChanged': '{role} の期限を変更しました',
+	'tm.d.remove.title': '{role} を外しますか？',
+	'tm.d.remove.body':
+		'この管理者は、このロールでできることができなくなります。グループから同じロールを得ていれば、そちらは残ります。',
+	'tm.toast.removed': '{role} を外しました',
+
+	'tm.d.groups': '所属グループ',
+	'tm.d.groups.empty': 'どのグループにも入っていません。',
+	'tm.d.passkeys': 'パスキー',
+	'tm.d.passkeys.empty': 'パスキーがありません。',
+	'tm.d.passkey.unnamed': '名前のないパスキー',
+	'tm.d.passkey.created': '登録',
+	'tm.d.passkey.used': '最後の利用',
+	'tm.d.passkey.unused': 'まだ使われていません',
+
+	'tm.d.delete.title': 'この管理者を削除',
+	'tm.d.delete.desc':
+		'管理者のアカウントを消します。元に戻せません。続けて使う人なら、削除ではなく停止にします。',
+	'tm.d.delete.action': '管理者を削除',
+	'tm.d.delete.confirmTitle': '{name} を削除しますか？',
+	'tm.d.delete.confirmBody':
+		'アカウントと、直接与えたロールが消えます。元に戻せません。自分自身と最後の管理者は削除できません。',
+	'tm.toast.deleted': '{name} を削除しました'
 };

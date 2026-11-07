@@ -32,9 +32,11 @@
 		access: TeamAccess;
 		/** Rows per page at first. */
 		pageSize?: number;
+		/** Opens an administrator's page. */
+		onopen?: (admin: TeamAdmin) => void;
 	}
 
-	let { client, access, pageSize: initialSize = 20 }: Props = $props();
+	let { client, access, pageSize: initialSize = 20, onopen }: Props = $props();
 
 	type Change = 'suspend' | 'activate' | 'unlock';
 
@@ -227,7 +229,14 @@
 				{/snippet}
 			</EmptyState>
 		{:else}
-			<DataTable caption={t('tm.admins.title')} {columns} rows={admins} rowKey={(row) => row.id}>
+			<DataTable
+				caption={t('tm.admins.title')}
+				{columns}
+				rows={admins}
+				rowKey={(row) => row.id}
+				onrowopen={onopen}
+				rowOpenLabel={(row) => t('tm.list.open', { name: adminLabel(row) })}
+			>
 				{#snippet cell(row, column)}
 					{#if column.key === 'admin'}
 						<CellText
