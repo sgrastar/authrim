@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   adminAuthMiddleware,
   applyOIDCIdentityMapping,
@@ -87,6 +87,11 @@ import {
   readIdentityMappingClientHistoryReceipt,
 } from '@authrim/ar-lib-core/services/identity-mapping-client-history-receipt';
 
+// Work the handlers hand to waitUntil (the admin audit log). It logs through the real logger, so
+// each test waits for it; a log that lands after the file's last test reaches Vitest while the
+// worker is closing and fails the run as an unhandled error.
+const pendingWork: Promise<unknown>[] = [];
+
 const HISTORY = '/api/admin/identity-mapping/history';
 const KEY = 'identity_mapping.oidc_default_set_id';
 
@@ -151,7 +156,11 @@ function setup() {
           { tenantId: TENANT, coreDb: coreAdapter, route: {} } as never
         );
         Object.defineProperty(c, 'executionCtx', {
-          value: { waitUntil: (_promise: Promise<unknown>) => undefined },
+          value: {
+            waitUntil: (promise: Promise<unknown>) => {
+              pendingWork.push(promise);
+            },
+          },
         });
         await next();
       });
@@ -238,6 +247,12 @@ function setup() {
 }
 
 describe('mapping selection history, restore and committed evidence', () => {
+  afterEach(async () => {
+    while (pendingWork.length > 0) {
+      await Promise.allSettled(pendingWork.splice(0));
+    }
+  });
+
   beforeEach(() => {
     mocks.audit.mockReset();
     mocks.bindingReads.mockClear();
