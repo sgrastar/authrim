@@ -513,6 +513,65 @@ describe('adminInvitationsRouter', () => {
     expect(audit).not.toHaveBeenCalled();
   });
 
+  describe('revoking takes the role away, so it is held to the role-removal rule', () => {
+    const revoke = (
+      app: ReturnType<typeof createTestApp>['app'],
+      env: ReturnType<typeof createTestApp>['env'],
+      headers: Record<string, string> = {}
+    ) =>
+      app.request(
+        '/api/admin/admin-invitations/invitation_1',
+        {
+          method: 'DELETE',
+          headers: { 'x-test-permissions': invitationPermissions(), ...headers },
+        },
+        env
+      );
+    const pending = { scope_type: 'tenant', role_name: 'ar_tenant_admin', admin_role_id: 'role_x' };
+    const roleAt = (hierarchy_level: number) => ({
+      id: 'role_x',
+      tenant_id: 'tenant_123',
+      name: 'ar_tenant_admin',
+      display_name: 'Administrator',
+      hierarchy_level,
+      is_system: false,
+    });
+
+    it('revokes an invitation for a role ranked at or below the caller', async () => {
+      adapter.queryOne.mockResolvedValueOnce(pending);
+      repo.getRole.mockResolvedValue(roleAt(80));
+      const { app, env } = createTestApp();
+
+      const response = await revoke(app, env, { 'x-test-hierarchy-level': '80' });
+
+      expect(response.status).toBe(200);
+      expect(adapter.execute).toHaveBeenCalledOnce();
+    });
+
+    it('refuses an invitation for a role ranked above the caller, changing nothing', async () => {
+      adapter.queryOne.mockResolvedValueOnce(pending);
+      repo.getRole.mockResolvedValue(roleAt(90));
+      const { app, env } = createTestApp();
+
+      const response = await revoke(app, env, { 'x-test-hierarchy-level': '50' });
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: 'insufficient_permissions' });
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(audit).not.toHaveBeenCalled();
+    });
+
+    it('leaves an invitation whose role is gone revocable', async () => {
+      adapter.queryOne.mockResolvedValueOnce(pending);
+      repo.getRole.mockResolvedValue(null);
+      const { app, env } = createTestApp();
+
+      const response = await revoke(app, env, { 'x-test-hierarchy-level': '10' });
+
+      expect(response.status).toBe(200);
+    });
+  });
+
   it('never resends a global invitation for a home tenant other than the default', async () => {
     adapter.queryOne.mockResolvedValueOnce({
       id: 'invitation_1',

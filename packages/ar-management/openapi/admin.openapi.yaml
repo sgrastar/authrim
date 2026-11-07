@@ -4002,12 +4002,22 @@ paths:
       tags:
         - Admin Invitations
       summary: Revoke a pending Admin invitation.
+      description: >-
+        Revoking takes the invitation's role away from the person invited, so it is held to the
+        rule for removing an assignment (mayRemoveAssignment), with the role as it is now: a
+        tenant invitation's role must not rank above the caller, and a global one needs the
+        wildcard and the roles' write permission from a global assignment, with the role not
+        ranked above the caller's global rank. A machine caller with those global permissions is
+        not measured by rank. 403 `insufficient_permissions` otherwise. An invitation whose role
+        is gone stays revocable.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
           $ref: '#/components/responses/AdminDeleteResult'
+        '403':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
       security:
@@ -52121,7 +52131,8 @@ components:
   schemas:
     AdminGroup:
       type: object
-      required: [id, tenant_id, group_key, display_name, description, revision, created_at, updated_at]
+      required:
+        [id, tenant_id, group_key, display_name, description, revision, created_at, updated_at]
       properties:
         id:
           type: string
