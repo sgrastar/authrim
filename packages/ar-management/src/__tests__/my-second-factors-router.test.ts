@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   listByUser: vi.fn(),
   getEnrollmentGraceEndsAt: vi.fn(),
   hasEverEnrolled: vi.fn(),
+  getReenrollWindowEndsAt: vi.fn(async (): Promise<number | null> => null),
   isActive: vi.fn(),
   insertWebAuthn: vi.fn(),
   revoke: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     listByUser = mocks.listByUser;
     getEnrollmentGraceEndsAt = mocks.getEnrollmentGraceEndsAt;
     hasEverEnrolled = mocks.hasEverEnrolled;
+    getReenrollWindowEndsAt = mocks.getReenrollWindowEndsAt;
     isActive = mocks.isActive;
     insertWebAuthn = mocks.insertWebAuthn;
     revoke = mocks.revoke;
@@ -217,7 +219,7 @@ describe('mySecondFactorsRouter', () => {
         ],
         active_count: 1,
         minimum: 1,
-        enrollment: { mode: 'step_up', first_enrollment_ends_at: NOW - 1 },
+        enrollment: { mode: 'step_up', first_enrollment_ends_at: NOW - 1, reenroll_until: null },
         keyring: { dc_api: false },
         recovery: { available: true },
       });
@@ -307,6 +309,41 @@ describe('mySecondFactorsRouter', () => {
       expect(status).toBe(403);
       expect(body).toMatchObject({ error: 'second_factor_recovery_required' });
       expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('lets a revoked admin register a first factor again inside the last-resort window', async () => {
+      mocks.listActiveByUser.mockResolvedValue([]);
+      mocks.getEnrollmentGraceEndsAt.mockResolvedValue(NOW - 1);
+      mocks.hasEverEnrolled.mockResolvedValue(true);
+      mocks.getReenrollWindowEndsAt.mockResolvedValueOnce(NOW + 60_000);
+
+      const { status, body } = await call('POST', '/webauthn/options', {
+        rp_id: 'admin.example.com',
+      });
+
+      expect(status).toBe(200);
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+      const stored = (mocks.storeChallengeRpc.mock.calls[0] as [{ metadata: { mode: string } }])[0];
+      expect(stored.metadata.mode).toBe('first');
+      expect(body).toBeTruthy();
+    });
+
+    it('reports the last-resort window as the first-enrollment end while it applies', async () => {
+      mocks.listActiveByUser.mockResolvedValue([]);
+      mocks.listByUser.mockResolvedValue([factor({ revoked_at: 5 })]);
+      mocks.hasEverEnrolled.mockResolvedValue(true);
+      mocks.getReenrollWindowEndsAt.mockResolvedValueOnce(NOW + 60_000);
+
+      const { body } = await call('GET', '');
+
+      expect(body).toMatchObject({
+        active_count: 0,
+        enrollment: {
+          mode: 'first',
+          first_enrollment_ends_at: NOW + 60_000,
+          reenroll_until: NOW + 60_000,
+        },
+      });
     });
 
     it('asks for a passkey re-authentication on a first factor with an old passkey', async () => {
@@ -441,6 +478,7 @@ describe('mySecondFactorsRouter', () => {
       // The approving key is checked again in the INSERT itself.
       expect(options).toEqual({
         firstOnly: false,
+        sessionId: 'sess-1',
         approvedBy: { factorId: 'sf-1', sessionId: 'sess-1' },
       });
       expect(mocks.verifyRegistrationResponse.mock.calls[0]?.[0]).toMatchObject({
@@ -469,7 +507,10 @@ describe('mySecondFactorsRouter', () => {
 
       expect(status).toBe(409);
       expect(body).toMatchObject({ error: 'second_factor_already_enrolled' });
-      expect(mocks.insertWebAuthn.mock.calls[0]?.[1]).toEqual({ firstOnly: true });
+      expect(mocks.insertWebAuthn.mock.calls[0]?.[1]).toEqual({
+        firstOnly: true,
+        sessionId: 'sess-1',
+      });
     });
 
     it.each([

@@ -21,6 +21,10 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.admin_keyring_dc_api': 'Present Keyring through the browser',
 	'set.k.security.admin_keyring_dc_api.desc':
 		'Where the browser supports it, administrators present their Keyring credential through the Digital Credentials API instead of a QR code.',
+	'set.k.security.admin_last_resort_reenroll_window_seconds':
+		'Re-enrolment window after last-resort recovery',
+	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
+		"After the last-resort recovery revoked an administrator's second factors, how long they may register a first one again with a passkey alone.",
 	'settings.json.object': 'Enter a JSON object (in braces { }).',
 	'set.page.stayingSignedIn': 'Staying signed in',
 	'set.page.stayingSignedIn.desc':

@@ -21,6 +21,10 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.admin_keyring_dc_api': 'تقديم Keyring عبر المتصفح',
 	'set.k.security.admin_keyring_dc_api.desc':
 		'حيث يدعم المتصفح ذلك، يقدّم المسؤولون بيانات اعتماد Keyring عبر Digital Credentials API بدلًا من رمز QR.',
+	'set.k.security.admin_last_resort_reenroll_window_seconds':
+		'مدة إعادة التسجيل بعد الاسترداد الأخير',
+	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
+		'بعد أن يلغي الاسترداد الأخير العوامل الثانية للمسؤول، المدة التي يمكنه خلالها تسجيل عامل أول من جديد باستخدام مفتاح المرور وحده.',
 	'settings.json.object': 'أدخل كائن JSON (بين القوسين { }).',
 	'set.page.stayingSignedIn': 'البقاء مسجلاً للدخول',
 	'set.page.stayingSignedIn.desc':

@@ -17857,6 +17857,137 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/platform/last-resort-recovery/second-factors:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminPlatformLastResortRecoverySecondFactors
+      summary: Last-resort recovery of an admin's step-up second factors
+      description: >-
+        For an admin who lost every step-up second factor when the recovery request cannot be used
+        (for example the only administrator in the system). Only a machine token holding
+        admin:last_resort_recovery by its exact name may call it: no wildcard carries the
+        permission, and granting it to a machine principal needs L2 (machine.permission.grant).
+        The setup tool (authrim admin recover-second-factor) holds it for one command through a
+        short-lived principal written with Cloudflare access to the environment. In one batch it
+        revokes every active second factor of the admin (the rows stay, so they are never
+        registered again), ends all their sessions (and with them step-up requirements, receipts
+        and Keyring presentations), cancels an open recovery request, and opens a re-enrolment
+        window (platform setting security.admin_last_resort_reenroll_window_seconds, env
+        ADMIN_LAST_RESORT_REENROLL_WINDOW_SECONDS, default 86400) in which the admin may register a
+        first second factor with a fresh passkey alone, once. It is written to the audit log as
+        admin.second_factor.last_resort_recovery, emailed to the admin and every active
+        administrator, and shown as console notices; the notices are best effort and the response
+        says which went out.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  maxLength: 320
+                  description: The admin's email (compared without case).
+                tenant_id:
+                  type: string
+                  description: The admin's tenant, when admins of several tenants share the email.
+                reason:
+                  type: string
+                  maxLength: 200
+                  description: Recorded in the audit log.
+      responses:
+        '200':
+          description: The admin's factors were revoked and the re-enrolment window is open.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - admin
+                  - revoked_second_factors
+                  - ended_sessions
+                  - cancelled_recovery_requests
+                  - reenroll_until
+                  - sole_admin
+                  - audit_logged
+                  - notices
+                properties:
+                  admin:
+                    type: object
+                    required:
+                      - id
+                      - email
+                      - tenant_id
+                    properties:
+                      id:
+                        type: string
+                      email:
+                        type: string
+                      tenant_id:
+                        type: string
+                  revoked_second_factors:
+                    type: integer
+                  ended_sessions:
+                    type: integer
+                  cancelled_recovery_requests:
+                    type: integer
+                  reenroll_until:
+                    type: integer
+                    description: End of the re-enrolment window, in milliseconds since the epoch.
+                  sole_admin:
+                    type: boolean
+                    description: Whether the admin is the only active administrator in the system.
+                  audit_logged:
+                    type: boolean
+                  notices:
+                    type: object
+                    required:
+                      - emailed
+                      - email_recipients
+                      - console
+                    properties:
+                      emailed:
+                        type: boolean
+                        description: Whether every email was accepted for delivery.
+                      email_recipients:
+                        type: integer
+                      console:
+                        type: boolean
+        '400':
+          description: >-
+            Invalid body, or target_not_human_admin when the ID belongs to a machine principal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not a machine token holding admin:last_resort_recovery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No administrator has this email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            admin_ambiguous (admins of several tenants share the email; tenant_ids lists them) or
+            admin_not_active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
   /api/admin/platform/control-plane/lookup-hmac/rotations:
     post:
       tags:
@@ -33182,7 +33313,19 @@ paths:
                         type:
                           - integer
                           - 'null'
-                        description: End of the first-enrollment window, in milliseconds since the epoch.
+                        description: >-
+                          End of the window that allows a first registration with a fresh
+                          passkey alone (the first-enrollment window, or the re-enrolment window
+                          while that one applies), in milliseconds since the epoch.
+                      reenroll_until:
+                        type:
+                          - integer
+                          - 'null'
+                        description: >-
+                          End of the re-enrolment window the last-resort recovery opened, in
+                          milliseconds since the epoch; null when none is open. Inside it an admin
+                          with no active second factor may register one with a fresh passkey
+                          alone, once.
                   keyring:
                     type: object
                     properties:

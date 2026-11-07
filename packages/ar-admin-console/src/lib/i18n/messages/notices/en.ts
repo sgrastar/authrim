@@ -75,6 +75,8 @@ export const enNotices: Record<keyof typeof jaNotices, string> = {
 	'nt.pub.err.invalid':
 		'Check the form. A headline is required, and so is the ID when you choose an app or an admin.',
 	'nt.pub.err.expiry': 'The expiry must be later than now.',
+	'notice.msg.second_factor_last_resort_recovery':
+		'The step-up security keys of {email} were reset by the environment owner',
 	'notice.msg.second_factor_recovery_requested': '{email} asked to recover a security key',
 	'notice.msg.storage_registry_security': 'A security problem was found in the storage registry',
 	'notice.msg.storage_registry_health': 'The storage registry has a health problem',

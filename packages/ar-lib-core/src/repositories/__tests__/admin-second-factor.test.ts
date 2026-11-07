@@ -16,7 +16,13 @@ const ADMIN_MIGRATIONS = new URL('../../../../../migrations/admin/d1/', import.m
 
 function adminSchema(): { db: DatabaseSync; adapter: DatabaseAdapter } {
   const fixture = sqliteAdapter('admin');
-  for (const file of ['003_admin_session_passkey_evidence.sql', '004_admin_second_factors.sql']) {
+  for (const file of [
+    '003_admin_session_passkey_evidence.sql',
+    '004_admin_second_factors.sql',
+    '005_admin_second_factor_recoveries.sql',
+    '010_keyring_second_factor_recoveries.sql',
+    '011_admin_second_factor_reenroll_window.sql',
+  ]) {
     fixture.db.exec(
       renderPortableMigrationSql(readMigrationSource(ADMIN_MIGRATIONS, file), 'sqlite')
     );
@@ -458,5 +464,200 @@ describe('AdminSecondFactorRepository in the real admin schema', () => {
       .prepare('SELECT second_factor_grace_started_at AS started FROM admin_users WHERE id = ?')
       .get('existing') as { started: number };
     expect(migrated.started).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
+  });
+});
+
+describe('AdminSecondFactorRepository: last-resort recovery and the re-enrolment window', () => {
+  let db: DatabaseSync;
+  let adapter: DatabaseAdapter;
+  let repo: AdminSecondFactorRepository;
+  const NOW = Date.now();
+
+  beforeEach(async () => {
+    ({ db, adapter } = adminSchema());
+    repo = new AdminSecondFactorRepository(adapter);
+    // Past the first-enrollment window, with one factor registered then.
+    addAdmin(db, 'admin-1', 1_000);
+    db.prepare('UPDATE admin_users SET second_factor_grace_started_at = NULL').run();
+    const first = await repo.insertWebAuthn(key('cred-old'), { firstOnly: false, now: 2_000 });
+    if (!first.inserted) throw new Error('setup failed');
+  });
+
+  function addSession(id: string, adminUserId = 'admin-1'): void {
+    db.prepare(
+      `INSERT INTO admin_sessions (id, tenant_id, admin_user_id, expires_at, created_at)
+       VALUES (?, 'default', ?, ?, ?)`
+    ).run(id, adminUserId, NOW + 3_600_000, NOW);
+  }
+
+  it('refuses a first registration without the window once a factor was ever registered', async () => {
+    const [active] = await repo.listActiveByUser('admin-1');
+    if (!active) throw new Error('setup failed');
+    await repo.revokeByAdmin('admin-1', active.id);
+    expect(await repo.insertWebAuthn(key('cred-new'), { firstOnly: true, now: NOW })).toEqual({
+      inserted: false,
+      reason: 'enrollment_closed',
+    });
+  });
+
+  it('revokes every factor, ends every session and opens the window in one batch', async () => {
+    await repo.insertKeyringHolderKey(
+      { admin_user_id: 'admin-1', holder_jkt: 'jkt-1' },
+      { firstOnly: false }
+    );
+    addAdmin(db, 'admin-2');
+    addSession('s-1');
+    addSession('s-2');
+    addSession('s-other', 'admin-2');
+
+    const result = await repo.revokeAllForLastResort('admin-1', {
+      reenrollUntil: NOW + 86_400_000,
+      actorId: 'amp_authrim_setup',
+      now: NOW,
+    });
+
+    expect(result.revokedFactorIds).toHaveLength(2);
+    expect(result.endedSessions).toBe(2);
+    expect(await repo.listActiveByUser('admin-1')).toHaveLength(0);
+    // The rows stay, revoked.
+    expect((await repo.listByUser('admin-1')).every((factor) => factor.revoked_at === NOW)).toBe(
+      true
+    );
+    expect(
+      db
+        .prepare('SELECT id FROM admin_sessions ORDER BY id')
+        .all()
+        .map((row) => row.id)
+    ).toEqual(['s-other']);
+    expect(await repo.getReenrollWindowEndsAt('admin-1', NOW)).toBe(NOW + 86_400_000);
+  });
+
+  it('cancels an open recovery request so it cannot replace the next factor', async () => {
+    db.prepare(
+      `INSERT INTO admin_second_factor_recoveries (
+         id, admin_user_id, tenant_id, status, kind, credential_id, public_key,
+         requested_session_id, requested_at, not_before, expires_at
+       ) VALUES ('rec-1', 'admin-1', 'default', 'pending', 'webauthn_credential', 'cred-x', 'cGs=',
+         's-0', ?, ?, ?)`
+    ).run(NOW - 1_000, NOW + 1_000, NOW + 10_000);
+
+    const result = await repo.revokeAllForLastResort('admin-1', {
+      reenrollUntil: NOW + 1_000,
+      actorId: 'amp_authrim_setup',
+      now: NOW,
+    });
+
+    expect(result.cancelledRecoveryIds).toEqual(['rec-1']);
+    expect(
+      db
+        .prepare('SELECT status, cancel_reason, cancelled_by FROM admin_second_factor_recoveries')
+        .get()
+    ).toEqual({
+      status: 'cancelled',
+      cancel_reason: 'last_resort',
+      cancelled_by: 'amp_authrim_setup',
+    });
+  });
+
+  it('lets one first registration through inside the window and closes it', async () => {
+    await repo.revokeAllForLastResort('admin-1', {
+      reenrollUntil: NOW + 60_000,
+      actorId: 'amp_authrim_setup',
+      now: NOW,
+    });
+
+    const results = await Promise.all([
+      repo.insertWebAuthn(key('cred-a'), { firstOnly: true, now: NOW + 1 }),
+      repo.insertKeyringHolderKey(
+        { admin_user_id: 'admin-1', holder_jkt: 'jkt-new' },
+        { firstOnly: true, now: NOW + 1 }
+      ),
+    ]);
+
+    expect(results.map((result) => result.inserted).sort()).toEqual([false, true]);
+    expect(await repo.listActiveByUser('admin-1')).toHaveLength(1);
+    expect(await repo.getReenrollWindowEndsAt('admin-1', NOW + 2)).toBeNull();
+    expect(
+      db.prepare('SELECT second_factor_reenroll_until AS until FROM admin_users').get()
+    ).toEqual({ until: null });
+  });
+
+  it('keeps a used window closed even after the new factor is revoked again', async () => {
+    await repo.revokeAllForLastResort('admin-1', {
+      reenrollUntil: NOW + 60_000,
+      actorId: 'amp_authrim_setup',
+      now: NOW,
+    });
+    const added = await repo.insertWebAuthn(key('cred-a'), { firstOnly: true, now: NOW + 1 });
+    if (!added.inserted) throw new Error('not inserted');
+    await repo.revokeByAdmin('admin-1', added.factor.id);
+
+    expect(await repo.insertWebAuthn(key('cred-b'), { firstOnly: true, now: NOW + 2 })).toEqual({
+      inserted: false,
+      reason: 'enrollment_closed',
+    });
+  });
+
+  it('refuses a first registration after the window closed', async () => {
+    await repo.revokeAllForLastResort('admin-1', {
+      reenrollUntil: NOW + 60_000,
+      actorId: 'amp_authrim_setup',
+      now: NOW,
+    });
+
+    expect(
+      await repo.insertWebAuthn(key('cred-a'), { firstOnly: true, now: NOW + 60_000 })
+    ).toEqual({ inserted: false, reason: 'enrollment_closed' });
+    expect(await repo.getReenrollWindowEndsAt('admin-1', NOW + 60_000)).toBeNull();
+  });
+
+  it('never registers a revoked factor again through the window', async () => {
+    await repo.revokeAllForLastResort('admin-1', {
+      reenrollUntil: NOW + 60_000,
+      actorId: 'amp_authrim_setup',
+      now: NOW,
+    });
+
+    expect(await repo.insertWebAuthn(key('cred-old'), { firstOnly: true, now: NOW + 1 })).toEqual({
+      inserted: false,
+      reason: 'credential_in_use',
+    });
+  });
+
+  it('refuses a registration from a session the last-resort recovery ended, keeping the window', async () => {
+    addSession('s-1');
+    await repo.revokeAllForLastResort('admin-1', {
+      reenrollUntil: NOW + 60_000,
+      actorId: 'amp_authrim_setup',
+      now: NOW,
+    });
+
+    expect(
+      await repo.insertKeyringHolderKey(
+        { admin_user_id: 'admin-1', holder_jkt: 'jkt-late' },
+        { firstOnly: true, sessionId: 's-1', now: NOW + 1 }
+      )
+    ).toEqual({ inserted: false, reason: 'session_ended' });
+    expect(await repo.getReenrollWindowEndsAt('admin-1', NOW + 1)).toBe(NOW + 60_000);
+
+    addSession('s-new');
+    expect(
+      (
+        await repo.insertWebAuthn(key('cred-a'), {
+          firstOnly: true,
+          sessionId: 's-new',
+          now: NOW + 2,
+        })
+      ).inserted
+    ).toBe(true);
+  });
+
+  it('does not open the window for an admin with an active factor', async () => {
+    db.prepare('UPDATE admin_users SET second_factor_reenroll_until = ?').run(NOW + 60_000);
+
+    expect(await repo.insertWebAuthn(key('cred-a'), { firstOnly: true, now: NOW })).toEqual({
+      inserted: false,
+      reason: 'already_enrolled',
+    });
   });
 });

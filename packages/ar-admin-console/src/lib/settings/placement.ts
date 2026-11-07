@@ -408,7 +408,8 @@ export const TEAM: SettingsPageDef = {
 			level: 'platform',
 			settings: [
 				{ key: 'security.admin_step_up_enforced', depth: 'primary' },
-				{ key: 'security.admin_keyring_dc_api', depth: 'primary' }
+				{ key: 'security.admin_keyring_dc_api', depth: 'primary' },
+				{ key: 'security.admin_last_resort_reenroll_window_seconds', depth: 'advanced' }
 			]
 		}
 	]
