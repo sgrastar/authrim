@@ -464,7 +464,9 @@ export type FlowConditionType =
   | 'authentication_method'
   | 'policy_rule'
   | 'policy_evaluation'
-  | 'organization_membership';
+  | 'organization_membership'
+  /** A choice a screen step sent to the Flow (`attribute` is its answer key). */
+  | 'screen.answer';
 
 export interface FlowConditionExpression {
   type: FlowConditionType;
@@ -516,6 +518,51 @@ export interface FlowConditionEvaluationContext {
   requested_scope?: string[];
   user?: FlowConditionEvaluationUser;
   authentication_method?: string;
+  /** The choices screen steps sent to the Flow, by answer key (see `screenAnswersOf`). */
+  screen_answers?: Record<string, string | boolean>;
+}
+
+/** The longest answer key a screen answer condition names. */
+export const MAX_SCREEN_ANSWER_CONDITION_KEY_LENGTH = 100;
+
+/** One screen step's choices kept with an interaction, by answer key. */
+export interface ScreenAnswerEntry {
+  step_id: string;
+  answers: Record<string, unknown>;
+}
+
+/**
+ * The choices kept with an interaction (`context_json.screen_answers`), one entry per step, the
+ * step answered last at the end. Kept as a list: an object's own keys do not keep the order they
+ * were set in when they look like integers (a step id may), so a step answered again could not
+ * be told to be the latest. The object by step id an earlier runtime wrote is read too.
+ */
+export function screenAnswerEntriesOf(raw: unknown): ScreenAnswerEntry[] {
+  if (Array.isArray(raw)) {
+    return raw.flatMap((entry) =>
+      isRecord(entry) && typeof entry.step_id === 'string' && isRecord(entry.answers)
+        ? [{ step_id: entry.step_id, answers: entry.answers }]
+        : []
+    );
+  }
+  if (!isRecord(raw)) return [];
+  return Object.entries(raw).flatMap(([stepId, answers]) =>
+    isRecord(answers) ? [{ step_id: stepId, answers }] : []
+  );
+}
+
+/**
+ * The kept choices by answer key (see screenAnswerEntriesOf). A key answered on more than one
+ * step takes the step answered last.
+ */
+export function screenAnswersOf(raw: unknown): Record<string, string | boolean> {
+  const answers: Record<string, string | boolean> = {};
+  for (const entry of screenAnswerEntriesOf(raw)) {
+    for (const [key, value] of Object.entries(entry.answers)) {
+      if (typeof value === 'string' || typeof value === 'boolean') answers[key] = value;
+    }
+  }
+  return answers;
 }
 
 export interface FlowConditionResolvers {
@@ -593,6 +640,8 @@ export async function evaluateFlowCondition(
       return matchArray(context.user?.roles ?? [], condition);
     case 'authentication_method':
       return matchScalar(context.authentication_method, condition);
+    case 'screen.answer':
+      return matchScreenAnswer(context.screen_answers, condition);
     case 'policy_rule':
     case 'policy_evaluation':
       if (!resolvers.evaluate_policy) {
@@ -1172,6 +1221,20 @@ function validateConditionNodeConfig(
         ref: { type: 'config', key: 'condition.type' },
       });
     } else if (
+      condition.type === 'screen.answer' &&
+      (typeof condition.attribute !== 'string' ||
+        condition.attribute.trim() === '' ||
+        condition.attribute.length > MAX_SCREEN_ANSWER_CONDITION_KEY_LENGTH)
+    ) {
+      issues.push({
+        level,
+        code: 'invalid_screen_answer_condition',
+        message: 'A screen answer condition names the answer key it compares.',
+        path: `${rowPath}.condition.attribute`,
+        node_id: nodeId,
+        ref: { type: 'config', key: 'condition.attribute' },
+      });
+    } else if (
       condition.type === 'protocol' &&
       condition.value !== 'oidc' &&
       condition.value !== 'saml'
@@ -1257,6 +1320,7 @@ const FLOW_CONDITION_TYPES = new Set<FlowConditionType>([
   'policy_rule',
   'policy_evaluation',
   'organization_membership',
+  'screen.answer',
 ]);
 
 function validateRuntimeContract(runtime: Record<string, unknown>): FlowValidationIssue[] {
@@ -1433,6 +1497,18 @@ function matchArray(values: string[], condition: FlowConditionExpression): boole
     return values.includes(String(condition.value));
   }
   return false;
+}
+
+/** A screen answer, as its text (a checkbox's `true` or `false`), against the condition's values. */
+function matchScreenAnswer(
+  answers: Record<string, string | boolean> | undefined,
+  condition: FlowConditionExpression
+): boolean {
+  if (!answers || !condition.attribute) return false;
+  const value = Object.prototype.hasOwnProperty.call(answers, condition.attribute)
+    ? answers[condition.attribute]
+    : undefined;
+  return value === undefined ? false : matchScalar(String(value), condition);
 }
 
 function matchUserAttribute(

@@ -1752,6 +1752,12 @@ describe('LoginUI runtime Flow handlers', () => {
       expect.stringContaining('SET context_json = ?'),
       expect.arrayContaining([expect.stringContaining('"locale":"ko"')])
     );
+    // Written back only while it is open: a context read before it ended (its screen answers
+    // removed then) is not written over the one it ended with.
+    const writeBack = mocks.coreAdapter.execute.mock.calls.find(([sql]) =>
+      String(sql).includes('SET context_json = ?')
+    );
+    expect(String(writeBack?.[0])).toContain("state IN ('created', 'active')");
   });
 
   it('hydrates screen steps with the active screen snapshot', async () => {
@@ -5371,9 +5377,9 @@ describe('LoginUI runtime Flow handlers', () => {
 
         expect(response.status).toBe(200);
         const [context] = contextWrites();
-        expect(context?.screen_answers).toEqual({
-          'screen:step': { plan: 'pro', newsletter: true },
-        });
+        expect(context?.screen_answers).toEqual([
+          { step_id: 'screen:step', answers: { plan: 'pro', newsletter: true } },
+        ]);
         expect(JSON.stringify(context)).not.toContain('Call me later');
         expect(screenResponseWrites()).toEqual([]);
         expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
@@ -5408,7 +5414,9 @@ describe('LoginUI runtime Flow handlers', () => {
         // One visit of the step, the same for a submit sent again: a receiver can drop a repeat.
         expect(typeof payload.data.submissionId).toBe('string');
         // The box left untouched is no answer: the step's choices are the plan alone.
-        expect(contextWrites()[0]?.screen_answers).toEqual({ 'screen:step': { plan: 'pro' } });
+        expect(contextWrites()[0]?.screen_answers).toEqual([
+          { step_id: 'screen:step', answers: { plan: 'pro' } },
+        ]);
       });
 
       it('keeps no choices once the interaction ends at the screen', async () => {
@@ -5428,6 +5436,101 @@ describe('LoginUI runtime Flow handlers', () => {
         expect(context).not.toHaveProperty('screen_answers');
         // The event still carries the answer.
         expect(mocks.publishEvent).toHaveBeenCalledTimes(1);
+      });
+
+      it('branches on the choice this submit sends to the Flow', async () => {
+        const page = (id: string) => ({
+          id: `${id}:step`,
+          source_node_id: id,
+          component: 'screen' as const,
+          render: true,
+          config: { screen_ref: 'profile_completion' },
+        });
+        const submitPlan = (plan: string, context?: Record<string, unknown>) =>
+          submitStep({
+            context,
+            runtime: {
+              flow_kind: 'login',
+              ui: {
+                steps: [
+                  screenRuntime.ui.steps[0],
+                  {
+                    id: 'plan:step',
+                    source_node_id: 'plan',
+                    component: 'condition',
+                    render: false,
+                    config: {
+                      conditions: {
+                        rows: [
+                          {
+                            id: 'pro',
+                            condition: { type: 'screen.answer', attribute: 'plan', value: 'pro' },
+                            output_handle: 'pro',
+                          },
+                        ],
+                        otherwise: { output_handle: 'otherwise' },
+                      },
+                    },
+                  },
+                  page('pro-page'),
+                  page('free-page'),
+                ],
+              },
+            },
+            editor: {
+              nodes: [
+                { id: 'screen', type: 'screen' },
+                { id: 'plan', type: 'condition' },
+                { id: 'pro-page', type: 'screen' },
+                { id: 'free-page', type: 'screen' },
+              ],
+              edges: [
+                { id: 'a', source: 'screen', source_handle: 'submitted', target: 'plan' },
+                { id: 'b', source: 'plan', source_handle: 'pro', target: 'pro-page' },
+                { id: 'c', source: 'plan', source_handle: 'otherwise', target: 'free-page' },
+              ],
+            },
+            currentStep: { node: 'screen', step: 'screen:step' },
+            handle: 'submitted',
+            withSession: false,
+            userId: 'user_1',
+            body: { input: { fields: { plan } } },
+            beforeSubmit: () => readsScreen(flowScreen),
+          });
+
+        const pro = await submitPlan('pro');
+        expect(pro.response.status).toBe(200);
+        expect((pro.data.step as { id?: string } | null)?.id).toBe('pro-page:step');
+
+        const free = await submitPlan('free');
+        expect(free.response.status).toBe(200);
+        expect((free.data.step as { id?: string } | null)?.id).toBe('free-page:step');
+
+        // The step answered again (after a later step answered the same key) reads as the latest:
+        // it moves to the end of the kept choices, an integer-like step id included (an object
+        // would list that one first whatever the order it was set in).
+        const again = await submitPlan('pro', {
+          screen_answers: [
+            { step_id: 'screen:step', answers: { plan: 'free' } },
+            { step_id: '2', answers: { plan: 'free' } },
+          ],
+        });
+        expect(again.response.status).toBe(200);
+        expect((again.data.step as { id?: string } | null)?.id).toBe('pro-page:step');
+        expect(contextWrites().at(-1)?.screen_answers).toEqual([
+          { step_id: '2', answers: { plan: 'free' } },
+          { step_id: 'screen:step', answers: { plan: 'pro' } },
+        ]);
+
+        // The object by step an earlier runtime kept is read, and written back as the list.
+        const legacy = await submitPlan('free', {
+          screen_answers: { 'screen:step': { plan: 'pro' }, 'later:step': { plan: 'pro' } },
+        });
+        expect((legacy.data.step as { id?: string } | null)?.id).toBe('free-page:step');
+        expect(contextWrites().at(-1)?.screen_answers).toEqual([
+          { step_id: 'later:step', answers: { plan: 'pro' } },
+          { step_id: 'screen:step', answers: { plan: 'free' } },
+        ]);
       });
 
       it('keeps the choices only while the interaction is still at the step', async () => {
@@ -6029,6 +6132,37 @@ describe('LoginUI runtime Flow handlers', () => {
       expect.stringContaining("SET state = 'expired'"),
       expect.arrayContaining(['tenant_test', 'interaction_1'])
     );
+  });
+
+  it('expires a stale interaction with its screen answers removed', async () => {
+    const { data: startData } = await startInteraction();
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      expiresAt: Math.floor(Date.now() / 1000) - 1,
+      context: { screen_answers: { 'survey:step': { plan: 'pro' } } },
+    });
+
+    await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        body: {
+          step_id: 'entry:step',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+
+    const expiry = mocks.coreAdapter.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET state = 'expired'")
+    );
+    const context = JSON.parse(String((expiry?.[1] as unknown[])[1])) as Record<string, unknown>;
+    expect(context).not.toHaveProperty('screen_answers');
+    // Only over the context read: a concurrent submit's answers are left to the maintenance.
+    expect(String(expiry?.[0])).toContain('AND context_json IS ?');
+    expect(JSON.parse(String((expiry?.[1] as unknown[])[4]))).toHaveProperty('screen_answers');
   });
 
   it('marks expired Flow interactions and deletes stale step rows during cleanup', async () => {

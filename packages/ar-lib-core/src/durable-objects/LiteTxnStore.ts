@@ -508,6 +508,11 @@ export class LiteTxnStore extends DurableObject<Env> {
     const operation = own(txn.operations, request.operationId);
     if (!operation) return { ok: false, reason: 'not_found' };
 
+    // An attempt whose lease ran out and that another took over: told apart from a version
+    // conflict, so its caller neither re-applies its move nor acts on what it did. Checked before
+    // a finished operation is read back: the later attempt's completion is never this one's.
+    if (operation.attempt !== request.attempt) return { ok: false, reason: 'superseded' };
+
     if (operation.status === 'done') {
       // A resend: the first completion's answer, read again (never the move made again).
       if (txn.reads >= LITE_TXN_MAX_READS) return { ok: false, reason: 'budget_exceeded' };
@@ -518,8 +523,6 @@ export class LiteTxnStore extends DurableObject<Env> {
         ? { ok: true, txn: snapshotOf(txn) }
         : { ok: false, reason: outcome };
     }
-
-    if (operation.attempt !== request.attempt) return { ok: false, reason: 'version_mismatch' };
 
     // The first completion: the result goes into the room reserved when the operation started,
     // so this save always fits. The move asked for with it is then tried once, and its outcome

@@ -508,7 +508,11 @@ const translation = {
 	common_dismissAlert: 'সতর্কতা বন্ধ করুন',
 	emailCode_digitLabel: '৬টির মধ্যে {position} নম্বর অঙ্ক',
 	lite_javascriptRequired:
-		'এই পাতাটি আপনার ব্রাউজারে একটি নিরাপত্তা যাচাই চালায়। JavaScript চালু করুন, তারপর পাতাটি আবার লোড করুন।'
+		'এই পাতাটি আপনার ব্রাউজারে একটি নিরাপত্তা যাচাই চালায়। JavaScript চালু করুন, তারপর পাতাটি আবার লোড করুন।',
+	lite_passkeyUnsupported:
+		'এই ব্রাউজারটি এখানে পাসকি ব্যবহার করতে পারে না। সাইন ইন করার অন্য একটি উপায় বেছে নিন।',
+	lite_passkeyFailed:
+		'পাসকি দিয়ে সাইন ইন শেষ হয়নি। আবার চেষ্টা করুন, অথবা সাইন ইন করার অন্য একটি উপায় বেছে নিন।'
 } satisfies Translation;
 
 export default translation;

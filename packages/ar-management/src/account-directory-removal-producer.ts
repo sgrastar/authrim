@@ -1,5 +1,7 @@
 import {
   createLookupBlindIndexes,
+  LOOKUP_PASSKEY_ISSUER_PREFIX,
+  LOOKUP_PASSKEY_SUBJECT_MAX_BYTES,
   guestDirectoryRemovalOperationPrefix,
   CanonicalIdentityRepository,
   captureAccountDeletionSnapshot,
@@ -465,8 +467,8 @@ export async function captureGuestDirectoryPage(input: {
   } else if (kind === 'capture_passkeys') {
     source = core;
     table = 'passkeys';
-    columns =
-      "id,CASE WHEN rp_id IS NULL OR rp_id='' THEN 0 ELSE 1 END AS directory_eligible,CASE WHEN length(rp_id)<=253 THEN rp_id ELSE NULL END AS issuer,CASE WHEN length(credential_id)<=1024 THEN credential_id ELSE NULL END AS subject";
+    // The lookup directory limits passkey subjects in UTF-8 bytes, so compare bytes, not characters.
+    columns = `id,CASE WHEN rp_id IS NULL OR rp_id='' THEN 0 ELSE 1 END AS directory_eligible,CASE WHEN length(rp_id)<=253 THEN rp_id ELSE NULL END AS issuer,CASE WHEN ${guestSourceBytes(core, 'credential_id')}<=${LOOKUP_PASSKEY_SUBJECT_MAX_BYTES} THEN credential_id ELSE NULL END AS subject`;
     predicate = 'tenant_id=? AND user_id=?';
   } else if (kind === 'capture_resume') {
     source = core;
@@ -507,7 +509,9 @@ export async function captureGuestDirectoryPage(input: {
     if (kind === 'capture_passkeys' && row.directory_eligible === 0) continue;
     if (!row.issuer || !row.subject) throw new Error('guest_directory_subject_invalid');
     const issuer =
-      kind === 'capture_passkeys' ? `urn:authrim:passkey:${row.issuer.toLowerCase()}` : row.issuer;
+      kind === 'capture_passkeys'
+        ? `${LOOKUP_PASSKEY_ISSUER_PREFIX}${row.issuer.toLowerCase()}`
+        : row.issuer;
     bytes += new TextEncoder().encode(row.id + issuer + row.subject).length;
     if (bytes > 32768) throw new Error('guest_directory_capture_budget_exceeded');
     publications.push(

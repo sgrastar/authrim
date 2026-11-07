@@ -1,4 +1,7 @@
-import { normalizeLookupExternalSubject } from './lookup-directory/blind-index';
+import {
+  LOOKUP_PASSKEY_ISSUER_PREFIX,
+  normalizeLookupExternalSubject,
+} from './lookup-directory/blind-index';
 import type {
   CanonicalRuntimeUserWriteInput,
   CanonicalSensitiveUserField,
@@ -170,6 +173,7 @@ export interface ExternalIdpPiiSourceShard {
   routeGeneration: number;
 }
 
+/** Base64url, at most `LOOKUP_PASSKEY_SUBJECT_MAX_BYTES` (2,048) characters, so always indexable. */
 const PASSKEY_CREDENTIAL_ID = /^[A-Za-z0-9_-]{1,2048}$/u;
 const PASSKEY_RP_ID =
   /^(?:localhost|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*)$/u;
@@ -186,7 +190,7 @@ export function passkeyCredentialLookupSubject(input: { rpId: string; credential
     throw new Error('passkey_route_credential_id_invalid');
   }
   return {
-    issuer: `urn:authrim:passkey:${rpId}`,
+    issuer: `${LOOKUP_PASSKEY_ISSUER_PREFIX}${rpId}`,
     subject: input.credentialId,
   };
 }

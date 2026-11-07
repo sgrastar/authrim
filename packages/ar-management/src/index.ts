@@ -6,6 +6,7 @@ import {
 import {
   publicLoginUiAssetResourcePolicy,
   reconcileProfileRegistryProjection,
+  expireFlowInteractions,
 } from '@authrim/ar-lib-core';
 import { processTenantBackupMaintenance } from './tenant-backup-services';
 import { processTenantBackupOperations } from './tenant-backup-operation-dispatcher';
@@ -4661,15 +4662,8 @@ async function handleCoveredScheduled(
     try {
       for (const target of maintenanceTargets) {
         for (const { adapter } of target.adapters) {
-          const expiredResult = await adapter.execute(
-            `UPDATE flow_interactions
-           SET state = 'expired', updated_at = ?
-           WHERE tenant_id = ?
-             AND state IN ('created', 'active')
-             AND expires_at <= ?`,
-            [now, target.tenantId, now]
-          );
-          flowInteractionsExpired += expiredResult.rowsAffected || 0;
+          // Expired with their screen answers removed (they served the steps that never came).
+          flowInteractionsExpired += await expireFlowInteractions(adapter, target.tenantId, now);
 
           const deletedStepsResult = await adapter.execute(
             `DELETE FROM flow_interaction_steps

@@ -1,6 +1,7 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import LoginPage from '../../../routes/__lite/login/+page.svelte';
+import { LITE_PASSKEY_SCRIPT } from '../passkey-ceremony';
 import { LITE_POW_SOLVER_SCRIPT } from '../pow-solver';
 
 const text = {
@@ -9,6 +10,13 @@ const text = {
 	sendCode: 'Send code',
 	email: 'Email address',
 	guest: 'Continue as a guest',
+	totp: 'Use authenticator',
+	totpCode: 'Authenticator code',
+	totpVerify: 'Verify authenticator code',
+	passkey: 'Use passkey',
+	passkeyPrompt: 'Follow your device',
+	passkeyUnsupported: 'No passkeys here',
+	passkeyFailed: 'Passkey did not finish',
 	javascriptRequired: 'Turn on JavaScript',
 	unsupported: 'Unavailable',
 	back: 'Back',
@@ -22,14 +30,18 @@ const text = {
 		email_invalid: 'Not an address',
 		code_invalid: 'Wrong code',
 		busy: 'Too many',
-		resend_wait: 'Wait'
+		resend_wait: 'Wait',
+		retry: 'Try again',
+		totp_invalid: 'Wrong authenticator code',
+		totp_failed: 'Authenticator did not start',
+		passkey_failed: 'Passkey did not finish'
 	}
 };
 
 function page(
 	fields: unknown[],
 	pow: unknown = null,
-	extra: { codeEntry?: unknown; form?: unknown } = {}
+	extra: { codeEntry?: unknown; form?: unknown; passkey?: unknown; available?: unknown } = {}
 ) {
 	return render(LoginPage, {
 		props: {
@@ -43,6 +55,8 @@ function page(
 				op: 'o'.repeat(22),
 				decision: { kind: 'screen', title: 'Sign in', description: null, fields },
 				codeEntry: extra.codeEntry ?? null,
+				passkey: extra.passkey ?? null,
+				available: extra.available ?? { mailOtp: true, totp: true },
 				pow,
 				text
 			} as never,
@@ -69,6 +83,7 @@ const field = (overrides: Record<string, unknown>) => ({
 	helpText: null,
 	placeholder: null,
 	href: null,
+	showLabel: true,
 	...overrides
 });
 
@@ -133,7 +148,7 @@ describe('the lite sign-in page as drawn', () => {
 		const { body } = page(
 			[field({ blockType: 'code_input_widget', field: 'code', label: 'Code' })],
 			POW,
-			{ codeEntry: { maskedEmail: 'p***n@example.com', resendWait: 42 } }
+			{ codeEntry: { kind: 'mail_otp', maskedEmail: 'p***n@example.com', resendWait: 42 } }
 		);
 		const forms = body.match(/<form[^>]*>/gu) ?? [];
 		expect(forms).toHaveLength(3);
@@ -160,6 +175,96 @@ describe('the lite sign-in page as drawn', () => {
 		]);
 		expect(body).toMatch(/<input[^>]*type="checkbox"[^>]*name="newsletter"/u);
 		expect(body).not.toMatch(/<input[^>]*name="newsletter"[^>]*type="text"/u);
+	});
+
+	it("keeps a legacy yes/no box's own words, and hides a label only from sight", () => {
+		const { body } = page([
+			field({
+				field: 'terms',
+				label: 'Terms',
+				placeholder: 'I agree',
+				valueType: 'boolean',
+				showLabel: false
+			}),
+			field({ field: 'nickname', label: 'Nickname', required: false, showLabel: false })
+		]);
+		expect(body).toMatch(/<p class="sr-only">Terms<\/p>/u);
+		expect(body).toMatch(/name="terms"[^>]*>\s*I agree/u);
+		expect(body).toMatch(/<span class="sr-only">Nickname<\/span>/u);
+	});
+
+	it("draws a divider's words, never its internal name", () => {
+		const { body } = page([
+			{ ...field({ blockType: 'divider', label: 'Divider' }), text: 'or' },
+			{ ...field({ blockType: 'divider', label: 'Divider' }), text: 'Divider' }
+		]);
+		expect(body).toMatch(/<p class="divider">or<\/p>/u);
+		expect(body).toContain('<hr');
+		expect(body).not.toContain('>Divider<');
+	});
+
+	it('draws an authenticator code entry: up to 8 digits, no resend, no proof', () => {
+		const { body } = page(
+			[field({ blockType: 'code_input_widget', field: 'code', label: 'Code' })],
+			null,
+			{ codeEntry: { kind: 'totp', maskedEmail: null, resendWait: 0 } }
+		);
+		const forms = body.match(/<form[^>]*>/gu) ?? [];
+		expect(forms).toHaveLength(2);
+		expect(forms[0]).toContain('/totp_verify"');
+		expect(forms[1]).toContain('/restart"');
+		expect(body).toContain('pattern="[0-9]{6}([0-9]{2})?"');
+		expect(body).toContain('maxlength="8"');
+		expect(body).toContain('Verify authenticator code');
+		expect(body).not.toContain('/resend"');
+	});
+
+	it('draws a button for each sign-in method, the passkey one free of the required fields', () => {
+		const { body } = page(
+			[
+				field({}),
+				field({ blockType: 'auth_widget', field: 'p', authMethod: 'passkey' }),
+				field({ blockType: 'auth_widget', field: 't', authMethod: 'totp' })
+			],
+			POW
+		);
+		expect(body).toMatch(/<button[^>]*formnovalidate[^>]*\/passkey_start"[^>]*>Use passkey/u);
+		expect(body).toMatch(/<button[^>]*\/totp_start"[^>]*>Use authenticator/u);
+	});
+
+	it('draws only the halves of the email-code-or-authenticator part that are on', () => {
+		const both = page(
+			[field({}), field({ blockType: 'auth_widget', field: 'c', authMethod: 'mail_otp_totp' })],
+			POW
+		).body;
+		expect(both).toContain('/send_code"');
+		expect(both).toContain('/totp_start"');
+		const codeOnly = page(
+			[field({}), field({ blockType: 'auth_widget', field: 'c', authMethod: 'mail_otp_totp' })],
+			POW,
+			{ available: { mailOtp: true, totp: false } }
+		).body;
+		expect(codeOnly).not.toContain('/totp_start"');
+	});
+
+	it('draws the passkey ceremony: the options as data, the fixed script, no proof', () => {
+		const options = {
+			challenge: 'c'.repeat(43),
+			rpId: 'id.example',
+			timeout: 60000,
+			userVerification: 'required',
+			allowCredentials: []
+		};
+		const { body } = page([field({})], null, { passkey: { options } });
+		const forms = body.match(/<form[^>]*>/gu) ?? [];
+		expect(forms[0]).toContain('/passkey_finish"');
+		expect(forms[0]).toContain('data-lite-passkey="');
+		expect(forms[0]).not.toContain('data-lite-pow');
+		expect(body).toContain('name="credential"');
+		expect(body).toContain(`<script>${LITE_PASSKEY_SCRIPT}</script>`);
+		expect(body).not.toContain(LITE_POW_SOLVER_SCRIPT);
+		// The options are an attribute's value, escaped: never markup.
+		expect(body).toContain('&quot;rpId&quot;:&quot;id.example&quot;');
 	});
 
 	it('goes back from a step it cannot draw by giving the transaction up (a restart post)', () => {

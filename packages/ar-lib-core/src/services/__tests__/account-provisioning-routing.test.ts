@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createLookupBlindIndex } from '../lookup-directory/blind-index';
 import {
   didLookupSubject,
   guestResumeCredentialLookupSubject,
@@ -25,6 +26,24 @@ describe('account provisioning routing subjects', () => {
     { rpId: 'example.com', credentialId: '' },
   ])('rejects malformed passkey routing input without normalization fallback', (input) => {
     expect(() => passkeyCredentialLookupSubject(input)).toThrow(/passkey_route_/u);
+  });
+
+  it('keeps every credential ID it accepts indexable, including the WebAuthn maximum', async () => {
+    const key = { generation: 1, secret: '0123456789abcdef0123456789abcdef' };
+    // 1,364 characters: the longest WebAuthn credential ID (1,023 bytes) in base64url; 2,048: the
+    // longest this helper accepts.
+    for (const credentialId of [`${'A'.repeat(1363)}w`, 'A'.repeat(2048)]) {
+      const subject = passkeyCredentialLookupSubject({ rpId: 'login.example.com', credentialId });
+      expect(subject.subject).toBe(credentialId);
+      await expect(createLookupBlindIndex('external_subject', subject, key)).resolves.toMatchObject(
+        {
+          indexKind: 'external_subject',
+        }
+      );
+    }
+    expect(() =>
+      passkeyCredentialLookupSubject({ rpId: 'login.example.com', credentialId: 'A'.repeat(2049) })
+    ).toThrow('passkey_route_credential_id_invalid');
   });
 
   it('uses an Authrim-owned issuer for hashed browser guest resume credentials', () => {

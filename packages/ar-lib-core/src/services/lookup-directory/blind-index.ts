@@ -122,6 +122,19 @@ export function normalizeLookupAccountId(value: string): Uint8Array {
   return lengthPrefixed(encoder.encode(normalized));
 }
 
+/** Issuer namespace under which `passkeyCredentialLookupSubject` indexes passkey credentials. */
+export const LOOKUP_PASSKEY_ISSUER_PREFIX = 'urn:authrim:passkey:';
+/** Largest external subject, in UTF-8 bytes, outside the passkey namespace. */
+export const LOOKUP_EXTERNAL_SUBJECT_MAX_BYTES = 1024;
+/**
+ * Largest passkey credential subject, in UTF-8 bytes. A WebAuthn credential ID may be up to 1,023
+ * raw bytes, which is up to 1,364 base64url characters, so the general 1,024-byte limit refused
+ * real credentials. 2,048 matches the credential ID format `passkeyCredentialLookupSubject`
+ * accepts. The limit only decides which values may be indexed: the HMAC input is the same for any
+ * value that already fit, so existing index entries keep their digests.
+ */
+export const LOOKUP_PASSKEY_SUBJECT_MAX_BYTES = 2048;
+
 export function normalizeLookupExternalSubject(input: {
   issuer: string;
   subject: string;
@@ -133,7 +146,9 @@ export function normalizeLookupExternalSubject(input: {
   );
   const subject = requiredBoundedString(
     input.subject,
-    1024,
+    issuer.startsWith(LOOKUP_PASSKEY_ISSUER_PREFIX)
+      ? LOOKUP_PASSKEY_SUBJECT_MAX_BYTES
+      : LOOKUP_EXTERNAL_SUBJECT_MAX_BYTES,
     'lookup_external_subject_value_invalid'
   );
   return concatBytes(

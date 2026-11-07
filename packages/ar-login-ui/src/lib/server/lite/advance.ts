@@ -16,8 +16,8 @@ import type { LiteFlowState } from './flow-driver';
 export type LiteAdvanceResult =
 	/** The Flow completed: its output (the continuation). */
 	| { kind: 'completed'; output: Record<string, unknown> | null }
-	/** A step the person must see: the page draws it. */
-	| { kind: 'draw' }
+	/** A step the person must see (the step itself): the page draws it. */
+	| { kind: 'draw'; step: FlowRuntimeStep }
 	/** A completion reached without a signed-in session: nothing more can happen here. */
 	| { kind: 'sign_in_required' }
 	| { kind: 'failed'; error: string };
@@ -40,7 +40,7 @@ export async function advanceLiteFlow(
 			return { kind: 'failed', error: 'step_unsupported' };
 		}
 		const handle = runtimeAutoSubmitHandle(step);
-		if (handle === null) return { kind: 'draw' };
+		if (handle === null) return { kind: 'draw', step };
 		if (step.component === 'completion' && !options.signedIn) return { kind: 'sign_in_required' };
 		const answer = await backend.request(
 			`/api/v1/login/interactions/${encodeURIComponent(state.interactionId)}/submit`,
