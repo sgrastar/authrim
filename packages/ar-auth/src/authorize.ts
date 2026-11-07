@@ -5509,11 +5509,33 @@ function createFragmentResponse(
  * Create a form_post response
  * Used when response_mode=form_post per OAuth 2.0 Form Post Response Mode
  */
+/**
+ * Requests whose form post responses are answered as data, not as an auto-submitting page: the
+ * lite Login UI's server, which sends the form from its own relay page (its CSP allows only its own
+ * fixed scripts). The data is what the page would hold: the destination and its fields.
+ */
+const STRUCTURED_FORM_POST = new WeakSet<Context>();
+
+/** Answers this request's form post responses as `{ form_post: { action, fields } }`. */
+export function answerFormPostAsData(c: Context<{ Bindings: Env }>): void {
+  STRUCTURED_FORM_POST.add(c);
+}
+
+/** Whether this request asked for its form post responses as data. */
+export function formPostAnsweredAsData(c: Context<{ Bindings: Env }>): boolean {
+  return STRUCTURED_FORM_POST.has(c);
+}
+
 function createFormPostResponse(
   c: Context<{ Bindings: Env }>,
   redirectUri: string,
   params: Record<string, string>
 ): Response {
+  if (STRUCTURED_FORM_POST.has(c)) {
+    return c.json({ form_post: { action: redirectUri, fields: Object.entries(params) } }, 200, {
+      'Cache-Control': 'no-store',
+    });
+  }
   // Generate nonce for CSP (Content Security Policy)
   const nonce = crypto.randomUUID();
 

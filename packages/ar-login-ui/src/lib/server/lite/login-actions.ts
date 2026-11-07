@@ -52,7 +52,7 @@ import { readLitePasskeyOptions, type LitePasskeyOptions } from './totp-passkey'
 import { liteMessages } from './messages';
 import { liteTxnClient, type LiteTxnClient, type LiteTxnView } from './txn-client';
 
-/** What the sign-in page draws: no consent (PR5c). Social sign-in is by redirect (not SAML yet). */
+/** What the sign-in page draws: no consent step yet (a Flow's consent: PR5d). */
 export const LITE_LOGIN_PAGE_BLOCKS: ReadonlySet<string> = new Set([
 	'identity_field',
 	'auth_widget',
@@ -418,7 +418,7 @@ export async function keepLiteFlow(
 	return moved.ok ? moved.txn : null;
 }
 
-function sameToken(a: string, b: string): boolean {
+export function sameToken(a: string, b: string): boolean {
 	if (a.length !== b.length) return false;
 	let diff = 0;
 	for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);

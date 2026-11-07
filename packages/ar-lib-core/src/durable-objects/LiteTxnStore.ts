@@ -123,6 +123,11 @@ export interface LiteTxnCreateRequest {
   bound: LiteTxnBound;
   data?: Record<string, unknown>;
   reuseKey?: string;
+  /**
+   * Only the live transaction of `reuseKey`, when there is one: none is made (`not_found`). For a
+   * page that gives a transaction up, and would not make one only to do so.
+   */
+  reuseOnly?: boolean;
   /** How many live transactions this browser may hold (from the tenant's settings). */
   maxActive: number;
 }
@@ -384,6 +389,7 @@ export class LiteTxnStore extends DurableObject<Env> {
         return { ok: true, txn: snapshotOf(existing), reused: true };
       }
     }
+    if (request.reuseOnly) return { ok: false, reason: 'not_found' };
     if (live.length >= request.maxActive) return { ok: false, reason: 'budget_exceeded' };
     const kept = [...all.values()].filter((txn) => now < txn.expiresAt).length;
     if (kept >= LITE_TXN_MAX_RECORDS) return { ok: false, reason: 'budget_exceeded' };

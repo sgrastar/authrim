@@ -437,6 +437,30 @@ describe('LiteTxnStore: idempotent operations', () => {
   });
 });
 
+describe('LiteTxnStore: a look-up by reuse key', () => {
+  it('answers the live transaction of the key, and makes none when there is none', async () => {
+    const { store } = createStore();
+    const request = {
+      tenantId: 'tenant-a',
+      bindingHash: BINDING,
+      bound: bound(),
+      reuseKey: 'key-1',
+      maxActive: 4,
+    };
+    await expect(store.createTxnRpc({ ...request, reuseOnly: true })).resolves.toEqual({
+      ok: false,
+      reason: 'not_found',
+    });
+    const made = await store.createTxnRpc(request);
+    if (!made.ok) throw new Error(made.reason);
+    await expect(store.createTxnRpc({ ...request, reuseOnly: true })).resolves.toMatchObject({
+      ok: true,
+      reused: true,
+      txn: { id: made.txn.id },
+    });
+  });
+});
+
 describe('LiteTxnStore: start grants', () => {
   const spec = { provider: 'google', action: 'login' as const, policyRevision: 'rev-1' };
   const start = { clientId: 'login-ui', interactionId: 'interaction-1' };

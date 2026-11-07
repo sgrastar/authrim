@@ -983,6 +983,20 @@ paths:
         Changed or missing snapshots return 409 document_changed. Use refresh_consent or the
         replacement consent_challenge_id in error_details to display updated documents; expired
         requests require a fresh authorization. Omitted optional decisions continue to mean withdrawal/refusal.
+        A denial whose authorization request uses a form post response mode (form_post,
+        form_post.jwt) answers the auto-submitting page, or, with `X-Authrim-Relay: structured`
+        (the lite Login UI's server, which sends the form from its own relay page), the same
+        destination and fields as `{ form_post: { action, fields: [[name, value], ...] } }`.
+      parameters:
+        - name: X-Authrim-Relay
+          in: header
+          required: false
+          description: >-
+            `structured`: a form post response is answered as data (the destination and its
+            fields) instead of an auto-submitting page.
+          schema:
+            type: string
+            enum: [structured]
       requestBody:
         required: true
         content:

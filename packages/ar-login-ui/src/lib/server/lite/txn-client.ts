@@ -61,6 +61,8 @@ export interface LiteTxnCreateInput {
 	returnTo?: string | null;
 	data?: Record<string, unknown>;
 	reuseKey?: string;
+	/** Only the live transaction of `reuseKey`, when there is one (none is made). */
+	reuseOnly?: boolean;
 }
 
 const NO_BINDING = { ok: false, reason: 'invalid_binding' } as const;

@@ -81,6 +81,12 @@ declare global {
 			 * load after an action; with this set, the load starts nothing and draws the relay.
 			 */
 			liteRelay?: { url: string; continueLabel: string };
+			/** A lite action's relay that posts a form (the fields a backend gave) to its destination. */
+			liteRelayPost?: {
+				action: string;
+				fields: ReadonlyArray<readonly [string, string]>;
+				continueLabel: string;
+			};
 			/** What a lite page adds to the lite CSP: a fixed script's hash, a relay's destination. */
 			liteCsp?: { scriptHashes?: string[]; formAction?: string };
 			loginChallengeThemeTarget?: {
