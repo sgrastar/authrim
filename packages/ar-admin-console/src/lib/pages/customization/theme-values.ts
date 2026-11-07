@@ -12,6 +12,10 @@
  */
 import type { ThemeValues } from '#lib/api/login-ui-themes.js';
 import {
+	formatLoginUIImageFilters,
+	parseLoginUIImageFilters
+} from '@authrim/ar-lib-core/utils/login-ui-image-filters';
+import {
 	newThemeDraft,
 	SPLIT_CHOICES,
 	TEXT_LANGUAGES,
@@ -70,7 +74,8 @@ const FIELD_KEYS: readonly (readonly [keyof ThemeDraft, readonly string[]])[] = 
 	['backgroundOpacity', ['background_image_opacity']],
 	['panelImageOpacity', ['brand_panel_image_opacity']],
 	['cardImageOpacity', ['login_panel_background_opacity']],
-	['backgroundGrayscale', ['background_image_grayscale']],
+	// Grayscale is one of the filters: the older switch is written off with them.
+	['backgroundFilters', ['background_image_filters', 'background_image_grayscale']],
 	['panelImageGrayscale', ['brand_panel_image_grayscale']],
 	['cardImageGrayscale', ['login_panel_background_grayscale']],
 	['customCss', ['custom_css']],
@@ -80,6 +85,8 @@ const FIELD_KEYS: readonly (readonly [keyof ThemeDraft, readonly string[]])[] = 
 	['titleColor', ['title_color']],
 	['textColor', ['text_color']],
 	['copyColor', ['copy_color']],
+	['fieldColor', ['field_color']],
+	['secondaryButtonColor', ['secondary_button_color']],
 	...THEME_IMAGES.map((image) => [image.field, [image.key]] as const)
 ];
 
@@ -115,7 +122,8 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 		[KEY('background_image_opacity')]: draft.backgroundOpacity,
 		[KEY('brand_panel_image_opacity')]: draft.panelImageOpacity,
 		[KEY('login_panel_background_opacity')]: draft.cardImageOpacity,
-		[KEY('background_image_grayscale')]: draft.backgroundGrayscale,
+		[KEY('background_image_grayscale')]: false,
+		[KEY('background_image_filters')]: formatLoginUIImageFilters(draft.backgroundFilters),
 		[KEY('brand_panel_image_grayscale')]: draft.panelImageGrayscale,
 		[KEY('login_panel_background_grayscale')]: draft.cardImageGrayscale,
 		[KEY('custom_css')]: draft.customCss
@@ -133,7 +141,9 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 		['accent_color', draft.accent],
 		['title_color', draft.titleColor],
 		['text_color', draft.textColor],
-		['copy_color', draft.copyColor]
+		['copy_color', draft.copyColor],
+		['field_color', draft.fieldColor],
+		['secondary_button_color', draft.secondaryButtonColor]
 	];
 	for (const [name, value] of colours) if (value) values[KEY(name)] = value;
 	for (const image of THEME_IMAGES) {
@@ -320,10 +330,20 @@ export function valuesToDraft(values: ThemeValues): ThemeDraft {
 	draft.titleColor = textOf(v('title_color'), '');
 	draft.textColor = textOf(v('text_color'), '');
 	draft.copyColor = textOf(v('copy_color'), '');
+	draft.fieldColor = textOf(v('field_color'), '');
+	draft.secondaryButtonColor = textOf(v('secondary_button_color'), '');
 	draft.backgroundOpacity = percentOf(v('background_image_opacity'), draft.backgroundOpacity);
 	draft.panelImageOpacity = percentOf(v('brand_panel_image_opacity'), draft.panelImageOpacity);
 	draft.cardImageOpacity = percentOf(v('login_panel_background_opacity'), draft.cardImageOpacity);
-	draft.backgroundGrayscale = flagOf(v('background_image_grayscale'), draft.backgroundGrayscale);
+	draft.backgroundFilters = parseLoginUIImageFilters(v('background_image_filters'));
+	// A theme saved with the older grayscale switch shows it as a full grayscale filter, first (the
+	// switch's tone is laid before any filter), unless it has a grayscale filter of its own.
+	if (
+		flagOf(v('background_image_grayscale'), false) &&
+		!draft.backgroundFilters.some((filter) => filter.name === 'grayscale')
+	) {
+		draft.backgroundFilters.unshift({ name: 'grayscale', value: 100 });
+	}
 	draft.panelImageGrayscale = flagOf(v('brand_panel_image_grayscale'), draft.panelImageGrayscale);
 	draft.cardImageGrayscale = flagOf(
 		v('login_panel_background_grayscale'),

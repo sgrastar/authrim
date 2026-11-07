@@ -126,18 +126,20 @@
 	}
 
 	/* Secondary variant - glass effect */
+	/* --secondary-bg / --secondary-text: a tenant's secondary button colour
+	   (login-ui.secondary_button_color), set by the page; it stays on hover. */
 	.btn-secondary {
-		background: var(--control-surface, var(--bg-glass));
-		color: var(--text-primary);
+		background: var(--secondary-bg, var(--control-surface, var(--bg-glass)));
+		color: var(--secondary-text, var(--text-primary));
 		border: 1px solid var(--border);
 		backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
 		-webkit-backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
 	}
 
 	.btn-secondary:hover:not(:disabled) {
-		background: var(--control-hover-surface, var(--bg-card));
+		background: var(--secondary-bg, var(--control-hover-surface, var(--bg-card)));
 		border-color: var(--primary);
-		color: var(--primary);
+		color: var(--secondary-text, var(--primary));
 		transform: var(--surface-hover-transform, translateY(-2px));
 	}
 

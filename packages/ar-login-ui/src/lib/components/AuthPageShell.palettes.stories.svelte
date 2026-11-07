@@ -201,6 +201,23 @@
 	{/snippet}
 </Story>
 
+<!-- The tenant's input field and secondary button colours, with the label each picks to read on
+     it (black or white). Clear glass keeps its sheen over the button colour. -->
+<Story name="Input field and secondary button colours">
+	{#snippet template()}
+		<ShellGallery
+			columns={3}
+			height={560}
+			cells={(['meridian', 'swiss-grid', 'clear-glass'] as const).map((palette) => ({
+				label: `${palette}: fields #fff3c4, secondary #1f2a5c`,
+				ui: ui('standard', palette, {
+					pageTemplate: { fieldColor: '#fff3c4', secondaryButtonColor: '#1f2a5c' }
+				})
+			}))}
+		/>
+	{/snippet}
+</Story>
+
 <Story name="Background image at 35% opacity">
 	{#snippet template()}
 		<ShellGallery

@@ -3,6 +3,7 @@
  * means "not set here": the template's own value applies.
  */
 import type { PaletteId } from './theme-palettes';
+import type { LoginUIImageFilter } from '@authrim/ar-lib-core/utils/login-ui-image-filters';
 
 export type ThemeTemplate = 'standard' | 'split' | 'minimal';
 export type ThemeFont = 'system' | 'serif' | 'rounded' | 'mono';
@@ -66,6 +67,10 @@ export interface ThemeDraft {
 	textColor: string;
 	/** The muted copy: tagline, brand panel text, footer. */
 	copyColor: string;
+	/** The text input fields' background. */
+	fieldColor: string;
+	/** The secondary buttons' background (the main button takes the accent). */
+	secondaryButtonColor: string;
 	font: ThemeFont;
 	fontScale: FontScale;
 	mode: ColourMode;
@@ -98,8 +103,8 @@ export interface ThemeDraft {
 	backgroundImage: string | File | null;
 	/** 0–100: how much of the background image shows through (100 = as it is). */
 	backgroundOpacity: number;
-	/** The background image is shown in grayscale. */
-	backgroundGrayscale: boolean;
+	/** Filters on the background image, in the order they apply (each at most once). */
+	backgroundFilters: LoginUIImageFilter[];
 	/** The picture on the Split template's brand panel, apart from the page background. */
 	panelImage: string | File | null;
 	panelImageOpacity: number;
@@ -168,6 +173,8 @@ export function newThemeDraft(): ThemeDraft {
 		titleColor: '',
 		textColor: '',
 		copyColor: '',
+		fieldColor: '',
+		secondaryButtonColor: '',
 		font: 'system',
 		fontScale: 'comfortable',
 		mode: 'auto',
@@ -194,7 +201,7 @@ export function newThemeDraft(): ThemeDraft {
 		favicon: null,
 		backgroundImage: null,
 		backgroundOpacity: 100,
-		backgroundGrayscale: false,
+		backgroundFilters: [],
 		panelImage: null,
 		panelImageOpacity: 100,
 		panelImageGrayscale: false,

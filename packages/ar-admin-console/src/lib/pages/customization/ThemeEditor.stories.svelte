@@ -85,6 +85,49 @@
 	{/snippet}
 </Story>
 
+<!-- Filters on the background image: the "⋯" beside the folder adds one, each gets a slider under
+     the opacity, and the bin removes it. The preview draws them in order. -->
+<Story
+	name="Background image filters"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const body = within(canvasElement.ownerDocument.body);
+		const layer = () => canvasElement.querySelector<HTMLElement>('.outline > .outline__image');
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
+		// No picture, nothing to filter: the menu waits for one.
+		await expect(canvas.getByRole('button', { name: t('th.f.add') })).toBeDisabled();
+		// Logo, favicon, background: the third.
+		const [, , background] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
+		await userEvent.upload(background, new File(['x'], 'bg.png', { type: 'image/png' }));
+		await waitFor(() => expect(layer()).not.toBeNull());
+		const add = async (name: string) => {
+			await userEvent.click(canvas.getByRole('button', { name: t('th.f.add') }));
+			await userEvent.click(await body.findByRole('menuitem', { name }));
+		};
+		await add(t('th.f.hue-rotate'));
+		const hue = await canvas.findByRole('slider', { name: t('th.f.hue-rotate') });
+		fireEvent.input(hue, { target: { value: '200' } });
+		await waitFor(() => expect(layer()?.style.filter).toBe('hue-rotate(200deg)'));
+		await add(t('th.f.blur'));
+		await waitFor(() => expect(layer()?.style.filter).toBe('hue-rotate(200deg) blur(4px)'));
+		// A filter already added is not offered again.
+		await userEvent.click(canvas.getByRole('button', { name: t('th.f.add') }));
+		await expect(await body.findByRole('menuitem', { name: t('th.f.blur') })).toBeDisabled();
+		await userEvent.keyboard('{Escape}');
+		await userEvent.click(
+			canvas.getByRole('button', { name: t('th.f.remove', { name: t('th.f.hue-rotate') }) })
+		);
+		await waitFor(() => expect(layer()?.style.filter).toBe('blur(4px)'));
+		await expect(canvas.queryByRole('slider', { name: t('th.f.hue-rotate') })).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<Page>
+			<ThemeEditor presets={storyPresets} />
+		</Page>
+	{/snippet}
+</Story>
+
 <Story
 	name="Background presets"
 	play={async ({ canvasElement }) => {

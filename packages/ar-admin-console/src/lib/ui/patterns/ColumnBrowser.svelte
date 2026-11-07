@@ -187,6 +187,16 @@
 		overflow-wrap: anywhere;
 	}
 
+	/* A category's count and arrow stay on its first line, however narrow the column: the name
+	   gives way (and takes its second line) instead. */
+	.browser__col:first-child .browser__row {
+		flex-wrap: nowrap;
+	}
+
+	.browser__col:first-child .browser__text {
+		flex-basis: 0;
+	}
+
 	/* Beside the name while there is room; otherwise on the next line, at the end. */
 	.browser__badges {
 		display: inline-flex;
