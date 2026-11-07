@@ -338,7 +338,9 @@ const ko = createTranslation({
 	lite_passkeyFailed:
 		'패스키 로그인을 완료하지 못했습니다. 다시 시도하거나 다른 로그인 방법을 선택하세요.',
 	lite_provisioningWait: '계정을 준비하고 있습니다. 잠시 기다린 후 계속을 선택하세요.',
-	lite_provisioningFailed: '계정을 준비하지 못했습니다. 처음부터 다시 시작하세요.'
+	lite_provisioningFailed: '계정을 준비하지 못했습니다. 처음부터 다시 시작하세요.',
+	lite_reauthSessionEnded: '이 페이지를 연 세션이 종료되었거나 변경되었습니다. 다시 로그인하세요.',
+	lite_reauthAnotherWay: '다른 방법 사용'
 });
 
 export default ko;

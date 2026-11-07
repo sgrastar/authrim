@@ -515,7 +515,10 @@ const it = createTranslation({
 		"L'accesso con passkey non è stato completato. Riprova o scegli un altro modo per accedere.",
 	lite_provisioningWait:
 		'Il tuo account è in fase di configurazione. Attendi un momento, poi seleziona Continua.',
-	lite_provisioningFailed: 'Non è stato possibile configurare il tuo account. Ricomincia.'
+	lite_provisioningFailed: 'Non è stato possibile configurare il tuo account. Ricomincia.',
+	lite_reauthSessionEnded:
+		'La sessione per cui è stata aperta questa pagina è terminata o è cambiata. Accedi di nuovo.',
+	lite_reauthAnotherWay: 'Usa un altro metodo'
 });
 
 export default it;

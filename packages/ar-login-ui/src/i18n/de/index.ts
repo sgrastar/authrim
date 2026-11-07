@@ -361,7 +361,10 @@ const de = createTranslation({
 		'Die Anmeldung mit Passkey wurde nicht abgeschlossen. Versuchen Sie es erneut oder wählen Sie eine andere Anmeldemethode.',
 	lite_provisioningWait:
 		'Ihr Konto wird eingerichtet. Warten Sie einen Moment und wählen Sie dann „Weiter“.',
-	lite_provisioningFailed: 'Ihr Konto konnte nicht eingerichtet werden. Beginnen Sie erneut.'
+	lite_provisioningFailed: 'Ihr Konto konnte nicht eingerichtet werden. Beginnen Sie erneut.',
+	lite_reauthSessionEnded:
+		'Die Sitzung, für die diese Seite geöffnet wurde, ist beendet oder hat sich geändert. Melden Sie sich erneut an.',
+	lite_reauthAnotherWay: 'Anderen Weg verwenden'
 });
 
 export default de;

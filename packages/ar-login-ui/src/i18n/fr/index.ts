@@ -359,7 +359,10 @@ const fr = createTranslation({
 		"La connexion par clé d'accès n'a pas abouti. Réessayez ou choisissez un autre moyen de vous connecter.",
 	lite_provisioningWait:
 		'Votre compte est en cours de configuration. Patientez un instant, puis sélectionnez Continuer.',
-	lite_provisioningFailed: 'Votre compte n’a pas pu être configuré. Recommencez.'
+	lite_provisioningFailed: 'Votre compte n’a pas pu être configuré. Recommencez.',
+	lite_reauthSessionEnded:
+		'La session pour laquelle cette page a été ouverte a pris fin ou a changé. Reconnectez-vous.',
+	lite_reauthAnotherWay: 'Utiliser un autre moyen'
 });
 
 export default fr;

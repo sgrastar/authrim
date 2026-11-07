@@ -511,7 +511,10 @@ const translation = {
 	lite_passkeyFailed:
 		'Logowanie kluczem dostępu nie zostało ukończone. Spróbuj ponownie lub wybierz inny sposób logowania.',
 	lite_provisioningWait: 'Trwa przygotowywanie konta. Poczekaj chwilę, a następnie wybierz Dalej.',
-	lite_provisioningFailed: 'Nie udało się przygotować konta. Zacznij od nowa.'
+	lite_provisioningFailed: 'Nie udało się przygotować konta. Zacznij od nowa.',
+	lite_reauthSessionEnded:
+		'Sesja, dla której otwarto tę stronę, zakończyła się lub zmieniła. Zaloguj się ponownie.',
+	lite_reauthAnotherWay: 'Użyj innej metody'
 } satisfies Translation;
 
 export default translation;

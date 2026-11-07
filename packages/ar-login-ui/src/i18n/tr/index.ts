@@ -509,7 +509,10 @@ const translation = {
 	lite_passkeyFailed:
 		'Geçiş anahtarıyla oturum açma tamamlanmadı. Yeniden deneyin veya başka bir oturum açma yöntemi seçin.',
 	lite_provisioningWait: "Hesabınız hazırlanıyor. Biraz bekleyin, ardından Devam'ı seçin.",
-	lite_provisioningFailed: 'Hesabınız hazırlanamadı. Baştan başlayın.'
+	lite_provisioningFailed: 'Hesabınız hazırlanamadı. Baştan başlayın.',
+	lite_reauthSessionEnded:
+		'Bu sayfanın açıldığı oturum sona erdi veya değişti. Yeniden oturum açın.',
+	lite_reauthAnotherWay: 'Başka bir yol kullan'
 } satisfies Translation;
 
 export default translation;
