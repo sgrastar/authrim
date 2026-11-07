@@ -923,7 +923,13 @@ export async function submitOrNull(
 	step: FlowRuntimeStep,
 	handle: string,
 	/** The rest of the step's input (a screen's answers). */
-	extra: Record<string, unknown> = {}
+	extra: Record<string, unknown> = {},
+	/**
+	 * Whether a submit another submit of the step took (`step_conflict`) draws the page again
+	 * (default); off for a post that must go on whatever its submit answers (an external start,
+	 * whose relay is what is left to do).
+	 */
+	options: { redrawOnConflict?: boolean } = {}
 ) {
 	const decided = await stepConsentInput(post, step);
 	// Terms not accepted as they are now (changed since): never a decision taken for others.
@@ -932,9 +938,23 @@ export async function submitOrNull(
 		...decided.input,
 		...extra
 	}).catch(() => null);
+	if (submitted && !submitted.ok && options.redrawOnConflict !== false) {
+		redrawOnStepConflict(post, submitted.error);
+	}
 	// This post's choices went with the step's submit.
 	if (submitted?.ok && decided.own) CONSENT_USED.add(post.event);
 	return submitted?.ok ? submitted : null;
+}
+
+/**
+ * A submit refused because another submit of the step (another tab, a retried request) moved the
+ * interaction (`step_conflict`): the page is drawn where the interaction is now (it is resumed on
+ * every page), as the SPA resumes it; the cookies this post's calls set go with it.
+ */
+export function redrawOnStepConflict(post: LitePost, error: string): void {
+	if (error !== 'step_conflict') return;
+	if (!HELD.has(post.event)) forwardSetCookies(post.event, post.backend.setCookies());
+	backToPage(post.event);
 }
 
 /**
@@ -1027,7 +1047,10 @@ export async function advanceAfterSignIn(
 				if (walked.kind === 'completed') return relayCompletion(post, current, walked.output);
 				forwardSetCookies(post.event, post.backend.setCookies());
 				if (walked.kind === 'sign_in_required') return fail(401, { restart: true });
-				if (walked.kind === 'failed') return retryLater();
+				if (walked.kind === 'failed') {
+					redrawOnStepConflict(post, walked.error);
+					return retryLater();
+				}
 				step = walked.step;
 				// Stopped at a step to draw: on with it only when it asks for consent alone.
 				if (!step || !(await consentOnlyStep(post, step))) break;
@@ -1072,6 +1095,7 @@ export async function advanceAfterSignIn(
 	if (result.kind === 'completed') return relayCompletion(post, current, result.output);
 	forwardSetCookies(post.event, post.backend.setCookies());
 	if (result.kind === 'draw') backToPage(post.event);
+	if (result.kind === 'failed') redrawOnStepConflict(post, result.error);
 	return result.kind === 'sign_in_required' ? fail(401, { restart: true }) : retryLater();
 }
 
@@ -1662,12 +1686,6 @@ export const liteResendCodeAction = guarded(async (event) => {
 	if (Date.now() - pending.sentAt < LITE_CODE_RESEND_MS) {
 		return fail(429, { error: 'resend_wait' as const });
 	}
-	if (
-		post.purpose === 'signup' &&
-		!liteSignupCodeResendable(await liteTenantMethods(event), pending)
-	) {
-		return fail(409, { error: 'retry' as const });
-	}
 	// The consent choices of the entry the code is sent again from (drawn with it): not a decision
 	// (that is taken with the code), kept to draw the page again with them.
 	const draft = await consentDraftOf(post);
@@ -1890,21 +1908,6 @@ const FORM_OWN_NAMES: ReadonlySet<string> = new Set([
 /** The step a page was drawn on, by its interaction: a Continue posts it (`step_continue`). */
 export function liteStepKey(interactionId: string, stepId: string): string {
 	return `${interactionId}:${stepId}`;
-}
-
-/**
- * Whether a sign-up's code can be sent again: the account its first code made exists, and ar-auth
- * sends a code to an existing account as a sign-in, so only when the tenant lets the email code
- * sign in (else the send is left unsent behind an answer that says it was sent).
- */
-export function liteSignupCodeResendable(
-	methods: LiteTenantMethods | null,
-	pending: { signup?: { customFields: Record<string, string> } } | null
-): boolean {
-	// ar-auth keeps a sign-up's profile with its first code only (a code sent to the account that
-	// code made carries none): a sign-up with a profile is not sent again.
-	if (pending?.signup && Object.keys(pending.signup.customFields).length > 0) return false;
-	return (methods?.emailCode?.loginEnabled ?? methods?.emailCode?.enabled) === true;
 }
 
 function isReservedFormName(name: string): boolean {

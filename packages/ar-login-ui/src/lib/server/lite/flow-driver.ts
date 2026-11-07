@@ -67,9 +67,10 @@ export function liteMethodAvailability(
 		runtimeAllowsAuthenticationHandle(step, handle, aliases);
 	const providers = (methods?.external?.providers ?? []).filter(
 		(provider) =>
-			// Started as a sign-in (ar-bridge, ar-saml); a sign-up's also signs up (liteSocialProviders).
-			(provider.loginEnabled ?? provider.enabled !== false) &&
-			(purpose !== 'signup' || (provider.signupEnabled ?? provider.enabled !== false)) &&
+			// The switch for the page's purpose (ar-bridge and ar-saml gate a lite start on it), as
+			// liteSocialProviders lists them.
+			((purpose === 'signup' ? provider.signupEnabled : provider.loginEnabled) ??
+				provider.enabled !== false) &&
 			runtimeAllowsExternalProvider(step, provider as never)
 	);
 	const available: Record<RuntimeScreenAuthMethod, boolean> = {
@@ -120,10 +121,9 @@ export function liteSocialProviders(
 		const id = text(raw.id, 128);
 		if (!id) continue;
 		const switched = (value: unknown) => (value as boolean | undefined) ?? raw.enabled !== false;
-		// ar-bridge and ar-saml start every external sign-in as one (its sign-in switch); a sign-up
-		// page offers only the providers that also sign up (the account their return makes).
-		if (!switched(raw.loginEnabled)) continue;
-		if (purpose === 'signup' && !switched(raw.signupEnabled)) continue;
+		// The switch for the page's purpose: ar-bridge and ar-saml start a lite sign-in or sign-up by
+		// the transaction's purpose, and gate it on that switch.
+		if (!switched(purpose === 'signup' ? raw.signupEnabled : raw.loginEnabled)) continue;
 		if (!runtimeAllowsExternalProvider(step, raw as never)) continue;
 		const startMode = raw.startMode === 'saml_sp' ? 'saml_sp' : 'oauth_redirect';
 		// A SAML IdP is started by its own ID, which its listed ID carries.

@@ -421,6 +421,28 @@ describe('social_start', () => {
 		);
 	});
 
+	it('relays to the start all the same when another submit of the step took it', async () => {
+		routes['/api/v1/login/interactions/int-1/submit'] = () =>
+			json({ error: 'step_conflict', error_code: 'AR_FLOW_STEP_CONFLICT' }, 409);
+		const ev = event({
+			action: 'social_start',
+			form: {
+				txn: 'txn-1',
+				csrf: 'csrf-1',
+				op: OP,
+				provider: 'provider-google',
+				human_verification_response: 'proof-1'
+			},
+			query: 'flow=1'
+		});
+		await expect(
+			(actions as Record<string, (e: RequestEvent) => Promise<unknown>>).social_start(ev)
+		).resolves.toEqual({ started: true });
+		expect((ev.locals as { liteRelay?: { url: string } }).liteRelay?.url).toBe(
+			'https://id.example/api/external/provider-google/start?lite_txn=txn-1&lite_grant=grant-1'
+		);
+	});
+
 	it('leaves the Flow where it was when the proof does not verify', async () => {
 		store.binding.issueStartGrant.mockResolvedValue({
 			ok: false,
