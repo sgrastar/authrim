@@ -561,14 +561,16 @@ describe('adminInvitationsRouter', () => {
       expect(audit).not.toHaveBeenCalled();
     });
 
-    it('leaves an invitation whose role is gone revocable', async () => {
+    it('refuses when the role cannot be read, rather than skipping the check', async () => {
       adapter.queryOne.mockResolvedValueOnce(pending);
       repo.getRole.mockResolvedValue(null);
       const { app, env } = createTestApp();
 
       const response = await revoke(app, env, { 'x-test-hierarchy-level': '10' });
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toEqual({ error: 'role_not_found' });
+      expect(adapter.execute).not.toHaveBeenCalled();
     });
   });
 
