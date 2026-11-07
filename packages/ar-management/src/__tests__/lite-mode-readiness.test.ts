@@ -233,6 +233,16 @@ describe('evaluateLiteReadiness', () => {
     expect(await evaluateLiteReadiness(context(), 'tenant-a')).toEqual([
       { code: 'account_page_path_custom' },
     ]);
+    // As stored: spaces make another path (the Router matches the stored text).
+    for (const path of [' /account', '/account ', '']) {
+      kv.set(
+        'settings:tenant:tenant-a:self-service',
+        JSON.stringify({ 'self-service.account_page_path': path })
+      );
+      expect(await evaluateLiteReadiness(context(), 'tenant-a')).toEqual([
+        { code: 'account_page_path_custom' },
+      ]);
+    }
     kv.set(
       'settings:tenant:tenant-a:self-service',
       JSON.stringify({ 'self-service.account_page_path': '/account' })

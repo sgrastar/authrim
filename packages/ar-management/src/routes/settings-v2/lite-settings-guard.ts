@@ -1,9 +1,10 @@
 /**
- * The lite Login UI guard for the two settings categories that can give a lite tenant something
- * the lite UI cannot do, judged on the document the save would leave (a dry run):
+ * The lite Login UI guard for the settings categories that can give a lite tenant something the
+ * lite UI cannot do, judged on the document the save would leave (a dry run):
  * - `authentication-methods`: DID sign-in or the directory password switched on; and the actions
  *   that require human verification, which the lite policy publishes with the save;
- * - `login-ui`: a published account page with a block the lite UI cannot render.
+ * - `login-ui`: a published account page with a block the lite UI cannot render;
+ * - `self-service`: an account page at a path of the tenant's own (the lite UI serves `/account`).
  * `login-ui.lite_mode` itself is never saved here (PUT /api/admin/login-ui/lite-mode).
  */
 import {
@@ -22,6 +23,7 @@ import { patchTouchesHumanVerification } from '../../human-verification-guards';
 import { runLiteGuardedWrite } from '../../lite-mode-guard';
 import {
   liteAccountPageIssuesFromLoginUISettings,
+  liteAccountPagePathIssues,
   liteMethodIssuesFromAuthenticationMethods,
   liteMethodsOnInAuthenticationMethods,
   liteScreenIssuesForTenant,
@@ -30,6 +32,19 @@ import {
 import { getSettingsManager, parsePatchRequest } from './settings-support';
 
 const LITE_MODE_KEY = 'login-ui.lite_mode';
+const ACCOUNT_PAGE_PATH_KEY = 'self-service.account_page_path';
+
+/** Whether a settings change names `key` (set, clear or disable). */
+function patchTouchesKey(
+  body: { set?: Record<string, unknown>; clear?: string[]; disable?: string[] },
+  key: string
+): boolean {
+  return (
+    Object.prototype.hasOwnProperty.call(body.set ?? {}, key) ||
+    (body.clear ?? []).includes(key) ||
+    (body.disable ?? []).includes(key)
+  );
+}
 
 /** Whether a settings change names `login-ui.lite_mode` (set, clear or disable). */
 export function patchTouchesLiteMode(body: {
@@ -91,6 +106,7 @@ export async function guardTenantSettingsChangeForLite(input: {
         ...(await screensRevealedBy(after)),
       ];
     }
+    if (category === 'self-service') return liteAccountPagePathIssues(after);
     return liteAccountPageIssuesFromLoginUISettings(after);
   };
 
@@ -116,9 +132,11 @@ export async function guardTenantSettingsChangeForLite(input: {
     check,
     write: input.save,
     humanVerificationAfter: () => humanVerificationAfter,
-    // A switch to `always` publishes the required actions it reads from these settings: a change
-    // of them must not run at the same time.
+    // A switch to `always` publishes the required actions it reads from these settings, and
+    // checks the account page's path: a change of either must not run at the same time (a save
+    // judged with lite off must not land after the switch).
     serializeWithSwitch:
-      category === 'authentication-methods' && patchTouchesHumanVerification(body),
+      (category === 'authentication-methods' && patchTouchesHumanVerification(body)) ||
+      (category === 'self-service' && patchTouchesKey(body, ACCOUNT_PAGE_PATH_KEY)),
   });
 }

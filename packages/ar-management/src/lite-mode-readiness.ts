@@ -330,16 +330,26 @@ export function liteAccountPageIssuesFromLoginUISettings(
 async function accountPageIssues(env: Env, tenantId: string): Promise<LiteModeIssue[]> {
   const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-ui`);
   const settings = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
-  const issues = liteAccountPageIssuesFromLoginUISettings(settings);
-  // The lite UI serves the account page at `/account` only (lib/lite/routing.ts): a path of the
-  // tenant's own would stay on the SPA, which lite mode does not serve.
   const selfServiceRaw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:self-service`);
   const selfService = selfServiceRaw ? (JSON.parse(selfServiceRaw) as Record<string, unknown>) : {};
+  return [
+    ...liteAccountPageIssuesFromLoginUISettings(settings),
+    ...liteAccountPagePathIssues(selfService),
+  ];
+}
+
+/**
+ * The lite UI serves the account page at `/account` only (lib/lite/routing.ts): a path of the
+ * tenant's own (`self-service.account_page_path`) would stay on the SPA, which lite mode does not
+ * serve.
+ */
+export function liteAccountPagePathIssues(selfService: Record<string, unknown>): LiteModeIssue[] {
+  // Compared as stored (the Router matches the stored text): ` /account` is another path. None set
+  // is the default, `/account`.
   const path = selfService['self-service.account_page_path'];
-  if (typeof path === 'string' && path.trim() && path.trim() !== '/account') {
-    issues.push({ code: 'account_page_path_custom' });
-  }
-  return issues;
+  return path === undefined || path === null || path === '/account'
+    ? []
+    : [{ code: 'account_page_path_custom' }];
 }
 
 async function clientIssues(db: DatabaseAdapter, tenantId: string): Promise<LiteModeIssue[]> {

@@ -1013,6 +1013,30 @@ describe('LiteTxnStore: completions that could not be stored as given', () => {
     await expect(store.getTxnRpc({ ...ref(made.txn.id), session: own })).resolves.toMatchObject({
       ok: true,
     });
+    // An operation begun with the session: its result is recorded only with it too.
+    const begun = (await store.beginOperationRpc({
+      ...ref(made.txn.id),
+      session: own,
+      operationId: 'op-own',
+    })) as { ok: true; attempt: number };
+    await expect(
+      store.completeOperationRpc({
+        ...ref(made.txn.id),
+        session: null,
+        operationId: 'op-own',
+        attempt: begun.attempt,
+        result: { done: true },
+      })
+    ).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    await expect(
+      store.completeOperationRpc({
+        ...ref(made.txn.id),
+        session: own,
+        operationId: 'op-own',
+        attempt: begun.attempt,
+        result: { done: true },
+      })
+    ).resolves.toMatchObject({ ok: true });
     // A sign-in's transaction is bound to no session: any call (with a session or not) is its own.
     const login = await create(store);
     await expect(store.getTxnRpc({ ...ref(login.id), session: own })).resolves.toMatchObject({
