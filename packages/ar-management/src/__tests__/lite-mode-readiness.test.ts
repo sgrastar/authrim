@@ -82,8 +82,9 @@ const CORE_SCHEMA = readRenderedMigrationSql(
 let db: Database;
 let kv: Map<string, string>;
 
-function context(env: Record<string, unknown> = {}) {
+function context(env: Record<string, unknown> = {}, tenantMetadata?: unknown) {
   return {
+    get: (key: string) => (key === 'tenantMetadataContext' ? tenantMetadata : undefined),
     env: {
       BASE_DOMAIN: 'id.example',
       LOGIN_UI_LITE_PRERELEASE: 'allow',
@@ -214,6 +215,14 @@ describe('evaluateLiteReadiness', () => {
         screen_key: 'login',
       })
     ).toEqual([]);
+  });
+
+  it('reports a tenant whose accounts are made asynchronously (routed account storage)', async () => {
+    for (const allocationScope of ['shared_pool', 'tenant_exclusive']) {
+      expect(
+        await evaluateLiteReadiness(context({}, { route: { allocationScope } }), 'tenant-a')
+      ).toEqual([{ code: 'account_provisioning_async' }]);
+    }
   });
 
   it('reports applications with their own Login UI and another issuer origin', async () => {

@@ -18,6 +18,7 @@
  * method-actions.ts.
  */
 import { error, redirect, type RequestEvent } from '@sveltejs/kit';
+import QRCode from 'qrcode';
 import { LITE_PASSKEY_SCRIPT } from '#lib/lite/passkey-ceremony.js';
 import { LITE_POW_SOLVER_SCRIPT } from '#lib/lite/pow-solver.js';
 import { cspHashSource } from '#lib/server/lite/csp.js';
@@ -96,6 +97,16 @@ const AUTHORIZATION_EXPIRED = new Set([
 function queryValue(event: RequestEvent, name: string): string | null {
 	const value = event.url.searchParams.get(name);
 	return value && value.length <= 2048 ? value : null;
+}
+
+/** A QR code as an inline image (an SVG data URI: the lite CSP allows `img-src data:` only). */
+async function qrDataUri(text: string): Promise<string | null> {
+	try {
+		const svg = await QRCode.toString(text, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
+		return `data:image/svg+xml;base64,${btoa(svg)}`;
+	} catch {
+		return null;
+	}
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -365,6 +376,7 @@ export async function liteStepPage(event: RequestEvent) {
 	if (pow) event.locals.liteCsp = { scriptHashes: [await cspHashSource(LITE_POW_SOLVER_SCRIPT)] };
 	if (passkey) event.locals.liteCsp = { scriptHashes: [await cspHashSource(LITE_PASSKEY_SCRIPT)] };
 	const available = liteMethodAvailability(methods, step, purpose);
+	const proofFirst = purpose === 'signup' && keptInvite?.emailProofRequired === true;
 	const resendWait = pending
 		? Math.max(0, Math.ceil((pending.sentAt + LITE_CODE_RESEND_MS - Date.now()) / 1000))
 		: 0;
@@ -390,6 +402,7 @@ export async function liteStepPage(event: RequestEvent) {
 		txnId: kept2.id,
 		csrfToken: kept2.csrfToken,
 		op: newOperationNonce(),
+		purpose,
 		// The step the page is drawn on (a Continue's post names it).
 		stepKey: step ? liteStepKey(interactionId, step.id) : null,
 		decision: decision satisfies LiteStepDecision,
@@ -409,20 +422,36 @@ export async function liteStepPage(event: RequestEvent) {
 								kind: 'totp' as const,
 								maskedEmail: null,
 								resendWait: 0,
-								challenge: pendingTotp.challengeId
+								challenge: pendingTotp.challengeId,
+								// A sign-up's authenticator: its secret, link and QR code, to add it to the app.
+								setup: pendingTotp.signup
+									? {
+											secret: pendingTotp.signup.secret,
+											uri: pendingTotp.signup.otpauthUri,
+											qr: await qrDataUri(pendingTotp.signup.otpauthUri)
+										}
+									: null
 							}
 						: null,
 		// Each form names the challenge it was drawn for: a post from an older page (another tab)
 		// is never checked against a newer challenge.
-		passkey: passkey ? { options: passkey.options, challenge: passkey.challengeId } : null,
+		passkey: passkey
+			? {
+					options: passkey.options,
+					registration: passkey.registration,
+					challenge: passkey.challengeId
+				}
+			: null,
 		/** The action a Continue form posts to (an expired start's check, else `continue`). */
 		continueAction: lapsed?.action ?? ('continue' as const),
 		continueChallenge: lapsed?.challenge ?? null,
 		// Which halves of an email-code-or-authenticator part the step offers.
-		// (A sign-up's authenticator half is not drawn yet: PR6a signs up by email code.)
+		// An invitation that asks a sign-up to prove its address first offers no passkey or
+		// authenticator sign-up (they prove none; their starts are refused too).
 		available: {
 			mailOtp: available('mail_otp'),
-			totp: purpose === 'signup' ? false : available('totp')
+			totp: available('totp') && !proofFirst,
+			passkey: available('passkey') && !proofFirst
 		},
 		// The step's consent (drawn by its screen's consent part); a screen that asks for consent and no
 		// sign-in has a Continue of its own.
@@ -459,6 +488,10 @@ export async function liteStepPage(event: RequestEvent) {
 			totp: LL.login_totpContinue(),
 			totpCode: LL.login_totpCodeLabel(),
 			totpVerify: LL.login_totpVerify(),
+			totpSetup: LL.register_totpSetupTitle(),
+			totpQrAlt: LL.account_totpQrAlt(),
+			totpManualKey: LL.account_totpManualKey(),
+			totpOpenApp: LL.account_addTotp(),
 			passkey: LL.login_signInWithPasskey(),
 			passkeyPrompt: LL.login_passkeyPrompt(),
 			passkeyUnsupported: LL.lite_passkeyUnsupported(),

@@ -500,33 +500,149 @@ describe('the sign-up page', () => {
 		expect(calls.some((call) => call.path === '/api/v1/login/interactions/start')).toBe(false);
 	});
 
-	it('does not draw a sign-up by passkey yet, and leaves out the authenticator half', async () => {
+	it('signs up with a passkey: registers it with the profile, then makes the session', async () => {
 		currentStep = {
 			...SIGNUP_STEP,
 			config: {
 				screen: {
 					fields: [
 						{ field: 'email', label: 'Email', required: true },
+						{ field: 'company', label: 'Company' },
 						{ block_type: 'auth_widget', field: 'p', label: 'Passkey', auth_method: 'passkey' }
 					]
 				}
 			}
 		};
-		tenantMethods = { emailCode: { enabled: true }, passkey: { enabled: true } };
-		expect((await view()).decision).toEqual({ kind: 'unsupported', reasons: ['method:passkey'] });
+		tenantMethods = { passkey: { enabled: true, signupEnabled: true } };
+		const creation = {
+			rp: { id: 'id.example', name: 'Authrim' },
+			user: { id: 'dXNlci0x', name: 'new@example.com', displayName: 'new' },
+			challenge: 'Y2hhbGxlbmdl',
+			pubKeyCredParams: [
+				{ type: 'public-key', alg: -7 },
+				{ type: 'public-key', alg: -257 }
+			],
+			timeout: 60000,
+			excludeCredentials: [],
+			authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+			attestation: 'none'
+		};
+		routes['/api/v1/auth/direct/passkey/signup/start'] = () =>
+			json({ challenge_id: 'pk-1', options: creation });
+		routes['/api/v1/auth/direct/passkey/signup/finish'] = () =>
+			json({ direct_auth_artifact: 'artifact-pk', expires_in: 60 });
+		routes['/api/v1/login/interactions/int-1/submit'] = (body) =>
+			body.selected_handle === 'passkey'
+				? json({ completed: true, output: { redirect_url: 'https://id.example/after' } })
+				: json({ error: 'invalid_handle' }, 400);
+		await view();
+		await post('passkey_start', {
+			email: 'new@example.com',
+			company: 'Acme',
+			human_verification_response: 'p'
+		}).catch((thrown: unknown) => thrown);
+		const start = calls.find((call) => call.path === '/api/v1/auth/direct/passkey/signup/start');
+		expect(start?.body).toMatchObject({
+			email: 'new@example.com',
+			display_name: 'new',
+			custom_fields: { company: 'Acme' },
+			code_challenge_method: 'S256',
+			human_verification_response: 'p'
+		});
+		// The ceremony registers (creation options), never signs in.
+		const page = (await view()) as { passkey: { registration: unknown; options: unknown } };
+		expect(page.passkey.options).toBeNull();
+		expect(page.passkey.registration).toMatchObject({ rp: { id: 'id.example' } });
+		const registration = {
+			id: 'Y3JlZA',
+			rawId: 'Y3JlZA',
+			type: 'public-key',
+			response: { clientDataJSON: 'e30', attestationObject: 'o2Nm', transports: ['internal'] }
+		};
+		await post('passkey_finish', {
+			challenge: 'pk-1',
+			credential: JSON.stringify(registration)
+		}).catch((thrown: unknown) => thrown);
+		const finish = calls.find((call) => call.path === '/api/v1/auth/direct/passkey/signup/finish');
+		expect(finish?.body).toMatchObject({
+			challenge_id: 'pk-1',
+			credential: { id: 'Y3JlZA', response: { attestationObject: 'o2Nm' } }
+		});
+		expect(calls.some((call) => call.path === '/api/v1/auth/direct/session')).toBe(true);
+		expect(
+			calls.filter((call) => call.path.endsWith('/submit')).map((call) => call.body.selected_handle)
+		).toEqual(['passkey']);
+	});
+
+	it('signs up with an authenticator: shows its secret, activates it, shows its backup codes once', async () => {
 		currentStep = {
 			...SIGNUP_STEP,
 			config: {
 				screen: {
 					fields: [
 						{ field: 'email', label: 'Email', required: true },
-						{ block_type: 'auth_widget', field: 'x', label: 'Code', auth_method: 'mail_otp_totp' }
+						{ block_type: 'auth_widget', field: 't', label: 'App', auth_method: 'totp' }
 					]
 				}
 			}
 		};
-		tenantMethods = { emailCode: { enabled: true }, totp: { enabled: true } };
-		expect((await view()).available).toEqual({ mailOtp: true, totp: false });
+		withCodeStep = false;
+		tenantMethods = { totp: { enabled: true, signupEnabled: true } };
+		routes['/api/auth/totp/signup/options'] = () =>
+			json(
+				{
+					challenge_id: 'totp-s1',
+					expires_in: 600,
+					secret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+					otpauth_uri: 'otpauth://totp/Authrim:new%40example.com?secret=JBSWY3DPEHPK3PXP'
+				},
+				201
+			);
+		routes['/api/auth/totp/signup/activate'] = () =>
+			json({ success: true, backup_codes: ['ABCD-EFGH-JKLM', 'NPQR-STUV-WXYZ'] }, 200, {
+				'Set-Cookie': 'authrim_session=t1; Path=/; HttpOnly; Secure; SameSite=Lax'
+			});
+		routes['/api/v1/login/interactions/int-1/submit'] = (body) =>
+			body.selected_handle === 'totp'
+				? json({ completed: true, output: { redirect_url: 'https://id.example/after' } })
+				: json({ error: 'invalid_handle' }, 400);
+		await view();
+		await post('totp_start', {
+			email: 'new@example.com',
+			human_verification_response: 'p'
+		}).catch((thrown: unknown) => thrown);
+		const options = calls.find((call) => call.path === '/api/auth/totp/signup/options');
+		expect(options?.body).toMatchObject({ email: 'new@example.com', name: 'new' });
+		const entry = (await view()) as {
+			codeEntry: { kind: string; setup: { secret: string; uri: string; qr: string | null } };
+		};
+		expect(entry.codeEntry.kind).toBe('totp');
+		expect(entry.codeEntry.setup.secret).toBe('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+		expect(entry.codeEntry.setup.qr).toMatch(/^data:image\/svg\+xml;base64,/u);
+		// A wrong code first: ar-auth keeps a sign-up's challenge, so the secret is kept to try again.
+		let activations = 0;
+		const activate = routes['/api/auth/totp/signup/activate'];
+		routes['/api/auth/totp/signup/activate'] = (body, init) =>
+			++activations === 1 ? json({ error: 'invalid_code' }, 400) : activate(body, init);
+		await expect(
+			post('totp_verify', { challenge: 'totp-s1', code: '000000' })
+		).resolves.toMatchObject({
+			status: 400,
+			data: { error: 'totp_invalid' }
+		});
+		expect(store.txn.data.totp).toMatchObject({ signup: { tries: 1 } });
+		const answer = await post('totp_verify', { challenge: 'totp-s1', code: '123456' });
+		expect(answer).toEqual({
+			backupCodes: ['ABCD-EFGH-JKLM', 'NPQR-STUV-WXYZ'],
+			backupCodesTitle: 'Backup codes'
+		});
+		// Shown once: nothing kept of them; the Continue goes on with the Flow.
+		expect(JSON.stringify(store.txn.data)).not.toContain('ABCD-EFGH-JKLM');
+		browserCookies = { authrim_session: 't1' };
+		await post('continue').catch((thrown: unknown) => thrown);
+		expect(
+			calls.filter((call) => call.path.endsWith('/submit')).map((call) => call.body.selected_handle)
+		).toEqual(['totp']);
 	});
 
 	it('reads the methods by their sign-up switch: none left, no screen to go on from', async () => {
@@ -546,7 +662,7 @@ describe('the sign-up page', () => {
 		};
 		tenantMethods = {
 			emailCode: { enabled: true, signupEnabled: false },
-			totp: { enabled: true, signupEnabled: true }
+			totp: { enabled: true, signupEnabled: false }
 		};
 		expect((await view()).decision).toEqual({ kind: 'unsupported', reasons: ['no_method'] });
 	});
@@ -592,25 +708,40 @@ describe('the sign-up page', () => {
 		expect(sends()[0].body.custom_fields).toEqual({ company: 'Acme' });
 	});
 
-	it('starts no sign-in of another kind from the sign-up page, whatever its form posts', async () => {
+	it('offers no passkey or authenticator sign-up to an invitation that asks a proof first', async () => {
 		currentStep = {
 			...SIGNUP_STEP,
 			config: {
 				screen: {
 					fields: [
 						{ field: 'email', label: 'Email', required: true },
-						{ block_type: 'auth_widget', field: 'x', label: 'Code', auth_method: 'mail_otp_totp' }
+						{ block_type: 'auth_widget', field: 'm', label: 'Send', auth_method: 'mail_otp' },
+						{ block_type: 'auth_widget', field: 't', label: 'App', auth_method: 'totp' },
+						{ block_type: 'auth_widget', field: 'p', label: 'Passkey', auth_method: 'passkey' }
 					]
 				}
 			}
 		};
-		tenantMethods = { emailCode: { enabled: true }, totp: { enabled: true } };
-		await view();
+		tenantMethods = {
+			emailCode: { enabled: true },
+			totp: { enabled: true },
+			passkey: { enabled: true }
+		};
+		const page = await view(`invite_token=${INVITE}`);
+		expect(page.available).toEqual({ mailOtp: true, totp: false, passkey: false });
 		await expect(
-			post('totp_start', { email: 'new@example.com', human_verification_response: 'p' })
+			post(
+				'totp_start',
+				{ email: 'invited@example.com', human_verification_response: 'p' },
+				`invite_token=${INVITE}`
+			)
 		).resolves.toMatchObject({ status: 409 });
 		await expect(
-			post('passkey_start', { human_verification_response: 'p' })
+			post(
+				'passkey_start',
+				{ email: 'invited@example.com', human_verification_response: 'p' },
+				`invite_token=${INVITE}`
+			)
 		).resolves.toMatchObject({ status: 409 });
 		await expect(post('guest', { human_verification_response: 'p' })).resolves.toMatchObject({
 			status: 409

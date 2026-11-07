@@ -70,6 +70,7 @@ import {
 	type LiteFlowConsent
 } from './flow-consent';
 import { readLitePasskeyOptions, type LitePasskeyOptions } from './totp-passkey';
+import { readLitePasskeyCreationOptions, type LitePasskeyCreationOptions } from './signup-methods';
 import { liteMessages } from './messages';
 import { liteTxnClient, type LiteTxnClient, type LiteTxnView } from './txn-client';
 
@@ -98,11 +99,15 @@ export const LITE_LOGIN_PAGE_METHODS: ReadonlySet<string> = new Set([
 	'external_idp'
 ]);
 /**
- * The sign-up page's (PR6a): a sign-up by email code. A passkey's or an authenticator's sign-up
- * (registration ceremonies of their own) and an external one are not drawn yet: such a part stops
- * the page. The authenticator half of an email-or-authenticator part is left out.
+ * The sign-up page's: by email code (PR6a), passkey or authenticator (PR6a-2). An external sign-up
+ * is not drawn yet (PR6c): such a part stops the page.
  */
-export const LITE_SIGNUP_PAGE_METHODS: ReadonlySet<string> = new Set(['mail_otp', 'mail_otp_totp']);
+export const LITE_SIGNUP_PAGE_METHODS: ReadonlySet<string> = new Set([
+	'mail_otp',
+	'mail_otp_totp',
+	'passkey',
+	'totp'
+]);
 /** The sign-up page's blocks: the sign-in page's, no guest (the SPA's sign-up has none). */
 export const LITE_SIGNUP_PAGE_BLOCKS: ReadonlySet<string> = new Set(
 	[...LITE_LOGIN_PAGE_BLOCKS].filter((block) => block !== 'guest_login_widget')
@@ -278,6 +283,11 @@ export interface LitePendingTotp {
 	choiceStepId: string;
 	challengeId: string;
 	expiresAt: number;
+	/**
+	 * A sign-up's authenticator: the secret to add to the app (its check activates it), and how many
+	 * of its codes were tried (ar-auth keeps a sign-up's challenge across a wrong code).
+	 */
+	signup?: { secret: string; otpauthUri: string; tries: number };
 }
 
 export function readPendingTotp(
@@ -289,11 +299,26 @@ export function readPendingTotp(
 	if (!isRecord(totp) || totp.interactionId !== interactionId) return null;
 	if (!nonEmpty(totp.choiceStepId) || !nonEmpty(totp.challengeId)) return null;
 	if (typeof totp.expiresAt !== 'number' || !(totp.expiresAt > now)) return null;
+	const signup = isRecord(totp.signup) ? totp.signup : null;
 	return {
 		interactionId,
 		choiceStepId: totp.choiceStepId,
 		challengeId: totp.challengeId,
-		expiresAt: totp.expiresAt
+		expiresAt: totp.expiresAt,
+		...(signup && nonEmpty(signup.secret) && nonEmpty(signup.otpauthUri)
+			? {
+					signup: {
+						secret: signup.secret,
+						otpauthUri: signup.otpauthUri,
+						tries:
+							typeof signup.tries === 'number' &&
+							Number.isInteger(signup.tries) &&
+							signup.tries >= 0
+								? signup.tries
+								: 0
+					}
+				}
+			: {})
 	};
 }
 
@@ -303,7 +328,10 @@ export interface LitePendingPasskey {
 	choiceStepId: string;
 	challengeId: string;
 	verifier: string;
-	options: LitePasskeyOptions;
+	/** A sign-in's request options (none for a sign-up's registration). */
+	options: LitePasskeyOptions | null;
+	/** A sign-up's creation options: its ceremony registers a passkey. */
+	registration: LitePasskeyCreationOptions | null;
 	expiresAt: number;
 }
 
@@ -317,14 +345,18 @@ export function readPendingPasskey(
 	if (!nonEmpty(passkey.choiceStepId) || !nonEmpty(passkey.challengeId)) return null;
 	if (!nonEmpty(passkey.verifier)) return null;
 	if (typeof passkey.expiresAt !== 'number' || !(passkey.expiresAt > now)) return null;
-	const options = readLitePasskeyOptions(passkey.options);
-	if (!options) return null;
+	const registration = isRecord(passkey.registration)
+		? readLitePasskeyCreationOptions(passkey.registration)
+		: null;
+	const options = registration ? null : readLitePasskeyOptions(passkey.options);
+	if (!options && !registration) return null;
 	return {
 		interactionId,
 		choiceStepId: passkey.choiceStepId,
 		challengeId: passkey.challengeId,
 		verifier: passkey.verifier,
 		options,
+		registration,
 		expiresAt: passkey.expiresAt
 	};
 }

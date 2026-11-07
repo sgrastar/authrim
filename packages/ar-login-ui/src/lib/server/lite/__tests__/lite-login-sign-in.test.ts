@@ -1193,7 +1193,8 @@ describe('the authenticator app', () => {
 			kind: 'totp',
 			maskedEmail: null,
 			resendWait: 0,
-			challenge: 'totp-1'
+			challenge: 'totp-1',
+			setup: null
 		});
 		expect(page.pow).toBeNull();
 	});

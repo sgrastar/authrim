@@ -56,7 +56,8 @@ function page(
 				decision: { kind: 'screen', title: 'Sign in', description: null, fields },
 				codeEntry: extra.codeEntry ?? null,
 				passkey: extra.passkey ?? null,
-				available: extra.available ?? { mailOtp: true, totp: true },
+				available: extra.available ?? { mailOtp: true, totp: true, passkey: true },
+				purpose: 'login',
 				pow,
 				text
 			} as never,
@@ -324,5 +325,27 @@ describe('the lite sign-in page as drawn', () => {
 			}).body;
 		expect(draw({ error: 'busy' })).toContain('action="?/restart"');
 		expect(draw(null)).not.toContain('/restart');
+	});
+});
+
+describe('the backup codes of a new authenticator', () => {
+	it('are drawn on whatever page comes next, an error page too', () => {
+		const { body } = render(LoginPage, {
+			props: {
+				data: {
+					page: 'error',
+					title: 'Something went wrong',
+					message: 'Try again later',
+					back: 'Back',
+					backHref: '/signup',
+					brandName: 'Acme',
+					logo: null
+				} as never,
+				form: { backupCodes: ['ABCD-EFGH-JKLM'], backupCodesTitle: 'Backup codes' } as never
+			}
+		});
+		expect(body).toContain('Backup codes');
+		expect(body).toContain('<code>ABCD-EFGH-JKLM</code>');
+		expect(body).toContain('Try again later');
 	});
 });

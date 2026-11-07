@@ -13,11 +13,24 @@
  *   the session is made as for an email code (`finishCheckedSignIn`). The choice (`passkey`) goes
  *   to the Flow after the sign-in, as in the SPA.
  */
-import { fail } from '@sveltejs/kit';
+import { fail, type ActionFailure } from '@sveltejs/kit';
+import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
 import { advanceLiteFlow } from './advance';
 import { forwardSetCookies } from './cookies';
 import { pkcePair } from './email-code';
-import { liteMethodAvailability } from './flow-driver';
+import { liteMethodAvailability, type LiteStepDecision } from './flow-driver';
+import { readLiteInvite } from './invite';
+import { liteMessages } from './messages';
+import { readLiteSignupProfile } from './signup';
+import {
+	activateLiteTotpSignup,
+	finishLitePasskeySignup,
+	readLitePasskeyRegistration,
+	startLitePasskeySignup,
+	startLiteTotpSignup,
+	type LitePasskeyCreationOptions,
+	type LiteSignupAccount
+} from './signup-methods';
 import type { LiteTxnView } from './txn-client';
 import {
 	advanceAfterSignIn,
@@ -62,17 +75,57 @@ import {
 	readLitePasskeyCredential,
 	startLitePasskey,
 	startLiteTotp,
-	verifyLiteTotp
+	verifyLiteTotp,
+	type LitePasskeyOptions
 } from './totp-passkey';
+
+/** The longest name a sign-up's passkey is registered with (its creation options' user). */
+const MAX_SIGNUP_DISPLAY_NAME = 256;
+
+/** The most codes a sign-up's authenticator is tried with before it starts again. */
+const MAX_SIGNUP_TOTP_TRIES = 5;
+
+/** The most a sign-up's creation options take in the transaction. */
+const MAX_REGISTRATION_CHARS = 3000;
+
+/**
+ * A sign-up's account, from the post: its address, its profile (the parts the screen stores,
+ * required ones answered) and its invitation; null on a sign-in page; the action's answer when the
+ * address or a required part is missing.
+ */
+function signupAccountOf(
+	post: LitePost,
+	offered: { step: FlowRuntimeStep; decision: LiteStepDecision }
+): { account: LiteSignupAccount } | { failure: ActionFailure<{ error: string }> } | null {
+	if (post.purpose !== 'signup') return null;
+	const email = readEmail(post, offered.decision);
+	if (!email) return { failure: fail(400, { error: 'email_invalid' }) };
+	const profile = readLiteSignupProfile(post.fields, offered.step, offered.decision);
+	if ('required' in profile) return { failure: fail(400, { error: 'answer_required' }) };
+	const displayName = profile.displayName ?? email.split('@')[0];
+	// Checked before the account is made: a name the registration's options cannot carry would
+	// leave an account no sign-up can go on with.
+	if (displayName.length > MAX_SIGNUP_DISPLAY_NAME) {
+		return { failure: fail(400, { error: 'answer_invalid' }) };
+	}
+	return {
+		account: {
+			email,
+			displayName,
+			customFields: profile.customFields,
+			inviteToken: readLiteInvite(post.txn.data)?.token ?? null
+		}
+	};
+}
 
 /** How long ar-auth keeps a passkey sign-in challenge (direct-auth.ts, 5 minutes). */
 const PASSKEY_CHALLENGE_TTL_MS = 300_000;
 
 /** Whether the step the post is on offers this method (on, allowed, and drawn as a button). */
 async function offers(post: LitePost, method: 'totp' | 'passkey') {
-	// A sign-up by passkey or authenticator is not done here yet (PR6a signs up by email code):
-	// never a sign-in's start from the sign-up page, whatever its form posts.
-	if (post.purpose !== 'login') return null;
+	// An invitation that asks a sign-up to prove its address first: a passkey's or authenticator's
+	// sign-up (which proves none) is not offered (PR6c).
+	if (post.purpose === 'signup' && readLiteInvite(post.txn.data)?.emailProofRequired) return null;
 	const step = post.flow.step;
 	const methods = await liteTenantMethods(post.event);
 	const decision = liteLoginStepDecision(step, methods, post.locale, post.purpose);
@@ -111,6 +164,9 @@ export const liteTotpStartAction = guarded(async (event) => {
 	if (!offered) return fail(409, { restart: true });
 	const identifier = readEmail(post, offered.decision);
 	if (!identifier) return fail(400, { error: 'email_invalid' as const });
+	// A sign-up's account: its profile (required parts answered) and invitation.
+	const account = signupAccountOf(post, offered);
+	if (account && 'failure' in account) return account.failure;
 
 	// The step's consent, accepted first (nothing is started without it).
 	const unconsented = await acceptFlowConsent(post);
@@ -119,13 +175,28 @@ export const liteTotpStartAction = guarded(async (event) => {
 	if ('failure' in begun) return begun.failure;
 	const operation = begun.operation;
 	const state = post.flow.state;
-	const started = await startLiteTotp(post.backend, {
-		identifier,
-		proof: readProof(post),
-		interactionId: state.interactionId
-	});
+	// A sign-up makes the account and its authenticator's secret; a sign-in asks for a code.
+	let signup: LitePendingTotp['signup'];
+	let started: Awaited<ReturnType<typeof startLiteTotp>> & { provisioning?: boolean };
+	if (account) {
+		const made = await startLiteTotpSignup(post.backend, {
+			...account.account,
+			proof: readProof(post),
+			authorizationChallengeId: post.txn.bound.challengeId,
+			interactionId: state.interactionId
+		});
+		if (made.ok) signup = { secret: made.secret, otpauthUri: made.otpauthUri, tries: 0 };
+		started = made;
+	} else {
+		started = await startLiteTotp(post.backend, {
+			identifier,
+			proof: readProof(post),
+			interactionId: state.interactionId
+		});
+	}
 	if (!started.ok) {
 		await finishOperation(post, post.txn, operation, { error: started.error });
+		if (started.provisioning) return retryLater();
 		return started.status === 429
 			? fail(429, { error: 'busy' as const })
 			: fail(400, { error: 'totp_failed' as const });
@@ -134,7 +205,8 @@ export const liteTotpStartAction = guarded(async (event) => {
 		interactionId: state.interactionId,
 		choiceStepId: offered.step.id,
 		challengeId: started.challengeId,
-		expiresAt: Date.now() + started.expiresIn * 1000
+		expiresAt: Date.now() + started.expiresIn * 1000,
+		...(signup ? { signup } : {})
 	};
 	const kept = await finishOperation(
 		post,
@@ -252,11 +324,28 @@ export const liteTotpVerifyAction = guarded(async (event) => {
 	});
 	const clearMove = { to: 'pending' as const, patch: { totp: null } };
 
-	const begun = await beginCheck(post, `totp:${pending.challengeId}`, async (result) => {
+	// A sign-up's challenge outlives a wrong code (ar-auth keeps it): each try is a check of its own.
+	const tries = pending.signup?.tries ?? 0;
+	const checkKey = pending.signup
+		? `totp:${pending.challengeId}:${tries}`
+		: `totp:${pending.challengeId}`;
+	// The sign-up's next try, its secret kept (a wrong code, an account still being made).
+	const retryMove = pending.signup
+		? {
+				to: 'pending' as const,
+				patch: { totp: { ...pending, signup: { ...pending.signup, tries: tries + 1 } } }
+			}
+		: null;
+	const sameTry = (now: { data: Record<string, unknown> }) =>
+		held(now) &&
+		readPendingTotp(now.data, interactionId, Number.NEGATIVE_INFINITY)?.signup?.tries === tries;
+	const begun = await beginCheck(post, checkKey, async (result) => {
 		const signedIn = readSignedIn({ signedIn: result.signedIn }, interactionId);
 		if (signedIn) {
 			const moved = await remake(post, signedInMove(signedIn), onlyThis);
 			if (moved) return advanceAfterSignIn(post, moved);
+		} else if (retryMove && result.retry === true) {
+			await remake(post, retryMove, sameTry);
 		} else {
 			await remake(post, clearMove, held);
 		}
@@ -279,11 +368,41 @@ export const liteTotpVerifyAction = guarded(async (event) => {
 	}
 	// The session it sets goes to the browser only once this check is recorded (see HELD).
 	holdCookies(event);
-	const verified = await verifyLiteTotp(post.backend, {
-		challengeId: pending.challengeId,
-		code,
-		authorizationChallengeId: post.txn.bound.challengeId
-	});
+	// A sign-up's authenticator is activated by its first code (ar-auth answers its backup codes).
+	let backupCodes: string[] = [];
+	let verified: Awaited<ReturnType<typeof verifyLiteTotp>>;
+	if (pending.signup) {
+		const activated = await activateLiteTotpSignup(post.backend, {
+			challengeId: pending.challengeId,
+			code
+		});
+		if (activated.ok) backupCodes = activated.backupCodes;
+		verified = activated;
+	} else {
+		verified = await verifyLiteTotp(post.backend, {
+			challengeId: pending.challengeId,
+			code,
+			authorizationChallengeId: post.txn.bound.challengeId
+		});
+	}
+	// A sign-up's wrong code, or its account still being made: the same secret is tried again (a
+	// few times; ar-auth limits the tries too).
+	if (
+		!verified.ok &&
+		retryMove &&
+		tries + 1 < MAX_SIGNUP_TOTP_TRIES &&
+		(verified.invalidCode || ('provisioning' in verified && verified.provisioning === true))
+	) {
+		await finishOperation(
+			post,
+			post.txn,
+			operation,
+			{ error: verified.error, retry: true },
+			{ ...retryMove, stillApplies: sameTry }
+		);
+		if (verified.invalidCode) return fail(400, { error: 'totp_invalid' as const });
+		return retryLater();
+	}
 	if (!verified.ok) {
 		// ar-auth spent the challenge on this check: the sign-in starts again (a new proof).
 		await finishOperation(
@@ -323,6 +442,15 @@ export const liteTotpVerifyAction = guarded(async (event) => {
 	if (!('txn' in finished)) return retryLater();
 	// Recorded: the session is the browser's from here, whatever happens next.
 	releaseCookies(post);
+	// A sign-up's backup codes, shown once (this answer's page only, never kept): the person goes
+	// on with the page's Continue. Given with this answer even when the change could not be saved
+	// (the check is recorded; they could never be given again).
+	if (backupCodes.length > 0) {
+		// With its own heading: drawn whatever the page's load draws next (an error page too).
+		const { LL } = await liteMessages(post.locale);
+		const shown = { backupCodes, backupCodesTitle: LL.account_totpBackupCodes() };
+		return finished.txn ? shown : fail(409, { error: 'retry' as const, ...shown });
+	}
 	if (!finished.txn) return retryLater();
 	return advanceAfterSignIn(post, finished.txn);
 });
@@ -335,6 +463,9 @@ export const litePasskeyStartAction = guarded(async (event) => {
 	oneAtATime(post);
 	const offered = await offers(post, 'passkey');
 	if (!offered) return fail(409, { restart: true });
+	// A sign-up's account: its address, its profile (required parts answered), its invitation.
+	const account = signupAccountOf(post, offered);
+	if (account && 'failure' in account) return account.failure;
 
 	// The step's consent, accepted first (nothing is started without it).
 	const unconsented = await acceptFlowConsent(post);
@@ -343,24 +474,37 @@ export const litePasskeyStartAction = guarded(async (event) => {
 	if ('failure' in begun) return begun.failure;
 	const operation = begun.operation;
 	const pkce = await pkcePair();
-	const started = await startLitePasskey(post.backend, {
+	const request = {
 		codeChallenge: pkce.challenge,
 		proof: readProof(post),
 		authorizationChallengeId: post.txn.bound.challengeId,
 		interactionId: post.flow.state.interactionId
-	});
+	};
+	// A sign-up registers a passkey (its creation options), a sign-in signs with one.
+	const started = account
+		? await startLitePasskeySignup(post.backend, { ...account.account, ...request })
+		: await startLitePasskey(post.backend, request);
 	if (!started.ok) {
 		await finishOperation(post, post.txn, operation, { error: started.error });
+		// An account still being made (a routed tenant database): the same start again later.
+		if ('provisioning' in started && started.provisioning) return retryLater();
 		return started.status === 429
 			? fail(429, { error: 'busy' as const })
 			: fail(400, { error: 'passkey_failed' as const });
+	}
+	const registration = account ? (started.options as LitePasskeyCreationOptions) : null;
+	// Kept in the transaction (its few kilobytes of data): options too large for it are refused.
+	if (registration && JSON.stringify(registration).length > MAX_REGISTRATION_CHARS) {
+		await finishOperation(post, post.txn, operation, { error: 'options_too_large' });
+		return fail(400, { error: 'passkey_failed' as const });
 	}
 	const passkey: LitePendingPasskey = {
 		interactionId: post.flow.state.interactionId,
 		choiceStepId: offered.step.id,
 		challengeId: started.challengeId,
 		verifier: pkce.verifier,
-		options: started.options,
+		options: registration ? null : (started.options as LitePasskeyOptions),
+		registration,
 		// ar-auth keeps the challenge 5 minutes from its start (the options' timeout is the
 		// browser's, counted from the press): the transaction keeps it as long.
 		expiresAt: Date.now() + PASSKEY_CHALLENGE_TTL_MS
@@ -426,9 +570,11 @@ export const litePasskeyFinishAction = guarded(async (event) => {
 		backToPage(event);
 	};
 
-	// An assertion that does not read is not sent: the challenge stays, the ceremony can run again
-	// (a check already made is still recovered).
-	const credential = readLitePasskeyCredential(post.fields.get('credential'));
+	// An assertion (a sign-up's registration) that does not read is not sent: the challenge stays,
+	// the ceremony can run again (a check already made is still recovered).
+	const credential = pending.registration
+		? readLitePasskeyRegistration(post.fields.get('credential'))
+		: readLitePasskeyCredential(post.fields.get('credential'));
 	if (!credential && pending.expiresAt > Date.now()) {
 		return fail(400, { error: 'passkey_failed' as const });
 	}
@@ -448,7 +594,8 @@ export const litePasskeyFinishAction = guarded(async (event) => {
 		);
 		return fail(400, { error: 'passkey_failed' as const });
 	}
-	const finished = await finishLitePasskey(post.backend, {
+	const finish = pending.registration ? finishLitePasskeySignup : finishLitePasskey;
+	const finished = await finish(post.backend, {
 		challengeId: pending.challengeId,
 		credential,
 		codeVerifier: pending.verifier

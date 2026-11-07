@@ -63,6 +63,19 @@
 	});
 </script>
 
+{#snippet backupCodes()}
+	{#if form && 'backupCodes' in form && Array.isArray(form.backupCodes)}
+		<!-- A new authenticator's backup codes: shown with this answer only (whatever the page draws
+		     next, an error page too), never again. -->
+		<section>
+			<h2>{'backupCodesTitle' in form ? form.backupCodesTitle : ''}</h2>
+			<ul>
+				{#each form.backupCodes as code (code)}<li><code>{code}</code></li>{/each}
+			</ul>
+		</section>
+	{/if}
+{/snippet}
+
 {#snippet consentPart(
 	consent: NonNullable<typeof data.consent>,
 	label: string,
@@ -129,16 +142,19 @@
 
 {#if data.page === 'error'}
 	<LiteShell title={data.title} brandName={data.brandName} logo={data.logo}>
+		{@render backupCodes()}
 		<h1>{data.title}</h1>
 		<p>{data.message}</p>
 		<p><a href={data.backHref}>{data.back}</a></p>
 	</LiteShell>
 {:else if data.page === 'relay'}
 	<LiteShell title={data.title} brandName={data.brandName} logo={data.logo}>
+		{@render backupCodes()}
 		<LiteRelay target={data.relay} continueLabel={data.continueLabel} />
 	</LiteShell>
 {:else}
 	<LiteShell title={data.text.title} brandName={data.brandName} logo={data.logo}>
+		{@render backupCodes()}
 		{#if (form && 'restart' in form && form.restart) || data.decision.kind === 'unsupported'}
 			<h1>{data.text.title}</h1>
 			<p role="alert">
@@ -186,7 +202,10 @@
 			<form
 				method="post"
 				action={actionOf(data.search, 'passkey_finish')}
-				data-lite-passkey={JSON.stringify(data.passkey.options)}
+				data-lite-passkey={data.passkey.options ? JSON.stringify(data.passkey.options) : undefined}
+				data-lite-passkey-create={data.passkey.registration
+					? JSON.stringify(data.passkey.registration)
+					: undefined}
 				data-lite-passkey-unsupported={data.text.passkeyUnsupported}
 				data-lite-passkey-error={data.text.passkeyFailed}
 			>
@@ -211,6 +230,15 @@
 			{#if data.decision.description}<p>{data.decision.description}</p>{/if}
 			{#if data.codeEntry?.maskedEmail}
 				<p>{data.text.codeSentTo} <strong>{data.codeEntry.maskedEmail}</strong></p>
+			{/if}
+			{#if data.codeEntry?.kind === 'totp' && data.codeEntry.setup}
+				<!-- A sign-up's authenticator: added to the app by its QR code, link or key. -->
+				<h2>{data.text.totpSetup}</h2>
+				{#if data.codeEntry.setup.qr}
+					<img src={data.codeEntry.setup.qr} alt={data.text.totpQrAlt} width="200" height="200" />
+				{/if}
+				<p><a href={data.codeEntry.setup.uri}>{data.text.totpOpenApp}</a></p>
+				<p>{data.text.totpManualKey}: <code>{data.codeEntry.setup.secret}</code></p>
 			{/if}
 			{#if formError}<p role="alert">{data.text.errors[formError]}</p>{/if}
 			<form
@@ -356,13 +384,16 @@
 						{/if}
 					{:else if field.blockType === 'auth_widget' && !data.codeEntry}
 						{#if field.authMethod === 'passkey'}
-							<!-- A passkey needs no address: the button goes without the required fields. -->
-							<button
-								type="submit"
-								formnovalidate
-								formaction={actionOf(data.search, 'passkey_start')}
-								>{field.label || data.text.passkey}</button
-							>
+							<!-- A passkey's sign-in needs no address: its button goes without the required
+							     fields; a passkey's sign-up makes an account from them. -->
+							{#if data.available.passkey}
+								<button
+									type="submit"
+									formnovalidate={data.purpose === 'login'}
+									formaction={actionOf(data.search, 'passkey_start')}
+									>{field.label || data.text.passkey}</button
+								>
+							{/if}
 						{:else if field.authMethod === 'external_idp'}
 							<!-- A button per provider; a provider needs no address (formnovalidate). -->
 							{#each data.providers as provider (provider.id)}
@@ -375,9 +406,11 @@
 								>
 							{/each}
 						{:else if field.authMethod === 'totp'}
-							<button type="submit" formaction={actionOf(data.search, 'totp_start')}
-								>{field.label || data.text.totp}</button
-							>
+							{#if data.available.totp}
+								<button type="submit" formaction={actionOf(data.search, 'totp_start')}
+									>{field.label || data.text.totp}</button
+								>
+							{/if}
 						{:else if field.authMethod === 'mail_otp_totp'}
 							<!-- One address, two ways on (the SPA's combined part): each only when it is on. -->
 							{#if data.available.mailOtp}

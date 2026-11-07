@@ -80,9 +80,7 @@ export function liteMethodAvailability(
 		external_idp: methods?.external?.enabled === true && providers.length > 0,
 		mail_otp_totp: false
 	};
-	// A sign-up's email-or-authenticator part is its email half alone (an authenticator's sign-up is
-	// not drawn yet, PR6a).
-	available.mail_otp_totp = available.mail_otp || (purpose !== 'signup' && available.totp);
+	available.mail_otp_totp = available.mail_otp || available.totp;
 	return (method) => available[method];
 }
 
