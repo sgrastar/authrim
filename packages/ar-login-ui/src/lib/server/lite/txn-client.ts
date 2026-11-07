@@ -120,10 +120,22 @@ export function liteTxnClient(event: RequestEvent) {
 				? service.completeOperation({ ...base, operationId, attempt, result, transition })
 				: NO_BINDING;
 		},
-		/** A one-time start grant for the provider (its action is the transaction's purpose). */
-		async issueStartGrant(txnId: string, provider: string) {
+		/**
+		 * A one-time start grant for the provider (its action is the transaction's purpose). ar-auth
+		 * verifies the page's proof of work first: the start that consumes the grant does not.
+		 */
+		async issueStartGrant(
+			txnId: string,
+			provider: string,
+			start: {
+				humanVerificationResponse: string;
+				/** The Login UI's own client, which its handoff is finalized for. */
+				clientId: string;
+				interactionId: string | null;
+			}
+		) {
 			const base = call(txnId);
-			return base ? service.issueStartGrant({ ...base, provider }) : NO_BINDING;
+			return base ? service.issueStartGrant({ ...base, provider, ...start }) : NO_BINDING;
 		}
 	};
 }

@@ -87,6 +87,11 @@
       "required": true
     },
     {
+      "name": "LITE_TXN_STORE",
+      "kind": "durable_object_namespace",
+      "required": false
+    },
+    {
       "name": "DPOP_JTI_STORE",
       "kind": "durable_object_namespace",
       "required": true

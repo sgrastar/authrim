@@ -1001,6 +1001,23 @@ describe('Identity Stitching Service', () => {
         expect(result.stitchedFromExisting).toBe(false);
       });
 
+      it('creates no account for a sign-in that may not create one (lite mode)', async () => {
+        const env = createMockEnv();
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+        mockPiiQueryOne.mockResolvedValueOnce(null);
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+            accountCreationAllowed: false,
+          })
+        ).rejects.toThrow('Automatic account creation is not available for this sign-in.');
+        expect(linkedIdentityStore.createLinkedIdentity).not.toHaveBeenCalled();
+      });
+
       it('should throw error if JIT disabled and no existing account', async () => {
         const env = createMockEnv();
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
@@ -1484,6 +1501,32 @@ describe('Identity Stitching Service', () => {
             tenantId: 'default',
           })
         ).rejects.toMatchObject({ code: 'external_signup_disabled' });
+
+        expect(mockFindPendingIdentity).not.toHaveBeenCalled();
+        expect(mockActivatePendingIdentity).not.toHaveBeenCalled();
+        expect(mockPersistCustomClaimWrite).not.toHaveBeenCalled();
+      });
+
+      it('does not finish a provisioning left pending for a sign-in that may not create an account', async () => {
+        const env = createMockEnv();
+        mockResolveAccountContext.mockResolvedValue({
+          tenantId: 'default',
+          accountId: 'account:user-a',
+          legacyUserId: 'user-a',
+          coreDb: env.DB,
+          piiDb: env.DB_PII,
+        });
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+            accountCreationAllowed: false,
+          })
+        ).rejects.toThrow('Automatic account creation is not available for this sign-in.');
 
         expect(mockFindPendingIdentity).not.toHaveBeenCalled();
         expect(mockActivatePendingIdentity).not.toHaveBeenCalled();

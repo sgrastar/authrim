@@ -44,6 +44,7 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.external_providers': string;
   'authentication-methods.directory_password.enabled': boolean;
   'authentication-methods.invitation.email_verification': 'optional' | 'required';
+  'authentication-methods.signup.flow_required': boolean;
 }
 
 export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
@@ -376,6 +377,15 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
       'For an invitation that names an email: optional accepts the email a sign-up gives; required has the person prove it (an email code before a passkey or authenticator-app sign-up, an external IdP that reports the email verified)',
     visibility: 'admin',
   },
+  'authentication-methods.signup.flow_required': {
+    key: 'authentication-methods.signup.flow_required',
+    type: 'boolean',
+    default: false,
+    label: 'Sign-up Only Through a Flow',
+    description:
+      'Accept a passkey, email code or authenticator-app sign-up only from a live Flow interaction at a sign-in step, its values checked against the screen of that step. Off, such a sign-up that names no interaction (an app with its own form) is checked against the Identity Schema alone. External IdP sign-ups carry no attributes and are not affected',
+    visibility: 'page',
+  },
 };
 
 export const AUTHENTICATION_METHODS_CATEGORY_META: CategoryMeta = {
@@ -422,4 +432,5 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.external_providers': '[]',
   'authentication-methods.directory_password.enabled': false,
   'authentication-methods.invitation.email_verification': 'optional',
+  'authentication-methods.signup.flow_required': false,
 };

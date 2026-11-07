@@ -55,6 +55,7 @@ import {
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
+import { checkSignUpScreen, signUpScreenRefusalResponse } from './signup-screen-check';
 import { resolveSessionTtl } from './session-ttl';
 import {
   isAuthenticationMethodUsageEnabled,
@@ -345,6 +346,10 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     }
+    // The attributes against the screen of the Flow step they were entered on (see
+    // signup-screen-check.ts), a resumed provisioning's too: its attributes are sent again.
+    const screenCheck = await checkSignUpScreen(c, tenantId, { customFields: custom_fields });
+    if (!screenCheck.ok) return signUpScreenRefusalResponse(c, screenCheck);
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,

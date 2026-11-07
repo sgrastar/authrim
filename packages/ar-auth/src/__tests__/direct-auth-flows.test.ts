@@ -70,6 +70,7 @@ const mocks = vi.hoisted(() => {
     verifyEmailCodeHash: vi.fn(),
     hashEmail: vi.fn(),
     validateRegistrationFieldSubmissionFromEnv: vi.fn(),
+    checkSignUpScreen: vi.fn(),
     persistRegistrationFieldValuesFromEnv: vi.fn(),
     verifyHumanVerificationForAction: vi.fn(),
     verifyEmailVerificationProtocol: vi.fn(),
@@ -126,6 +127,11 @@ vi.mock('../registration-field-utils', () => ({
   buildCanonicalProfileRuntimeUserFields: () => ({ piiFields: {}, sensitiveValues: {} }),
   validateRegistrationFieldSubmissionFromEnv: mocks.validateRegistrationFieldSubmissionFromEnv,
   persistRegistrationFieldValuesFromEnv: mocks.persistRegistrationFieldValuesFromEnv,
+}));
+
+vi.mock('../signup-screen-check', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../signup-screen-check')>()),
+  checkSignUpScreen: mocks.checkSignUpScreen,
 }));
 
 vi.mock('../human-verification', async (importOriginal) => ({
@@ -500,6 +506,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
   }, 20_000);
 
   beforeEach(() => {
+    mocks.checkSignUpScreen.mockReset();
+    mocks.checkSignUpScreen.mockResolvedValue({ ok: true });
     vi.clearAllMocks();
     mocks.getTenantSettingsDocument.mockResolvedValue(null);
     mocks.getDefaultTenantId.mockReturnValue('default');
@@ -1872,6 +1880,65 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
   });
 
+  it('refuses a passkey sign-up whose attributes do not fit its Flow screen', async () => {
+    mocks.checkSignUpScreen.mockResolvedValueOnce({
+      ok: false,
+      reason: 'unknown_field',
+      field: 'role',
+    });
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+    const response = await directPasskeySignupStartHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'new@example.com',
+          code_challenge: 'signup-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          custom_fields: { role: 'admin' },
+        },
+        { ...webHeaders(), 'X-Authrim-Interaction-Id': 'fi_1' }
+      ) as never
+    );
+    const body = await response.json<Record<string, unknown>>();
+
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(body)).toContain('signup_screen_unknown_field');
+    expect(JSON.stringify(body)).not.toContain('admin');
+    expect(mocks.checkSignUpScreen).toHaveBeenCalledWith(expect.anything(), 'tenant_test', {
+      customFields: { role: 'admin' },
+    });
+    expect(mocks.validateRegistrationFieldSubmissionFromEnv).not.toHaveBeenCalled();
+    expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
+  });
+
+  it('refuses a passkey sign-up outside a Flow where sign-ups go through one', async () => {
+    mocks.checkSignUpScreen.mockResolvedValueOnce({
+      ok: false,
+      reason: 'flow_required',
+      field: null,
+    });
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+    const response = await directPasskeySignupStartHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'new@example.com',
+          code_challenge: 'signup-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        },
+        webHeaders()
+      ) as never
+    );
+
+    expect(response.status).toBe(403);
+    expect(JSON.stringify(await response.json())).toContain('signup_flow_required');
+    expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
+  });
+
   it('starts passkey signup by creating a new user and storing challenge mapping', async () => {
     mocks.validateRegistrationFieldSubmissionFromEnv.mockResolvedValueOnce({
       ok: true,
@@ -2130,6 +2197,28 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect.anything(),
       expect.objectContaining({ candidateUserId: 'user_first' })
     );
+    // The resumed start was checked against its screen too: its attributes are sent again, and
+    // one that changes them to what the screen does not ask for is refused.
+    expect(mocks.checkSignUpScreen).toHaveBeenCalledTimes(2);
+    mocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
+    mocks.checkSignUpScreen.mockResolvedValueOnce({
+      ok: false,
+      reason: 'unknown_field',
+      field: 'role',
+    });
+    const altered = await directPasskeySignupStartHandler(
+      createContextForRequest({
+        ...request,
+        custom_fields: { role: 'admin' },
+        provisioning_token: 'A'.repeat(43),
+        resume_user_id: 'user_first',
+      }) as never
+    );
+    expect(altered.status).toBe(400);
+    expect(JSON.stringify(await altered.json())).toContain('signup_screen_unknown_field');
+    expect(mocks.checkSignUpScreen).toHaveBeenLastCalledWith(expect.anything(), 'tenant_test', {
+      customFields: { role: 'admin' },
+    });
   });
 
   it('rejects passkey signup start when the signup usage is disabled', async () => {
@@ -4400,6 +4489,44 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
   });
 
+  it('sends nothing, and answers as usual, for a sign-up that does not fit its Flow screen', async () => {
+    mocks.checkSignUpScreen.mockResolvedValueOnce({
+      ok: false,
+      reason: 'required',
+      field: 'company',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            runtime_interaction_id: 'fi_1',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+    const body = await response.json<Record<string, unknown>>();
+
+    expect(response.status).toBe(200);
+    expect(typeof body.attempt_id).toBe('string');
+    expect(body.expires_in).toBe(300);
+    expect(body).not.toHaveProperty('error');
+    expect(mocks.checkSignUpScreen).toHaveBeenCalledWith(expect.anything(), 'tenant_test', {
+      customFields: undefined,
+      interactionId: 'fi_1',
+    });
+    expect(mocks.validateRegistrationFieldSubmissionFromEnv).not.toHaveBeenCalled();
+    expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
   it('returns the generic accepted envelope when no email notifier is configured', async () => {
     mocks.getNotifier.mockReturnValue(null);
     const { directEmailCodeSendHandler } = await import('../direct-auth');
@@ -5639,6 +5766,45 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       mocks.findInvitationById.mockResolvedValue(invitation);
       mocks.claimInvitationReservation.mockResolvedValue(true);
       mocks.applyInvitationAssignments.mockResolvedValue({ orgMembership: { success: true } });
+    });
+
+    it("checks a sign-up an invitation moves to another tenant with that tenant's rules", async () => {
+      mocks.findActiveInvitationByToken.mockResolvedValue({
+        ...invitation,
+        tenant_id: 'tenant_invited',
+      });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const context = enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            invite_token: 'invite-token',
+          },
+          webHeaders()
+        ),
+        {
+          'settings:tenant:tenant_invited:authentication-methods': JSON.stringify({
+            'authentication-methods.email_otp.login_enabled': true,
+            'authentication-methods.email_otp.signup_enabled': true,
+          }),
+        }
+      ) as unknown as { req: { header: ReturnType<typeof vi.fn> } };
+      // The header is not read for this send: its body names the interaction (here none).
+      const header = context.req.header.getMockImplementation() as (name: string) => unknown;
+      context.req.header.mockImplementation((name: string) =>
+        name.toLowerCase() === 'x-authrim-interaction-id' ? 'fi_other' : header(name)
+      );
+      await directEmailCodeSendHandler(context as never);
+
+      expect(mocks.checkSignUpScreen).toHaveBeenCalledWith(expect.anything(), 'tenant_invited', {
+        customFields: undefined,
+        interactionId: null,
+      });
     });
 
     it('reserves a use, held by the address, for a new address and records it on the code', async () => {

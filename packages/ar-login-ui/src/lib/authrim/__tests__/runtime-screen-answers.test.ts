@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	hasScreenAnswer,
 	offProfileFieldKeys,
+	profileFieldKeys,
 	requiredScreenInputParts,
 	screenAnswerFields
 } from '../runtime-screen-answers';
@@ -68,6 +69,15 @@ describe('screenAnswerFields', () => {
 
 	it('names the parts kept off the profile', () => {
 		expect([...offProfileFieldKeys(screen)]).toEqual(['survey']);
+	});
+
+	it('lists the shown parts a sign-up sends as attributes (stored to the profile)', () => {
+		const keys = profileFieldKeys(screen);
+		expect(keys.has('given_name')).toBe(true);
+		expect(keys.has('newsletter')).toBe(true);
+		expect(keys.has('agree')).toBe(true);
+		expect(keys.has('survey')).toBe(false);
+		expect(keys.has('heading')).toBe(false);
 	});
 
 	it('counts a ticked box or a non-empty value as an answer', () => {

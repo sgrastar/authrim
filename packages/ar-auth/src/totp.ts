@@ -48,6 +48,7 @@ import {
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
+import { checkSignUpScreen, signUpScreenRefusalResponse } from './signup-screen-check';
 import {
   consumeAuthorizationChallengeContinuation,
   type AuthorizationChallengeContinuation,
@@ -419,6 +420,10 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       !Array.isArray(body.custom_fields)
         ? (body.custom_fields as Record<string, unknown>)
         : {};
+    // The attributes against the screen of the Flow step they were entered on (see
+    // signup-screen-check.ts).
+    const screenCheck = await checkSignUpScreen(c, tenantId, { customFields });
+    if (!screenCheck.ok) return signUpScreenRefusalResponse(c, screenCheck);
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,

@@ -112,6 +112,20 @@ export interface LiteStartGrantSpec {
   policyRevision: string;
 }
 
+/**
+ * What a start grant carries to the start that consumes it, beside the transaction's own bound
+ * values: the start uses these and the transaction's, never its public query.
+ */
+export interface LiteStartGrantStart {
+  /**
+   * The Login UI's own client (the one its handoff is finalized for): the start signs in for it,
+   * as the SPA's start does.
+   */
+  clientId: string;
+  /** The Flow interaction the sign-in belongs to, when a Flow runs (checked again by the start). */
+  interactionId: string | null;
+}
+
 export type LiteTxnRefusal =
   | 'not_found'
   | 'expired'
