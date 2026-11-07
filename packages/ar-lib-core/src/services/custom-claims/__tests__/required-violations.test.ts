@@ -89,6 +89,7 @@ function createMockCoreDb(state: {
             const [lifecycleState, _updatedAt, accountId] = args;
             const userId = String(accountId).replace(/^account-/, '');
             state.lifecycleStates.set(userId, lifecycleState);
+            return { success: true, meta: { changes: 1 } };
           }
 
           return { success: true };

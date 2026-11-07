@@ -18,6 +18,12 @@ import type { Env } from '@authrim/ar-lib-core/types/env';
 import scimApp from '../scim';
 import { installGroupBoundaryFixture } from './helpers/group-boundary-fixture';
 
+/** A mock user's account lifecycle: deactivated is deprovisioned (as the writer makes it), deleted only once deleted. */
+function mockAccountLifecycle(user: { active?: number; lifecycle_state?: string }): string {
+  if (user.lifecycle_state === 'deleted') return 'deleted';
+  return user.active === 0 ? 'deprovisioned' : 'active';
+}
+
 // SCIM audit logs the routes start without awaiting them (logScimAudit; the requests carry no
 // executionCtx for waitUntil). They log through the real ar-lib-core logger, so each test waits for
 // them; a log that lands after the file's last test reaches Vitest while the worker is closing and
@@ -758,15 +764,21 @@ describe('SCIM 2.0 Endpoints', () => {
                     return holdId ? { hold_id: holdId, reason_code: 'litigation' } : null;
                   }
                   if (sql.includes('FROM identity_accounts')) {
-                    const userId = sql.includes('legacy_user_id = ?') ? args[0] : args[0];
+                    const userId = sql.includes('legacy_user_id = ?')
+                      ? args[0]
+                      : String(args[0]).replace(/^account:/, '');
                     const user = mockUsers.get(userId);
                     if (!user) return null;
                     return {
                       id: `account:${user.id}`,
                       tenant_id: user.tenant_id || 'default',
                       account_type: 'user',
-                      lifecycle_state: user.active === 0 ? 'deleted' : 'active',
-                      subject_lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+                      lifecycle_state: mockAccountLifecycle(
+                        user as { active?: number; lifecycle_state?: string }
+                      ),
+                      subject_lifecycle_state: mockAccountLifecycle(
+                        user as { active?: number; lifecycle_state?: string }
+                      ),
                       directory_publication_state: 'active',
                       legacy_user_id: user.id,
                       primary_subject_id: `subject:${user.id}`,
@@ -825,7 +837,9 @@ describe('SCIM 2.0 Endpoints', () => {
                         id: `account:${user.id}`,
                         tenant_id: user.tenant_id || 'default',
                         account_type: 'user',
-                        lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+                        lifecycle_state: mockAccountLifecycle(
+                          user as { active?: number; lifecycle_state?: string }
+                        ),
                         legacy_user_id: user.id,
                         primary_subject_id: `subject:${user.id}`,
                         display_label: null,

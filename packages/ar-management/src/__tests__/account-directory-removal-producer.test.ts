@@ -18,6 +18,7 @@ vi.mock('../lookup-hmac-runtime', () => ({
 }));
 
 import {
+  AccountDeletionHeldError,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
   markAccountDirectoryRemovalsReady,
   prepareAccountDirectoryRemoval,
@@ -125,6 +126,21 @@ describe('account directory removal producer', () => {
     expect(executed.some((entry) => entry.sql.includes("lifecycle_state = 'deleting'"))).toBe(true);
   });
 
+  it('refuses (AccountDeletionHeldError) when a legal hold stands, in the prepare itself', async () => {
+    // The hold authority row (the batch's first statement) matched nothing: neither did the rest.
+    vi.mocked(core.batch).mockImplementationOnce(async (statements) =>
+      statements.map(() => ({ rowsAffected: 0, success: true }))
+    );
+
+    await expect(
+      prepareAccountDirectoryRemoval(
+        {} as Env,
+        { tenantId: 'tenant-a', userId: 'user-a', core, pii },
+        100
+      )
+    ).rejects.toBeInstanceOf(AccountDeletionHeldError);
+  });
+
   it('allows deletion recovery from an active or deprovisioned account', async () => {
     await prepareAccountDirectoryRemoval(
       {} as Env,
@@ -213,6 +229,65 @@ describe('account directory removal producer', () => {
     expect(core.execute).toHaveBeenCalledTimes(2);
   });
 
+  it('takes the PII mutation epoch first on PostgreSQL, so no write straddles the erasure', async () => {
+    const calls: string[] = [];
+    vi.mocked(pii.batch).mockImplementation(async (statements) => {
+      calls.push(...statements.map((statement) => statement.sql));
+      return statements.map(() => ({ rowsAffected: 1, success: true }));
+    });
+    const postgres = { ...pii, getType: () => 'postgres' };
+
+    await eraseAccountPiiAfterDirectoryRemovalPrepared(
+      postgres,
+      { tenantId: 'tenant-a', userId: 'user-a', core },
+      100
+    );
+
+    expect(calls[0]).toBe(
+      'UPDATE guest_pii_mutation_epoch SET revision = revision + 1 WHERE id = 1'
+    );
+    expect(calls[1]).toContain('INSERT INTO account_pii_erasure_markers');
+  });
+
+  it('runs the erasure again when PostgreSQL broke a deadlock with it, and only then', async () => {
+    const deadlock = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    const postgres = { ...pii, getType: () => 'postgres' };
+    vi.mocked(pii.batch)
+      .mockRejectedValueOnce(deadlock)
+      .mockImplementationOnce(async (statements) =>
+        statements.map(() => ({ rowsAffected: 1, success: true }))
+      );
+
+    await eraseAccountPiiAfterDirectoryRemovalPrepared(
+      postgres,
+      { tenantId: 'tenant-a', userId: 'user-a', core },
+      100
+    );
+    expect(pii.batch).toHaveBeenCalledTimes(2);
+
+    vi.mocked(pii.batch).mockReset();
+    vi.mocked(pii.batch).mockRejectedValue(deadlock);
+    await expect(
+      eraseAccountPiiAfterDirectoryRemovalPrepared(
+        postgres,
+        { tenantId: 'tenant-a', userId: 'user-a', core },
+        100
+      )
+    ).rejects.toBe(deadlock);
+    expect(pii.batch).toHaveBeenCalledTimes(3);
+
+    vi.mocked(pii.batch).mockReset();
+    vi.mocked(pii.batch).mockRejectedValue(new Error('other failure'));
+    await expect(
+      eraseAccountPiiAfterDirectoryRemovalPrepared(
+        postgres,
+        { tenantId: 'tenant-a', userId: 'user-a', core },
+        100
+      )
+    ).rejects.toThrow('other failure');
+    expect(pii.batch).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels replacement work before erasing raw account PII', async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     vi.mocked(pii.batch).mockImplementation(async (statements) => {
@@ -231,11 +306,14 @@ describe('account directory removal producer', () => {
       100
     );
 
-    expect(calls[0]).toEqual({
+    // The erasure fence first, in the same batch: no value is written back after it.
+    expect(calls[0].sql).toContain('INSERT INTO account_pii_erasure_markers');
+    expect(calls[0].params).toEqual(['tenant-a', 'user-a', 100]);
+    expect(calls[1]).toEqual({
       sql: expect.stringContaining('UPDATE guest_upgrade_operations'),
       params: [100, 'tenant-a', 'user-a'],
     });
-    expect(calls[1].sql).toContain('identity_identifier_replacement_operations');
+    expect(calls[2].sql).toContain('identity_identifier_replacement_operations');
     expect(calls.map((call) => call.sql)).toEqual(
       expect.arrayContaining([
         expect.stringContaining('proof_payload_json = NULL'),

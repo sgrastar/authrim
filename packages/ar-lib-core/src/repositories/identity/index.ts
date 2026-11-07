@@ -1,5 +1,7 @@
 export {
+  CanonicalAccountRemovedError,
   CanonicalIdentityRepository,
+  isRemovedLifecycleState,
   type AssuranceEvidenceRow,
   type AttributeClassification,
   type AttributeValueType,
