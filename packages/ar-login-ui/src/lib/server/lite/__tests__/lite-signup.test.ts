@@ -708,47 +708,143 @@ describe('the sign-up page', () => {
 		expect(sends()[0].body.custom_fields).toEqual({ company: 'Acme' });
 	});
 
-	it('offers no passkey or authenticator sign-up to an invitation that asks a proof first', async () => {
+	it('proves the invited address first for a passkey or authenticator sign-up', async () => {
 		currentStep = {
 			...SIGNUP_STEP,
 			config: {
 				screen: {
 					fields: [
 						{ field: 'email', label: 'Email', required: true },
-						{ block_type: 'auth_widget', field: 'm', label: 'Send', auth_method: 'mail_otp' },
-						{ block_type: 'auth_widget', field: 't', label: 'App', auth_method: 'totp' },
+						{ block_type: 'auth_widget', field: 't', label: 'App', auth_method: 'totp' }
+					]
+				}
+			}
+		};
+		withCodeStep = false;
+		tenantMethods = { totp: { enabled: true } };
+		routes['/api/v1/invitations/email-verification/send'] = () =>
+			json({
+				verification_id: '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f',
+				expires_in: 600,
+				masked_email: 'i***@example.com'
+			});
+		routes['/api/v1/invitations/email-verification/verify'] = (body) =>
+			body.code === '123456'
+				? json({ invitation_email_proof: 'p'.repeat(43), expires_in: 600 })
+				: json({ error: 'invalid_code' }, 400);
+		routes['/api/auth/totp/signup/options'] = () =>
+			json(
+				{
+					challenge_id: 'totp-s1',
+					expires_in: 600,
+					secret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+					otpauth_uri: 'otpauth://totp/Authrim:invited?secret=JBSWY3DPEHPK3PXP'
+				},
+				201
+			);
+		const q = `invite_token=${INVITE}`;
+		await view(q);
+		// No guest sign-up from the sign-up page.
+		await expect(post('guest', { human_verification_response: 'p' }, q)).resolves.toMatchObject({
+			status: 409
+		});
+		// The sign-up is held: the code goes to the invited address (with the sign-up's proof).
+		await post(
+			'totp_start',
+			{ email: 'invited@example.com', human_verification_response: 'p' },
+			q
+		).catch((thrown: unknown) => thrown);
+		const sent = calls.find((call) => call.path === '/api/v1/invitations/email-verification/send');
+		expect(sent?.body).toEqual({ token: INVITE, human_verification_response: 'p' });
+		expect(calls.some((call) => call.path === '/api/auth/totp/signup/options')).toBe(false);
+		// Its entry posts no proof of work: none is asked for (drawn even when none can be issued).
+		routes['/api/auth/human-verification/pow-challenge'] = () => json({ error: 'busy' }, 429);
+		const entry = await view(q);
+		expect(entry.inviteProof).toEqual({
+			maskedEmail: 'i***@example.com',
+			verification: '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f'
+		});
+		const verification = '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f';
+		// A sign-in another tab began meanwhile (an email code sent): its page comes first.
+		const held = store.txn.data;
+		store.set({
+			data: {
+				...held,
+				code: {
+					interactionId: 'int-1',
+					choiceStepId: 'signup',
+					email: 'invited@example.com',
+					maskedEmail: 'i***@example.com',
+					attemptId: 'attempt-x',
+					verifier: 'v'.repeat(43),
+					sentAt: Date.now()
+				}
+			}
+		});
+		expect((await view(q)).inviteProof).toBeNull();
+		store.set({ data: held });
+		// A form drawn for another code is not checked against this one.
+		await expect(
+			post('invite_proof_verify', { code: '123456', verification: 'another' }, q)
+		).rejects.toMatchObject({ status: 303 });
+		expect(
+			calls.some((call) => call.path === '/api/v1/invitations/email-verification/verify')
+		).toBe(false);
+		expect(entry.pow).toBeNull();
+		routes['/api/auth/human-verification/pow-challenge'] = () =>
+			json({
+				challenge: {
+					algorithm: 'SHA-256',
+					challenge: 'a'.repeat(64),
+					maxnumber: 100,
+					salt: 's',
+					signature: 'g'
+				},
+				policy_revision: 'rev-1'
+			});
+		await expect(
+			post('invite_proof_verify', { code: '000000', verification }, q)
+		).resolves.toMatchObject({
+			status: 400,
+			data: { error: 'code_invalid' }
+		});
+		await post('invite_proof_verify', { code: '123456', verification }, q).catch(
+			(thrown: unknown) => thrown
+		);
+		expect((await view(q)).inviteProof).toBeNull();
+		// Proved: the sign-up starts with the proof.
+		await post(
+			'totp_start',
+			{ email: 'invited@example.com', human_verification_response: 'p2' },
+			q
+		).catch((thrown: unknown) => thrown);
+		const options = calls.find((call) => call.path === '/api/auth/totp/signup/options');
+		expect(options?.body).toMatchObject({
+			invite_token: INVITE,
+			invitation_email_proof: 'p'.repeat(43)
+		});
+	});
+
+	it('points an address that has an account (an unfinished sign-up) to the sign-in page', async () => {
+		currentStep = {
+			...SIGNUP_STEP,
+			config: {
+				screen: {
+					fields: [
+						{ field: 'email', label: 'Email', required: true },
 						{ block_type: 'auth_widget', field: 'p', label: 'Passkey', auth_method: 'passkey' }
 					]
 				}
 			}
 		};
-		tenantMethods = {
-			emailCode: { enabled: true },
-			totp: { enabled: true },
-			passkey: { enabled: true }
-		};
-		const page = await view(`invite_token=${INVITE}`);
-		expect(page.available).toEqual({ mailOtp: true, totp: false, passkey: false });
+		tenantMethods = { passkey: { enabled: true } };
+		routes['/api/v1/auth/direct/passkey/signup/start'] = () => json({ error: 'conflict' }, 409);
+		await view();
 		await expect(
-			post(
-				'totp_start',
-				{ email: 'invited@example.com', human_verification_response: 'p' },
-				`invite_token=${INVITE}`
-			)
-		).resolves.toMatchObject({ status: 409 });
-		await expect(
-			post(
-				'passkey_start',
-				{ email: 'invited@example.com', human_verification_response: 'p' },
-				`invite_token=${INVITE}`
-			)
-		).resolves.toMatchObject({ status: 409 });
-		await expect(post('guest', { human_verification_response: 'p' })).resolves.toMatchObject({
-			status: 409
-		});
-		expect(calls.some((call) => call.path.startsWith('/api/auth/totp'))).toBe(false);
-		expect(calls.some((call) => call.path.includes('/passkey/'))).toBe(false);
-		expect(calls.some((call) => call.path === '/api/auth/guest/login')).toBe(false);
+			post('passkey_start', { email: 'taken@example.com', human_verification_response: 'p' })
+		).resolves.toMatchObject({ status: 409, data: { error: 'account_exists' } });
+		// Nothing is held: the page can sign in, or sign up another address.
+		expect(store.txn.data.passkey).toBeUndefined();
 	});
 
 	it('does not draw two parts posted under one name', async () => {
@@ -792,6 +888,66 @@ describe('the sign-up page', () => {
 		};
 		expect(page.decision.kind).toBe('screen');
 		expect(page.decision.fields.some((field) => field.authMethod === 'external_idp')).toBe(false);
+	});
+
+	it('signs up with an external provider: its grant is made for the sign-up', async () => {
+		currentStep = {
+			...SIGNUP_STEP,
+			config: {
+				screen: {
+					fields: [
+						{ block_type: 'auth_widget', field: 's', label: 'Social', auth_method: 'external_idp' }
+					]
+				}
+			}
+		};
+		tenantMethods = {
+			external: {
+				enabled: true,
+				providers: [{ id: 'google', name: 'Google', enabled: true, signupEnabled: true }]
+			}
+		};
+		store.binding.issueStartGrant.mockResolvedValue({ ok: true, grantId: 'grant-1' });
+		routes['/api/v1/login/interactions/int-1/submit'] = () =>
+			json({ completed: false, step: COMPLETION, interaction: { current_step_id: 'done' } });
+		const page = (await view(`invite_token=${INVITE}`)) as { providers: unknown[] };
+		expect(page.providers).toEqual([{ id: 'google', label: 'Continue with Google' }]);
+		await post(
+			'social_start',
+			{ provider: 'google', human_verification_response: 'p' },
+			`invite_token=${INVITE}`
+		).catch((thrown: unknown) => thrown);
+		expect(store.binding.issueStartGrant).toHaveBeenCalledTimes(1);
+		expect(store.txn.data.social).toMatchObject({ provider: 'google', grantId: 'grant-1' });
+	});
+
+	it('lists the providers that sign in and sign up (an external start is a sign-in), and starts only those', async () => {
+		currentStep = {
+			...SIGNUP_STEP,
+			config: {
+				screen: {
+					fields: [
+						{ block_type: 'auth_widget', field: 's', label: 'Social', auth_method: 'external_idp' }
+					]
+				}
+			}
+		};
+		tenantMethods = {
+			external: {
+				enabled: true,
+				providers: [
+					{ id: 'both', name: 'Both', enabled: true, loginEnabled: true, signupEnabled: true },
+					{ id: 'signs-up', name: 'Up', enabled: true, loginEnabled: false, signupEnabled: true },
+					{ id: 'signs-in', name: 'In', enabled: true, loginEnabled: true, signupEnabled: false }
+				]
+			}
+		};
+		const page = (await view()) as { providers: Array<{ id: string }> };
+		expect(page.providers.map((provider) => provider.id)).toEqual(['both']);
+		await expect(
+			post('social_start', { provider: 'signs-in', human_verification_response: 'p' })
+		).resolves.toMatchObject({ status: 409 });
+		expect(store.binding.issueStartGrant).not.toHaveBeenCalled();
 	});
 
 	it('takes no post for a transaction made for another page', async () => {

@@ -748,9 +748,45 @@ describe('LiteTxnEntrypoint start grants', () => {
     await expect(consume()).resolves.toMatchObject({
       ok: true,
       txn: { id: created.txn.id, bound: { purpose: 'login', publicOrigin: ORIGIN } },
-      start: { clientId: 'login-ui', interactionId: 'interaction-1' },
+      start: { clientId: 'login-ui', interactionId: 'interaction-1', inviteToken: null },
     });
     await expect(consume()).resolves.toEqual({ ok: false, reason: 'grant_invalid' });
+  });
+
+  it("carries a sign-up's invitation, as its transaction keeps it, to the start", async () => {
+    await setPolicy('always');
+    const token = 'a'.repeat(64);
+    for (const purpose of ['signup', 'login'] as const) {
+      const created = await entry().create({
+        ...call,
+        clientIp: null,
+        purpose,
+        reuseKey: `invite-${purpose}`,
+        data: { invite: { token, tenantId: 'default' } },
+      });
+      if (!created.ok) throw new Error(created.reason);
+      const issued = await entry().issueStartGrant({
+        ...call,
+        txnId: created.txn.id,
+        provider: 'google',
+        clientId: 'login-ui',
+        interactionId: null,
+        humanVerificationResponse: 'proof',
+      });
+      if (!issued.ok) throw new Error(issued.reason);
+      const consumed = await consumeLiteStartGrant(env as never, {
+        tenantId: 'default',
+        binding: BINDING,
+        txnId: created.txn.id,
+        grantId: issued.grantId,
+        provider: 'google',
+      });
+      // Only a sign-up takes an invitation (a sign-in's transaction never carries one to a start).
+      expect(consumed).toMatchObject({
+        ok: true,
+        start: { inviteToken: purpose === 'signup' ? token : null },
+      });
+    }
   });
 
   it('consumes no grant once the tenant changed its policy or left lite mode', async () => {
