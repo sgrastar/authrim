@@ -494,6 +494,9 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				label: 'nav.set.teamRoles',
 				icon: 'shield',
 				platform: 'tenant',
+				requires: { permission: 'admin:admin_roles:read' },
+				// …/team-roles/<id> and …/team-roles/new: a role's page.
+				details: true,
 				legacyRoutes: ['/admin/admin-roles (このテナントへの割り当てのみ)']
 			}
 		],

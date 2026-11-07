@@ -105,7 +105,9 @@ describe('the team pages, as the admin APIs decide them', () => {
 		revokeGlobal: false,
 		expiry: false,
 		groupsEdit: false,
-		groupsGrant: false
+		groupsGrant: false,
+		roles: false,
+		rolesEdit: false
 	};
 	const all = { ...none, read: true, manage: true, invite: true, inviteForm: true, edit: true };
 	const of = (permissions: string[]) => teamAccess({ platform: false, roles: [], permissions });
@@ -118,7 +120,9 @@ describe('the team pages, as the admin APIs decide them', () => {
 			revoke: true,
 			expiry: true,
 			groupsEdit: true,
-			groupsGrant: true
+			groupsGrant: true,
+			roles: true,
+			rolesEdit: true
 		});
 	});
 
