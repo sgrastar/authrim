@@ -3131,6 +3131,10 @@ app.delete('/Users/:id', async (c) => {
     if (!existingUser) {
       // A deletion that stopped after the user could no longer be read is finished now.
       if (await hasUnfinishedAccountDeletion(coreAdapter, { tenantId, userId })) {
+        // The same gate as a first attempt: a hold stops it (the fence refuses one too).
+        if (await findActiveAccountLegalHold(coreAdapter, tenantId, userId)) {
+          return scimError(c, 409, 'User is under legal hold and cannot be deleted');
+        }
         await deleteScimAccount(c, {
           coreAdapter,
           piiAdapter,
@@ -4776,13 +4780,29 @@ async function processUserOperation(
       if (!existingUser) {
         // A deletion that stopped after the user could no longer be read is finished now.
         if (await hasUnfinishedAccountDeletion(coreAdapter, { tenantId, userId: resourceId! })) {
-          await deleteScimAccount(c, {
-            coreAdapter,
-            piiAdapter,
-            tenantId,
-            userId: resourceId!,
-            existingUser: { email: null, tenant_id: tenantId },
-          });
+          const held = {
+            method: 'DELETE',
+            status: '409',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '409',
+              detail: 'User is under legal hold and cannot be deleted',
+            },
+          };
+          // The same gate as a first attempt: a hold stops it (the fence refuses one too).
+          if (await findActiveAccountLegalHold(coreAdapter, tenantId, resourceId!)) return held;
+          try {
+            await deleteScimAccount(c, {
+              coreAdapter,
+              piiAdapter,
+              tenantId,
+              userId: resourceId!,
+              existingUser: { email: null, tenant_id: tenantId },
+            });
+          } catch (error) {
+            if (!(error instanceof AccountDeletionHeldError)) throw error;
+            return held;
+          }
           return { method: 'DELETE', status: '204' };
         }
         return {

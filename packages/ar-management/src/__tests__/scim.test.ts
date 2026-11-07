@@ -3209,6 +3209,36 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(accountRemovalState.erase).not.toHaveBeenCalled();
     });
 
+    it('does not resume a deletion a legal hold now stands on', async () => {
+      (
+        canonicalRuntimeState.users.get('user-001') as { lifecycle_state?: string }
+      ).lifecycle_state = 'deleted';
+      activeLegalHolds.set('user-001', 'legal-hold:scim-resume-held');
+      accountRemovalState.unfinished.mockResolvedValue(true);
+      try {
+        const single = await app.fetch(
+          createRequest('/scim/v2/Users/user-001', { method: 'DELETE' }),
+          mockEnv
+        );
+        expect(single.status).toBe(409);
+        const bulk = await app.fetch(
+          createRequest('/scim/v2/Bulk', {
+            method: 'POST',
+            body: JSON.stringify({
+              schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+              Operations: [{ method: 'DELETE', path: '/Users/user-001' }],
+            }),
+          }),
+          mockEnv
+        );
+        const body = await bulk.json<{ Operations: Array<{ status: string }> }>();
+        expect(body.Operations[0].status).toBe('409');
+        expect(accountRemovalState.erase).not.toHaveBeenCalled();
+      } finally {
+        accountRemovalState.unfinished.mockResolvedValue(false);
+      }
+    });
+
     it('finishes a bulk deletion that stopped after the user could no longer be read', async () => {
       (
         canonicalRuntimeState.users.get('user-001') as { lifecycle_state?: string }

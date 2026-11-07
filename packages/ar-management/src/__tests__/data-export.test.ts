@@ -378,7 +378,7 @@ describe('Data Export API', () => {
     it("exports the person's response records from their PII database", async () => {
       mockCoreAdapter.query.mockResolvedValue([]);
       mockPiiAdapter.query.mockImplementation(async (sql: string, params?: unknown[]) => {
-        if (sql.includes('SELECT COUNT(*) as count FROM screen_responses')) {
+        if (sql.includes('SUM(LENGTH(answers_json))')) {
           expect(params).toEqual(['default', 'user-123']);
           return [{ count: 1 }];
         }

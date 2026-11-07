@@ -1407,13 +1407,15 @@ async function estimateExportSize(
     totalSize += (passkeys[0]?.count || 0) * 400;
   }
 
-  // Estimate ~1 KB per response record (read from the account's PII database)
+  // The response records' own size (their answers, ~200 bytes each besides), read from the
+  // account's PII database: answers vary too much in size for a count to tell.
   if (sections.includes('screen_responses') && piiAdapter) {
-    const responses = await piiAdapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM screen_responses WHERE tenant_id = ? AND user_id = ?',
+    const responses = await piiAdapter.query<{ count: number; bytes: number | null }>(
+      `SELECT COUNT(*) as count, SUM(LENGTH(answers_json)) as bytes
+         FROM screen_responses WHERE tenant_id = ? AND user_id = ?`,
       [tenantId, userId]
     );
-    totalSize += Number(responses[0]?.count || 0) * 1024;
+    totalSize += Number(responses[0]?.bytes || 0) * 2 + Number(responses[0]?.count || 0) * 200;
   }
 
   // Add base overhead for profile
