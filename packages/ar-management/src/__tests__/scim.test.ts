@@ -764,7 +764,9 @@ describe('SCIM 2.0 Endpoints', () => {
                     return holdId ? { hold_id: holdId, reason_code: 'litigation' } : null;
                   }
                   if (sql.includes('FROM identity_accounts')) {
-                    const userId = sql.includes('legacy_user_id = ?') ? args[0] : args[0];
+                    const userId = sql.includes('legacy_user_id = ?')
+                      ? args[0]
+                      : String(args[0]).replace(/^account:/, '');
                     const user = mockUsers.get(userId);
                     if (!user) return null;
                     return {

@@ -175,8 +175,8 @@ export async function setUserLifecycleState(
       'SELECT lifecycle_state FROM identity_accounts WHERE id = ? AND tenant_id = ?',
       [currentRow.id, tenantId]
     );
-    // (A deletion keeps the row, marked: only that state stops the move.)
-    if (now && isRemovedLifecycleState(now.lifecycle_state)) {
+    // A row gone since the read is no account to move either.
+    if (!now || isRemovedLifecycleState(now.lifecycle_state)) {
       throw new CanonicalAccountRemovedError();
     }
   }

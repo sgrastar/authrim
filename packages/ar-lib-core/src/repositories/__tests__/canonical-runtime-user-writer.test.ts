@@ -456,10 +456,12 @@ describe('CanonicalRuntimeUserWriter', () => {
     it('writes no profile values when the deletion began after the read', async () => {
       await create();
       const before = JSON.stringify(emailValue());
-      identityRepository.touchAccountUnlessRemoved = async (accountId) => {
+      // The account moves to deleting between the first read and the write of the values.
+      const findAccountById = identityRepository.findAccountById.bind(identityRepository);
+      identityRepository.findAccountById = async (accountId, options) => {
         const row = adapter.getById('identity_accounts', accountId);
         adapter.seed('identity_accounts', [{ ...row, lifecycle_state: 'deleting' }]);
-        return false;
+        return findAccountById(accountId, options);
       };
 
       await expect(

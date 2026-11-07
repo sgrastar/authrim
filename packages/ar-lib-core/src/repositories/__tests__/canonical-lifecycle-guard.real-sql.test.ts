@@ -103,12 +103,6 @@ describe('canonical lifecycle guard', () => {
     expect(account('account:deleted')).toEqual({ lifecycle_state: 'deleted', deleted_at: 1 });
   });
 
-  it('claims only an account that is not being deleted for a write of its values', async () => {
-    await expect(repository.touchAccountUnlessRemoved('account:live')).resolves.toBe(true);
-    await expect(repository.touchAccountUnlessRemoved('account:deleting')).resolves.toBe(false);
-    await expect(repository.touchAccountUnlessRemoved('account:deleted')).resolves.toBe(false);
-  });
-
   it('never moves a deleted subject back to another state', async () => {
     await expect(
       repository.updateSubjectRuntimeFields('subject:deleted', { lifecycleState: 'active' })

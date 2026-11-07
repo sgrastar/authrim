@@ -1014,19 +1014,6 @@ export class CanonicalIdentityRepository {
     return result.rowsAffected > 0;
   }
 
-  /**
-   * Claims the account for a write of its values: a no-op update carrying the lifecycle guard,
-   * true while the account is not being deleted (the same check a lifecycle update makes).
-   */
-  async touchAccountUnlessRemoved(accountId: string): Promise<boolean> {
-    const result = await this.adapter.execute(
-      `UPDATE identity_accounts SET updated_at = updated_at
-        WHERE id = ? AND tenant_id = ? ${NOT_REMOVED_SQL}`,
-      [accountId, this.tenantId]
-    );
-    return result.rowsAffected > 0;
-  }
-
   async updateAccountRuntimeFields(
     accountId: string,
     input: {

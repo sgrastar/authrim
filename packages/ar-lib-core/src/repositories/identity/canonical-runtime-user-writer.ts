@@ -226,8 +226,8 @@ export class CanonicalRuntimeUserWriter {
     // written, the profile values least of all.
     if (!(await this.repository.updateAccountRuntimeFields(account.id, accountRuntimeUpdate))) {
       const now = await this.repository.findAccountById(account.id, { includeInactive: true });
-      // (A deletion keeps the row, marked: only that state stops the write.)
-      if (now && isRemovedLifecycleState(now.lifecycle_state)) {
+      // A row gone since the read is no account to write to either.
+      if (!now || isRemovedLifecycleState(now.lifecycle_state)) {
         throw new CanonicalAccountRemovedError();
       }
     }
@@ -293,17 +293,9 @@ export class CanonicalRuntimeUserWriter {
     if (!account?.primary_subject_id) {
       return false;
     }
-    // An account being deleted (or deleted) gets no profile values again, also when its deletion
-    // began after the read (the guarded claim misses; the account is then read again, as for a
-    // sync).
+    // An account being deleted (or deleted) gets no profile values again.
     if (isRemovedLifecycleState(account.lifecycle_state)) {
       throw new CanonicalAccountRemovedError();
-    }
-    if (!(await this.repository.touchAccountUnlessRemoved(account.id))) {
-      const now = await this.repository.findAccountById(account.id, { includeInactive: true });
-      if (now && isRemovedLifecycleState(now.lifecycle_state)) {
-        throw new CanonicalAccountRemovedError();
-      }
     }
     const profile = (
       await this.repository.findProfilesForSubject(account.primary_subject_id, {
@@ -312,6 +304,12 @@ export class CanonicalRuntimeUserWriter {
     )[0];
     if (!profile) {
       return false;
+    }
+    // Read again just before the values are written: a deletion that began since the read above
+    // stops it. (The PII database's erasure fence refuses what would still slip between.)
+    const current = await this.repository.findAccountById(account.id, { includeInactive: true });
+    if (!current || isRemovedLifecycleState(current.lifecycle_state)) {
+      throw new CanonicalAccountRemovedError();
     }
     const fields = Object.keys(input.values) as CanonicalSensitiveUserField[];
     await this.upsertPiiProfileAttributeRefs(
