@@ -1167,12 +1167,24 @@ async function directEmailSendResumeKey(input: {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/** Records that a send passed its checks (human verification included) as `usage`. */
+/** What a resumed send must still be to take its sign-up's attributes: its channel and interaction. */
+interface DirectEmailSendResumeBinding {
+  channel: string;
+  runtimeInteractionId: string | null;
+}
+
+/**
+ * Records that a send passed its checks (human verification included) as `usage`, with the
+ * sign-up's checked attributes (its code carries them, as the first send's would have) and the
+ * channel and Flow interaction they were checked for.
+ */
 async function recordDirectEmailSendResume(
   env: Env,
   tenantId: string,
   key: string,
-  usage: HumanVerificationAction
+  usage: HumanVerificationAction,
+  customFields: Record<string, string>,
+  binding: DirectEmailSendResumeBinding
 ): Promise<void> {
   const id = `direct_email_send_resume:${key}`;
   const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
@@ -1183,16 +1195,32 @@ async function recordDirectEmailSendResume(
     userId: 'anonymous',
     challenge: key,
     ttl: DIRECT_EMAIL_SEND_RESUME_TTL_SECONDS,
-    metadata: { usage },
+    metadata: {
+      usage,
+      channel: binding.channel,
+      runtime_interaction_id: binding.runtimeInteractionId,
+      ...(usage === 'signup' && Object.keys(customFields).length > 0
+        ? { custom_fields: customFields }
+        : {}),
+    },
   });
 }
 
-/** The usage of the send this one resumes, using its record up (once), or null. */
+/**
+ * The send this one resumes, using its record up once: its usage and, when this send has the
+ * channel and Flow interaction it had (`sameBinding`), a sign-up's attributes. A record made before
+ * the binding was kept has none, so it gives the usage alone.
+ */
 async function consumeDirectEmailSendResume(
   env: Env,
   tenantId: string,
-  key: string
-): Promise<{ usage: HumanVerificationAction } | null> {
+  key: string,
+  binding: DirectEmailSendResumeBinding
+): Promise<{
+  usage: HumanVerificationAction;
+  customFields: Record<string, string>;
+  sameBinding: boolean;
+} | null> {
   const id = `direct_email_send_resume:${key}`;
   try {
     const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
@@ -1201,12 +1229,174 @@ async function consumeDirectEmailSendResume(
       tenantId,
       type: 'direct_email_send_resume',
       challenge: key,
-    })) as { metadata?: { usage?: unknown } } | undefined;
-    const usage = record?.metadata?.usage;
-    return usage === 'signup' || usage === 'login' ? { usage } : null;
+    })) as
+      | {
+          metadata?: {
+            usage?: unknown;
+            custom_fields?: unknown;
+            channel?: unknown;
+            runtime_interaction_id?: unknown;
+          };
+        }
+      | undefined;
+    const metadata = record?.metadata;
+    const usage = metadata?.usage;
+    if (usage !== 'signup' && usage !== 'login') return null;
+    const sameBinding =
+      metadata?.channel === binding.channel &&
+      metadata?.runtime_interaction_id === binding.runtimeInteractionId;
+    return {
+      usage,
+      customFields:
+        usage === 'signup' && sameBinding ? readStoredCustomFields(metadata?.custom_fields) : {},
+      sameBinding,
+    };
   } catch {
     return null;
   }
+}
+
+/**
+ * How long, at most, a sign-up's email code may be sent again as that sign-up (never past the
+ * authorization challenge it continues). Later, a code sent to its account signs in.
+ */
+const DIRECT_EMAIL_SIGNUP_RESEND_TTL_SECONDS = 30 * 60;
+
+/**
+ * The sign-up a code sent again belongs to: the same address, from the same client and channel,
+ * for the same authorization challenge and Flow interaction. Only a send made with a challenge or
+ * an interaction has one: without either nothing tells the sign-up's own resend from anyone else's
+ * send to that address, so its resend stays a sign-in to the account.
+ */
+async function directEmailSignupResendKey(input: {
+  tenantId: string;
+  email: string;
+  clientId: string;
+  channel: string;
+  authorizationChallengeId?: string;
+  runtimeInteractionId?: string;
+}): Promise<string | null> {
+  if (!input.authorizationChallengeId && !input.runtimeInteractionId) return null;
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(
+      JSON.stringify([
+        'direct_email_signup',
+        input.tenantId,
+        input.email,
+        input.clientId,
+        input.channel,
+        input.authorizationChallengeId ?? null,
+        input.runtimeInteractionId ?? null,
+      ])
+    )
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** The challenge store calls a sign-up's resend record takes. */
+type SignupResendChallengeStore = {
+  storeChallengeRpc(input: {
+    id: string;
+    tenantId: string;
+    type: string;
+    userId: string;
+    challenge: string;
+    ttl: number;
+    notAfterMs?: number;
+    metadata: Record<string, unknown>;
+  }): Promise<unknown>;
+  getChallengeRpc(id: string): Promise<unknown>;
+};
+
+/**
+ * Records the sign-up whose send created `userId` (its checked attributes with it), so a code sent
+ * again within it is that sign-up still: governed by the sign-up switch, carrying the same
+ * attributes. A failure only costs that (the resend signs in, as before), so it is logged only.
+ */
+async function recordDirectEmailSignupResend(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  key: string,
+  input: { userId: string; customFields: Record<string, string>; notAfterMs?: number }
+): Promise<void> {
+  const id = `direct_email_signup:${key}`;
+  try {
+    const challengeStore = (await getChallengeStoreByChallengeId(
+      c.env,
+      id,
+      tenantId
+    )) as SignupResendChallengeStore;
+    await challengeStore.storeChallengeRpc({
+      id,
+      tenantId,
+      type: 'direct_email_signup',
+      userId: input.userId,
+      challenge: key,
+      ttl: DIRECT_EMAIL_SIGNUP_RESEND_TTL_SECONDS,
+      ...(input.notAfterMs !== undefined ? { notAfterMs: input.notAfterMs } : {}),
+      metadata:
+        Object.keys(input.customFields).length > 0 ? { custom_fields: input.customFields } : {},
+    });
+  } catch (error) {
+    getLogger(c)
+      .module('DIRECT-AUTH')
+      .warn('Failed to record an email-code sign-up for its resend', {
+        action: 'direct_email_signup_record',
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+  }
+}
+
+/**
+ * The sign-up a code sent again continues: its record, for this key, made for this very account.
+ * Null when there is none (another sign-up's, another account's, expired, or unreadable).
+ */
+async function readDirectEmailSignupResend(
+  env: Env,
+  tenantId: string,
+  key: string,
+  userId: string
+): Promise<{ customFields: Record<string, string> } | null> {
+  const id = `direct_email_signup:${key}`;
+  try {
+    const challengeStore = (await getChallengeStoreByChallengeId(
+      env,
+      id,
+      tenantId
+    )) as SignupResendChallengeStore;
+    const record = (await challengeStore.getChallengeRpc(id)) as {
+      tenantId?: unknown;
+      type?: unknown;
+      userId?: unknown;
+      challenge?: unknown;
+      consumed?: unknown;
+      metadata?: { custom_fields?: unknown };
+    } | null;
+    if (
+      !record ||
+      record.tenantId !== tenantId ||
+      record.type !== 'direct_email_signup' ||
+      record.challenge !== key ||
+      record.userId !== userId ||
+      record.consumed === true
+    ) {
+      return null;
+    }
+    return { customFields: readStoredCustomFields(record.metadata?.custom_fields) };
+  } catch {
+    return null;
+  }
+}
+
+/** A sign-up's checked attributes as stored with a record (string values only). */
+function readStoredCustomFields(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string'
+    )
+  );
 }
 
 async function resolveDirectStartTurnstileAction(
@@ -3294,6 +3484,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         name: existingUser.name || null,
       };
     }
+    const existingEmailVerified = existingUser?.email_verified === 1;
 
     let suppressEmailCodeSend = false;
 
@@ -3347,21 +3538,56 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     // A tenant in lite mode does not let the resume record (made of values that are not secret)
     // stand in for human verification: a resumed send needs a proof again (lite-mode.ts).
     const liteTenant = (await readLiteMode(c.env, tenantId)) !== 'off';
+    const resumeBinding: DirectEmailSendResumeBinding = {
+      channel,
+      runtimeInteractionId: boundRuntimeInteractionId ?? null,
+    };
     const resumedSend =
       user && challengeType !== 'reauth' && !liteTenant
-        ? await consumeDirectEmailSendResume(c.env, tenantId, resumeKey)
+        ? await consumeDirectEmailSendResume(c.env, tenantId, resumeKey, resumeBinding)
+        : null;
+    // A code sent again within a sign-up, to the account (not yet verified) its first send
+    // created, is still that sign-up: the sign-up switch governs it and its code carries the
+    // sign-up's attributes. Only the same sign-up has it (the same address, client, channel,
+    // authorization challenge and Flow interaction, for the account its record names): a send from
+    // any other sign-up, or with neither a challenge nor an interaction, signs in to the account.
+    const signupResendKey = await directEmailSignupResendKey({
+      tenantId,
+      email: normalizedEmail,
+      clientId: client_id,
+      channel,
+      ...(authorization_challenge_id
+        ? { authorizationChallengeId: authorization_challenge_id }
+        : {}),
+      ...(boundRuntimeInteractionId ? { runtimeInteractionId: boundRuntimeInteractionId } : {}),
+    });
+    const signupResend =
+      user &&
+      !existingEmailVerified &&
+      !resumedSend &&
+      challengeType !== 'reauth' &&
+      signupResendKey
+        ? await readDirectEmailSignupResend(c.env, tenantId, signupResendKey, user.id)
         : null;
     const emailCodeUsage: HumanVerificationAction =
-      resumedSend?.usage ?? (!user ? 'signup' : challengeType === 'reauth' ? 'reauth' : 'login');
+      resumedSend?.usage ??
+      (!user || signupResend ? 'signup' : challengeType === 'reauth' ? 'reauth' : 'login');
     // The token is checked against the screen it came from (a re-authentication only ever takes
     // its own screen's token). A client that does not say keeps the earlier inference. Whatever the
     // screen, the setting for what the code does (signing up a new address) asks for a token too.
+    // A sign-up's resend is asked for what a code to an existing account is (a sign-in): its
+    // sign-up passed the sign-up's check when the account was created, and the resend asks no
+    // less than it did before it was a sign-up.
     const turnstileAction: HumanVerificationAction =
       challengeType === 'reauth'
         ? 'reauth'
         : (declaredScreen ?? challengeType ?? (user ? 'login' : 'signup'));
+    const humanVerificationUsage: HumanVerificationAction = signupResend ? 'login' : emailCodeUsage;
     const turnstileAlsoRequiredFor: HumanVerificationAction[] =
-      emailCodeUsage === turnstileAction ? [] : [emailCodeUsage];
+      humanVerificationUsage === turnstileAction ? [] : [humanVerificationUsage];
+    // The attributes the code carries: a new address's are checked below; a resumed send's or a
+    // resend's are the ones its sign-up's first send checked.
+    customFieldValues = signupResend?.customFields ?? resumedSend?.customFields ?? {};
     const emailOtpEnabled = await isAuthenticationMethodUsageEnabled(
       c.env,
       tenantId,
@@ -3532,7 +3758,14 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             runtimeUser,
           });
           if (provisioned.status === 'pending') {
-            await recordDirectEmailSendResume(c.env, tenantId, resumeKey, emailCodeUsage);
+            await recordDirectEmailSendResume(
+              c.env,
+              tenantId,
+              resumeKey,
+              emailCodeUsage,
+              customFieldValues,
+              resumeBinding
+            );
             return provisioned.response;
           }
           user = {
@@ -3575,6 +3808,22 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         reservation: signupInvitation,
         tenantId,
         userId: user.id,
+      });
+    }
+    // The sign-up that made this account (now, or in the send this one resumes from the same
+    // channel and interaction), for its resend.
+    if (
+      emailCodeUsage === 'signup' &&
+      !signupResend &&
+      signupResendKey &&
+      (!resumedSend || resumedSend.sameBinding)
+    ) {
+      await recordDirectEmailSignupResend(c, tenantId, signupResendKey, {
+        userId: user.id,
+        customFields: customFieldValues,
+        ...(emailCodeLifetime.notAfterMs !== undefined
+          ? { notAfterMs: emailCodeLifetime.notAfterMs }
+          : {}),
       });
     }
 
