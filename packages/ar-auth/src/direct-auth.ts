@@ -145,6 +145,7 @@ import {
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
+import { checkSignUpScreen, signUpScreenRefusalResponse } from './signup-screen-check';
 import {
   readDeclaredHumanVerificationScreen,
   verifyHumanVerificationForAction,
@@ -2173,6 +2174,11 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       }
     }
 
+    // The attributes against the screen of the Flow step they were entered on (see
+    // signup-screen-check.ts), a resumed provisioning's too: its attributes are sent again.
+    const screenCheck = await checkSignUpScreen(c, tenantId, { customFields: custom_fields });
+    if (!screenCheck.ok) return signUpScreenRefusalResponse(c, screenCheck);
+
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,
@@ -3402,6 +3408,26 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       });
     }
 
+    // A new address signs up: its attributes are checked against the screen of the Flow step
+    // they were entered on (see signup-screen-check.ts). A refusal sends nothing and answers as
+    // usual, so it does not tell that the address has no account.
+    if (!user && !suppressEmailCodeSend) {
+      // The tenant the account is made in (an invitation may name another; one bound to an
+      // interaction cannot, above), and the interaction from the body only, as for the rest of
+      // this send.
+      const screenCheck = await checkSignUpScreen(c, tenantId, {
+        customFields: custom_fields,
+        interactionId: boundRuntimeInteractionId ?? null,
+      });
+      if (!screenCheck.ok) {
+        suppressEmailCodeSend = true;
+        log.info('Suppressing email-code send because the sign-up does not fit its Flow screen', {
+          action: 'direct_email_code_send_suppressed',
+          reason: 'signup_screen',
+          refusal: screenCheck.reason,
+        });
+      }
+    }
     if (!user && !suppressEmailCodeSend) {
       const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
         c.env,

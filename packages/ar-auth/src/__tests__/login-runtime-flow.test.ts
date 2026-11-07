@@ -16,6 +16,7 @@ import {
   loginRuntimeInteractionStartHandler,
   insertDestinationFieldConsentRecord,
   loginRuntimeInteractionSubmitHandler,
+  resolveSignUpScreen,
 } from '../login-runtime-flow';
 
 const mocks = vi.hoisted(() => {
@@ -6310,6 +6311,229 @@ describe('the re-authentication challenge of a SAML request', () => {
       });
 
       expect(data.completed).toBe(true);
+    });
+  });
+});
+
+describe('resolveSignUpScreen', () => {
+  const step = (id: string, component: string, screenRef?: string) => ({
+    id,
+    source_node_id: id.replace(':step', ''),
+    component,
+    render: true,
+    config: screenRef ? { screen_ref: screenRef } : {},
+  });
+  const runtime = {
+    flow_kind: 'signup',
+    ui: {
+      steps: [
+        step('signup:step', 'registration_method_selector', 'registration_custom'),
+        step('built-in:step', 'registration_method_selector'),
+        step('code:step', 'email_verification', 'code_input'),
+        step('survey:step', 'screen', 'survey'),
+      ],
+    },
+  };
+  const screens: Record<string, unknown[]> = {
+    registration_custom: [
+      { field: 'email', label: 'Email', required: true },
+      { field: 'company', label: 'Company' },
+      { field: 'signup', block_type: 'auth_widget', auth_method: 'passkey' },
+    ],
+    code_input: [{ field: 'code', block_type: 'code_input_widget' }],
+    survey: [{ field: 'plan', label: 'Plan' }],
+  };
+  let versionSeq = 0;
+
+  function reads(input: {
+    currentStepId: string;
+    visited?: Array<string | { stepId: string; createdAt: number; completedAtMs?: number }>;
+    /** What a read of one second's visits answers (the edge of the look-back). */
+    sameSecond?: Array<{ stepId: string; createdAt: number; completedAtMs?: number }>;
+    state?: string;
+    expiresAt?: number;
+  }) {
+    versionSeq += 1;
+    const versionId = `fv_signup_${versionSeq}`;
+    mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, params: unknown[]) => {
+      const text = String(sql);
+      if (text.includes('FROM flow_interactions')) {
+        return {
+          id: 'fi_1',
+          flow_id: 'flow_1',
+          flow_version_id: versionId,
+          user_id: null,
+          client_id: 'client_1',
+          saml_sp_id: null,
+          state: input.state ?? 'active',
+          current_node_id: input.currentStepId.replace(':step', ''),
+          current_step_id: input.currentStepId,
+          context_json: '{}',
+          contract_hash: 'hash',
+          signature: 'sig',
+          expires_at: input.expiresAt ?? Math.floor(Date.now() / 1000) + 600,
+        };
+      }
+      if (text.includes('FROM flow_versions')) {
+        return {
+          id: versionId,
+          flow_id: 'flow_1',
+          schema_version: 1,
+          runtime_snapshot_json: JSON.stringify(runtime),
+          editor_snapshot_json: null,
+          published_at: 1,
+        };
+      }
+      if (text.includes('FROM screens')) {
+        const ref = String(params[1]);
+        const fields = screens[ref];
+        return fields
+          ? {
+              id: `screen_${ref}`,
+              screen_key: ref,
+              display_name: ref,
+              description: null,
+              screen_kind: 'custom',
+              fields_json: JSON.stringify(fields),
+              localizations_json: null,
+              settings_json: null,
+            }
+          : undefined;
+      }
+      return undefined;
+    });
+    const row = (visit: { stepId: string; createdAt: number; completedAtMs?: number }) => ({
+      step_id: visit.stepId,
+      created_at: visit.createdAt,
+      state_json:
+        visit.completedAtMs === undefined
+          ? null
+          : JSON.stringify({ completed_at_ms: visit.completedAtMs }),
+    });
+    mocks.coreAdapter.query.mockImplementation(async (sql: string) =>
+      String(sql).includes('AND created_at = ?')
+        ? (input.sameSecond ?? []).map(row)
+        : String(sql).includes('FROM flow_interaction_steps')
+          ? (input.visited ?? []).map((visit) =>
+              typeof visit === 'string'
+                ? { step_id: visit, created_at: 1, state_json: null }
+                : {
+                    step_id: visit.stepId,
+                    created_at: visit.createdAt,
+                    state_json:
+                      visit.completedAtMs === undefined
+                        ? null
+                        : JSON.stringify({ completed_at_ms: visit.completedAtMs }),
+                  }
+            )
+          : []
+    );
+  }
+
+  const c = () => createContext({});
+
+  it('takes the screen of the current step when a sign-up starts on it', async () => {
+    reads({ currentStepId: 'signup:step' });
+    const resolved = await resolveSignUpScreen(c(), 'tenant_1', 'fi_1');
+    expect(resolved.kind).toBe('screen');
+    expect(resolved).toMatchObject({
+      stepId: 'signup:step',
+      screen: { id: 'screen_registration_custom' },
+    });
+  });
+
+  it('looks back from a code step to the step the sign-up started on', async () => {
+    reads({ currentStepId: 'code:step', visited: ['code:step', 'survey:step', 'signup:step'] });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      kind: 'screen',
+      stepId: 'signup:step',
+    });
+  });
+
+  it('orders the visits of one second by when each was completed', async () => {
+    // The database lists them by second, then by id: here the earlier visit first.
+    reads({
+      currentStepId: 'code:step',
+      visited: [
+        { stepId: 'code:step', createdAt: 100 },
+        { stepId: 'built-in:step', createdAt: 100, completedAtMs: 100_100 },
+        { stepId: 'signup:step', createdAt: 100, completedAtMs: 100_400 },
+      ],
+    });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      kind: 'screen',
+      stepId: 'signup:step',
+    });
+  });
+
+  it('reads every visit of the second at the edge of the look-back', async () => {
+    // Twenty visits of one second fill the look-back without the latest (listed by id, it fell
+    // past the limit); the read of that whole second has it.
+    const filler = Array.from({ length: 19 }, (_, index) => ({
+      stepId: 'survey:step',
+      createdAt: 100,
+      completedAtMs: 100_000 + index,
+    }));
+    const builtIn = { stepId: 'built-in:step', createdAt: 100, completedAtMs: 100_050 };
+    const latest = { stepId: 'signup:step', createdAt: 100, completedAtMs: 100_900 };
+    reads({
+      currentStepId: 'code:step',
+      visited: [...filler, builtIn],
+      sameSecond: [...filler, builtIn, latest],
+    });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      kind: 'screen',
+      stepId: 'signup:step',
+    });
+  });
+
+  it('tells no step from more visits in one second than it reads', async () => {
+    const visit = (index: number) => ({
+      stepId: 'signup:step',
+      createdAt: 100,
+      completedAtMs: 100_000 + index,
+    });
+    const twenty = Array.from({ length: 20 }, (_, index) => visit(index));
+    reads({
+      currentStepId: 'code:step',
+      visited: twenty,
+      sameSecond: Array.from({ length: 200 }, (_, index) => visit(index)),
+    });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      kind: 'screen',
+    });
+    reads({
+      currentStepId: 'code:step',
+      visited: twenty,
+      sameSecond: Array.from({ length: 201 }, (_, index) => visit(index)),
+    });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toEqual({
+      kind: 'invalid',
+      reason: 'not_a_sign_up_step',
+    });
+  });
+
+  it('leaves a selector showing the built-in form to the Identity Schema', async () => {
+    reads({ currentStepId: 'built-in:step' });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toEqual({
+      kind: 'built_in',
+    });
+  });
+
+  it('is no place to sign up from without a sign-in step, or once the interaction ended', async () => {
+    reads({ currentStepId: 'survey:step', visited: ['survey:step'] });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toEqual({
+      kind: 'invalid',
+      reason: 'not_a_sign_up_step',
+    });
+    reads({ currentStepId: 'signup:step', state: 'completed' });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toEqual({
+      kind: 'invalid',
+      reason: 'interaction_not_found',
+    });
+    reads({ currentStepId: 'signup:step', expiresAt: 1 });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      reason: 'interaction_not_found',
     });
   });
 });

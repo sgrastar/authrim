@@ -78,6 +78,7 @@
 	import {
 		hasScreenAnswer,
 		isAnswerScreenStep,
+		profileFieldKeys,
 		offProfileFieldKeys,
 		requiredScreenInputParts,
 		screenAnswerFields
@@ -1181,14 +1182,17 @@
 	}
 
 	function getSubmittedCustomFields(): Record<string, string> {
-		// A part whose answer is kept off the profile is never sent as a profile attribute.
-		const offProfile = offProfileFieldKeys(getRuntimeScreen(runtimeFlowStep));
+		// On a Flow's screen, only the attributes its parts ask for and store to the profile (a
+		// part kept off the profile, or an attribute of the registration list the screen does not
+		// show, is never sent: the server checks the sign-up against the screen).
+		const screen = getRuntimeScreen(runtimeFlowStep);
+		const asked = screen ? profileFieldKeys(screen) : null;
 		return Object.fromEntries(
 			Object.entries(customFieldValues).filter(([fieldKey, value]) => {
 				if (FIXED_REGISTRATION_FIELD_KEYS.has(normalizeRegistrationFieldKey(fieldKey))) {
 					return false;
 				}
-				if (offProfile.has(fieldKey)) return false;
+				if (asked && !asked.has(fieldKey)) return false;
 				return value !== '';
 			})
 		);
@@ -1422,7 +1426,8 @@
 				authorizationChallengeId: authorizationChallengeId || undefined,
 				human_verification_response: cfTurnstileResponse,
 				inviteToken: inviteToken || undefined,
-				invitationEmailProof: invitationEmailProof ?? undefined
+				invitationEmailProof: invitationEmailProof ?? undefined,
+				runtimeInteractionId: runtimeFlow?.interaction.id
 			});
 
 			if (optionsError) {
@@ -1634,7 +1639,8 @@
 				authorizationChallengeId: authorizationChallengeId || undefined,
 				human_verification_response: cfTurnstileResponse,
 				inviteToken: inviteToken || undefined,
-				invitationEmailProof: invitationEmailProof ?? undefined
+				invitationEmailProof: invitationEmailProof ?? undefined,
+				runtimeInteractionId: runtimeFlow?.interaction.id
 			});
 			if (apiError || !data) {
 				forgetExpiredInvitationEmailProof(apiError);
