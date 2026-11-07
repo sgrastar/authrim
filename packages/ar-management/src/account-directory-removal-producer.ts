@@ -443,8 +443,9 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
     throw new Error('account_pii_erasure_batch_failed');
   }
   forgetCachedAnonymizedUserId(input.tenantId, input.userId);
-  // The account's custom attributes, in its core database (a trigger there refuses writing them
-  // again once the account is being deleted).
+  // The account's custom attributes, in its core database. No trigger guards them there (it would
+  // break restoring a backup taken mid-deletion): upsertUserCustomFieldValue refuses an account
+  // being deleted, whose lifecycle never goes back. Re-run whole when a deletion is retried.
   await input.core.execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
     input.tenantId,
     input.userId,
