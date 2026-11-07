@@ -10,8 +10,10 @@ import { arSecurityKeys } from './security-keys/ar';
 import { arKeyringPresentation } from './keyring-presentation/ar';
 import { arNotices } from './notices/ar';
 import { arCustomization } from './customization/ar';
+import { arScreens } from './screens/ar';
 import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
+import { arTeam } from './team/ar';
 
 export const ar = {
 	...arSettings,
@@ -25,8 +27,10 @@ export const ar = {
 	...arKeyringPresentation,
 	...arNotices,
 	...arCustomization,
+	...arScreens,
 	...arStepUp,
 	...arAdminAudit,
+	...arTeam,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',

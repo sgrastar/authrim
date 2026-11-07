@@ -1,22 +1,22 @@
 <script lang="ts">
 	import { t } from '#lib/i18n/i18n.svelte.js';
-	import type { LayoutPart, LayoutRow } from '../builder/layout-model';
-	import OptionListEditor from '../builder/OptionListEditor.svelte';
-	import Callout from '../patterns/Callout.svelte';
-	import Card from '../patterns/Card.svelte';
-	import DetailItem from '../patterns/DetailItem.svelte';
-	import DetailList from '../patterns/DetailList.svelte';
-	import EmptyState from '../patterns/EmptyState.svelte';
-	import Checkbox from '../primitives/Checkbox.svelte';
-	import SegmentedControl from '../primitives/SegmentedControl.svelte';
-	import Link from '../primitives/Link.svelte';
-	import Select from '../primitives/Select.svelte';
-	import SelectMenu, { type MenuOption } from '../primitives/SelectMenu.svelte';
-	import TextArea from '../primitives/TextArea.svelte';
-	import TextField from '../primitives/TextField.svelte';
-	import { valueAt } from '../save/draft.svelte';
-	import { provideSaveScope, useChangeMark } from '../save/save-scope';
-	import { sample } from './sample';
+	import type { LayoutPart, LayoutRow } from '#lib/ui/builder/layout-model.js';
+	import OptionListEditor from '#lib/ui/builder/OptionListEditor.svelte';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
+	import Link from '#lib/ui/primitives/Link.svelte';
+	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
+	import Select from '#lib/ui/primitives/Select.svelte';
+	import SelectMenu, { type MenuOption } from '#lib/ui/primitives/SelectMenu.svelte';
+	import TextArea from '#lib/ui/primitives/TextArea.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
+	import { valueAt } from '#lib/ui/save/draft.svelte.js';
+	import { provideSaveScope, useChangeMark } from '#lib/ui/save/save-scope.js';
+	import { methodName, partName, setting } from './screen-copy';
 	import {
 		ACCOUNT_KINDS,
 		CONDITION_KINDS,
@@ -24,20 +24,20 @@
 		INPUT_KINDS,
 		LABEL_KINDS,
 		METHODS,
-		SCHEMA_FIELDS,
 		SCHEMA_TYPES_FOR,
 		fieldFits,
-		schemaChoices,
-		type SchemaField,
-		partName,
-		setting,
+		type AnswerTarget,
+		type ChoiceSource,
 		type DisplayCondition,
-		type PartSettings
-	} from './screen-parts';
+		type PartSettings,
+		type SchemaField
+	} from './screen-model';
 
 	/**
-	 * Storybook demo: the settings of the selected part (or row), with the same parameters as
-	 * the legacy screen editor. Fields carry SaveScope `field` paths, so changes are marked.
+	 * The settings of the part (or row) selected in the screen builder. Fields carry SaveScope
+	 * `field` paths, so changes are marked. A part linked to an attribute picks it from the
+	 * Identity Schema (`schemaFields`); one kept off the profile names its own answer key and where
+	 * the answer goes (the flow and its event, the response record, or both).
 	 */
 	interface Props {
 		part?: LayoutPart | null;
@@ -50,6 +50,19 @@
 		oncolumns?: (count: number) => void;
 		/** The part or row is new since saving: the canvas marks it, not every field here. */
 		isNew?: boolean;
+		/** The tenant's attributes a part can be linked to. */
+		schemaFields?: readonly SchemaField[];
+		/** An enum attribute's choices, by key. */
+		choices?: ChoiceSource;
+		/** Where the Identity Schema is edited. */
+		schemaHref?: string;
+		/** Shown, not edited (a built-in screen, or no permission to change it). */
+		readonly?: boolean;
+		/**
+		 * The part is a legacy yes/no question saved in that form: its label is the question and
+		 * its placeholder the text beside the box, as the Login UI shows them.
+		 */
+		legacyYesNo?: boolean;
 	}
 
 	let {
@@ -60,7 +73,12 @@
 		rowCondition = $bindable(null),
 		rowNumber = 0,
 		oncolumns,
-		isNew = false
+		isNew = false,
+		schemaFields = [],
+		choices = () => [],
+		schemaHref,
+		readonly = false,
+		legacyYesNo = false
 	}: Props = $props();
 
 	// A new part has no saved settings: compare its fields with themselves, so none is marked.
@@ -77,7 +95,7 @@
 		}
 	});
 
-	const methodOptions = $derived(METHODS.map(([value, key]) => ({ value, label: setting(key) })));
+	const methodOptions = $derived(METHODS.map((value) => ({ value, label: methodName(value) })));
 	const conditionOptions = $derived([
 		{ value: 'always', label: setting('condAlways') },
 		{ value: 'feature_enabled', label: setting('condFeature') },
@@ -86,8 +104,6 @@
 	/**
 	 * Attributes by key and type. Those the part cannot store in stay listed, disabled and
 	 * grouped after the rest, so the schema reads complete and the reason is visible.
-	 * TODO(api): comes from the Identity Schema (active attributes incl. the fixed profile
-	 * keys: field_key, field_type, cardinality, enum value count).
 	 */
 	function fieldOptions(kind: string): MenuOption[] {
 		const row = (f: SchemaField, fits: boolean): MenuOption => ({
@@ -97,20 +113,26 @@
 			mono: true,
 			disabled: !fits,
 			group: setting(fits ? 'usable' : 'unusable'),
-			description: f.choices?.length
-				? setting('choicesN').replace('{n}', String(f.choices.length))
-				: undefined
+			description: f.choices?.length ? setting('choicesN', { n: f.choices.length }) : undefined
 		});
 		return [
-			...SCHEMA_FIELDS.filter((f) => fieldFits(kind, f)).map((f) => row(f, true)),
-			...SCHEMA_FIELDS.filter((f) => !fieldFits(kind, f)).map((f) => row(f, false))
+			...schemaFields.filter((f) => fieldFits(kind, f)).map((f) => row(f, true)),
+			...schemaFields.filter((f) => !fieldFits(kind, f)).map((f) => row(f, false))
 		];
 	}
 
 	const storeHint = (kind: string) =>
 		CHOICE_KINDS.has(kind)
 			? setting('storeChoices')
-			: setting('storeTypes').replace('{types}', (SCHEMA_TYPES_FOR[kind] ?? []).join(' / '));
+			: setting('storeTypes', { types: (SCHEMA_TYPES_FOR[kind] ?? []).join(' / ') });
+
+	/** Turns a target on or off; the last one is kept (an answer must go somewhere). */
+	function setTarget(settings: PartSettings, target: AnswerTarget, on: boolean) {
+		const next = on
+			? [...new Set([...settings.answerTargets, target])]
+			: settings.answerTargets.filter((item) => item !== target);
+		if (next.length > 0) settings.answerTargets = next;
+	}
 </script>
 
 {#snippet conditionFields(condition: DisplayCondition, path: string)}
@@ -132,8 +154,8 @@
 
 {#if part && settings}
 	{@const path = `settings.${part.id}`}
-	<Card title={sample('partSettings')} description={partName(part.kind)}>
-		<div class="fields">
+	<Card title={t('sc.editor.partSettings')} description={partName(part.kind)}>
+		<fieldset class="fields" disabled={readonly}>
 			<DetailList size="sm">
 				<DetailItem label={setting('internalId')}><code>{part.id}</code></DetailItem>
 			</DetailList>
@@ -160,15 +182,48 @@
 				<Checkbox field="{path}.linked" info={setting('linkDbDesc')} bind:checked={settings.linked}>
 					{setting('linkDb')}
 				</Checkbox>
-				<SelectMenu
-					field="{path}.field"
-					label={setting('identity')}
-					options={fieldOptions(part.kind)}
-					hint={settings.linked ? storeHint(part.kind) : undefined}
-					disabled={!settings.linked}
-					bind:value={settings.field}
-				/>
-				{#if part.kind === 'identity_field'}
+				{#if settings.linked}
+					<SelectMenu
+						field="{path}.field"
+						label={setting('identity')}
+						options={fieldOptions(part.kind)}
+						hint={storeHint(part.kind)}
+						bind:value={settings.field}
+					/>
+				{:else}
+					<TextField
+						field="{path}.field"
+						label={setting('answerKey')}
+						hint={setting('answerKeyHint')}
+						maxlength={100}
+						bind:value={settings.field}
+					/>
+					<div class="targets" role="group" aria-label={setting('answerTargets')}>
+						<p class="targets__title">{setting('answerTargets')}</p>
+						<Checkbox
+							description={setting('targetFlowHint')}
+							checked={settings.answerTargets.includes('flow_event')}
+							onchange={(event) => setTarget(settings!, 'flow_event', event.currentTarget.checked)}
+						>
+							{setting('targetFlow')}
+						</Checkbox>
+						<Checkbox
+							description={setting('targetRecordHint')}
+							checked={settings.answerTargets.includes('record')}
+							onchange={(event) => setTarget(settings!, 'record', event.currentTarget.checked)}
+						>
+							{setting('targetRecord')}
+						</Checkbox>
+					</div>
+				{/if}
+				{#if part.kind === 'checkbox' && legacyYesNo && settings.linked}
+					<TextField
+						field="{path}.placeholder"
+						label={setting('checkboxText')}
+						hint={setting('checkboxTextHint')}
+						bind:value={settings.placeholder}
+					/>
+				{:else if part.kind === 'identity_field'}
 					<TextField
 						field="{path}.placeholder"
 						label={setting('placeholder')}
@@ -183,17 +238,18 @@
 					/>
 				{/if}
 				{#if CHOICE_KINDS.has(part.kind) && settings.linked}
-					<!-- Linked: the values belong to the schema, shared by every screen and the API.
-					     TODO(api): the link opens the attribute in the Identity Schema editor. -->
+					<!-- Linked: the values belong to the schema, shared by every screen and the API. -->
 					<div class="schema-choices">
 						<p class="schema-choices__title">{setting('schemaChoices')}</p>
 						<ul>
-							{#each schemaChoices(settings.field) as choice (choice.value)}
+							{#each choices(settings.field) as choice (choice.value)}
 								<li><span>{choice.label}</span><code>{choice.value}</code></li>
 							{/each}
 						</ul>
 						<p class="schema-choices__note">{setting('schemaChoicesNote')}</p>
-						<Link href="#identity-schema" standalone>{setting('editInSchema')}</Link>
+						{#if schemaHref}
+							<Link href={schemaHref} standalone>{setting('editInSchema')}</Link>
+						{/if}
 					</div>
 				{:else if CHOICE_KINDS.has(part.kind)}
 					<OptionListEditor field="{path}.options" bind:options={settings.options} />
@@ -281,11 +337,11 @@
 			{:else if ACCOUNT_KINDS.has(part.kind)}
 				<Callout>{setting('widgetNote')}</Callout>
 			{/if}
-		</div>
+		</fieldset>
 	</Card>
 {:else if row && rowCondition}
 	<Card title={setting('rowSettings')} description={t('builder.row', { n: rowNumber })}>
-		<div class="fields">
+		<fieldset class="fields" disabled={readonly}>
 			<SegmentedControl
 				label={setting('rowColumns')}
 				hideLabel={false}
@@ -298,11 +354,11 @@
 				onchange={(value) => oncolumns?.(Number(value))}
 			/>
 			{@render conditionFields(rowCondition, `rowSettings.${row.id}`)}
-		</div>
+		</fieldset>
 	</Card>
 {:else}
-	<Card title={sample('partSettings')}>
-		<EmptyState icon="list" title={sample('noSelection')} />
+	<Card title={t('sc.editor.partSettings')}>
+		<EmptyState icon="list" title={t('sc.editor.noSelection')} />
 	</Card>
 {/if}
 
@@ -310,6 +366,23 @@
 	.fields {
 		display: grid;
 		gap: var(--space-field);
+		/* A fieldset only to turn every control off at once: no frame of its own. */
+		min-inline-size: 0;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+
+	.targets {
+		display: grid;
+		gap: 8px;
+	}
+
+	.targets__title {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: var(--fs-label);
+		font-weight: var(--fw-semibold);
 	}
 
 	code {

@@ -303,6 +303,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'screens',
 				label: 'nav.custom.screens',
 				icon: 'list',
+				// The screen builder: …/screens/new and …/screens/<screen id>.
+				details: true,
 				legacyRoutes: ['/admin/screens']
 			},
 			{
@@ -471,7 +473,10 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				label: 'nav.set.team',
 				icon: 'users',
 				platform: 'tenant',
-				requires: { settings: ['session', 'security'] },
+				// The administrators (their read permission) or how they sign in (those settings).
+				requires: { settings: ['session', 'security'], permission: 'admin:admin_users:read' },
+				// …/team/invite (later, an administrator's page).
+				details: true,
 				legacyRoutes: ['/admin/admins (このテナントの管理者のみ)']
 			},
 			{

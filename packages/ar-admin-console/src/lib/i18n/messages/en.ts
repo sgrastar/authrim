@@ -10,8 +10,10 @@ import { enSecurityKeys } from './security-keys/en';
 import { enKeyringPresentation } from './keyring-presentation/en';
 import { enNotices } from './notices/en';
 import { enCustomization } from './customization/en';
+import { enScreens } from './screens/en';
 import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
+import { enTeam } from './team/en';
 
 export const en = {
 	...enSettings,
@@ -25,8 +27,10 @@ export const en = {
 	...enKeyringPresentation,
 	...enNotices,
 	...enCustomization,
+	...enScreens,
 	...enStepUp,
 	...enAdminAudit,
+	...enTeam,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
