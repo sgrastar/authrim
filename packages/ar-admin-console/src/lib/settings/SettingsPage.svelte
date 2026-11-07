@@ -71,9 +71,16 @@
 		target: SettingsTarget;
 		/** Who is looking; the signed-in admin unless given (Storybook). */
 		access?: AdminAccess;
+		/**
+		 * Draw the page frame and its header (default). Off, only the settings are drawn: for a
+		 * page that shows them as one of its tabs and has its own header.
+		 */
+		framed?: boolean;
+		/** Whether there are unsaved changes, and whether a save is running (for a page around it). */
+		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
 	}
 
-	let { page, client, target, access }: Props = $props();
+	let { page, client, target, access, framed = true, onstate }: Props = $props();
 
 	const who = $derived(access ?? adminAccess.current);
 	const parts = $derived(partsOf(page));
@@ -241,9 +248,7 @@
 	}
 </script>
 
-<Page>
-	<PageHeader title={t(page.title)} description={t(page.description)} />
-
+{#snippet settings()}
 	{#if status === 'loading'}
 		<LoadingState label={t('common.loading')} />
 	{:else if status === 'forbidden'}
@@ -260,7 +265,7 @@
 				>{t('settings.readOnly.body')}</Callout
 			>
 		{/if}
-		<SaveScope {draft} onsave={save}>
+		<SaveScope {draft} onsave={save} {onstate}>
 			<div class="settings">
 				{#each page.sections as section (section.id)}
 					{@const view = sectionView(section, draft!.value, levels, draft!.saved)}
@@ -309,7 +314,16 @@
 			onchoose={(choice) => conflict?.resolve(choice)}
 		/>
 	{/if}
-</Page>
+{/snippet}
+
+{#if framed}
+	<Page>
+		<PageHeader title={t(page.title)} description={t(page.description)} />
+		{@render settings()}
+	</Page>
+{:else}
+	{@render settings()}
+{/if}
 
 <!-- A section's settings as table rows: a ruled list when the admin may only look, form rows
      (FieldRow, inside SettingField) when they may change them. -->

@@ -119,3 +119,59 @@ export function widest(levels: readonly AccessLevel[]): AccessLevel {
 	if (levels.includes('view')) return 'view';
 	return 'none';
 }
+
+/**
+ * What the admin can do on the team pages (Settings → Administrators), as the Admin API checks it.
+ * The API also measures the caller's rank against the role and the admin concerned, and whether a
+ * permission comes from a global assignment; the console cannot see either, so a control shown
+ * here can still be refused, and the page says why.
+ */
+export interface TeamAccess {
+	/** See the administrators and invitations (`admin:admin_users:read`). */
+	read: boolean;
+	/** Suspend, reactivate and unlock administrators (`admin:admin_users:write`). */
+	manage: boolean;
+	/** Invite, resend and revoke: also the roles' write permission, since an invitation is a grant. */
+	invite: boolean;
+	/** Fill in a new invitation: inviting, and reading the roles to offer (`admin:admin_roles:read`). */
+	inviteForm: boolean;
+	/** Offer a global (every tenant) role: the wildcard from a global assignment. */
+	global: boolean;
+	/** Edit an administrator's name and address (`admin:admin_users:write`). */
+	edit: boolean;
+	/** Delete an administrator (`admin:admin_users:delete`). */
+	delete: boolean;
+	/** Give a role directly: the roles' read (to offer them) and write permissions. */
+	grant: boolean;
+	/** Remove a direct assignment: a DELETE, so `admin:admin_users:delete`, and the roles' write. */
+	revoke: boolean;
+	/**
+	 * Remove a direct role for every tenant: the roles' write permission from a global assignment
+	 * (the API also measures rank). The console sees only that some assignment is global.
+	 */
+	revokeGlobal: boolean;
+	/** Change when a direct assignment ends: the roles API, read and write (`admin:admin_roles:*`). */
+	expiry: boolean;
+}
+
+export function teamAccess(access: AdminAccess): TeamAccess {
+	const read = hasPermission(access, 'admin:admin_users:read');
+	const manage = read && hasPermission(access, 'admin:admin_users:write');
+	const rolesWrite = hasPermission(access, 'admin:admin_roles:write');
+	const rolesRead = hasPermission(access, 'admin:admin_roles:read');
+	const usersDelete = read && hasPermission(access, 'admin:admin_users:delete');
+	const invite = manage && rolesWrite;
+	return {
+		read,
+		manage,
+		invite,
+		inviteForm: invite && rolesRead,
+		global: access.platform && access.permissions.includes('*'),
+		edit: manage,
+		delete: usersDelete,
+		grant: manage && rolesWrite && rolesRead,
+		revoke: usersDelete && rolesWrite,
+		revokeGlobal: usersDelete && rolesWrite && access.platform,
+		expiry: read && rolesRead && rolesWrite
+	};
+}

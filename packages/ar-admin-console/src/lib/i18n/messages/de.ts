@@ -13,6 +13,7 @@ import { deCustomization } from './customization/de';
 import { deScreens } from './screens/de';
 import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
+import { deTeam } from './team/de';
 
 export const de = {
 	...deSettings,
@@ -29,6 +30,7 @@ export const de = {
 	...deScreens,
 	...deStepUp,
 	...deAdminAudit,
+	...deTeam,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
