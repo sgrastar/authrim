@@ -1114,9 +1114,14 @@ function createRoutedAccountDatabases(userId: string) {
   );
   const accountPiiSqls: string[] = [];
   const accountPiiCalls: Array<{ sql: string; params: unknown[] }> = [];
+  const accountPiiFirst: Array<[string, unknown]> = [];
   const accountPiiDb = createSqlAwareMockDB(async (sql, params, op) => {
     accountPiiSqls.push(sql);
     accountPiiCalls.push({ sql, params });
+    if (op === 'first') {
+      const found = accountPiiFirst.find(([fragment]) => sql.includes(fragment))?.[1];
+      return typeof found === 'function' ? (found as () => unknown)() : found;
+    }
     return op === 'run' ? { success: true } : undefined;
   });
   const attachAccount = (c: { set(key: string, value: unknown): void }) =>
@@ -1137,6 +1142,7 @@ function createRoutedAccountDatabases(userId: string) {
       )
     );
   return {
+    accountPiiFirst,
     metadataDb,
     metadataPiiDb,
     metadataSqls,
@@ -4079,6 +4085,11 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserDeletePiiHandler (routed account)', () => {
+    /** The mock context, typed (createMockContext answers `any`). */
+    const piiDeleteContext = (options: Parameters<typeof createMockContext>[0]) =>
+      createMockContext(options) as Parameters<typeof adminUserDeletePiiHandler>[0] & {
+        json: ReturnType<typeof vi.fn>;
+      };
     function routeAccountSources(dbs: ReturnType<typeof createRoutedAccountDatabases>) {
       resolveCustomClaimRuntimeSources.mockImplementationOnce(async (env: Partial<Env>) => ({
         schemaDb: env.DB,
@@ -4118,8 +4129,104 @@ describe('Admin API Handlers', () => {
         sql.includes('DELETE FROM screen_responses WHERE tenant_id = ? AND user_id = ?')
       );
       expect(responsesAt).toBeGreaterThan(tombstoneAt);
+      // Earlier webhook events' addresses go before the profile changes; the raw values marked
+      // deleted and the provider profile after it, with the core custom attributes.
+      const snapshotsAt = dbs.accountPiiSqls.findIndex((sql) =>
+        sql.includes("UPDATE account_webhook_snapshots SET email_before_json = 'null'")
+      );
+      const valuesAt = dbs.accountPiiSqls.findIndex((sql) =>
+        /UPDATE identity_sensitive_values\s+SET value_json = NULL, lifecycle_state = 'deleted'/u.test(
+          sql
+        )
+      );
+      const providerAt = dbs.accountPiiSqls.findIndex((sql) =>
+        sql.includes('UPDATE linked_identities')
+      );
+      expect(snapshotsAt).toBeGreaterThan(tombstoneAt);
+      expect(valuesAt).toBeGreaterThan(snapshotsAt);
+      expect(providerAt).toBeGreaterThan(snapshotsAt);
+      expect(dbs.accountCoreSqls).toContainEqual(
+        expect.stringContaining(
+          'DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?'
+        )
+      );
+      // A second pass after the check again: an operation finished in the meantime is erased too
+      // (its history and its webhook snapshot).
+      const count = (pattern: RegExp) =>
+        dbs.accountPiiSqls.filter((sql) => pattern.test(sql)).length;
+      expect(count(/UPDATE identity_identifier_replacement_history/u)).toBe(2);
+      expect(count(/UPDATE account_webhook_snapshots SET email_before_json = 'null'/u)).toBe(2);
+      expect(count(/FROM identity_identifier_replacement_operations[\s\S]*state NOT IN/u)).toBe(2);
       expect(dbs.metadataUserSqls()).toEqual([]);
       expect(canonicalRuntimeUsers.get(userId)).toMatchObject({ email: null });
+    });
+
+    it.each([
+      ['FROM identity_identifier_replacement_operations', 'identifier_change_in_progress'],
+      ['FROM linked_identities', 'account_provisioning_pending'],
+    ])('waits (409, nothing erased) while %s holds the values', async (fragment, code) => {
+      const userId = `user-routed-delete-pii-wait-${code}`;
+      const dbs = createRoutedAccountDatabases(userId);
+      dbs.accountPiiFirst.push([fragment, { operation_id: 'op', id: 'li' }]);
+      routeAccountSources(dbs);
+      const c = piiDeleteContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: code }), 409);
+      expect(dbs.accountPiiSqls).not.toContainEqual(
+        expect.stringContaining('INSERT INTO users_pii_tombstone')
+      );
+      expect(dbs.accountPiiSqls.some((sql) => /^\s*(UPDATE|DELETE)/u.test(sql))).toBe(false);
+    });
+
+    it('answers 409 when an operation started while it erased (to be run again)', async () => {
+      const userId = 'user-routed-delete-pii-started-since';
+      const dbs = createRoutedAccountDatabases(userId);
+      let checks = 0;
+      // No change under way at the first check; one started before the second.
+      dbs.accountPiiFirst.push([
+        'FROM identity_identifier_replacement_operations',
+        () => (++checks > 1 ? { operation_id: 'op' } : undefined),
+      ]);
+      routeAccountSources(dbs);
+      const c = piiDeleteContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      await Promise.all(vi.mocked(c.executionCtx.waitUntil).mock.calls.map(([promise]) => promise));
+      // The erasure is recorded, also when the answer asks for the deletion to be run again.
+      expect(await newLogFixture.rows('admin.admin_audit_log', 'default')).toContainEqual(
+        expect.objectContaining({
+          action: 'user.pii_deleted',
+          resource_id: userId,
+          result: 'success',
+        })
+      );
+      expect(checks).toBe(2);
+      // Erased once; the operation that started holds the rest until it has finished.
+      expect(
+        dbs.accountPiiSqls.filter((sql) =>
+          /UPDATE identity_identifier_replacement_history/u.test(sql)
+        )
+      ).toHaveLength(1);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'identifier_change_in_progress' }),
+        409
+      );
+      expect(dbs.accountPiiSqls).toContainEqual(
+        expect.stringContaining('UPDATE identity_sensitive_values')
+      );
     });
 
     it("keeps the erased address's keyed index and the requested retention in the tombstone", async () => {

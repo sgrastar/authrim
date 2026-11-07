@@ -21,15 +21,93 @@ export interface LiteInvite {
 	 * prove it first: such sign-ups are not offered here (PR6c).
 	 */
 	emailProofRequired: boolean;
+	/** A code sent to the invited address, to prove it (its check gives the proof). */
+	proofPending?: {
+		verificationId: string;
+		maskedEmail: string | null;
+		sentAt: number;
+		/** How many wrong codes were tried (ar-auth allows a code a few). */
+		tries: number;
+		/** How many checks were made (each its own; one ar-auth could not make is no try). */
+		checks: number;
+	} | null;
+	/** The proof of the invited address a passkey's or authenticator's sign-up passes on. */
+	emailProof?: { value: string; expiresAt: number } | null;
+	/** When one post took the send of a code (the others meanwhile draw the page again). */
+	proofSendAt?: number | null;
+}
+
+/** The invitation's proof of its address while it lasts (a minute's margin); null when none. */
+export function liteInviteEmailProof(invite: LiteInvite | null, now = Date.now()): string | null {
+	const proof = invite?.emailProof;
+	return proof && proof.expiresAt - 60_000 > now ? proof.value : null;
+}
+
+/**
+ * Sends a code to the invited address (`/api/v1/invitations/email-verification/send`, behind the
+ * sign-up's proof of work on a lite tenant): never to an address the page gives.
+ */
+export async function sendLiteInviteProofCode(
+	backend: LiteBackendClient,
+	input: { token: string; proof: string | null }
+): Promise<
+	{ ok: true; verificationId: string; maskedEmail: string | null } | { ok: false; status: number }
+> {
+	const answer = await backend.request('/api/v1/invitations/email-verification/send', {
+		json: {
+			token: input.token,
+			...(input.proof ? { human_verification_response: input.proof } : {})
+		}
+	});
+	const json = isRecord(answer.json) ? answer.json : {};
+	if (
+		answer.status !== 200 ||
+		typeof json.verification_id !== 'string' ||
+		!/^[0-9a-f-]{36}$/u.test(json.verification_id)
+	) {
+		return { ok: false, status: answer.status };
+	}
+	return {
+		ok: true,
+		verificationId: json.verification_id,
+		maskedEmail: typeof json.masked_email === 'string' ? json.masked_email : null
+	};
+}
+
+/** Checks the invited address's code: the proof, and how long it lasts. */
+export async function checkLiteInviteProofCode(
+	backend: LiteBackendClient,
+	input: { token: string; verificationId: string; code: string }
+): Promise<{ ok: true; proof: string; expiresAt: number } | { ok: false; status: number }> {
+	const answer = await backend.request('/api/v1/invitations/email-verification/verify', {
+		json: { token: input.token, verification_id: input.verificationId, code: input.code }
+	});
+	const json = isRecord(answer.json) ? answer.json : {};
+	const proof = json.invitation_email_proof;
+	if (
+		answer.status !== 200 ||
+		typeof proof !== 'string' ||
+		!/^[A-Za-z0-9_-]{16,128}$/u.test(proof)
+	) {
+		return { ok: false, status: answer.status };
+	}
+	const expiresIn =
+		typeof json.expires_in === 'number' && Number.isFinite(json.expires_in) && json.expires_in > 0
+			? Math.min(json.expires_in, 3600)
+			: 600;
+	return { ok: true, proof, expiresAt: Date.now() + expiresIn * 1000 };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** An invitation's token as a query carries it (ar-auth takes 32 characters or more). */
+/**
+ * An invitation's token as a query carries it: ar-auth takes 32 characters or more (the admin
+ * makes 64), and the start grant that carries a sign-up's keeps 128 at most (LiteTxnStore keys).
+ */
 export function readInviteToken(value: string | null): string | null {
-	return value && /^[A-Za-z0-9_-]{32,256}$/u.test(value) ? value : null;
+	return value && /^[A-Za-z0-9_-]{32,128}$/u.test(value) ? value : null;
 }
 
 /** The invitation, checked; `invalid` when there is none to take (`unavailable`: the check failed). */
@@ -70,6 +148,46 @@ export function readLiteInvite(data: Record<string, unknown>): LiteInvite | null
 		tenantId: invite.tenantId,
 		tenantName: typeof invite.tenantName === 'string' ? invite.tenantName : null,
 		email: typeof invite.email === 'string' ? invite.email : null,
-		emailProofRequired: invite.emailProofRequired !== false
+		emailProofRequired: invite.emailProofRequired !== false,
+		proofPending:
+			isRecord(invite.proofPending) &&
+			typeof invite.proofPending.verificationId === 'string' &&
+			typeof invite.proofPending.sentAt === 'number'
+				? {
+						verificationId: invite.proofPending.verificationId,
+						maskedEmail:
+							typeof invite.proofPending.maskedEmail === 'string'
+								? invite.proofPending.maskedEmail
+								: null,
+						sentAt: invite.proofPending.sentAt,
+						tries:
+							typeof invite.proofPending.tries === 'number' &&
+							Number.isInteger(invite.proofPending.tries) &&
+							invite.proofPending.tries >= 0
+								? invite.proofPending.tries
+								: 0,
+						checks:
+							typeof invite.proofPending.checks === 'number' &&
+							Number.isInteger(invite.proofPending.checks) &&
+							invite.proofPending.checks >= 0
+								? invite.proofPending.checks
+								: 0
+					}
+				: null,
+		emailProof:
+			isRecord(invite.emailProof) &&
+			typeof invite.emailProof.value === 'string' &&
+			typeof invite.emailProof.expiresAt === 'number'
+				? { value: invite.emailProof.value, expiresAt: invite.emailProof.expiresAt }
+				: null,
+		proofSendAt:
+			typeof invite.proofSendAt === 'number' && Number.isFinite(invite.proofSendAt)
+				? invite.proofSendAt
+				: null
 	};
+}
+
+/** Whether two readings of the transaction hold the same invitation, every part of it. */
+export function sameLiteInvite(a: LiteInvite | null, b: LiteInvite | null): boolean {
+	return a !== null && b !== null && JSON.stringify(a) === JSON.stringify(b);
 }

@@ -447,7 +447,8 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 4b. A sign-in started from an invitation reserves one use of it now, so the use is there
     // when the callback creates the account. A link, a re-authentication or a silent sign-in
     // creates no account, so it carries no invitation.
-    const inviteToken = query('invite_token');
+    // A lite start's invitation is the one its sign-up's transaction keeps (its grant carries it).
+    const inviteToken = lite ? (lite.start.inviteToken ?? undefined) : query('invite_token');
     const silent = (prompt ?? '').split(' ').includes('none');
     let signupInvitation: ExternalSignupInvitation | null = null;
     if (inviteToken !== undefined && !link && !reauth && !silent) {

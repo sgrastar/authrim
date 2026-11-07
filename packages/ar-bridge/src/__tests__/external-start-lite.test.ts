@@ -265,6 +265,19 @@ describe('external start for a tenant in lite mode', () => {
     expect(authorization).toMatchObject({ prompt: undefined, loginHint: undefined });
   });
 
+  it("reserves the invitation its grant carries (the sign-up's), never the query's", async () => {
+    mocks.consumeGrant.mockResolvedValue({
+      ok: true,
+      txn,
+      start: { clientId: 'login-ui', interactionId: 'interaction-1', inviteToken: 'grant-invite' },
+    });
+    mocks.reserveInvitation.mockResolvedValue({ id: 'reservation-1' });
+    const response = await start('provider-a', `lite_txn=txn-1&lite_grant=grant-1&${PUBLIC_QUERY}`);
+    expect(response.status).toBe(302);
+    expect(mocks.reserveInvitation).toHaveBeenCalledTimes(1);
+    expect(mocks.reserveInvitation.mock.calls[0][1]).toMatchObject({ token: 'grant-invite' });
+  });
+
   it('starts no re-authentication (its proof was not made for one)', async () => {
     mocks.challengeKind.mockResolvedValue('reauth');
     const response = await start('provider-a', 'lite_txn=txn-1&lite_grant=grant-1');
