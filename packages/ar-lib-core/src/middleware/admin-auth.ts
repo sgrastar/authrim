@@ -8,7 +8,8 @@
  * Admin/EndUser Separation:
  * - Admin users are stored in DB_ADMIN (separate from EndUsers in DB_CORE)
  * - Admin sessions are stored in admin_sessions table (not Durable Objects)
- * - Admin roles/permissions are from admin_role_assignments + admin_roles
+ * - Admin roles/permissions are from admin_effective_role_assignments (own and group
+ *   assignments) + admin_roles
  *
  * Security features:
  * - Admin role verification for session auth
@@ -432,7 +433,7 @@ export const DEFAULT_ADMIN_SIGN_IN_ROLES: readonly string[] = ADMIN_ROLE_GROUPS.
  * Authenticate using session cookie
  *
  * Validates session from DB_ADMIN and checks for admin roles.
- * Uses admin_sessions and admin_role_assignments tables.
+ * Uses admin_sessions and admin_effective_role_assignments (own and group assignments).
  *
  * @param c - Hono context
  * @param sessionId - Session ID from cookie
@@ -531,7 +532,8 @@ export async function authenticateAdminSessionForTenant(
     const effectiveTargetTenantId =
       targetTenantId || session.derived_target_tenant_id || session.tenant_id;
 
-    // Fetch effective roles for this Admin user. Global assignments are platform-wide.
+    // Fetch effective roles for this Admin user: their own assignments and their groups'.
+    // Global assignments are platform-wide (a group gives tenant roles only).
     // Tenant assignments only apply to the requested tenant; legacy NULL scope_id only
     // applies to the assignment tenant for backward compatibility.
     const rolesResult = await adminAdapter.query<AdminAuthRoleRow>(
@@ -542,7 +544,7 @@ export async function authenticateAdminSessionForTenant(
          r.hierarchy_level,
          r.inherits_from,
          MAX(CASE WHEN ra.scope_type = 'global' THEN 1 ELSE 0 END) as has_global_scope
-       FROM admin_role_assignments ra
+       FROM admin_effective_role_assignments ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
        WHERE ra.admin_user_id = ?
          AND ra.tenant_id = ?

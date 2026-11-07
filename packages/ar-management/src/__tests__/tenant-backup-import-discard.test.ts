@@ -53,7 +53,7 @@ export function freshDatabase(family: Family) {
   // The 0.5.0 baseline, and the later admin tables the backup registry requires.
   for (const file of [
     `001_0_5_0_${family}_baseline.sql`,
-    ...(family === 'admin' ? ['009_login_ui_themes.sql'] : []),
+    ...(family === 'admin' ? ['009_login_ui_themes.sql', '012_admin_groups.sql'] : []),
   ])
     database.exec(renderSqliteMigration(readFileSync(`${directory}/${file}`, 'utf8')));
   database.exec('PRAGMA foreign_keys = ON');

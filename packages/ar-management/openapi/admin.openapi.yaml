@@ -29,6 +29,7 @@ tags:
   - name: Admin Access Control
   - name: Admin Attributes
   - name: Admin Audit
+  - name: Admin Groups
   - name: Admin IP Allowlist
   - name: Admin Invitations
   - name: Admin Miscellaneous
@@ -4065,7 +4066,9 @@ paths:
           $ref: '#/components/responses/AdminManagementUserDetail'
         '404':
           $ref: '#/components/responses/Error'
-      description: Return one Admin Console user with role assignments and passkey count.
+      description: >-
+        Return one Admin Console user with every role they hold (their own and their admin groups'),
+        their groups, and the passkey count.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -39053,6 +39056,385 @@ paths:
         },
     }
 
+  /api/admin/admin-groups:
+    get:
+      tags:
+        - Admin Groups
+      summary: List admin groups.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      responses:
+        '200':
+          description: Admin groups.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupList'
+      description: >-
+        The tenant's admin groups with their member and grant counts. Needs admin users read.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Admin Groups
+      summary: Create an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminGroupCreate'
+      responses:
+        '201':
+          description: The group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroup'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Create an empty group; it gives nothing until a role is granted to it. Needs admin roles write. 409 when the tenant already has the key.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}':
+    get:
+      tags:
+        - Admin Groups
+      summary: Get an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupDetail'
+        '404':
+          $ref: '#/components/responses/Error'
+      description: >-
+        The group with its members and the roles it gives.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    patch:
+      tags:
+        - Admin Groups
+      summary: Rename an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminGroupUpdate'
+      responses:
+        '200':
+          description: The group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroup'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Change the display name or description (the key stays). Changes no one's roles.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Admin Groups
+      summary: Delete an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupSuccess'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Delete the group with its members and grants: every member loses what it gave. Judged as removing those assignments (the caller may remove each role; L2 as admin.role.revoke); 409 last_tenant_admin when it would leave the tenant without an administrator.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}/members':
+    get:
+      tags:
+        - Admin Groups
+      summary: List the members of an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Members.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupMemberList'
+        '404':
+          $ref: '#/components/responses/Error'
+      description: >-
+        The group's members (the tenant's administrators).
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}/members/{adminUserId}':
+    put:
+      tags:
+        - Admin Groups
+      summary: Add an admin to a group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: adminUserId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Already a member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupMemberAdded'
+        '201':
+          description: Added.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupMemberAdded'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Add one of the tenant's administrators. They get every role the group gives, so the caller must outrank each (L2 as admin.role.grant). 409 admin_group_changed when the group's roles changed while the request was checked. Already a member: 200 with added false.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Admin Groups
+      summary: Remove an admin from a group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: adminUserId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupSuccess'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        They lose what the group gave them. L2 as admin.role.revoke; 409 last_tenant_admin when it would leave the tenant without an administrator.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}/role-grants':
+    get:
+      tags:
+        - Admin Groups
+      summary: List the roles an admin group gives.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Grants.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupRoleGrantList'
+        '404':
+          $ref: '#/components/responses/Error'
+      description: >-
+        The group's grants, for its tenant.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Admin Groups
+      summary: Give an admin group a role.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminGroupRoleGrantCreate'
+      responses:
+        '201':
+          description: The grant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupRoleGrant'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Every member gets the role for the tenant. Judged as granting it directly (the caller must outrank it; L2 as admin.role.grant). The platform role is not given through groups (400). 409 when the group already gives it, or admin_group_changed.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admin-groups/{id}/role-grants/{grantId}':
+    patch:
+      tags:
+        - Admin Groups
+      summary: Change when an admin group's role ends.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminGroupRoleGrantUpdate'
+      responses:
+        '200':
+          description: The grant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupRoleGrant'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        A later end, or none, gives the role for longer and is judged as granting it (admin.role.grant); an earlier one is judged as removing it (admin.role.revoke, and 409 last_tenant_admin).
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Admin Groups
+      summary: Take a role from an admin group.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGroupSuccess'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Every member loses the role (unless they hold it otherwise). L2 as admin.role.revoke; 409 last_tenant_admin.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+
 components:
   headers:
     LogConsistency:
@@ -51463,6 +51845,200 @@ components:
                 type: boolean
                 const: false
   schemas:
+    AdminGroup:
+      type: object
+      required: [id, tenant_id, group_key, display_name, description, revision, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        group_key:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9_-]{0,63}$'
+        display_name:
+          type: string
+          maxLength: 100
+        description:
+          type: [string, 'null']
+          maxLength: 500
+        revision:
+          type: integer
+          description: Goes up whenever the roles the group gives change.
+        created_by:
+          type: [string, 'null']
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+    AdminGroupList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/AdminGroup'
+              - type: object
+                required: [member_count, grant_count]
+                properties:
+                  member_count:
+                    type: integer
+                  grant_count:
+                    type: integer
+        total:
+          type: integer
+    AdminGroupMember:
+      type: object
+      required: [id, admin_group_id, admin_user_id, created_at]
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        admin_group_id:
+          type: string
+        admin_user_id:
+          type: string
+        added_by:
+          type: [string, 'null']
+        created_at:
+          type: integer
+          format: int64
+        email:
+          type: [string, 'null']
+        name:
+          type: [string, 'null']
+        status:
+          type: [string, 'null']
+        is_active:
+          type: boolean
+    AdminGroupMemberList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminGroupMember'
+        total:
+          type: integer
+    AdminGroupRoleGrant:
+      type: object
+      required: [id, admin_group_id, admin_role_id, scope_type, scope_id, expires_at, created_at]
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        admin_group_id:
+          type: string
+        admin_role_id:
+          type: string
+        scope_type:
+          type: string
+          enum: [tenant]
+        scope_id:
+          type: string
+        expires_at:
+          type: [integer, 'null']
+          format: int64
+        assigned_by:
+          type: [string, 'null']
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+        role_name:
+          type: string
+        role_display_name:
+          type: [string, 'null']
+        hierarchy_level:
+          type: integer
+    AdminGroupRoleGrantList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminGroupRoleGrant'
+        total:
+          type: integer
+    AdminGroupDetail:
+      allOf:
+        - $ref: '#/components/schemas/AdminGroup'
+        - type: object
+          required: [members, grants]
+          properties:
+            members:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminGroupMember'
+            grants:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminGroupRoleGrant'
+    AdminGroupCreate:
+      type: object
+      required: [group_key, display_name]
+      properties:
+        group_key:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9_-]{0,63}$'
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: [string, 'null']
+          maxLength: 500
+    AdminGroupUpdate:
+      type: object
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: [string, 'null']
+          maxLength: 500
+    AdminGroupRoleGrantCreate:
+      type: object
+      required: [role_id]
+      properties:
+        role_id:
+          type: string
+        expires_at:
+          type: [integer, 'null']
+          format: int64
+          description: A future time in epoch milliseconds; null or absent for permanent.
+    AdminGroupRoleGrantUpdate:
+      type: object
+      required: [expires_at]
+      properties:
+        expires_at:
+          type: [integer, 'null']
+          format: int64
+    AdminGroupMemberAdded:
+      type: object
+      required: [success, added]
+      properties:
+        success:
+          type: boolean
+        added:
+          type: boolean
+    AdminGroupSuccess:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
     AdminKeyringPresentationStart:
       type: object
       required:
@@ -52115,6 +52691,15 @@ components:
         role_expires_at:
           type: integer
           format: int64
+        group_ids:
+          type: array
+          maxItems: 10
+          description: >-
+            Admin groups the admin joins on enrolment. The caller must outrank every role each
+            group gives. A group whose roles change before enrolment is not joined (the tenant's
+            administrators get a console notice).
+          items:
+            type: string
         expires_in_hours:
           type: number
           exclusiveMinimum: 0
@@ -52770,8 +53355,23 @@ components:
           type: string
         roles:
           type: array
+          description: Every role the admin holds, their own and through their admin groups.
           items:
             type: string
+        groups:
+          type: array
+          description: The admin groups the admin belongs to.
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, group_key, display_name]
+            properties:
+              id:
+                type: string
+              group_key:
+                type: string
+              display_name:
+                type: string
         permissions:
           type: array
           items:
@@ -57688,9 +58288,36 @@ components:
           properties:
             roles:
               type: array
+              description: >-
+                Every role the admin holds: their own assignments (source direct, removable by
+                assignment_id) and the ones their admin groups give (source group, assignment_id
+                null; changed through the group).
               items:
                 type: object
                 additionalProperties: true
+                properties:
+                  assignment_id:
+                    type: [string, 'null']
+                  source:
+                    type: string
+                    enum: [direct, group]
+                  admin_group_id:
+                    type: [string, 'null']
+                  admin_group_name:
+                    type: [string, 'null']
+            groups:
+              type: array
+              description: The admin groups the admin belongs to.
+              items:
+                type: object
+                required: [id, group_key, display_name]
+                properties:
+                  id:
+                    type: string
+                  group_key:
+                    type: string
+                  display_name:
+                    type: string
             passkey_count:
               type: integer
               minimum: 0

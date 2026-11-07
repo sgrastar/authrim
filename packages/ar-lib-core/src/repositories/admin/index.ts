@@ -14,6 +14,18 @@ export {
   type AdminRoleAssignmentWithUser,
 } from './admin-role';
 export { ADMIN_GUARD_NOW_MS, allOfGuards, guardClause, type AdminWriteGuard } from './write-guard';
+export {
+  ADMIN_EFFECTIVE_ROLE_ASSIGNMENTS,
+  AdminGroupRepository,
+  adminInvitationGroupJoin,
+  adminInvitationGroupJoinCheck,
+  type AdminGroup,
+  type AdminGroupAddResult,
+  type AdminGroupGrantSnapshot,
+  type AdminGroupMember,
+  type AdminGroupRoleGrant,
+  type AdminGroupSummary,
+} from './admin-group';
 export { AdminSessionRepository } from './admin-session';
 export { AdminPasskeyNotFirstError, AdminPasskeyRepository } from './admin-passkey';
 export {

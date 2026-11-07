@@ -1515,6 +1515,88 @@ describe('admin tenant clone', () => {
     expect(Number((assignmentRead?.[1] as unknown[])[1])).toBeGreaterThan(1e12);
   });
 
+  it('copies admin groups with their roles, remapped, and leaves their members behind', async () => {
+    mocks.admin.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM admin_roles')) {
+        return [
+          {
+            id: 'source-custom-role',
+            name: 'support_custom',
+            display_name: 'Support Custom',
+            description: null,
+            permissions_json: '["admin:users:read"]',
+            hierarchy_level: 40,
+            role_type: 'custom',
+          },
+        ];
+      }
+      // The source digest of the groups
+      if (sql.includes('FROM admin_groups grp')) return [];
+      if (sql.includes('FROM admin_groups WHERE tenant_id')) {
+        return [
+          { id: 'source-group', group_key: 'help', display_name: 'Help', description: 'Desk' },
+        ];
+      }
+      if (sql.includes('FROM admin_group_role_grants g')) {
+        return [
+          {
+            admin_group_id: 'source-group',
+            admin_role_id: 'source-custom-role',
+            expires_at: null,
+            assigned_by: 'admin-root',
+            is_system: 0,
+          },
+          {
+            admin_group_id: 'source-group',
+            admin_role_id: 'role_ar_support',
+            expires_at: 9_999_999_999_999,
+            assigned_by: 'admin-root',
+            is_system: 1,
+          },
+        ];
+      }
+      return [];
+    });
+
+    const response = await adminTenantCloneHandler(
+      context(
+        { id: 'destination', name: 'Destination', copy: { admin_access: true } },
+        { SETTINGS: kvNamespace(), AUTHRIM_CONFIG: kvNamespace(), ENVIRONMENT: 'test' }
+      )
+    );
+    const body = await response.json<{
+      cloned_items: { admin_groups: number; admin_group_role_grants: number };
+    }>();
+    expect(response.status).toBe(201);
+    expect(body.cloned_items).toMatchObject({ admin_groups: 1, admin_group_role_grants: 2 });
+
+    const calls = mocks.admin.execute.mock.calls.map(([sql, params]) => ({
+      sql: String(sql),
+      params: params as unknown[],
+    }));
+    const groupInserts = calls.filter(({ sql }) => sql.includes('INSERT INTO admin_groups'));
+    expect(groupInserts).toHaveLength(1);
+    expect(groupInserts[0].params).toEqual(
+      expect.arrayContaining(['destination', 'help', 'Help', 'Desk'])
+    );
+    const newGroupId = groupInserts[0].params[0];
+    expect(newGroupId).not.toBe('source-group');
+    const grantInserts = calls.filter(({ sql }) =>
+      sql.includes('INSERT INTO admin_group_role_grants')
+    );
+    expect(grantInserts).toHaveLength(2);
+    for (const insert of grantInserts) {
+      expect(insert.params[1]).toBe('destination');
+      expect(insert.params[2]).toBe(newGroupId);
+      expect(insert.params[4]).toBe('destination');
+    }
+    // The custom role is the destination's copy; the system role stays itself.
+    expect(grantInserts[0].params[3]).not.toBe('source-custom-role');
+    expect(grantInserts[1].params[3]).toBe('role_ar_support');
+    // The members are the source tenant's administrators: not copied.
+    expect(calls.some(({ sql }) => sql.includes('INSERT INTO admin_group_members'))).toBe(false);
+  });
+
   it('restores custom Admin role inheritance and preserves system parents', async () => {
     mocks.admin.query.mockImplementation(async (sql: string) => {
       if (sql.includes('WHERE tenant_id = ? AND is_system = 0')) {
@@ -2056,7 +2138,8 @@ describe('admin tenant clone', () => {
   });
 
   it('cleans partially copied Admin access when its copy step fails', async () => {
-    // The first read is the source snapshot's digest of the assignments.
+    // The first reads are the source snapshot's digests of the assignments and the admin groups.
+    mocks.admin.query.mockResolvedValueOnce([]);
     mocks.admin.query.mockResolvedValueOnce([]);
     mocks.admin.query.mockResolvedValueOnce([
       {

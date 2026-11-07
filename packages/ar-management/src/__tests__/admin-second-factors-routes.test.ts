@@ -72,6 +72,7 @@ function database(): { db: Database; adapter: DatabaseAdapter } {
     '001_0_5_0_admin_baseline.sql',
     '003_admin_session_passkey_evidence.sql',
     '004_admin_second_factors.sql',
+    '012_admin_groups.sql',
   ]) {
     db.exec(readRenderedMigrationSql(ADMIN_MIGRATIONS, file));
   }

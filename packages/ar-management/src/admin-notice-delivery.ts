@@ -127,7 +127,7 @@ export async function adminViews(
     }>(
       `SELECT ra.admin_user_id, au.tenant_id AS home, ra.admin_role_id, ra.scope_type,
               r.name AS role_name
-         FROM admin_role_assignments ra
+         FROM admin_effective_role_assignments ra
          JOIN admin_users au ON au.id = ra.admin_user_id AND au.tenant_id = ra.tenant_id
          JOIN admin_roles r ON r.id = ra.admin_role_id
           AND (r.tenant_id = ra.tenant_id OR (r.tenant_id = 'default' AND r.is_system = 1))
@@ -239,7 +239,7 @@ async function globalAdminIds(
   superAdminsOnly: boolean
 ): Promise<string[]> {
   const rows = await adapter.query<{ id: string }>(
-    `SELECT DISTINCT au.id FROM admin_role_assignments ra
+    `SELECT DISTINCT au.id FROM admin_effective_role_assignments ra
        JOIN admin_roles r ON r.id = ra.admin_role_id
         AND (r.tenant_id = ra.tenant_id OR (r.tenant_id = 'default' AND r.is_system = 1))
        JOIN admin_users au ON au.id = ra.admin_user_id AND au.tenant_id = ra.tenant_id

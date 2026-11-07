@@ -210,6 +210,17 @@ export interface AdminRoleAssignment {
 }
 
 /**
+ * An assignment as authorization reads it: the admin's own (`direct`), or one that comes through
+ * an admin group (`group`, whose `id` is `group:<membership id>:<grant id>` and cannot be edited
+ * as an assignment; change the group's members or grants instead).
+ */
+export interface AdminEffectiveRoleAssignment extends AdminRoleAssignment {
+  source: 'direct' | 'group';
+  admin_group_id: string | null;
+  admin_group_name: string | null;
+}
+
+/**
  * Admin role assignment creation input
  */
 export interface AdminRoleAssignmentCreateInput {

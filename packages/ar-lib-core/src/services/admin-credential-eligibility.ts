@@ -53,7 +53,7 @@ export async function evaluateAdminCredentialEligibility(
 
   const assignment = await adminAdapter.queryOne<{ id: string }>(
     `SELECT ra.id
-       FROM admin_role_assignments ra
+       FROM admin_effective_role_assignments ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
       WHERE ra.admin_user_id = ?
         AND ra.tenant_id = ?

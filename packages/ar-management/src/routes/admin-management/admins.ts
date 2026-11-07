@@ -17,6 +17,7 @@ import {
   AdminUserRepository,
   AdminRoleRepository,
   AdminRoleAssignmentRepository,
+  AdminGroupRepository,
   AdminPasskeyRepository,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -400,11 +401,15 @@ adminUsersRouter.get('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    // Get role assignments
-    const roleAssignments = await roleAssignmentRepo.getAssignmentsByUser(id);
+    // Every role the admin holds: their own assignments (which can be removed one by one) and
+    // the ones their groups give (changed through the group: no assignment_id).
+    const [roleAssignments, groups] = await Promise.all([
+      roleAssignmentRepo.getEffectiveAssignmentsByUser(id),
+      new AdminGroupRepository(adapter, tenantId).groupsOfUser(id),
+    ]);
     const roles = roleAssignments.map((ra) => ({
       id: ra.admin_role_id,
-      assignment_id: ra.id,
+      assignment_id: ra.source === 'direct' ? ra.id : null,
       role_id: ra.admin_role_id,
       name: ra.role.name,
       display_name: ra.role.display_name,
@@ -413,6 +418,9 @@ adminUsersRouter.get('/:id', async (c) => {
       assigned_at: ra.created_at,
       expires_at: ra.expires_at,
       assigned_by: ra.assigned_by,
+      source: ra.source,
+      admin_group_id: ra.admin_group_id,
+      admin_group_name: ra.admin_group_name,
     }));
 
     // Get passkeys
@@ -421,6 +429,7 @@ adminUsersRouter.get('/:id', async (c) => {
     return c.json({
       ...sanitizeAdminUser(user),
       roles,
+      groups,
       passkey_count: passkeys.length,
       passkeys: passkeys.map((passkey) => ({
         id: passkey.id,
@@ -1266,9 +1275,11 @@ adminUsersRouter.delete('/:id/roles/:roleId', async (c) => {
       }
     }
 
+    // Only the role's own assignments go; what the admin holds through a group stays.
     if (role.name === ADMIN_ROLES.TENANT_ADMIN) {
       const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
         adminUserId: id,
+        directOnly: true,
       });
       if (tenantAdminRefusal) {
         return tenantAdminRefusal;
@@ -1295,7 +1306,7 @@ adminUsersRouter.delete('/:id/roles/:roleId', async (c) => {
       allOfGuards(
         isPlatformAdminRole(role.name) ? roleKeepsHolderGuard(tenantId, roleId, true) : undefined,
         role.name === ADMIN_ROLES.TENANT_ADMIN
-          ? tenantKeepsAdminGuard(tenantId, { adminUserId: id })
+          ? tenantKeepsAdminGuard(tenantId, { adminUserId: id, directOnly: true })
           : undefined
       )
     );

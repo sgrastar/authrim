@@ -178,6 +178,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/admin-groups.ts',
+        receiverPrefixes: {
+          adminGroupsRouter: '/api/admin/admin-groups',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-approvals.ts',
         receiverPrefixes: {
           adminApprovalsRouter: '/api/admin/approvals',
