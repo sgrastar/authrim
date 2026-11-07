@@ -315,6 +315,11 @@ export async function handleIdentity(
         defaultUserStoreSources.piiDb
       );
   if (existingLink) {
+    // Signing in to an existing account: only with a provider the tenant lets sign people in,
+    // decided before anything is written.
+    if (params.reauthentication !== true) {
+      await assertExternalProviderUsageAllowed(env, tenantId, provider, 'login');
+    }
     // The user's profile from the provider, where the tenant turns that on.
     await updateUserProfileFromProvider(
       env,
@@ -389,6 +394,7 @@ export async function handleIdentity(
       status: 'ready',
       userId: externalRoute.legacyUserId,
       isNewUser: false,
+      finishedAccountCreation: true,
       linkedIdentityId: completed.linkedIdentityId,
       stitchedFromExisting: false,
       roles_assigned: completed.roles_assigned,
@@ -419,6 +425,11 @@ export async function handleIdentity(
     : null;
 
   if (existingUser) {
+    // The sign-in is for an existing account (linked now or asked to be linked first): only with
+    // a provider the tenant lets sign people in, decided before anything is written.
+    if (params.reauthentication !== true) {
+      await assertExternalProviderUsageAllowed(env, tenantId, provider, 'login');
+    }
     // User with this email exists - check if we can auto-link
     if (
       stitchingConfig.enabled &&

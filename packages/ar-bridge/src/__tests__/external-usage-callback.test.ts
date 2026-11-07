@@ -160,13 +160,25 @@ describe("external callback: the tenant's sign-in switch", () => {
   };
 
   it('refuses the sign-in when the tenant turned the provider off after it started', async () => {
-    const response = await callback(envWith(entry({ loginEnabled: false })));
+    const response = await callback(envWith(entry({ loginEnabled: false, signupEnabled: false })));
 
     expect(response.status).toBe(302);
     expect(errorOf(response)).toBe('access_denied');
     expect(response.headers.get('location')).not.toContain('code=');
     expectNothingMade();
   });
+
+  it.each([
+    ['sign-up only', { loginEnabled: false, signupEnabled: true }],
+    ['sign-in only', { loginEnabled: true, signupEnabled: false }],
+  ])(
+    'lets a provider for %s on to the exchange: what the sign-in does is checked when it is known',
+    async (_label, fields) => {
+      await callback(envWith(entry(fields)));
+
+      expect(mocks.fromProvider).toHaveBeenCalledOnce();
+    }
+  );
 
   it('answers temporarily_unavailable, making nothing, when the switches cannot be read', async () => {
     const response = await callback(envWith('unreadable'));

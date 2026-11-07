@@ -26,7 +26,10 @@ paths:
         in the path and the tenant's current lite policy revision); such a start ignores every other query
         parameter and takes the client, the authorization challenge and the interaction from the
         transaction and the grant, and returns to the lite /callback with lite_txn and lite_grant
-        (its failures too).
+        (its failures too). A sign-in checks the provider's sign-in switch, a sign-up
+        (purpose=signup, or a lite transaction made for sign-up) its sign-up switch; the callback
+        then lets it sign in to an existing account only while sign-in is on, and create one only
+        while sign-up is on.
       parameters:
         - name: provider
           in: path
@@ -59,6 +62,19 @@ paths:
           description: One-use account-link intent bound to the current browser session.
           schema:
             type: string
+        - name: purpose
+          in: query
+          required: false
+          description: >-
+            signup when started from the sign-up screen: the start checks the provider's sign-up
+            switch and verifies human verification for sign-up (with the sign-in requirement as
+            well). Any other value, or none, is a sign-in; a link, a re-authentication and a silent
+            sign-in (prompt=none) are never a sign-up. Ignored for a lite Login UI tenant.
+          schema:
+            type: string
+            enum:
+              - login
+              - signup
         - name: lite_txn
           in: query
           required: false
@@ -99,7 +115,7 @@ paths:
           description: Existing sign-in validation failed, such as missing client PKCE or invalid human verification.
         '403':
           description: >-
-            The provider is not permitted for the requested sign-in or re-authentication, or a
+            The provider is not permitted for the requested sign-in, sign-up or re-authentication, or a
             lite Login UI tenant's start has no start grant it can consume
             (lite_mode_endpoint_unavailable).
         '404':
@@ -125,7 +141,10 @@ paths:
         in the path and the tenant's current lite policy revision); such a start ignores every other query
         parameter and takes the client, the authorization challenge and the interaction from the
         transaction and the grant, and returns to the lite /callback with lite_txn and lite_grant
-        (its failures too).
+        (its failures too). A sign-in checks the provider's sign-in switch, a sign-up
+        (purpose=signup, or a lite transaction made for sign-up) its sign-up switch; the callback
+        then lets it sign in to an existing account only while sign-in is on, and create one only
+        while sign-up is on.
       parameters:
         - name: provider
           in: path
@@ -158,6 +177,19 @@ paths:
           description: One-use account-link intent bound to the current browser session.
           schema:
             type: string
+        - name: purpose
+          in: query
+          required: false
+          description: >-
+            signup when started from the sign-up screen: the start checks the provider's sign-up
+            switch and verifies human verification for sign-up (with the sign-in requirement as
+            well). Any other value, or none, is a sign-in; a link, a re-authentication and a silent
+            sign-in (prompt=none) are never a sign-up. Ignored for a lite Login UI tenant.
+          schema:
+            type: string
+            enum:
+              - login
+              - signup
         - name: lite_txn
           in: query
           required: false
@@ -198,7 +230,7 @@ paths:
           description: Existing sign-in validation failed, such as missing client PKCE or invalid human verification.
         '403':
           description: >-
-            The provider is not permitted for the requested sign-in or re-authentication, or a
+            The provider is not permitted for the requested sign-in, sign-up or re-authentication, or a
             lite Login UI tenant's start has no start grant it can consume
             (lite_mode_endpoint_unavailable).
         '404':

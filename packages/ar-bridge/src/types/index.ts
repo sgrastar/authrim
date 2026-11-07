@@ -284,12 +284,24 @@ export interface HandleIdentityParams {
    * a sign-in begun at a lite start, whose proof of work also met the sign-up requirement.
    */
   accountCreationAllowed?: boolean;
+  /**
+   * True for a re-authentication, which has its own switch. Any other sign-in that finds an
+   * existing account signs in to it only with a provider the tenant lets sign people in
+   * (whatever its start was for: a sign-up that finds the account is a sign-in).
+   */
+  reauthentication?: boolean;
 }
 
 export interface HandleIdentityReadyResult {
   status: 'ready';
   userId: string;
   isNewUser: boolean;
+  /**
+   * True where this sign-in finished creating an account an earlier one provisioned (a sign-up,
+   * as a new account is), though the account is not new (isNewUser false: its invitation, if
+   * any, was the earlier sign-in's).
+   */
+  finishedAccountCreation?: true;
   linkedIdentityId: string;
   stitchedFromExisting: boolean;
   /** Roles assigned during JIT provisioning */

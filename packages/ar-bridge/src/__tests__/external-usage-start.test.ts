@@ -207,3 +207,102 @@ describe("external start: the tenant's sign-in switch", () => {
     expect(mocks.storeAuthState).toHaveBeenCalledOnce();
   });
 });
+
+describe("external start: the switch for the start's purpose", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.verifyHumanVerification.mockResolvedValue({ verified: true });
+    mocks.getProvider.mockResolvedValue(provider);
+    mocks.storeAuthState.mockResolvedValue('auth-state-id');
+    mocks.createAuthorizationUrl.mockResolvedValue(IDP_AUTHORIZE);
+    mocks.fromProvider.mockReturnValue({ createAuthorizationUrl: mocks.createAuthorizationUrl });
+    mocks.findByClientId.mockResolvedValue(null);
+    mocks.challengeKind.mockResolvedValue('login');
+  });
+
+  const SIGN_UP = `${SIGN_IN}&purpose=signup`;
+
+  it.each([
+    ['sign-up only', { loginEnabled: false, signupEnabled: true }, 403, 302],
+    ['sign-in only', { loginEnabled: true, signupEnabled: false }, 302, 403],
+    ['both on', { loginEnabled: true, signupEnabled: true }, 302, 302],
+    ['both off', { loginEnabled: false, signupEnabled: false }, 403, 403],
+  ])(
+    'with a provider for %s, answers a sign-in start %i and a sign-up start %i',
+    async (_label, fields, signInStatus, signUpStatus) => {
+      const env = envWith(entry(fields));
+
+      const signIn = await start(SIGN_IN, env);
+      expect(signIn.status).toBe(signInStatus);
+      const signUp = await start(SIGN_UP, env);
+      expect(signUp.status).toBe(signUpStatus);
+
+      expect(mocks.storeAuthState).toHaveBeenCalledTimes(
+        [signInStatus, signUpStatus].filter((status) => status === 302).length
+      );
+    }
+  );
+
+  it('names the refused use: a sign-up start refused for sign-up says so', async () => {
+    const response = await start(SIGN_UP, envWith(entry({ signupEnabled: false })));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'access_denied',
+      error_description: 'This provider cannot be used to sign up',
+    });
+  });
+
+  it.each([['login'], ['admin'], ['SIGNUP'], ['']])(
+    'takes any other purpose (%j) as a sign-in',
+    async (purpose) => {
+      const response = await start(
+        `${SIGN_IN}&purpose=${purpose}`,
+        envWith(entry({ loginEnabled: false, signupEnabled: true }))
+      );
+
+      expect(response.status).toBe(403);
+      expect(mocks.storeAuthState).not.toHaveBeenCalled();
+    }
+  );
+
+  it('takes a silent sign-up (prompt=none) as a sign-in, which creates no account', async () => {
+    const response = await start(
+      `${SIGN_UP}&prompt=none`,
+      envWith(entry({ loginEnabled: false, signupEnabled: true }))
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.storeAuthState).not.toHaveBeenCalled();
+  });
+
+  it('leaves a re-authentication asked as a sign-up to its own switch', async () => {
+    mocks.challengeKind.mockResolvedValue('reauth');
+
+    const response = await start(
+      `${SIGN_UP}&authorization_challenge_id=reauth_1`,
+      envWith(entry({ loginEnabled: false, signupEnabled: false, reauthEnabled: true }))
+    );
+
+    expect(response.status).toBe(302);
+  });
+
+  it("verifies the sign-up screen's token for sign-up, with the sign-in requirement too", async () => {
+    await start(`${SIGN_UP}&human_verification_response=token-1`, envWith(undefined));
+    expect(mocks.verifyHumanVerification).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'signup',
+        alsoRequiredFor: ['login'],
+        responseToken: 'token-1',
+      })
+    );
+
+    await start(`${SIGN_IN}&human_verification_response=token-2`, envWith(undefined));
+    const signIn = mocks.verifyHumanVerification.mock.lastCall?.[1] as
+      | Record<string, unknown>
+      | undefined;
+    expect(signIn).toMatchObject({ action: 'login', responseToken: 'token-2' });
+    expect(signIn).not.toHaveProperty('alsoRequiredFor');
+  });
+});

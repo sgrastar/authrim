@@ -12,8 +12,10 @@ const {
   mockReserveInvitation,
   mockResolveCoreAdapter,
   mockConsumeGrant,
+  mockVerifyHumanVerification,
 } = vi.hoisted(() => ({
   mockConsumeGrant: vi.fn(),
+  mockVerifyHumanVerification: vi.fn(),
   mockReserveInvitation: vi.fn(),
   mockResolveCoreAdapter: vi.fn(),
   mockGetIdPConfig: vi.fn(),
@@ -54,6 +56,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     consumeLiteStartGrant: (...args: unknown[]): unknown => mockConsumeGrant(...args),
     readExternalProviderReauthPolicy: mockReauthPolicy,
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveCoreAdapter,
+    // The real check, watched: what it was asked to verify is the start's purpose.
+    verifyHumanVerificationWithRunner: (
+      ...args: Parameters<typeof actual.verifyHumanVerificationWithRunner>
+    ) => {
+      mockVerifyHumanVerification(...args);
+      return actual.verifyHumanVerificationWithRunner(...args);
+    },
     getLogger: () => ({
       module: () => ({
         info: vi.fn(),
@@ -183,6 +192,67 @@ describe('SP login tenant signing boundary', () => {
     // The return the query asked for (return_url) is ignored: the lite callback of the grant.
     expect(stored).toMatchObject({ relayState: liteReturn, context: { liteReturn } });
   });
+
+  it.each([
+    ['signup', 'login', { loginEnabled: false, signupEnabled: true }],
+    ['login', 'signup', { loginEnabled: true, signupEnabled: false }],
+  ] as const)(
+    "checks the switch for its transaction's purpose (%s), never the query's (%s)",
+    async (purpose, queried, fields) => {
+      mockEnv.LITE_POLICY_STORE = {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          isEverLiteRpc: vi.fn().mockResolvedValue(true),
+          getSnapshotRpc: vi.fn().mockResolvedValue({
+            tenantId: 'tenant-a',
+            liteMode: 'always',
+            humanVerificationRequired: { login: true, signup: true, reauth: false },
+            policyRevision: 'rev-1',
+            generation: 1,
+            updatedAt: 1,
+          }),
+        })),
+      } as unknown as Env['LITE_POLICY_STORE'];
+      mockEnv.SETTINGS = {
+        get: vi.fn(async (key: string) =>
+          key === 'settings:tenant:tenant-a:authentication-methods'
+            ? JSON.stringify({
+                'authentication-methods.external_provider_usage': JSON.stringify([
+                  { id: 'saml:idp-1', providerId: 'idp-1', ...fields },
+                ]),
+              })
+            : null
+        ),
+      } as unknown as Env['SETTINGS'];
+      mockConsumeGrant.mockResolvedValue({
+        ok: true,
+        txn: {
+          id: 'txn-1',
+          bound: { publicOrigin: 'https://auth.example.com', challengeId: null, purpose },
+        },
+        start: { clientId: 'login-ui', interactionId: null },
+      });
+      mockGetIdPConfig.mockResolvedValue({
+        entityId: 'https://idp.example.com',
+        ssoUrl: 'https://idp.example.com/sso',
+        certificate: 'mock-certificate',
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        attributeMapping: {},
+        allowedBindings: ['redirect'],
+        signingKeyPolicy: { active: { slot: 'active', keyRef: 'tenant:tenant-a:saml:sp:signing' } },
+      });
+
+      const { context } = createLoginContext(mockEnv, 'tenant-a', {
+        lite_txn: 'txn-1',
+        lite_grant: 'grant-1',
+        purpose: queried,
+      });
+      const res = await handleSPLogin(context);
+
+      // Allowed by the switch of the transaction's purpose (the queried one is off).
+      expect(res.status).toBe(302);
+    }
+  );
 
   it("reserves the invitation its grant carries (the sign-up's), never the query's", async () => {
     mockEnv.LITE_POLICY_STORE = {
@@ -656,6 +726,71 @@ describe("SP login and the tenant's sign-in switch", () => {
 
     expect(res.status).toBe(200);
     expect(storeBodies).toHaveLength(1);
+  });
+
+  it.each([
+    ['sign-up only', { loginEnabled: false, signupEnabled: true }, 403, 200],
+    ['sign-in only', { loginEnabled: true, signupEnabled: false }, 200, 403],
+    ['both on', { loginEnabled: true, signupEnabled: true }, 200, 200],
+    ['both off', { loginEnabled: false, signupEnabled: false }, 403, 403],
+  ])(
+    'with an IdP for %s, answers a sign-in start %i and a sign-up start %i',
+    async (_label, fields, signInStatus, signUpStatus) => {
+      mockEnv.SETTINGS = settingsWith(entry(fields));
+
+      const signIn = await handleSPLogin(createLoginContext(mockEnv, 'tenant-a').context);
+      expect(signIn.status).toBe(signInStatus);
+      const signUp = await handleSPLogin(
+        createLoginContext(mockEnv, 'tenant-a', { purpose: 'signup' }).context
+      );
+      expect(signUp.status).toBe(signUpStatus);
+
+      expect(storeBodies).toHaveLength(
+        [signInStatus, signUpStatus].filter((status) => status === 200).length
+      );
+    }
+  );
+
+  it.each([['login'], ['admin'], ['SIGNUP']])(
+    'takes any other purpose (%j) as a sign-in',
+    async (purpose) => {
+      mockEnv.SETTINGS = settingsWith(entry({ loginEnabled: false, signupEnabled: true }));
+
+      const res = await handleSPLogin(createLoginContext(mockEnv, 'tenant-a', { purpose }).context);
+
+      expect(res.status).toBe(403);
+      expect(storeBodies).toHaveLength(0);
+    }
+  );
+
+  it("verifies the sign-up screen's token for sign-up, with the sign-in requirement too", async () => {
+    mockEnv.SETTINGS = settingsWith(undefined);
+
+    await handleSPLogin(createLoginContext(mockEnv, 'tenant-a', { purpose: 'signup' }).context);
+    expect(mockVerifyHumanVerification.mock.lastCall?.[1]).toMatchObject({
+      action: 'signup',
+      alsoRequiredFor: ['login'],
+    });
+
+    await handleSPLogin(createLoginContext(mockEnv, 'tenant-a').context);
+    const signIn = mockVerifyHumanVerification.mock.lastCall?.[1] as
+      | Record<string, unknown>
+      | undefined;
+    expect(signIn).toMatchObject({ action: 'login' });
+    expect(signIn).not.toHaveProperty('alsoRequiredFor');
+  });
+
+  it('keeps a sign-up a sign-up on every choice of the IdP selection page', async () => {
+    mockListIdPConfigs.mockResolvedValue([
+      { id: 'idp-1', name: 'IdP One', entityId: 'https://idp.example.com' },
+    ]);
+    const { context } = createLoginContext(mockEnv, 'tenant-a', { purpose: 'signup' });
+    (context.req.query as ReturnType<typeof vi.fn>).mockImplementation((name: string) =>
+      name === 'purpose' ? 'signup' : undefined
+    );
+    const html = await (await handleSPLogin(context)).text();
+
+    expect(html.match(/idp=idp-1[^"]*&purpose=signup/g)).toHaveLength(1);
   });
 
   it('leaves a re-authentication to its own switch', async () => {

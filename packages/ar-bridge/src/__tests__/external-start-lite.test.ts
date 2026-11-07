@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   challengeKind: vi.fn(),
   resolveInteraction: vi.fn(),
   reauthPolicy: vi.fn(),
+  usageGate: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -60,9 +61,10 @@ vi.mock('../services/signup-invitation', async (importOriginal) => {
   return { ...actual, reserveExternalSignupInvitation: mocks.reserveInvitation };
 });
 vi.mock('../services/provider-store', () => ({ getProviderByIdOrSlug: mocks.getProvider }));
-vi.mock('../services/external-usage-gate', () => ({
-  assertExternalProviderUsageAllowed: vi.fn(async () => undefined),
-}));
+vi.mock('../services/external-usage-gate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/external-usage-gate')>();
+  return { ...actual, assertExternalProviderUsageAllowed: mocks.usageGate };
+});
 vi.mock('../services/dynamic-registration', () => ({
   ensureDynamicClientRegistration: vi.fn(
     async (input: { provider: UpstreamProvider }) =>
@@ -185,6 +187,7 @@ beforeEach(() => {
     start: { clientId: 'login-ui', interactionId: 'interaction-1' },
   });
   mocks.verifyHumanVerification.mockResolvedValue({ verified: true });
+  mocks.usageGate.mockResolvedValue(undefined);
   mocks.getProvider.mockResolvedValue(provider);
   mocks.storeAuthState.mockResolvedValue('auth-state-id');
   mocks.createAuthorizationUrl.mockResolvedValue(IDP_AUTHORIZE);
@@ -198,6 +201,27 @@ beforeEach(() => {
 });
 
 describe('external start for a tenant in lite mode', () => {
+  it.each([
+    ['signup', 'login', 'signup'],
+    ['login', 'signup', 'login'],
+  ] as const)(
+    "checks the switch for its transaction's purpose (%s), never the query's (%s)",
+    async (purpose, queried, usage) => {
+      mocks.consumeGrant.mockResolvedValue({
+        ok: true,
+        txn: { ...txn, bound: { ...txn.bound, purpose } },
+        start: { clientId: 'login-ui', interactionId: null },
+      });
+      const response = await start(
+        'provider-a',
+        `lite_txn=txn-1&lite_grant=grant-1&purpose=${queried}&prompt=none`
+      );
+      expect(response.status).toBe(302);
+      expect(mocks.usageGate).toHaveBeenCalledOnce();
+      expect(mocks.usageGate.mock.calls[0][3]).toBe(usage);
+    }
+  );
+
   it.each(['always', 'unknown'] as const)(
     'refuses it without a grant it can consume when the mode is %s',
     async (mode) => {
