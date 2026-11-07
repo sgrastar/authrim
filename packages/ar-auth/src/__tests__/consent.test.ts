@@ -31,8 +31,12 @@ const mockValidateActingAsRelationship = vi.hoisted(() => vi.fn());
 // while the worker is closing and fails the run as an unhandled error.
 const unawaitedEvents = vi.hoisted(() => ({ pending: [] as Promise<unknown>[] }));
 
+const mockAnswerFormPostAsData = vi.hoisted(() => vi.fn());
 vi.mock('../authorize', () => ({
   redirectWithError: mockRedirectWithError,
+  answerFormPostAsData: mockAnswerFormPostAsData,
+  formPostAnsweredAsData: (c: { req: { header: (name: string) => string | undefined } }) =>
+    c.req.header('x-authrim-relay') === 'structured',
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -862,6 +866,70 @@ describe('Consent Handlers', () => {
         expect.objectContaining({
           redirect_url: expect.stringContaining('error=access_denied'),
         })
+      );
+    });
+
+    it('answers a form post as data only for the lite relay that asks for it', async () => {
+      const store = () =>
+        createMockChallengeStore({
+          id: 'consent-challenge-123',
+          type: 'consent',
+          userId: 'user-123',
+          metadata: {
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'test-state',
+          },
+        });
+      mockAnswerFormPostAsData.mockClear();
+      await consentPostHandler(
+        createMockContext({
+          method: 'POST',
+          body: { challenge_id: 'consent-challenge-123', approved: false },
+          headers: { 'content-type': 'application/json' },
+          challengeStore: store(),
+        }) as Parameters<typeof consentPostHandler>[0]
+      );
+      expect(mockAnswerFormPostAsData).not.toHaveBeenCalled();
+      await consentPostHandler(
+        createMockContext({
+          method: 'POST',
+          body: { challenge_id: 'consent-challenge-123', approved: false },
+          headers: { 'content-type': 'application/json', 'x-authrim-relay': 'structured' },
+          challengeStore: store(),
+        }) as Parameters<typeof consentPostHandler>[0]
+      );
+      expect(mockAnswerFormPostAsData).toHaveBeenCalledTimes(1);
+    });
+
+    it('denies a form_post request through the form post response when asked for data', async () => {
+      mockRedirectWithError.mockClear();
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'consent-challenge-fp', approved: false },
+        headers: { 'content-type': 'application/json', 'x-authrim-relay': 'structured' },
+        challengeStore: createMockChallengeStore({
+          id: 'consent-challenge-fp',
+          type: 'consent',
+          userId: 'user-123',
+          metadata: {
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'test-state',
+            response_mode: 'form_post',
+          },
+        }),
+      }) as Parameters<typeof consentPostHandler>[0];
+      await consentPostHandler(c);
+      expect(mockRedirectWithError).toHaveBeenCalledWith(
+        c,
+        'https://example.com/callback',
+        'access_denied',
+        'User denied the consent request',
+        'test-state',
+        expect.objectContaining({ responseMode: 'form_post', isUserCancellation: true })
       );
     });
 

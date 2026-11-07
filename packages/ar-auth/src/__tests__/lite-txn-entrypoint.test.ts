@@ -576,6 +576,25 @@ describe('LiteTxnEntrypoint refusals before the store', () => {
   });
 });
 
+describe('LiteTxnEntrypoint look-ups', () => {
+  it('makes nothing for a look-up by reuse key, nor counts it against the limits', async () => {
+    await setPolicy('always');
+    const lookup = { ...call, clientIp: '203.0.113.9', purpose: 'login' as const, reuseKey: 'k' };
+    await expect(entry().create({ ...lookup, reuseOnly: true })).resolves.toEqual({
+      ok: false,
+      reason: 'not_found',
+    });
+    expect([...counts.values()]).toEqual([]);
+    const made = await entry().create(lookup);
+    if (!made.ok) throw new Error(made.reason);
+    await expect(entry().create({ ...lookup, reuseOnly: true })).resolves.toMatchObject({
+      ok: true,
+      reused: true,
+      txn: { id: made.txn.id },
+    });
+  });
+});
+
 describe('LiteTxnEntrypoint start grants', () => {
   function storedGrants(txnId: string) {
     const record = [...txnStores.values()]
