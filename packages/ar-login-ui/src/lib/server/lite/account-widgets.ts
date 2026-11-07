@@ -10,7 +10,11 @@ import { record } from './totp-passkey';
 
 type LL = Awaited<ReturnType<typeof liteMessages>>['LL'];
 
-function text(value: unknown, max = 512): string | null {
+/**
+ * A value the page shows, as the API answers it (no length of the page's own: the API's are its
+ * limits), within a bound only against an answer that is not one.
+ */
+function text(value: unknown, max = 8192): string | null {
 	return typeof value === 'string' && value.length > 0 && value.length <= max ? value : null;
 }
 
@@ -28,8 +32,8 @@ export interface LiteAccountProfileView {
 export function liteAccountProfile(json: Record<string, unknown>): LiteAccountProfileView {
 	const profile = record(json.profile);
 	return {
-		name: text(profile.name, 200),
-		email: text(profile.email, 320),
+		name: text(profile.name),
+		email: text(profile.email),
 		emailVerified: profile.email_verified === true
 	};
 }
@@ -63,13 +67,13 @@ export function liteAccountSessions(
 		const row = record(raw);
 		const id = liteAccountItemId(row.id);
 		if (!id) return [];
-		const title = [text(row.browser, 100), text(row.os, 100)].filter(Boolean).join(' / ');
+		const title = [text(row.browser), text(row.os)].filter(Boolean).join(' / ');
 		return [
 			{
 				id,
 				title: title || LL.account_unknownDevice(),
 				current: row.current === true,
-				location: regionName(text(row.country_code, 8)),
+				location: regionName(text(row.country_code)),
 				signedInAt: formatTimestamp(row.created_at as number | null, locale)
 			}
 		];
@@ -93,9 +97,9 @@ export function liteAccountDevices(
 		if (!id) return [];
 		return [
 			{
-				title: text(row.display_name, 200) ?? text(row.fallback_display_name, 200) ?? id,
+				title: text(row.display_name) ?? text(row.fallback_display_name) ?? id,
 				current: row.current === true,
-				meta: `${text(row.platform, 100) ?? ''} / ${formatTimestamp(
+				meta: `${text(row.platform) ?? ''} / ${formatTimestamp(
 					row.last_seen_at_unix as number | null,
 					locale
 				)}`
@@ -131,7 +135,7 @@ export function liteAccountConsents(
 	return rows.flatMap((raw): LiteAccountConsentItem[] => {
 		const row = record(raw);
 		if (row.kind === 'oauth_client') {
-			const clientId = text(row.clientId, 256);
+			const clientId = text(row.clientId, 1024);
 			if (!clientId) return [];
 			const scopes = (
 				Array.isArray(row.selectedScopes) && row.selectedScopes.length > 0
@@ -142,10 +146,10 @@ export function liteAccountConsents(
 			).filter((scope): scope is string => typeof scope === 'string');
 			const versions = record(row.policyVersions);
 			const parts = [
-				text(versions.privacyPolicyVersion, 64)
+				text(versions.privacyPolicyVersion)
 					? `${LL.account_consentPrivacyPolicy()}: ${versions.privacyPolicyVersion as string}`
 					: null,
-				text(versions.tosVersion, 64)
+				text(versions.tosVersion)
 					? `${LL.account_consentTerms()}: ${versions.tosVersion as string}`
 					: null,
 				typeof versions.consentVersion === 'number'
@@ -155,7 +159,7 @@ export function liteAccountConsents(
 			return [
 				{
 					kind: 'oauth_client',
-					title: text(row.clientName, 200) ?? clientId,
+					title: text(row.clientName) ?? clientId,
 					// (No logo: the lite page loads no image but its own, `img-src data:`.)
 					subtitle: clientId,
 					rows: [
@@ -168,7 +172,7 @@ export function liteAccountConsents(
 			];
 		}
 		if (row.kind === 'statement') {
-			const statementId = text(row.statementId, 256);
+			const statementId = text(row.statementId, 1024);
 			if (!statementId) return [];
 			const statuses: Record<string, string> = {
 				granted: LL.account_consentStatusGranted(),
@@ -181,19 +185,19 @@ export function liteAccountConsents(
 				none: LL.account_consentSelectedNone()
 			};
 			// (The sign-in Flow takes a choice's value up to 128 characters; the API answers it as kept.)
-			const status = text(row.status, 256) ?? '-';
-			const value = text(row.selectedValue, 256);
+			const status = text(row.status) ?? '-';
+			const value = text(row.selectedValue);
 			return [
 				{
 					kind: 'statement',
-					title: text(row.title, 200) ?? statementId,
-					subtitle: text(row.category, 200) ?? statementId,
+					title: text(row.title) ?? statementId,
+					subtitle: text(row.category) ?? statementId,
 					rows: [
 						{
 							label: LL.account_consentStatus(),
 							value: Object.hasOwn(statuses, status) ? statuses[status] : status
 						},
-						{ label: LL.account_consentVersionLabel(), value: text(row.version, 256) ?? '-' },
+						{ label: LL.account_consentVersionLabel(), value: text(row.version) ?? '-' },
 						{ label: LL.account_consentStatementId(), value: statementId },
 						...(value
 							? [
@@ -259,7 +263,7 @@ export function liteAccountActivity(
 	const items = rows.flatMap((raw) => {
 		const row = record(raw);
 		const id = text(row.id, 256);
-		const action = text(row.action, 200);
+		const action = text(row.action);
 		if (!id || !action || seen.has(id)) return [];
 		seen.add(id);
 		const seconds = typeof row.created_at === 'number' ? row.created_at : null;

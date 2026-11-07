@@ -110,6 +110,17 @@ describe('the lite account widgets', async () => {
 			'en'
 		);
 		expect(client).toMatchObject({ kind: 'oauth_client', title: 'App', subtitle: 'c1' });
+		// A name as long as the API keeps one (no length of the page's own).
+		const [long] = liteAccountConsents(
+			{
+				consents: [
+					{ kind: 'statement', statementId: 'st9', title: 't'.repeat(300), status: 'granted' }
+				]
+			},
+			LL,
+			'en'
+		);
+		expect(long.title).toBe('t'.repeat(300));
 		// No logo: the lite page loads no image from elsewhere.
 		expect(client).not.toHaveProperty('logo');
 		expect(client.rows[0]).toEqual({ label: LL.account_consentScopes(), value: 'openid' });
