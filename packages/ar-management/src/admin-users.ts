@@ -1,6 +1,12 @@
 import { Context } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
+  eraseRetainedAccountPii,
+  findPiiOnlyErasureBlocker,
+  redactEarlierWebhookEmailSnapshots,
+  type PiiOnlyErasureBlocker,
+} from './account-pii-only-erasure';
+import {
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
@@ -2369,6 +2375,17 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
  * Delete user's PII data only.
  * DELETE /admin/users/:id/pii
  */
+const PII_ONLY_ERASURE_BLOCKER_DESCRIPTIONS: Record<PiiOnlyErasureBlocker, string> = {
+  identifier_change_in_progress:
+    'An identifier change of the user is in progress; retry once it has finished',
+  external_unlink_in_progress:
+    'An external identifier of the user is being unlinked; retry once it has finished',
+  guest_upgrade_in_progress:
+    'A guest registration of the user is in progress; retry once it has finished',
+  account_provisioning_pending:
+    'An account creation by an identity provider is pending; retry once it has finished',
+};
+
 export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
@@ -2414,6 +2431,19 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // An identifier change under way, or an identity provider's account creation pending, still
+    // needs the values: the deletion waits for it (nothing is erased).
+    const blocker = await findPiiOnlyErasureBlocker(accountPii, { tenantId, userId });
+    if (blocker) {
+      return c.json(
+        {
+          error: blocker,
+          error_description: PII_ONLY_ERASURE_BLOCKER_DESCRIPTIONS[blocker],
+        },
+        409
+      );
+    }
+
     let body: { reason?: string; retention_days?: number } = {};
     try {
       body = await c.req.json();
@@ -2454,6 +2484,10 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       },
     });
 
+    // The addresses earlier webhook events kept, redacted (before the profile changes: the
+    // deletion's own notice that the address was removed is still delivered).
+    await redactEarlierWebhookEmailSnapshots(accountPii, { tenantId, userId });
+
     await createCanonicalRuntimeUserWriter(
       c,
       accountCore,
@@ -2489,12 +2523,10 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       addressJson: null,
       customAttributesJson: null,
     });
-    // What the person answered to login screens (their response records) is PII too. The
-    // tombstone written above keeps a later screen from recording new ones.
-    await accountPii.execute('DELETE FROM screen_responses WHERE tenant_id = ? AND user_id = ?', [
-      tenantId,
-      userId,
-    ]);
+    // The values the writer only marked deleted, the linked identities' provider profile, the
+    // custom attributes and the screen response records (the tombstone written above keeps a
+    // later screen from recording new ones). The sign-in identifiers stay.
+    await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
 
     await invalidateUserCache(c.env, tenantId, userId);
     await createAuditLogFromContext(c, 'user.pii_deleted', 'user', userId, {
