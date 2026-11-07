@@ -22,6 +22,12 @@ import {
 } from '@sveltejs/kit';
 import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
 import { runtimeAllowsAuthenticationHandle } from '#lib/authrim/runtime-auth-handles.js';
+import {
+	hasScreenAnswer,
+	isAnswerScreenStep,
+	requiredScreenInputParts,
+	screenAnswerFields
+} from '#lib/authrim/runtime-screen-answers.js';
 import { localizeRuntimeScreen } from '#lib/i18n/runtime-screen-localization.js';
 import { getPlatformEnv } from '#lib/server/platform-env.js';
 import { getCachedAuthenticationMethodsForRequest } from '../../../hooks.server';
@@ -41,6 +47,7 @@ import {
 import {
 	decideLiteStep,
 	liteMethodAvailability,
+	rawScreenOf,
 	readKeptFlow,
 	resumeLiteFlow,
 	type LiteFlowView,
@@ -49,6 +56,8 @@ import {
 } from './flow-driver';
 import { LITE_FORM_MAX_FIELDS, readLiteForm } from './form';
 import { readPendingSocial } from './social-state';
+import { readLiteSignupProfile, type LiteSignupProfile } from './signup';
+import { readLiteInvite } from './invite';
 import {
 	keptFlowConsentWith,
 	liteConsentDigest,
@@ -67,6 +76,9 @@ import { liteTxnClient, type LiteTxnClient, type LiteTxnView } from './txn-clien
 /** What the sign-in page draws (a step's consent through its screen's consent part). */
 export const LITE_LOGIN_PAGE_BLOCKS: ReadonlySet<string> = new Set([
 	'identity_field',
+	'checkbox',
+	'select',
+	'radio',
 	'auth_widget',
 	'guest_login_widget',
 	'code_input_widget',
@@ -85,6 +97,19 @@ export const LITE_LOGIN_PAGE_METHODS: ReadonlySet<string> = new Set([
 	'passkey',
 	'external_idp'
 ]);
+/**
+ * The sign-up page's (PR6a): a sign-up by email code. A passkey's or an authenticator's sign-up
+ * (registration ceremonies of their own) and an external one are not drawn yet: such a part stops
+ * the page. The authenticator half of an email-or-authenticator part is left out.
+ */
+export const LITE_SIGNUP_PAGE_METHODS: ReadonlySet<string> = new Set(['mail_otp', 'mail_otp_totp']);
+/** The sign-up page's blocks: the sign-in page's, no guest (the SPA's sign-up has none). */
+export const LITE_SIGNUP_PAGE_BLOCKS: ReadonlySet<string> = new Set(
+	[...LITE_LOGIN_PAGE_BLOCKS].filter((block) => block !== 'guest_login_widget')
+);
+
+/** The most a sign-up's profile takes in the transaction (kept with its code). */
+const MAX_SIGNUP_PROFILE_BYTES = 2048;
 
 /** How long before a code can be sent again (the SPA's `MAIL_OTP_RESEND_SECONDS`). */
 export const LITE_CODE_RESEND_MS = 60_000;
@@ -104,6 +129,8 @@ export interface LitePendingCode {
 	attemptId: string;
 	verifier: string;
 	sentAt: number;
+	/** A sign-up's profile, sent again with a code sent again (as the SPA's resend does). */
+	signup?: LiteSignupProfile;
 }
 
 /**
@@ -151,7 +178,22 @@ export function readPendingCode(
 		maskedEmail: nonEmpty(code.maskedEmail) ? code.maskedEmail : null,
 		attemptId: code.attemptId,
 		verifier: code.verifier,
-		sentAt: code.sentAt
+		sentAt: code.sentAt,
+		...(isRecord(code.signup) ? { signup: readKeptSignupProfile(code.signup) } : {})
+	};
+}
+
+/** A profile as the transaction keeps it (strings only). */
+function readKeptSignupProfile(value: Record<string, unknown>): LiteSignupProfile {
+	const customFields: Record<string, string> = {};
+	if (isRecord(value.customFields)) {
+		for (const [key, field] of Object.entries(value.customFields)) {
+			if (typeof field === 'string') customFields[key] = field;
+		}
+	}
+	return {
+		displayName: typeof value.displayName === 'string' ? value.displayName : null,
+		customFields
 	};
 }
 
@@ -402,20 +444,25 @@ export async function liteTenantMethods(event: RequestEvent): Promise<LiteTenant
 	return (answer?.methods as LiteTenantMethods | undefined) ?? null;
 }
 
-/** The most fields the sign-in form posts of its own: txn, csrf, op, a proof or challenge, a code. */
-const LITE_PAGE_OWN_FIELDS = 5;
+/**
+ * The most fields the sign-in form posts of its own: txn, csrf, op, the step it was drawn on, a
+ * proof or challenge, a code.
+ */
+const LITE_PAGE_OWN_FIELDS = 6;
 
 /** What the page does with a step: the rule the page view and every post share. */
 export function liteLoginStepDecision(
 	step: FlowRuntimeStep | null,
 	methods: LiteTenantMethods | null,
-	locale: string
+	locale: string,
+	purpose: LitePagePurpose
 ): LiteStepDecision {
+	const signup = purpose === 'signup';
 	const decision = decideLiteStep(withLocalizedScreen(step, locale), {
-		blocks: LITE_LOGIN_PAGE_BLOCKS,
-		methods: LITE_LOGIN_PAGE_METHODS,
-		isAvailable: liteMethodAvailability(methods, step),
-		guestEnabled: methods?.guest?.enabled === true
+		blocks: signup ? LITE_SIGNUP_PAGE_BLOCKS : LITE_LOGIN_PAGE_BLOCKS,
+		methods: signup ? LITE_SIGNUP_PAGE_METHODS : LITE_LOGIN_PAGE_METHODS,
+		isAvailable: liteMethodAvailability(methods, step, purpose),
+		guestEnabled: !signup && methods?.guest?.enabled === true
 	});
 	// A step's consent is drawn in full (by its screen's consent part, or with a Continue for a step
 	// the Flow is advanced through), or the step is not drawn: what an Allow, a sign-in or a Continue
@@ -427,24 +474,32 @@ export function liteLoginStepDecision(
 			: { kind: 'unsupported', reasons: ['consent_unsupported'] };
 	}
 	if (decision.kind !== 'screen') return decision;
+	// A choice of methods with none left to choose (all off) is no screen to go on from.
+	if (
+		(step?.component === 'authentication_method_selector' ||
+			step?.component === 'registration_method_selector') &&
+		!decision.fields.some((field) => SIGN_IN_BLOCKS.has(field.blockType))
+	) {
+		return { kind: 'unsupported', reasons: ['no_method'] };
+	}
 	const consentParts = decision.fields.filter((field) => field.blockType === 'consent_widget');
 	if (liteFlowConsentHasParts(consent) && consentParts.length === 0) {
 		return { kind: 'unsupported', reasons: ['consent_not_drawn'] };
 	}
 	// Drawn once (its fields would be posted twice, which no form reader takes).
 	if (consentParts.length > 1) return { kind: 'unsupported', reasons: ['consent_drawn_twice'] };
-	// A consent's own Continue submits its decision only: a screen's answers next to it (the SPA's
-	// `input.fields`) are not submitted yet, so such a step is not drawn.
-	if (
-		consentParts.length > 0 &&
-		!decision.fields.some((field) => SIGN_IN_BLOCKS.has(field.blockType)) &&
-		decision.fields.some((field) => field.blockType === 'identity_field')
-	) {
-		return { kind: 'unsupported', reasons: ['screen_answers'] };
+	// A part's answer is posted under the part's own name: never one the form posts of its own.
+	const entryParts = decision.fields.filter((field) => INPUT_BLOCKS.has(field.blockType));
+	if (entryParts.some((field) => isReservedFormName(field.field))) {
+		return { kind: 'unsupported', reasons: ['field_name'] };
+	}
+	// Each answer under its own name: two parts of one name would post it twice (refused).
+	if (new Set(entryParts.map((field) => field.field)).size !== entryParts.length) {
+		return { kind: 'unsupported', reasons: ['field_name'] };
 	}
 	// Every field the page's form posts fits the form reader: its own (the transaction, the
 	// check, the operation, a proof or a challenge, a code), the step's entries and its consent.
-	const entries = decision.fields.filter((field) => field.blockType === 'identity_field').length;
+	const entries = entryParts.length;
 	const drawnConsent = consentParts.length > 0 ? liteFlowConsentFormFields(consent) : 0;
 	if (LITE_PAGE_OWN_FIELDS + entries + drawnConsent > LITE_FORM_MAX_FIELDS) {
 		return { kind: 'unsupported', reasons: ['too_many_fields'] };
@@ -555,6 +610,21 @@ export interface LitePost {
 	backend: LiteBackendClient;
 	flow: LiteFlowView;
 	locale: string;
+	/** The page's purpose (its route's), which its transaction was made for. */
+	purpose: LitePagePurpose;
+}
+
+/** What a lite step page is for: a sign-in, or a sign-up (`/signup`). */
+export type LitePagePurpose = 'login' | 'signup';
+
+/** The page's purpose, by its route: a post is only taken for a transaction made for it. */
+export function litePagePurpose(event: RequestEvent): LitePagePurpose {
+	return event.route?.id === '/__lite/signup' ? 'signup' : 'login';
+}
+
+/** The page's public path (where its links and its error page lead back to). */
+export function litePagePath(event: RequestEvent): '/login' | '/signup' {
+	return litePagePurpose(event) === 'signup' ? '/signup' : '/login';
 }
 
 /**
@@ -578,7 +648,8 @@ export async function openPost(
 	if (!txnId || !token) return refused(403);
 	const read = await txns.get(txnId, { current: true });
 	if (!read.ok || !sameToken(read.txn.csrfToken, token)) return refused(403);
-	if (read.txn.bound.purpose !== 'login') return refused(403);
+	const purpose = litePagePurpose(event);
+	if (read.txn.bound.purpose !== purpose) return refused(403);
 	if (read.txn.state === 'completed' || read.txn.state === 'abandoned') {
 		return refused(403);
 	}
@@ -592,10 +663,20 @@ export async function openPost(
 	// The resume signed the contract again: keep the new hash and signature before going on.
 	const txn = await keepLiteFlow(txns, read.txn, flow.view);
 	if (!txn) return { failure: fail(409, { error: 'retry' as const }) };
-	return { post: { event, txns, txn, fields: form.fields, backend, flow: flow.view, locale } };
+	return {
+		post: { event, txns, txn, fields: form.fields, backend, flow: flow.view, locale, purpose }
+	};
 }
 
-type OperationKind = 'send' | 'resend' | 'verify' | 'guest' | 'totp' | 'passkey' | 'social';
+type OperationKind =
+	| 'send'
+	| 'resend'
+	| 'verify'
+	| 'guest'
+	| 'totp'
+	| 'passkey'
+	| 'social'
+	| 'continue';
 
 /**
  * Starts the post's operation. `started`: carry it out, then `finishOperation`. Otherwise the
@@ -796,17 +877,20 @@ export function retryLater() {
  * Submits a step's handle, with the step's consent decision when one was accepted for it (this
  * post's, else the one the transaction keeps); null when the call failed.
  */
-export async function submitOrNull(post: LitePost, step: FlowRuntimeStep, handle: string) {
+export async function submitOrNull(
+	post: LitePost,
+	step: FlowRuntimeStep,
+	handle: string,
+	/** The rest of the step's input (a screen's answers). */
+	extra: Record<string, unknown> = {}
+) {
 	const decided = await stepConsentInput(post, step);
 	// Terms not accepted as they are now (changed since): never a decision taken for others.
 	if (!decided) return null;
-	const submitted = await submitLiteStep(
-		post.backend,
-		post.flow.state,
-		step,
-		handle,
-		decided.input
-	).catch(() => null);
+	const submitted = await submitLiteStep(post.backend, post.flow.state, step, handle, {
+		...decided.input,
+		...extra
+	}).catch(() => null);
 	// This post's choices went with the step's submit.
 	if (submitted?.ok && decided.own) CONSENT_USED.add(post.event);
 	return submitted?.ok ? submitted : null;
@@ -854,10 +938,15 @@ export function consentInputOf(post: LitePost) {
  * of a recorded sign-in is submitted only while the Flow is on its step, so a retry submits
  * nothing twice.
  */
-export async function advanceAfterSignIn(post: LitePost, txn: LiteTxnView) {
+export async function advanceAfterSignIn(
+	post: LitePost,
+	txn: LiteTxnView,
+	/** The step the Flow is on, when this post moved it on (a screen it submitted). */
+	from: FlowRuntimeStep | null = post.flow.step
+) {
 	// The session is the browser's from here, whatever happens next.
 	forwardSetCookies(post.event, post.backend.setCookies());
-	let step = post.flow.step;
+	let step = from;
 	let current = txn;
 	const signedIn = readSignedIn(current.data, post.flow.state.interactionId);
 	if (signedIn) {
@@ -902,13 +991,14 @@ export async function advanceAfterSignIn(post: LitePost, txn: LiteTxnView) {
 				// Stopped at a step to draw: on with it only when it asks for consent alone.
 				if (!step || !(await consentOnlyStep(post, step))) break;
 			}
-			// Still a consent step before the code's step (more of them than one post takes): the
-			// sign-in stays recorded, and the next Continue goes on from here.
+			// Still a step of the person's before the code's step (a consent, more of them than one
+			// post takes; a screen to answer): the sign-in stays recorded, and the page draws it (a
+			// Continue, or the screen with its own), from which the code's step is gone on to.
 			if (
 				step &&
 				!codeSuccessHandle(step) &&
 				post.flow.codeInputElsewhere &&
-				(await consentOnlyStep(post, step))
+				((await consentOnlyStep(post, step)) || (await answerScreenStep(post, step)))
 			) {
 				backToPage(post.event);
 			}
@@ -946,11 +1036,46 @@ export async function advanceAfterSignIn(post: LitePost, txn: LiteTxnView) {
 
 /** A step whose screen asks for its consent alone (no sign-in on it): its Continue submits it. */
 async function consentOnlyStep(post: LitePost, step: FlowRuntimeStep): Promise<boolean> {
-	const decision = liteLoginStepDecision(step, await liteTenantMethods(post.event), post.locale);
+	const decision = liteLoginStepDecision(
+		step,
+		await liteTenantMethods(post.event),
+		post.locale,
+		post.purpose
+	);
 	return (
 		decision.kind === 'screen' &&
 		decision.fields.some((field) => field.blockType === 'consent_widget') &&
-		!decision.fields.some((field) => SIGN_IN_BLOCKS.has(field.blockType))
+		!decision.fields.some((field) => SIGN_IN_BLOCKS.has(field.blockType)) &&
+		// Nothing to answer on it either (its answers are the person's to give).
+		!decision.fields.some((field) => INPUT_BLOCKS.has(field.blockType))
+	);
+}
+
+/** A screen step of the person's (to answer, or to read), drawn with a Continue of its own. */
+async function answerScreenStep(post: LitePost, step: FlowRuntimeStep): Promise<boolean> {
+	const decision = liteLoginStepDecision(
+		step,
+		await liteTenantMethods(post.event),
+		post.locale,
+		post.purpose
+	);
+	return liteAnswerScreen(step, decision);
+}
+
+/**
+ * Whether a step's decision is a screen step the person goes on from with its own Continue (one to
+ * answer, or to read): never submitted for them, so a sign-in whose code's step comes after it
+ * stays recorded while it is drawn.
+ */
+export function liteAnswerScreen(
+	step: FlowRuntimeStep | null,
+	decision: LiteStepDecision
+): boolean {
+	return (
+		step !== null &&
+		decision.kind === 'screen' &&
+		liteStepContinues(decision) &&
+		isAnswerScreenStep(step, rawScreenOf(step))
 	);
 }
 
@@ -1046,14 +1171,23 @@ export interface LiteConsentEcho {
  */
 function withConsentEcho<T>(event: RequestEvent, answer: T): T {
 	const fields = POST_FIELDS.get(event);
-	const key = fields?.get('consent-key');
-	if (!fields || !key || !isActionFailure(answer)) return answer;
+	if (!fields || !isActionFailure(answer)) return answer;
+	const key = fields.get('consent-key');
 	const choices: Record<string, string> = {};
+	// What the person entered in the step's parts (never a code, a proof or the form's own).
+	const answers: Record<string, string> = {};
 	for (const [name, value] of fields) {
 		if (/^consent(?:-value|-field)?:/u.test(name)) choices[name] = value;
+		else if (!isReservedFormName(name)) answers[name] = value;
 	}
 	const data = (answer.data ?? {}) as Record<string, unknown>;
-	return fail(answer.status, { ...data, consentEcho: { key, choices } }) as T;
+	// Answers are given back for the step their form was drawn on only (the page draws them there).
+	const stepKey = fields.get('step-key');
+	return fail(answer.status, {
+		...data,
+		...(key ? { consentEcho: { key, choices } } : {}),
+		...(Object.keys(answers).length > 0 && stepKey ? { answersEcho: { stepKey, answers } } : {})
+	}) as T;
 }
 
 /** How a session try went: what it leaves in the transaction is made from this alone. */
@@ -1229,7 +1363,12 @@ export async function stepUnsupported(
 	post: LitePost,
 	step: FlowRuntimeStep | null = post.flow.step
 ): Promise<boolean> {
-	const decision = liteLoginStepDecision(step, await liteTenantMethods(post.event), post.locale);
+	const decision = liteLoginStepDecision(
+		step,
+		await liteTenantMethods(post.event),
+		post.locale,
+		post.purpose
+	);
 	return decision.kind === 'unsupported';
 }
 
@@ -1247,7 +1386,12 @@ export const liteSendCodeAction = guarded(async (event) => {
 	// (or given up by a restart), never a second one over it.
 	if (signInStarted(post.txn.data, state.interactionId)) backToPage(event);
 	if (signInUnderway(post.txn.data, state.interactionId)) backToPage(event);
-	const decision = liteLoginStepDecision(step, await liteTenantMethods(event), post.locale);
+	const decision = liteLoginStepDecision(
+		step,
+		await liteTenantMethods(event),
+		post.locale,
+		post.purpose
+	);
 	// The email code alone, or the email-code half of the email-code-or-authenticator part.
 	const offered =
 		step !== null &&
@@ -1257,10 +1401,24 @@ export const liteSendCodeAction = guarded(async (event) => {
 				f.blockType === 'auth_widget' &&
 				(f.authMethod === 'mail_otp' || f.authMethod === 'mail_otp_totp')
 		) &&
-		liteMethodAvailability(await liteTenantMethods(event), step)('mail_otp');
+		liteMethodAvailability(await liteTenantMethods(event), step, post.purpose)('mail_otp');
 	if (!offered || !step) return fail(409, { restart: true });
 	const email = readEmail(post, decision);
 	if (!email) return fail(400, { error: 'email_invalid' as const });
+	// A sign-up's profile (the parts it stores), its required ones answered first.
+	const read =
+		post.purpose === 'signup' ? readLiteSignupProfile(post.fields, step, decision) : null;
+	if (read && 'required' in read) return fail(400, { error: 'answer_required' as const });
+	const profile = read
+		? { displayName: read.displayName ?? email.split('@')[0], customFields: read.customFields }
+		: null;
+	// Kept with the code (a code sent again sends it again), within the transaction's room.
+	if (
+		profile &&
+		new TextEncoder().encode(JSON.stringify(profile)).length > MAX_SIGNUP_PROFILE_BYTES
+	) {
+		return fail(400, { error: 'answer_invalid' as const });
+	}
 
 	// The step's consent, accepted first (nothing is started without it).
 	const unconsented = await acceptFlowConsent(post);
@@ -1274,7 +1432,10 @@ export const liteSendCodeAction = guarded(async (event) => {
 		proof: readProof(post),
 		codeChallenge: pkce.challenge,
 		authorizationChallengeId: post.txn.bound.challengeId,
-		interactionId: state.interactionId
+		interactionId: state.interactionId,
+		signup: profile
+			? { ...profile, inviteToken: readLiteInvite(post.txn.data)?.token ?? null }
+			: undefined
 	});
 	if (!sent.ok) {
 		await finishOperation(post, post.txn, operation, { error: sent.error });
@@ -1288,7 +1449,8 @@ export const liteSendCodeAction = guarded(async (event) => {
 		maskedEmail: sent.maskedEmail,
 		attemptId: sent.attemptId,
 		verifier: pkce.verifier,
-		sentAt: Date.now()
+		sentAt: Date.now(),
+		...(profile ? { signup: profile } : {})
 	};
 	const kept = await finishOperation(
 		post,
@@ -1347,6 +1509,12 @@ export const liteResendCodeAction = guarded(async (event) => {
 	if (Date.now() - pending.sentAt < LITE_CODE_RESEND_MS) {
 		return fail(429, { error: 'resend_wait' as const });
 	}
+	if (
+		post.purpose === 'signup' &&
+		!liteSignupCodeResendable(await liteTenantMethods(event), pending)
+	) {
+		return fail(409, { error: 'retry' as const });
+	}
 	// The consent choices of the entry the code is sent again from (drawn with it): not a decision
 	// (that is taken with the code), kept to draw the page again with them.
 	const draft = await consentDraftOf(post);
@@ -1359,7 +1527,16 @@ export const liteResendCodeAction = guarded(async (event) => {
 		proof: readProof(post),
 		codeChallenge: pkce.challenge,
 		authorizationChallengeId: post.txn.bound.challengeId,
-		interactionId: pending.interactionId
+		interactionId: pending.interactionId,
+		// A sign-up's code is sent again with its profile and invitation (the SPA's resend).
+		signup:
+			post.purpose === 'signup'
+				? {
+						displayName: pending.signup?.displayName ?? null,
+						customFields: pending.signup?.customFields ?? {},
+						inviteToken: readLiteInvite(post.txn.data)?.token ?? null
+					}
+				: undefined
 	});
 	if (!sent.ok) {
 		await finishOperation(post, post.txn, operation, { error: sent.error });
@@ -1465,8 +1642,14 @@ export const liteGuestAction = guarded(async (event) => {
 	// Never over a sign-in begun or made here (an old form from another tab): restart is the way.
 	if (signInStarted(post.txn.data, post.flow.state.interactionId)) backToPage(event);
 	if (signInUnderway(post.txn.data, post.flow.state.interactionId)) backToPage(event);
-	const decision = liteLoginStepDecision(step, await liteTenantMethods(event), post.locale);
+	const decision = liteLoginStepDecision(
+		step,
+		await liteTenantMethods(event),
+		post.locale,
+		post.purpose
+	);
 	const offered =
+		post.purpose === 'login' &&
 		step !== null &&
 		decision.kind === 'screen' &&
 		decision.fields.some((f) => f.blockType === 'guest_login_widget') &&
@@ -1524,31 +1707,145 @@ const SIGN_IN_BLOCKS: ReadonlySet<string> = new Set([
 	'code_input_widget'
 ]);
 
+/** The parts a person enters something in (their answers posted under the part's name). */
+const INPUT_BLOCKS: ReadonlySet<string> = new Set([
+	'identity_field',
+	'checkbox',
+	'select',
+	'radio'
+]);
+
+/** The names a lite form posts of its own. */
+const FORM_OWN_NAMES: ReadonlySet<string> = new Set([
+	'txn',
+	'csrf',
+	'op',
+	'challenge',
+	'code',
+	'credential',
+	'provider',
+	'human_verification_response',
+	'consent-key',
+	'step-key'
+]);
+
+/** The step a page was drawn on, by its interaction: a Continue posts it (`step_continue`). */
+export function liteStepKey(interactionId: string, stepId: string): string {
+	return `${interactionId}:${stepId}`;
+}
+
 /**
- * `consent_continue`: a step that asks for consent and no sign-in (a consent policy step, a screen
- * with its consent part): the consent accepted, the step submitted with it (the SPA's Continue:
- * `accepted` for a consent policy step, `submitted` for a screen), then the steps the SPA takes on
- * its own.
+ * Whether a sign-up's code can be sent again: the account its first code made exists, and ar-auth
+ * sends a code to an existing account as a sign-in, so only when the tenant lets the email code
+ * sign in (else the send is left unsent behind an answer that says it was sent).
  */
-export const liteConsentContinueAction = guarded(async (event) => {
+export function liteSignupCodeResendable(
+	methods: LiteTenantMethods | null,
+	pending: { signup?: { customFields: Record<string, string> } } | null
+): boolean {
+	// ar-auth keeps a sign-up's profile with its first code only (a code sent to the account that
+	// code made carries none): a sign-up with a profile is not sent again.
+	if (pending?.signup && Object.keys(pending.signup.customFields).length > 0) return false;
+	return (methods?.emailCode?.loginEnabled ?? methods?.emailCode?.enabled) === true;
+}
+
+function isReservedFormName(name: string): boolean {
+	return FORM_OWN_NAMES.has(name) || /^consent(?:-value|-field)?:/u.test(name);
+}
+
+/** Whether a screen has a Continue of its own: nothing on it to sign in with. */
+export function liteStepContinues(decision: { fields: Array<{ blockType: string }> }): boolean {
+	return !decision.fields.some((field) => SIGN_IN_BLOCKS.has(field.blockType));
+}
+
+/**
+ * A screen step's answers from the form, as the SPA submits them (`input.fields`, read against the
+ * Flow's own screen): `required` when a part the server requires is not answered; null for a step
+ * the server reads no answers on (a sign-in screen, a consent policy step).
+ */
+function screenAnswersOf(
+	post: LitePost,
+	step: FlowRuntimeStep,
+	decision: { fields: Array<{ blockType: string; field: string; valueType: string | null }> }
+): { fields: Record<string, string | boolean | null> } | { required: true } | null {
+	const screen = rawScreenOf(step);
+	if (!isAnswerScreenStep(step, screen)) return null;
+	// A box the page drew and the person left unticked is not posted (a form sends ticked boxes
+	// only): it is `false`, as the SPA submits it; a part the page did not draw stays unanswered.
+	const drawnBoxes = new Set(
+		decision.fields
+			.filter(
+				(field) =>
+					field.blockType === 'checkbox' ||
+					(field.blockType === 'identity_field' && field.valueType === 'boolean')
+			)
+			.map((field) => field.field)
+	);
+	// Only what the page drew is read (a part left out, its condition not met, has no answer here,
+	// whatever the form holds under its name).
+	const drawnParts = new Set(
+		decision.fields.filter((field) => INPUT_BLOCKS.has(field.blockType)).map((field) => field.field)
+	);
+	const valueOf = (field: string) =>
+		!drawnParts.has(field) || isReservedFormName(field)
+			? undefined
+			: (post.fields.get(field) ?? (drawnBoxes.has(field) ? 'false' : undefined));
+	// Required of what the page drew (a part left out, its condition not met, is not asked for).
+	const drawn = new Set(decision.fields.map((field) => field.field));
+	for (const part of requiredScreenInputParts(screen)) {
+		const field = String(part.field).trim();
+		if (drawn.has(field) && !hasScreenAnswer(part, valueOf(field))) return { required: true };
+	}
+	return { fields: screenAnswerFields(screen, valueOf) };
+}
+
+/**
+ * `step_continue`: a step with nothing to sign in with (a screen to answer, a consent policy step,
+ * a screen of words): its consent accepted and its answers read, the step submitted with them (the
+ * SPA's Continue: `accepted` for a consent policy step, `submitted` for a screen), then the steps
+ * the SPA takes on its own.
+ */
+export const liteStepContinueAction = guarded(async (event) => {
 	const opened = await openPost(event);
 	if ('failure' in opened) return opened.failure;
 	const post = opened.post;
 	const step = post.flow.step;
-	const decision = liteLoginStepDecision(step, await liteTenantMethods(event), post.locale);
-	if (
-		!step ||
-		decision.kind !== 'screen' ||
-		!decision.fields.some((field) => field.blockType === 'consent_widget') ||
-		decision.fields.some((field) => SIGN_IN_BLOCKS.has(field.blockType))
-	) {
+	const decision = liteLoginStepDecision(
+		step,
+		await liteTenantMethods(event),
+		post.locale,
+		post.purpose
+	);
+	if (!step || decision.kind !== 'screen' || !liteStepContinues(decision)) {
 		return fail(409, { restart: true });
+	}
+	// The form of the step it was drawn on, in this interaction: one posted again after its step
+	// went on (a retry, another tab) is never taken for the step the Flow is on now.
+	if (post.fields.get('step-key') !== liteStepKey(post.flow.state.interactionId, step.id)) {
+		// What it holds was made on another step: nothing of it is given back.
+		CONSENT_USED.add(event);
+		backToPage(event);
 	}
 	const unconsented = await acceptFlowConsent(post);
 	if (unconsented) return unconsented;
-	const submitted = await submitOrNull(post, step, consentContinueHandle(step));
+	const answers = screenAnswersOf(post, step, decision);
+	if (answers && 'required' in answers) return fail(400, { error: 'answer_required' as const });
+	// One submit per form (the same form posted twice, a double click: the second goes back to the
+	// page, which draws where the first went).
+	const begun = await beginOperation(post, 'continue');
+	if ('failure' in begun) return begun.failure;
+	const submitted = await submitOrNull(post, step, consentContinueHandle(step), answers ?? {});
+	const finished = await finishOperation(post, post.txn, begun.operation, {
+		submitted: submitted !== null
+	});
+	if (finished) post.txn = finished;
 	if (!submitted) return retryLater();
 	if (submitted.completed) return relayCompletion(post, post.txn, submitted.output);
+	// A sign-in recorded whose Flow part is still to come (its code's step, after this screen):
+	// gone on with from the step this submit reached.
+	if (readSignedIn(post.txn.data, post.flow.state.interactionId)) {
+		return advanceAfterSignIn(post, post.txn, submitted.step);
+	}
 	const advanced = await advanceLiteFlow(post.backend, post.flow.state, submitted.step, {
 		signedIn: hasSession(post),
 		consentInput: consentInputOf(post)
@@ -1572,7 +1869,7 @@ export const liteRestartAction = guarded(async (event) => {
 	if (!txnId || !token) return fail(403, { restart: true });
 	const read = await txns.get(txnId);
 	if (!read.ok || !sameToken(read.txn.csrfToken, token)) return fail(403, { restart: true });
-	if (read.txn.bound.purpose !== 'login') return fail(403, { restart: true });
+	if (read.txn.bound.purpose !== litePagePurpose(event)) return fail(403, { restart: true });
 	if (read.txn.state !== 'completed' && read.txn.state !== 'abandoned') {
 		const moved = await txns.transition(read.txn.id, {
 			expectedVersion: read.txn.version,

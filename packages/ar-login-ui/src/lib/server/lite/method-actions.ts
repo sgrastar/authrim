@@ -70,9 +70,12 @@ const PASSKEY_CHALLENGE_TTL_MS = 300_000;
 
 /** Whether the step the post is on offers this method (on, allowed, and drawn as a button). */
 async function offers(post: LitePost, method: 'totp' | 'passkey') {
+	// A sign-up by passkey or authenticator is not done here yet (PR6a signs up by email code):
+	// never a sign-in's start from the sign-up page, whatever its form posts.
+	if (post.purpose !== 'login') return null;
 	const step = post.flow.step;
 	const methods = await liteTenantMethods(post.event);
-	const decision = liteLoginStepDecision(step, methods, post.locale);
+	const decision = liteLoginStepDecision(step, methods, post.locale, post.purpose);
 	const drawn =
 		decision.kind === 'screen' &&
 		decision.fields.some(
@@ -80,7 +83,7 @@ async function offers(post: LitePost, method: 'totp' | 'passkey') {
 				field.blockType === 'auth_widget' &&
 				(field.authMethod === method || (method === 'totp' && field.authMethod === 'mail_otp_totp'))
 		);
-	return step !== null && drawn && liteMethodAvailability(methods, step)(method)
+	return step !== null && drawn && liteMethodAvailability(methods, step, post.purpose)(method)
 		? { step, decision }
 		: null;
 }

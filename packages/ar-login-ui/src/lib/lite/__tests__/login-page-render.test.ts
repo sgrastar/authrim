@@ -148,7 +148,14 @@ describe('the lite sign-in page as drawn', () => {
 		const { body } = page(
 			[field({ blockType: 'code_input_widget', field: 'code', label: 'Code' })],
 			POW,
-			{ codeEntry: { kind: 'mail_otp', maskedEmail: 'p***n@example.com', resendWait: 42 } }
+			{
+				codeEntry: {
+					kind: 'mail_otp',
+					maskedEmail: 'p***n@example.com',
+					resendWait: 42,
+					resendable: true
+				}
+			}
 		);
 		const forms = body.match(/<form[^>]*>/gu) ?? [];
 		expect(forms).toHaveLength(2);
@@ -282,7 +289,7 @@ describe('the lite sign-in page as drawn', () => {
 					txnId: 'txn-1',
 					csrfToken: 'csrf-1',
 					op: 'o'.repeat(22),
-					decision: { kind: 'unsupported', reasons: ['block:checkbox'] },
+					decision: { kind: 'unsupported', reasons: ['block:signature_pad'] },
 					codeEntry: null,
 					pow: null,
 					text
