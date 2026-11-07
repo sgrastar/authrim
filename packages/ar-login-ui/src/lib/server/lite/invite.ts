@@ -16,6 +16,11 @@ export interface LiteInvite {
 	tenantName: string | null;
 	/** The address it was sent to, when it names one (the page offers it). */
 	email: string | null;
+	/**
+	 * Whether a sign-up that does not prove the address itself (a passkey, an authenticator) must
+	 * prove it first: such sign-ups are not offered here (PR6c).
+	 */
+	emailProofRequired: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -44,7 +49,9 @@ export async function validateLiteInvite(
 		token,
 		tenantId: json.tenant_id,
 		tenantName: typeof json.tenant_name === 'string' ? json.tenant_name : null,
-		email: typeof json.invited_email === 'string' && json.invited_email ? json.invited_email : null
+		email: typeof json.invited_email === 'string' && json.invited_email ? json.invited_email : null,
+		// Unsaid is taken as required (the safe reading).
+		emailProofRequired: json.email_verification_required !== false
 	};
 }
 
@@ -62,6 +69,7 @@ export function readLiteInvite(data: Record<string, unknown>): LiteInvite | null
 		token: invite.token,
 		tenantId: invite.tenantId,
 		tenantName: typeof invite.tenantName === 'string' ? invite.tenantName : null,
-		email: typeof invite.email === 'string' ? invite.email : null
+		email: typeof invite.email === 'string' ? invite.email : null,
+		emailProofRequired: invite.emailProofRequired !== false
 	};
 }

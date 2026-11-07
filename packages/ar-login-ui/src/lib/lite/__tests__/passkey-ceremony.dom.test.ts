@@ -94,3 +94,63 @@ describe('the lite passkey ceremony', () => {
 		expect(sent).not.toHaveBeenCalled();
 	});
 });
+
+describe('the lite passkey ceremony, for a sign-up', () => {
+	const CREATION = {
+		challenge: 'AQID',
+		rp: { id: 'id.example', name: 'Authrim' },
+		user: { id: 'BAU', name: 'new@example.com', displayName: 'New' },
+		pubKeyCredParams: [{ alg: -7 }],
+		timeout: 60000,
+		excludeCredentials: [{ id: 'Bgc', transports: [] }],
+		residentKey: 'required',
+		userVerification: 'required',
+		authenticatorAttachment: null
+	};
+
+	it('registers a passkey on the press and sends the registration as base64url JSON', async () => {
+		const create = vi.fn(async () => ({
+			id: 'cred',
+			rawId: buffer(0xfb, 0xff),
+			type: 'public-key',
+			response: {
+				clientDataJSON: buffer(2),
+				attestationObject: buffer(3),
+				getTransports: () => ['internal']
+			}
+		}));
+		vi.stubGlobal('PublicKeyCredential', function PublicKeyCredential() {});
+		Object.defineProperty(navigator, 'credentials', { value: { create }, configurable: true });
+		document.body.innerHTML = `
+			<form method="post" data-lite-passkey-create='${JSON.stringify(CREATION)}'
+				data-lite-passkey-unsupported="No passkeys" data-lite-passkey-error="Did not finish">
+				<input type="hidden" name="credential" value="" />
+				<button type="submit">Create</button>
+			</form>`;
+		const form = document.querySelector('form') as HTMLFormElement;
+		const sent = vi.fn();
+		form.submit = () => sent((form.querySelector('input') as HTMLInputElement).value);
+		new Function(LITE_PASSKEY_SCRIPT)();
+		expect(press(form).defaultPrevented).toBe(true);
+		await vi.waitFor(() => expect(sent).toHaveBeenCalled());
+		const request = (create.mock.calls[0] as unknown as [{ publicKey: Record<string, unknown> }])[0]
+			.publicKey;
+		expect([...(request.challenge as Uint8Array)]).toEqual([1, 2, 3]);
+		expect(request.rp).toEqual({ id: 'id.example', name: 'Authrim' });
+		const user = request.user as { id: Uint8Array; name: string };
+		expect([...user.id]).toEqual([4, 5]);
+		expect(request.pubKeyCredParams).toEqual([{ type: 'public-key', alg: -7 }]);
+		expect(request.attestation).toBe('none');
+		expect(request.authenticatorSelection).toEqual({
+			residentKey: 'required',
+			requireResidentKey: true,
+			userVerification: 'required'
+		});
+		expect(JSON.parse(sent.mock.calls[0][0] as string)).toEqual({
+			id: 'cred',
+			rawId: '-_8',
+			type: 'public-key',
+			response: { clientDataJSON: 'Ag', attestationObject: 'Aw', transports: ['internal'] }
+		});
+	});
+});
