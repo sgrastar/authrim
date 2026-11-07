@@ -12,6 +12,7 @@ import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
+const lite = vi.hoisted((): { mode: 'off' | 'always' | 'unknown' } => ({ mode: 'off' }));
 const mocks = vi.hoisted(() => ({
   getChallengeStore: vi.fn(),
   getSessionStore: vi.fn(),
@@ -43,6 +44,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       piiDb: {},
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
+    readLiteModeAuthoritative: vi.fn(async () => {
+      if (lite.mode === 'unknown') throw new Error('policy unavailable');
+      return lite.mode;
+    }),
   };
 });
 
@@ -67,7 +72,12 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function resume(options: { usage?: unknown; enableSso?: boolean; reauth?: boolean }) {
+async function resume(options: {
+  usage?: unknown;
+  enableSso?: boolean;
+  reauth?: boolean;
+  flowId?: string;
+}) {
   const digest = await sha256Hex(TOKEN);
   const challengeId = `external_idp_provisioning:${digest}`;
   const continuation = {
@@ -81,6 +91,7 @@ async function resume(options: { usage?: unknown; enableSso?: boolean; reauth?: 
       codeChallenge: 'code-challenge-a',
       redirectUri: 'https://login.example.com/callback',
       enableSso: options.enableSso ?? false,
+      ...(options.flowId ? { flowId: options.flowId } : {}),
       ...(options.reauth ? { reauthChallengeId: 'reauth_1', reauthRequestedAt: Date.now() } : {}),
       expiresAt: Date.now() + 60_000,
       createdAt: Date.now(),
@@ -157,6 +168,7 @@ function errorOf(response: Response): string | null {
 describe("external provisioning resume: the tenant's sign-in and sign-up switches", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    lite.mode = 'off';
     mocks.completeJit.mockResolvedValue({
       linkedIdentityId: 'external-link-a',
       roles_assigned: [],
@@ -207,6 +219,30 @@ describe("external provisioning resume: the tenant's sign-in and sign-up switche
       expect(mocks.createSession).not.toHaveBeenCalled();
     }
   );
+
+  it.each(['always', 'unknown'] as const)(
+    'finishes no account a sign-in begun outside a lite start left pending, when the mode is %s',
+    async (mode) => {
+      lite.mode = mode;
+      const { response, consumeChallengeRpc, storeChallengeRpc } = await resume({
+        flowId: 'flow-before-the-switch',
+      });
+      // The resume answers its failures as one error; nothing is finished.
+      expect(errorOf(response)).toBeTruthy();
+      expect(response.headers.get('location')).not.toContain('code=');
+      expect(mocks.completeJit).not.toHaveBeenCalled();
+      expect(consumeChallengeRpc).not.toHaveBeenCalled();
+      expect(storeChallengeRpc).not.toHaveBeenCalled();
+      expect(mocks.createSession).not.toHaveBeenCalled();
+    }
+  );
+
+  it('finishes the account of a sign-in begun at a lite start', async () => {
+    lite.mode = 'always';
+    const { response } = await resume({ flowId: 'lite:flow-a' });
+    expect(new URL(response.headers.get('location') ?? '').searchParams.get('code')).toBeTruthy();
+    expect(mocks.completeJit).toHaveBeenCalledOnce();
+  });
 
   it('answers temporarily_unavailable, activating nothing, when the switches cannot be read', async () => {
     const { response, storeChallengeRpc } = await resume({ usage: 'unreadable' });

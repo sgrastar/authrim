@@ -50,6 +50,7 @@ import {
   safeFetchJson,
   resolveSessionTtl,
 } from '@authrim/ar-lib-core';
+import { externalSignInMayCreateAccount } from '../services/lite-start';
 import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from '../utils/state';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import {
@@ -781,6 +782,17 @@ export async function handleExternalProvisioningResume(
       await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'login');
     }
     await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'signup');
+    // Finishing the account is still its creation: a tenant in lite mode lets only a sign-in begun
+    // at a lite start do it (one provisioned before the switch is not finished here).
+    if (
+      !(await externalSignInMayCreateAccount(c.env, tenantId, loaded.continuation.authState.flowId))
+    ) {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED,
+        'Automatic account creation is not available for this sign-in.',
+        { providerName: provider.name }
+      );
+    }
     const completed = await completeExternalIdpJIT(c.env, {
       tenantId,
       userId: expected.userId,
@@ -1661,6 +1673,12 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           inviteId: signupInvitation.inviteId,
         })
       : null;
+    // A tenant in lite mode creates an account only for a sign-in begun at a lite start.
+    const accountCreationAllowed = await externalSignInMayCreateAccount(
+      c.env,
+      authState.tenantId,
+      authState.flowId
+    );
     const result = await handleIdentity(c.env, {
       provider,
       userInfo,
@@ -1668,6 +1686,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       linkingUserId: authState.userId,
       tenantId: authState.tenantId,
       ...(invitation ? { invitation } : {}),
+      ...(accountCreationAllowed ? {} : { accountCreationAllowed: false }),
     });
     // Created here (now or once provisioning finishes): the use goes to that account.
     if (result.isNewUser) unsettledInvitation = null;
