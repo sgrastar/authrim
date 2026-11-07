@@ -312,7 +312,9 @@ const zhCN = createTranslation({
 		'您的登录提供方未确认您已重新登录。请重新登录或选择其他方式。',
 	login_extError_default_title: '身份验证错误',
 	login_extError_default_message: '外部身份验证过程中发生错误。',
-	lite_javascriptRequired: '此页面会在浏览器中进行安全检查。请启用 JavaScript，然后重新加载页面。'
+	lite_javascriptRequired: '此页面会在浏览器中进行安全检查。请启用 JavaScript，然后重新加载页面。',
+	lite_passkeyUnsupported: '此浏览器无法在此处使用通行密钥。请选择其他登录方式。',
+	lite_passkeyFailed: '通行密钥登录未完成。请重试，或选择其他登录方式。'
 });
 
 export default zhCN;
