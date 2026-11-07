@@ -107,7 +107,7 @@ describe('fieldsToBuilder', () => {
 });
 
 describe('builderToFields', () => {
-	it('saves what it read as it was, the legacy yes/no field as a checkbox', () => {
+	it('saves what it read as it was, a legacy yes/no field in its form', () => {
 		const saved: ScreenField[] = [
 			part({ block_type: 'heading', block_id: 'title', field: 'title', label: 'Hello', order: 10 }),
 			part({ block_id: 'agree', field: 'agree', label: 'Agree', value_type: 'boolean', order: 20 }),
@@ -133,13 +133,12 @@ describe('builderToFields', () => {
 
 		expect(fields.map((field) => [field.block_type, field.block_id, field.layout_column])).toEqual([
 			['heading', 'title', undefined],
-			['checkbox', 'agree', undefined],
+			['identity_field', 'agree', undefined],
 			['layout_row', 'names', undefined],
 			['identity_field', 'given', 1],
 			['identity_field', 'family', 2]
 		]);
-		expect(fields[1]).not.toHaveProperty('value_type');
-		expect(fields[1].store_to_profile).toBe(true);
+		expect(fields[1]).toMatchObject({ value_type: 'boolean', store_to_profile: true });
 		expect(fields[3]).toMatchObject({ future_property: 'kept', field: 'given_name' });
 		expect(fields.map((field) => field.order)).toEqual([10, 20, 30, 40, 50]);
 		// Read back, it is the same screen.
@@ -267,32 +266,6 @@ describe('builderToFields', () => {
 		expect(fields[1]).toMatchObject({ text: 'kept', required: false });
 	});
 
-	it('keeps a legacy yes/no question whose box has words of its own in its form', () => {
-		const [legacy, plain] = builderToFields(
-			fieldsToBuilder(
-				[
-					part({
-						block_id: 'terms',
-						field: 'terms',
-						label: 'Terms of use',
-						value_type: 'boolean',
-						placeholder: 'I have read and agree'
-					}),
-					part({ block_id: 'news', field: 'news', label: 'News', value_type: 'boolean' })
-				],
-				ids()
-			)
-		);
-
-		expect(legacy).toMatchObject({
-			block_type: 'identity_field',
-			value_type: 'boolean',
-			placeholder: 'I have read and agree'
-		});
-		expect(plain.block_type).toBe('checkbox');
-		expect(plain).not.toHaveProperty('value_type');
-	});
-
 	it('drops where an answer goes once it is stored to the profile', () => {
 		const screen = fieldsToBuilder(
 			[
@@ -316,36 +289,35 @@ describe('builderToFields', () => {
 		expect(plan).not.toHaveProperty('options');
 	});
 
-	it('turns a legacy yes/no into a checkbox when its box had no words of its own, or it leaves the profile', () => {
+	it('keeps a legacy yes/no in its form while stored to the profile, a checkbox once it is not', () => {
 		const screen = fieldsToBuilder(
 			[
 				part({
-					block_id: 'news',
-					field: 'news',
-					label: 'News',
-					placeholder: 'News',
-					value_type: 'boolean'
-				}),
-				part({
 					block_id: 'terms',
 					field: 'terms',
-					label: 'Terms',
-					placeholder: 'I agree',
+					label: 'Terms of use',
+					placeholder: 'I have read and agree',
 					value_type: 'boolean'
-				})
+				}),
+				part({ block_id: 'news', field: 'news', label: 'News', value_type: 'boolean' })
 			],
 			ids()
 		);
-		// The question is renamed: the box had no words of its own, so it is still a checkbox.
-		screen.rows[0].columns[0][0].label = 'Send me news';
+		// Renamed, still stored to the profile: the lite Login UI reads only this form for now.
+		screen.rows[0].columns[0][0].label = 'Terms';
 		// Kept off the profile: a checkbox to the API.
-		screen.settings.terms.linked = false;
-		screen.settings.terms.field = 'terms_answer';
+		screen.settings.news.linked = false;
+		screen.settings.news.field = 'news_answer';
 
-		const [news, terms] = builderToFields(screen);
+		const [terms, news] = builderToFields(screen);
+		expect(terms).toMatchObject({
+			block_type: 'identity_field',
+			value_type: 'boolean',
+			label: 'Terms',
+			placeholder: 'I have read and agree'
+		});
 		expect(news.block_type).toBe('checkbox');
-		expect(terms.block_type).toBe('checkbox');
-		expect(terms).not.toHaveProperty('value_type');
+		expect(news).not.toHaveProperty('value_type');
 	});
 
 	it('reads an older code input that named its code by auth_method', () => {

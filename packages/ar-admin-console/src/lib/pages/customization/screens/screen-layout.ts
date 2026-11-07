@@ -249,7 +249,8 @@ function defined(field: Record<string, unknown>): ScreenField {
 /**
  * Writes the builder's rows as a saved screen: a layout row before every row but a leading plain
  * one (one column, always shown, not read as a layout row), each part with its column, and an
- * `order` that keeps them in place. A legacy yes/no field is saved as a checkbox.
+ * `order` that keeps them in place. A legacy yes/no field stays in its form while it is stored to
+ * the profile.
  */
 export function builderToFields(screen: BuilderScreen): ScreenField[] {
 	const fields: ScreenField[] = [];
@@ -303,15 +304,11 @@ export function builderToFields(screen: BuilderScreen): ScreenField[] {
 				}
 				for (const key of removed(part.kind, settings)) delete origin[key];
 				if (typeof origin.required !== 'boolean') origin.required = false;
-				// A legacy yes/no question whose box has words of its own (its placeholder) stays in
-				// that form: a checkbox has one text only. Any other becomes a checkbox.
-				// Judged on what was read (the box's words differed from the question), and only while
-				// it is stored to the profile: one kept off the profile is a checkbox to the API.
-				const keepsLegacy =
-					isLegacyYesNo(read) &&
-					settings.linked &&
-					!!text(read?.placeholder) &&
-					text(read?.placeholder) !== text(read?.label);
+				// A legacy yes/no question stays in that form while it is stored to the profile: the
+				// lite Login UI renders only that form until it takes checkbox parts, and its box may
+				// have words of its own (its placeholder) a checkbox cannot hold. One kept off the
+				// profile is a checkbox (the API reads it as one).
+				const keepsLegacy = isLegacyYesNo(read) && settings.linked;
 				if (!keepsLegacy) delete origin.value_type;
 				fields.push(
 					defined({
