@@ -7,6 +7,7 @@ import {
   captureAccountDeletionSnapshot,
   deleteAnonymizationMappingStatement,
   forgetCachedAnonymizedUserId,
+  DIRECTORY_REMOVAL_ACCOUNT_HELD,
   insertPreparedAccountDirectoryRemovals,
   markAccountDirectoryRemovalReady,
   validateAccountDirectoryPublication,
@@ -230,7 +231,16 @@ export async function prepareAccountDirectoryRemoval(
       })
     )
   );
-  await insertPreparedAccountDirectoryRemovals(input.core, publications, now);
+  try {
+    // Refused while a legal hold stands on the account, in the same write that moves it to
+    // `deleting` (after which no hold can be placed): a held account is left as it was.
+    await insertPreparedAccountDirectoryRemovals(input.core, publications, now);
+  } catch (error) {
+    if (error instanceof Error && error.message === DIRECTORY_REMOVAL_ACCOUNT_HELD) {
+      throw new AccountDeletionHeldError();
+    }
+    throw error;
+  }
   return publications;
 }
 
@@ -253,12 +263,12 @@ export class AccountDeletionHeldError extends Error {
 }
 
 /**
- * Moves the account to `deleting` before any of its PII is erased, so a legal hold placed after the
- * deletion's own hold check cannot be placed any more (holds are refused for an account being
- * deleted), and one placed before it refuses the move: then nothing is erased
- * (AccountDeletionHeldError). Called after the directory removal is prepared (which reads the
- * account while it is still active). An account already deleted, or none at all (rows from before
- * canonical accounts), has nothing to fence.
+ * Confirms the account is `deleting` with no legal hold before any of its PII is erased (holds are
+ * refused for an account being deleted); a hold refuses the move: then nothing is erased
+ * (AccountDeletionHeldError). Called after the directory removal is prepared, which already moved
+ * the account to `deleting` under the same hold check (a retried deletion that adopts a prepared
+ * removal comes here with no new check). An account already deleted, or none at all (rows from
+ * before canonical accounts), has nothing to fence.
  */
 export async function fenceAccountDeletion(
   core: DatabaseAdapter,

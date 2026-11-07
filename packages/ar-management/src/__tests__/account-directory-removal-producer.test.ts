@@ -18,6 +18,7 @@ vi.mock('../lookup-hmac-runtime', () => ({
 }));
 
 import {
+  AccountDeletionHeldError,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
   markAccountDirectoryRemovalsReady,
   prepareAccountDirectoryRemoval,
@@ -123,6 +124,21 @@ describe('account directory removal producer', () => {
     expect(insert).toBeDefined();
     expect(JSON.stringify(insert?.params)).not.toContain('person@example.com');
     expect(executed.some((entry) => entry.sql.includes("lifecycle_state = 'deleting'"))).toBe(true);
+  });
+
+  it('refuses (AccountDeletionHeldError) when a legal hold stands, in the prepare itself', async () => {
+    // The hold authority row (the batch's first statement) matched nothing: neither did the rest.
+    vi.mocked(core.batch).mockImplementationOnce(async (statements) =>
+      statements.map(() => ({ rowsAffected: 0, success: true }))
+    );
+
+    await expect(
+      prepareAccountDirectoryRemoval(
+        {} as Env,
+        { tenantId: 'tenant-a', userId: 'user-a', core, pii },
+        100
+      )
+    ).rejects.toBeInstanceOf(AccountDeletionHeldError);
   });
 
   it('allows deletion recovery from an active or deprovisioned account', async () => {
