@@ -73,6 +73,8 @@ import {
   FLOW_EVENTS,
   contextWithoutScreenAnswers,
   expireFlowInteractions,
+  screenAnswerEntriesOf,
+  screenAnswersOf,
   publishEvent,
   isSAMLAuthorizationChallenge,
 } from '@authrim/ar-lib-core';
@@ -2592,6 +2594,8 @@ async function buildConditionEvaluationContext(
     user: interaction.user_id
       ? await getFlowConditionUserContext(c, db, tenantId, interaction.user_id)
       : undefined,
+    // The choices screen steps sent to the Flow (a screen answer condition reads them).
+    screen_answers: screenAnswersOf(requestContext.screen_answers),
   };
 }
 
@@ -4271,11 +4275,14 @@ function withRuntimeScreenAnswers(
   stepId: string,
   answers: Record<string, ScreenAnswerValue>
 ): Record<string, unknown> {
-  const byStep = { ...parseJsonRecord(context.screen_answers) };
-  if (Object.keys(answers).length > 0) byStep[stepId] = answers;
-  else delete byStep[stepId];
+  // The step moves to the end each time it is answered: the list is in the order of the last
+  // answers, and a key answered on two steps reads the latest (see screenAnswerEntriesOf).
+  const entries = screenAnswerEntriesOf(context.screen_answers).filter(
+    (entry) => entry.step_id !== stepId
+  );
+  if (Object.keys(answers).length > 0) entries.push({ step_id: stepId, answers });
   const next = { ...context };
-  if (Object.keys(byStep).length > 0) next.screen_answers = byStep;
+  if (entries.length > 0) next.screen_answers = entries;
   else delete next.screen_answers;
   return next;
 }
@@ -6406,7 +6413,20 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
           c,
           db,
           tenantId,
-          interaction,
+          // The choices this submit sends to the Flow count for the conditions after it (they are
+          // written with the step).
+          interaction: offProfileAnswers?.hasFlowContextPart
+            ? {
+                ...interaction,
+                context_json: JSON.stringify(
+                  withRuntimeScreenAnswers(
+                    parseJsonObject(interaction.context_json),
+                    current.step.id,
+                    offProfileAnswers.flowContext
+                  )
+                ),
+              }
+            : interaction,
           runtime,
           editor,
           requestContext,
