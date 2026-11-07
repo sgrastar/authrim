@@ -7,6 +7,7 @@ import {
   isCustomFlowNodeType,
   isStandardFlowNodeType,
   sanitizeImportedFlowContract,
+  screenAnswerEntriesOf,
   screenAnswersOf,
   validateFlowEditorState,
   validateFlowRuntimeContractPackage,
@@ -586,12 +587,12 @@ describe('screen answer conditions', () => {
   });
 
   it('branches on a choice a screen step sent to the Flow', async () => {
-    const screen_answers = screenAnswersOf({
-      'welcome:step': { plan: 'free', news: true },
-      'upgrade:step': { plan: 'pro' },
-    });
+    const screen_answers = screenAnswersOf([
+      { step_id: 'welcome:step', answers: { plan: 'free', news: true } },
+      { step_id: 'upgrade:step', answers: { plan: 'pro' } },
+    ]);
 
-    // The step kept last wins for a key answered twice.
+    // The step answered last wins for a key answered twice.
     expect(screen_answers).toEqual({ plan: 'pro', news: true });
     await expect(
       evaluateFlowConditionRows(
@@ -687,8 +688,30 @@ describe('screen answer conditions', () => {
     expect(issues.map((issue) => issue.code)).toContain('invalid_screen_answer_condition');
   });
 
+  it('takes the step answered last, an integer-like step id included', () => {
+    // An object would list '2' before '10' whatever the order they were set in; the list keeps it.
+    expect(
+      screenAnswersOf([
+        { step_id: '10', answers: { plan: 'free' } },
+        { step_id: '2', answers: { plan: 'pro' } },
+      ])
+    ).toEqual({ plan: 'pro' });
+  });
+
+  it('reads the object by step an earlier runtime kept', () => {
+    expect(
+      screenAnswerEntriesOf({ 'a:step': { plan: 'free' }, 'b:step': { plan: 'pro' } })
+    ).toEqual([
+      { step_id: 'a:step', answers: { plan: 'free' } },
+      { step_id: 'b:step', answers: { plan: 'pro' } },
+    ]);
+  });
+
   it('ignores what is not an answer', () => {
     expect(screenAnswersOf(null)).toEqual({});
     expect(screenAnswersOf({ step: { plan: 3, items: ['a'], ok: false } })).toEqual({ ok: false });
+    expect(
+      screenAnswerEntriesOf([null, { step_id: 1, answers: {} }, { step_id: 's', answers: [] }])
+    ).toEqual([]);
   });
 });

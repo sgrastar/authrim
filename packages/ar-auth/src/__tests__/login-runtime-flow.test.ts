@@ -5370,9 +5370,9 @@ describe('LoginUI runtime Flow handlers', () => {
 
         expect(response.status).toBe(200);
         const [context] = contextWrites();
-        expect(context?.screen_answers).toEqual({
-          'screen:step': { plan: 'pro', newsletter: true },
-        });
+        expect(context?.screen_answers).toEqual([
+          { step_id: 'screen:step', answers: { plan: 'pro', newsletter: true } },
+        ]);
         expect(JSON.stringify(context)).not.toContain('Call me later');
         expect(screenResponseWrites()).toEqual([]);
         expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
@@ -5407,7 +5407,9 @@ describe('LoginUI runtime Flow handlers', () => {
         // One visit of the step, the same for a submit sent again: a receiver can drop a repeat.
         expect(typeof payload.data.submissionId).toBe('string');
         // The box left untouched is no answer: the step's choices are the plan alone.
-        expect(contextWrites()[0]?.screen_answers).toEqual({ 'screen:step': { plan: 'pro' } });
+        expect(contextWrites()[0]?.screen_answers).toEqual([
+          { step_id: 'screen:step', answers: { plan: 'pro' } },
+        ]);
       });
 
       it('keeps no choices once the interaction ends at the screen', async () => {
@@ -5437,8 +5439,9 @@ describe('LoginUI runtime Flow handlers', () => {
           render: true,
           config: { screen_ref: 'profile_completion' },
         });
-        const submitPlan = (plan: string) =>
+        const submitPlan = (plan: string, context?: Record<string, unknown>) =>
           submitStep({
+            context,
             runtime: {
               flow_kind: 'login',
               ui: {
@@ -5495,6 +5498,32 @@ describe('LoginUI runtime Flow handlers', () => {
         const free = await submitPlan('free');
         expect(free.response.status).toBe(200);
         expect((free.data.step as { id?: string } | null)?.id).toBe('free-page:step');
+
+        // The step answered again (after a later step answered the same key) reads as the latest:
+        // it moves to the end of the kept choices, an integer-like step id included (an object
+        // would list that one first whatever the order it was set in).
+        const again = await submitPlan('pro', {
+          screen_answers: [
+            { step_id: 'screen:step', answers: { plan: 'free' } },
+            { step_id: '2', answers: { plan: 'free' } },
+          ],
+        });
+        expect(again.response.status).toBe(200);
+        expect((again.data.step as { id?: string } | null)?.id).toBe('pro-page:step');
+        expect(contextWrites().at(-1)?.screen_answers).toEqual([
+          { step_id: '2', answers: { plan: 'free' } },
+          { step_id: 'screen:step', answers: { plan: 'pro' } },
+        ]);
+
+        // The object by step an earlier runtime kept is read, and written back as the list.
+        const legacy = await submitPlan('free', {
+          screen_answers: { 'screen:step': { plan: 'pro' }, 'later:step': { plan: 'pro' } },
+        });
+        expect((legacy.data.step as { id?: string } | null)?.id).toBe('free-page:step');
+        expect(contextWrites().at(-1)?.screen_answers).toEqual([
+          { step_id: 'later:step', answers: { plan: 'pro' } },
+          { step_id: 'screen:step', answers: { plan: 'free' } },
+        ]);
       });
 
       it('keeps the choices only while the interaction is still at the step', async () => {

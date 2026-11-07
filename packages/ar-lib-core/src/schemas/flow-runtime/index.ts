@@ -525,16 +525,40 @@ export interface FlowConditionEvaluationContext {
 /** The longest answer key a screen answer condition names. */
 export const MAX_SCREEN_ANSWER_CONDITION_KEY_LENGTH = 100;
 
+/** One screen step's choices kept with an interaction, by answer key. */
+export interface ScreenAnswerEntry {
+  step_id: string;
+  answers: Record<string, unknown>;
+}
+
 /**
- * The choices kept with an interaction (`context_json.screen_answers`: by step, then answer key),
- * by answer key. A key answered on more than one step takes the step kept last.
+ * The choices kept with an interaction (`context_json.screen_answers`), one entry per step, the
+ * step answered last at the end. Kept as a list: an object's own keys do not keep the order they
+ * were set in when they look like integers (a step id may), so a step answered again could not
+ * be told to be the latest. The object by step id an earlier runtime wrote is read too.
+ */
+export function screenAnswerEntriesOf(raw: unknown): ScreenAnswerEntry[] {
+  if (Array.isArray(raw)) {
+    return raw.flatMap((entry) =>
+      isRecord(entry) && typeof entry.step_id === 'string' && isRecord(entry.answers)
+        ? [{ step_id: entry.step_id, answers: entry.answers }]
+        : []
+    );
+  }
+  if (!isRecord(raw)) return [];
+  return Object.entries(raw).flatMap(([stepId, answers]) =>
+    isRecord(answers) ? [{ step_id: stepId, answers }] : []
+  );
+}
+
+/**
+ * The kept choices by answer key (see screenAnswerEntriesOf). A key answered on more than one
+ * step takes the step answered last.
  */
 export function screenAnswersOf(raw: unknown): Record<string, string | boolean> {
   const answers: Record<string, string | boolean> = {};
-  if (!isRecord(raw)) return answers;
-  for (const byKey of Object.values(raw)) {
-    if (!isRecord(byKey)) continue;
-    for (const [key, value] of Object.entries(byKey)) {
+  for (const entry of screenAnswerEntriesOf(raw)) {
+    for (const [key, value] of Object.entries(entry.answers)) {
       if (typeof value === 'string' || typeof value === 'boolean') answers[key] = value;
     }
   }

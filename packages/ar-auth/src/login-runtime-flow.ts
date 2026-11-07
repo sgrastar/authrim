@@ -71,6 +71,7 @@ import {
   type Session,
   type FlowScreenSubmittedEventData,
   FLOW_EVENTS,
+  screenAnswerEntriesOf,
   screenAnswersOf,
   publishEvent,
   isSAMLAuthorizationChallenge,
@@ -4272,11 +4273,14 @@ function withRuntimeScreenAnswers(
   stepId: string,
   answers: Record<string, ScreenAnswerValue>
 ): Record<string, unknown> {
-  const byStep = { ...parseJsonRecord(context.screen_answers) };
-  if (Object.keys(answers).length > 0) byStep[stepId] = answers;
-  else delete byStep[stepId];
+  // The step moves to the end each time it is answered: the list is in the order of the last
+  // answers, and a key answered on two steps reads the latest (see screenAnswerEntriesOf).
+  const entries = screenAnswerEntriesOf(context.screen_answers).filter(
+    (entry) => entry.step_id !== stepId
+  );
+  if (Object.keys(answers).length > 0) entries.push({ step_id: stepId, answers });
   const next = { ...context };
-  if (Object.keys(byStep).length > 0) next.screen_answers = byStep;
+  if (entries.length > 0) next.screen_answers = entries;
   else delete next.screen_answers;
   return next;
 }
