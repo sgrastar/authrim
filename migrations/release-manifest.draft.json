@@ -24,6 +24,10 @@
             {
               "path": "004_screens_version.sql",
               "checksum": "a71542865d5aa467253b0e54822d4527aded649027e12f9c4f09aad59342e1f7"
+            },
+            {
+              "path": "005_flow_interaction_submit_claim.sql",
+              "checksum": "1d11e0cff4b6861ab94ec3d765bd641ad3f70e81992a75bc107e6eecaeacb960"
             }
           ]
         },
@@ -127,6 +131,10 @@
             {
               "path": "004_screens_version.sql",
               "checksum": "2cc347a913f919408ff92c6e36df016061d50f2aacb1b2cadcc9afc163a7c51d"
+            },
+            {
+              "path": "005_flow_interaction_submit_claim.sql",
+              "checksum": "601c831bac4b2af2406ac88da40654a8ae0680efca879afb4191b4f0b36bc05f"
             }
           ]
         },
@@ -174,6 +182,10 @@
         {
           "path": "004_screens_version.sql",
           "checksum": "a71542865d5aa467253b0e54822d4527aded649027e12f9c4f09aad59342e1f7"
+        },
+        {
+          "path": "005_flow_interaction_submit_claim.sql",
+          "checksum": "1d11e0cff4b6861ab94ec3d765bd641ad3f70e81992a75bc107e6eecaeacb960"
         }
       ]
     },
@@ -304,6 +316,10 @@
         {
           "path": "004_screens_version.sql",
           "checksum": "2cc347a913f919408ff92c6e36df016061d50f2aacb1b2cadcc9afc163a7c51d"
+        },
+        {
+          "path": "005_flow_interaction_submit_claim.sql",
+          "checksum": "601c831bac4b2af2406ac88da40654a8ae0680efca879afb4191b4f0b36bc05f"
         }
       ]
     },
