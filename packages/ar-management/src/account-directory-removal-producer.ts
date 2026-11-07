@@ -467,9 +467,8 @@ export async function captureGuestDirectoryPage(input: {
   } else if (kind === 'capture_passkeys') {
     source = core;
     table = 'passkeys';
-    // Credential IDs are base64url (one byte per character), so length() is the byte count the
-    // lookup directory limits passkey subjects by.
-    columns = `id,CASE WHEN rp_id IS NULL OR rp_id='' THEN 0 ELSE 1 END AS directory_eligible,CASE WHEN length(rp_id)<=253 THEN rp_id ELSE NULL END AS issuer,CASE WHEN length(credential_id)<=${LOOKUP_PASSKEY_SUBJECT_MAX_BYTES} THEN credential_id ELSE NULL END AS subject`;
+    // The lookup directory limits passkey subjects in UTF-8 bytes, so compare bytes, not characters.
+    columns = `id,CASE WHEN rp_id IS NULL OR rp_id='' THEN 0 ELSE 1 END AS directory_eligible,CASE WHEN length(rp_id)<=253 THEN rp_id ELSE NULL END AS issuer,CASE WHEN ${guestSourceBytes(core, 'credential_id')}<=${LOOKUP_PASSKEY_SUBJECT_MAX_BYTES} THEN credential_id ELSE NULL END AS subject`;
     predicate = 'tenant_id=? AND user_id=?';
   } else if (kind === 'capture_resume') {
     source = core;
