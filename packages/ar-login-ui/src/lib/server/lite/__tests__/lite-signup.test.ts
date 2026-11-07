@@ -427,12 +427,10 @@ describe('the sign-up page', () => {
 			invite_token: INVITE,
 			custom_fields: { company: 'Acme', newsletter: 'true' }
 		});
-		// A profile is kept with the first code only (ar-auth): such a sign-up is not sent again,
-		// and its code entry needs no proof (drawn even when none can be issued).
-		routes['/api/auth/human-verification/pow-challenge'] = () => json({ error: 'busy' }, 429);
+		// Its code is sent again as the sign-up (ar-auth keeps its profile): the entry posts a proof.
 		const entry = await view(`invite_token=${INVITE}`);
-		expect(entry.codeEntry).toMatchObject({ resendable: false });
-		expect(entry.pow).toBeNull();
+		expect(entry.codeEntry).toMatchObject({ kind: 'mail_otp' });
+		expect(entry.pow).not.toBeNull();
 	});
 
 	it('sends a code again as a sign-up, with the invitation, when it has no profile', async () => {
@@ -455,7 +453,7 @@ describe('the sign-up page', () => {
 			{ email: 'invited@example.com', name: 'Kai', human_verification_response: 'p' },
 			`invite_token=${INVITE}`
 		).catch((thrown: unknown) => thrown);
-		expect((await view(`invite_token=${INVITE}`)).codeEntry).toMatchObject({ resendable: true });
+		expect((await view(`invite_token=${INVITE}`)).codeEntry).toMatchObject({ kind: 'mail_otp' });
 		const code = store.txn.data.code as Record<string, unknown>;
 		store.set({ data: { ...store.txn.data, code: { ...code, sentAt: 0 } } });
 		await post('resend', { human_verification_response: 'p' }, `invite_token=${INVITE}`).catch(
@@ -470,7 +468,9 @@ describe('the sign-up page', () => {
 		});
 	});
 
-	it('sends no code again where ar-auth would not (the email code signs up only)', async () => {
+	it("sends a sign-up's code again, with a profile, where the email code only signs up", async () => {
+		// ar-auth takes a resend of the same sign-up (client, channel, challenge, interaction) as
+		// that sign-up, with the profile it kept (#766): no sign-in switch is needed.
 		await view();
 		await post('send_code', {
 			email: 'new@example.com',
@@ -478,14 +478,21 @@ describe('the sign-up page', () => {
 			human_verification_response: 'p'
 		}).catch((thrown: unknown) => thrown);
 		const page = await view();
-		expect(page.codeEntry).toMatchObject({ kind: 'mail_otp', resendable: false });
+		expect(page.codeEntry).toMatchObject({ kind: 'mail_otp' });
+		expect(page.pow).not.toBeNull();
 		const code = store.txn.data.code as Record<string, unknown>;
 		store.set({ data: { ...store.txn.data, code: { ...code, sentAt: 0 } } });
-		await expect(post('resend', { human_verification_response: 'p' })).resolves.toMatchObject({
-			status: 409
+		routes['/api/v1/auth/direct/email-code/send'] = () =>
+			json({ attempt_id: 'attempt-2', expires_in: 300, masked_email: 'n***@example.com' });
+		await post('resend', { human_verification_response: 'p2' }).catch((thrown: unknown) => thrown);
+		expect(sends()).toHaveLength(2);
+		expect(sends()[1].body).toMatchObject({
+			email: 'new@example.com',
+			runtime_interaction_id: sends()[0].body.runtime_interaction_id,
+			human_verification_response: 'p2'
 		});
-		expect(sends()).toHaveLength(1);
-		expect(store.txn.data.code).toMatchObject({ attemptId: code.attemptId });
+		expect(sends()[1].headers.get('X-Authrim-Human-Verification-Action')).toBe('signup');
+		expect(store.txn.data.code).toMatchObject({ attemptId: 'attempt-2' });
 	});
 
 	it('stops at an invitation it cannot take: unknown, malformed, or of another tenant', async () => {
@@ -856,6 +863,7 @@ describe('the sign-up page', () => {
 		vi.useRealTimers();
 		expect(calls.some((call) => call.path === '/api/auth/totp/signup/options')).toBe(false);
 		// Its entry posts no proof of work: none is asked for (drawn even when none can be issued).
+		const powRoute = routes['/api/auth/human-verification/pow-challenge'];
 		routes['/api/auth/human-verification/pow-challenge'] = () => json({ error: 'busy' }, 429);
 		const entry = await view(q);
 		expect(entry.inviteProof).toEqual({
@@ -879,7 +887,10 @@ describe('the sign-up page', () => {
 				}
 			}
 		});
+		// (That code's entry posts its resend's proof.)
+		routes['/api/auth/human-verification/pow-challenge'] = powRoute;
 		expect((await view(q)).inviteProof).toBeNull();
+		routes['/api/auth/human-verification/pow-challenge'] = () => json({ error: 'busy' }, 429);
 		store.set({ data: held });
 		// A new code being sent (another post took the send): no check of the old one meanwhile.
 		store.set({
@@ -1048,7 +1059,7 @@ describe('the sign-up page', () => {
 		expect(store.txn.data.social).toMatchObject({ provider: 'google', grantId: 'grant-1' });
 	});
 
-	it('lists the providers that sign in and sign up (an external start is a sign-in), and starts only those', async () => {
+	it('lists the providers by their sign-up switch (a lite start is gated by its purpose)', async () => {
 		currentStep = {
 			...SIGNUP_STEP,
 			config: {
@@ -1070,11 +1081,46 @@ describe('the sign-up page', () => {
 			}
 		};
 		const page = (await view()) as { providers: Array<{ id: string }> };
-		expect(page.providers.map((provider) => provider.id)).toEqual(['both']);
+		expect(page.providers.map((provider) => provider.id)).toEqual(['both', 'signs-up']);
 		await expect(
 			post('social_start', { provider: 'signs-in', human_verification_response: 'p' })
 		).resolves.toMatchObject({ status: 409 });
 		expect(store.binding.issueStartGrant).not.toHaveBeenCalled();
+	});
+
+	it('offers and starts a provider that only signs up (none that signs in besides)', async () => {
+		currentStep = {
+			...SIGNUP_STEP,
+			config: {
+				screen: {
+					fields: [
+						{ block_type: 'auth_widget', field: 's', label: 'Social', auth_method: 'external_idp' }
+					]
+				}
+			}
+		};
+		tenantMethods = {
+			external: {
+				enabled: true,
+				providers: [
+					{ id: 'signs-up', name: 'Up', enabled: true, loginEnabled: false, signupEnabled: true }
+				]
+			}
+		};
+		const page = (await view()) as {
+			providers: Array<{ id: string }>;
+			available: { external?: boolean };
+			decision: { fields: Array<{ blockType: string }> };
+		};
+		expect(page.providers.map((provider) => provider.id)).toEqual(['signs-up']);
+		expect(page.decision.fields.map((field) => field.blockType)).toContain('auth_widget');
+		store.binding.issueStartGrant.mockResolvedValue({ ok: true, grantId: 'grant-1' });
+		await post('social_start', { provider: 'signs-up', human_verification_response: 'p' }).catch(
+			(thrown: unknown) => thrown
+		);
+		expect(store.binding.issueStartGrant).toHaveBeenCalledWith(
+			expect.objectContaining({ provider: 'signs-up' })
+		);
 	});
 
 	it('takes no post for a transaction made for another page', async () => {
