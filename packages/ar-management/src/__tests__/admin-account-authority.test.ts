@@ -381,8 +381,9 @@ describe('revoking an invitation', () => {
     const context = setup();
     const globalActor = signIn(context.db, GLOBAL_SUPER_ADMIN);
     const tenantActor = signIn(context.db, GLOBAL_VIEWER_TENANT_SUPER_ADMIN);
-    const globalInvitation = invite(context, 'global', 'viewer');
-    const tenantInvitation = invite(context, 'tenant', 'viewer');
+    // The built-in viewer role, so the revoke measures a role that exists.
+    const globalInvitation = invite(context, 'global', 'ar_viewer');
+    const tenantInvitation = invite(context, 'tenant', 'ar_viewer');
 
     const first = await context.call(
       globalActor.cookie,
