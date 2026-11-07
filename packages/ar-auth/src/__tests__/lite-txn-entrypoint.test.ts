@@ -1,9 +1,17 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LitePolicyStore } from '@authrim/ar-lib-core/durable-objects/LitePolicyStore';
 import { LiteTxnStore } from '@authrim/ar-lib-core/durable-objects/LiteTxnStore';
 import { resetLitePolicyRuntimeCache } from '@authrim/ar-lib-core/services/lite-policy';
 import { tenantPrimaryVanityDomainCacheKey } from '@authrim/ar-lib-core/services/tenant-vanity-domain-resolver';
+import { consumeLiteStartGrant } from '@authrim/ar-lib-core';
 import { LITE_TXN_AUDIENCE, LiteTxnEntrypoint, checkedReturnTo } from '../lite-txn-entrypoint';
+
+const humanVerification = vi.hoisted(() => ({ verify: vi.fn(), challengeKind: vi.fn() }));
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  verifyHumanVerificationWithRunner: humanVerification.verify,
+  readAuthorizationChallengeKind: humanVerification.challengeKind,
+}));
 
 class Storage {
   readonly data = new Map<string, unknown>();
@@ -74,6 +82,10 @@ function entry(props: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   resetLitePolicyRuntimeCache();
+  humanVerification.verify.mockReset();
+  humanVerification.verify.mockResolvedValue({ required: true, verified: true });
+  humanVerification.challengeKind.mockReset();
+  humanVerification.challengeKind.mockResolvedValue('login');
   policy = new LitePolicyStore({ storage: new Storage() } as never, {} as never);
   txnStores = new Map();
   counts = new Map();
@@ -257,7 +269,9 @@ describe('LiteTxnEntrypoint', () => {
     await expect(
       entry().transition({ ...call, txnId, expectedVersion: 1, to: 'pending' })
     ).resolves.toEqual({ ok: false, reason: 'policy_changed' });
-    await expect(entry().issueStartGrant({ ...call, txnId, provider: 'google' })).resolves.toEqual({
+    await expect(
+      entry().issueStartGrant({ ...call, txnId, provider: 'google', clientId: 'login-ui' })
+    ).resolves.toEqual({
       ok: false,
       reason: 'policy_changed',
     });
@@ -325,7 +339,9 @@ describe('LiteTxnEntrypoint', () => {
       ok: false,
       reason: 'policy_changed',
     });
-    await expect(entry().issueStartGrant({ ...call, txnId, provider: 'google' })).resolves.toEqual({
+    await expect(
+      entry().issueStartGrant({ ...call, txnId, provider: 'google', clientId: 'login-ui' })
+    ).resolves.toEqual({
       ok: false,
       reason: 'policy_changed',
     });
@@ -511,6 +527,7 @@ describe('LiteTxnEntrypoint refusals before the store', () => {
       ...call,
       txnId: created.txn.id,
       provider: 'google',
+      clientId: 'login-ui',
       action: 'login',
     } as never);
     expect(issued).toMatchObject({ ok: true });
@@ -556,5 +573,198 @@ describe('LiteTxnEntrypoint refusals before the store', () => {
         returnTo: `${ORIGIN}/account`,
       })
     ).resolves.toEqual({ ok: false, reason: 'origin_not_canonical', canonicalOrigin: ORIGIN });
+  });
+});
+
+describe('LiteTxnEntrypoint start grants', () => {
+  function storedGrants(txnId: string) {
+    const record = [...txnStores.values()]
+      .flatMap((store) => [
+        ...(
+          store as unknown as { ctx: { storage: { data: Map<string, unknown> } } }
+        ).ctx.storage.data.values(),
+      ])
+      .find((value) => (value as { id?: string }).id === txnId) as {
+      grants: Record<string, { consumed: boolean }>;
+    };
+    return Object.values(record.grants);
+  }
+
+  it.each([
+    ['login', ['signup']],
+    ['signup', ['login']],
+  ] as const)(
+    'verifies the proof for a %s, with the requirement of the other (JIT, or signing in)',
+    async (purpose, alsoRequiredFor) => {
+      await setPolicy('always');
+      const created = await entry().create({ ...call, clientIp: null, purpose });
+      if (!created.ok) throw new Error(created.reason);
+      await expect(
+        entry().issueStartGrant({
+          ...call,
+          txnId: created.txn.id,
+          provider: 'google',
+          clientId: 'login-ui',
+          humanVerificationResponse: 'proof',
+        })
+      ).resolves.toMatchObject({ ok: true });
+      expect(humanVerification.verify).toHaveBeenCalledWith(expect.anything(), {
+        tenantId: 'default',
+        action: purpose,
+        alsoRequiredFor,
+        responseToken: 'proof',
+      });
+    }
+  );
+
+  it.each(['reauth', null] as const)(
+    'makes no grant for a sign-in that answers a %s challenge, spending no proof',
+    async (kind) => {
+      await setPolicy('always');
+      humanVerification.challengeKind.mockResolvedValue(kind);
+      const created = await entry().create({
+        ...call,
+        clientIp: null,
+        purpose: 'login',
+        challengeId: 'challenge-1',
+      });
+      if (!created.ok) throw new Error(created.reason);
+      await expect(
+        entry().issueStartGrant({
+          ...call,
+          txnId: created.txn.id,
+          provider: 'google',
+          clientId: 'login-ui',
+          humanVerificationResponse: 'proof',
+        })
+      ).resolves.toEqual({ ok: false, reason: 'unsupported_purpose' });
+      expect(humanVerification.challengeKind).toHaveBeenCalledWith(
+        expect.anything(),
+        'default',
+        'challenge-1'
+      );
+      expect(humanVerification.verify).not.toHaveBeenCalled();
+      expect(storedGrants(created.txn.id)).toEqual([]);
+    }
+  );
+
+  it('makes no grant when the proof does not verify, or its check fails', async () => {
+    await setPolicy('always');
+    const created = await entry().create({ ...call, clientIp: null, purpose: 'login' });
+    if (!created.ok) throw new Error(created.reason);
+    humanVerification.verify.mockResolvedValueOnce({ required: true, verified: false });
+    humanVerification.verify.mockRejectedValueOnce(new Error('store down'));
+    for (let i = 0; i < 2; i++) {
+      await expect(
+        entry().issueStartGrant({
+          ...call,
+          txnId: created.txn.id,
+          provider: 'google',
+          clientId: 'login-ui',
+          humanVerificationResponse: 'proof',
+        })
+      ).resolves.toEqual({ ok: false, reason: 'human_verification_failed' });
+    }
+    expect(storedGrants(created.txn.id)).toEqual([]);
+  });
+
+  it('spends no proof for a transaction it cannot use, nor without the UI client', async () => {
+    await setPolicy('always');
+    const created = await entry().create({ ...call, clientIp: null, purpose: 'login' });
+    if (!created.ok) throw new Error(created.reason);
+    await expect(
+      entry().issueStartGrant({
+        ...call,
+        txnId: 'missing',
+        provider: 'google',
+        clientId: 'login-ui',
+        humanVerificationResponse: 'proof',
+      })
+    ).resolves.toEqual({ ok: false, reason: 'not_found' });
+    await expect(
+      entry().issueStartGrant({
+        ...call,
+        txnId: created.txn.id,
+        provider: 'google',
+        clientId: '',
+        humanVerificationResponse: 'proof',
+      })
+    ).resolves.toEqual({ ok: false, reason: 'invalid_request' });
+    expect(humanVerification.verify).not.toHaveBeenCalled();
+  });
+
+  it('carries the UI client and the interaction to the start that consumes it, once', async () => {
+    await setPolicy('always');
+    const created = await entry().create({ ...call, clientIp: null, purpose: 'login' });
+    if (!created.ok) throw new Error(created.reason);
+    const issued = await entry().issueStartGrant({
+      ...call,
+      txnId: created.txn.id,
+      provider: 'google',
+      clientId: 'login-ui',
+      interactionId: 'interaction-1',
+      humanVerificationResponse: 'proof',
+    });
+    if (!issued.ok) throw new Error(issued.reason);
+    const consume = (overrides: Record<string, unknown> = {}) =>
+      consumeLiteStartGrant(env as never, {
+        tenantId: 'default',
+        binding: BINDING,
+        txnId: created.txn.id,
+        grantId: issued.grantId,
+        provider: 'google',
+        ...overrides,
+      });
+    // Another browser, another provider: refused, and the grant is still there.
+    await expect(consume({ binding: 'c'.repeat(43) })).resolves.toEqual({
+      ok: false,
+      reason: 'binding_mismatch',
+    });
+    // Another tenant's store instance does not hold it.
+    await expect(consume({ tenantId: 'other' })).resolves.toMatchObject({ ok: false });
+    await expect(consume({ provider: 'github' })).resolves.toEqual({
+      ok: false,
+      reason: 'grant_invalid',
+    });
+    await expect(consume()).resolves.toMatchObject({
+      ok: true,
+      txn: { id: created.txn.id, bound: { purpose: 'login', publicOrigin: ORIGIN } },
+      start: { clientId: 'login-ui', interactionId: 'interaction-1' },
+    });
+    await expect(consume()).resolves.toEqual({ ok: false, reason: 'grant_invalid' });
+  });
+
+  it('consumes no grant once the tenant changed its policy or left lite mode', async () => {
+    await setPolicy('always');
+    const created = await entry().create({ ...call, clientIp: null, purpose: 'login' });
+    if (!created.ok) throw new Error(created.reason);
+    const issued = await entry().issueStartGrant({
+      ...call,
+      txnId: created.txn.id,
+      provider: 'google',
+      clientId: 'login-ui',
+      humanVerificationResponse: 'proof',
+    });
+    if (!issued.ok) throw new Error(issued.reason);
+    const consume = () =>
+      consumeLiteStartGrant(env as never, {
+        tenantId: 'default',
+        binding: BINDING,
+        txnId: created.txn.id,
+        grantId: issued.grantId,
+        provider: 'google',
+      });
+    const lease = await policy.acquireLeaseRpc('default');
+    if (!lease.acquired) throw new Error('lease');
+    await policy.commitRpc({
+      tenantId: 'default',
+      token: lease.token,
+      expectedGeneration: lease.generation,
+      liteMode: 'always',
+      humanVerificationRequired: { login: true, signup: false, reauth: false },
+    });
+    await expect(consume()).resolves.toEqual({ ok: false, reason: 'policy_changed' });
+    await setPolicy('off');
+    await expect(consume()).resolves.toEqual({ ok: false, reason: 'not_lite' });
   });
 });

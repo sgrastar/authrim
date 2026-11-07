@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_SCREEN_TEXT_ANSWER_LENGTH,
+  hasSignInMethodPart,
   readRuntimeScreenAnswers,
+  readSignUpScreenFields,
   shownScreenInputParts,
   splitOffProfileAnswers,
   splitProfileAnswers,
@@ -246,5 +248,95 @@ describe('splitOffProfileAnswers', () => {
 
     expect(split.hasFlowEventPart).toBe(false);
     expect(split.flowEvent).toEqual({});
+  });
+});
+
+describe('readSignUpScreenFields', () => {
+  const fixed = (field: string) => ['email', 'name', 'field.canonical.email'].includes(field);
+  const signUp = {
+    fields: [
+      { field: 'email', label: 'Email', required: true },
+      { field: 'company', label: 'Company', required: true },
+      { field: 'plan', block_type: 'select', options, label: 'Plan' },
+      { field: 'terms', block_type: 'checkbox', label: 'Terms', required: true },
+      { field: 'legacy_ok', value_type: 'boolean', label: 'OK' },
+      {
+        field: 'survey',
+        block_type: 'radio',
+        store_to_profile: false,
+        answer_targets: ['flow_event'],
+        options,
+        label: 'Survey',
+      },
+      { field: 'internal', label: 'Hidden', display_condition: { mode: 'hidden' } },
+      {
+        field: 'promo',
+        label: 'Promo',
+        required: true,
+        display_condition: { mode: 'feature_enabled' },
+      },
+      { field: 'signup', block_type: 'auth_widget', auth_method: 'passkey' },
+    ],
+  };
+  const read = (fields: unknown) => readSignUpScreenFields(signUp, fields, fixed);
+
+  it('accepts the attributes the screen shows and stores to the profile', () => {
+    expect(read({ company: 'Acme', plan: 'dev', terms: 'true', legacy_ok: false })).toEqual({
+      ok: true,
+    });
+    // The fixed fields are the sign-up's own; numbers are left to the Identity Schema.
+    expect(read({ email: 'a@example.com', company: 42, terms: true })).toEqual({ ok: true });
+  });
+
+  it('refuses an attribute the screen does not show or keeps off the profile', () => {
+    expect(read({ company: 'Acme', terms: true, internal: 'x' })).toEqual({
+      ok: false,
+      problem: 'unknown_field',
+      field: 'internal',
+    });
+    expect(read({ company: 'Acme', terms: true, survey: 'dev' })).toEqual({
+      ok: false,
+      problem: 'unknown_field',
+      field: 'survey',
+    });
+    expect(read({ company: 'Acme', terms: true, role: 'admin' })).toMatchObject({
+      field: 'role',
+    });
+  });
+
+  it('refuses a value the part does not offer', () => {
+    expect(read({ company: 'Acme', terms: true, plan: 'enterprise' })).toEqual({
+      ok: false,
+      problem: 'invalid_value',
+      field: 'plan',
+    });
+    expect(read({ company: 'Acme', terms: 'yes' })).toMatchObject({ problem: 'invalid_value' });
+    expect(read({ company: ['Acme'], terms: true })).toMatchObject({
+      problem: 'invalid_value',
+      field: 'company',
+    });
+  });
+
+  it('needs every required part, a required checkbox ticked', () => {
+    expect(read({ terms: true })).toEqual({ ok: false, problem: 'required', field: 'company' });
+    expect(read({ company: '  ', terms: true })).toMatchObject({ field: 'company' });
+    expect(read({ company: 'Acme', terms: false })).toEqual({
+      ok: false,
+      problem: 'required',
+      field: 'terms',
+    });
+    // A part shown only for a method is not required here, nor a fixed field.
+    expect(read({ company: 'Acme', terms: true })).toEqual({ ok: true });
+  });
+
+  it('reads no attributes as none, and refuses what is not an object', () => {
+    expect(readSignUpScreenFields({ fields: [] }, undefined, fixed)).toEqual({ ok: true });
+    expect(read('company=Acme')).toEqual({ ok: false, problem: 'invalid_input', field: null });
+  });
+
+  it('tells a screen a sign-in or sign-up starts on', () => {
+    expect(hasSignInMethodPart(signUp)).toBe(true);
+    expect(hasSignInMethodPart(screen)).toBe(false);
+    expect(hasSignInMethodPart({ fields: [{ block_type: 'code_input_widget' }] })).toBe(false);
   });
 });

@@ -11,7 +11,9 @@ const {
   mockReauthPolicy,
   mockReserveInvitation,
   mockResolveCoreAdapter,
+  mockConsumeGrant,
 } = vi.hoisted(() => ({
+  mockConsumeGrant: vi.fn(),
   mockReserveInvitation: vi.fn(),
   mockResolveCoreAdapter: vi.fn(),
   mockGetIdPConfig: vi.fn(),
@@ -49,6 +51,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     readAuthorizationChallengeKind: mockChallengeKind,
+    consumeLiteStartGrant: (...args: unknown[]): unknown => mockConsumeGrant(...args),
     readExternalProviderReauthPolicy: mockReauthPolicy,
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveCoreAdapter,
     getLogger: () => ({
@@ -74,6 +77,7 @@ describe('SP login tenant signing boundary', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConsumeGrant.mockResolvedValue({ ok: false, reason: 'invalid_binding' });
     mockGetSigningKey.mockResolvedValue({
       kid: 'mock-kid',
       privateKeyPem: 'mock-private-key',
@@ -94,8 +98,8 @@ describe('SP login tenant signing boundary', () => {
     };
   });
 
-  it('refuses an SP start for a tenant in lite mode before anything else', async () => {
-    // A tenant in lite mode starts SAML sign-in only from the lite Login UI.
+  it('refuses an SP start for a tenant in lite mode without a start grant, before anything else', async () => {
+    // A tenant in lite mode starts SAML sign-in only from the lite Login UI (its start grant).
     mockEnv.LITE_POLICY_STORE = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({
@@ -117,6 +121,121 @@ describe('SP login tenant signing boundary', () => {
     expect(await res.json()).toMatchObject({ error: 'lite_mode_endpoint_unavailable' });
     expect(redirect).not.toHaveBeenCalled();
     expect(mockGetIdPConfig).not.toHaveBeenCalled();
+    expect(mockConsumeGrant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tenantId: 'tenant-a', provider: 'saml:idp-1' })
+    );
+  });
+
+  it('starts from a consumed grant, taking the return, challenge and interaction from it', async () => {
+    mockEnv.LITE_POLICY_STORE = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => ({
+        isEverLiteRpc: vi.fn().mockResolvedValue(true),
+        getSnapshotRpc: vi.fn().mockResolvedValue({
+          tenantId: 'tenant-a',
+          liteMode: 'always',
+          humanVerificationRequired: { login: true, signup: true, reauth: false },
+          policyRevision: 'rev-1',
+          generation: 1,
+          updatedAt: 1,
+        }),
+      })),
+    } as unknown as Env['LITE_POLICY_STORE'];
+    mockConsumeGrant.mockResolvedValue({
+      ok: true,
+      txn: {
+        id: 'txn-1',
+        bound: { publicOrigin: 'https://auth.example.com', challengeId: null, purpose: 'login' },
+      },
+      start: { clientId: 'login-ui', interactionId: null },
+    });
+    mockGetIdPConfig.mockResolvedValue({
+      entityId: 'https://idp.example.com',
+      ssoUrl: 'https://idp.example.com/sso',
+      certificate: 'mock-certificate',
+      nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+      attributeMapping: {},
+      allowedBindings: ['redirect'],
+      signingKeyPolicy: { active: { slot: 'active', keyRef: 'tenant:tenant-a:saml:sp:signing' } },
+    });
+    const store = { fetch: vi.fn().mockResolvedValue(new Response('OK', { status: 200 })) };
+    mockEnv.SAML_REQUEST_STORE = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => store),
+    } as unknown as Env['SAML_REQUEST_STORE'];
+
+    const { context } = createLoginContext(mockEnv, 'tenant-a', {
+      lite_txn: 'txn-1',
+      lite_grant: 'grant-1',
+      invite_token: 'invite-1',
+      authorization_challenge_id: 'attacker-challenge',
+      runtime_interaction_id: 'attacker-interaction',
+    });
+    const res = await handleSPLogin(context);
+    expect(res.status).toBe(302);
+    // No human verification here (the grant was made after it), no invitation, no challenge read.
+    expect(mockReserveInvitation).not.toHaveBeenCalled();
+    expect(mockChallengeKind).not.toHaveBeenCalled();
+    const [, init] = store.fetch.mock.calls[0] as [string, { body: string }];
+    const stored = JSON.parse(init.body) as Record<string, unknown>;
+    const liteReturn = 'https://auth.example.com/callback?lite_txn=txn-1&lite_grant=grant-1';
+    // The return the query asked for (return_url) is ignored: the lite callback of the grant.
+    expect(stored).toMatchObject({ relayState: liteReturn, context: { liteReturn } });
+  });
+
+  it('refuses a lite start without an IdP, or one answering a re-authentication', async () => {
+    mockEnv.LITE_POLICY_STORE = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => ({
+        isEverLiteRpc: vi.fn().mockResolvedValue(true),
+        getSnapshotRpc: vi.fn().mockResolvedValue({
+          tenantId: 'tenant-a',
+          liteMode: 'always',
+          humanVerificationRequired: { login: true, signup: true, reauth: false },
+          policyRevision: 'rev-1',
+          generation: 1,
+          updatedAt: 1,
+        }),
+      })),
+    } as unknown as Env['LITE_POLICY_STORE'];
+    // No IdP: no IdP selection page, no grant consumed.
+    const noIdp = createLoginContext(mockEnv, 'tenant-a', { idp: '' });
+    (noIdp.context.req.query as ReturnType<typeof vi.fn>).mockImplementation((name: string) =>
+      name === 'idp' ? undefined : undefined
+    );
+    expect((await handleSPLogin(noIdp.context)).status).toBe(403);
+    expect(mockConsumeGrant).not.toHaveBeenCalled();
+
+    mockConsumeGrant.mockResolvedValue({
+      ok: true,
+      txn: {
+        id: 'txn-1',
+        bound: {
+          publicOrigin: 'https://auth.example.com',
+          challengeId: 'reauth-1',
+          purpose: 'login',
+        },
+      },
+      start: { clientId: 'login-ui', interactionId: null },
+    });
+    mockGetIdPConfig.mockResolvedValue({
+      entityId: 'https://idp.example.com',
+      ssoUrl: 'https://idp.example.com/sso',
+      certificate: 'mock-certificate',
+      nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+      attributeMapping: {},
+      allowedBindings: ['redirect'],
+    });
+    mockChallengeKind.mockResolvedValue('reauth');
+    const { context, redirect } = createLoginContext(mockEnv, 'tenant-a', {
+      lite_txn: 'txn-1',
+      lite_grant: 'grant-1',
+    });
+    expect((await handleSPLogin(context)).status).toBe(403);
+    expect(mockChallengeKind).toHaveBeenCalledWith(expect.anything(), 'tenant-a', 'reauth-1');
+    expect(mockReauthPolicy).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
   });
 
   it('fails closed when SP-initiated redirect signing keyRef belongs to another tenant', async () => {

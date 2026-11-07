@@ -12,6 +12,7 @@ import {
 } from '@authrim/ar-lib-core/services/external-signup-invitation';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import { consumeLiteSamlStart } from './lite-start';
 import type { SAMLIdPConfig, SAMLRequestContext } from '@authrim/ar-lib-core';
 import {
   createErrorResponse,
@@ -27,7 +28,6 @@ import {
   resolveSignInAttemptInteraction,
   resolveSamlRequestTtlSeconds,
   verifyHumanVerificationWithRunner,
-  readLiteModeState,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
@@ -98,27 +98,26 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     // Get IdP ID from query parameter
     const idpId = c.req.query('idp');
     const tenantId = resolveSAMLTenantIdFromContext(c);
-    // A tenant in lite mode starts SAML sign-in only from the lite Login UI, which proves human
-    // verification first; until that start is wired, it is refused here.
-    if (env.LITE_POLICY_STORE && (await readLiteModeState(env, tenantId)) !== 'off') {
-      c.header('Cache-Control', 'no-store');
-      return c.json(
-        {
-          error: 'lite_mode_endpoint_unavailable',
-          error_description: 'This tenant starts SAML sign-in from the lite Login UI',
-        },
-        403
-      );
+    // A tenant in lite mode starts SAML sign-in only from the lite Login UI: by the one-time start
+    // grant ar-auth made for this browser's transaction after the page's proof of work. It is
+    // consumed before anything else; the start then takes nothing from its query.
+    const lite = await consumeLiteSamlStart(c, tenantId, idpId);
+    if (lite && !lite.ok) return lite.response;
+    const query = (name: string): string | undefined => (lite ? undefined : c.req.query(name));
+    // A lite start's proof of work was verified (and spent) when its grant was made.
+    if (!lite) {
+      const turnstileError = await verifySPLoginHumanVerification(c, tenantId);
+      if (turnstileError) return turnstileError;
     }
-    const turnstileError = await verifySPLoginHumanVerification(c, tenantId);
-    if (turnstileError) return turnstileError;
     const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
     // Determine return URL with UI config fallback. Only local Authrim/Login UI origins are accepted.
-    const requestedReturnUrl = c.req.query('return_url');
+    const requestedReturnUrl = query('return_url');
     const uiConfig = await getUIConfig(env, tenantId);
     const defaultReturnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${issuerUrl}/`;
-    const returnUrl = resolveSafeReturnUrl(env, tenantId, requestedReturnUrl) ?? defaultReturnUrl;
+    const returnUrl = lite
+      ? lite.returnUrl
+      : (resolveSafeReturnUrl(env, tenantId, requestedReturnUrl) ?? defaultReturnUrl);
 
     if (!idpId) {
       // Return list of available IdPs if no IdP specified
@@ -128,9 +127,9 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
           issuerUrl,
           idps,
           returnUrl,
-          c.req.query('authorization_challenge_id') || undefined,
-          c.req.query('invite_token'),
-          c.req.query('runtime_interaction_id')
+          query('authorization_challenge_id') || undefined,
+          query('invite_token'),
+          query('runtime_interaction_id')
         )
       );
     }
@@ -146,7 +145,9 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     // A sign-in that answers an Authrim re-authentication asks the IdP for a new login
     // (ForceAuthn), and only an IdP the tenant lets re-authenticate is asked.
     let reauthentication: SAMLRequestContext['spReauthentication'];
-    const authorizationChallengeId = c.req.query('authorization_challenge_id');
+    const authorizationChallengeId = lite
+      ? (lite.txn.bound.challengeId ?? undefined)
+      : query('authorization_challenge_id');
     if (authorizationChallengeId) {
       const challengeKind = await readAuthorizationChallengeKind(
         env,
@@ -159,6 +160,16 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
         });
       }
       if (challengeKind === 'reauth') {
+        // A lite grant is made only for a sign-in challenge (re-authentication is not lite yet).
+        if (lite) {
+          return c.json(
+            {
+              error: 'lite_mode_endpoint_unavailable',
+              error_description: 'This tenant starts SAML sign-in from the lite Login UI',
+            },
+            403
+          );
+        }
         const providerIds = [`saml:${idpId}`, idpId];
         const policy = await readExternalProviderReauthPolicy(env, tenantId, {
           providerId: idpId,
@@ -212,7 +223,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     // A sign-in started from an invitation reserves one use now, held by this request for as
     // long as the IdP may take to answer it, so the ACS can apply it to the account it creates.
     // A re-authentication creates no account, so it carries no invitation.
-    const inviteToken = c.req.query('invite_token');
+    const inviteToken = query('invite_token');
     let invitation: ExternalSignupInvitation | null = null;
     if (inviteToken !== undefined && !reauthentication) {
       if (!isUsableInvitationToken(inviteToken)) {
@@ -236,7 +247,9 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     // The Flow interaction this sign-in belongs to, once checked a live interaction of the tenant:
     // the ACS records the sign-in's failures with it.
     // Best effort: a check that cannot be made leaves the sign-in unrecorded, never refused.
-    const requestedInteractionId = c.req.query('runtime_interaction_id');
+    const requestedInteractionId = lite
+      ? (lite.start.interactionId ?? undefined)
+      : query('runtime_interaction_id');
     const attemptInteractionId = requestedInteractionId
       ? await (async () =>
           resolveSignInAttemptInteraction(
@@ -247,11 +260,12 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
           ))().catch(() => null)
       : null;
     const requestContext: SAMLRequestContext | undefined =
-      reauthentication || invitation || attemptInteractionId
+      reauthentication || invitation || attemptInteractionId || lite
         ? {
             ...(reauthentication ? { spReauthentication: reauthentication } : {}),
             ...(invitation ? { invitation } : {}),
             ...(attemptInteractionId ? { attemptInteractionId } : {}),
+            ...(lite ? { liteReturn: lite.returnUrl, liteClientId: lite.start.clientId } : {}),
           }
         : undefined;
     await storeAuthnRequest(

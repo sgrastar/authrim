@@ -16,6 +16,7 @@ import {
   loginRuntimeInteractionStartHandler,
   insertDestinationFieldConsentRecord,
   loginRuntimeInteractionSubmitHandler,
+  resolveSignUpScreen,
 } from '../login-runtime-flow';
 
 const mocks = vi.hoisted(() => {
@@ -1751,6 +1752,12 @@ describe('LoginUI runtime Flow handlers', () => {
       expect.stringContaining('SET context_json = ?'),
       expect.arrayContaining([expect.stringContaining('"locale":"ko"')])
     );
+    // Written back only while it is open: a context read before it ended (its screen answers
+    // removed then) is not written over the one it ended with.
+    const writeBack = mocks.coreAdapter.execute.mock.calls.find(([sql]) =>
+      String(sql).includes('SET context_json = ?')
+    );
+    expect(String(writeBack?.[0])).toContain("state IN ('created', 'active')");
   });
 
   it('hydrates screen steps with the active screen snapshot', async () => {
@@ -5370,9 +5377,9 @@ describe('LoginUI runtime Flow handlers', () => {
 
         expect(response.status).toBe(200);
         const [context] = contextWrites();
-        expect(context?.screen_answers).toEqual({
-          'screen:step': { plan: 'pro', newsletter: true },
-        });
+        expect(context?.screen_answers).toEqual([
+          { step_id: 'screen:step', answers: { plan: 'pro', newsletter: true } },
+        ]);
         expect(JSON.stringify(context)).not.toContain('Call me later');
         expect(screenResponseWrites()).toEqual([]);
         expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
@@ -5407,7 +5414,9 @@ describe('LoginUI runtime Flow handlers', () => {
         // One visit of the step, the same for a submit sent again: a receiver can drop a repeat.
         expect(typeof payload.data.submissionId).toBe('string');
         // The box left untouched is no answer: the step's choices are the plan alone.
-        expect(contextWrites()[0]?.screen_answers).toEqual({ 'screen:step': { plan: 'pro' } });
+        expect(contextWrites()[0]?.screen_answers).toEqual([
+          { step_id: 'screen:step', answers: { plan: 'pro' } },
+        ]);
       });
 
       it('keeps no choices once the interaction ends at the screen', async () => {
@@ -5427,6 +5436,101 @@ describe('LoginUI runtime Flow handlers', () => {
         expect(context).not.toHaveProperty('screen_answers');
         // The event still carries the answer.
         expect(mocks.publishEvent).toHaveBeenCalledTimes(1);
+      });
+
+      it('branches on the choice this submit sends to the Flow', async () => {
+        const page = (id: string) => ({
+          id: `${id}:step`,
+          source_node_id: id,
+          component: 'screen' as const,
+          render: true,
+          config: { screen_ref: 'profile_completion' },
+        });
+        const submitPlan = (plan: string, context?: Record<string, unknown>) =>
+          submitStep({
+            context,
+            runtime: {
+              flow_kind: 'login',
+              ui: {
+                steps: [
+                  screenRuntime.ui.steps[0],
+                  {
+                    id: 'plan:step',
+                    source_node_id: 'plan',
+                    component: 'condition',
+                    render: false,
+                    config: {
+                      conditions: {
+                        rows: [
+                          {
+                            id: 'pro',
+                            condition: { type: 'screen.answer', attribute: 'plan', value: 'pro' },
+                            output_handle: 'pro',
+                          },
+                        ],
+                        otherwise: { output_handle: 'otherwise' },
+                      },
+                    },
+                  },
+                  page('pro-page'),
+                  page('free-page'),
+                ],
+              },
+            },
+            editor: {
+              nodes: [
+                { id: 'screen', type: 'screen' },
+                { id: 'plan', type: 'condition' },
+                { id: 'pro-page', type: 'screen' },
+                { id: 'free-page', type: 'screen' },
+              ],
+              edges: [
+                { id: 'a', source: 'screen', source_handle: 'submitted', target: 'plan' },
+                { id: 'b', source: 'plan', source_handle: 'pro', target: 'pro-page' },
+                { id: 'c', source: 'plan', source_handle: 'otherwise', target: 'free-page' },
+              ],
+            },
+            currentStep: { node: 'screen', step: 'screen:step' },
+            handle: 'submitted',
+            withSession: false,
+            userId: 'user_1',
+            body: { input: { fields: { plan } } },
+            beforeSubmit: () => readsScreen(flowScreen),
+          });
+
+        const pro = await submitPlan('pro');
+        expect(pro.response.status).toBe(200);
+        expect((pro.data.step as { id?: string } | null)?.id).toBe('pro-page:step');
+
+        const free = await submitPlan('free');
+        expect(free.response.status).toBe(200);
+        expect((free.data.step as { id?: string } | null)?.id).toBe('free-page:step');
+
+        // The step answered again (after a later step answered the same key) reads as the latest:
+        // it moves to the end of the kept choices, an integer-like step id included (an object
+        // would list that one first whatever the order it was set in).
+        const again = await submitPlan('pro', {
+          screen_answers: [
+            { step_id: 'screen:step', answers: { plan: 'free' } },
+            { step_id: '2', answers: { plan: 'free' } },
+          ],
+        });
+        expect(again.response.status).toBe(200);
+        expect((again.data.step as { id?: string } | null)?.id).toBe('pro-page:step');
+        expect(contextWrites().at(-1)?.screen_answers).toEqual([
+          { step_id: '2', answers: { plan: 'free' } },
+          { step_id: 'screen:step', answers: { plan: 'pro' } },
+        ]);
+
+        // The object by step an earlier runtime kept is read, and written back as the list.
+        const legacy = await submitPlan('free', {
+          screen_answers: { 'screen:step': { plan: 'pro' }, 'later:step': { plan: 'pro' } },
+        });
+        expect((legacy.data.step as { id?: string } | null)?.id).toBe('free-page:step');
+        expect(contextWrites().at(-1)?.screen_answers).toEqual([
+          { step_id: 'later:step', answers: { plan: 'pro' } },
+          { step_id: 'screen:step', answers: { plan: 'free' } },
+        ]);
       });
 
       it('keeps the choices only while the interaction is still at the step', async () => {
@@ -6030,6 +6134,37 @@ describe('LoginUI runtime Flow handlers', () => {
     );
   });
 
+  it('expires a stale interaction with its screen answers removed', async () => {
+    const { data: startData } = await startInteraction();
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      expiresAt: Math.floor(Date.now() / 1000) - 1,
+      context: { screen_answers: { 'survey:step': { plan: 'pro' } } },
+    });
+
+    await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        body: {
+          step_id: 'entry:step',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+
+    const expiry = mocks.coreAdapter.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET state = 'expired'")
+    );
+    const context = JSON.parse(String((expiry?.[1] as unknown[])[1])) as Record<string, unknown>;
+    expect(context).not.toHaveProperty('screen_answers');
+    // Only over the context read: a concurrent submit's answers are left to the maintenance.
+    expect(String(expiry?.[0])).toContain('AND context_json IS ?');
+    expect(JSON.parse(String((expiry?.[1] as unknown[])[4]))).toHaveProperty('screen_answers');
+  });
+
   it('marks expired Flow interactions and deletes stale step rows during cleanup', async () => {
     mocks.coreAdapter.execute
       .mockResolvedValueOnce({ success: true, rowsAffected: 2 })
@@ -6310,6 +6445,229 @@ describe('the re-authentication challenge of a SAML request', () => {
       });
 
       expect(data.completed).toBe(true);
+    });
+  });
+});
+
+describe('resolveSignUpScreen', () => {
+  const step = (id: string, component: string, screenRef?: string) => ({
+    id,
+    source_node_id: id.replace(':step', ''),
+    component,
+    render: true,
+    config: screenRef ? { screen_ref: screenRef } : {},
+  });
+  const runtime = {
+    flow_kind: 'signup',
+    ui: {
+      steps: [
+        step('signup:step', 'registration_method_selector', 'registration_custom'),
+        step('built-in:step', 'registration_method_selector'),
+        step('code:step', 'email_verification', 'code_input'),
+        step('survey:step', 'screen', 'survey'),
+      ],
+    },
+  };
+  const screens: Record<string, unknown[]> = {
+    registration_custom: [
+      { field: 'email', label: 'Email', required: true },
+      { field: 'company', label: 'Company' },
+      { field: 'signup', block_type: 'auth_widget', auth_method: 'passkey' },
+    ],
+    code_input: [{ field: 'code', block_type: 'code_input_widget' }],
+    survey: [{ field: 'plan', label: 'Plan' }],
+  };
+  let versionSeq = 0;
+
+  function reads(input: {
+    currentStepId: string;
+    visited?: Array<string | { stepId: string; createdAt: number; completedAtMs?: number }>;
+    /** What a read of one second's visits answers (the edge of the look-back). */
+    sameSecond?: Array<{ stepId: string; createdAt: number; completedAtMs?: number }>;
+    state?: string;
+    expiresAt?: number;
+  }) {
+    versionSeq += 1;
+    const versionId = `fv_signup_${versionSeq}`;
+    mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, params: unknown[]) => {
+      const text = String(sql);
+      if (text.includes('FROM flow_interactions')) {
+        return {
+          id: 'fi_1',
+          flow_id: 'flow_1',
+          flow_version_id: versionId,
+          user_id: null,
+          client_id: 'client_1',
+          saml_sp_id: null,
+          state: input.state ?? 'active',
+          current_node_id: input.currentStepId.replace(':step', ''),
+          current_step_id: input.currentStepId,
+          context_json: '{}',
+          contract_hash: 'hash',
+          signature: 'sig',
+          expires_at: input.expiresAt ?? Math.floor(Date.now() / 1000) + 600,
+        };
+      }
+      if (text.includes('FROM flow_versions')) {
+        return {
+          id: versionId,
+          flow_id: 'flow_1',
+          schema_version: 1,
+          runtime_snapshot_json: JSON.stringify(runtime),
+          editor_snapshot_json: null,
+          published_at: 1,
+        };
+      }
+      if (text.includes('FROM screens')) {
+        const ref = String(params[1]);
+        const fields = screens[ref];
+        return fields
+          ? {
+              id: `screen_${ref}`,
+              screen_key: ref,
+              display_name: ref,
+              description: null,
+              screen_kind: 'custom',
+              fields_json: JSON.stringify(fields),
+              localizations_json: null,
+              settings_json: null,
+            }
+          : undefined;
+      }
+      return undefined;
+    });
+    const row = (visit: { stepId: string; createdAt: number; completedAtMs?: number }) => ({
+      step_id: visit.stepId,
+      created_at: visit.createdAt,
+      state_json:
+        visit.completedAtMs === undefined
+          ? null
+          : JSON.stringify({ completed_at_ms: visit.completedAtMs }),
+    });
+    mocks.coreAdapter.query.mockImplementation(async (sql: string) =>
+      String(sql).includes('AND created_at = ?')
+        ? (input.sameSecond ?? []).map(row)
+        : String(sql).includes('FROM flow_interaction_steps')
+          ? (input.visited ?? []).map((visit) =>
+              typeof visit === 'string'
+                ? { step_id: visit, created_at: 1, state_json: null }
+                : {
+                    step_id: visit.stepId,
+                    created_at: visit.createdAt,
+                    state_json:
+                      visit.completedAtMs === undefined
+                        ? null
+                        : JSON.stringify({ completed_at_ms: visit.completedAtMs }),
+                  }
+            )
+          : []
+    );
+  }
+
+  const c = () => createContext({});
+
+  it('takes the screen of the current step when a sign-up starts on it', async () => {
+    reads({ currentStepId: 'signup:step' });
+    const resolved = await resolveSignUpScreen(c(), 'tenant_1', 'fi_1');
+    expect(resolved.kind).toBe('screen');
+    expect(resolved).toMatchObject({
+      stepId: 'signup:step',
+      screen: { id: 'screen_registration_custom' },
+    });
+  });
+
+  it('looks back from a code step to the step the sign-up started on', async () => {
+    reads({ currentStepId: 'code:step', visited: ['code:step', 'survey:step', 'signup:step'] });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      kind: 'screen',
+      stepId: 'signup:step',
+    });
+  });
+
+  it('orders the visits of one second by when each was completed', async () => {
+    // The database lists them by second, then by id: here the earlier visit first.
+    reads({
+      currentStepId: 'code:step',
+      visited: [
+        { stepId: 'code:step', createdAt: 100 },
+        { stepId: 'built-in:step', createdAt: 100, completedAtMs: 100_100 },
+        { stepId: 'signup:step', createdAt: 100, completedAtMs: 100_400 },
+      ],
+    });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      kind: 'screen',
+      stepId: 'signup:step',
+    });
+  });
+
+  it('reads every visit of the second at the edge of the look-back', async () => {
+    // Twenty visits of one second fill the look-back without the latest (listed by id, it fell
+    // past the limit); the read of that whole second has it.
+    const filler = Array.from({ length: 19 }, (_, index) => ({
+      stepId: 'survey:step',
+      createdAt: 100,
+      completedAtMs: 100_000 + index,
+    }));
+    const builtIn = { stepId: 'built-in:step', createdAt: 100, completedAtMs: 100_050 };
+    const latest = { stepId: 'signup:step', createdAt: 100, completedAtMs: 100_900 };
+    reads({
+      currentStepId: 'code:step',
+      visited: [...filler, builtIn],
+      sameSecond: [...filler, builtIn, latest],
+    });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      kind: 'screen',
+      stepId: 'signup:step',
+    });
+  });
+
+  it('tells no step from more visits in one second than it reads', async () => {
+    const visit = (index: number) => ({
+      stepId: 'signup:step',
+      createdAt: 100,
+      completedAtMs: 100_000 + index,
+    });
+    const twenty = Array.from({ length: 20 }, (_, index) => visit(index));
+    reads({
+      currentStepId: 'code:step',
+      visited: twenty,
+      sameSecond: Array.from({ length: 200 }, (_, index) => visit(index)),
+    });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      kind: 'screen',
+    });
+    reads({
+      currentStepId: 'code:step',
+      visited: twenty,
+      sameSecond: Array.from({ length: 201 }, (_, index) => visit(index)),
+    });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toEqual({
+      kind: 'invalid',
+      reason: 'not_a_sign_up_step',
+    });
+  });
+
+  it('leaves a selector showing the built-in form to the Identity Schema', async () => {
+    reads({ currentStepId: 'built-in:step' });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toEqual({
+      kind: 'built_in',
+    });
+  });
+
+  it('is no place to sign up from without a sign-in step, or once the interaction ended', async () => {
+    reads({ currentStepId: 'survey:step', visited: ['survey:step'] });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toEqual({
+      kind: 'invalid',
+      reason: 'not_a_sign_up_step',
+    });
+    reads({ currentStepId: 'signup:step', state: 'completed' });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toEqual({
+      kind: 'invalid',
+      reason: 'interaction_not_found',
+    });
+    reads({ currentStepId: 'signup:step', expiresAt: 1 });
+    await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
+      reason: 'interaction_not_found',
     });
   });
 });

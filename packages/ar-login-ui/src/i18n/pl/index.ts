@@ -503,7 +503,13 @@ const translation = {
 	common_dismissAlert: 'Zamknij powiadomienie',
 	emailCode_digitLabel: 'Cyfra {position} z 6',
 	lite_javascriptRequired:
-		'Ta strona przeprowadza w przeglądarce kontrolę bezpieczeństwa. Włącz JavaScript, a następnie załaduj stronę ponownie.'
+		'Ta strona przeprowadza w przeglądarce kontrolę bezpieczeństwa. Włącz JavaScript, a następnie załaduj stronę ponownie.',
+	lite_passkeyUnsupported:
+		'Ta przeglądarka nie może tutaj użyć klucza dostępu. Wybierz inny sposób logowania.',
+	lite_socialStarted:
+		'Logowanie kontem zewnętrznym zostało rozpoczęte na tej stronie. Aby zalogować się w inny sposób, zacznij od nowa.',
+	lite_passkeyFailed:
+		'Logowanie kluczem dostępu nie zostało ukończone. Spróbuj ponownie lub wybierz inny sposób logowania.'
 } satisfies Translation;
 
 export default translation;

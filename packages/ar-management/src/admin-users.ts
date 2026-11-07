@@ -71,6 +71,8 @@ import { writeCanonicalAccountAuthoritative } from './account-authoritative-writ
 import {
   attemptImmediateAccountDirectoryRemovals,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
+  fenceAccountDeletion,
+  AccountDeletionHeldError,
   markAccountDirectoryRemovalsReady,
   prepareAccountDirectoryRemoval,
 } from './account-directory-removal-producer';
@@ -2013,6 +2015,8 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
             core,
             pii,
           });
+          // Holds fenced off before anything is erased (see fenceAccountDeletion).
+          await fenceAccountDeletion(core, { tenantId, userId });
           await writeAccountTombstone(pii, {
             tenantId,
             userId,
@@ -2108,6 +2112,8 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
           operationId: deletingOperationId,
         });
 
+        // Holds fenced off before anything is erased (see fenceAccountDeletion).
+        await fenceAccountDeletion(authCtx.coreAdapter, { tenantId, userId });
         const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
         if (piiAdapter) {
           await writeAccountTombstone(piiAdapter, {
@@ -2120,6 +2126,14 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
               source: 'admin_api',
               timestamp: new Date().toISOString(),
             },
+          });
+          // The account's PII, as the routed deletion erases it (linked identities, response
+          // records, subject identifiers, ...): there is no Lookup directory to remove routes from
+          // here, but the PII is the person's all the same.
+          await eraseAccountPiiAfterDirectoryRemovalPrepared(piiAdapter, {
+            tenantId,
+            userId,
+            core: authCtx.coreAdapter,
           });
           // The audit pseudonym, after the tombstone: a late audit write does not create it again.
           const pseudonym = deleteAnonymizationMappingStatement(tenantId, userId);
@@ -2160,6 +2174,16 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       message: 'User deleted successfully',
     });
   } catch (error) {
+    // A hold placed after the check above: the deletion stopped before anything was erased.
+    if (error instanceof AccountDeletionHeldError) {
+      return c.json(
+        {
+          error: 'legal_hold_active',
+          error_description: 'User is under legal hold and cannot be deleted',
+        },
+        409
+      );
+    }
     logSanitizedError('Admin user delete error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;
@@ -2465,6 +2489,12 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       addressJson: null,
       customAttributesJson: null,
     });
+    // What the person answered to login screens (their response records) is PII too. The
+    // tombstone written above keeps a later screen from recording new ones.
+    await accountPii.execute('DELETE FROM screen_responses WHERE tenant_id = ? AND user_id = ?', [
+      tenantId,
+      userId,
+    ]);
 
     await invalidateUserCache(c.env, tenantId, userId);
     await createAuditLogFromContext(c, 'user.pii_deleted', 'user', userId, {

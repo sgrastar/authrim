@@ -500,7 +500,13 @@ const translation = {
 	common_dismissAlert: 'सूचना बंद करें',
 	emailCode_digitLabel: '6 में से अंक {position}',
 	lite_javascriptRequired:
-		'यह पेज आपके ब्राउज़र में सुरक्षा जाँच करता है। JavaScript चालू करें, फिर पेज को दोबारा लोड करें।'
+		'यह पेज आपके ब्राउज़र में सुरक्षा जाँच करता है। JavaScript चालू करें, फिर पेज को दोबारा लोड करें।',
+	lite_passkeyUnsupported:
+		'यह ब्राउज़र यहाँ पासकी का उपयोग नहीं कर सकता। साइन इन करने का कोई दूसरा तरीका चुनें।',
+	lite_socialStarted:
+		'इस पेज से बाहरी खाते से साइन-इन शुरू किया गया था। किसी और तरीके से साइन इन करने के लिए फिर से शुरू करें।',
+	lite_passkeyFailed:
+		'पासकी से साइन इन पूरा नहीं हुआ। फिर से कोशिश करें, या साइन इन करने का कोई दूसरा तरीका चुनें।'
 } satisfies Translation;
 
 export default translation;

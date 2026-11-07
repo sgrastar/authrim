@@ -1,5 +1,7 @@
 import {
   createLookupBlindIndexes,
+  LOOKUP_PASSKEY_ISSUER_PREFIX,
+  LOOKUP_PASSKEY_SUBJECT_MAX_BYTES,
   guestDirectoryRemovalOperationPrefix,
   CanonicalIdentityRepository,
   captureAccountDeletionSnapshot,
@@ -242,6 +244,56 @@ export async function markAccountDirectoryRemovalsReady(
   }
 }
 
+/** A legal hold stands on the account a deletion was about to erase. */
+export class AccountDeletionHeldError extends Error {
+  constructor() {
+    super('account_deletion_legal_hold');
+    this.name = 'AccountDeletionHeldError';
+  }
+}
+
+/**
+ * Moves the account to `deleting` before any of its PII is erased, so a legal hold placed after the
+ * deletion's own hold check cannot be placed any more (holds are refused for an account being
+ * deleted), and one placed before it refuses the move: then nothing is erased
+ * (AccountDeletionHeldError). Called after the directory removal is prepared (which reads the
+ * account while it is still active). An account already deleted, or none at all (rows from before
+ * canonical accounts), has nothing to fence.
+ */
+export async function fenceAccountDeletion(
+  core: DatabaseAdapter,
+  input: { tenantId: string; userId: string }
+): Promise<void> {
+  const repository = new CanonicalIdentityRepository(core, input.tenantId);
+  const account = await repository.findAccountByLegacyUserId(input.userId, {
+    includeInactive: true,
+    consistencyClass: 'primary_required',
+  });
+  if (!account || account.lifecycle_state === 'deleted') return;
+  if (!(await repository.transitionAccountLifecycle(account.id, 'deleting'))) {
+    throw new AccountDeletionHeldError();
+  }
+}
+
+/**
+ * Whether a deletion of the account stopped part way: its directory removal is still only
+ * prepared (it becomes pending at the end of the deletion), so a retried deletion goes on with it
+ * even after the user can no longer be read.
+ */
+export async function hasUnfinishedAccountDeletion(
+  core: DatabaseAdapter,
+  input: { tenantId: string; userId: string }
+): Promise<boolean> {
+  const row = await core.queryOne<{ found: number }>(
+    `SELECT 1 AS found FROM account_routing_outbox
+      WHERE tenant_id = ? AND account_id = ? AND event_kind = 'account_deleted'
+        AND status = 'prepared'
+      LIMIT 1`,
+    [input.tenantId, `account:${input.userId}`]
+  );
+  return row !== null;
+}
+
 export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
   pii: DatabaseAdapter,
   input: { tenantId: string; userId: string; core: DatabaseAdapter },
@@ -465,8 +517,8 @@ export async function captureGuestDirectoryPage(input: {
   } else if (kind === 'capture_passkeys') {
     source = core;
     table = 'passkeys';
-    columns =
-      "id,CASE WHEN rp_id IS NULL OR rp_id='' THEN 0 ELSE 1 END AS directory_eligible,CASE WHEN length(rp_id)<=253 THEN rp_id ELSE NULL END AS issuer,CASE WHEN length(credential_id)<=1024 THEN credential_id ELSE NULL END AS subject";
+    // The lookup directory limits passkey subjects in UTF-8 bytes, so compare bytes, not characters.
+    columns = `id,CASE WHEN rp_id IS NULL OR rp_id='' THEN 0 ELSE 1 END AS directory_eligible,CASE WHEN length(rp_id)<=253 THEN rp_id ELSE NULL END AS issuer,CASE WHEN ${guestSourceBytes(core, 'credential_id')}<=${LOOKUP_PASSKEY_SUBJECT_MAX_BYTES} THEN credential_id ELSE NULL END AS subject`;
     predicate = 'tenant_id=? AND user_id=?';
   } else if (kind === 'capture_resume') {
     source = core;
@@ -507,7 +559,9 @@ export async function captureGuestDirectoryPage(input: {
     if (kind === 'capture_passkeys' && row.directory_eligible === 0) continue;
     if (!row.issuer || !row.subject) throw new Error('guest_directory_subject_invalid');
     const issuer =
-      kind === 'capture_passkeys' ? `urn:authrim:passkey:${row.issuer.toLowerCase()}` : row.issuer;
+      kind === 'capture_passkeys'
+        ? `${LOOKUP_PASSKEY_ISSUER_PREFIX}${row.issuer.toLowerCase()}`
+        : row.issuer;
     bytes += new TextEncoder().encode(row.id + issuer + row.subject).length;
     if (bytes > 32768) throw new Error('guest_directory_capture_budget_exceeded');
     publications.push(

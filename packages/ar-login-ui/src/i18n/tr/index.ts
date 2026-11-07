@@ -501,7 +501,13 @@ const translation = {
 	common_dismissAlert: 'Uyarıyı kapat',
 	emailCode_digitLabel: '6 hanenin {position}. hanesi',
 	lite_javascriptRequired:
-		"Bu sayfa tarayıcınızda bir güvenlik denetimi çalıştırır. JavaScript'i açın, ardından sayfayı yeniden yükleyin."
+		"Bu sayfa tarayıcınızda bir güvenlik denetimi çalıştırır. JavaScript'i açın, ardından sayfayı yeniden yükleyin.",
+	lite_passkeyUnsupported:
+		'Bu tarayıcı burada geçiş anahtarı kullanamıyor. Başka bir oturum açma yöntemi seçin.',
+	lite_socialStarted:
+		'Bu sayfadan harici bir hesapla oturum açma başlatıldı. Başka bir yolla oturum açmak için baştan başlayın.',
+	lite_passkeyFailed:
+		'Geçiş anahtarıyla oturum açma tamamlanmadı. Yeniden deneyin veya başka bir oturum açma yöntemi seçin.'
 } satisfies Translation;
 
 export default translation;

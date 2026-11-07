@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import {
+  createLookupBlindIndexes,
+  passkeyCredentialLookupSubject,
+  type DatabaseAdapter,
+  type Env,
+} from '@authrim/ar-lib-core';
 import {
   buildAccountEmailAddition,
   prepareAccountExternalSubjectRemoval,
@@ -100,6 +105,35 @@ describe('account external-subject removal preparation', () => {
         params: expect.arrayContaining(['identifier_removed', JSON.stringify(publication)]),
       }),
     ]);
+  });
+
+  it('prepares the removal of a WebAuthn-maximum (1,364-character) passkey credential', async () => {
+    const credentialId = `${'Q'.repeat(1363)}w`;
+    const externalSubject = passkeyCredentialLookupSubject({
+      rpId: 'login.example.com',
+      credentialId,
+    });
+    const adapter = {
+      queryOne: vi.fn().mockResolvedValue(null),
+      batch: vi.fn().mockResolvedValue([{ success: true, rowsAffected: 1 }]),
+    } as unknown as DatabaseAdapter;
+
+    const publication = await prepareAccountExternalSubjectRemoval(
+      {} as Env,
+      { ...input(), externalSubject },
+      adapter,
+      123
+    );
+
+    // The removal names the very indexes registration published for the credential.
+    const published = await createLookupBlindIndexes('external_subject', externalSubject, [
+      { generation: 2, secret: KEY_B },
+      { generation: 1, secret: KEY_A },
+    ]);
+    expect(publication.indexes.map((index) => index.digest).sort()).toEqual(
+      published.map((index) => index.digest).sort()
+    );
+    expect(JSON.stringify(publication)).not.toContain(credentialId);
   });
 
   it('reuses only an exact existing outbox payload', async () => {

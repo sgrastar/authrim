@@ -279,6 +279,11 @@ export interface HandleIdentityParams {
    * for that email (and, when the tenant requires it, only when the provider verified it).
    */
   invitation?: { invitedEmail: string | null; requireVerifiedEmail: boolean };
+  /**
+   * False when this sign-in may not create an account: a tenant in lite mode creates one only for
+   * a sign-in begun at a lite start, whose proof of work also met the sign-up requirement.
+   */
+  accountCreationAllowed?: boolean;
 }
 
 export interface HandleIdentityReadyResult {

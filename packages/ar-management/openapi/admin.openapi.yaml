@@ -2264,6 +2264,11 @@ paths:
         a passkey or authenticator-app sign-up by a code sent to that email first, an external IdP
         sign-up by the provider reporting the email verified (an email-code sign-up always proves
         it).
+        authentication-methods.signup.flow_required (default false) accepts a passkey, email code
+        or authenticator-app sign-up only from a live Flow interaction at a sign-in step, its
+        custom_fields checked against the screen of that step; off, such a sign-up that names no
+        interaction (an app with its own form) is checked against the Identity Schema alone.
+        External IdP sign-ups carry no attributes and are not affected.
         The rate-limit category includes rate_limit.totp_max_requests (integer 1-100, default 10)
         and rate_limit.totp_window (seconds 60-3600, default 900): how many authenticator-app
         sign-in and re-authentication starts are allowed per identifier and IP address, and how

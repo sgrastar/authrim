@@ -26,6 +26,10 @@ const mockRedirectWithError = vi.hoisted(() => vi.fn());
 const mockResolveClientTrustPolicy = vi.hoisted(() => vi.fn());
 const mockResolveAccountDataContextFromHono = vi.hoisted(() => vi.fn());
 const mockValidateActingAsRelationship = vi.hoisted(() => vi.fn());
+// Events consent.ts publishes without awaiting them. Delivery logs through the real ar-lib-core
+// logger, so each test waits for it; a log that lands after the file's last test reaches Vitest
+// while the worker is closing and fails the run as an unhandled error.
+const unawaitedEvents = vi.hoisted(() => ({ pending: [] as Promise<unknown>[] }));
 
 vi.mock('../authorize', () => ({
   redirectWithError: mockRedirectWithError,
@@ -35,6 +39,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    publishEvent: (...args: Parameters<typeof actual.publishEvent>) => {
+      const delivery = actual.publishEvent(...args);
+      unawaitedEvents.pending.push(delivery);
+      return delivery;
+    },
     getConsentUserInfo: vi.fn(async (_db, subjectId: string) => {
       if (subjectId !== 'user-123') return null;
       return {
@@ -292,7 +301,10 @@ describe('Consent Handlers', () => {
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    while (unawaitedEvents.pending.length > 0) {
+      await Promise.allSettled(unawaitedEvents.pending.splice(0));
+    }
     vi.restoreAllMocks();
   });
 

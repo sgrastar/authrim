@@ -73,6 +73,7 @@ import {
   persistRegistrationFieldValuesFromEnv,
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
+import { checkSignUpScreen } from './signup-screen-check';
 import { resolveSessionTtl } from './session-ttl';
 import { provisionTenantD1EmailAccount, usesRoutedAccountStorage } from './account-provisioning';
 import { isAuthenticationMethodUsageEnabled } from './authentication-method-settings';
@@ -344,6 +345,23 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         }
 
         if (!user) {
+          // The attributes against the screen of the Flow step they were entered on (see
+          // signup-screen-check.ts). A refusal sends nothing and answers as usual, so it does not
+          // tell that the address has no account.
+          const screenCheck = await checkSignUpScreen(c, tenantId, {
+            customFields: custom_fields,
+          });
+          if (!screenCheck.ok) {
+            log.warn(
+              'Suppressing email-code send because the sign-up does not fit its Flow screen',
+              {
+                action: 'email_code_send_suppressed',
+                reason: 'signup_screen',
+                refusal: screenCheck.reason,
+              }
+            );
+            return suppressedSendResponse(c, tenantId);
+          }
           const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
             c.env,
             tenantId,

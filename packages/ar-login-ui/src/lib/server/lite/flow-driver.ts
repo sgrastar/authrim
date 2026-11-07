@@ -73,6 +73,53 @@ export function liteMethodAvailability(
 	return (method) => available[method];
 }
 
+/** A provider the lite page draws a button for. */
+export interface LiteSocialProvider {
+	/**
+	 * The ID the authentication methods answer gives (its slug, when it has one): the Flow's
+	 * handle, and what the start grant and ar-bridge's start name (which takes an ID or a slug).
+	 */
+	id: string;
+	name: string;
+	buttonText: string | null;
+	/**
+	 * How it is started: by redirect (ar-bridge), or as a SAML IdP (ar-saml's SP start), whose ID
+	 * the authentication methods answer gives as `saml:<IdP ID>`.
+	 */
+	startMode: 'oauth_redirect' | 'saml_sp';
+}
+
+/**
+ * The providers a step offers: on for sign-in, and allowed by the step's handles (the SPA's
+ * `visibleExternalProviders`). A SAML IdP is one whose ID is `saml:<IdP ID>`.
+ */
+export function liteSocialProviders(
+	methods: LiteTenantMethods | null | undefined,
+	step: FlowRuntimeStep | null
+): { providers: LiteSocialProvider[] } {
+	if (methods?.external?.enabled !== true) return { providers: [] };
+	const providers: LiteSocialProvider[] = [];
+	const text = (value: unknown, max: number) =>
+		typeof value === 'string' && value.length > 0 && value.length <= max ? value : null;
+	for (const raw of methods.external.providers ?? []) {
+		if (!isRecord(raw)) continue;
+		const id = text(raw.id, 128);
+		if (!id) continue;
+		if (!((raw.loginEnabled as boolean | undefined) ?? raw.enabled !== false)) continue;
+		if (!runtimeAllowsExternalProvider(step, raw as never)) continue;
+		const startMode = raw.startMode === 'saml_sp' ? 'saml_sp' : 'oauth_redirect';
+		// A SAML IdP is started by its own ID, which its listed ID carries.
+		if (startMode === 'saml_sp' && !/^saml:[^/?#\\]+$/u.test(id)) continue;
+		providers.push({
+			id,
+			startMode,
+			name: text(raw.name, 200) ?? id,
+			buttonText: text(raw.buttonText, 200)
+		});
+	}
+	return { providers };
+}
+
 /** The Flow as the lite transaction keeps it. */
 export interface LiteFlowState {
 	interactionId: string;
@@ -87,6 +134,11 @@ export interface LiteFlowView {
 	step: FlowRuntimeStep | null;
 	/** The interaction's state (`active`, `completed`, …). */
 	interactionState: string;
+	/**
+	 * Whether the contract asks for a code on a step other than this one (the SPA's
+	 * `runtimeFlowHasCodeInputStep`): an authenticator code is then entered there, after its choice.
+	 */
+	codeInputElsewhere: boolean;
 }
 
 export type LiteFlowFailure = { ok: false; error: string; status: number };
@@ -124,10 +176,24 @@ export function readFlowStartAnswer(json: unknown): LiteFlowView | null {
 		(steps.find((candidate) => isRecord(candidate) && candidate.id === currentStepId) as
 			| FlowRuntimeStep
 			| undefined) ?? null;
+	const asksForCode = (candidate: unknown) =>
+		isRecord(candidate) &&
+		[candidate.config, candidate.content].some(
+			(part) =>
+				isRecord(part) &&
+				isRecord(part.screen) &&
+				Array.isArray(part.screen.fields) &&
+				part.screen.fields.some(
+					(field) => isRecord(field) && field.block_type === 'code_input_widget'
+				)
+		);
 	return {
 		state: { interactionId, contractHash, signature },
 		step,
-		interactionState: readString(json.interaction.state) ?? 'active'
+		interactionState: readString(json.interaction.state) ?? 'active',
+		codeInputElsewhere: steps.some(
+			(candidate) => isRecord(candidate) && candidate.id !== currentStepId && asksForCode(candidate)
+		)
 	};
 }
 
@@ -218,6 +284,8 @@ export interface LiteScreenField {
 	valueType: string | null;
 	/** A link block's destination, checked (safeLinkHref); null for any other block. */
 	href: string | null;
+	/** Whether the label is shown; `show_label: false` keeps it for screen readers only. */
+	showLabel: boolean;
 }
 
 /**
@@ -331,7 +399,8 @@ export function decideLiteStep(
 			helpText: readString(raw.help_text),
 			placeholder: readString(raw.placeholder),
 			valueType: blockType === 'identity_field' ? readString(raw.value_type) : null,
-			href: blockType === 'link' ? safeLinkHref(raw.href) : null
+			href: blockType === 'link' ? safeLinkHref(raw.href) : null,
+			showLabel: raw.show_label !== false
 		});
 	}
 	if (reasons.length > 0) return { kind: 'unsupported', reasons };
@@ -359,7 +428,8 @@ export function decideLiteStep(
 			helpText: null,
 			placeholder: null,
 			valueType: null,
-			href: null
+			href: null,
+			showLabel: true
 		});
 	}
 	return {

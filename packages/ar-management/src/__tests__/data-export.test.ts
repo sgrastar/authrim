@@ -243,6 +243,7 @@ describe('Data Export API', () => {
       })
     );
     mockPiiAdapter.query.mockReset();
+    mockPiiAdapter.query.mockResolvedValue([]);
     // Reset config mocks
     mockConfigManager.getConsentDataExportEnabled.mockResolvedValue(true);
     mockConfigManager.getConsentDataExportSyncThresholdKB.mockResolvedValue(1024);
@@ -372,6 +373,69 @@ describe('Data Export API', () => {
 
       const body = (await response.json()) as { error: string };
       expect(body.error).toBe('feature_disabled');
+    });
+
+    it("exports the person's response records from their PII database", async () => {
+      mockCoreAdapter.query.mockResolvedValue([]);
+      mockPiiAdapter.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('SUM(LENGTH(answers_json))')) {
+          expect(params).toEqual(['default', 'user-123']);
+          return [{ count: 1 }];
+        }
+        if (sql.includes('FROM screen_responses')) {
+          expect(params).toEqual(['default', 'user-123']);
+          return [
+            {
+              id: 'response-1',
+              screen_id: 'screen_survey',
+              screen_key: 'survey',
+              flow_id: 'flow_1',
+              answers_json: JSON.stringify({ plan: 'pro', note: 'Call me later' }),
+              created_at: 1700000000000,
+              updated_at: '1700000005000',
+            },
+            {
+              id: 'response-2',
+              screen_id: 'screen_survey',
+              screen_key: 'survey',
+              flow_id: 'flow_1',
+              answers_json: 'not json',
+              created_at: 1700000010000,
+              updated_at: 1700000010000,
+            },
+          ];
+        }
+        return [];
+      });
+
+      const context: unknown = createMockContext({
+        method: 'POST',
+        headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
+        body: { sections: ['screen_responses'] },
+      });
+
+      const response = await dataExportRequestHandler(
+        context as Parameters<typeof dataExportRequestHandler>[0]
+      );
+      expect(response.status).toBe(200);
+      const body = await response.json<{
+        status: string;
+        data: { screenResponses?: Array<Record<string, unknown>>; profile?: unknown };
+      }>();
+      expect(body.status).toBe('completed');
+      expect(body.data.profile).toBeUndefined();
+      expect(body.data.screenResponses).toEqual([
+        {
+          id: 'response-1',
+          screenId: 'screen_survey',
+          screenKey: 'survey',
+          flowId: 'flow_1',
+          answers: { plan: 'pro', note: 'Call me later' },
+          createdAt: new Date(1700000000000).toISOString(),
+          updatedAt: new Date(1700000005000).toISOString(),
+        },
+        expect.objectContaining({ id: 'response-2', answers: {} }),
+      ]);
     });
 
     it('should create async export request for large data', async () => {

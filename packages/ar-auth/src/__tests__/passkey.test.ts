@@ -98,6 +98,21 @@ const mockPIIContext = {
   },
 };
 
+const signUpMocks = vi.hoisted(() => ({
+  checkSignUpScreen: vi.fn(),
+  resolvePasskeyProvisioningResumeUserId: vi.fn(),
+}));
+
+vi.mock('../signup-screen-check', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../signup-screen-check')>()),
+  checkSignUpScreen: signUpMocks.checkSignUpScreen,
+}));
+
+vi.mock('../account-provisioning', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../account-provisioning')>()),
+  resolvePasskeyProvisioningResumeUserId: signUpMocks.resolvePasskeyProvisioningResumeUserId,
+}));
+
 // Mock @simplewebauthn/server
 vi.mock('@simplewebauthn/server', () => mockWebAuthnFunctions);
 
@@ -124,6 +139,11 @@ const registrationCheck = vi.hoisted(() => ({
 }));
 // Makes the address's account-route lookup fail with this error for one test (null: the real one).
 const adminAuditSpy = vi.hoisted(() => ({ schedule: vi.fn() }));
+// Work the handlers leave running after their response: what they hand to waitUntil and the
+// events they publish without awaiting them. It logs through the real ar-lib-core logger, so each
+// test waits for it; a log that lands after the file's last test reaches Vitest while the worker
+// is closing and fails the run as an unhandled error.
+const backgroundWork = vi.hoisted(() => ({ pending: [] as Promise<unknown>[] }));
 const routeLookup = vi.hoisted(() => ({
   failure: null as null | { message: string; cause?: string },
 }));
@@ -133,6 +153,11 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     scheduleAdminAuthenticationAudit: adminAuditSpy.schedule,
+    publishEvent: (...args: Parameters<typeof import('@authrim/ar-lib-core').publishEvent>) => {
+      const delivery = (actual as typeof import('@authrim/ar-lib-core')).publishEvent(...args);
+      backgroundWork.pending.push(delivery);
+      return delivery;
+    },
     resolveAccountDataContextByIdentifierFromHono: async (...args: unknown[]) => {
       if (routeLookup.failure) {
         throw new Error(
@@ -458,7 +483,9 @@ function createMockContext(options: {
     get: vi.fn((key: string) => contextStore.get(key)),
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
     executionCtx: {
-      waitUntil: vi.fn(),
+      waitUntil: vi.fn((promise: Promise<unknown>) => {
+        backgroundWork.pending.push(promise);
+      }),
       passThroughOnException: vi.fn(),
       props: {},
     },
@@ -473,6 +500,9 @@ function createMockContext(options: {
 
 describe('Passkey Handlers', () => {
   beforeEach(() => {
+    signUpMocks.checkSignUpScreen.mockReset();
+    signUpMocks.checkSignUpScreen.mockResolvedValue({ ok: true });
+    signUpMocks.resolvePasskeyProvisioningResumeUserId.mockReset();
     vi.clearAllMocks();
 
     // Setup WebAuthn mock implementations
@@ -625,7 +655,10 @@ describe('Passkey Handlers', () => {
     mockCoreAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    while (backgroundWork.pending.length > 0) {
+      await Promise.allSettled(backgroundWork.pending.splice(0));
+    }
     vi.restoreAllMocks();
   });
 
@@ -724,6 +757,34 @@ describe('Passkey Handlers', () => {
           userId: expect.any(String),
         })
       );
+    });
+
+    it('checks a resumed sign-up against its screen again, refusing changed attributes', async () => {
+      signUpMocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
+      signUpMocks.checkSignUpScreen.mockResolvedValueOnce({
+        ok: false,
+        reason: 'unknown_field',
+        field: 'role',
+      });
+
+      const context: unknown = createMockContext({
+        body: {
+          email: 'newuser@example.com',
+          custom_fields: { role: 'admin' },
+          provisioning_token: 'A'.repeat(43),
+          resume_user_id: 'user_first',
+        },
+        headers: { origin: 'https://example.com', 'X-Authrim-Interaction-Id': 'fi_1' },
+      });
+      const c = context as Parameters<typeof passkeyRegisterOptionsHandler>[0];
+
+      const response = await passkeyRegisterOptionsHandler(c);
+
+      expect(signUpMocks.checkSignUpScreen).toHaveBeenCalledWith(c, 'default', {
+        customFields: { role: 'admin' },
+      });
+      expect(response.status).toBe(400);
+      expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
     });
 
     it('should return missing_required_fields when registration fields are required', async () => {

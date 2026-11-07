@@ -517,6 +517,8 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'CHALLENGE_STORE',
     // LITE_POLICY_STORE: a tenant in lite mode starts SAML sign-in only from the lite UI.
     'LITE_POLICY_STORE',
+    // LITE_TXN_STORE: such a start consumes the lite UI transaction's one-time start grant.
+    'LITE_TXN_STORE',
   ],
   // RATE_LIMITER: /api/external/* is rate limited. Without it the limiter falls back to a
   // STATE_STORE KV the Bridge Worker does not have, and every request would answer 503.
@@ -533,6 +535,8 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'DPOP_JTI_STORE',
     // LITE_POLICY_STORE: a tenant in lite mode starts external sign-in only from the lite UI.
     'LITE_POLICY_STORE',
+    // LITE_TXN_STORE: such a start consumes the lite UI transaction's one-time start grant.
+    'LITE_TXN_STORE',
   ],
   'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE'],
 };

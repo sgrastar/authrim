@@ -1851,6 +1851,18 @@ type RootTranslation = {
 	 * T​h​i​s​ ​p​a​g​e​ ​r​u​n​s​ ​a​ ​s​e​c​u​r​i​t​y​ ​c​h​e​c​k​ ​i​n​ ​y​o​u​r​ ​b​r​o​w​s​e​r​.​ ​T​u​r​n​ ​o​n​ ​J​a​v​a​S​c​r​i​p​t​,​ ​t​h​e​n​ ​r​e​l​o​a​d​ ​t​h​e​ ​p​a​g​e​.
 	 */
 	lite_javascriptRequired: string;
+	/**
+	 * T​h​i​s​ ​b​r​o​w​s​e​r​ ​c​a​n​n​o​t​ ​u​s​e​ ​a​ ​p​a​s​s​k​e​y​ ​h​e​r​e​.​ ​C​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​w​a​y​ ​t​o​ ​s​i​g​n​ ​i​n​.
+	 */
+	lite_passkeyUnsupported: string;
+	/**
+	 * S​i​g​n​-​i​n​ ​w​i​t​h​ ​a​n​ ​e​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​ ​w​a​s​ ​s​t​a​r​t​e​d​ ​f​r​o​m​ ​t​h​i​s​ ​p​a​g​e​.​ ​T​o​ ​s​i​g​n​ ​i​n​ ​a​n​o​t​h​e​r​ ​w​a​y​,​ ​s​t​a​r​t​ ​a​g​a​i​n​.
+	 */
+	lite_socialStarted: string;
+	/**
+	 * T​h​e​ ​p​a​s​s​k​e​y​ ​s​i​g​n​-​i​n​ ​d​i​d​ ​n​o​t​ ​f​i​n​i​s​h​.​ ​T​r​y​ ​a​g​a​i​n​,​ ​o​r​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​w​a​y​ ​t​o​ ​s​i​g​n​ ​i​n​.
+	 */
+	lite_passkeyFailed: string;
 };
 
 export type TranslationFunctions = {
@@ -3645,6 +3657,18 @@ export type TranslationFunctions = {
 	 * This page runs a security check in your browser. Turn on JavaScript, then reload the page.
 	 */
 	lite_javascriptRequired: () => LocalizedString;
+	/**
+	 * This browser cannot use a passkey here. Choose another way to sign in.
+	 */
+	lite_passkeyUnsupported: () => LocalizedString;
+	/**
+	 * Sign-in with an external account was started from this page. To sign in another way, start again.
+	 */
+	lite_socialStarted: () => LocalizedString;
+	/**
+	 * The passkey sign-in did not finish. Try again, or choose another way to sign in.
+	 */
+	lite_passkeyFailed: () => LocalizedString;
 };
 
 export type Formatters = {};

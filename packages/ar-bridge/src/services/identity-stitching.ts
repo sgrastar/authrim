@@ -355,7 +355,15 @@ export async function handleIdentity(
   }
   if (tenantD1 && externalRoute) {
     // The account was provisioned by an earlier sign-in that did not finish; finishing it (its
-    // roles, organizations and identity) is still a sign-up, so the tenant's switch holds.
+    // roles, organizations and identity) is still a sign-up, so the tenant's switch holds, and a
+    // sign-in that may not create an account (lite mode) does not finish it either.
+    if (params.accountCreationAllowed === false) {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED,
+        'Automatic account creation is not available for this sign-in.',
+        { providerName: provider.name }
+      );
+    }
     await assertExternalProviderUsageAllowed(env, tenantId, provider, 'signup');
     const completed = await completeTenantD1ExternalIdpJIT(env, {
       tenantId,
@@ -490,6 +498,14 @@ export async function handleIdentity(
 
   // 4. No existing user - try JIT Provisioning
   if (provider.jitProvisioning) {
+    // A sign-in that did not prove what a sign-up asks for (lite mode) creates nothing.
+    if (params.accountCreationAllowed === false) {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED,
+        'Automatic account creation is not available for this sign-in.',
+        { providerName: provider.name }
+      );
+    }
     // Creating an account is a sign-up: only a provider the tenant lets sign people up does it,
     // decided before anything is written. The login screen merely hides the others.
     await assertExternalProviderUsageAllowed(env, tenantId, provider, 'signup');

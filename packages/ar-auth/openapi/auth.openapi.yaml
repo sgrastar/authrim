@@ -518,12 +518,16 @@ paths:
         - TOTP
       summary: Start TOTP signup.
       description: Creates a short-lived TOTP enrollment challenge, synthetic pending credential metadata, secret, and otpauth URI for first-code activation. The user and stored credential are created when activation succeeds.
+      parameters:
+        - $ref: '#/components/parameters/SignUpInteractionId'
       requestBody:
         $ref: '#/components/requestBodies/TotpSignupOptions'
       responses:
         '201':
           $ref: '#/components/responses/TotpSignupOptions'
         '400':
+          $ref: '#/components/responses/Error'
+        '403':
           $ref: '#/components/responses/Error'
   /api/auth/totp/signup/activate:
     post:
@@ -1638,6 +1642,12 @@ paths:
         Credential authentication requires a completed guest upgrade. Uncommitted or deleting
         guest accounts cannot receive a regular authentication artifact or session. Unavailable
         lifecycle state returns temporarily_unavailable (503).
+        For a new address, the custom_fields are checked against the screen of the Flow
+        interaction named in the body (runtime_interaction_id; the X-Authrim-Interaction-Id header
+        is not read here), as described for the SignUpInteractionId header; a sign-up that does
+        not fit it, or that names no interaction where the tenant accepts sign-ups only through a
+        Flow (authentication-methods.signup.flow_required), sends nothing and gets the usual
+        accepted response.
       responses:
         '200':
           $ref: '#/components/responses/DirectEmailCodeSend'
@@ -1877,6 +1887,8 @@ paths:
       description:
         Creates WebAuthn registration options for Direct Auth signup after validating client,
         channel, and origin. Email is optional and is not used for discoverable Passkey lookup.
+      parameters:
+        - $ref: '#/components/parameters/SignUpInteractionId'
       responses:
         '200':
           $ref: '#/components/responses/DirectPasskeyStart'
@@ -2615,6 +2627,23 @@ components:
       in: cookie
       name: authrim_admin_session
   parameters:
+    SignUpInteractionId:
+      name: X-Authrim-Interaction-Id
+      in: header
+      required: false
+      description: >-
+        The Flow interaction this sign-up belongs to. The server resolves the screen of its step
+        where the sign-up started and accepts only the custom_fields that screen shows and stores
+        to the profile, a choice among a part's options, and every required part answered
+        (400 validation/invalid-format with extensions.reason signup_screen_<problem>). An
+        interaction that is not live or not at a sign-in step is refused the same way. Without
+        it the custom_fields are checked against the Identity Schema alone, unless the tenant
+        accepts sign-ups only through a Flow (authentication-methods.signup.flow_required): then
+        the sign-up is refused (403 policy/feature-disabled, extensions.reason
+        signup_flow_required).
+      schema:
+        type: string
+        maxLength: 128
     ClientIdQuery:
       name: client_id
       in: query

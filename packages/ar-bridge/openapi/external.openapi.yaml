@@ -20,7 +20,13 @@ paths:
         code_challenge and code_challenge_method=S256. A one-use link_intent issued for the current
         browser session starts account linking instead; runtime_interaction_id is ignored for
         linking. The optional interaction association does not alter provider selection,
-        client redirect validation, PKCE, or the normal authorization redirect.
+        client redirect validation, PKCE, or the normal authorization redirect. A tenant in lite
+        Login UI mode starts only with lite_txn and lite_grant (a one-time start grant of the
+        browser's lite transaction, bound to its __Host-authrim_lite cookie, the provider as named
+        in the path and the tenant's current lite policy revision); such a start ignores every other query
+        parameter and takes the client, the authorization challenge and the interaction from the
+        transaction and the grant, and returns to the lite /callback with lite_txn and lite_grant
+        (its failures too).
       parameters:
         - name: provider
           in: path
@@ -53,6 +59,22 @@ paths:
           description: One-use account-link intent bound to the current browser session.
           schema:
             type: string
+        - name: lite_txn
+          in: query
+          required: false
+          description: >-
+            Lite Login UI tenants only: the browser's lite transaction holding the start grant.
+          schema:
+            type: string
+        - name: lite_grant
+          in: query
+          required: false
+          description: >-
+            Lite Login UI tenants only: the one-time start grant to consume. Without a grant that
+            can be consumed for this browser and provider, the start answers 403
+            lite_mode_endpoint_unavailable before anything else is done.
+          schema:
+            type: string
         - name: runtime_interaction_id
           in: query
           required: false
@@ -76,7 +98,10 @@ paths:
         '400':
           description: Existing sign-in validation failed, such as missing client PKCE or invalid human verification.
         '403':
-          description: The provider is not permitted for the requested sign-in or re-authentication.
+          description: >-
+            The provider is not permitted for the requested sign-in or re-authentication, or a
+            lite Login UI tenant's start has no start grant it can consume
+            (lite_mode_endpoint_unavailable).
         '404':
           description: The provider is unknown or disabled, or a signup invitation is unavailable.
         '429':
@@ -94,7 +119,13 @@ paths:
         code_challenge and code_challenge_method=S256. A one-use link_intent issued for the current
         browser session starts account linking instead; runtime_interaction_id is ignored for
         linking. The optional interaction association does not alter provider selection,
-        client redirect validation, PKCE, or the normal authorization redirect.
+        client redirect validation, PKCE, or the normal authorization redirect. A tenant in lite
+        Login UI mode starts only with lite_txn and lite_grant (a one-time start grant of the
+        browser's lite transaction, bound to its __Host-authrim_lite cookie, the provider as named
+        in the path and the tenant's current lite policy revision); such a start ignores every other query
+        parameter and takes the client, the authorization challenge and the interaction from the
+        transaction and the grant, and returns to the lite /callback with lite_txn and lite_grant
+        (its failures too).
       parameters:
         - name: provider
           in: path
@@ -127,6 +158,22 @@ paths:
           description: One-use account-link intent bound to the current browser session.
           schema:
             type: string
+        - name: lite_txn
+          in: query
+          required: false
+          description: >-
+            Lite Login UI tenants only: the browser's lite transaction holding the start grant.
+          schema:
+            type: string
+        - name: lite_grant
+          in: query
+          required: false
+          description: >-
+            Lite Login UI tenants only: the one-time start grant to consume. Without a grant that
+            can be consumed for this browser and provider, the start answers 403
+            lite_mode_endpoint_unavailable before anything else is done.
+          schema:
+            type: string
         - name: runtime_interaction_id
           in: query
           required: false
@@ -150,7 +197,10 @@ paths:
         '400':
           description: Existing sign-in validation failed, such as missing client PKCE or invalid human verification.
         '403':
-          description: The provider is not permitted for the requested sign-in or re-authentication.
+          description: >-
+            The provider is not permitted for the requested sign-in or re-authentication, or a
+            lite Login UI tenant's start has no start grant it can consume
+            (lite_mode_endpoint_unavailable).
         '404':
           description: The provider is unknown or disabled, or a signup invitation is unavailable.
         '429':

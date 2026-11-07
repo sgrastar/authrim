@@ -344,7 +344,13 @@ const pt = createTranslation({
 	login_extError_default_title: 'Erro de autenticação',
 	login_extError_default_message: 'Ocorreu um erro durante a autenticação externa.',
 	lite_javascriptRequired:
-		'Esta página faz uma verificação de segurança no seu navegador. Ative o JavaScript e recarregue a página.'
+		'Esta página faz uma verificação de segurança no seu navegador. Ative o JavaScript e recarregue a página.',
+	lite_passkeyUnsupported:
+		'Este navegador não pode usar uma chave de acesso aqui. Escolha outra forma de entrar.',
+	lite_socialStarted:
+		'O acesso com uma conta externa foi iniciado nesta página. Para entrar de outra forma, comece de novo.',
+	lite_passkeyFailed:
+		'O login com chave de acesso não foi concluído. Tente novamente ou escolha outra forma de entrar.'
 });
 
 export default pt;

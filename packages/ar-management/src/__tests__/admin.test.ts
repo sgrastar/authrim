@@ -68,6 +68,7 @@ const {
   markAccountRemovalsReady,
   attemptAccountRemovals,
   eraseAccountPii,
+  fenceAccountDeletion,
   produceNotificationDelivery,
   resolveCustomClaimRuntimeSources,
   writeCanonicalAccountAuthoritative,
@@ -103,6 +104,7 @@ const {
   markAccountRemovalsReady: vi.fn(),
   attemptAccountRemovals: vi.fn(),
   eraseAccountPii: vi.fn(),
+  fenceAccountDeletion: vi.fn(async () => undefined),
   produceNotificationDelivery: vi.fn(),
   resolveCustomClaimRuntimeSources: vi.fn(),
   writeCanonicalAccountAuthoritative: vi.fn(async (_input?: any) => ({ userId: 'user-written' })),
@@ -126,6 +128,8 @@ vi.mock('../account-directory-removal-producer', () => ({
   markAccountDirectoryRemovalsReady: markAccountRemovalsReady,
   attemptImmediateAccountDirectoryRemovals: attemptAccountRemovals,
   eraseAccountPiiAfterDirectoryRemovalPrepared: eraseAccountPii,
+  fenceAccountDeletion,
+  AccountDeletionHeldError: class AccountDeletionHeldError extends Error {},
 }));
 
 // The tombstone keyring every mock environment holds (TOMBSTONE_HMAC_KEYRING).
@@ -4106,6 +4110,14 @@ describe('Admin API Handlers', () => {
       expect(dbs.accountPiiSqls).toContainEqual(
         expect.stringContaining('INSERT INTO users_pii_tombstone')
       );
+      // The response records go too, after the tombstone (which keeps new ones from being kept).
+      const tombstoneAt = dbs.accountPiiSqls.findIndex((sql) =>
+        sql.includes('INSERT INTO users_pii_tombstone')
+      );
+      const responsesAt = dbs.accountPiiSqls.findIndex((sql) =>
+        sql.includes('DELETE FROM screen_responses WHERE tenant_id = ? AND user_id = ?')
+      );
+      expect(responsesAt).toBeGreaterThan(tombstoneAt);
       expect(dbs.metadataUserSqls()).toEqual([]);
       expect(canonicalRuntimeUsers.get(userId)).toMatchObject({ email: null });
     });
@@ -5090,6 +5102,42 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('answers 409 and erases nothing when a hold is placed during the deletion', async () => {
+      const { AccountDeletionHeldError } = await import('../account-directory-removal-producer');
+      fenceAccountDeletion.mockRejectedValueOnce(new AccountDeletionHeldError());
+      const userId = 'user-to-delete';
+      const piiDb = createSqlAwareMockDB(async (_sql, _params, op) =>
+        op === 'run' ? { success: true } : undefined
+      );
+      const context: unknown = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: createMockDB({
+          firstResult: { id: userId, email: 'delete@example.com' },
+          runResult: { success: true },
+        }),
+        dbPII: piiDb,
+      });
+      const c = context as Parameters<typeof adminUserDeleteHandler>[0] & {
+        json: ReturnType<typeof vi.fn>;
+      };
+
+      await adminUserDeleteHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'legal_hold_active' }),
+        409
+      );
+      expect(fenceAccountDeletion).toHaveBeenCalledWith(expect.anything(), {
+        tenantId: 'default',
+        userId,
+      });
+      const { prepare } = piiDb as unknown as { prepare: ReturnType<typeof vi.fn> };
+      const piiSqls = prepare.mock.calls.map((call) => String(call[0]));
+      expect(piiSqls.some((sql) => sql.includes('INSERT INTO users_pii_tombstone'))).toBe(false);
+      expect(eraseAccountPii).not.toHaveBeenCalled();
+    });
+
     it("deletes the user's audit pseudonym after writing the tombstone", async () => {
       const userId = 'user-to-delete';
       const mockDB = createMockDB({
@@ -5116,6 +5164,15 @@ describe('Admin API Handlers', () => {
       );
       expect(tombstone).toBeGreaterThanOrEqual(0);
       expect(pseudonym).toBeGreaterThan(tombstone);
+      // Without account routing there is no directory to remove routes from, but the account's
+      // PII (linked identities, response records, subject identifiers) is erased all the same.
+      expect(eraseAccountPii).toHaveBeenCalledTimes(1);
+      const [, erased] = eraseAccountPii.mock.calls[0] as unknown as [
+        unknown,
+        { tenantId: string; userId: string; core: unknown },
+      ];
+      expect(erased).toMatchObject({ tenantId: 'default', userId });
+      expect(erased.core).toBeDefined();
     });
 
     it('should mark the canonical runtime user deleted when runtime cutover is enabled', async () => {

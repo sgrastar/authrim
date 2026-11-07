@@ -422,6 +422,7 @@ describe('LiteTxnStore: idempotent operations', () => {
       store.issueStartGrantRpc({
         ...ref(txn.id),
         spec: { provider: 'p'.repeat(200), action: 'login', policyRevision: 'rev-1' },
+        start: { clientId: 'login-ui', interactionId: null },
       })
     ).resolves.toEqual({ ok: false, reason: 'too_large' });
     await expect(
@@ -438,11 +439,12 @@ describe('LiteTxnStore: idempotent operations', () => {
 
 describe('LiteTxnStore: start grants', () => {
   const spec = { provider: 'google', action: 'login' as const, policyRevision: 'rev-1' };
+  const start = { clientId: 'login-ui', interactionId: 'interaction-1' };
 
   it('is used once, and only for the provider, action and revision it was issued for', async () => {
     const { store } = createStore();
     const txn = await create(store);
-    const issued = await store.issueStartGrantRpc({ ...ref(txn.id), spec });
+    const issued = await store.issueStartGrantRpc({ ...ref(txn.id), spec, start });
     if (!issued.ok) throw new Error(issued.reason);
     for (const wrong of [
       { ...spec, provider: 'github' },
@@ -455,7 +457,7 @@ describe('LiteTxnStore: start grants', () => {
     }
     await expect(
       store.consumeStartGrantRpc({ ...ref(txn.id), grantId: issued.grantId, spec })
-    ).resolves.toMatchObject({ ok: true, txn: { bound: { clientId: 'client-1' } } });
+    ).resolves.toMatchObject({ ok: true, txn: { bound: { clientId: 'client-1' } }, start });
     await expect(
       store.consumeStartGrantRpc({ ...ref(txn.id), grantId: issued.grantId, spec })
     ).resolves.toEqual({ ok: false, reason: 'grant_invalid' });
@@ -465,12 +467,33 @@ describe('LiteTxnStore: start grants', () => {
     const { store } = createStore();
     const txn = await create(store);
     for (let i = 0; i < LITE_TXN_MAX_START_GRANTS; i++) {
-      await store.issueStartGrantRpc({ ...ref(txn.id), spec });
+      await store.issueStartGrantRpc({ ...ref(txn.id), spec, start });
     }
-    await expect(store.issueStartGrantRpc({ ...ref(txn.id), spec })).resolves.toEqual({
+    await expect(store.issueStartGrantRpc({ ...ref(txn.id), spec, start })).resolves.toEqual({
       ok: false,
       reason: 'budget_exceeded',
     });
+  });
+
+  it('refuses a start it cannot carry, and makes no grant for it', async () => {
+    const { store } = createStore();
+    const txn = await create(store);
+    for (const wrong of [
+      { clientId: '', interactionId: null },
+      { clientId: 'c'.repeat(LITE_TXN_MAX_KEY_LENGTH + 1), interactionId: null },
+      { clientId: 'login-ui', interactionId: 'i'.repeat(LITE_TXN_MAX_KEY_LENGTH + 1) },
+      { clientId: 'login-ui', interactionId: '' },
+    ]) {
+      await expect(
+        store.issueStartGrantRpc({ ...ref(txn.id), spec, start: wrong })
+      ).resolves.toEqual({ ok: false, reason: 'too_large' });
+    }
+    // All the grants are still there to be made.
+    for (let i = 0; i < LITE_TXN_MAX_START_GRANTS; i++) {
+      await expect(
+        store.issueStartGrantRpc({ ...ref(txn.id), spec, start })
+      ).resolves.toMatchObject({ ok: true });
+    }
   });
 });
 
@@ -841,7 +864,7 @@ describe('LiteTxnStore: completions that could not be stored as given', () => {
     await expect(store.beginOperationRpc(op)).resolves.toMatchObject({ attempt: 2 });
     await expect(
       store.completeOperationRpc({ ...op, attempt: 1, result: 'failed' })
-    ).resolves.toEqual({ ok: false, reason: 'version_mismatch' });
+    ).resolves.toEqual({ ok: false, reason: 'superseded' });
     await expect(
       store.completeOperationRpc({ ...op, attempt: 2, result: 'sent' })
     ).resolves.toMatchObject({ ok: true });
@@ -850,6 +873,26 @@ describe('LiteTxnStore: completions that could not be stored as given', () => {
       status: 'done',
       result: 'sent',
     });
+  });
+
+  it("refuses a late completion from an earlier attempt after the retry's own completion", async () => {
+    const { store } = createStore();
+    const txn = await create(store);
+    const op = { ...ref(txn.id), operationId: 'op' };
+    await store.beginOperationRpc(op);
+    vi.advanceTimersByTime(LITE_TXN_OPERATION_LEASE_MS);
+    await store.beginOperationRpc(op);
+    await expect(
+      store.completeOperationRpc({ ...op, attempt: 2, result: 'sent' })
+    ).resolves.toMatchObject({ ok: true });
+    // Not the later attempt's answer: the earlier one learns it lost the operation.
+    await expect(
+      store.completeOperationRpc({ ...op, attempt: 1, result: 'late' })
+    ).resolves.toEqual({ ok: false, reason: 'superseded' });
+    // The later attempt's own resend still reads its completion back.
+    await expect(
+      store.completeOperationRpc({ ...op, attempt: 2, result: 'sent' })
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it('refuses a session or user on a sign-in or sign-up', async () => {

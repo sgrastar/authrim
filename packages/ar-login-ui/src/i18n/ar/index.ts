@@ -477,7 +477,13 @@ const ar = createTranslation({
 	common_dismissAlert: 'إغلاق التنبيه',
 	emailCode_digitLabel: 'الرقم {position} من 6',
 	lite_javascriptRequired:
-		'تُجري هذه الصفحة فحصًا أمنيًا في متصفحك. فعّل JavaScript، ثم أعد تحميل الصفحة.'
+		'تُجري هذه الصفحة فحصًا أمنيًا في متصفحك. فعّل JavaScript، ثم أعد تحميل الصفحة.',
+	lite_passkeyUnsupported:
+		'لا يمكن لهذا المتصفح استخدام مفتاح المرور هنا. اختر طريقة أخرى لتسجيل الدخول.',
+	lite_socialStarted:
+		'بدأ تسجيل الدخول بحساب خارجي من هذه الصفحة. لتسجيل الدخول بطريقة أخرى، ابدأ من جديد.',
+	lite_passkeyFailed:
+		'لم يكتمل تسجيل الدخول بمفتاح المرور. حاول مرة أخرى، أو اختر طريقة أخرى لتسجيل الدخول.'
 });
 
 export default ar;
