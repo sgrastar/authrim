@@ -473,10 +473,20 @@ describe('the lite account page', () => {
 			expect(page.widgets.devices).toEqual([expect.objectContaining({ title: 'Laptop' })]);
 			expect(page.widgets.consents).toHaveLength(1);
 			expect(page.widgets.activity.nextCursor).toBe('next_1');
-			// The next page of the activity: its cursor passed on, nothing else.
+			// The consents in the page's language, not only the browser's.
+			expect(
+				calls.find((call) => call.path === '/api/account/consents')?.headers.get('Accept-Language')
+			).toBe('en');
+			// The next page of the activity: its cursor passed on, the page's own query kept (never a
+			// form action's key).
 			calls = [];
-			await view('/account?activity_cursor=next_1');
+			const next = (await view('/account?lang=ja&/profile_save&activity_cursor=old')) as {
+				search: string;
+				widgets: { activityNextHref: string };
+			};
 			expect(calls.find((call) => call.path === '/api/account/operations')).toBeDefined();
+			expect(next.search).toBe('?lang=ja&activity_cursor=old');
+			expect(next.widgets.activityNextHref).toBe('/account?lang=ja&activity_cursor=next_1');
 		});
 
 		it('says the activity is incomplete when the log cannot be read whole', async () => {
@@ -493,8 +503,10 @@ describe('the lite account page', () => {
 			withWidgets();
 			routes['/api/account/profile'] = (body, init) =>
 				init.method === 'PATCH' ? json({ profile: { name: body.name } }) : profile();
-			routes['/api/account/sessions/s-z'] = (_body, init) =>
-				init.method === 'DELETE' ? json({ ok: true, session: { id: 's-z' } }) : json({}, 405);
+			for (const id of ['s-z', 's-a']) {
+				routes[`/api/account/sessions/${id}`] = (_body, init) =>
+					init.method === 'DELETE' ? json({ ok: true, session: { id } }) : json({}, 405);
+			}
 			await view();
 			await expect(post('profile_save', { name: '  Kai  ' })).resolves.toEqual({
 				notice: 'saved',
@@ -515,12 +527,16 @@ describe('the lite account page', () => {
 			await expect(post('session_revoke', { session: 'a/b' })).resolves.toMatchObject({
 				status: 400
 			});
-			// This browser's own: signed out (the transaction given up first), then home.
+			// This browser's own: the transaction given up first, then revoked as any (its record
+			// kept), then signed out, home.
 			await expect(post('session_revoke', { session: 's-a' })).rejects.toMatchObject({
 				status: 303,
 				location: '/'
 			});
-			expect(calls.some((call) => call.path === '/api/v1/auth/direct/logout')).toBe(true);
+			const revoked = calls.findIndex((call) => call.path === '/api/account/sessions/s-a');
+			const loggedOut = calls.findIndex((call) => call.path === '/api/v1/auth/direct/logout');
+			expect(revoked).toBeGreaterThanOrEqual(0);
+			expect(loggedOut).toBeGreaterThan(revoked);
 			expect(store.txn.state).toBe('abandoned');
 		});
 	});

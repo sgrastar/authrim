@@ -137,13 +137,9 @@
 					</li>
 				{/each}
 			</ul>
-			{#if data.widgets.activity.nextCursor}
+			{#if data.widgets.activityNextHref}
 				<!-- The next page of the activity (a link: no state is kept for it). -->
-				<p>
-					<a href={`?activity_cursor=${encodeURIComponent(data.widgets.activity.nextCursor)}`}
-						>{data.text.activityMore}</a
-					>
-				</p>
+				<p><a href={data.widgets.activityNextHref}>{data.text.activityMore}</a></p>
 			{/if}
 		{/if}
 	{/if}

@@ -122,7 +122,8 @@ export function liteAccountConsents(
 	LL: LL,
 	locale: string
 ): LiteAccountConsentItem[] {
-	const rows = Array.isArray(json.consents) ? json.consents.slice(0, 200) : [];
+	// All of them (the SPA draws every one the API answers).
+	const rows = Array.isArray(json.consents) ? json.consents : [];
 	const when = (value: unknown) => formatTimestamp(value as number | null, locale);
 	const expires = (value: unknown) =>
 		typeof value === 'number' ? when(value) : LL.account_consentNoExpiry();

@@ -60,6 +60,15 @@ function accountReturn(event: RequestEvent): string {
 	return `${path}${query ? `?${query}` : ''}`;
 }
 
+/** The page's query (`?…`, or empty) without a form action's key. */
+function pageQuery(event: RequestEvent, set: Record<string, string> = {}): string {
+	const search = new URLSearchParams(event.url.search);
+	for (const key of [...search.keys()]) if (key.startsWith('/')) search.delete(key);
+	for (const [key, value] of Object.entries(set)) search.set(key, value);
+	const query = search.toString();
+	return query ? `?${query}` : '';
+}
+
 /** To the sign-in page, back here once signed in (the transaction keeps the return target). */
 function toSignIn(event: RequestEvent): never {
 	redirect(303, `/login?return_to=${encodeURIComponent(accountReturn(event))}`);
@@ -110,11 +119,12 @@ function widgetDefaults(LL: Awaited<ReturnType<typeof liteMessages>>['LL']) {
 /** GET of an account API (its JSON, or null with the status for a failure). */
 async function read(
 	backend: LiteBackendClient,
-	path: string
+	path: string,
+	headers?: Record<string, string>
 ): Promise<
 	{ ok: true; json: Record<string, unknown> } | { ok: false; status: number; error: string | null }
 > {
-	const answer = await backend.request(path).catch(() => null);
+	const answer = await backend.request(path, headers ? { headers } : {}).catch(() => null);
 	if (!answer) return { ok: false, status: 503, error: null };
 	if (answer.status === 200) return { ok: true, json: record(answer.json) };
 	const code = record(answer.json).error;
@@ -168,8 +178,17 @@ export async function liteAccountPage(event: RequestEvent) {
 
 	// The lists the placements' conditions read (only those they need).
 	const used = liteAccountConditionsUsed(page);
+	// The consents' words in the page's language (the SPA's `getConsents(getLocale())`).
+	const locale = event.locals.locale ?? 'en';
+	const pageLanguage = {
+		'Accept-Language': /^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})?$/u.test(locale)
+			? locale.replace('_', '-')
+			: 'en'
+	};
 	const [consents, sessions] = await Promise.all([
-		used.has('consent_records_available') ? read(backend, '/api/account/consents') : null,
+		used.has('consent_records_available')
+			? read(backend, '/api/account/consents', pageLanguage)
+			: null,
 		used.has('multiple_sessions') ? read(backend, '/api/account/sessions') : null
 	]);
 	const listLength = (answer: typeof consents, key: string) =>
@@ -190,7 +209,6 @@ export async function liteAccountPage(event: RequestEvent) {
 		multipleSessions: listLength(sessions, 'sessions') > 1
 	};
 
-	const locale = event.locals.locale ?? 'en';
 	const defaultLocale =
 		typeof methods?.ui.defaultLocale === 'string' ? methods.ui.defaultLocale : 'en';
 	const shown = page.placements.filter((placement) =>
@@ -260,7 +278,7 @@ export async function liteAccountPage(event: RequestEvent) {
 			: null,
 		drawn.has('account_device_list_widget') ? read(backend, '/api/account/devices') : null,
 		drawn.has('account_consent_widget')
-			? (consents ?? read(backend, '/api/account/consents'))
+			? (consents ?? read(backend, '/api/account/consents', pageLanguage))
 			: null,
 		drawn.has('account_activity_widget')
 			? read(
@@ -279,15 +297,23 @@ export async function liteAccountPage(event: RequestEvent) {
 		devices: deviceList?.ok ? liteAccountDevices(deviceList.json, locale) : null,
 		consents: consentList?.ok ? liteAccountConsents(consentList.json, LL, locale) : null,
 		activity: activityList?.ok ? liteAccountActivity(activityList.json, LL, locale) : null,
+		// The activity's next page: the page's own query with its cursor (the language kept).
+		activityNextHref: null as string | null,
 		activityIncomplete:
 			activityList !== null && !activityList.ok && activityList.error === 'log_query_incomplete'
 	};
+	if (widgets.activity?.nextCursor) {
+		widgets.activityNextHref = `${event.url.pathname}${pageQuery(event, {
+			activity_cursor: widgets.activity.nextCursor
+		})}`;
+	}
 	return {
 		page: 'account' as const,
 		txnId: txn.id,
 		csrfToken: txn.csrfToken,
 		op: newOperationNonce(),
-		search: event.url.search,
+		// The page's query without a form action's key (a post's page is drawn with its own URL).
+		search: pageQuery(event),
 		guest:
 			(record(record(profile.json).session).amr as unknown[] | undefined)?.includes('anon') ??
 			false,
@@ -419,9 +445,16 @@ export async function liteAccountSessionRevokeAction(event: RequestEvent) {
 	const { post } = opened;
 	const id = liteAccountItemId(post.fields.get('session'));
 	if (!id) return fail(400, { error: 'action_failed' as const, widget: 'sessions' });
-	// This browser's own session: signed out as the sign-out button does (the transaction given up
-	// while the session still is).
-	if (id === post.txn.bound.sessionId) return endSession(event, post);
+	// This browser's own session: the transaction given up first (while the session still is),
+	// then revoked as any (its record kept; its answer clears the session's cookies), then signed
+	// out (as the SPA does), home.
+	const own = id === post.txn.bound.sessionId;
+	if (own) {
+		const ended = await post.txns
+			.transition(post.txn.id, { expectedVersion: post.txn.version, to: 'abandoned' })
+			.catch(() => null);
+		if (!ended?.ok) return fail(409, { error: 'retry' as const });
+	}
 	const answer = await post.backend
 		.request(`/api/account/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' })
 		.catch(() => null);
@@ -430,6 +463,11 @@ export async function liteAccountSessionRevokeAction(event: RequestEvent) {
 			error: 'action_failed' as const,
 			widget: 'sessions'
 		});
+	}
+	if (own) {
+		await post.backend.request('/api/v1/auth/direct/logout', { json: {} }).catch(() => null);
+		forwardSetCookies(event, post.backend.setCookies());
+		redirect(303, '/');
 	}
 	return { notice: 'revoked' as const, widget: 'sessions' };
 }
