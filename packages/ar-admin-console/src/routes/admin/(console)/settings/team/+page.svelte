@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { httpAdminTeam } from '#lib/api/admin-team.js';
 	import { httpSettings } from '#lib/api/settings.js';
@@ -19,6 +20,7 @@
 			settings={httpSettings}
 			tenantId={tenantScope.tenantId}
 			inviteHref="/admin/settings/team/invite"
+			onopen={(adminId) => void goto(`/admin/settings/team/${encodeURIComponent(adminId)}`)}
 			initialTab={teamTabOf(page.url.searchParams.get('tab'))}
 		/>
 	{/key}

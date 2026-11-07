@@ -27,13 +27,23 @@
 		tenantId: string;
 		/** Where "Invite administrator" goes. */
 		inviteHref: string;
+		/** Opens an administrator's page. */
+		onopen?: (adminId: string) => void;
 		/** Who is looking; the signed-in admin unless given (Storybook). */
 		access?: AdminAccess;
 		/** The tab shown first (links, stories); an unavailable one falls back to the first. */
 		initialTab?: TeamTab;
 	}
 
-	let { team, settings, tenantId, inviteHref, access, initialTab = 'admins' }: Props = $props();
+	let {
+		team,
+		settings,
+		tenantId,
+		inviteHref,
+		onopen,
+		access,
+		initialTab = 'admins'
+	}: Props = $props();
 
 	const who = $derived(access ?? adminAccess.current);
 	const can = $derived(teamAccess(who));
@@ -97,7 +107,7 @@
 		>
 			{#snippet panel(id)}
 				{#if id === 'admins'}
-					<AdminList client={team} access={can} />
+					<AdminList client={team} access={can} onopen={onopen && ((admin) => onopen(admin.id))} />
 				{:else if id === 'invitations'}
 					<InvitationList client={team} access={can} />
 				{:else}

@@ -63,7 +63,7 @@
 	let phase = $state<'loading' | 'ready' | 'failed'>('loading');
 	/**
 	 * A role for every tenant can be given here: the admin may give one, and the invited admin
-	 * will belong to the deployment's default tenant (when that cannot be read, the API decides).
+	 * will belong to the deployment's default tenant (known to be: when it cannot be read, not).
 	 */
 	let globalHere = $state(false);
 
@@ -89,7 +89,7 @@
 				client.listGroups(),
 				access.global ? client.defaultTenantId() : Promise.resolve(null)
 			]);
-			globalHere = access.global && (home === null || home === tenantId);
+			globalHere = access.global && home === tenantId;
 			roles = invitableRoles(allRoles, globalHere);
 			groups = allGroups;
 			phase = 'ready';

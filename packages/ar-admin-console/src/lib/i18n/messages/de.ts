@@ -93,6 +93,7 @@ export const de = {
 	'nav.set.domains': 'Eigene Domains',
 	'nav.set.compliance': 'Compliance',
 	'nav.set.team': 'Administratoren',
+	'nav.set.teamGroups': 'Administratorgruppen',
 	'nav.set.teamRoles': 'Rollenzuweisung',
 	'nav.plat.tenants': 'Mandanten',
 	'nav.plat.releases': 'Steuerungsebene',

@@ -77,6 +77,16 @@ export const jaNotices = {
 	'nt.pub.err.invalid':
 		'入力を確認してください。見出しは必須で、アプリや管理者を選んだ場合は ID も必要です。',
 	'nt.pub.err.expiry': '表示期限は今より後の日時にしてください。',
+	'notice.msg.admin_group_role_granted':
+		'管理者グループ {group} が {role} を与えるようになりました',
+	'notice.msg.admin_group_role_revoked': '管理者グループ {group} は {role} を与えなくなりました',
+	'notice.msg.admin_group_role_expiry_changed':
+		'管理者グループ {group} の {role} の期限が変わりました',
+	'notice.msg.admin_group_member_added': '{email} が管理者グループ {group} に入りました',
+	'notice.msg.admin_group_member_removed': '{email} が管理者グループ {group} から外れました',
+	'notice.msg.admin_group_deleted': '管理者グループ {group} が削除されました',
+	'notice.msg.admin_group_invitation_not_joined':
+		'{email} は招待を受け付けましたが、管理者グループ（{groups}）には入りませんでした',
 	'notice.msg.second_factor_last_resort_recovery':
 		'環境の所有者が {email} の step-up 用のセキュリティキーをリセットしました',
 	'notice.msg.second_factor_recovery_requested': '{email} がセキュリティキーの復旧を申請しました',

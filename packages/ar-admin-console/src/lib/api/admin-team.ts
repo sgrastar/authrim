@@ -28,6 +28,55 @@ export interface TeamAdmin {
 	created_at: number;
 }
 
+/** One role the admin holds: given to them (`direct`) or through an admin group (`group`). */
+export interface HeldRole {
+	role_id: string;
+	name: string;
+	display_name: string | null;
+	scope_type: 'tenant' | 'global';
+	/** The assignment, for a direct role (changed and removed one by one); null for a group's. */
+	assignment_id: string | null;
+	source: 'direct' | 'group';
+	/** The group a group role comes through. */
+	group: { id: string; name: string | null } | null;
+	assigned_at: number;
+	expires_at: number | null;
+}
+
+export interface AdminGroupMembership {
+	id: string;
+	group_key: string;
+	display_name: string;
+}
+
+export interface AdminPasskey {
+	id: string;
+	device_name: string | null;
+	provider: string | null;
+	created_at: number;
+	last_used_at: number | null;
+}
+
+export interface AdminDetail extends TeamAdmin {
+	email_verified: boolean;
+	updated_at: number;
+	roles: HeldRole[];
+	groups: AdminGroupMembership[];
+	passkeys: AdminPasskey[];
+}
+
+export interface AdminProfileInput {
+	name: string;
+	email: string;
+}
+
+export interface RoleGrantInput {
+	role_id: string;
+	scope_type: 'tenant' | 'global';
+	/** When the role ends (ms); omitted, it does not end. */
+	expires_at?: number;
+}
+
 export interface AdminListQuery {
 	page: number;
 	limit: number;
@@ -109,6 +158,30 @@ export interface InvitationCreated {
 
 export interface AdminTeamClient {
 	listAdmins(query: AdminListQuery, signal?: AbortSignal): Promise<AdminListPage>;
+	getAdmin(adminId: string, signal?: AbortSignal): Promise<AdminDetail>;
+	/** Name and address; a new address asks for a step-up. */
+	updateAdmin(adminId: string, input: AdminProfileInput): Promise<void>;
+	/** Removes the administrator (not oneself, not the last one). */
+	deleteAdmin(adminId: string): Promise<void>;
+	/** Gives a role directly (a role the admin's groups give is changed through the group). */
+	grantRole(adminId: string, input: RoleGrantInput): Promise<void>;
+	/** Removes one direct assignment. */
+	removeAssignment(adminId: string, assignmentId: string): Promise<void>;
+	/**
+	 * The admin's ended assignment of this role and scope, if any: the API counts it when a role
+	 * is given again (a 409), so it is given its end anew instead. Null when none or unreadable.
+	 */
+	findEndedAssignment(
+		roleId: string,
+		adminId: string,
+		scope: 'tenant' | 'global'
+	): Promise<string | null>;
+	/** Changes when a direct assignment ends (null: never). */
+	setAssignmentExpiry(
+		roleId: string,
+		assignmentId: string,
+		expiresAt: number | null
+	): Promise<void>;
 	suspend(adminId: string): Promise<void>;
 	activate(adminId: string): Promise<void>;
 	unlock(adminId: string): Promise<void>;
@@ -155,6 +228,55 @@ export function adminFromRow(value: unknown): TeamAdmin {
 		last_login_at: countOrNull(row.last_login_at),
 		locked_until: countOrNull(row.locked_until),
 		created_at: count(row.created_at)
+	};
+}
+
+export function heldRoleFromRow(value: unknown): HeldRole {
+	const row = record(value);
+	const source = row.source === 'group' ? 'group' : 'direct';
+	const groupId = textOrNull(row.admin_group_id);
+	return {
+		role_id: text(row.role_id) || text(row.id),
+		name: text(row.name),
+		display_name: textOrNull(row.display_name),
+		scope_type: row.scope_type === 'global' ? 'global' : 'tenant',
+		assignment_id: source === 'direct' ? textOrNull(row.assignment_id) : null,
+		source,
+		group:
+			source === 'group' && groupId
+				? { id: groupId, name: textOrNull(row.admin_group_name) }
+				: null,
+		assigned_at: count(row.assigned_at),
+		expires_at: countOrNull(row.expires_at)
+	};
+}
+
+export function adminDetailFromRow(value: unknown): AdminDetail {
+	const row = record(value);
+	return {
+		...adminFromRow(row),
+		email_verified: row.email_verified === true || row.email_verified === 1,
+		updated_at: count(row.updated_at),
+		roles: rows(row.roles).map(heldRoleFromRow),
+		groups: rows(row.groups).map((item) => {
+			const group = record(item);
+			return {
+				id: text(group.id),
+				group_key: text(group.group_key),
+				display_name: text(group.display_name)
+			};
+		}),
+		passkeys: rows(row.passkeys).map((item) => {
+			const passkey = record(item);
+			const provider = record(passkey.provider);
+			return {
+				id: text(passkey.id),
+				device_name: textOrNull(passkey.device_name),
+				provider: textOrNull(provider.name) ?? textOrNull(passkey.provider),
+				created_at: count(passkey.created_at),
+				last_used_at: countOrNull(passkey.last_used_at)
+			};
+		})
 	};
 }
 
@@ -292,6 +414,66 @@ export function httpAdminTeam(tenantId: string): AdminTeamClient {
 				totalPages: count(body.totalPages)
 			};
 		},
+		async getAdmin(adminId, signal) {
+			const body = await readJson(await get(`${admins}/${encodeURIComponent(adminId)}`, signal));
+			return adminDetailFromRow(body);
+		},
+		updateAdmin: (adminId, input) =>
+			write(
+				`${admins}/${encodeURIComponent(adminId)}`,
+				'PATCH',
+				{ name: input.name.trim() || null, email: input.email.trim() },
+				done
+			),
+		deleteAdmin: (adminId) =>
+			write(`${admins}/${encodeURIComponent(adminId)}`, 'DELETE', undefined, done),
+		grantRole: (adminId, input) =>
+			write(
+				`${admins}/${encodeURIComponent(adminId)}/roles`,
+				'POST',
+				{
+					role_id: input.role_id,
+					scope_type: input.scope_type,
+					...(input.expires_at !== undefined ? { expires_at: input.expires_at } : {})
+				},
+				done
+			),
+		removeAssignment: (adminId, assignmentId) =>
+			write(
+				`${admins}/${encodeURIComponent(adminId)}/role-assignments/${encodeURIComponent(assignmentId)}`,
+				'DELETE',
+				undefined,
+				done
+			),
+		async findEndedAssignment(roleId, adminId, scope) {
+			try {
+				const body = await readJson(
+					await get(
+						`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(roleId)}/assignments?include_expired=true`
+					)
+				);
+				const now = Date.now();
+				const ended = rows(body.items)
+					.map(record)
+					.find(
+						(row) =>
+							row.admin_user_id === adminId &&
+							row.scope_type === scope &&
+							typeof row.expires_at === 'number' &&
+							row.expires_at <= now
+					);
+				return ended ? textOrNull(ended.id) : null;
+			} catch {
+				return null;
+			}
+		},
+		setAssignmentExpiry: (roleId, assignmentId, expiresAt) =>
+			write(
+				`${API_BASE_URL}/api/admin/admin-roles/${encodeURIComponent(roleId)}/assignments/${encodeURIComponent(assignmentId)}`,
+				'PATCH',
+				{ expires_at: expiresAt },
+				done
+			),
 		suspend: (adminId) => adminAction(adminId, 'suspend'),
 		activate: (adminId) => adminAction(adminId, 'activate'),
 		unlock: (adminId) => adminAction(adminId, 'unlock'),
