@@ -237,10 +237,12 @@
 					class:outline__stage--formcard={split && draft.formFrame === 'card'}
 					class:outline__stage--wide={split && draft.splitWidth === 'wide'}
 					class:outline__stage--card={split && draft.splitFrame === 'card'}
+					class:outline__stage--over-image={split && !!backgroundUrl}
 				>
 					{#if split}
 						<aside
 							class="outline__panel"
+							class:outline__panel--over-image={!!backgroundUrl}
 							data-position={draft.brandPosition}
 							data-align={draft.brandAlign}
 						>
@@ -508,6 +510,14 @@
 		box-shadow: var(--shadow-lg);
 	}
 
+	/*
+	 * A framed split screen over the background image: the image shows inside the frame too, under
+	 * a translucent tint of the panel colour (the real screen draws it there at 70%).
+	 */
+	.outline__stage--card.outline__stage--over-image {
+		background: color-mix(in srgb, var(--ol-panel) 70%, transparent);
+	}
+
 	.outline__panel {
 		position: relative;
 		overflow: hidden;
@@ -515,16 +525,63 @@
 		align-content: center;
 		padding: 48px;
 		/*
-		 * The brand side is always painted (never see-through): a fill from the accent colour, so a
-		 * background image shows behind the form side, not through this one. Its own picture, if it
-		 * has one, is laid over the fill with its opacity; the text on it is the inverse of the page.
+		 * With no background image the brand side is painted: a fill from the accent colour. Its own
+		 * picture, if it has one, is laid over the fill with its opacity; the text on it is the
+		 * inverse of the page.
 		 */
 		background: linear-gradient(
 			150deg,
 			color-mix(in srgb, var(--ol-accent) 78%, var(--ol-panel)),
 			var(--ol-accent)
 		);
-		color: var(--text-inverse);
+		--panel-title: var(--text-inverse);
+		--panel-copy: color-mix(in srgb, var(--text-inverse) 80%, transparent);
+		color: var(--panel-title);
+	}
+
+	/*
+	 * Over the background image the brand side is see-through, as on the real screen (the image is
+	 * shared by both sides): no fill, only a scrim like the real screen's (in a named colour, as the
+	 * console allows no literal colours), darker where the content sits. The scrim lies over the
+	 * brand side's own picture and under the text, as on the real screen.
+	 */
+	.outline__panel--over-image {
+		/* The real screen's light ink for the brand side, in either mode: the scrim is dark. */
+		--panel-title: ghostwhite;
+		--panel-copy: color-mix(in srgb, ghostwhite 80%, transparent);
+		isolation: isolate;
+		background: none;
+	}
+
+	.outline__panel--over-image::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: 1;
+		pointer-events: none;
+		background: linear-gradient(
+			to top,
+			color-mix(in srgb, midnightblue 62%, transparent),
+			color-mix(in srgb, midnightblue 8%, transparent) 58%,
+			transparent
+		);
+	}
+
+	.outline__panel--over-image[data-position='top']::before {
+		background: linear-gradient(
+			to bottom,
+			color-mix(in srgb, midnightblue 62%, transparent),
+			color-mix(in srgb, midnightblue 8%, transparent) 58%,
+			transparent
+		);
+	}
+
+	.outline__panel--over-image[data-position='center']::before {
+		background: color-mix(in srgb, midnightblue 38%, transparent);
+	}
+
+	.outline__panel--over-image .outline__panel-content {
+		z-index: 2;
 	}
 
 	.outline__panel-content {
@@ -562,13 +619,13 @@
 		margin: 0;
 		font-size: var(--preview-fs-hero);
 		line-height: var(--preview-lh-hero);
-		color: var(--ol-title-own, var(--text-inverse));
+		color: var(--ol-title-own, var(--panel-title));
 	}
 
 	.outline__panel p {
 		margin: 0;
 		line-height: var(--lh-relaxed);
-		color: var(--ol-copy-own, color-mix(in srgb, var(--text-inverse) 80%, transparent));
+		color: var(--ol-copy-own, var(--panel-copy));
 	}
 
 	/* The brand panel's logo is the big one (the real screen allows up to 260 x 92). */
@@ -585,7 +642,7 @@
 		font-weight: var(--fw-semibold);
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
-		color: var(--ol-copy-own, color-mix(in srgb, var(--text-inverse) 80%, transparent));
+		color: var(--ol-copy-own, var(--panel-copy));
 	}
 
 	/*

@@ -3885,11 +3885,12 @@ tr.expired {
 
 /* The page's own text (the header, the footer, the link under the card) lies on the picture, not on
    a pane: over a tenant's picture each sits on a small pane of its own. A minimal form has no card,
-   so it keeps one here. */
+   so it keeps one here. Not in the split template: there the header and the link are inside the
+   form side (already a pane), and the footer is a full-width bar of its own. */
 [data-has-page-background-image='true']:is(
 		[data-login-theme='glass'],
 		[data-login-theme='clear-glass']
-	)
+	):where(:not([data-page-layout='split_panel']))
 	.auth-page
 	:is(.auth-header, .auth-footer, .auth-bottom-link) {
 	background: var(--bg-card);
