@@ -71,6 +71,27 @@ describe('the lite transaction client', () => {
 		});
 	});
 
+	it('asks for a start grant with the proof, the UI client and the interaction', async () => {
+		const { e, service } = event(
+			{ [LITE_BINDING_COOKIE]: BINDING },
+			{ source: 'router', publicOrigin: 'https://id.example', clientIp: null }
+		);
+		await liteTxnClient(e)?.issueStartGrant('t1', 'provider-a', {
+			humanVerificationResponse: 'proof',
+			clientId: 'login-ui',
+			interactionId: 'interaction-1'
+		});
+		expect(service.issueStartGrant).toHaveBeenCalledWith({
+			publicOrigin: 'https://id.example',
+			binding: BINDING,
+			txnId: 't1',
+			provider: 'provider-a',
+			humanVerificationResponse: 'proof',
+			clientId: 'login-ui',
+			interactionId: 'interaction-1'
+		});
+	});
+
 	it('answers invalid_binding without a binding cookie, except when creating', async () => {
 		const { e, service, set } = event(
 			{},

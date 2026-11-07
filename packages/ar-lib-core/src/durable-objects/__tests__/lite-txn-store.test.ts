@@ -422,6 +422,7 @@ describe('LiteTxnStore: idempotent operations', () => {
       store.issueStartGrantRpc({
         ...ref(txn.id),
         spec: { provider: 'p'.repeat(200), action: 'login', policyRevision: 'rev-1' },
+        start: { clientId: 'login-ui', interactionId: null },
       })
     ).resolves.toEqual({ ok: false, reason: 'too_large' });
     await expect(
@@ -438,11 +439,12 @@ describe('LiteTxnStore: idempotent operations', () => {
 
 describe('LiteTxnStore: start grants', () => {
   const spec = { provider: 'google', action: 'login' as const, policyRevision: 'rev-1' };
+  const start = { clientId: 'login-ui', interactionId: 'interaction-1' };
 
   it('is used once, and only for the provider, action and revision it was issued for', async () => {
     const { store } = createStore();
     const txn = await create(store);
-    const issued = await store.issueStartGrantRpc({ ...ref(txn.id), spec });
+    const issued = await store.issueStartGrantRpc({ ...ref(txn.id), spec, start });
     if (!issued.ok) throw new Error(issued.reason);
     for (const wrong of [
       { ...spec, provider: 'github' },
@@ -455,7 +457,7 @@ describe('LiteTxnStore: start grants', () => {
     }
     await expect(
       store.consumeStartGrantRpc({ ...ref(txn.id), grantId: issued.grantId, spec })
-    ).resolves.toMatchObject({ ok: true, txn: { bound: { clientId: 'client-1' } } });
+    ).resolves.toMatchObject({ ok: true, txn: { bound: { clientId: 'client-1' } }, start });
     await expect(
       store.consumeStartGrantRpc({ ...ref(txn.id), grantId: issued.grantId, spec })
     ).resolves.toEqual({ ok: false, reason: 'grant_invalid' });
@@ -465,12 +467,33 @@ describe('LiteTxnStore: start grants', () => {
     const { store } = createStore();
     const txn = await create(store);
     for (let i = 0; i < LITE_TXN_MAX_START_GRANTS; i++) {
-      await store.issueStartGrantRpc({ ...ref(txn.id), spec });
+      await store.issueStartGrantRpc({ ...ref(txn.id), spec, start });
     }
-    await expect(store.issueStartGrantRpc({ ...ref(txn.id), spec })).resolves.toEqual({
+    await expect(store.issueStartGrantRpc({ ...ref(txn.id), spec, start })).resolves.toEqual({
       ok: false,
       reason: 'budget_exceeded',
     });
+  });
+
+  it('refuses a start it cannot carry, and makes no grant for it', async () => {
+    const { store } = createStore();
+    const txn = await create(store);
+    for (const wrong of [
+      { clientId: '', interactionId: null },
+      { clientId: 'c'.repeat(LITE_TXN_MAX_KEY_LENGTH + 1), interactionId: null },
+      { clientId: 'login-ui', interactionId: 'i'.repeat(LITE_TXN_MAX_KEY_LENGTH + 1) },
+      { clientId: 'login-ui', interactionId: '' },
+    ]) {
+      await expect(
+        store.issueStartGrantRpc({ ...ref(txn.id), spec, start: wrong })
+      ).resolves.toEqual({ ok: false, reason: 'too_large' });
+    }
+    // All the grants are still there to be made.
+    for (let i = 0; i < LITE_TXN_MAX_START_GRANTS; i++) {
+      await expect(
+        store.issueStartGrantRpc({ ...ref(txn.id), spec, start })
+      ).resolves.toMatchObject({ ok: true });
+    }
   });
 });
 

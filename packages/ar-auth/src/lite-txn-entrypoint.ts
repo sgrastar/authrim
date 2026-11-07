@@ -21,6 +21,11 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   checkRateLimit,
+  checkedLiteBrowserBinding,
+  readAuthorizationChallengeKind,
+  liteBrowserBindingHash,
+  liteTxnStoreFor,
+  verifyHumanVerificationWithRunner,
   buildCanonicalTenantIssuerUrl,
   buildIssuerUrl,
   getTenantIdFromHost,
@@ -61,6 +66,8 @@ export type LiteTxnEntryRefusal =
   | 'policy_changed'
   | 'invalid_binding'
   | 'budget_exceeded'
+  | 'invalid_request'
+  | 'human_verification_failed'
   | 'unavailable';
 
 type Refused = { ok: false; reason: LiteTxnEntryRefusal };
@@ -86,14 +93,8 @@ export interface LiteTxnCreateCall extends LiteTxnCall {
   reuseKey?: string;
 }
 
-const BINDING_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 /** A revision no transaction is made under: moves are refused, a result is still recorded. */
 const NO_CURRENT_REVISION = '\u0000no-current-revision';
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
 
 /**
  * The return target, checked: a URL of the public origin, or a local path (one leading `/`, no
@@ -168,9 +169,8 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
     this.#authorize();
     const namespace = this.env.LITE_TXN_STORE;
     if (!namespace) return { ok: false, reason: 'unavailable' };
-    if (typeof call.binding !== 'string' || !BINDING_PATTERN.test(call.binding)) {
-      return { ok: false, reason: 'invalid_binding' };
-    }
+    const binding = checkedLiteBrowserBinding(call.binding);
+    if (!binding) return { ok: false, reason: 'invalid_binding' };
     const origin = typeof call.publicOrigin === 'string' ? originOf(call.publicOrigin) : null;
     if (!origin) return { ok: false, reason: 'tenant_unknown' };
     const byHost = getTenantIdFromHost(origin.host, this.env);
@@ -183,8 +183,8 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
     if (typeof policyRevision !== 'string' && options.requireLite) {
       return { ok: false, reason: policyRevision.refusal };
     }
-    const bindingHash = await sha256Hex(call.binding);
-    const store = namespace.get(namespace.idFromName(`lite-txn:${tenantId}:${bindingHash}`));
+    const bindingHash = await liteBrowserBindingHash(binding);
+    const store = liteTxnStoreFor(namespace, tenantId, bindingHash);
     return {
       ok: true,
       tenantId,
@@ -367,9 +367,25 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
     });
   }
 
-  /** A one-time start grant for the provider; its action is the transaction's purpose. */
+  /**
+   * A one-time start grant for an external sign-in with the provider (ar-bridge or ar-saml
+   * consumes it); its action is the transaction's purpose.
+   *
+   * The page's proof of work is verified here, before the grant is made: the start that consumes
+   * the grant does not verify again. A sign-in with a provider may create the account (JIT), and
+   * the start cannot know beforehand whether it will, so a sign-in's proof must also meet the
+   * sign-up requirement (as a guest sign-in's does).
+   */
   issueStartGrant(
-    call: LiteTxnCall & { txnId: string; provider: string }
+    call: LiteTxnCall & {
+      txnId: string;
+      provider: string;
+      humanVerificationResponse?: unknown;
+      /** The Login UI's own client, which its handoff is finalized for. */
+      clientId: string;
+      /** The Flow interaction the sign-in belongs to, when a Flow runs. */
+      interactionId?: string | null;
+    }
   ): Promise<{ ok: true; grantId: string } | { ok: false; reason: string }> {
     return this.#covered(async () => {
       const context = await this.#context(call);
@@ -378,12 +394,55 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
       // (The stub's RPC types wrap the answer; it is the store's LiteTxnResult.)
       const read = (await context.store.getTxnRpc(ref)) as LiteTxnResult;
       if (!read.ok) return read;
+      const purpose = read.txn.bound.purpose;
+      // Only sign-ins and sign-ups are made yet (see create); nothing else starts a provider. A
+      // sign-in that answers a re-authentication challenge would start as one (ar-bridge reads
+      // the challenge), under the re-authentication requirement the page's proof was not made
+      // for: refused, as re-authentication transactions are, until their session check (PR7).
+      if (purpose !== 'login' && purpose !== 'signup') {
+        return { ok: false, reason: 'unsupported_purpose' } as const;
+      }
+      const challengeId = read.txn.bound.challengeId;
+      if (
+        challengeId !== null &&
+        (await readAuthorizationChallengeKind(this.env, context.tenantId, challengeId)) !== 'login'
+      ) {
+        return { ok: false, reason: 'unsupported_purpose' } as const;
+      }
+      const interactionId = call.interactionId ?? null;
+      if (
+        typeof call.clientId !== 'string' ||
+        !call.clientId ||
+        (interactionId !== null && (typeof interactionId !== 'string' || !interactionId))
+      ) {
+        return { ok: false, reason: 'invalid_request' } as const;
+      }
+      let verified = false;
+      try {
+        verified = (
+          await verifyHumanVerificationWithRunner(this.env, {
+            tenantId: context.tenantId,
+            action: purpose,
+            // Either may happen whatever the page was for: a sign-in may create the account
+            // (JIT), and a sign-up that finds the account signs in to it.
+            alsoRequiredFor: [purpose === 'login' ? 'signup' : 'login'],
+            responseToken: call.humanVerificationResponse,
+          })
+        ).verified;
+      } catch {
+        verified = false;
+      }
+      if (!verified) return { ok: false, reason: 'human_verification_failed' } as const;
       const spec: LiteStartGrantSpec = {
         provider: call.provider,
-        action: read.txn.bound.purpose,
+        action: purpose,
         policyRevision: context.policyRevision,
       };
-      return context.store.issueStartGrantRpc({ ...ref, spec });
+      return context.store.issueStartGrantRpc({
+        ...ref,
+        spec,
+        start: { clientId: call.clientId, interactionId },
+      });
     });
   }
 
