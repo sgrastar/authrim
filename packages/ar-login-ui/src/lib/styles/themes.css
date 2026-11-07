@@ -186,7 +186,8 @@
 [data-theme='dark'] select,
 [data-theme='dark'] input:not([type='checkbox']):not([type='radio']) {
 	background: var(--bg-input);
-	color: var(--text-primary);
+	/* --field-text: the label colour for a tenant's input colour (login-ui.field_color). */
+	color: var(--field-text, var(--text-primary));
 	border-color: var(--border);
 }
 

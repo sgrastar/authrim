@@ -1372,7 +1372,7 @@
 		border: 1px solid var(--input-border, var(--border));
 		border-radius: var(--input-radius, var(--radius-lg, var(--radius-md)));
 		background: var(--bg-input);
-		color: var(--text-primary);
+		color: var(--field-text, var(--text-primary));
 		font: inherit;
 		font-weight: 500;
 		padding: var(--auth-control-padding-y, 0.875rem) var(--auth-control-padding-x, 1rem);
@@ -1398,7 +1398,7 @@
 		border: 1px solid var(--input-border, var(--border));
 		border-radius: var(--input-radius, var(--radius-lg, var(--radius-md)));
 		background: var(--bg-input);
-		color: var(--text-primary);
+		color: var(--field-text, var(--text-primary));
 		font: inherit;
 		font-weight: 500;
 		padding: var(--auth-control-padding-y, 0.875rem) var(--auth-control-padding-x, 1rem);

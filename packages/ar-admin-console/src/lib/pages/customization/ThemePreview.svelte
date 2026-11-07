@@ -2,6 +2,8 @@
 	import { apiAssetUrl } from '#lib/api/assets.js';
 	import { t, tIn } from '#lib/i18n/i18n.svelte.js';
 	import { localeDir } from '#lib/i18n/locales.js';
+	import { loginUIImageFilterCss } from '@authrim/ar-lib-core/utils/login-ui-image-filters';
+	import { contrastRatio, normalizeHex, splitAlpha } from '#lib/ui/primitives/color.js';
 	import Icon from '#lib/ui/icons/Icon.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
@@ -93,6 +95,41 @@
 
 	$effect(() => imageUrl(draft.logo, (url) => (logoUrl = url)));
 	$effect(() => imageUrl(draft.backgroundImage, (url) => (backgroundUrl = url)));
+	/**
+	 * A set colour that text is laid on, as the Login UI takes it: hex (3, 6 or 8 digits) or rgb(),
+	 * with the black or white label that reads better on it (its alpha left aside). Anything else
+	 * is dropped there, and so here too: the palette's own colour applies.
+	 */
+	function labelled(colour: string): { fill: string; label: string } | null {
+		const value = colour.trim();
+		let rgb = /^#[0-9a-f]{8}$/i.test(value)
+			? splitAlpha(value).rgb
+			: /^#/.test(value)
+				? normalizeHex(value)
+				: null;
+		const channels =
+			/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*(?:0|1|0?\.\d+)\s*)?\)$/i.exec(
+				value
+			);
+		if (!rgb && channels) {
+			const parts = channels.slice(1, 4).map(Number);
+			if (parts.some((part) => part > 255)) return null;
+			rgb = `#${parts.map((part) => part.toString(16).padStart(2, '0')).join('')}`;
+		}
+		if (!rgb) return null;
+		const label =
+			contrastRatio(rgb, '#000000') >= contrastRatio(rgb, '#ffffff') ? '#000000' : '#ffffff';
+		return { fill: value, label };
+	}
+	const field = $derived(labelled(draft.fieldColor));
+	const button2 = $derived(labelled(draft.secondaryButtonColor));
+	// The picture's filters in order, as the Login UI draws them.
+	const backgroundFilter = $derived(loginUIImageFilterCss(draft.backgroundFilters));
+	// A blurred picture fades at its edges: it is drawn that much larger, as the Login UI's blur
+	// (of what lies under the page) has no edge inside the screen.
+	const backgroundBleed = $derived(
+		2 * (draft.backgroundFilters.find((filter) => filter.name === 'blur')?.value ?? 0)
+	);
 	$effect(() => imageUrl(draft.panelImage, (url) => (panelUrl = url)));
 	$effect(() => imageUrl(draft.cardImage, (url) => (cardUrl = url)));
 
@@ -205,6 +242,11 @@
 				style:--ol-copy={draft.copyColor || defaults.copy}
 				style:--ol-title-own={draft.titleColor || undefined}
 				style:--ol-copy-own={draft.copyColor || undefined}
+				style:--ol-field={field?.fill}
+				style:--ol-field-text={field?.label}
+				data-button2={button2 ? 'set' : undefined}
+				style:--ol-button2={button2?.fill}
+				style:--ol-button2-text={button2?.label}
 				style:--ol-density={DENSITIES[draft.fontScale]}
 				style:--ol-card-radius={`${shape.cardRadius}px`}
 				style:--ol-control-radius={`${shape.controlRadius}px`}
@@ -220,7 +262,8 @@
 						class="outline__image"
 						style:background-image={`url("${backgroundUrl}")`}
 						style:opacity={draft.backgroundOpacity / 100}
-						style:filter={draft.backgroundGrayscale ? 'grayscale(1)' : undefined}
+						style:filter={backgroundFilter || undefined}
+						style:inset={backgroundBleed ? `-${backgroundBleed}px` : undefined}
 					></span>
 				{/if}
 				<!-- The header runs along the top of the whole screen, over the brand panel too, as the footer
@@ -999,7 +1042,7 @@
 		height: 44px;
 		border: 1px solid var(--border);
 		border-radius: var(--ol-field-radius, var(--ol-control-radius, var(--radius-sm)));
-		background: var(--bg-input);
+		background: var(--ol-field, var(--bg-input));
 	}
 
 	.outline__button {
@@ -1043,6 +1086,13 @@
 		border: 1px solid var(--border);
 		background: color-mix(in srgb, var(--ol-text) 4%, var(--ol-card));
 		color: var(--ol-text);
+	}
+
+	/* A set secondary button colour, under the palette's sheen (as on the real screens), with the
+	   black or white label that reads on it. */
+	.outline[data-button2='set'] .outline__button--plain {
+		background-color: var(--ol-button2);
+		color: var(--ol-button2-text, var(--ol-text));
 	}
 
 	/* "or" between the methods, on a line. */

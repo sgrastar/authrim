@@ -81,6 +81,8 @@ export interface LoginUISettings {
   'login-ui.text_color': string;
   'login-ui.copy_color': string;
   'login-ui.form_area_color': string;
+  'login-ui.field_color': string;
+  'login-ui.secondary_button_color': string;
 
   // Branding
   'login-ui.brand_name': string;
@@ -104,6 +106,7 @@ export interface LoginUISettings {
   'login-ui.background_image_url': string;
   'login-ui.background_image_opacity': number;
   'login-ui.background_image_grayscale': boolean;
+  'login-ui.background_image_filters': string;
   'login-ui.login_panel_background_image_url': string;
   'login-ui.brand_panel_image_url': string;
   'login-ui.brand_panel_image_opacity': number;
@@ -330,6 +333,26 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     description: 'Optional CSS color override for supporting copy, subtitles, and helper text',
     visibility: 'public',
   },
+  'login-ui.field_color': {
+    key: 'login-ui.field_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_FIELD_COLOR',
+    label: 'Input Field Color',
+    description:
+      'Background colour of the text input fields. #rgb, #rrggbb or #rrggbbaa. Empty follows the palette',
+    visibility: 'public',
+  },
+  'login-ui.secondary_button_color': {
+    key: 'login-ui.secondary_button_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_SECONDARY_BUTTON_COLOR',
+    label: 'Secondary Button Color',
+    description:
+      'Background colour of the secondary buttons (such as Continue under an input). #rgb, #rrggbb or #rrggbbaa. Empty follows the palette',
+    visibility: 'public',
+  },
   'login-ui.form_area_color': {
     key: 'login-ui.form_area_color',
     type: 'string',
@@ -512,6 +535,16 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     envKey: 'LOGIN_UI_BACKGROUND_IMAGE_GRAYSCALE',
     label: 'Background Image Grayscale',
     description: 'Show the page background image in grayscale',
+    visibility: 'public',
+  },
+  'login-ui.background_image_filters': {
+    key: 'login-ui.background_image_filters',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_BACKGROUND_IMAGE_FILTERS',
+    label: 'Background Image Filters',
+    description:
+      'Filters on the page background image, in order: name:value pairs joined by ";" (for example "hue-rotate:200;blur:4")',
     visibility: 'public',
   },
   'login-ui.brand_panel_image_url': {
@@ -993,6 +1026,8 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.text_color': '',
   'login-ui.copy_color': '',
   'login-ui.form_area_color': '',
+  'login-ui.field_color': '',
+  'login-ui.secondary_button_color': '',
   'login-ui.brand_name': 'Authrim',
   'login-ui.header_name': '',
   'login-ui.logo_url': '',
@@ -1011,6 +1046,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.background_image_url': '',
   'login-ui.background_image_opacity': 100,
   'login-ui.background_image_grayscale': false,
+  'login-ui.background_image_filters': '',
   'login-ui.login_panel_background_image_url': '',
   'login-ui.brand_panel_image_url': '',
   'login-ui.brand_panel_image_opacity': 100,
@@ -1073,6 +1109,8 @@ export const LOGIN_UI_THEME_KEYS = [
   'login-ui.text_color',
   'login-ui.copy_color',
   'login-ui.form_area_color',
+  'login-ui.field_color',
+  'login-ui.secondary_button_color',
   'login-ui.brand_name',
   'login-ui.header_name',
   'login-ui.logo_url',
@@ -1085,6 +1123,7 @@ export const LOGIN_UI_THEME_KEYS = [
   'login-ui.background_image_url',
   'login-ui.background_image_opacity',
   'login-ui.background_image_grayscale',
+  'login-ui.background_image_filters',
   'login-ui.login_panel_background_image_url',
   'login-ui.login_panel_background_opacity',
   'login-ui.login_panel_background_grayscale',

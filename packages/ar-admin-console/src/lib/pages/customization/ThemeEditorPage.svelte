@@ -165,7 +165,12 @@
 		const over = stored;
 		const from = version;
 		// What is saved is the draft as it is now; changes made while it is saved stay unsaved.
-		const sent: ThemeDraft = { ...draft, texts: $state.snapshot(draft.texts) };
+		// Its nested parts are copied: edits made after the save must not change what it compares with.
+		const sent: ThemeDraft = {
+			...draft,
+			texts: $state.snapshot(draft.texts),
+			backgroundFilters: $state.snapshot(draft.backgroundFilters)
+		};
 		try {
 			let uploaded: ThemeDraft;
 			try {

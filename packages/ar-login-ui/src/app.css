@@ -272,7 +272,7 @@ button {
 	border-radius: var(--radius-sm);
 	font-size: 0.875rem;
 	font-family: var(--font-body);
-	color: var(--text-primary);
+	color: var(--field-text, var(--text-primary));
 	background: var(--bg-input);
 	transition: all var(--transition-fast);
 	box-sizing: border-box;
@@ -2319,7 +2319,7 @@ tr.expired {
 	background: var(--bg-input);
 	border: 2px solid var(--input-border, var(--border));
 	border-radius: var(--input-radius, var(--radius-md));
-	color: var(--text-primary);
+	color: var(--field-text, var(--text-primary));
 	transition: all var(--transition-fast);
 	backdrop-filter: var(--blur-sm);
 	-webkit-backdrop-filter: var(--blur-sm);
@@ -2993,6 +2993,96 @@ tr.expired {
 
 [data-brand-panel-image-grayscale='true'] {
 	--login-brand-panel-image-filter: grayscale(1);
+}
+
+/* Filters on the page picture (login-ui.background_image_filters). As with grayscale, a filter on
+   a box that paints the picture would also filter the form in it. Each such box instead gets an
+   empty first child (.auth-image-filter) laid just over its picture: its backdrop-filter filters
+   the picture under it, and it paints over that what the box laid over the picture (the veil of
+   the picture's opacity, the framed split's glass tint), so these are not filtered. Then come the
+   palette's overlay, the brand panel's own picture and scrim, and the content.
+   The boxes: the page itself, the framed split's frame, and the brand panel when the picture is
+   only the panel's ("brand only"). Elsewhere the element is not drawn. */
+.auth-image-filter {
+	display: none;
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+	border-radius: inherit;
+	-webkit-backdrop-filter: var(--login-page-image-filter);
+	backdrop-filter: var(--login-page-image-filter);
+	background-image: var(--login-page-image-veil);
+}
+
+/* Over the glass palettes' own page rule too. */
+[data-has-page-background-image='true'] .auth-page[data-page-image-filter='true'] {
+	isolation: isolate;
+	background-image: var(--login-page-image-tone, none), var(--login-page-background-layer, none);
+	background-blend-mode: saturation, normal;
+}
+
+.auth-page[data-page-image-filter='true'] > .auth-image-filter {
+	display: block;
+	position: absolute;
+	z-index: -1;
+}
+
+/* "Brand only": the page shows its colour, not the picture, and the panel shows the picture. */
+[data-page-layout='split_panel'][data-split-background-mode='brand'][data-has-page-background-image='true']
+	.auth-page[data-page-image-filter='true'] {
+	background-image: none;
+}
+
+[data-page-layout='split_panel'][data-split-background-mode='brand']
+	.auth-page[data-page-image-filter='true']
+	> .auth-image-filter {
+	display: none;
+}
+
+[data-page-layout='split_panel'][data-split-background-mode='brand'][data-has-page-background-image='true']
+	.auth-page[data-page-image-filter='true']
+	.auth-brand-panel {
+	isolation: isolate;
+	background-image: var(--login-page-image-tone, none), var(--login-page-background-layer);
+	background-blend-mode: saturation, normal;
+}
+
+[data-page-layout='split_panel'][data-split-background-mode='brand'][data-has-page-background-image='true']
+	.auth-page[data-page-image-filter='true']
+	.auth-brand-panel
+	> .auth-image-filter {
+	display: block;
+}
+
+/* The framed split template paints the picture again inside its frame, under a glass tint (not on
+   a phone, where the frame is a glass pane over the page and the page's own layer filters it). */
+@media (min-width: 641px) {
+	[data-page-layout='split_panel'][data-split-frame='card'][data-has-page-background-image='true']:not(
+			[data-split-background-mode='brand']
+		)
+		.auth-page[data-page-image-filter='true']
+		> .auth-main {
+		background: var(--login-page-image-tone, none), var(--login-page-background-layer, none);
+		background-blend-mode: saturation, normal;
+	}
+
+	[data-page-layout='split_panel'][data-split-frame='card'][data-has-page-background-image='true']:not(
+			[data-split-background-mode='brand']
+		)
+		.auth-page[data-page-image-filter='true']
+		> .auth-main
+		> .auth-image-filter {
+		display: block;
+		position: absolute;
+		z-index: -1;
+		background-image:
+			linear-gradient(
+				color-mix(in srgb, var(--bg-glass) 70%, transparent),
+				color-mix(in srgb, var(--bg-glass) 70%, transparent)
+			),
+			var(--login-page-image-veil);
+	}
 }
 
 /* The veil over the page background image takes only the page colour's channels, so a translucent
@@ -4042,4 +4132,12 @@ tr.expired {
 [data-login-theme='swiss-grid'][data-page-layout='split_panel'] .auth-main {
 	backdrop-filter: none;
 	-webkit-backdrop-filter: none;
+}
+
+/* The tenant's secondary button colour (login-ui.secondary_button_color) on the shared Button. The
+   screens' own buttons read --button-secondary-bg and -text, which the page sets. Only the colour
+   is set, so a palette's sheen over it stays. */
+.auth-page[data-has-secondary-button-color='true'] .btn-secondary {
+	background-color: var(--button-secondary-bg);
+	color: var(--button-secondary-text, var(--text-primary));
 }

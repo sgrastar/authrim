@@ -27,6 +27,10 @@ import {
   readLiteModeState,
 } from '@authrim/ar-lib-core/services/lite-policy';
 import { checkLiteLogoDataUri } from '@authrim/ar-lib-core/utils/lite-logo';
+import {
+  parseLoginUIImageFilters,
+  type LoginUIImageFilter,
+} from '@authrim/ar-lib-core/utils/login-ui-image-filters';
 import type { Context } from 'hono';
 import type {
   Env,
@@ -261,6 +265,8 @@ interface UIConfig {
     textColor: string;
     copyColor: string;
     formAreaColor: string;
+    fieldColor: string;
+    secondaryButtonColor: string;
     logoDisplay: 'auto' | 'image' | 'text' | 'hidden';
     brandPanelLogoDisplay: 'inherit' | 'auto' | 'image' | 'text' | 'hidden';
     logoLayout: 'stack' | 'row';
@@ -294,6 +300,7 @@ interface UIConfig {
     backgroundImageUrl: string | null;
     backgroundImageOpacity: number;
     backgroundImageGrayscale: boolean;
+    backgroundImageFilters: LoginUIImageFilter[];
     loginPanelBackgroundImageUrl: string | null;
     brandPanelImageUrl: string | null;
     brandPanelImageOpacity: number;
@@ -457,6 +464,8 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     textColor: '',
     copyColor: '',
     formAreaColor: '',
+    fieldColor: '',
+    secondaryButtonColor: '',
     logoDisplay: 'auto',
     brandPanelLogoDisplay: 'inherit',
     logoLayout: 'stack',
@@ -490,6 +499,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     backgroundImageUrl: null,
     backgroundImageOpacity: 100,
     backgroundImageGrayscale: false,
+    backgroundImageFilters: [],
     loginPanelBackgroundImageUrl: null,
     brandPanelImageUrl: null,
     brandPanelImageOpacity: 100,
@@ -559,6 +569,8 @@ interface LoginUIKVSettings {
   'login-ui.text_color'?: string;
   'login-ui.copy_color'?: string;
   'login-ui.form_area_color'?: string;
+  'login-ui.field_color'?: string;
+  'login-ui.secondary_button_color'?: string;
   'login-ui.brand_name'?: string;
   'login-ui.header_name'?: string;
   'login-ui.logo_url'?: string;
@@ -576,6 +588,7 @@ interface LoginUIKVSettings {
   'login-ui.background_image_url'?: string;
   'login-ui.background_image_opacity'?: number | string;
   'login-ui.background_image_grayscale'?: boolean | string;
+  'login-ui.background_image_filters'?: string;
   'login-ui.login_panel_background_image_url'?: string;
   'login-ui.brand_panel_image_url'?: string;
   'login-ui.brand_panel_image_opacity'?: number | string;
@@ -689,6 +702,8 @@ interface LoginUIResolved {
   textColor: string;
   copyColor: string;
   formAreaColor: string;
+  fieldColor: string;
+  secondaryButtonColor: string;
   brandName: string;
   headerName: string;
   logoUrl: string | null;
@@ -706,6 +721,7 @@ interface LoginUIResolved {
   backgroundImageUrl: string | null;
   backgroundImageOpacity: number;
   backgroundImageGrayscale: boolean;
+  backgroundImageFilters: LoginUIImageFilter[];
   loginPanelBackgroundImageUrl: string | null;
   brandPanelImageUrl: string | null;
   brandPanelImageOpacity: number;
@@ -1249,6 +1265,11 @@ function resolveLoginUIFromKVSettings(
     textColor: readSafeColor(kvSettings['login-ui.text_color'], defaults.textColor),
     copyColor: readSafeColor(kvSettings['login-ui.copy_color'], defaults.copyColor),
     formAreaColor: readSafeColor(kvSettings['login-ui.form_area_color'], defaults.formAreaColor),
+    fieldColor: readSafeColor(kvSettings['login-ui.field_color'], defaults.fieldColor),
+    secondaryButtonColor: readSafeColor(
+      kvSettings['login-ui.secondary_button_color'],
+      defaults.secondaryButtonColor
+    ),
     brandName: kvSettings['login-ui.brand_name'] || defaults.brandName,
     headerName: readHeaderName(kvSettings['login-ui.header_name'], defaults.headerName),
     liteLogo: checkLiteLogoDataUri(kvSettings['login-ui.lite_logo']).ok
@@ -1308,6 +1329,10 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.background_image_grayscale'],
       defaults.backgroundImageGrayscale
     ),
+    backgroundImageFilters:
+      kvSettings['login-ui.background_image_filters'] === undefined
+        ? defaults.backgroundImageFilters
+        : parseLoginUIImageFilters(kvSettings['login-ui.background_image_filters']),
     loginPanelBackgroundImageUrl: isValidLoginUIImageUrl(
       kvSettings['login-ui.login_panel_background_image_url']
     )
@@ -1490,6 +1515,8 @@ async function getLoginUISettings(
     textColor: DEFAULT_UI_CONFIG.pageTemplate.textColor,
     copyColor: DEFAULT_UI_CONFIG.pageTemplate.copyColor,
     formAreaColor: DEFAULT_UI_CONFIG.pageTemplate.formAreaColor,
+    fieldColor: DEFAULT_UI_CONFIG.pageTemplate.fieldColor,
+    secondaryButtonColor: DEFAULT_UI_CONFIG.pageTemplate.secondaryButtonColor,
     brandName: DEFAULT_UI_CONFIG.branding.brandName,
     headerName: DEFAULT_UI_CONFIG.branding.headerName,
     logoUrl: DEFAULT_UI_CONFIG.branding.logoUrl,
@@ -1507,6 +1534,7 @@ async function getLoginUISettings(
     backgroundImageUrl: DEFAULT_UI_CONFIG.appearance.backgroundImageUrl,
     backgroundImageOpacity: DEFAULT_UI_CONFIG.appearance.backgroundImageOpacity,
     backgroundImageGrayscale: DEFAULT_UI_CONFIG.appearance.backgroundImageGrayscale,
+    backgroundImageFilters: [...DEFAULT_UI_CONFIG.appearance.backgroundImageFilters],
     loginPanelBackgroundImageUrl: DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageUrl,
     brandPanelImageUrl: DEFAULT_UI_CONFIG.appearance.brandPanelImageUrl,
     brandPanelImageOpacity: DEFAULT_UI_CONFIG.appearance.brandPanelImageOpacity,
@@ -2459,6 +2487,8 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
       textColor: loginUI.textColor,
       copyColor: loginUI.copyColor,
       formAreaColor: loginUI.formAreaColor,
+      fieldColor: loginUI.fieldColor,
+      secondaryButtonColor: loginUI.secondaryButtonColor,
       logoDisplay: loginUI.logoDisplay,
       brandPanelLogoDisplay: loginUI.brandPanelLogoDisplay,
       logoLayout: loginUI.logoLayout,
@@ -2492,6 +2522,7 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
       backgroundImageUrl: loginUI.backgroundImageUrl,
       backgroundImageOpacity: loginUI.backgroundImageOpacity,
       backgroundImageGrayscale: loginUI.backgroundImageGrayscale,
+      backgroundImageFilters: loginUI.backgroundImageFilters,
       loginPanelBackgroundImageUrl: loginUI.loginPanelBackgroundImageUrl,
       brandPanelImageUrl: loginUI.brandPanelImageUrl,
       brandPanelImageOpacity: loginUI.brandPanelImageOpacity,

@@ -1476,6 +1476,16 @@ components:
                   description: >-
                     Form area background as a hex colour, with an optional alpha channel. Empty when
                     none is set, in which case the palette's own colour applies.
+                fieldColor:
+                  type: string
+                  description: >-
+                    Background of the text input fields as a hex colour, with an optional alpha
+                    channel. Empty when none is set, in which case the palette's own colour applies.
+                secondaryButtonColor:
+                  type: string
+                  description: >-
+                    Background of the secondary buttons as a hex colour, with an optional alpha
+                    channel. Empty when none is set, in which case the palette's own colour applies.
                 brandPanelLogoDisplay:
                   type: string
                   enum:
@@ -1500,6 +1510,34 @@ components:
                   type: boolean
                   default: false
                   description: Whether the page background image is shown in grayscale.
+                backgroundImageFilters:
+                  type: array
+                  default: []
+                  description: >-
+                    Filters on the page background image, in the order they apply. Each filter
+                    appears at most once.
+                  items:
+                    type: object
+                    required: [name, value]
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          [
+                            grayscale,
+                            blur,
+                            brightness,
+                            contrast,
+                            saturate,
+                            hue-rotate,
+                            sepia,
+                            invert,
+                          ]
+                      value:
+                        type: integer
+                        description: >-
+                          blur 0-20 px; brightness and contrast 0-200 %; saturate 0-300 %;
+                          hue-rotate 0-360 deg; grayscale, sepia and invert 0-100 %.
                 brandPanelImageUrl:
                   type:
                     - string
