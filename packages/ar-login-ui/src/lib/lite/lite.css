@@ -58,6 +58,26 @@ p {
 .muted {
 	color: var(--muted);
 }
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+.divider {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	color: var(--muted);
+}
+.divider::before,
+.divider::after {
+	content: '';
+	flex: 1;
+	border-top: 1px solid currentColor;
+}
 .code {
 	font-family: ui-monospace, monospace;
 	overflow-wrap: anywhere;

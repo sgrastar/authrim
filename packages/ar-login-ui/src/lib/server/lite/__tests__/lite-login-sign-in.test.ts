@@ -1,6 +1,6 @@
 /**
- * The lite sign-in page's email code and guest sign-in (PR4b): the posts, their retries and
- * double submits, and what the page view draws after each. The transaction store is a small
+ * The lite sign-in page's email code and guest sign-in (PR4b), authenticator app and passkey
+ * (PR5a): the posts, their retries and double submits, and what the page view draws after each. The transaction store is a small
  * in-memory model of LiteTxnStore (versions, the operation lease, the recorded results).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,11 +49,22 @@ let calls: Array<{ path: string; body: Record<string, unknown>; headers: Headers
 let routes: Record<string, Handler>;
 let currentStep: Record<string, unknown>;
 let store: ReturnType<typeof fakeStore>;
+let tenantMethods: Record<string, unknown>;
+/** Whether the contract has a step of its own for the code (CODE_STEP). */
+let withCodeStep: boolean;
+/** Cookies the browser sends besides the lite binding (a session made by an earlier post). */
+let browserCookies: Record<string, string>;
 
 function startAnswer() {
 	return {
 		interaction: { id: 'int-1', state: 'active', current_step_id: currentStep.id },
-		contract: { ui: { steps: [...new Set([SELECT_STEP, CODE_STEP, COMPLETION, currentStep])] } },
+		contract: {
+			ui: {
+				steps: [
+					...new Set([SELECT_STEP, ...(withCodeStep ? [CODE_STEP] : []), COMPLETION, currentStep])
+				]
+			}
+		},
 		contract_hash: 'hash-1',
 		signature: 'sig-1'
 	};
@@ -128,9 +139,10 @@ function fakeStore() {
 				transition?: Record<string, unknown>;
 			}) => {
 				const operation = operations.get(call.operationId);
-				if (!operation || operation.attempt !== call.attempt) {
-					return { ok: false, reason: 'version_mismatch' };
-				}
+				if (!operation) return { ok: false, reason: 'not_found' };
+				// As the store: an attempt another took over, before a finished one is read back.
+				if (operation.attempt !== call.attempt) return { ok: false, reason: 'superseded' };
+				if (operation.status === 'done') return { ok: true, txn: view() };
 				operations.set(call.operationId, { ...operation, status: 'done', result: call.result });
 				if (!call.transition) return { ok: true, txn: view() };
 				const refused = move(call.transition as never);
@@ -157,7 +169,10 @@ function event(init: { action?: string; form?: Record<string, string>; query?: s
 		? `/login?${search}${search ? '&' : ''}/${init.action}`
 		: `/login${search ? `?${search}` : ''}`;
 	const url = new URL(`https://id.example${path}`);
-	const cookies = new Map<string, string>([['__Host-authrim_lite', 'b'.repeat(43)]]);
+	const cookies = new Map<string, string>([
+		['__Host-authrim_lite', 'b'.repeat(43)],
+		...Object.entries(browserCookies)
+	]);
 	const body = init.form ? new URLSearchParams(init.form).toString() : undefined;
 	return {
 		url,
@@ -172,9 +187,7 @@ function event(init: { action?: string; form?: Record<string, string>; query?: s
 		},
 		locals: {
 			locale: 'en',
-			authenticationMethods: {
-				methods: { emailCode: { enabled: true }, guest: { enabled: true } }
-			},
+			authenticationMethods: { methods: tenantMethods },
 			edge: {
 				source: 'router',
 				originVerified: init.form ? true : null,
@@ -230,6 +243,9 @@ beforeEach(() => {
 	calls = [];
 	currentStep = SELECT_STEP;
 	store = fakeStore();
+	tenantMethods = { emailCode: { enabled: true }, guest: { enabled: true } };
+	withCodeStep = true;
+	browserCookies = {};
 	routes = {
 		'/api/v1/login/interactions/start': () => json(startAnswer()),
 		'/api/auth/human-verification/pow-challenge': () =>
@@ -1082,5 +1098,812 @@ describe('a post the page does not accept', () => {
 		store.set({ state: 'completed' });
 		expect(await post('verify_code', { code: '123456' })).toMatchObject({ status: 403 });
 		expect(calls).toEqual([]);
+	});
+});
+
+const METHOD_STEP = {
+	id: 'methods',
+	source_node_id: 'n-methods',
+	component: 'authentication_method_selector',
+	render: true,
+	config: {
+		screen: {
+			display_name: 'Sign in',
+			fields: [
+				{ field: 'email', label: 'Email', required: true },
+				{ block_type: 'auth_widget', field: 't', label: 'Authenticator', auth_method: 'totp' },
+				{ block_type: 'auth_widget', field: 'p', label: 'Passkey', auth_method: 'passkey' }
+			]
+		}
+	}
+};
+
+/** The steps the methods' handles lead to: a code step when the Flow has one, else the end. */
+function methodRoutes() {
+	const submit = routes['/api/v1/login/interactions/int-1/submit'];
+	routes['/api/v1/login/interactions/int-1/submit'] = (body, init) => {
+		if (body.selected_handle === 'totp' || body.selected_handle === 'passkey') {
+			const next = withCodeStep && body.selected_handle === 'totp' ? CODE_STEP : COMPLETION;
+			currentStep = next;
+			return json({ completed: false, step: next, interaction: { current_step_id: next.id } });
+		}
+		return submit(body, init);
+	};
+	routes['/api/auth/totp/login/start'] = () => json({ challenge_id: 'totp-1', expires_in: 300 });
+	routes['/api/auth/totp/login/verify'] = () =>
+		json({ success: true, redirect_url: 'https://id.example/totp-after' }, 200, {
+			'Set-Cookie': 'authrim_session=t1; Path=/; HttpOnly; Secure; SameSite=Lax'
+		});
+	routes['/api/v1/auth/direct/passkey/login/start'] = () =>
+		json({
+			challenge_id: 'pk-1',
+			options: {
+				challenge: 'c'.repeat(43),
+				rpId: 'id.example',
+				timeout: 60000,
+				userVerification: 'required',
+				allowCredentials: [],
+				extensions: { anything: true }
+			}
+		});
+	routes['/api/v1/auth/direct/passkey/login/finish'] = () =>
+		json({ direct_auth_artifact: 'pk-artifact', expires_in: 60 });
+}
+
+describe('the authenticator app', () => {
+	beforeEach(() => {
+		currentStep = METHOD_STEP;
+		tenantMethods = { totp: { enabled: true }, passkey: { enabled: true } };
+		methodRoutes();
+	});
+	const pendingTotp = () => ({
+		interactionId: 'int-1',
+		choiceStepId: 'methods',
+		challengeId: 'totp-1',
+		expiresAt: Date.now() + 300_000
+	});
+
+	it('starts with the address and the proof, keeps the challenge, and chooses it when the Flow asks for the code itself', async () => {
+		await expect(
+			post('totp_start', { email: 'person@example.com', human_verification_response: 'proof-1' })
+		).rejects.toMatchObject({ status: 303 });
+		const start = calls.find((call) => call.path === '/api/auth/totp/login/start');
+		expect(start?.body).toEqual({
+			identifier: 'person@example.com',
+			human_verification_response: 'proof-1'
+		});
+		expect(start?.headers.get('X-Authrim-Interaction-Id')).toBe('int-1');
+		expect(store.txn.data.totp).toMatchObject({ challengeId: 'totp-1', choiceStepId: 'methods' });
+		expect(submits()).toEqual(['totp']);
+	});
+
+	it('submits no choice at the start when the Flow has no step for the code, and draws an entry of its own', async () => {
+		withCodeStep = false;
+		await expect(post('totp_start', { email: 'person@example.com' })).rejects.toMatchObject({
+			status: 303
+		});
+		expect(submits()).toEqual([]);
+		const page = (await view()) as {
+			decision: { fields: Array<{ blockType: string }> };
+			codeEntry: unknown;
+			pow: unknown;
+		};
+		expect(page.decision.fields.map((field) => field.blockType)).toEqual(['code_input_widget']);
+		expect(page.codeEntry).toEqual({
+			kind: 'totp',
+			maskedEmail: null,
+			resendWait: 0,
+			challenge: 'totp-1'
+		});
+		expect(page.pow).toBeNull();
+	});
+
+	it('checks the code, passes the session on, then submits the choice and completes the Flow', async () => {
+		withCodeStep = false;
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: pendingTotp() } });
+		const e = event({
+			action: 'totp_verify',
+			form: { txn: 'txn-1', csrf: 'csrf-1', op: OP, challenge: 'totp-1', code: '1234 5678' }
+		});
+		const answer = await (
+			actions as Record<string, (e: RequestEvent) => Promise<unknown>>
+		).totp_verify(e);
+		expect(answer).toEqual({ completed: true });
+		expect(calls.find((call) => call.path === '/api/auth/totp/login/verify')?.body).toEqual({
+			challenge_id: 'totp-1',
+			code: '12345678',
+			defer_authorization_continuation: true
+		});
+		expect(submits()).toEqual(['totp', 'completed']);
+		expect(e.cookies.set).toHaveBeenCalledWith('authrim_session', 't1', expect.anything());
+		expect(store.txn.state).toBe('completed');
+		expect(store.txn.data.totp).toBeUndefined();
+	});
+
+	it("submits the Flow's own code step as checked once the choice went at the start", async () => {
+		currentStep = CODE_STEP;
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: pendingTotp() } });
+		expect(await post('totp_verify', { challenge: 'totp-1', code: '123456' })).toEqual({
+			completed: true
+		});
+		expect(submits()).toEqual(['verified', 'completed']);
+	});
+
+	it('starts again after a wrong code (ar-auth spent the challenge)', async () => {
+		withCodeStep = false;
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: pendingTotp() } });
+		routes['/api/auth/totp/login/verify'] = () => json({ error: 'invalid_code' }, 400);
+		const answer = await post('totp_verify', { challenge: 'totp-1', code: '000000' });
+		expect(answer).toMatchObject({ status: 400, data: { error: 'totp_invalid' } });
+		expect(store.txn.data.totp).toBeUndefined();
+		expect(store.txn.data.signedIn).toBeUndefined();
+		expect(submits()).toEqual([]);
+	});
+
+	it('checks nothing for a code of the wrong length', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: pendingTotp() } });
+		const answer = await post('totp_verify', { challenge: 'totp-1', code: '12345' });
+		expect(answer).toMatchObject({ status: 400, data: { error: 'totp_invalid' } });
+		expect(paths()).not.toContain('/api/auth/totp/login/verify');
+	});
+
+	it('starts nothing when the tenant has the authenticator app off', async () => {
+		tenantMethods = { passkey: { enabled: true } };
+		const answer = await post('totp_start', { email: 'person@example.com' });
+		expect(answer).toMatchObject({ status: 409, data: { restart: true } });
+		expect(paths()).not.toContain('/api/auth/totp/login/start');
+	});
+
+	it('sends no email code over an authenticator sign-in begun', async () => {
+		currentStep = SELECT_STEP;
+		tenantMethods = { emailCode: { enabled: true }, totp: { enabled: true } };
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: pendingTotp() } });
+		await expect(post('send_code', { email: 'person@example.com' })).rejects.toMatchObject({
+			status: 303
+		});
+		expect(paths()).not.toContain('/api/v1/auth/direct/email-code/send');
+	});
+});
+
+describe('the passkey', () => {
+	beforeEach(() => {
+		currentStep = METHOD_STEP;
+		tenantMethods = { totp: { enabled: true }, passkey: { enabled: true } };
+		methodRoutes();
+	});
+	const pendingPasskey = () => ({
+		interactionId: 'int-1',
+		choiceStepId: 'methods',
+		challengeId: 'pk-1',
+		verifier: 'secret-passkey-verifier',
+		options: {
+			challenge: 'c'.repeat(43),
+			rpId: 'id.example',
+			timeout: 60000,
+			userVerification: 'required',
+			allowCredentials: []
+		},
+		expiresAt: Date.now() + 60_000
+	});
+	const credential = JSON.stringify({
+		id: 'cred-1',
+		rawId: 'cred-1',
+		type: 'public-key',
+		response: { authenticatorData: 'YXV0aA', clientDataJSON: 'Y2RqCg', signature: 'c2ln' },
+		authenticatorAttachment: 'platform',
+		injected: '<script>'
+	});
+
+	it('gets the challenge with the proof and a PKCE challenge, keeps it, and submits nothing yet', async () => {
+		await expect(
+			post('passkey_start', { human_verification_response: 'proof-1' }, 'challenge_id=ch-1')
+		).rejects.toMatchObject({ status: 303 });
+		const start = calls.find((call) => call.path === '/api/v1/auth/direct/passkey/login/start');
+		expect(start?.headers.get('X-Authrim-Interaction-Id')).toBe('int-1');
+		const kept = store.txn.data.passkey as Record<string, unknown>;
+		expect(kept).toMatchObject({ challengeId: 'pk-1', choiceStepId: 'methods' });
+		// Only the fields the ceremony reads are kept.
+		expect(kept.options).not.toHaveProperty('extensions');
+		expect(start?.body).toMatchObject({
+			client_id: 'login-ui',
+			code_challenge: await sha256Base64Url(String(kept.verifier)),
+			code_challenge_method: 'S256',
+			channel: 'browser',
+			human_verification_response: 'proof-1'
+		});
+		expect(submits()).toEqual([]);
+	});
+
+	it('draws the ceremony with its options and script, and no secret or proof', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, passkey: pendingPasskey() } });
+		const e = event();
+		const page = await (load as unknown as (e: RequestEvent) => Promise<Record<string, unknown>>)(
+			e
+		);
+		expect(page).toMatchObject({ passkey: { options: { rpId: 'id.example' } }, pow: null });
+		expect(JSON.stringify(page)).not.toContain('secret-passkey-verifier');
+		expect(e.locals.liteCsp?.scriptHashes).toHaveLength(1);
+	});
+
+	it('checks the assertion, makes the session from its artifact, then submits the choice', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, passkey: pendingPasskey() } });
+		expect(await post('passkey_finish', { challenge: 'pk-1', credential })).toEqual({
+			completed: true
+		});
+		const finish = calls.find((call) => call.path === '/api/v1/auth/direct/passkey/login/finish');
+		expect(finish?.body).toMatchObject({
+			challenge_id: 'pk-1',
+			code_verifier: 'secret-passkey-verifier',
+			channel: 'browser'
+		});
+		// Re-made from the checked fields: nothing else the page sent goes on.
+		expect(finish?.body.credential).not.toHaveProperty('injected');
+		expect(calls.find((call) => call.path === '/api/v1/auth/direct/session')?.body).toMatchObject({
+			direct_auth_artifact: 'pk-artifact',
+			code_verifier: 'secret-passkey-verifier'
+		});
+		expect(submits()).toEqual(['passkey', 'completed']);
+		expect(store.txn.state).toBe('completed');
+	});
+
+	it('sends no assertion that does not read, and keeps the challenge for another try', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, passkey: pendingPasskey() } });
+		const answer = await post('passkey_finish', { challenge: 'pk-1', credential: '{"id":"x"}' });
+		expect(answer).toMatchObject({ status: 400, data: { error: 'passkey_failed' } });
+		expect(paths()).not.toContain('/api/v1/auth/direct/passkey/login/finish');
+		expect(store.txn.data.passkey).toMatchObject({ challengeId: 'pk-1' });
+	});
+
+	it('starts again when the assertion is refused (ar-auth spent the challenge)', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, passkey: pendingPasskey() } });
+		routes['/api/v1/auth/direct/passkey/login/finish'] = () =>
+			json({ error: 'passkey_failed' }, 400);
+		const answer = await post('passkey_finish', { challenge: 'pk-1', credential });
+		expect(answer).toMatchObject({ status: 400, data: { error: 'passkey_failed' } });
+		expect(store.txn.data.passkey).toBeUndefined();
+		expect(paths()).not.toContain('/api/v1/auth/direct/session');
+	});
+
+	it('starts again, with no code put back, when the session call spent the artifact', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, passkey: pendingPasskey() } });
+		routes['/api/v1/auth/direct/session'] = () => json({ error: 'invalid_grant' }, 400);
+		const answer = await post('passkey_finish', { challenge: 'pk-1', credential });
+		expect(answer).toMatchObject({ status: 400, data: { error: 'passkey_failed' } });
+		expect(store.txn.data.checked).toBeUndefined();
+		expect(store.txn.data.code).toBeUndefined();
+		const page = (await view()) as { decision: { kind: string }; passkey: unknown };
+		expect(page.decision.kind).toBe('screen');
+		expect(page.passkey).toBeNull();
+	});
+
+	it('keeps nothing from a start whose options do not read', async () => {
+		routes['/api/v1/auth/direct/passkey/login/start'] = () =>
+			json({ challenge_id: 'pk-1', options: { challenge: 'not base64url!', rpId: 'id.example' } });
+		const answer = await post('passkey_start', {});
+		expect(answer).toMatchObject({ status: 400, data: { error: 'passkey_failed' } });
+		expect(store.txn.data.passkey).toBeUndefined();
+	});
+});
+
+describe('one sign-in at a time across tabs', () => {
+	beforeEach(() => {
+		currentStep = METHOD_STEP;
+		tenantMethods = {
+			emailCode: { enabled: true },
+			totp: { enabled: true },
+			passkey: { enabled: true },
+			guest: { enabled: true }
+		};
+		methodRoutes();
+	});
+	const pendingPasskey = {
+		interactionId: 'int-1',
+		choiceStepId: 'methods',
+		challengeId: 'pk-1',
+		verifier: 'secret-passkey-verifier',
+		options: {
+			challenge: 'c'.repeat(43),
+			rpId: 'id.example',
+			timeout: 60000,
+			userVerification: 'required',
+			allowCredentials: []
+		},
+		expiresAt: Date.now() + 60_000
+	};
+	const credential = JSON.stringify({
+		id: 'cred-1',
+		rawId: 'cred-1',
+		type: 'public-key',
+		response: { authenticatorData: 'YXV0aA', clientDataJSON: 'Y2RqCg', signature: 'c2ln' }
+	});
+
+	it('sends a code from the email-code half of the email-code-or-authenticator part', async () => {
+		currentStep = {
+			...METHOD_STEP,
+			config: {
+				screen: {
+					display_name: 'Sign in',
+					fields: [{ block_type: 'auth_widget', field: 'c', auth_method: 'mail_otp_totp' }]
+				}
+			}
+		};
+		await expect(post('send_code', { email: 'person@example.com' })).rejects.toMatchObject({
+			status: 303
+		});
+		expect(paths()).toContain('/api/v1/auth/direct/email-code/send');
+	});
+
+	it('checks a passkey challenge once, whatever form posts it (another tab waits)', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, passkey: pendingPasskey } });
+		store.operations.set('verify:passkey:pk-1', {
+			status: 'running',
+			attempt: 1,
+			startedAt: Date.now()
+		});
+		await expect(
+			post('passkey_finish', { challenge: 'pk-1', credential, op: 'x'.repeat(22) })
+		).rejects.toMatchObject({
+			status: 303
+		});
+		expect(paths()).not.toContain('/api/v1/auth/direct/passkey/login/finish');
+		expect(store.txn.data.passkey).toMatchObject({ challengeId: 'pk-1' });
+	});
+
+	it('checks an authenticator challenge once, and makes its recorded sign-in when it was not saved', async () => {
+		withCodeStep = false;
+		// The first check's session cookie: the browser has it.
+		browserCookies = { authrim_session: 't1' };
+		store.set({
+			state: 'pending',
+			data: {
+				...store.txn.data,
+				totp: {
+					interactionId: 'int-1',
+					choiceStepId: 'methods',
+					challengeId: 'totp-1',
+					expiresAt: Date.now() + 60_000
+				}
+			}
+		});
+		store.operations.set('verify:totp:totp-1', {
+			status: 'done',
+			attempt: 1,
+			startedAt: Date.now(),
+			result: {
+				signedIn: {
+					interactionId: 'int-1',
+					method: 'totp',
+					choice: { stepId: 'methods', handle: 'totp' },
+					redirectUrl: null
+				}
+			}
+		});
+		expect(await post('totp_verify', { challenge: 'totp-1', code: '123456' })).toEqual({
+			completed: true
+		});
+		expect(paths()).not.toContain('/api/auth/totp/login/verify');
+		expect(submits()).toEqual(['totp', 'completed']);
+	});
+
+	it("makes a passkey check's recorded artifact into the session when it was not saved", async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, passkey: pendingPasskey } });
+		store.operations.set('verify:passkey:pk-1', {
+			status: 'done',
+			attempt: 1,
+			startedAt: Date.now(),
+			result: {
+				checked: {
+					interactionId: 'int-1',
+					method: 'passkey',
+					choiceStepId: 'methods',
+					artifact: 'pk-artifact',
+					verifier: 'secret-passkey-verifier',
+					expiresAt: Date.now() + 60_000,
+					attemptKey: 'pk-1',
+					code: null,
+					tries: 0
+				}
+			}
+		});
+		expect(await post('passkey_finish', { challenge: 'pk-1', credential })).toEqual({
+			completed: true
+		});
+		expect(paths()).not.toContain('/api/v1/auth/direct/passkey/login/finish');
+		expect(calls.find((call) => call.path === '/api/v1/auth/direct/session')?.body).toMatchObject({
+			direct_auth_artifact: 'pk-artifact'
+		});
+		expect(submits()).toEqual(['passkey', 'completed']);
+	});
+
+	it('records no passkey check next to an email code sent meanwhile (its challenge expired)', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, passkey: pendingPasskey } });
+		routes['/api/v1/auth/direct/passkey/login/finish'] = () => {
+			// Another tab sends a code while this check is out.
+			store.set({
+				data: {
+					...store.txn.data,
+					code: {
+						interactionId: 'int-1',
+						choiceStepId: 'methods',
+						email: 'person@example.com',
+						maskedEmail: null,
+						attemptId: 'attempt-9',
+						verifier: 'v',
+						sentAt: Date.now()
+					}
+				},
+				version: store.txn.version + 1
+			});
+			return json({ direct_auth_artifact: 'pk-artifact', expires_in: 60 });
+		};
+		const answer = await post('passkey_finish', { challenge: 'pk-1', credential });
+		expect(answer).toMatchObject({ status: 409 });
+		expect(store.txn.data.checked).toBeUndefined();
+		expect(store.txn.data.code).toMatchObject({ attemptId: 'attempt-9' });
+		expect(paths()).not.toContain('/api/v1/auth/direct/session');
+	});
+
+	it("keeps a passkey challenge for ar-auth's five minutes, whatever the ceremony's timeout", async () => {
+		await expect(post('passkey_start', {})).rejects.toMatchObject({ status: 303 });
+		const kept = store.txn.data.passkey as { expiresAt: number };
+		expect(kept.expiresAt - Date.now()).toBeGreaterThan(290_000);
+	});
+
+	it('makes no guest over a passkey sign-in begun (an old form from another tab)', async () => {
+		currentStep = SELECT_STEP;
+		store.set({ state: 'pending', data: { ...store.txn.data, passkey: pendingPasskey } });
+		await expect(post('guest', {})).rejects.toMatchObject({ status: 303 });
+		expect(paths()).not.toContain('/api/auth/guest/login');
+		expect(store.txn.data.passkey).toMatchObject({ challengeId: 'pk-1' });
+	});
+});
+
+describe('an authenticator or passkey start that expired', () => {
+	beforeEach(() => {
+		currentStep = METHOD_STEP;
+		withCodeStep = false;
+		tenantMethods = { totp: { enabled: true }, passkey: { enabled: true } };
+		methodRoutes();
+	});
+	const lapsedTotp = {
+		interactionId: 'int-1',
+		choiceStepId: 'methods',
+		challengeId: 'totp-1',
+		expiresAt: Date.now() - 1
+	};
+
+	it('draws a Continue that posts to its check, which clears it without a code', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: lapsedTotp } });
+		const page = await view();
+		expect(page).toMatchObject({ decision: { kind: 'continue' }, continueAction: 'totp_verify' });
+		const answer = await post('totp_verify', { challenge: 'totp-1' });
+		expect(answer).toMatchObject({ status: 400, data: { error: 'totp_invalid' } });
+		expect(store.txn.data.totp).toBeUndefined();
+		expect(paths()).not.toContain('/api/auth/totp/login/verify');
+	});
+
+	it("recovers a passkey check made before it expired, from the Continue's post", async () => {
+		store.set({
+			state: 'pending',
+			data: {
+				...store.txn.data,
+				passkey: {
+					interactionId: 'int-1',
+					choiceStepId: 'methods',
+					challengeId: 'pk-1',
+					verifier: 'v',
+					options: {
+						challenge: 'c'.repeat(43),
+						rpId: 'id.example',
+						timeout: 60000,
+						userVerification: 'required',
+						allowCredentials: []
+					},
+					expiresAt: Date.now() - 1
+				}
+			}
+		});
+		store.operations.set('verify:passkey:pk-1', {
+			status: 'done',
+			attempt: 1,
+			startedAt: Date.now(),
+			result: {
+				checked: {
+					interactionId: 'int-1',
+					method: 'passkey',
+					choiceStepId: 'methods',
+					artifact: 'pk-artifact',
+					verifier: 'v',
+					expiresAt: Date.now() + 60_000,
+					attemptKey: 'pk-1',
+					code: null,
+					tries: 0
+				}
+			}
+		});
+		expect(await view()).toMatchObject({ continueAction: 'passkey_finish' });
+		expect(await post('passkey_finish', { challenge: 'pk-1' })).toEqual({ completed: true });
+		expect(submits()).toEqual(['passkey', 'completed']);
+	});
+
+	it('is never replaced by another start or a guest (a check of it may still be out)', async () => {
+		tenantMethods = {
+			totp: { enabled: true },
+			passkey: { enabled: true },
+			guest: { enabled: true }
+		};
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: lapsedTotp } });
+		await expect(post('passkey_start', {})).rejects.toMatchObject({ status: 303 });
+		currentStep = SELECT_STEP;
+		await expect(post('guest', {})).rejects.toMatchObject({ status: 303 });
+		expect(paths()).not.toContain('/api/v1/auth/direct/passkey/login/start');
+		expect(paths()).not.toContain('/api/auth/guest/login');
+		expect(store.txn.data.totp).toMatchObject({ challengeId: 'totp-1' });
+	});
+
+	it('waits for a check of it still out, rather than clearing it', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: lapsedTotp } });
+		store.operations.set('verify:totp:totp-1', {
+			status: 'running',
+			attempt: 1,
+			startedAt: Date.now()
+		});
+		await expect(post('totp_verify', { challenge: 'totp-1' })).rejects.toMatchObject({
+			status: 303
+		});
+		expect(store.txn.data.totp).toMatchObject({ challengeId: 'totp-1' });
+	});
+
+	it("records an authenticator sign-in within the store's result limit (a long destination left out)", async () => {
+		store.set({
+			state: 'pending',
+			data: { ...store.txn.data, totp: { ...lapsedTotp, expiresAt: Date.now() + 60_000 } }
+		});
+		const long = `https://id.example/after?state=${'x'.repeat(1200)}`;
+		routes['/api/auth/totp/login/verify'] = () =>
+			json({ success: true, redirect_url: long }, 200, {
+				'Set-Cookie': 'authrim_session=t1; Path=/; HttpOnly; Secure; SameSite=Lax'
+			});
+		await post('totp_verify', { challenge: 'totp-1', code: '123456' });
+		const recorded = store.operations.get('verify:totp:totp-1')?.result;
+		expect(JSON.stringify(recorded).length).toBeLessThan(1024);
+		expect(recorded).toMatchObject({ signedIn: { method: 'totp', redirectUrl: null } });
+	});
+});
+
+describe('a code step after steps not drawn', () => {
+	const HIDDEN = {
+		id: 'hidden',
+		source_node_id: 'n-hidden',
+		component: 'condition',
+		render: false
+	};
+
+	it('takes the hidden steps after an authenticator check and submits the code step as checked', async () => {
+		currentStep = METHOD_STEP;
+		tenantMethods = { totp: { enabled: true } };
+		methodRoutes();
+		let hiddenFails = true;
+		routes['/api/v1/login/interactions/int-1/submit'] = (body) => {
+			if (body.selected_handle === 'totp') {
+				currentStep = HIDDEN;
+				return json({ completed: false, step: HIDDEN, interaction: { current_step_id: 'hidden' } });
+			}
+			if (body.step_id === 'hidden') {
+				if (hiddenFails) return json({ error: 'server_error' }, 500);
+				currentStep = CODE_STEP;
+				return json({
+					completed: false,
+					step: CODE_STEP,
+					interaction: { current_step_id: 'code' }
+				});
+			}
+			if (body.selected_handle === 'verified') {
+				currentStep = COMPLETION;
+				return json({
+					completed: false,
+					step: COMPLETION,
+					interaction: { current_step_id: 'done' }
+				});
+			}
+			if (body.selected_handle === 'completed') {
+				return json({ completed: true, output: { redirect_url: 'https://id.example/after' } });
+			}
+			return json({ error: 'invalid_handle' }, 400);
+		};
+		// The choice goes, the hidden step fails once: the Flow waits on it, the code is still asked.
+		await expect(post('totp_start', { email: 'person@example.com' })).rejects.toMatchObject({
+			status: 303
+		});
+		expect(await view()).toMatchObject({ codeEntry: { kind: 'totp' } });
+
+		hiddenFails = false;
+		calls = [];
+		expect(await post('totp_verify', { challenge: 'totp-1', code: '123456' })).toEqual({
+			completed: true
+		});
+		expect(
+			calls.filter((call) => call.path.endsWith('/submit')).map((call) => call.body.step_id)
+		).toEqual(['hidden', 'code', 'done']);
+		expect(submits().slice(1)).toEqual(['verified', 'completed']);
+	});
+});
+
+describe('recordableUrl', () => {
+	it("measures a destination as the store does (its JSON's UTF-8 bytes)", async () => {
+		const { recordableUrl } = await import('../login-actions');
+		expect(recordableUrl('/after')).toBe('/after');
+		expect(recordableUrl(`/${'あ'.repeat(200)}`)).toBeNull();
+		expect(recordableUrl(`/${'a'.repeat(400)}`)).toBe(`/${'a'.repeat(400)}`);
+		expect(recordableUrl(null)).toBeNull();
+	});
+});
+
+describe('a check whose lease ran out', () => {
+	beforeEach(() => {
+		currentStep = METHOD_STEP;
+		withCodeStep = false;
+		tenantMethods = { totp: { enabled: true } };
+		methodRoutes();
+	});
+
+	it('passes on no session from an authenticator answer that came after another attempt took over', async () => {
+		store.set({
+			state: 'pending',
+			data: {
+				...store.txn.data,
+				totp: {
+					interactionId: 'int-1',
+					choiceStepId: 'methods',
+					challengeId: 'totp-1',
+					expiresAt: Date.now() + 60_000
+				}
+			}
+		});
+		routes['/api/auth/totp/login/verify'] = () => {
+			// While this answer is late, another post takes the check over (a new attempt).
+			const op = store.operations.get('verify:totp:totp-1');
+			if (op) store.operations.set('verify:totp:totp-1', { ...op, attempt: op.attempt + 1 });
+			return json({ success: true, redirect_url: null }, 200, {
+				'Set-Cookie': 'authrim_session=late; Path=/; HttpOnly; Secure; SameSite=Lax'
+			});
+		};
+		const e = event({
+			action: 'totp_verify',
+			form: { txn: 'txn-1', csrf: 'csrf-1', op: OP, challenge: 'totp-1', code: '123456' }
+		});
+		const answer = await (
+			actions as Record<string, (e: RequestEvent) => Promise<unknown>>
+		).totp_verify(e);
+		expect(answer).toMatchObject({ status: 409, data: { error: 'retry' } });
+		expect(e.cookies.set).not.toHaveBeenCalledWith('authrim_session', 'late', expect.anything());
+		expect(store.txn.data.signedIn).toBeUndefined();
+	});
+});
+
+describe('a session try whose lease ran out', () => {
+	it('passes on no session from an answer that came after another attempt took over', async () => {
+		currentStep = CODE_STEP;
+		store.set({
+			state: 'verified',
+			data: {
+				...store.txn.data,
+				checked: {
+					interactionId: 'int-1',
+					method: 'mail_otp',
+					choiceStepId: 'select',
+					artifact: 'artifact-1',
+					verifier: 'v',
+					expiresAt: Date.now() + 60_000,
+					attemptKey: 'attempt-1',
+					code: {
+						interactionId: 'int-1',
+						choiceStepId: 'select',
+						email: 'person@example.com',
+						maskedEmail: null,
+						attemptId: 'attempt-1',
+						verifier: 'v',
+						sentAt: 0
+					},
+					tries: 0
+				}
+			}
+		});
+		routes['/api/v1/auth/direct/session'] = () => {
+			const op = store.operations.get('session:attempt-1:0');
+			if (op) store.operations.set('session:attempt-1:0', { ...op, attempt: op.attempt + 1 });
+			return json({ ok: true }, 200, {
+				'Set-Cookie': 'authrim_session=late; Path=/; HttpOnly; Secure; SameSite=Lax'
+			});
+		};
+		const e = event({ action: 'continue', form: { txn: 'txn-1', csrf: 'csrf-1', op: OP } });
+		const answer = await (
+			actions as Record<string, (e: RequestEvent) => Promise<unknown>>
+		).continue(e);
+		expect(answer).toMatchObject({ status: 409, data: { error: 'retry' } });
+		expect(e.cookies.set).not.toHaveBeenCalledWith('authrim_session', 'late', expect.anything());
+	});
+});
+
+describe('a form drawn for another challenge, and a result not recorded', () => {
+	beforeEach(() => {
+		currentStep = METHOD_STEP;
+		withCodeStep = false;
+		tenantMethods = { totp: { enabled: true }, passkey: { enabled: true } };
+		methodRoutes();
+	});
+	const pendingTotp = {
+		interactionId: 'int-1',
+		choiceStepId: 'methods',
+		challengeId: 'totp-2',
+		expiresAt: Date.now() + 60_000
+	};
+
+	it('checks no authenticator code from a page drawn for an older challenge', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: pendingTotp } });
+		await expect(
+			post('totp_verify', { challenge: 'totp-1', code: '123456' })
+		).rejects.toMatchObject({ status: 303 });
+		expect(paths()).not.toContain('/api/auth/totp/login/verify');
+		expect(store.txn.data.totp).toMatchObject({ challengeId: 'totp-2' });
+	});
+
+	it('sends no passkey assertion signed for an older challenge', async () => {
+		store.set({
+			state: 'pending',
+			data: {
+				...store.txn.data,
+				passkey: {
+					interactionId: 'int-1',
+					choiceStepId: 'methods',
+					challengeId: 'pk-2',
+					verifier: 'v',
+					options: {
+						challenge: 'c'.repeat(43),
+						rpId: 'id.example',
+						timeout: 60000,
+						userVerification: 'required',
+						allowCredentials: []
+					},
+					expiresAt: Date.now() + 60_000
+				}
+			}
+		});
+		await expect(
+			post('passkey_finish', { challenge: 'pk-1', credential: '{}' })
+		).rejects.toMatchObject({ status: 303 });
+		expect(paths()).not.toContain('/api/v1/auth/direct/passkey/login/finish');
+	});
+
+	it('passes on no session when the check could not be recorded', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: pendingTotp } });
+		store.binding.completeOperation.mockRejectedValueOnce(new Error('store unreachable'));
+		const e = event({
+			action: 'totp_verify',
+			form: { txn: 'txn-1', csrf: 'csrf-1', op: OP, challenge: 'totp-2', code: '123456' }
+		});
+		const answer = await (
+			actions as Record<string, (e: RequestEvent) => Promise<unknown>>
+		).totp_verify(e);
+		expect(answer).toMatchObject({ status: 409, data: { error: 'retry' } });
+		expect(e.cookies.set).not.toHaveBeenCalledWith('authrim_session', 't1', expect.anything());
+	});
+
+	it('passes on no session when the check throws after its answer set one', async () => {
+		store.set({ state: 'pending', data: { ...store.txn.data, totp: pendingTotp } });
+		store.binding.completeOperation.mockImplementationOnce(async () => {
+			throw new Error('unexpected');
+		});
+		routes['/api/auth/totp/login/verify'] = () =>
+			new Response('not json', {
+				status: 200,
+				headers: { 'Set-Cookie': 'authrim_session=t1; Path=/; HttpOnly; Secure; SameSite=Lax' }
+			});
+		const e = event({
+			action: 'totp_verify',
+			form: { txn: 'txn-1', csrf: 'csrf-1', op: OP, challenge: 'totp-2', code: '123456' }
+		});
+		await (actions as Record<string, (e: RequestEvent) => Promise<unknown>>).totp_verify(e);
+		expect(e.cookies.set).not.toHaveBeenCalledWith('authrim_session', 't1', expect.anything());
 	});
 });
