@@ -57,7 +57,8 @@ export function liteAccountSessions(
 	LL: LL,
 	locale: string
 ): LiteAccountSessionItem[] {
-	const rows = Array.isArray(json.sessions) ? json.sessions.slice(0, 100) : [];
+	// All of them (the API keeps this browser's session in the list whatever its age).
+	const rows = Array.isArray(json.sessions) ? json.sessions : [];
 	return rows.flatMap((raw) => {
 		const row = record(raw);
 		const id = liteAccountItemId(row.id);
@@ -85,7 +86,7 @@ export function liteAccountDevices(
 	json: Record<string, unknown>,
 	locale: string
 ): LiteAccountDeviceItem[] {
-	const rows = Array.isArray(json.devices) ? json.devices.slice(0, 100) : [];
+	const rows = Array.isArray(json.devices) ? json.devices : [];
 	return rows.flatMap((raw) => {
 		const row = record(raw);
 		const id = text(row.id, 256);
@@ -179,8 +180,9 @@ export function liteAccountConsents(
 				always: LL.account_consentSelectedAlways(),
 				none: LL.account_consentSelectedNone()
 			};
-			const status = text(row.status, 64) ?? '-';
-			const value = text(row.selectedValue, 64);
+			// (The sign-in Flow takes a choice's value up to 128 characters; the API answers it as kept.)
+			const status = text(row.status, 256) ?? '-';
+			const value = text(row.selectedValue, 256);
 			return [
 				{
 					kind: 'statement',
@@ -191,7 +193,7 @@ export function liteAccountConsents(
 							label: LL.account_consentStatus(),
 							value: Object.hasOwn(statuses, status) ? statuses[status] : status
 						},
-						{ label: LL.account_consentVersionLabel(), value: text(row.version, 64) ?? '-' },
+						{ label: LL.account_consentVersionLabel(), value: text(row.version, 256) ?? '-' },
 						{ label: LL.account_consentStatementId(), value: statementId },
 						...(value
 							? [

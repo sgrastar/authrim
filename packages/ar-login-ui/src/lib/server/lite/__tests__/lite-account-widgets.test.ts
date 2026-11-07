@@ -52,6 +52,19 @@ describe('the lite account widgets', async () => {
 			location: 'Japan'
 		});
 		expect(other).toMatchObject({ id: 's-b', title: LL.account_unknownDevice(), location: null });
+		// This browser's session after a hundred newer ones (the API keeps it in the list).
+		const many = liteAccountSessions(
+			{
+				sessions: [
+					...Array.from({ length: 100 }, (_, i) => ({ id: `s-${i}` })),
+					{ id: 's-mine', current: true }
+				]
+			},
+			LL,
+			'en'
+		);
+		expect(many).toHaveLength(101);
+		expect(many.at(-1)).toMatchObject({ id: 's-mine', current: true });
 	});
 
 	it('names a device by its own name, else its fallback, else its ID', () => {
@@ -110,6 +123,26 @@ describe('the lite account widgets', async () => {
 		expect(statement.rows).toContainEqual({
 			label: LL.account_consentSelectedValue(),
 			value: LL.account_consentSelectedAlways()
+		});
+		// A custom choice's value, as long as the sign-in Flow takes one.
+		const [custom] = liteAccountConsents(
+			{
+				consents: [
+					{
+						kind: 'statement',
+						statementId: 'st2',
+						title: 'T',
+						status: 'granted',
+						selectedValue: 'v'.repeat(128)
+					}
+				]
+			},
+			LL,
+			'en'
+		);
+		expect(custom.rows).toContainEqual({
+			label: LL.account_consentSelectedValue(),
+			value: 'v'.repeat(128)
 		});
 	});
 
