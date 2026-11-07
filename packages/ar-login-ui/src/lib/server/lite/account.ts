@@ -20,6 +20,7 @@ import {
 	liteAccountPlacementVisible,
 	liteAccountScreenFields,
 	liteAccountWidgetTitle,
+	liteLocaleVariants,
 	readLiteAccountPage,
 	type LiteAccountConditions,
 	type LiteAccountField,
@@ -228,7 +229,14 @@ export async function liteAccountPage(event: RequestEvent) {
 			}
 		];
 	});
-	const words = liteAccountPageWords(page, locale, defaultLocale, null);
+	// The theme's title for the page (its text in the page's locale, else the default's).
+	const themeTexts = record(record(methods?.ui.appearance).textLocalizations);
+	const themeTitle =
+		[...new Set([...liteLocaleVariants(locale), ...liteLocaleVariants(defaultLocale)])]
+			.map((candidate) => record(themeTexts[candidate]).accountTitle)
+			.find((value): value is string => typeof value === 'string' && value.trim().length > 0) ??
+		null;
+	const words = liteAccountPageWords(page, locale, defaultLocale, themeTitle);
 	return {
 		page: 'account' as const,
 		txnId: txn.id,
@@ -290,11 +298,12 @@ export async function liteAccountSignOutAction(event: RequestEvent) {
 	if ('failure' in opened) return opened.failure;
 	const { post } = opened;
 	if (post.fields.get('confirm') !== 'guest') {
+		// Whether the person is a guest is known first (the SPA stops when it cannot tell): a guest
+		// is never signed out unasked.
 		const profile = await read(post.backend, '/api/account/profile');
-		const amr = profile.ok ? record(profile.json.session).amr : null;
-		if (Array.isArray(amr) && amr.includes('anon')) {
-			return fail(409, { confirmGuestSignOut: true as const });
-		}
+		const amr = profile.ok ? record(profile.json.session).amr : undefined;
+		if (!Array.isArray(amr)) return fail(503, { error: 'action_failed' as const });
+		if (amr.includes('anon')) return fail(409, { confirmGuestSignOut: true as const });
 	}
 	const answer = await post.backend
 		.request('/api/v1/auth/direct/logout', { json: {} })

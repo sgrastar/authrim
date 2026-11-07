@@ -148,6 +148,30 @@ describe('the lite account page composition', () => {
 		]);
 	});
 
+	it('takes an empty translation as one (it clears what the block says)', () => {
+		const [heading] = liteAccountScreenFields(
+			{
+				screenKey: 'account_custom',
+				fields: [
+					{
+						field: 'h',
+						label: 'Title',
+						blockType: 'heading',
+						blockId: 'h1',
+						text: 'Subtitle',
+						href: null,
+						order: 0,
+						layoutColumn: null
+					}
+				],
+				localizations: { ja: { fields: { h1: { text: '' } } } }
+			},
+			'ja',
+			'en'
+		);
+		expect(heading).toMatchObject({ label: 'Title', text: null });
+	});
+
 	it('draws a link only to a placement shown, a path of this origin, or https', () => {
 		const shown = (id: string) => id === 'profile';
 		expect(liteAccountHref('#profile', shown)).toBe('#profile');

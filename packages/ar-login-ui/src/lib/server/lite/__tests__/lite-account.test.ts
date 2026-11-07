@@ -308,6 +308,19 @@ describe('the lite account page', () => {
 		]);
 	});
 
+	it("titles the page with the theme's account title in the page's locale", async () => {
+		const e = event();
+		(
+			e.locals as unknown as { authenticationMethods: { ui: Record<string, unknown> } }
+		).authenticationMethods.ui.appearance = {
+			textLocalizations: { en: { accountTitle: 'Your space' } }
+		};
+		const page = (await (load as unknown as (e: RequestEvent) => Promise<Record<string, unknown>>)(
+			e
+		)) as { text: { title: string } };
+		expect(page.text.title).toBe('Your space');
+	});
+
 	it('keeps the members-only placements from a guest', async () => {
 		routes['/api/account/profile'] = () => profile('guest', ['anon']);
 		const page = (await view()) as { placements: Array<{ id: string }> };
@@ -353,6 +366,19 @@ describe('the lite account page', () => {
 		});
 		expect(calls.some((call) => call.path === '/api/v1/auth/direct/logout')).toBe(false);
 		await expect(post('sign_out', { confirm: 'guest' })).rejects.toMatchObject({ status: 303 });
+
+		// A profile that cannot be read: whether this is a guest is not known, so no sign-out.
+		store = fakeStore();
+		calls = [];
+		routes['/api/account/profile'] = () => profile();
+		await view();
+		routes['/api/account/profile'] = () => json({ error: 'server_error' }, 503);
+		await expect(post('sign_out')).resolves.toMatchObject({
+			status: 503,
+			data: { error: 'action_failed' }
+		});
+		expect(calls.some((call) => call.path === '/api/v1/auth/direct/logout')).toBe(false);
+		routes['/api/account/profile'] = () => profile();
 
 		store = fakeStore();
 		calls = [];

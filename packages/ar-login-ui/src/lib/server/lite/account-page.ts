@@ -216,10 +216,15 @@ export function liteAccountScreenFields(
 		.map(({ field }, index) => {
 			const key = field.blockId ?? `${field.field}-${index}`;
 			const words = { ...record(fallback[key]), ...record(localized[key]) };
+			// A translation's words, an empty one included (it clears what the block says).
+			const word = (value: unknown, max: number) =>
+				typeof value === 'string' && value.length <= max ? value : undefined;
+			const label = word(words.label, 200);
+			const said = word(words.text, 4000);
 			const merged: LiteAccountField = {
 				...field,
-				label: text(words.label, 200) ?? field.label,
-				text: text(words.text, 4000) ?? field.text
+				label: label ?? field.label,
+				text: said === undefined ? field.text : said || null
 			};
 			return screen.screenKey === 'account_overview' && field.field === 'heading.account_overview'
 				? { ...merged, text: null }
