@@ -705,13 +705,15 @@ adminInvitationsRouter.delete('/:id', async (c) => {
   }
   // Revoking takes the role away from the person invited, as removing an assignment does, so it
   // is held to the same rule: a role ranked above the caller is not theirs to take. The role as it
-  // is now. One that cannot be read is not measured as allowed: the revoke is refused (a role in
-  // use cannot be deleted, so a pending invitation's role is normally there).
+  // is now. One that cannot be read (deleted under an expired invitation) is not skipped: only the
+  // strongest authority (the wildcard and the roles' write permission from a global assignment)
+  // revokes it, so taking it away stays possible without letting a lower admin through.
   const role = await new AdminRoleRepository(adapter).getRole(pending.admin_role_id);
-  if (!role) return c.json({ error: 'role_not_found' }, 404);
-  if (!mayRemoveAssignment(auth, pending.scope_type, role.hierarchy_level)) {
-    return c.json({ error: 'insufficient_permissions' }, 403);
-  }
+  const allowed = role
+    ? mayRemoveAssignment(auth, pending.scope_type, role.hierarchy_level)
+    : hasGlobalAdminPermission(auth, '*') &&
+      hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE);
+  if (!allowed) return c.json({ error: 'insufficient_permissions' }, 403);
 
   const result = await adapter.execute(
     "UPDATE admin_invitations SET status = 'revoked', pending_email_key = NULL, updated_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",

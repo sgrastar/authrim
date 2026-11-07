@@ -561,16 +561,23 @@ describe('adminInvitationsRouter', () => {
       expect(audit).not.toHaveBeenCalled();
     });
 
-    it('refuses when the role cannot be read, rather than skipping the check', async () => {
-      adapter.queryOne.mockResolvedValueOnce(pending);
+    it('leaves an invitation whose role cannot be read to the strongest authority only', async () => {
       repo.getRole.mockResolvedValue(null);
-      const { app, env } = createTestApp();
 
-      const response = await revoke(app, env, { 'x-test-hierarchy-level': '10' });
-
-      expect(response.status).toBe(404);
-      await expect(response.json()).resolves.toEqual({ error: 'role_not_found' });
+      adapter.queryOne.mockResolvedValueOnce(pending);
+      const lower = createTestApp();
+      const refused = await revoke(lower.app, lower.env, { 'x-test-hierarchy-level': '100' });
+      expect(refused.status).toBe(403);
       expect(adapter.execute).not.toHaveBeenCalled();
+
+      adapter.queryOne.mockResolvedValueOnce(pending);
+      const top = createTestApp();
+      const revoked = await revoke(top.app, top.env, {
+        'x-test-permissions': invitationPermissions(['*']),
+        'x-test-global-permissions': '*',
+        'x-test-tenant-scope': '*',
+      });
+      expect(revoked.status).toBe(200);
     });
   });
 

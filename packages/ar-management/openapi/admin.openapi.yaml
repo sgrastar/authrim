@@ -4008,8 +4008,9 @@ paths:
         tenant invitation's role must not rank above the caller, and a global one needs the
         wildcard and the roles' write permission from a global assignment, with the role not
         ranked above the caller's global rank. A machine caller with those global permissions is
-        not measured by rank. 403 `insufficient_permissions` otherwise; 404 `role_not_found` when
-        the role cannot be read (the check is never skipped).
+        not measured by rank. When the role cannot be read (deleted under an expired invitation),
+        only the wildcard with the roles' write permission from a global assignment revokes it.
+        403 `insufficient_permissions` otherwise.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
