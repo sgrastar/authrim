@@ -97,7 +97,7 @@ export const ja = {
 	'nav.set.compliance': 'コンプライアンス',
 	'nav.set.team': '管理者ユーザー',
 	'nav.set.teamGroups': '管理者グループ',
-	'nav.set.teamRoles': '役割の割り当て',
+	'nav.set.teamRoles': '管理者ロール',
 	'nav.plat.tenants': 'テナント',
 	'nav.plat.releases': 'コントロールプレーン',
 	'nav.plat.scale': 'スケール',

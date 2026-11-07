@@ -94,7 +94,7 @@ export const de = {
 	'nav.set.compliance': 'Compliance',
 	'nav.set.team': 'Administratoren',
 	'nav.set.teamGroups': 'Administratorgruppen',
-	'nav.set.teamRoles': 'Rollenzuweisung',
+	'nav.set.teamRoles': 'Administratorrollen',
 	'nav.plat.tenants': 'Mandanten',
 	'nav.plat.releases': 'Steuerungsebene',
 	'nav.plat.scale': 'Skalierung',
