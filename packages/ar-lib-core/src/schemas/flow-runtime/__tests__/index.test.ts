@@ -7,6 +7,7 @@ import {
   isCustomFlowNodeType,
   isStandardFlowNodeType,
   sanitizeImportedFlowContract,
+  screenAnswersOf,
   validateFlowEditorState,
   validateFlowRuntimeContractPackage,
   type FlowConditionConfig,
@@ -575,5 +576,119 @@ describe('flow runtime schema helpers', () => {
         error: 'not_allowed',
       },
     });
+  });
+});
+
+describe('screen answer conditions', () => {
+  const rowsOf = (condition: Record<string, unknown>): FlowConditionConfig => ({
+    rows: [{ id: 'pro', condition: condition as never, output_handle: 'pro' }],
+    otherwise: { output_handle: 'otherwise' },
+  });
+
+  it('branches on a choice a screen step sent to the Flow', async () => {
+    const screen_answers = screenAnswersOf({
+      'welcome:step': { plan: 'free', news: true },
+      'upgrade:step': { plan: 'pro' },
+    });
+
+    // The step kept last wins for a key answered twice.
+    expect(screen_answers).toEqual({ plan: 'pro', news: true });
+    await expect(
+      evaluateFlowConditionRows(
+        rowsOf({ type: 'screen.answer', attribute: 'plan', value: 'pro' }),
+        {
+          screen_answers,
+        }
+      )
+    ).resolves.toMatchObject({ matched: true, output_handle: 'pro' });
+    await expect(
+      evaluateFlowConditionRows(
+        rowsOf({ type: 'screen.answer', attribute: 'plan', values: ['team', 'enterprise'] }),
+        { screen_answers }
+      )
+    ).resolves.toMatchObject({ matched: false, output_handle: 'otherwise' });
+    // A checkbox is its text.
+    await expect(
+      evaluateFlowConditionRows(
+        rowsOf({ type: 'screen.answer', attribute: 'news', value: 'true' }),
+        {
+          screen_answers,
+        }
+      )
+    ).resolves.toMatchObject({ matched: true });
+  });
+
+  it('matches nothing for an answer not given, or no key', async () => {
+    for (const condition of [
+      { type: 'screen.answer', attribute: 'missing', value: 'pro' },
+      { type: 'screen.answer', value: 'pro' },
+      { type: 'screen.answer', attribute: 'toString', value: 'pro' },
+    ]) {
+      await expect(
+        evaluateFlowConditionRows(rowsOf(condition), { screen_answers: { plan: 'pro' } })
+      ).resolves.toMatchObject({ matched: false });
+    }
+    await expect(
+      evaluateFlowConditionRows(
+        rowsOf({ type: 'screen.answer', attribute: 'plan', value: 'pro' }),
+        {}
+      )
+    ).resolves.toMatchObject({ matched: false });
+  });
+
+  it('matches a box left unticked, and one of several values', async () => {
+    await expect(
+      evaluateFlowConditionRows(
+        rowsOf({ type: 'screen.answer', attribute: 'news', value: 'false' }),
+        { screen_answers: { news: false } }
+      )
+    ).resolves.toMatchObject({ matched: true });
+    await expect(
+      evaluateFlowConditionRows(
+        rowsOf({ type: 'screen.answer', attribute: 'plan', values: ['team', 'business pro'] }),
+        { screen_answers: { plan: 'business pro' } }
+      )
+    ).resolves.toMatchObject({ matched: true });
+  });
+
+  it('takes an answer key of up to 100 characters', () => {
+    const codesFor = (attribute: unknown) =>
+      validateFlowEditorState({
+        nodes: [
+          { id: 'entry', type: 'entry' },
+          {
+            id: 'branch',
+            type: 'condition',
+            config: { conditions: rowsOf({ type: 'screen.answer', attribute, value: 'pro' }) },
+          },
+        ],
+        edges: [{ id: 'entry-branch', source: 'entry', target: 'branch' }],
+      }).map((issue) => issue.code);
+
+    expect(codesFor('k'.repeat(100))).not.toContain('invalid_screen_answer_condition');
+    for (const attribute of ['k'.repeat(101), '   ', 7]) {
+      expect(codesFor(attribute)).toContain('invalid_screen_answer_condition');
+    }
+  });
+
+  it('refuses a screen answer condition without an answer key', () => {
+    const issues = validateFlowEditorState({
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        {
+          id: 'branch',
+          type: 'condition',
+          config: { conditions: rowsOf({ type: 'screen.answer', value: 'pro' }) },
+        },
+      ],
+      edges: [{ id: 'entry-branch', source: 'entry', target: 'branch' }],
+    });
+
+    expect(issues.map((issue) => issue.code)).toContain('invalid_screen_answer_condition');
+  });
+
+  it('ignores what is not an answer', () => {
+    expect(screenAnswersOf(null)).toEqual({});
+    expect(screenAnswersOf({ step: { plan: 3, items: ['a'], ok: false } })).toEqual({ ok: false });
   });
 });

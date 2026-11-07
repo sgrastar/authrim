@@ -464,7 +464,9 @@ export type FlowConditionType =
   | 'authentication_method'
   | 'policy_rule'
   | 'policy_evaluation'
-  | 'organization_membership';
+  | 'organization_membership'
+  /** A choice a screen step sent to the Flow (`attribute` is its answer key). */
+  | 'screen.answer';
 
 export interface FlowConditionExpression {
   type: FlowConditionType;
@@ -516,6 +518,27 @@ export interface FlowConditionEvaluationContext {
   requested_scope?: string[];
   user?: FlowConditionEvaluationUser;
   authentication_method?: string;
+  /** The choices screen steps sent to the Flow, by answer key (see `screenAnswersOf`). */
+  screen_answers?: Record<string, string | boolean>;
+}
+
+/** The longest answer key a screen answer condition names. */
+export const MAX_SCREEN_ANSWER_CONDITION_KEY_LENGTH = 100;
+
+/**
+ * The choices kept with an interaction (`context_json.screen_answers`: by step, then answer key),
+ * by answer key. A key answered on more than one step takes the step kept last.
+ */
+export function screenAnswersOf(raw: unknown): Record<string, string | boolean> {
+  const answers: Record<string, string | boolean> = {};
+  if (!isRecord(raw)) return answers;
+  for (const byKey of Object.values(raw)) {
+    if (!isRecord(byKey)) continue;
+    for (const [key, value] of Object.entries(byKey)) {
+      if (typeof value === 'string' || typeof value === 'boolean') answers[key] = value;
+    }
+  }
+  return answers;
 }
 
 export interface FlowConditionResolvers {
@@ -593,6 +616,8 @@ export async function evaluateFlowCondition(
       return matchArray(context.user?.roles ?? [], condition);
     case 'authentication_method':
       return matchScalar(context.authentication_method, condition);
+    case 'screen.answer':
+      return matchScreenAnswer(context.screen_answers, condition);
     case 'policy_rule':
     case 'policy_evaluation':
       if (!resolvers.evaluate_policy) {
@@ -1172,6 +1197,20 @@ function validateConditionNodeConfig(
         ref: { type: 'config', key: 'condition.type' },
       });
     } else if (
+      condition.type === 'screen.answer' &&
+      (typeof condition.attribute !== 'string' ||
+        condition.attribute.trim() === '' ||
+        condition.attribute.length > MAX_SCREEN_ANSWER_CONDITION_KEY_LENGTH)
+    ) {
+      issues.push({
+        level,
+        code: 'invalid_screen_answer_condition',
+        message: 'A screen answer condition names the answer key it compares.',
+        path: `${rowPath}.condition.attribute`,
+        node_id: nodeId,
+        ref: { type: 'config', key: 'condition.attribute' },
+      });
+    } else if (
       condition.type === 'protocol' &&
       condition.value !== 'oidc' &&
       condition.value !== 'saml'
@@ -1257,6 +1296,7 @@ const FLOW_CONDITION_TYPES = new Set<FlowConditionType>([
   'policy_rule',
   'policy_evaluation',
   'organization_membership',
+  'screen.answer',
 ]);
 
 function validateRuntimeContract(runtime: Record<string, unknown>): FlowValidationIssue[] {
@@ -1433,6 +1473,18 @@ function matchArray(values: string[], condition: FlowConditionExpression): boole
     return values.includes(String(condition.value));
   }
   return false;
+}
+
+/** A screen answer, as its text (a checkbox's `true` or `false`), against the condition's values. */
+function matchScreenAnswer(
+  answers: Record<string, string | boolean> | undefined,
+  condition: FlowConditionExpression
+): boolean {
+  if (!answers || !condition.attribute) return false;
+  const value = Object.prototype.hasOwnProperty.call(answers, condition.attribute)
+    ? answers[condition.attribute]
+    : undefined;
+  return value === undefined ? false : matchScalar(String(value), condition);
 }
 
 function matchUserAttribute(

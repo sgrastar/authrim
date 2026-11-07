@@ -5429,6 +5429,74 @@ describe('LoginUI runtime Flow handlers', () => {
         expect(mocks.publishEvent).toHaveBeenCalledTimes(1);
       });
 
+      it('branches on the choice this submit sends to the Flow', async () => {
+        const page = (id: string) => ({
+          id: `${id}:step`,
+          source_node_id: id,
+          component: 'screen' as const,
+          render: true,
+          config: { screen_ref: 'profile_completion' },
+        });
+        const submitPlan = (plan: string) =>
+          submitStep({
+            runtime: {
+              flow_kind: 'login',
+              ui: {
+                steps: [
+                  screenRuntime.ui.steps[0],
+                  {
+                    id: 'plan:step',
+                    source_node_id: 'plan',
+                    component: 'condition',
+                    render: false,
+                    config: {
+                      conditions: {
+                        rows: [
+                          {
+                            id: 'pro',
+                            condition: { type: 'screen.answer', attribute: 'plan', value: 'pro' },
+                            output_handle: 'pro',
+                          },
+                        ],
+                        otherwise: { output_handle: 'otherwise' },
+                      },
+                    },
+                  },
+                  page('pro-page'),
+                  page('free-page'),
+                ],
+              },
+            },
+            editor: {
+              nodes: [
+                { id: 'screen', type: 'screen' },
+                { id: 'plan', type: 'condition' },
+                { id: 'pro-page', type: 'screen' },
+                { id: 'free-page', type: 'screen' },
+              ],
+              edges: [
+                { id: 'a', source: 'screen', source_handle: 'submitted', target: 'plan' },
+                { id: 'b', source: 'plan', source_handle: 'pro', target: 'pro-page' },
+                { id: 'c', source: 'plan', source_handle: 'otherwise', target: 'free-page' },
+              ],
+            },
+            currentStep: { node: 'screen', step: 'screen:step' },
+            handle: 'submitted',
+            withSession: false,
+            userId: 'user_1',
+            body: { input: { fields: { plan } } },
+            beforeSubmit: () => readsScreen(flowScreen),
+          });
+
+        const pro = await submitPlan('pro');
+        expect(pro.response.status).toBe(200);
+        expect((pro.data.step as { id?: string } | null)?.id).toBe('pro-page:step');
+
+        const free = await submitPlan('free');
+        expect(free.response.status).toBe(200);
+        expect((free.data.step as { id?: string } | null)?.id).toBe('free-page:step');
+      });
+
       it('keeps the choices only while the interaction is still at the step', async () => {
         await submitAnswers({ plan: 'pro' }, false, undefined, undefined, flowScreen);
 
