@@ -506,6 +506,8 @@ const translation = {
 		'Ukurasa huu huendesha ukaguzi wa usalama katika kivinjari chako. Washa JavaScript, kisha pakia upya ukurasa.',
 	lite_passkeyUnsupported:
 		'Kivinjari hiki hakiwezi kutumia passkey hapa. Chagua njia nyingine ya kuingia.',
+	lite_socialStarted:
+		'Kuingia kwa akaunti ya nje kumeanzishwa kutoka ukurasa huu. Ili kuingia kwa njia nyingine, anza upya.',
 	lite_passkeyFailed:
 		'Kuingia kwa passkey hakukukamilika. Jaribu tena, au chagua njia nyingine ya kuingia.'
 } satisfies Translation;

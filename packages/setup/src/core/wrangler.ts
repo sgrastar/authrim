@@ -533,6 +533,8 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'DPOP_JTI_STORE',
     // LITE_POLICY_STORE: a tenant in lite mode starts external sign-in only from the lite UI.
     'LITE_POLICY_STORE',
+    // LITE_TXN_STORE: such a start consumes the lite UI transaction's one-time start grant.
+    'LITE_TXN_STORE',
   ],
   'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE'],
 };

@@ -39,6 +39,7 @@ import {
   LITE_TXN_TTL_MS,
   isLiteTxnTransitionAllowed,
   type LiteStartGrantSpec,
+  type LiteStartGrantStart,
   type LiteTxnBound,
   type LiteTxnRefusal,
   type LiteTxnSnapshot,
@@ -65,6 +66,7 @@ interface StoredOperation {
 
 interface StoredGrant {
   spec: LiteStartGrantSpec;
+  start: LiteStartGrantStart;
   consumed: boolean;
 }
 
@@ -565,9 +567,14 @@ export class LiteTxnStore extends DurableObject<Env> {
   }
 
   async issueStartGrantRpc(
-    request: LiteTxnRef & { spec: LiteStartGrantSpec }
+    request: LiteTxnRef & { spec: LiteStartGrantSpec; start: LiteStartGrantStart }
   ): Promise<{ ok: true; grantId: string } | { ok: false; reason: LiteTxnRefusal }> {
     if (!isKey(request.spec.provider)) return { ok: false, reason: 'too_large' };
+    const clientId = request.start?.clientId;
+    const interactionId = request.start?.interactionId ?? null;
+    if (!isKey(clientId) || (interactionId !== null && !isKey(interactionId))) {
+      return { ok: false, reason: 'too_large' };
+    }
     const txn = await this.#load(request);
     if (typeof txn === 'string') return { ok: false, reason: txn };
     if (isFinished(txn)) return { ok: false, reason: 'finished' };
@@ -577,15 +584,25 @@ export class LiteTxnStore extends DurableObject<Env> {
     if (txn.updates >= LITE_TXN_MAX_UPDATES) return { ok: false, reason: 'budget_exceeded' };
     txn.updates += 1;
     const grantId = randomToken();
-    txn.grants[grantId] = { spec: asJson(request.spec), consumed: false };
+    txn.grants[grantId] = {
+      spec: asJson(request.spec),
+      start: { clientId, interactionId },
+      consumed: false,
+    };
     if (!(await this.#save(txn))) return { ok: false, reason: 'too_large' };
     return { ok: true, grantId };
   }
 
-  /** Uses a start grant once: it must be unused and match the provider, action and revision. */
+  /**
+   * Uses a start grant once: it must be unused and match the provider, action and revision. The
+   * answer carries what the grant was issued with for the start.
+   */
   async consumeStartGrantRpc(
     request: LiteTxnRef & { grantId: string; spec: LiteStartGrantSpec }
-  ): Promise<LiteTxnResult> {
+  ): Promise<
+    | { ok: true; txn: LiteTxnSnapshot; start: LiteStartGrantStart }
+    | { ok: false; reason: LiteTxnRefusal }
+  > {
     const txn = await this.#load(request);
     if (typeof txn === 'string') return { ok: false, reason: txn };
     if (isFinished(txn)) return { ok: false, reason: 'finished' };
@@ -593,6 +610,8 @@ export class LiteTxnStore extends DurableObject<Env> {
     if (
       !grant ||
       grant.consumed ||
+      // A grant stored before it carried its start (none exists in a release) starts nothing.
+      !grant.start ||
       grant.spec.provider !== request.spec.provider ||
       grant.spec.action !== request.spec.action ||
       grant.spec.policyRevision !== request.spec.policyRevision ||
@@ -604,7 +623,11 @@ export class LiteTxnStore extends DurableObject<Env> {
     txn.updates += 1;
     grant.consumed = true;
     if (!(await this.#save(txn))) return { ok: false, reason: 'too_large' };
-    return { ok: true, txn: snapshotOf(txn) };
+    return {
+      ok: true,
+      txn: snapshotOf(txn),
+      start: { clientId: grant.start.clientId, interactionId: grant.start.interactionId },
+    };
   }
 
   /** Deletes expired transactions, at most ALARM_DELETE_BATCH per run, then schedules the next. */

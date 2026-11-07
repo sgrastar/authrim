@@ -169,6 +169,9 @@ place('authentication/methods', 'Guests', {
 place('authentication/methods', 'Invitations', {
 	primary: ['authentication-methods.invitation.email_verification']
 });
+place('authentication/methods', 'Sign-up', {
+	primary: ['authentication-methods.signup.flow_required']
+});
 place('authentication/methods', 'Authenticator app (TOTP)', {
 	advanced: [
 		'authentication-methods.totp.preset',

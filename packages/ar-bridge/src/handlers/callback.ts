@@ -50,6 +50,7 @@ import {
   safeFetchJson,
   resolveSessionTtl,
 } from '@authrim/ar-lib-core';
+import { externalSignInMayCreateAccount, isLiteExternalFlow } from '../services/lite-start';
 import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from '../utils/state';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import {
@@ -739,6 +740,9 @@ export async function handleExternalProvisioningResume(
     const tenantId = c.req.query('tenant');
     if (!token || !tenantId) throw new Error('external_idp_provisioning_token_invalid');
     const loaded = await loadExternalIdpContinuation(c, token, tenantId);
+    if (isLiteExternalFlow(loaded.continuation.authState.flowId)) {
+      LITE_ERROR_RETURNS.set(c, loaded.continuation.authState.redirectUri);
+    }
     const expected = loaded.continuation.result;
     const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
     if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
@@ -781,6 +785,17 @@ export async function handleExternalProvisioningResume(
       await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'login');
     }
     await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'signup');
+    // Finishing the account is still its creation: a tenant in lite mode lets only a sign-in begun
+    // at a lite start do it (one provisioned before the switch is not finished here).
+    if (
+      !(await externalSignInMayCreateAccount(c.env, tenantId, loaded.continuation.authState.flowId))
+    ) {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED,
+        'Automatic account creation is not available for this sign-in.',
+        { providerName: provider.name }
+      );
+    }
     const completed = await completeExternalIdpJIT(c.env, {
       tenantId,
       userId: expected.userId,
@@ -1040,6 +1055,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     if (authState.attemptInteractionId) {
       attempt = authState;
     }
+    // A sign-in begun at a lite start reports its failures to its lite callback page (which
+    // clears the start for its transaction), not to the sign-in page.
+    if (isLiteExternalFlow(authState.flowId)) LITE_ERROR_RETURNS.set(c, authState.redirectUri);
 
     // Verify the provider ID matches (authState always stores the actual ID)
     if (authState.providerId !== provider.id) {
@@ -1661,6 +1679,12 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           inviteId: signupInvitation.inviteId,
         })
       : null;
+    // A tenant in lite mode creates an account only for a sign-in begun at a lite start.
+    const accountCreationAllowed = await externalSignInMayCreateAccount(
+      c.env,
+      authState.tenantId,
+      authState.flowId
+    );
     const result = await handleIdentity(c.env, {
       provider,
       userInfo,
@@ -1668,6 +1692,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       linkingUserId: authState.userId,
       tenantId: authState.tenantId,
       ...(invitation ? { invitation } : {}),
+      ...(accountCreationAllowed ? {} : { accountCreationAllowed: false }),
     });
     // Created here (now or once provisioning finishes): the use goes to that account.
     if (result.isNewUser) unsettledInvitation = null;
@@ -1994,11 +2019,31 @@ async function redirectToLinkResult(
   });
 }
 
+/**
+ * The lite callback page a request's errors go to: set once the request has the stored state of
+ * a sign-in begun at a lite start (its return, which the start made: the lite `/callback` of its
+ * transaction and grant).
+ */
+const LITE_ERROR_RETURNS = new WeakMap<Context, string>();
+
 async function redirectWithError(
   c: Context<{ Bindings: Env }>,
   error: string,
   description?: string
 ): Promise<Response> {
+  const liteReturn = LITE_ERROR_RETURNS.get(c);
+  if (liteReturn) {
+    const url = new URL(liteReturn);
+    url.searchParams.set('error', error);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: url.toString(),
+        'Referrer-Policy': 'no-referrer',
+        'Cache-Control': 'no-store',
+      },
+    });
+  }
   const tenantId = getTenantIdFromContext(c);
   const uiConfig = await getUIConfig(c.env, tenantId);
 

@@ -654,7 +654,8 @@ function createDirectAuthClient(
 
 /**
  * Names the Flow interaction a sign-in attempt belongs to, at its start step, so the server can
- * record the attempt's failures with it (it checks the interaction before keeping it).
+ * record the attempt's failures with it (it checks the interaction before keeping it), and the one
+ * a sign-up belongs to, so the server checks its attributes against the screen of that step.
  */
 function signInAttemptInteractionHeaders(
 	interactionId: string | undefined
@@ -1125,6 +1126,8 @@ export const passkeyAPI = {
 		inviteToken?: string;
 		/** Proof of the invited email, when the tenant requires one. */
 		invitationEmailProof?: string;
+		/** The Flow interaction this sign-up belongs to (the server checks it against its screen). */
+		runtimeInteractionId?: string;
 	}) {
 		const response = await withDirectAuthResult(() =>
 			createDirectAuthClient(signupInvitationHttp(data)).startPasskeySignup(
@@ -1135,7 +1138,7 @@ export const passkeyAPI = {
 					authorizationChallengeId: data.authorizationChallengeId,
 					humanVerificationResponse: data.human_verification_response
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(signInAttemptInteractionHeaders(data.runtimeInteractionId))
 			)
 		);
 		if (response.data) {
@@ -1455,6 +1458,8 @@ export const totpAPI = {
 		inviteToken?: string;
 		/** Proof of the invited email, when the tenant requires one. */
 		invitationEmailProof?: string;
+		/** The Flow interaction this sign-up belongs to (the server checks it against its screen). */
+		runtimeInteractionId?: string;
 	}) {
 		return withDirectAuthResult(() =>
 			createDirectAuthClient(signupInvitationHttp(data)).createTotpSignupOptions(
@@ -1466,7 +1471,7 @@ export const totpAPI = {
 					authorizationChallengeId: data.authorizationChallengeId,
 					humanVerificationResponse: data.human_verification_response
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(signInAttemptInteractionHeaders(data.runtimeInteractionId))
 			)
 		);
 	},

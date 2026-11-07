@@ -692,6 +692,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     authentication-methods.human_verification.signup_enabled
     authentication-methods.human_verification.reauth_enabled
     authentication-methods.directory_password.enabled
+    authentication-methods.signup.flow_required
   `,
     ],
     [

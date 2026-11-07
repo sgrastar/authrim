@@ -225,6 +225,82 @@ export function readRuntimeScreenAnswers(screen: unknown, input: unknown): Runti
   return { ok: true, answers };
 }
 
+/** Whether a screen has a part a person starts a sign-in or sign-up with (a method's button). */
+export function hasSignInMethodPart(screen: unknown): boolean {
+  if (!isRecord(screen) || !Array.isArray(screen.fields)) return false;
+  return screen.fields.some((part) => isRecord(part) && blockTypeOf(part) === 'auth_widget');
+}
+
+export type SignUpScreenFieldsRead =
+  | { ok: true }
+  | { ok: false; problem: RuntimeScreenAnswerProblem; field: string | null };
+
+/**
+ * A sign-up's attributes (`custom_fields`) checked against the screen it was entered on, as the
+ * server resolved it: each one a part the screen shows and stores to the profile (by the part's
+ * `field`, the key the Login UI sends it under), a choice among the part's options, a checkbox a
+ * boolean; and every required part of the screen answered (a required checkbox ticked). The fixed fields (`isFixedKey`: the
+ * address, the name), sent beside the attributes and checked by the sign-up itself, are left to
+ * it. A part kept off the profile is never a sign-up attribute: its answer goes to the Flow's own
+ * submit. The Identity Schema still checks the values afterwards.
+ */
+export function readSignUpScreenFields(
+  screen: unknown,
+  customFields: unknown,
+  isFixedKey: (field: string) => boolean
+): SignUpScreenFieldsRead {
+  if (customFields !== undefined && customFields !== null && !isRecord(customFields)) {
+    return { ok: false, problem: 'invalid_input', field: null };
+  }
+  const submitted: JsonObject = isRecord(customFields) ? customFields : {};
+  const shown = shownParts(screen).filter(
+    ({ part }) => part.store_to_profile !== false && !isFixedKey(text(part.field) as string)
+  );
+  const byField = new Map(shown.map(({ part }) => [text(part.field) as string, part]));
+  for (const key of Object.keys(submitted)) {
+    if (!isFixedKey(key) && !byField.has(key)) {
+      return { ok: false, problem: 'unknown_field', field: key };
+    }
+  }
+  for (const { part, conditional } of shown) {
+    const field = text(part.field) as string;
+    const read = readSignUpValue(
+      part,
+      Object.prototype.hasOwnProperty.call(submitted, field) ? submitted[field] : undefined
+    );
+    if (!read.ok) return { ok: false, problem: 'invalid_value', field };
+    if (part.required === true && !conditional && !read.answered) {
+      return { ok: false, problem: 'required', field };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * One sign-up value against its part: a choice among the part's options, a checkbox a boolean
+ * (ticked to count as answered); any other value is left to the Identity Schema's rules (its
+ * type and length), only a string, a number or a boolean being a value for a part at all.
+ */
+function readSignUpValue(
+  part: JsonObject,
+  raw: unknown
+): { ok: false } | { ok: true; answered: boolean } {
+  if (raw === undefined || raw === null) return { ok: true, answered: false };
+  if (isCheckboxPart(part)) {
+    const checked = readBoolean(raw);
+    return checked === null ? { ok: false } : { ok: true, answered: checked };
+  }
+  if (typeof raw !== 'string' && typeof raw !== 'number' && typeof raw !== 'boolean') {
+    return { ok: false };
+  }
+  const value = String(raw).trim();
+  if (!value) return { ok: true, answered: false };
+  if (CHOICE_BLOCK_TYPES.has(blockTypeOf(part)) && !optionValues(part).has(value)) {
+    return { ok: false };
+  }
+  return { ok: true, answered: true };
+}
+
 /**
  * Where the profile answers go: standard profile fields, and custom attributes by the key the
  * screen names. An empty answer changes nothing (the screen does not show what is stored, so

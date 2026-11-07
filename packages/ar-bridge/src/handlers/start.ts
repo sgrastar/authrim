@@ -23,7 +23,6 @@ import {
   getUIConfig,
   buildIssuerUrl,
   getTenantIdFromContext,
-  readLiteModeState,
   getLogger,
   createLogger,
   createDiagnosticLoggerFromContext,
@@ -37,6 +36,11 @@ import {
   resolveSignInAttemptInteraction,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
+import {
+  consumeLiteExternalStart,
+  liteExternalCallbackUrl,
+  liteExternalFlowId,
+} from '../services/lite-start';
 import { assertExternalProviderUsageAllowed } from '../services/external-usage-gate';
 import { ExternalIdPError, ExternalIdPErrorCode } from '../types';
 import { accountPageLinkResultUrl, consumeLinkIntent } from '../services/link-intent';
@@ -154,28 +158,25 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     if (!providerIdOrName) {
       return c.json({ error: 'invalid_request', error_description: 'Missing provider' }, 400);
     }
-    const requestedRedirectUri = c.req.query('redirect_uri');
-    const linkIntentToken = c.req.query('link_intent');
-    let loginHint = c.req.query('login_hint');
-    const maxAgeParam = c.req.query('max_age');
-    let acrValues = c.req.query('acr_values');
     const tenantId = getTenantIdFromContext(c);
-    // A tenant in lite mode starts external sign-in (and linking) only from the lite Login UI,
-    // which proves human verification first; until that start is wired, it is refused here.
-    if ((await readLiteModeState(c.env, tenantId)) !== 'off') {
-      c.header('Cache-Control', 'no-store');
-      return c.json(
-        {
-          error: 'lite_mode_endpoint_unavailable',
-          error_description: 'This tenant starts external sign-in from the lite Login UI',
-        },
-        403
-      );
-    }
-    const clientId = c.req.query('client_id');
-    const codeChallenge = c.req.query('code_challenge');
-    const codeChallengeMethod = c.req.query('code_challenge_method');
-    const stateParam = c.req.query('state');
+    // A tenant in lite mode starts external sign-in only from the lite Login UI: by the one-time
+    // start grant ar-auth made for this browser's transaction after the page's proof of work. It
+    // is consumed before anything else is done; the start then takes everything from the
+    // transaction and the grant, nothing from its query (no link, invitation, prompt or hint).
+    const lite = await consumeLiteExternalStart(c, tenantId, providerIdOrName);
+    if (lite && !lite.ok) return lite.response;
+    const query = (name: string): string | undefined => (lite ? undefined : c.req.query(name));
+    const requestedRedirectUri = query('redirect_uri');
+    const linkIntentToken = query('link_intent');
+    let loginHint = query('login_hint');
+    const maxAgeParam = query('max_age');
+    let acrValues = query('acr_values');
+    // A lite start's PKCE pair is the Bridge's own: its handoff is finalized without a verifier,
+    // and the authorization code path (a provider without SSO) is not taken by the lite UI.
+    const clientId = lite ? lite.start.clientId : query('client_id');
+    const codeChallenge = lite ? (await generatePKCE()).codeChallenge : query('code_challenge');
+    const codeChallengeMethod = lite ? 'S256' : query('code_challenge_method');
+    const stateParam = query('state');
 
     // Linking from the account page: only a one-use intent, issued to this browser's own
     // re-authenticated session, starts it. It replaces the sign-in checks (human verification,
@@ -209,7 +210,11 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       acrValues = undefined;
     }
     // A sign-in that answers an Authrim re-authentication must be a new login at the provider.
-    const authorizationChallengeId = link ? undefined : c.req.query('authorization_challenge_id');
+    const authorizationChallengeId = link
+      ? undefined
+      : lite
+        ? (lite.txn.bound.challengeId ?? undefined)
+        : query('authorization_challenge_id');
     let reauth: { challengeId: string; requestedAt: number } | null = null;
     if (authorizationChallengeId) {
       const challengeType = await readAuthorizationChallengeKind(
@@ -227,13 +232,25 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         );
       }
       if (challengeType === 'reauth') {
+        // A lite grant is made only for a sign-in challenge (re-authentication transactions are
+        // not lite yet): its proof was not made for the re-authentication requirement.
+        if (lite) {
+          return c.json(
+            {
+              error: 'lite_mode_endpoint_unavailable',
+              error_description: 'This tenant starts external sign-in from the lite Login UI',
+            },
+            403
+          );
+        }
         reauth = { challengeId: authorizationChallengeId, requestedAt: Date.now() };
       }
     }
     // Linking never answers silently or for a client; a re-authentication always asks again.
-    const prompt = link ? undefined : reauth ? 'login' : c.req.query('prompt');
+    const prompt = link ? undefined : reauth ? 'login' : query('prompt');
 
-    if (!link) {
+    // A lite start's proof of work was verified (and spent) when its grant was made.
+    if (!link && !lite) {
       const turnstileError = await verifyExternalStartHumanVerification(c, tenantId);
       if (turnstileError) return turnstileError;
     }
@@ -283,17 +300,30 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // to the account page.
     const redirectUri = link
       ? await accountPageLinkResultUrl(c.env, tenantIdResolved, { linked: true })
-      : await validateRedirectUri(
-          requestedRedirectUri,
-          c.env,
-          tenantIdResolved,
-          clientId,
-          clientRedirectUris
-        );
+      : lite
+        ? liteExternalCallbackUrl(lite.txn, lite.grantId)
+        : await validateRedirectUri(
+            requestedRedirectUri,
+            c.env,
+            tenantIdResolved,
+            clientId,
+            clientRedirectUris
+          );
 
     // 2. Get provider configuration (by slug or ID)
     let provider = await getProviderByIdOrSlug(c.env, providerIdOrName, tenantIdResolved);
 
+    // A lite sign-in returns by a handoff (the lite UI finalizes it). A provider without SSO
+    // answers with an authorization code instead, for a PKCE verifier no one holds here.
+    if (lite && provider && provider.enabled && provider.enableSso === false) {
+      return c.json(
+        {
+          error: 'access_denied',
+          error_description: 'This provider cannot be used to sign in here',
+        },
+        403
+      );
+    }
     if (!provider || !provider.enabled) {
       if (link) {
         return c.redirect(
@@ -409,7 +439,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 4. Generate state, nonce, and flowId
     const state = generateState();
     const nonce = generateNonce();
-    const flowId = crypto.randomUUID();
+    const flowId = lite ? liteExternalFlowId() : crypto.randomUUID();
     diagnosticFlowId = flowId;
     c.header(DIAGNOSTIC_FLOW_ID_HEADER, flowId);
     c.header('Cache-Control', 'no-store');
@@ -417,7 +447,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 4b. A sign-in started from an invitation reserves one use of it now, so the use is there
     // when the callback creates the account. A link, a re-authentication or a silent sign-in
     // creates no account, so it carries no invitation.
-    const inviteToken = c.req.query('invite_token');
+    const inviteToken = query('invite_token');
     const silent = (prompt ?? '').split(' ').includes('none');
     let signupInvitation: ExternalSignupInvitation | null = null;
     if (inviteToken !== undefined && !link && !reauth && !silent) {
@@ -476,7 +506,11 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 7b. The Flow interaction this sign-in belongs to, once checked a live interaction of the
     // tenant: the callback records the sign-in's failures with it. A link is not a sign-in.
     // Best effort: a check that cannot be made leaves the sign-in unrecorded, never refused.
-    const requestedInteractionId = link ? undefined : c.req.query('runtime_interaction_id');
+    const requestedInteractionId = link
+      ? undefined
+      : lite
+        ? (lite.start.interactionId ?? undefined)
+        : query('runtime_interaction_id');
     const attemptInteractionId = requestedInteractionId
       ? await (async () =>
           resolveSignInAttemptInteraction(

@@ -20,7 +20,14 @@
  * carries an Origin only from a verified form post. (Add an entry only with the page that needs
  * it.)
  */
-const PAGE_LOAD_ORIGIN_CALLS: readonly RegExp[] = [/^\/api\/v1\/login\/interactions\/start$/u];
+const PAGE_LOAD_ORIGIN_CALLS: readonly RegExp[] = [
+	/^\/api\/v1\/login\/interactions\/start$/u,
+	// The lite `/callback` (as the SPA's callback page loads): the handoff of a social sign-in this
+	// browser's transaction started (single use, checked by ar-bridge for its state and client),
+	// and the status of an account still being made (a read).
+	/^\/handoff\/finalize$/u,
+	/^\/api\/external\/provisioning\/status$/u
+];
 
 export function isPageLoadOriginCall(method: string, path: string): boolean {
 	return method === 'POST' && PAGE_LOAD_ORIGIN_CALLS.some((pattern) => pattern.test(path));

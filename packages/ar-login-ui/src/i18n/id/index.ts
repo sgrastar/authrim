@@ -344,6 +344,8 @@ const id = createTranslation({
 		'Halaman ini menjalankan pemeriksaan keamanan di peramban Anda. Aktifkan JavaScript, lalu muat ulang halaman.',
 	lite_passkeyUnsupported:
 		'Peramban ini tidak dapat menggunakan passkey di sini. Pilih cara lain untuk masuk.',
+	lite_socialStarted:
+		'Masuk dengan akun eksternal telah dimulai dari halaman ini. Untuk masuk dengan cara lain, mulai lagi.',
 	lite_passkeyFailed:
 		'Masuk dengan passkey tidak selesai. Coba lagi, atau pilih cara lain untuk masuk.'
 });

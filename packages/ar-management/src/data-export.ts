@@ -59,6 +59,7 @@ const ALL_SECTIONS: DataExportSection[] = [
   'sessions',
   'audit_log',
   'passkeys',
+  'screen_responses',
 ];
 
 const DATA_EXPORT_DOWNLOAD_TTL_MS = 24 * 60 * 60 * 1000;
@@ -431,14 +432,20 @@ export async function dataExportRequestHandler(c: Context<{ Bindings: Env }>) {
     const syncThresholdKB = await getConsentDataExportSyncThresholdKB(c.env);
 
     // Estimate data size (simplified - just count records)
-    const estimatedSize = await estimateExportSize(authCtx.coreAdapter, tenantId, userId, sections);
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    const estimatedSize = await estimateExportSize(
+      authCtx.coreAdapter,
+      tenantId,
+      userId,
+      sections,
+      piiCtx?.defaultPiiAdapter ?? null
+    );
 
     const now = Date.now();
     const requestId = crypto.randomUUID();
 
     if (estimatedSize < syncThresholdKB * 1024) {
       // Synchronous export for small data
-      const piiCtx = createPIIContextFromHono(c, tenantId);
       const exportedData = await collectExportData(
         c.env,
         authCtx.coreAdapter,
@@ -1366,7 +1373,8 @@ async function estimateExportSize(
   adapter: { query: <T>(sql: string, params?: unknown[]) => Promise<T[]> },
   tenantId: string,
   userId: string,
-  sections: DataExportSection[]
+  sections: DataExportSection[],
+  piiAdapter: { query: <T>(sql: string, params?: unknown[]) => Promise<T[]> } | null = null
 ): Promise<number> {
   let totalSize = 0;
 
@@ -1397,6 +1405,17 @@ async function estimateExportSize(
       [tenantId, userId]
     );
     totalSize += (passkeys[0]?.count || 0) * 400;
+  }
+
+  // The response records' own size (their answers, ~200 bytes each besides), read from the
+  // account's PII database: answers vary too much in size for a count to tell.
+  if (sections.includes('screen_responses') && piiAdapter) {
+    const responses = await piiAdapter.query<{ count: number; bytes: number | null }>(
+      `SELECT COUNT(*) as count, SUM(LENGTH(answers_json)) as bytes
+         FROM screen_responses WHERE tenant_id = ? AND user_id = ?`,
+      [tenantId, userId]
+    );
+    totalSize += Number(responses[0]?.bytes || 0) * 2 + Number(responses[0]?.count || 0) * 200;
   }
 
   // Add base overhead for profile
@@ -1574,5 +1593,45 @@ async function collectExportData(
     }));
   }
 
+  // Collect the response records (the account's PII database)
+  if (sections.includes('screen_responses') && piiAdapter) {
+    const responses = await piiAdapter.query<{
+      id: string;
+      screen_id: string;
+      screen_key: string;
+      flow_id: string;
+      answers_json: string;
+      created_at: number | string;
+      updated_at: number | string;
+    }>(
+      `SELECT id, screen_id, screen_key, flow_id, answers_json, created_at, updated_at
+       FROM screen_responses
+       WHERE tenant_id = ? AND user_id = ?
+       ORDER BY created_at ASC, id ASC`,
+      [tenantId, userId]
+    );
+    exportedData.screenResponses = responses.map((row) => ({
+      id: row.id,
+      screenId: row.screen_id,
+      screenKey: row.screen_key,
+      flowId: row.flow_id,
+      answers: parseExportAnswers(row.answers_json),
+      createdAt: toISOString(Number(row.created_at)),
+      updatedAt: toISOString(Number(row.updated_at)),
+    }));
+  }
+
   return exportedData;
+}
+
+/** A response record's answers; a value that does not read as an object is exported as none. */
+function parseExportAnswers(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }

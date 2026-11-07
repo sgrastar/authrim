@@ -33,11 +33,34 @@ const mockShardedSessionStore = {
   invalidateSessionRpc: vi.fn().mockResolvedValue(true),
 };
 
+// Audit logs and events the handlers start without awaiting them (the mock contexts have no
+// executionCtx for waitUntil). They log through the real ar-lib-core logger, so each test waits for
+// them; a log that lands after the file's last test reaches Vitest while the worker is closing and
+// fails the run as an unhandled error.
+const backgroundWork = vi.hoisted(() => ({ pending: [] as Promise<unknown>[] }));
+
+async function settleBackgroundWork(): Promise<void> {
+  while (backgroundWork.pending.length > 0) {
+    await Promise.allSettled(backgroundWork.pending.splice(0));
+  }
+}
+
 // Mock shared module
 vi.mock('@authrim/ar-lib-core', async () => {
-  const actual = await vi.importActual('@authrim/ar-lib-core');
+  const actual =
+    await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
+    createAuditLog: (...args: Parameters<typeof actual.createAuditLog>) => {
+      const write = actual.createAuditLog(...args);
+      backgroundWork.pending.push(write);
+      return write;
+    },
+    publishEvent: (...args: Parameters<typeof actual.publishEvent>) => {
+      const delivery = actual.publishEvent(...args);
+      backgroundWork.pending.push(delivery);
+      return delivery;
+    },
     revokeGuestResumeForSession: vi.fn().mockResolvedValue(undefined),
     timingSafeEqual: vi.fn((a: string, b: string) => a === b),
     verifyClientSecretHash: vi.fn(async (secret: string, hash: string) => {
@@ -237,7 +260,8 @@ describe('Front-channel Logout', () => {
     vi.mocked(validatePostLogoutRedirectUri).mockReturnValue({ valid: true });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await settleBackgroundWork();
     vi.restoreAllMocks();
   });
 
@@ -1190,7 +1214,8 @@ describe('Back-channel Logout', () => {
     vi.clearAllMocks();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await settleBackgroundWork();
     vi.restoreAllMocks();
   });
 

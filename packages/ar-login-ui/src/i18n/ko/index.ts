@@ -333,6 +333,8 @@ const ko = createTranslation({
 		'이 페이지는 브라우저에서 보안 확인을 실행합니다. JavaScript를 켠 다음 페이지를 새로 고치세요.',
 	lite_passkeyUnsupported:
 		'이 브라우저에서는 여기서 패스키를 사용할 수 없습니다. 다른 로그인 방법을 선택하세요.',
+	lite_socialStarted:
+		'이 페이지에서 외부 계정 로그인을 시작했습니다. 다른 방법으로 로그인하려면 처음부터 다시 시작하세요.',
 	lite_passkeyFailed:
 		'패스키 로그인을 완료하지 못했습니다. 다시 시도하거나 다른 로그인 방법을 선택하세요.'
 });
