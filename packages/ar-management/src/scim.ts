@@ -76,6 +76,9 @@ import { writeCanonicalAccountAuthoritative } from './account-authoritative-writ
 import {
   attemptImmediateAccountDirectoryRemovals,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
+  fenceAccountDeletion,
+  hasUnfinishedAccountDeletion,
+  AccountDeletionHeldError,
   markAccountDirectoryRemovalsReady,
   prepareAccountDirectoryRemoval,
 } from './account-directory-removal-producer';
@@ -394,6 +397,60 @@ async function maybeSyncCanonicalRuntimeUser(
       revokeSessions: false,
     });
   }
+}
+
+/**
+ * Deletes a SCIM user's account, as `DELETE /Users/:id` and a Bulk `DELETE` operation both do: the
+ * tombstone, the account's PII (linked identities, response records, subject identifiers, ...),
+ * the runtime user, and its Lookup directory routes. A retried deletion finds what the first
+ * attempt wrote.
+ */
+async function deleteScimAccount(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    coreAdapter: DatabaseAdapter;
+    piiAdapter: DatabaseAdapter;
+    tenantId: string;
+    userId: string;
+    existingUser: { email?: string | null; tenant_id?: string | null };
+  }
+): Promise<void> {
+  const { coreAdapter, piiAdapter, tenantId, userId, existingUser } = input;
+  const now = Date.now();
+  // Decided before anything changes: the address's keyed fingerprint and the tenant's retention.
+  const tombstoneInput = await prepareAccountTombstone(c.env, {
+    tenantId,
+    email: existingUser.email,
+  });
+  const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
+    tenantId,
+    userId,
+    core: coreAdapter,
+    pii: piiAdapter,
+  });
+  // Holds fenced off before anything is erased (see fenceAccountDeletion).
+  await fenceAccountDeletion(coreAdapter, { tenantId, userId });
+
+  // The tombstone first, in the PII database (GDPR audit trail): it also stops later writes of
+  // the person's PII (a response record, a profile value) from landing after the erasure.
+  await writeAccountTombstone(piiAdapter, {
+    tenantId: existingUser.tenant_id || tenantId,
+    userId,
+    prepared: tombstoneInput,
+    deletedBy: 'scim_api',
+    reason: 'scim_delete',
+    metadata: { source: 'scim_api' },
+  });
+
+  await eraseAccountPiiAfterDirectoryRemovalPrepared(
+    piiAdapter,
+    { tenantId, userId, core: coreAdapter },
+    Math.floor(now / 1000)
+  );
+
+  await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId);
+  await markAccountDirectoryRemovalsReady(coreAdapter, directoryRemovals);
+  await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
 }
 
 async function maybeDeleteCanonicalRuntimeUser(
@@ -3072,6 +3129,23 @@ app.delete('/Users/:id', async (c) => {
     });
 
     if (!existingUser) {
+      // A deletion that stopped after the user could no longer be read is finished now.
+      if (await hasUnfinishedAccountDeletion(coreAdapter, { tenantId, userId })) {
+        // The same gate as a first attempt: a hold stops it (the fence refuses one too).
+        if (await findActiveAccountLegalHold(coreAdapter, tenantId, userId)) {
+          return scimError(c, 409, 'User is under legal hold and cannot be deleted');
+        }
+        await deleteScimAccount(c, {
+          coreAdapter,
+          piiAdapter,
+          tenantId,
+          userId,
+          existingUser: { email: null, tenant_id: tenantId },
+        });
+        // The deletion is complete now: recorded as one (the first attempt never got this far).
+        logScimAudit(c, 'scim.user.delete', 'scim_user', userId, { resumed: true }, 'warning');
+        return c.body(null, 204);
+      }
       return scimError(c, 404, 'The requested resource was not found');
     }
 
@@ -3090,41 +3164,7 @@ app.delete('/Users/:id', async (c) => {
       }
     }
 
-    const now = Date.now();
-    // Decided before anything changes: the address's keyed fingerprint and the tenant's retention.
-    const tombstoneInput = await prepareAccountTombstone(c.env, {
-      tenantId,
-      email: existingUser.email,
-    });
-    const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
-      tenantId,
-      userId,
-      core: coreAdapter,
-      pii: piiAdapter,
-    });
-
-    // Step 1: Create tombstone record in PII DB for GDPR audit trail
-    if (piiAdapter) {
-      // A retried DELETE finds the record the first attempt wrote.
-      await writeAccountTombstone(piiAdapter, {
-        tenantId: existingUser.tenant_id || tenantId,
-        userId,
-        prepared: tombstoneInput,
-        deletedBy: 'scim_api',
-        reason: 'scim_delete',
-        metadata: { source: 'scim_api' },
-      });
-    }
-
-    await eraseAccountPiiAfterDirectoryRemovalPrepared(
-      piiAdapter,
-      { tenantId, userId, core: coreAdapter },
-      Math.floor(now / 1000)
-    );
-
-    await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId);
-    await markAccountDirectoryRemovalsReady(coreAdapter, directoryRemovals);
-    await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
+    await deleteScimAccount(c, { coreAdapter, piiAdapter, tenantId, userId, existingUser });
 
     // Audit log (non-blocking) - severity: warning for deletion
     logScimAudit(
@@ -3140,6 +3180,10 @@ app.delete('/Users/:id', async (c) => {
 
     return c.body(null, 204); // No Content
   } catch (error) {
+    // A hold placed after the check above: the deletion stopped before anything was erased.
+    if (error instanceof AccountDeletionHeldError) {
+      return scimError(c, 409, 'User is under legal hold and cannot be deleted');
+    }
     const log = getLogger(c).module('SCIM');
     log.error('SCIM delete user error', { action: 'delete_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
@@ -4734,6 +4778,33 @@ async function processUserOperation(
         includeInactive: true,
       });
       if (!existingUser) {
+        // A deletion that stopped after the user could no longer be read is finished now.
+        if (await hasUnfinishedAccountDeletion(coreAdapter, { tenantId, userId: resourceId! })) {
+          const held: ScimBulkOperationResponse = {
+            method: 'DELETE',
+            status: '409',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '409',
+              detail: 'User is under legal hold and cannot be deleted',
+            },
+          };
+          // The same gate as a first attempt: a hold stops it (the fence refuses one too).
+          if (await findActiveAccountLegalHold(coreAdapter, tenantId, resourceId!)) return held;
+          try {
+            await deleteScimAccount(c, {
+              coreAdapter,
+              piiAdapter,
+              tenantId,
+              userId: resourceId!,
+              existingUser: { email: null, tenant_id: tenantId },
+            });
+          } catch (error) {
+            if (!(error instanceof AccountDeletionHeldError)) throw error;
+            return held;
+          }
+          return { method: 'DELETE', status: '204' };
+        }
         return {
           method: 'DELETE',
           status: '404',
@@ -4775,7 +4846,29 @@ async function processUserOperation(
         }
       }
 
-      await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, resourceId!);
+      // The whole deletion, as DELETE /Users/:id does (it used to delete the runtime user only,
+      // leaving its tombstone, PII and directory routes behind).
+      try {
+        await deleteScimAccount(c, {
+          coreAdapter,
+          piiAdapter,
+          tenantId,
+          userId: resourceId!,
+          existingUser,
+        });
+      } catch (error) {
+        // A hold placed after the check above: the deletion stopped before anything was erased.
+        if (!(error instanceof AccountDeletionHeldError)) throw error;
+        return {
+          method: 'DELETE',
+          status: '409',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '409',
+            detail: 'User is under legal hold and cannot be deleted',
+          },
+        };
+      }
 
       return {
         method: 'DELETE',

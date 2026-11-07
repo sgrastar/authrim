@@ -3584,14 +3584,18 @@ components:
       properties:
         sections:
           type: array
+          description: >-
+            The sections to export (all when omitted; unknown values are ignored). screen_responses
+            is what the person answered to login screens that keep response records.
           items:
             type: string
             enum:
               - profile
               - consents
               - sessions
-              - auth_history
-              - custom_claims
+              - audit_log
+              - passkeys
+              - screen_responses
         format:
           type: string
           enum:

@@ -384,7 +384,14 @@ export type DataExportFormat = 'json' | 'csv';
 /**
  * Data export sections
  */
-export type DataExportSection = 'profile' | 'consents' | 'sessions' | 'audit_log' | 'passkeys';
+export type DataExportSection =
+  | 'profile'
+  | 'consents'
+  | 'sessions'
+  | 'audit_log'
+  | 'passkeys'
+  /** What the person answered to login screens kept as response records (screen_responses). */
+  | 'screen_responses';
 
 /**
  * Data export request
@@ -499,6 +506,17 @@ export interface ExportedUserData {
     deviceName?: string;
     createdAt: string;
     lastUsedAt?: string;
+  }>;
+  /** The answers kept as response records, one per visit of a screen step. */
+  screenResponses?: Array<{
+    id: string;
+    screenId: string;
+    screenKey: string;
+    flowId: string;
+    /** The answers by the part's key, as given. */
+    answers: Record<string, unknown>;
+    createdAt: string;
+    updatedAt: string;
   }>;
 }
 

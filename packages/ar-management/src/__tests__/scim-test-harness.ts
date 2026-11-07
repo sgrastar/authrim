@@ -144,6 +144,8 @@ const accountRemovalState = vi.hoisted(() => ({
   ready: vi.fn(),
   attempt: vi.fn(),
   erase: vi.fn(),
+  fence: vi.fn(async () => undefined),
+  unfinished: vi.fn(async () => false),
 }));
 
 vi.mock('../cross-shard-account-list', () => ({
@@ -259,6 +261,9 @@ vi.mock('../account-directory-removal-producer', () => ({
   markAccountDirectoryRemovalsReady: accountRemovalState.ready,
   attemptImmediateAccountDirectoryRemovals: accountRemovalState.attempt,
   eraseAccountPiiAfterDirectoryRemovalPrepared: accountRemovalState.erase,
+  fenceAccountDeletion: accountRemovalState.fence,
+  hasUnfinishedAccountDeletion: accountRemovalState.unfinished,
+  AccountDeletionHeldError: class AccountDeletionHeldError extends Error {},
 }));
 
 vi.mock('../scim-identifier-replacement', () => ({
