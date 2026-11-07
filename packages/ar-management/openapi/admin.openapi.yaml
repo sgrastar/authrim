@@ -3970,6 +3970,13 @@ paths:
       tags:
         - Admin Invitations
       summary: Replace and resend an Admin invitation code.
+      description: >-
+        Issues a new code and a new validity window, which brings an expired invitation back, so
+        it grants the invitation's role again: the caller must be allowed to invite that role as
+        it is now (ranking below them, a global one below their global rank; a peer
+        ar_super_admin invitation needs the wildcard from a global assignment), and to give the
+        roles of the admin groups it names. 403 `insufficient_permissions` otherwise; 404
+        `role_not_found` when the role is gone.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
@@ -3988,6 +3995,8 @@ paths:
                   expires_at:
                     type: integer
                     format: int64
+        '403':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -52121,7 +52130,8 @@ components:
   schemas:
     AdminGroup:
       type: object
-      required: [id, tenant_id, group_key, display_name, description, revision, created_at, updated_at]
+      required:
+        [id, tenant_id, group_key, display_name, description, revision, created_at, updated_at]
       properties:
         id:
           type: string
