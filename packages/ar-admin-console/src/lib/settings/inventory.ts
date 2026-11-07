@@ -94,7 +94,11 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'settings/signing-keys', scope: 'tenant' },
 	{ id: 'settings/compliance', scope: 'tenant' },
 	{ id: 'settings/runtime', scope: 'tenant' },
-	{ id: 'settings/team', scope: 'tenant' },
+	{
+		id: 'settings/team',
+		scope: 'tenant',
+		note: 'A built page (Admin sign-in); the list of administrators is not built yet.'
+	},
 	{ id: 'plat-tenants/discovery', scope: 'platform' },
 	{
 		id: 'plat-tenants/bulk-apply',
@@ -729,14 +733,6 @@ place('authentication/staying-signed-in', 'Logout channels and webhook', {
 		'session.backchannel_include_sid',
 		'session.logout_webhook_include_sub',
 		'session.logout_webhook_include_sid'
-	]
-});
-place('settings/team', 'Admin sign-in', {
-	advanced: [
-		'session.ttl.admin_passkey',
-		'security.admin_step_up_overrides',
-		'security.admin_step_up_enforced',
-		'security.admin_keyring_dc_api'
 	]
 });
 

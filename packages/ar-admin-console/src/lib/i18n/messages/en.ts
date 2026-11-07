@@ -11,6 +11,7 @@ import { enKeyringPresentation } from './keyring-presentation/en';
 import { enNotices } from './notices/en';
 import { enCustomization } from './customization/en';
 import { enStepUp } from './step-up/en';
+import { enAdminAudit } from './admin-audit/en';
 
 export const en = {
 	...enSettings,
@@ -25,6 +26,7 @@ export const en = {
 	...enNotices,
 	...enCustomization,
 	...enStepUp,
+	...enAdminAudit,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
@@ -914,6 +916,11 @@ export const en = {
 	'keyring.credentials.noExpiry': 'Not set',
 	'keyring.credentials.revoke': 'Revoke',
 	'keyring.credentials.revokeTitle': 'Revoke the credential {code}?',
+	'keyring.issued.factorNote':
+		'If Keyring renewed your credential, the key confirmation code is the same as before and your second factor keeps working. If the code changed, this is a new key: add Keyring as a second factor in My account.',
+	'keyring.credentials.secondFactor': 'Second factor',
+	'keyring.credentials.revokeRemovesFactor':
+		'This credential’s key is registered as a second factor. Revoking it also removes that second factor, for every credential using the same key (renewed ones included). An old credential stops working at its expiry even if you do not revoke it.',
 	'keyring.credentials.revokeBody':
 		'The credential stops working at once and cannot be restored. To use Keyring again, you need to add a new credential.',
 	'keyring.credentials.revoked': 'Credential revoked.',

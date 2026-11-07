@@ -11,6 +11,11 @@ export const arSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.nameHint': 'مثال: YubiKey (أزرق)',
 	'sk.register': 'تسجيل المفتاح',
 	'sk.unnamed': 'بدون اسم',
+	'sk.recovery.soleAdmin':
+		'أنت المسؤول الوحيد، لذا لا يمكنك طلب الاسترداد هنا. استرد الوصول عبر إجراء مالك البيئة (الاسترداد الأخير).',
+	'sk.onlyOne.title': 'لديك عامل ثانٍ واحد فقط',
+	'sk.onlyOne.body':
+		'إذا فقدته فلن تتمكن من تنفيذ العمليات الحساسة. ننصح بتسجيل مفتاح أمان آخر أو Keyring.',
 	'sk.only': 'المفتاح الوحيد',
 	'sk.created': 'تاريخ التسجيل',
 	'sk.lastUsed': 'آخر استخدام',

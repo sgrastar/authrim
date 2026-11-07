@@ -3,7 +3,8 @@
  *
  *   POST /api/admin/me/wallet-credentials/offers          create an offer (QR + transaction code)
  *   GET  /api/admin/me/wallet-credentials/offers/:offerId its progress, read-only
- *   GET  /api/admin/me/wallet-credentials                 the admin's own credentials
+ *   GET  /api/admin/me/wallet-credentials                 the admin's own credentials (and which
+ *                                                         carry a second-factor key)
  *   POST /api/admin/me/wallet-credentials/:id/revoke      revoke one (fresh sign-in required)
  *
  * The offer and the transaction code are secrets for a few minutes: this module never logs or
@@ -66,6 +67,11 @@ export interface WalletCredential {
 	expiresAt: number | null;
 	/** base64url RFC 7638 thumbprint of the holder key; absent for older credentials. */
 	holderKeyThumbprint?: string;
+	/**
+	 * Whether the holder key is one of the admin's active second factors. Revoking such a
+	 * credential also revokes that factor, even when a renewed credential shares the key.
+	 */
+	secondFactor: boolean;
 }
 
 const CREDENTIAL_STATUSES: ReadonlySet<string> = new Set<WalletCredentialStatus>([
@@ -175,7 +181,8 @@ function parseCredentials(body: unknown): WalletCredential[] {
 			expiresAt: item.expiresAt,
 			...(typeof item.holderKeyThumbprint === 'string'
 				? { holderKeyThumbprint: item.holderKeyThumbprint }
-				: {})
+				: {}),
+			secondFactor: item.secondFactor === true
 		};
 	});
 }
