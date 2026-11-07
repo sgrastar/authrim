@@ -517,7 +517,10 @@ const translation = {
 		'পাসকি দিয়ে সাইন ইন শেষ হয়নি। আবার চেষ্টা করুন, অথবা সাইন ইন করার অন্য একটি উপায় বেছে নিন।',
 	lite_provisioningWait:
 		'আপনার অ্যাকাউন্ট প্রস্তুত করা হচ্ছে। একটু অপেক্ষা করুন, তারপর চালিয়ে যান বেছে নিন।',
-	lite_provisioningFailed: 'আপনার অ্যাকাউন্ট প্রস্তুত করা যায়নি। আবার শুরু করুন।'
+	lite_provisioningFailed: 'আপনার অ্যাকাউন্ট প্রস্তুত করা যায়নি। আবার শুরু করুন।',
+	lite_reauthSessionEnded:
+		'যে সেশনের জন্য এই পৃষ্ঠা খোলা হয়েছিল, সেটি শেষ হয়েছে বা বদলে গেছে। আবার সাইন ইন করুন।',
+	lite_reauthAnotherWay: 'অন্য উপায় ব্যবহার করুন'
 } satisfies Translation;
 
 export default translation;

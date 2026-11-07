@@ -538,7 +538,10 @@ const ja = {
 	lite_passkeyFailed:
 		'パスキーでのログインを完了できませんでした。もう一度試すか、別の方法でログインしてください。',
 	lite_provisioningWait: 'アカウントを準備しています。少し待ってから「続ける」を選んでください。',
-	lite_provisioningFailed: 'アカウントを準備できませんでした。最初からやり直してください。'
+	lite_provisioningFailed: 'アカウントを準備できませんでした。最初からやり直してください。',
+	lite_reauthSessionEnded:
+		'このページを開いたときのセッションが終了したか、別のものに変わりました。もう一度ログインしてください。',
+	lite_reauthAnotherWay: '別の方法を使う'
 } satisfies Translation;
 
 export default ja;

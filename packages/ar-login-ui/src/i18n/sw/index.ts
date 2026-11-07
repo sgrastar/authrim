@@ -511,7 +511,10 @@ const translation = {
 	lite_passkeyFailed:
 		'Kuingia kwa passkey hakukukamilika. Jaribu tena, au chagua njia nyingine ya kuingia.',
 	lite_provisioningWait: 'Akaunti yako inaandaliwa. Subiri kidogo, kisha chagua Endelea.',
-	lite_provisioningFailed: 'Akaunti yako haikuweza kuandaliwa. Anza upya.'
+	lite_provisioningFailed: 'Akaunti yako haikuweza kuandaliwa. Anza upya.',
+	lite_reauthSessionEnded:
+		'Kipindi ambacho ukurasa huu ulifunguliwa kwacho kimeisha au kimebadilika. Ingia tena.',
+	lite_reauthAnotherWay: 'Tumia njia nyingine'
 } satisfies Translation;
 
 export default translation;

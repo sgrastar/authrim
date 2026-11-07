@@ -318,7 +318,9 @@ const zhTW = createTranslation({
 	lite_socialStarted: '已從此頁面開始使用外部帳戶登入。若要使用其他方式登入，請重新開始。',
 	lite_passkeyFailed: '通行密鑰登入未完成。請再試一次，或選擇其他登入方式。',
 	lite_provisioningWait: '正在準備您的帳戶。請稍候，然後選擇「繼續」。',
-	lite_provisioningFailed: '無法準備您的帳戶。請重新開始。'
+	lite_provisioningFailed: '無法準備您的帳戶。請重新開始。',
+	lite_reauthSessionEnded: '開啟此頁面時的工作階段已結束或已變更。請重新登入。',
+	lite_reauthAnotherWay: '使用其他方式'
 });
 
 export default zhTW;

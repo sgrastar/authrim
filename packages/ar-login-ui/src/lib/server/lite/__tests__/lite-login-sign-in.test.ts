@@ -296,6 +296,17 @@ beforeEach(() => {
 	};
 });
 
+describe('a re-authentication challenge', () => {
+	it('sends the sign-in page given one to the re-authentication page, with the challenge only', async () => {
+		routes['/auth/login-challenge'] = () => json({ client: { client_id: 'client-1' } });
+		store.binding.create.mockResolvedValueOnce({ ok: false, reason: 'reauth_challenge' } as never);
+		await expect(view('challenge_id=ch-reauth&return_to=%2Felsewhere')).rejects.toMatchObject({
+			status: 303,
+			location: '/reauth?challenge_id=ch-reauth'
+		});
+	});
+});
+
 describe('send_code', () => {
 	it('sends a code for the sign-in screen, keeps its PKCE verifier, and submits the choice', async () => {
 		await expect(
