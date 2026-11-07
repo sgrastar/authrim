@@ -129,6 +129,14 @@ class SqliteCliAdapter implements DatabaseAdapter {
   }
 }
 
+/** The admin groups migration: its tables and the view of what an admin holds. */
+function adminGroupsMigrationSql(): string {
+  return readFileSync(
+    new URL('../../../../../migrations/admin/d1/012_admin_groups.sql', import.meta.url),
+    'utf8'
+  );
+}
+
 const sqlite3Path = findSqlite3();
 const describeWithSqlite = sqlite3Path ? describe : describe.skip;
 
@@ -268,8 +276,9 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
         CREATE TABLE admin_role_assignments (
           id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, admin_user_id TEXT NOT NULL,
           admin_role_id TEXT NOT NULL, scope_type TEXT NOT NULL, scope_id TEXT,
-          expires_at INTEGER
-        );`,
+          expires_at INTEGER, assigned_by TEXT, created_at INTEGER
+        );
+        ${adminGroupsMigrationSql()}`,
       ],
       { encoding: 'utf8' }
     );
@@ -300,6 +309,44 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
     await expect(
       repository.getActiveDelegatorPermissions('target-tenant', 'admin-global', Date.now())
     ).resolves.toEqual(['admin:agent:use', 'admin:clients:read']);
+  });
+
+  it('counts what an admin group gives the delegator, for its tenant, until the membership ends', async () => {
+    await adapter.execute(
+      `INSERT INTO admin_users (id, tenant_id, is_active, status)
+       VALUES (?, ?, 1, 'active')`,
+      ['admin-grouped', 'home-tenant']
+    );
+    await adapter.execute(
+      `INSERT INTO admin_roles (id, tenant_id, permissions_json, inherits_from, is_system)
+       VALUES (?, ?, ?, NULL, 0)`,
+      ['role-grouped', 'home-tenant', '["admin:clients:read"]']
+    );
+    await adapter.execute(
+      `INSERT INTO admin_groups (id, tenant_id, group_key, display_name, created_at, updated_at)
+       VALUES ('group-1', 'home-tenant', 'ops', 'Ops', 1, 1)`
+    );
+    await adapter.execute(
+      `INSERT INTO admin_group_role_grants
+         (id, tenant_id, admin_group_id, admin_role_id, scope_id, created_at, updated_at)
+       VALUES ('grant-1', 'home-tenant', 'group-1', 'role-grouped', 'home-tenant', 1, 1)`
+    );
+    await adapter.execute(
+      `INSERT INTO admin_group_members (id, tenant_id, admin_group_id, admin_user_id, created_at)
+       VALUES ('member-1', 'home-tenant', 'group-1', 'admin-grouped', 1)`
+    );
+
+    await expect(
+      repository.getActiveDelegatorPermissions('home-tenant', 'admin-grouped', Date.now())
+    ).resolves.toEqual(['admin:clients:read']);
+    await expect(
+      repository.getActiveDelegatorPermissions('target-tenant', 'admin-grouped', Date.now())
+    ).resolves.toEqual([]);
+
+    await adapter.execute("DELETE FROM admin_group_members WHERE id = 'member-1'");
+    await expect(
+      repository.getActiveDelegatorPermissions('home-tenant', 'admin-grouped', Date.now())
+    ).resolves.toEqual([]);
   });
 
   it('does not apply a home-tenant-only assignment to another target tenant', async () => {
@@ -1766,7 +1813,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
       : path.resolve(process.cwd(), '../../migrations/admin/d1');
     // The fresh-install baseline only: the 0.4.0 baseline and the 0.4.1 bridge delta in the same
     // directory are for existing environments and would collide with it.
-    const migrationSql = ['001_0_5_0_admin_baseline.sql']
+    const migrationSql = ['001_0_5_0_admin_baseline.sql', '012_admin_groups.sql']
       .map((filename) =>
         readFileSync(path.join(migrationDirectory, filename), 'utf8')
           .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '0')

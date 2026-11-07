@@ -149,7 +149,8 @@ function createMockDB(
             if (throwOnIpAllowlist) throw new Error('IP allowlist query failed');
             return { results: ipAllowlistEntries, success: true };
           }
-          if (sql.includes('admin_role_assignments')) {
+          // An admin's own and group assignments
+          if (sql.includes('admin_effective_role_assignments')) {
             return { results: roles, success: true };
           }
           if (sql.includes('admin_roles')) {

@@ -15,6 +15,10 @@ import {
   ADMIN_UI_FORWARDED_ORIGIN_HEADER,
   adminSessionAuditDigest,
   adminWebAuthnOriginMatchesRpId,
+  AdminNoticeRepository,
+  adminInvitationGroupJoin,
+  adminInvitationGroupJoinCheck,
+  type DatabaseAdapter,
   generateId,
   getAdminCookieSameSite,
   getDefaultTenantId,
@@ -31,6 +35,44 @@ import {
 import { resolveSessionTtl } from './session-ttl';
 
 const RP_NAME = 'Authrim Admin';
+
+/**
+ * After enrolment: tell the tenant's administrators about any group the invitation named that the
+ * new admin did not join, because its roles changed after the invitation was made (or it is gone).
+ * Adding them is then a decision for someone who can give those roles now.
+ */
+async function noticeGroupsNotJoined(
+  adapter: DatabaseAdapter,
+  invitation: { id: string; tenant_id: string; admin_user_id: string; email: string }
+): Promise<void> {
+  // The invitation's rows outlive a deleted group, with the name the group had then.
+  const missed = await adapter.query<{ admin_group_id: string; display_name: string }>(
+    `SELECT ig.admin_group_id, COALESCE(grp.display_name, ig.group_display_name) AS display_name
+       FROM admin_invitation_groups ig
+       LEFT JOIN admin_groups grp
+         ON grp.id = ig.admin_group_id AND grp.tenant_id = ig.tenant_id
+       LEFT JOIN admin_group_members m
+         ON m.admin_group_id = ig.admin_group_id AND m.admin_user_id = ?
+      WHERE ig.invitation_id = ? AND m.id IS NULL`,
+    [invitation.admin_user_id, invitation.id]
+  );
+  if (missed.length === 0) return;
+  const groups = missed.map((row) => row.display_name);
+  await new AdminNoticeRepository(adapter).create({
+    scope_type: 'tenant',
+    tenant_id: invitation.tenant_id,
+    severity: 'caution',
+    source: 'system',
+    category: 'admin_group',
+    message_key: 'admin_group_invitation_not_joined',
+    params: { email: invitation.email, groups: groups.join(', ') },
+    title: `${invitation.email} was not added to ${groups.join(', ')}: the group changed after the invitation`,
+    link: `/admin/team/groups`,
+    required_permission: 'admin:admin_users:read',
+    source_ref: invitation.id,
+    deduplication_key: `admin-group-invitation:${invitation.id}`,
+  });
+}
 const ENROLLMENT_TTL_SECONDS = 10 * 60;
 const ENROLLMENT_TTL_MS = ENROLLMENT_TTL_SECONDS * 1000;
 const MAX_EMAIL_LENGTH = 320;
@@ -562,6 +604,35 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
   const userAgent = c.req.header('user-agent') || null;
   const enrollmentTokenHash = await hashEnrollmentToken(token);
 
+  // The groups the invitation names, and whether each is joined: one whose grants are still the
+  // version the inviter was judged against is (the batch checks it again when it writes), one
+  // that changed or was deleted is left out. Kept in the enrolment's audit entry.
+  const namedGroups = await checked.adapter.query<{
+    admin_group_id: string;
+    group_display_name: string;
+    group_revision: number;
+    current_revision: number | null;
+  }>(
+    `SELECT ig.admin_group_id, ig.group_display_name, ig.group_revision,
+            grp.revision AS current_revision
+       FROM admin_invitation_groups ig
+       LEFT JOIN admin_groups grp
+         ON grp.id = ig.admin_group_id AND grp.tenant_id = ig.tenant_id
+      WHERE ig.invitation_id = ?
+      ORDER BY ig.admin_group_id`,
+    [invitation.id]
+  );
+  const groupOutcomes = namedGroups.map((group) => ({
+    admin_group_id: group.admin_group_id,
+    name: group.group_display_name,
+    outcome:
+      group.current_revision === null
+        ? 'not_joined_deleted'
+        : Number(group.current_revision) === Number(group.group_revision)
+          ? 'joined'
+          : 'not_joined_changed',
+  }));
+
   const preparedAudit = await prepareLogIcebergRowWrite(c.env, checked.adapter, {
     tenantId: invitation.tenant_id,
     sourceDataset: 'admin.admin_audit_log',
@@ -594,6 +665,7 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
         role_id: invitation.admin_role_id,
         scope_type: invitation.scope_type,
         ip_restriction_enabled: Boolean(invitation.ip_restriction_enabled),
+        ...(groupOutcomes.length > 0 ? { admin_groups: groupOutcomes } : {}),
       }),
     },
   });
@@ -647,6 +719,18 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
                 FROM admin_invitations WHERE id = ? AND status = 'pending'`,
         params: [assignmentId, now, invitation.id],
       },
+      // The groups the invitation names, each only while its grants are still the version the
+      // inviter was judged against. The audit entry says which are joined; a group that changed
+      // since it was read refuses the whole activation, so the entry stays true.
+      ...[
+        adminInvitationGroupJoinCheck(
+          invitation.id,
+          groupOutcomes
+            .filter((group) => group.outcome === 'joined')
+            .map((group) => group.admin_group_id)
+        ),
+      ].filter((statement): statement is NonNullable<typeof statement> => statement !== null),
+      adminInvitationGroupJoin(invitation.id, now),
       {
         sql: `INSERT INTO admin_sessions (
                 id, tenant_id, admin_user_id, ip_address, user_agent, created_at,
@@ -689,6 +773,7 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
   // The atomic batch already retained the delivery pointer. A transport outage
   // is retried by the scanner and must not strand an accepted invitation.
   await preparedAudit.dispatch().catch(() => {});
+  await noticeGroupsNotJoined(checked.adapter, invitation).catch(() => {});
   setCookie(c, 'authrim_admin_session', sessionId, {
     path: '/',
     httpOnly: true,

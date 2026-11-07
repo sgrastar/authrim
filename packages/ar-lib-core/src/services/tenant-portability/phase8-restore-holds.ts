@@ -127,6 +127,8 @@ export const PHASE8_RESTORE_HOLD_RULES: Readonly<Record<string, HoldRule>> = {
     all: true,
   },
   'admin.admin_invitations': { reason: 'source_invitation', all: true },
+  // The groups a held invitation names are held with it.
+  'admin.admin_invitation_groups': { reason: 'source_invitation', all: true },
   'admin.admin_jobs': { reason: 'source_admin_workflow', all: true },
   'admin.agent_bulk_plans': { reason: 'source_admin_workflow', all: true },
   'admin.agent_bulk_tenant_executions': { reason: 'source_admin_workflow', all: true },

@@ -20,6 +20,8 @@ describe('evaluateAdminCredentialEligibility', () => {
       CREATE TABLE admin_role_assignments (
         id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, admin_user_id TEXT NOT NULL,
         admin_role_id TEXT NOT NULL, scope_type TEXT NOT NULL, scope_id TEXT, expires_at INTEGER);
+      -- The admin's own assignments; group ones come through the same view in the real schema.
+      CREATE VIEW admin_effective_role_assignments AS SELECT * FROM admin_role_assignments;
       INSERT INTO admin_roles VALUES ('role-system', 'default', 1);
       INSERT INTO admin_roles VALUES ('role-acme', 'acme', 0);
       INSERT INTO admin_roles VALUES ('role-other', 'other', 0);

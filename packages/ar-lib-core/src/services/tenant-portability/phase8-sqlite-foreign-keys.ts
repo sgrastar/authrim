@@ -71,6 +71,31 @@ export const PHASE8_SQLITE_FOREIGN_KEY_RULES = [
     to: 'admin.admin_machine_principals',
   },
   {
+    from: 'admin.admin_group_members',
+    columns: ['admin_group_id'],
+    to: 'admin.admin_groups',
+  },
+  {
+    from: 'admin.admin_group_members',
+    columns: ['admin_user_id'],
+    to: 'admin.admin_users',
+  },
+  {
+    from: 'admin.admin_group_role_grants',
+    columns: ['admin_group_id'],
+    to: 'admin.admin_groups',
+  },
+  {
+    from: 'admin.admin_group_role_grants',
+    columns: ['admin_role_id'],
+    to: 'admin.admin_roles',
+  },
+  {
+    from: 'admin.admin_invitation_groups',
+    columns: ['invitation_id'],
+    to: 'admin.admin_invitations',
+  },
+  {
     from: 'admin.admin_role_assignments',
     columns: ['admin_role_id'],
     to: 'admin.admin_roles',

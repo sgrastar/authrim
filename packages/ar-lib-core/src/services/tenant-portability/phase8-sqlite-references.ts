@@ -147,6 +147,7 @@ type AdminReferenceRule =
 export const PHASE8_ADMIN_REFERENCE_RESTORE_RULES: Readonly<Record<string, AdminReferenceRule>> = {
   'admin.admin_agent_grants': { columns: ['grantor_id', 'delegator_id'] },
   'admin.admin_attribute_values': { columns: ['admin_user_id'] },
+  'admin.admin_group_members': { columns: ['admin_user_id'] },
   'admin.admin_invitations': { columns: ['admin_user_id'] },
   'admin.admin_role_assignments': { columns: ['admin_user_id'] },
   'admin.agent_consents': { columns: ['user_id'] },

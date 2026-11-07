@@ -1448,6 +1448,22 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ADMIN_ROLES_DELETE,
     'admin roles'
   ),
+  // Admin groups: read with admin users read; every change gives or takes roles away, so it is
+  // held to admin roles write as a direct assignment is (and to the role checks in the handler).
+  ...byMethod(
+    '/api/admin/admin-groups',
+    ADMIN_PERMISSIONS.ADMIN_USERS_READ,
+    ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+    ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+    'admin groups'
+  ),
+  ...byMethod(
+    '/api/admin/admin-groups/*',
+    ADMIN_PERMISSIONS.ADMIN_USERS_READ,
+    ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+    ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+    'admin groups'
+  ),
   ...byMethod(
     '/api/admin/ip-allowlist',
     ADMIN_PERMISSIONS.IP_ALLOWLIST_READ,

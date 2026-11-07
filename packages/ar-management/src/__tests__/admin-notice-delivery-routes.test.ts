@@ -71,6 +71,7 @@ function database(): { db: Database; adapter: DatabaseAdapter } {
     '006_admin_notices.sql',
     '007_admin_notice_indexes.sql',
     '008_admin_notice_delivery.sql',
+    '012_admin_groups.sql',
   ]) {
     db.exec(readRenderedMigrationSql(ADMIN_MIGRATIONS, file));
   }

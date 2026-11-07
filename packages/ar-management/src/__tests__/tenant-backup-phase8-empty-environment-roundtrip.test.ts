@@ -88,7 +88,7 @@ function freshDatabase(family: Family) {
   // The 0.5.0 baseline, and the later admin tables the backup registry requires.
   for (const file of [
     `001_0_5_0_${family}_baseline.sql`,
-    ...(family === 'admin' ? ['009_login_ui_themes.sql'] : []),
+    ...(family === 'admin' ? ['009_login_ui_themes.sql', '012_admin_groups.sql'] : []),
     ...(family === 'pii' ? ['003_screen_responses.sql'] : []),
   ])
     database.exec(renderSqliteMigration(readFileSync(`${directory}/${file}`, 'utf8')));
@@ -411,6 +411,25 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         ) VALUES(
           'assignment-global','tenant-a','source-admin','role_ar_tenant_admin','global',NULL,'source-admin',1
         );
+        INSERT INTO admin_groups(id,tenant_id,group_key,display_name,revision,created_at,updated_at)
+        VALUES('group-a','tenant-a','operators','Operators',2,1,1);
+        INSERT INTO admin_group_members(id,tenant_id,admin_group_id,admin_user_id,created_at)
+        VALUES('member-a','tenant-a','group-a','source-admin',1);
+        INSERT INTO admin_group_role_grants(
+          id,tenant_id,admin_group_id,admin_role_id,scope_type,scope_id,created_at,updated_at
+        ) VALUES('grant-a','tenant-a','group-a','role_ar_support','tenant','tenant-a',1,1);
+        INSERT INTO admin_invitations(
+          id,tenant_id,admin_user_id,email,code_hash,status,admin_role_id,admin_role_name,
+          scope_type,scope_id,expires_at,last_sent_at,created_by,created_at,updated_at,
+          pending_email_key
+        ) VALUES(
+          'invitation-a','tenant-a','invited-admin','invited@example.test','hash','pending',
+          'role-a','tenant_operator','tenant','tenant-a',9999999999999,1,'source-admin',1,1,
+          'invited@example.test'
+        );
+        INSERT INTO admin_invitation_groups(
+          id,tenant_id,invitation_id,admin_group_id,group_display_name,group_revision,created_at
+        ) VALUES('invitation-group-a','tenant-a','invitation-a','group-a','Operators',2,1);
         INSERT INTO tenant_settings_documents(
           tenant_id,scope_type,scope_id,category,document_json,version,revision,projection_state,
           updated_at,projected_at
@@ -774,6 +793,25 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
           )
           .get()
       ).toEqual({ admin_user_id: 'target-admin', scope_type: 'global' });
+      // The group comes back with its grant, and its member is mapped to the target admin, who
+      // holds the group's role through the view.
+      expect(
+        target.admin
+          .prepare("SELECT admin_user_id FROM admin_group_members WHERE id='member-a'")
+          .get()
+      ).toEqual({ admin_user_id: 'target-admin' });
+      expect(
+        target.admin
+          .prepare(
+            `SELECT admin_role_id,source,admin_group_id FROM admin_effective_role_assignments
+              WHERE admin_user_id='target-admin' AND source='group'`
+          )
+          .all()
+      ).toEqual([{ admin_role_id: 'role_ar_support', source: 'group', admin_group_id: 'group-a' }]);
+      // The invitation is held, and the group it names with it.
+      expect(
+        target.admin.prepare('SELECT count(*) total FROM admin_invitation_groups').get()
+      ).toEqual({ total: 0 });
       for (const database of Object.values(target))
         expect(database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     } finally {

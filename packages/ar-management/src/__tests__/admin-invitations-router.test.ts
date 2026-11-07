@@ -124,6 +124,8 @@ describe('adminInvitationsRouter', () => {
       is_system: false,
     });
     adapter.queryOne.mockResolvedValue(null);
+    // No admin groups named by default
+    adapter.query.mockResolvedValue([]);
     adapter.execute.mockResolvedValue({ rowsAffected: 1 });
     adapter.batch.mockResolvedValue([{ rowsAffected: 1 }, { rowsAffected: 0 }]);
     notifier.send.mockResolvedValue({ success: true });

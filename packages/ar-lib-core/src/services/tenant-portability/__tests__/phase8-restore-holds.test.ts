@@ -59,13 +59,17 @@ describe('Phase 8 restored work holds', () => {
   });
 
   it('keeps a finite reviewed rule registry and rejects malformed discriminator fields', () => {
-    expect(Object.keys(PHASE8_RESTORE_HOLD_RULES)).toHaveLength(48);
+    expect(Object.keys(PHASE8_RESTORE_HOLD_RULES)).toHaveLength(49);
     expect(
       phase8RestoreHoldReason(
         'core.account_lifecycle_event_outbox',
         JSON.stringify({ id: text('row-a') })
       )
     ).toBe('source_outbox');
+    // The groups a held invitation names are held with it (their parent is never restored).
+    expect(
+      phase8RestoreHoldReason('admin.admin_invitation_groups', JSON.stringify({ id: text('ig') }))
+    ).toBe('source_invitation');
     expect(() =>
       phase8RestoreHoldReason('core.plugin_hook_outbox', JSON.stringify({ id: text('row-a') }))
     ).toThrow('backup_phase8_restore_hold_invalid');
