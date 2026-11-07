@@ -536,7 +536,9 @@ const ja = {
 	lite_socialStarted:
 		'このページから外部アカウントでのログインを始めました。別の方法でログインするには、最初からやり直してください。',
 	lite_passkeyFailed:
-		'パスキーでのログインを完了できませんでした。もう一度試すか、別の方法でログインしてください。'
+		'パスキーでのログインを完了できませんでした。もう一度試すか、別の方法でログインしてください。',
+	lite_provisioningWait: 'アカウントを準備しています。少し待ってから「続ける」を選んでください。',
+	lite_provisioningFailed: 'アカウントを準備できませんでした。最初からやり直してください。'
 } satisfies Translation;
 
 export default ja;
