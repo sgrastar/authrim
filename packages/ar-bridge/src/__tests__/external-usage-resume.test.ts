@@ -201,8 +201,12 @@ describe("external provisioning resume: the tenant's sign-in and sign-up switche
   });
 
   it.each([
-    ['sign-in', { loginEnabled: false }, 'access_denied'],
     ['sign-up', { signupEnabled: false }, 'external_signup_disabled'],
+    [
+      'sign-in and sign-up',
+      { loginEnabled: false, signupEnabled: false },
+      'external_signup_disabled',
+    ],
   ])(
     'activates nothing and makes no code when the tenant turned %s off since',
     async (_label, fields, error) => {
@@ -240,6 +244,15 @@ describe("external provisioning resume: the tenant's sign-in and sign-up switche
   it('finishes the account of a sign-in begun at a lite start', async () => {
     lite.mode = 'always';
     const { response } = await resume({ flowId: 'lite:flow-a' });
+    expect(new URL(response.headers.get('location') ?? '').searchParams.get('code')).toBeTruthy();
+    expect(mocks.completeJit).toHaveBeenCalledOnce();
+  });
+
+  it('finishes the account with a provider for sign-up only: finishing it is its creation', async () => {
+    const { response } = await resume({
+      usage: entry({ loginEnabled: false, signupEnabled: true }),
+    });
+
     expect(new URL(response.headers.get('location') ?? '').searchParams.get('code')).toBeTruthy();
     expect(mocks.completeJit).toHaveBeenCalledOnce();
   });
@@ -291,6 +304,8 @@ describe("external provisioning resume: the tenant's sign-in and sign-up switche
     expect(handoff?.metadata).toMatchObject({
       aud: 'handoff',
       external_provider_usage_key: { providerId: 'provider-a', ids: ['provider-a', 'corp'] },
+      // The sign-in created the account: redeeming it takes the sign-up switch too.
+      external_provider_usage: 'signup',
     });
   });
 

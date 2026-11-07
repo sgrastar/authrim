@@ -1482,6 +1482,131 @@ describe('Identity Stitching Service', () => {
         ).resolves.toMatchObject({ userId: 'existing-user-789', isNewUser: false });
       });
 
+      describe('sign-in switch for an existing account (a sign-up start that finds one too)', () => {
+        const loginOff = [
+          {
+            id: 'provider-123',
+            providerId: 'provider-123',
+            loginEnabled: false,
+            signupEnabled: true,
+          },
+        ];
+        const existingLink = () => {
+          vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce({
+            id: 'existing-linked-id',
+            userId: 'existing-user-789',
+            tenantId: 'default',
+            providerId: 'provider-123',
+            providerUserId: 'google-user-123',
+            emailVerified: true,
+            linkedAt: Date.now() - 86400000,
+            updatedAt: Date.now() - 86400000,
+          });
+        };
+
+        it('does not sign in to an existing linked identity, writing nothing', async () => {
+          const env = usageEnv(loginOff);
+          mockResolveAccountContext.mockResolvedValue({
+            tenantId: 'default',
+            accountId: 'account:existing-user-789',
+            legacyUserId: 'existing-user-789',
+            coreDb: env.DB,
+            piiDb: env.DB_PII,
+          });
+          existingLink();
+
+          await expect(
+            handleIdentity(env as never, {
+              provider: mockProvider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+            })
+          ).rejects.toMatchObject({ code: 'access_denied' });
+
+          expect(linkedIdentityStore.updateLinkedIdentity).not.toHaveBeenCalled();
+          expectNothingCreated();
+        });
+
+        it('does not link an email match, writing nothing', async () => {
+          const env = usageEnv(loginOff);
+          mockResolveAccountContext
+            .mockRejectedValueOnce(new Error('account_data_route_not_found'))
+            .mockResolvedValueOnce({
+              tenantId: 'default',
+              accountId: 'account:existing-user-by-email',
+              legacyUserId: 'existing-user-by-email',
+              coreDb: env.DB,
+              piiDb: env.DB_PII,
+            });
+          vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+          mockPiiQueryOne.mockResolvedValueOnce({
+            id: 'existing-user-by-email',
+            email: 'test@example.com',
+          });
+          mockCoreQueryOne.mockResolvedValueOnce({
+            id: 'existing-user-by-email',
+            email_verified: 1,
+          });
+
+          await expect(
+            handleIdentity(env as never, {
+              provider: mockProvider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+            })
+          ).rejects.toMatchObject({ code: 'access_denied' });
+
+          expectNothingCreated();
+        });
+
+        it('leaves a re-authentication to its own switch', async () => {
+          const env = usageEnv(loginOff);
+          mockResolveAccountContext.mockResolvedValue({
+            tenantId: 'default',
+            accountId: 'account:existing-user-789',
+            legacyUserId: 'existing-user-789',
+            coreDb: env.DB,
+            piiDb: env.DB_PII,
+          });
+          existingLink();
+
+          await expect(
+            handleIdentity(env as never, {
+              provider: mockProvider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+              reauthentication: true,
+            })
+          ).resolves.toMatchObject({ userId: 'existing-user-789', isNewUser: false });
+        });
+
+        it('answers temporarily unavailable, writing nothing, when the switches cannot be read', async () => {
+          const env = usageEnv('unreadable');
+          mockResolveAccountContext.mockResolvedValue({
+            tenantId: 'default',
+            accountId: 'account:existing-user-789',
+            legacyUserId: 'existing-user-789',
+            coreDb: env.DB,
+            piiDb: env.DB_PII,
+          });
+          existingLink();
+
+          await expect(
+            handleIdentity(env as never, {
+              provider: mockProvider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+            })
+          ).rejects.toMatchObject({ code: 'temporarily_unavailable' });
+
+          expect(linkedIdentityStore.updateLinkedIdentity).not.toHaveBeenCalled();
+        });
+      });
+
       it('does not finish a provisioning an earlier sign-in left pending once sign-up is off', async () => {
         const env = usageEnv(signupOff);
         mockResolveAccountContext.mockResolvedValue({

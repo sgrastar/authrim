@@ -310,6 +310,8 @@ async function createHandoffSession(
       origin?: string;
       /** The external provider that signed the user in, where the artifact comes from a sign-in. */
       external_provider_usage_key?: unknown;
+      /** `signup` where that sign-in created the account; otherwise it signed in to one. */
+      external_provider_usage?: unknown;
     };
   };
 
@@ -397,7 +399,8 @@ async function createHandoffSession(
 
   // 5b. An artifact from an external provider's sign-in is honoured only while the tenant still
   // lets that provider sign people in (it may have been turned off since the sign-in), before any
-  // session is made.
+  // session is made. One from a sign-in that created the account (a sign-up: the artifact says so,
+  // as the server wrote it) is honoured while the tenant lets the provider sign people up or in.
   const usageKey = parseExternalProviderUsageKey(handoffData.metadata?.external_provider_usage_key);
   if (usageKey === 'invalid') {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
@@ -405,8 +408,10 @@ async function createHandoffSession(
   if (usageKey) {
     let loginEnabled: boolean;
     try {
-      loginEnabled = (await readExternalProviderUsagePolicy(c.env, tenantId, usageKey))
-        .loginEnabled;
+      const policy = await readExternalProviderUsagePolicy(c.env, tenantId, usageKey);
+      loginEnabled =
+        policy.loginEnabled ||
+        (handoffData.metadata?.external_provider_usage === 'signup' && policy.signupEnabled);
     } catch (error) {
       log.error('External provider usage settings are unavailable', {}, error as Error);
       c.header('Retry-After', '1');

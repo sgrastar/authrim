@@ -1260,6 +1260,49 @@ describe('LoginUI external IdP adapter boundary', () => {
 		expect(result).not.toHaveProperty('codeVerifier');
 	});
 
+	it('names a sign-up start for an OAuth and a SAML start, and nothing for a sign-in', async () => {
+		const { externalIdpAPI } = await loadClient();
+
+		const oauth = new URL(
+			(
+				await externalIdpAPI.startLogin(
+					'github',
+					'https://login.example.com/callback',
+					undefined,
+					'oauth_redirect',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					'signup'
+				)
+			).url
+		);
+		const saml = new URL(
+			(
+				await externalIdpAPI.startLogin(
+					'corp',
+					'https://login.example.com/',
+					'/saml/sp/login?idp=corp',
+					'saml_sp',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					'signup'
+				)
+			).url
+		);
+		const plain = new URL(
+			(await externalIdpAPI.startLogin('github', 'https://login.example.com/callback')).url
+		);
+
+		expect(oauth.searchParams.get('purpose')).toBe('signup');
+		expect(saml.searchParams.get('purpose')).toBe('signup');
+		expect(saml.searchParams.get('idp')).toBe('corp');
+		expect(plain.searchParams.has('purpose')).toBe(false);
+	});
+
 	it('carries an invitation to an OAuth start and to a SAML start', async () => {
 		const { externalIdpAPI } = await loadClient();
 

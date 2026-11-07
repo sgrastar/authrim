@@ -41,7 +41,11 @@ import {
   liteExternalCallbackUrl,
   liteExternalFlowId,
 } from '../services/lite-start';
-import { assertExternalProviderUsageAllowed } from '../services/external-usage-gate';
+import {
+  assertExternalProviderUsageAllowed,
+  externalStartPurpose,
+  type ExternalProviderUsage,
+} from '../services/external-usage-gate';
 import { ExternalIdPError, ExternalIdPErrorCode } from '../types';
 import { accountPageLinkResultUrl, consumeLinkIntent } from '../services/link-intent';
 import {
@@ -95,12 +99,16 @@ function remoteIp(c: Context<{ Bindings: Env }>): string | undefined {
 
 async function verifyExternalStartHumanVerification(
   c: Context<{ Bindings: Env }>,
-  tenantId: string
+  tenantId: string,
+  usage: ExternalProviderUsage
 ): Promise<Response | null> {
   try {
     const result = await verifyHumanVerificationWithRunner(c.env, {
       tenantId,
-      action: 'login',
+      // The screen the start was asked from: its token was made for it. A sign-up that finds the
+      // account signs in to it, so the sign-in's requirement holds for it too.
+      action: usage,
+      ...(usage === 'signup' ? { alsoRequiredFor: ['login'] as const } : {}),
       responseToken:
         c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
       remoteIp: remoteIp(c),
@@ -130,6 +138,7 @@ async function verifyExternalStartHumanVerification(
  * - max_age: Optional maximum authentication age in seconds (OIDC)
  * - acr_values: Optional authentication context class reference values (OIDC)
  * - handoff: "true" to enable Session Token Handoff SSO (page-level navigation)
+ * - purpose: "signup" when started from the sign-up screen (anything else is a sign-in)
  */
 export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('START');
@@ -248,10 +257,24 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     }
     // Linking never answers silently or for a client; a re-authentication always asks again.
     const prompt = link ? undefined : reauth ? 'login' : query('prompt');
+    // What the sign-in is for: a lite start's is its transaction's (server-bound), any other's
+    // the one its screen asked for. A link, a re-authentication and a silent sign-in create no
+    // account. It selects only the switch checked here: the callback checks what the sign-in
+    // turns out to do (sign in to an existing account, create one) against that use's own switch.
+    const requestedPurpose = lite
+      ? externalStartPurpose(lite.txn.bound.purpose)
+      : externalStartPurpose(query('purpose'));
+    const usage: ExternalProviderUsage =
+      requestedPurpose === 'signup' &&
+      !link &&
+      !reauth &&
+      !(prompt ?? '').split(' ').includes('none')
+        ? 'signup'
+        : 'login';
 
     // A lite start's proof of work was verified (and spent) when its grant was made.
     if (!link && !lite) {
-      const turnstileError = await verifyExternalStartHumanVerification(c, tenantId);
+      const turnstileError = await verifyExternalStartHumanVerification(c, tenantId, usage);
       if (turnstileError) return turnstileError;
     }
 
@@ -376,11 +399,12 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       }
     }
 
-    // 2. A sign-in (including a silent one) uses only a provider the tenant lets sign people in;
-    // the login screen merely hides the others. A link and a re-authentication have their own switches.
+    // 2. A sign-in (including a silent one) uses only a provider the tenant lets sign people in,
+    // a sign-up only one it lets sign people up; the screens merely hide the others. A link and a
+    // re-authentication have their own switches.
     if (!link && !reauth) {
       try {
-        await assertExternalProviderUsageAllowed(c.env, tenantIdResolved, provider, 'login');
+        await assertExternalProviderUsageAllowed(c.env, tenantIdResolved, provider, usage);
       } catch (error) {
         if (!(error instanceof ExternalIdPError)) throw error;
         if (error.code === ExternalIdPErrorCode.SETTINGS_UNAVAILABLE) {
@@ -399,7 +423,10 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         return c.json(
           {
             error: 'access_denied',
-            error_description: 'This provider cannot be used to sign in',
+            error_description:
+              usage === 'signup'
+                ? 'This provider cannot be used to sign up'
+                : 'This provider cannot be used to sign in',
           },
           403
         );

@@ -62,14 +62,27 @@ function remoteIp(c: Context<{ Bindings: Env }>): string | undefined {
   );
 }
 
+/**
+ * What a SAML start is for, as the start was asked: `signup` only when asked for exactly that,
+ * anything else a sign-in. It decides only which switch the start checks: the ACS checks what the
+ * sign-in then does (sign in to an existing account, create one) against that use's own switch.
+ */
+export function samlStartPurpose(value: unknown): 'login' | 'signup' {
+  return value === 'signup' ? 'signup' : 'login';
+}
+
 async function verifySPLoginHumanVerification(
   c: Context<{ Bindings: Env }>,
-  tenantId: string
+  tenantId: string,
+  usage: 'login' | 'signup'
 ): Promise<Response | null> {
   try {
     const result = await verifyHumanVerificationWithRunner(c.env, {
       tenantId,
-      action: 'login',
+      // The screen the start was asked from: its token was made for it. A sign-up that finds the
+      // account signs in to it, so the sign-in's requirement holds for it too.
+      action: usage,
+      ...(usage === 'signup' ? { alsoRequiredFor: ['login'] as const } : {}),
       responseToken:
         c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
       remoteIp: remoteIp(c),
@@ -104,9 +117,13 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     const lite = await consumeLiteSamlStart(c, tenantId, idpId);
     if (lite && !lite.ok) return lite.response;
     const query = (name: string): string | undefined => (lite ? undefined : c.req.query(name));
+    // What the sign-in is for: a lite start's is its transaction's (server-bound), any other's
+    // the one its screen asked for (its human verification token was made for that screen). A
+    // re-authentication keeps its own switch, whatever it was asked for.
+    const requestedPurpose = samlStartPurpose(lite ? lite.txn.bound.purpose : query('purpose'));
     // A lite start's proof of work was verified (and spent) when its grant was made.
     if (!lite) {
-      const turnstileError = await verifySPLoginHumanVerification(c, tenantId);
+      const turnstileError = await verifySPLoginHumanVerification(c, tenantId, requestedPurpose);
       if (turnstileError) return turnstileError;
     }
     const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);
@@ -129,7 +146,8 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
           returnUrl,
           query('authorization_challenge_id') || undefined,
           query('invite_token'),
-          query('runtime_interaction_id')
+          query('runtime_interaction_id'),
+          requestedPurpose
         )
       );
     }
@@ -187,17 +205,17 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       }
     }
 
-    // A sign-in starts only with an IdP the tenant lets sign people in (the login screen merely
-    // hides the others). A re-authentication has its own switch, checked above.
+    // A sign-in starts only with an IdP the tenant lets sign people in, a sign-up only with one
+    // it lets sign people up (the screens merely hide the others). A re-authentication has its own
+    // switch, checked above.
     if (!reauthentication) {
-      let loginEnabled: boolean;
+      let usageEnabled: boolean;
       try {
-        loginEnabled = (
-          await readExternalProviderUsagePolicy(env, tenantId, {
-            providerId: idpId,
-            ids: [`saml:${idpId}`, idpId],
-          })
-        ).loginEnabled;
+        const policy = await readExternalProviderUsagePolicy(env, tenantId, {
+          providerId: idpId,
+          ids: [`saml:${idpId}`, idpId],
+        });
+        usageEnabled = requestedPurpose === 'signup' ? policy.signupEnabled : policy.loginEnabled;
       } catch (error) {
         log.warn(
           'SAML IdP usage settings could not be read; refusing the sign-in',
@@ -206,7 +224,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
         );
         return samlUsageUnavailableResponse(c);
       }
-      if (!loginEnabled) return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
+      if (!usageEnabled) return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
     }
 
     // Generate AuthnRequest
@@ -473,17 +491,19 @@ function buildIdPSelectionPage(
   returnUrl: string,
   authorizationChallengeId?: string,
   inviteToken?: string,
-  runtimeInteractionId?: string
+  runtimeInteractionId?: string,
+  purpose: 'login' | 'signup' = 'login'
 ): string {
-  // A choice answering an authorization challenge (a re-authentication) keeps answering it, and
-  // a sign-in started from an invitation keeps its invitation.
+  // A choice answering an authorization challenge (a re-authentication) keeps answering it, a
+  // sign-in started from an invitation keeps its invitation, and a sign-up stays one.
   const challenge =
     (authorizationChallengeId
       ? `&authorization_challenge_id=${encodeURIComponent(authorizationChallengeId)}`
       : '') +
     (isUsableInvitationToken(inviteToken)
       ? `&invite_token=${encodeURIComponent(inviteToken)}`
-      : '');
+      : '') +
+    (purpose === 'signup' ? '&purpose=signup' : '');
   // This is only an opaque navigation hint. The selected provider start checks its tenant,
   // live state and expiry before storing it with the AuthnRequest.
   const interactionId = runtimeInteractionId?.trim();

@@ -2041,7 +2041,12 @@ export const externalIdpAPI = {
 		/** The invitation a sign-up started from; applied only to an account the sign-in creates. */
 		inviteToken?: string,
 		/** The Flow interaction this sign-in belongs to (the server checks it), when a Flow runs. */
-		runtimeInteractionId?: string
+		runtimeInteractionId?: string,
+		/**
+		 * What the start is for: `signup` from the sign-up screen, whose providers are the ones the
+		 * tenant lets sign people up (the start checks that switch instead of the sign-in one).
+		 */
+		purpose: 'login' | 'signup' = 'login'
 	): Promise<{
 		url: string;
 	}> {
@@ -2059,6 +2064,9 @@ export const externalIdpAPI = {
 		}
 		if (runtimeInteractionId) {
 			targetUrl.searchParams.set('runtime_interaction_id', runtimeInteractionId);
+		}
+		if (purpose === 'signup') {
+			targetUrl.searchParams.set('purpose', 'signup');
 		}
 
 		if (startMode === 'saml_sp') {
