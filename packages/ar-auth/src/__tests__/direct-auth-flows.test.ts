@@ -6416,4 +6416,393 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.challengeStore.getChallengeRpc).toHaveBeenCalledTimes(2);
     expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
   });
+
+  describe('a code sent again within an email-code sign-up', () => {
+    // A challenge store that keeps what is stored, so a sign-up's first send, its resend and the
+    // check of the resent code run against the same records.
+    let records: Map<string, Record<string, unknown>>;
+    const profile = { 'field.custom.department': 'Research' };
+
+    beforeEach(() => {
+      records = new Map();
+      for (const id of ['challenge_mine', 'challenge_other']) {
+        records.set(id, {
+          id,
+          tenantId: 'tenant_test',
+          type: 'login',
+          challenge: id,
+          expiresAt: Date.now() + 600_000,
+        });
+      }
+      mocks.challengeStore.storeChallengeRpc.mockImplementation(
+        async (request: Record<string, unknown> & { id: string; ttl: number }) => {
+          records.set(request.id, {
+            ...request,
+            expiresAt: Date.now() + request.ttl * 1000,
+            consumed: false,
+          });
+          return { success: true };
+        }
+      );
+      mocks.challengeStore.getChallengeRpc.mockImplementation(
+        async (id: string) => records.get(id) ?? null
+      );
+      mocks.challengeStore.consumeChallengeRpc.mockImplementation(
+        async (request: { id: string; type?: string }) => {
+          const record = records.get(request.id);
+          if (!record || record.type !== request.type) throw new Error('Challenge not found');
+          records.delete(request.id);
+          return record;
+        }
+      );
+      mocks.challengeStore.deleteChallengeRpc.mockImplementation(async (id: string) => {
+        records.delete(id);
+      });
+      mocks.validateRegistrationFieldSubmissionFromEnv.mockResolvedValue({
+        ok: true,
+        values: profile,
+      });
+    });
+
+    function send(
+      body: Record<string, unknown>,
+      overrides: Record<string, boolean | string> = {},
+      headers: Record<string, string> = {}
+    ): Promise<Response> {
+      return import('../direct-auth').then(({ directEmailCodeSendHandler }) =>
+        directEmailCodeSendHandler(
+          enableEmailOtp(
+            createContext(
+              {
+                client_id: 'web-client',
+                email: 'new@example.com',
+                code_challenge_method: 'S256',
+                channel: 'browser',
+                authorization_challenge_id: 'challenge_mine',
+                ...body,
+              },
+              { ...webHeaders(), ...headers }
+            ),
+            {},
+            overrides
+          ) as never
+        )
+      );
+    }
+
+    async function signUp(overrides: Record<string, boolean | string> = {}) {
+      const first = await send(
+        {
+          code_challenge: await s256Challenge('first-verifier'),
+          display_name: 'New Person',
+          custom_fields: profile,
+        },
+        overrides
+      );
+      expect(first.status).toBe(200);
+      expect(mocks.userCore.createUser).toHaveBeenCalledTimes(1);
+      // From now on the address has the (not yet verified) account its sign-up created.
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_new',
+        email: 'new@example.com',
+      });
+      mocks.userCore.findById.mockResolvedValue({
+        id: 'user_new',
+        is_active: true,
+        email_verified: false,
+        created_at: Date.now(),
+      });
+    }
+
+    function storedCodes() {
+      return [...records.values()].filter(
+        (record) => record.type === 'direct_email_code'
+      ) as Array<{
+        id: string;
+        userId: string;
+        metadata: Record<string, unknown>;
+      }>;
+    }
+
+    it('sends the resend of a sign-up where email code may sign up but not sign in', async () => {
+      const loginOff = { 'authentication-methods.email_otp.login_enabled': false };
+      await signUp(loginOff);
+      mocks.emailNotifier.send.mockClear();
+
+      // As the Login UIs send it again: same address, client and challenge, a new PKCE.
+      const resent = await send(
+        { code_challenge: await s256Challenge('second-verifier') },
+        loginOff
+      );
+
+      expect(resent.status).toBe(200);
+      const codes = storedCodes();
+      expect(codes).toHaveLength(2);
+      expect(codes[1].userId).toBe('user_new');
+      expect(codes[1].metadata).toMatchObject({ usage: 'signup', custom_fields: profile });
+      expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
+      // Nothing is checked or created again for it.
+      expect(mocks.userCore.createUser).toHaveBeenCalledTimes(1);
+      expect(mocks.checkSignUpScreen).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives the account the sign-up profile when the resent code is the one verified', async () => {
+      await signUp();
+      const resent = await send({ code_challenge: await s256Challenge('second-verifier') });
+      const resentBody: { attempt_id: string } = await resent.json();
+      const attemptId = resentBody.attempt_id;
+      expect(records.has(`direct_email_code:${attemptId}`)).toBe(true);
+      const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+
+      const verified = await directEmailCodeVerifyHandler(
+        enableEmailOtp(
+          createContext({
+            attempt_id: attemptId,
+            code: '123456',
+            code_verifier: 'second-verifier',
+            channel: 'browser',
+          })
+        ) as never
+      );
+
+      expect(verified.status).toBe(200);
+      expect(mocks.persistRegistrationFieldValuesFromEnv).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant_test',
+        'user_new',
+        profile
+      );
+    });
+
+    it('takes the profile the sign-up checked, not one a resend brings', async () => {
+      await signUp();
+
+      await send({
+        code_challenge: await s256Challenge('second-verifier'),
+        custom_fields: { 'field.custom.department': 'Elsewhere' },
+      });
+
+      expect(storedCodes()[1].metadata).toMatchObject({ usage: 'signup', custom_fields: profile });
+      expect(mocks.validateRegistrationFieldSubmissionFromEnv).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['another authorization challenge', { authorization_challenge_id: 'challenge_other' }],
+      ['another client', { client_id: 'other-client' }],
+      ['another Flow interaction', { runtime_interaction_id: 'interaction_other' }],
+    ])(
+      'does not let a send from %s continue the sign-up',
+      async (_label, other: Record<string, unknown>) => {
+        mocks.getClient.mockResolvedValue({
+          client_id: other.client_id ?? 'web-client',
+          application_type: 'web',
+          allowed_redirect_origins: ['https://app.example.com'],
+        });
+        const loginOff = { 'authentication-methods.email_otp.login_enabled': false };
+        await signUp(loginOff);
+        mocks.emailNotifier.send.mockClear();
+
+        // Where email code may not sign in, a send that is not the sign-up's sends nothing.
+        const blocked = await send(
+          { code_challenge: await s256Challenge('intruder-verifier'), ...other },
+          loginOff
+        );
+        expect(blocked.status).toBe(200);
+        expect(storedCodes()).toHaveLength(1);
+        expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+
+        // Where it may, the send is a sign-in to the account, carrying nothing of the sign-up.
+        const signIn = await send({
+          code_challenge: await s256Challenge('intruder-verifier'),
+          ...other,
+        });
+        expect(signIn.status).toBe(200);
+        const codes = storedCodes();
+        expect(codes).toHaveLength(2);
+        expect(codes[1].metadata.usage).toBe('login');
+        expect(codes[1].metadata).not.toHaveProperty('custom_fields');
+      }
+    );
+
+    it('asks a resend for the human verification a code to an existing account needs', async () => {
+      // A tenant that asks login (not sign-up) for a token; the client names the sign-up screen.
+      const loginProof = {
+        'authentication-methods.human_verification.provider':
+          'human-verification-cloudflare-turnstile',
+        'authentication-methods.human_verification.login_enabled': true,
+      };
+      const signupScreen = { 'X-Authrim-Human-Verification-Action': 'signup' };
+      await send(
+        { code_challenge: await s256Challenge('first-verifier'), custom_fields: profile },
+        loginProof,
+        signupScreen
+      );
+      expect(mocks.verifyHumanVerificationForAction).toHaveBeenLastCalledWith(
+        expect.anything(),
+        'signup',
+        undefined,
+        []
+      );
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_new',
+        email: 'new@example.com',
+      });
+      mocks.userCore.findById.mockResolvedValue({
+        id: 'user_new',
+        is_active: true,
+        email_verified: false,
+        created_at: Date.now(),
+      });
+
+      // A token is asked for whenever the screen or any of the other uses asks for one.
+      mocks.verifyHumanVerificationForAction.mockImplementation(
+        async (
+          c: { env: { SETTINGS?: { get: (key: string) => Promise<string | null> } } },
+          action: string,
+          responseToken: unknown,
+          alsoRequiredFor: string[] = []
+        ) => {
+          const raw = await c.env.SETTINGS?.get(
+            'settings:tenant:tenant_test:authentication-methods'
+          );
+          const settings = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+          const required =
+            Boolean(settings['authentication-methods.human_verification.provider']) &&
+            [action, ...alsoRequiredFor].some(
+              (use) => settings[`authentication-methods.human_verification.${use}_enabled`] === true
+            );
+          if (!required || responseToken) return null;
+          return Response.json({ error: 'human_verification_required' }, { status: 400 });
+        }
+      );
+      mocks.emailNotifier.send.mockClear();
+
+      await send(
+        { code_challenge: await s256Challenge('second-verifier') },
+        loginProof,
+        signupScreen
+      );
+
+      // As before it was a sign-up: the screen's token, and the one a sign-in needs, so a resend
+      // without a token sends nothing.
+      expect(mocks.verifyHumanVerificationForAction).toHaveBeenLastCalledWith(
+        expect.anything(),
+        'signup',
+        undefined,
+        ['login']
+      );
+      expect(storedCodes()).toHaveLength(1);
+      expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+
+      // With one, it is sent, as the sign-up.
+      await send(
+        {
+          code_challenge: await s256Challenge('third-verifier'),
+          human_verification_response: 'token',
+        },
+        loginProof,
+        signupScreen
+      );
+      expect(storedCodes()).toHaveLength(2);
+      expect(storedCodes()[1].metadata.usage).toBe('signup');
+      expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('signs in once the account is verified, whoever sends', async () => {
+      await signUp();
+      mocks.userCore.findById.mockResolvedValue({
+        id: 'user_new',
+        is_active: true,
+        email_verified: true,
+        created_at: Date.now(),
+      });
+
+      await send({ code_challenge: await s256Challenge('later-verifier') });
+
+      const codes = storedCodes();
+      expect(codes[1].metadata.usage).toBe('login');
+      expect(codes[1].metadata).not.toHaveProperty('custom_fields');
+    });
+
+    it('signs in for a sign-up made with neither a challenge nor a Flow interaction', async () => {
+      await send({
+        code_challenge: await s256Challenge('first-verifier'),
+        authorization_challenge_id: undefined,
+        custom_fields: profile,
+      });
+      expect([...records.keys()].some((id) => id.startsWith('direct_email_signup:'))).toBe(false);
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_new',
+        email: 'new@example.com',
+      });
+
+      await send({
+        code_challenge: await s256Challenge('second-verifier'),
+        authorization_challenge_id: undefined,
+      });
+
+      expect(storedCodes()[1].metadata.usage).toBe('login');
+    });
+
+    it('records the checked profile of a resumed sign-up for its resend', async () => {
+      const tenantExclusive = (context: ReturnType<typeof createContext>) => {
+        context.get = vi.fn((key: string) => {
+          if (key === 'tenantId') return 'tenant_test';
+          if (key === 'tenantMetadataContext') {
+            return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
+          }
+          return undefined;
+        }) as never;
+        return context;
+      };
+      const sendExclusive = async (body: Record<string, unknown>) => {
+        const { directEmailCodeSendHandler } = await import('../direct-auth');
+        return directEmailCodeSendHandler(
+          tenantExclusive(
+            enableEmailOtp(
+              createContext(
+                {
+                  client_id: 'web-client',
+                  email: 'user@example.com',
+                  code_challenge: await s256Challenge('first-verifier'),
+                  code_challenge_method: 'S256',
+                  channel: 'browser',
+                  authorization_challenge_id: 'challenge_mine',
+                  ...body,
+                },
+                webHeaders()
+              )
+            )
+          ) as never
+        );
+      };
+      mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
+      mocks.provisionTenantD1EmailAccount.mockResolvedValueOnce({
+        status: 'pending',
+        response: Response.json({ status: 'provisioning' }, { status: 202 }),
+      });
+      const sent = { 'field.custom.department': 'as typed' };
+
+      // The first send stops while the account is provisioned; nothing is kept for its resend yet.
+      expect((await sendExclusive({ custom_fields: sent })).status).toBe(202);
+      expect([...records.keys()].some((id) => id.startsWith('direct_email_signup:'))).toBe(false);
+
+      // The same send again, once the account exists, with its attributes, checked again.
+      const resumed = await sendExclusive({ custom_fields: sent });
+      expect(resumed.status).toBe(200);
+      expect(mocks.validateRegistrationFieldSubmissionFromEnv).toHaveBeenCalledTimes(2);
+      expect(storedCodes()).toHaveLength(1);
+      expect(storedCodes()[0].metadata).toMatchObject({ usage: 'signup', custom_fields: profile });
+
+      // Its resend is the sign-up still, with the profile that check gave (not what it sends).
+      await sendExclusive({
+        code_challenge: await s256Challenge('second-verifier'),
+        custom_fields: { 'field.custom.department': 'Elsewhere' },
+      });
+      expect(mocks.validateRegistrationFieldSubmissionFromEnv).toHaveBeenCalledTimes(2);
+      expect(storedCodes()[1].metadata).toMatchObject({ usage: 'signup', custom_fields: profile });
+    });
+  });
 });
