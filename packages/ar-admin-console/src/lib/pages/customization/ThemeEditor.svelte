@@ -6,6 +6,7 @@
 	import ThemeLayout from './ThemeLayout.svelte';
 	import ThemeDesign from './ThemeDesign.svelte';
 	import ThemeImages from './ThemeImages.svelte';
+	import { apiBgPresets, type BgPresetSource } from './bg-presets';
 	import ThemePreview from './ThemePreview.svelte';
 	import { newThemeDraft, type ThemeDraft } from './theme-draft';
 	import { THEME_SECTIONS, type PreviewScreen } from './theme-sections';
@@ -21,9 +22,11 @@
 	 */
 	interface Props {
 		draft?: ThemeDraft;
+		/** Where the background presets come from (the Admin API unless given). */
+		presets?: BgPresetSource;
 	}
 
-	let { draft = $bindable(newThemeDraft()) }: Props = $props();
+	let { draft = $bindable(newThemeDraft()), presets = apiBgPresets }: Props = $props();
 	let section = $state<string>(THEME_SECTIONS[0].id);
 	let screen = $state<PreviewScreen>('signIn');
 	let mode = $state<'light' | 'dark'>('light');
@@ -48,7 +51,7 @@
 						{:else if id === 'content'}
 							<ThemeContent bind:draft />
 						{:else}
-							<ThemeImages bind:draft />
+							<ThemeImages bind:draft {presets} />
 						{/if}
 					</div>
 				{/snippet}

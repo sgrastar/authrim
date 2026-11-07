@@ -39,7 +39,8 @@ import {
 } from '#lib/server/lite/txn-client.js';
 
 const KEY = /^[A-Za-z0-9_-]{1,128}$/u;
-const HANDOFF = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+/** A handoff token: ar-bridge's (a UUID) or ar-saml's (32 random bytes in hex). */
+const HANDOFF = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64})$/u;
 const PROVISIONING_RESUME_PATH = '/auth/external/provisioning/resume';
 /** The errors ar-bridge returns that have their own message (the SPA callback's list). */
 const KNOWN_ERRORS = new Set([
@@ -249,7 +250,7 @@ export const load: PageServerLoad = async (event) => {
 		return failurePage(event, back, 'temporarily_unavailable', cleared ? again : null);
 	}
 
-	const handoffToken = queryValue(event, 'handoff_token', 64);
+	const handoffToken = queryValue(event, 'handoff_token', 128);
 	const handoffState = queryValue(event, 'state', 512);
 	if (!handoffToken || !HANDOFF.test(handoffToken) || !handoffState) {
 		const cleared = social.handoff === null && (await clearSocial(txns, txn));

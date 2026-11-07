@@ -103,9 +103,11 @@ export interface LoginUISettings {
   // Appearance
   'login-ui.background_image_url': string;
   'login-ui.background_image_opacity': number;
+  'login-ui.background_image_grayscale': boolean;
   'login-ui.login_panel_background_image_url': string;
   'login-ui.brand_panel_image_url': string;
   'login-ui.brand_panel_image_opacity': number;
+  'login-ui.brand_panel_image_grayscale': boolean;
   'login-ui.custom_css': string;
   'login-ui.header_enabled': boolean;
   'login-ui.subtitle_enabled': boolean;
@@ -126,6 +128,7 @@ export interface LoginUISettings {
   'login-ui.login_panel_background_color': string;
   'login-ui.login_panel_background_gradient_color': string;
   'login-ui.login_panel_background_opacity': number;
+  'login-ui.login_panel_background_grayscale': boolean;
   'login-ui.brand_content_mode': string;
   'login-ui.brand_position': string;
   'login-ui.brand_align': string;
@@ -502,6 +505,15 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     unit: 'percent',
     visibility: 'public',
   },
+  'login-ui.background_image_grayscale': {
+    key: 'login-ui.background_image_grayscale',
+    type: 'boolean',
+    default: false,
+    envKey: 'LOGIN_UI_BACKGROUND_IMAGE_GRAYSCALE',
+    label: 'Background Image Grayscale',
+    description: 'Show the page background image in grayscale',
+    visibility: 'public',
+  },
   'login-ui.brand_panel_image_url': {
     key: 'login-ui.brand_panel_image_url',
     type: 'string',
@@ -521,6 +533,15 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     min: 0,
     max: 100,
     unit: 'percent',
+    visibility: 'public',
+  },
+  'login-ui.brand_panel_image_grayscale': {
+    key: 'login-ui.brand_panel_image_grayscale',
+    type: 'boolean',
+    default: false,
+    envKey: 'LOGIN_UI_BRAND_PANEL_IMAGE_GRAYSCALE',
+    label: 'Brand Panel Image Grayscale',
+    description: 'Show the brand panel picture in grayscale',
     visibility: 'public',
   },
   'login-ui.login_panel_background_image_url': {
@@ -745,6 +766,15 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     min: 0,
     max: 100,
     unit: 'percent',
+    visibility: 'public',
+  },
+  'login-ui.login_panel_background_grayscale': {
+    key: 'login-ui.login_panel_background_grayscale',
+    type: 'boolean',
+    default: false,
+    envKey: 'LOGIN_UI_LOGIN_PANEL_BACKGROUND_GRAYSCALE',
+    label: 'Login Panel Image Grayscale',
+    description: 'Show the independent login panel image in grayscale',
     visibility: 'public',
   },
   'login-ui.brand_content_mode': {
@@ -980,9 +1010,11 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.show_english_language_names': false,
   'login-ui.background_image_url': '',
   'login-ui.background_image_opacity': 100,
+  'login-ui.background_image_grayscale': false,
   'login-ui.login_panel_background_image_url': '',
   'login-ui.brand_panel_image_url': '',
   'login-ui.brand_panel_image_opacity': 100,
+  'login-ui.brand_panel_image_grayscale': false,
   'login-ui.custom_css': '',
   'login-ui.header_enabled': true,
   'login-ui.subtitle_enabled': true,
@@ -1003,6 +1035,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.login_panel_background_color': '',
   'login-ui.login_panel_background_gradient_color': '',
   'login-ui.login_panel_background_opacity': 70,
+  'login-ui.login_panel_background_grayscale': false,
   'login-ui.brand_content_mode': 'logo_copy',
   'login-ui.brand_position': 'center',
   'login-ui.brand_align': 'left',
@@ -1051,10 +1084,13 @@ export const LOGIN_UI_THEME_KEYS = [
   'login-ui.brand_panel_text',
   'login-ui.background_image_url',
   'login-ui.background_image_opacity',
+  'login-ui.background_image_grayscale',
   'login-ui.login_panel_background_image_url',
   'login-ui.login_panel_background_opacity',
+  'login-ui.login_panel_background_grayscale',
   'login-ui.brand_panel_image_url',
   'login-ui.brand_panel_image_opacity',
+  'login-ui.brand_panel_image_grayscale',
   'login-ui.custom_css',
   'login-ui.header_enabled',
   'login-ui.subtitle_enabled',

@@ -34,6 +34,7 @@ import type {
   LoginUITextLocalizations,
 } from '@authrim/ar-lib-core';
 import {
+  isLoginUiPresetAssetPath,
   HUMAN_VERIFICATION_FLOWS,
   humanVerificationConfigValid,
   humanVerificationProviderAvailability,
@@ -282,6 +283,7 @@ interface UIConfig {
     loginPanelBackgroundColor: string;
     loginPanelBackgroundGradientColor: string;
     loginPanelBackgroundOpacity: number;
+    loginPanelBackgroundGrayscale: boolean;
     brandContentMode: 'logo_copy' | 'logo' | 'none';
     brandPosition: 'top' | 'center' | 'bottom';
     brandAlign: 'left' | 'center' | 'right';
@@ -291,9 +293,11 @@ interface UIConfig {
   appearance: {
     backgroundImageUrl: string | null;
     backgroundImageOpacity: number;
+    backgroundImageGrayscale: boolean;
     loginPanelBackgroundImageUrl: string | null;
     brandPanelImageUrl: string | null;
     brandPanelImageOpacity: number;
+    brandPanelImageGrayscale: boolean;
     thumbnailUrl: string | null;
     customCss: string | null;
     headerText: string | null;
@@ -475,6 +479,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     loginPanelBackgroundColor: '',
     loginPanelBackgroundGradientColor: '',
     loginPanelBackgroundOpacity: 70,
+    loginPanelBackgroundGrayscale: false,
     brandContentMode: 'logo_copy',
     brandPosition: 'center',
     brandAlign: 'left',
@@ -484,9 +489,11 @@ const DEFAULT_UI_CONFIG: UIConfig = {
   appearance: {
     backgroundImageUrl: null,
     backgroundImageOpacity: 100,
+    backgroundImageGrayscale: false,
     loginPanelBackgroundImageUrl: null,
     brandPanelImageUrl: null,
     brandPanelImageOpacity: 100,
+    brandPanelImageGrayscale: false,
     thumbnailUrl: null,
     customCss: null,
     headerText: null,
@@ -568,9 +575,11 @@ interface LoginUIKVSettings {
   'login-ui.show_english_language_names'?: boolean | string;
   'login-ui.background_image_url'?: string;
   'login-ui.background_image_opacity'?: number | string;
+  'login-ui.background_image_grayscale'?: boolean | string;
   'login-ui.login_panel_background_image_url'?: string;
   'login-ui.brand_panel_image_url'?: string;
   'login-ui.brand_panel_image_opacity'?: number | string;
+  'login-ui.brand_panel_image_grayscale'?: boolean | string;
   'login-ui.custom_css'?: string;
   'login-ui.header_enabled'?: boolean | string;
   'login-ui.subtitle_enabled'?: boolean | string;
@@ -591,6 +600,7 @@ interface LoginUIKVSettings {
   'login-ui.login_panel_background_color'?: string;
   'login-ui.login_panel_background_gradient_color'?: string;
   'login-ui.login_panel_background_opacity'?: number | string;
+  'login-ui.login_panel_background_grayscale'?: boolean | string;
   'login-ui.brand_content_mode'?: string;
   'login-ui.brand_position'?: string;
   'login-ui.brand_align'?: string;
@@ -695,9 +705,11 @@ interface LoginUIResolved {
   showEnglishLanguageNames: boolean;
   backgroundImageUrl: string | null;
   backgroundImageOpacity: number;
+  backgroundImageGrayscale: boolean;
   loginPanelBackgroundImageUrl: string | null;
   brandPanelImageUrl: string | null;
   brandPanelImageOpacity: number;
+  brandPanelImageGrayscale: boolean;
   customCss: string | null;
   headerEnabled: boolean;
   subtitleEnabled: boolean;
@@ -718,6 +730,7 @@ interface LoginUIResolved {
   loginPanelBackgroundColor: string;
   loginPanelBackgroundGradientColor: string;
   loginPanelBackgroundOpacity: number;
+  loginPanelBackgroundGrayscale: boolean;
   brandContentMode: UIConfig['pageTemplate']['brandContentMode'];
   brandPosition: UIConfig['pageTemplate']['brandPosition'];
   brandAlign: UIConfig['pageTemplate']['brandAlign'];
@@ -1291,6 +1304,10 @@ function resolveLoginUIFromKVSettings(
       0,
       100
     ),
+    backgroundImageGrayscale: readBoolean(
+      kvSettings['login-ui.background_image_grayscale'],
+      defaults.backgroundImageGrayscale
+    ),
     loginPanelBackgroundImageUrl: isValidLoginUIImageUrl(
       kvSettings['login-ui.login_panel_background_image_url']
     )
@@ -1304,6 +1321,10 @@ function resolveLoginUIFromKVSettings(
       defaults.brandPanelImageOpacity,
       0,
       100
+    ),
+    brandPanelImageGrayscale: readBoolean(
+      kvSettings['login-ui.brand_panel_image_grayscale'],
+      defaults.brandPanelImageGrayscale
     ),
     customCss: readCustomCss(kvSettings['login-ui.custom_css'], defaults.customCss),
     headerEnabled: readBoolean(kvSettings['login-ui.header_enabled'], defaults.headerEnabled),
@@ -1379,6 +1400,10 @@ function resolveLoginUIFromKVSettings(
       defaults.loginPanelBackgroundOpacity,
       0,
       100
+    ),
+    loginPanelBackgroundGrayscale: readBoolean(
+      kvSettings['login-ui.login_panel_background_grayscale'],
+      defaults.loginPanelBackgroundGrayscale
     ),
     brandContentMode: readEnum(
       kvSettings['login-ui.brand_content_mode'],
@@ -1481,9 +1506,11 @@ async function getLoginUISettings(
     showEnglishLanguageNames: DEFAULT_UI_CONFIG.showEnglishLanguageNames,
     backgroundImageUrl: DEFAULT_UI_CONFIG.appearance.backgroundImageUrl,
     backgroundImageOpacity: DEFAULT_UI_CONFIG.appearance.backgroundImageOpacity,
+    backgroundImageGrayscale: DEFAULT_UI_CONFIG.appearance.backgroundImageGrayscale,
     loginPanelBackgroundImageUrl: DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageUrl,
     brandPanelImageUrl: DEFAULT_UI_CONFIG.appearance.brandPanelImageUrl,
     brandPanelImageOpacity: DEFAULT_UI_CONFIG.appearance.brandPanelImageOpacity,
+    brandPanelImageGrayscale: DEFAULT_UI_CONFIG.appearance.brandPanelImageGrayscale,
     customCss: DEFAULT_UI_CONFIG.appearance.customCss,
     headerEnabled: DEFAULT_UI_CONFIG.pageTemplate.headerEnabled,
     subtitleEnabled: DEFAULT_UI_CONFIG.pageTemplate.subtitleEnabled,
@@ -1505,6 +1532,7 @@ async function getLoginUISettings(
     loginPanelBackgroundGradientColor:
       DEFAULT_UI_CONFIG.pageTemplate.loginPanelBackgroundGradientColor,
     loginPanelBackgroundOpacity: DEFAULT_UI_CONFIG.pageTemplate.loginPanelBackgroundOpacity,
+    loginPanelBackgroundGrayscale: DEFAULT_UI_CONFIG.pageTemplate.loginPanelBackgroundGrayscale,
     brandContentMode: DEFAULT_UI_CONFIG.pageTemplate.brandContentMode,
     brandPosition: DEFAULT_UI_CONFIG.pageTemplate.brandPosition,
     brandAlign: DEFAULT_UI_CONFIG.pageTemplate.brandAlign,
@@ -1565,6 +1593,7 @@ function isValidHttpsUrl(url: string | undefined): boolean {
 function isValidLoginUIImageUrl(url: string | undefined): boolean {
   if (!url || typeof url !== 'string') return false;
   if (url.length > MAX_URL_LENGTH) return false;
+  if (isLoginUiPresetAssetPath(url)) return true;
   if (url.startsWith('/api/assets/')) {
     return /^\/api\/assets\/[A-Za-z0-9_-]{1,128}\/login-ui\/(?:logo|background|panel-background|favicon|thumbnail)\/[A-Za-z0-9._-]+\.(?:gif|ico|jpe?g|png|webp)$/u.test(
       url
@@ -2452,6 +2481,7 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
       loginPanelBackgroundColor: loginUI.loginPanelBackgroundColor,
       loginPanelBackgroundGradientColor: loginUI.loginPanelBackgroundGradientColor,
       loginPanelBackgroundOpacity: loginUI.loginPanelBackgroundOpacity,
+      loginPanelBackgroundGrayscale: loginUI.loginPanelBackgroundGrayscale,
       brandContentMode: loginUI.brandContentMode,
       brandPosition: loginUI.brandPosition,
       brandAlign: loginUI.brandAlign,
@@ -2461,9 +2491,11 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
     appearance: {
       backgroundImageUrl: loginUI.backgroundImageUrl,
       backgroundImageOpacity: loginUI.backgroundImageOpacity,
+      backgroundImageGrayscale: loginUI.backgroundImageGrayscale,
       loginPanelBackgroundImageUrl: loginUI.loginPanelBackgroundImageUrl,
       brandPanelImageUrl: loginUI.brandPanelImageUrl,
       brandPanelImageOpacity: loginUI.brandPanelImageOpacity,
+      brandPanelImageGrayscale: loginUI.brandPanelImageGrayscale,
       thumbnailUrl: loginUI.thumbnailUrl,
       customCss: loginUI.customCss,
       headerText: loginUI.headerText,

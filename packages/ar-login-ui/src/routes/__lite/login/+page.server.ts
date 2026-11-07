@@ -221,7 +221,7 @@ export const load: PageServerLoad = async (event) => {
 	// transaction says has happened.
 	const methods = await liteTenantMethods(event);
 	let decision = liteLoginStepDecision(step, methods, locale);
-	// The providers of a social part (one offering a SAML provider stopped the page above).
+	// The providers of a social part.
 	const social = liteSocialProviders(methods, step);
 	// An external sign-in started from here and not finished: its callback may still come back;
 	// until then (or a Start again) nothing else is started over it.

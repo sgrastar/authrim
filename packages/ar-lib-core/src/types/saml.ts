@@ -890,6 +890,14 @@ export interface SAMLRequestContext {
    * interaction of the tenant: the ACS records the sign-in's failures with it.
    */
   attemptInteractionId?: string;
+  /**
+   * A sign-in begun at a lite Login UI start: the lite `/callback` of its transaction and grant
+   * (made by the start, never from a request). The ACS answers with a handoff to it, sends its
+   * failures there, and lets it create an account in a lite tenant.
+   */
+  liteReturn?: string;
+  /** For a lite sign-in: the Login UI's own client its handoff is finalized for (the grant's). */
+  liteClientId?: string;
   spReauthentication?: {
     authorizationChallengeId: string;
     requestedAt: number;

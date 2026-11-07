@@ -182,6 +182,33 @@ describe('SAMLRequestStore replay protection', () => {
   });
   afterEach(() => vi.useRealTimers());
 
+  it("consumes only a lite start's request when asked for one, leaving any other usable", async () => {
+    const store = new SAMLRequestStore(durableState(), {} as never);
+    const base = {
+      requestType: 'AuthnRequest',
+      issuer: 'https://sp.example',
+      destination: 'https://idp.example/sso',
+      relayState: 'relay',
+      createdAt: 0,
+      expiresAt: 0,
+      used: false,
+    };
+    await store.storeRequest({ ...base, requestId: 'plain' } as never);
+    await store.storeRequest({
+      ...base,
+      requestId: 'lite',
+      context: { liteReturn: 'https://id.example/callback?lite_txn=t&lite_grant=g' },
+    } as never);
+    await expect(store.consumeRequest('plain', { onlyLite: true })).resolves.toBeNull();
+    // Left as it is: its own response still consumes it.
+    await expect(store.consumeRequest('plain')).resolves.toMatchObject({ used: true });
+    await expect(store.consumeRequest('lite', { onlyLite: true })).resolves.toMatchObject({
+      used: true,
+      context: { liteReturn: 'https://id.example/callback?lite_txn=t&lite_grant=g' },
+    });
+    await expect(store.consumeRequest('lite')).resolves.toBeNull();
+  });
+
   it('stores and consumes requests, artifacts, and assertion IDs only once', async () => {
     const store = new SAMLRequestStore(durableState(), {} as never);
     await store.storeRequest({

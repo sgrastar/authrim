@@ -30,6 +30,8 @@ import {
   withBackfilledWorkerDeletionIdentities,
   withEnvironmentOperationForEnvironment,
   withDeployConfigLock,
+  withR2SetupObjectKeys,
+  AuthrimLockSchema,
   type AuthrimLock,
 } from '../core/lock.js';
 import { KV_NAMESPACES, getKVNamespaceName } from '../core/naming.js';
@@ -62,6 +64,38 @@ function createTestLock(): AuthrimLock {
   };
   return lock;
 }
+
+describe('R2 setup object keys', () => {
+  const base = AuthrimLockSchema.parse({
+    env: 'single',
+    createdAt: '2026-11-07T00:00:00.000Z',
+    r2: { PUBLIC_ASSETS: { name: 'single-public-assets' } },
+  });
+
+  it('keeps every key recorded, old and new, sorted and once each', () => {
+    const first = withR2SetupObjectKeys(base, 'PUBLIC_ASSETS', [
+      'presets/b.webp',
+      'presets/a.webp',
+    ]);
+    const second = withR2SetupObjectKeys(first, 'PUBLIC_ASSETS', [
+      'presets/a.webp',
+      'presets/c.webp',
+    ]);
+    expect(second.r2?.PUBLIC_ASSETS?.setupObjectKeys).toEqual([
+      'presets/a.webp',
+      'presets/b.webp',
+      'presets/c.webp',
+    ]);
+    // Nothing new: the same lock comes back (no needless lock write).
+    expect(withR2SetupObjectKeys(second, 'PUBLIC_ASSETS', ['presets/a.webp'])).toBe(second);
+    // Survives a round trip through the lock file schema.
+    expect(AuthrimLockSchema.parse(second).r2?.PUBLIC_ASSETS?.setupObjectKeys).toHaveLength(3);
+  });
+
+  it('leaves the lock as it is without that bucket', () => {
+    expect(withR2SetupObjectKeys(base, 'PLUGIN_BUNDLES', ['x'])).toBe(base);
+  });
+});
 
 describe('Worker deletion recovery identities', () => {
   it('prefers the latest ownership checkpoint over an older final component identity', () => {

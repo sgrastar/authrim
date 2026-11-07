@@ -136,7 +136,7 @@ import { buildSAMLRequestBindingCookie } from '../request-browser-binding';
 
 const REQUEST_ID = `_${'a'.repeat(32)}`;
 
-function samlResponse(inResponseTo?: string): string {
+function samlResponse(inResponseTo?: string, status = 'Success'): string {
   const id = '_response_1';
   const now = new Date();
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -148,7 +148,7 @@ function samlResponse(inResponseTo?: string): string {
   ${inResponseTo ? `InResponseTo="${inResponseTo}"` : ''}>
   <saml:Issuer>https://idp.example.com</saml:Issuer>
   <ds:Signature><ds:SignedInfo><ds:Reference URI="#${id}"/></ds:SignedInfo></ds:Signature>
-  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:${status}"/></samlp:Status>
   <saml:Assertion ID="_assertion_1" Version="2.0" IssueInstant="${now.toISOString()}">
     <saml:Issuer>https://idp.example.com</saml:Issuer>
     <saml:Subject>
@@ -284,9 +284,15 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
     mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE;
   });
 
-  async function callACS(inResponseTo: string | undefined = REQUEST_ID): Promise<Response> {
+  async function callACS(
+    inResponseTo: string | undefined = REQUEST_ID,
+    status = 'Success',
+    encoded?: string,
+    relayState?: string
+  ): Promise<Response> {
     const formData = new FormData();
-    formData.append('SAMLResponse', samlResponse(inResponseTo));
+    formData.append('SAMLResponse', encoded ?? samlResponse(inResponseTo, status));
+    if (relayState !== undefined) formData.append('RelayState', relayState);
     const cookie = inResponseTo ? buildSAMLRequestBindingCookie(inResponseTo, 300) : undefined;
     const context = {
       env: mockEnv,
@@ -438,6 +444,174 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
       }),
     } as unknown as Env['LITE_POLICY_STORE'];
     expect((await callACS('')).status).toBe(400);
+  });
+
+  describe('a sign-in begun at a lite start', () => {
+    const liteReturn = 'https://auth.example.com/callback?lite_txn=txn-1&lite_grant=grant-1';
+    const litePolicy = () =>
+      ({
+        idFromName: vi.fn().mockReturnValue('lite-policy'),
+        get: vi.fn().mockReturnValue({
+          isEverLiteRpc: vi.fn().mockResolvedValue(true),
+          getSnapshotRpc: vi.fn().mockResolvedValue({
+            tenantId: 'tenant-a',
+            liteMode: 'always',
+            humanVerificationRequired: { login: true, signup: true, reauth: false },
+            policyRevision: 'rev-1',
+            generation: 1,
+            updatedAt: 1,
+          }),
+        }),
+      }) as unknown as Env['LITE_POLICY_STORE'];
+
+    it('answers with a handoff to its lite callback, setting no session cookie here', async () => {
+      storedContext = { attemptInteractionId: 'int-1', liteReturn, liteClientId: 'login-ui' };
+      const storeChallengeRpc = vi.fn().mockResolvedValue(undefined);
+      mockEnv.CHALLENGE_STORE = {
+        idFromName: vi.fn().mockReturnValue('challenge-store-id'),
+        get: vi.fn().mockReturnValue({ storeChallengeRpc }),
+      } as unknown as Env['CHALLENGE_STORE'];
+
+      const res = await callACS();
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('location') ?? '');
+      expect(`${location.origin}${location.pathname}`).toBe('https://auth.example.com/callback');
+      expect(location.searchParams.get('lite_txn')).toBe('txn-1');
+      expect(location.searchParams.get('lite_grant')).toBe('grant-1');
+      expect(location.searchParams.get('handoff_token')).toMatch(/^[0-9a-f]{64}$/u);
+      expect(location.searchParams.get('state')).toBeTruthy();
+      expect(location.searchParams.has('return_url')).toBe(false);
+      expect(res.headers.get('set-cookie') ?? '').not.toContain('authrim_session=');
+      const [handoff] = storeChallengeRpc.mock.calls[0] as [
+        { type: string; metadata: Record<string, unknown> },
+      ];
+      expect(handoff.type).toBe('handoff');
+      expect(handoff.metadata).toMatchObject({
+        aud: 'saml_sp_cookie_handoff',
+        return_url: liteReturn,
+        // Its grant's client, whatever the Worker's own setting says.
+        client_id: 'login-ui',
+      });
+    });
+
+    it("makes no handoff without its grant's client (it would be finalized for any)", async () => {
+      storedContext = { attemptInteractionId: 'int-1', liteReturn };
+      mockEnv.CHALLENGE_STORE = {
+        idFromName: vi.fn().mockReturnValue('challenge-store-id'),
+        get: vi.fn().mockReturnValue({ storeChallengeRpc: vi.fn() }),
+      } as unknown as Env['CHALLENGE_STORE'];
+
+      const res = await callACS();
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('location') ?? '');
+      expect(location.searchParams.get('error')).toBe('server_error');
+      expect(location.searchParams.has('handoff_token')).toBe(false);
+      expect(res.headers.get('set-cookie') ?? '').not.toContain('authrim_session=');
+    });
+
+    function consumeCalls(): string[] {
+      const store = (
+        mockEnv.SAML_REQUEST_STORE as unknown as { get: () => { fetch: ReturnType<typeof vi.fn> } }
+      ).get();
+      return store.fetch.mock.calls
+        .map((call) => String(call[0]))
+        .filter((url) => url.includes('/consume/'));
+    }
+
+    it('sends an IdP refusal (no assertion) of its request to its lite callback', async () => {
+      mockEnv.LITE_POLICY_STORE = litePolicy();
+      storedContext = { attemptInteractionId: 'int-1', liteReturn, liteClientId: 'login-ui' };
+
+      const res = await callACS(REQUEST_ID, 'Responder');
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('location') ?? '');
+      expect(location.searchParams.get('lite_txn')).toBe('txn-1');
+      expect(location.searchParams.get('error')).toBeTruthy();
+    });
+
+    it('reads the refusal by the XML parser (single quotes, a character reference)', async () => {
+      mockEnv.LITE_POLICY_STORE = litePolicy();
+      storedContext = { attemptInteractionId: 'int-1', liteReturn, liteClientId: 'login-ui' };
+      const xml = atob(samlResponse(REQUEST_ID, 'Responder'))
+        .replace(`InResponseTo="${REQUEST_ID}"`, `InResponseTo = '${REQUEST_ID}'`)
+        .replace(
+          '<saml:Issuer>https://idp.example.com</saml:Issuer>',
+          '<saml:Issuer>https://idp.example&#46;com</saml:Issuer>'
+        );
+
+      const res = await callACS(REQUEST_ID, 'Responder', btoa(xml));
+
+      expect(res.status).toBe(302);
+      expect(new URL(res.headers.get('location') ?? '').searchParams.get('lite_txn')).toBe('txn-1');
+    });
+
+    it("consumes, on a refusal, only a lite start's request (one made before the switch stays)", async () => {
+      mockEnv.LITE_POLICY_STORE = litePolicy();
+      storedContext = { attemptInteractionId: 'int-1' };
+
+      await callACS(REQUEST_ID, 'Responder');
+
+      expect(consumeCalls()).toEqual([expect.stringContaining(`/consume/${REQUEST_ID}?only=lite`)]);
+    });
+
+    it('sends a refusal of its RelayState to its lite callback too', async () => {
+      mockEnv.LITE_POLICY_STORE = litePolicy();
+      storedContext = { attemptInteractionId: 'int-1', liteReturn, liteClientId: 'login-ui' };
+
+      const res = await callACS(REQUEST_ID, 'Success', undefined, 'r'.repeat(81));
+
+      expect(res.status).toBe(302);
+      expect(new URL(res.headers.get('location') ?? '').searchParams.get('lite_txn')).toBe('txn-1');
+    });
+
+    it("leaves another tenant's request as it is when its answer is refused", async () => {
+      storedContext = { attemptInteractionId: 'int-1' };
+
+      const res = await callACS(REQUEST_ID, 'Responder');
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(consumeCalls()).toEqual([]);
+    });
+
+    it('answers markup made to be slow to scan without reading it by hand', async () => {
+      mockEnv.LITE_POLICY_STORE = litePolicy();
+      const started = Date.now();
+
+      const res = await callACS(REQUEST_ID, 'Success', btoa('<Response '.repeat(25_000)));
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(consumeCalls()).toEqual([]);
+    });
+
+    it('sends its failure to its lite callback, not an error page', async () => {
+      storedContext = { attemptInteractionId: 'int-1', liteReturn, liteClientId: 'login-ui' };
+      mockUsageKey.mockResolvedValue('idp-key-1');
+      mockUsagePolicy.mockResolvedValue({ loginEnabled: false, signupEnabled: true });
+
+      const res = await callACS();
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('location') ?? '');
+      expect(location.searchParams.get('lite_txn')).toBe('txn-1');
+      expect(location.searchParams.get('error')).toBe('access_denied');
+    });
+
+    it('creates no account in a lite tenant for a sign-in not begun at a lite start', async () => {
+      mockEnv.LITE_POLICY_STORE = litePolicy();
+      storedContext = { attemptInteractionId: 'int-1' };
+      mockAccountLookup.mockRejectedValue(new Error('account_data_route_not_found'));
+
+      const res = await callACS();
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(scheduledFailures()).toEqual([
+        expect.objectContaining({ reasonCode: 'signup_disabled' }),
+      ]);
+    });
   });
 
   it('has no interaction to record against for an IdP-initiated response', async () => {

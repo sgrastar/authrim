@@ -91,6 +91,15 @@
 	style:--login-page-background-opacity={String(loginUIPageStore.backgroundImageOpacity / 100)}
 	style:--login-brand-panel-image-layer={loginUIPageStore.brandPanelImageLayer ?? undefined}
 	style:--login-brand-panel-image-opacity={String(loginUIPageStore.brandPanelImageOpacity / 100)}
+	style:--login-page-image-tone={loginUIPageStore.backgroundImageGrayscale
+		? 'linear-gradient(#808080, #808080)'
+		: undefined}
+	style:--login-panel-background-filter={loginUIPageStore.loginPanelBackgroundGrayscale
+		? 'grayscale(1)'
+		: undefined}
+	style:--login-brand-panel-image-filter={loginUIPageStore.brandPanelImageGrayscale
+		? 'grayscale(1)'
+		: undefined}
 >
 	<div class="auth-main">
 		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card' && !topbarInForm}

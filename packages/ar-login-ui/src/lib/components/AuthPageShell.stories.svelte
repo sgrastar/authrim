@@ -224,3 +224,17 @@
 		})}
 	{/snippet}
 </Story>
+
+<Story name="Background image in grayscale">
+	{#snippet template()}
+		{@render full({
+			...page({
+				accentColor: '#16a34a',
+				titleColor: '#ffffff',
+				copyColor: '#e2e8f0',
+				textColor: '#ffffff'
+			}),
+			appearance: { backgroundImageUrl: SAMPLE_BACKGROUND_URL, backgroundImageGrayscale: true }
+		})}
+	{/snippet}
+</Story>

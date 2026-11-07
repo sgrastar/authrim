@@ -148,9 +148,13 @@ export class SAMLRequestStore {
   }
 
   /**
-   * Get and consume a SAML request (one-time use)
+   * Get and consume a SAML request (one-time use). `onlyLite`: only a request a lite Login UI
+   * start made (its context carries `liteReturn`); any other is left as it is (not consumed).
    */
-  async consumeRequest(requestId: string): Promise<SAMLRequestData | null> {
+  async consumeRequest(
+    requestId: string,
+    options: { onlyLite?: boolean } = {}
+  ): Promise<SAMLRequestData | null> {
     await this.initializeState();
     const state = this.getState();
 
@@ -169,6 +173,10 @@ export class SAMLRequestStore {
     // Check if already used
     if (request.used) {
       this.log.warn('SAML request replay detected', { requestId });
+      return null;
+    }
+
+    if (options.onlyLite && typeof request.context?.liteReturn !== 'string') {
       return null;
     }
 
@@ -357,7 +365,9 @@ export class SAMLRequestStore {
       // POST /consume/:requestId - Consume a SAML request
       if (path.startsWith('/consume/') && request.method === 'POST') {
         const requestId = path.substring('/consume/'.length);
-        const result = await this.consumeRequest(requestId);
+        const result = await this.consumeRequest(requestId, {
+          onlyLite: url.searchParams.get('only') === 'lite',
+        });
 
         if (!result) {
           return new Response(JSON.stringify({ error: 'Request not found or already used' }), {

@@ -478,7 +478,12 @@ import {
   registerDeclaredAdminRouteAccessMiddleware,
 } from './admin-route-access';
 import { requireInternalVersionManagerAuthority } from './internal-version-access';
-import { adminPublicAssetUploadHandler, servePublicAssetHandler } from './admin-public-assets';
+import {
+  adminLoginUiPresetsListHandler,
+  adminPublicAssetUploadHandler,
+  servePresetAssetHandler,
+  servePublicAssetHandler,
+} from './admin-public-assets';
 import {
   adminRelationDefinitionsListHandler,
   adminRelationDefinitionGetHandler,
@@ -1437,6 +1442,7 @@ app.use('/api/auth/authentication-methods', async (c, next) => {
 });
 app.use('/api/auth/authentication-methods', managementRequestDiagnosticCheckpoint('mg_rate_limit'));
 app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
+app.get('/api/assets/presets/login-ui/backgrounds/:category/:filename', servePresetAssetHandler);
 app.get('/api/assets/:tenantId/login-ui/:kind/:filename', servePublicAssetHandler);
 app.get('/api/avatars/:filename', serveAvatarHandler);
 app.use('/api/auth/discovery', async (c, next) => {
@@ -1609,6 +1615,7 @@ registerAdminResourcePermissionMiddleware(app);
 
 app.get('/api/admin/stats', adminStatsHandler);
 app.post('/api/admin/assets/login-ui', adminPublicAssetUploadHandler);
+app.get('/api/admin/assets/login-ui/presets', adminLoginUiPresetsListHandler);
 app.get('/api/admin/users', adminUsersListHandler);
 app.get('/api/admin/users/operations/:operationId', adminUserCreationOperationHandler);
 app.get('/api/admin/users/:id', adminUserGetHandler);

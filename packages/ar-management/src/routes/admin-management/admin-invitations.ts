@@ -21,7 +21,11 @@ import {
 import { ensureCrossTenantPlacement } from './cross-tenant-placement';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
-import { callerOutranks, callerOutranksGlobally } from './admin-role-authority';
+import {
+  callerOutranks,
+  callerOutranksGlobally,
+  mayRemoveAssignment,
+} from './admin-role-authority';
 
 const DEFAULT_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -704,8 +708,12 @@ adminInvitationsRouter.delete('/:id', async (c) => {
 
   // An invitation for a global assignment (an ar_super_admin one always is) is revoked on the wildcard
   // from a global assignment, as creating and resending it are.
-  const pending = await adapter.queryOne<{ scope_type: string; role_name: string | null }>(
-    `SELECT scope_type, admin_role_name AS role_name FROM admin_invitations
+  const pending = await adapter.queryOne<{
+    scope_type: string;
+    role_name: string | null;
+    admin_role_id: string;
+  }>(
+    `SELECT scope_type, admin_role_name AS role_name, admin_role_id FROM admin_invitations
       WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
     [c.req.param('id'), tenantId]
   );
@@ -716,6 +724,17 @@ adminInvitationsRouter.delete('/:id', async (c) => {
   ) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
+  // Revoking takes the role away from the person invited, as removing an assignment does, so it
+  // is held to the same rule: a role ranked above the caller is not theirs to take. The role as it
+  // is now. One that cannot be read (deleted under an expired invitation) is not skipped: only the
+  // strongest authority (the wildcard and the roles' write permission from a global assignment)
+  // revokes it, so taking it away stays possible without letting a lower admin through.
+  const role = await new AdminRoleRepository(adapter).getRole(pending.admin_role_id);
+  const allowed = role
+    ? mayRemoveAssignment(auth, pending.scope_type, role.hierarchy_level)
+    : hasGlobalAdminPermission(auth, '*') &&
+      hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE);
+  if (!allowed) return c.json({ error: 'insufficient_permissions' }, 403);
 
   const result = await adapter.execute(
     "UPDATE admin_invitations SET status = 'revoked', pending_email_key = NULL, updated_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",

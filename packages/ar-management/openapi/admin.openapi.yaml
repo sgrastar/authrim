@@ -561,6 +561,56 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/assets/login-ui/presets:
+    get:
+      tags:
+        - Settings - UI
+      operationId: getApiAdminAssetsLoginUiPresets
+      summary: List the Login UI background presets.
+      description: >-
+        Lists the background images the setup tool placed in the public assets bucket, shared by
+        every tenant. A theme uses one by storing its url; no copy is made.
+      responses:
+        '200':
+          description: The presets, sorted by id; empty when the bucket is not configured.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - presets
+                properties:
+                  presets:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - category
+                        - name
+                        - url
+                      properties:
+                        id:
+                          type: string
+                          description: '`<category>/<name>`.'
+                        category:
+                          type: string
+                        name:
+                          type: string
+                        url:
+                          type: string
+                          description: Path to store in Login UI settings.
+                        size:
+                          type: integer
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/logout:
     post:
       tags:
@@ -4016,12 +4066,23 @@ paths:
       tags:
         - Admin Invitations
       summary: Revoke a pending Admin invitation.
+      description: >-
+        Revoking takes the invitation's role away from the person invited, so it is held to the
+        rule for removing an assignment (mayRemoveAssignment), with the role as it is now: a
+        tenant invitation's role must not rank above the caller, and a global one needs the
+        wildcard and the roles' write permission from a global assignment, with the role not
+        ranked above the caller's global rank. A machine caller with those global permissions is
+        not measured by rank. When the role cannot be read (deleted under an expired invitation),
+        only the wildcard with the roles' write permission from a global assignment revokes it.
+        403 `insufficient_permissions` otherwise.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
           $ref: '#/components/responses/AdminDeleteResult'
+        '403':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
       security:

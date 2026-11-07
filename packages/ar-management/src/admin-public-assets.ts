@@ -1,6 +1,13 @@
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { AR_ERROR_CODES, createErrorResponse, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import {
+  AR_ERROR_CODES,
+  createErrorResponse,
+  getTenantIdFromContext,
+  LOGIN_UI_PRESET_KEY_PREFIX,
+  LOGIN_UI_PRESET_URL_PREFIX,
+  parseLoginUiPresetName,
+} from '@authrim/ar-lib-core';
 import { detectImageType, logSanitizedError } from './admin-shared';
 
 const PUBLIC_ASSET_MAX_BYTES = 5 * 1024 * 1024;
@@ -159,6 +166,76 @@ export async function adminPublicAssetUploadHandler(c: Context<{ Bindings: Env }
         error: 'server_error',
         error_description: 'Failed to upload public asset',
       },
+      500
+    );
+  }
+}
+
+/** Presets are replaced in place by a later setup run: cached for a day, not for ever. */
+const PRESET_CACHE_CONTROL = 'public, max-age=86400';
+/** Enough for any catalogue of presets; the list stops here rather than paging without end. */
+const PRESET_LIST_MAX_PAGES = 10;
+
+export async function servePresetAssetHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const preset = parseLoginUiPresetName(
+      `${c.req.param('category') ?? ''}/${c.req.param('filename') ?? ''}`
+    );
+    const bucket = getPublicAssetsBucket(c.env);
+    if (!preset || !bucket) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+    const object = await bucket.get(
+      `${LOGIN_UI_PRESET_KEY_PREFIX}${preset.category}/${preset.name}.${preset.extension}`
+    );
+    if (!object) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('content-type', PUBLIC_ASSET_CONTENT_TYPES[preset.extension] ?? 'image/webp');
+    headers.set('etag', object.httpEtag);
+    headers.set('cache-control', PRESET_CACHE_CONTROL);
+    headers.set('x-content-type-options', 'nosniff');
+    return new Response(object.body, { headers });
+  } catch (error) {
+    logSanitizedError('Serve preset asset error', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/** The background presets in PUBLIC_ASSETS, each with the path a theme stores to use it. */
+export async function adminLoginUiPresetsListHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const bucket = getPublicAssetsBucket(c.env);
+    if (!bucket) return c.json({ presets: [] });
+
+    const presets: { id: string; category: string; name: string; url: string; size: number }[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < PRESET_LIST_MAX_PAGES; page++) {
+      const listed = await bucket.list({ prefix: LOGIN_UI_PRESET_KEY_PREFIX, cursor });
+      for (const object of listed.objects) {
+        const rest = object.key.slice(LOGIN_UI_PRESET_KEY_PREFIX.length);
+        const preset = parseLoginUiPresetName(rest);
+        if (!preset) continue;
+        presets.push({
+          id: `${preset.category}/${preset.name}`,
+          category: preset.category,
+          name: preset.name,
+          url: `${LOGIN_UI_PRESET_URL_PREFIX}${rest}`,
+          size: object.size,
+        });
+      }
+      if (!listed.truncated) break;
+      cursor = listed.cursor;
+    }
+    presets.sort((a, b) => a.id.localeCompare(b.id));
+    return c.json({ presets });
+  } catch (error) {
+    logSanitizedError('Admin preset list error', error);
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to list background presets' },
       500
     );
   }

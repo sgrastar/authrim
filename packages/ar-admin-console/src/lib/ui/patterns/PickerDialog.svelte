@@ -122,10 +122,13 @@
 		query.trim() ? groups.filter((group) => rows.some((row) => row.groupId === group.id)) : groups
 	);
 
-	// A search that hides the open group opens the first group that has a match.
+	// When the open group is gone (a search hid it, or the groups arrived after the dialog opened),
+	// the group of the current choice opens if it is shown, else the first group that is.
 	$effect(() => {
-		if (shownGroups.length && !shownGroups.some((group) => group.id === groupId))
-			groupId = shownGroups[0].id;
+		if (!shownGroups.length || shownGroups.some((group) => group.id === groupId)) return;
+		groupId =
+			shownGroups.find((group) => group.items.some((item) => item.value === value))?.id ??
+			shownGroups[0].id;
 	});
 </script>
 

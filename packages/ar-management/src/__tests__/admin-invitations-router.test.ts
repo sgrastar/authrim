@@ -513,6 +513,74 @@ describe('adminInvitationsRouter', () => {
     expect(audit).not.toHaveBeenCalled();
   });
 
+  describe('revoking takes the role away, so it is held to the role-removal rule', () => {
+    const revoke = (
+      app: ReturnType<typeof createTestApp>['app'],
+      env: ReturnType<typeof createTestApp>['env'],
+      headers: Record<string, string> = {}
+    ) =>
+      app.request(
+        '/api/admin/admin-invitations/invitation_1',
+        {
+          method: 'DELETE',
+          headers: { 'x-test-permissions': invitationPermissions(), ...headers },
+        },
+        env
+      );
+    const pending = { scope_type: 'tenant', role_name: 'ar_tenant_admin', admin_role_id: 'role_x' };
+    const roleAt = (hierarchy_level: number) => ({
+      id: 'role_x',
+      tenant_id: 'tenant_123',
+      name: 'ar_tenant_admin',
+      display_name: 'Administrator',
+      hierarchy_level,
+      is_system: false,
+    });
+
+    it('revokes an invitation for a role ranked at or below the caller', async () => {
+      adapter.queryOne.mockResolvedValueOnce(pending);
+      repo.getRole.mockResolvedValue(roleAt(80));
+      const { app, env } = createTestApp();
+
+      const response = await revoke(app, env, { 'x-test-hierarchy-level': '80' });
+
+      expect(response.status).toBe(200);
+      expect(adapter.execute).toHaveBeenCalledOnce();
+    });
+
+    it('refuses an invitation for a role ranked above the caller, changing nothing', async () => {
+      adapter.queryOne.mockResolvedValueOnce(pending);
+      repo.getRole.mockResolvedValue(roleAt(90));
+      const { app, env } = createTestApp();
+
+      const response = await revoke(app, env, { 'x-test-hierarchy-level': '50' });
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: 'insufficient_permissions' });
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(audit).not.toHaveBeenCalled();
+    });
+
+    it('leaves an invitation whose role cannot be read to the strongest authority only', async () => {
+      repo.getRole.mockResolvedValue(null);
+
+      adapter.queryOne.mockResolvedValueOnce(pending);
+      const lower = createTestApp();
+      const refused = await revoke(lower.app, lower.env, { 'x-test-hierarchy-level': '100' });
+      expect(refused.status).toBe(403);
+      expect(adapter.execute).not.toHaveBeenCalled();
+
+      adapter.queryOne.mockResolvedValueOnce(pending);
+      const top = createTestApp();
+      const revoked = await revoke(top.app, top.env, {
+        'x-test-permissions': invitationPermissions(['*']),
+        'x-test-global-permissions': '*',
+        'x-test-tenant-scope': '*',
+      });
+      expect(revoked.status).toBe(200);
+    });
+  });
+
   describe('a resend grants the role again, so it is held to the caller as creating it is', () => {
     const pendingInvitation = (partial: Record<string, unknown> = {}) => ({
       id: 'invitation_1',

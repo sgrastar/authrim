@@ -82,20 +82,23 @@ export interface LiteSocialProvider {
 	id: string;
 	name: string;
 	buttonText: string | null;
+	/**
+	 * How it is started: by redirect (ar-bridge), or as a SAML IdP (ar-saml's SP start), whose ID
+	 * the authentication methods answer gives as `saml:<IdP ID>`.
+	 */
+	startMode: 'oauth_redirect' | 'saml_sp';
 }
 
 /**
- * The providers a step offers: on for sign-in, allowed by the step's handles (the SPA's
- * `visibleExternalProviders`), and started by redirect. A SAML provider (`saml_sp`) is not
- * offered by the lite UI yet (plan PR5b-3): `samlOffered` says the step has one.
+ * The providers a step offers: on for sign-in, and allowed by the step's handles (the SPA's
+ * `visibleExternalProviders`). A SAML IdP is one whose ID is `saml:<IdP ID>`.
  */
 export function liteSocialProviders(
 	methods: LiteTenantMethods | null | undefined,
 	step: FlowRuntimeStep | null
-): { providers: LiteSocialProvider[]; samlOffered: boolean } {
-	if (methods?.external?.enabled !== true) return { providers: [], samlOffered: false };
+): { providers: LiteSocialProvider[] } {
+	if (methods?.external?.enabled !== true) return { providers: [] };
 	const providers: LiteSocialProvider[] = [];
-	let samlOffered = false;
 	const text = (value: unknown, max: number) =>
 		typeof value === 'string' && value.length > 0 && value.length <= max ? value : null;
 	for (const raw of methods.external.providers ?? []) {
@@ -104,17 +107,17 @@ export function liteSocialProviders(
 		if (!id) continue;
 		if (!((raw.loginEnabled as boolean | undefined) ?? raw.enabled !== false)) continue;
 		if (!runtimeAllowsExternalProvider(step, raw as never)) continue;
-		if (raw.startMode === 'saml_sp') {
-			samlOffered = true;
-			continue;
-		}
+		const startMode = raw.startMode === 'saml_sp' ? 'saml_sp' : 'oauth_redirect';
+		// A SAML IdP is started by its own ID, which its listed ID carries.
+		if (startMode === 'saml_sp' && !/^saml:[^/?#\\]+$/u.test(id)) continue;
 		providers.push({
 			id,
+			startMode,
 			name: text(raw.name, 200) ?? id,
 			buttonText: text(raw.buttonText, 200)
 		});
 	}
-	return { providers, samlOffered };
+	return { providers };
 }
 
 /** The Flow as the lite transaction keeps it. */
