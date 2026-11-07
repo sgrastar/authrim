@@ -31,13 +31,18 @@ import {
 
 /** The tenant's sign-in methods, as the authentication methods answer gives them. */
 export interface LiteTenantMethods {
-	passkey?: { enabled?: boolean; loginEnabled?: boolean };
-	emailCode?: { enabled?: boolean; loginEnabled?: boolean };
-	totp?: { enabled?: boolean; loginEnabled?: boolean };
+	passkey?: { enabled?: boolean; loginEnabled?: boolean; signupEnabled?: boolean };
+	emailCode?: { enabled?: boolean; loginEnabled?: boolean; signupEnabled?: boolean };
+	totp?: { enabled?: boolean; loginEnabled?: boolean; signupEnabled?: boolean };
 	directoryPassword?: { enabled?: boolean };
 	external?: {
 		enabled?: boolean;
-		providers?: Array<{ enabled?: boolean; loginEnabled?: boolean } & Record<string, unknown>>;
+		providers?: Array<
+			{ enabled?: boolean; loginEnabled?: boolean; signupEnabled?: boolean } & Record<
+				string,
+				unknown
+			>
+		>;
 	};
 	guest?: { enabled?: boolean };
 }
@@ -49,15 +54,21 @@ export interface LiteTenantMethods {
  */
 export function liteMethodAvailability(
 	methods: LiteTenantMethods | null | undefined,
-	step: FlowRuntimeStep | null
+	step: FlowRuntimeStep | null,
+	/** A sign-up page reads each method's sign-up switch (the SPA's `signupEnabled ?? enabled`). */
+	purpose: 'login' | 'signup' = 'login'
 ): (method: RuntimeScreenAuthMethod) => boolean {
-	const on = (value?: { enabled?: boolean; loginEnabled?: boolean }) =>
-		value ? (value.loginEnabled ?? value.enabled) === true : false;
+	const on = (value?: { enabled?: boolean; loginEnabled?: boolean; signupEnabled?: boolean }) =>
+		value
+			? ((purpose === 'signup' ? value.signupEnabled : value.loginEnabled) ?? value.enabled) ===
+				true
+			: false;
 	const allows = (handle: string, aliases: string[] = []) =>
 		runtimeAllowsAuthenticationHandle(step, handle, aliases);
 	const providers = (methods?.external?.providers ?? []).filter(
 		(provider) =>
-			(provider.loginEnabled ?? provider.enabled !== false) &&
+			((purpose === 'signup' ? provider.signupEnabled : provider.loginEnabled) ??
+				provider.enabled !== false) &&
 			runtimeAllowsExternalProvider(step, provider as never)
 	);
 	const available: Record<RuntimeScreenAuthMethod, boolean> = {
@@ -217,15 +228,16 @@ function runtimeTarget(target: LiteLoginTarget): Record<string, unknown> {
 	return { target_type: 'tenant', target_id: null };
 }
 
-/** Starts a sign-in Flow (a page view may: it consumes nothing single-use, plan §14). */
+/** Starts a sign-in (or sign-up) Flow (a page view may: it consumes nothing single-use, §14). */
 export async function startLiteLoginFlow(
 	backend: LiteBackendClient,
 	target: LiteLoginTarget,
-	locale: string
+	locale: string,
+	flowKind: 'login' | 'registration' = 'login'
 ): Promise<{ ok: true; view: LiteFlowView } | LiteFlowFailure> {
 	const answer = await backend.request(FLOW_START_PATH, {
 		json: {
-			flow_kind: 'login',
+			flow_kind: flowKind,
 			locale,
 			authorization_challenge_id: target.authorizationChallengeId ?? undefined,
 			saml_request_id: target.samlRequestId ?? undefined,
@@ -286,6 +298,25 @@ export interface LiteScreenField {
 	href: string | null;
 	/** Whether the label is shown; `show_label: false` keeps it for screen readers only. */
 	showLabel: boolean;
+	/** A select's or a radio part's choices (none for any other block). */
+	options: Array<{ value: string; label: string }>;
+}
+
+/** The most choices a select or a radio part may have, and the longest value. */
+const MAX_CHOICES = 50;
+const MAX_CHOICE_VALUE = 256;
+
+/** A select's or radio part's choices as the SPA reads them; null when they cannot be drawn. */
+function readChoices(value: unknown): Array<{ value: string; label: string }> | null {
+	if (!Array.isArray(value) || value.length === 0 || value.length > MAX_CHOICES) return null;
+	const choices: Array<{ value: string; label: string }> = [];
+	for (const raw of value) {
+		if (!isRecord(raw) || typeof raw.value !== 'string' || raw.value === '') return null;
+		if (raw.value.length > MAX_CHOICE_VALUE) return null;
+		if (choices.some((choice) => choice.value === raw.value)) return null;
+		choices.push({ value: raw.value, label: readString(raw.label) ?? raw.value });
+	}
+	return choices;
 }
 
 /**
@@ -316,6 +347,11 @@ export type LiteStepDecision =
 	| { kind: 'continue' }
 	/** Something the lite UI cannot draw or drive: stop before any side effect (plan R3-2). */
 	| { kind: 'unsupported'; reasons: string[] };
+
+/** A step's screen as the Flow keeps it (not localized): what the server reads answers against. */
+export function rawScreenOf(step: FlowRuntimeStep): Record<string, unknown> | null {
+	return screenOf(step);
+}
 
 function screenOf(step: FlowRuntimeStep): Record<string, unknown> | null {
 	const fromConfig = isRecord(step.config) ? step.config.screen : undefined;
@@ -389,6 +425,11 @@ export function decideLiteStep(
 			reasons.push(`method:${authMethod ?? 'none'}`);
 			continue;
 		}
+		const options = blockType === 'select' || blockType === 'radio' ? readChoices(raw.options) : [];
+		if (!options) {
+			reasons.push(`choices:${readString(raw.field) ?? ''}`);
+			continue;
+		}
 		fields.push({
 			blockType,
 			field: readString(raw.field) ?? '',
@@ -400,7 +441,8 @@ export function decideLiteStep(
 			placeholder: readString(raw.placeholder),
 			valueType: blockType === 'identity_field' ? readString(raw.value_type) : null,
 			href: blockType === 'link' ? safeLinkHref(raw.href) : null,
-			showLabel: raw.show_label !== false
+			showLabel: raw.show_label !== false,
+			options
 		});
 	}
 	if (reasons.length > 0) return { kind: 'unsupported', reasons };
@@ -429,7 +471,8 @@ export function decideLiteStep(
 			placeholder: null,
 			valueType: null,
 			href: null,
-			showLabel: true
+			showLabel: true,
+			options: []
 		});
 	}
 	return {

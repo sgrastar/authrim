@@ -29,6 +29,9 @@ export const LITE_FLOW_COMPONENTS: ReadonlySet<string> = new Set([
 /** Screen blocks the lite UI renders on sign-in, sign-up, code entry and consent screens. */
 export const LITE_SCREEN_BLOCK_TYPES: ReadonlySet<string> = new Set([
   'identity_field',
+  'checkbox',
+  'select',
+  'radio',
   'auth_widget',
   'guest_login_widget',
   'code_input_widget',
@@ -89,7 +92,12 @@ export type LiteModeIssueCode =
   /** An application sends its users to its own Login UI. */
   | 'client_login_ui_url'
   /** External sign-in returns to a different origin than the tenant's issuer. */
-  | 'issuer_origin_mismatch';
+  | 'issuer_origin_mismatch'
+  /**
+   * The tenant's accounts are made asynchronously (routed account storage: a sign-up answers 202
+   * and is resumed), which the lite sign-up does not resume yet.
+   */
+  | 'account_provisioning_async';
 
 /**
  * One reason the lite UI cannot serve the tenant. `subject` names the thing (a method, a Flow, a

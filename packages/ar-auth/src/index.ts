@@ -1,3 +1,4 @@
+import { AUTH_CORS_ALLOW_HEADERS } from './cors-headers';
 import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
@@ -423,7 +424,7 @@ app.use('*', async (c, next) => {
       return '';
     },
     allowMethods: ['GET', 'POST', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'X-Session-Id', 'X-Authrim-Interaction-Id'],
+    allowHeaders: [...AUTH_CORS_ALLOW_HEADERS],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
     credentials: true,

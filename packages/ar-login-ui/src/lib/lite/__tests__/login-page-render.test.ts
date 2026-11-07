@@ -56,7 +56,8 @@ function page(
 				decision: { kind: 'screen', title: 'Sign in', description: null, fields },
 				codeEntry: extra.codeEntry ?? null,
 				passkey: extra.passkey ?? null,
-				available: extra.available ?? { mailOtp: true, totp: true },
+				available: extra.available ?? { mailOtp: true, totp: true, passkey: true },
+				purpose: 'login',
 				pow,
 				text
 			} as never,
@@ -144,24 +145,35 @@ describe('the lite sign-in page as drawn', () => {
 		expect(body).toContain('<p>Sign in to go on</p>');
 	});
 
-	it('draws the code entry: the code form without a proof, the resend form with one', () => {
+	it('draws the code entry: one form, its check with no proof, its resend with one', () => {
 		const { body } = page(
 			[field({ blockType: 'code_input_widget', field: 'code', label: 'Code' })],
 			POW,
-			{ codeEntry: { kind: 'mail_otp', maskedEmail: 'p***n@example.com', resendWait: 42 } }
+			{
+				codeEntry: {
+					kind: 'mail_otp',
+					maskedEmail: 'p***n@example.com',
+					resendWait: 42,
+					resendable: true
+				}
+			}
 		);
 		const forms = body.match(/<form[^>]*>/gu) ?? [];
-		expect(forms).toHaveLength(3);
+		expect(forms).toHaveLength(2);
 		expect(forms[0]).toContain('action="?challenge_id=ch-1&amp;/verify_code"');
-		expect(forms[0]).not.toContain('data-lite-pow');
-		expect(forms[1]).toContain('action="?challenge_id=ch-1&amp;/resend"');
-		expect(forms[1]).toContain('data-lite-pow=');
-		expect(forms[2]).toContain('action="?challenge_id=ch-1&amp;/restart"');
+		expect(forms[0]).toContain('data-lite-pow=');
+		const buttons = body.match(/<button[^>]*>/gu) ?? [];
+		// The check first (an Enter in the code), sent with no proof; the resend with one.
+		expect(buttons[0]).toContain('data-lite-pow-none');
+		expect(buttons[1]).toContain('formaction="?challenge_id=ch-1&amp;/resend"');
+		expect(buttons[1]).toContain('formnovalidate');
+		expect(buttons[1]).not.toContain('data-lite-pow-none');
+		expect(forms[1]).toContain('action="?challenge_id=ch-1&amp;/restart"');
 		expect(body).toMatch(/<input[^>]*name="code"[^>]*autocomplete="one-time-code"/u);
 		expect(body).toContain('pattern="[0-9]{6}"');
 		expect(body).toContain('p***n@example.com');
 		expect(body).toContain('Resend in 42s');
-		expect(body.match(/name="op"/gu)).toHaveLength(2);
+		expect(body.match(/name="op"/gu)).toHaveLength(1);
 	});
 
 	it('says what was wrong with the last post', () => {
@@ -278,7 +290,7 @@ describe('the lite sign-in page as drawn', () => {
 					txnId: 'txn-1',
 					csrfToken: 'csrf-1',
 					op: 'o'.repeat(22),
-					decision: { kind: 'unsupported', reasons: ['block:checkbox'] },
+					decision: { kind: 'unsupported', reasons: ['block:signature_pad'] },
 					codeEntry: null,
 					pow: null,
 					text
@@ -313,5 +325,27 @@ describe('the lite sign-in page as drawn', () => {
 			}).body;
 		expect(draw({ error: 'busy' })).toContain('action="?/restart"');
 		expect(draw(null)).not.toContain('/restart');
+	});
+});
+
+describe('the backup codes of a new authenticator', () => {
+	it('are drawn on whatever page comes next, an error page too', () => {
+		const { body } = render(LoginPage, {
+			props: {
+				data: {
+					page: 'error',
+					title: 'Something went wrong',
+					message: 'Try again later',
+					back: 'Back',
+					backHref: '/signup',
+					brandName: 'Acme',
+					logo: null
+				} as never,
+				form: { backupCodes: ['ABCD-EFGH-JKLM'], backupCodesTitle: 'Backup codes' } as never
+			}
+		});
+		expect(body).toContain('Backup codes');
+		expect(body).toContain('<code>ABCD-EFGH-JKLM</code>');
+		expect(body).toContain('Try again later');
 	});
 });

@@ -11,6 +11,7 @@ import type {
 } from '@authrim/ar-lib-core';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CustomFieldAccountRemovedError, upsertUserCustomFieldValue } from '@authrim/ar-lib-core';
 import {
   AccountDeletionHeldError,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
@@ -93,12 +94,28 @@ class SqliteAdapter implements DatabaseAdapter {
   async close(): Promise<void> {}
 }
 
+/** What these tests use of node:sqlite (whose types this package does not load). */
+interface FenceDatabase {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+    run(...params: unknown[]): unknown;
+  };
+  close(): void;
+}
+
+function openFenceDatabase(): FenceDatabase {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return -- node:sqlite is untyped here
+  return new DatabaseSync(':memory:');
+}
+
 describe('account directory removal PII erasure', () => {
-  let database: DatabaseSync;
+  let database: FenceDatabase;
   let adapter: SqliteAdapter;
 
   beforeEach(() => {
-    database = new DatabaseSync(':memory:');
+    database = openFenceDatabase();
     database.exec(
       readMigrationSource(
         new URL('../../../../migrations/pii/d1/', import.meta.url),
@@ -188,10 +205,91 @@ describe('account directory removal PII erasure', () => {
     database.exec(`INSERT INTO identity_sensitive_values
       (id,tenant_id,owner_type,owner_id,value_key,value_json,lifecycle_state,updated_at)
       VALUES ('email-a','tenant-a','runtime_user','user-a','email','"before@example.com"','active',1)`);
+    // The erasure fence (its triggers need the tables above), and the core custom attributes.
+    database.exec(
+      readMigrationSource(
+        new URL('../../../../migrations/pii/d1/', import.meta.url),
+        '004_account_pii_erasure_markers.sql'
+      )
+    );
+    database.exec(`
+      CREATE TABLE user_custom_fields (tenant_id TEXT, user_id TEXT, field_name TEXT,
+        field_value TEXT, field_type TEXT);
+      INSERT INTO user_custom_fields VALUES ('tenant-a', 'user-a', 'department', 'Sales', 'string'),
+        ('tenant-b', 'user-a', 'department', 'Other', 'string');
+    `);
     adapter = new SqliteAdapter(database);
   });
 
   afterEach(() => database.close());
+
+  it('fences the erased account: no PII value is written back for it', async () => {
+    await eraseAccountPiiAfterDirectoryRemovalPrepared(
+      adapter,
+      { tenantId: 'tenant-a', userId: 'user-a', core: adapter },
+      100
+    );
+    const blocked = /account_pii_erasure_mutation_blocked/u;
+    // A concurrent update that read the user before the deletion.
+    expect(() =>
+      database.exec(`UPDATE identity_sensitive_values SET value_json = '"again@example.com"'
+        WHERE id = 'email-a'`)
+    ).toThrow(blocked);
+    expect(() =>
+      database.exec(`INSERT INTO identity_sensitive_values
+        (id,tenant_id,owner_type,owner_id,value_key,value_json,lifecycle_state,updated_at)
+        VALUES ('name-a','tenant-a','runtime_user','user-a','name','"Ada"','active',2)`)
+    ).toThrow(blocked);
+    expect(() =>
+      database.exec(
+        "INSERT INTO linked_identities (id, tenant_id, user_id) VALUES ('li-new', 'tenant-a', 'user-a')"
+      )
+    ).toThrow(blocked);
+    expect(() =>
+      database.exec(`INSERT INTO screen_responses
+        (id, tenant_id, user_id, screen_id, screen_key, answers_json, created_at, updated_at)
+        VALUES ('response-new', 'tenant-a', 'user-a', 'screen-1', 'survey', '{}', 2, 2)`)
+    ).toThrow(blocked);
+    expect(() =>
+      database.exec(
+        "INSERT INTO pairwise_subject_identifiers (id, tenant_id, user_id) VALUES ('pw-new', 'tenant-a', 'user-a')"
+      )
+    ).toThrow(blocked);
+    expect(() =>
+      database.exec(
+        "INSERT INTO subject_identifiers (id, tenant_id, subject_id) VALUES ('si-new', 'tenant-a', 'user-a')"
+      )
+    ).toThrow(blocked);
+    // Erasing stays possible (a NULL value, a deleted row), and other accounts are not fenced.
+    database.exec(`UPDATE identity_sensitive_values SET value_json = NULL, lifecycle_state = 'deleted'
+      WHERE id = 'email-a'`);
+    database.exec("DELETE FROM screen_responses WHERE tenant_id = 'tenant-b'");
+    database.exec(
+      "INSERT INTO linked_identities (id, tenant_id, user_id) VALUES ('li-other', 'tenant-b', 'user-a')"
+    );
+    // A retried erasure keeps its marker.
+    await eraseAccountPiiAfterDirectoryRemovalPrepared(
+      adapter,
+      { tenantId: 'tenant-a', userId: 'user-a', core: adapter },
+      101
+    );
+    expect(
+      database
+        .prepare('SELECT tenant_id, user_id, created_at FROM account_pii_erasure_markers')
+        .all()
+    ).toEqual([{ tenant_id: 'tenant-a', user_id: 'user-a', created_at: 100 }]);
+  });
+
+  it("removes the account's custom attributes from its core database", async () => {
+    await eraseAccountPiiAfterDirectoryRemovalPrepared(
+      adapter,
+      { tenantId: 'tenant-a', userId: 'user-a', core: adapter },
+      100
+    );
+    expect(
+      database.prepare('SELECT tenant_id, user_id FROM user_custom_fields ORDER BY tenant_id').all()
+    ).toEqual([{ tenant_id: 'tenant-b', user_id: 'user-a' }]);
+  });
 
   it('does not erase PII if its deletion snapshot cannot be persisted', async () => {
     database.exec('DROP TABLE account_webhook_snapshots');
@@ -251,18 +349,6 @@ describe('account directory removal PII erasure', () => {
     ).toEqual([{ id: 'pairwise-b' }]);
   });
 });
-
-/** What the fence tests use of node:sqlite (whose types this package does not load). */
-interface FenceDatabase {
-  exec(sql: string): void;
-  prepare(sql: string): { get(...params: unknown[]): unknown };
-  close(): void;
-}
-
-function openFenceDatabase(): FenceDatabase {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return -- node:sqlite is untyped here
-  return new DatabaseSync(':memory:');
-}
 
 /** The governance writes run only on D1 or PostgreSQL; SQLite here is D1's engine. */
 class D1LikeAdapter extends SqliteAdapter {
@@ -325,6 +411,41 @@ describe('account deletion fence', () => {
     await fenceAccountDeletion(adapter, { tenantId: 'tenant-a', userId: 'user-a' });
     expect(lifecycle()).toBe('deleted');
     await fenceAccountDeletion(adapter, { tenantId: 'tenant-a', userId: 'user-missing' });
+  });
+
+  it('writes no custom attribute of an account being deleted, or deleted', async () => {
+    database.exec(`CREATE TABLE user_custom_fields (tenant_id TEXT, user_id TEXT,
+      field_name TEXT, field_value TEXT, field_type TEXT,
+      UNIQUE (tenant_id, user_id, field_name))`);
+    const write = (fieldValue: string) =>
+      upsertUserCustomFieldValue({
+        adapter,
+        tenantId: 'tenant-a',
+        userId: 'user-a',
+        fieldName: 'department',
+        fieldValue,
+        fieldType: 'string',
+      });
+    const value = () =>
+      database
+        .prepare('SELECT field_value FROM user_custom_fields WHERE user_id = ?')
+        .get('user-a');
+
+    await write('Sales');
+    await write('Ops');
+    expect(value()).toEqual({ field_value: 'Ops' });
+    for (const removed of ['deleting', 'deleted']) {
+      database.exec(`UPDATE identity_accounts SET lifecycle_state = '${removed}'`);
+      await expect(write('Again')).rejects.toBeInstanceOf(CustomFieldAccountRemovedError);
+      expect(value()).toEqual({ field_value: 'Ops' });
+      // Nor a new one, once its rows were removed.
+      database.exec('DELETE FROM user_custom_fields');
+      await expect(write('Again')).rejects.toBeInstanceOf(CustomFieldAccountRemovedError);
+      expect(value()).toBeUndefined();
+      database.exec(
+        "INSERT INTO user_custom_fields VALUES ('tenant-a','user-a','department','Ops','string')"
+      );
+    }
   });
 
   it('tells a deletion that stopped before its directory removal became pending', async () => {

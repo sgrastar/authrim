@@ -67,6 +67,7 @@ export {
   type EnumRulesResult,
 } from './enum-options';
 export {
+  CustomFieldAccountRemovedError,
   upsertUserCustomFieldValue,
   type UpsertUserCustomFieldValueParams,
 } from './non-pii-storage';

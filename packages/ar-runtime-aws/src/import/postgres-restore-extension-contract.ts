@@ -1357,6 +1357,17 @@ export const POSTGRES_RESTORE_EXTENSION_CONTRACTS: readonly PostgresRestoreTable
   },
   {
     family: 'pii',
+    datasetId: 'pii.account_pii_erasure_markers',
+    table: 'account_pii_erasure_markers',
+    columns: ['tenant_id', 'user_id', 'created_at'],
+    sqliteIntegerColumns: ['created_at'],
+    postgresBooleanColumns: [],
+    postgresJsonbColumns: [],
+    primaryKey: ['tenant_id', 'user_id'],
+    tenantColumn: 'tenant_id',
+  },
+  {
+    family: 'pii',
     datasetId: 'pii.screen_responses',
     table: 'screen_responses',
     columns: [

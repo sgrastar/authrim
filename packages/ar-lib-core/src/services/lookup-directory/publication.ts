@@ -4,7 +4,7 @@ import {
   type AccountDirectoryPublishResult,
   type AccountDirectoryPublishRequest,
 } from '../control-plane/control-plane-contracts';
-import type { DatabaseAdapter, PreparedStatement } from '../../db/adapter';
+import type { DatabaseAdapter, PreparedStatement, TransactionContext } from '../../db/adapter';
 import {
   lookupVirtualBucket,
   type LookupBlindIndex,
@@ -63,6 +63,43 @@ export async function markAccountDirectoryPublicationReady(
   }
 }
 
+/** The account a removal of the whole account was about to prepare is under a legal hold. */
+export const DIRECTORY_REMOVAL_ACCOUNT_HELD = 'directory_removal_account_held';
+
+/**
+ * No legal hold stands on `account`, as the deletion transition reads it
+ * (accountDeletionPlan): its hold authority row is inactive and no active hold exists. A hold
+ * placed later is refused, because the account is then `deleting`.
+ */
+const ACCOUNT_NOT_HELD_SQL = `EXISTS (SELECT 1 FROM account_legal_hold_states hold_state
+      WHERE hold_state.tenant_id = account.tenant_id AND hold_state.account_id = account.id
+        AND hold_state.projection_state = 'inactive' AND hold_state.active_hold_id IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM legal_holds hold
+      WHERE hold.tenant_id = account.tenant_id AND hold.subject_id = account.id
+        AND hold.subject_type = 'account' AND hold.state = 'active')`;
+
+/**
+ * Takes the account's hold authority row first, as placing a hold does (legalHoldGuardStatement):
+ * on PostgreSQL its row lock, on Aurora DSQL a write conflict, puts the two in an order. Matches
+ * no row while a hold stands.
+ */
+function accountRemovalHoldGuardStatement(
+  tenantId: string,
+  accountId: string,
+  now: number
+): PreparedStatement {
+  return {
+    sql: `UPDATE account_legal_hold_states
+             SET updated_at = CASE WHEN updated_at >= ? THEN updated_at + 1 ELSE ? END
+           WHERE tenant_id = ? AND account_id = ?
+             AND projection_state = 'inactive' AND active_hold_id IS NULL
+             AND NOT EXISTS (SELECT 1 FROM legal_holds hold
+               WHERE hold.tenant_id = ? AND hold.subject_id = ?
+                 AND hold.subject_type = 'account' AND hold.state = 'active')`,
+    params: [now * 1000, now * 1000, tenantId, accountId, tenantId, accountId],
+  };
+}
+
 function accountDirectoryRemovalOutboxStatement(
   publication: AccountDirectoryRemovalPublication,
   now: number
@@ -74,7 +111,8 @@ function accountDirectoryRemovalOutboxStatement(
   const accountStatePredicate =
     publication.scope === 'account'
       ? `account.lifecycle_state IN ('active', 'deprovisioned', 'deleting')
-           AND account.directory_publication_state IN ('active', 'disabled')`
+           AND account.directory_publication_state IN ('active', 'disabled')
+           AND ${ACCOUNT_NOT_HELD_SQL}`
       : `account.lifecycle_state = 'active'
            AND account.directory_publication_state = 'active'`;
   return {
@@ -135,34 +173,94 @@ export async function insertPreparedAccountDirectoryRemovals(
   const statements = publications.map((publication) =>
     accountDirectoryRemovalOutboxStatement(publication, now)
   );
-  if (first.scope === 'account') {
-    statements.push({
-      sql: `UPDATE identity_accounts
-               SET lifecycle_state = 'deleting', directory_publication_state = 'disabled',
-                   updated_at = ?, deleted_at = COALESCE(deleted_at, ?)
-             WHERE tenant_id = ? AND id = ? AND account_route_generation = ?
-               AND lifecycle_state IN ('active', 'deprovisioned', 'deleting')
-               AND directory_publication_state IN ('active', 'disabled')`,
-      params: [
-        now * 1000,
-        now * 1000,
-        first.tenantId,
-        first.accountId,
-        first.routeProjection.accountRouteGeneration,
-      ],
-    });
+  if (first.scope !== 'account') {
+    const results = await adapter.batch(statements);
+    if (
+      results.length !== statements.length ||
+      results.some((result) => !result.success || result.rowsAffected !== 1)
+    ) {
+      throw new Error('directory_identifier_removal_prepare_failed');
+    }
+    return;
   }
-  const results = await adapter.batch(statements);
-  if (
-    results.length !== statements.length ||
-    results.some((result) => !result.success || result.rowsAffected !== 1)
-  ) {
-    throw new Error(
-      first.scope === 'account'
-        ? 'directory_removal_account_prepare_failed'
-        : 'directory_identifier_removal_prepare_failed'
-    );
+  statements.push({
+    sql: `UPDATE identity_accounts AS account
+             SET lifecycle_state = 'deleting', directory_publication_state = 'disabled',
+                 updated_at = ?, deleted_at = COALESCE(deleted_at, ?)
+           WHERE account.tenant_id = ? AND account.id = ? AND account.account_route_generation = ?
+             AND account.lifecycle_state IN ('active', 'deprovisioned', 'deleting')
+             AND account.directory_publication_state IN ('active', 'disabled')
+             AND ${ACCOUNT_NOT_HELD_SQL}`,
+    params: [
+      now * 1000,
+      now * 1000,
+      first.tenantId,
+      first.accountId,
+      first.routeProjection.accountRouteGeneration,
+    ],
+  });
+  const guard = accountRemovalHoldGuardStatement(first.tenantId, first.accountId, now);
+  await prepareAccountRemoval(adapter, guard, statements);
+}
+
+type TransactionRunner = <T>(fn: (tx: TransactionContext) => Promise<T>) => Promise<T>;
+
+/** The adapter's retry on a confirmed serialization conflict (Aurora DSQL), or its transaction. */
+function retryableTransaction(adapter: DatabaseAdapter): TransactionRunner {
+  const retrying = (adapter as { retryableTransaction?: TransactionRunner }).retryableTransaction;
+  if (typeof retrying === 'function') {
+    return <T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> =>
+      retrying.call(adapter, fn) as Promise<T>;
   }
+  return <T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> => adapter.transaction(fn);
+}
+
+/**
+ * Writes an account removal only when no legal hold stands on the account, all of it or none of
+ * it (DIRECTORY_REMOVAL_ACCOUNT_HELD when held). D1 runs a batch as one transaction with no other
+ * writer between its statements, so each statement carries the same hold condition and they all
+ * match, or none does (a statement matching no row would not roll the batch back). Elsewhere a
+ * transaction takes the hold authority row first and rolls back on any miss.
+ */
+async function prepareAccountRemoval(
+  adapter: DatabaseAdapter,
+  guard: PreparedStatement,
+  statements: PreparedStatement[]
+): Promise<void> {
+  if (adapter.getType() === 'd1') {
+    const results = await adapter.batch([guard, ...statements]);
+    if (results.length !== statements.length + 1 || results.some((result) => !result.success)) {
+      throw new Error('directory_removal_account_prepare_failed');
+    }
+    if (results[0].rowsAffected < 1) {
+      if (results.slice(1).some((result) => result.rowsAffected !== 0)) {
+        throw new Error('directory_removal_account_prepare_failed');
+      }
+      throw new Error(DIRECTORY_REMOVAL_ACCOUNT_HELD);
+    }
+    // Point writes; D1 also counts what triggers write, so more than one means matched.
+    if (results.slice(1).some((result) => result.rowsAffected < 1)) {
+      throw new Error('directory_removal_account_prepare_failed');
+    }
+    return;
+  }
+  // Held is returned, not thrown: a transaction may replace what its callback throws (Aurora
+  // DSQL does), and the guard matched nothing, so there is nothing to roll back. On Aurora DSQL a
+  // hold placed at the same time is a write conflict on the hold authority row: the work (SQL
+  // only) runs again on a confirmed conflict, then sees the hold.
+  const prepared = await retryableTransaction(adapter)(async (tx) => {
+    const guarded = await tx.execute(guard.sql, guard.params);
+    if (!guarded.success) throw new Error('directory_removal_account_prepare_failed');
+    if (guarded.rowsAffected !== 1) return false;
+    for (const statement of statements) {
+      const result = await tx.execute(statement.sql, statement.params);
+      if (!result.success || result.rowsAffected !== 1) {
+        throw new Error('directory_removal_account_prepare_failed');
+      }
+    }
+    return true;
+  });
+  if (!prepared) throw new Error(DIRECTORY_REMOVAL_ACCOUNT_HELD);
 }
 
 export async function markAccountDirectoryRemovalReady(

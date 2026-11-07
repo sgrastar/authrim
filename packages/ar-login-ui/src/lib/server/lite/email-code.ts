@@ -43,8 +43,9 @@ function errorOf(answer: { status: number; json: unknown }): string {
 /**
  * Sends a code. The answer looks the same whether a code went out or not (a refused proof, a
  * limited address, an unknown one): the page says a code was sent either way, as the SPA does.
- * The action header is always `login` (without it an unknown address is checked as a sign-up,
- * and a login proof would not do).
+ * The action header is the page's: `login` on the sign-in page (without it an unknown address is
+ * checked as a sign-up, and a login proof would not do); `signup` on the sign-up page, which sends
+ * the account's profile and the invitation it takes (the SPA's `emailCodeAPI.send`).
  */
 export async function sendLiteEmailCode(
 	backend: LiteBackendClient,
@@ -54,11 +55,18 @@ export async function sendLiteEmailCode(
 		codeChallenge: string;
 		authorizationChallengeId: string | null;
 		interactionId: string;
+		/** A sign-up's profile and invitation (the sign-up page's send). */
+		signup?: {
+			displayName: string | null;
+			customFields: Record<string, string>;
+			inviteToken: string | null;
+		};
 	}
 ): Promise<
 	| { ok: true; attemptId: string; maskedEmail: string | null }
 	| { ok: false; error: string; status: number }
 > {
+	const signup = input.signup;
 	const answer = await backend.request('/api/v1/auth/direct/email-code/send', {
 		json: {
 			client_id: loginUiClientId(),
@@ -68,9 +76,16 @@ export async function sendLiteEmailCode(
 			channel: 'browser',
 			authorization_challenge_id: input.authorizationChallengeId ?? undefined,
 			human_verification_response: input.proof ?? undefined,
-			runtime_interaction_id: input.interactionId
+			runtime_interaction_id: input.interactionId,
+			...(signup
+				? {
+						display_name: signup.displayName ?? undefined,
+						custom_fields: signup.customFields,
+						invite_token: signup.inviteToken ?? undefined
+					}
+				: {})
 		},
-		headers: { 'X-Authrim-Human-Verification-Action': 'login' }
+		headers: { 'X-Authrim-Human-Verification-Action': signup ? 'signup' : 'login' }
 	});
 	const json = record(answer.json);
 	if (answer.status !== 200 || typeof json.attempt_id !== 'string') {
@@ -165,7 +180,9 @@ export async function submitLiteStep(
 	backend: LiteBackendClient,
 	state: LiteFlowState,
 	step: FlowRuntimeStep,
-	handle: string
+	handle: string,
+	/** What the step's submit carries (a consent's decisions); nothing, by default. */
+	input: Record<string, unknown> = {}
 ): Promise<
 	| {
 			ok: true;
@@ -184,7 +201,7 @@ export async function submitLiteStep(
 				selected_handle: handle,
 				contract_hash: state.contractHash,
 				signature: state.signature,
-				input: {}
+				input
 			}
 		}
 	);

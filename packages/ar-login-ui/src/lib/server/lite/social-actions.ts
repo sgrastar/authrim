@@ -23,6 +23,10 @@ import {
 	backToPage,
 	finishOperation,
 	guarded,
+	acceptFlowConsent,
+	consentInputOf,
+	againOnPage,
+	flowConsentPatch,
 	liteLoginStepDecision,
 	liteTenantMethods,
 	openPost,
@@ -50,15 +54,19 @@ function nonEmpty(value: unknown): value is string {
 
 /** Whether the step the post is on offers this provider (on, allowed, and drawn as a button). */
 async function offersProvider(post: LitePost, provider: string) {
+	// An external sign-up is not done here yet (PR6c): never a start from the sign-up page.
+	if (post.purpose !== 'login') return null;
 	const step = post.flow.step;
 	const methods = await liteTenantMethods(post.event);
-	const decision = liteLoginStepDecision(step, methods, post.locale);
+	const decision = liteLoginStepDecision(step, methods, post.locale, post.purpose);
 	const drawn =
 		decision.kind === 'screen' &&
 		decision.fields.some(
 			(field) => field.blockType === 'auth_widget' && field.authMethod === 'external_idp'
 		);
-	if (!step || !drawn || !liteMethodAvailability(methods, step)('external_idp')) return null;
+	if (!step || !drawn || !liteMethodAvailability(methods, step, post.purpose)('external_idp')) {
+		return null;
+	}
 	const found = liteSocialProviders(methods, step).providers.find((p) => p.id === provider);
 	return found ? { step, provider: found } : null;
 }
@@ -114,13 +122,20 @@ export const liteSocialStartAction = guarded(async (event) => {
 	// the grant it got (ar-bridge refuses a grant used once; the page then starts again).
 	const nonce = readOperationNonce(post.fields);
 	if (!nonce) return fail(400, { restart: true });
+	// The step's consent, accepted before anything is started. Once a start was made, the same form
+	// posted again is answered with it below, whatever step the Flow went on to (and any other form
+	// starts nothing over it): no consent is asked of it.
+	if (!readPendingSocial(post.txn.data, state.interactionId)) {
+		const unconsented = await acceptFlowConsent(post);
+		if (unconsented) return unconsented;
+	}
 	const begun = await post.txns.beginOperation(post.txn.id, `social:${nonce}`);
 	if (!begun.ok) {
 		return begun.reason === 'budget_exceeded'
 			? fail(429, { error: 'busy' as const })
 			: fail(409, { restart: true });
 	}
-	if (begun.status === 'running') backToPage(event);
+	if (begun.status === 'running') return againOnPage(post);
 	if (begun.status === 'done') {
 		const result = isRecord(begun.result) ? begun.result : {};
 		// Only the start the transaction kept (a start that lost to another tab's is not followed).
@@ -134,7 +149,7 @@ export const liteSocialStartAction = guarded(async (event) => {
 		) {
 			return relayToStart(post, post.txn, provider, result.grantId);
 		}
-		backToPage(event);
+		return againOnPage(post);
 	}
 	const operation = { operationId: `social:${nonce}`, attempt: begun.attempt };
 	// Nothing over a sign-in begun or made here, another external start included (it is gone on
@@ -184,7 +199,7 @@ export const liteSocialStartAction = guarded(async (event) => {
 		{ grantId: grant.grantId, provider },
 		{
 			to: 'pending',
-			patch: { social },
+			patch: { social, ...flowConsentPatch(post, post.txn.data) },
 			// Never over a start another post (another tab) made meanwhile: its sign-in may be on
 			// its way back, and its callback names its own grant.
 			// Nor once the transaction is on another Flow (a Flow begun afresh in another tab).
@@ -206,7 +221,8 @@ export const liteSocialStartAction = guarded(async (event) => {
 	}
 	if (submitted) {
 		const advanced = await advanceLiteFlow(post.backend, state, submitted.step, {
-			signedIn: false
+			signedIn: false,
+			consentInput: consentInputOf(post)
 		}).catch(() => null);
 		if (advanced?.kind === 'completed') return relayCompletion(post, kept, advanced.output);
 	}

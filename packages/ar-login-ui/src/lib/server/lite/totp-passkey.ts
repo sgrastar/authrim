@@ -9,21 +9,21 @@
 import type { LiteBackendClient } from './backend-client';
 import { loginUiClientId } from './email-code';
 
-function record(json: unknown): Record<string, unknown> {
+export function record(json: unknown): Record<string, unknown> {
 	return typeof json === 'object' && json !== null && !Array.isArray(json)
 		? (json as Record<string, unknown>)
 		: {};
 }
 
-function errorOf(answer: { status: number; json: unknown }): string {
+export function errorOf(answer: { status: number; json: unknown }): string {
 	const error = record(answer.json).error;
 	return typeof error === 'string' ? error : `status_${answer.status}`;
 }
 
-const BASE64URL = /^[A-Za-z0-9_-]+$/u;
+export const BASE64URL = /^[A-Za-z0-9_-]+$/u;
 
 /** The Flow interaction a sign-in attempt belongs to (its failures are recorded with it). */
-function interactionHeaders(interactionId: string): Record<string, string> {
+export function interactionHeaders(interactionId: string): Record<string, string> {
 	return /^[A-Za-z0-9_.:-]{1,128}$/u.test(interactionId)
 		? { 'X-Authrim-Interaction-Id': interactionId }
 		: {};
@@ -111,9 +111,9 @@ export interface LitePasskeyOptions {
  * The longest credential ID taken, in base64url: WebAuthn allows 1,023 bytes (1,364 characters).
  * A security key's non-resident credential can be that long.
  */
-const MAX_CREDENTIAL_ID_CHARS = 1400;
+export const MAX_CREDENTIAL_ID_CHARS = 1400;
 
-const TRANSPORTS = new Set(['usb', 'nfc', 'ble', 'internal', 'hybrid', 'smart-card']);
+export const TRANSPORTS = new Set(['usb', 'nfc', 'ble', 'internal', 'hybrid', 'smart-card']);
 const MAX_ALLOWED_CREDENTIALS = 16;
 
 /** The options as the ceremony may use them, or null when anything is off. */
