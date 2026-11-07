@@ -22,6 +22,10 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.admin_keyring_dc_api': 'Keyring über den Browser vorlegen',
 	'set.k.security.admin_keyring_dc_api.desc':
 		'Wo der Browser es unterstützt, legen Administratoren ihren Keyring-Nachweis über die Digital Credentials API statt per QR-Code vor.',
+	'set.k.security.admin_last_resort_reenroll_window_seconds':
+		'Zeitraum für die Neuregistrierung nach der Notfallwiederherstellung',
+	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
+		'Wie lange ein Administrator nach der Notfallwiederherstellung, die seine zweiten Faktoren widerrufen hat, allein mit einem Passkey wieder einen ersten registrieren darf.',
 	'settings.json.object': 'Geben Sie ein JSON-Objekt ein (in geschweiften Klammern { }).',
 	'set.page.stayingSignedIn': 'Angemeldet bleiben',
 	'set.page.stayingSignedIn.desc':

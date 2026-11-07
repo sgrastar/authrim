@@ -35,6 +35,7 @@ export {
   type AdminSecondFactor,
   type AdminSecondFactorKind,
   type AdminSecondFactorInsertResult,
+  type AdminSecondFactorLastResortResult,
   type AdminSecondFactorRevokeResult,
   type AdminWebAuthnSecondFactorInput,
 } from './admin-second-factor';

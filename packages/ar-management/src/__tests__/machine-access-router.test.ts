@@ -731,6 +731,19 @@ describe('machineAccessRouter', () => {
       expect(mockRepo.updateCredentialWithGrant).not.toHaveBeenCalled();
     });
 
+    it('credential PATCH: adding the last-resort recovery permission to an inheriting key is gated', async () => {
+      // An empty list inherits the principal's permissions, but no wildcard there carries this
+      // exact-name-only permission: adding it widens the key and needs L2.
+      mockRepo.getCredentialPermissions.mockResolvedValue([]);
+      mockRequireAdminStepUp.mockResolvedValue(refusal());
+      const res = await send('PATCH', '/principals/amp_mcp/credentials/amk_old', {
+        permissions: ['admin:last_resort_recovery'],
+      });
+      expect(res.status).toBe(403);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockRepo.updateCredentialWithGrant).not.toHaveBeenCalled();
+    });
+
     it('credential PATCH: moving the window outward revives by time and is gated', async () => {
       mockRepo.findCredentialById.mockImplementation(async (id: string) => ({
         id,

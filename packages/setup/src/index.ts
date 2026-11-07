@@ -30,6 +30,7 @@ import {
   rotateSmokeRpcSigningKeyCommand,
 } from './cli/commands/signing-key-rotate.js';
 import { rotateLookupHmacKeyCommand } from './cli/commands/lookup-hmac-rotate.js';
+import { adminRecoverSecondFactorCommand } from './cli/commands/admin-recover-second-factor.js';
 import { controlProvisionCommand } from './cli/commands/control-provision.js';
 import { registerLocalCommands } from './cli/commands/local.js';
 import { registerAwsCommands } from './cli/commands/aws.js';
@@ -231,6 +232,21 @@ program
   .option('--dry-run', 'Validate the environment without changing key state')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(rotateLookupHmacKeyCommand);
+
+const adminProgram = program.command('admin').description('Administrator account operations');
+
+adminProgram
+  .command('recover-second-factor')
+  .description(
+    'Last-resort recovery: revoke an admin’s step-up second factors with Cloudflare access and open a short re-enrolment window'
+  )
+  .requiredOption('--env <name>', 'Environment name')
+  .requiredOption('--admin <email>', 'Email of the admin whose second factors are reset')
+  .option('--tenant <id>', 'The admin’s tenant, when admins of several tenants share the email')
+  .option('--reason <text>', 'Reason recorded in the audit log')
+  .option('--keys-dir <path>', 'Keys directory')
+  .option('-y, --yes', 'Skip the confirmation prompt')
+  .action(adminRecoverSecondFactorCommand);
 
 program
   .command('upgrade')

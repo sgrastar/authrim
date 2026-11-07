@@ -2290,6 +2290,20 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.deploymentIncomplete': 'Deployment incomplete',
           'web.envDetail.deploymentStatusUnknown': 'Status not verified',
           'web.envDetail.adminAccount': 'Admin Account',
+          'web.envDetail.sfRecoveryTitle': 'Admin second-factor recovery',
+          'web.envDetail.sfRecoveryDesc': 'Last resort for an admin who lost every step-up security key and Keyring credential when no other administrator can approve a recovery request. With your Cloudflare access it revokes all of the admin’s second factors, ends their sessions and lets them register a new one with their passkey for a limited time. Everyone is notified.',
+          'web.envDetail.sfRecoveryEmailPlaceholder': 'admin@example.com',
+          'web.envDetail.sfRecoveryTenantPlaceholder': 'Tenant (optional)',
+          'web.envDetail.sfRecoveryAction': 'Reset second factors...',
+          'web.envDetail.sfRecoveryEmailRequired': 'Enter the admin’s email.',
+          'web.envDetail.sfRecoveryConfirm': 'This revokes every step-up second factor of {{email}} in {{env}} and ends their sessions. This is permanent. Type the email again to confirm.',
+          'web.envDetail.sfRecoveryMismatch': 'Cancelled: the email did not match.',
+          'web.envDetail.sfRecoveryRunning': 'Resetting second factors...',
+          'web.envDetail.sfRecoveryDone': 'Done: {{count}} second factors revoked. {{email}} can register a new one after signing in with their passkey until {{until}}.',
+          'web.envDetail.sfRecoveryNotEmailed': ' Not every notification email could be sent: tell the other administrators yourself.',
+          'web.envDetail.sfRecoveryAmbiguous': 'Administrators in several tenants have this email ({{tenants}}). Enter the tenant.',
+          'web.envDetail.sfRecoveryNoLock': 'This machine has no lock file for the environment. Use the manual procedure in docs/operations/admin-second-factor-last-resort-recovery.md.',
+          'web.envDetail.sfRecoveryFailed': 'Recovery failed: {{error}}',
           'web.envDetail.adminStatusUnavailable': 'Could not confirm administrator registration. Refresh the environment details to retry. Registration remains disabled until the status is confirmed.',
           'web.envDetail.workerUpdateHint': 'Compare deployed and local builds',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
@@ -2432,6 +2446,20 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.deploymentIncomplete': 'デプロイ未完了',
           'web.envDetail.deploymentStatusUnknown': '状態未確認',
           'web.envDetail.adminAccount': '管理者アカウント',
+          'web.envDetail.sfRecoveryTitle': '管理者の 2 つ目の要素の復旧',
+          'web.envDetail.sfRecoveryDesc': '管理者が step-up 用のセキュリティキーと Keyring の資格情報をすべて失い、復旧の申請を承認できる他の管理者がいないときの最終手段です。Cloudflare の権限で、その管理者の 2 つ目の要素をすべて失効させ、セッションを終了し、一定時間だけパスキーで新しい要素を登録できるようにします。全員に通知されます。',
+          'web.envDetail.sfRecoveryEmailPlaceholder': 'admin@example.com',
+          'web.envDetail.sfRecoveryTenantPlaceholder': 'テナント（任意）',
+          'web.envDetail.sfRecoveryAction': '2 つ目の要素をリセット...',
+          'web.envDetail.sfRecoveryEmailRequired': '管理者のメールアドレスを入力してください。',
+          'web.envDetail.sfRecoveryConfirm': '{{env}} の {{email}} の step-up 用の 2 つ目の要素をすべて失効させ、セッションを終了します。元に戻せません。確認のため、メールアドレスをもう一度入力してください。',
+          'web.envDetail.sfRecoveryMismatch': 'メールアドレスが一致しないため、取り消しました。',
+          'web.envDetail.sfRecoveryRunning': '2 つ目の要素をリセットしています...',
+          'web.envDetail.sfRecoveryDone': '完了しました。{{count}} 件の要素を失効させました。{{email}} は {{until}} まで、パスキーでサインインして新しい要素を登録できます。',
+          'web.envDetail.sfRecoveryNotEmailed': ' 通知メールの一部を送れませんでした。他の管理者に直接知らせてください。',
+          'web.envDetail.sfRecoveryAmbiguous': '複数のテナント（{{tenants}}）に、このメールアドレスの管理者がいます。テナントを入力してください。',
+          'web.envDetail.sfRecoveryNoLock': 'このマシンには、この環境の lock ファイルがありません。docs/operations/admin-second-factor-last-resort-recovery.md の手動の手順を使ってください。',
+          'web.envDetail.sfRecoveryFailed': '復旧に失敗しました: {{error}}',
           'web.envDetail.adminStatusUnavailable': '管理者の登録状態を確認できませんでした。環境詳細を開き直して再確認してください。状態を確認できるまで登録操作はできません。',
           'web.envDetail.workerUpdateHint': 'デプロイ済みバージョンとローカルのビルドを比較',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
@@ -2940,6 +2968,20 @@ ${SETUP_WEB_UI_STYLE}</style>
         'id',
       ];
       const envManagementSupplementalRows = {
+        'web.envDetail.sfRecoveryTitle': ['管理员第二要素恢复', '管理員第二要素復原', 'Recuperación del segundo factor del administrador', 'Recuperação do segundo fator do administrador', 'Récupération du second facteur administrateur', 'Wiederherstellung des zweiten Faktors für Administratoren', '관리자 2단계 요소 복구', 'Восстановление второго фактора администратора', 'Pemulihan faktor kedua admin'],
+        'web.envDetail.sfRecoveryDesc': ['当管理员丢失了所有 step-up 安全密钥和 Keyring 凭据，且没有其他管理员可以批准恢复请求时的最后手段。使用您的 Cloudflare 权限撤销该管理员的所有第二要素、结束其会话，并允许其在限定时间内用通行密钥注册新的要素。所有人都会收到通知。', '當管理員遺失所有 step-up 安全金鑰與 Keyring 憑證，且沒有其他管理員可核准復原請求時的最後手段。使用您的 Cloudflare 權限撤銷該管理員的所有第二要素、結束其工作階段，並允許其在限定時間內以通行金鑰註冊新的要素。所有人都會收到通知。', 'Último recurso para un administrador que perdió todas sus llaves de seguridad step-up y credenciales de Keyring cuando ningún otro administrador puede aprobar una solicitud de recuperación. Con su acceso a Cloudflare revoca todos los segundos factores del administrador, cierra sus sesiones y le permite registrar uno nuevo con su passkey durante un tiempo limitado. Se notifica a todos.', 'Último recurso para um administrador que perdeu todas as chaves de segurança step-up e credenciais do Keyring quando nenhum outro administrador pode aprovar uma solicitação de recuperação. Com seu acesso ao Cloudflare, revoga todos os segundos fatores do administrador, encerra as sessões e permite registrar um novo com a passkey por tempo limitado. Todos são notificados.', 'Dernier recours pour un administrateur qui a perdu toutes ses clés de sécurité step-up et ses identifiants Keyring lorsqu’aucun autre administrateur ne peut approuver une demande de récupération. Avec votre accès Cloudflare, cela révoque tous ses seconds facteurs, met fin à ses sessions et lui permet d’en enregistrer un nouveau avec sa passkey pendant une durée limitée. Tout le monde est notifié.', 'Letzter Ausweg für einen Administrator, der alle Step-up-Sicherheitsschlüssel und Keyring-Anmeldedaten verloren hat, wenn kein anderer Administrator eine Wiederherstellungsanfrage genehmigen kann. Mit Ihrem Cloudflare-Zugriff werden alle zweiten Faktoren widerrufen, seine Sitzungen beendet und er kann für begrenzte Zeit mit seinem Passkey einen neuen registrieren. Alle werden benachrichtigt.', '관리자가 step-up 보안 키와 Keyring 자격 증명을 모두 잃었고 복구 요청을 승인할 다른 관리자가 없을 때의 최후 수단입니다. Cloudflare 권한으로 해당 관리자의 2단계 요소를 모두 폐기하고 세션을 종료하며, 제한된 시간 동안 패스키로 새 요소를 등록할 수 있게 합니다. 모두에게 알림이 전송됩니다.', 'Крайняя мера для администратора, потерявшего все ключи безопасности step-up и учетные данные Keyring, когда нет другого администратора, способного одобрить запрос на восстановление. С вашим доступом к Cloudflare отзывает все вторые факторы администратора, завершает его сеансы и на ограниченное время позволяет зарегистрировать новый с помощью passkey. Уведомляются все.', 'Upaya terakhir bagi admin yang kehilangan semua kunci keamanan step-up dan kredensial Keyring ketika tidak ada admin lain yang dapat menyetujui permintaan pemulihan. Dengan akses Cloudflare Anda, semua faktor kedua admin dicabut, sesinya diakhiri, dan admin dapat mendaftarkan yang baru dengan passkey dalam waktu terbatas. Semua orang diberi tahu.'],
+        'web.envDetail.sfRecoveryEmailPlaceholder': ['admin@example.com', 'admin@example.com', 'admin@example.com', 'admin@example.com', 'admin@example.com', 'admin@example.com', 'admin@example.com', 'admin@example.com', 'admin@example.com'],
+        'web.envDetail.sfRecoveryTenantPlaceholder': ['租户（可选）', '租戶（選填）', 'Tenant (opcional)', 'Tenant (opcional)', 'Tenant (facultatif)', 'Tenant (optional)', '테넌트(선택)', 'Тенант (необязательно)', 'Tenant (opsional)'],
+        'web.envDetail.sfRecoveryAction': ['重置第二要素...', '重設第二要素...', 'Restablecer segundos factores...', 'Redefinir segundos fatores...', 'Réinitialiser les seconds facteurs...', 'Zweite Faktoren zurücksetzen...', '2단계 요소 재설정...', 'Сбросить вторые факторы...', 'Atur ulang faktor kedua...'],
+        'web.envDetail.sfRecoveryEmailRequired': ['请输入管理员的电子邮件地址。', '請輸入管理員的電子郵件地址。', 'Introduzca el correo del administrador.', 'Informe o e-mail do administrador.', 'Saisissez l’e-mail de l’administrateur.', 'Geben Sie die E-Mail-Adresse des Administrators ein.', '관리자 이메일을 입력하세요.', 'Введите адрес электронной почты администратора.', 'Masukkan email admin.'],
+        'web.envDetail.sfRecoveryConfirm': ['这将撤销 {{env}} 中 {{email}} 的所有 step-up 第二要素并结束其会话。此操作是永久性的。请再次输入电子邮件地址以确认。', '這會撤銷 {{env}} 中 {{email}} 的所有 step-up 第二要素並結束其工作階段。此操作為永久性。請再次輸入電子郵件地址以確認。', 'Esto revoca todos los segundos factores step-up de {{email}} en {{env}} y cierra sus sesiones. Es permanente. Escriba el correo de nuevo para confirmar.', 'Isto revoga todos os segundos fatores step-up de {{email}} em {{env}} e encerra as sessões. É permanente. Digite o e-mail novamente para confirmar.', 'Cela révoque tous les seconds facteurs step-up de {{email}} dans {{env}} et met fin à ses sessions. C’est définitif. Saisissez à nouveau l’e-mail pour confirmer.', 'Damit werden alle Step-up-Zweitfaktoren von {{email}} in {{env}} widerrufen und die Sitzungen beendet. Dies ist dauerhaft. Geben Sie die E-Mail-Adresse zur Bestätigung erneut ein.', '{{env}}에서 {{email}}의 step-up 2단계 요소를 모두 폐기하고 세션을 종료합니다. 영구적인 작업입니다. 확인을 위해 이메일을 다시 입력하세요.', 'Это отзовет все вторые факторы step-up для {{email}} в {{env}} и завершит сеансы. Это необратимо. Введите адрес электронной почты еще раз для подтверждения.', 'Ini mencabut semua faktor kedua step-up milik {{email}} di {{env}} dan mengakhiri sesinya. Ini permanen. Ketik email lagi untuk mengonfirmasi.'],
+        'web.envDetail.sfRecoveryMismatch': ['已取消：电子邮件地址不一致。', '已取消：電子郵件地址不一致。', 'Cancelado: el correo no coincide.', 'Cancelado: o e-mail não confere.', 'Annulé : l’e-mail ne correspond pas.', 'Abgebrochen: Die E-Mail-Adresse stimmt nicht überein.', '취소됨: 이메일이 일치하지 않습니다.', 'Отменено: адрес электронной почты не совпадает.', 'Dibatalkan: email tidak cocok.'],
+        'web.envDetail.sfRecoveryRunning': ['正在重置第二要素...', '正在重設第二要素...', 'Restableciendo segundos factores...', 'Redefinindo segundos fatores...', 'Réinitialisation des seconds facteurs...', 'Zweite Faktoren werden zurückgesetzt...', '2단계 요소를 재설정하는 중...', 'Сброс вторых факторов...', 'Mengatur ulang faktor kedua...'],
+        'web.envDetail.sfRecoveryDone': ['完成：已撤销 {{count}} 个第二要素。{{email}} 可在 {{until}} 之前用通行密钥登录后注册新的要素。', '完成：已撤銷 {{count}} 個第二要素。{{email}} 可在 {{until}} 之前以通行金鑰登入後註冊新的要素。', 'Listo: se revocaron {{count}} segundos factores. {{email}} puede registrar uno nuevo tras iniciar sesión con su passkey hasta {{until}}.', 'Concluído: {{count}} segundos fatores revogados. {{email}} pode registrar um novo após entrar com a passkey até {{until}}.', 'Terminé : {{count}} seconds facteurs révoqués. {{email}} peut en enregistrer un nouveau après connexion avec sa passkey jusqu’au {{until}}.', 'Fertig: {{count}} zweite Faktoren widerrufen. {{email}} kann bis {{until}} nach der Anmeldung mit dem Passkey einen neuen registrieren.', '완료: 2단계 요소 {{count}}개를 폐기했습니다. {{email}}은(는) {{until}}까지 패스키로 로그인한 뒤 새 요소를 등록할 수 있습니다.', 'Готово: отозвано вторых факторов: {{count}}. {{email}} может зарегистрировать новый после входа с passkey до {{until}}.', 'Selesai: {{count}} faktor kedua dicabut. {{email}} dapat mendaftarkan yang baru setelah masuk dengan passkey hingga {{until}}.'],
+        'web.envDetail.sfRecoveryNotEmailed': [' 部分通知邮件未能发送：请自行告知其他管理员。', ' 部分通知郵件未能寄出：請自行告知其他管理員。', ' No se pudieron enviar todos los correos de notificación: avise usted a los demás administradores.', ' Nem todos os e-mails de notificação puderam ser enviados: avise os outros administradores.', ' Tous les e-mails de notification n’ont pas pu être envoyés : prévenez vous-même les autres administrateurs.', ' Nicht alle Benachrichtigungs-E-Mails konnten gesendet werden: Informieren Sie die anderen Administratoren selbst.', ' 일부 알림 이메일을 보내지 못했습니다. 다른 관리자에게 직접 알리세요.', ' Не все уведомления по электронной почте удалось отправить: сообщите другим администраторам сами.', ' Tidak semua email notifikasi dapat dikirim: beri tahu admin lain sendiri.'],
+        'web.envDetail.sfRecoveryAmbiguous': ['多个租户（{{tenants}}）中有使用该电子邮件地址的管理员。请输入租户。', '多個租戶（{{tenants}}）中有使用此電子郵件地址的管理員。請輸入租戶。', 'Hay administradores con este correo en varios tenants ({{tenants}}). Indique el tenant.', 'Há administradores com este e-mail em vários tenants ({{tenants}}). Informe o tenant.', 'Des administrateurs de plusieurs tenants ({{tenants}}) ont cet e-mail. Indiquez le tenant.', 'Administratoren mehrerer Tenants ({{tenants}}) haben diese E-Mail-Adresse. Geben Sie den Tenant an.', '여러 테넌트({{tenants}})에 이 이메일을 쓰는 관리자가 있습니다. 테넌트를 입력하세요.', 'Этот адрес используют администраторы нескольких тенантов ({{tenants}}). Укажите тенант.', 'Admin di beberapa tenant ({{tenants}}) memakai email ini. Masukkan tenant.'],
+        'web.envDetail.sfRecoveryNoLock': ['本机没有该环境的 lock 文件。请使用 docs/operations/admin-second-factor-last-resort-recovery.md 中的手动步骤。', '本機沒有此環境的 lock 檔案。請使用 docs/operations/admin-second-factor-last-resort-recovery.md 中的手動步驟。', 'Este equipo no tiene el archivo lock del entorno. Use el procedimiento manual de docs/operations/admin-second-factor-last-resort-recovery.md.', 'Esta máquina não tem o arquivo lock do ambiente. Use o procedimento manual em docs/operations/admin-second-factor-last-resort-recovery.md.', 'Cette machine n’a pas le fichier lock de l’environnement. Utilisez la procédure manuelle de docs/operations/admin-second-factor-last-resort-recovery.md.', 'Auf diesem Rechner fehlt die Lock-Datei der Umgebung. Verwenden Sie das manuelle Verfahren in docs/operations/admin-second-factor-last-resort-recovery.md.', '이 컴퓨터에는 해당 환경의 lock 파일이 없습니다. docs/operations/admin-second-factor-last-resort-recovery.md의 수동 절차를 사용하세요.', 'На этом компьютере нет lock-файла среды. Используйте ручную процедуру из docs/operations/admin-second-factor-last-resort-recovery.md.', 'Mesin ini tidak memiliki file lock untuk lingkungan tersebut. Gunakan prosedur manual di docs/operations/admin-second-factor-last-resort-recovery.md.'],
+        'web.envDetail.sfRecoveryFailed': ['恢复失败：{{error}}', '復原失敗：{{error}}', 'La recuperación falló: {{error}}', 'A recuperação falhou: {{error}}', 'La récupération a échoué : {{error}}', 'Wiederherstellung fehlgeschlagen: {{error}}', '복구 실패: {{error}}', 'Не удалось восстановить: {{error}}', 'Pemulihan gagal: {{error}}'],
         'web.envDetail.capacityTab': ['D1 容量', 'D1 容量', 'Capacidad D1', 'Capacidade D1', 'Capacité D1', 'D1-Kapazität', 'D1 용량', 'Емкость D1', 'Kapasitas D1'],
         'web.envDetail.capacityTitle': ['控制平面容量', '控制平面容量', 'Capacidad del plano de control', 'Capacidade do plano de controle', 'Capacité du plan de contrôle', 'Kapazität der Steuerungsebene', '컨트롤 플레인 용량', 'Емкость плоскости управления', 'Kapasitas control plane'],
         'web.envDetail.adminStatusUnavailable': ['无法确认管理员注册状态。请重新打开环境详情重试。确认前无法注册。', '無法確認管理員註冊狀態。請重新開啟環境詳情重試。確認前無法註冊。', 'No se pudo confirmar el registro del administrador. Vuelve a abrir los detalles del entorno para reintentar. El registro requiere confirmar el estado.', 'Não foi possível confirmar o cadastro do administrador. Reabra os detalhes do ambiente para tentar novamente. O cadastro exige a confirmação do estado.', 'Impossible de confirmer l’inscription de l’administrateur. Rouvrez les détails de l’environnement pour réessayer. L’inscription nécessite la confirmation de l’état.', 'Die Administratorregistrierung konnte nicht bestätigt werden. Öffnen Sie die Umgebungsdetails erneut. Die Registrierung bleibt bis zur Bestätigung gesperrt.', '관리자 등록 상태를 확인할 수 없습니다. 환경 상세를 다시 열어 확인하세요. 확인 전에는 등록할 수 없습니다.', 'Не удалось проверить регистрацию администратора. Откройте сведения о среде повторно. Регистрация недоступна до проверки статуса.', 'Status pendaftaran administrator tidak dapat dikonfirmasi. Buka kembali detail lingkungan untuk mencoba lagi. Pendaftaran memerlukan konfirmasi status.'],
@@ -6297,6 +6339,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             </div>
             <div class="c-note" data-i18n="web.envDetail.urlValidFor">This URL is valid for 1 hour. Open it in a browser to register the first admin account.</div>
           </div>
+        </div>
+
+        <div id="admin-sf-recovery-section">
+          <div class="sechead"><span class="idx">2FA</span><h3 data-i18n="web.envDetail.sfRecoveryTitle">Admin second-factor recovery</h3></div>
+          <div class="secdesc" data-i18n="web.envDetail.sfRecoveryDesc">Last resort for an admin who lost every step-up security key and Keyring credential when no other administrator can approve a recovery request. With your Cloudflare access it revokes all of the admin's second factors, ends their sessions and lets them register a new one with their passkey for a limited time. Everyone is notified.</div>
+          <div class="inline-form">
+            <input class="f-input sm" type="email" id="sf-recovery-email" autocomplete="off" spellcheck="false" placeholder="admin@example.com" aria-label="Admin email" data-i18n-placeholder="web.envDetail.sfRecoveryEmailPlaceholder">
+            <input class="f-input sm" type="text" id="sf-recovery-tenant" autocomplete="off" spellcheck="false" placeholder="Tenant (optional)" aria-label="Tenant" data-i18n-placeholder="web.envDetail.sfRecoveryTenantPlaceholder">
+            <button type="button" class="btn btn-danger sm" id="btn-sf-recovery" data-i18n="web.envDetail.sfRecoveryAction">Reset second factors...</button>
+          </div>
+          <div class="f-help" id="sf-recovery-message" aria-live="polite"></div>
         </div>
       </div>
 
@@ -13644,6 +13697,71 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    async function recoverAdminSecondFactorForEnv() {
+      if (!selectedEnvForDetail) {
+        alert(t('web.envDetail.noEnvironmentSelected'));
+        return;
+      }
+      const envName = selectedEnvForDetail.env;
+      const emailInput = document.getElementById('sf-recovery-email');
+      const tenantInput = document.getElementById('sf-recovery-tenant');
+      const messageEl = document.getElementById('sf-recovery-message');
+      const btn = document.getElementById('btn-sf-recovery');
+      const email = emailInput.value.trim().toLowerCase();
+      const tenantId = tenantInput.value.trim();
+      if (!email) {
+        messageEl.textContent = t('web.envDetail.sfRecoveryEmailRequired');
+        return;
+      }
+      // Typing the address again, not a yes/no, so the account is the one meant.
+      const typed = prompt(t('web.envDetail.sfRecoveryConfirm', { email, env: envName }));
+      if (typed === null) return;
+      if (typed.trim().toLowerCase() !== email) {
+        messageEl.textContent = t('web.envDetail.sfRecoveryMismatch');
+        return;
+      }
+      btn.disabled = true;
+      messageEl.textContent = t('web.envDetail.sfRecoveryRunning');
+      try {
+        const response = await api('/admin/recover-second-factor', {
+          method: 'POST',
+          body: {
+            env: envName,
+            email,
+            confirmEmail: typed,
+            ...(tenantId ? { tenantId } : {}),
+          },
+        });
+        if (!response.success) {
+          if (response.errorCode === 'admin_ambiguous') {
+            messageEl.textContent = t('web.envDetail.sfRecoveryAmbiguous', {
+              tenants: (response.tenantIds || []).join(', '),
+            });
+          } else if (response.errorCode === 'environment_lock_not_found') {
+            messageEl.textContent = t('web.envDetail.sfRecoveryNoLock');
+          } else {
+            messageEl.textContent = t('web.envDetail.sfRecoveryFailed', {
+              error: response.errorCode || response.error || t('web.status.error'),
+            });
+          }
+          return;
+        }
+        const result = response.result;
+        messageEl.textContent =
+          t('web.envDetail.sfRecoveryDone', {
+            count: result.revokedSecondFactors,
+            email: result.admin.email,
+            until: new Date(result.reenrollUntil).toLocaleString(),
+          }) + (result.notices.emailed ? '' : t('web.envDetail.sfRecoveryNotEmailed'));
+        emailInput.value = '';
+        tenantInput.value = '';
+      } catch (error) {
+        messageEl.textContent = t('web.envDetail.sfRecoveryFailed', { error: error.message });
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     async function provisionR2BucketsForEnv() {
       if (!selectedEnvForDetail) {
         alert(t('web.envDetail.noEnvironmentSelected'));
@@ -14772,6 +14890,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     });
     document.getElementById('btn-provision-r2-buckets')?.addEventListener('click', provisionR2BucketsForEnv);
+    document.getElementById('btn-sf-recovery')?.addEventListener('click', recoverAdminSecondFactorForEnv);
 
     // ===========================================
     // Admin Setup Functions

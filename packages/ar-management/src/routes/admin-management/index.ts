@@ -39,6 +39,7 @@ import { myStepUpRouter } from './my-step-up';
 import { mySecondFactorsRouter } from './my-second-factors';
 import { myKeyringFactorRouter } from './my-keyring-factor';
 import { mySecondFactorRecoveryRouter } from './my-second-factor-recovery';
+import { adminLastResortRecoveryRouter } from './admin-last-resort-recovery';
 import { adminSecondFactorRecoveriesRouter } from './admin-second-factor-recoveries';
 import { adminSecondFactorsRouter } from './admin-second-factors';
 import { adminNoticesRouter } from './admin-notices';
@@ -138,6 +139,7 @@ adminManagementRouter.route('/agent-templates', agentTemplatesRouter);
 adminManagementRouter.route('/agent-baselines', agentBaselinesRouter);
 adminManagementRouter.route('/platform/read-replication', readReplicationRouter);
 adminManagementRouter.route('/platform/control-plane', controlPlaneOperationsRouter);
+adminManagementRouter.route('/platform/last-resort-recovery', adminLastResortRecoveryRouter);
 
 // Mount sub-routers - Admin ABAC/ReBAC/Policies (these also have /admins/:userId subroutes)
 adminManagementRouter.route('/', adminAbacRouter);
@@ -190,6 +192,7 @@ export { agentBulkPlansRouter } from './agent-bulk';
 export { agentBaselinesRouter, agentTemplatesRouter } from './agent-baselines';
 export { readReplicationRouter } from './read-replication';
 export { controlPlaneOperationsRouter } from './control-plane-operations';
+export { adminLastResortRecoveryRouter } from './admin-last-resort-recovery';
 export {
   adminLoggingRouter,
   destinationsRouter,

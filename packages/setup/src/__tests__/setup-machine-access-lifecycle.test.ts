@@ -42,6 +42,21 @@ describe('ephemeral setup machine access lifecycle', () => {
     expect(cleanup).toHaveBeenCalledWith('test', '/keys');
   });
 
+  it('writes the principal with only the permissions asked for', async () => {
+    await runEphemeralSetupMachineAccess({
+      env: 'test',
+      config,
+      keysDir: '/keys',
+      databaseIdentifier: 'admin-db-id',
+      permissions: ['admin:last_resort_recovery'],
+      action: async () => 'result',
+    });
+    expect(ensure).toHaveBeenCalledWith('test', config, '/keys', undefined, {
+      databaseIdentifier: 'admin-db-id',
+      permissions: ['admin:last_resort_recovery'],
+    });
+  });
+
   it('removes machine access after an action failure', async () => {
     await expect(
       withEphemeralSetupMachineAccess({

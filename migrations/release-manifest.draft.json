@@ -83,6 +83,10 @@
               "checksum": "3a266ffccf0d21d2c197638b717944edb4f268e37169ff8972eb7c228f6fc093"
             },
             {
+              "path": "011_admin_second_factor_reenroll_window.sql",
+              "checksum": "f5593e9e1d5884d26320391ca02bca66f56ce13b37e983ed7f43b13ca0625c44"
+            },
+            {
               "path": "012_admin_groups.sql",
               "checksum": "7ae1ed299a343913d59766635841c1fc87ed41c3c2188dc4891c41efadce5861"
             }
@@ -238,6 +242,10 @@
         {
           "path": "010_keyring_second_factor_recoveries.sql",
           "checksum": "3a266ffccf0d21d2c197638b717944edb4f268e37169ff8972eb7c228f6fc093"
+        },
+        {
+          "path": "011_admin_second_factor_reenroll_window.sql",
+          "checksum": "f5593e9e1d5884d26320391ca02bca66f56ce13b37e983ed7f43b13ca0625c44"
         },
         {
           "path": "012_admin_groups.sql",

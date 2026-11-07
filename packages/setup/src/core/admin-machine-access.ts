@@ -424,6 +424,11 @@ export function buildSetupMachineAccessBootstrapSql(
     principalType?: string;
     tokenTtlSeconds?: number;
     createdByActorId?: string;
+    /**
+     * Reach every tenant instead of only the configured one, for a platform-wide operation
+     * (such as the last-resort recovery) whose permission is checked at the global scope.
+     */
+    allTenants?: boolean;
   } = {}
 ): string {
   const sqlExpr = getPortableSqlExpressions('sqlite');
@@ -556,8 +561,8 @@ INSERT INTO admin_machine_principal_tenant_scopes (
 )
 VALUES (
   ${sqlString(principalId)},
-  'allow',
-  ${sqlString(tenantId)},
+  ${options.allTenants ? "'all'" : "'allow'"},
+  ${options.allTenants ? 'NULL' : sqlString(tenantId)},
   ${sqlExpr.nowEpochMilliseconds},
   'bootstrap',
   'setup'

@@ -409,6 +409,11 @@ import {
   createDownstreamIntrospectionFailure,
   resolveDownstreamIntrospectionKeysDir,
 } from '../core/downstream-introspection-deploy.js';
+import {
+  AdminSecondFactorRecoveryError,
+  normalizeRecoveryRequest,
+  recoverAdminSecondFactor,
+} from '../core/admin-second-factor-recovery.js';
 import { appendFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 
@@ -7212,6 +7217,93 @@ export function createApiRoutes(): Hono {
       keysDir: resolveWebDeploymentKeysDir(planned.baseDir, environmentId, config),
     };
   }
+
+  // Last-resort recovery of an admin's step-up second factors (Cloudflare authority). The body
+  // repeats the email as the confirmation the operator typed.
+  api.post('/admin/recover-second-factor', async (c) => {
+    return withLock(async () => {
+      if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+        return c.json({ success: false, error: 'Invalid setup origin' }, 403);
+      }
+      const parsed = z
+        .object({
+          env: EnvNameSchema,
+          email: z.string().min(3).max(320),
+          confirmEmail: z.string().max(320),
+          tenantId: z.string().max(63).optional(),
+          reason: z.string().max(200).optional(),
+        })
+        .strict()
+        .safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) {
+        return c.json({ success: false, error: 'Invalid recovery request' }, 400);
+      }
+      let request;
+      try {
+        request = normalizeRecoveryRequest({
+          email: parsed.data.email,
+          ...(parsed.data.tenantId ? { tenantId: parsed.data.tenantId } : {}),
+          ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
+        });
+      } catch (error) {
+        return c.json({ success: false, error: sanitizeError(error) }, 400);
+      }
+      if (parsed.data.confirmEmail.trim().toLowerCase() !== request.email) {
+        return c.json(
+          {
+            success: false,
+            error: 'The confirmation does not match the email',
+            errorCode: 'confirmation_mismatch',
+          },
+          400
+        );
+      }
+      try {
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const env = parsed.data.env;
+        const envPaths = getEnvironmentPaths({ baseDir, env });
+        if (!existsSync(envPaths.config)) {
+          return c.json({ success: false, error: 'environment_config_not_found' }, 404);
+        }
+        const config = AuthrimConfigSchema.parse(
+          JSON.parse(await readFile(envPaths.config, 'utf8'))
+        );
+        const result = await recoverAdminSecondFactor({
+          baseDir,
+          env,
+          keysDir: resolveWebDeploymentKeysDir(baseDir, env, config),
+          ...request,
+        });
+        return c.json({ success: true, result });
+      } catch (error) {
+        if (error instanceof AdminSecondFactorRecoveryError) {
+          return c.json(
+            {
+              success: false,
+              error: error.message,
+              errorCode: error.code,
+              ...(Array.isArray(error.detail.tenant_ids)
+                ? { tenantIds: error.detail.tenant_ids }
+                : {}),
+            },
+            error.status === 404 ? 404 : 409
+          );
+        }
+        const message = sanitizeError(error);
+        const noLock =
+          message.startsWith('environment_not_found:') ||
+          message.startsWith('environment_lock_not_found:');
+        return c.json(
+          {
+            success: false,
+            error: message,
+            ...(noLock ? { errorCode: 'environment_lock_not_found' } : {}),
+          },
+          noLock ? 409 : 500
+        );
+      }
+    });
+  });
 
   api.get('/control/capacity/tenants', async (c) => {
     if (!sessionToken || c.req.header('X-Session-Token') !== sessionToken) {

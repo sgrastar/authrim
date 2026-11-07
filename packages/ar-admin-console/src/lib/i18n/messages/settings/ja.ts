@@ -23,6 +23,9 @@ export const jaSettings = {
 	'set.k.security.admin_keyring_dc_api': 'Keyring をブラウザーから提示する',
 	'set.k.security.admin_keyring_dc_api.desc':
 		'対応するブラウザーでは、QR コードの代わりに Digital Credentials API で Keyring の証明書を提示できるようにします。',
+	'set.k.security.admin_last_resort_reenroll_window_seconds': '最終手段の復旧後に再登録できる期間',
+	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
+		'最終手段の復旧で管理者の第 2 要素を取り消した後、パスキーだけで最初の第 2 要素を登録し直せる期間です。',
 	'settings.json.object': 'JSON のオブジェクト（{ } で囲んだ形）を入力してください。',
 	'set.page.stayingSignedIn': 'ログイン状態の維持',
 	'set.page.stayingSignedIn.desc':

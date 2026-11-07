@@ -768,6 +768,9 @@ export const ADMIN_PERMISSIONS = {
   ADMIN_MACHINE_ACCESS_WRITE: 'admin:machine_access:write',
   ADMIN_MACHINE_ACCESS_DELETE: 'admin:machine_access:delete',
   ADMIN_MACHINE_ACCESS_ALL: 'admin:machine_access:*',
+  // Last-resort second-factor recovery (the setup tool under Cloudflare authority). Exact name
+  // only: no wildcard carries it, and handing it to a machine principal needs L2.
+  ADMIN_LAST_RESORT_RECOVERY: 'admin:last_resort_recovery',
 
   // Environment control plane
   CONTROL_PLANE_READ: 'admin:control_plane:read',
@@ -832,12 +835,22 @@ export type AdminPermission = (typeof ADMIN_PERMISSIONS)[keyof typeof ADMIN_PERM
 
 /**
  * Permissions under these prefixes are never granted by a wildcard, only by their exact name:
- * break-glass access, and a machine principal's exemption from an operation's admin step-up.
+ * break-glass access, a machine principal's exemption from an operation's admin step-up, and the
+ * last-resort second-factor recovery (listed by its full name).
  */
 const EXACT_MATCH_ONLY_PERMISSION_PREFIXES: readonly string[] = [
   'admin:support_ops:break_glass:',
   'admin:step_up_exempt:',
+  'admin:last_resort_recovery',
 ];
+
+/**
+ * Whether a permission is held by its exact name only (no wildcard carries it). Handing one of
+ * these to a machine principal is treated like a step-up exemption: it needs L2.
+ */
+export function isExactMatchOnlyAdminPermission(permission: string): boolean {
+  return EXACT_MATCH_ONLY_PERMISSION_PREFIXES.some((prefix) => permission.startsWith(prefix));
+}
 
 /**
  * Check if a set of permissions includes a specific permission
@@ -850,7 +863,7 @@ export function hasAdminPermission(permissions: string[], required: string): boo
   // Break-glass and step-up exemption permissions are held by name only. `*`, `admin:*` and
   // the like do not carry them: neither is something a broad role picks up as a side effect, and
   // a token cannot be issued with them from a wildcard grant either (scopes are intersected here).
-  if (EXACT_MATCH_ONLY_PERMISSION_PREFIXES.some((prefix) => required.startsWith(prefix))) {
+  if (isExactMatchOnlyAdminPermission(required)) {
     return permissions.includes(required);
   }
 
