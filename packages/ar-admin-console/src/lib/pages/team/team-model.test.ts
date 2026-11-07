@@ -5,6 +5,7 @@ import { ApiError, ConflictError } from '#lib/api/api-error.js';
 import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
 import {
 	adminLabel,
+	readRoleEnd,
 	grantableRoles,
 	roleLabel,
 	inputTimeToMs,
@@ -104,6 +105,17 @@ describe('checking an invitation before it is sent', () => {
 			'tm.new.roleEndsInvalid'
 		);
 		expect(invitationProblems(invitation(), NOW, '').roleEnds).toBeUndefined();
+	});
+
+	it('reads a typed role end, or says what is wrong with it', () => {
+		expect(readRoleEnd('', false, 'utc', NOW)).toEqual({});
+		expect(readRoleEnd('', true, 'utc', NOW)).toEqual({ problem: 'tm.new.roleEndsInvalid' });
+		expect(readRoleEnd('2020-01-01T00:00', false, 'utc', NOW)).toEqual({
+			problem: 'tm.new.roleEndsPast'
+		});
+		expect(readRoleEnd('2030-01-01T00:00', false, 'utc', NOW)).toEqual({
+			ms: Date.UTC(2030, 0, 1)
+		});
 	});
 
 	it('reads the role end in the zone the admin chose', () => {

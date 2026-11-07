@@ -24,7 +24,7 @@
 	import { timePreference } from '#lib/ui/time/time-preference.svelte.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { teamErrorKey } from './team-errors';
-	import { grantableRoles, inputTimeToMs, roleLabel } from './team-model';
+	import { grantableRoles, readRoleEnd, roleLabel } from './team-model';
 
 	/**
 	 * The roles an administrator holds: given to them directly, or through an admin group (marked
@@ -97,12 +97,8 @@
 
 	/** The end typed, or a message when it cannot be read or is not ahead. */
 	function readEnd(text: string, bad: boolean): { ms?: number; problem?: string } {
-		if (bad) return { problem: t('tm.new.roleEndsInvalid') };
-		if (!text) return {};
-		const ms = inputTimeToMs(text, inZone);
-		if (ms === undefined) return { problem: t('tm.new.roleEndsInvalid') };
-		if (ms <= Date.now()) return { problem: t('tm.new.roleEndsPast') };
-		return { ms };
+		const end = readRoleEnd(text, bad, inZone);
+		return end.problem ? { problem: t(end.problem) } : { ms: end.ms };
 	}
 
 	async function run(change: () => Promise<void>, done: string, conflict?: 'tm.error.roleHeld') {

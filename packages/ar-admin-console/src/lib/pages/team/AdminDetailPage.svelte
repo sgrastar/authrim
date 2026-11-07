@@ -14,6 +14,7 @@
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
 	import BackLink from '#lib/ui/primitives/BackLink.svelte';
+	import Link from '#lib/ui/primitives/Link.svelte';
 	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
@@ -254,7 +255,11 @@
 				<ul class="plain">
 					{#each admin.groups as group (group.id)}
 						<li>
-							<span>{group.display_name}</span>
+							{#if groupHref}
+								<Link href={groupHref(group.id)}>{group.display_name}</Link>
+							{:else}
+								<span>{group.display_name}</span>
+							{/if}
 							<span class="muted">{group.group_key}</span>
 						</li>
 					{/each}
