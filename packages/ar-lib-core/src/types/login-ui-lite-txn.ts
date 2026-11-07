@@ -147,4 +147,9 @@ export type LiteTxnRefusal =
   | 'too_large'
   | 'budget_exceeded'
   | 'grant_invalid'
-  | 'policy_changed';
+  | 'policy_changed'
+  /**
+   * A transaction bound to a session (an account page, a re-authentication) called without that
+   * session, live and its user's (the entrypoint checks the caller's session).
+   */
+  | 'session_invalid';

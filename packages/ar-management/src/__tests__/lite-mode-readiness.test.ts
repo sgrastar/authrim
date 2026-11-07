@@ -225,6 +225,21 @@ describe('evaluateLiteReadiness', () => {
     }
   });
 
+  it('reports an account page at a path of its own (the lite UI serves /account only)', async () => {
+    kv.set(
+      'settings:tenant:tenant-a:self-service',
+      JSON.stringify({ 'self-service.account_page_path': '/my-account' })
+    );
+    expect(await evaluateLiteReadiness(context(), 'tenant-a')).toEqual([
+      { code: 'account_page_path_custom' },
+    ]);
+    kv.set(
+      'settings:tenant:tenant-a:self-service',
+      JSON.stringify({ 'self-service.account_page_path': '/account' })
+    );
+    expect(await evaluateLiteReadiness(context(), 'tenant-a')).toEqual([]);
+  });
+
   it('reports applications with their own Login UI and another issuer origin', async () => {
     db.prepare(
       `INSERT INTO oauth_clients (client_id, tenant_id, client_name, redirect_uris, grant_types,

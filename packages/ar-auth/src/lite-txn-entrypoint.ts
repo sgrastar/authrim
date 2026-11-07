@@ -83,6 +83,12 @@ export interface LiteTxnCall {
   publicOrigin: string;
   /** The browser binding: the value of the `__Host-authrim_lite` cookie. */
   binding: string;
+  /**
+   * The browser's session (the value of its `authrim_session` cookie), passed by an account or
+   * re-authentication page: checked here (live, of the tenant), never taken as given. A
+   * transaction bound to a session is acted on only with that session of its user.
+   */
+  sessionId?: string | null;
 }
 
 export interface LiteTxnCreateCall extends LiteTxnCall {
@@ -92,11 +98,6 @@ export interface LiteTxnCreateCall extends LiteTxnCall {
   clientId?: string | null;
   challengeId?: string | null;
   returnTo?: string | null;
-  /**
-   * The browser's session (the value of its `authrim_session` cookie), for a re-authentication:
-   * checked here, never taken as given. The user is the session's.
-   */
-  sessionId?: string | null;
   data?: Record<string, unknown>;
   reuseKey?: string;
   /** Only the live transaction of `reuseKey` (none is made, nor counted against the limits). */
@@ -174,6 +175,8 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
         bindingHash: string;
         publicOrigin: string;
         store: DurableObjectStub<LiteTxnStore>;
+        /** The caller's live session (`sessionId`), or null without one. */
+        session: { sessionId: string; userId: string } | null;
       }
   > {
     this.#authorize();
@@ -195,8 +198,22 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
     }
     const bindingHash = await liteBrowserBindingHash(binding);
     const store = liteTxnStoreFor(namespace, tenantId, bindingHash);
+    // Read once per call, only for a page that passes one (a sign-in page passes none).
+    let session: { sessionId: string; userId: string } | null = null;
+    if (typeof call.sessionId === 'string' && call.sessionId) {
+      try {
+        const live = await readAccountSession(this.env, tenantId, call.sessionId);
+        session =
+          live && live.sessionId === call.sessionId
+            ? { sessionId: live.sessionId, userId: live.userId }
+            : null;
+      } catch {
+        return { ok: false, reason: 'unavailable' };
+      }
+    }
     return {
       ok: true,
+      session,
       tenantId,
       policyRevision: typeof policyRevision === 'string' ? policyRevision : NO_CURRENT_REVISION,
       bindingHash,
@@ -230,9 +247,12 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
 
   create(call: LiteTxnCreateCall): Promise<LiteTxnCreateResult | Refused> {
     return this.#covered(async () => {
-      // An account action acts for the signed-in session and user, which this entrypoint does
-      // not check for it yet: refused until it does (lite plan PR7b).
-      if (call.purpose !== 'login' && call.purpose !== 'signup' && call.purpose !== 'reauth') {
+      if (
+        call.purpose !== 'login' &&
+        call.purpose !== 'signup' &&
+        call.purpose !== 'reauth' &&
+        call.purpose !== 'account'
+      ) {
         this.#authorize();
         return { ok: false, reason: 'unsupported_purpose' } as const;
       }
@@ -283,16 +303,15 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
           call.challengeId
         );
         if (!reauthUser) return { ok: false, reason: 'invalid_request' } as const;
-        let live: Awaited<ReturnType<typeof readAccountSession>>;
-        try {
-          live = await readAccountSession(this.env, context.tenantId, call.sessionId);
-        } catch {
-          return { ok: false, reason: 'unavailable' } as const;
-        }
-        if (!live || live.userId !== reauthUser) {
+        if (!context.session || context.session.userId !== reauthUser) {
           return { ok: false, reason: 'session_invalid' } as const;
         }
-        session = { sessionId: live.sessionId, userId: live.userId };
+        session = context.session;
+      }
+      // An account page is for the browser's live session and its user.
+      if (call.purpose === 'account') {
+        if (!context.session) return { ok: false, reason: 'session_invalid' } as const;
+        session = context.session;
       }
       const limits = await readLiteTxnLimits(this.env, context.tenantId);
       const reuseOnly = call.reuseOnly === true;
@@ -350,37 +369,16 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
    * (`current: true`) the tenant's current policy is read, so a post under an earlier revision is
    * refused before any backend call.
    */
-  get(
-    call: LiteTxnCall & {
-      txnId: string;
-      current?: boolean;
-      /**
-       * The browser's session (its `authrim_session` cookie). A transaction bound to a session (a
-       * re-authentication) is read only while that session is the browser's, live, and its user's.
-       */
-      sessionId?: string | null;
-    }
-  ): Promise<LiteTxnResult | Refused> {
+  get(call: LiteTxnCall & { txnId: string; current?: boolean }): Promise<LiteTxnResult | Refused> {
     return this.#covered(async () => {
       const context = await this.#context(call, {
         current: call.current === true,
         requireLite: true,
       });
       if (!context.ok) return context;
-      const read = (await context.store.getTxnRpc(this.#ref(context, call.txnId))) as LiteTxnResult;
-      if (!read.ok || read.txn.bound.sessionId === null) return read;
-      const bound = read.txn.bound;
-      if (call.sessionId !== bound.sessionId)
-        return { ok: false, reason: 'session_invalid' } as const;
-      let live: Awaited<ReturnType<typeof readAccountSession>>;
-      try {
-        live = await readAccountSession(this.env, context.tenantId, call.sessionId);
-      } catch {
-        return { ok: false, reason: 'unavailable' } as const;
-      }
-      return live && live.sessionId === bound.sessionId && live.userId === bound.userId
-        ? read
-        : ({ ok: false, reason: 'session_invalid' } as const);
+      // A transaction bound to a session is read only with that session of its user (the store
+      // compares the caller's, checked live above, with the transaction's).
+      return context.store.getTxnRpc(this.#ref(context, call.txnId));
     });
   }
 
@@ -541,6 +539,7 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
       bindingHash: string;
       policyRevision: string;
       publicOrigin: string;
+      session: { sessionId: string; userId: string } | null;
     },
     txnId: string
   ) {
@@ -550,6 +549,7 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
       txnId,
       policyRevision: context.policyRevision,
       publicOrigin: context.publicOrigin,
+      session: context.session,
     };
   }
 }

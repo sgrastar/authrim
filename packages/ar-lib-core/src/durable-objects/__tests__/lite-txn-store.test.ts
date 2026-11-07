@@ -979,6 +979,47 @@ describe('LiteTxnStore: completions that could not be stored as given', () => {
     }
   });
 
+  it('acts on a transaction bound to a session only with that session of its user', async () => {
+    const { store } = createStore();
+    const made = (await store.createTxnRpc({
+      tenantId: 'tenant-a',
+      bindingHash: BINDING,
+      bound: bound({ purpose: 'account', sessionId: 's1', userId: 'u1' }),
+      maxActive: 4,
+    })) as { ok: true; txn: { id: string; version: number } };
+    const own = { sessionId: 's1', userId: 'u1' };
+    for (const session of [
+      undefined,
+      null,
+      { sessionId: 's2', userId: 'u1' },
+      { sessionId: 's1', userId: 'u2' },
+    ]) {
+      await expect(store.getTxnRpc({ ...ref(made.txn.id), session })).resolves.toEqual({
+        ok: false,
+        reason: 'session_invalid',
+      });
+      await expect(
+        store.transitionRpc({
+          ...ref(made.txn.id),
+          session,
+          expectedVersion: made.txn.version,
+          to: 'pending',
+        })
+      ).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+      await expect(
+        store.beginOperationRpc({ ...ref(made.txn.id), session, operationId: 'op' })
+      ).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    }
+    await expect(store.getTxnRpc({ ...ref(made.txn.id), session: own })).resolves.toMatchObject({
+      ok: true,
+    });
+    // A sign-in's transaction is bound to no session: any call (with a session or not) is its own.
+    const login = await create(store);
+    await expect(store.getTxnRpc({ ...ref(login.id), session: own })).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+
   it('counts a reload by reuse key as a read', async () => {
     const { store } = createStore();
     const first = await create(store, { reuseKey: 'k' });

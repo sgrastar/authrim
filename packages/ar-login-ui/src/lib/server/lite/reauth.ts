@@ -188,7 +188,7 @@ export async function liteReauthPage(event: RequestEvent) {
 	}
 	const challengeId = event.url.searchParams.get('challenge_id');
 	if (!challengeId || !CHALLENGE.test(challengeId)) return errorPage(event, 'expired');
-	const txns = liteTxnClient(event);
+	const txns = liteTxnClient(event, { session: true });
 	const backend = liteBackendForEvent(event, 'page_load');
 	if (!txns || !backend) error(503, 'temporarily_unavailable');
 
@@ -200,12 +200,10 @@ export async function liteReauthPage(event: RequestEvent) {
 	const client = record(record(challenge.json).client);
 	const clientId = typeof client.client_id === 'string' ? client.client_id : null;
 
-	const sessionId = event.cookies.get(SESSION_COOKIE) ?? null;
 	const created = await txns.create({
 		purpose: 'reauth',
 		clientId,
 		challengeId,
-		sessionId,
 		reuseKey: await sha256Hex(JSON.stringify(['reauth', challengeId]))
 	});
 	if (!created.ok) {
@@ -302,7 +300,7 @@ async function openReauthPost(event: RequestEvent): Promise<
 	| { failure: ReauthFailure }
 > {
 	const refused = { failure: fail(403, { restart: true }) };
-	const txns = liteTxnClient(event);
+	const txns = liteTxnClient(event, { session: true });
 	const backend = liteBackendForEvent(event, 'form_post');
 	const form = await readLiteForm(event.request);
 	if (!txns || !backend || !form.ok) return refused;
@@ -313,7 +311,7 @@ async function openReauthPost(event: RequestEvent): Promise<
 	// (ar-auth checks): a sign-in as someone else meanwhile (another tab), or a session ended, is
 	// not re-authenticated from this page.
 	const sessionId = event.cookies.get(SESSION_COOKIE) ?? null;
-	const read = await txns.get(txnId, { current: true, sessionId });
+	const read = await txns.get(txnId, { current: true });
 	if (!read.ok && read.reason === 'session_invalid') {
 		return { failure: fail(409, { error: 'session_changed' as const }) };
 	}
@@ -383,7 +381,7 @@ async function finish(
 		.catch(() => null);
 	if (done?.ok || !patch) return done?.ok ? done.txn : null;
 	if (done?.reason !== 'version_mismatch') return null;
-	const now = await post.txns.get(post.txn.id, { sessionId: post.sessionId }).catch(() => null);
+	const now = await post.txns.get(post.txn.id).catch(() => null);
 	if (!now?.ok || !stillApplies(now.txn.data)) return null;
 	const moved = await post.txns
 		.transition(post.txn.id, { expectedVersion: now.txn.version, to: 'pending', patch })
