@@ -91,6 +91,8 @@ export interface LiteTxnCreateCall extends LiteTxnCall {
   userId?: string | null;
   data?: Record<string, unknown>;
   reuseKey?: string;
+  /** Only the live transaction of `reuseKey` (none is made, nor counted against the limits). */
+  reuseOnly?: boolean;
 }
 
 /** A revision no transaction is made under: moves are refused, a result is still recorded. */
@@ -252,21 +254,31 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
         return { ok: false, reason: 'invalid_return_to' } as const;
       }
       const limits = await readLiteTxnLimits(this.env, context.tenantId);
-      try {
-        for (const [key, maxRequests] of [
-          [call.clientIp || 'unknown', limits.perIpPerMinute],
-          ['tenant-total', limits.perTenantPerMinute],
-        ] as const) {
-          const counted = await checkRateLimit(
-            this.env,
-            key,
-            { maxRequests, windowSeconds: 60, endpointClass: 'liteTxnCreate', requireAtomic: true },
-            context.tenantId
-          );
-          if (!counted.allowed) return { ok: false, reason: 'budget_exceeded' } as const;
+      const reuseOnly = call.reuseOnly === true;
+      if (reuseOnly && !call.reuseKey) return { ok: false, reason: 'unavailable' } as const;
+      // A look-up makes nothing: it is not counted against the creation limits.
+      if (!reuseOnly) {
+        try {
+          for (const [key, maxRequests] of [
+            [call.clientIp || 'unknown', limits.perIpPerMinute],
+            ['tenant-total', limits.perTenantPerMinute],
+          ] as const) {
+            const counted = await checkRateLimit(
+              this.env,
+              key,
+              {
+                maxRequests,
+                windowSeconds: 60,
+                endpointClass: 'liteTxnCreate',
+                requireAtomic: true,
+              },
+              context.tenantId
+            );
+            if (!counted.allowed) return { ok: false, reason: 'budget_exceeded' } as const;
+          }
+        } catch {
+          return { ok: false, reason: 'unavailable' } as const;
         }
-      } catch {
-        return { ok: false, reason: 'unavailable' } as const;
       }
       const bound: LiteTxnBound = {
         tenantId: context.tenantId,
@@ -286,6 +298,7 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
         bound,
         data: call.data,
         reuseKey: call.reuseKey,
+        reuseOnly,
         maxActive: limits.perBrowser,
       });
     });

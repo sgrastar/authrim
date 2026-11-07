@@ -78,7 +78,9 @@ interface ParsedSetCookie {
  */
 const EXTRA_HEADERS: ReadonlySet<string> = new Set([
 	'x-authrim-human-verification-action',
-	'x-authrim-interaction-id'
+	'x-authrim-interaction-id',
+	// The consent answer's form post as data (the lite relay page sends it).
+	'x-authrim-relay'
 ]);
 
 const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
