@@ -597,12 +597,22 @@ describe('the lite account page', () => {
 					? json({ ok: true, passkey: { id: 'pk1', deleted: true } })
 					: json({ error: 'reauth_required', reauth_required: true }, 403);
 			};
-			routes['/api/account/reauth/email-code/send'] = () =>
-				json({ challenge_id: 'rc-1', expires_in: 300, masked_email: 'a***@example.com' });
+			// As ar-management: a challenge is spent on its check, a wrong code included.
+			const spent = new Set<string>();
+			let sends = 0;
+			routes['/api/account/reauth/email-code/send'] = () => {
+				sends++;
+				return json({
+					challenge_id: `rc-${sends}`,
+					expires_in: 300,
+					masked_email: 'a***@example.com'
+				});
+			};
 			routes['/api/account/reauth/email-code/complete'] = (body) => {
-				if (body.code !== '123456' || body.challenge_id !== 'rc-1') {
-					return json({ error: 'invalid_code' }, 400);
-				}
+				const id = String(body.challenge_id);
+				if (spent.has(id)) return json({ error: 'invalid_code' }, 400);
+				spent.add(id);
+				if (body.code !== '123456') return json({ error: 'invalid_code' }, 400);
 				recent = true;
 				return json({ ok: true, reauth: {} });
 			};
@@ -633,6 +643,29 @@ describe('the lite account page', () => {
 			).resolves.toMatchObject({
 				status: 400,
 				data: { error: 'code_invalid' }
+			});
+			// That code is spent: the methods are offered again, the removal still held.
+			expect(((await view()) as Page).stepUp).toMatchObject({ email: null, at });
+			// A send another post took within the minute (a double submit): no second code.
+			const before = sends;
+			store.set({
+				data: {
+					...store.txn.data,
+					accountStepUp: { ...(store.txn.data.accountStepUp as object), sendingAt: Date.now() }
+				}
+			});
+			await expect(post('stepup_email_send', { step_up: at })).resolves.toMatchObject({
+				notice: 'step_up_code_sending'
+			});
+			expect(sends).toBe(before);
+			store.set({
+				data: {
+					...store.txn.data,
+					accountStepUp: { ...(store.txn.data.accountStepUp as object), sendingAt: null }
+				}
+			});
+			await expect(post('stepup_email_send', { step_up: at })).resolves.toMatchObject({
+				notice: 'step_up_code_sent'
 			});
 			// Proven: the held removal is made (once), the step-up given up.
 			await expect(post('stepup_email_verify', { step_up: at, code: '123456' })).resolves.toEqual({
@@ -705,6 +738,34 @@ describe('the lite account page', () => {
 				status: 409,
 				data: { error: 'remaining_method' }
 			});
+		});
+
+		it('draws one ceremony at a time (a step-up gives a passkey being added up)', async () => {
+			passkeyPage();
+			routes['/api/account/passkeys/options'] = () =>
+				json({
+					challenge_id: 'pc-1',
+					options: {
+						rp: { id: 'id.example', name: 'Authrim' },
+						user: { id: 'dXNlci0x', name: 'a@example.com', displayName: 'a' },
+						challenge: 'Y2hhbGxlbmdl',
+						pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+						timeout: 60000,
+						excludeCredentials: [],
+						authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+						attestation: 'none'
+					}
+				});
+			routes['/api/account/passkeys/pk1'] = () =>
+				json({ error: 'reauth_required', reauth_required: true }, 403);
+			await view();
+			await post('passkey_add', { device_name: '' });
+			expect(store.txn.data.accountPasskeyCreate).toBeDefined();
+			await post('passkey_delete', { passkey: 'pk1' });
+			expect(store.txn.data.accountPasskeyCreate).toBeUndefined();
+			const page = (await view()) as { widgets: { passkeyCreate: unknown }; stepUp: unknown };
+			expect(page.stepUp).not.toBeNull();
+			expect(page.widgets.passkeyCreate).toBeNull();
 		});
 	});
 });

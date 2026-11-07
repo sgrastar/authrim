@@ -296,9 +296,11 @@ export async function liteAccountPage(event: RequestEvent) {
 		passkeys: passkeyList?.ok ? liteAccountPasskeys(passkeyList.json, LL, locale) : null,
 		// A passkey being added: its ceremony.
 		passkeyCreate: (() => {
-			const create = drawn.has('account_passkey_widget')
-				? readLiteAccountPasskeyCreate(txn.data)
-				: null;
+			// One ceremony at a time: none while a step-up is asked for.
+			const create =
+				drawn.has('account_passkey_widget') && !readLiteAccountStepUp(txn.data)
+					? readLiteAccountPasskeyCreate(txn.data)
+					: null;
 			return create ? { registration: create.registration, challenge: create.challengeId } : null;
 		})(),
 		activityIncomplete:

@@ -44,6 +44,8 @@ export interface LiteAccountStepUp {
 	at: number;
 	/** A code sent to the verified address (its challenge, the address masked). */
 	email: { challengeId: string; maskedEmail: string | null } | null;
+	/** When a post took the send of a code (the others meanwhile draw the page). */
+	sendingAt: number | null;
 	/** A passkey challenge got (its ceremony is drawn). */
 	passkey: { challengeId: string; options: LitePasskeyOptions; expiresAt: number } | null;
 }
@@ -71,6 +73,7 @@ export function readLiteAccountStepUp(
 	return {
 		pending: { action: pending.action, args },
 		at: held.at,
+		sendingAt: typeof held.sendingAt === 'number' ? held.sendingAt : null,
 		email: challengeId(email.challengeId)
 			? {
 					challengeId: email.challengeId as string,
@@ -137,8 +140,10 @@ async function move(
 
 /** Holds the change for a step-up (the page then asks for it). */
 async function holdForStepUp(post: LiteAccountPost, pending: LiteAccountPending) {
+	// Alone on the page: a passkey being added is given up with it (one ceremony at a time).
 	const kept = await move(post, {
-		accountStepUp: { pending, at: Date.now(), email: null, passkey: null }
+		accountStepUp: { pending, at: Date.now(), email: null, passkey: null, sendingAt: null },
+		accountPasskeyCreate: null
 	});
 	if (!kept) return retryLater();
 	return fail(403, { stepUp: true as const, widget: widgetOf(pending.action) });
@@ -321,20 +326,34 @@ export async function liteAccountStepUpEmailSendAction(event: RequestEvent) {
 	const opened = await openStepUp(event);
 	if ('failure' in opened) return opened.failure;
 	const { post, stepUp } = opened;
+	// One send at a time: taken first (a move from the version this post read), so of posts that
+	// read the same only one sends; one taken within the last minute is another post's.
+	if (stepUp.sendingAt !== null && Date.now() - stepUp.sendingAt < 60_000) {
+		return { notice: 'step_up_code_sending' as const, widget: 'account' };
+	}
+	const taken = await move(post, {
+		accountStepUp: { ...stepUp, email: null, passkey: null, sendingAt: Date.now() }
+	});
+	if (!taken) return retryLater();
+	const sending = { ...post, txn: taken };
 	const answer = await post.backend
 		.request('/api/account/reauth/email-code/send', { json: {} })
 		.catch(() => null);
 	const json = record(answer?.json);
 	const id = challengeId(json.challenge_id);
-	if (answer?.status !== 200 || !id) return stepUpFailure(answer);
-	const kept = await move(post, {
+	if (answer?.status !== 200 || !id) {
+		await move(sending, { accountStepUp: { ...stepUp, email: null, sendingAt: null } });
+		return stepUpFailure(answer);
+	}
+	const kept = await move(sending, {
 		accountStepUp: {
 			...stepUp,
 			email: {
 				challengeId: id,
 				maskedEmail: typeof json.masked_email === 'string' ? json.masked_email : null
 			},
-			passkey: null
+			passkey: null,
+			sendingAt: null
 		}
 	});
 	if (!kept) return retryLater();
@@ -355,7 +374,12 @@ export async function liteAccountStepUpEmailVerifyAction(event: RequestEvent) {
 			json: { challenge_id: stepUp.email.challengeId, code }
 		})
 		.catch(() => null);
-	if (answer?.status !== 200 || record(answer.json).ok !== true) return stepUpFailure(answer);
+	if (answer?.status !== 200 || record(answer.json).ok !== true) {
+		// ar-management spends the challenge on its check, a wrong code included: the held change
+		// stays, and the page offers the methods again (a new code, or another way).
+		await move(post, { accountStepUp: { ...stepUp, email: null } });
+		return stepUpFailure(answer);
+	}
 	return proven(event, post, stepUp);
 }
 
