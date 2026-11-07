@@ -24,11 +24,26 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
   DatabaseSync: new (filename: string) => SqliteDatabase;
 };
 
+const MIGRATIONS_ROOT = path.resolve(__dirname, '../../../../../migrations');
+
+/**
+ * The files a fresh installation applies to the folder's D1 database (`core`, `pii`), in order:
+ * the release manifest's fresh plan (the baseline, then the migrations after it).
+ */
+export function freshInstallMigrationFiles(folder: string): string[] {
+  const manifest = JSON.parse(
+    readFileSync(path.join(MIGRATIONS_ROOT, 'release-manifest.draft.json'), 'utf8')
+  ) as { streams: Array<{ id: string; files: Array<{ path: string }> }> };
+  const stream = manifest.streams.find((candidate) => candidate.id === `${folder}-d1`);
+  if (!stream) throw new Error(`No fresh-install stream for ${folder}-d1`);
+  return stream.files.map((file) => file.path);
+}
+
 /** A new in-memory database with every migration of the folder (`core`, `pii`) applied. */
 export function migrate(folder: string): SqliteDatabase {
   const db = new DatabaseSync(':memory:');
-  const directory = path.resolve(__dirname, '../../../../../migrations', folder, 'd1');
-  for (const file of [`001_0_5_0_${folder}_baseline.sql`]) {
+  const directory = path.join(MIGRATIONS_ROOT, folder, 'd1');
+  for (const file of freshInstallMigrationFiles(folder)) {
     db.exec(renderPortableMigrationSql(readFileSync(path.join(directory, file), 'utf8'), 'sqlite'));
   }
   return db;

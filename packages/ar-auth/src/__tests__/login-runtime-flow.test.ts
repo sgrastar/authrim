@@ -5338,12 +5338,13 @@ describe('LoginUI runtime Flow handlers', () => {
           },
         ]),
       };
+      /** The context the saving write keeps (`COALESCE(?, context_json)`: null keeps it as it is). */
       const contextWrites = () =>
         transactionStatements()
-          .filter(([sql]) => String(sql).includes('SET context_json'))
-          .map(
-            ([, params]) => JSON.parse(String((params as unknown[])[0])) as Record<string, unknown>
-          );
+          .filter(([sql]) => String(sql).includes('context_json = COALESCE(?, context_json)'))
+          .map(([, params]) => (params as unknown[])[5] as string | null)
+          .filter((value): value is string => value !== null)
+          .map((value) => JSON.parse(value) as Record<string, unknown>);
       const screenResponseWrites = () =>
         mocks.piiAdapter.execute.mock.calls.filter(([sql]) =>
           String(sql).includes('INSERT INTO screen_responses')
@@ -5537,10 +5538,10 @@ describe('LoginUI runtime Flow handlers', () => {
         await submitAnswers({ plan: 'pro' }, false, undefined, undefined, flowScreen);
 
         const [statement] = transactionStatements().filter(([sql]) =>
-          String(sql).includes('SET context_json')
+          String(sql).includes('context_json = COALESCE(?, context_json)')
         );
-        expect(String(statement?.[0])).toContain('current_step_id = ?');
-        expect((statement?.[1] as unknown[]).slice(-1)).toEqual(['screen:step']);
+        expect(String(statement?.[0])).toContain('current_step_id = ? AND submit_claim_id = ?');
+        expect((statement?.[1] as unknown[]).slice(-2, -1)).toEqual(['screen:step']);
       });
 
       it('logs a delivery the event dispatcher refused, never the answers', async () => {
