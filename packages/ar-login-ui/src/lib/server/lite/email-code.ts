@@ -165,7 +165,9 @@ export async function submitLiteStep(
 	backend: LiteBackendClient,
 	state: LiteFlowState,
 	step: FlowRuntimeStep,
-	handle: string
+	handle: string,
+	/** What the step's submit carries (a consent's decisions); nothing, by default. */
+	input: Record<string, unknown> = {}
 ): Promise<
 	| {
 			ok: true;
@@ -184,7 +186,7 @@ export async function submitLiteStep(
 				selected_handle: handle,
 				contract_hash: state.contractHash,
 				signature: state.signature,
-				input: {}
+				input
 			}
 		}
 	);

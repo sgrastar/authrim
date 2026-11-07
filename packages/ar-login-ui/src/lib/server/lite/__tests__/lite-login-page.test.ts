@@ -234,11 +234,11 @@ describe('a page view of the lite sign-in page', () => {
 			json(
 				startAnswer({
 					...screenStep,
-					config: { screen: { fields: [{ block_type: 'consent_widget', field: 'c' }] } }
+					config: { screen: { fields: [{ block_type: 'checkbox', field: 'c' }] } }
 				})
 			);
 		const page = (await run(event())) as { decision: unknown };
-		expect(page.decision).toEqual({ kind: 'unsupported', reasons: ['block:consent_widget'] });
+		expect(page.decision).toEqual({ kind: 'unsupported', reasons: ['block:checkbox'] });
 		expect(backendCalls.map((call) => new URL(call.url).pathname)).toEqual([
 			'/api/v1/login/interactions/start'
 		]);

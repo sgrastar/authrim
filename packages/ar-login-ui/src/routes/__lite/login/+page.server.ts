@@ -31,9 +31,18 @@ import {
 	type LiteStepDecision
 } from '#lib/server/lite/flow-driver.js';
 import {
+	liteConsentChoices,
+	liteConsentDigest,
+	liteFlowConsentHasParts,
+	readKeptFlowConsent,
+	readLiteConsentDraft
+} from '#lib/server/lite/flow-consent.js';
+import {
 	LITE_CODE_RESEND_MS,
 	keepLiteFlow,
 	liteContinueAction,
+	liteConsentContinueAction,
+	liteStepConsent,
 	liteGuestAction,
 	liteLoginStepDecision,
 	liteResendCodeAction,
@@ -221,6 +230,12 @@ export const load: PageServerLoad = async (event) => {
 	// transaction says has happened.
 	const methods = await liteTenantMethods(event);
 	let decision = liteLoginStepDecision(step, methods, locale);
+	// The step's consent part as its screen draws it (its heading and words), for a Continue that
+	// draws the terms again.
+	const consentWidget =
+		decision.kind === 'screen'
+			? (decision.fields.find((field) => field.blockType === 'consent_widget') ?? null)
+			: null;
 	// The providers of a social part.
 	const social = liteSocialProviders(methods, step);
 	// An external sign-in started from here and not finished: its callback may still come back;
@@ -289,6 +304,21 @@ export const load: PageServerLoad = async (event) => {
 		? Math.max(0, Math.ceil((pending.sentAt + LITE_CODE_RESEND_MS - Date.now()) / 1000))
 		: 0;
 
+	// The step's consent: drawn by its screen's consent part; with a Continue (the step's submit
+	// still to come), drawn with it too, so what is submitted is what the Continue shows (drawn as the
+	// decision kept for it, if any, and accepted anew with the Continue).
+	let consent = decision.kind === 'screen' ? liteStepConsent(step) : null;
+	if (decision.kind === 'continue' && step) {
+		const due = liteStepConsent(step);
+		if (due && liteFlowConsentHasParts(due)) consent = due;
+	}
+	const consentKey = consent ? await liteConsentDigest(consent, interactionId) : null;
+	// A decision kept for these terms (a sign-in begun with it, since failed): drawn as it was taken,
+	// not as the defaults would draw it.
+	const keptConsent =
+		consent && consentKey && step
+			? readKeptFlowConsent(kept2.data, interactionId, step.id, consentKey)
+			: null;
 	return {
 		page: 'step' as const,
 		search: pageSearch(event.url),
@@ -317,6 +347,26 @@ export const load: PageServerLoad = async (event) => {
 		continueChallenge: lapsed?.challenge ?? null,
 		// Which halves of an email-code-or-authenticator part the step offers.
 		available: { mailOtp: available('mail_otp'), totp: available('totp') },
+		// The step's consent (drawn by its screen's consent part); a screen that asks for consent and no
+		// sign-in has a Continue of its own.
+		consent,
+		// What was shown, by its digest: a decision is taken only for these terms.
+		consentKey,
+		consentWords: consentWidget ? { label: consentWidget.label, text: consentWidget.text } : null,
+		// Choices sent with a code sent again (not yet a decision), else the decision kept.
+		consentKept:
+			(consent && consentKey && step
+				? readLiteConsentDraft(kept2.data, interactionId, step.id, consentKey)
+				: null) ?? (keptConsent ? liteConsentChoices(keptConsent) : null),
+		consentOnly:
+			decision.kind === 'screen' &&
+			decision.fields.some((f) => f.blockType === 'consent_widget') &&
+			!decision.fields.some(
+				(f) =>
+					f.blockType === 'auth_widget' ||
+					f.blockType === 'guest_login_widget' ||
+					f.blockType === 'code_input_widget'
+			),
 		// A button per provider of a social part (its own text, else "Continue with <name>").
 		providers: social.providers.map((provider) => ({
 			id: provider.id,
@@ -327,6 +377,7 @@ export const load: PageServerLoad = async (event) => {
 		text: {
 			title: LL.login_title(),
 			continue: LL.common_continue(),
+			consent: LL.common_consent(),
 			sendCode: LL.login_sendCode(),
 			email: LL.common_email(),
 			guest: LL.login_guestContinue(),
@@ -355,7 +406,8 @@ export const load: PageServerLoad = async (event) => {
 				retry: LL.error_temporarily_unavailable(),
 				totp_invalid: LL.login_totpCodeInvalid(),
 				totp_failed: LL.login_totpStartFailed(),
-				passkey_failed: LL.lite_passkeyFailed()
+				passkey_failed: LL.lite_passkeyFailed(),
+				consent_required: LL.consent_block_message()
 			}
 		}
 	};
@@ -363,6 +415,7 @@ export const load: PageServerLoad = async (event) => {
 
 export const actions: Actions = {
 	continue: liteContinueAction,
+	consent_continue: liteConsentContinueAction,
 	send_code: liteSendCodeAction,
 	resend: liteResendCodeAction,
 	verify_code: liteVerifyCodeAction,

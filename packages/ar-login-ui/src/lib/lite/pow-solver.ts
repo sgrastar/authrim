@@ -12,6 +12,9 @@
  * Without JavaScript nothing fills the field: the backend refuses the proof, and the page says so
  * (`<noscript>`). When the browser cannot solve it (no Web Crypto, a failure), the buttons come
  * back and the form shows its `data-lite-pow-error` text. The proof is never skipped.
+ *
+ * A button marked `data-lite-pow-none` sends its form without a proof (an action that needs none,
+ * a code's check, sharing its form with one that does, the code sent again).
  */
 export const LITE_POW_SOLVER_SCRIPT = `(function(){
 var forms=document.querySelectorAll('form[data-lite-pow]');
@@ -23,6 +26,7 @@ crypto.subtle.digest('SHA-256',enc.encode(c.salt+n)).then(function(d){
 if(hex(d)===c.challenge){resolve(n);return;}n+=1;next();},reject);})();});}
 Array.prototype.forEach.call(forms,function(form){
 form.addEventListener('submit',function(event){
+if(event.submitter&&event.submitter.hasAttribute('data-lite-pow-none')){return;}
 var out=form.querySelector('input[name="human_verification_response"]');
 if(!out||out.value){return;}
 event.preventDefault();

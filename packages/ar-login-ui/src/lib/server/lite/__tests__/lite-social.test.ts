@@ -491,6 +491,49 @@ describe('social_start', () => {
 		expect(submits()).toEqual(['provider-google']);
 	});
 
+	it('sends the same form posted again to its grant once the Flow went on to a step with consent', async () => {
+		const CONSENT_NEXT = {
+			id: 'consent',
+			source_node_id: 'n-consent',
+			component: 'consent_policy',
+			render: true,
+			config: {
+				screen: {
+					display_name: 'Consent',
+					fields: [{ block_type: 'consent_widget', field: 'c', label: 'Consent' }]
+				}
+			},
+			content: {
+				consent_policy: {
+					id: 'policy-1',
+					items: [
+						{
+							statement_id: 'tos',
+							title: 'Terms',
+							version: '1',
+							is_required: true,
+							content_mode: 'checkbox',
+							checkbox_mode: 'required'
+						}
+					]
+				}
+			}
+		};
+		routes['/api/v1/login/interactions/int-1/submit'] = (body) => {
+			if (body.selected_handle !== 'provider-google') return json({ error: 'invalid_handle' }, 400);
+			currentStep = CONSENT_NEXT;
+			return json({
+				completed: false,
+				step: CONSENT_NEXT,
+				interaction: { current_step_id: 'consent' }
+			});
+		};
+		await started();
+		// The relay did not get through: the same form, now over the step asking for consent.
+		await expect(started()).resolves.toEqual({ started: true });
+		expect(grantCalls()).toHaveLength(1);
+	});
+
 	it('never replaces a start another tab made meanwhile', async () => {
 		const other = {
 			interactionId: 'int-1',

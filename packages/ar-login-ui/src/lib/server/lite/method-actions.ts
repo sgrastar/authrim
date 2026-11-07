@@ -28,6 +28,11 @@ import {
 	finishOperationOutcome,
 	guarded,
 	holdCookies,
+	acceptFlowConsent,
+	consentInputOf,
+	againOnPage,
+	noteConsentKept,
+	flowConsentPatch,
 	releaseCookies,
 	liteLoginStepDecision,
 	liteTenantMethods,
@@ -104,6 +109,9 @@ export const liteTotpStartAction = guarded(async (event) => {
 	const identifier = readEmail(post, offered.decision);
 	if (!identifier) return fail(400, { error: 'email_invalid' as const });
 
+	// The step's consent, accepted first (nothing is started without it).
+	const unconsented = await acceptFlowConsent(post);
+	if (unconsented) return unconsented;
 	const begun = await beginOperation(post, 'totp');
 	if ('failure' in begun) return begun.failure;
 	const operation = begun.operation;
@@ -131,7 +139,11 @@ export const liteTotpStartAction = guarded(async (event) => {
 		operation,
 		{ started: true },
 		// Over an expired passkey start, if any (an unexpired one was refused above).
-		{ to: 'pending', patch: { totp, passkey: null }, stillApplies: noneBegun(post) }
+		{
+			to: 'pending',
+			patch: { totp, passkey: null, ...flowConsentPatch(post, post.txn.data) },
+			stillApplies: noneBegun(post)
+		}
 	);
 	if (!kept) return retryLater();
 	if (post.flow.codeInputElsewhere) {
@@ -141,7 +153,8 @@ export const liteTotpStartAction = guarded(async (event) => {
 		if (submitted?.completed) return relayCompletion(post, kept, submitted.output);
 		if (submitted) {
 			const advanced = await advanceLiteFlow(post.backend, state, submitted.step, {
-				signedIn: false
+				signedIn: false,
+				consentInput: consentInputOf(post)
 			}).catch(() => null);
 			if (advanced?.kind === 'completed') return relayCompletion(post, kept, advanced.output);
 		}
@@ -170,7 +183,7 @@ async function beginCheck(
 				begun.reason === 'budget_exceeded' ? fail(429, { error: 'busy' as const }) : retryLater()
 		};
 	}
-	if (begun.status === 'running') backToPage(post.event);
+	if (begun.status === 'running') return { answer: againOnPage(post) };
 	if (begun.status === 'done') {
 		const result =
 			typeof begun.result === 'object' && begun.result !== null && !Array.isArray(begun.result)
@@ -191,6 +204,7 @@ async function remake(
 	const moved = await post.txns
 		.transition(post.txn.id, { expectedVersion: post.txn.version, ...move })
 		.catch(() => null);
+	if (moved?.ok) noteConsentKept(post, move.patch);
 	return moved?.ok ? moved.txn : null;
 }
 
@@ -214,6 +228,10 @@ export const liteTotpVerifyAction = guarded(async (event) => {
 	if (!expired && !/^\d{6}$|^\d{8}$/u.test(code)) {
 		return fail(400, { error: 'totp_invalid' as const });
 	}
+	// The consent of the step asking for the code (when drawn with it), accepted before the code is
+	// spent.
+	const unconsented = await acceptFlowConsent(post, 'when_drawn');
+	if (unconsented) return unconsented;
 
 	const held = (now: { data: Record<string, unknown> }) =>
 		readPendingTotp(now.data, interactionId, Number.NEGATIVE_INFINITY)?.challengeId ===
@@ -227,7 +245,7 @@ export const liteTotpVerifyAction = guarded(async (event) => {
 		!signInUnderway(now.data, interactionId);
 	const signedInMove = (signedIn: LiteSignedIn) => ({
 		to: 'verified' as const,
-		patch: { totp: null, signedIn }
+		patch: { totp: null, signedIn, ...flowConsentPatch(post, post.txn.data) }
 	});
 	const clearMove = { to: 'pending' as const, patch: { totp: null } };
 
@@ -315,6 +333,9 @@ export const litePasskeyStartAction = guarded(async (event) => {
 	const offered = await offers(post, 'passkey');
 	if (!offered) return fail(409, { restart: true });
 
+	// The step's consent, accepted first (nothing is started without it).
+	const unconsented = await acceptFlowConsent(post);
+	if (unconsented) return unconsented;
 	const begun = await beginOperation(post, 'passkey');
 	if ('failure' in begun) return begun.failure;
 	const operation = begun.operation;
@@ -347,7 +368,11 @@ export const litePasskeyStartAction = guarded(async (event) => {
 		operation,
 		{ started: true },
 		// Over an expired authenticator start, if any (an unexpired one was refused above).
-		{ to: 'pending', patch: { passkey, totp: null }, stillApplies: noneBegun(post) }
+		{
+			to: 'pending',
+			patch: { passkey, totp: null, ...flowConsentPatch(post, post.txn.data) },
+			stillApplies: noneBegun(post)
+		}
 	);
 	forwardSetCookies(event, post.backend.setCookies());
 	if (!kept) return retryLater();
@@ -366,6 +391,9 @@ export const litePasskeyFinishAction = guarded(async (event) => {
 	// An assertion signed for another challenge (an older page, another tab) never spends this one.
 	if (post.fields.get('challenge') !== pending.challengeId) backToPage(event);
 	if (await stepUnsupported(post)) return fail(409, { restart: true });
+	// The step's consent, when drawn again with a Continue (its terms changed since).
+	const unconsented = await acceptFlowConsent(post, 'when_drawn');
+	if (unconsented) return unconsented;
 
 	const held = (now: { data: Record<string, unknown> }) =>
 		readPendingPasskey(now.data, interactionId, Number.NEGATIVE_INFINITY)?.challengeId ===
@@ -377,7 +405,7 @@ export const litePasskeyFinishAction = guarded(async (event) => {
 		!signInUnderway(now.data, interactionId);
 	const checkedMove = (checked: LiteCheckedCode) => ({
 		to: 'verified' as const,
-		patch: { passkey: null, checked }
+		patch: { passkey: null, checked, ...flowConsentPatch(post, post.txn.data) }
 	});
 	const clearMove = { to: 'pending' as const, patch: { passkey: null } };
 	const recover = async (result: Record<string, unknown>) => {
