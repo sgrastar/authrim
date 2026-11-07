@@ -748,14 +748,112 @@ describe('the sign-up page', () => {
 		await expect(post('guest', { human_verification_response: 'p' }, q)).resolves.toMatchObject({
 			status: 409
 		});
-		// The sign-up is held: the code goes to the invited address (with the sign-up's proof).
+		// A send that fails (a limit): the next try (another form) is a send of its own, at once.
+		vi.useFakeTimers({ now: Date.now(), toFake: ['Date'] });
+		const send = routes['/api/v1/invitations/email-verification/send'];
+		routes['/api/v1/invitations/email-verification/send'] = () => json({ error: 'busy' }, 429);
+		await expect(
+			post(
+				'totp_start',
+				{ email: 'invited@example.com', human_verification_response: 'p', op: 'f'.repeat(22) },
+				q
+			)
+		).resolves.toMatchObject({ status: 429 });
+		expect((store.txn.data.invite as { proofSendAt?: unknown }).proofSendAt).toBeNull();
+		// A send whose operation could not begin takes nothing (the next try sends at once).
+		store.binding.beginOperation.mockResolvedValueOnce({ ok: false, reason: 'budget_exceeded' });
+		await expect(
+			post(
+				'totp_start',
+				{ email: 'invited@example.com', human_verification_response: 'p', op: 'b'.repeat(22) },
+				q
+			)
+		).resolves.toMatchObject({ status: 429 });
+		expect((store.txn.data.invite as { proofSendAt?: unknown }).proofSendAt).toBeNull();
+		// A take the store could not answer: nothing sent, and a try once the lease is out sends.
+		calls = [];
+		const transition = store.binding.transition.getMockImplementation()!;
+		store.binding.transition.mockImplementationOnce(async () => {
+			throw new Error('unreachable');
+		});
+		await expect(
+			post(
+				'totp_start',
+				{ email: 'invited@example.com', human_verification_response: 'p', op: 'u'.repeat(22) },
+				q
+			)
+		).resolves.toMatchObject({ status: 409, data: { error: 'retry' } });
+		// Nor a take refused for a policy not read (no move either).
+		store.binding.transition.mockImplementationOnce(async () => ({
+			ok: false,
+			reason: 'policy_unknown'
+		}));
+		vi.setSystemTime(Date.now() + 61_000);
+		await expect(
+			post(
+				'totp_start',
+				{ email: 'invited@example.com', human_verification_response: 'p', op: 'v'.repeat(22) },
+				q
+			)
+		).resolves.toMatchObject({ status: 409, data: { error: 'retry' } });
+		store.binding.transition.mockImplementation(transition);
+		expect(calls.some((call) => call.path === '/api/v1/invitations/email-verification/send')).toBe(
+			false
+		);
+		vi.setSystemTime(Date.now() + 61_000);
+		calls = [];
+		// The sign-up is held: the code goes to the invited address (with the sign-up's proof). A post
+		// made while it is being sent (another tab, another form) sends none of its own.
+		let during: unknown;
+		routes['/api/v1/invitations/email-verification/send'] = (body, init) => {
+			routes['/api/v1/invitations/email-verification/send'] = send;
+			during = post(
+				'totp_start',
+				{ email: 'invited@example.com', human_verification_response: 'p', op: 'd'.repeat(22) },
+				q
+			).catch((thrown: unknown) => thrown);
+			return send(body, init);
+		};
 		await post(
 			'totp_start',
 			{ email: 'invited@example.com', human_verification_response: 'p' },
 			q
 		).catch((thrown: unknown) => thrown);
+		await expect(during).resolves.toMatchObject({ status: 303 });
 		const sent = calls.find((call) => call.path === '/api/v1/invitations/email-verification/send');
 		expect(sent?.body).toEqual({ token: INVITE, human_verification_response: 'p' });
+		expect(
+			calls.filter((call) => call.path === '/api/v1/invitations/email-verification/send')
+		).toHaveLength(1);
+		expect(store.txn.data.invite).toMatchObject({
+			proofPending: { verificationId: '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f', tries: 0 },
+			proofSendAt: null
+		});
+		// The button again within the minute (another form): the code already sent is the one asked
+		// for; a minute later, a new one goes out.
+		const sends = () =>
+			calls.filter((call) => call.path === '/api/v1/invitations/email-verification/send');
+		await post(
+			'totp_start',
+			{ email: 'invited@example.com', human_verification_response: 'p', op: 'q'.repeat(22) },
+			q
+		).catch((thrown: unknown) => thrown);
+		expect(sends()).toHaveLength(1);
+		const invite = store.txn.data.invite as { proofPending: Record<string, unknown> };
+		store.set({
+			data: {
+				...store.txn.data,
+				invite: { ...invite, proofPending: { ...invite.proofPending, sentAt: Date.now() - 61_000 } }
+			}
+		});
+		vi.setSystemTime(Date.now() + 61_000);
+		await post(
+			'totp_start',
+			{ email: 'invited@example.com', human_verification_response: 'p', op: 'r'.repeat(22) },
+			q
+		).catch((thrown: unknown) => thrown);
+		expect(sends()).toHaveLength(2);
+		vi.useRealTimers();
 		expect(calls.some((call) => call.path === '/api/auth/totp/signup/options')).toBe(false);
 		// Its entry posts no proof of work: none is asked for (drawn even when none can be issued).
 		routes['/api/auth/human-verification/pow-challenge'] = () => json({ error: 'busy' }, 429);
@@ -783,6 +881,18 @@ describe('the sign-up page', () => {
 		});
 		expect((await view(q)).inviteProof).toBeNull();
 		store.set({ data: held });
+		// A new code being sent (another post took the send): no check of the old one meanwhile.
+		store.set({
+			data: { ...held, invite: { ...(held.invite as object), proofSendAt: Date.now() } }
+		});
+		await expect(
+			post(
+				'invite_proof_verify',
+				{ code: '123456', verification: '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f' },
+				q
+			)
+		).rejects.toMatchObject({ status: 303 });
+		store.set({ data: held });
 		// A form drawn for another code is not checked against this one.
 		await expect(
 			post('invite_proof_verify', { code: '123456', verification: 'another' }, q)
@@ -808,6 +918,23 @@ describe('the sign-up page', () => {
 			status: 400,
 			data: { error: 'code_invalid' }
 		});
+		// Checks ar-auth could not make (unavailable, or a limit) are no tries: the right code still
+		// passes.
+		const verify = routes['/api/v1/invitations/email-verification/verify'];
+		routes['/api/v1/invitations/email-verification/verify'] = () =>
+			json({ error: 'server_error' }, 500);
+		for (let i = 0; i < 4; i++) {
+			await expect(
+				post('invite_proof_verify', { code: '123456', verification }, q)
+			).resolves.toMatchObject({ status: 409, data: { error: 'retry' } });
+		}
+		routes['/api/v1/invitations/email-verification/verify'] = () =>
+			json({ error: 'rate_limit_exceeded' }, 429);
+		await expect(
+			post('invite_proof_verify', { code: '123456', verification }, q)
+		).resolves.toMatchObject({ status: 429, data: { error: 'busy' } });
+		expect(store.txn.data.invite).toMatchObject({ proofPending: { tries: 1, checks: 6 } });
+		routes['/api/v1/invitations/email-verification/verify'] = verify;
 		await post('invite_proof_verify', { code: '123456', verification }, q).catch(
 			(thrown: unknown) => thrown
 		);

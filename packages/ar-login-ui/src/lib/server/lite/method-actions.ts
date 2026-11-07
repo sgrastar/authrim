@@ -23,6 +23,8 @@ import {
 	checkLiteInviteProofCode,
 	liteInviteEmailProof,
 	readLiteInvite,
+	sameLiteInvite,
+	type LiteInvite,
 	sendLiteInviteProofCode
 } from './invite';
 import { liteMessages } from './messages';
@@ -39,6 +41,7 @@ import {
 import type { LiteTxnView } from './txn-client';
 import {
 	advanceAfterSignIn,
+	LITE_CODE_RESEND_MS,
 	backToPage,
 	beginOperation,
 	finishCheckedSignIn,
@@ -87,6 +90,9 @@ import {
 /** The longest name a sign-up's passkey is registered with (its creation options' user). */
 const MAX_SIGNUP_DISPLAY_NAME = 256;
 
+/** The most tries of an invitation's address code (ar-auth allows a code five). */
+const MAX_INVITE_PROOF_TRIES = 5;
+
 /** The most codes a sign-up's authenticator is tried with before it starts again. */
 const MAX_SIGNUP_TOTP_TRIES = 5;
 
@@ -131,52 +137,90 @@ function signupAccountOf(
  * `invite_proof_verify`), as the SPA holds such a sign-up back. Null when no proof is asked or one
  * is at hand.
  */
+/** Whether a post took the send of a code within the last minute (its send is underway). */
+function liteInviteSendTaken(invite: LiteInvite, now = Date.now()): boolean {
+	return typeof invite.proofSendAt === 'number' && now - invite.proofSendAt < LITE_CODE_RESEND_MS;
+}
+
 async function inviteProofFirst(post: LitePost, account: LiteSignupAccount) {
 	const invite = readLiteInvite(post.txn.data);
 	if (!invite?.emailProofRequired || account.inviteProof) return null;
-	const begun = await beginOperation(post, 'invite');
+	const now = Date.now();
+	// A code sent within the last minute is the one asked for, and a send another post took within
+	// it is that post's (no second send over either).
+	if (
+		(invite.proofPending && now - invite.proofPending.sentAt < LITE_CODE_RESEND_MS) ||
+		liteInviteSendTaken(invite, now)
+	) {
+		backToPage(post.event);
+	}
+	if (post.txn.state !== 'pending') backToPage(post.event);
+	// The send is begun under the version this post read (posts that read the same, whatever their
+	// forms, run one operation), then taken by moving the transaction from that version (of posts
+	// that read others, one only): nothing is taken before the operation is under way.
+	const begun = await beginOperation(post, 'invite', `send:${post.txn.version}`);
 	if ('failure' in begun) return begun.failure;
+	const taken = await post.txns
+		.transition(post.txn.id, {
+			expectedVersion: post.txn.version,
+			to: 'pending',
+			patch: { invite: { ...invite, proofSendAt: now } }
+		})
+		.catch(() => null);
+	// Taken by another post (the transaction moved since this one read it): the page. Anything
+	// else (the store unreachable, the policy not read) leaves it unknown whether it can be taken:
+	// the operation is left under way, so a later try takes it over once its lease is out.
+	if (!taken || (!taken.ok && taken.reason !== 'version_mismatch')) return retryLater();
+	if (!taken.ok) {
+		await finishOperation(post, post.txn, begun.operation, { error: 'send_taken' });
+		backToPage(post.event);
+	}
+	const txn = taken.txn;
+	const held = readLiteInvite(txn.data);
+	// Every move below is made only over the invitation as this send left it (nothing another
+	// post changed since is written back over), and never over a sign-in begun meanwhile.
+	const unchanged = (current: LiteTxnView) =>
+		sameLiteInvite(readLiteInvite(current.data), held) &&
+		current.state === 'pending' &&
+		!signInStarted(current.data, post.flow.state.interactionId) &&
+		!signInUnderway(current.data, post.flow.state.interactionId);
 	const sent = await sendLiteInviteProofCode(post.backend, {
 		token: invite.token,
 		proof: readProof(post)
 	});
 	if (!sent.ok) {
-		await finishOperation(post, post.txn, begun.operation, { error: `status_${sent.status}` });
+		// Not sent: the next try may send at once.
+		await finishOperation(
+			post,
+			txn,
+			begun.operation,
+			{ error: `status_${sent.status}` },
+			{ to: 'pending', patch: { invite: { ...held, proofSendAt: null } }, stillApplies: unchanged }
+		);
 		return sent.status === 429 ? fail(429, { error: 'busy' as const }) : retryLater();
 	}
 	const kept = await finishOperation(
 		post,
-		post.txn,
+		txn,
 		begun.operation,
 		{ sent: true },
 		{
 			to: 'pending',
 			patch: {
 				invite: {
-					...invite,
+					...held,
 					proofPending: {
 						verificationId: sent.verificationId,
 						maskedEmail: sent.maskedEmail,
 						sentAt: Date.now(),
-						tries: 0
+						tries: 0,
+						checks: 0
 					},
-					emailProof: null
+					emailProof: null,
+					proofSendAt: null
 				}
 			},
-			// Only over the same invitation as it was when the code went out (never one a restart
-			// replaced, a proof another tab got meanwhile, or a sign-up begun since).
-			stillApplies: (now) => {
-				const held = readLiteInvite(now.data);
-				return (
-					held?.token === invite.token &&
-					liteInviteEmailProof(held) === null &&
-					(held.proofPending?.verificationId ?? null) ===
-						(invite.proofPending?.verificationId ?? null) &&
-					now.state !== 'verified' &&
-					!signInStarted(now.data, post.flow.state.interactionId) &&
-					!signInUnderway(now.data, post.flow.state.interactionId)
-				);
-			}
+			stillApplies: unchanged
 		}
 	);
 	if (!kept) return retryLater();
@@ -194,6 +238,9 @@ export const liteInviteProofVerifyAction = guarded(async (event) => {
 	// A form drawn for another code (one sent again since, from another tab), or over a sign-in
 	// begun or made meanwhile: the page again.
 	if (post.fields.get('verification') !== pending.verificationId) backToPage(event);
+	// A new code being sent (another post took the send): its page, not a check of the old one (a
+	// check saved meanwhile would keep the new code from being kept).
+	if (liteInviteSendTaken(invite)) backToPage(event);
 	if (
 		post.txn.state === 'verified' ||
 		signInStarted(post.txn.data, post.flow.state.interactionId) ||
@@ -203,9 +250,15 @@ export const liteInviteProofVerifyAction = guarded(async (event) => {
 	}
 	const code = (post.fields.get('code') ?? '').replace(/\s+/gu, '');
 	if (!/^\d{6}$/u.test(code)) return fail(400, { error: 'code_invalid' as const });
+	// A code tried as often as ar-auth allows: a new one is sent (the passkey or authenticator
+	// button again), not tried further.
+	if (pending.tries >= MAX_INVITE_PROOF_TRIES) return fail(429, { error: 'busy' as const });
 	// Each try a check of its own (ar-auth spends the code on its right answer, and allows a few
-	// wrong ones): its result holds the proof, so a change not saved is made from it later.
+	// wrong ones): its result holds the proof, so a change not saved is made from it later. Checks
+	// are counted apart from wrong codes: one that could not be made (ar-auth unavailable) names the
+	// next check, but is not a try of the code.
 	const tries = pending.tries;
+	const checks = pending.checks;
 	// Only over the same code and try, and never over a sign-in another tab began or made meanwhile
 	// (a verified transaction is never moved back).
 	const samePending = (now: { state?: string; data: Record<string, unknown> }) => {
@@ -214,22 +267,31 @@ export const liteInviteProofVerifyAction = guarded(async (event) => {
 			now.state !== 'verified' &&
 			!signInStarted(now.data, post.flow.state.interactionId) &&
 			!signInUnderway(now.data, post.flow.state.interactionId) &&
-			held?.token === invite.token &&
-			held.proofPending?.verificationId === pending.verificationId &&
-			held.proofPending.tries === tries
+			sameLiteInvite(held, invite)
 		);
 	};
 	const provedMove = (proof: { value: string; expiresAt: number }) => ({
 		to: 'pending' as const,
 		patch: { invite: { ...invite, proofPending: null, emailProof: proof } }
 	});
-	const retryMove = {
+	// A wrong code is a try; a check not made, none. A limit is none too: ar-auth answers its limit
+	// of the code as it does its limit of one network address's requests, so it is waited out.
+	const retryMove = (status: number) => ({
 		to: 'pending' as const,
-		patch: { invite: { ...invite, proofPending: { ...pending, tries: tries + 1 } } }
-	};
+		patch: {
+			invite: {
+				...invite,
+				proofPending: {
+					...pending,
+					checks: checks + 1,
+					tries: status >= 400 && status < 500 && status !== 429 ? tries + 1 : tries
+				}
+			}
+		}
+	});
 	const begun = await beginCheck(
 		post,
-		`invite:${pending.verificationId}:${tries}`,
+		`invite:${pending.verificationId}:${checks}`,
 		async (result) => {
 			if (typeof result.proof === 'string' && typeof result.expiresAt === 'number') {
 				await remake(
@@ -237,8 +299,8 @@ export const liteInviteProofVerifyAction = guarded(async (event) => {
 					provedMove({ value: result.proof, expiresAt: result.expiresAt }),
 					samePending
 				);
-			} else if (result.retry === true) {
-				await remake(post, retryMove, samePending);
+			} else if (result.retry === true && typeof result.status === 'number') {
+				await remake(post, retryMove(result.status), samePending);
 			}
 			backToPage(event);
 		}
@@ -250,17 +312,18 @@ export const liteInviteProofVerifyAction = guarded(async (event) => {
 		code
 	});
 	if (!checked.ok) {
-		// A wrong code (or a limit): the next try is a check of its own.
+		// A wrong code (or a limit, or no check made): the next try is a check of its own.
 		await finishOperation(
 			post,
 			post.txn,
 			begun.operation,
-			{ error: `status_${checked.status}`, retry: true },
-			{ ...retryMove, stillApplies: samePending }
+			{ error: `status_${checked.status}`, status: checked.status, retry: true },
+			{ ...retryMove(checked.status), stillApplies: samePending }
 		);
-		return checked.status === 429
-			? fail(429, { error: 'busy' as const })
-			: fail(400, { error: 'code_invalid' as const });
+		if (checked.status === 429) return fail(429, { error: 'busy' as const });
+		return checked.status >= 400 && checked.status < 500
+			? fail(400, { error: 'code_invalid' as const })
+			: retryLater();
 	}
 	const proof = { value: checked.proof, expiresAt: checked.expiresAt };
 	const saved = await finishOperation(

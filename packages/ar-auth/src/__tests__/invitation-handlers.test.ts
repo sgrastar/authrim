@@ -341,6 +341,22 @@ describe('public invitation handlers', () => {
       };
     }
 
+    it("proves a lite tenant's invitation only for a request of its own tenant", async () => {
+      mocks.readLiteMode.mockResolvedValue('always');
+      mocks.store.getChallengeRpc.mockResolvedValue(await storedCode());
+      const body = { token, verification_id: verificationId, code: '123456' };
+      mocks.tenantFromContext.mockReturnValue('other-tenant');
+      const refused = await post('/email-verification/verify', body);
+      expect(refused.status).toBe(403);
+      // Refused before any attempt is counted or the code read.
+      expect(mocks.incrementRpc).not.toHaveBeenCalled();
+      expect(mocks.store.getChallengeRpc).not.toHaveBeenCalled();
+      // The invitation's own tenant: proved.
+      mocks.tenantFromContext.mockReturnValue('tenant-1');
+      const proved = await post('/email-verification/verify', body);
+      expect(proved.status).toBe(200);
+    });
+
     it('exchanges the right code for a proof bound to the invitation and its email', async () => {
       mocks.store.getChallengeRpc.mockResolvedValue(await storedCode());
 
