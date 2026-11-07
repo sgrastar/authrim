@@ -4780,7 +4780,7 @@ async function processUserOperation(
       if (!existingUser) {
         // A deletion that stopped after the user could no longer be read is finished now.
         if (await hasUnfinishedAccountDeletion(coreAdapter, { tenantId, userId: resourceId! })) {
-          const held = {
+          const held: ScimBulkOperationResponse = {
             method: 'DELETE',
             status: '409',
             response: {
