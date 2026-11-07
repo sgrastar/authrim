@@ -1,4 +1,5 @@
 <script lang="ts">
+	import LiteAccountWidget from './LiteAccountWidget.svelte';
 	import LiteShell from './LiteShell.svelte';
 	import type { ActionData, PageData } from '../../routes/__lite/account/$types';
 
@@ -78,9 +79,7 @@
 								<hr />
 								{#if block.text}<p class="muted">{block.text}</p>{/if}
 							{:else}
-								<section class="account-widget" data-widget={block.widget}>
-									<h2>{block.title}</h2>
-								</section>
+								<LiteAccountWidget {data} {form} widget={block.widget} title={block.title} />
 							{/if}
 						</div>
 					{/each}

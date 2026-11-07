@@ -400,4 +400,128 @@ describe('the lite account page', () => {
 		});
 		expect(calls.some((call) => call.path === '/api/v1/auth/direct/logout')).toBe(false);
 	});
+
+	describe('the profile, sessions, devices, consents and activity widgets', () => {
+		const withWidgets = () => {
+			routes['/api/account/capabilities'] = () =>
+				json({
+					account_page: {
+						definition: {
+							screens: [
+								{ id: 'profile', screen_key: 'p' },
+								{ id: 'sessions', screen_key: 's' },
+								{ id: 'devices', screen_key: 'd' },
+								{ id: 'consents', screen_key: 'c' },
+								{ id: 'activity', screen_key: 'a' }
+							]
+						},
+						screens: [
+							{
+								screen_key: 'p',
+								fields: [{ block_type: 'account_profile_widget', field: 'account.profile' }]
+							},
+							{
+								screen_key: 's',
+								fields: [{ block_type: 'account_session_widget', field: 'account.sessions' }]
+							},
+							{
+								screen_key: 'd',
+								fields: [{ block_type: 'account_device_list_widget', field: 'account.devices' }]
+							},
+							{
+								screen_key: 'c',
+								fields: [{ block_type: 'account_consent_widget', field: 'account.consents' }]
+							},
+							{
+								screen_key: 'a',
+								fields: [{ block_type: 'account_activity_widget', field: 'account.activity' }]
+							}
+						]
+					}
+				});
+			routes['/api/account/sessions'] = () =>
+				json({
+					sessions: [
+						{ id: 's-a', current: true },
+						{ id: 's-z', current: false }
+					]
+				});
+			routes['/api/account/devices'] = () =>
+				json({ devices: [{ id: 'd1', display_name: 'Laptop' }] });
+			routes['/api/account/consents'] = () =>
+				json({
+					consents: [{ kind: 'oauth_client', clientId: 'c1', scopes: ['openid'], grantedAt: 1 }]
+				});
+			routes['/api/account/operations'] = () =>
+				json({
+					operations: [{ id: 'o1', action: 'account.session.revoked', created_at: 1 }],
+					pagination: { has_more: true, next_cursor: 'next_1' }
+				});
+		};
+
+		it('draws each widget with its data, read only for the widgets drawn', async () => {
+			withWidgets();
+			const page = (await view()) as {
+				widgets: Record<string, unknown> & { activity: { nextCursor: string } };
+			};
+			expect(page.widgets.profile).toEqual({
+				name: null,
+				email: 'a@example.com',
+				emailVerified: false
+			});
+			expect(page.widgets.sessions).toHaveLength(2);
+			expect(page.widgets.devices).toEqual([expect.objectContaining({ title: 'Laptop' })]);
+			expect(page.widgets.consents).toHaveLength(1);
+			expect(page.widgets.activity.nextCursor).toBe('next_1');
+			// The next page of the activity: its cursor passed on, nothing else.
+			calls = [];
+			await view('/account?activity_cursor=next_1');
+			expect(calls.find((call) => call.path === '/api/account/operations')).toBeDefined();
+		});
+
+		it('says the activity is incomplete when the log cannot be read whole', async () => {
+			withWidgets();
+			routes['/api/account/operations'] = () =>
+				json({ error: 'log_query_incomplete', complete: false }, 503);
+			const page = (await view()) as {
+				widgets: { activityIncomplete: boolean; activity: unknown };
+			};
+			expect(page.widgets).toMatchObject({ activityIncomplete: true, activity: null });
+		});
+
+		it('saves the name, and signs out a session (this one: the browser too)', async () => {
+			withWidgets();
+			routes['/api/account/profile'] = (body, init) =>
+				init.method === 'PATCH' ? json({ profile: { name: body.name } }) : profile();
+			routes['/api/account/sessions/s-z'] = (_body, init) =>
+				init.method === 'DELETE' ? json({ ok: true, session: { id: 's-z' } }) : json({}, 405);
+			await view();
+			await expect(post('profile_save', { name: '  Kai  ' })).resolves.toEqual({
+				notice: 'saved',
+				widget: 'profile'
+			});
+			expect(
+				calls.find((call) => call.path === '/api/account/profile' && call.body.name)?.body
+			).toEqual({
+				name: 'Kai'
+			});
+			await expect(post('profile_save', { name: 'x'.repeat(101) })).resolves.toMatchObject({
+				status: 400
+			});
+			await expect(post('session_revoke', { session: 's-z' })).resolves.toEqual({
+				notice: 'revoked',
+				widget: 'sessions'
+			});
+			await expect(post('session_revoke', { session: 'a/b' })).resolves.toMatchObject({
+				status: 400
+			});
+			// This browser's own: signed out (the transaction given up first), then home.
+			await expect(post('session_revoke', { session: 's-a' })).rejects.toMatchObject({
+				status: 303,
+				location: '/'
+			});
+			expect(calls.some((call) => call.path === '/api/v1/auth/direct/logout')).toBe(true);
+			expect(store.txn.state).toBe('abandoned');
+		});
+	});
 });

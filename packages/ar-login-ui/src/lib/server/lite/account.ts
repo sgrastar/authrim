@@ -30,6 +30,14 @@ import type { LiteBackendClient } from './backend-client';
 import { liteBackendForEvent } from './backend-for-event';
 import { forwardSetCookies } from './cookies';
 import { readLiteForm } from './form';
+import {
+	liteAccountActivity,
+	liteAccountConsents,
+	liteAccountDevices,
+	liteAccountItemId,
+	liteAccountProfile,
+	liteAccountSessions
+} from './account-widgets';
 import { newOperationNonce, sameToken } from './login-actions';
 import { liteMessages } from './messages';
 import { record } from './totp-passkey';
@@ -103,12 +111,14 @@ function widgetDefaults(LL: Awaited<ReturnType<typeof liteMessages>>['LL']) {
 async function read(
 	backend: LiteBackendClient,
 	path: string
-): Promise<{ ok: true; json: Record<string, unknown> } | { ok: false; status: number }> {
+): Promise<
+	{ ok: true; json: Record<string, unknown> } | { ok: false; status: number; error: string | null }
+> {
 	const answer = await backend.request(path).catch(() => null);
-	if (!answer) return { ok: false, status: 503 };
-	return answer.status === 200
-		? { ok: true, json: record(answer.json) }
-		: { ok: false, status: answer.status };
+	if (!answer) return { ok: false, status: 503, error: null };
+	if (answer.status === 200) return { ok: true, json: record(answer.json) };
+	const code = record(answer.json).error;
+	return { ok: false, status: answer.status, error: typeof code === 'string' ? code : null };
 }
 
 export async function liteAccountPage(event: RequestEvent) {
@@ -236,6 +246,42 @@ export async function liteAccountPage(event: RequestEvent) {
 			.find((value): value is string => typeof value === 'string' && value.trim().length > 0) ??
 		null;
 	const words = liteAccountPageWords(page, locale, defaultLocale, themeTitle);
+
+	// Each widget drawn, its data (read once, only for the widgets the page draws).
+	const drawn = new Set(
+		placements.flatMap((placement) =>
+			placement.blocks.flatMap((block) => (block.kind === 'widget' ? [block.widget] : []))
+		)
+	);
+	const cursor = event.url.searchParams.get('activity_cursor');
+	const [sessionList, deviceList, consentList, activityList] = await Promise.all([
+		drawn.has('account_session_widget')
+			? (sessions ?? read(backend, '/api/account/sessions'))
+			: null,
+		drawn.has('account_device_list_widget') ? read(backend, '/api/account/devices') : null,
+		drawn.has('account_consent_widget')
+			? (consents ?? read(backend, '/api/account/consents'))
+			: null,
+		drawn.has('account_activity_widget')
+			? read(
+					backend,
+					`/api/account/operations?limit=20${
+						cursor && /^[A-Za-z0-9_.~=-]{1,1024}$/u.test(cursor)
+							? `&cursor=${encodeURIComponent(cursor)}`
+							: ''
+					}`
+				)
+			: null
+	]);
+	const widgets = {
+		profile: liteAccountProfile(profile.json),
+		sessions: sessionList?.ok ? liteAccountSessions(sessionList.json, LL, locale) : null,
+		devices: deviceList?.ok ? liteAccountDevices(deviceList.json, locale) : null,
+		consents: consentList?.ok ? liteAccountConsents(consentList.json, LL, locale) : null,
+		activity: activityList?.ok ? liteAccountActivity(activityList.json, LL, locale) : null,
+		activityIncomplete:
+			activityList !== null && !activityList.ok && activityList.error === 'log_query_incomplete'
+	};
 	return {
 		page: 'account' as const,
 		txnId: txn.id,
@@ -246,6 +292,7 @@ export async function liteAccountPage(event: RequestEvent) {
 			(record(record(profile.json).session).amr as unknown[] | undefined)?.includes('anon') ??
 			false,
 		placements,
+		widgets,
 		text: {
 			title: words.title ?? LL.account_title(),
 			description: words.description,
@@ -254,7 +301,26 @@ export async function liteAccountPage(event: RequestEvent) {
 			confirmSignOut: LL.header_logout(),
 			cancel: LL.dialog_cancel(),
 			actionFailed: LL.account_actionFailed(),
-			sessionChanged: LL.lite_reauthSessionEnded()
+			sessionChanged: LL.lite_reauthSessionEnded(),
+			loadFailed: LL.account_loadFailed(),
+			empty: LL.account_empty(),
+			name: LL.account_name(),
+			email: LL.account_email(),
+			verified: LL.account_verified(),
+			editName: LL.account_editName(),
+			save: LL.account_save(),
+			saved: LL.account_saved(),
+			saveFailed: LL.account_saveFailed(),
+			sessionsDescription: LL.account_sessionsDescription(),
+			currentSession: LL.account_currentSession(),
+			logoutSession: LL.account_logoutSession(),
+			devicesDescription: LL.account_connectedDevicesDescription(),
+			noDevices: LL.account_noConnectedDevices(),
+			currentDevice: LL.account_currentDevice(),
+			consentDescription: LL.account_consentDescription(),
+			consentEmpty: LL.account_consentEmpty(),
+			activityMore: LL.account_activityLoadMore(),
+			activityIncomplete: LL.account_activityIncomplete()
 		}
 	};
 }
@@ -307,6 +373,14 @@ export async function liteAccountSignOutAction(event: RequestEvent) {
 	// The transaction is given up first, while its session still is (after the sign-out ar-auth
 	// would no longer act on it): it no longer counts as one of the browser's live ones. A page
 	// drawn again makes another.
+	return endSession(event, post);
+}
+
+/** Signs the session out (the transaction given up first), then home. */
+async function endSession(
+	event: RequestEvent,
+	post: Extract<Awaited<ReturnType<typeof openAccountPost>>, { post: unknown }>['post']
+) {
 	const ended = await post.txns
 		.transition(post.txn.id, { expectedVersion: post.txn.version, to: 'abandoned' })
 		.catch(() => null);
@@ -319,6 +393,49 @@ export async function liteAccountSignOutAction(event: RequestEvent) {
 	redirect(303, '/');
 }
 
+/** `profile_save`: the name (as the SPA's form, at most 100 characters). */
+export async function liteAccountProfileSaveAction(event: RequestEvent) {
+	const opened = await openAccountPost(event);
+	if ('failure' in opened) return opened.failure;
+	const { post } = opened;
+	const name = (post.fields.get('name') ?? '').trim();
+	if (name.length > 100) return fail(400, { error: 'save_failed' as const, widget: 'profile' });
+	const answer = await post.backend
+		.request('/api/account/profile', { method: 'PATCH', json: { name } })
+		.catch(() => null);
+	if (!answer || answer.status !== 200) {
+		return fail(answer?.status === 400 ? 400 : 503, {
+			error: 'save_failed' as const,
+			widget: 'profile'
+		});
+	}
+	return { notice: 'saved' as const, widget: 'profile' };
+}
+
+/** `session_revoke`: a session signed out; this one, the browser signed out too (home). */
+export async function liteAccountSessionRevokeAction(event: RequestEvent) {
+	const opened = await openAccountPost(event);
+	if ('failure' in opened) return opened.failure;
+	const { post } = opened;
+	const id = liteAccountItemId(post.fields.get('session'));
+	if (!id) return fail(400, { error: 'action_failed' as const, widget: 'sessions' });
+	// This browser's own session: signed out as the sign-out button does (the transaction given up
+	// while the session still is).
+	if (id === post.txn.bound.sessionId) return endSession(event, post);
+	const answer = await post.backend
+		.request(`/api/account/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' })
+		.catch(() => null);
+	if (!answer || answer.status !== 200) {
+		return fail(answer && answer.status < 500 ? answer.status : 503, {
+			error: 'action_failed' as const,
+			widget: 'sessions'
+		});
+	}
+	return { notice: 'revoked' as const, widget: 'sessions' };
+}
+
 export const liteAccountActions = {
-	sign_out: liteAccountSignOutAction
+	sign_out: liteAccountSignOutAction,
+	profile_save: liteAccountProfileSaveAction,
+	session_revoke: liteAccountSessionRevokeAction
 };

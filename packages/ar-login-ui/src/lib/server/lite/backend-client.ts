@@ -228,7 +228,7 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 		async request(
 			path: string,
 			init: {
-				method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+				method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 				json?: unknown;
 				/** Extra request headers, from EXTRA_HEADERS only. */
 				headers?: Readonly<Record<string, string>>;
