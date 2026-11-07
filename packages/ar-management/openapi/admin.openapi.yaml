@@ -26726,8 +26726,20 @@ paths:
       operationId: deleteApiAdminUsersByIdPii
       summary: Delete user PII
       description: >-
-        Deletes only the user PII values, creates a tombstone, and leaves the account active. An
-        active account legal hold rejects deletion with 409.
+        Deletes only the user PII values, creates a tombstone, and leaves the account active. The
+        profile values are erased (not only marked deleted), together with the custom attributes,
+        the screen response records, the linked identities' provider profile (address, name, raw
+        attributes and claims, profile data), the raw values of finished identifier changes and of
+        identifier change challenges (an unused one can no longer be verified) and of finished or
+        stopped external identifier unlinkings, the proofs of finished guest registrations, and
+        the addresses earlier account webhook events kept (redacted; a notice that an address was
+        removed keeps it until the snapshot expires). The sign-in identifiers (each linked
+        identity's provider and subject) stay, and the person may enter a profile again. An active
+        account legal hold rejects deletion with 409, as does an operation that still needs the
+        values: an identifier change (`identifier_change_in_progress`), an external identifier's
+        unlinking (`external_unlink_in_progress`), a guest registration
+        (`guest_upgrade_in_progress`) or an identity provider's account creation
+        (`account_provisioning_pending`); nothing is erased then.
       responses:
         '200':
           $ref: '#/components/responses/UserPiiDelete'
