@@ -5,7 +5,7 @@
  * response consumes that request, and schedules the failure record at each refusal.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildPolicyConstrainedRegionShardConfig, type Env } from '@authrim/ar-lib-core';
 
 type SamlTestEnv = Partial<Env> & {
@@ -197,6 +197,17 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
   let storedContext: Record<string, unknown> | undefined;
   let assertionStore: 'new' | 'replayed' | 'error' | 'throws';
 
+  // Work the handler hands to waitUntil (the audit log). It logs through the real ar-lib-core
+  // logger, so each test waits for it: a log that lands after the file's last test reaches
+  // Vitest while the worker is closing and fails the run as an unhandled error.
+  const pendingWork: Promise<unknown>[] = [];
+
+  afterEach(async () => {
+    while (pendingWork.length > 0) {
+      await Promise.allSettled(pendingWork.splice(0));
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     storedContext = { attemptInteractionId: 'int-1' };
@@ -285,7 +296,11 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
       },
       json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
       get: vi.fn().mockReturnValue('tenant-a'),
-      executionCtx: { waitUntil: vi.fn() },
+      executionCtx: {
+        waitUntil: vi.fn((promise: Promise<unknown>) => {
+          pendingWork.push(promise);
+        }),
+      },
     };
     return handleSPACS(context as unknown as Parameters<typeof handleSPACS>[0]);
   }
