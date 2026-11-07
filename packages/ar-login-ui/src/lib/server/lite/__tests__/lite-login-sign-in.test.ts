@@ -1907,3 +1907,26 @@ describe('a form drawn for another challenge, and a result not recorded', () => 
 		expect(e.cookies.set).not.toHaveBeenCalledWith('authrim_session', 't1', expect.anything());
 	});
 });
+
+describe('a long credential ID', () => {
+	it("takes a security key's longest credential ID (1,023 bytes) in the options and the assertion", async () => {
+		const { readLitePasskeyCredential, readLitePasskeyOptions } = await import('../totp-passkey');
+		const id = 'A'.repeat(1364);
+		expect(
+			readLitePasskeyOptions({
+				challenge: 'c'.repeat(43),
+				rpId: 'id.example',
+				allowCredentials: [{ id }]
+			})?.allowCredentials
+		).toEqual([{ id, transports: [] }]);
+		const credential = readLitePasskeyCredential(
+			JSON.stringify({
+				id,
+				rawId: id,
+				type: 'public-key',
+				response: { authenticatorData: 'YQ', clientDataJSON: 'Yg', signature: 'Yw' }
+			})
+		);
+		expect(credential?.id).toBe(id);
+	});
+});

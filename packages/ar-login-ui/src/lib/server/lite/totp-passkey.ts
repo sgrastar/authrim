@@ -107,6 +107,12 @@ export interface LitePasskeyOptions {
 	allowCredentials: Array<{ id: string; transports: string[] }>;
 }
 
+/**
+ * The longest credential ID taken, in base64url: WebAuthn allows 1,023 bytes (1,364 characters).
+ * A security key's non-resident credential can be that long.
+ */
+const MAX_CREDENTIAL_ID_CHARS = 1400;
+
 const TRANSPORTS = new Set(['usb', 'nfc', 'ble', 'internal', 'hybrid', 'smart-card']);
 const MAX_ALLOWED_CREDENTIALS = 16;
 
@@ -132,7 +138,9 @@ export function readLitePasskeyOptions(value: unknown): LitePasskeyOptions | nul
 	const allowCredentials: LitePasskeyOptions['allowCredentials'] = [];
 	for (const entry of listed) {
 		const credential = record(entry);
-		if (typeof credential.id !== 'string' || credential.id.length > 1024) return null;
+		if (typeof credential.id !== 'string' || credential.id.length > MAX_CREDENTIAL_ID_CHARS) {
+			return null;
+		}
 		if (!BASE64URL.test(credential.id)) return null;
 		const transports = Array.isArray(credential.transports)
 			? credential.transports.filter(
@@ -198,7 +206,12 @@ export function readLitePasskeyCredential(
 	const response = record(credential.response);
 	const b64 = (field: unknown, max: number) =>
 		typeof field === 'string' && field.length > 0 && field.length <= max && BASE64URL.test(field);
-	if (!b64(credential.id, 1024) || !b64(credential.rawId, 1024)) return null;
+	if (
+		!b64(credential.id, MAX_CREDENTIAL_ID_CHARS) ||
+		!b64(credential.rawId, MAX_CREDENTIAL_ID_CHARS)
+	) {
+		return null;
+	}
 	if (credential.type !== 'public-key') return null;
 	if (!b64(response.authenticatorData, 2048) || !b64(response.clientDataJSON, 2048)) return null;
 	if (!b64(response.signature, 1024)) return null;

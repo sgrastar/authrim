@@ -56,3 +56,29 @@ describe('readLiteForm', () => {
 		expect(await readLiteForm(post('a=%E0%A4%A'))).toEqual({ ok: false, reason: 'malformed' });
 	});
 });
+
+describe('a passkey assertion', () => {
+	it('reads the largest assertion the passkey check accepts, and no other field as long', async () => {
+		const { readLitePasskeyCredential } = await import('../totp-passkey');
+		const credential = JSON.stringify({
+			id: 'A'.repeat(1400),
+			rawId: 'A'.repeat(1400),
+			type: 'public-key',
+			response: {
+				authenticatorData: 'B'.repeat(2048),
+				clientDataJSON: 'C'.repeat(2048),
+				signature: 'D'.repeat(1024),
+				userHandle: 'E'.repeat(512)
+			},
+			authenticatorAttachment: 'cross-platform'
+		});
+		const form = { txn: 't', csrf: 'c', op: 'o'.repeat(22), challenge: 'pk-1', credential };
+		const read = await readLiteForm(post(new URLSearchParams(form).toString()));
+		expect(read.ok).toBe(true);
+		if (read.ok) expect(readLitePasskeyCredential(read.fields.get('credential'))).not.toBeNull();
+		const other = await readLiteForm(
+			post(new URLSearchParams({ code: 'x'.repeat(4097) }).toString())
+		);
+		expect(other).toEqual({ ok: false, reason: 'malformed' });
+	});
+});
