@@ -480,10 +480,23 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				legacyRoutes: ['/admin/admins (このテナントの管理者のみ)']
 			},
 			{
+				id: 'team-groups',
+				label: 'nav.set.teamGroups',
+				icon: 'users',
+				platform: 'tenant',
+				requires: { permission: 'admin:admin_users:read' },
+				// …/team-groups/<id>: a group's page.
+				details: true,
+				legacyRoutes: ['(new) 管理者グループ']
+			},
+			{
 				id: 'team-roles',
 				label: 'nav.set.teamRoles',
 				icon: 'shield',
 				platform: 'tenant',
+				requires: { permission: 'admin:admin_roles:read' },
+				// …/team-roles/<id> and …/team-roles/new: a role's page.
+				details: true,
 				legacyRoutes: ['/admin/admin-roles (このテナントへの割り当てのみ)']
 			}
 		],
