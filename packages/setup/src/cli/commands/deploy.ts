@@ -38,6 +38,7 @@ import {
   clearProvisionalWorkerScriptOwnership,
   withDnsOwnershipEntry,
   type AuthrimLock,
+  withR2SetupObjectKeys,
 } from '../../core/lock.js';
 import {
   getEnvironmentPaths,
@@ -2650,6 +2651,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             baseDir: rootDir,
             environment: env,
             bucket: currentLock.r2?.PUBLIC_ASSETS,
+            recordObjectKeys: async (keys) => {
+              currentLock = withR2SetupObjectKeys(currentLock, 'PUBLIC_ASSETS', keys);
+              await saveLockFile(currentLock, lockPath);
+            },
             onProgress: (message) => updateOraSpinner(inventorySpinner, message),
             onWarning: (message) => console.warn(chalk.yellow(`  ${message}`)),
           });

@@ -27,6 +27,7 @@ import {
   saveLockFile,
   type AuthrimLock,
   type DeployConfigLockProof,
+  withR2SetupObjectKeys,
 } from '../../core/lock.js';
 import {
   deployAll,
@@ -2255,6 +2256,10 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         baseDir,
         environment: env,
         bucket: workingLock.r2?.PUBLIC_ASSETS,
+        recordObjectKeys: async (keys) => {
+          workingLock = withR2SetupObjectKeys(workingLock, 'PUBLIC_ASSETS', keys);
+          await saveLockFile(workingLock, lockPath);
+        },
         onProgress: (message) => {
           presetSpinner.text = message;
         },

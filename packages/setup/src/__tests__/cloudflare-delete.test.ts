@@ -17,9 +17,34 @@ import {
   parseR2BucketRows,
   parseD1RowsFromWranglerJson,
   parseObjectCatalogR2RowsFromWranglerJson,
+  withSetupR2ObjectKeys,
 } from '../core/cloudflare.js';
 
 describe('Cloudflare environment deletion helpers', () => {
+  it('adds the objects the setup tool put itself to the buckets being deleted', () => {
+    const known = withSetupR2ObjectKeys(
+      new Map([['single-public-assets', ['public/t/login-ui/logo/a.png']]]),
+      [{ name: 'single-public-assets' }, { name: 'single-sensitive-details' }],
+      [
+        {
+          name: 'single-public-assets',
+          setupObjectKeys: [
+            'presets/login-ui/backgrounds/nature/old-name.webp',
+            'public/t/login-ui/logo/a.png',
+          ],
+        },
+        // Not being deleted: its keys are not touched.
+        { name: 'other-public-assets', setupObjectKeys: ['presets/x.webp'] },
+      ]
+    );
+    expect(known.get('single-public-assets')).toEqual([
+      'public/t/login-ui/logo/a.png',
+      'presets/login-ui/backgrounds/nature/old-name.webp',
+    ]);
+    expect(known.has('other-public-assets')).toBe(false);
+    expect(known.has('single-sensitive-details')).toBe(false);
+  });
+
   it('maps object catalog R2 bindings to environment bucket names', () => {
     expect(getObjectCatalogR2BucketName('single', 'SENSITIVE_DETAILS')).toBe(
       'single-sensitive-details'

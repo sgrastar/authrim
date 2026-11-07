@@ -39,16 +39,25 @@ describe('Login UI background preset publication', () => {
     ]);
   });
 
-  it('puts every picture in the bucket after checking the bucket is ours', async () => {
-    const upload = vi.fn(async () => undefined);
-    const verify = vi.fn(async () => undefined);
+  it('records the keys, then puts every picture in the bucket once it is known to be ours', async () => {
+    const order: string[] = [];
+    const upload = vi.fn(async ({ objectKey }: { objectKey: string }) => {
+      order.push(`put ${objectKey}`);
+    });
+    const verify = vi.fn(async () => {
+      order.push('verify');
+    });
+    const record = vi.fn(async (keys: readonly string[]) => {
+      order.push(`record ${keys.length}`);
+    });
     const result = await publishLoginUiPresets({
       baseDir: base,
       bucketName: 'test-public-assets',
       upload,
       verifyBucketOwnership: verify,
+      recordObjectKeys: record,
     });
-    expect(verify).toHaveBeenCalledTimes(1);
+    expect(order.slice(0, 2)).toEqual(['verify', 'record 2']);
     expect(result.published).toEqual([
       'presets/login-ui/backgrounds/nature/forest.webp',
       'presets/login-ui/backgrounds/paper/washi.png',
@@ -81,6 +90,7 @@ describe('Login UI background preset publication', () => {
       environment: 'test',
       // No ownership marker: the check fails.
       bucket: { name: 'test-public-assets' },
+      recordObjectKeys: async () => undefined,
       onWarning: (message) => warnings.push(message),
     });
     expect(result).toBeNull();

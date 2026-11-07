@@ -134,6 +134,7 @@ import {
   withDnsOwnershipEntry,
   type AuthrimLock,
   type DeployConfigLockProof,
+  withR2SetupObjectKeys,
 } from '../core/lock.js';
 import {
   getEnvironmentPaths,
@@ -5649,6 +5650,11 @@ export function createApiRoutes(): Hono {
               baseDir: resolvedRootDir,
               environment: env,
               bucket: lock.r2?.PUBLIC_ASSETS,
+              recordObjectKeys: async (keys) => {
+                if (!lock || !lockPath) throw new Error('lock_file_required_for_login_ui_presets');
+                lock = withR2SetupObjectKeys(lock, 'PUBLIC_ASSETS', keys);
+                await saveLockFile(lock, lockPath);
+              },
               onProgress: addProgress,
               onWarning: addProgress,
             });

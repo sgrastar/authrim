@@ -243,6 +243,12 @@ const R2ResourceEntrySchema = z
       .regex(/^__authrim_setup__\/ownership-v1-[a-f0-9-]{36}\.json$/u)
       .optional(),
     ownershipId: z.guid().optional(),
+    /**
+     * Objects the setup tool put into the bucket itself (the Login UI background presets),
+     * recorded before each upload. Environment deletion removes them even without the R2 API,
+     * including ones the source tree no longer has.
+     */
+    setupObjectKeys: z.array(z.string().min(1).max(512)).max(10_000).optional(),
   })
   .superRefine((value, context) => {
     const ownershipFieldCount = [
@@ -2071,4 +2077,17 @@ export function getLockFileSummary(lock: AuthrimLock): string {
   }
 
   return lines.join('\n');
+}
+
+/** The lock with these keys added to the bucket's {@link setupObjectKeys} (sorted, unique). */
+export function withR2SetupObjectKeys(
+  lock: AuthrimLock,
+  binding: string,
+  keys: readonly string[]
+): AuthrimLock {
+  const bucket = lock.r2?.[binding];
+  if (!bucket) return lock;
+  const merged = [...new Set([...(bucket.setupObjectKeys ?? []), ...keys])].sort();
+  if (merged.length === (bucket.setupObjectKeys ?? []).length) return lock;
+  return { ...lock, r2: { ...lock.r2, [binding]: { ...bucket, setupObjectKeys: merged } } };
 }

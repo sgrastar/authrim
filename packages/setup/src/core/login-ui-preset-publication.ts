@@ -8,76 +8,29 @@
  * Publishing is idempotent: each run puts every picture again, so a changed picture replaces the
  * old one under the same key and every theme that uses it shows the new one.
  */
-import { readdir, readFile, realpath } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import {
   assertR2BucketOwnershipForUse,
   putR2Object,
   type DeletionR2Identity,
 } from './cloudflare.js';
+import { listLoginUiPresetFiles } from './login-ui-presets.js';
 
-export const LOGIN_UI_PRESET_SOURCE_DIR =
-  'packages/ar-management/assets/login-ui-presets/backgrounds';
-export const LOGIN_UI_PRESET_KEY_PREFIX = 'presets/login-ui/backgrounds/';
+export {
+  LOGIN_UI_PRESET_KEY_PREFIX,
+  LOGIN_UI_PRESET_SOURCE_DIR,
+  listLoginUiPresetFiles,
+  type LoginUiPresetFile,
+} from './login-ui-presets.js';
 
-const SEGMENT = /^[a-z0-9-]{1,64}$/u;
-const FILE = /^([a-z0-9-]{1,128})\.(webp|jpe?g|png)$/u;
-const CONTENT_TYPES = {
-  webp: 'image/webp',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  png: 'image/png',
-} as const;
 /** Each picture is a few hundred kB; a larger file is a mistake, not a background. */
 const MAX_PRESET_BYTES = 5 * 1024 * 1024;
 const UPLOAD_CONCURRENCY = 4;
-
-export interface LoginUiPresetFile {
-  objectKey: string;
-  path: string;
-  contentType: (typeof CONTENT_TYPES)[keyof typeof CONTENT_TYPES];
-}
 
 export interface LoginUiPresetPublicationResult {
   published: string[];
   /** Why nothing was published, when nothing was. */
   skipped?: 'no_presets' | 'no_bucket';
-}
-
-/** The presets in the source tree, sorted by object key; none when the folder is missing. */
-export async function listLoginUiPresetFiles(baseDir: string): Promise<LoginUiPresetFile[]> {
-  const root = resolve(baseDir, LOGIN_UI_PRESET_SOURCE_DIR);
-  let categories: string[];
-  try {
-    categories = await readdir(root);
-  } catch {
-    return [];
-  }
-  const realRoot = await realpath(root);
-  const files: LoginUiPresetFile[] = [];
-  for (const category of categories.sort()) {
-    if (!SEGMENT.test(category)) continue;
-    let names: string[];
-    try {
-      names = await readdir(join(root, category));
-    } catch {
-      continue;
-    }
-    for (const name of names.sort()) {
-      const match = FILE.exec(name);
-      if (!match) continue;
-      const path = await realpath(join(root, category, name));
-      // A symlink must not reach outside the presets folder.
-      const inside = relative(realRoot, path);
-      if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) continue;
-      files.push({
-        objectKey: `${LOGIN_UI_PRESET_KEY_PREFIX}${category}/${name}`,
-        path,
-        contentType: CONTENT_TYPES[match[2] as keyof typeof CONTENT_TYPES],
-      });
-    }
-  }
-  return files;
 }
 
 /** Puts every preset into the public assets bucket. */
@@ -86,6 +39,11 @@ export async function publishLoginUiPresets(input: {
   bucketName?: string;
   upload?: typeof putR2Object;
   verifyBucketOwnership?: () => Promise<void>;
+  /**
+   * Keeps the keys about to be put (in the lock), before any upload: environment deletion then
+   * removes them even after a failed run or once the source tree no longer has them.
+   */
+  recordObjectKeys?: (keys: readonly string[]) => Promise<void>;
   onProgress?: (message: string) => void;
 }): Promise<LoginUiPresetPublicationResult> {
   const files = await listLoginUiPresetFiles(input.baseDir);
@@ -94,6 +52,7 @@ export async function publishLoginUiPresets(input: {
   if (!bucketName) return { published: [], skipped: 'no_bucket' };
 
   await input.verifyBucketOwnership?.();
+  await input.recordObjectKeys?.(files.map((file) => file.objectKey));
   const upload = input.upload ?? putR2Object;
   input.onProgress?.(`Publishing ${files.length} Login UI background presets`);
 
@@ -130,6 +89,8 @@ export async function publishLoginUiPresetsToEnvironment(input: {
   baseDir: string;
   environment: string;
   bucket?: DeletionR2Identity;
+  /** Saves the keys into the lock's PUBLIC_ASSETS entry (see {@link withR2SetupObjectKeys}). */
+  recordObjectKeys: (keys: readonly string[]) => Promise<void>;
   onProgress?: (message: string) => void;
   onWarning?: (message: string) => void;
 }): Promise<LoginUiPresetPublicationResult | null> {
@@ -146,6 +107,7 @@ export async function publishLoginUiPresetsToEnvironment(input: {
               binding: 'PUBLIC_ASSETS',
             })
         : undefined,
+      recordObjectKeys: input.recordObjectKeys,
       onProgress: input.onProgress,
     });
   } catch (error) {
