@@ -359,7 +359,10 @@ const es = createTranslation({
 		'No se completó el inicio de sesión con la clave de acceso. Inténtelo de nuevo o elija otra forma de iniciar sesión.',
 	lite_provisioningWait:
 		'Se está configurando tu cuenta. Espera un momento y luego selecciona Continuar.',
-	lite_provisioningFailed: 'No se pudo configurar tu cuenta. Vuelve a empezar.'
+	lite_provisioningFailed: 'No se pudo configurar tu cuenta. Vuelve a empezar.',
+	lite_reauthSessionEnded:
+		'La sesión para la que se abrió esta página ha terminado o ha cambiado. Vuelve a iniciar sesión.',
+	lite_reauthAnotherWay: 'Usar otro método'
 });
 
 export default es;

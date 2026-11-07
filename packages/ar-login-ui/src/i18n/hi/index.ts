@@ -508,7 +508,10 @@ const translation = {
 	lite_passkeyFailed:
 		'पासकी से साइन इन पूरा नहीं हुआ। फिर से कोशिश करें, या साइन इन करने का कोई दूसरा तरीका चुनें।',
 	lite_provisioningWait: 'आपका खाता तैयार किया जा रहा है। थोड़ा रुकें, फिर जारी रखें चुनें।',
-	lite_provisioningFailed: 'आपका खाता तैयार नहीं किया जा सका। फिर से शुरू करें।'
+	lite_provisioningFailed: 'आपका खाता तैयार नहीं किया जा सका। फिर से शुरू करें।',
+	lite_reauthSessionEnded:
+		'जिस सत्र के लिए यह पेज खोला गया था, वह समाप्त हो गया है या बदल गया है। फिर से साइन इन करें।',
+	lite_reauthAnotherWay: 'दूसरा तरीका इस्तेमाल करें'
 } satisfies Translation;
 
 export default translation;

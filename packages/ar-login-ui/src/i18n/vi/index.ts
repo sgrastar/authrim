@@ -511,7 +511,10 @@ const vi = createTranslation({
 		'Đăng nhập bằng khóa truy cập chưa hoàn tất. Hãy thử lại hoặc chọn cách đăng nhập khác.',
 	lite_provisioningWait:
 		'Tài khoản của bạn đang được thiết lập. Hãy đợi một chút, rồi chọn Tiếp tục.',
-	lite_provisioningFailed: 'Không thể thiết lập tài khoản của bạn. Hãy bắt đầu lại.'
+	lite_provisioningFailed: 'Không thể thiết lập tài khoản của bạn. Hãy bắt đầu lại.',
+	lite_reauthSessionEnded:
+		'Phiên mà trang này được mở cho đã kết thúc hoặc đã thay đổi. Hãy đăng nhập lại.',
+	lite_reauthAnotherWay: 'Dùng cách khác'
 });
 
 export default vi;

@@ -467,7 +467,9 @@ const translation = {
 	lite_socialStarted: 'ከዚህ ገጽ በውጭ መለያ መግባት ተጀምሯል። በሌላ መንገድ ለመግባት እንደገና ይጀምሩ።',
 	lite_passkeyFailed: 'በይለፍ ቁልፍ መግባት አልተጠናቀቀም። እንደገና ይሞክሩ፣ ወይም ሌላ የመግቢያ መንገድ ይምረጡ።',
 	lite_provisioningWait: 'መለያዎ እየተዘጋጀ ነው። ትንሽ ይጠብቁ፣ ከዚያ ቀጥል የሚለውን ይምረጡ።',
-	lite_provisioningFailed: 'መለያዎን ማዘጋጀት አልተቻለም። እንደገና ይጀምሩ።'
+	lite_provisioningFailed: 'መለያዎን ማዘጋጀት አልተቻለም። እንደገና ይጀምሩ።',
+	lite_reauthSessionEnded: 'ይህ ገጽ የተከፈተበት ክፍለ-ጊዜ አብቅቷል ወይም ተቀይሯል። እንደገና ይግቡ።',
+	lite_reauthAnotherWay: 'ሌላ መንገድ ይጠቀሙ'
 } satisfies Translation;
 
 export default translation;

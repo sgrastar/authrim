@@ -534,7 +534,10 @@ const en = {
 	lite_passkeyFailed:
 		'The passkey sign-in did not finish. Try again, or choose another way to sign in.',
 	lite_provisioningWait: 'Your account is being set up. Wait a moment, then select Continue.',
-	lite_provisioningFailed: 'Your account could not be set up. Start again.'
+	lite_provisioningFailed: 'Your account could not be set up. Start again.',
+	lite_reauthSessionEnded:
+		'The session this page was opened for has ended or changed. Sign in again.',
+	lite_reauthAnotherWay: 'Use another way'
 } satisfies BaseTranslation;
 
 export default en;

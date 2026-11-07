@@ -491,7 +491,10 @@ const th = createTranslation({
 	lite_passkeyFailed:
 		'การลงชื่อเข้าใช้ด้วยพาสคีย์ไม่เสร็จสมบูรณ์ ลองอีกครั้ง หรือเลือกวิธีอื่นในการลงชื่อเข้าใช้',
 	lite_provisioningWait: 'กำลังเตรียมบัญชีของคุณ รอสักครู่ แล้วเลือก ดำเนินการต่อ',
-	lite_provisioningFailed: 'ไม่สามารถเตรียมบัญชีของคุณได้ โปรดเริ่มใหม่'
+	lite_provisioningFailed: 'ไม่สามารถเตรียมบัญชีของคุณได้ โปรดเริ่มใหม่',
+	lite_reauthSessionEnded:
+		'เซสชันที่ใช้เปิดหน้านี้สิ้นสุดลงหรือเปลี่ยนไปแล้ว โปรดลงชื่อเข้าใช้อีกครั้ง',
+	lite_reauthAnotherWay: 'ใช้วิธีอื่น'
 });
 
 export default th;

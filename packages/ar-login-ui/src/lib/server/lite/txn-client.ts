@@ -54,11 +54,16 @@ interface LiteTxnBinding {
 }
 
 export interface LiteTxnCreateInput {
-	/** `account` and `reauth` are refused until their session check exists (lite plan PR7). */
+	/** `account` is refused until its session check exists (lite plan PR7b). */
 	purpose: LiteTxnPurpose;
 	clientId?: string | null;
 	challengeId?: string | null;
 	returnTo?: string | null;
+	/**
+	 * A re-authentication's session (the browser's `authrim_session` cookie): ar-auth checks it is
+	 * live and the challenge's user's, and binds the transaction to it.
+	 */
+	sessionId?: string | null;
 	data?: Record<string, unknown>;
 	reuseKey?: string;
 	/** Only the live transaction of `reuseKey`, when there is one (none is made). */
@@ -94,9 +99,18 @@ export function liteTxnClient(event: RequestEvent) {
 			return service.create({ ...input, publicOrigin, binding, clientIp });
 		},
 		/** `current`: checked against the tenant's current policy (before a form post acts). */
-		async get(txnId: string, options: { current?: boolean } = {}): Promise<LiteTxnAnswer> {
+		async get(
+			txnId: string,
+			options: { current?: boolean; sessionId?: string | null } = {}
+		): Promise<LiteTxnAnswer> {
 			const base = call(txnId);
-			return base ? service.get({ ...base, current: options.current === true }) : NO_BINDING;
+			return base
+				? service.get({
+						...base,
+						current: options.current === true,
+						...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {})
+					})
+				: NO_BINDING;
 		},
 		async transition(
 			txnId: string,

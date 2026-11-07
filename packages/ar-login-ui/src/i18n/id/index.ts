@@ -349,7 +349,10 @@ const id = createTranslation({
 	lite_passkeyFailed:
 		'Masuk dengan passkey tidak selesai. Coba lagi, atau pilih cara lain untuk masuk.',
 	lite_provisioningWait: 'Akun Anda sedang disiapkan. Tunggu sebentar, lalu pilih Lanjutkan.',
-	lite_provisioningFailed: 'Akun Anda tidak dapat disiapkan. Mulai lagi.'
+	lite_provisioningFailed: 'Akun Anda tidak dapat disiapkan. Mulai lagi.',
+	lite_reauthSessionEnded:
+		'Sesi tempat halaman ini dibuka telah berakhir atau berubah. Masuk lagi.',
+	lite_reauthAnotherWay: 'Gunakan cara lain'
 });
 
 export default id;

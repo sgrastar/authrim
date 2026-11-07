@@ -225,6 +225,10 @@ export async function liteStepPage(event: RequestEvent) {
 				external: [origin]
 			});
 		}
+		// A re-authentication challenge: its own page (with the challenge only).
+		if (created.reason === 'reauth_challenge' && target.authorizationChallengeId) {
+			redirect(303, `/reauth?challenge_id=${encodeURIComponent(target.authorizationChallengeId)}`);
+		}
 		if (created.reason === 'budget_exceeded') return errorPage(event, 'busy');
 		if (created.reason === 'invalid_return_to') error(400, 'invalid_request');
 		return errorPage(event, 'unavailable');

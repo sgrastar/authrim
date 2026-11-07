@@ -55,7 +55,10 @@ export async function sendLiteEmailCode(
 		proof: string | null;
 		codeChallenge: string;
 		authorizationChallengeId: string | null;
-		interactionId: string;
+		/** The Flow's interaction (none for a re-authentication, which runs no Flow). */
+		interactionId: string | null;
+		/** A re-authentication's send (ar-auth takes the challenge's action; no page action). */
+		reauth?: boolean;
 		/** A sign-up's profile and invitation (the sign-up page's send). */
 		signup?: {
 			displayName: string | null;
@@ -77,7 +80,7 @@ export async function sendLiteEmailCode(
 			channel: 'browser',
 			authorization_challenge_id: input.authorizationChallengeId ?? undefined,
 			human_verification_response: input.proof ?? undefined,
-			runtime_interaction_id: input.interactionId,
+			runtime_interaction_id: input.interactionId ?? undefined,
 			...(signup
 				? {
 						display_name: signup.displayName ?? undefined,
@@ -86,7 +89,9 @@ export async function sendLiteEmailCode(
 					}
 				: {})
 		},
-		headers: { 'X-Authrim-Human-Verification-Action': signup ? 'signup' : 'login' }
+		headers: input.reauth
+			? {}
+			: { 'X-Authrim-Human-Verification-Action': signup ? 'signup' : 'login' }
 	});
 	// A new address whose account is still being made (a routed tenant database): sent again
 	// once it exists (provisioning.ts).
@@ -138,7 +143,16 @@ export async function checkLiteEmailCode(
 /** Makes the session from a checked code's artifact (its cookies go into the action's jar). */
 export async function createLiteDirectSession(
 	backend: LiteBackendClient,
-	input: { artifact: string; codeVerifier: string; authorizationChallengeId: string | null }
+	input: {
+		artifact: string;
+		codeVerifier: string;
+		authorizationChallengeId: string | null;
+		/**
+		 * Whether the session's answer continues the authorization request itself (a
+		 * re-authentication, which runs no Flow); else the Flow's completion does.
+		 */
+		continueAuthorization?: boolean;
+	}
 ): Promise<
 	{ ok: true; redirectUrl: string | null } | { ok: false; error: string; status: number }
 > {
@@ -149,8 +163,9 @@ export async function createLiteDirectSession(
 			code_verifier: input.codeVerifier,
 			channel: 'browser',
 			authorization_challenge_id: input.authorizationChallengeId ?? undefined,
-			// The Flow's completion continues the authorization request, not this call.
-			defer_authorization_continuation: true
+			// The Flow's completion continues the authorization request, not this call (unless no
+			// Flow runs).
+			defer_authorization_continuation: input.continueAuthorization !== true
 		}
 	});
 	if (session.status !== 200) return { ok: false, error: errorOf(session), status: session.status };
