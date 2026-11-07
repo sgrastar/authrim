@@ -130,3 +130,28 @@ nav.lang {
 nav.lang a {
 	margin: 0 0.35rem;
 }
+.account-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 1rem;
+	margin-top: 1rem;
+}
+.account-screen {
+	grid-column: span 1;
+	display: grid;
+	gap: 0.5rem;
+	align-content: start;
+}
+.account-screen.full {
+	grid-column: 1/-1;
+}
+.account-widget {
+	border: 1px solid currentColor;
+	border-radius: 0.5rem;
+	padding: 0.75rem;
+}
+@media (max-width: 760px) {
+	.account-grid {
+		grid-template-columns: 1fr;
+	}
+}
