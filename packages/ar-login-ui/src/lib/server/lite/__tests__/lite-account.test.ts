@@ -290,8 +290,10 @@ describe('the lite account page', () => {
 		expect(page.page).toBe('account');
 		expect(page.text.title).toBe('My account');
 		expect(store.binding.create).toHaveBeenCalledWith(
-			expect.objectContaining({ purpose: 'account', sessionId: 's-a', returnTo: '/account' })
+			expect.objectContaining({ purpose: 'account', sessionId: 's-a' })
 		);
+		// One per session, whatever the page's path or query (no return target kept).
+		expect(store.binding.create.mock.calls[0][0]).not.toHaveProperty('returnTo');
 		// Passkeys off; one session only: those placements are not drawn.
 		expect(page.placements.map((placement) => placement.id)).toEqual([
 			'overview',
@@ -352,9 +354,17 @@ describe('the lite account page', () => {
 	});
 
 	it('signs out (a guest asked first) and acts on nothing for another session', async () => {
+		let stateAtLogout: string | null = null;
+		const logout = routes['/api/v1/auth/direct/logout'];
+		routes['/api/v1/auth/direct/logout'] = (body, init) => {
+			stateAtLogout = store.txn.state;
+			return logout(body, init);
+		};
 		await view();
 		await expect(post('sign_out')).rejects.toMatchObject({ status: 303, location: '/' });
 		expect(calls.some((call) => call.path === '/api/v1/auth/direct/logout')).toBe(true);
+		// Given up before the session ended (it no longer counts as live).
+		expect(stateAtLogout).toBe('abandoned');
 
 		store = fakeStore();
 		calls = [];

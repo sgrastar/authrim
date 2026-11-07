@@ -122,10 +122,10 @@ export async function liteAccountPage(event: RequestEvent) {
 	const backend = liteBackendForEvent(event, 'page_load');
 	if (!txns || !backend) error(503, 'temporarily_unavailable');
 
-	// The transaction first (ar-auth checks the session is live): one per browser and session.
+	// The transaction first (ar-auth checks the session is live): one per browser and session,
+	// whatever the page's path or query (it keeps no return target: a sign-in's is its own).
 	const created = await txns.create({
 		purpose: 'account',
-		returnTo: accountReturn(event),
 		reuseKey: await sha256Hex(JSON.stringify(['account']))
 	});
 	if (!created.ok) {
@@ -138,7 +138,6 @@ export async function liteAccountPage(event: RequestEvent) {
 		}
 		if (created.reason === 'session_invalid') toSignIn(event);
 		if (created.reason === 'budget_exceeded') return errorPage(event, 'busy');
-		if (created.reason === 'invalid_return_to') toSignIn(event);
 		return errorPage(event, 'unavailable');
 	}
 	const txn = created.txn;
@@ -305,13 +304,17 @@ export async function liteAccountSignOutAction(event: RequestEvent) {
 		if (!Array.isArray(amr)) return fail(503, { error: 'action_failed' as const });
 		if (amr.includes('anon')) return fail(409, { confirmGuestSignOut: true as const });
 	}
+	// The transaction is given up first, while its session still is (after the sign-out ar-auth
+	// would no longer act on it): it no longer counts as one of the browser's live ones. A page
+	// drawn again makes another.
+	const ended = await post.txns
+		.transition(post.txn.id, { expectedVersion: post.txn.version, to: 'abandoned' })
+		.catch(() => null);
+	if (!ended?.ok) return fail(409, { error: 'retry' as const });
 	const answer = await post.backend
 		.request('/api/v1/auth/direct/logout', { json: {} })
 		.catch(() => null);
 	if (!answer || answer.status >= 400) return fail(503, { error: 'action_failed' as const });
-	await post.txns
-		.transition(post.txn.id, { expectedVersion: post.txn.version, to: 'completed' })
-		.catch(() => null);
 	forwardSetCookies(event, post.backend.setCookies());
 	redirect(303, '/');
 }
