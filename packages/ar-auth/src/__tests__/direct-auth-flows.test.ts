@@ -73,6 +73,7 @@ const mocks = vi.hoisted(() => {
     checkSignUpScreen: vi.fn(),
     persistRegistrationFieldValuesFromEnv: vi.fn(),
     verifyHumanVerificationForAction: vi.fn(),
+    readLiteMode: vi.fn(),
     verifyEmailVerificationProtocol: vi.fn(),
     markOtpLoginEmailVerified: vi.fn(),
     ensureDatabaseAdapter: vi.fn((source) => source),
@@ -137,6 +138,11 @@ vi.mock('../signup-screen-check', async (importOriginal) => ({
 vi.mock('../human-verification', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../human-verification')>()),
   verifyHumanVerificationForAction: mocks.verifyHumanVerificationForAction,
+}));
+
+vi.mock('../lite-mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lite-mode')>()),
+  readLiteMode: mocks.readLiteMode,
 }));
 
 vi.mock('../email-verification-protocol', () => ({
@@ -476,6 +482,31 @@ function enableEmailOtp(
   return context;
 }
 
+/**
+ * The resume record of a provisioned send, stored for whatever send asks (read first, used up
+ * once the send passed its checks).
+ */
+function storeSendResumeRecords(usage = 'signup') {
+  const other = mocks.challengeStore.getChallengeRpc.getMockImplementation();
+  mocks.challengeStore.getChallengeRpc.mockImplementation(async (id: string) =>
+    typeof id === 'string' && id.startsWith('direct_email_send_resume:')
+      ? {
+          id,
+          tenantId: 'tenant_test',
+          type: 'direct_email_send_resume',
+          challenge: id.slice('direct_email_send_resume:'.length),
+          consumed: false,
+          metadata: { usage },
+        }
+      : other
+        ? ((await other(id)) as unknown)
+        : null
+  );
+  mocks.challengeStore.consumeChallengeRpc.mockImplementation(async (request: { type?: string }) =>
+    request?.type === 'direct_email_send_resume' ? { metadata: { usage } } : undefined
+  );
+}
+
 /** Challenge consumptions apart from looking up a resumed email-code send. */
 function consumesOtherThanSendResume() {
   return mocks.challengeStore.consumeChallengeRpc.mock.calls.filter(
@@ -656,6 +687,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     });
     mocks.findActiveInvitationByToken.mockReset();
     mocks.findActiveInvitationByToken.mockResolvedValue(null);
+    mocks.readLiteMode.mockReset();
+    mocks.readLiteMode.mockResolvedValue('off');
     mocks.verifyHumanVerificationForAction.mockImplementation(
       async (
         c: { env: { SETTINGS?: { get: (key: string) => Promise<string | null> } } },
@@ -2221,6 +2254,71 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     });
   });
 
+  it("goes on with a resumed sign-up's own account at its address, while it has no passkey", async () => {
+    mocks.getWebOriginRegistry.mockResolvedValue({
+      origins: [{ origin: 'https://login.test.authrim.com', handoff_allowed: true }],
+    });
+    mocks.provisionTenantD1EmailAccount.mockReset();
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+    const start = (resumeUserId: string) => {
+      const context = createContext(
+        {
+          client_id: 'web-client',
+          email: 'new@example.com',
+          code_challenge: 'signup-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          provisioning_token: 'A'.repeat(43),
+          resume_user_id: resumeUserId,
+        },
+        tenantProxyHeaders(),
+        'https://test.authrim.com/api/v1/auth/direct/passkey/signup/start'
+      );
+      context.get = vi.fn((key: string) => {
+        if (key === 'tenantId') return 'tenant_test';
+        if (key === 'tenantMetadataContext') {
+          return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
+        }
+        return undefined;
+      }) as never;
+      context.env.ALLOWED_ORIGINS = 'https://login.test.authrim.com';
+      return directPasskeySignupStartHandler(context as never);
+    };
+    // The account the provisioning made, found at the address.
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_first',
+      email: 'new@example.com',
+    });
+    mocks.userCore.findById.mockImplementation(async (id: string) => ({
+      id,
+      is_active: 1,
+      user_type: 'end_user',
+    }));
+
+    // The user its token names: that sign-up's account, gone on with (nothing made again).
+    mocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
+    expect((await start('user_first')).status).toBe(200);
+    expect(mocks.provisionTenantD1EmailAccount).not.toHaveBeenCalled();
+    expect(mocks.passkey.findByUserId).toHaveBeenCalledWith('user_first');
+    expect(
+      (mocks.generateRegistrationOptions.mock.calls.at(-1)?.[0] as { userName?: string })?.userName
+    ).toBe('new@example.com');
+
+    // Its token names another user than the account at the address: in use.
+    mocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_other');
+    expect((await start('user_other')).status).toBe(409);
+
+    // An account that already has a passkey (the sign-up finished, or another's): in use.
+    mocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
+    mocks.passkey.findByUserId.mockResolvedValueOnce([{ credential_id: 'cred-1', transports: [] }]);
+    expect((await start('user_first')).status).toBe(409);
+
+    // A user the request names that no token stands for: refused before anything.
+    mocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce(null);
+    expect((await start('user_first')).status).toBe(400);
+    expect(mocks.provisionTenantD1EmailAccount).not.toHaveBeenCalled();
+  });
+
   it('rejects passkey signup start when the signup usage is disabled', async () => {
     const { directPasskeySignupStartHandler } = await import('../direct-auth');
     const context = createContext(
@@ -3621,22 +3719,14 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect.objectContaining({
         type: 'direct_email_send_resume',
         ttl: 300,
-        metadata: { usage: 'signup', channel: 'browser', runtime_interaction_id: null },
+        metadata: { usage: 'signup' },
       })
     );
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
   });
 
-  it('resumes a provisioned send as the sign-up it was, without checking it again', async () => {
-    mocks.challengeStore.consumeChallengeRpc.mockImplementationOnce(
-      async (request: { type?: string; id?: string }) => {
-        expect(request).toMatchObject({
-          type: 'direct_email_send_resume',
-          id: expect.stringMatching(/^direct_email_send_resume:[0-9a-f]{64}$/),
-        });
-        return { metadata: { usage: 'signup' } };
-      }
-    );
+  it('resumes a provisioned send as the sign-up it was, without asking its proof again', async () => {
+    storeSendResumeRecords();
     mocks.userPII.findByTenantAndEmail.mockResolvedValue({
       id: 'user_existing',
       email: 'user@example.com',
@@ -3672,6 +3762,138 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it("checks a resumed sign-up's attributes again and keeps them with its code", async () => {
+    storeSendResumeRecords();
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'user@example.com',
+    });
+    mocks.validateRegistrationFieldSubmissionFromEnv.mockResolvedValueOnce({
+      ok: true,
+      values: { company: 'Acme' },
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const send = () =>
+      directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email: 'user@example.com',
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+              custom_fields: { company: 'Acme' },
+            },
+            { ...webHeaders(), 'X-Authrim-Human-Verification-Action': 'signup' }
+          )
+        ) as never
+      );
+
+    expect((await send()).status).toBe(200);
+    expect(mocks.checkSignUpScreen.mock.calls.at(-1)?.[2]).toMatchObject({
+      customFields: { company: 'Acme' },
+    });
+    const issued = mocks.challengeStore.storeChallengeRpc.mock.calls
+      .map(([request]) => request as { type?: string; metadata?: Record<string, unknown> })
+      .find((request) => request.type === 'direct_email_code');
+    expect(issued?.metadata?.custom_fields).toEqual({ company: 'Acme' });
+
+    // Attributes the screen does not ask for: nothing sent, answered as usual.
+    mocks.emailNotifier.send.mockClear();
+    mocks.checkSignUpScreen.mockResolvedValueOnce({
+      ok: false,
+      reason: 'unknown_field',
+      field: 'role',
+    });
+    expect((await send()).status).toBe(200);
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+    // The refused send left its record (used up by the send that went out only).
+    expect(
+      mocks.challengeStore.consumeChallengeRpc.mock.calls.filter(
+        ([request]) => (request as { type?: string })?.type === 'direct_email_send_resume'
+      )
+    ).toHaveLength(1);
+  });
+
+  it("resumes a lite tenant's provisioned send only behind a fresh proof, using the record then", async () => {
+    mocks.readLiteMode.mockResolvedValue('always');
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+      id: 'user_existing',
+      email: 'user@example.com',
+    });
+    const record = (id: string) => ({
+      id,
+      tenantId: 'tenant_test',
+      type: 'direct_email_send_resume',
+      challenge: id.slice('direct_email_send_resume:'.length),
+      consumed: false,
+      metadata: { usage: 'signup' },
+    });
+    mocks.challengeStore.getChallengeRpc.mockImplementation(async (id: string) =>
+      id.startsWith('direct_email_send_resume:') ? record(id) : null
+    );
+    const resumeConsumes = () =>
+      mocks.challengeStore.consumeChallengeRpc.mock.calls.filter(
+        ([request]) => (request as { type?: string })?.type === 'direct_email_send_resume'
+      );
+    mocks.challengeStore.consumeChallengeRpc.mockImplementation(
+      async (request: { type?: string }) =>
+        request?.type === 'direct_email_send_resume' ? { metadata: { usage: 'signup' } } : undefined
+    );
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const send = () =>
+      directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email: 'user@example.com',
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+              human_verification_response: 'fresh-proof',
+            },
+            { ...webHeaders(), 'X-Authrim-Human-Verification-Action': 'signup' }
+          )
+        ) as never
+      );
+
+    // A proof refused: nothing sent, and the record is left for the next try.
+    mocks.verifyHumanVerificationForAction.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'human_verification_failed' }), { status: 403 })
+    );
+    expect((await send()).status).toBe(200);
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+    expect(resumeConsumes()).toHaveLength(0);
+
+    // A proof passed: the sign-up's code goes out, and the record is used up.
+    mocks.verifyHumanVerificationForAction.mockResolvedValueOnce(null);
+    expect((await send()).status).toBe(200);
+    expect(mocks.verifyHumanVerificationForAction.mock.calls.at(-1)?.slice(1)).toEqual([
+      'signup',
+      'fresh-proof',
+      [],
+    ]);
+    expect(resumeConsumes()).toHaveLength(1);
+    expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
+    const issued = mocks.challengeStore.storeChallengeRpc.mock.calls
+      .map(([request]) => request as { type?: string; metadata?: { usage?: string } })
+      .find((request) => request.type === 'direct_email_code');
+    expect(issued?.metadata?.usage).toBe('signup');
+
+    // A record another send used meanwhile: nothing sent.
+    mocks.verifyHumanVerificationForAction.mockResolvedValueOnce(null);
+    mocks.challengeStore.consumeChallengeRpc.mockImplementation(
+      async (request: { type?: string }) => {
+        if (request?.type === 'direct_email_send_resume') throw new Error('Challenge consumed');
+        return undefined;
+      }
+    );
+    expect((await send()).status).toBe(200);
+    expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
+  });
+
   it('keys a resume record by the whole send, a screen named or not', async () => {
     mocks.userPII.findByTenantAndEmail.mockResolvedValue({
       id: 'user_existing',
@@ -3705,10 +3927,9 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     await send({ authorization_challenge_id: 'login_challenge' });
     await send({}, { 'X-Authrim-Human-Verification-Action': 'login' });
 
-    const ids = mocks.challengeStore.consumeChallengeRpc.mock.calls
-      .map(([request]) => request as { type?: string; id?: string })
-      .filter((request) => request.type === 'direct_email_send_resume')
-      .map((request) => request.id);
+    const ids = mocks.challengeStore.getChallengeRpc.mock.calls
+      .map(([id]) => id as string)
+      .filter((id) => id.startsWith('direct_email_send_resume:'));
     expect(ids).toHaveLength(4);
     // The same send, sent again without naming a screen, keeps its key.
     expect(ids[1]).toBe(ids[0]);
@@ -5908,9 +6129,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     });
 
     it('keeps the invitation for the resumed send of a sign-up whose account was being provisioned', async () => {
-      mocks.challengeStore.consumeChallengeRpc.mockImplementationOnce(async () => ({
-        metadata: { usage: 'signup' },
-      }));
+      storeSendResumeRecords();
       mocks.userPII.findByTenantAndEmail.mockResolvedValue({
         id: 'user_existing',
         email: 'user@example.com',
@@ -6435,20 +6654,58 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         created_at: Date.now(),
       });
 
+      // A token is asked for whenever the screen or any of the other uses asks for one.
+      mocks.verifyHumanVerificationForAction.mockImplementation(
+        async (
+          c: { env: { SETTINGS?: { get: (key: string) => Promise<string | null> } } },
+          action: string,
+          responseToken: unknown,
+          alsoRequiredFor: string[] = []
+        ) => {
+          const raw = await c.env.SETTINGS?.get(
+            'settings:tenant:tenant_test:authentication-methods'
+          );
+          const settings = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+          const required =
+            Boolean(settings['authentication-methods.human_verification.provider']) &&
+            [action, ...alsoRequiredFor].some(
+              (use) => settings[`authentication-methods.human_verification.${use}_enabled`] === true
+            );
+          if (!required || responseToken) return null;
+          return Response.json({ error: 'human_verification_required' }, { status: 400 });
+        }
+      );
+      mocks.emailNotifier.send.mockClear();
+
       await send(
         { code_challenge: await s256Challenge('second-verifier') },
         loginProof,
         signupScreen
       );
 
-      // As before it was a sign-up: the screen's token, and the one a sign-in needs.
+      // As before it was a sign-up: the screen's token, and the one a sign-in needs, so a resend
+      // without a token sends nothing.
       expect(mocks.verifyHumanVerificationForAction).toHaveBeenLastCalledWith(
         expect.anything(),
         'signup',
         undefined,
         ['login']
       );
+      expect(storedCodes()).toHaveLength(1);
+      expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+
+      // With one, it is sent, as the sign-up.
+      await send(
+        {
+          code_challenge: await s256Challenge('third-verifier'),
+          human_verification_response: 'token',
+        },
+        loginProof,
+        signupScreen
+      );
+      expect(storedCodes()).toHaveLength(2);
       expect(storedCodes()[1].metadata.usage).toBe('signup');
+      expect(mocks.emailNotifier.send).toHaveBeenCalledTimes(1);
     });
 
     it('signs in once the account is verified, whoever sends', async () => {
@@ -6487,7 +6744,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect(storedCodes()[1].metadata.usage).toBe('login');
     });
 
-    it('keeps the profile for the send that resumes a sign-up whose account was provisioned', async () => {
+    it('records the checked profile of a resumed sign-up for its resend', async () => {
       const tenantExclusive = (context: ReturnType<typeof createContext>) => {
         context.get = vi.fn((key: string) => {
           if (key === 'tenantId') return 'tenant_test';
@@ -6526,76 +6783,26 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         status: 'pending',
         response: Response.json({ status: 'provisioning' }, { status: 202 }),
       });
+      const sent = { 'field.custom.department': 'as typed' };
 
-      // The first send stops while the account is provisioned.
-      const pending = await sendExclusive({ custom_fields: profile });
-      expect(pending.status).toBe(202);
-      expect(storedCodes()).toHaveLength(0);
-
-      // The same send again, once the account exists (its attributes are not sent this time).
-      const resumed = await sendExclusive({});
-
-      expect(resumed.status).toBe(200);
-      expect(storedCodes()).toHaveLength(1);
-      expect(storedCodes()[0].metadata).toMatchObject({
-        usage: 'signup',
-        custom_fields: profile,
-      });
-      // And its own resend is the sign-up still.
-      await sendExclusive({ code_challenge: await s256Challenge('second-verifier') });
-      expect(storedCodes()[1].metadata).toMatchObject({
-        usage: 'signup',
-        custom_fields: profile,
-      });
-    });
-
-    it('gives the profile only to a resumed send from the interaction it was checked for', async () => {
-      const tenantExclusive = (context: ReturnType<typeof createContext>) => {
-        context.get = vi.fn((key: string) => {
-          if (key === 'tenantId') return 'tenant_test';
-          if (key === 'tenantMetadataContext') {
-            return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
-          }
-          return undefined;
-        }) as never;
-        return context;
-      };
-      const sendExclusive = async (body: Record<string, unknown>) => {
-        const { directEmailCodeSendHandler } = await import('../direct-auth');
-        return directEmailCodeSendHandler(
-          tenantExclusive(
-            enableEmailOtp(
-              createContext(
-                {
-                  client_id: 'web-client',
-                  email: 'user@example.com',
-                  code_challenge: await s256Challenge('first-verifier'),
-                  code_challenge_method: 'S256',
-                  channel: 'browser',
-                  authorization_challenge_id: 'challenge_mine',
-                  ...body,
-                },
-                webHeaders()
-              )
-            )
-          ) as never
-        );
-      };
-      mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
-        new Error('account_data_route_not_found')
-      );
-      mocks.provisionTenantD1EmailAccount.mockResolvedValueOnce({
-        status: 'pending',
-        response: Response.json({ status: 'provisioning' }, { status: 202 }),
-      });
-      expect((await sendExclusive({ custom_fields: profile })).status).toBe(202);
-
-      // The same send, but for another Flow interaction than the one its attributes were checked for.
-      await sendExclusive({ runtime_interaction_id: 'interaction_other' });
-
-      expect(storedCodes()).toHaveLength(1);
-      expect(storedCodes()[0].metadata).not.toHaveProperty('custom_fields');
+      // The first send stops while the account is provisioned; nothing is kept for its resend yet.
+      expect((await sendExclusive({ custom_fields: sent })).status).toBe(202);
       expect([...records.keys()].some((id) => id.startsWith('direct_email_signup:'))).toBe(false);
+
+      // The same send again, once the account exists, with its attributes, checked again.
+      const resumed = await sendExclusive({ custom_fields: sent });
+      expect(resumed.status).toBe(200);
+      expect(mocks.validateRegistrationFieldSubmissionFromEnv).toHaveBeenCalledTimes(2);
+      expect(storedCodes()).toHaveLength(1);
+      expect(storedCodes()[0].metadata).toMatchObject({ usage: 'signup', custom_fields: profile });
+
+      // Its resend is the sign-up still, with the profile that check gave (not what it sends).
+      await sendExclusive({
+        code_challenge: await s256Challenge('second-verifier'),
+        custom_fields: { 'field.custom.department': 'Elsewhere' },
+      });
+      expect(mocks.validateRegistrationFieldSubmissionFromEnv).toHaveBeenCalledTimes(2);
+      expect(storedCodes()[1].metadata).toMatchObject({ usage: 'signup', custom_fields: profile });
     });
   });
 });

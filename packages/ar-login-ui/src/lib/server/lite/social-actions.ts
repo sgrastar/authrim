@@ -35,6 +35,7 @@ import {
 	readProof,
 	relayCompletion,
 	retryLater,
+	heldForAccount,
 	signInStarted,
 	signInUnderway,
 	submitOrNull,
@@ -54,8 +55,6 @@ function nonEmpty(value: unknown): value is string {
 
 /** Whether the step the post is on offers this provider (on, allowed, and drawn as a button). */
 async function offersProvider(post: LitePost, provider: string) {
-	// An external sign-up is not done here yet (PR6c): never a start from the sign-up page.
-	if (post.purpose !== 'login') return null;
 	const step = post.flow.step;
 	const methods = await liteTenantMethods(post.event);
 	const decision = liteLoginStepDecision(step, methods, post.locale, post.purpose);
@@ -67,7 +66,9 @@ async function offersProvider(post: LitePost, provider: string) {
 	if (!step || !drawn || !liteMethodAvailability(methods, step, post.purpose)('external_idp')) {
 		return null;
 	}
-	const found = liteSocialProviders(methods, step).providers.find((p) => p.id === provider);
+	const found = liteSocialProviders(methods, step, post.purpose).providers.find(
+		(p) => p.id === provider
+	);
 	return found ? { step, provider: found } : null;
 }
 
@@ -156,7 +157,8 @@ export const liteSocialStartAction = guarded(async (event) => {
 	// with, or restarted): the same form posted again was answered above.
 	if (
 		signInStarted(post.txn.data, state.interactionId) ||
-		signInUnderway(post.txn.data, state.interactionId)
+		signInUnderway(post.txn.data, state.interactionId) ||
+		heldForAccount(post.txn.data, state.interactionId)
 	) {
 		await finishOperation(post, post.txn, operation, { error: 'sign_in_begun' });
 		backToPage(event);
@@ -207,6 +209,7 @@ export const liteSocialStartAction = guarded(async (event) => {
 				readKeptFlow(now.data)?.interactionId === state.interactionId &&
 				!signInStarted(now.data, state.interactionId) &&
 				!signInUnderway(now.data, state.interactionId) &&
+				!heldForAccount(now.data, state.interactionId) &&
 				!readPendingSocial(now.data, null)
 		}
 	);

@@ -58,6 +58,33 @@
 	{/snippet}
 </Story>
 
+<!-- Split over a background image: the brand side is see-through, as on the real screen (the
+     accent fill would hide the picture). -->
+<Story
+	name="Split over a background image"
+	play={async ({ canvasElement }) => {
+		await waitFor(() =>
+			expect(canvasElement.querySelector('.outline__panel')).toHaveClass(
+				'outline__panel--over-image'
+			)
+		);
+	}}
+>
+	{#snippet template()}
+		<Page>
+			<ThemeEditor
+				draft={{
+					...newThemeDraft(),
+					template: 'split',
+					palette: 'clear-glass',
+					formFrame: 'card',
+					backgroundImage: PAPER_PRESET
+				}}
+			/>
+		</Page>
+	{/snippet}
+</Story>
+
 <Story
 	name="Background presets"
 	play={async ({ canvasElement }) => {

@@ -27,6 +27,7 @@ import {
   resolveEmailSendLimit,
   resolveOptionalCoreAdapterFromHono,
   getLogger,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import {
   findActiveInvitationByToken,
@@ -38,6 +39,7 @@ import { generateEmailCode, hashEmailCode, verifyEmailCodeHash } from './utils/e
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import { invitationChallengeStore, invitationEmailProofId } from './invitation-redemption';
 import { liteModeEndpointUnavailable, readLiteMode } from './lite-mode';
+import { verifyHumanVerificationForAction } from './human-verification';
 
 const INVITATION_EMAIL_CODE_TTL_SECONDS = 600;
 const INVITATION_EMAIL_PROOF_TTL_SECONDS = 900;
@@ -169,15 +171,24 @@ function maskEmail(email: string): string {
 export async function sendInvitationEmailCodeHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('INVITATIONS');
   try {
-    const body = await c.req.json<{ token?: unknown }>();
+    const body = await c.req.json<{ token?: unknown; human_verification_response?: unknown }>();
     const invitation = await findEmailInvitation(c, body.token);
     if (!invitation) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
     const tenantId = invitation.tenant_id;
     // The invitation's tenant decides: a tenant in lite mode sends invitation codes only from the
-    // lite Login UI's sign-up, behind human verification (refused here until that is wired).
-    if ((await readLiteMode(c.env, tenantId)) !== 'off') return liteModeEndpointUnavailable(c);
+    // lite Login UI's sign-up, behind its proof of work for a sign-up (verified for the request's
+    // tenant, which must be the invitation's).
+    if ((await readLiteMode(c.env, tenantId)) !== 'off') {
+      if (getTenantIdFromContext(c) !== tenantId) return liteModeEndpointUnavailable(c);
+      const humanVerificationError = await verifyHumanVerificationForAction(
+        c,
+        'signup',
+        body.human_verification_response
+      );
+      if (humanVerificationError) return humanVerificationError;
+    }
     const hmacSecret = c.env.OTP_HMAC_SECRET;
     if (!hmacSecret) {
       return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
@@ -271,6 +282,14 @@ export async function verifyInvitationEmailCodeHandler(c: Context<{ Bindings: En
     const invitation = await findEmailInvitation(c, body.token);
     if (!invitation) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+    // A tenant in lite mode proves an invitation's address only for a request of its own tenant
+    // (as its code was sent).
+    if (
+      (await readLiteMode(c.env, invitation.tenant_id)) !== 'off' &&
+      getTenantIdFromContext(c) !== invitation.tenant_id
+    ) {
+      return liteModeEndpointUnavailable(c);
     }
     const tenantId = invitation.tenant_id;
     const hmacSecret = c.env.OTP_HMAC_SECRET;

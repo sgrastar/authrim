@@ -23,7 +23,6 @@ import {
   createAuthContextFromHono,
   DEFAULT_RUNTIME_SCREEN_KEYS,
   getLitePolicyStore,
-  getTenantMetadataContextFromHono,
   humanVerificationSettingsKey,
   isLoginUILiteSelectable,
   LITE_FLOW_KINDS,
@@ -32,7 +31,6 @@ import {
   liteScreenIssues,
   normalizeLiteModeIssues,
   resolveRuntimeScreenRow,
-  usesRoutedAccountStorage,
   type DatabaseAdapter,
   type Env,
   type LiteModeIssue,
@@ -366,11 +364,6 @@ export async function evaluateLiteReadiness(
     issues.push({ code: 'not_released' });
   }
   if (!getLitePolicyStore(env, tenantId)) issues.push({ code: 'policy_store_unavailable' });
-  // A tenant whose accounts are made asynchronously (routed account storage): a sign-up there is
-  // answered 202 and resumed, which the lite sign-up does not do yet.
-  if (usesRoutedAccountStorage(getTenantMetadataContextFromHono(c as Context<{ Bindings: Env }>))) {
-    issues.push({ code: 'account_provisioning_async' });
-  }
 
   const db = createAuthContextFromHono(c as Context<{ Bindings: Env }>, tenantId).coreAdapter;
   const methods = await resolveLiteMethodState(env, tenantId);

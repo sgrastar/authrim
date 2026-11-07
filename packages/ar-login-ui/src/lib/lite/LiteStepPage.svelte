@@ -33,7 +33,10 @@
 		| 'passkey_failed'
 		| 'consent_required'
 		| 'answer_required'
-		| 'answer_invalid';
+		| 'answer_invalid'
+		| 'account_exists'
+		| 'provisioning_wait'
+		| 'provisioning_failed';
 	const formError = $derived(
 		form && 'error' in form && typeof form.error === 'string' ? (form.error as FormError) : null
 	);
@@ -194,6 +197,70 @@
 					<button type="submit">{data.text.restart}</button>
 				</form>
 			{/if}
+		{:else if data.provisioning}
+			<!-- A sign-up held until its account exists: its Continue sends it again (with a proof). -->
+			<h1>{data.text.title}</h1>
+			{#if formError}
+				<p role="alert">{data.text.errors[formError]}</p>
+			{:else}
+				<p>{data.text.provisioningWait}</p>
+			{/if}
+			{#if formError !== 'provisioning_failed'}
+				<form
+					method="post"
+					action={actionOf(data.search, 'provisioning_continue')}
+					data-lite-pow={data.pow ? JSON.stringify(data.pow) : undefined}
+					data-lite-pow-error={data.pow ? data.text.javascriptRequired : undefined}
+				>
+					<input type="hidden" name="provisioning" value={data.provisioning.id} />
+					<input type="hidden" name="txn" value={data.txnId} />
+					<input type="hidden" name="csrf" value={data.csrfToken} />
+					<input type="hidden" name="op" value={data.op} />
+					{#if data.pow}<input type="hidden" name="human_verification_response" value="" />{/if}
+					<button type="submit">{data.text.continue}</button>
+				</form>
+			{/if}
+			<form method="post" action={actionOf(data.search, 'restart')}>
+				<input type="hidden" name="txn" value={data.txnId} />
+				<input type="hidden" name="csrf" value={data.csrfToken} />
+				<button type="submit">{data.text.restart}</button>
+			</form>
+			{#if data.pow}
+				<noscript><p role="alert">{data.text.javascriptRequired}</p></noscript>
+				<!-- eslint-disable-next-line svelte/no-at-html-tags -- a constant, allowed by its CSP hash -->
+				{@html solverTag}
+			{/if}
+		{:else if data.inviteProof}
+			<!-- The invited address's code: a passkey's or authenticator's sign-up proves it first. -->
+			<h1>{data.text.inviteProofTitle}</h1>
+			{#if data.inviteProof.maskedEmail}
+				<p>{data.text.codeSentTo} <strong>{data.inviteProof.maskedEmail}</strong></p>
+			{/if}
+			{#if formError}<p role="alert">{data.text.errors[formError]}</p>{/if}
+			<form method="post" action={actionOf(data.search, 'invite_proof_verify')}>
+				<input type="hidden" name="verification" value={data.inviteProof.verification} />
+				<input type="hidden" name="txn" value={data.txnId} />
+				<input type="hidden" name="csrf" value={data.csrfToken} />
+				<input type="hidden" name="op" value={data.op} />
+				<label>
+					{data.text.code}
+					<input
+						name="code"
+						inputmode="numeric"
+						autocomplete="one-time-code"
+						pattern={'[0-9]{6}'}
+						minlength="6"
+						maxlength="6"
+						required
+					/>
+				</label>
+				<button type="submit">{data.text.verify}</button>
+			</form>
+			<form method="post" action={actionOf(data.search, 'restart')}>
+				<input type="hidden" name="txn" value={data.txnId} />
+				<input type="hidden" name="csrf" value={data.csrfToken} />
+				<button type="submit">{data.text.restart}</button>
+			</form>
 		{:else if data.passkey}
 			<!-- The passkey ceremony: the fixed script signs the challenge on the button's press. -->
 			<h1>{data.text.passkey}</h1>
@@ -240,7 +307,10 @@
 				<p><a href={data.codeEntry.setup.uri}>{data.text.totpOpenApp}</a></p>
 				<p>{data.text.totpManualKey}: <code>{data.codeEntry.setup.secret}</code></p>
 			{/if}
-			{#if formError}<p role="alert">{data.text.errors[formError]}</p>{/if}
+			{#if formError === 'account_exists'}
+				<!-- The address has an account: the sign-in page, for the same request. -->
+				<p role="alert"><a href={`/login${data.search}`}>{data.text.errors.account_exists}</a></p>
+			{:else if formError}<p role="alert">{data.text.errors[formError]}</p>{/if}
 			<form
 				method="post"
 				action={actionOf(

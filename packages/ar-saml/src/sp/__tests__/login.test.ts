@@ -184,6 +184,55 @@ describe('SP login tenant signing boundary', () => {
     expect(stored).toMatchObject({ relayState: liteReturn, context: { liteReturn } });
   });
 
+  it("reserves the invitation its grant carries (the sign-up's), never the query's", async () => {
+    mockEnv.LITE_POLICY_STORE = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => ({
+        isEverLiteRpc: vi.fn().mockResolvedValue(true),
+        getSnapshotRpc: vi.fn().mockResolvedValue({
+          tenantId: 'tenant-a',
+          liteMode: 'always',
+          humanVerificationRequired: { login: true, signup: true, reauth: false },
+          policyRevision: 'rev-1',
+          generation: 1,
+          updatedAt: 1,
+        }),
+      })),
+    } as unknown as Env['LITE_POLICY_STORE'];
+    mockConsumeGrant.mockResolvedValue({
+      ok: true,
+      txn: {
+        id: 'txn-1',
+        bound: { publicOrigin: 'https://auth.example.com', challengeId: null, purpose: 'signup' },
+      },
+      start: { clientId: 'login-ui', interactionId: null, inviteToken: 'grant-invite-token' },
+    });
+    mockReserveInvitation.mockResolvedValue({ inviteId: 'invite-1', inviteReservationId: 'inr-1' });
+    mockGetIdPConfig.mockResolvedValue({
+      entityId: 'https://idp.example.com',
+      ssoUrl: 'https://idp.example.com/sso',
+      certificate: 'mock-certificate',
+      nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+      attributeMapping: {},
+      allowedBindings: ['redirect'],
+      signingKeyPolicy: { active: { slot: 'active', keyRef: 'tenant:tenant-a:saml:sp:signing' } },
+    });
+    const store = { fetch: vi.fn().mockResolvedValue(new Response('OK', { status: 200 })) };
+    mockEnv.SAML_REQUEST_STORE = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => store),
+    } as unknown as Env['SAML_REQUEST_STORE'];
+    const { context } = createLoginContext(mockEnv, 'tenant-a', {
+      lite_txn: 'txn-1',
+      lite_grant: 'grant-1',
+      invite_token: 'query-invite-token',
+    });
+    const res = await handleSPLogin(context);
+    expect(res.status).toBe(302);
+    expect(mockReserveInvitation).toHaveBeenCalledTimes(1);
+    expect(mockReserveInvitation.mock.calls[0][1]).toMatchObject({ token: 'grant-invite-token' });
+  });
+
   it('refuses a lite start without an IdP, or one answering a re-authentication', async () => {
     mockEnv.LITE_POLICY_STORE = {
       idFromName: vi.fn((name: string) => name),

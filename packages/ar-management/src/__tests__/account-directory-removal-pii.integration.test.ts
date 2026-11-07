@@ -280,6 +280,33 @@ describe('account directory removal PII erasure', () => {
     ).toEqual([{ tenant_id: 'tenant-a', user_id: 'user-a', created_at: 100 }]);
   });
 
+  it('erases identifier change values named by the user id as by the account id', async () => {
+    // Self-service and SCIM name the account by its user id; others by its account id.
+    database.exec(`
+      INSERT INTO identity_identifier_replacement_challenges
+        (id, tenant_id, account_id, normalized_value_json, raw_value_erased_at, updated_at)
+      VALUES ('ch-user', 'tenant-a', 'user-a', '"next@example.com"', NULL, 1),
+             ('ch-account', 'tenant-a', 'account:user-a', '"x@example.com"', NULL, 1),
+             ('ch-other', 'tenant-a', 'user-b', '"b@example.com"', NULL, 1);
+    `);
+    await eraseAccountPiiAfterDirectoryRemovalPrepared(
+      adapter,
+      { tenantId: 'tenant-a', userId: 'user-a', core: adapter },
+      100
+    );
+    expect(
+      database
+        .prepare(
+          'SELECT id, normalized_value_json FROM identity_identifier_replacement_challenges ORDER BY id'
+        )
+        .all()
+    ).toEqual([
+      { id: 'ch-account', normalized_value_json: 'null' },
+      { id: 'ch-other', normalized_value_json: '"b@example.com"' },
+      { id: 'ch-user', normalized_value_json: 'null' },
+    ]);
+  });
+
   it("removes the account's custom attributes from its core database", async () => {
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       adapter,

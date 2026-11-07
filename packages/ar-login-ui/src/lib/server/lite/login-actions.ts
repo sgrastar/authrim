@@ -59,6 +59,12 @@ import { readPendingSocial } from './social-state';
 import { readLiteSignupProfile, type LiteSignupProfile } from './signup';
 import { readLiteInvite } from './invite';
 import {
+	newLiteProvisioningId,
+	readLiteProvisioning,
+	type LiteProvisioning,
+	type LiteProvisioningAnswer
+} from './provisioning';
+import {
 	keptFlowConsentWith,
 	liteConsentDigest,
 	liteConsentDraft,
@@ -99,14 +105,15 @@ export const LITE_LOGIN_PAGE_METHODS: ReadonlySet<string> = new Set([
 	'external_idp'
 ]);
 /**
- * The sign-up page's: by email code (PR6a), passkey or authenticator (PR6a-2). An external sign-up
- * is not drawn yet (PR6c): such a part stops the page.
+ * The sign-up page's: by email code (PR6a), passkey or authenticator (PR6a-2), an external
+ * provider (PR6c; its start carries the sign-up's invitation).
  */
 export const LITE_SIGNUP_PAGE_METHODS: ReadonlySet<string> = new Set([
 	'mail_otp',
 	'mail_otp_totp',
 	'passkey',
-	'totp'
+	'totp',
+	'external_idp'
 ]);
 /** The sign-up page's blocks: the sign-in page's, no guest (the SPA's sign-up has none). */
 export const LITE_SIGNUP_PAGE_BLOCKS: ReadonlySet<string> = new Set(
@@ -114,7 +121,7 @@ export const LITE_SIGNUP_PAGE_BLOCKS: ReadonlySet<string> = new Set(
 );
 
 /** The most a sign-up's profile takes in the transaction (kept with its code). */
-const MAX_SIGNUP_PROFILE_BYTES = 2048;
+export const MAX_SIGNUP_PROFILE_BYTES = 2048;
 
 /** How long before a code can be sent again (the SPA's `MAIL_OTP_RESEND_SECONDS`). */
 export const LITE_CODE_RESEND_MS = 60_000;
@@ -708,7 +715,9 @@ type OperationKind =
 	| 'totp'
 	| 'passkey'
 	| 'social'
-	| 'continue';
+	| 'continue'
+	| 'invite'
+	| 'provisioning';
 
 /**
  * Starts the post's operation. `started`: carry it out, then `finishOperation`. Otherwise the
@@ -1418,6 +1427,7 @@ export const liteSendCodeAction = guarded(async (event) => {
 	// (or given up by a restart), never a second one over it.
 	if (signInStarted(post.txn.data, state.interactionId)) backToPage(event);
 	if (signInUnderway(post.txn.data, state.interactionId)) backToPage(event);
+	if (heldForAccount(post.txn.data, state.interactionId)) backToPage(event);
 	const decision = liteLoginStepDecision(
 		step,
 		await liteTenantMethods(event),
@@ -1470,35 +1480,107 @@ export const liteSendCodeAction = guarded(async (event) => {
 			: undefined
 	});
 	if (!sent.ok) {
+		// The account is still being made: the send is held, to be sent again once it exists.
+		if (sent.provisioning) {
+			return holdForAccount(post, operation, sent.provisioning, {
+				kind: 'email_code',
+				choiceStepId: step.id,
+				email,
+				verifier: pkce.verifier,
+				codeChallenge: pkce.challenge,
+				profile,
+				inviteToken: profile ? (readLiteInvite(post.txn.data)?.token ?? null) : null
+			});
+		}
 		await finishOperation(post, post.txn, operation, { error: sent.error });
 		return sendFailure(sent.status);
 	}
-	// Kept first: whatever happens to the Flow below, the code that went out can be checked.
-	const code: LitePendingCode = {
-		interactionId: state.interactionId,
-		choiceStepId: step.id,
+	return keepSentCode(post, step, operation, {
 		email,
 		maskedEmail: sent.maskedEmail,
 		attemptId: sent.attemptId,
 		verifier: pkce.verifier,
+		profile
+	});
+});
+
+/**
+ * Whether a sign-up is held for its account in this interaction (its Continue is the page's: no
+ * other sign-in starts over it).
+ */
+export function heldForAccount(data: Record<string, unknown>, interactionId: string): boolean {
+	return readLiteProvisioning(data, interactionId) !== null;
+}
+
+/**
+ * Keeps a code that went out (with the operation that sent it), then submits the email-code choice:
+ * the Flow then waits for the sign-in; the page draws the entry. `held`: the hold of the account
+ * the code was sent again for (kept only over it, and given up with it).
+ */
+export async function keepSentCode(
+	post: LitePost,
+	step: FlowRuntimeStep,
+	/** The operation that sent it; null when it is recovered from that operation's result. */
+	operation: { operationId: string; attempt: number } | null,
+	sent: {
+		email: string;
+		maskedEmail: string | null;
+		attemptId: string;
+		verifier: string;
+		profile: { displayName: string | null; customFields: Record<string, string> } | null;
+	},
+	held: string | null = null
+) {
+	const event = post.event;
+	const state = post.flow.state;
+	// Kept first: whatever happens to the Flow below, the code that went out can be checked.
+	const code: LitePendingCode = {
+		interactionId: state.interactionId,
+		choiceStepId: step.id,
+		email: sent.email,
+		maskedEmail: sent.maskedEmail,
+		attemptId: sent.attemptId,
+		verifier: sent.verifier,
 		sentAt: Date.now(),
-		...(profile ? { signup: profile } : {})
+		...(sent.profile ? { signup: sent.profile } : {})
 	};
-	const kept = await finishOperation(
-		post,
-		post.txn,
-		operation,
-		{ sent: true },
-		{
-			to: 'pending',
-			// Over an expired authenticator or passkey start, if any (an unexpired one was refused).
-			patch: { code, totp: null, passkey: null, ...flowConsentPatch(post, post.txn.data) },
-			// Never over a code or a sign-in a concurrent post made meanwhile.
-			stillApplies: (now) =>
-				!signInStarted(now.data, state.interactionId) &&
-				!signInUnderway(now.data, state.interactionId)
-		}
-	);
+	const move = {
+		to: 'pending' as const,
+		// Over an expired authenticator or passkey start, if any (an unexpired one was refused).
+		patch: {
+			code,
+			totp: null,
+			passkey: null,
+			provisioning: null,
+			...flowConsentPatch(post, post.txn.data)
+		},
+		// Never over a code or a sign-in a concurrent post made meanwhile (nor, for a send made
+		// again, over another hold).
+		stillApplies: (now: LiteTxnView) =>
+			!signInStarted(now.data, state.interactionId) &&
+			!signInUnderway(now.data, state.interactionId) &&
+			(readLiteProvisioning(now.data, state.interactionId)?.id ?? null) === held
+	};
+	// The result names the code, so a change not saved is made from it later (a send made again
+	// for a hold cannot be made a second time).
+	const kept = operation
+		? await finishOperation(
+				post,
+				post.txn,
+				operation,
+				{ sent: true, attemptId: sent.attemptId, maskedEmail: sent.maskedEmail },
+				move
+			)
+		: move.stillApplies(post.txn)
+			? await post.txns
+					.transition(post.txn.id, {
+						expectedVersion: post.txn.version,
+						to: move.to,
+						patch: move.patch
+					})
+					.then((moved) => (moved.ok ? moved.txn : null))
+					.catch(() => null)
+			: null;
 	if (!kept) return retryLater();
 	// The SPA's `submitRuntimeStep('mail_otp', …, { awaitingSignIn: true })`: the choice, then
 	// the steps not drawn, stopping at the completion (it waits for the code). Should either
@@ -1517,7 +1599,46 @@ export const liteSendCodeAction = guarded(async (event) => {
 	}
 	forwardSetCookies(event, post.backend.setCookies());
 	backToPage(event);
-});
+}
+
+/**
+ * Holds a sign-up whose account is still being made (a 202): its request is kept with the
+ * operation that sent it, with the consent this post accepted (taken with the request when it is
+ * sent again); the page draws its Continue.
+ */
+export async function holdForAccount(
+	post: LitePost,
+	operation: { operationId: string; attempt: number },
+	answer: LiteProvisioningAnswer,
+	request: LiteProvisioning['request']
+) {
+	const interactionId = post.flow.state.interactionId;
+	const provisioning: LiteProvisioning = {
+		interactionId,
+		id: newLiteProvisioningId(),
+		token: answer.token,
+		expiresAt: answer.expiresAt,
+		request
+	};
+	const kept = await finishOperation(
+		post,
+		post.txn,
+		operation,
+		{ provisioning: true },
+		{
+			to: 'pending',
+			patch: { provisioning, ...flowConsentPatch(post, post.txn.data) },
+			// Never over another hold (another request's, kept meanwhile) or a sign-in begun since.
+			stillApplies: (now) =>
+				!signInStarted(now.data, interactionId) &&
+				!signInUnderway(now.data, interactionId) &&
+				!heldForAccount(now.data, interactionId)
+		}
+	);
+	forwardSetCookies(post.event, post.backend.setCookies());
+	if (!kept) return retryLater();
+	backToPage(post.event);
+}
 
 /** A post's consent choices as a draft, for the terms its form was drawn with (else none). */
 async function consentDraftOf(post: LitePost) {
@@ -1674,6 +1795,7 @@ export const liteGuestAction = guarded(async (event) => {
 	// Never over a sign-in begun or made here (an old form from another tab): restart is the way.
 	if (signInStarted(post.txn.data, post.flow.state.interactionId)) backToPage(event);
 	if (signInUnderway(post.txn.data, post.flow.state.interactionId)) backToPage(event);
+	if (heldForAccount(post.txn.data, post.flow.state.interactionId)) backToPage(event);
 	const decision = liteLoginStepDecision(
 		step,
 		await liteTenantMethods(event),
@@ -1722,9 +1844,11 @@ export const liteGuestAction = guarded(async (event) => {
 		{
 			to: 'verified',
 			patch: { signedIn, ...flowConsentPatch(post, post.txn.data) },
+			// Never over a sign-in begun or made meanwhile, nor a sign-up held for its account.
 			stillApplies: (now) =>
 				!signInStarted(now.data, post.flow.state.interactionId) &&
-				!signInUnderway(now.data, post.flow.state.interactionId)
+				!signInUnderway(now.data, post.flow.state.interactionId) &&
+				!heldForAccount(now.data, post.flow.state.interactionId)
 		}
 	);
 	if (!('txn' in finished) || !finished.txn) return retryLater();
@@ -1758,7 +1882,9 @@ const FORM_OWN_NAMES: ReadonlySet<string> = new Set([
 	'provider',
 	'human_verification_response',
 	'consent-key',
-	'step-key'
+	'step-key',
+	'verification',
+	'provisioning'
 ]);
 
 /** The step a page was drawn on, by its interaction: a Continue posts it (`step_continue`). */

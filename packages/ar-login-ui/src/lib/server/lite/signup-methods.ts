@@ -12,6 +12,7 @@
  */
 import type { LiteBackendClient } from './backend-client';
 import { loginUiClientId } from './email-code';
+import { readLiteProvisioningAnswer, type LiteProvisioningAnswer } from './provisioning';
 import {
 	BASE64URL,
 	MAX_CREDENTIAL_ID_CHARS,
@@ -27,6 +28,8 @@ export interface LiteSignupAccount {
 	displayName: string | null;
 	customFields: Record<string, string>;
 	inviteToken: string | null;
+	/** The proof of the invited address, when the invitation asks one first. */
+	inviteProof: string | null;
 }
 
 /** An answer that the account is still being made (a routed tenant database): try again later. */
@@ -146,10 +149,18 @@ export async function startLitePasskeySignup(
 		proof: string | null;
 		authorizationChallengeId: string | null;
 		interactionId: string;
+		/** The account a start answered 202 for, now made (the same start, sent again). */
+		resume?: { token: string; userId: string };
 	}
 ): Promise<
 	| { ok: true; challengeId: string; options: LitePasskeyCreationOptions }
-	| { ok: false; error: string; status: number; provisioning: boolean }
+	| {
+			ok: false;
+			error: string;
+			status: number;
+			provisioning: boolean;
+			resume?: LiteProvisioningAnswer;
+	  }
 > {
 	const answer = await backend.request('/api/v1/auth/direct/passkey/signup/start', {
 		json: {
@@ -164,12 +175,23 @@ export async function startLitePasskeySignup(
 				? { authorization_challenge_id: input.authorizationChallengeId }
 				: {}),
 			...(input.proof ? { human_verification_response: input.proof } : {}),
-			...(input.inviteToken ? { invite_token: input.inviteToken } : {})
+			...(input.inviteToken ? { invite_token: input.inviteToken } : {}),
+			...(input.inviteProof ? { invitation_email_proof: input.inviteProof } : {}),
+			...(input.resume
+				? { provisioning_token: input.resume.token, resume_user_id: input.resume.userId }
+				: {})
 		},
 		headers: interactionHeaders(input.interactionId)
 	});
 	if (isProvisioning(answer)) {
-		return { ok: false, error: 'provisioning', status: 202, provisioning: true };
+		const resume = readLiteProvisioningAnswer(answer);
+		return {
+			ok: false,
+			error: 'provisioning',
+			status: 202,
+			provisioning: true,
+			...(resume ? { resume } : {})
+		};
 	}
 	const json = record(answer.json);
 	if (answer.status !== 200 || typeof json.challenge_id !== 'string' || !json.challenge_id) {
@@ -302,7 +324,8 @@ export async function startLiteTotpSignup(
 				? { authorization_challenge_id: input.authorizationChallengeId }
 				: {}),
 			...(input.proof ? { human_verification_response: input.proof } : {}),
-			...(input.inviteToken ? { invite_token: input.inviteToken } : {})
+			...(input.inviteToken ? { invite_token: input.inviteToken } : {}),
+			...(input.inviteProof ? { invitation_email_proof: input.inviteProof } : {})
 		},
 		headers: interactionHeaders(input.interactionId)
 	});

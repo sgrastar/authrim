@@ -64,10 +64,13 @@ import {
 	readPendingPasskey,
 	readPendingTotp,
 	readSignedIn,
+	signInStarted,
+	signInUnderway,
 	stepHasCodeInput
 } from '#lib/server/lite/login-actions.js';
 import {
 	litePasskeyFinishAction,
+	liteInviteProofVerifyAction,
 	litePasskeyStartAction,
 	liteTotpStartAction,
 	liteTotpVerifyAction
@@ -75,7 +78,14 @@ import {
 import { liteMessages } from '#lib/server/lite/messages.js';
 import { fetchLitePowChallenge, type LitePowChallenge } from '#lib/server/lite/pow.js';
 import { liteTxnClient } from '#lib/server/lite/txn-client.js';
-import { readInviteToken, readLiteInvite, validateLiteInvite } from '#lib/server/lite/invite.js';
+import { readLiteProvisioning } from '#lib/server/lite/provisioning.js';
+import { liteProvisioningContinueAction } from '#lib/server/lite/provisioning-actions.js';
+import {
+	liteInviteEmailProof,
+	readInviteToken,
+	readLiteInvite,
+	validateLiteInvite
+} from '#lib/server/lite/invite.js';
 import {
 	liteSocialProviders,
 	liteSocialStartAction,
@@ -307,7 +317,7 @@ export async function liteStepPage(event: RequestEvent) {
 			? (decision.fields.find((field) => field.blockType === 'consent_widget') ?? null)
 			: null;
 	// The providers of a social part.
-	const social = liteSocialProviders(methods, step);
+	const social = liteSocialProviders(methods, step, purpose);
 	// An external sign-in started from here and not finished: its callback may still come back;
 	// until then (or a Start again) nothing else is started over it.
 	const socialStarted = !madeOrHalfMade && readPendingSocial(kept2.data, interactionId) !== null;
@@ -360,12 +370,34 @@ export async function liteStepPage(event: RequestEvent) {
 	let pow: LitePowChallenge | null = null;
 	// A code entry's proof is its resend's: none where its code is not sent again.
 	const resendable = purpose === 'login' || liteSignupCodeResendable(methods, pending);
+	// The invited address's code asked for: its entry (drawn instead) posts no proof.
+	const proofAsked =
+		purpose === 'signup' &&
+		keptInvite?.proofPending !== null &&
+		keptInvite?.proofPending !== undefined &&
+		liteInviteEmailProof(keptInvite) === null &&
+		// Never over a sign-in begun or made meanwhile (another tab's): its own page comes first;
+		// once one is made (the transaction verified), no proof is asked for again.
+		kept2.state !== 'verified' &&
+		!signInStarted(kept2.data, interactionId) &&
+		!signInUnderway(kept2.data, interactionId);
+	// A sign-up held for its account (a 202): its Continue (with a proof, for the request sent
+	// again) is drawn instead, never over a sign-in begun or made meanwhile.
+	const held =
+		decision.kind === 'screen' &&
+		kept2.state === 'pending' &&
+		!signInStarted(kept2.data, interactionId) &&
+		!signInUnderway(kept2.data, interactionId)
+			? readLiteProvisioning(kept2.data, interactionId)
+			: null;
 	const needsProof =
-		!passkey &&
-		((pending !== null && decision.kind === 'screen' && resendable) ||
-			(!codeAsked &&
-				decision.kind === 'screen' &&
-				decision.fields.some((f) => PROOF_BLOCKS.has(f.blockType))));
+		held !== null ||
+		(!passkey &&
+			!proofAsked &&
+			((pending !== null && decision.kind === 'screen' && resendable) ||
+				(!codeAsked &&
+					decision.kind === 'screen' &&
+					decision.fields.some((f) => PROOF_BLOCKS.has(f.blockType)))));
 	if (needsProof) {
 		// A lite page never draws such a form without its proof (the resend, for a code entry): no
 		// challenge (the tenant left lite mode, or none could be issued) is an error page.
@@ -376,7 +408,6 @@ export async function liteStepPage(event: RequestEvent) {
 	if (pow) event.locals.liteCsp = { scriptHashes: [await cspHashSource(LITE_POW_SOLVER_SCRIPT)] };
 	if (passkey) event.locals.liteCsp = { scriptHashes: [await cspHashSource(LITE_PASSKEY_SCRIPT)] };
 	const available = liteMethodAvailability(methods, step, purpose);
-	const proofFirst = purpose === 'signup' && keptInvite?.emailProofRequired === true;
 	const resendWait = pending
 		? Math.max(0, Math.ceil((pending.sentAt + LITE_CODE_RESEND_MS - Date.now()) / 1000))
 		: 0;
@@ -446,13 +477,22 @@ export async function liteStepPage(event: RequestEvent) {
 		continueAction: lapsed?.action ?? ('continue' as const),
 		continueChallenge: lapsed?.challenge ?? null,
 		// Which halves of an email-code-or-authenticator part the step offers.
-		// An invitation that asks a sign-up to prove its address first offers no passkey or
-		// authenticator sign-up (they prove none; their starts are refused too).
 		available: {
 			mailOtp: available('mail_otp'),
-			totp: available('totp') && !proofFirst,
-			passkey: available('passkey') && !proofFirst
+			totp: available('totp'),
+			passkey: available('passkey')
 		},
+		// A sign-up held until its account exists: its Continue names the hold.
+		provisioning: held ? { id: held.id } : null,
+		// An invitation's address proof asked for (a passkey's or authenticator's sign-up held for
+		// it): the code sent to the invited address is entered first.
+		inviteProof:
+			proofAsked && decision.kind === 'screen'
+				? {
+						maskedEmail: keptInvite?.proofPending?.maskedEmail ?? null,
+						verification: keptInvite?.proofPending?.verificationId ?? ''
+					}
+				: null,
 		// The step's consent (drawn by its screen's consent part); a screen that asks for consent and no
 		// sign-in has a Continue of its own.
 		consent,
@@ -489,6 +529,8 @@ export async function liteStepPage(event: RequestEvent) {
 			totpCode: LL.login_totpCodeLabel(),
 			totpVerify: LL.login_totpVerify(),
 			totpSetup: LL.register_totpSetupTitle(),
+			inviteProofTitle: LL.emailCode_title(),
+			provisioningWait: LL.lite_provisioningWait(),
 			totpQrAlt: LL.account_totpQrAlt(),
 			totpManualKey: LL.account_totpManualKey(),
 			totpOpenApp: LL.account_addTotp(),
@@ -517,7 +559,10 @@ export async function liteStepPage(event: RequestEvent) {
 				passkey_failed: LL.lite_passkeyFailed(),
 				consent_required: LL.consent_block_message(),
 				answer_required: LL.discover_error_valueRequired(),
-				answer_invalid: LL.error_invalid_request()
+				answer_invalid: LL.error_invalid_request(),
+				account_exists: LL.register_alreadyHaveAccount(),
+				provisioning_wait: LL.lite_provisioningWait(),
+				provisioning_failed: LL.lite_provisioningFailed()
 			}
 		}
 	};
@@ -536,5 +581,7 @@ export const liteStepActions = {
 	passkey_start: litePasskeyStartAction,
 	passkey_finish: litePasskeyFinishAction,
 	social_start: liteSocialStartAction,
+	invite_proof_verify: liteInviteProofVerifyAction,
+	provisioning_continue: liteProvisioningContinueAction,
 	restart: liteRestartAction
 };
