@@ -1557,6 +1557,43 @@ describe('one sign-in at a time across tabs', () => {
 		expect(paths()).not.toContain('/api/auth/guest/login');
 		expect(store.txn.data.passkey).toMatchObject({ challengeId: 'pk-1' });
 	});
+
+	it('makes no guest over a sign-up held for its account, nor keeps one held meanwhile', async () => {
+		currentStep = SELECT_STEP;
+		const hold = {
+			interactionId: 'int-1',
+			id: 'hold-1',
+			token: 'T'.repeat(43),
+			expiresAt: Date.now() + 60_000,
+			request: {
+				kind: 'email_code',
+				choiceStepId: 'select',
+				email: 'new@example.com',
+				verifier: 'v'.repeat(43),
+				codeChallenge: 'c'.repeat(43),
+				profile: null,
+				inviteToken: null
+			}
+		};
+		const flow = store.txn.data.flow;
+		store.set({ state: 'pending', data: { flow, provisioning: hold } });
+		await expect(post('guest', {})).rejects.toMatchObject({ status: 303 });
+		expect(paths()).not.toContain('/api/auth/guest/login');
+		// A hold kept while the guest was being made (another tab's send): the guest is not kept.
+		store.set({ state: 'pending', data: { flow } });
+		const guest = routes['/api/auth/guest/login'];
+		routes['/api/auth/guest/login'] = (body, init) => {
+			void store.binding.transition({
+				expectedVersion: store.txn.version,
+				to: 'pending',
+				patch: { provisioning: hold }
+			});
+			return guest(body, init);
+		};
+		await post('guest', { op: 'h'.repeat(22) }).catch((thrown: unknown) => thrown);
+		expect(store.txn.data.signedIn).toBeUndefined();
+		expect(store.txn.data.provisioning).toMatchObject({ id: 'hold-1' });
+	});
 });
 
 describe('an authenticator or passkey start that expired', () => {

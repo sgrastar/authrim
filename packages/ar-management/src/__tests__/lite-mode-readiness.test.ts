@@ -217,11 +217,11 @@ describe('evaluateLiteReadiness', () => {
     ).toEqual([]);
   });
 
-  it('reports a tenant whose accounts are made asynchronously (routed account storage)', async () => {
+  it('takes a tenant whose accounts are made asynchronously (the lite sign-up resumes them)', async () => {
     for (const allocationScope of ['shared_pool', 'tenant_exclusive']) {
       expect(
         await evaluateLiteReadiness(context({}, { route: { allocationScope } }), 'tenant-a')
-      ).toEqual([{ code: 'account_provisioning_async' }]);
+      ).toEqual([]);
     }
   });
 

@@ -78,6 +78,8 @@ import {
 import { liteMessages } from '#lib/server/lite/messages.js';
 import { fetchLitePowChallenge, type LitePowChallenge } from '#lib/server/lite/pow.js';
 import { liteTxnClient } from '#lib/server/lite/txn-client.js';
+import { readLiteProvisioning } from '#lib/server/lite/provisioning.js';
+import { liteProvisioningContinueAction } from '#lib/server/lite/provisioning-actions.js';
 import {
 	liteInviteEmailProof,
 	readInviteToken,
@@ -379,13 +381,23 @@ export async function liteStepPage(event: RequestEvent) {
 		kept2.state !== 'verified' &&
 		!signInStarted(kept2.data, interactionId) &&
 		!signInUnderway(kept2.data, interactionId);
+	// A sign-up held for its account (a 202): its Continue (with a proof, for the request sent
+	// again) is drawn instead, never over a sign-in begun or made meanwhile.
+	const held =
+		decision.kind === 'screen' &&
+		kept2.state === 'pending' &&
+		!signInStarted(kept2.data, interactionId) &&
+		!signInUnderway(kept2.data, interactionId)
+			? readLiteProvisioning(kept2.data, interactionId)
+			: null;
 	const needsProof =
-		!passkey &&
-		!proofAsked &&
-		((pending !== null && decision.kind === 'screen' && resendable) ||
-			(!codeAsked &&
-				decision.kind === 'screen' &&
-				decision.fields.some((f) => PROOF_BLOCKS.has(f.blockType))));
+		held !== null ||
+		(!passkey &&
+			!proofAsked &&
+			((pending !== null && decision.kind === 'screen' && resendable) ||
+				(!codeAsked &&
+					decision.kind === 'screen' &&
+					decision.fields.some((f) => PROOF_BLOCKS.has(f.blockType)))));
 	if (needsProof) {
 		// A lite page never draws such a form without its proof (the resend, for a code entry): no
 		// challenge (the tenant left lite mode, or none could be issued) is an error page.
@@ -470,6 +482,8 @@ export async function liteStepPage(event: RequestEvent) {
 			totp: available('totp'),
 			passkey: available('passkey')
 		},
+		// A sign-up held until its account exists: its Continue names the hold.
+		provisioning: held ? { id: held.id } : null,
 		// An invitation's address proof asked for (a passkey's or authenticator's sign-up held for
 		// it): the code sent to the invited address is entered first.
 		inviteProof:
@@ -516,6 +530,7 @@ export async function liteStepPage(event: RequestEvent) {
 			totpVerify: LL.login_totpVerify(),
 			totpSetup: LL.register_totpSetupTitle(),
 			inviteProofTitle: LL.emailCode_title(),
+			provisioningWait: LL.lite_provisioningWait(),
 			totpQrAlt: LL.account_totpQrAlt(),
 			totpManualKey: LL.account_totpManualKey(),
 			totpOpenApp: LL.account_addTotp(),
@@ -545,7 +560,9 @@ export async function liteStepPage(event: RequestEvent) {
 				consent_required: LL.consent_block_message(),
 				answer_required: LL.discover_error_valueRequired(),
 				answer_invalid: LL.error_invalid_request(),
-				account_exists: LL.register_alreadyHaveAccount()
+				account_exists: LL.register_alreadyHaveAccount(),
+				provisioning_wait: LL.lite_provisioningWait(),
+				provisioning_failed: LL.lite_provisioningFailed()
 			}
 		}
 	};
@@ -565,5 +582,6 @@ export const liteStepActions = {
 	passkey_finish: litePasskeyFinishAction,
 	social_start: liteSocialStartAction,
 	invite_proof_verify: liteInviteProofVerifyAction,
+	provisioning_continue: liteProvisioningContinueAction,
 	restart: liteRestartAction
 };

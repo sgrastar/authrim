@@ -532,7 +532,9 @@ const en = {
 	lite_socialStarted:
 		'Sign-in with an external account was started from this page. To sign in another way, start again.',
 	lite_passkeyFailed:
-		'The passkey sign-in did not finish. Try again, or choose another way to sign in.'
+		'The passkey sign-in did not finish. Try again, or choose another way to sign in.',
+	lite_provisioningWait: 'Your account is being set up. Wait a moment, then select Continue.',
+	lite_provisioningFailed: 'Your account could not be set up. Start again.'
 } satisfies BaseTranslation;
 
 export default en;

@@ -356,7 +356,10 @@ const fr = createTranslation({
 	lite_socialStarted:
 		'Une connexion avec un compte externe a été lancée depuis cette page. Pour vous connecter autrement, recommencez.',
 	lite_passkeyFailed:
-		"La connexion par clé d'accès n'a pas abouti. Réessayez ou choisissez un autre moyen de vous connecter."
+		"La connexion par clé d'accès n'a pas abouti. Réessayez ou choisissez un autre moyen de vous connecter.",
+	lite_provisioningWait:
+		'Votre compte est en cours de configuration. Patientez un instant, puis sélectionnez Continuer.',
+	lite_provisioningFailed: 'Votre compte n’a pas pu être configuré. Recommencez.'
 });
 
 export default fr;

@@ -1290,6 +1290,10 @@ paths:
         Creates a LoginUI runtime Flow interaction for login, registration, approve, or account flows,
         or resumes an existing interaction when a signed resume request is supplied. The endpoint is
         feature-flagged and returns a signed runtime contract without AdminUI editor state.
+        A resume made while a submit of the interaction's step is being saved waits briefly for it
+        and then answers where that submit left the interaction; if the submit keeps the step
+        longer, the resume is answered 409 `step_conflict` (`AR_FLOW_STEP_CONFLICT`, `recoverable`)
+        and can be sent again.
       requestBody:
         required: true
         content:
@@ -1637,7 +1641,42 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          description: >
+            The step cannot be advanced as submitted. `step_conflict` (`error_code`
+            `AR_FLOW_STEP_CONFLICT`, `category` `recoverable`, `action` `retry_step`) answers a
+            submit of a step that another submit of the same step holds or has just taken (another
+            tab, a retried request), or that the interaction changed under since it was read: only
+            one of them advances the interaction, and a submit refused before it held the step
+            records nothing. One that held it but ran out of time (it stops starting new work 10
+            seconds after it took the step) may leave what it recorded before, as a submit sent
+            again would. The client loads the interaction again (`resume_interaction_id` on
+            `/api/v1/login/interactions/start`) and draws the step it is at. Other errors include
+            `interaction_not_active`, `interaction_expired`, `step_mismatch` and `step_not_active`.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required:
+                  - error
+                  - error_description
+                properties:
+                  error:
+                    type: string
+                    examples:
+                      - step_conflict
+                  error_description:
+                    type: string
+                  error_code:
+                    type: string
+                    examples:
+                      - AR_FLOW_STEP_CONFLICT
+                  category:
+                    type: string
+                  action:
+                    type: string
+                  interaction_id:
+                    type: string
         '500':
           $ref: '#/components/responses/Error'
   /api/v1/auth/direct/email-code/send:

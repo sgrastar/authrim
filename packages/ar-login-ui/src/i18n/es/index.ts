@@ -356,7 +356,10 @@ const es = createTranslation({
 	lite_socialStarted:
 		'Se inició el acceso con una cuenta externa desde esta página. Para acceder de otra forma, empieza de nuevo.',
 	lite_passkeyFailed:
-		'No se completó el inicio de sesión con la clave de acceso. Inténtelo de nuevo o elija otra forma de iniciar sesión.'
+		'No se completó el inicio de sesión con la clave de acceso. Inténtelo de nuevo o elija otra forma de iniciar sesión.',
+	lite_provisioningWait:
+		'Se está configurando tu cuenta. Espera un momento y luego selecciona Continuar.',
+	lite_provisioningFailed: 'No se pudo configurar tu cuenta. Vuelve a empezar.'
 });
 
 export default es;

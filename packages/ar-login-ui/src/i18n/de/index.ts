@@ -358,7 +358,10 @@ const de = createTranslation({
 	lite_socialStarted:
 		'Die Anmeldung mit einem externen Konto wurde auf dieser Seite gestartet. Um dich anders anzumelden, beginne von vorn.',
 	lite_passkeyFailed:
-		'Die Anmeldung mit Passkey wurde nicht abgeschlossen. Versuchen Sie es erneut oder wählen Sie eine andere Anmeldemethode.'
+		'Die Anmeldung mit Passkey wurde nicht abgeschlossen. Versuchen Sie es erneut oder wählen Sie eine andere Anmeldemethode.',
+	lite_provisioningWait:
+		'Ihr Konto wird eingerichtet. Warten Sie einen Moment und wählen Sie dann „Weiter“.',
+	lite_provisioningFailed: 'Ihr Konto konnte nicht eingerichtet werden. Beginnen Sie erneut.'
 });
 
 export default de;

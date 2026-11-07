@@ -8,6 +8,7 @@
 import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
 import type { LiteBackendClient } from './backend-client';
 import type { LiteFlowState } from './flow-driver';
+import { readLiteProvisioningAnswer, type LiteProvisioningAnswer } from './provisioning';
 
 /** The Login UI's client (lib/auth.ts `getClientId`): what the direct sign-in APIs act for. */
 export function loginUiClientId(): string {
@@ -64,7 +65,7 @@ export async function sendLiteEmailCode(
 	}
 ): Promise<
 	| { ok: true; attemptId: string; maskedEmail: string | null }
-	| { ok: false; error: string; status: number }
+	| { ok: false; error: string; status: number; provisioning?: LiteProvisioningAnswer }
 > {
 	const signup = input.signup;
 	const answer = await backend.request('/api/v1/auth/direct/email-code/send', {
@@ -87,6 +88,10 @@ export async function sendLiteEmailCode(
 		},
 		headers: { 'X-Authrim-Human-Verification-Action': signup ? 'signup' : 'login' }
 	});
+	// A new address whose account is still being made (a routed tenant database): sent again
+	// once it exists (provisioning.ts).
+	const provisioning = readLiteProvisioningAnswer(answer);
+	if (provisioning) return { ok: false, error: 'provisioning', status: 202, provisioning };
 	const json = record(answer.json);
 	if (answer.status !== 200 || typeof json.attempt_id !== 'string') {
 		return { ok: false, error: errorOf(answer), status: answer.status };

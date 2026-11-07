@@ -753,6 +753,41 @@ describe('LiteTxnEntrypoint start grants', () => {
     await expect(consume()).resolves.toEqual({ ok: false, reason: 'grant_invalid' });
   });
 
+  it('carries no invitation the page did not check (no tenant recorded, or another)', async () => {
+    await setPolicy('always');
+    for (const [index, invite] of [
+      { token: 'a'.repeat(64) },
+      { token: 'a'.repeat(64), tenantId: 'other' },
+    ].entries()) {
+      const created = await entry().create({
+        ...call,
+        clientIp: null,
+        purpose: 'signup',
+        reuseKey: `unchecked-${index}`,
+        data: { invite },
+      });
+      if (!created.ok) throw new Error(created.reason);
+      const issued = await entry().issueStartGrant({
+        ...call,
+        txnId: created.txn.id,
+        provider: 'google',
+        clientId: 'login-ui',
+        interactionId: null,
+        humanVerificationResponse: 'proof',
+      });
+      if (!issued.ok) throw new Error(issued.reason);
+      await expect(
+        consumeLiteStartGrant(env as never, {
+          tenantId: 'default',
+          binding: BINDING,
+          txnId: created.txn.id,
+          grantId: issued.grantId,
+          provider: 'google',
+        })
+      ).resolves.toMatchObject({ ok: true, start: { inviteToken: null } });
+    }
+  });
+
   it("carries a sign-up's invitation, as its transaction keeps it, to the start", async () => {
     await setPolicy('always');
     const token = 'a'.repeat(64);
