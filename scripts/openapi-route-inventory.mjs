@@ -59,6 +59,31 @@ const packageSpecs = [
     openapiFiles: ['packages/ar-agent-access/openapi/agent-access.openapi.yaml'],
   },
   {
+    // The bridge's OpenAPI covers the routes outside callers depend on (browser continuations and
+    // identity provider callbacks), not its whole surface: those routes are declared here.
+    name: 'ar-bridge',
+    sourceFiles: [],
+    declaredRoutes: [
+      { method: 'GET', path: '/auth/external/{provider}/start' },
+      { method: 'GET', path: '/api/external/{provider}/start' },
+      { method: 'GET', path: '/api/external/links' },
+      { method: 'POST', path: '/api/external/links' },
+      { method: 'DELETE', path: '/api/external/links/{id}' },
+      { method: 'POST', path: '/api/external/provisioning/status' },
+      { method: 'GET', path: '/auth/external/provisioning/resume' },
+      { method: 'POST', path: '/handoff/verify' },
+      { method: 'POST', path: '/auth/external/handoff/verify' },
+      { method: 'POST', path: '/api/external/handoff/verify' },
+      { method: 'POST', path: '/auth/external/{provider}/data-deletion' },
+      { method: 'POST', path: '/api/external/{provider}/data-deletion' },
+      { method: 'GET', path: '/auth/external/{provider}/data-deletion/{code}' },
+      { method: 'GET', path: '/api/external/{provider}/data-deletion/{code}' },
+      { method: 'POST', path: '/auth/external/{provider}/deauthorize' },
+      { method: 'POST', path: '/api/external/{provider}/deauthorize' },
+    ],
+    openapiFiles: ['packages/ar-bridge/openapi/external.openapi.yaml'],
+  },
+  {
     name: 'ar-userinfo',
     sourceFiles: [
       { file: 'packages/ar-userinfo/src/index.ts' },

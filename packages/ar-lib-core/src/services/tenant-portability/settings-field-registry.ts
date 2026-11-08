@@ -1159,6 +1159,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     ],
     [
       'external-idp',
+      'number',
+      'value',
+      `
+    external_idp.signed_request_max_age_seconds
+  `,
+    ],
+    [
+      'external-idp',
       'string',
       'logical_reference',
       `

@@ -114,7 +114,7 @@ const TABLE_GROUPS: Partial<
     ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages
       guest_core_mutation_epoch
       authrim_runtime_probes
-      ciba_requests credential_offers device_codes external_idp_auth_states
+      ciba_requests credential_offers device_codes external_idp_auth_states external_idp_data_deletion_requests
       flow_interaction_steps flow_interactions password_reset_tokens sessions
       user_token_families vp_requests support_ops_account_result_receipts
     `,

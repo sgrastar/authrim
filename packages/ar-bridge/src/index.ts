@@ -8,6 +8,9 @@
  * - GET/POST /api/external/:provider/initiate-login - OIDC third-party initiated login
  * - GET  /api/external/:provider/callback           - Handle OAuth callback
  * - POST /api/external/:provider/backchannel-logout - Handle backchannel logout (OIDC Back-Channel Logout 1.0)
+ * - POST /api/external/:provider/data-deletion      - Facebook Data Deletion Request Callback
+ * - GET  /api/external/:provider/data-deletion/:code - The data deletion request's status
+ * - POST /api/external/:provider/deauthorize        - Facebook Deauthorize Callback
  * - GET  /api/external/link                         - List linked identities (requires session)
  * - POST /api/external/link                         - Start linking flow (requires session)
  * - DELETE /api/external/link/:id                   - Unlink identity (requires session)
@@ -62,6 +65,11 @@ import {
 } from './handlers/callback';
 import { handleBackchannelLogout } from './handlers/backchannel-logout';
 import { handleFrontchannelLogout } from './handlers/frontchannel-logout';
+import {
+  handleFacebookDataDeletion,
+  handleFacebookDataDeletionStatus,
+  handleFacebookDeauthorize,
+} from './handlers/facebook-data-deletion';
 import {
   handleRpInitiatedLogout,
   handleRpInitiatedLogoutCallback,
@@ -228,6 +236,15 @@ app.get('/auth/external/provisioning/resume', handleExternalProvisioningResume);
 // Handle backchannel logout from external IdP (OpenID Connect Back-Channel Logout 1.0)
 app.post('/api/external/:provider/backchannel-logout', handleBackchannelLogout);
 app.post('/auth/external/:provider/backchannel-logout', handleBackchannelLogout);
+
+// Facebook Login callbacks (signed_request): data deletion, its status, and deauthorize.
+// Unlinks the person's Facebook identity; the Authrim account is kept.
+app.post('/api/external/:provider/data-deletion', handleFacebookDataDeletion);
+app.post('/auth/external/:provider/data-deletion', handleFacebookDataDeletion);
+app.get('/api/external/:provider/data-deletion/:code', handleFacebookDataDeletionStatus);
+app.get('/auth/external/:provider/data-deletion/:code', handleFacebookDataDeletionStatus);
+app.post('/api/external/:provider/deauthorize', handleFacebookDeauthorize);
+app.post('/auth/external/:provider/deauthorize', handleFacebookDeauthorize);
 
 // Upstream OpenID Connect logout endpoints.
 app.get('/api/external/:provider/logout', handleRpInitiatedLogout);

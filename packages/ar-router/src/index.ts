@@ -1266,7 +1266,9 @@ app.use('*', async (c, next) => {
 
 function isExternalProviderProtocolPost(method: string, pathname: string): boolean {
   if (method !== 'POST') return false;
-  return /^\/(?:api|auth)\/external\/[^/]+\/(?:callback|backchannel-logout)$/.test(pathname);
+  return /^\/(?:api|auth)\/external\/[^/]+\/(?:callback|backchannel-logout|data-deletion|deauthorize)$/.test(
+    pathname
+  );
 }
 
 // CSRF protection (defense-in-depth at the router level)

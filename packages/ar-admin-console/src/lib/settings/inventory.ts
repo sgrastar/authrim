@@ -228,6 +228,9 @@ place('authentication/social', 'Creating users on first sign-in', {
 		'external_idp.jit_allow_unverified_domain_mappings'
 	]
 });
+place('authentication/social', 'Provider callbacks', {
+	advanced: ['external_idp.signed_request_max_age_seconds']
+});
 
 place('authentication/enterprise', 'SAML', {
 	advanced: ['tenant.saml_attribute_release_failure_message_mode'],
