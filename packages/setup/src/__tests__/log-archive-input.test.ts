@@ -129,14 +129,14 @@ describe('log archive input UX', () => {
     async (locale) => {
       const error = await input
         .withLogArchiveCliErrors(locale, async () => {
-          throw new LogArchiveApiError(403, 'log_archive_permission_or_subscription_required', {
+          throw new LogArchiveApiError(403, 'log_archive_permission_required', {
             step: 'pipeline_stream',
             cloudflare: [{ code: 1234, message: 'Workers Paid plan is required' }],
           });
         })
         .catch((reason: unknown) => reason as Error);
       expect(error.message).toBe(
-        logArchiveErrorMessage('log_archive_permission_or_subscription_required', locale) +
+        logArchiveErrorMessage('log_archive_permission_required', locale) +
           ' [step pipeline_stream, HTTP 403, Cloudflare: code 1234: Workers Paid plan is required]'
       );
       // The hint names the plan a Pipeline needs, so the cause can be read without a lookup.
