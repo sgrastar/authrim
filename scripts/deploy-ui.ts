@@ -46,6 +46,7 @@ import {
   resolveApiBaseUrlCandidates,
   resolveIssuerUrl,
   resolveLoginUiEntryUrl,
+  resolveLoginUiExecutionOrigin,
 } from '../packages/setup/src/core/url-config.js';
 import {
   waitForWorkerDeploymentsReady,
@@ -194,10 +195,10 @@ async function resolveLoginUiClientId(
     return undefined;
   }
 
-  const loginUiUrl =
-    config.urls?.loginUi?.custom ||
-    config.urls?.loginUi?.auto ||
-    `https://${env}-ar-login-ui.workers.dev`;
+  // The same origin setup (deploy, update, web) registers: in a multi-tenant environment the Login
+  // UI runs on each tenant's host, not on the shared Login UI address. A different origin here
+  // would rewrite the client's redirect URIs, and the next setup update would rewrite them back.
+  const loginUiUrl = resolveLoginUiExecutionOrigin(config, { env });
   const apiBaseUrl = getApiBaseUrl(config);
 
   const setupMachineResult = await ensureSetupMachineAccessInD1(env, config, keysDir, (message) =>

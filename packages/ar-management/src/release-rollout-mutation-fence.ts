@@ -1,6 +1,8 @@
-import type { MiddlewareHandler } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import {
   ADMIN_PERMISSIONS,
+  createAuthContextFromHono,
+  getTenantIdFromContext,
   hasAdminPermission,
   isBootstrapSetupMachine,
   type AdminAuthContext,
@@ -14,6 +16,8 @@ const MAPPING_HISTORY_RESTORE_PATH =
 const SAFE_RECOVERY_SEGMENT = /^[a-zA-Z0-9][a-zA-Z0-9._:%-]{0,511}$/u;
 const SETUP_LOGIN_UI_IDEMPOTENCY_KEY = /^setup-login-ui-[a-f0-9]{32}$/u;
 const SETUP_DOWNSTREAM_IDEMPOTENCY_KEY = /^setup-downstream-client-[A-Za-z0-9_-]{24}$/u;
+const LOGIN_UI_CLIENT_NAME = 'Login UI';
+const CLIENT_UPDATE_PATH = /^\/api\/admin\/clients\/([A-Za-z0-9._:-]{1,200})$/u;
 const LOGIN_UI_CLIENT_DESCRIPTION =
   'System-managed public OAuth client used by the built-in Authrim Login UI.';
 const LOGIN_UI_CALLBACK_PATHS = new Set([
@@ -139,6 +143,11 @@ async function isAuthorizedInitialSystemClientBootstrap(
       body.client_credentials_allowed === true
     );
   }
+  return isExactLoginUiClientBody(body);
+}
+
+/** The exact body setup sends for its Login UI client, on creation and on repair alike. */
+function isExactLoginUiClientBody(body: Record<string, unknown>): boolean {
   const expectedKeys = [
     'browser_public_client_mode',
     'browser_refresh_token_policy',
@@ -156,7 +165,7 @@ async function isAuthorizedInitialSystemClientBootstrap(
   ];
   if (
     Object.keys(body).sort().join('\n') !== expectedKeys.sort().join('\n') ||
-    body.client_name !== 'Login UI' ||
+    body.client_name !== LOGIN_UI_CLIENT_NAME ||
     body.description !== LOGIN_UI_CLIENT_DESCRIPTION ||
     !isExactLoginUiRedirectSet(body.redirect_uris) ||
     !isExactStringArray(body.grant_types, ['authorization_code']) ||
@@ -173,6 +182,57 @@ async function isAuthorizedInitialSystemClientBootstrap(
   }
   const redirectOrigin = new URL(body.redirect_uris[0]).origin;
   return isExactLoginUiOriginRegistry(body.web_origin_registry, redirectOrigin);
+}
+
+/** Reads the client a request names, in the request's tenant: name and trust only. */
+export type FenceClientLookup = (
+  c: Context<{ Bindings: Env }>,
+  clientId: string
+) => Promise<{ client_name?: string | null; is_trusted?: boolean | null } | null>;
+
+const lookUpClient: FenceClientLookup = async (c, clientId) => {
+  const tenantId = getTenantIdFromContext(c);
+  return createAuthContextFromHono(c, tenantId).repositories.client.findByClientId(clientId);
+};
+
+/**
+ * Setup's repair of its own Login UI client during a release update: the setup machine puts the
+ * exact Login UI body (the one it creates the client with) on the existing trusted Login UI
+ * client, for example after the Login UI's address changed. Any other client, body or caller
+ * stays paused.
+ */
+async function isAuthorizedLoginUiClientRepair(
+  c: Parameters<MiddlewareHandler<{ Bindings: Env }>>[0],
+  findClient: FenceClientLookup
+): Promise<boolean> {
+  if (c.req.method !== 'PUT') return false;
+  const clientId = CLIENT_UPDATE_PATH.exec(c.req.path)?.[1];
+  if (!clientId) return false;
+  const auth = (c as unknown as { get: (key: string) => AdminAuthContext | undefined }).get(
+    'adminAuth'
+  );
+  if (
+    !auth ||
+    !isBootstrapSetupMachine(auth) ||
+    !hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.CLIENTS_WRITE)
+  ) {
+    return false;
+  }
+  let body: Record<string, unknown>;
+  try {
+    const parsed = await c.req.raw.clone().json<unknown>();
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    body = parsed as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  if (!isExactLoginUiClientBody(body)) return false;
+  try {
+    const existing = await findClient(c as Context<{ Bindings: Env }>, clientId);
+    return existing?.client_name === LOGIN_UI_CLIENT_NAME && existing.is_trusted === true;
+  } catch {
+    return false;
+  }
 }
 
 function isAuthorizedReleaseRecoveryPath(path: string): boolean {
@@ -211,9 +271,12 @@ async function isMappingHistoryRestorePreview(
   }
 }
 
-export function releaseRolloutMutationFenceMiddleware(): MiddlewareHandler<{
+export function releaseRolloutMutationFenceMiddleware(
+  options: { findClient?: FenceClientLookup } = {}
+): MiddlewareHandler<{
   Bindings: Env;
 }> {
+  const findClient = options.findClient ?? lookUpClient;
   return async (c, next) => {
     if (
       SAFE_METHODS.has(c.req.method) ||
@@ -257,6 +320,7 @@ export function releaseRolloutMutationFenceMiddleware(): MiddlewareHandler<{
     }
     if (status.adminMutationMode !== 'read_only') return next();
     if (await isAuthorizedInitialSystemClientBootstrap(c)) return next();
+    if (await isAuthorizedLoginUiClientRepair(c, findClient)) return next();
 
     c.header('Cache-Control', 'no-store');
     c.header('Retry-After', '5');
