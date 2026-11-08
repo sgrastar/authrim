@@ -771,6 +771,7 @@ describe('account directory producer', () => {
     const releaseIdentifiers = vi.fn(async () => undefined);
     const dependencies = {
       operationRepository: {
+        touch: vi.fn(async (current: AccountCreationOperation) => current),
         acquire: vi.fn(async () => operation),
         recordPublication: vi.fn(
           async (_current: AccountCreationOperation, publication: AccountDirectoryPublication) => {
@@ -837,6 +838,7 @@ describe('account directory producer', () => {
     const recordPreparationFailure = vi.fn(async () => operation);
     const dependencies = {
       operationRepository: {
+        touch: vi.fn(async (current: AccountCreationOperation) => current),
         acquire: vi.fn(async () => operation),
         recordPreparationFailure,
       } as never,
@@ -905,7 +907,11 @@ describe('account directory producer', () => {
           workerEnv,
           { ...base, onDeletedAccount: 'renew' as const },
           {
-            operationRepository: { acquire, findByIdempotencyKeys } as never,
+            operationRepository: {
+              touch: vi.fn(async (current: AccountCreationOperation) => current),
+              acquire,
+              findByIdempotencyKeys,
+            } as never,
             readPreviousAccount,
             now: () => 100,
             writeAuthoritative: vi.fn(),
@@ -932,6 +938,7 @@ describe('account directory producer', () => {
           { ...base, onDeletedAccount: 'renew' as const },
           {
             operationRepository: {
+              touch: vi.fn(async (current: AccountCreationOperation) => current),
               acquire: vi.fn(async () => previous),
               findByIdempotencyKeys: vi.fn(async () => [previous]),
             } as never,
@@ -957,7 +964,11 @@ describe('account directory producer', () => {
           workerEnv,
           { ...base, onDeletedAccount: 'refuse' as const },
           {
-            operationRepository: { acquire, findByIdempotencyKeys } as never,
+            operationRepository: {
+              touch: vi.fn(async (current: AccountCreationOperation) => current),
+              acquire,
+              findByIdempotencyKeys,
+            } as never,
             readPreviousAccount,
             now: () => 100,
             writeAuthoritative: vi.fn(),
@@ -981,13 +992,36 @@ describe('account directory producer', () => {
           workerEnv,
           { ...base, onDeletedAccount: 'refuse' as const },
           {
-            operationRepository: { acquire: vi.fn(async () => pending) } as never,
+            operationRepository: {
+              touch: vi.fn(async (current: AccountCreationOperation) => current),
+              acquire: vi.fn(async () => pending),
+            } as never,
             readPreviousAccount: vi.fn(async () => 'deleting' as const),
             now: () => 100,
             writeAuthoritative,
           }
         )
       ).rejects.toThrow('account_creation_previous_account_deleting');
+      expect(writeAuthoritative).not.toHaveBeenCalled();
+    });
+
+    it('refuses a resume of a creation the clean-up gave up meanwhile', async () => {
+      const { workerEnv } = env();
+      const pending = { ...previous, status: 'directory_pending' as const };
+      const writeAuthoritative = vi.fn();
+
+      await expect(
+        executeDurableInitialAccountDirectoryWrite(workerEnv, base, {
+          operationRepository: {
+            acquire: vi.fn(async () => pending),
+            touch: vi.fn(async () => {
+              throw new Error('account_creation_operation_blocked');
+            }),
+          } as never,
+          now: () => 100,
+          writeAuthoritative,
+        })
+      ).rejects.toThrow('account_creation_operation_blocked');
       expect(writeAuthoritative).not.toHaveBeenCalled();
     });
 
@@ -999,7 +1033,11 @@ describe('account directory producer', () => {
 
       await expect(
         executeDurableInitialAccountDirectoryWrite(workerEnv, base, {
-          operationRepository: { acquire, findByIdempotencyKeys } as never,
+          operationRepository: {
+            touch: vi.fn(async (current: AccountCreationOperation) => current),
+            acquire,
+            findByIdempotencyKeys,
+          } as never,
           readPreviousAccount,
           now: () => 100,
           writeAuthoritative: vi.fn(),
@@ -1035,6 +1073,7 @@ describe('account directory producer', () => {
       publication: null,
     };
     const operationRepository = {
+      touch: vi.fn(async (current: AccountCreationOperation) => current),
       acquire: vi.fn(async () => operation),
       recordPublication: vi.fn(
         async (_current: AccountCreationOperation, publication: AccountDirectoryPublication) => {

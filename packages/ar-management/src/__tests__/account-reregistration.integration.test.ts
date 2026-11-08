@@ -561,6 +561,46 @@ describe('signing up again after the account was deleted', () => {
     expect(second.idempotencyKey).toBe(accountCreationGenerationKey(KEY, 1));
   });
 
+  it('makes a new account after the clean-up gave up an unpublished creation', async () => {
+    // Written but never published: the clean-up gives its operation up, then deletes it.
+    const acquired = await acquireSignUp('user-first');
+    let pending = await repository.recordPublication(acquired, await publicationFor(acquired), 100);
+    pending = await repository.transition(pending, 'reserved', 100);
+    pending = await repository.transition(pending, 'writing', 100);
+    const found = await repository.findByAccountId({
+      tenantId: TENANT,
+      accountId: pending.accountId,
+    });
+    expect(found).not.toBeNull();
+    await core.execute(
+      `INSERT INTO identity_accounts (id, tenant_id, account_type, lifecycle_state, legacy_user_id,
+         created_at, updated_at, directory_publication_state)
+       VALUES (?, ?, 'user', 'active', ?, 100, 100, 'pending')`,
+      [pending.accountId, TENANT, pending.userId]
+    );
+    await expect(
+      repository.abandon({ operation: found!.operation, updatedAt: found!.updatedAt, now: 200 })
+    ).resolves.toBe(true);
+    await core.execute(
+      `UPDATE identity_accounts SET lifecycle_state = 'deleted', directory_publication_state = 'disabled'
+        WHERE id = ?`,
+      [pending.accountId]
+    );
+    await core.execute(
+      `INSERT INTO account_routing_outbox (outbox_id, tenant_id, account_id, event_kind,
+         route_generation, route_schema_version, hmac_key_generation, payload_json, status,
+         created_at, updated_at, succeeded_at)
+       VALUES ('removal-unpublished', ?, ?, 'account_deleted', 1, 1, 1, '{}', 'succeeded', 200,
+         200, 200)`,
+      [TENANT, pending.accountId]
+    );
+
+    const second = await signUp('user-second');
+
+    expect(second.idempotencyKey).toBe(accountCreationGenerationKey(KEY, 1));
+    expect(second.userId).toBe('user-second');
+  });
+
   it('leaves another flow and another request on their own keys', async () => {
     const first = await signUp('user-first');
     await deleteVia(DELETION_PATHS[0], first.userId);
