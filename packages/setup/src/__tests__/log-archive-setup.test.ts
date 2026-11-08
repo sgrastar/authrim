@@ -1108,7 +1108,7 @@ describe('log archive setup contract', () => {
     ).toBeGreaterThan(f.calls.findIndex((call) => call.path === `${catalogPath}/enable`));
   });
 
-  it('accepts a 204 disable answer once the catalog reads back as the same inactive one', async () => {
+  it('accepts a 204 disable answer only once the catalog reads back named, inactive and the same', async () => {
     implemented.push('scheduled');
     const seed = (f: ReturnType<typeof fixture>) => {
       f.remote.set(`basin-catalog/${f.archive.bucketName}`, {
@@ -1125,12 +1125,38 @@ describe('log archive setup contract', () => {
       });
       return original;
     };
+    const namedReadBack = (f: ReturnType<typeof fixture>) => {
+      const original = f.fetcher.getMockImplementation()!;
+      const catalogPath = `basin-catalog/${f.archive.bucketName}`;
+      f.fetcher.mockImplementation(async (url, init) => {
+        const response = await original(url, init);
+        const remote = f.remote.get(catalogPath);
+        // The 200 form of an inactive catalog, which still names it.
+        if (
+          String(url).endsWith(`/${catalogPath}`) &&
+          (init?.method ?? 'GET') === 'GET' &&
+          remote?.status === 'inactive'
+        )
+          return new Response(JSON.stringify({ success: true, result: { ...remote } }), {
+            status: 200,
+          });
+        return response;
+      });
+    };
     const ok = fixture('scheduled');
     seed(ok);
+    namedReadBack(ok);
     await expect(provisionLogArchive(ok.options)).resolves.toMatchObject({
       catalog: { id: 'catalog-id' },
     });
     expect(ok.calls.some((call) => call.path.endsWith('/delete?force=true'))).toBe(true);
+    // The 40402 read-back names no catalog: it proves nothing, so nothing is deleted.
+    const unnamed = fixture('scheduled');
+    seed(unnamed);
+    await expect(provisionLogArchive(unnamed.options)).rejects.toThrow(
+      'log_archive_catalog_ownership_unproven'
+    );
+    expect(unnamed.calls.some((call) => call.path.includes('/delete'))).toBe(false);
     const swapped = fixture('scheduled');
     const original = seed(swapped);
     const catalogPath = `basin-catalog/${swapped.archive.bucketName}`;

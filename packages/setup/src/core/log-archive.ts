@@ -932,19 +932,19 @@ async function removeStaleCatalog(
     `  Removing a Catalog left by an earlier bucket named ${options.archive.bucketName}...`
   );
   // Cloudflare answers the disable either with the catalog or with 204 and no body. Without an id
-  // in the answer, the catalog is read again: it must be inactive, and the same one where the
-  // answer still names it.
+  // in the answer, the catalog is read again and must be the same one, inactive. The 40402 form
+  // names no catalog, so it proves nothing and stops before the force delete.
   const disabled = object(await options.api.request<RemoteResource>(`${path}/disable`, 'POST'));
-  if (disabled.id !== undefined) {
-    if (disabled.id !== catalog.id) throw new Error('log_archive_catalog_ownership_unproven');
-  } else {
+  let disabledId = disabled.id;
+  if (disabledId === undefined) {
     const after = await readCatalogState(options, path);
-    if (
-      after.state !== 'inactive' ||
-      (after.catalog !== undefined && object(after.catalog).id !== catalog.id)
-    )
+    if (after.state !== 'inactive' || after.catalog === undefined)
       throw new Error('log_archive_catalog_ownership_unproven');
+    const seen = object(after.catalog);
+    if (seen.name !== warehouse) throw new Error('log_archive_catalog_ownership_unproven');
+    disabledId = seen.id;
   }
+  if (disabledId !== catalog.id) throw new Error('log_archive_catalog_ownership_unproven');
   await options.api.request(`${path}/delete?force=true`, 'POST');
   if ((await readCatalogState(options, path)).state !== 'missing')
     throw new Error('log_archive_stale_catalog_deletion_unconfirmed');
