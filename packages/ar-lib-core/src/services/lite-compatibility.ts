@@ -92,7 +92,9 @@ export type LiteModeIssueCode =
   /** An application sends its users to its own Login UI. */
   | 'client_login_ui_url'
   /** External sign-in returns to a different origin than the tenant's issuer. */
-  | 'issuer_origin_mismatch';
+  | 'issuer_origin_mismatch'
+  /** The account page is at a path of the tenant's own, which the lite UI does not serve. */
+  | 'account_page_path_custom';
 
 /**
  * One reason the lite UI cannot serve the tenant. `subject` names the thing (a method, a Flow, a

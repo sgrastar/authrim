@@ -59,11 +59,6 @@ export interface LiteTxnCreateInput {
 	clientId?: string | null;
 	challengeId?: string | null;
 	returnTo?: string | null;
-	/**
-	 * A re-authentication's session (the browser's `authrim_session` cookie): ar-auth checks it is
-	 * live and the challenge's user's, and binds the transaction to it.
-	 */
-	sessionId?: string | null;
 	data?: Record<string, unknown>;
 	reuseKey?: string;
 	/** Only the live transaction of `reuseKey`, when there is one (none is made). */
@@ -71,6 +66,8 @@ export interface LiteTxnCreateInput {
 }
 
 const NO_BINDING = { ok: false, reason: 'invalid_binding' } as const;
+
+const SESSION_COOKIE = 'authrim_session';
 
 const NOT_THROUGH_ROUTER = { ok: false, reason: 'not_through_router' } as const;
 
@@ -80,15 +77,27 @@ const NOT_THROUGH_ROUTER = { ok: false, reason: 'not_through_router' } as const;
  * trusted). A transaction is made only for a request the Router checked at its edge: a request
  * straight to the Login UI's own hostname (workers.dev) has no trusted public origin.
  */
-export function liteTxnClient(event: RequestEvent) {
+export function liteTxnClient(
+	event: RequestEvent,
+	options: {
+		/**
+		 * A page whose transactions are bound to the signed-in session (an account page, a
+		 * re-authentication): every call passes the browser's `authrim_session`, which ar-auth checks
+		 * is live and the transaction's (it acts on one only with that session of its user).
+		 */
+		session?: boolean;
+	} = {}
+) {
 	const service = getPlatformEnv(event)?.LITE_TXN as LiteTxnBinding | undefined;
 	const edge = event.locals.edge;
 	if (!service || !edge) return null;
 	const publicOrigin = edge.publicOrigin;
 	const clientIp = edge.clientIp;
+	const session = () =>
+		options.session ? { sessionId: event.cookies.get(SESSION_COOKIE) ?? null } : {};
 	const call = (txnId: string) => {
 		const binding = readBrowserBinding(event);
-		return binding ? { publicOrigin, binding, txnId } : null;
+		return binding ? { publicOrigin, binding, txnId, ...session() } : null;
 	};
 
 	return {
@@ -96,21 +105,12 @@ export function liteTxnClient(event: RequestEvent) {
 		async create(input: LiteTxnCreateInput): Promise<LiteTxnAnswer & { reused?: boolean }> {
 			if (edge.source !== 'router') return NOT_THROUGH_ROUTER;
 			const { binding } = ensureBrowserBinding(event);
-			return service.create({ ...input, publicOrigin, binding, clientIp });
+			return service.create({ ...input, publicOrigin, binding, clientIp, ...session() });
 		},
 		/** `current`: checked against the tenant's current policy (before a form post acts). */
-		async get(
-			txnId: string,
-			options: { current?: boolean; sessionId?: string | null } = {}
-		): Promise<LiteTxnAnswer> {
+		async get(txnId: string, options: { current?: boolean } = {}): Promise<LiteTxnAnswer> {
 			const base = call(txnId);
-			return base
-				? service.get({
-						...base,
-						current: options.current === true,
-						...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {})
-					})
-				: NO_BINDING;
+			return base ? service.get({ ...base, current: options.current === true }) : NO_BINDING;
 		},
 		async transition(
 			txnId: string,

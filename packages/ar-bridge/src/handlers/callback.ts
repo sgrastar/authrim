@@ -1642,7 +1642,30 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       const session = link.sessionId
         ? await readAccountSession(c.env, link.tenantId, link.sessionId)
         : null;
-      if (!session || session.userId !== link.userId) {
+      // The browser that brings the answer back, when it sends its session (a provider's
+      // cross-site form post carries no Lax cookie; its state cookie binds it to the browser that
+      // started): still the session that asked for the link, of the same user. A browser signed
+      // in as someone else since never attaches the account to the first one.
+      const browserSessionId = c.req
+        .header('Cookie')
+        ?.match(/(?:^|;\s*)authrim_session=([^;]+)/)?.[1];
+      let sameBrowserSession = true;
+      if (browserSessionId !== undefined) {
+        let decoded: string | null = null;
+        try {
+          decoded = decodeURIComponent(browserSessionId);
+        } catch {
+          decoded = null;
+        }
+        const current = decoded
+          ? await readAccountSession(c.env, link.tenantId, decoded).catch(() => null)
+          : null;
+        sameBrowserSession =
+          current !== null &&
+          current.sessionId === link.sessionId &&
+          current.userId === link.userId;
+      }
+      if (!session || session.userId !== link.userId || !sameBrowserSession) {
         return redirectToLinkResult(c, link.tenantId, {
           linked: false,
           reason: 'session_expired',

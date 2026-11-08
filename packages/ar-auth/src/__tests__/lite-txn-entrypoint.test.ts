@@ -387,12 +387,47 @@ describe('LiteTxnEntrypoint', () => {
     expect(record.operations.op).toMatchObject({ status: 'done', result: 'sent' });
   });
 
-  it('refuses account transactions until their session check exists', async () => {
+  it("binds an account page to the browser's live session and its user", async () => {
     await setPolicy('always');
+    const account = (sessionId: string | null) =>
+      entry().create({ ...call, clientIp: null, purpose: 'account', sessionId });
+    await expect(account(null)).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    humanVerification.accountSession.mockResolvedValueOnce(null);
+    await expect(account('s-ended')).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    humanVerification.accountSession.mockResolvedValueOnce({ sessionId: 's-a', userId: 'user-a' });
+    const created = await account('s-a');
+    expect(created).toMatchObject({
+      ok: true,
+      txn: { bound: { purpose: 'account', sessionId: 's-a', userId: 'user-a' } },
+    });
+    if (!created.ok) throw new Error(created.reason);
+    // Every call on it (a read, a change, an operation) only with that session, live.
+    humanVerification.accountSession.mockResolvedValue({ sessionId: 's-a', userId: 'user-a' });
+    const ref = { ...call, txnId: created.txn.id };
+    await expect(entry().get({ ...ref, sessionId: 's-a' })).resolves.toMatchObject({ ok: true });
     await expect(
-      entry().create({ ...call, clientIp: null, purpose: 'account', sessionId: 'someone-else' })
-    ).resolves.toEqual({ ok: false, reason: 'unsupported_purpose' });
-    expect(txnStores.size).toBe(0);
+      entry().transition({ ...ref, expectedVersion: created.txn.version, to: 'pending' })
+    ).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    await expect(entry().beginOperation({ ...ref, operationId: 'op-1' })).resolves.toEqual({
+      ok: false,
+      reason: 'session_invalid',
+    });
+    await expect(
+      entry().transition({
+        ...ref,
+        sessionId: 's-a',
+        expectedVersion: created.txn.version,
+        to: 'pending',
+      })
+    ).resolves.toMatchObject({ ok: true });
+    humanVerification.accountSession.mockResolvedValueOnce(null);
+    await expect(
+      entry().beginOperation({ ...ref, sessionId: 's-a', operationId: 'op-2' })
+    ).resolves.toEqual({
+      ok: false,
+      reason: 'session_invalid',
+    });
+    humanVerification.accountSession.mockReset();
   });
 
   it('sends a sign-in or sign-up page given a re-authentication challenge to its own page', async () => {
@@ -440,8 +475,10 @@ describe('LiteTxnEntrypoint', () => {
     // Another user's session, or none (signed out, expired): refused.
     humanVerification.accountSession.mockResolvedValueOnce({ sessionId: 's-b', userId: 'user-b' });
     await expect(reauth('s-b')).resolves.toEqual({ ok: false, reason: 'session_invalid' });
-    humanVerification.accountSession.mockResolvedValueOnce(null);
+    // (None is read for a call without a session.)
     await expect(reauth(null)).resolves.toEqual({ ok: false, reason: 'session_invalid' });
+    humanVerification.accountSession.mockResolvedValueOnce(null);
+    await expect(reauth('s-a')).resolves.toEqual({ ok: false, reason: 'session_invalid' });
     // A session the store could not read: unavailable, not signed out.
     humanVerification.accountSession.mockRejectedValueOnce(new Error('down'));
     await expect(reauth('s-a')).resolves.toEqual({ ok: false, reason: 'unavailable' });

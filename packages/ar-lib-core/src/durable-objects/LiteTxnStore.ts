@@ -108,6 +108,11 @@ export interface LiteTxnRef {
    * operation already carried out.
    */
   policyRevision?: string;
+  /**
+   * The caller's live session (checked by the entrypoint), or null when it has none: a transaction
+   * bound to a session is acted on, read or changed, only with that session of its user.
+   */
+  session?: { sessionId: string; userId: string } | null;
 }
 
 /** A change of `data`: a key set to null is removed. */
@@ -342,6 +347,12 @@ export class LiteTxnStore extends DurableObject<Env> {
       return 'binding_mismatch';
     }
     if (Date.now() >= txn.expiresAt) return 'expired';
+    if (
+      txn.bound.sessionId !== null &&
+      (ref.session?.sessionId !== txn.bound.sessionId || ref.session.userId !== txn.bound.userId)
+    ) {
+      return 'session_invalid';
+    }
     if (
       options.checkRevision &&
       ref.policyRevision !== undefined &&

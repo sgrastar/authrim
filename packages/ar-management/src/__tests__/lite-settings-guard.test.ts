@@ -73,7 +73,7 @@ async function goLite() {
 }
 
 function save(
-  category: 'authentication-methods' | 'login-ui',
+  category: 'authentication-methods' | 'login-ui' | 'self-service',
   body: unknown,
   readBody: () => Promise<unknown> = async () => body
 ) {
@@ -130,6 +130,55 @@ describe('the lite guard on settings saves', () => {
       issues: [{ code: 'method_unsupported', subject: 'did' }],
     });
     expect(saved).not.toHaveBeenCalled();
+  });
+
+  it("refuses moving a lite tenant's account page off /account, and saves it at /account", async () => {
+    await goLite();
+    mocks.after = { 'self-service.account_page_path': '/my-account' };
+    const moved = save('self-service', {
+      ifMatch: 'v',
+      set: { 'self-service.account_page_path': '/my-account' },
+    });
+    const result = await moved.response;
+    expect(result.status).toBe(409);
+    expect(await result.json()).toMatchObject({
+      error: 'lite_mode_unsupported',
+      issues: [{ code: 'account_page_path_custom' }],
+    });
+    expect(moved.saved).not.toHaveBeenCalled();
+    mocks.after = { 'self-service.account_page_path': '/account' };
+    const kept = save('self-service', {
+      ifMatch: 'v',
+      set: { 'self-service.account_page_path': '/account' },
+    });
+    expect((await kept.response).status).toBe(200);
+    expect(kept.saved).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves a change of the account page path under the lite lease, lite on or off', async () => {
+    // Off: the save holds the lease, so a switch to lite cannot run in the middle of it.
+    mocks.after = { 'self-service.account_page_path': '/my-account' };
+    let leaseDuringSave: boolean | null = null;
+    const app = new Hono();
+    app.patch('/', (c) =>
+      guardTenantSettingsChangeForLite({
+        c,
+        tenantId: 'tenant-a',
+        category: 'self-service',
+        actor: 'admin-1',
+        readBody: async () => ({
+          ifMatch: 'v',
+          set: { 'self-service.account_page_path': '/my-account' },
+        }),
+        save: async () => {
+          leaseDuringSave = (await store.acquireLeaseRpc('tenant-a')).acquired;
+          return Response.json({ saved: true });
+        },
+      })
+    );
+    const env = { LITE_POLICY_STORE: { idFromName: (n: string) => n, get: () => store } };
+    expect((await app.request('/', { method: 'PATCH' }, env)).status).toBe(200);
+    expect(leaseDuringSave).toBe(false);
   });
 
   it('refuses switching on a method that reveals a block the lite UI cannot render', async () => {

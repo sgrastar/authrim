@@ -172,11 +172,22 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // start grant ar-auth made for this browser's transaction after the page's proof of work. It
     // is consumed before anything else is done; the start then takes everything from the
     // transaction and the grant, nothing from its query (no link, invitation, prompt or hint).
-    const lite = await consumeLiteExternalStart(c, tenantId, providerIdOrName);
+    //
+    // A link from the account page (the SPA's or the lite one's) is no sign-in: it is started by
+    // its one-use intent alone, whatever the tenant's mode, and reads nothing else from its query.
+    // The intent was made by the links API for the session the browser's own cookie names, and is
+    // checked against that cookie again below; it signs no one in and creates no account.
+    const linkStart =
+      c.req.query('link_intent') !== undefined &&
+      c.req.query('lite_txn') === undefined &&
+      c.req.query('lite_grant') === undefined;
+    const lite = linkStart ? null : await consumeLiteExternalStart(c, tenantId, providerIdOrName);
     if (lite && !lite.ok) return lite.response;
-    const query = (name: string): string | undefined => (lite ? undefined : c.req.query(name));
+    if (linkStart) c.header('Cache-Control', 'no-store');
+    const query = (name: string): string | undefined =>
+      lite || linkStart ? undefined : c.req.query(name);
     const requestedRedirectUri = query('redirect_uri');
-    const linkIntentToken = query('link_intent');
+    const linkIntentToken = linkStart ? c.req.query('link_intent') : undefined;
     let loginHint = query('login_hint');
     const maxAgeParam = query('max_age');
     let acrValues = query('acr_values');

@@ -61,7 +61,11 @@ function shortText(value: unknown, max: number): string | null {
  * The creation options as the ceremony may use them, or null when anything is off. Reads ar-auth's
  * answer and the form this returns (the transaction keeps it), alike.
  */
-export function readLitePasskeyCreationOptions(value: unknown): LitePasskeyCreationOptions | null {
+export function readLitePasskeyCreationOptions(
+	value: unknown,
+	/** The most credentials taken in the exclude list (a sign-up's is short; an account's is all). */
+	maxExcluded = MAX_EXCLUDED_CREDENTIALS
+): LitePasskeyCreationOptions | null {
 	const options = record(value);
 	const challenge = options.challenge;
 	if (typeof challenge !== 'string' || challenge.length > 512 || !BASE64URL.test(challenge)) {
@@ -92,7 +96,7 @@ export function readLitePasskeyCreationOptions(value: unknown): LitePasskeyCreat
 			? Math.min(Math.max(Math.trunc(options.timeout), 10_000), 300_000)
 			: 300_000;
 	const listed = Array.isArray(options.excludeCredentials) ? options.excludeCredentials : [];
-	if (listed.length > MAX_EXCLUDED_CREDENTIALS) return null;
+	if (listed.length > maxExcluded) return null;
 	const excludeCredentials: LitePasskeyCreationOptions['excludeCredentials'] = [];
 	for (const entry of listed) {
 		const credential = record(entry);
