@@ -44,7 +44,7 @@ const adminExternalIdp = {
 	admin_external_idp_redirect_url: 'Redirect URL (for external IdP configuration)',
 	admin_external_idp_copy_to_clipboard: 'Copy to clipboard',
 	admin_external_idp_redirect_url_hint:
-		'Enter a slug to generate the callback URL. Register the generated URL exactly in the external IdP callback settings.',
+		'Enter a slug to generate the callback URL. Register the generated URL exactly in the external IdP callback settings. It stays on the platform issuer host even when the tenant has a custom domain: sign-ins started there come back to it (a form post such as Sign in with Apple is relayed), so the custom domain needs no registration.',
 	admin_external_idp_provider_status: 'Provider Status',
 	admin_external_idp_provider_status_desc:
 		'Enable or disable this identity provider. When disabled, users cannot sign in using this provider.',
