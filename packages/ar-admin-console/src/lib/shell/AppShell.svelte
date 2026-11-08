@@ -7,7 +7,14 @@
 	import NavDrawer from './NavDrawer.svelte';
 	import type { ScopeOption } from './ScopeSwitcher.svelte';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
-	import { areaColor, drawerSections, showsSubNav, subNavRows, topNavEntries } from './shell-model';
+	import {
+		areaColor,
+		drawerSections,
+		showsSubNav,
+		subNavRows,
+		topNavEntries,
+		topNavMenus
+	} from './shell-model';
 	import SubNav from './SubNav.svelte';
 	import TopNav from './TopNav.svelte';
 
@@ -17,6 +24,11 @@
 	 */
 	interface Props {
 		location: NavLocation;
+		/**
+		 * The address shown. A move to another address closes the header's category menu: several
+		 * addresses share one location (a list and its records), so the location cannot tell.
+		 */
+		path?: string;
 		scopes: readonly ScopeOption[];
 		currentScopeId: string;
 		onscope: (option: ScopeOption) => void;
@@ -41,6 +53,7 @@
 
 	let {
 		location,
+		path,
 		scopes,
 		currentScopeId,
 		onscope,
@@ -62,6 +75,7 @@
 		showsSubNav(location, standalone) ? subNavRows(location, t, adminAccess.current) : []
 	);
 	const sections = $derived(drawerSections(location, t, adminAccess.current));
+	const menus = $derived(topNavMenus(location, t, adminAccess.current));
 	const color = $derived(areaColor(location));
 </script>
 
@@ -80,8 +94,10 @@
 	<TopNav
 		label={t('nav.primaryLabel')}
 		flipKey={location.kind}
+		pageKey={path ?? `${location.kind}:${location.area.id}:${location.item?.id ?? ''}`}
 		{entries}
 		activeId={standalone ? '' : location.top.id}
+		{menus}
 	/>
 	{#if banner}<div class="banner" bind:clientHeight={bannerHeight}>{@render banner()}</div>{/if}
 	<div class="split" class:split--full={rows.length === 0}>

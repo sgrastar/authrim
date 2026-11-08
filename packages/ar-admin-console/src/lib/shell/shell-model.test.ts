@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { persona } from '#lib/access/personas.js';
 import type { MessageKey } from '#lib/i18n/messages/ja.js';
 import { resolveNavPath } from './nav';
-import { drawerSections, showsSubNav, subNavRows, topNavEntries } from './shell-model';
+import { drawerSections, showsSubNav, subNavRows, topNavEntries, topNavMenus } from './shell-model';
 
 const t = (key: MessageKey) => key;
 
@@ -34,6 +34,14 @@ describe('shell model', () => {
 		expect(hrefs('support')).not.toContain(page);
 		// Items that do not state what they need yet stay for everyone.
 		expect(hrefs('support')).toContain('/admin/authentication/methods');
+	});
+
+	it('gives the header no menu for a category whose landing page owns the side column', () => {
+		const location = resolveNavPath('/admin/monitoring/audit')!;
+		const ids = topNavMenus(location, t).map((menu) => menu.id);
+		expect(ids).not.toContain('applications');
+		expect(ids).toContain('users');
+		expect(drawerSections(location, t).map((s) => s.id)).toContain('applications');
 	});
 
 	it('has no left nav on the overview', () => {

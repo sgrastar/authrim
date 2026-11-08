@@ -93,6 +93,7 @@
 {:else}
 	<AppShell
 		{location}
+		path={page.url.pathname}
 		{scopes}
 		{currentScopeId}
 		onscope={selectScope}

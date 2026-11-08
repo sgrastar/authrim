@@ -353,6 +353,7 @@ export const en = {
 	'setup.error.verification': 'The passkey could not be verified. Please try again.',
 	'setup.error.generic': 'Could not complete registration.',
 	'nav.primaryLabel': 'Main menu',
+	'nav.menuOf': 'Pages in {name}',
 
 	/* --- parts --- */
 	'json.valid': 'Valid JSON',

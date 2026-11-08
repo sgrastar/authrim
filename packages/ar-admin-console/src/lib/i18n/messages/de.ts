@@ -364,6 +364,7 @@ export const de = {
 		'Der Passkey konnte nicht geprüft werden. Bitte versuchen Sie es erneut.',
 	'setup.error.generic': 'Die Registrierung konnte nicht abgeschlossen werden.',
 	'nav.primaryLabel': 'Hauptmenü',
+	'nav.menuOf': 'Seiten in {name}',
 
 	/* --- parts --- */
 	'json.valid': 'Gültiges JSON',

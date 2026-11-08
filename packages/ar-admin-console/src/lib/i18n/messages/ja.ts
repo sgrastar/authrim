@@ -358,6 +358,7 @@ export const ja = {
 	'setup.error.verification': 'パスキーを確認できませんでした。もう一度お試しください。',
 	'setup.error.generic': '登録を完了できませんでした。',
 	'nav.primaryLabel': 'メインメニュー',
+	'nav.menuOf': '{name}のページ一覧',
 
 	/* --- parts --- */
 	'json.valid': '正しい JSON です',

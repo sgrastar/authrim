@@ -121,6 +121,7 @@
 >
 	<AppShell
 		{location}
+		path={page.url.pathname}
 		scopes={mockScopes}
 		{currentScopeId}
 		onscope={selectScope}

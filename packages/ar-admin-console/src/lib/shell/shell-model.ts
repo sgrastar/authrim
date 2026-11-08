@@ -110,6 +110,27 @@ export function drawerSections(
 	}));
 }
 
+/**
+ * The header's category menus: each category's pages, as in the phone drawer. A category whose
+ * landing page owns the left column (Service flows) has no left nav, so it gets no menu either:
+ * a click on it opens that page.
+ */
+export function topNavMenus(
+	location: NavLocation,
+	t: Translate,
+	access?: AdminAccess
+): DrawerSection[] {
+	const { kind } = location;
+	const owned = new Set(
+		scopeNav(kind)
+			.topnav.filter(
+				(entry) => scopeNav(kind).byId.get(landingAreaOf(entry))?.children[0]?.ownsSide === true
+			)
+			.map((entry) => entry.id)
+	);
+	return drawerSections(location, t, access).filter((section) => !owned.has(section.id));
+}
+
 /** Whether the left nav is shown: not on pages outside the nav or pages that own the column. */
 export function showsSubNav(location: NavLocation, standalone = false): boolean {
 	return !standalone && location.item?.ownsSide !== true;
