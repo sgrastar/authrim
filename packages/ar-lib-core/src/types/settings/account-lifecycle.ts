@@ -6,6 +6,9 @@ export interface AccountLifecycleSettings {
   'account-lifecycle.guest.upgrade_enabled': boolean;
   'account-lifecycle.guest.upgrade_hold_minutes': number;
   'account-lifecycle.registration.pending_ttl_hours': number;
+  'account-lifecycle.registration.cleanup_enabled': boolean;
+  'account-lifecycle.registration.cleanup_max_per_run': number;
+  'account-lifecycle.registration.cleanup_time_budget_seconds': number;
   'account-lifecycle.deletion.tombstone_retention_days': number;
   'account-lifecycle.deletion.block_reregistration': boolean;
 }
@@ -16,6 +19,9 @@ export const ACCOUNT_LIFECYCLE_DEFAULTS: AccountLifecycleSettings = {
   'account-lifecycle.guest.upgrade_enabled': true,
   'account-lifecycle.guest.upgrade_hold_minutes': 10,
   'account-lifecycle.registration.pending_ttl_hours': 72,
+  'account-lifecycle.registration.cleanup_enabled': true,
+  'account-lifecycle.registration.cleanup_max_per_run': 20,
+  'account-lifecycle.registration.cleanup_time_budget_seconds': 5,
   'account-lifecycle.deletion.tombstone_retention_days': 90,
   'account-lifecycle.deletion.block_reregistration': false,
 };
@@ -79,6 +85,47 @@ export const ACCOUNT_LIFECYCLE_SETTINGS_META: Record<keyof AccountLifecycleSetti
       max: 720,
       integer: true,
       unit: 'hours',
+      visibility: 'page',
+    },
+    'account-lifecycle.registration.cleanup_enabled': {
+      key: 'account-lifecycle.registration.cleanup_enabled',
+      type: 'boolean',
+      // On by default: an unfinished sign-up's account (with its unverified address) would
+      // otherwise be kept for ever.
+      default: true,
+      envKey: 'ACCOUNT_REGISTRATION_CLEANUP_ENABLED',
+      label: 'Delete unfinished sign-ups',
+      description:
+        'Delete the accounts of sign-ups never finished once their time is up (scheduled maintenance, every 6 hours). Turning it off keeps them until it is turned on again.',
+      visibility: 'page',
+    },
+    'account-lifecycle.registration.cleanup_max_per_run': {
+      key: 'account-lifecycle.registration.cleanup_max_per_run',
+      type: 'number',
+      default: 20,
+      envKey: 'ACCOUNT_REGISTRATION_CLEANUP_MAX_PER_RUN',
+      envNumber: 'strict-in-range',
+      label: 'Unfinished sign-ups deleted per run',
+      description:
+        'At most this many unfinished sign-ups are deleted in one maintenance run; the rest wait for the next.',
+      min: 1,
+      max: 200,
+      integer: true,
+      visibility: 'page',
+    },
+    'account-lifecycle.registration.cleanup_time_budget_seconds': {
+      key: 'account-lifecycle.registration.cleanup_time_budget_seconds',
+      type: 'number',
+      default: 5,
+      envKey: 'ACCOUNT_REGISTRATION_CLEANUP_TIME_BUDGET_SECONDS',
+      envNumber: 'strict-in-range',
+      label: 'Unfinished sign-up clean-up time per run',
+      description:
+        'No new deletion is started after this many seconds of a maintenance run; the rest wait for the next.',
+      min: 1,
+      max: 20,
+      integer: true,
+      unit: 'seconds',
       visibility: 'page',
     },
     'account-lifecycle.deletion.tombstone_retention_days': {

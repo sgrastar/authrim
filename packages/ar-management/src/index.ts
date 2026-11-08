@@ -117,6 +117,7 @@ import {
   listGuestLifecycleHandler,
 } from './admin-guest-retention';
 import { processGuestLifecycleMaintenance } from './guest-lifecycle-scheduled';
+import { processRegistrationPendingCleanup } from './registration-pending-cleanup';
 import { processScheduledAccountWebhookOutbox } from './account-webhook-outbox';
 import { processGuestDeletionAuditOutbox } from './guest-deletion-audit-outbox';
 import { processScheduledIdentifierReplacements } from './identifier-replacement-scheduled';
@@ -4591,6 +4592,12 @@ async function handleCoveredScheduled(
     const maintenanceTenantIds = maintenanceTargets.map((target) => target.tenantId);
 
     await processGuestLifecycleMaintenance(env, maintenanceTargets, log.module('GUEST-LIFECYCLE'));
+    // The accounts of sign-ups never finished, once their time is up (never throws).
+    await processRegistrationPendingCleanup(
+      env,
+      maintenanceTargets,
+      log.module('REGISTRATION-CLEANUP')
+    );
     try {
       await processGuestDeletionAuditOutbox(
         env,

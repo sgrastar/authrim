@@ -79,18 +79,16 @@ import {
 } from './account-directory-errors';
 import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
 import {
-  attemptImmediateAccountDirectoryRemovals,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
   fenceAccountDeletion,
   AccountDeletionHeldError,
-  markAccountDirectoryRemovalsReady,
-  prepareAccountDirectoryRemoval,
 } from './account-directory-removal-producer';
 import {
   CrossShardAccountExactSearchService,
   CrossShardAccountListService,
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
+import { deleteAccount } from './account-deletion';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 import { isInactiveAccountRouteError } from './account-route-errors';
 import {
@@ -1979,78 +1977,43 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       ) {
         throw new Error('admin_user_route_projection_invalid');
       }
-      const legalHold = await findActiveAccountLegalHold(core, tenantId, userId);
-      if (legalHold) {
+      // The shared saga (account-deletion.ts). A retry after the projection was erased has no
+      // address left; its tombstone, if any, was written by the first attempt.
+      const deleted = await deleteAccount(c.env, {
+        tenantId,
+        userId,
+        core,
+        pii,
+        email: projection?.email,
+        tombstone: {
+          deletedBy: 'admin',
+          reason: 'admin_action',
+          metadata: { source: 'admin_api' },
+        },
+        endSessions: (operationId, work) =>
+          withAdminSessionEndLogout(
+            c,
+            {
+              tenantId,
+              trigger: {
+                action: 'user.deleted',
+                operationId,
+                actorId: adminActorIdFromContext(c),
+              },
+            },
+            work
+          ),
+      });
+      if (deleted.status === 'held') {
         return c.json(
           {
             error: 'legal_hold_active',
             error_description: 'User is under legal hold and cannot be deleted',
-            hold_id: legalHold.holdId,
+            hold_id: deleted.holdId,
           },
           409
         );
       }
-      // A retry after the projection was erased has no address left; its tombstone, if any, was
-      // written by the first attempt.
-      const tombstoneInput = await prepareAccountTombstone(c.env, {
-        tenantId,
-        email: projection?.email,
-      });
-      // The sessions the deletion ends: their relying parties are told after the response (each
-      // logout token carries the sub recorded with its session-client, not one read from the
-      // account being removed), also when a later step fails.
-      const deletingOperationId = crypto.randomUUID();
-      await withAdminSessionEndLogout(
-        c,
-        {
-          tenantId,
-          trigger: {
-            action: 'user.deleted',
-            operationId: deletingOperationId,
-            actorId: adminActorIdFromContext(c),
-          },
-        },
-        async (ended) => {
-          const deletingVersionMs = Date.now();
-          await transitionEndingSessions(c.env, ended, {
-            tenantId,
-            userId,
-            lifecycle: 'deleting',
-            sourceVersionMs: deletingVersionMs,
-            operationId: deletingOperationId,
-          });
-          const removals = await prepareAccountDirectoryRemoval(c.env, {
-            tenantId,
-            userId,
-            core,
-            pii,
-          });
-          // Holds fenced off before anything is erased (see fenceAccountDeletion).
-          await fenceAccountDeletion(core, { tenantId, userId });
-          await writeAccountTombstone(pii, {
-            tenantId,
-            userId,
-            prepared: tombstoneInput,
-            deletedBy: 'admin',
-            reason: 'admin_action',
-            metadata: { source: 'admin_api' },
-          });
-          await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId, core });
-          await new CanonicalRuntimeUserWriter(
-            new CanonicalIdentityRepository(core, tenantId),
-            pii
-          ).deleteRuntimeUser(userId);
-          await transitionEndingSessions(c.env, ended, {
-            tenantId,
-            userId,
-            lifecycle: 'deleted',
-            sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-            operationId: crypto.randomUUID(),
-          });
-          await markAccountDirectoryRemovalsReady(core, removals);
-          await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, removals);
-        }
-      );
       await invalidateUserCache(c.env, tenantId, userId);
       await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
         registration_state: projection?.registration_state,
