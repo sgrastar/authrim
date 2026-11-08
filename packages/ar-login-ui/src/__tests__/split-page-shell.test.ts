@@ -319,11 +319,15 @@ describe('split page shell', () => {
 		);
 	});
 
-	it('makes both glasses opaque without the blur, over a picture and in the split card too', () => {
+	it('makes both glasses opaque without the blur in the split card, and leaves a page picture alone', () => {
 		const css = source('app.css');
-		const lightProtection = "\n[data-login-theme='glass'][data-has-page-background-image='true'],";
+		// Over the page's own picture the glass stays as the palette draws it (as the admin console's
+		// preview shows it); only the split card, which floats over the brand panel, is protected.
+		expect(css).not.toContain("[data-login-theme='glass'][data-has-page-background-image='true'],");
+		const lightProtection =
+			"\n[data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card']:not(";
 		const darkProtection =
-			"\n[data-theme='dark'][data-login-theme='glass'][data-has-page-background-image='true'],";
+			"\n[data-theme='dark'][data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card'],";
 		const light = selectorsAt(css, css.indexOf(lightProtection) + 1);
 		const dark = selectorsAt(css, css.indexOf(darkProtection) + 1);
 		// The split card floats over the tenant's brand panel in either scheme.

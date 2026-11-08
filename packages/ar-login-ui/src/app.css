@@ -4083,12 +4083,10 @@ tr.expired {
 		var(--glass-thumb-shadow);
 }
 
-/* Over a tenant's own picture, whose lightness is unknown, the panes are more opaque (their text
-   must read over a white or a black photo alike). The split template's floating card lies over
-   the brand panel, whose colour and picture are the tenant's too, so it is as opaque in either
-   scheme. */
-[data-login-theme='glass'][data-has-page-background-image='true'],
-[data-login-theme='clear-glass'][data-has-page-background-image='true'],
+/* The split template's floating card lies over the brand panel, whose colour and picture are the
+   tenant's, so it is more opaque (its text must read over a white or a black panel alike). Over a
+   tenant's page picture the glass stays as the palette draws it, as the admin console's preview
+   shows it: the form area colour (with its opacity) sets how dense it is. */
 [data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card']:not(
 		[data-theme='dark']
 	),
@@ -4102,8 +4100,6 @@ tr.expired {
 	--card-bg-muted: rgba(255, 255, 255, 0.78);
 }
 
-[data-theme='dark'][data-login-theme='glass'][data-has-page-background-image='true'],
-[data-theme='dark'][data-login-theme='clear-glass'][data-has-page-background-image='true'],
 [data-theme='dark'][data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card'],
 [data-theme='dark'][data-login-theme='clear-glass'][data-page-layout='split_panel'][data-form-frame='card'] {
 	--bg-card: rgba(23, 24, 27, 0.82);
