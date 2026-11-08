@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Context as HonoContext } from 'hono';
-import type { DatabaseSource } from '../db';
+import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import type { CanonicalOtpLoginUser } from '../repositories/identity/canonical-runtime-user-store';
 import type { Env } from '../types/env';
 import { isValidPersistedUserId } from '../utils/id';
@@ -72,12 +72,16 @@ export type AnyTenantMetadataContext = TenantMetadataContext | PortableTenantMet
 
 /**
  * Which accounts a context may be resolved for besides active ones (an opt-in for callers that
- * act on the account's data, never for an authentication decision):
- * - `restricted`: also suspended and locked accounts (directory publication still active).
- * - `any`: every account the route still names, whatever its state (being deleted, deleted,
- *   publication disabled), so the caller can tell those states apart.
+ * act on the account's data, never for an authentication decision): `restricted` also accepts
+ * suspended and locked accounts (directory publication still active).
  */
-export type AccountLifecycleAcceptance = 'restricted' | 'any';
+export type AccountLifecycleAcceptance = 'restricted';
+
+/**
+ * Internally also `any`: every account the route still names, whatever its state. Only the
+ * read-only probe below uses it; no context of such an account leaves this module.
+ */
+type InternalLifecycleAcceptance = AccountLifecycleAcceptance | 'any';
 
 /** The account states `restricted` accepts besides `active`. */
 export const RESTRICTED_ACCOUNT_LIFECYCLE_STATES: readonly string[] = ['suspended', 'locked'];
@@ -358,7 +362,7 @@ async function resolveAccountRouteBaseByIdentifier(
 async function resolveCoreAccountDestination(
   base: AccountCoreRouteResolutionBase,
   tenantId: string,
-  options: { otpTrustedEmail?: string; acceptLifecycle?: AccountLifecycleAcceptance } = {}
+  options: { otpTrustedEmail?: string; acceptLifecycle?: InternalLifecycleAcceptance } = {}
 ): Promise<{
   target: ResolvedLookupTarget;
   account: AccountDestinationRow;
@@ -558,25 +562,45 @@ function resolvePiiAccountDestination(
   });
 }
 
+type AccountContextIdentifierInput = {
+  tenantId: string;
+  indexKind: LookupIdentifierKind;
+  identifier: string | { issuer: string; subject: string };
+  expectedAccountId?: string;
+  nowMs?: number;
+  /** See AccountLifecycleAcceptance. Runtime ports resolve active accounts only. */
+  acceptLifecycle?: AccountLifecycleAcceptance;
+  /**
+   * Read the route from the Lookup directory's primary instead of a cached one (up to the
+   * memory cache's lifetime old), for a caller that acts on who holds the identifier now.
+   * Runtime ports cannot promise that: the resolution is refused there.
+   */
+  freshRoute?: boolean;
+};
+
 export async function resolveAccountDataContextByIdentifier(
   env: Env,
-  input: {
-    tenantId: string;
-    indexKind: LookupIdentifierKind;
-    identifier: string | { issuer: string; subject: string };
-    expectedAccountId?: string;
-    nowMs?: number;
-    /** See AccountLifecycleAcceptance. Runtime ports resolve active accounts only. */
-    acceptLifecycle?: AccountLifecycleAcceptance;
-    /**
-     * Read the route from the Lookup directory's primary instead of a cached one (up to the
-     * memory cache's lifetime old), for a caller that acts on who holds the identifier now.
-     */
-    freshRoute?: boolean;
+  input: AccountContextIdentifierInput
+): Promise<AccountDataContext> {
+  // Only `restricted` is public (a cast cannot widen it).
+  const acceptance: unknown = input.acceptLifecycle;
+  if (acceptance !== undefined && acceptance !== 'restricted') {
+    throw new Error('account_data_lifecycle_acceptance_invalid');
+  }
+  return resolveAccountContextInternal(env, input);
+}
+
+async function resolveAccountContextInternal(
+  env: Env,
+  input: Omit<AccountContextIdentifierInput, 'acceptLifecycle'> & {
+    acceptLifecycle?: InternalLifecycleAcceptance;
   }
 ): Promise<AccountDataContext> {
   if (env.RUNTIME_DATA_PORTS) {
     if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
+    // A fresh route cannot be promised through the ports: refused rather than served cached.
+    if (input.freshRoute) throw new Error('account_data_fresh_route_unsupported');
+    // Ports resolve active accounts only, which is stricter than any acceptance asked for.
     const { acceptLifecycle: _acceptLifecycle, freshRoute: _freshRoute, ...portInput } = input;
     const resolved = await env.RUNTIME_DATA_PORTS.resolveAccount(portInput);
     const expectedAccountId = input.expectedAccountId
@@ -827,6 +851,117 @@ export async function resolveAccountDataContext(
     ...(input.acceptLifecycle ? { acceptLifecycle: input.acceptLifecycle } : {}),
     ...(input.freshRoute ? { freshRoute: true } : {}),
   });
+}
+
+/** What an identity provider's data deletion request needs to know of an account, read-only. */
+export interface ProviderDataDeletionAccountProbe {
+  accountId: string;
+  legacyUserId: string;
+  /** The account's lifecycle state at its Core destination (active, suspended, deleting, ...). */
+  lifecycleState: string;
+  /** Whether an active legal hold names the account (its authoritative state). */
+  legalHoldActive: boolean;
+  /**
+   * Whether the account's PII still holds data received for the subject: a linked identity of
+   * the provider and subject (any provisioning state), or an unlink operation of it whose raw
+   * issuer and subject were not erased yet. With an operation id instead of a subject, whether
+   * that operation still holds its raw values.
+   */
+  providerDataRemains: boolean;
+}
+
+async function sha256HexOf(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Read, without handing out the account's databases, what a provider data deletion request
+ * needs to know of the account a route names, whatever the account's state (being deleted,
+ * deleted, publication disabled): its lifecycle state, whether a legal hold names it, and
+ * whether data received for the subject (or held by an unlink operation) remains. The route is
+ * read from the Lookup directory's primary. Refused on runtime ports.
+ */
+export async function probeAccountForProviderDataDeletion(
+  env: Env,
+  input: {
+    tenantId: string;
+    /** The account: the one the provider subject routes to, or one by its id. */
+    account: { issuer: string; subject: string } | { accountId: string };
+    /** What to look for: data for the provider subject, or an unlink operation's raw values. */
+    remains: { issuer: string; subject: string } | { unlinkOperationId: string };
+  }
+): Promise<ProviderDataDeletionAccountProbe> {
+  const context =
+    'accountId' in input.account
+      ? await resolveAccountContextInternal(env, {
+          tenantId: input.tenantId,
+          indexKind: 'account_id',
+          identifier: normalizeAccountId(input.account.accountId),
+          expectedAccountId: normalizeAccountId(input.account.accountId),
+          acceptLifecycle: 'any',
+          freshRoute: true,
+        })
+      : await resolveAccountContextInternal(env, {
+          tenantId: input.tenantId,
+          indexKind: 'external_subject',
+          identifier: { issuer: input.account.issuer, subject: input.account.subject },
+          acceptLifecycle: 'any',
+          freshRoute: true,
+        });
+  const core = ensureDatabaseAdapter(context.coreDb, 'provider-data-deletion-probe-core');
+  const pii = ensureDatabaseAdapter(context.piiDb, 'provider-data-deletion-probe-pii');
+  const strict = { consistencyClass: 'primary_required' as const };
+  const hold = await core.queryOne<{ id: string }>(
+    `SELECT id FROM legal_holds
+      WHERE tenant_id = ? AND subject_type = 'account' AND subject_id = ? AND state = 'active'
+      LIMIT 1`,
+    [input.tenantId, context.accountId],
+    strict
+  );
+  let remains: boolean;
+  if ('unlinkOperationId' in input.remains) {
+    const operation = await pii.queryOne<{ operation_id: string }>(
+      `SELECT operation_id FROM external_identifier_unlink_operations
+        WHERE operation_id = ? AND tenant_id = ? AND account_id = ?
+          AND raw_values_erased_at IS NULL
+        LIMIT 1`,
+      [input.remains.unlinkOperationId, input.tenantId, context.accountId],
+      strict
+    );
+    remains = Boolean(operation);
+  } else {
+    const { issuer, subject } = input.remains;
+    const [link, issuerDigest, subjectDigest] = await Promise.all([
+      pii.queryOne<{ id: string }>(
+        `SELECT id FROM linked_identities
+          WHERE tenant_id = ? AND user_id = ? AND provider_id = ? AND provider_user_id = ?
+          LIMIT 1`,
+        [input.tenantId, context.legacyUserId, issuer, subject],
+        strict
+      ),
+      sha256HexOf(issuer),
+      sha256HexOf(subject),
+    ]);
+    const operation = link
+      ? null
+      : await pii.queryOne<{ operation_id: string }>(
+          `SELECT operation_id FROM external_identifier_unlink_operations
+            WHERE tenant_id = ? AND account_id = ? AND issuer_sha256 = ? AND subject_sha256 = ?
+              AND raw_values_erased_at IS NULL
+            LIMIT 1`,
+          [input.tenantId, context.accountId, issuerDigest, subjectDigest],
+          strict
+        );
+    remains = Boolean(link || operation);
+  }
+  return {
+    accountId: context.accountId,
+    legacyUserId: context.legacyUserId,
+    lifecycleState: context.lifecycleState ?? 'unknown',
+    legalHoldActive: Boolean(hold),
+    providerDataRemains: remains,
+  };
 }
 
 /**
