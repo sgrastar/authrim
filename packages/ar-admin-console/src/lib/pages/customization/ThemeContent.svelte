@@ -5,7 +5,7 @@
 	import TextArea from '#lib/ui/primitives/TextArea.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import ThemeGroup from './ThemeGroup.svelte';
-	import { TEXT_LANGUAGES, type ThemeDraft } from './theme-draft';
+	import { BAR_ALIGNS, TEXT_LANGUAGES, type ThemeDraft } from './theme-draft';
 
 	/**
 	 * Content: what the screens say and show of the brand: the header and footer, the language the
@@ -21,11 +21,28 @@
 	]);
 	// The brand panel can also show nothing of the brand (its picture and text aside).
 	const panelDisplays = $derived([...logoDisplays, { value: 'none', label: t('th.logo.none') }]);
+	const aligns = $derived(BAR_ALIGNS.map((value) => ({ value, label: t(`th.align.${value}`) })));
 </script>
 
 <ThemeGroup title={t('th.g.headerFooter')} info={t('th.g.headerFooter.d')}>
 	<ToggleRow label={t('th.t.header')} info={t('th.t.header.d')} bind:checked={draft.header} />
+	{#if draft.header}
+		<Select
+			label={t('th.f.headerAlign')}
+			info={t('th.f.headerAlign.d')}
+			options={aligns}
+			bind:value={draft.headerAlign}
+		/>
+	{/if}
 	<ToggleRow label={t('th.t.footer')} info={t('th.t.footer.d')} bind:checked={draft.footer} />
+	{#if draft.footer}
+		<Select
+			label={t('th.f.footerAlign')}
+			info={t('th.f.footerAlign.d')}
+			options={aligns}
+			bind:value={draft.footerAlign}
+		/>
+	{/if}
 </ThemeGroup>
 
 <ThemeGroup title={t('th.g.language')} info={t('th.g.language.d')}>

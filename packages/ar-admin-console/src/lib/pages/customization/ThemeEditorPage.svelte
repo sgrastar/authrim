@@ -18,6 +18,7 @@
 	import { themeErrorKey } from './theme-errors';
 	import {
 		draftToValues,
+		needsResave,
 		openStored,
 		THEME_IMAGES,
 		uploadThemeImages,
@@ -63,7 +64,8 @@
 	let name = $state('');
 	let draft = $state<ThemeDraft>(newThemeDraft());
 	/** The theme as stored (none for a new one): what the editor does not edit is saved as it was. */
-	let stored: StoredTheme | undefined;
+	// Raw: it is replaced whole (opened, saved), and the editor reads it for the theme's definition.
+	let stored = $state.raw<StoredTheme | undefined>(undefined);
 	let version = $state(0);
 	/** The applied version of this theme, or null when another (or none) is applied. */
 	let appliedVersion = $state<number | null>(null);
@@ -126,7 +128,9 @@
 			stored = openStored(theme.values);
 			version = theme.version;
 			appliedVersion = applied;
-			saved = snapshot();
+			// A theme the editor would save differently (saved before the bars) opens with changes to
+			// save: applying it as stored would not show what the editor shows.
+			saved = needsResave(stored) ? '' : snapshot();
 			phase = 'ready';
 		} catch (error) {
 			if (!current()) return;
@@ -298,7 +302,7 @@
 				oninput={() => (nameError = undefined)}
 			/>
 		</div>
-		<ThemeEditor bind:draft />
+		<ThemeEditor bind:draft {stored} />
 	{/if}
 </Page>
 

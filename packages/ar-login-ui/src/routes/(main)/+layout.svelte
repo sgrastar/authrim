@@ -50,6 +50,8 @@
 	}
 	// After the tenant's mode is known: a tenant that names none opens in the visitor's last mode.
 	themeStore.primeFromHint(untrack(() => data.themeHint));
+	// The colours of the mode the page opens in, from the first render (then kept in step below).
+	loginUIPageStore.setColourMode(untrack(() => themeStore.mode));
 
 	// Root layouts persist during client-side navigation. Apply newly embedded route data before
 	// Svelte updates the page so login/signup transitions never retain the previous/default theme.
@@ -68,6 +70,9 @@
 		).authenticationMethods;
 		return authenticationMethods ?? null;
 	}
+
+	// The tenant's colours are set per mode: show the ones of the mode the page is in.
+	$effect(() => loginUIPageStore.setColourMode(themeStore.mode));
 
 	// Initialize theme on mount
 	// Resolution order: localStorage → tenant (API) → system → default

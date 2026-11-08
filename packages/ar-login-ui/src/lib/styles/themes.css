@@ -20,8 +20,8 @@
 	--nav-border: rgba(255, 255, 255, 0.08);
 
 	/* Primary Colors */
-	--primary: #2c2724;
-	--primary-hover: #1a1715;
+	--primary: var(--login-accent-color, #2c2724);
+	--primary-hover: var(--login-accent-color, #1a1715);
 	--primary-light: rgba(44, 39, 36, 0.1);
 	--primary-glow: rgba(44, 39, 36, 0.4);
 	--gradient-primary: linear-gradient(135deg, #333333 0%, #1a1a1a 50%, #000000 100%);
@@ -66,8 +66,8 @@
 		--nav-border: rgba(200, 184, 168, 0.2);
 
 		/* Primary Colors */
-		--primary: #c8b8a8;
-		--primary-hover: #9d8b7a;
+		--primary: var(--login-accent-color, #c8b8a8);
+		--primary-hover: var(--login-accent-color, #9d8b7a);
 		--primary-light: rgba(200, 184, 168, 0.15);
 		--primary-glow: rgba(200, 184, 168, 0.4);
 		--gradient-primary: linear-gradient(135deg, #d4c6b8 0%, #c8b8a8 50%, #b8a794 100%);
@@ -119,8 +119,8 @@
 	--nav-border: rgba(200, 184, 168, 0.2);
 
 	/* Primary Colors */
-	--primary: #c8b8a8;
-	--primary-hover: #9d8b7a;
+	--primary: var(--login-accent-color, #c8b8a8);
+	--primary-hover: var(--login-accent-color, #9d8b7a);
 	--primary-light: rgba(200, 184, 168, 0.15);
 	--primary-glow: rgba(200, 184, 168, 0.4);
 	--gradient-primary: linear-gradient(135deg, #d4c6b8 0%, #c8b8a8 50%, #b8a794 100%);

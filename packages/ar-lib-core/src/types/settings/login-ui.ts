@@ -83,6 +83,13 @@ export interface LoginUISettings {
   'login-ui.form_area_color': string;
   'login-ui.field_color': string;
   'login-ui.secondary_button_color': string;
+  'login-ui.link_color': string;
+  'login-ui.header_background_color': string;
+  'login-ui.header_text_color': string;
+  'login-ui.footer_background_color': string;
+  'login-ui.footer_text_color': string;
+  /** Dark-mode colours: a JSON object from colour name to colour (utils/login-ui-theme-colors). */
+  'login-ui.dark_colors': string;
 
   // Branding
   'login-ui.brand_name': string;
@@ -123,6 +130,8 @@ export interface LoginUISettings {
   'login-ui.language_switcher_position': string;
   'login-ui.header_style': string;
   'login-ui.footer_style': string;
+  'login-ui.header_align': string;
+  'login-ui.footer_align': string;
   'login-ui.split_frame': string;
   'login-ui.form_frame': string;
   'login-ui.split_panel_side': string;
@@ -351,6 +360,66 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     label: 'Secondary Button Color',
     description:
       'Background colour of the secondary buttons (such as Continue under an input). #rgb, #rrggbb or #rrggbbaa. Empty follows the palette',
+    visibility: 'public',
+  },
+  'login-ui.link_color': {
+    key: 'login-ui.link_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_LINK_COLOR',
+    label: 'Link Color',
+    description:
+      'Colour of the text links (such as the sign-in / sign-up switch). #rgb, #rrggbb, #rrggbbaa or rgb(). Empty follows the accent',
+    visibility: 'public',
+  },
+  'login-ui.header_background_color': {
+    key: 'login-ui.header_background_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_HEADER_BACKGROUND_COLOR',
+    label: 'Header Background Color',
+    description:
+      'Background colour of the header bar along the top of the page. #rgb, #rrggbb, #rrggbbaa or rgb(). Empty follows the palette',
+    visibility: 'public',
+  },
+  'login-ui.header_text_color': {
+    key: 'login-ui.header_text_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_HEADER_TEXT_COLOR',
+    label: 'Header Text Color',
+    description:
+      'Colour of the header bar text (brand name and tagline). #rgb, #rrggbb, #rrggbbaa or rgb(). Empty follows the palette',
+    visibility: 'public',
+  },
+  'login-ui.footer_background_color': {
+    key: 'login-ui.footer_background_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_FOOTER_BACKGROUND_COLOR',
+    label: 'Footer Background Color',
+    description:
+      'Background colour of the footer bar along the bottom of the page. #rgb, #rrggbb, #rrggbbaa or rgb(). Empty follows the palette',
+    visibility: 'public',
+  },
+  'login-ui.footer_text_color': {
+    key: 'login-ui.footer_text_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_FOOTER_TEXT_COLOR',
+    label: 'Footer Text Color',
+    description:
+      'Colour of the footer bar text and links. #rgb, #rrggbb, #rrggbbaa or rgb(). Empty follows the palette',
+    visibility: 'public',
+  },
+  'login-ui.dark_colors': {
+    key: 'login-ui.dark_colors',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_DARK_COLORS',
+    label: 'Dark Mode Colors',
+    description:
+      'Colours used in dark mode, as a JSON object from colour name (background, form_area, accent, link, title, text, copy, field, secondary_button, header_background, header_text, footer_background, footer_text) to colour. A colour not listed follows the palette in dark mode',
     visibility: 'public',
   },
   'login-ui.form_area_color': {
@@ -647,7 +716,7 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     envKey: 'LOGIN_UI_TOPBAR_POSITION',
     label: 'Topbar Position',
     description:
-      'Where the theme toggle and language selector are displayed on Login UI pages. The form_bottom_* values place them at the bottom of the split template form side and behave as below_card elsewhere',
+      'Where the theme toggle and language selector are displayed on Login UI pages. The form_bottom_* values place them at the bottom of the split template form side and behave as below_card elsewhere. The header_* and footer_* values place them in the header or footer bar; without that bar they behave as below_card and bottom_* respectively',
     enum: [
       'below_card',
       'in_card',
@@ -658,6 +727,12 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
       'form_bottom_left',
       'form_bottom_center',
       'form_bottom_right',
+      'header_left',
+      'header_center',
+      'header_right',
+      'footer_left',
+      'footer_center',
+      'footer_right',
       'hidden',
     ],
     visibility: 'public',
@@ -708,6 +783,27 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     label: 'Footer Style',
     description: 'Footer presentation style for the Login UI outer page',
     enum: ['simple', 'bar'],
+    visibility: 'public',
+  },
+  'login-ui.header_align': {
+    key: 'login-ui.header_align',
+    type: 'enum',
+    default: 'left',
+    envKey: 'LOGIN_UI_HEADER_ALIGN',
+    label: 'Header Alignment',
+    description: 'Where the header bar places the brand: at the start, in the middle or at the end',
+    enum: ['left', 'center', 'right'],
+    visibility: 'public',
+  },
+  'login-ui.footer_align': {
+    key: 'login-ui.footer_align',
+    type: 'enum',
+    default: 'center',
+    envKey: 'LOGIN_UI_FOOTER_ALIGN',
+    label: 'Footer Alignment',
+    description:
+      'Where the footer bar places its text and links: at the start, in the middle or at the end',
+    enum: ['left', 'center', 'right'],
     visibility: 'public',
   },
   'login-ui.logo_layout': {
@@ -1028,6 +1124,12 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.form_area_color': '',
   'login-ui.field_color': '',
   'login-ui.secondary_button_color': '',
+  'login-ui.link_color': '',
+  'login-ui.header_background_color': '',
+  'login-ui.header_text_color': '',
+  'login-ui.footer_background_color': '',
+  'login-ui.footer_text_color': '',
+  'login-ui.dark_colors': '',
   'login-ui.brand_name': 'Authrim',
   'login-ui.header_name': '',
   'login-ui.logo_url': '',
@@ -1063,6 +1165,8 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.language_switcher_position': 'below_card',
   'login-ui.header_style': 'center',
   'login-ui.footer_style': 'simple',
+  'login-ui.header_align': 'left',
+  'login-ui.footer_align': 'center',
   'login-ui.split_frame': 'full',
   'login-ui.form_frame': 'full',
   'login-ui.split_panel_side': 'left',
@@ -1111,6 +1215,12 @@ export const LOGIN_UI_THEME_KEYS = [
   'login-ui.form_area_color',
   'login-ui.field_color',
   'login-ui.secondary_button_color',
+  'login-ui.link_color',
+  'login-ui.header_background_color',
+  'login-ui.header_text_color',
+  'login-ui.footer_background_color',
+  'login-ui.footer_text_color',
+  'login-ui.dark_colors',
   'login-ui.brand_name',
   'login-ui.header_name',
   'login-ui.logo_url',
@@ -1140,6 +1250,8 @@ export const LOGIN_UI_THEME_KEYS = [
   'login-ui.topbar_position',
   'login-ui.header_style',
   'login-ui.footer_style',
+  'login-ui.header_align',
+  'login-ui.footer_align',
   'login-ui.split_frame',
   'login-ui.form_frame',
   'login-ui.split_panel_side',

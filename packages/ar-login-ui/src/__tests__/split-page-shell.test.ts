@@ -10,7 +10,7 @@ function expectPageShellOrder(pageSource: string) {
 	const headerIndex = pageSource.indexOf('class="auth-header"');
 	const mainIndex = pageSource.indexOf('class="auth-main"');
 	const panelIndex = pageSource.indexOf('class="auth-container"');
-	const footerIndex = pageSource.indexOf('<ConfiguredFooter class="auth-page-footer" />');
+	const footerIndex = pageSource.search(/<ConfiguredFooter\s+class="auth-page-footer"/);
 
 	expect(headerIndex).toBeGreaterThan(-1);
 	expect(panelIndex).toBeGreaterThan(mainIndex);
@@ -138,7 +138,7 @@ describe('split page shell', () => {
 		expect(shell).toContain('<aside class="auth-brand-panel"');
 		expect(shell).toContain("loginUIPageStore.topbarPosition !== 'in_card'");
 		expect(shell).toContain("loginUIPageStore.topbarPosition === 'in_card'");
-		expect(shell).toContain('<ConfiguredFooter class="auth-page-footer" />');
+		expect(shell).toMatch(/<ConfiguredFooter\s+class="auth-page-footer"/);
 		expect(shell).toContain('style:--login-page-background-layer');
 		expect(shell).toContain('style:--login-panel-background-layer');
 	});
@@ -370,7 +370,7 @@ describe('split page shell', () => {
 		// The page text's own panes over a picture lose their blur too.
 		const reduced = css.slice(css.lastIndexOf('@media (prefers-reduced-transparency: reduce) {'));
 		expect(reduced.slice(0, reduced.indexOf('@supports'))).toMatch(
-			/:is\(\.auth-header, \.auth-footer, \.auth-bottom-link\) \{\s*backdrop-filter: none;/
+			/:is\(\.auth-header, \.auth-footer:not\(\.auth-bar\), \.auth-bottom-link\) \{\s*backdrop-filter: none;/
 		);
 	});
 

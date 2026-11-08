@@ -10,6 +10,10 @@ import {
 	loginUIImageFilterCss,
 	type LoginUIImageFilter
 } from '@authrim/ar-lib-core/utils/login-ui-image-filters';
+import {
+	LOGIN_UI_THEME_COLOR_NAMES,
+	type LoginUIThemeColorName
+} from '@authrim/ar-lib-core/utils/login-ui-theme-colors';
 
 /** Black or white, whichever reads better on a tenant's colour; its alpha, if any, left aside. */
 const labelColorOn = (colour: string) =>
@@ -20,6 +24,50 @@ const labelColorOn = (colour: string) =>
 function labelledColor(colour: string | undefined): string {
 	const safe = sanitizeColor(colour);
 	return safe && labelColorOn(safe) ? safe : '';
+}
+
+/** How each theme colour is taken from what the server sent: '' when it is not usable. */
+const READ_COLOUR: Record<LoginUIThemeColorName, (value: unknown) => string> = {
+	background: (value) => sanitizeColor(value as string) || '',
+	form_area: (value) => sanitizeColor(value as string) || '',
+	// Applied opaque, from a colour every renderer resolves alike (see accent-text.ts).
+	accent: (value) => normalizeAccentColor(sanitizeColor(value as string)) || '',
+	link: (value) => sanitizeColor(value as string) || '',
+	title: (value) => sanitizeColor(value as string) || '',
+	text: (value) => sanitizeColor(value as string) || '',
+	copy: (value) => sanitizeColor(value as string) || '',
+	field: (value) => labelledColor(value as string),
+	secondary_button: (value) => labelledColor(value as string),
+	header_background: (value) => sanitizeColor(value as string) || '',
+	header_text: (value) => sanitizeColor(value as string) || '',
+	footer_background: (value) => sanitizeColor(value as string) || '',
+	footer_text: (value) => sanitizeColor(value as string) || ''
+};
+
+type ThemeColours = Record<LoginUIThemeColorName, string>;
+
+const noColours = (): ThemeColours =>
+	Object.fromEntries(LOGIN_UI_THEME_COLOR_NAMES.map((name) => [name, ''])) as ThemeColours;
+
+/**
+ * The dark-mode colours the server sent, each taken as its light one is ('' for none). The server
+ * checks a stored dark set strictly (the shared module); what it carries over from the light
+ * colours of a theme fixed to dark mode follows their own rules, as here.
+ */
+function readDarkColours(value: unknown): ThemeColours {
+	const colours = noColours();
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return colours;
+	for (const name of LOGIN_UI_THEME_COLOR_NAMES) {
+		const colour = (value as Record<string, unknown>)[name];
+		if (typeof colour === 'string') colours[name] = READ_COLOUR[name](colour);
+	}
+	return colours;
+}
+
+type BarAlign = 'left' | 'center' | 'right';
+
+function readBarAlign(value: unknown, fallback: BarAlign): BarAlign {
+	return value === 'left' || value === 'center' || value === 'right' ? value : fallback;
 }
 import {
 	cssUrl,
@@ -56,6 +104,12 @@ type TopbarPosition =
 	| 'form_bottom_left'
 	| 'form_bottom_center'
 	| 'form_bottom_right'
+	| 'header_left'
+	| 'header_center'
+	| 'header_right'
+	| 'footer_left'
+	| 'footer_center'
+	| 'footer_right'
 	| 'hidden';
 type FormFrame = 'card' | 'full';
 type BrandPanelLogoDisplay = 'inherit' | LogoDisplay;
@@ -160,6 +214,12 @@ function readTopbarPosition(value: unknown, legacyValue: unknown): TopbarPositio
 		value === 'form_bottom_left' ||
 		value === 'form_bottom_center' ||
 		value === 'form_bottom_right' ||
+		value === 'header_left' ||
+		value === 'header_center' ||
+		value === 'header_right' ||
+		value === 'footer_left' ||
+		value === 'footer_center' ||
+		value === 'footer_right' ||
 		value === 'hidden' ||
 		value === 'below_card'
 	) {
@@ -315,6 +375,17 @@ export function createLoginUIPageStore() {
 	let titleColor = $state('');
 	let textColor = $state('');
 	let copyColor = $state('');
+	let linkColor = $state('');
+	let headerBackgroundColor = $state('');
+	let headerTextColor = $state('');
+	let footerBackgroundColor = $state('');
+	let footerTextColor = $state('');
+	/** The colours set for dark mode; '' where the palette's dark colour applies. */
+	let darkColours = $state<ThemeColours>(noColours());
+	/** The mode the page is shown in now (the theme store's): it picks the light or dark colours. */
+	let colourMode = $state<'light' | 'dark'>('light');
+	let headerAlign = $state<BarAlign>('left');
+	let footerAlign = $state<BarAlign>('center');
 	let backgroundImageUrl = $state<string | null>(null);
 	let loginPanelBackgroundImageUrl = $state<string | null>(null);
 	let loginPanelBackgroundColor = $state('');
@@ -362,6 +433,47 @@ export function createLoginUIPageStore() {
 		return brandPanelLogoDisplay === 'inherit' ? logoDisplay : brandPanelLogoDisplay;
 	}
 
+	/** A colour as it applies in the mode shown: the light one, or the dark one ('' = palette). */
+	function current(name: LoginUIThemeColorName, light: string): string {
+		return colourMode === 'dark' ? darkColours[name] : light;
+	}
+
+	/**
+	 * Where the colour-mode and language choices go: in the header or footer bar only while that
+	 * bar is shown (else under the card, or along the page bottom on the same side).
+	 */
+	function effectiveTopbarPosition(): TopbarPosition {
+		if (topbarPosition.startsWith('header_') && !(headerEnabled && headerStyle === 'bar')) {
+			return 'below_card';
+		}
+		if (topbarPosition.startsWith('footer_') && !(footerEnabled && footerStyle === 'bar')) {
+			return topbarPosition.replace(/^footer_/, 'bottom_') as TopbarPosition;
+		}
+		return topbarPosition;
+	}
+
+	/** The colours on the document, for the mode shown. */
+	function applyDocumentColours() {
+		if (!browser) return;
+		const html = document.documentElement;
+		const formArea = current('form_area', formAreaColor);
+		const accent = current('accent', accentColor);
+		html.setAttribute('data-has-form-area-color', formArea ? 'true' : 'false');
+		html.setAttribute('data-has-accent-color', accent ? 'true' : 'false');
+		setOptionalStyleProperty(
+			'--login-page-background-color',
+			current('background', backgroundColor) || null
+		);
+		syncLoginUIDocumentSurface();
+		setOptionalStyleProperty('--login-accent-color', accent || null);
+		setOptionalStyleProperty('--login-accent-text', accentTextColor(accent));
+		setOptionalStyleProperty('--login-title-color', current('title', titleColor) || null);
+		setOptionalStyleProperty('--login-text-color', current('text', textColor) || null);
+		setOptionalStyleProperty('--login-copy-color', current('copy', copyColor) || null);
+		setOptionalStyleProperty('--login-link-color', current('link', linkColor) || null);
+		setOptionalStyleProperty('--login-form-area-color', formArea || null);
+	}
+
 	function applyDocumentState(customCss: string | null) {
 		if (!browser) return;
 		const html = document.documentElement;
@@ -373,7 +485,7 @@ export function createLoginUIPageStore() {
 		html.setAttribute('data-font-family', fontFamily);
 		html.setAttribute('data-font-scale', fontScale);
 		html.setAttribute('data-language-switcher-position', languageSwitcherPosition);
-		html.setAttribute('data-topbar-position', topbarPosition);
+		html.setAttribute('data-topbar-position', effectiveTopbarPosition());
 		html.setAttribute('data-header-style', headerStyle);
 		html.setAttribute('data-footer-style', footerStyle);
 		html.setAttribute('data-logo-layout', logoLayout);
@@ -395,19 +507,7 @@ export function createLoginUIPageStore() {
 		html.setAttribute('data-page-background-grayscale', String(pageBackgroundGray()));
 		html.setAttribute('data-login-panel-background-grayscale', String(loginPanelBackgroundGray()));
 		html.setAttribute('data-brand-panel-image-grayscale', String(brandPanelImageGray()));
-		html.setAttribute('data-has-form-area-color', sanitizeColor(formAreaColor) ? 'true' : 'false');
-		html.setAttribute('data-has-accent-color', accentColor ? 'true' : 'false');
-
-		setOptionalStyleProperty(
-			'--login-page-background-color',
-			sanitizeColor(backgroundColor) || null
-		);
-		syncLoginUIDocumentSurface();
-		setOptionalStyleProperty('--login-accent-color', accentColor || null);
-		setOptionalStyleProperty('--login-accent-text', accentTextColor(accentColor));
-		setOptionalStyleProperty('--login-title-color', sanitizeColor(titleColor) || null);
-		setOptionalStyleProperty('--login-text-color', sanitizeColor(textColor) || null);
-		setOptionalStyleProperty('--login-copy-color', sanitizeColor(copyColor) || null);
+		applyDocumentColours();
 		setOptionalStyleProperty(
 			'--login-page-background-layer',
 			backgroundImageUrl && isValidImageUrl(backgroundImageUrl) ? cssUrl(backgroundImageUrl) : null
@@ -430,7 +530,6 @@ export function createLoginUIPageStore() {
 			'--login-panel-background-opacity',
 			String(loginPanelBackgroundOpacity / 100)
 		);
-		setOptionalStyleProperty('--login-form-area-color', sanitizeColor(formAreaColor) || null);
 		setOptionalStyleProperty(
 			'--login-page-background-opacity',
 			String(backgroundImageOpacity / 100)
@@ -459,9 +558,17 @@ export function createLoginUIPageStore() {
 		palette = servedPalette ?? paletteOfThemeTemplate(legacyTheme);
 		themeTemplate = servedPalette ? legacyThemeFor(servedPalette, template) : legacyTheme;
 		formFrame = readFormFrame(page?.formFrame);
-		formAreaColor = sanitizeColor(page?.formAreaColor) || '';
-		fieldColor = labelledColor(page?.fieldColor);
-		secondaryButtonColor = labelledColor(page?.secondaryButtonColor);
+		formAreaColor = READ_COLOUR.form_area(page?.formAreaColor);
+		fieldColor = READ_COLOUR.field(page?.fieldColor);
+		secondaryButtonColor = READ_COLOUR.secondary_button(page?.secondaryButtonColor);
+		linkColor = READ_COLOUR.link(page?.linkColor);
+		headerBackgroundColor = READ_COLOUR.header_background(page?.headerBackgroundColor);
+		headerTextColor = READ_COLOUR.header_text(page?.headerTextColor);
+		footerBackgroundColor = READ_COLOUR.footer_background(page?.footerBackgroundColor);
+		footerTextColor = READ_COLOUR.footer_text(page?.footerTextColor);
+		darkColours = readDarkColours(page?.darkColors);
+		headerAlign = readBarAlign(page?.headerAlign, 'left');
+		footerAlign = readBarAlign(page?.footerAlign, 'center');
 		headerName = readOptionalText(ui?.branding?.headerName) ?? '';
 		brandPanelLogoDisplay = readBrandPanelLogoDisplay(page?.brandPanelLogoDisplay);
 		backgroundImageOpacity = readPercentage(appearance?.backgroundImageOpacity, 100);
@@ -478,12 +585,11 @@ export function createLoginUIPageStore() {
 		brandPanelImageGrayscale = readBoolean(appearance?.brandPanelImageGrayscale, false);
 		fontFamily = readFontFamily(page?.fontFamily);
 		fontScale = readFontScale(page?.fontScale);
-		backgroundColor = sanitizeColor(page?.backgroundColor) || '';
-		// Applied opaque, from a colour every renderer resolves alike (see accent-text.ts).
-		accentColor = normalizeAccentColor(sanitizeColor(page?.accentColor)) || '';
-		titleColor = sanitizeColor(page?.titleColor) || '';
-		textColor = sanitizeColor(page?.textColor) || '';
-		copyColor = sanitizeColor(page?.copyColor) || '';
+		backgroundColor = READ_COLOUR.background(page?.backgroundColor);
+		accentColor = READ_COLOUR.accent(page?.accentColor);
+		titleColor = READ_COLOUR.title(page?.titleColor);
+		textColor = READ_COLOUR.text(page?.textColor);
+		copyColor = READ_COLOUR.copy(page?.copyColor);
 		backgroundImageUrl =
 			appearance?.backgroundImageUrl && isValidImageUrl(appearance.backgroundImageUrl)
 				? appearance.backgroundImageUrl
@@ -550,25 +656,69 @@ export function createLoginUIPageStore() {
 		get formFrame() {
 			return formFrame;
 		},
+		/**
+		 * The colours below are the ones of the mode shown (see setColourMode): the light ones, or
+		 * the dark ones. Each is empty while the palette's own applies.
+		 */
+		get colourMode() {
+			return colourMode;
+		},
+		/** Shows the page's colours for the mode the page is in now (light or dark). */
+		setColourMode(mode: 'light' | 'dark') {
+			if (mode === colourMode) return;
+			colourMode = mode;
+			applyDocumentColours();
+		},
 		/** The form area colour (hex with optional alpha); empty while the palette's applies. */
 		get formAreaColor() {
-			return formAreaColor;
+			return current('form_area', formAreaColor);
 		},
 		/** The text input colour (hex with optional alpha); empty while the palette's applies. */
 		get fieldColor() {
-			return fieldColor;
+			return current('field', fieldColor);
 		},
 		/** Black or white, whichever reads better on the input colour; null while none is set. */
 		get fieldTextColor() {
-			return labelColorOn(fieldColor);
+			return labelColorOn(current('field', fieldColor));
 		},
 		/** The secondary button colour (hex with optional alpha); empty while the palette's applies. */
 		get secondaryButtonColor() {
-			return secondaryButtonColor;
+			return current('secondary_button', secondaryButtonColor);
 		},
 		/** Black or white, whichever reads better on the secondary button colour. */
 		get secondaryButtonTextColor() {
-			return labelColorOn(secondaryButtonColor);
+			return labelColorOn(current('secondary_button', secondaryButtonColor));
+		},
+		get linkColor() {
+			return current('link', linkColor);
+		},
+		get headerBackgroundColor() {
+			return current('header_background', headerBackgroundColor);
+		},
+		get headerTextColor() {
+			return current('header_text', headerTextColor);
+		},
+		get footerBackgroundColor() {
+			return current('footer_background', footerBackgroundColor);
+		},
+		get footerTextColor() {
+			return current('footer_text', footerTextColor);
+		},
+		/** Where the header bar places the brand. */
+		get headerAlign() {
+			return headerAlign;
+		},
+		/** Where the footer bar places its text and links. */
+		get footerAlign() {
+			return footerAlign;
+		},
+		/** The header is the bar along the top of the page (else a block over the form). */
+		get headerBar() {
+			return headerEnabled && headerStyle === 'bar';
+		},
+		/** The footer is the bar along the bottom of the page. */
+		get footerBar() {
+			return footerEnabled && footerStyle === 'bar';
 		},
 		/** The name shown in the page header; empty when none is set. */
 		get headerName() {
@@ -621,23 +771,23 @@ export function createLoginUIPageStore() {
 			return fontScale;
 		},
 		get backgroundColor() {
-			return backgroundColor;
+			return current('background', backgroundColor);
 		},
 		get accentColor() {
-			return accentColor;
+			return current('accent', accentColor);
 		},
 		/** The text colour that reads on the accent (null without an accent). */
 		get accentTextColor() {
-			return accentTextColor(accentColor);
+			return accentTextColor(current('accent', accentColor));
 		},
 		get titleColor() {
-			return titleColor;
+			return current('title', titleColor);
 		},
 		get textColor() {
-			return textColor;
+			return current('text', textColor);
 		},
 		get copyColor() {
-			return copyColor;
+			return current('copy', copyColor);
 		},
 		get backgroundImageUrl() {
 			return backgroundImageUrl;
@@ -681,7 +831,7 @@ export function createLoginUIPageStore() {
 			return languageSwitcherPosition;
 		},
 		get topbarPosition() {
-			return topbarPosition;
+			return effectiveTopbarPosition();
 		},
 		get showTopbar() {
 			return (

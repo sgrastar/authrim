@@ -5,6 +5,9 @@
  * own apply). Reading starts from a new draft and takes each value that is valid, so a value the
  * editor does not know (written elsewhere) falls back to the editor's default.
  *
+ * The header and the footer are always the bars the preview draws (`header_style` and
+ * `footer_style` are written `bar` on every save).
+ *
  * Saving a theme that was opened starts from its stored values (`base`): what the editor does not
  * edit is kept as it was (keys it has no control for, languages and texts it does not show, a
  * value it shows the same way as one it would write), so that changing a theme's name, or one of
@@ -16,6 +19,14 @@ import {
 	parseLoginUIImageFilters
 } from '@authrim/ar-lib-core/utils/login-ui-image-filters';
 import {
+	formatLoginUIDarkColors,
+	isValidLoginUIThemeColor,
+	parseLoginUIDarkColors,
+	type LoginUIThemeColors
+} from '@authrim/ar-lib-core/utils/login-ui-theme-colors';
+import { THEME_COLOURS } from './theme-colours';
+import {
+	BAR_ALIGNS,
 	newThemeDraft,
 	SPLIT_CHOICES,
 	TEXT_LANGUAGES,
@@ -57,6 +68,8 @@ const FIELD_KEYS: readonly (readonly [keyof ThemeDraft, readonly string[]])[] = 
 	['topbarPosition', ['topbar_position']],
 	['header', ['header_enabled']],
 	['footer', ['footer_enabled']],
+	['headerAlign', ['header_align']],
+	['footerAlign', ['footer_align']],
 	['themeToggle', ['theme_toggle_enabled']],
 	['languageSelect', ['language_select_enabled']],
 	['brandName', ['brand_name']],
@@ -79,14 +92,8 @@ const FIELD_KEYS: readonly (readonly [keyof ThemeDraft, readonly string[]])[] = 
 	['panelImageGrayscale', ['brand_panel_image_grayscale']],
 	['cardImageGrayscale', ['login_panel_background_grayscale']],
 	['customCss', ['custom_css']],
-	['background', ['background_color']],
-	['cardColor', ['form_area_color']],
-	['accent', ['accent_color']],
-	['titleColor', ['title_color']],
-	['textColor', ['text_color']],
-	['copyColor', ['copy_color']],
-	['fieldColor', ['field_color']],
-	['secondaryButtonColor', ['secondary_button_color']],
+	...THEME_COLOURS.map((colour) => [colour.field, [`${colour.name}_color`]] as const),
+	['darkColours', ['dark_colors']],
 	...THEME_IMAGES.map((image) => [image.field, [image.key]] as const)
 ];
 
@@ -106,6 +113,10 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 		[KEY('topbar_position')]: draft.topbarPosition,
 		[KEY('header_enabled')]: draft.header,
 		[KEY('footer_enabled')]: draft.footer,
+		[KEY('header_style')]: 'bar',
+		[KEY('footer_style')]: 'bar',
+		[KEY('header_align')]: draft.headerAlign,
+		[KEY('footer_align')]: draft.footerAlign,
 		[KEY('theme_toggle_enabled')]: draft.themeToggle,
 		[KEY('language_select_enabled')]: draft.languageSelect,
 		[KEY('brand_name')]: draft.brandName,
@@ -135,17 +146,13 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 		values[KEY('brand_content_mode')] = 'logo_copy';
 		values[KEY('brand_panel_logo_display')] = LOGO_DISPLAY[draft.brandLogoDisplay];
 	}
-	const colours: [string, string][] = [
-		['background_color', draft.background],
-		['form_area_color', draft.cardColor],
-		['accent_color', draft.accent],
-		['title_color', draft.titleColor],
-		['text_color', draft.textColor],
-		['copy_color', draft.copyColor],
-		['field_color', draft.fieldColor],
-		['secondary_button_color', draft.secondaryButtonColor]
-	];
-	for (const [name, value] of colours) if (value) values[KEY(name)] = value;
+	for (const colour of THEME_COLOURS) {
+		const value = draft[colour.field];
+		if (value) values[KEY(`${colour.name}_color`)] = value;
+	}
+	// Written even when empty: a theme with the key has a dark set of its own (none set is the
+	// palette's), one without it was saved before there was one (see valuesToDraft).
+	values[KEY('dark_colors')] = formatLoginUIDarkColors(draft.darkColours);
 	for (const image of THEME_IMAGES) {
 		const value = draft[image.field];
 		if (typeof value === 'string' && value) values[KEY(image.key)] = value;
@@ -206,6 +213,12 @@ export function draftToValues(draft: ThemeDraft, stored?: StoredTheme): ThemeVal
 		const from = same(draft[field], opened[field]) ? base : fresh;
 		for (const key of names.map(KEY)) if (key in from) values[key] = from[key];
 	}
+	// A theme saved before there was a dark set gets one when it is saved (see valuesToDraft): the
+	// one the editor shows, though it was not changed.
+	if (!(KEY('dark_colors') in base)) values[KEY('dark_colors')] = fresh[KEY('dark_colors')];
+	// The header and footer are the preview's bars, whatever a stored theme said.
+	values[KEY('header_style')] = 'bar';
+	values[KEY('footer_style')] = 'bar';
 	// A panel showing the logo alone (no copy) stays so: the editor has no control for it.
 	if (
 		base[KEY('brand_content_mode')] === 'logo' &&
@@ -233,6 +246,25 @@ export function draftToValues(draft: ThemeDraft, stored?: StoredTheme): ThemeVal
 	}
 	values[KEY('text_localizations')] = JSON.stringify(localizations);
 	return values;
+}
+
+/** A theme's values in one order, to compare. */
+const canonical = (values: ThemeValues) =>
+	JSON.stringify(
+		Object.fromEntries(
+			Object.keys(values)
+				.sort()
+				.map((key) => [key, values[key]])
+		)
+	);
+
+/**
+ * Whether a stored theme, saved as it opens, would be saved differently: it was saved before
+ * something the editor now always writes (the header and footer bars). Applied as it is, it would
+ * not look as the editor shows it, so it has to be saved first.
+ */
+export function needsResave(stored: StoredTheme): boolean {
+	return canonical(draftToValues(stored.opened, stored)) !== canonical(stored.values);
 }
 
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
@@ -298,6 +330,8 @@ export function valuesToDraft(values: ThemeValues): ThemeDraft {
 	draft.topbarPosition = oneOf(v('topbar_position'), TOPBAR_POSITIONS, draft.topbarPosition);
 	draft.header = flagOf(v('header_enabled'), draft.header);
 	draft.footer = flagOf(v('footer_enabled'), draft.footer);
+	draft.headerAlign = oneOf(v('header_align'), BAR_ALIGNS, draft.headerAlign);
+	draft.footerAlign = oneOf(v('footer_align'), BAR_ALIGNS, draft.footerAlign);
 	draft.themeToggle = flagOf(v('theme_toggle_enabled'), draft.themeToggle);
 	draft.languageSelect = flagOf(v('language_select_enabled'), draft.languageSelect);
 	draft.brandName = textOf(v('brand_name'), draft.brandName);
@@ -324,14 +358,23 @@ export function valuesToDraft(values: ThemeValues): ThemeDraft {
 		draft.brandPosition
 	);
 	draft.brandAlign = oneOf(v('brand_align'), SPLIT_CHOICES.brandAlign, draft.brandAlign);
-	draft.background = textOf(v('background_color'), '');
-	draft.cardColor = textOf(v('form_area_color'), '');
-	draft.accent = textOf(v('accent_color'), '');
-	draft.titleColor = textOf(v('title_color'), '');
-	draft.textColor = textOf(v('text_color'), '');
-	draft.copyColor = textOf(v('copy_color'), '');
-	draft.fieldColor = textOf(v('field_color'), '');
-	draft.secondaryButtonColor = textOf(v('secondary_button_color'), '');
+	for (const colour of THEME_COLOURS) {
+		const value = textOf(v(`${colour.name}_color`), '');
+		draft[colour.field] =
+			!colour.strict || isValidLoginUIThemeColor(colour.name, value) ? value : '';
+	}
+	draft.darkColours = parseLoginUIDarkColors(v('dark_colors'));
+	// A theme fixed to dark mode saved before the colours had a dark set showed its colours in dark
+	// mode. It opens with them as an explicit dark set, in the form the dark set takes (a named
+	// colour is left out), and saving writes that set: what the preview shows is what is saved. The
+	// Admin API carries such colours over only while a theme has no dark set at all.
+	if (draft.mode === 'dark' && v('dark_colors') === undefined) {
+		const dark: LoginUIThemeColors = {};
+		for (const colour of THEME_COLOURS) {
+			if (draft[colour.field]) dark[colour.name] = draft[colour.field];
+		}
+		draft.darkColours = parseLoginUIDarkColors(formatLoginUIDarkColors(dark));
+	}
 	draft.backgroundOpacity = percentOf(v('background_image_opacity'), draft.backgroundOpacity);
 	draft.panelImageOpacity = percentOf(v('brand_panel_image_opacity'), draft.panelImageOpacity);
 	draft.cardImageOpacity = percentOf(v('login_panel_background_opacity'), draft.cardImageOpacity);

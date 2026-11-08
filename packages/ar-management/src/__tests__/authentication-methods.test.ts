@@ -2032,6 +2032,99 @@ describe('Authentication Methods API', () => {
       }
     );
 
+    it('serves the bars, link and dark colours, dropping colours the pages would not apply', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.theme': 'auto',
+          'login-ui.link_color': 'rgb(100%, 0%, 0%)',
+          'login-ui.header_background_color': '#1f2a44',
+          'login-ui.footer_text_color': 'rgba(10, 20, 30, 0.5)',
+          'login-ui.header_align': 'center',
+          'login-ui.footer_align': 'nowhere',
+          'login-ui.topbar_position': 'header_right',
+          'login-ui.dark_colors': JSON.stringify({ accent: '#93aef2', link: 'red' }),
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = await res.json<{ ui: { pageTemplate: Record<string, unknown> } }>();
+
+      expect(res.status).toBe(200);
+      expect(body.ui.pageTemplate).toMatchObject({
+        linkColor: '',
+        headerBackgroundColor: '#1f2a44',
+        footerTextColor: 'rgba(10, 20, 30, 0.5)',
+        headerAlign: 'center',
+        footerAlign: 'center',
+        topbarPosition: 'header_right',
+        darkColors: { accent: '#93aef2' },
+      });
+    });
+
+    it('serves the light colours of a tenant fixed to dark mode as its dark ones until it has a dark set', async () => {
+      const request = async (settings: Record<string, string>) => {
+        const settingsKV = createMockKV({
+          'settings:tenant:default:login-ui': JSON.stringify({
+            'login-ui.theme': 'dark',
+            'login-ui.background_color': '#101820',
+            'login-ui.accent_color': '#ff8800',
+            'login-ui.title_color': 'white',
+            ...settings,
+          }),
+        });
+        const { app, mockEnv } = createTestApp({ settingsKV });
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = await res.json<{ ui: { pageTemplate: { darkColors: unknown } } }>();
+        return body.ui.pageTemplate.darkColors;
+      };
+      // No dark set yet: the colours it set, as they are served, are its dark ones.
+      expect(await request({})).toEqual({
+        background: '#101820',
+        accent: '#ff8800',
+        title: 'white',
+      });
+      // A dark set of its own, even an empty one: the light colours stay light.
+      expect(await request({ 'login-ui.dark_colors': '' })).toEqual({});
+      expect(await request({ 'login-ui.theme': 'auto' })).toEqual({});
+    });
+
+    it('carries the light colours over once, from the scope that sets them', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.theme': 'dark',
+          'login-ui.background_color': '#111111',
+        }),
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.background_color': '#222222',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = await res.json<{ ui: { pageTemplate: { darkColors: unknown } } }>();
+      expect(body.ui.pageTemplate.darkColors).toEqual({ background: '#222222' });
+    });
+
+    it('keeps a dark set written at the platform, even an empty one', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.theme': 'dark',
+          'login-ui.dark_colors': '',
+        }),
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.background_color': '#222222',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = await res.json<{ ui: { pageTemplate: { darkColors: unknown } } }>();
+      expect(body.ui.pageTemplate.darkColors).toEqual({});
+    });
+
     it('keeps a tenant accent the pages apply over the platform accent', async () => {
       const settingsKV = createMockKV({
         'settings:platform:login-ui': JSON.stringify({ 'login-ui.accent_color': '#2563eb' }),

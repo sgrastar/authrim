@@ -610,14 +610,20 @@ export function resolveInitialLoginUIAppearance(
 	darkBackground?: string;
 } {
 	const ui = authenticationMethods?.ui;
-	const configuredBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
+	// The tenant's background of each mode: its light one, or the one set for dark mode (none set:
+	// the palette's own, not the light one).
+	const lightBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
+	const darkColors = ui?.pageTemplate?.darkColors;
+	const darkBackground = sanitizeColor(darkColors?.background);
+	const configured = (mode: 'light' | 'dark') =>
+		mode === 'dark' ? darkBackground : lightBackground;
 	// The page background of the theme template in the mode the page opens in.
 	// The palette names the colours; `themeTemplate` is its pre-palette name, kept for old servers.
 	const template = readPalette(ui?.pageTemplate?.palette) ?? ui?.themeTemplate;
 	const theme = ui?.theme?.trim().toLowerCase();
 	if (theme === 'dark') {
 		return {
-			background: resolveLoginUIThemeBackground('dark', template, configuredBackground),
+			background: resolveLoginUIThemeBackground('dark', template, configured('dark')),
 			colorScheme: 'dark'
 		};
 	}
@@ -628,18 +634,18 @@ export function resolveInitialLoginUIAppearance(
 		const hinted = normalizeLoginUIThemeMode(themeHint?.theme);
 		return hinted
 			? {
-					background: resolveLoginUIThemeBackground(hinted, template, configuredBackground),
+					background: resolveLoginUIThemeBackground(hinted, template, configured(hinted)),
 					colorScheme: hinted
 				}
 			: {
-					background: resolveLoginUIThemeBackground('light', template, configuredBackground),
+					background: resolveLoginUIThemeBackground('light', template, configured('light')),
 					colorScheme: 'light dark',
-					darkBackground: resolveLoginUIThemeBackground('dark', template, configuredBackground)
+					darkBackground: resolveLoginUIThemeBackground('dark', template, configured('dark'))
 				};
 	}
 	if (theme === 'light') {
 		return {
-			background: resolveLoginUIThemeBackground('light', template, configuredBackground),
+			background: resolveLoginUIThemeBackground('light', template, configured('light')),
 			colorScheme: 'light'
 		};
 	}
@@ -653,7 +659,7 @@ export function resolveInitialLoginUIAppearance(
 	}
 
 	return {
-		background: resolveLoginUIThemeBackground('light', template, configuredBackground),
+		background: resolveLoginUIThemeBackground('light', template, configured('light')),
 		colorScheme: 'light'
 	};
 }

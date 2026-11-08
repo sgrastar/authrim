@@ -558,6 +558,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.language_switcher_position
     login-ui.header_style
     login-ui.footer_style
+    login-ui.header_align
+    login-ui.footer_align
     login-ui.logo_layout
     login-ui.split_frame
     login-ui.form_frame
@@ -599,6 +601,11 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.form_area_color
     login-ui.field_color
     login-ui.secondary_button_color
+    login-ui.link_color
+    login-ui.header_background_color
+    login-ui.header_text_color
+    login-ui.footer_background_color
+    login-ui.footer_text_color
     login-ui.brand_name
     login-ui.header_name
     login-ui.brand_panel_title
@@ -619,6 +626,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.rollback_snapshot
     login-ui.custom_css
     login-ui.background_image_filters
+    login-ui.dark_colors
     login-ui.text_localizations
     login-ui.footer_text
     login-ui.footer_links

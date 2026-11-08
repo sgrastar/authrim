@@ -63,13 +63,40 @@
 	);
 	/** The page always has a level-one heading: the brand, shown in the header or for screen readers. */
 	const showVisibleHeading = $derived(loginUIPageStore.headerEnabled && showBrandText);
+	/**
+	 * The colour-mode and language choices in the header or footer bar: the bar and the side, or
+	 * null where they sit elsewhere (the store has already moved them out of a bar that is not shown).
+	 */
+	const topbarInBar = $derived.by(() => {
+		if (!loginUIPageStore.showTopbar) return null;
+		const match = /^(header|footer)_(left|center|right)$/.exec(loginUIPageStore.topbarPosition);
+		return match
+			? { bar: match[1] as 'header' | 'footer', side: match[2] as 'left' | 'center' | 'right' }
+			: null;
+	});
+	const BAR_ZONES = ['left', 'center', 'right'] as const;
 </script>
+
+{#snippet footerTools()}
+	<LanguageSwitcher
+		showThemeToggle={loginUIPageStore.themeToggleEnabled}
+		showLanguageSelect={loginUIPageStore.languageSelectEnabled}
+	/>
+{/snippet}
 
 <div
 	class="auth-page"
 	class:auth-page--entry-motion={entryMotion}
 	data-branding-loaded={brand ? '' : undefined}
 	class:auth-page--has-footer={loginUIPageStore.footerEnabled}
+	class:auth-page--header-bar={loginUIPageStore.headerBar}
+	class:auth-page--footer-bar={loginUIPageStore.footerBar}
+	data-has-link-color={loginUIPageStore.linkColor ? 'true' : undefined}
+	style:--login-link-color={loginUIPageStore.linkColor || undefined}
+	style:--login-header-background={loginUIPageStore.headerBackgroundColor || undefined}
+	style:--login-header-text={loginUIPageStore.headerTextColor || undefined}
+	style:--login-footer-background={loginUIPageStore.footerBackgroundColor || undefined}
+	style:--login-footer-text={loginUIPageStore.footerTextColor || undefined}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
 	data-has-accent-color={loginUIPageStore.accentColor ? 'true' : 'false'}
 	style:--login-accent-color={loginUIPageStore.accentColor || undefined}
@@ -120,10 +147,49 @@
 >
 	{#if loginUIPageStore.backgroundImageFilter}<span class="auth-image-filter" aria-hidden="true"
 		></span>{/if}
+	{#if loginUIPageStore.headerBar}
+		<!-- The header bar runs along the top of the whole page (over the brand panel too): the brand
+		     at its start, middle or end, and the choices on their side when they sit in it. -->
+		<header class="auth-bar auth-bar--header" data-align={loginUIPageStore.headerAlign}>
+			{#each BAR_ZONES as zone (zone)}
+				<div class="auth-bar__zone auth-bar__zone--{zone}">
+					{#if loginUIPageStore.headerAlign === zone}
+						<div class="auth-bar__brand">
+							{#if showBrandLogo && brandLogoUrl}
+								<img
+									src={brandLogoUrl}
+									alt={brandName || $LL.common_logoAlt()}
+									class="auth-bar__logo"
+									onerror={(event) =>
+										((event.currentTarget as HTMLImageElement).style.display = 'none')}
+								/>
+							{/if}
+							{#if showBrandText || loginUIPageStore.subtitleEnabled}
+								<div class="auth-bar__text">
+									{#if showBrandText}
+										<h1 class="auth-bar__title">{headerTitle}</h1>
+									{/if}
+									{#if loginUIPageStore.subtitleEnabled}
+										<p class="auth-bar__subtitle"><LocalizedTagline /></p>
+									{/if}
+								</div>
+							{/if}
+						</div>
+					{/if}
+					{#if topbarInBar?.bar === 'header' && topbarInBar.side === zone}
+						<LanguageSwitcher
+							showThemeToggle={loginUIPageStore.themeToggleEnabled}
+							showLanguageSelect={loginUIPageStore.languageSelectEnabled}
+						/>
+					{/if}
+				</div>
+			{/each}
+		</header>
+	{/if}
 	<div class="auth-main">
 		{#if loginUIPageStore.backgroundImageFilter}<span class="auth-image-filter" aria-hidden="true"
 			></span>{/if}
-		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card' && !topbarInForm}
+		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card' && !topbarInForm && !topbarInBar}
 			<LanguageSwitcher
 				showThemeToggle={loginUIPageStore.themeToggleEnabled}
 				showLanguageSelect={loginUIPageStore.languageSelectEnabled}
@@ -168,7 +234,7 @@
 			{#if !showVisibleHeading}
 				<h1 class="sr-only">{brandName || $LL.app_title()}</h1>
 			{/if}
-			{#if loginUIPageStore.headerEnabled}
+			{#if loginUIPageStore.headerEnabled && !loginUIPageStore.headerBar}
 				<header class="auth-header">
 					{#if showBrandLogo && brandLogoUrl}
 						<img
@@ -210,5 +276,9 @@
 		</div>
 	</div>
 
-	<ConfiguredFooter class="auth-page-footer" />
+	<ConfiguredFooter
+		class="auth-page-footer"
+		tools={topbarInBar?.bar === 'footer' ? footerTools : undefined}
+		toolsSide={topbarInBar?.bar === 'footer' ? topbarInBar.side : undefined}
+	/>
 </div>

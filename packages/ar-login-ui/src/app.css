@@ -985,8 +985,8 @@ tr.expired {
 	--card-padding: 24px;
 	--button-radius: var(--radius-md);
 	--input-radius: var(--radius-md);
-	--button-primary-bg: var(--gradient-primary);
-	--button-primary-text: var(--text-inverse);
+	--button-primary-bg: var(--login-accent-color, var(--gradient-primary));
+	--button-primary-text: var(--login-accent-text, var(--text-inverse));
 	--button-secondary-bg: var(--bg-input);
 	--button-secondary-border: var(--border);
 	--button-secondary-text: var(--text-primary);
@@ -1007,8 +1007,9 @@ tr.expired {
 		rgba(47, 82, 196, 0.1),
 		transparent 68%
 	);
-	--primary: #2f52c4;
-	--primary-hover: #24409e;
+	/* The tenant's main button colour (accent), when set, in place of cobalt; as every palette. */
+	--primary: var(--login-accent-color, #2f52c4);
+	--primary-hover: var(--login-accent-color, #24409e);
 	--primary-light: rgba(47, 82, 196, 0.08);
 	--gradient-primary: linear-gradient(135deg, #2f52c4 0%, #24409e 100%);
 	--bg-page: #eef1f6;
@@ -1030,8 +1031,8 @@ tr.expired {
 	--button-radius: 12px;
 	--input-radius: 12px;
 	--input-border: rgba(24, 34, 56, 0.16);
-	--button-primary-bg: #2f52c4;
-	--button-primary-text: #ffffff;
+	--button-primary-bg: var(--login-accent-color, #2f52c4);
+	--button-primary-text: var(--login-accent-text, #ffffff);
 	--button-secondary-bg: #ffffff;
 	--button-secondary-border: rgba(24, 34, 56, 0.18);
 	--button-secondary-text: #182238;
@@ -1052,8 +1053,8 @@ tr.expired {
 		rgba(147, 174, 242, 0.09),
 		transparent 68%
 	);
-	--primary: #93aef2;
-	--primary-hover: #b3c6f7;
+	--primary: var(--login-accent-color, #93aef2);
+	--primary-hover: var(--login-accent-color, #b3c6f7);
 	--primary-light: rgba(147, 174, 242, 0.12);
 	--gradient-primary: linear-gradient(135deg, #93aef2 0%, #7a97e8 100%);
 	--bg-page: #0b0e16;
@@ -1067,8 +1068,8 @@ tr.expired {
 	--text-secondary: #aeb9d0;
 	--text-muted: #7683a0;
 	--input-border: rgba(147, 174, 242, 0.22);
-	--button-primary-bg: #93aef2;
-	--button-primary-text: #0c1327;
+	--button-primary-bg: var(--login-accent-color, #93aef2);
+	--button-primary-text: var(--login-accent-text, #0c1327);
 	--button-secondary-bg: #172033;
 	--button-secondary-border: rgba(147, 174, 242, 0.24);
 	--button-secondary-text: #eef2fa;
@@ -1244,6 +1245,29 @@ tr.expired {
 	width: 100%;
 	min-height: 0;
 	position: relative;
+}
+
+/* With a header or footer bar, the bars run edge to edge: the page has no padding of its own and
+   the main region (between the bars) holds the card with the room the page gave it. The split
+   template lays out its own grid (below). */
+:where([data-page-layout]:not([data-page-layout='split_panel']))
+	.auth-page:is(.auth-page--header-bar, .auth-page--footer-bar) {
+	justify-content: flex-start;
+	padding: 0;
+}
+
+:where([data-page-layout]:not([data-page-layout='split_panel']))
+	:where(.auth-page--header-bar, .auth-page--footer-bar)
+	> .auth-main {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	min-height: 0;
+	position: relative;
+	padding: clamp(24px, 5vw, 48px) clamp(10px, 3vw, 24px);
 }
 
 .auth-brand-panel {
@@ -1805,31 +1829,11 @@ tr.expired {
 	margin-bottom: var(--auth-header-margin-bottom, 32px);
 }
 
-[data-header-style='bar'] .auth-header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 16px;
-	width: 100%;
-	padding: 14px 16px;
-	margin-bottom: 20px;
-	border: 1px solid var(--border);
-	border-radius: var(--radius-lg);
-	background: var(--bg-glass);
-	text-align: start;
-	backdrop-filter: var(--blur-sm);
-	-webkit-backdrop-filter: var(--blur-sm);
-}
-
 [data-logo-layout='row'] .auth-header {
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	gap: 12px;
-}
-
-[data-logo-layout='row'][data-header-style='bar'] .auth-header {
-	justify-content: flex-start;
 }
 
 .auth-header__logo {
@@ -2135,6 +2139,165 @@ tr.expired {
 	flex: 1;
 }
 
+/* --- Header and footer bars ---
+   The bars run along the top and the bottom of the whole page (over the split template's brand
+   panel too), as the admin console's preview draws them. Each has three zones, start, middle and
+   end: the brand (or the footer's text) sits in the zone its alignment names, and the colour-mode
+   and language choices in theirs when they sit in the bar. Transparent unless the tenant set a
+   colour. */
+.auth-bar {
+	display: grid;
+	/* The sides keep room for what they hold (the choices); the middle gives way and wraps. */
+	grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr);
+	align-items: center;
+	gap: 16px;
+	align-self: stretch;
+	/* Left, middle and right are where they say, in a right-to-left language too: the zones are
+	   laid left to right, and what they hold reads in the page's direction. */
+	direction: ltr;
+	box-sizing: border-box;
+	width: 100%;
+	padding: 16px clamp(16px, 4vw, 40px);
+}
+
+.auth-bar__zone {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.auth-bar__zone--left {
+	justify-content: flex-start;
+	text-align: left;
+}
+
+.auth-bar__zone--center {
+	justify-content: center;
+	text-align: center;
+}
+
+.auth-bar__zone--right {
+	justify-content: flex-end;
+	text-align: right;
+}
+
+[dir='rtl'] .auth-bar__zone > * {
+	direction: rtl;
+}
+
+.auth-bar .auth-topbar {
+	margin: 0;
+}
+
+.auth-page .auth-bar--header {
+	background: var(--login-header-background, transparent);
+	color: var(--login-header-text, var(--login-title-color, var(--text-primary)));
+}
+
+.auth-bar__brand {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+
+.auth-bar__logo {
+	display: block;
+	max-width: 160px;
+	max-height: 40px;
+	object-fit: contain;
+}
+
+.auth-bar__text {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+
+.auth-page .auth-bar__title {
+	margin: 0;
+	font-family: var(--font-display);
+	font-size: 1.125rem;
+	font-weight: 700;
+	line-height: 1.3;
+	letter-spacing: 0;
+	color: var(--login-header-text, var(--login-title-color, var(--text-primary)));
+}
+
+.auth-page .auth-bar__subtitle {
+	margin: 0;
+	font-size: 0.8125rem;
+	line-height: 1.4;
+	color: var(--login-header-text, var(--login-copy-color, var(--text-secondary)));
+}
+
+.auth-page .auth-bar--footer {
+	order: 3;
+	margin: 0;
+	background: var(--login-footer-background, transparent);
+	color: var(--login-footer-text, var(--login-copy-color, var(--text-secondary)));
+	border: 0;
+}
+
+.auth-bar--footer .auth-bar__content {
+	min-width: 0;
+}
+
+.auth-bar--footer .auth-bar__zone--left .auth-footer__links {
+	justify-content: flex-start;
+}
+
+.auth-bar--footer .auth-bar__zone--right .auth-footer__links {
+	justify-content: flex-end;
+}
+
+.auth-page .auth-bar--footer a {
+	color: inherit;
+}
+
+/* On a phone the zones that hold something stack, each still at its own side. */
+@media (max-width: 640px) {
+	.auth-bar {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 8px;
+		padding-block: 12px;
+	}
+
+	.auth-bar__zone:empty {
+		display: none;
+	}
+}
+
+/* The split template: the header bar is a row of its own over the panel and the form side. */
+[data-page-layout='split_panel'] .auth-page.auth-page--header-bar {
+	grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+[data-page-layout='split_panel'] .auth-page--header-bar > .auth-bar--header {
+	grid-row: 1;
+}
+
+[data-page-layout='split_panel'] .auth-page--header-bar > .auth-main {
+	grid-row: 2;
+}
+
+[data-page-layout='split_panel'] .auth-page--header-bar > .auth-page-footer {
+	grid-row: 3;
+}
+
+[data-page-layout='split_panel'] .auth-page .auth-bar--footer {
+	padding: 12px clamp(16px, 4vw, 40px);
+	background: var(--login-footer-background, transparent);
+	border-top: 0;
+}
+
+/* The tenant's link colour, for the links in the page (not the bars, which keep their own). */
+.auth-page[data-has-link-color='true'] .auth-main a:not(.btn):not([role='button']),
+.auth-page[data-has-link-color='true'] .auth-main a:not(.btn):not([role='button']):hover {
+	color: var(--login-link-color);
+}
+
 /* --- Auth footer --- */
 .auth-footer {
 	order: 3;
@@ -2167,24 +2330,6 @@ tr.expired {
 	font-weight: 600;
 	text-decoration: underline;
 	text-underline-offset: 0.18em;
-}
-
-[data-footer-style='bar'] .auth-footer {
-	width: min(100%, var(--login-page-max-width, 420px));
-	padding: 12px 16px;
-	border: 1px solid var(--border);
-	border-radius: var(--radius-lg);
-	background: var(--bg-glass);
-	backdrop-filter: var(--blur-sm);
-	-webkit-backdrop-filter: var(--blur-sm);
-}
-
-[data-page-layout='split_panel'][data-footer-style='bar'] .auth-page-footer {
-	width: 100%;
-	border-right: 0;
-	border-bottom: 0;
-	border-left: 0;
-	border-radius: 0;
 }
 
 .auth-footer__links {
@@ -3982,7 +4127,7 @@ tr.expired {
 		[data-login-theme='clear-glass']
 	):where(:not([data-page-layout='split_panel']))
 	.auth-page
-	:is(.auth-header, .auth-footer, .auth-bottom-link) {
+	:is(.auth-header, .auth-footer:not(.auth-bar), .auth-bottom-link) {
 	background: var(--bg-card);
 	border-radius: var(--radius-md);
 	backdrop-filter: blur(14px) saturate(140%);
@@ -4072,7 +4217,7 @@ tr.expired {
 			[data-login-theme='clear-glass']
 		)
 		.auth-page
-		:is(.auth-header, .auth-footer, .auth-bottom-link) {
+		:is(.auth-header, .auth-footer:not(.auth-bar), .auth-bottom-link) {
 		backdrop-filter: none;
 		-webkit-backdrop-filter: none;
 	}

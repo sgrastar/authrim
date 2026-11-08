@@ -46,6 +46,7 @@
 
 	const stores = initializeLoginUIStores();
 	const { brandingStore, loginUIPageStore, themeStore } = stores;
+	$effect(() => loginUIPageStore.setColourMode(themeStore.mode));
 
 	// A part is shown on a centred page whatever the theme's own layout is: a split panel grid
 	// around a single button says nothing about the button.

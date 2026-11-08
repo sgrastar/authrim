@@ -7,7 +7,8 @@
 	import Icon from '#lib/ui/icons/Icon.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
-	import { DENSITIES, FONT_STACKS, type ThemeDraft } from './theme-draft';
+	import { BAR_ALIGNS, DENSITIES, FONT_STACKS, type ThemeDraft } from './theme-draft';
+	import { draftColour, THEME_COLOURS, type ThemeColourField } from './theme-colours';
 	import { paletteColours, paletteOf } from './theme-palettes';
 	import { parseFooter } from './footer-links';
 	import { PREVIEW_SCREENS, type PreviewScreen } from './theme-sections';
@@ -35,6 +36,12 @@
 
 	// What is not set here is the real screens' own colour, in the mode shown.
 	const defaults = $derived(paletteColours(draft.palette, scheme));
+	// The colours set for the mode shown: the light ones, or the dark ones ('' = the palette's).
+	const own = $derived(
+		Object.fromEntries(
+			THEME_COLOURS.map((colour) => [colour.field, draftColour(draft, colour, scheme)])
+		) as Record<ThemeColourField, string>
+	);
 	const shape = $derived(paletteOf(draft.palette).shape);
 
 	let width = $state<'mobile' | 'desktop'>('desktop');
@@ -71,9 +78,30 @@
 	);
 	const headerName = $derived(draft.headerName);
 	const footerParts = $derived(parseFooter(texts.footer));
-	// "Form bottom" belongs to Split's form side; without a side of its own it is the bottom.
-	const topbar = $derived(
-		split ? draft.topbarPosition : draft.topbarPosition.replace(/^form_/, '')
+	// "Form bottom" belongs to Split's form side; without a side of its own it is the bottom. The
+	// header and footer places need their bar: without it, under the card or along the bottom.
+	const topbar = $derived.by(() => {
+		const position = split ? draft.topbarPosition : draft.topbarPosition.replace(/^form_/, '');
+		if (position.startsWith('header_') && !draft.header) return 'below_card';
+		if (position.startsWith('footer_') && !draft.footer) {
+			return position.replace(/^footer_/, 'bottom_');
+		}
+		return position;
+	});
+	/** The bar the choices sit in, and its side; null when they sit elsewhere. */
+	const barTools = $derived.by(() => {
+		const match = /^(header|footer)_(left|center|right)$/.exec(topbar);
+		return match ? { bar: match[1], side: match[2] } : null;
+	});
+	// Split's form filling its side is the card itself: the link sits in it, at its end.
+	const switchInCard = $derived(split && draft.formFrame === 'full');
+	// The link under the card that switches between signing in and signing up.
+	const switchLink = $derived(
+		screen === 'signIn'
+			? tIn(draft.language, 'th.preview.toSignUp')
+			: screen === 'signUp'
+				? tIn(draft.language, 'th.preview.toSignIn')
+				: null
 	);
 	const showTools = $derived((draft.themeToggle || draft.languageSelect) && topbar !== 'hidden');
 
@@ -82,6 +110,11 @@
 	let backgroundUrl = $state<string | null>(null);
 	let panelUrl = $state<string | null>(null);
 	let cardUrl = $state<string | null>(null);
+	// The glasses over a picture lay the page's own text (here the link under the card) on a small
+	// pane of its own, as the Login UI does; not in Split, where it is inside the form side.
+	const switchPane = $derived(
+		(draft.palette === 'glass' || draft.palette === 'clear-glass') && !!backgroundUrl && !split
+	);
 
 	function imageUrl(value: string | File | null, set: (url: string | null) => void) {
 		if (value instanceof File) {
@@ -100,7 +133,7 @@
 	 * with the black or white label that reads better on it (its alpha left aside). Anything else
 	 * is dropped there, and so here too: the palette's own colour applies.
 	 */
-	function labelled(colour: string): { fill: string; label: string } | null {
+	function labelled(colour: string): { fill: string; solid: string; label: string } | null {
 		const value = colour.trim();
 		let rgb = /^#[0-9a-f]{8}$/i.test(value)
 			? splitAlpha(value).rgb
@@ -119,10 +152,13 @@
 		if (!rgb) return null;
 		const label =
 			contrastRatio(rgb, '#000000') >= contrastRatio(rgb, '#ffffff') ? '#000000' : '#ffffff';
-		return { fill: value, label };
+		return { fill: value, solid: rgb, label };
 	}
-	const field = $derived(labelled(draft.fieldColor));
-	const button2 = $derived(labelled(draft.secondaryButtonColor));
+	const field = $derived(labelled(own.fieldColor));
+	// The main button: the colour set, opaque (its alpha left aside), under a black or white label
+	// chosen against it, as the Login UI draws it.
+	const accent = $derived(own.accent ? labelled(own.accent) : null);
+	const button2 = $derived(labelled(own.secondaryButtonColor));
 	// The picture's filters in order, as the Login UI draws them.
 	const backgroundFilter = $derived(loginUIImageFilterCss(draft.backgroundFilters));
 	// A blurred picture fades at its edges: it is drawn that much larger, as the Login UI's blur
@@ -233,15 +269,21 @@
 				data-template={draft.template}
 				lang={draft.language}
 				dir={localeDir(draft.language)}
-				style:--ol-bg={draft.background || defaults.background}
-				style:--ol-card={draft.cardColor || defaults.card}
+				style:--ol-bg={own.background || defaults.background}
+				style:--ol-card={own.cardColor || defaults.card}
 				style:--ol-panel={defaults.card}
-				style:--ol-accent={draft.accent || defaults.accent}
-				style:--ol-title={draft.titleColor || defaults.title}
-				style:--ol-text={draft.textColor || defaults.text}
-				style:--ol-copy={draft.copyColor || defaults.copy}
-				style:--ol-title-own={draft.titleColor || undefined}
-				style:--ol-copy-own={draft.copyColor || undefined}
+				style:--ol-accent={accent?.solid || defaults.accent}
+				style:--ol-link={own.linkColor || accent?.solid || defaults.accent}
+				style:--ol-accent-text={accent?.label}
+				style:--ol-title={own.titleColor || defaults.title}
+				style:--ol-text={own.textColor || defaults.text}
+				style:--ol-copy={own.copyColor || defaults.copy}
+				style:--ol-title-own={own.titleColor || undefined}
+				style:--ol-copy-own={own.copyColor || undefined}
+				style:--ol-header-bg={own.headerBackground || undefined}
+				style:--ol-header-text={own.headerText || undefined}
+				style:--ol-footer-bg={own.footerBackground || undefined}
+				style:--ol-footer-text={own.footerText || undefined}
 				style:--ol-field={field?.fill}
 				style:--ol-field-text={field?.label}
 				data-button2={button2 ? 'set' : undefined}
@@ -252,7 +294,7 @@
 				style:--ol-control-radius={`${shape.controlRadius}px`}
 				style:--ol-button-radius={`${shape.buttonRadius ?? shape.controlRadius}px`}
 				style:--ol-field-radius={`${shape.fieldRadius ?? shape.controlRadius}px`}
-				data-accent={draft.accent ? 'set' : 'preset'}
+				data-accent={accent ? 'set' : 'preset'}
 				data-shadow={shape.shadow}
 				data-frost={shape.frost ? 'true' : 'false'}
 				style:font-family={FONT_STACKS[draft.font]}
@@ -269,7 +311,16 @@
 				<!-- The header runs along the top of the whole screen, over the brand panel too, as the footer
 				     runs along the bottom. The brand panel has no header of its own. -->
 				{#if draft.header}
-					<header class="outline__header" inert>{@render brand()}</header>
+					<header class="outline__header outline__bar" inert>
+						{#each BAR_ALIGNS as zone (zone)}
+							<div class="outline__zone outline__zone--{zone}">
+								{#if draft.headerAlign === zone}{@render brand()}{/if}
+								{#if showTools && barTools?.bar === 'header' && barTools.side === zone}
+									{@render tools()}
+								{/if}
+							</div>
+						{/each}
+					</header>
 				{/if}
 				<div
 					class="outline__stage"
@@ -364,7 +415,13 @@
 										<span class="outline__button">{tIn(draft.language, 'th.preview.continue')}</span
 										>
 									{/if}
+									{#if switchLink && switchInCard}<p class="outline__switch">{switchLink}</p>{/if}
 								</div>
+								{#if switchLink && !switchInCard}
+									<p class="outline__switch" class:outline__switch--pane={switchPane}>
+										{switchLink}
+									</p>
+								{/if}
 								{#if showTools && topbar === 'below_card'}{@render tools()}{/if}
 							</div>
 						</div>
@@ -387,13 +444,25 @@
 				<!-- The footer runs along the bottom of the whole screen, under the brand panel too. -->
 				{#if draft.footer}
 					<!-- The one part that is not inert: its links work and open in a new window. -->
-					<footer class="outline__footer">
-						{#each footerParts as part, index (index)}
-							{#if 'href' in part}
-								<a href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>
-							{:else}
-								{part.text}
-							{/if}
+					<footer class="outline__footer outline__bar">
+						{#each BAR_ALIGNS as zone (zone)}
+							<div class="outline__zone outline__zone--{zone}">
+								{#if draft.footerAlign === zone}
+									<p class="outline__footer-text">
+										{#each footerParts as part, index (index)}
+											{#if 'href' in part}
+												<a href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a
+												>
+											{:else}
+												{part.text}
+											{/if}
+										{/each}
+									</p>
+								{/if}
+								{#if showTools && barTools?.bar === 'footer' && barTools.side === zone}
+									<span class="outline__bar-tools" inert>{@render tools()}</span>
+								{/if}
+							</div>
 						{/each}
 					</footer>
 				{/if}
@@ -745,11 +814,81 @@
 	.outline__header {
 		position: relative;
 		grid-row: 1;
+		padding: 20px 40px;
+		background: var(--ol-header-bg, transparent);
+	}
+
+	/* The header and the footer are bars of three zones (start, middle, end), as the Login UI's:
+	   what each shows sits in the zone its alignment names, the choices in theirs. */
+	.outline__bar {
+		display: grid;
+		/* The sides keep room for what they hold (the choices); the middle gives way and wraps. The
+		   zones are left, middle and right as drawn, in a right-to-left language too. */
+		grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr);
+		align-items: center;
+		gap: 16px;
+		direction: ltr;
+	}
+
+	.outline[dir='rtl'] .outline__zone > :global(*) {
+		direction: rtl;
+	}
+
+	/* On a phone the zones that hold something stack, each still at its own side. */
+	.screen--mobile .outline__bar {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 8px;
+	}
+
+	.screen--mobile .outline__zone:empty {
+		display: none;
+	}
+
+	.outline__zone {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-		padding: 20px 40px;
+		gap: 12px;
+		min-width: 0;
+	}
+
+	.outline__zone--left {
+		justify-content: flex-start;
+		text-align: left;
+	}
+
+	.outline__zone--center {
+		justify-content: center;
+		text-align: center;
+	}
+
+	.outline__zone--right {
+		justify-content: flex-end;
+		text-align: right;
+	}
+
+	.outline__header .brand__name {
+		color: var(--ol-header-text, var(--ol-title, var(--text-primary)));
+	}
+
+	.outline__header .brand__tagline {
+		color: var(--ol-header-text, var(--ol-copy, var(--ol-text, var(--text-secondary))));
+	}
+
+	/* The link under the card that switches between signing in and signing up. */
+	/* Spaced by the column (or the card) it sits in, as the Login UI's link under the card. */
+	.outline__switch {
+		margin: 0;
+		text-align: center;
+		font-size: var(--preview-fs-small);
+		font-weight: var(--fw-semibold);
+		color: var(--ol-link);
+	}
+
+	.outline__switch--pane {
+		justify-self: center;
+		padding: 2px 12px;
+		border-radius: var(--ol-control-radius);
+		background: var(--ol-card);
 	}
 
 	/* Floating over the stage or over the form side: its top end corner. */
@@ -810,9 +949,13 @@
 		position: relative;
 		grid-row: 3;
 		padding: 16px 40px;
-		text-align: center;
-		color: var(--ol-copy, var(--ol-text, var(--text-secondary)));
+		background: var(--ol-footer-bg, transparent);
+		color: var(--ol-footer-text, var(--ol-copy, var(--ol-text, var(--text-secondary))));
 		font-size: var(--preview-fs-small);
+	}
+
+	.outline__footer-text {
+		margin: 0;
 	}
 
 	.outline__footer a {
@@ -1054,7 +1197,7 @@
 		font-size: var(--preview-fs-label);
 		border-radius: var(--ol-button-radius, var(--ol-control-radius, var(--radius-sm)));
 		background: var(--ol-accent);
-		color: var(--text-inverse);
+		color: var(--ol-accent-text, var(--text-inverse));
 		font-weight: var(--fw-semibold);
 		--icon-size: var(--icon-md);
 	}

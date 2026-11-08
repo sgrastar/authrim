@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { newThemeDraft, type ThemeDraft } from './theme-draft';
-import { draftToValues, openStored, uploadThemeImages, valuesToDraft } from './theme-values';
+import {
+	draftToValues,
+	needsResave,
+	openStored,
+	uploadThemeImages,
+	valuesToDraft
+} from './theme-values';
 
 function edited(): ThemeDraft {
 	const draft = newThemeDraft();
@@ -127,6 +133,105 @@ describe('theme values', () => {
 		expect(draftToValues(newThemeDraft())).not.toHaveProperty('login-ui.field_color');
 	});
 
+	it('saves the bars, links and dark-mode colours, and opens them again', () => {
+		const draft = {
+			...newThemeDraft(),
+			linkColor: '#1a73e8',
+			headerBackground: '#ffffffcc',
+			headerText: '#101010',
+			footerBackground: '#000000',
+			footerText: '#eeeeee',
+			headerAlign: 'center' as const,
+			footerAlign: 'right' as const,
+			topbarPosition: 'header_right' as const,
+			darkColours: { accent: '#93aef2', header_background: '#0b0e16' }
+		};
+		const values = draftToValues(draft);
+		expect(values).toMatchObject({
+			'login-ui.link_color': '#1a73e8',
+			'login-ui.header_background_color': '#ffffffcc',
+			'login-ui.header_text_color': '#101010',
+			'login-ui.footer_background_color': '#000000',
+			'login-ui.footer_text_color': '#eeeeee',
+			'login-ui.header_align': 'center',
+			'login-ui.footer_align': 'right',
+			'login-ui.topbar_position': 'header_right',
+			'login-ui.header_style': 'bar',
+			'login-ui.footer_style': 'bar',
+			'login-ui.dark_colors': '{"accent":"#93aef2","header_background":"#0b0e16"}'
+		});
+		expect(valuesToDraft(values)).toMatchObject({
+			linkColor: '#1a73e8',
+			headerAlign: 'center',
+			footerAlign: 'right',
+			topbarPosition: 'header_right',
+			darkColours: { accent: '#93aef2', header_background: '#0b0e16' }
+		});
+		// No dark colour set: written empty (the theme has a dark set, the palette's).
+		expect(draftToValues(newThemeDraft())['login-ui.dark_colors']).toBe('');
+	});
+
+	it('opens the new colours as the screens read them, dropping what they would not apply', () => {
+		const draft = valuesToDraft({
+			'login-ui.link_color': 'rgb(100%, 0%, 0%)',
+			'login-ui.header_background_color': '#1f2a44',
+			'login-ui.title_color': 'red'
+		});
+		expect(draft.linkColor).toBe('');
+		expect(draft.headerBackground).toBe('#1f2a44');
+		// The older colours keep their wider rule.
+		expect(draft.titleColor).toBe('red');
+	});
+
+	it('takes over the colours of a dark theme saved before dark colours had a set of their own', () => {
+		const stored = openStored({
+			'login-ui.theme': 'dark',
+			'login-ui.background_color': '#101820',
+			'login-ui.accent_color': '#ff8800',
+			'login-ui.title_color': 'white'
+		});
+		// Opened as an explicit dark set, in the form the dark set takes (the named colour left out)...
+		expect(stored.opened.darkColours).toEqual({ background: '#101820', accent: '#ff8800' });
+		// ...which saving writes, unchanged too: the preview shows what is saved.
+		expect(draftToValues(stored.opened, stored)['login-ui.dark_colors']).toBe(
+			'{"background":"#101820","accent":"#ff8800"}'
+		);
+		// A light colour changed afterwards stays light: the dark set is the theme's own now.
+		const changed = { ...stored.opened, background: '#ffffff' };
+		expect(draftToValues(changed, stored)['login-ui.dark_colors']).toBe(
+			'{"background":"#101820","accent":"#ff8800"}'
+		);
+		// A theme that has dark colours, or follows the device, is read as it is.
+		expect(
+			valuesToDraft({
+				'login-ui.theme': 'dark',
+				'login-ui.dark_colors': '',
+				'login-ui.accent_color': '#ff8800'
+			}).darkColours
+		).toEqual({});
+		expect(
+			valuesToDraft({ 'login-ui.theme': 'auto', 'login-ui.accent_color': '#ff8800' }).darkColours
+		).toEqual({});
+	});
+
+	it('tells a stored theme that would be saved differently from one that would not', () => {
+		// Saved before the bars: saving it changes it.
+		expect(needsResave(openStored({ 'login-ui.palette': 'glass' }))).toBe(true);
+		// Saved by this editor: saving it again changes nothing.
+		const saved = draftToValues(newThemeDraft());
+		expect(needsResave(openStored(saved))).toBe(false);
+	});
+
+	it('writes the header and footer as bars over a stored theme that said otherwise', () => {
+		const stored = openStored({
+			'login-ui.header_style': 'center',
+			'login-ui.footer_style': 'simple'
+		});
+		const values = draftToValues(stored.opened, stored);
+		expect(values['login-ui.header_style']).toBe('bar');
+		expect(values['login-ui.footer_style']).toBe('bar');
+	});
+
 	it('shows nothing of the brand on the panel as brand_content_mode none', () => {
 		const values = draftToValues({ ...newThemeDraft(), brandLogoDisplay: 'none' });
 		expect(values['login-ui.brand_content_mode']).toBe('none');
@@ -230,8 +335,14 @@ describe('theme values', () => {
 	});
 
 	it('keeps a stored theme with no values as it is, not as a new one', () => {
+		// Only what the editor always draws is written: the header and footer as bars, and a dark
+		// set (empty: the palette's).
 		const values = draftToValues(valuesToDraft({}), openStored({}));
-		expect(values).toEqual({});
+		expect(values).toEqual({
+			'login-ui.header_style': 'bar',
+			'login-ui.footer_style': 'bar',
+			'login-ui.dark_colors': ''
+		});
 	});
 
 	it('keeps a panel that shows the logo alone', () => {

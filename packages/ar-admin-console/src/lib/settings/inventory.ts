@@ -539,7 +539,13 @@ place('customization/login-ui', 'Colours', {
 		'login-ui.copy_color',
 		'login-ui.form_area_color',
 		'login-ui.field_color',
-		'login-ui.secondary_button_color'
+		'login-ui.secondary_button_color',
+		'login-ui.link_color',
+		'login-ui.header_background_color',
+		'login-ui.header_text_color',
+		'login-ui.footer_background_color',
+		'login-ui.footer_text_color',
+		'login-ui.dark_colors'
 	]
 });
 place('customization/login-ui', 'Layout', {
@@ -555,6 +561,8 @@ place('customization/login-ui', 'Layout', {
 		'login-ui.language_switcher_position',
 		'login-ui.header_style',
 		'login-ui.footer_style',
+		'login-ui.header_align',
+		'login-ui.footer_align',
 		'login-ui.logo_layout',
 		'login-ui.form_frame',
 		'login-ui.background_image_url',
