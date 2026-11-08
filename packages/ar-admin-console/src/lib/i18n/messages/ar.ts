@@ -352,6 +352,7 @@ export const ar = {
 	'setup.error.verification': 'تعذّر التحقق من مفتاح المرور. يُرجى المحاولة مرة أخرى.',
 	'setup.error.generic': 'تعذّر إكمال التسجيل.',
 	'nav.primaryLabel': 'القائمة الرئيسية',
+	'nav.menuOf': 'صفحات {name}',
 
 	/* --- parts --- */
 	'json.valid': 'JSON صالح',

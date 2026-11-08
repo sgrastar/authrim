@@ -83,7 +83,7 @@
 			docs: {
 				description: {
 					component:
-						'The console frame: header with the scope switcher, header categories, left nav and the phone drawer. Click categories to see the left nav turn over (click several quickly to see the turn abandoned for the new rows); switch the scope to the platform to see the category bar flip.'
+						"The console frame: header with the scope switcher, header categories, left nav and the phone drawer. Click categories to see the left nav turn over (click several quickly to see the turn abandoned for the new rows); switch the scope to the platform to see the category bar flip.\n\nRest the pointer on a category to drop a menu of its pages, as the OS menu bar does; while one is open, slide along the bar to open the next. A click on a category still opens its first page. From the keyboard: ↓ on a category opens its menu, ↑ ↓ walk it, ← → move to the next category's menu, Esc closes it. Touch has no menus (a tap opens the category)."
 				}
 			}
 		}
@@ -122,6 +122,48 @@
 				canvas.getAllByRole('link', { current: 'page' }).map((link) => link.getAttribute('href'))
 			).toContain('/admin/access/apis')
 		);
+	}}
+/>
+
+<Story
+	name="Category menus"
+	args={{ path: '/admin/monitoring/audit' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const nav = canvas.getAllByRole('navigation')[0];
+		const [, users, access] = within(nav).getAllByRole('link');
+		const expanded = () => nav.querySelector('button[aria-expanded="true"]');
+		const menuOf = (link: HTMLElement) =>
+			canvas.queryByRole('group', { name: link.textContent!.trim() });
+		// ↓ on a category drops its menu and puts the keyboard on its first page.
+		users.focus();
+		await userEvent.keyboard('{ArrowDown}');
+		await waitFor(() => expect(menuOf(users)).not.toBeNull());
+		await waitFor(() => expect(menuOf(users)!.contains(document.activeElement)).toBe(true));
+		// → moves to the next category's menu; Esc closes it and goes back to that category.
+		await userEvent.keyboard('{ArrowRight}');
+		await waitFor(() => expect(menuOf(access)).not.toBeNull());
+		await expect(expanded()).not.toBeNull();
+		await userEvent.keyboard('{Escape}');
+		await waitFor(() => expect(menuOf(access)).toBeNull());
+		await expect(access).toHaveFocus();
+		// Tab from the category reaches its menu button: Enter opens the menu (screen readers).
+		await userEvent.tab();
+		await expect(document.activeElement?.getAttribute('aria-expanded')).toBe('false');
+		const accessToggle = document.activeElement as HTMLElement;
+		await userEvent.keyboard('{Enter}');
+		await waitFor(() => expect(menuOf(access)).not.toBeNull());
+		// Shift+Tab from the menu goes back to its category's button, not to the end of the bar.
+		await waitFor(() => expect(menuOf(access)!.contains(document.activeElement)).toBe(true));
+		await userEvent.tab({ shift: true });
+		await waitFor(() => expect(menuOf(access)).toBeNull());
+		await expect(accessToggle).toHaveFocus();
+		await userEvent.keyboard('{Enter}');
+		await waitFor(() => expect(menuOf(access)).not.toBeNull());
+		// Esc closes it from anywhere, not only from inside the menu.
+		(document.activeElement as HTMLElement).blur();
+		await userEvent.keyboard('{Escape}');
+		await waitFor(() => expect(menuOf(access)).toBeNull());
 	}}
 />
 
