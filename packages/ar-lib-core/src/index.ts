@@ -192,6 +192,7 @@ export * from './utils/claim-normalizer';
 export * from './utils/feature-flags';
 export * from './utils/ssrf-protection';
 export * from './utils/post-login-routing';
+export * from './utils/account-page-published';
 export * from './utils/totp';
 export * from './utils/totp-backup-codes';
 

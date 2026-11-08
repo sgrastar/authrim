@@ -16,6 +16,7 @@ import {
 import { discoveryHandler } from './discovery';
 import { jwksHandler } from './jwks';
 import { webfingerHandler } from './webfinger';
+import { passkeyEndpointsHandler } from './passkey-endpoints';
 import {
   adminAgentAuthorizationServerMetadataHandler,
   agentProtectedResourceMetadataHandler,
@@ -101,6 +102,9 @@ app.get('/.well-known/webfinger', webfingerHandler);
 
 // JWKS endpoint (JSON Web Key Set)
 app.get('/.well-known/jwks.json', jwksHandler);
+
+// W3C A Well-Known URL for Passkey Endpoints (404 while passkey sign-in or the account page is off)
+app.get('/.well-known/passkey-endpoints', passkeyEndpointsHandler);
 
 // 404 handler
 app.notFound((c) => {

@@ -188,6 +188,64 @@ describe('Router Worker', () => {
 
         expect(mockEnv.OP_DISCOVERY.fetch).toHaveBeenCalledTimes(1);
       });
+
+      describe('/.well-known/passkey-endpoints', () => {
+        const loginUiProxyEnv = (tenantId: string, selfService?: Record<string, unknown>) => ({
+          ...mockEnv,
+          BASE_DOMAIN: 'example.com',
+          DEFAULT_TENANT_ID: tenantId,
+          SETTINGS: createMockKV(
+            selfService
+              ? { [`settings:tenant:${tenantId}:self-service`]: JSON.stringify(selfService) }
+              : {}
+          ),
+          ENABLE_LOGIN_UI_PATH_PROXY: 'true',
+          AR_LOGIN_UI_URL: 'https://ar-login-ui.example.workers.dev',
+        });
+
+        it('routes to OP_DISCOVERY while this host serves the account page', async () => {
+          const res = await app.fetch(
+            new Request('https://pkon.example.com/.well-known/passkey-endpoints'),
+            loginUiProxyEnv('pkon')
+          );
+
+          expect(res.status).toBe(200);
+          expect(mockEnv.OP_DISCOVERY.fetch).toHaveBeenCalledTimes(1);
+        });
+
+        it('returns 404 while the Login UI path proxy is off', async () => {
+          const res = await app.fetch(
+            new Request('https://example.com/.well-known/passkey-endpoints'),
+            mockEnv
+          );
+
+          expect(res.status).toBe(404);
+          expect(res.headers.get('Cache-Control')).toBe('no-store');
+          expect(mockEnv.OP_DISCOVERY.fetch).not.toHaveBeenCalled();
+        });
+
+        it('returns 404 while no Login UI is configured to proxy to', async () => {
+          const res = await app.fetch(
+            new Request('https://pknoui.example.com/.well-known/passkey-endpoints'),
+            { ...loginUiProxyEnv('pknoui'), AR_LOGIN_UI_URL: undefined }
+          );
+
+          expect(res.status).toBe(404);
+          expect(res.headers.get('Cache-Control')).toBe('no-store');
+          expect(mockEnv.OP_DISCOVERY.fetch).not.toHaveBeenCalled();
+        });
+
+        it('returns 404 while the tenant account page is disabled', async () => {
+          const res = await app.fetch(
+            new Request('https://pkoff.example.com/.well-known/passkey-endpoints'),
+            loginUiProxyEnv('pkoff', { 'self-service.account_page_enabled': false })
+          );
+
+          expect(res.status).toBe(404);
+          expect(res.headers.get('Cache-Control')).toBe('no-store');
+          expect(mockEnv.OP_DISCOVERY.fetch).not.toHaveBeenCalled();
+        });
+      });
     });
 
     describe('OP_VC routes', () => {

@@ -115,6 +115,22 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/JWKS'
+  /.well-known/passkey-endpoints:
+    get:
+      tags:
+        - Discovery
+      summary: Return the W3C passkey endpoints for this origin.
+      description: >-
+        W3C A Well-Known URL for Passkey Endpoints. Both URLs point at the placement of the
+        published account page that shows the passkey list, on the request host. Published only
+        while the tenant allows passkey sign-in, the account page is enabled and shows the passkey
+        list to everyone, and the Router serves the account page on the host (Login UI path proxy
+        on); otherwise 404.
+      responses:
+        '200':
+          $ref: '#/components/responses/PasskeyEndpoints'
+        '404':
+          $ref: '#/components/responses/PasskeyEndpointsNotFound'
 components:
   responses:
     SettingsUnavailable:
@@ -217,6 +233,33 @@ components:
             links:
               - rel: http://openid.net/specs/connect/1.0/issuer
                 href: https://auth.example.com
+    PasskeyEndpoints:
+      description: Where to create and manage passkeys for this origin.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+          example: public, max-age=300
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PasskeyEndpointsResponse'
+          example:
+            enroll: https://auth.example.com/account#passkeys
+            manage: https://auth.example.com/account#passkeys
+    PasskeyEndpointsNotFound:
+      description: Passkey sign-in or the account page is disabled for the tenant.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+              message:
+                type: string
     JWKS:
       description: Successful JSON response.
       content:
@@ -577,6 +620,18 @@ components:
               href:
                 type: string
                 format: uri
+    PasskeyEndpointsResponse:
+      type: object
+      required:
+        - enroll
+        - manage
+      properties:
+        enroll:
+          type: string
+          format: uri
+        manage:
+          type: string
+          format: uri
     JwksResponse:
       type: object
       required:
