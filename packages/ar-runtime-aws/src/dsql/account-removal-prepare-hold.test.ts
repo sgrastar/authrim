@@ -7,6 +7,7 @@ import {
   DIRECTORY_REMOVAL_ACCOUNT_HELD,
   createLookupBlindIndex,
   insertPreparedAccountDirectoryRemovals,
+  insertPreparedUnpublishedAccountRemovals,
   type AccountDirectoryRemovalPublication,
 } from '@authrim/ar-lib-core';
 import { AuroraDsqlAdapter, type DsqlClient, type DsqlQueryResult } from './adapter';
@@ -49,7 +50,11 @@ async function removal(): Promise<AccountDirectoryRemovalPublication> {
 }
 
 /** Each attempt's guard matches the next count of `guardRows`; the first COMMIT may conflict. */
-function adapterWith(guardRows: number[], conflictOnFirstCommit = false) {
+function adapterWith(
+  guardRows: number[],
+  conflictOnFirstCommit = false,
+  rowsFor: (sql: string) => number | undefined = () => undefined
+) {
   const queries: string[] = [];
   let commits = 0;
   let guards = 0;
@@ -64,6 +69,8 @@ function adapterWith(guardRows: number[], conflictOnFirstCommit = false) {
       if (sql.includes('UPDATE account_legal_hold_states')) {
         return { rows: [], rowCount: guardRows[Math.min(guards++, guardRows.length - 1)] };
       }
+      const rows = rowsFor(sql);
+      if (rows !== undefined) return { rows: [], rowCount: rows };
       return { rows: [], rowCount: /^(BEGIN|COMMIT|ROLLBACK)/u.test(sql) ? 0 : 1 };
     }),
     release: vi.fn(),
@@ -104,5 +111,43 @@ describe('account removal prepare on Aurora DSQL', () => {
     expect(queries[0]).toMatch(/^BEGIN/u);
     expect(queries[1]).toContain('UPDATE account_legal_hold_states');
     expect(queries.at(-1)).toBe('COMMIT');
+  });
+
+  describe('an unpublished account (insertPreparedUnpublishedAccountRemovals)', () => {
+    const blocksCreation = (sql: string) =>
+      sql.includes("last_error_code = 'registration_abandoned'");
+
+    it("commits when only its creation's publication had no row to block", async () => {
+      const { adapter, queries } = adapterWith([1], false, (sql) =>
+        blocksCreation(sql) ? 0 : undefined
+      );
+
+      await insertPreparedUnpublishedAccountRemovals(adapter, [await removal()], 1_800_000_000);
+      expect(queries.at(-1)).toBe('COMMIT');
+      expect(queries.some((sql) => sql.includes("directory_publication_state = 'disabled'"))).toBe(
+        true
+      );
+    });
+
+    it('rolls back everything when the account was published (or leased) meanwhile', async () => {
+      const { adapter, queries } = adapterWith([1], false, (sql) =>
+        sql.includes('UPDATE identity_accounts') ? 0 : undefined
+      );
+
+      await expect(
+        insertPreparedUnpublishedAccountRemovals(adapter, [await removal()], 1_800_000_000)
+        // The adapter replaces what its transaction's callback throws.
+      ).rejects.toThrow();
+      expect(queries).toContain('ROLLBACK');
+      expect(queries).not.toContain('COMMIT');
+    });
+
+    it('reports a legal hold as held', async () => {
+      const { adapter } = adapterWith([0]);
+
+      await expect(
+        insertPreparedUnpublishedAccountRemovals(adapter, [await removal()], 1_800_000_000)
+      ).rejects.toThrow(DIRECTORY_REMOVAL_ACCOUNT_HELD);
+    });
   });
 });

@@ -63,6 +63,22 @@ export function accountCreationGenerationKey(idempotencyKey: string, generation:
   return generation === 0 ? idempotencyKey : `${idempotencyKey}:g${generation}`;
 }
 
+/** From this generation on, a key's reuse is logged as a warning (one address, many deletions). */
+export const ACCOUNT_CREATION_GENERATION_WARNING = 16;
+
+/** The generation a resolved key is of its base key (0 for the base key itself). */
+export function accountCreationGenerationOf(idempotencyKey: string, resolvedKey: string): number {
+  if (resolvedKey === idempotencyKey) return 0;
+  const suffix = resolvedKey.startsWith(`${idempotencyKey}:g`)
+    ? resolvedKey.slice(idempotencyKey.length + 2)
+    : '';
+  const generation = /^[1-9][0-9]?$/u.test(suffix) ? Number(suffix) : NaN;
+  if (!Number.isSafeInteger(generation) || generation >= MAX_ACCOUNT_CREATION_GENERATIONS) {
+    throw new Error('account_creation_generation_key_invalid');
+  }
+  return generation;
+}
+
 /** What became of a generation's account. */
 export type PreviousAccountState = 'live' | 'deleting' | 'removed';
 
