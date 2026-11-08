@@ -30,6 +30,13 @@
 	);
 </script>
 
+<svelte:head>
+	{#if data.page === 'account' && data.widgets.emailChange?.stage === 'processing'}
+		<!-- A change of the email address under way: the page drawn again until it ends (no script). -->
+		<meta http-equiv="refresh" content="2" />
+	{/if}
+</svelte:head>
+
 {#snippet hidden(txnId: string, csrf: string, op: string)}
 	<input type="hidden" name="txn" value={txnId} />
 	<input type="hidden" name="csrf" value={csrf} />

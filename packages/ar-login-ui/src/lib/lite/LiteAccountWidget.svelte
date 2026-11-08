@@ -56,6 +56,57 @@
 			</label>
 			<button type="submit">{data.text.save}</button>
 		</form>
+		{@const change = data.widgets.emailChange}
+		{#if failed('profile') === 'code_invalid'}
+			<p role="alert">{data.text.codeInvalid}</p>
+		{:else if failed('profile') === 'busy'}
+			<p role="alert">{data.text.busy}</p>
+		{:else if failed('profile') && failed('profile') !== 'save_failed'}
+			<p role="alert">{data.text.actionFailed}</p>
+		{/if}
+		{#if notice('profile') === 'email_changed' || change?.stage === 'completed'}
+			<p role="status">{data.text.emailChanged}</p>
+		{:else if change?.stage === 'failed'}
+			<p role="alert">{data.text.actionFailed}</p>
+		{:else if change?.stage === 'processing'}
+			<!-- Under way at ar-management: the page is drawn again until it ends (LiteAccountPage). -->
+			<p role="status">{data.text.emailProcessing}</p>
+		{:else if change?.stage === 'challenge'}
+			<p>{data.text.emailCodeSent}</p>
+			<form method="post" action={actionOf(data.search, 'email_change_complete')}>
+				{@render hidden()}
+				<input type="hidden" name="challenge" value={change.challengeId} />
+				<label>
+					{data.text.emailCode}
+					<input
+						name="code"
+						inputmode="numeric"
+						autocomplete="one-time-code"
+						pattern={'[0-9]{6}'}
+						maxlength="6"
+						required
+					/>
+				</label>
+				<button type="submit">{data.text.emailVerify}</button>
+			</form>
+			<form method="post" action={actionOf(data.search, 'email_change_cancel')}>
+				{@render hidden()}
+				<input type="hidden" name="challenge" value={change.challengeId} />
+				<button type="submit">{data.text.cancel}</button>
+			</form>
+		{:else}
+			<details>
+				<summary>{data.text.manage}</summary>
+				<form method="post" action={actionOf(data.search, 'email_change_start')}>
+					{@render hidden()}
+					<label>
+						{data.text.newEmail}
+						<input name="email" type="email" autocomplete="email" maxlength="254" required />
+					</label>
+					<button type="submit">{data.text.continue}</button>
+				</form>
+			</details>
+		{/if}
 	{:else if widget === 'account_session_widget'}
 		<p class="muted">{data.text.sessionsDescription}</p>
 		{#if failed('sessions')}<p role="alert">{data.text.actionFailed}</p>{/if}

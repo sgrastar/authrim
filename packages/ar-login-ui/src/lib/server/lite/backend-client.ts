@@ -82,7 +82,9 @@ const EXTRA_HEADERS: ReadonlySet<string> = new Set([
 	// The consent answer's form post as data (the lite relay page sends it).
 	'x-authrim-relay',
 	// The page's language, where the answer's words follow it (the account page's consents).
-	'accept-language'
+	'accept-language',
+	// A change made once only (the account page's email change confirmation).
+	'idempotency-key'
 ]);
 
 const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;

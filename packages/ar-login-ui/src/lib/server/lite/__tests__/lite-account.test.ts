@@ -1962,4 +1962,305 @@ describe('the lite account page', () => {
 			}
 		});
 	});
+
+	describe('changing the email address', () => {
+		let recent: boolean;
+		let operationState: string;
+		const emailPage = () => {
+			methods = {
+				passkey: { enabled: false },
+				emailCode: { enabled: true, reauthEnabled: true },
+				totp: { enabled: false },
+				external: { enabled: false }
+			};
+			recent = true;
+			operationState = 'processing';
+			routes['/api/account/capabilities'] = () =>
+				json({
+					account_page: {
+						definition: { screens: [{ id: 'profile', screen_key: 'k' }] },
+						screens: [
+							{
+								screen_key: 'k',
+								fields: [{ block_type: 'account_profile_widget', field: 'account.profile' }]
+							}
+						]
+					}
+				});
+			routes['/api/account/identifier-replacements/start'] = (body) =>
+				recent
+					? json(
+							{
+								challenge_id: `identifier-replacement-${String(body.email).length}`,
+								expires_in: 600
+							},
+							202
+						)
+					: json({ error: 'reauthentication_required', reauth_required: true }, 403);
+			routes['/api/account/identifier-replacements/complete'] = (body, init) => {
+				const key = new Headers(init.headers).get('Idempotency-Key');
+				if (!key) return json({ error: 'invalid_request' }, 400);
+				if (body.code !== '123456') return json({ error: 'invalid_code' }, 400);
+				return json({ operation: { id: 'identifier-replacement:op', state: 'processing' } }, 202);
+			};
+			routes['/api/account/identifier-replacements/identifier-replacement%3Aop'] = () =>
+				json({ operation: { id: 'identifier-replacement:op', state: operationState } });
+			routes['/api/account/identifier-replacements/identifier-replacement:op'] = () =>
+				json({ operation: { id: 'identifier-replacement:op', state: operationState } });
+		};
+		type Page = {
+			widgets: { emailChange: { stage: string; email: string; challengeId: string } | null };
+			text: { emailCodeSent: string };
+		};
+
+		it('sends a code to the new address, confirms it once, and waits for the change', async () => {
+			emailPage();
+			expect(((await view()) as Page).widgets.emailChange).toBeNull();
+			await expect(post('email_change_start', { email: ' new@example.com ' })).resolves.toEqual({
+				notice: 'email_code_sent',
+				widget: 'profile'
+			});
+			const waiting = (await view()) as Page;
+			expect(waiting.widgets.emailChange).toMatchObject({
+				stage: 'challenge',
+				email: 'new@example.com'
+			});
+			expect(waiting.text.emailCodeSent).toContain('new@example.com');
+			const challenge = waiting.widgets.emailChange!.challengeId;
+			await expect(
+				post('email_change_complete', { challenge, code: '000000' })
+			).resolves.toMatchObject({ status: 400, data: { error: 'code_invalid' } });
+			await expect(post('email_change_complete', { challenge, code: '123456' })).resolves.toEqual({
+				notice: 'email_processing',
+				widget: 'profile'
+			});
+			// The confirmation's key is the change's own (a double submit is the same confirmation).
+			const keys = calls
+				.filter((call) => call.path === '/api/account/identifier-replacements/complete')
+				.map((call) => call.headers.get('Idempotency-Key'));
+			expect(new Set(keys).size).toBe(1);
+			expect(JSON.stringify(store.txn.data)).not.toContain('123456');
+			expect(((await view()) as Page).widgets.emailChange?.stage).toBe('processing');
+			// A second confirmation of it does nothing.
+			await expect(
+				post('email_change_complete', { challenge, code: '123456' })
+			).resolves.toMatchObject({ status: 409 });
+			operationState = 'completed';
+			expect(((await view()) as Page).widgets.emailChange?.stage).toBe('completed');
+			expect(store.txn.data.accountEmailChange).toBeUndefined();
+		});
+
+		it('holds the change for a step-up, and gives an older form’s change up not', async () => {
+			emailPage();
+			recent = false;
+			await view();
+			await expect(post('email_change_start', { email: 'new@example.com' })).resolves.toMatchObject(
+				{
+					status: 403,
+					data: { stepUp: true }
+				}
+			);
+			expect(store.txn.data.accountStepUp).toMatchObject({
+				pending: { action: 'email_change_start', args: { email: 'new@example.com' } }
+			});
+			recent = true;
+			store.set({ data: { ...store.txn.data, accountStepUp: undefined } });
+			await post('email_change_start', { email: 'new@example.com' });
+			await post('email_change_cancel', { challenge: 'identifier-replacement-0' });
+			expect(store.txn.data.accountEmailChange).toBeDefined();
+			const challenge = (store.txn.data.accountEmailChange as { challengeId: string }).challengeId;
+			await expect(post('email_change_cancel', { challenge })).resolves.toMatchObject({
+				notice: 'email_cancelled'
+			});
+			expect(store.txn.data.accountEmailChange).toBeUndefined();
+			await expect(post('email_change_start', { email: 'not an address' })).resolves.toMatchObject({
+				status: 400,
+				data: { error: 'email_invalid' }
+			});
+		});
+
+		it('says a change failed when it ends so, or does not end in its time', async () => {
+			emailPage();
+			await view();
+			await post('email_change_start', { email: 'new@example.com' });
+			const challenge = (store.txn.data.accountEmailChange as { challengeId: string }).challengeId;
+			await post('email_change_complete', { challenge, code: '123456' });
+			store.set({
+				data: {
+					...store.txn.data,
+					accountEmailChange: {
+						...(store.txn.data.accountEmailChange as object),
+						expiresAt: Date.now() - 1
+					}
+				}
+			});
+			expect(((await view()) as Page).widgets.emailChange?.stage).toBe('failed');
+			expect(store.txn.data.accountEmailChange).toBeUndefined();
+		});
+
+		it('starts no change over one under way, and an older cancel gives a confirmed one up not', async () => {
+			emailPage();
+			await view();
+			await post('email_change_start', { email: 'new@example.com' });
+			const starts = () =>
+				calls.filter((call) => call.path === '/api/account/identifier-replacements/start').length;
+			const before = starts();
+			await expect(
+				post('email_change_start', { email: 'other@example.com' })
+			).resolves.toMatchObject({ status: 409, data: { error: 'email_change_exists' } });
+			expect(starts()).toBe(before);
+			const challenge = (store.txn.data.accountEmailChange as { challengeId: string }).challengeId;
+			await post('email_change_complete', { challenge, code: '123456' });
+			await post('email_change_cancel', { challenge });
+			expect(store.txn.data.accountEmailChange).toMatchObject({
+				operationId: 'identifier-replacement:op'
+			});
+		});
+
+		it('draws the new address once the change ended, whatever moved meanwhile', async () => {
+			emailPage();
+			await view();
+			await post('email_change_start', { email: 'new@example.com' });
+			const challenge = (store.txn.data.accountEmailChange as { challengeId: string }).challengeId;
+			await post('email_change_complete', { challenge, code: '123456' });
+			let ended = false;
+			const done: Handler = () => {
+				// Reading it finishes it, and another post moves the transaction meanwhile.
+				ended = true;
+				store.set({ version: store.txn.version + 1 });
+				return json({ operation: { id: 'identifier-replacement:op', state: 'completed' } });
+			};
+			routes['/api/account/identifier-replacements/identifier-replacement%3Aop'] = done;
+			routes['/api/account/identifier-replacements/identifier-replacement:op'] = done;
+			routes['/api/account/profile'] = () =>
+				json({
+					profile: {
+						user_id: 'user-a',
+						registration_state: 'registered',
+						email: ended ? 'new@example.com' : 'a@example.com'
+					},
+					session: { id: 's-a', amr: ['pwd'] }
+				});
+			const page = (await view()) as Page & { widgets: { profile: { email: string } } };
+			expect(page.widgets.emailChange?.stage).toBe('completed');
+			expect(page.widgets.profile.email).toBe('new@example.com');
+			expect(store.txn.data.accountEmailChange).toBeUndefined();
+		});
+
+		it('says a change ar-management stopped failed, and asks the code again after a step-up', async () => {
+			emailPage();
+			await view();
+			await post('email_change_start', { email: 'new@example.com' });
+			const challenge = (store.txn.data.accountEmailChange as { challengeId: string }).challengeId;
+			routes['/api/account/identifier-replacements/complete'] = () =>
+				json({ error: 'reauthentication_required', reauth_required: true }, 403);
+			await expect(
+				post('email_change_complete', { challenge, code: '123456' })
+			).resolves.toMatchObject({ status: 403, data: { stepUp: true } });
+			expect(store.txn.data.accountStepUp).toMatchObject({
+				pending: { action: 'email_change_reenter', args: {} }
+			});
+			expect(JSON.stringify(store.txn.data)).not.toContain('123456');
+			store.set({ data: { ...store.txn.data, accountStepUp: undefined } });
+			routes['/api/account/identifier-replacements/complete'] = () =>
+				json({ operation: { id: 'identifier-replacement:op', state: 'canceled' } }, 200);
+			await expect(
+				post('email_change_complete', { challenge, code: '123456' })
+			).resolves.toMatchObject({ status: 409 });
+			expect(store.txn.data.accountEmailChange).toBeUndefined();
+		});
+
+		it('gives a change up not while its confirmation is under way', async () => {
+			emailPage();
+			await view();
+			await post('email_change_start', { email: 'new@example.com' });
+			const challenge = (store.txn.data.accountEmailChange as { challengeId: string }).challengeId;
+			let during: unknown = null;
+			routes['/api/account/identifier-replacements/complete'] = (async () => {
+				during = await post('email_change_cancel', { challenge });
+				return json({ operation: { id: 'identifier-replacement:op', state: 'processing' } }, 202);
+			}) as unknown as Handler;
+			await expect(post('email_change_complete', { challenge, code: '123456' })).resolves.toEqual({
+				notice: 'email_processing',
+				widget: 'profile'
+			});
+			expect(during).toMatchObject({ status: 409, data: { error: 'busy' } });
+			expect(store.txn.data.accountEmailChange).toMatchObject({
+				operationId: 'identifier-replacement:op',
+				confirmingAt: null
+			});
+		});
+
+		it('keeps an authenticator’s setup begun while the page was drawn', async () => {
+			emailPage();
+			routes['/api/account/capabilities'] = () =>
+				json({
+					account_page: {
+						definition: { screens: [{ id: 'profile', screen_key: 'k' }] },
+						screens: [
+							{
+								screen_key: 'k',
+								fields: [
+									{ block_type: 'account_profile_widget', field: 'account.profile' },
+									{ block_type: 'account_totp_widget', field: 'account.totp' }
+								]
+							}
+						]
+					}
+				});
+			routes['/api/account/totp'] = () => json({ credentials: [] });
+			await view();
+			await post('email_change_start', { email: 'new@example.com' });
+			const challenge = (store.txn.data.accountEmailChange as { challengeId: string }).challengeId;
+			await post('email_change_complete', { challenge, code: '123456' });
+			const ended: Handler = () => {
+				// Another tab begins an authenticator's setup while the change is read.
+				store.set({
+					data: {
+						...store.txn.data,
+						accountTotpEnroll: {
+							credentialId: 'tc-new',
+							secret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+							otpauthUri: 'otpauth://totp/A:a?secret=JBSWY3DPEHPK3PXP',
+							expiresAt: Date.now() + 600_000
+						}
+					},
+					version: store.txn.version + 1
+				});
+				return json({ operation: { id: 'identifier-replacement:op', state: 'completed' } });
+			};
+			routes['/api/account/identifier-replacements/identifier-replacement%3Aop'] = ended;
+			routes['/api/account/identifier-replacements/identifier-replacement:op'] = ended;
+			await view();
+			expect(store.txn.data.accountEmailChange).toBeUndefined();
+			expect(store.txn.data.accountTotpEnroll).toMatchObject({ credentialId: 'tc-new' });
+		});
+
+		it('keeps a change whose code’s time passes while its confirmation is answered', async () => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			try {
+				emailPage();
+				await view();
+				await post('email_change_start', { email: 'new@example.com' });
+				const challenge = (store.txn.data.accountEmailChange as { challengeId: string })
+					.challengeId;
+				routes['/api/account/identifier-replacements/complete'] = (async () => {
+					// Past the code's time, another tab draws the page while ar-management answers.
+					vi.setSystemTime(Date.now() + 20_000);
+					await view();
+					return json({ operation: { id: 'identifier-replacement:op', state: 'processing' } }, 202);
+				}) as unknown as Handler;
+				// Confirmed just before the code's time ends.
+				vi.setSystemTime(Date.now() + 590_000);
+				await expect(post('email_change_complete', { challenge, code: '123456' })).resolves.toEqual(
+					{ notice: 'email_processing', widget: 'profile' }
+				);
+				expect(store.txn.data.accountEmailChange).toMatchObject({
+					operationId: 'identifier-replacement:op'
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
 });

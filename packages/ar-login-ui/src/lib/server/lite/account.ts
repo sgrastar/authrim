@@ -47,6 +47,12 @@ import {
 	liteAccountSocialOutcome
 } from './account-social';
 import {
+	liteAccountEmailActions,
+	liteAccountEmailChangeStale,
+	liteAccountEmailChangeView,
+	readLiteAccountEmailChange
+} from './account-email';
+import {
 	liteAccountGuest,
 	liteAccountGuestActions,
 	liteAccountGuestAttemptStale,
@@ -187,17 +193,29 @@ export async function liteAccountPage(event: RequestEvent) {
 		return errorPage(event, 'unavailable');
 	}
 	let txn = created.txn;
+	/**
+	 * Takes `key` from the transaction as it is now (read again when another post moved it), while
+	 * `still` holds of what it keeps: what the page drew from it is never taken over a newer one.
+	 */
+	const clearHeld = async (key: string, still: (held: Record<string, unknown>) => boolean) => {
+		for (let attempt = 0; attempt < 3; attempt++) {
+			if (txn.data[key] === undefined || !still(record(txn.data[key]))) return;
+			const moved = await txns
+				.transition(txn.id, { expectedVersion: txn.version, to: 'pending', patch: { [key]: null } })
+				.catch(() => null);
+			if (moved?.ok) {
+				txn = moved.txn;
+				return;
+			}
+			const got = await txns.get(txn.id, { current: true }).catch(() => null);
+			if (!got?.ok) return;
+			txn = got.txn;
+		}
+	};
 	// An authenticator's setup past its time: its secret removed (the page draws it no more).
-	if (liteAccountTotpEnrollStale(txn.data)) {
-		const cleared = await txns
-			.transition(txn.id, {
-				expectedVersion: txn.version,
-				to: 'pending',
-				patch: { accountTotpEnroll: null }
-			})
-			.catch(() => null);
-		if (cleared?.ok) txn = cleared.txn;
-	}
+	await clearHeld('accountTotpEnroll', (held) =>
+		liteAccountTotpEnrollStale({ accountTotpEnroll: held })
+	);
 
 	const [capabilities, profile] = await Promise.all([
 		read(backend, '/api/account/capabilities'),
@@ -211,6 +229,8 @@ export async function liteAccountPage(event: RequestEvent) {
 	}
 	if (!capabilities.ok || !profile.ok) return errorPage(event, 'unavailable');
 	const page = readLiteAccountPage(capabilities.json);
+	// The profile drawn (read again when a change of its address has just ended).
+	let profileJson = profile.json;
 	if (!page) return errorPage(event, 'unavailable');
 
 	// The lists the placements' conditions read (only those they need).
@@ -309,6 +329,8 @@ export async function liteAccountPage(event: RequestEvent) {
 		)
 	);
 	const cursor = event.url.searchParams.get('activity_cursor');
+	// An authenticator being added, as the transaction keeps it before its list is read.
+	const enrollSeen = drawn.has('account_totp_widget') ? readLiteAccountTotpEnroll(txn.data) : null;
 	const [
 		sessionList,
 		deviceList,
@@ -356,14 +378,13 @@ export async function liteAccountPage(event: RequestEvent) {
 		conditions.registrationState === 'registered' || (guestView !== null && !guestView.guest);
 	if (liteAccountGuestAttemptStale(txn.data) || (guestAttempt && registeredNow)) {
 		guestRecovered = guestAttempt !== null && registeredNow;
-		const cleared = await txns
-			.transition(txn.id, {
-				expectedVersion: txn.version,
-				to: 'pending',
-				patch: { accountGuestUpgrade: null }
-			})
-			.catch(() => null);
-		if (cleared?.ok) txn = cleared.txn;
+		const seen = guestAttempt?.operationId ?? null;
+		await clearHeld(
+			'accountGuestUpgrade',
+			(held) =>
+				(seen !== null && held.operationId === seen) ||
+				liteAccountGuestAttemptStale({ accountGuestUpgrade: held })
+		);
 		guestAttempt = null;
 	}
 	// The registration widget is a guest's (and says a registration done): a registered account
@@ -377,8 +398,41 @@ export async function liteAccountPage(event: RequestEvent) {
 						(block) => !(block.kind === 'widget' && block.widget === 'account_upgrade_widget')
 					)
 				}));
+	// A change of the email address under way (drawn by the profile widget): its operation read; one
+	// ended, or past its time, is removed from the transaction (its end said once).
+	// (One confirmed and still not ended past its time is said failed, as the SPA's polling ends.)
+	const timedOut =
+		liteAccountEmailChangeStale(txn.data) &&
+		typeof record(txn.data.accountEmailChange).operationId === 'string';
+	const change = !drawn.has('account_profile_widget')
+		? null
+		: timedOut
+			? { stage: 'failed' as const, email: '', challengeId: '' }
+			: await liteAccountEmailChangeView(backend, readLiteAccountEmailChange(txn.data));
+	if (
+		liteAccountEmailChangeStale(txn.data) ||
+		change?.stage === 'completed' ||
+		change?.stage === 'failed'
+	) {
+		const seen = change?.challengeId || null;
+		await clearHeld(
+			'accountEmailChange',
+			(held) =>
+				(seen !== null && held.challengeId === seen) ||
+				liteAccountEmailChangeStale({ accountEmailChange: held })
+		);
+	}
+	// A change just ended (reading its operation may have finished it): the profile as it is now.
+	if (change?.stage === 'completed') {
+		const again = await read(backend, '/api/account/profile');
+		if (again.ok) profileJson = again.json;
+	}
 	// An authenticator being added: its secret and QR code (drawn once, by its widget).
-	let enroll = drawn.has('account_totp_widget') ? readLiteAccountTotpEnroll(txn.data) : null;
+	// (As the transaction was when the list was read: one a post began since is drawn the next time.)
+	let enroll =
+		enrollSeen && record(txn.data.accountTotpEnroll).credentialId === enrollSeen.credentialId
+			? enrollSeen
+			: null;
 	// A setup whose credential is no longer pending (activated, or removed, when the post that did
 	// it could not clear it): its secret removed now, never drawn again.
 	const pendingIds = new Set(
@@ -393,18 +447,12 @@ export async function liteAccountPage(event: RequestEvent) {
 	// Drawn only when the list confirms it pending (a list not read draws none: the setup is kept).
 	if (enroll && !totpList?.ok) enroll = null;
 	if (enroll && totpList?.ok && !pendingIds.has(enroll.credentialId)) {
-		const cleared = await txns
-			.transition(txn.id, {
-				expectedVersion: txn.version,
-				to: 'pending',
-				patch: { accountTotpEnroll: null }
-			})
-			.catch(() => null);
-		if (cleared?.ok) txn = cleared.txn;
+		const seen = enroll.credentialId;
+		await clearHeld('accountTotpEnroll', (held) => held.credentialId === seen);
 		enroll = null;
 	}
 	const widgets = {
-		profile: liteAccountProfile(profile.json),
+		profile: liteAccountProfile(profileJson),
 		sessions: sessionList?.ok ? liteAccountSessions(sessionList.json, LL, locale) : null,
 		devices: deviceList?.ok ? liteAccountDevices(deviceList.json, locale) : null,
 		consents: consentList?.ok ? liteAccountConsents(consentList.json, LL, locale) : null,
@@ -438,6 +486,7 @@ export async function liteAccountPage(event: RequestEvent) {
 		socialOutcome: drawn.has('account_social_account_widget')
 			? liteAccountSocialOutcome(event.url, LL)
 			: null,
+		emailChange: change,
 		guest: guestView,
 		guestRecovered,
 		guestAttempt:
@@ -595,7 +644,17 @@ export async function liteAccountPage(event: RequestEvent) {
 			guestCollision: LL.account_guestCollision(),
 			guestExistingLogin: LL.account_guestExistingLogin(),
 			guestRegistered: LL.account_guestRegistered(),
-			guestChangeMethod: LL.account_guestChangeMethod()
+			guestChangeMethod: LL.account_guestChangeMethod(),
+			manage: LL.account_manage(),
+			newEmail: LL.common_email(),
+			continue: LL.common_continue(),
+			emailCodeSent: LL.account_reauthEmailCodeSent({
+				email: change?.email ?? ''
+			}),
+			emailCode: LL.account_reauthEmailCodePlaceholder(),
+			emailVerify: LL.account_reauthVerifyEmailCode(),
+			emailProcessing: LL.common_loading(),
+			emailChanged: LL.common_complete()
 		}
 	};
 }
@@ -699,6 +758,7 @@ export const liteAccountActions = {
 	...liteAccountSocialActions,
 	...liteAccountLauncherActions,
 	...liteAccountGuestActions,
+	...liteAccountEmailActions,
 	sign_out: liteAccountSignOutAction,
 	profile_save: liteAccountProfileSaveAction,
 	session_revoke: liteAccountSessionRevokeAction
