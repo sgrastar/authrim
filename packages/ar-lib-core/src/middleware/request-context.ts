@@ -382,6 +382,25 @@ function isReservedUiHost(env: Partial<Env>, requestHost: string | undefined): b
   return loginUiHost !== getPrimaryTenantIssuerHostname(env);
 }
 
+/**
+ * The tenant a custom (vanity) domain belongs to, decided the way this middleware decides it for
+ * an ordinary protocol or REST request: only in multi-tenant mode and only for a host outside
+ * BASE_DOMAIN (a configured Login UI or Admin UI host there is looked up too, as below). Null
+ * when the host is not a vanity host or no active tenant owns it; throws when the lookup fails.
+ * Writes nothing, not even the resolver's KV hint.
+ * For Workers that need the same answer without running this middleware (the Router asks
+ * through ar-discovery's TenantHostEntrypoint).
+ */
+export async function resolveVanityHostTenantId(
+  env: Partial<Env>,
+  host: string | null | undefined
+): Promise<string | null> {
+  const requestHost = host?.split(':')[0]?.trim().toLowerCase();
+  if (!requestHost) return null;
+  if (!shouldAttemptVanityHostResolution(env, requestHost, 'public_protocol_or_rest')) return null;
+  return resolveTenantFromVanityHost(env, requestHost, { strict: true, readOnly: true });
+}
+
 export function requestContextMiddleware(options: RequestContextMiddlewareOptions = {}) {
   const { requireTenant = true } = options;
 
