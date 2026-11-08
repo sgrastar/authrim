@@ -58,7 +58,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
 import { canonicalProjectionToScimInternalUser } from './identity-canonical-runtime';
-import { prepareAccountTombstone, writeAccountTombstone } from './account-tombstone-write';
+import { deleteAccount } from './account-deletion';
 import {
   AccountCreationOperationRepository,
   hashAccountCreationRequest,
@@ -74,13 +74,8 @@ import {
 } from './account-directory-errors';
 import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
 import {
-  attemptImmediateAccountDirectoryRemovals,
-  eraseAccountPiiAfterDirectoryRemovalPrepared,
-  fenceAccountDeletion,
   hasUnfinishedAccountDeletion,
   AccountDeletionHeldError,
-  markAccountDirectoryRemovalsReady,
-  prepareAccountDirectoryRemoval,
 } from './account-directory-removal-producer';
 import {
   CrossShardAccountExactSearchService,
@@ -416,88 +411,35 @@ async function deleteScimAccount(
   }
 ): Promise<void> {
   const { coreAdapter, piiAdapter, tenantId, userId, existingUser } = input;
-  const now = Date.now();
-  // Decided before anything changes: the address's keyed fingerprint and the tenant's retention.
-  const tombstoneInput = await prepareAccountTombstone(c.env, {
-    tenantId,
-    email: existingUser.email,
-  });
-  const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
+  // The shared saga (account-deletion.ts), in the administrator's delete's order: the sessions
+  // are ended (and their downstream logout started) before the directory removal is prepared.
+  const actorId = await scimActorRef(c);
+  const deleted = await deleteAccount(c.env, {
     tenantId,
     userId,
     core: coreAdapter,
     pii: piiAdapter,
-  });
-  // Holds fenced off before anything is erased (see fenceAccountDeletion).
-  await fenceAccountDeletion(coreAdapter, { tenantId, userId });
-
-  // The tombstone first, in the PII database (GDPR audit trail): it also stops later writes of
-  // the person's PII (a response record, a profile value) from landing after the erasure.
-  await writeAccountTombstone(piiAdapter, {
-    tenantId: existingUser.tenant_id || tenantId,
-    userId,
-    prepared: tombstoneInput,
-    deletedBy: 'scim_api',
-    reason: 'scim_delete',
-    metadata: { source: 'scim_api' },
-  });
-
-  await eraseAccountPiiAfterDirectoryRemovalPrepared(
-    piiAdapter,
-    { tenantId, userId, core: coreAdapter },
-    Math.floor(now / 1000)
-  );
-
-  await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId);
-  await markAccountDirectoryRemovalsReady(coreAdapter, directoryRemovals);
-  await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
-}
-
-async function maybeDeleteCanonicalRuntimeUser(
-  c: Context<{ Bindings: Env }>,
-  coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string
-): Promise<void> {
-  // The sessions the deletion ends: their relying parties are told after the response (each
-  // logout token carries the sub recorded with its session-client, not one read from the account
-  // being removed), also when a later step fails.
-  const deletingOperationId = crypto.randomUUID();
-  await withAdminSessionEndLogout(
-    c,
-    {
-      tenantId,
-      trigger: {
-        action: 'scim.user.delete',
-        operationId: deletingOperationId,
-        actorId: await scimActorRef(c),
-      },
-      audit: 'tenant',
+    email: existingUser.email,
+    tombstoneTenantId: existingUser.tenant_id || tenantId,
+    tombstone: {
+      deletedBy: 'scim_api',
+      reason: 'scim_delete',
+      metadata: { source: 'scim_api' },
     },
-    async (ended) => {
-      const deletingVersionMs = Date.now();
-      await transitionEndingSessions(c.env, ended, {
-        tenantId,
-        userId,
-        lifecycle: 'deleting',
-        sourceVersionMs: deletingVersionMs,
-        operationId: deletingOperationId,
-      });
-      const writer = new CanonicalRuntimeUserWriter(
-        new CanonicalIdentityRepository(coreAdapter, tenantId),
-        piiAdapter
-      );
-      await writer.deleteRuntimeUser(userId);
-      await transitionEndingSessions(c.env, ended, {
-        tenantId,
-        userId,
-        lifecycle: 'deleted',
-        sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-        operationId: crypto.randomUUID(),
-      });
-    }
-  );
+    erasedAtSeconds: Math.floor(Date.now() / 1000),
+    endSessions: (operationId, work) =>
+      withAdminSessionEndLogout(
+        c,
+        {
+          tenantId,
+          trigger: { action: 'scim.user.delete', operationId, actorId },
+          audit: 'tenant',
+        },
+        work
+      ),
+  });
+  // A hold placed since the handler's own check: refused as the handler refuses it.
+  if (deleted.status === 'held') throw new AccountDeletionHeldError();
 }
 
 /**
