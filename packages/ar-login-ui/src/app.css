@@ -4129,7 +4129,8 @@ tr.expired {
 		.auth-footer:not(.auth-bar),
 		.auth-bottom-link:not(.auth-bottom-link--in-card)
 	) {
-	background: var(--bg-card);
+	/* The form area colour (with its opacity) sets how dense the glass is, here too. */
+	background: var(--login-form-area-color, var(--bg-card));
 	border-radius: var(--radius-md);
 	backdrop-filter: blur(14px) saturate(140%);
 	-webkit-backdrop-filter: blur(14px) saturate(140%);
@@ -4140,7 +4141,7 @@ tr.expired {
 		[data-login-theme='clear-glass']
 	)
 	.card {
-	background: var(--bg-card);
+	background: var(--login-form-area-color, var(--bg-card));
 	border: 1px solid var(--border-glass);
 	box-shadow: var(--shadow-sm);
 }

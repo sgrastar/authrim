@@ -319,6 +319,23 @@ describe('split page shell', () => {
 		);
 	});
 
+	it('lets the form area colour set the density of the glass panes over a page picture', () => {
+		const css = source('app.css');
+		// The small panes of the page's own text, and the card of a minimal form, over a picture.
+		const panes = css.indexOf('\t.auth-bottom-link:not(.auth-bottom-link--in-card)\n\t) {');
+		expect(panes).toBeGreaterThan(0);
+		expect(css.slice(panes, css.indexOf('}', panes))).toContain(
+			'background: var(--login-form-area-color, var(--bg-card));'
+		);
+		const minimal = css.indexOf(
+			"[data-has-page-background-image='true'][data-login-template='minimal']"
+		);
+		expect(minimal).toBeGreaterThan(0);
+		expect(css.slice(minimal, css.indexOf('}', minimal))).toContain(
+			'background: var(--login-form-area-color, var(--bg-card));'
+		);
+	});
+
 	it('makes both glasses opaque without the blur in the split card, and leaves a page picture alone', () => {
 		const css = source('app.css');
 		// Over the page's own picture the glass stays as the palette draws it (as the admin console's
