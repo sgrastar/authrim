@@ -1163,6 +1163,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     external_idp.signed_request_max_age_seconds
+    external_idp.token_revocation_timeout_ms
   `,
     ],
     [

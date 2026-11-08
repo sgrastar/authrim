@@ -424,6 +424,20 @@ function parseEnvValue(
 }
 
 /**
+ * A setting's value from its environment variable, parsed as the settings resolution parses it
+ * (undefined when unset or refused). For a caller that falls back to the environment when the
+ * stored settings cannot be read.
+ */
+export function readSettingEnvValue(
+  env: Partial<Record<string, unknown>>,
+  meta: SettingMeta
+): unknown {
+  if (!meta.envKey) return undefined;
+  const raw = env[meta.envKey];
+  return parseEnvValue(typeof raw === 'string' ? raw : undefined, meta.type, meta);
+}
+
+/**
  * Check if a value is the disabled marker
  */
 /** Whether a setting can be set at a scope (its own `scopes`, when it narrows its category's). */

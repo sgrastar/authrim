@@ -43,8 +43,16 @@ export interface TokenRevocationResult {
  */
 export async function revokeLinkedIdentityTokens(
   env: Env,
-  identity: LinkedIdentity
+  identity: LinkedIdentity,
+  options: { deadlineMs?: number } = {}
 ): Promise<TokenRevocationResult> {
+  // Each provider request ends by the deadline (epoch ms) when one is given.
+  const timeoutFor = (defaultMs: number): number => {
+    if (options.deadlineMs === undefined) return defaultMs;
+    const left = options.deadlineMs - Date.now();
+    if (left <= 0) throw new Error('token_revocation_deadline_passed');
+    return Math.min(defaultMs, left);
+  };
   const result: TokenRevocationResult = {
     success: false,
     accessTokenRevoked: false,
@@ -62,7 +70,7 @@ export async function revokeLinkedIdentityTokens(
     }
 
     // Get revocation endpoint
-    const revocationEndpoint = await getRevocationEndpoint(provider);
+    const revocationEndpoint = await getRevocationEndpoint(provider, timeoutFor);
     if (!revocationEndpoint) {
       // Provider doesn't support token revocation - this is not an error
       log.warn('Provider does not support token revocation', { provider: provider.name });
@@ -88,7 +96,8 @@ export async function revokeLinkedIdentityTokens(
         accessToken,
         'access_token',
         provider.clientId,
-        clientSecret
+        clientSecret,
+        timeoutFor(10000)
       );
       result.accessTokenRevoked = accessResult.success;
       if (!accessResult.success && accessResult.error) {
@@ -103,7 +112,8 @@ export async function revokeLinkedIdentityTokens(
         refreshToken,
         'refresh_token',
         provider.clientId,
-        clientSecret
+        clientSecret,
+        timeoutFor(10000)
       );
       result.refreshTokenRevoked = refreshResult.success;
       if (!refreshResult.success && refreshResult.error) {
@@ -138,7 +148,10 @@ export async function revokeLinkedIdentityTokens(
 /**
  * Get revocation endpoint from provider configuration or discovery
  */
-async function getRevocationEndpoint(provider: UpstreamProvider): Promise<string | null> {
+async function getRevocationEndpoint(
+  provider: UpstreamProvider,
+  timeoutFor: (defaultMs: number) => number
+): Promise<string | null> {
   // Check provider quirks for custom revocation endpoint
   const quirks = provider.providerQuirks as { revocationEndpoint?: string } | undefined;
   if (quirks?.revocationEndpoint) {
@@ -150,14 +163,16 @@ async function getRevocationEndpoint(provider: UpstreamProvider): Promise<string
     try {
       const discoveryUrl = `${provider.issuer.replace(/\/$/, '')}/.well-known/openid-configuration`;
       const metadata = await safeFetchJson<ProviderMetadata>(discoveryUrl, {
-        timeoutMs: 5000,
+        timeoutMs: timeoutFor(5000),
         maxResponseSize: 64 * 1024,
       });
       if (metadata.revocation_endpoint) {
         return metadata.revocation_endpoint;
       }
     } catch {
-      // Discovery failed - provider might not support it
+      // Discovery failed - provider might not support it. Not when it ran out of time: that is
+      // not taken for a provider without revocation (this throws once the deadline has passed).
+      timeoutFor(1);
     }
   }
 
@@ -184,7 +199,8 @@ async function revokeToken(
   token: string,
   tokenTypeHint: 'access_token' | 'refresh_token',
   clientId: string,
-  clientSecret: string
+  clientSecret: string,
+  timeoutMs = 10000
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const body = new URLSearchParams({
@@ -200,7 +216,7 @@ async function revokeToken(
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: body.toString(),
-      timeoutMs: 10000,
+      timeoutMs,
       maxResponseSize: 16 * 1024,
     });
 
