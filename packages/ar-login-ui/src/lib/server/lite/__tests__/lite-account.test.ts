@@ -893,4 +893,391 @@ describe('the lite account page', () => {
 			expect(page.widgets.passkeyCreate).toBeNull();
 		});
 	});
+
+	describe('authenticator apps', () => {
+		const SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+		let totpState: Array<Record<string, unknown>>;
+		let recent: boolean;
+		const totpPage = () => {
+			methods = {
+				passkey: { enabled: false },
+				emailCode: { enabled: true, reauthEnabled: true },
+				totp: { enabled: true },
+				external: { enabled: false }
+			};
+			recent = true;
+			totpState = [];
+			routes['/api/account/capabilities'] = () =>
+				json({
+					account_page: {
+						definition: { screens: [{ id: 'totp', screen_key: 'k' }] },
+						screens: [
+							{
+								screen_key: 'k',
+								fields: [{ block_type: 'account_totp_widget', field: 'account.totp' }]
+							}
+						]
+					}
+				});
+			routes['/api/account/profile'] = () =>
+				json({
+					profile: {
+						user_id: 'user-a',
+						registration_state: 'registered',
+						email: 'a@example.com',
+						email_verified: true
+					},
+					session: { id: 's-a', amr: ['pwd'] }
+				});
+			routes['/api/account/totp'] = () =>
+				json({ credentials: totpState, backup_codes: { total: 10, remaining: 7 } });
+			routes['/api/account/totp/options'] = () =>
+				recent
+					? json(
+							{
+								credential: { id: 'tc-1', status: 'pending' },
+								secret: SECRET,
+								otpauth_uri: `otpauth://totp/Authrim:a?secret=${SECRET}`
+							},
+							201
+						)
+					: json({ error: 'reauth_required', reauth_required: true }, 403);
+		};
+		type Page = {
+			widgets: {
+				totp: {
+					credentials: Array<{ id: string; pending: boolean; name: string }>;
+					active: boolean;
+				} | null;
+				totpEnroll: { credentialId: string; secret: string; qr: string | null } | null;
+				totpAddEnabled: boolean;
+			};
+			text: { totpBackupCodesRemaining: string };
+			stepUp: null | { at: string; methods: Record<string, boolean> };
+		};
+
+		it('adds one with its QR code and key, then activates it, its backup codes shown once', async () => {
+			totpPage();
+			const first = (await view()) as Page;
+			expect(first.widgets.totpAddEnabled).toBe(true);
+			expect(first.widgets.totpEnroll).toBeNull();
+			await expect(post('totp_add', { label: ' Phone ' })).resolves.toMatchObject({
+				notice: 'totp_enroll',
+				widget: 'totp'
+			});
+			expect(calls.at(-1)).toMatchObject({
+				path: '/api/account/totp/options',
+				body: { label: 'Phone' }
+			});
+			totpState = [{ id: 'tc-1', status: 'pending', label: 'Phone' }];
+			const enrolling = (await view()) as Page;
+			expect(enrolling.widgets.totpEnroll).toMatchObject({ credentialId: 'tc-1', secret: SECRET });
+			expect(enrolling.widgets.totpEnroll?.qr).toMatch(/^data:image\//u);
+			expect(enrolling.widgets.totp?.credentials).toEqual([
+				expect.objectContaining({ id: 'tc-1', name: 'Phone', pending: true })
+			]);
+			// A form of another enrollment does nothing.
+			await expect(
+				post('totp_activate', { credential: 'tc-0', code: '123456' })
+			).resolves.toMatchObject({ status: 409 });
+			routes['/api/account/totp/activate'] = (body) =>
+				body.code === '123456'
+					? json({ ok: true, credential: { id: 'tc-1' }, backup_codes: ['AAAA-BBBB-CCCC'] })
+					: json({ error: 'invalid_code' }, 400);
+			await expect(
+				post('totp_activate', { credential: 'tc-1', code: '000000' })
+			).resolves.toMatchObject({ status: 400, data: { error: 'code_invalid', widget: 'totp' } });
+			expect(store.txn.data.accountTotpEnroll).toBeDefined();
+			await expect(post('totp_activate', { credential: 'tc-1', code: '123 456' })).resolves.toEqual(
+				{ backupCodes: ['AAAA-BBBB-CCCC'], widget: 'totp' }
+			);
+			expect(calls.at(-1)?.body).toEqual({ credential_id: 'tc-1', code: '123456' });
+			// The codes are never kept: the page drawn again shows none, nor the enrollment.
+			expect(JSON.stringify(store.txn.data)).not.toContain('AAAA-BBBB-CCCC');
+			totpState = [{ id: 'tc-1', status: 'active', label: 'Phone' }];
+			const done = (await view()) as Page;
+			expect(done.widgets.totpEnroll).toBeNull();
+			expect(done.widgets.totp?.active).toBe(true);
+			expect(done.text.totpBackupCodesRemaining).toContain('7');
+		});
+
+		it('gives an enrollment up, and adds none where the tenant offers no authenticator', async () => {
+			totpPage();
+			await view();
+			await post('totp_add', { label: '' });
+			expect(calls.at(-1)?.body).toEqual({});
+			// An older page's form (of another enrollment) gives this one up not.
+			await post('totp_cancel', { credential: 'tc-0' });
+			expect(store.txn.data.accountTotpEnroll).toMatchObject({ credentialId: 'tc-1' });
+			await expect(post('totp_cancel', { credential: 'tc-1' })).resolves.toMatchObject({
+				notice: 'totp_cancelled'
+			});
+			expect(store.txn.data.accountTotpEnroll).toBeUndefined();
+			methods = { ...methods, totp: { enabled: false } };
+			expect(((await view()) as Page).widgets.totpAddEnabled).toBe(false);
+		});
+
+		it('removes one with a code, a backup code, or nothing when not yet active', async () => {
+			totpPage();
+			totpState = [
+				{ id: 'ta', status: 'active' },
+				{ id: 'tp', status: 'pending' }
+			];
+			const bodies: Array<Record<string, unknown>> = [];
+			let removable = true;
+			const remove: Handler = (body, init) => {
+				if (init.method !== 'DELETE') return json({}, 405);
+				bodies.push(body);
+				return removable
+					? json({ ok: true, credential: { deleted: true } })
+					: json({ error: 'remaining_login_method_required' }, 400);
+			};
+			routes['/api/account/totp/ta'] = remove;
+			routes['/api/account/totp/tp'] = remove;
+			await view();
+			await expect(post('totp_delete', { totp: 'tp' })).resolves.toMatchObject({
+				notice: 'totp_deleted'
+			});
+			await post('totp_delete', { totp: 'ta', proof: ' 123 456 ' });
+			await post('totp_delete', { totp: 'ta', proof: 'abcd-efgh-2345' });
+			expect(bodies).toEqual([{}, { code: '123456' }, { backup_code: 'abcd-efgh-2345' }]);
+			await expect(post('totp_delete', { totp: 'ta', proof: 'nope' })).resolves.toMatchObject({
+				status: 400,
+				data: { error: 'code_invalid' }
+			});
+			await expect(post('totp_delete', { totp: 'a/b', proof: '123456' })).resolves.toMatchObject({
+				status: 400
+			});
+			removable = false;
+			await expect(post('totp_delete', { totp: 'ta', proof: '123456' })).resolves.toMatchObject({
+				status: 400,
+				data: { error: 'remaining_method', widget: 'totp' }
+			});
+			expect(bodies).toHaveLength(4);
+		});
+
+		it('holds a change for a step-up without its code, and makes it once proven', async () => {
+			totpPage();
+			totpState = [{ id: 'ta', status: 'active' }];
+			recent = false;
+			let regenerated = 0;
+			routes['/api/account/totp/backup-codes/regenerate'] = (body) => {
+				if (!recent) return json({ error: 'reauth_required', reauth_required: true }, 403);
+				regenerated++;
+				expect(body).toEqual({});
+				return json({ ok: true, backup_codes: ['DDDD-EEEE-FFFF'] });
+			};
+			routes['/api/account/reauth/totp/complete'] = (body) => {
+				if (body.code !== '654321') return json({ error: 'invalid_code' }, 400);
+				recent = true;
+				return json({ ok: true, reauth: {} });
+			};
+			await view();
+			await expect(post('totp_regenerate', { code: '111111' })).resolves.toMatchObject({
+				status: 403,
+				data: { stepUp: true, widget: 'totp' }
+			});
+			// The code posted is not kept with the change held.
+			expect(JSON.stringify(store.txn.data)).not.toContain('111111');
+			const held = (await view()) as Page;
+			expect(held.stepUp?.methods.totp).toBe(true);
+			await expect(
+				post('stepup_totp', { step_up: held.stepUp!.at, code: '654321' })
+			).resolves.toEqual({ backupCodes: ['DDDD-EEEE-FFFF'], widget: 'totp' });
+			expect(regenerated).toBe(1);
+			expect(store.txn.data.accountStepUp).toBeUndefined();
+		});
+
+		it('holds no new change over a step-up whose code is sent', async () => {
+			totpPage();
+			totpState = [{ id: 'ta', status: 'active' }];
+			recent = false;
+			routes['/api/account/totp/backup-codes/regenerate'] = () =>
+				json({ error: 'reauth_required', reauth_required: true }, 403);
+			routes['/api/account/reauth/email-code/send'] = () =>
+				json({ challenge_id: 'rc-1', expires_in: 300, masked_email: 'a***@example.com' });
+			await view();
+			await post('totp_regenerate', {});
+			const held = (await view()) as Page;
+			await post('stepup_email_send', { step_up: held.stepUp!.at });
+			const before = structuredClone(store.txn.data.accountStepUp);
+			await expect(post('totp_add', { label: '' })).resolves.toMatchObject({
+				status: 409,
+				data: { error: 'busy' }
+			});
+			expect(store.txn.data.accountStepUp).toEqual(before);
+		});
+
+		it('shows the codes of an activation whatever moved meanwhile, and keeps no setup', async () => {
+			totpPage();
+			await view();
+			await post('totp_add', { label: '' });
+			routes['/api/account/totp/activate'] = () => {
+				// Another post moved the transaction while the API answered.
+				store.set({ version: store.txn.version + 1 });
+				return json({ ok: true, credential: { id: 'tc-1' }, backup_codes: ['GGGG-HHHH-JJJJ'] });
+			};
+			await expect(post('totp_activate', { credential: 'tc-1', code: '123456' })).resolves.toEqual({
+				backupCodes: ['GGGG-HHHH-JJJJ'],
+				widget: 'totp'
+			});
+			expect(store.txn.data.accountTotpEnroll).toBeUndefined();
+		});
+
+		it('gives a setup up with its authenticator removed, and a setup past its time', async () => {
+			totpPage();
+			totpState = [{ id: 'tc-1', status: 'pending' }];
+			routes['/api/account/totp/tc-1'] = () => json({ ok: true, credential: { deleted: true } });
+			await view();
+			await post('totp_add', { label: '' });
+			await post('totp_delete', { totp: 'tc-1' });
+			expect(store.txn.data.accountTotpEnroll).toBeUndefined();
+			await post('totp_add', { label: '' });
+			store.set({
+				data: {
+					...store.txn.data,
+					accountTotpEnroll: {
+						...(store.txn.data.accountTotpEnroll as object),
+						expiresAt: Date.now() - 1
+					}
+				}
+			});
+			expect(((await view()) as Page).widgets.totpEnroll).toBeNull();
+			// Its secret removed from the transaction too.
+			expect(store.txn.data.accountTotpEnroll).toBeUndefined();
+		});
+
+		it('makes backup codes for one post at a time', async () => {
+			totpPage();
+			totpState = [{ id: 'ta', status: 'active' }];
+			let made = 0;
+			routes['/api/account/totp/backup-codes/regenerate'] = () => {
+				made++;
+				return json({ ok: true, backup_codes: ['KKKK-LLLL-MMMM'] });
+			};
+			await view();
+			store.set({
+				data: { ...store.txn.data, accountTotpCodes: { at: Date.now(), owner: 'other' } }
+			});
+			await expect(post('totp_regenerate', {})).resolves.toMatchObject({
+				status: 409,
+				data: { error: 'busy' }
+			});
+			expect(made).toBe(0);
+			store.set({
+				data: {
+					...store.txn.data,
+					accountTotpCodes: { at: Date.now() - 200_000, owner: 'other' }
+				}
+			});
+			await expect(post('totp_regenerate', {})).resolves.toMatchObject({
+				backupCodes: ['KKKK-LLLL-MMMM']
+			});
+			expect(made).toBe(1);
+			expect(store.txn.data.accountTotpCodes).toBeUndefined();
+			// An activation makes codes too: not while a regeneration does.
+			await post('totp_add', { label: '' });
+			store.set({
+				data: { ...store.txn.data, accountTotpCodes: { at: Date.now(), owner: 'other' } }
+			});
+			routes['/api/account/totp/activate'] = () => json({ ok: true, backup_codes: ['X'] });
+			await expect(
+				post('totp_activate', { credential: 'tc-1', code: '123456' })
+			).resolves.toMatchObject({ status: 409, data: { error: 'busy' } });
+			expect(calls.some((call) => call.path === '/api/account/totp/activate')).toBe(false);
+		});
+
+		it('shows no codes when another post took the turn while they were made', async () => {
+			totpPage();
+			totpState = [{ id: 'ta', status: 'active' }];
+			routes['/api/account/totp/backup-codes/regenerate'] = () => {
+				// Past its time, another post took the turn (and made newer codes).
+				store.set({
+					data: { ...store.txn.data, accountTotpCodes: { at: Date.now(), owner: 'later' } },
+					version: store.txn.version + 1
+				});
+				return json({ ok: true, backup_codes: ['NNNN-PPPP-QQQQ'] });
+			};
+			await view();
+			await expect(post('totp_regenerate', {})).resolves.toMatchObject({
+				status: 409,
+				data: { error: 'busy', widget: 'totp' }
+			});
+			// The later post's turn is left to it.
+			expect(store.txn.data.accountTotpCodes).toMatchObject({ owner: 'later' });
+		});
+
+		it('shows no codes when it cannot tell the turn was still its own', async () => {
+			totpPage();
+			totpState = [{ id: 'ta', status: 'active' }];
+			routes['/api/account/totp/backup-codes/regenerate'] = () => {
+				// The release is refused and the transaction cannot be read again.
+				store.binding.transition.mockRejectedValueOnce(new Error('store unavailable'));
+				store.binding.get.mockRejectedValueOnce(new Error('store unavailable'));
+				return json({ ok: true, backup_codes: ['YYYY-ZZZZ-2222'] });
+			};
+			await view();
+			await expect(post('totp_regenerate', {})).resolves.toMatchObject({
+				status: 409,
+				data: { error: 'busy' }
+			});
+		});
+
+		it('moves nothing over a step-up being checked, and makes a held change after a move', async () => {
+			totpPage();
+			totpState = [{ id: 'ta', status: 'active' }];
+			recent = false;
+			let made = 0;
+			routes['/api/account/totp/backup-codes/regenerate'] = () => {
+				if (!recent) return json({ error: 'reauth_required', reauth_required: true }, 403);
+				made++;
+				return json({ ok: true, backup_codes: ['RRRR-SSSS-TTTT'] });
+			};
+			routes['/api/account/reauth/email-code/send'] = () =>
+				json({ challenge_id: 'rc-1', expires_in: 300, masked_email: 'a***@example.com' });
+			let during: unknown = null;
+			routes['/api/account/reauth/email-code/complete'] = (async () => {
+				// While the code is checked, another post: refused without moving the transaction.
+				const version = store.txn.version;
+				during = await post('totp_regenerate', {});
+				expect(store.txn.version).toBe(version);
+				recent = true;
+				return json({ ok: true, reauth: {} });
+			}) as unknown as Handler;
+			await view();
+			await post('totp_regenerate', {});
+			const held = (await view()) as Page;
+			await post('stepup_email_send', { step_up: held.stepUp!.at });
+			const proven = await post('stepup_email_verify', {
+				step_up: held.stepUp!.at,
+				challenge: 'rc-1',
+				code: '123456'
+			});
+			expect(during).toMatchObject({ status: 409, data: { error: 'busy' } });
+			expect(proven).toEqual({ backupCodes: ['RRRR-SSSS-TTTT'], widget: 'totp' });
+			expect(made).toBe(1);
+			expect(store.txn.data.accountStepUp).toBeUndefined();
+		});
+
+		it('makes a held change though another post moved the transaction while it was proven', async () => {
+			totpPage();
+			totpState = [{ id: 'ta', status: 'active' }];
+			recent = false;
+			routes['/api/account/totp/backup-codes/regenerate'] = () =>
+				recent
+					? json({ ok: true, backup_codes: ['UUUU-VVVV-WWWW'] })
+					: json({ error: 'reauth_required', reauth_required: true }, 403);
+			routes['/api/account/reauth/totp/complete'] = () => {
+				store.set({ version: store.txn.version + 1 });
+				recent = true;
+				return json({ ok: true, reauth: {} });
+			};
+			await view();
+			await post('totp_regenerate', {});
+			const held = (await view()) as Page;
+			await expect(
+				post('stepup_totp', { step_up: held.stepUp!.at, code: '654321' })
+			).resolves.toEqual({ backupCodes: ['UUUU-VVVV-WWWW'], widget: 'totp' });
+		});
+	});
 });

@@ -116,6 +116,111 @@
 				{/each}
 			</ul>
 		{/if}
+	{:else if widget === 'account_totp_widget'}
+		{@const totp = data.widgets.totp}
+		{@const enroll = data.widgets.totpEnroll}
+		{@const shownCodes =
+			mine('totp') && form && 'backupCodes' in form && Array.isArray(form.backupCodes)
+				? (form.backupCodes as string[])
+				: []}
+		{#if failed('totp') === 'remaining_method'}
+			<p role="alert">{data.text.remainingMethod}</p>
+		{:else if failed('totp') === 'code_invalid'}
+			<p role="alert">{data.text.codeInvalid}</p>
+		{:else if failed('totp') === 'busy'}
+			<p role="alert">{data.text.busy}</p>
+		{:else if failed('totp')}
+			<p role="alert">{data.text.actionFailed}</p>
+		{/if}
+		{#if shownCodes.length > 0}
+			<!-- Shown once: the action's answer only (never kept for the page drawn again). -->
+			<h3>{data.text.totpBackupCodes}</h3>
+			<ul class="backup-codes">
+				{#each shownCodes as code (code)}
+					<li><code>{code}</code></li>
+				{/each}
+			</ul>
+		{/if}
+		{#if enroll}
+			<h3>{data.text.totpSetupTitle}</h3>
+			{#if enroll.qr}<img src={enroll.qr} alt={data.text.totpQrAlt} width="200" height="200" />{/if}
+			<p>{data.text.totpManualKey}: <code>{enroll.secret}</code></p>
+			<form method="post" action={actionOf(data.search, 'totp_activate')}>
+				{@render hidden()}
+				<input type="hidden" name="credential" value={enroll.credentialId} />
+				<label>
+					{data.text.totpActivationCode}
+					<input
+						name="code"
+						inputmode="numeric"
+						autocomplete="one-time-code"
+						pattern={'[0-9 ]{6,9}'}
+						maxlength="9"
+						required
+					/>
+				</label>
+				<button type="submit">{data.text.totpActivate}</button>
+			</form>
+			<form method="post" action={actionOf(data.search, 'totp_cancel')}>
+				{@render hidden()}
+				<input type="hidden" name="credential" value={enroll.credentialId} />
+				<button type="submit">{data.text.cancel}</button>
+			</form>
+		{:else if data.widgets.totpAddEnabled}
+			<form method="post" action={actionOf(data.search, 'totp_add')}>
+				{@render hidden()}
+				<label>
+					{data.text.totpName}
+					<input name="label" maxlength="100" />
+				</label>
+				<button type="submit">{data.text.addTotp}</button>
+			</form>
+		{/if}
+		{#if totp === null}
+			<p role="alert">{data.text.loadFailed}</p>
+		{:else}
+			{#if totp.active}
+				<p>{data.text.totpBackupCodesRemaining}</p>
+				<form method="post" action={actionOf(data.search, 'totp_regenerate')}>
+					{@render hidden()}
+					<label>
+						{data.text.totpCurrentCode}
+						<input
+							name="code"
+							inputmode="numeric"
+							autocomplete="one-time-code"
+							pattern={'[0-9 ]{6,9}'}
+							maxlength="9"
+						/>
+					</label>
+					<button type="submit">{data.text.totpRegenerate}</button>
+				</form>
+			{/if}
+			{#if totp.credentials.length === 0}
+				<p>{data.text.empty}</p>
+			{:else}
+				<ul>
+					{#each totp.credentials as credential (credential.id)}
+						<li>
+							<strong>{credential.name}</strong>
+							{#if credential.pending}<span class="tag">{data.text.totpPending}</span>{/if}
+							<p class="muted">{credential.meta} / {credential.used}</p>
+							<form method="post" action={actionOf(data.search, 'totp_delete')}>
+								{@render hidden()}
+								<input type="hidden" name="totp" value={credential.id} />
+								{#if !credential.pending}
+									<label>
+										{data.text.totpDeleteCode}
+										<input name="proof" maxlength="32" autocomplete="one-time-code" />
+									</label>
+								{/if}
+								<button type="submit">{data.text.deleteTotp}</button>
+							</form>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		{/if}
 	{:else if widget === 'account_device_list_widget'}
 		<p class="muted">{data.text.devicesDescription}</p>
 		{#if data.widgets.devices === null}

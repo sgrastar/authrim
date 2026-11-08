@@ -126,7 +126,7 @@ export function readLiteAccountPasskeyCreate(
 }
 
 /** Whether ar-management asks for a recent authentication first. */
-function stepUpAsked(answer: { status: number; json: unknown } | null): boolean {
+export function stepUpAsked(answer: { status: number; json: unknown } | null): boolean {
 	const error = record(answer?.json).error;
 	return (
 		answer?.status === 403 && (error === 'reauth_required' || error === 'reauthentication_required')
@@ -134,7 +134,7 @@ function stepUpAsked(answer: { status: number; json: unknown } | null): boolean 
 }
 
 /** Moves the transaction from the version the post read (a refused move: the page again). */
-async function move(
+export async function move(
 	post: LiteAccountPost,
 	patch: Record<string, unknown>
 ): Promise<LiteTxnView | null> {
@@ -148,8 +148,40 @@ async function move(
 	return moved?.ok ? moved.txn : null;
 }
 
+/**
+ * Moves the transaction as it is now (read again when another post moved it meanwhile), while
+ * `still` holds of it: the moved transaction, `'gone'` when `still` no longer holds, or null when
+ * it could not be moved.
+ */
+export async function moveCurrent(
+	post: LiteAccountPost,
+	still: (data: Record<string, unknown>) => boolean,
+	patch: Record<string, unknown>
+): Promise<LiteTxnView | 'gone' | null> {
+	let txn = post.txn;
+	for (let attempt = 0; attempt < 3; attempt++) {
+		if (!still(txn.data)) return 'gone';
+		const moved = await move({ ...post, txn }, patch);
+		if (moved) return moved;
+		const got = await post.txns.get(txn.id, { current: true }).catch(() => null);
+		if (!got?.ok) return null;
+		txn = got.txn;
+	}
+	return null;
+}
+
+/** Whether the transaction holds a step-up whose method is chosen or whose check is under way. */
+export function stepUpBusy(data: Record<string, unknown>): boolean {
+	const current = readLiteAccountStepUp(data);
+	return current !== null && busy(current);
+}
+
 /** Holds the change for a step-up (the page then asks for it). */
-async function holdForStepUp(post: LiteAccountPost, pending: LiteAccountPending) {
+export async function holdForStepUp(post: LiteAccountPost, pending: LiteAccountPending) {
+	// Never over a step-up whose method is chosen or whose check is under way (a code sent, a
+	// passkey's ceremony drawn): that one is finished or given up first.
+	const current = readLiteAccountStepUp(post.txn.data);
+	if (current && busy(current)) return fail(409, { error: 'busy' as const, widget: 'account' });
 	// Alone on the page: a passkey being added is given up with it (one ceremony at a time).
 	const kept = await move(post, {
 		accountStepUp: {
@@ -174,7 +206,7 @@ function widgetOf(action: string): string {
 			: 'account';
 }
 
-type PendingAction = (
+export type PendingAction = (
 	event: RequestEvent,
 	post: LiteAccountPost,
 	args: Record<string, string>
@@ -250,11 +282,16 @@ async function deletePasskey(
 	});
 }
 
-/** The changes a step-up may hold, and how each is made again. */
+/** The changes a step-up may hold, and how each is made again (other widgets add theirs). */
 const PENDING: Record<string, PendingAction> = {
 	passkey_add: startPasskeyAdd,
 	passkey_delete: deletePasskey
 };
+
+/** Adds a change a step-up may hold (a widget module's, when it is loaded). */
+export function registerPendingAction(name: string, action: PendingAction): void {
+	PENDING[name] = action;
+}
 
 export async function liteAccountPasskeyAddAction(event: RequestEvent) {
 	const opened = await openAccountPost(event);
@@ -314,7 +351,21 @@ export async function liteAccountPasskeyAddFinishAction(event: RequestEvent) {
  * session the proof refreshed.
  */
 async function proven(event: RequestEvent, post: LiteAccountPost, stepUp: LiteAccountStepUp) {
-	const cleared = await move(post, { accountStepUp: null });
+	// Taken from the transaction as it is now (another post may have moved it while the proof was
+	// checked), only while it still holds this step-up.
+	const cleared = await moveCurrent(
+		post,
+		(data) => {
+			const held = readLiteAccountStepUp(data);
+			return (
+				held !== null && held.at === stepUp.at && held.pending.action === stepUp.pending.action
+			);
+		},
+		{ accountStepUp: null }
+	);
+	if (cleared === 'gone') {
+		return fail(409, { error: 'step_up_gone' as const, widget: 'account' });
+	}
 	if (!cleared) return retryLater();
 	const action = Object.hasOwn(PENDING, stepUp.pending.action)
 		? PENDING[stepUp.pending.action]

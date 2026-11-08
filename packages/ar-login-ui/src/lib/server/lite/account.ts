@@ -35,7 +35,14 @@ import {
 	readLiteAccountPasskeyCreate,
 	readLiteAccountStepUp
 } from './account-security';
+import {
+	liteAccountTotp,
+	liteAccountTotpActions,
+	liteAccountTotpEnrollStale,
+	readLiteAccountTotpEnroll
+} from './account-totp';
 import { cspHashSource } from './csp';
+import { qrDataUri } from './qr';
 import { LITE_PASSKEY_SCRIPT } from '#lib/lite/passkey-ceremony.js';
 import {
 	liteAccountActivity,
@@ -153,7 +160,18 @@ export async function liteAccountPage(event: RequestEvent) {
 		if (created.reason === 'budget_exceeded') return errorPage(event, 'busy');
 		return errorPage(event, 'unavailable');
 	}
-	const txn = created.txn;
+	let txn = created.txn;
+	// An authenticator's setup past its time: its secret removed (the page draws it no more).
+	if (liteAccountTotpEnrollStale(txn.data)) {
+		const cleared = await txns
+			.transition(txn.id, {
+				expectedVersion: txn.version,
+				to: 'pending',
+				patch: { accountTotpEnroll: null }
+			})
+			.catch(() => null);
+		if (cleared?.ok) txn = cleared.txn;
+	}
 
 	const [capabilities, profile] = await Promise.all([
 		read(backend, '/api/account/capabilities'),
@@ -265,26 +283,30 @@ export async function liteAccountPage(event: RequestEvent) {
 		)
 	);
 	const cursor = event.url.searchParams.get('activity_cursor');
-	const [sessionList, deviceList, consentList, activityList, passkeyList] = await Promise.all([
-		drawn.has('account_session_widget')
-			? (sessions ?? read(backend, '/api/account/sessions'))
-			: null,
-		drawn.has('account_device_list_widget') ? read(backend, '/api/account/devices') : null,
-		drawn.has('account_consent_widget')
-			? (consents ?? read(backend, '/api/account/consents', pageLanguage))
-			: null,
-		drawn.has('account_activity_widget')
-			? read(
-					backend,
-					`/api/account/operations?limit=20${
-						cursor && /^[A-Za-z0-9_.~=-]{1,1024}$/u.test(cursor)
-							? `&cursor=${encodeURIComponent(cursor)}`
-							: ''
-					}`
-				)
-			: null,
-		drawn.has('account_passkey_widget') ? read(backend, '/api/account/passkeys') : null
-	]);
+	const [sessionList, deviceList, consentList, activityList, passkeyList, totpList] =
+		await Promise.all([
+			drawn.has('account_session_widget')
+				? (sessions ?? read(backend, '/api/account/sessions'))
+				: null,
+			drawn.has('account_device_list_widget') ? read(backend, '/api/account/devices') : null,
+			drawn.has('account_consent_widget')
+				? (consents ?? read(backend, '/api/account/consents', pageLanguage))
+				: null,
+			drawn.has('account_activity_widget')
+				? read(
+						backend,
+						`/api/account/operations?limit=20${
+							cursor && /^[A-Za-z0-9_.~=-]{1,1024}$/u.test(cursor)
+								? `&cursor=${encodeURIComponent(cursor)}`
+								: ''
+						}`
+					)
+				: null,
+			drawn.has('account_passkey_widget') ? read(backend, '/api/account/passkeys') : null,
+			drawn.has('account_totp_widget') ? read(backend, '/api/account/totp') : null
+		]);
+	// An authenticator being added: its secret and QR code (drawn once, by its widget).
+	const enroll = drawn.has('account_totp_widget') ? readLiteAccountTotpEnroll(txn.data) : null;
 	const widgets = {
 		profile: liteAccountProfile(profile.json),
 		sessions: sessionList?.ok ? liteAccountSessions(sessionList.json, LL, locale) : null,
@@ -303,6 +325,16 @@ export async function liteAccountPage(event: RequestEvent) {
 					: null;
 			return create ? { registration: create.registration, challenge: create.challengeId } : null;
 		})(),
+		totp: totpList?.ok ? liteAccountTotp(totpList.json, LL, locale) : null,
+		totpEnroll: enroll
+			? {
+					credentialId: enroll.credentialId,
+					secret: enroll.secret,
+					qr: await qrDataUri(enroll.otpauthUri)
+				}
+			: null,
+		// An authenticator may be added (the tenant offers them: the SPA's widget's condition).
+		totpAddEnabled: conditions.totpManagementEnabled,
 		activityIncomplete:
 			activityList !== null && !activityList.ok && activityList.error === 'log_query_incomplete'
 	};
@@ -388,9 +420,31 @@ export async function liteAccountPage(event: RequestEvent) {
 			passkeyFailed: LL.account_passkeyRegistrationFailed(),
 			passkeyUnsupported: LL.lite_passkeyUnsupported(),
 			passkeyCeremonyFailed: LL.lite_passkeyFailed(),
-			javascriptRequired: LL.lite_javascriptRequired()
+			javascriptRequired: LL.lite_javascriptRequired(),
+			totpName: LL.account_totpName(),
+			addTotp: LL.account_addTotp(),
+			totpSetupTitle: LL.account_totpSetupTitle(),
+			totpQrAlt: LL.account_totpQrAlt(),
+			totpManualKey: LL.account_totpManualKey(),
+			totpActivationCode: LL.account_totpActivationCode(),
+			totpActivate: LL.account_totpActivate(),
+			totpBackupCodes: LL.account_totpBackupCodes(),
+			totpBackupCodesRemaining: totpRemaining(LL, widgets.totp),
+			totpRegenerate: LL.account_totpRegenerateBackupCodes(),
+			totpCurrentCode: LL.account_totpCurrentCode(),
+			totpDeleteCode: LL.account_totpDeleteCode(),
+			totpPending: LL.account_totpPending(),
+			totpDone: LL.account_totpDone(),
+			deleteTotp: LL.account_delete()
 		}
 	};
+}
+
+function totpRemaining(
+	LL: Awaited<ReturnType<typeof liteMessages>>['LL'],
+	totp: { backupCodes: { total: number; remaining: number } } | null
+): string {
+	return totp ? LL.account_totpBackupCodesRemaining(totp.backupCodes) : '';
 }
 
 /** `sign_out`: the session ended (a guest is asked first: its account cannot be come back to). */
@@ -481,6 +535,7 @@ export async function liteAccountSessionRevokeAction(event: RequestEvent) {
 
 export const liteAccountActions = {
 	...liteAccountSecurityActions,
+	...liteAccountTotpActions,
 	sign_out: liteAccountSignOutAction,
 	profile_save: liteAccountProfileSaveAction,
 	session_revoke: liteAccountSessionRevokeAction
