@@ -76,14 +76,14 @@
 		<div class="runtime-screen-step mb-4">
 			<RuntimeScreenHarness {screen} mode={kind} framed={false} guest={false} providerCount={2} />
 		</div>
+		{#if loginUIPageStore.authSwitchLinkEnabled}
+			<p class="auth-bottom-link auth-bottom-link--in-card">
+				<AuthSwitchLink
+					href={kind === 'login' ? '/signup' : '/login'}
+					label={kind === 'login' ? $LL.login_createAccount() : $LL.register_alreadyHaveAccount()}
+					loadingLabel={$LL.common_loading()}
+				/>
+			</p>
+		{/if}
 	</Card>
-	{#if loginUIPageStore.authSwitchLinkEnabled}
-		<p class="auth-bottom-link">
-			<AuthSwitchLink
-				href={kind === 'login' ? '/signup' : '/login'}
-				label={kind === 'login' ? $LL.login_createAccount() : $LL.register_alreadyHaveAccount()}
-				loadingLabel={$LL.common_loading()}
-			/>
-		</p>
-	{/if}
 </AuthPageShell>

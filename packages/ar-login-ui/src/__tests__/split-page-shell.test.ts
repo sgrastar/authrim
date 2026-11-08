@@ -370,7 +370,7 @@ describe('split page shell', () => {
 		// The page text's own panes over a picture lose their blur too.
 		const reduced = css.slice(css.lastIndexOf('@media (prefers-reduced-transparency: reduce) {'));
 		expect(reduced.slice(0, reduced.indexOf('@supports'))).toMatch(
-			/:is\(\.auth-header, \.auth-footer:not\(\.auth-bar\), \.auth-bottom-link\) \{\s*backdrop-filter: none;/
+			/:is\(\s*\.auth-header,\s*\.auth-footer:not\(\.auth-bar\),\s*\.auth-bottom-link:not\(\.auth-bottom-link--in-card\)\s*\) \{\s*backdrop-filter: none;/
 		);
 	});
 

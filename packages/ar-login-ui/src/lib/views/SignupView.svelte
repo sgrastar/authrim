@@ -666,19 +666,19 @@
 					{$LL.register_termsAgreement()}
 				</p>
 			{/if}
+
+			<!-- Sign In Link: the last line of the card -->
+			{#if loginHref}
+				<p class="auth-bottom-link auth-bottom-link--in-card">
+					<AuthSwitchLink
+						href={loginHref}
+						label={$LL.register_alreadyHaveAccount()}
+						loadingLabel={$LL.common_loading()}
+					/>
+				</p>
+			{/if}
 		</Card>
 	</form>
-{/if}
-
-<!-- Sign In Link -->
-{#if loginHref}
-	<p class="auth-bottom-link">
-		<AuthSwitchLink
-			href={loginHref}
-			label={$LL.register_alreadyHaveAccount()}
-			loadingLabel={$LL.common_loading()}
-		/>
-	</p>
 {/if}
 
 <style>

@@ -235,6 +235,19 @@
 	const externalIdpBusy = $derived(loading.externalIdp != null);
 </script>
 
+<!-- Create Account Link: the last line of the card (the error card too) -->
+{#snippet createAccountLink()}
+	{#if signupHref}
+		<p class="auth-bottom-link auth-bottom-link--in-card">
+			<AuthSwitchLink
+				href={signupHref}
+				label={$LL.login_createAccount()}
+				loadingLabel={$LL.common_loading()}
+			/>
+		</p>
+	{/if}
+{/snippet}
+
 <!-- Client Info Section (OIDC Dynamic OP) -->
 {#if client.loading}
 	<div class="auth-client-card animate-pulse">
@@ -317,6 +330,7 @@
 		<Alert variant="error" class="mb-0">
 			{methodsError}
 		</Alert>
+		{@render createAccountLink()}
 	</Card>
 {:else}
 	<!-- Login Card -->
@@ -743,17 +757,8 @@
 					onSelect={onExternalProvider}
 				/>
 			{/if}
+
+			{@render createAccountLink()}
 		</Card>
 	</form>
-{/if}
-
-<!-- Create Account Link -->
-{#if signupHref}
-	<p class="auth-bottom-link">
-		<AuthSwitchLink
-			href={signupHref}
-			label={$LL.login_createAccount()}
-			loadingLabel={$LL.common_loading()}
-		/>
-	</p>
 {/if}
