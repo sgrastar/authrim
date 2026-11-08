@@ -66,6 +66,10 @@ function fixture(mode: 'pipeline' | 'scheduled') {
     { status?: number; result?: unknown; errors?: unknown; raw?: string }
   >();
   const loseResponse = new Set<string>();
+  const staleEntries: {
+    namespaces?: Array<{ name: string[]; createdAt: string }>;
+    tables?: Record<string, Array<{ name: string; createdAt: string; updatedAt: string }>>;
+  } = {};
   const permissionGroups = [
     { id: 'catalog-read', name: 'Workers R2 Data Catalog Read' },
     { id: 'sql-read', name: 'Workers R2 SQL Read' },
@@ -140,14 +144,63 @@ function fixture(mode: 'pipeline' | 'scheduled') {
             },
           };
       } else if (method === 'POST' && path.endsWith('/enable')) {
-        result = { id: 'catalog-id', name: `${accountId}_${archive.bucketName}`, status: 'active' };
+        // Re-enabling a disabled catalog brings the same catalog (and its entries) back.
+        const existing = remote.get(catalogPath);
+        result = existing
+          ? Object.assign(existing, { status: 'active' })
+          : { id: 'catalog-id', name: `${accountId}_${archive.bucketName}`, status: 'active' };
         remote.set(catalogPath, result as Record<string, unknown>);
       } else if (method === 'POST' && path.endsWith('/disable')) {
         remote.get(catalogPath)!.status = 'inactive';
-        result = null;
+        result = { ...remote.get(catalogPath)! };
+      } else if (method === 'GET' && path === catalogPath) {
+        // Cloudflare answers 404 for both: 40401 when missing, 40402 when disabled.
+        const existing = remote.get(catalogPath);
+        if (!existing || existing.status === 'inactive')
+          return new Response(
+            JSON.stringify({
+              success: false,
+              result: null,
+              errors: [
+                existing
+                  ? { code: 40402, message: 'Warehouse inactive' }
+                  : { code: 40401, message: 'Warehouse not found' },
+              ],
+            }),
+            { status: 404 }
+          );
+        result = existing;
       } else if (method === 'POST' && path.split('?')[0].endsWith('/delete')) {
         remote.delete(catalogPath);
         result = null;
+      } else if (path.split('?')[0] === `${catalogPath}/namespaces`) {
+        const parent = new URL(`https://example.invalid/${path}`).searchParams.get('parent') ?? '';
+        const listed = (staleEntries.namespaces ?? []).filter(
+          (entry) => entry.name.slice(0, -1).join('\u001f') === parent
+        );
+        result = {
+          namespaces: listed.map((entry) => entry.name),
+          details: listed.map((entry) => ({ namespace: entry.name, created_at: entry.createdAt })),
+        };
+      } else if (
+        path.startsWith(`${catalogPath}/namespaces/`) &&
+        path.split('?')[0].endsWith('/tables')
+      ) {
+        const namespace = decodeURIComponent(
+          path.split('?')[0].slice(`${catalogPath}/namespaces/`.length, -'/tables'.length)
+        );
+        const tables = staleEntries.tables?.[namespace] ?? [];
+        result = {
+          identifiers: tables.map((table) => ({
+            namespace: namespace.split('\u001f'),
+            name: table.name,
+          })),
+          details: tables.map((table) => ({
+            identifier: { namespace: namespace.split('\u001f'), name: table.name },
+            created_at: table.createdAt,
+            updated_at: table.updatedAt,
+          })),
+        };
       } else result = remote.get(path);
     } else if (path.startsWith('pipelines/v1/')) {
       if (method === 'POST') {
@@ -221,12 +274,14 @@ function fixture(mode: 'pipeline' | 'scheduled') {
     checkpoints,
     checkpoint,
     assertBucketOwned,
+    bucketCreationDate: '2026-11-08T01:31:19.733Z' as string | undefined,
     prepareScheduledTable,
     loadArchiveTable,
   };
   return {
     archive,
     remote,
+    staleEntries,
     calls,
     fetcher,
     checkpoints,
@@ -891,6 +946,236 @@ describe('log archive setup contract', () => {
     expect(f.checkpoints['catalog:LOG_ARCHIVE_CATALOG'].state).toBe('create_rejected');
     f.overrides.delete(path);
     await expect(provisionLogArchive(f.options)).resolves.toMatchObject({ mode: 'scheduled' });
+  });
+
+  it('removes a Catalog left by an earlier bucket of the same name and enables a new one', async () => {
+    implemented.push('scheduled');
+    const f = fixture('scheduled');
+    const catalogPath = `basin-catalog/${f.archive.bucketName}`;
+    f.remote.set(catalogPath, {
+      id: 'old-catalog-id',
+      name: `${accountId}_${f.archive.bucketName}`,
+      status: 'active',
+    });
+    f.staleEntries.namespaces = [
+      { name: ['authrim'], createdAt: '2026-10-31T11:59:19.573666+00:00' },
+      { name: ['authrim', 'nested'], createdAt: '2026-10-31T12:00:00+00:00' },
+    ];
+    f.staleEntries.tables = {
+      authrim: [
+        {
+          name: 'logs_v1_old',
+          createdAt: '2026-10-31T11:59:20.254561+00:00',
+          updatedAt: '2026-10-31T16:41:58.433576+00:00',
+        },
+      ],
+    };
+    await expect(provisionLogArchive(f.options)).resolves.toMatchObject({
+      mode: 'scheduled',
+      catalog: { id: 'catalog-id' },
+    });
+    const posts = f.calls
+      .filter((call) => call.method === 'POST' && call.path.startsWith(catalogPath))
+      .map((call) => call.path.slice(catalogPath.length));
+    expect(posts.slice(0, 3)).toEqual(['/disable', '/delete?force=true', '/enable']);
+    expect(
+      f.calls.some((call) => call.path.startsWith(`${catalogPath}/namespaces/authrim%1Fnested/`))
+    ).toBe(true);
+    expect(f.checkpoints['catalog:LOG_ARCHIVE_CATALOG']).toMatchObject({
+      id: 'catalog-id',
+      state: 'created',
+    });
+  });
+
+  it('leaves an unrecorded Catalog untouched unless every entry predates the owned bucket', async () => {
+    implemented.push('scheduled');
+    const cases: Array<(f: ReturnType<typeof fixture>) => void> = [
+      (f) => {
+        f.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '2026-11-08T02:00:00Z' }];
+      },
+      (f) => {
+        f.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '2026-10-31T00:00:00Z' }];
+        f.staleEntries.tables = {
+          authrim: [
+            { name: 't', createdAt: '2026-10-31T00:00:00Z', updatedAt: '2026-11-08T02:00:00Z' },
+          ],
+        };
+      },
+      (f) => {
+        f.options.bucketCreationDate = undefined;
+      },
+      (f) => {
+        f.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '0' }];
+      },
+      (f) => {
+        f.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '2026-10-31T00:00:00Z' }];
+        f.overrides.set(
+          `basin-catalog/${f.archive.bucketName}/namespaces/authrim/tables?page_size=1000&return_details=true`,
+          {
+            result: {
+              identifiers: [{ namespace: ['authrim'], name: 'new_table' }],
+              details: [
+                {
+                  identifier: { namespace: ['authrim'], name: 'old_table' },
+                  created_at: '2026-10-31T00:00:00Z',
+                  updated_at: '2026-10-31T00:00:00Z',
+                },
+              ],
+            },
+          }
+        );
+      },
+      (f) => {
+        f.overrides.set(
+          `basin-catalog/${f.archive.bucketName}/namespaces?page_size=1000&return_details=true`,
+          { result: { namespaces: [['authrim']] } }
+        );
+      },
+    ];
+    for (const prepare of cases) {
+      const f = fixture('scheduled');
+      f.remote.set(`basin-catalog/${f.archive.bucketName}`, {
+        id: 'foreign',
+        name: `${accountId}_${f.archive.bucketName}`,
+        status: 'active',
+      });
+      prepare(f);
+      await expect(provisionLogArchive(f.options)).rejects.toThrow(
+        'log_archive_catalog_ownership_unproven'
+      );
+      expect(f.calls.some((call) => call.method === 'POST')).toBe(false);
+    }
+  });
+
+  it('re-enables a disabled leftover Catalog only to inventory it, then removes it', async () => {
+    implemented.push('scheduled');
+    const f = fixture('scheduled');
+    const catalogPath = `basin-catalog/${f.archive.bucketName}`;
+    f.remote.set(catalogPath, {
+      id: 'old-catalog-id',
+      name: `${accountId}_${f.archive.bucketName}`,
+      status: 'inactive',
+    });
+    f.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '2026-10-31T00:00:00Z' }];
+    await expect(provisionLogArchive(f.options)).resolves.toMatchObject({
+      catalog: { id: 'catalog-id' },
+    });
+    const posts = f.calls
+      .filter((call) => call.method === 'POST' && call.path.startsWith(catalogPath))
+      .map((call) => call.path.slice(catalogPath.length));
+    expect(posts.slice(0, 4)).toEqual(['/enable', '/disable', '/delete?force=true', '/enable']);
+  });
+
+  it('puts a disabled unrecorded Catalog back when its entries are not all older', async () => {
+    implemented.push('scheduled');
+    const f = fixture('scheduled');
+    const catalogPath = `basin-catalog/${f.archive.bucketName}`;
+    f.remote.set(catalogPath, {
+      id: 'foreign',
+      name: `${accountId}_${f.archive.bucketName}`,
+      status: 'inactive',
+    });
+    f.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '2026-11-08T02:00:00Z' }];
+    await expect(provisionLogArchive(f.options)).rejects.toThrow(
+      'log_archive_catalog_ownership_unproven'
+    );
+    expect(f.remote.get(catalogPath)).toMatchObject({ id: 'foreign', status: 'inactive' });
+    expect(f.calls.some((call) => call.path.includes('/delete'))).toBe(false);
+    expect(f.checkpoints['catalog:LOG_ARCHIVE_CATALOG']).toBeUndefined();
+  });
+
+  it('puts a disabled leftover back when the inventory enable answer is lost', async () => {
+    implemented.push('scheduled');
+    const f = fixture('scheduled');
+    const catalogPath = `basin-catalog/${f.archive.bucketName}`;
+    f.remote.set(catalogPath, {
+      id: 'foreign',
+      name: `${accountId}_${f.archive.bucketName}`,
+      status: 'inactive',
+    });
+    f.loseResponse.add(`${catalogPath}/enable`);
+    await expect(provisionLogArchive(f.options)).rejects.toThrow('response loss');
+    expect(f.remote.get(catalogPath)).toMatchObject({ id: 'foreign', status: 'inactive' });
+    expect(f.calls.some((call) => call.path.includes('/delete'))).toBe(false);
+    f.loseResponse.clear();
+    f.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '2026-11-08T02:00:00Z' }];
+    f.overrides.set(`${catalogPath}/disable`, { status: 503 });
+    await expect(provisionLogArchive(f.options)).rejects.toThrow(
+      'log_archive_catalog_restore_failed_disable_it_manually'
+    );
+    expect(f.calls.some((call) => call.path.includes('/delete'))).toBe(false);
+  });
+
+  it('never force-deletes without a matching disable answer or a known catalog state', async () => {
+    implemented.push('scheduled');
+    const seed = (f: ReturnType<typeof fixture>) =>
+      f.remote.set(`basin-catalog/${f.archive.bucketName}`, {
+        id: 'old',
+        name: `${accountId}_${f.archive.bucketName}`,
+        status: 'active',
+      });
+    const noId = fixture('scheduled');
+    seed(noId);
+    noId.overrides.set(`basin-catalog/${noId.archive.bucketName}/disable`, { result: {} });
+    await expect(provisionLogArchive(noId.options)).rejects.toThrow(
+      'log_archive_catalog_ownership_unproven'
+    );
+    expect(noId.calls.some((call) => call.path.includes('/delete'))).toBe(false);
+    const unknown = fixture('scheduled');
+    unknown.overrides.set(`basin-catalog/${unknown.archive.bucketName}`, {
+      status: 404,
+      errors: [{ code: 40499 }],
+    });
+    await expect(provisionLogArchive(unknown.options)).rejects.toThrow(
+      'log_archive_catalog_state_unknown'
+    );
+    expect(unknown.calls.some((call) => call.method === 'POST')).toBe(false);
+    const calendar = fixture('scheduled');
+    seed(calendar);
+    calendar.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '2026-02-30T00:00:00Z' }];
+    await expect(provisionLogArchive(calendar.options)).rejects.toThrow(
+      'log_archive_catalog_ownership_unproven'
+    );
+    expect(calendar.calls.some((call) => call.method === 'POST')).toBe(false);
+  });
+
+  it('replaces an empty unrecorded Catalog, which holds no table to lose', async () => {
+    implemented.push('scheduled');
+    const f = fixture('scheduled');
+    f.remote.set(`basin-catalog/${f.archive.bucketName}`, {
+      id: 'empty',
+      name: `${accountId}_${f.archive.bucketName}`,
+      status: 'active',
+    });
+    await expect(provisionLogArchive(f.options)).resolves.toMatchObject({
+      catalog: { id: 'catalog-id' },
+    });
+  });
+
+  it('still refuses a recorded Catalog that changed, and a lost enable response', async () => {
+    implemented.push('scheduled');
+    const disabled = fixture('scheduled');
+    await provisionLogArchive(disabled.options);
+    disabled.remote.get(`basin-catalog/${disabled.archive.bucketName}`)!.status = 'inactive';
+    const posts = disabled.calls.filter((call) => call.method === 'POST').length;
+    await expect(provisionLogArchive(disabled.options)).rejects.toThrow(
+      'log_archive_recorded_catalog_inactive'
+    );
+    expect(disabled.calls.filter((call) => call.method === 'POST')).toHaveLength(posts);
+    const lost = fixture('scheduled');
+    const identity = planLogArchive('demo', lost.archive).resources.find(
+      (resource) => resource.kind === 'catalog'
+    )!;
+    lost.checkpoints['catalog:LOG_ARCHIVE_CATALOG'] = { ...identity, state: 'create_issued' };
+    lost.remote.set(`basin-catalog/${lost.archive.bucketName}`, {
+      id: 'catalog-id',
+      name: `${accountId}_${lost.archive.bucketName}`,
+      status: 'active',
+    });
+    await expect(provisionLogArchive(lost.options)).rejects.toThrow(
+      'log_archive_catalog_ownership_unproven'
+    );
+    expect(lost.calls.some((call) => call.method === 'POST')).toBe(false);
   });
 
   it('keeps draft secret recipients minimal until the archive path is selected', () => {
