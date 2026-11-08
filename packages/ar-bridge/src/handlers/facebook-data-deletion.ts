@@ -230,8 +230,8 @@ async function handleSignedCallback(
   }
 
   if (result.outcome === 'account_inactive') {
-    // Suspended, locked or being deleted: the unlink cannot run, and nothing was erased. Never
-    // answered as done. A retry must come within the signed request's max age (a later one needs
+    // Being deleted (no hold; the deletion is still erasing), or in a state the unlink does not
+    // run for: nothing was erased here. Never answered as done. A retry must come within the signed request's max age (a later one needs
     // a new signed request), so the retry delay stays well inside the shortest allowed (60 s).
     await recordCallbackAudit(c, log, { tenantId, kind, provider, result });
     c.header('Retry-After', '30');

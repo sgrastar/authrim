@@ -1,5 +1,6 @@
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import {
+  IDENTIFIER_REMOVAL_ACCOUNT_LIFECYCLE_STATES,
   accountDirectoryRemovalOutboxId,
   validateAccountDirectoryRemovalPublication,
   type AccountDirectoryPublishResult,
@@ -105,7 +106,8 @@ export class AccountDirectoryRemovalCoordinator {
       (publication.scope === 'account'
         ? account.directory_publication_state !== 'disabled' ||
           !['deleting', 'deleted'].includes(account.lifecycle_state)
-        : account.directory_publication_state !== 'active' || account.lifecycle_state !== 'active')
+        : account.directory_publication_state !== 'active' ||
+          !IDENTIFIER_REMOVAL_ACCOUNT_LIFECYCLE_STATES.includes(account.lifecycle_state))
     ) {
       throw new Error('directory_removal_account_state_conflict');
     }

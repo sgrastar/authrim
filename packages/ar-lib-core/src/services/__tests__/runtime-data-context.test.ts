@@ -606,6 +606,42 @@ describe('runtime account data context', () => {
     }
   );
 
+  it.each([
+    ['suspended', undefined, false],
+    ['suspended', 'restricted', true],
+    ['locked', 'restricted', true],
+    ['deleting', 'restricted', false],
+    ['deleted', 'restricted', false],
+    ['deleting', 'any', true],
+    ['deleted', 'any', true],
+    ['active', undefined, true],
+  ] as const)(
+    'resolves a %s account with acceptLifecycle %s only when accepted (%s)',
+    async (accountLifecycleState, acceptLifecycle, resolves) => {
+      const bindings = env();
+      (bindings as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+      });
+      const outcome = await resolveAccountDataContext(bindings, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+        ...(acceptLifecycle ? { acceptLifecycle } : {}),
+      }).catch((error: unknown) => error as Error);
+      if (resolves) {
+        expect(outcome).toMatchObject({
+          accountId: 'account:user-a',
+          lifecycleState: accountLifecycleState,
+        });
+      } else {
+        expect(outcome).toMatchObject({
+          message: 'lookup_destination_revalidation_failed',
+          cause: 'account_inactive',
+        });
+      }
+    }
+  );
+
   it.each(['suspended', 'locked', 'deleted'])(
     'resolves the PII store of a %s account for its audit pseudonym, verified there',
     async (accountLifecycleState) => {
