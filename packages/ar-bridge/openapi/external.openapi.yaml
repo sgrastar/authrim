@@ -690,9 +690,9 @@ paths:
         Called by Meta with a `signed_request` signed by the provider's app secret (HMAC-SHA256;
         `issued_at` must be within `external_idp.signed_request_max_age_seconds`). Unlinks the
         person's Facebook identity and erases the data received from Facebook (linked identity,
-        profile values and upstream tokens); the Authrim account is kept. A legal hold on the
-        account keeps the data (the request is recorded as `retained`). The answer is the same
-        whether or not the person had a link.
+        profile values and upstream tokens); the Authrim account is kept. The status of a
+        request that needs the operator's individual handling is `operator_action_required`,
+        which gives no reason. The answer is the same whether or not the person had a link.
       parameters:
         - $ref: '#/components/parameters/FacebookProvider'
       requestBody:
@@ -766,9 +766,9 @@ paths:
         Called by Meta with a `signed_request` signed by the provider's app secret (HMAC-SHA256;
         `issued_at` must be within `external_idp.signed_request_max_age_seconds`). Unlinks the
         person's Facebook identity and erases the data received from Facebook (linked identity,
-        profile values and upstream tokens); the Authrim account is kept. A legal hold on the
-        account keeps the data (the request is recorded as `retained`). The answer is the same
-        whether or not the person had a link.
+        profile values and upstream tokens); the Authrim account is kept. The status of a
+        request that needs the operator's individual handling is `operator_action_required`,
+        which gives no reason. The answer is the same whether or not the person had a link.
       parameters:
         - $ref: '#/components/parameters/FacebookProvider'
       requestBody:
@@ -840,7 +840,7 @@ paths:
       summary: Facebook Deauthorize Callback
       description: >-
         Called by Meta with a `signed_request` when the person removes the app. Verified and
-        handled like the data deletion callback (unlink, account kept, legal hold respected), but
+        handled like the data deletion callback (unlink, account kept), but
         no status record is kept.
       parameters:
         - $ref: '#/components/parameters/FacebookProvider'
@@ -871,7 +871,7 @@ paths:
       summary: Facebook Deauthorize Callback
       description: >-
         Called by Meta with a `signed_request` when the person removes the app. Verified and
-        handled like the data deletion callback (unlink, account kept, legal hold respected), but
+        handled like the data deletion callback (unlink, account kept), but
         no status record is kept.
       parameters:
         - $ref: '#/components/parameters/FacebookProvider'
@@ -966,7 +966,10 @@ components:
           enum:
             - pending
             - completed
-            - retained
+            - operator_action_required
+          description: >-
+            `operator_action_required`: the request needs the service operator's individual
+            handling (no reason is given).
     HandoffVerifyRequest:
       type: object
       required:

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
@@ -161,10 +162,12 @@ describe('Facebook data deletion and deauthorize callbacks', () => {
     expect(JSON.parse(entry.metadata)).toMatchObject({
       outcome: 'unlink_pending',
       user_id: 'user-a',
-      confirmation_code: CODE,
+      confirmation_code_sha256: createHash('sha256').update(CODE).digest('hex'),
+      status: 'pending',
     });
-    // Never the Facebook id in clear.
+    // Never the Facebook id, nor the confirmation code (the status URL's key), in clear.
     expect(entry.metadata).not.toContain(FACEBOOK_USER);
+    expect(entry.metadata).not.toContain(CODE);
   });
 
   it('answers the same whether or not the person had a link', async () => {
@@ -405,6 +408,21 @@ describe('Facebook data deletion status', () => {
       providerId: 'provider-facebook',
       confirmationCode: CODE,
     });
+  });
+
+  it('shows a request a legal hold keeps with a neutral state that gives no reason', async () => {
+    mocks.readState.mockResolvedValue('retained');
+    const json = await get(CODE, 'application/json');
+    expect(await json.json()).toEqual({
+      confirmation_code: CODE,
+      status: 'operator_action_required',
+    });
+    const html = await (await get(CODE, 'text/html')).text();
+    expect(html).toContain('operator action required');
+    expect(html).toContain('individual handling by the service operator');
+    for (const revealing of ['retained', 'legal', 'hold', 'obligation', 'kept']) {
+      expect(html.toLowerCase()).not.toContain(revealing);
+    }
   });
 
   it('shows a page to a browser', async () => {
