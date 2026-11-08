@@ -160,6 +160,13 @@ nav.lang a {
 	border-radius: 0.5rem;
 	padding: 0.75rem;
 }
+.launcher-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+	gap: 0.5rem;
+	padding: 0;
+	list-style: none;
+}
 .backup-codes {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));

@@ -191,4 +191,83 @@ describe('the lite account page markup', () => {
 		expect(body).toContain('name="provider" value="apple"');
 		expect(body).toContain('Linked.');
 	});
+
+	it('draws the launcher’s filters as a form, and a favourite only where allowed', () => {
+		const { body } = render(AccountPage, {
+			props: {
+				data: {
+					page: 'account',
+					brandName: 'Acme',
+					logo: null,
+					txnId: 'txn-1',
+					csrfToken: 'csrf-1',
+					op: 'o'.repeat(22),
+					search: '?lang=en',
+					launcherAction: '/account',
+					launcherKeep: [['lang', 'en']],
+					guest: false,
+					stepUp: null,
+					placements: [
+						{
+							id: 'a',
+							width: 'full',
+							overview: false,
+							blocks: [
+								{ kind: 'widget', widget: 'account_launcher_widget', title: 'Apps', column: null }
+							]
+						}
+					],
+					widgets: {
+						profile: { name: null, email: null, emailVerified: false },
+						passkeyCreate: null,
+						launcher: {
+							total: 2,
+							categories: ['Work'],
+							filters: { q: 'ma', category: 'Work', favorites: false },
+							launchers: [
+								{
+									id: 'mail',
+									name: 'Mail <b>&',
+									description: null,
+									category: 'Work',
+									href: '/api/account/launchers/mail/launch',
+									newTab: true,
+									favorite: false,
+									allowFavorite: true,
+									initial: 'M'
+								},
+								{
+									id: 'wiki',
+									name: 'Wiki',
+									description: null,
+									category: null,
+									href: '/api/account/launchers/wiki/launch',
+									newTab: false,
+									favorite: true,
+									allowFavorite: false,
+									initial: 'W'
+								}
+							]
+						}
+					},
+					text: new Proxy({}, { get: (_target, key) => String(key) })
+				} as never,
+				form: null as never
+			}
+		});
+		expect(body).toContain('method="get" action="/account"');
+		expect(body).toContain('name="lang" value="en"');
+		expect(body).toContain('name="launcher_q" value="ma"');
+		expect(body).toMatch(/<option value="Work" selected/u);
+		expect(body).toMatch(
+			/href="\/api\/account\/launchers\/mail\/launch" target="_blank" rel="noopener noreferrer"/u
+		);
+		expect(body.match(/\/launcher_favorite"/gu)).toHaveLength(1);
+		// Escaped, and the whole count beside the title (not the filtered one).
+		expect(body).toContain('Mail &lt;b>&amp;');
+		expect(body).not.toContain('<b>&');
+		expect(body.slice(body.indexOf('<h2>'), body.indexOf('</h2>'))).toMatch(
+			/Apps[\s\S]*<span class="tag">2<\/span>/u
+		);
+	});
 });

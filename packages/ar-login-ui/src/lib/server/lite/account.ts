@@ -46,6 +46,7 @@ import {
 	liteAccountSocialActions,
 	liteAccountSocialOutcome
 } from './account-social';
+import { liteAccountLauncherActions, liteAccountLaunchers } from './account-launcher';
 import { cspHashSource } from './csp';
 import { qrDataUri } from './qr';
 import { LITE_PASSKEY_SCRIPT } from '#lib/lite/passkey-ceremony.js';
@@ -302,29 +303,38 @@ export async function liteAccountPage(event: RequestEvent) {
 		)
 	);
 	const cursor = event.url.searchParams.get('activity_cursor');
-	const [sessionList, deviceList, consentList, activityList, passkeyList, totpList, socialList] =
-		await Promise.all([
-			drawn.has('account_session_widget')
-				? (sessions ?? read(backend, '/api/account/sessions'))
-				: null,
-			drawn.has('account_device_list_widget') ? read(backend, '/api/account/devices') : null,
-			drawn.has('account_consent_widget')
-				? (consents ?? read(backend, '/api/account/consents', pageLanguage))
-				: null,
-			drawn.has('account_activity_widget')
-				? read(
-						backend,
-						`/api/account/operations?limit=20${
-							cursor && /^[A-Za-z0-9_.~=-]{1,1024}$/u.test(cursor)
-								? `&cursor=${encodeURIComponent(cursor)}`
-								: ''
-						}`
-					)
-				: null,
-			drawn.has('account_passkey_widget') ? read(backend, '/api/account/passkeys') : null,
-			drawn.has('account_totp_widget') ? read(backend, '/api/account/totp') : null,
-			drawn.has('account_social_account_widget') ? read(backend, '/api/external/links') : null
-		]);
+	const [
+		sessionList,
+		deviceList,
+		consentList,
+		activityList,
+		passkeyList,
+		totpList,
+		socialList,
+		launcherList
+	] = await Promise.all([
+		drawn.has('account_session_widget')
+			? (sessions ?? read(backend, '/api/account/sessions'))
+			: null,
+		drawn.has('account_device_list_widget') ? read(backend, '/api/account/devices') : null,
+		drawn.has('account_consent_widget')
+			? (consents ?? read(backend, '/api/account/consents', pageLanguage))
+			: null,
+		drawn.has('account_activity_widget')
+			? read(
+					backend,
+					`/api/account/operations?limit=20${
+						cursor && /^[A-Za-z0-9_.~=-]{1,1024}$/u.test(cursor)
+							? `&cursor=${encodeURIComponent(cursor)}`
+							: ''
+					}`
+				)
+			: null,
+		drawn.has('account_passkey_widget') ? read(backend, '/api/account/passkeys') : null,
+		drawn.has('account_totp_widget') ? read(backend, '/api/account/totp') : null,
+		drawn.has('account_social_account_widget') ? read(backend, '/api/external/links') : null,
+		drawn.has('account_launcher_widget') ? read(backend, '/api/account/launchers') : null
+	]);
 	// An authenticator being added: its secret and QR code (drawn once, by its widget).
 	let enroll = drawn.has('account_totp_widget') ? readLiteAccountTotpEnroll(txn.data) : null;
 	// A setup whose credential is no longer pending (activated, or removed, when the post that did
@@ -384,6 +394,7 @@ export async function liteAccountPage(event: RequestEvent) {
 		socialOutcome: drawn.has('account_social_account_widget')
 			? liteAccountSocialOutcome(event.url, LL)
 			: null,
+		launcher: launcherList?.ok ? liteAccountLaunchers(launcherList.json, event.url, locale) : null,
 		// An authenticator may be added (the tenant offers them: the SPA's widget's condition).
 		totpAddEnabled: conditions.totpManagementEnabled,
 		activityIncomplete:
@@ -414,6 +425,11 @@ export async function liteAccountPage(event: RequestEvent) {
 		op: newOperationNonce(),
 		// The page's query without a form action's key (a post's page is drawn with its own URL).
 		search: pageQuery(event),
+		// The launcher's filters: a form the page is drawn again with, keeping the rest of its query.
+		launcherAction: event.url.pathname,
+		launcherKeep: [...new URLSearchParams(pageQuery(event)).entries()].filter(
+			([key]) => key !== 'launcher_q' && key !== 'launcher_category' && key !== 'launcher_favorites'
+		),
 		guest:
 			(record(record(profile.json).session).amr as unknown[] | undefined)?.includes('anon') ??
 			false,
@@ -495,7 +511,16 @@ export async function liteAccountPage(event: RequestEvent) {
 			socialAlreadyLinkedHere: LL.account_socialErrorAlreadyLinkedHere(),
 			socialLastMethod: LL.account_socialErrorLastMethod(),
 			socialInProgress: LL.account_socialErrorInProgress(),
-			socialFailed: LL.account_socialErrorFailed()
+			socialFailed: LL.account_socialErrorFailed(),
+			launcherDescription: LL.account_launcherDescription(),
+			launcherEmpty: LL.account_launcherEmpty(),
+			launcherSearch: LL.account_launcherSearch(),
+			launcherAllCategories: LL.account_launcherAllCategories(),
+			launcherFavorites: LL.account_launcherFavorites(),
+			launcherNoMatches: LL.account_launcherNoMatches(),
+			launcherFavorite: LL.account_launcherFavoriteAdd(),
+			launcherUnfavorite: LL.account_launcherFavoriteRemove(),
+			launcherFavoriteFailed: LL.account_launcherFavoriteUpdateFailed()
 		}
 	};
 }
@@ -597,6 +622,7 @@ export const liteAccountActions = {
 	...liteAccountSecurityActions,
 	...liteAccountTotpActions,
 	...liteAccountSocialActions,
+	...liteAccountLauncherActions,
 	sign_out: liteAccountSignOutAction,
 	profile_save: liteAccountProfileSaveAction,
 	session_revoke: liteAccountSessionRevokeAction

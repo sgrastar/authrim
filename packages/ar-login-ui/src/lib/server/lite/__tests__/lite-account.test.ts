@@ -1523,4 +1523,90 @@ describe('the lite account page', () => {
 			});
 		});
 	});
+
+	describe('the application launcher', () => {
+		const launcherPage = () => {
+			routes['/api/account/capabilities'] = () =>
+				json({
+					account_page: {
+						definition: { screens: [{ id: 'apps', screen_key: 'k' }] },
+						screens: [
+							{
+								screen_key: 'k',
+								fields: [{ block_type: 'account_launcher_widget', field: 'account.launcher' }]
+							}
+						]
+					}
+				});
+			routes['/api/account/launchers'] = () =>
+				json({
+					launchers: [
+						{
+							id: 'mail',
+							name: 'Mail',
+							category: 'Work',
+							favorite: false,
+							allow_favorite: true,
+							launch_href: '/api/account/launchers/mail/launch'
+						},
+						{
+							id: 'wiki',
+							name: 'Wiki',
+							category: 'Work',
+							favorite: true,
+							allow_favorite: false,
+							launch_href: '/api/account/launchers/wiki/launch'
+						}
+					]
+				});
+		};
+		type Page = {
+			widgets: { launcher: { launchers: Array<{ id: string }>; total: number } | null };
+			launcherKeep: Array<[string, string]>;
+			search: string;
+		};
+
+		it('lists the applications as the page’s filters ask, keeping the rest of its query', async () => {
+			launcherPage();
+			const all = (await view()) as Page;
+			expect(all.widgets.launcher?.launchers.map((item) => item.id)).toEqual(['mail', 'wiki']);
+			const filtered = (await view(
+				'/account?lang=en&launcher_favorites=1&activity_cursor=abc'
+			)) as Page;
+			expect(filtered.widgets.launcher?.launchers.map((item) => item.id)).toEqual(['wiki']);
+			expect(filtered.widgets.launcher?.total).toBe(2);
+			// The other widgets' query kept (the activity's page among it).
+			expect(filtered.launcherKeep).toEqual([
+				['lang', 'en'],
+				['activity_cursor', 'abc']
+			]);
+		});
+
+		it('sets a favourite, and says when it could not', async () => {
+			launcherPage();
+			const puts: Array<Record<string, unknown>> = [];
+			routes['/api/account/launchers/mail/favorite'] = (body, init) => {
+				if (init.method !== 'PUT') return json({}, 405);
+				puts.push(body);
+				return json({ launcher_id: 'mail', favorite: body.favorite });
+			};
+			routes['/api/account/launchers/wiki/favorite'] = () => json({ error: 'access_denied' }, 403);
+			await view();
+			await expect(post('launcher_favorite', { launcher: 'mail', favorite: '1' })).resolves.toEqual(
+				{ notice: 'favorite_saved', widget: 'launcher' }
+			);
+			await post('launcher_favorite', { launcher: 'mail', favorite: '0' });
+			expect(puts).toEqual([{ favorite: true }, { favorite: false }]);
+			await expect(
+				post('launcher_favorite', { launcher: 'wiki', favorite: '0' })
+			).resolves.toMatchObject({ status: 400, data: { error: 'favorite_failed' } });
+			await expect(
+				post('launcher_favorite', { launcher: 'mail', favorite: 'yes' })
+			).resolves.toMatchObject({ status: 400 });
+			routes['/api/account/launchers/mail/favorite'] = () => json({ error: 'server_error' }, 500);
+			await expect(
+				post('launcher_favorite', { launcher: 'mail', favorite: '1' })
+			).resolves.toMatchObject({ status: 503, data: { error: 'favorite_failed' } });
+		});
+	});
 });

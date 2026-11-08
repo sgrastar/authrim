@@ -29,7 +29,12 @@
 {/snippet}
 
 <section class="account-widget" data-widget={widget}>
-	<h2>{title}</h2>
+	<h2>
+		{title}
+		{#if widget === 'account_launcher_widget' && data.widgets.launcher && data.widgets.launcher.total > 0}
+			<span class="tag">{data.widgets.launcher.total}</span>
+		{/if}
+	</h2>
 	{#if widget === 'account_profile_widget'}
 		{@const profile = data.widgets.profile}
 		<dl>
@@ -281,6 +286,79 @@
 						<button type="submit">{provider.label}</button>
 					</form>
 				{/each}
+			{/if}
+		{/if}
+	{:else if widget === 'account_launcher_widget'}
+		{@const launcher = data.widgets.launcher}
+		<p class="muted">{data.text.launcherDescription}</p>
+		{#if failed('launcher')}<p role="alert">{data.text.launcherFavoriteFailed}</p>{/if}
+		{#if launcher === null}
+			<p role="alert">{data.text.loadFailed}</p>
+		{:else if launcher.total === 0}
+			<p>{data.text.launcherEmpty}</p>
+		{:else}
+			<!-- The SPA's filters, as a form the page is drawn again with (no script). -->
+			<form method="get" action={data.launcherAction}>
+				{#each data.launcherKeep as [name, value] (name)}
+					<input type="hidden" {name} {value} />
+				{/each}
+				<label>
+					{data.text.launcherSearch}
+					<input type="search" name="launcher_q" value={launcher.filters.q} maxlength="200" />
+				</label>
+				{#if launcher.categories.length > 0}
+					<label>
+						{data.text.launcherAllCategories}
+						<select name="launcher_category">
+							<option value="">{data.text.launcherAllCategories}</option>
+							{#each launcher.categories as category (category)}
+								<option value={category} selected={category === launcher.filters.category}
+									>{category}</option
+								>
+							{/each}
+						</select>
+					</label>
+				{/if}
+				<label>
+					<input
+						type="checkbox"
+						name="launcher_favorites"
+						value="1"
+						checked={launcher.filters.favorites}
+					/>
+					{data.text.launcherFavorites}
+				</label>
+				<button type="submit">{data.text.launcherSearch}</button>
+			</form>
+			{#if launcher.launchers.length === 0}
+				<p>{data.text.launcherNoMatches}</p>
+			{:else}
+				<ul class="launcher-grid">
+					{#each launcher.launchers as item (item.id)}
+						<li>
+							<a
+								href={item.href}
+								target={item.newTab ? '_blank' : undefined}
+								rel={item.newTab ? 'noopener noreferrer' : undefined}
+							>
+								<span class="icon" aria-hidden="true">{item.initial}</span>
+								<strong>{item.name}</strong>
+							</a>
+							{#if item.description}<p class="muted">{item.description}</p>{/if}
+							{#if item.category}<p class="muted">{item.category}</p>{/if}
+							{#if item.allowFavorite}
+								<form method="post" action={actionOf(data.search, 'launcher_favorite')}>
+									{@render hidden()}
+									<input type="hidden" name="launcher" value={item.id} />
+									<input type="hidden" name="favorite" value={item.favorite ? '0' : '1'} />
+									<button type="submit" aria-pressed={item.favorite}>
+										{item.favorite ? data.text.launcherUnfavorite : data.text.launcherFavorite}
+									</button>
+								</form>
+							{/if}
+						</li>
+					{/each}
+				</ul>
 			{/if}
 		{/if}
 	{:else if widget === 'account_device_list_widget'}
