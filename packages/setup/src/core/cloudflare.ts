@@ -9173,7 +9173,13 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     const accountId = await getAccountId();
     const credential = await getCloudflareApiToken();
     if (!accountId || !credential) throw new Error('log_archive_cloudflare_credentials_required');
-    logArchiveApi = new LogArchiveApi(accountId, credential.token);
+    // The Wrangler OAuth token can expire during the run; the API asks for the current one on 401.
+    logArchiveApi = new LogArchiveApi(
+      accountId,
+      credential.token,
+      fetch,
+      async () => (await getCloudflareApiToken())?.token
+    );
     logArchivePolicyVerified = options.logArchiveIssuedForAccountId === accountId;
     await preflightLogArchive({
       catalogPolicyVerified: logArchivePolicyVerified,
@@ -12926,7 +12932,12 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       if (!accountId || !credential) throw new Error('log_archive_deletion_credentials_required');
       deleteLogArchiveResources = await prepareLogArchiveDeletion(
         knownLogArchiveResource,
-        new LogArchiveApi(accountId, credential.token)
+        new LogArchiveApi(
+          accountId,
+          credential.token,
+          fetch,
+          async () => (await getCloudflareApiToken())?.token
+        )
       );
     } catch (error) {
       errors.push(`Log archive ownership preflight failed: ${sanitizeError(error)}`);
