@@ -44,7 +44,7 @@ const adminExternalIdp = {
 	admin_external_idp_redirect_url: 'Redirect URL（外部IdP設定用）',
 	admin_external_idp_copy_to_clipboard: 'クリップボードにコピー',
 	admin_external_idp_redirect_url_hint:
-		'Slugを入力するとcallback URLが生成されます。生成されたURLを外部IdP側のcallback設定に完全一致で登録してください。',
+		'Slugを入力するとcallback URLが生成されます。生成されたURLを外部IdP側のcallback設定に完全一致で登録してください。テナントにカスタムドメインがあってもこのURLはプラットフォームのissuerホストのままです（カスタムドメインで始まったサインインはここに戻り、Sign in with Apple などのフォームPOSTはカスタムドメインへ中継されます）。カスタムドメイン側のURLを登録する必要はありません。',
 	admin_external_idp_provider_status: 'Provider状態',
 	admin_external_idp_provider_status_desc:
 		'このidentity providerを有効化または無効化します。無効な場合、ユーザーはこのproviderでサインインできません。',
