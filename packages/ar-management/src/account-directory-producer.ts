@@ -17,6 +17,12 @@ import {
   AccountCreationOperationRepository,
   type AccountCreationOperation,
 } from './account-creation-operation';
+import {
+  ACCOUNT_CREATION_PREVIOUS_ACCOUNT_DELETING,
+  previousAccountStateReader,
+  resolveAccountCreationGenerationKey,
+  type PreviousAccountStateReader,
+} from './account-creation-generation';
 import { InitialAccountIdentifierReservationService } from './account-directory-reservation';
 import { ACCOUNT_DIRECTORY_WRITE_BINDING_UNAVAILABLE } from './account-directory-errors';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
@@ -80,10 +86,20 @@ export interface DurableInitialAccountDirectoryWriteInput {
   externalSubject?: { issuer: string; subject: string } | null;
   residencyPolicyId: string;
   residencyPartition: string;
+  /**
+   * The key is derived from the request (an auth sign-up's, a SCIM create's without an
+   * Idempotency-Key), so the same request after its account was deleted must not get the deleted
+   * account back (account-creation-generation.ts). `renew`: it goes to the key's next generation.
+   * `refuse`: it is refused while the account is deleted or being deleted (a guest's, whose key
+   * cannot move to a new account). Absent: a key the caller chose, replayed as it was.
+   */
+  onDeletedAccount?: 'renew' | 'refuse';
 }
 
 export interface DurableInitialAccountDirectoryWriteDependencies extends InitialAccountDirectoryWriteDependencies {
   operationRepository: AccountCreationOperationRepository;
+  /** How a generation's account is read (the tenant's current core shards when absent). */
+  readPreviousAccount?: PreviousAccountStateReader;
 }
 
 export interface DurableInitialAccountDirectoryWriteResult extends InitialAccountDirectoryWriteResult {
@@ -451,10 +467,24 @@ export async function executeDurableInitialAccountDirectoryWrite(
   if (!Number.isSafeInteger(now) || now < 1) {
     throw new Error('account_directory_write_time_invalid');
   }
+  const readPreviousAccount = input.onDeletedAccount
+    ? (dependencies.readPreviousAccount ?? previousAccountStateReader(env))
+    : null;
+  const idempotencyKey =
+    readPreviousAccount && input.onDeletedAccount === 'renew'
+      ? await resolveAccountCreationGenerationKey({
+          repository: dependencies.operationRepository,
+          tenantId: input.tenantId,
+          actorId: input.actorId,
+          idempotencyKey: input.idempotencyKey,
+          requestHash: input.requestHash,
+          readPreviousAccount,
+        })
+      : input.idempotencyKey;
   let operation = await dependencies.operationRepository.acquire({
     tenantId: input.tenantId,
     actorId: input.actorId,
-    idempotencyKey: input.idempotencyKey,
+    idempotencyKey,
     requestHash: input.requestHash,
     candidateOperationId: input.candidateOperationId,
     candidateUserId: input.candidateUserId,
@@ -470,6 +500,17 @@ export async function executeDurableInitialAccountDirectoryWrite(
       throw new Error('directory_identifier_reservation_conflict');
     }
     throw new Error(`account_creation_operation_${operation.status}`);
+  }
+  // An account already written (a resume, a replay) is read again here: deleted since the
+  // generation was chosen (or, for `refuse`, at all), it is neither handed back nor published
+  // again. Refused like a deletion under way; a `renew` retry goes on to the next generation once
+  // the removal has finished.
+  if (
+    readPreviousAccount &&
+    (operation.status === 'directory_pending' || operation.status === 'succeeded') &&
+    (await readPreviousAccount(operation)) !== 'live'
+  ) {
+    throw new Error(ACCOUNT_CREATION_PREVIOUS_ACCOUNT_DELETING);
   }
   let publication = operation.publication;
   if (!publication) {

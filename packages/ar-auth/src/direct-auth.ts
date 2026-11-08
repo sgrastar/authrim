@@ -3836,6 +3836,11 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         }
         const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
         if (writeFenceResponse) return writeFenceResponse;
+        // The address's previous account still being deleted, or made and deleted too often:
+        // answered as a send, so the reply does not tell what became of an address.
+        if (error instanceof Error && SUPPRESSED_PROVISIONING_REFUSALS.has(error.message)) {
+          return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
+        }
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
@@ -4035,6 +4040,12 @@ function maskEmail(email: string): string {
 }
 
 /** Answers a send that sent nothing exactly as one that did, its lifetime included. */
+/** Account provisioning's refusals that depend on what became of the address (see the send). */
+const SUPPRESSED_PROVISIONING_REFUSALS = new Set([
+  'account_creation_previous_account_deleting',
+  'account_creation_generations_exhausted',
+]);
+
 function acceptedEmailCodeSendResponse(
   c: Context<{ Bindings: Env }>,
   normalizedEmail: string,

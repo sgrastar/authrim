@@ -64,6 +64,10 @@ import {
   hashAccountCreationRequest,
 } from './account-creation-operation';
 import {
+  ACCOUNT_CREATION_GENERATIONS_EXHAUSTED,
+  ACCOUNT_CREATION_PREVIOUS_ACCOUNT_DELETING,
+} from './account-creation-generation';
+import {
   executeDurableInitialAccountDirectoryWrite,
   resolveInitialAccountDirectoryWriteTargets,
   type DurableInitialAccountDirectoryWriteResult,
@@ -594,6 +598,12 @@ async function scimActorRef(c: ScimContext): Promise<string | undefined> {
   return scimActorId(c).catch(() => undefined);
 }
 
+const SCIM_DERIVED_KEY_PREFIX = 'scim-create:';
+const SCIM_PREVIOUS_ACCOUNT_DELETING_DETAIL =
+  "The user's previous account is still being deleted; retry shortly";
+const SCIM_GENERATIONS_EXHAUSTED_DETAIL =
+  'This user has been created and deleted too many times with the same payload; send an Idempotency-Key';
+
 function explicitScimIdempotencyKey(c: ScimContext): string | null {
   const header = c.req.header('Idempotency-Key');
   if (header === undefined) return null;
@@ -602,7 +612,9 @@ function explicitScimIdempotencyKey(c: ScimContext): string | null {
     value.length < 8 ||
     value.length > 128 ||
     // eslint-disable-next-line no-control-regex -- reject header control bytes before persistence
-    /[\x00-\x1f\x7f]/u.test(value)
+    /[\x00-\x1f\x7f]/u.test(value) ||
+    // The derived keys' own namespace (and their generations'): never a caller's.
+    value.startsWith(SCIM_DERIVED_KEY_PREFIX)
   ) {
     throw new Error('scim_account_idempotency_key_invalid');
   }
@@ -627,7 +639,7 @@ async function executeScimAccountCreation(
 ): Promise<DurableInitialAccountDirectoryWriteResult> {
   const requestHash = await hashAccountCreationRequest({ source, user: scimUser });
   const explicitKey = source.kind === 'single' ? explicitScimIdempotencyKey(c) : null;
-  const idempotencyKey = explicitKey ?? `scim-create:${requestHash}`;
+  const idempotencyKey = explicitKey ?? `${SCIM_DERIVED_KEY_PREFIX}${requestHash}`;
   const actorId = await scimActorId(c);
   const candidateUserId = await generateUserIdFromSettings(c.env, tenantId, c.env);
   const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
@@ -649,6 +661,9 @@ async function executeScimAccountCreation(
       tenantId,
       actorId,
       idempotencyKey,
+      // A key derived from the payload: the same user created again after its deletion is a new
+      // account. An explicit Idempotency-Key keeps the plain replay of its first result.
+      ...(explicitKey === null ? { onDeletedAccount: 'renew' as const } : {}),
       requestHash,
       candidateOperationId: `account-create-${crypto.randomUUID()}`,
       candidateUserId,
@@ -2729,6 +2744,13 @@ app.post('/Users', async (c) => {
       if (error.message === 'control_account_allocation_capacity_unavailable') {
         return scimError(c, 503, 'Account storage capacity is temporarily unavailable');
       }
+      if (error.message === ACCOUNT_CREATION_PREVIOUS_ACCOUNT_DELETING) {
+        c.header('Retry-After', '5');
+        return scimError(c, 503, SCIM_PREVIOUS_ACCOUNT_DELETING_DETAIL);
+      }
+      if (error.message === ACCOUNT_CREATION_GENERATIONS_EXHAUSTED) {
+        return scimError(c, 409, SCIM_GENERATIONS_EXHAUSTED_DETAIL, 'uniqueness');
+      }
     }
     if (error instanceof DefaultIALUnavailableError) {
       c.header('Retry-After', '5');
@@ -4207,6 +4229,34 @@ async function processUserOperation(
               schemas: [SCIM_SCHEMAS.ERROR],
               status: '503',
               detail: 'Account storage capacity is temporarily unavailable',
+            },
+          };
+        }
+        if (
+          error instanceof Error &&
+          error.message === ACCOUNT_CREATION_PREVIOUS_ACCOUNT_DELETING
+        ) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: SCIM_PREVIOUS_ACCOUNT_DELETING_DETAIL,
+            },
+          };
+        }
+        if (error instanceof Error && error.message === ACCOUNT_CREATION_GENERATIONS_EXHAUSTED) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '409',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '409',
+              detail: SCIM_GENERATIONS_EXHAUSTED_DETAIL,
+              scimType: 'uniqueness',
             },
           };
         }

@@ -667,6 +667,34 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     );
   });
 
+  it("asks for a new generation after a deletion; a guest's key is refused instead", async () => {
+    await worker().provisionAuthAccount(input());
+    expect(mocks.execute).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ onDeletedAccount: 'renew' }),
+      expect.anything()
+    );
+    const guest = guestInput();
+    mocks.tenantQuery.mockResolvedValueOnce({
+      id: guest.guestResumeCredential?.id,
+      user_id: 'user-a',
+    });
+    await worker().provisionAuthAccount(guest);
+    expect(mocks.execute).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ onDeletedAccount: 'refuse' }),
+      expect.anything()
+    );
+  });
+
+  it.each(['account_creation_previous_account_deleting', 'account_creation_generations_exhausted'])(
+    'passes the safe refusal %s through',
+    async (code) => {
+      mocks.execute.mockRejectedValueOnce(new Error(code));
+      await expect(worker().provisionAuthAccount(input())).rejects.toThrow(code);
+    }
+  );
+
   it.each(['registered', 'upgrading', 'anonymous'])(
     'rejects guest provisioning with registration state %s before writing',
     async (registrationState) => {

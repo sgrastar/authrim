@@ -150,7 +150,11 @@ paths:
         authenticated provisioning token and canonical request body. Returns 202 with an operation
         Location when directory publication continues asynchronously. userName is unique within the
         tenant using case-insensitive comparison; externalId is not unique. Capacity provisioning
-        and runtime binding propagation return retryable 503 responses.
+        and runtime binding propagation return retryable 503 responses. A derived key belongs to
+        the account it created: the same body sent again after that user was deleted creates a new
+        account, answered with a retryable 503 until the deletion has finished and with 409 once
+        the same body has made 32 accounts (an explicit Idempotency-Key still answers its first
+        result).
 
 
         The identity assurance of the new account is what the request's assurance extension

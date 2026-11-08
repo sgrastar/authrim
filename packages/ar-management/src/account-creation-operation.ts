@@ -200,6 +200,37 @@ export class AccountCreationOperationRepository {
     return parseRow(row);
   }
 
+  /**
+   * The actor's operations of any of the given keys (an auth request's generations), at most one
+   * per key (the table's unique key), read from the primary.
+   */
+  async findByIdempotencyKeys(input: {
+    tenantId: string;
+    actorId: string;
+    idempotencyKeys: readonly string[];
+  }): Promise<AccountCreationOperation[]> {
+    const tenantId = id(input.tenantId, 'account_creation_tenant_id_invalid');
+    const actorId = id(input.actorId, 'account_creation_actor_id_invalid');
+    if (input.idempotencyKeys.length === 0 || input.idempotencyKeys.length > 64) {
+      throw new Error('account_creation_operation_input_invalid');
+    }
+    const rows = await this.adapter.query<AccountCreationOperationRow>(
+      `SELECT operation_id, tenant_id, actor_id, idempotency_key,
+              allocation_idempotency_key, request_hash, user_id, account_id,
+              status, publication_json, last_error_code
+         FROM account_creation_operations
+        WHERE tenant_id = ? AND actor_id = ?
+          AND idempotency_key IN (${input.idempotencyKeys.map(() => '?').join(', ')})`,
+      [tenantId, actorId, ...input.idempotencyKeys],
+      { consistencyClass: 'primary_required' }
+    );
+    return Promise.all(
+      rows
+        .filter((row) => row.tenant_id === tenantId && row.actor_id === actorId)
+        .map((row) => parseRow(row))
+    );
+  }
+
   async findForPublication(
     value: AccountDirectoryPublication
   ): Promise<AccountCreationOperation | null> {
