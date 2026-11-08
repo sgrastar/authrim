@@ -80,7 +80,11 @@ const EXTRA_HEADERS: ReadonlySet<string> = new Set([
 	'x-authrim-human-verification-action',
 	'x-authrim-interaction-id',
 	// The consent answer's form post as data (the lite relay page sends it).
-	'x-authrim-relay'
+	'x-authrim-relay',
+	// The page's language, where the answer's words follow it (the account page's consents).
+	'accept-language',
+	// A change made once only (the account page's email change confirmation).
+	'idempotency-key'
 ]);
 
 const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
@@ -205,7 +209,10 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 			.join('; ');
 		if (cookie) headers.set('Cookie', cookie);
 		if (options.userAgent) headers.set('User-Agent', options.userAgent);
-		if (options.acceptLanguage) headers.set('Accept-Language', options.acceptLanguage);
+		// The browser's languages, unless the call names the page's own.
+		if (options.acceptLanguage && !headers.has('Accept-Language')) {
+			headers.set('Accept-Language', options.acceptLanguage);
+		}
 		if (options.clientIp) {
 			headers.set('CF-Connecting-IP', options.clientIp);
 			headers.set('X-Forwarded-For', options.clientIp);
@@ -228,7 +235,7 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 		async request(
 			path: string,
 			init: {
-				method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+				method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 				json?: unknown;
 				/** Extra request headers, from EXTRA_HEADERS only. */
 				headers?: Readonly<Record<string, string>>;

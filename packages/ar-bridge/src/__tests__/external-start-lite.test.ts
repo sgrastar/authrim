@@ -227,7 +227,9 @@ describe('external start for a tenant in lite mode', () => {
     async (mode) => {
       lite.mode = mode;
       mocks.consumeGrant.mockResolvedValue({ ok: false, reason: 'grant_invalid' });
-      const response = await start('provider-a', PUBLIC_QUERY);
+      const query = new URLSearchParams(PUBLIC_QUERY);
+      query.delete('link_intent');
+      const response = await start('provider-a', query.toString());
       expect(response.status).toBe(403);
       expect(response.headers.get('cache-control')).toBe('no-store');
       expect(await response.json()).toMatchObject({ error: 'lite_mode_endpoint_unavailable' });
@@ -256,6 +258,28 @@ describe('external start for a tenant in lite mode', () => {
     expect(response.status).toBe(403);
     expect(mocks.consumeGrant.mock.calls[0][1]).toMatchObject({ binding: undefined });
   });
+
+  it.each(['always', 'unknown'] as const)(
+    'takes a link from the account page by its intent alone when the mode is %s',
+    async (mode) => {
+      lite.mode = mode;
+      // An intent no longer usable (or never made): back to the account page, nothing started.
+      mocks.consumeLinkIntent.mockResolvedValue(null);
+      const response = await start('provider-a', PUBLIC_QUERY);
+      expect(response.status).toBe(302);
+      const location = new URL(String(response.headers.get('location')));
+      expect(location.pathname).toBe('/account');
+      expect(location.searchParams.get('social_link')).toBe('error');
+      expect(location.searchParams.get('reason')).toBe('session_expired');
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(mocks.consumeLinkIntent).toHaveBeenCalledWith(env, 'default', 'link-1');
+      // Not a lite start (no grant is asked for), and no sign-in: no proof, no state stored.
+      expect(mocks.consumeGrant).not.toHaveBeenCalled();
+      expect(mocks.verifyHumanVerification).not.toHaveBeenCalled();
+      expect(mocks.reserveInvitation).not.toHaveBeenCalled();
+      expect(mocks.storeAuthState).not.toHaveBeenCalled();
+    }
+  );
 
   it('starts from the transaction and the grant, ignoring every public parameter', async () => {
     const response = await start('provider-a', `lite_txn=txn-1&lite_grant=grant-1&${PUBLIC_QUERY}`);

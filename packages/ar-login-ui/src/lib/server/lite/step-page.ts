@@ -18,7 +18,7 @@
  * method-actions.ts.
  */
 import { error, redirect, type RequestEvent } from '@sveltejs/kit';
-import QRCode from 'qrcode';
+import { qrDataUri } from '#lib/server/lite/qr.js';
 import { LITE_PASSKEY_SCRIPT } from '#lib/lite/passkey-ceremony.js';
 import { LITE_POW_SOLVER_SCRIPT } from '#lib/lite/pow-solver.js';
 import { cspHashSource } from '#lib/server/lite/csp.js';
@@ -106,16 +106,6 @@ const AUTHORIZATION_EXPIRED = new Set([
 function queryValue(event: RequestEvent, name: string): string | null {
 	const value = event.url.searchParams.get(name);
 	return value && value.length <= 2048 ? value : null;
-}
-
-/** A QR code as an inline image (an SVG data URI: the lite CSP allows `img-src data:` only). */
-async function qrDataUri(text: string): Promise<string | null> {
-	try {
-		const svg = await QRCode.toString(text, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
-		return `data:image/svg+xml;base64,${btoa(svg)}`;
-	} catch {
-		return null;
-	}
 }
 
 async function sha256Hex(value: string): Promise<string> {

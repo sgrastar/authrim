@@ -39,6 +39,7 @@ import {
   DEFAULT_SIGNED_REQUEST_MAX_AGE_SECONDS,
   EXTERNAL_IDP_SETTINGS_META,
   ensureDatabaseAdapter,
+  probeAccountForProviderDataDeletion,
   resolveAccountDataContext,
   resolveAccountDataContextByIdentifier,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -174,14 +175,14 @@ async function answerForRemovedAccount(
   env: Env,
   input: { tenantId: string; providerId: string; providerUserId: string }
 ): Promise<ProviderDataDeletionResult> {
-  let account: Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>>;
+  // Read-only: the account's state, its hold, and whether data for the subject remains.
+  let probe: Awaited<ReturnType<typeof probeAccountForProviderDataDeletion>>;
+  const subject = { issuer: input.providerId, subject: input.providerUserId };
   try {
-    account = await resolveAccountDataContextByIdentifier(env, {
+    probe = await probeAccountForProviderDataDeletion(env, {
       tenantId: input.tenantId,
-      indexKind: 'external_subject',
-      identifier: { issuer: input.providerId, subject: input.providerUserId },
-      acceptLifecycle: 'any',
-      freshRoute: true,
+      account: subject,
+      remains: subject,
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'account_data_route_not_found') {
@@ -190,11 +191,17 @@ async function answerForRemovedAccount(
     if (isInactiveAccountError(error)) return { outcome: 'account_inactive' };
     throw error;
   }
-  const base = { userId: account.legacyUserId, accountId: account.accountId };
-  if (account.lifecycleState === 'deleted') return { outcome: 'account_deleted', ...base };
-  if (account.lifecycleState === 'deleting') {
+  const base = { userId: probe.legacyUserId, accountId: probe.accountId };
+  if (probe.lifecycleState === 'deleted') {
+    // Completed only once nothing for the subject remains (the deletion erased it); otherwise
+    // the deletion is not done with it yet.
+    return probe.providerDataRemains
+      ? { outcome: 'account_inactive', ...base }
+      : { outcome: 'account_deleted', ...base };
+  }
+  if (probe.lifecycleState === 'deleting') {
     // A deletion a hold stopped stays here with the data kept.
-    return (await hasActiveAccountLegalHold(account.coreDb, input.tenantId, account.accountId))
+    return probe.legalHoldActive
       ? { outcome: 'retained', ...base }
       : { outcome: 'account_inactive', ...base };
   }
@@ -447,10 +454,23 @@ async function statusAdapter(env: Env, tenantId: string, partition: string) {
 export function dataDeletionStateFor(
   outcome: ProviderDataDeletionOutcome
 ): DataDeletionRequestState | null {
-  if (outcome === 'account_inactive') return null;
-  if (outcome === 'unlink_pending') return 'pending';
-  if (outcome === 'retained') return 'retained';
-  return 'completed';
+  switch (outcome) {
+    case 'account_inactive':
+      return null;
+    case 'unlink_pending':
+      return 'pending';
+    case 'retained':
+      return 'retained';
+    case 'unlinked':
+    case 'no_link':
+    case 'account_deleted':
+      return 'completed';
+    default: {
+      // A new outcome must be mapped here: never recorded as done by default.
+      const unmapped: never = outcome;
+      throw new ProviderDataDeletionError(`data_deletion_outcome_unmapped:${String(unmapped)}`);
+    }
+  }
 }
 
 /** Record a data deletion request's status; returns its confirmation code. */
@@ -554,16 +574,15 @@ async function isUnlinkFinished(
     // ar-management account-directory-removal-producer.ts).
     if (error instanceof Error && error.message === 'account_data_route_not_found') return true;
     if (!isInactiveAccountError(error)) throw error;
-    // Being deleted since (still pending: a hold may stop that deletion), or deleted (its
-    // deletion erased what the unlink left).
+    // Being deleted since (still pending: a hold may stop that deletion), or deleted: done only
+    // once the unlink operation no longer holds its raw values (the deletion erases them).
     try {
-      const removed = await resolveAccountDataContext(env, {
+      const probe = await probeAccountForProviderDataDeletion(env, {
         tenantId,
-        accountId,
-        acceptLifecycle: 'any',
-        freshRoute: true,
+        account: { accountId },
+        remains: { unlinkOperationId: operationId },
       });
-      return removed.lifecycleState === 'deleted';
+      return probe.lifecycleState === 'deleted' && !probe.providerDataRemains;
     } catch (again) {
       if (again instanceof Error && again.message === 'account_data_route_not_found') return true;
       if (isInactiveAccountError(again)) return false;
