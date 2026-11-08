@@ -35,7 +35,9 @@
 		'accent',
 		'titleColor',
 		'textColor',
-		'copyColor'
+		'copyColor',
+		'fieldColor',
+		'secondaryButtonColor'
 	] as const;
 	const customised = $derived(COLOUR_FIELDS.some((field) => draft[field] !== ''));
 	function resetColours() {
@@ -89,6 +91,18 @@
 			alpha
 			fallback={defaults.copy}
 			bind:value={draft.copyColor}
+		/>
+		<ColorField
+			label={t('th.c.field')}
+			alpha
+			fallback={defaults.card}
+			bind:value={draft.fieldColor}
+		/>
+		<ColorField
+			label={t('th.c.secondaryButton')}
+			alpha
+			fallback={defaults.card}
+			bind:value={draft.secondaryButtonColor}
 		/>
 	</div>
 </ThemeGroup>

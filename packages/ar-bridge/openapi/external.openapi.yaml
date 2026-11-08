@@ -682,6 +682,220 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthError'
+  /auth/external/{provider}/data-deletion:
+    post:
+      operationId: receiveFacebookDataDeletionRequest
+      summary: Facebook Data Deletion Request Callback
+      description: >-
+        Called by Meta with a `signed_request` signed by the provider's app secret (HMAC-SHA256;
+        `issued_at` must be within `external_idp.signed_request_max_age_seconds`). Unlinks the
+        person's Facebook identity and erases the data received from Facebook (linked identity,
+        profile values and upstream tokens); the Authrim account is kept. The status of a
+        request that needs the operator's individual handling is `operator_action_required`,
+        which gives no reason. The answer is the same whether or not the person had a link.
+      parameters:
+        - $ref: '#/components/parameters/FacebookProvider'
+      requestBody:
+        $ref: '#/components/requestBodies/FacebookSignedRequest'
+      responses:
+        '200':
+          description: The request was processed; Meta shows the person the status URL and code.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FacebookDataDeletionResponse'
+        '400':
+          description: >-
+            The signed request is missing, malformed, wrongly signed, not HMAC-SHA256, stale, a
+            login-flow request (carries `code` or `oauth_token`), or one already processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '404':
+          description: No Facebook Login provider of this tenant has this id or slug.
+        '500':
+          description: The app secret is unavailable or the unlink could not be completed safely.
+        '503':
+          description: >-
+            `temporarily_unavailable`: another change to how the account signs in is running, or
+            the account is not active (suspended, locked, being deleted) and nothing was done.
+            Retry after the Retry-After delay. Never recorded as done.
+  /auth/external/{provider}/data-deletion/{code}:
+    get:
+      operationId: getFacebookDataDeletionStatus
+      summary: Status of a Facebook data deletion request
+      description: >-
+        Public: the confirmation code is the only key. Shows only the request's state, as an HTML
+        page, or as JSON when the request accepts `application/json` and not `text/html`.
+      parameters:
+        - $ref: '#/components/parameters/FacebookProvider'
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{22}$'
+      responses:
+        '200':
+          description: The request's state.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FacebookDataDeletionStatus'
+            text/html:
+              schema:
+                type: string
+        '404':
+          description: No request has this confirmation code for this provider.
+  /api/external/{provider}/data-deletion:
+    post:
+      operationId: receiveFacebookDataDeletionRequestApi
+      summary: Facebook Data Deletion Request Callback
+      description: >-
+        Called by Meta with a `signed_request` signed by the provider's app secret (HMAC-SHA256;
+        `issued_at` must be within `external_idp.signed_request_max_age_seconds`). Unlinks the
+        person's Facebook identity and erases the data received from Facebook (linked identity,
+        profile values and upstream tokens); the Authrim account is kept. The status of a
+        request that needs the operator's individual handling is `operator_action_required`,
+        which gives no reason. The answer is the same whether or not the person had a link.
+      parameters:
+        - $ref: '#/components/parameters/FacebookProvider'
+      requestBody:
+        $ref: '#/components/requestBodies/FacebookSignedRequest'
+      responses:
+        '200':
+          description: The request was processed; Meta shows the person the status URL and code.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FacebookDataDeletionResponse'
+        '400':
+          description: >-
+            The signed request is missing, malformed, wrongly signed, not HMAC-SHA256, stale, a
+            login-flow request (carries `code` or `oauth_token`), or one already processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '404':
+          description: No Facebook Login provider of this tenant has this id or slug.
+        '500':
+          description: The app secret is unavailable or the unlink could not be completed safely.
+        '503':
+          description: >-
+            `temporarily_unavailable`: another change to how the account signs in is running, or
+            the account is not active (suspended, locked, being deleted) and nothing was done.
+            Retry after the Retry-After delay. Never recorded as done.
+  /api/external/{provider}/data-deletion/{code}:
+    get:
+      operationId: getFacebookDataDeletionStatusApi
+      summary: Status of a Facebook data deletion request
+      description: >-
+        Public: the confirmation code is the only key. Shows only the request's state, as an HTML
+        page, or as JSON when the request accepts `application/json` and not `text/html`.
+      parameters:
+        - $ref: '#/components/parameters/FacebookProvider'
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{22}$'
+      responses:
+        '200':
+          description: The request's state.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FacebookDataDeletionStatus'
+            text/html:
+              schema:
+                type: string
+        '404':
+          description: No request has this confirmation code for this provider.
+  /auth/external/{provider}/deauthorize:
+    post:
+      operationId: receiveFacebookDeauthorization
+      summary: Facebook Deauthorize Callback
+      description: >-
+        Called by Meta with a `signed_request` when the person removes the app. Verified and
+        handled like the data deletion callback (unlink, account kept), but
+        no status record is kept.
+      parameters:
+        - $ref: '#/components/parameters/FacebookProvider'
+      requestBody:
+        $ref: '#/components/requestBodies/FacebookSignedRequest'
+      responses:
+        '200':
+          description: The request was processed.
+        '400':
+          description: >-
+            The signed request is missing, malformed, wrongly signed, not HMAC-SHA256, stale, a
+            login-flow request (carries `code` or `oauth_token`), or one already processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '404':
+          description: No Facebook Login provider of this tenant has this id or slug.
+        '500':
+          description: The app secret is unavailable or the unlink could not be completed safely.
+        '503':
+          description: >-
+            Another change to how the account signs in is running, or the account is not active
+            (nothing was done); retry later.
+  /api/external/{provider}/deauthorize:
+    post:
+      operationId: receiveFacebookDeauthorizationApi
+      summary: Facebook Deauthorize Callback
+      description: >-
+        Called by Meta with a `signed_request` when the person removes the app. Verified and
+        handled like the data deletion callback (unlink, account kept), but
+        no status record is kept.
+      parameters:
+        - $ref: '#/components/parameters/FacebookProvider'
+      requestBody:
+        $ref: '#/components/requestBodies/FacebookSignedRequest'
+      responses:
+        '200':
+          description: The request was processed.
+        '400':
+          description: >-
+            The signed request is missing, malformed, wrongly signed, not HMAC-SHA256, stale, a
+            login-flow request (carries `code` or `oauth_token`), or one already processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '404':
+          description: No Facebook Login provider of this tenant has this id or slug.
+        '500':
+          description: The app secret is unavailable or the unlink could not be completed safely.
+        '503':
+          description: >-
+            Another change to how the account signs in is running, or the account is not active
+            (nothing was done); retry later.
 components:
   securitySchemes:
     authrimSession:
@@ -693,7 +907,69 @@ components:
       in: cookie
       name: authrim_external_provisioning_<digest-prefix>
       description: Dynamically named HttpOnly browser-binding cookie.
+  parameters:
+    FacebookProvider:
+      name: provider
+      in: path
+      required: true
+      description: The id or slug of a Facebook Login provider configuration of the tenant.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+  requestBodies:
+    FacebookSignedRequest:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: '#/components/schemas/FacebookSignedRequestForm'
+        multipart/form-data:
+          schema:
+            $ref: '#/components/schemas/FacebookSignedRequestForm'
   schemas:
+    FacebookSignedRequestForm:
+      type: object
+      required:
+        - signed_request
+      properties:
+        signed_request:
+          type: string
+          maxLength: 4096
+          description: '`<signature>.<payload>`, each base64url (Meta signed request).'
+    FacebookDataDeletionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+        - confirmation_code
+      properties:
+        url:
+          type: string
+          format: uri
+          description: The status page of the request.
+        confirmation_code:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{22}$'
+    FacebookDataDeletionStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - confirmation_code
+        - status
+      properties:
+        confirmation_code:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{22}$'
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+            - operator_action_required
+          description: >-
+            `operator_action_required`: the request needs the service operator's individual
+            handling (no reason is given).
     HandoffVerifyRequest:
       type: object
       required:

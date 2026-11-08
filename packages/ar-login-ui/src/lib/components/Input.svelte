@@ -109,12 +109,13 @@
 		min-height: var(--auth-control-height, 0);
 		padding: var(--auth-control-padding-y, 12px) var(--auth-control-padding-x, 16px);
 		/* --control-surface and --surface-*: see Card; AccountShell sets them. */
-		background: var(--control-surface, var(--bg-glass));
+		/* --field-bg / --field-text: a tenant's input colour (login-ui.field_color), set by the page. */
+		background: var(--field-bg, var(--control-surface, var(--bg-glass)));
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);
 		font-size: var(--auth-control-font-size, 0.9375rem);
 		font-family: var(--font-body);
-		color: var(--text-primary);
+		color: var(--field-text, var(--text-primary));
 		transition: var(--surface-transition, all var(--transition-fast));
 		backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
 		-webkit-backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));

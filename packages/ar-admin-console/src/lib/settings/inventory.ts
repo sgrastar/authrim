@@ -228,6 +228,9 @@ place('authentication/social', 'Creating users on first sign-in', {
 		'external_idp.jit_allow_unverified_domain_mappings'
 	]
 });
+place('authentication/social', 'Provider callbacks', {
+	advanced: ['external_idp.signed_request_max_age_seconds']
+});
 
 place('authentication/enterprise', 'SAML', {
 	advanced: ['tenant.saml_attribute_release_failure_message_mode'],
@@ -521,7 +524,9 @@ place('customization/login-ui', 'Colours', {
 		'login-ui.title_color',
 		'login-ui.text_color',
 		'login-ui.copy_color',
-		'login-ui.form_area_color'
+		'login-ui.form_area_color',
+		'login-ui.field_color',
+		'login-ui.secondary_button_color'
 	]
 });
 place('customization/login-ui', 'Layout', {
@@ -541,7 +546,8 @@ place('customization/login-ui', 'Layout', {
 		'login-ui.form_frame',
 		'login-ui.background_image_url',
 		'login-ui.background_image_opacity',
-		'login-ui.background_image_grayscale'
+		'login-ui.background_image_grayscale',
+		'login-ui.background_image_filters'
 	]
 });
 place('customization/login-ui', 'Split layout', {

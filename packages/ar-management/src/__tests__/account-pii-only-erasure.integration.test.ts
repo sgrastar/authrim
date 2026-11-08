@@ -104,7 +104,8 @@ describe('PII-only deletion erasure', () => {
       CREATE TABLE linked_identities (
         id TEXT PRIMARY KEY, tenant_id TEXT, user_id TEXT, provider_id TEXT,
         provider_user_id TEXT, provider_email TEXT, provider_name TEXT, raw_attributes TEXT,
-        raw_claims TEXT, profile_data TEXT, access_token_encrypted TEXT, updated_at INTEGER,
+        raw_claims TEXT, profile_data TEXT, access_token_encrypted TEXT,
+        refresh_token_encrypted TEXT, token_expires_at INTEGER, updated_at INTEGER,
         provisioning_state TEXT NOT NULL DEFAULT 'active'
       );
       CREATE TABLE identity_identifier_replacement_operations (
@@ -138,11 +139,12 @@ describe('PII-only deletion erasure', () => {
         ('v-tenant', 'tenant-b', 'runtime_user', 'user-a', 'email', '"t@example.com"', NULL, 'deleted', 1);
       INSERT INTO linked_identities
         (id, tenant_id, user_id, provider_id, provider_user_id, provider_email, provider_name,
-         raw_attributes, raw_claims, profile_data, access_token_encrypted, updated_at)
+         raw_attributes, raw_claims, profile_data, access_token_encrypted,
+         refresh_token_encrypted, token_expires_at, updated_at)
       VALUES
         ('li-a', 'tenant-a', 'user-a', 'google', 'sub-a', 'a@gmail.com', 'Ann', '{"x":1}',
-         '{"email":"a@gmail.com"}', '{"name":"Ann"}', 'enc-token', 1),
-        ('li-b', 'tenant-a', 'user-b', 'google', 'sub-b', 'b@gmail.com', 'Bob', NULL, NULL, NULL, NULL, 1);
+         '{"email":"a@gmail.com"}', '{"name":"Ann"}', 'enc-token', 'enc-refresh', 99, 1),
+        ('li-b', 'tenant-a', 'user-b', 'google', 'sub-b', 'b@gmail.com', 'Bob', NULL, NULL, NULL, NULL, NULL, NULL, 1);
       INSERT INTO identity_identifier_replacement_operations VALUES
         -- Self-service and SCIM name the account by its user id; others by its account id.
         ('op-done', 'tenant-a', 'user-a', 'completed'),
@@ -226,7 +228,10 @@ describe('PII-only deletion erasure', () => {
       raw_attributes: null,
       raw_claims: null,
       profile_data: null,
-      access_token_encrypted: 'enc-token',
+      // The stored provider token goes too (a sign-in through the provider gets a new one).
+      access_token_encrypted: null,
+      refresh_token_encrypted: null,
+      token_expires_at: null,
       updated_at: NOW,
       provisioning_state: 'active',
     });

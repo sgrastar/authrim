@@ -139,4 +139,27 @@ describe('linked-identity-store', () => {
     expect(sqlTracker.calls[0]?.sql).toContain('token_expires_at = NULL');
     expect(sqlTracker.calls[0]?.params).toEqual([expect.any(Number), 'tenant-a', 'link-a']);
   });
+
+  it('writes only while the link still holds the refresh token read before a refresh', async () => {
+    mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
+
+    // The tokens were erased (a PII deletion) or replaced meanwhile: nothing is put back.
+    await expect(
+      updateLinkedIdentity(
+        env,
+        'tenant-a',
+        'link-a',
+        { lastLoginAt: 1, expectedRefreshTokenEncrypted: 'enc-refresh-read' },
+        piiSource
+      )
+    ).resolves.toBe(false);
+    expect(sqlTracker.calls[0]?.sql).toContain(
+      'WHERE tenant_id = ? AND id = ? AND refresh_token_encrypted = ?'
+    );
+    expect(sqlTracker.calls[0]?.params.slice(-3)).toEqual([
+      'tenant-a',
+      'link-a',
+      'enc-refresh-read',
+    ]);
+  });
 });

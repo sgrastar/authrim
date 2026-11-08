@@ -132,7 +132,12 @@ export async function recordSocialAccountActivity(
   c: Context<{ Bindings: Env }>,
   userId: string,
   action: 'account.social_account.linked' | 'account.social_account.unlinked',
-  metadata: { linkedIdentityId: string; providerId: string }
+  metadata: {
+    linkedIdentityId: string;
+    providerId: string;
+    /** Why, when the person did not do it from the account page (a provider's callback). */
+    reason?: 'provider_data_deletion' | 'provider_deauthorize';
+  }
 ): Promise<void> {
   try {
     await createAuditLog(c.env, {

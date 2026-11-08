@@ -343,6 +343,12 @@ export async function updateLinkedIdentity(
     clearTokens?: boolean;
     lastLoginAt?: number;
     rawClaims?: Record<string, unknown>;
+    /**
+     * Write only while the link still holds this refresh token (as read before a refresh): a
+     * refresh that waited on the provider while the tokens were erased (a PII deletion) or
+     * replaced puts none back.
+     */
+    expectedRefreshTokenEncrypted?: string;
   },
   piiSource: DatabaseSource
 ): Promise<boolean> {
@@ -394,9 +400,12 @@ export async function updateLinkedIdentity(
     'linked-identity:update',
     piiSource
   );
+  const expected = updates.expectedRefreshTokenEncrypted;
   const result = await adapter.execute(
-    `UPDATE linked_identities SET ${setClauses.join(', ')} WHERE tenant_id = ? AND id = ?`,
-    [...params, tenantId, id]
+    `UPDATE linked_identities SET ${setClauses.join(', ')} WHERE tenant_id = ? AND id = ?${
+      expected !== undefined ? ' AND refresh_token_encrypted = ?' : ''
+    }`,
+    [...params, tenantId, id, ...(expected !== undefined ? [expected] : [])]
   );
 
   return result.rowsAffected > 0;

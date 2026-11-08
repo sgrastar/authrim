@@ -165,6 +165,10 @@ export interface LoginUIConfig {
 		formFrame?: 'card' | 'full';
 		/** Hex colour with an optional alpha channel; empty when none is set. */
 		formAreaColor?: string;
+		/** Text input background: hex with an optional alpha channel; empty when none is set. */
+		fieldColor?: string;
+		/** Secondary button background: hex with an optional alpha channel; empty when none is set. */
+		secondaryButtonColor?: string;
 		brandPanelLogoDisplay?: 'inherit' | 'auto' | 'image' | 'text' | 'hidden';
 		/** @deprecated Derived from `template`. */
 		layout: 'centered_card' | 'split_panel' | 'fullbleed_card';
@@ -217,6 +221,8 @@ export interface LoginUIConfig {
 		/** Percentage, 0-100. */
 		backgroundImageOpacity?: number;
 		backgroundImageGrayscale?: boolean;
+		/** Filters on the page picture, in the order they apply (each at most once). */
+		backgroundImageFilters?: { name: string; value: number }[];
 		loginPanelBackgroundImageUrl?: string | null;
 		brandPanelImageUrl?: string | null;
 		/** Percentage, 0-100. */

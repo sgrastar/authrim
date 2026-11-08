@@ -139,6 +139,7 @@ export const TENANT_TABLES_TO_DELETE = [
   'ciba_requests',
   'device_codes',
   'external_idp_auth_states',
+  'external_idp_data_deletion_requests',
   'flows',
   'password_reset_tokens',
   // Consents

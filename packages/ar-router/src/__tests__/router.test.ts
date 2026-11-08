@@ -1499,6 +1499,10 @@ describe('Router Worker', () => {
       '/api/external/oidf/callback',
       '/auth/external/oidf/backchannel-logout',
       '/api/external/oidf/backchannel-logout',
+      '/auth/external/facebook/data-deletion',
+      '/api/external/facebook/data-deletion',
+      '/auth/external/facebook/deauthorize',
+      '/api/external/facebook/deauthorize',
     ])(
       'should allow external provider protocol POST without same-origin CSRF: %s',
       async (path) => {

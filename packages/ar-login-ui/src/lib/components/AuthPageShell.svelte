@@ -88,9 +88,26 @@
 		loginUIPageStore.loginPanelBackgroundOpacity / 100
 	)}
 	style:--login-form-area-color={loginUIPageStore.formAreaColor || undefined}
+	data-has-field-color={loginUIPageStore.fieldColor ? 'true' : undefined}
+	style:--bg-input={loginUIPageStore.fieldColor || undefined}
+	style:--field-bg={loginUIPageStore.fieldColor || undefined}
+	style:--field-text={loginUIPageStore.fieldColor
+		? (loginUIPageStore.fieldTextColor ?? undefined)
+		: undefined}
+	data-has-secondary-button-color={loginUIPageStore.secondaryButtonColor ? 'true' : undefined}
+	style:--button-secondary-bg={loginUIPageStore.secondaryButtonColor || undefined}
+	style:--secondary-bg={loginUIPageStore.secondaryButtonColor || undefined}
+	style:--secondary-text={loginUIPageStore.secondaryButtonColor
+		? (loginUIPageStore.secondaryButtonTextColor ?? undefined)
+		: undefined}
+	style:--button-secondary-text={loginUIPageStore.secondaryButtonColor
+		? (loginUIPageStore.secondaryButtonTextColor ?? undefined)
+		: undefined}
 	style:--login-page-background-opacity={String(loginUIPageStore.backgroundImageOpacity / 100)}
 	style:--login-brand-panel-image-layer={loginUIPageStore.brandPanelImageLayer ?? undefined}
 	style:--login-brand-panel-image-opacity={String(loginUIPageStore.brandPanelImageOpacity / 100)}
+	data-page-image-filter={loginUIPageStore.backgroundImageFilter ? 'true' : undefined}
+	style:--login-page-image-filter={loginUIPageStore.backgroundImageFilter || undefined}
 	style:--login-page-image-tone={loginUIPageStore.backgroundImageGrayscale
 		? 'linear-gradient(#808080, #808080)'
 		: undefined}
@@ -101,7 +118,11 @@
 		? 'grayscale(1)'
 		: undefined}
 >
+	{#if loginUIPageStore.backgroundImageFilter}<span class="auth-image-filter" aria-hidden="true"
+		></span>{/if}
 	<div class="auth-main">
+		{#if loginUIPageStore.backgroundImageFilter}<span class="auth-image-filter" aria-hidden="true"
+			></span>{/if}
 		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card' && !topbarInForm}
 			<LanguageSwitcher
 				showThemeToggle={loginUIPageStore.themeToggleEnabled}
@@ -111,6 +132,7 @@
 
 		{#if loginUIPageStore.showBrandPanel}
 			<aside class="auth-brand-panel" aria-hidden="true">
+				{#if loginUIPageStore.backgroundImageFilter}<span class="auth-image-filter"></span>{/if}
 				{#if loginUIPageStore.brandContentMode !== 'none'}
 					<div class="auth-brand-panel__content">
 						{#if panelShowLogo && brandLogoUrl}

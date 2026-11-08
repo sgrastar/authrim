@@ -512,7 +512,7 @@ async function listPiiSources(
 /**
  * Refresh token for a single linked identity
  */
-async function refreshIdentityToken(
+export async function refreshIdentityToken(
   env: Env,
   identity: LinkedIdentity,
   encryptionKey: string,
@@ -544,16 +544,24 @@ async function refreshIdentityToken(
   // Refresh the token
   const tokens = await client.refreshTokens(refreshToken);
 
-  // Update the linked identity with new tokens
-  await updateLinkedIdentity(
+  // Update the linked identity with new tokens, only while it still holds the refresh token read
+  // above: tokens erased meanwhile (a PII deletion) or replaced (a sign-in) are not put back.
+  const saved = await updateLinkedIdentity(
     env,
     identity.tenantId,
     identity.id,
     {
       tokens,
+      ...(identity.refreshTokenEncrypted
+        ? { expectedRefreshTokenEncrypted: identity.refreshTokenEncrypted }
+        : {}),
     },
     piiSource
   );
+  if (!saved) {
+    log.warn('Refreshed external IdP token not saved: the link changed meanwhile');
+    return false;
+  }
 
   // PII Protection: Don't log identity.id
   log.info('Successfully refreshed external IdP token');

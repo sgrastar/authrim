@@ -28,6 +28,10 @@
             {
               "path": "005_flow_interaction_submit_claim.sql",
               "checksum": "1d11e0cff4b6861ab94ec3d765bd641ad3f70e81992a75bc107e6eecaeacb960"
+            },
+            {
+              "path": "006_external_idp_data_deletion_requests.sql",
+              "checksum": "edf5b7a5fea4a2821140d30667bdd39bb58be092d5e96dbea2bf815d4f0644dc"
             }
           ]
         },
@@ -186,6 +190,10 @@
         {
           "path": "005_flow_interaction_submit_claim.sql",
           "checksum": "1d11e0cff4b6861ab94ec3d765bd641ad3f70e81992a75bc107e6eecaeacb960"
+        },
+        {
+          "path": "006_external_idp_data_deletion_requests.sql",
+          "checksum": "edf5b7a5fea4a2821140d30667bdd39bb58be092d5e96dbea2bf815d4f0644dc"
         }
       ]
     },

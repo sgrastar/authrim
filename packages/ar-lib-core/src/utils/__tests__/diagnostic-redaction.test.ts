@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   redactSecretPathSegments,
+  redactSecretPathsInLogLine,
   isCompactJwt,
   isProtectedForm,
   maskIpAddress,
@@ -532,9 +533,68 @@ describe('redactSecretPathSegments', () => {
     expect(redactSecretPathSegments('/vci/offers/code/extra')).toBe('/vci/offers/[REDACTED]/extra');
   });
 
+  it('hides the confirmation code of a provider data deletion status path', () => {
+    for (const prefix of ['/auth/external/facebook', '/api/external/provider-1']) {
+      expect(redactSecretPathSegments(`${prefix}/data-deletion/AbCdEfGhIjKlMnOpQrStUv`)).toBe(
+        `${prefix}/data-deletion/[REDACTED]`
+      );
+    }
+  });
+
+  it('is not bypassed by percent-encoding or repeated slashes', () => {
+    expect(redactSecretPathSegments('/%61uth/external/facebook/data-deletion/AbCdEfGh')).toBe(
+      '/%61uth/external/facebook/data-deletion/[REDACTED]'
+    );
+    expect(redactSecretPathSegments('/auth/external/facebook/data%2Ddeletion/AbCdEfGh')).toBe(
+      '/auth/external/facebook/data%2Ddeletion/[REDACTED]'
+    );
+    expect(redactSecretPathSegments('//vci/%6fffers/code')).toBe('/vci/%6fffers/[REDACTED]');
+    expect(redactSecretPathSegments('/auth//external/facebook/data-deletion/AbCd')).toBe(
+      '/auth/external/facebook/data-deletion/[REDACTED]'
+    );
+    expect(redactSecretPathsInLogLine('<-- GET /%61pi/external/fb/data-deletion/AbCd')).toBe(
+      '<-- GET /%61pi/external/fb/data-deletion/[REDACTED]'
+    );
+  });
+
+  it('keeps an encoded slash inside a segment (a provider slug) as one segment', () => {
+    expect(
+      redactSecretPathSegments(
+        '/auth/external/facebook%2Fprod/data-deletion/AbCdEfGhIjKlMnOpQrStUv'
+      )
+    ).toBe('/auth/external/facebook%2Fprod/data-deletion/[REDACTED]');
+    expect(
+      redactSecretPathsInLogLine('--> GET /api/external/a%2Fb/data-deletion/AbCd 200 2ms')
+    ).toBe('--> GET /api/external/a%2Fb/data-deletion/[REDACTED] 200 2ms');
+    // Nor does it make one secret path out of two segments.
+    expect(redactSecretPathSegments('/vci%2Foffers/code')).toBe('/vci%2Foffers/code');
+  });
+
   it('leaves every other path unchanged', () => {
-    for (const path of ['/vci/offers/', '/vci/token', '/api/vci/offers/x', '/vci/offersx/y']) {
+    for (const path of [
+      '/%zz/not-decodable',
+      '/auth/external/%E3%81%82/start',
+      '/vci/offers/',
+      '/vci/token',
+      '/api/vci/offers/x',
+      '/vci/offersx/y',
+      '/auth/external/facebook/data-deletion',
+      '/auth/external/facebook/deauthorize',
+      '/x/auth/external/facebook/data-deletion/code',
+    ]) {
       expect(redactSecretPathSegments(path)).toBe(path);
     }
+  });
+});
+
+describe('redactSecretPathsInLogLine', () => {
+  it('redacts the paths of hono/logger lines and nothing else', () => {
+    expect(redactSecretPathsInLogLine('<-- GET /auth/external/fb/data-deletion/AbCd')).toBe(
+      '<-- GET /auth/external/fb/data-deletion/[REDACTED]'
+    );
+    expect(redactSecretPathsInLogLine('--> GET /vci/offers/secret-code 200 3ms')).toBe(
+      '--> GET /vci/offers/[REDACTED] 200 3ms'
+    );
+    expect(redactSecretPathsInLogLine('--> POST /token 200 3ms')).toBe('--> POST /token 200 3ms');
   });
 });
