@@ -87,21 +87,7 @@
 		{:else if failed('passkeys')}
 			<p role="alert">{data.text.actionFailed}</p>
 		{/if}
-		{#if data.widgets.passkeyCreate}
-			<!-- The new passkey's ceremony: the fixed script creates it on the button's press. -->
-			<form
-				method="post"
-				action={actionOf(data.search, 'passkey_add_finish')}
-				data-lite-passkey-create={JSON.stringify(data.widgets.passkeyCreate.registration)}
-				data-lite-passkey-unsupported={data.text.passkeyUnsupported}
-				data-lite-passkey-error={data.text.passkeyCeremonyFailed}
-			>
-				{@render hidden()}
-				<input type="hidden" name="challenge" value={data.widgets.passkeyCreate.challenge} />
-				<input type="hidden" name="credential" value="" />
-				<button type="submit">{data.text.addPasskey}</button>
-			</form>
-		{:else}
+		{#if !data.widgets.passkeyCreate}
 			<form method="post" action={actionOf(data.search, 'passkey_add')}>
 				{@render hidden()}
 				<label>

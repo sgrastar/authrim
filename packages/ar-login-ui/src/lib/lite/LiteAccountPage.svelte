@@ -158,6 +158,25 @@
 				</form>
 			</section>
 		{/if}
+		{#if data.widgets.passkeyCreate}
+			<!-- The new passkey's ceremony, once on the page (whatever the widgets placed): the fixed
+			     script creates it on the button's press. -->
+			<section class="account-widget" id="passkey-create">
+				<h2>{data.text.addPasskey}</h2>
+				<form
+					method="post"
+					action={actionOf(data.search, 'passkey_add_finish')}
+					data-lite-passkey-create={JSON.stringify(data.widgets.passkeyCreate.registration)}
+					data-lite-passkey-unsupported={data.text.passkeyUnsupported}
+					data-lite-passkey-error={data.text.passkeyCeremonyFailed}
+				>
+					{@render hidden(data.txnId, data.csrfToken, data.op)}
+					<input type="hidden" name="challenge" value={data.widgets.passkeyCreate.challenge} />
+					<input type="hidden" name="credential" value="" />
+					<button type="submit">{data.text.addPasskey}</button>
+				</form>
+			</section>
+		{/if}
 		{#if formError === 'session_changed'}
 			<p role="alert">{data.text.sessionChanged}</p>
 		{:else if formError}
