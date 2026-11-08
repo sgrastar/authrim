@@ -1,5 +1,6 @@
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
+  createAuditLog,
   createLookupBlindIndexes,
   createLogger,
   ensureDatabaseAdapter,
@@ -17,6 +18,16 @@ import {
   AccountCreationOperationRepository,
   type AccountCreationOperation,
 } from './account-creation-operation';
+import {
+  ACCOUNT_CREATION_GENERATION_WARNING,
+  ACCOUNT_CREATION_GENERATIONS_EXHAUSTED,
+  ACCOUNT_CREATION_PREVIOUS_ACCOUNT_DELETING,
+  MAX_ACCOUNT_CREATION_GENERATIONS,
+  accountCreationGenerationOf,
+  previousAccountStateReader,
+  resolveAccountCreationGenerationKey,
+  type PreviousAccountStateReader,
+} from './account-creation-generation';
 import { InitialAccountIdentifierReservationService } from './account-directory-reservation';
 import { ACCOUNT_DIRECTORY_WRITE_BINDING_UNAVAILABLE } from './account-directory-errors';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
@@ -80,10 +91,20 @@ export interface DurableInitialAccountDirectoryWriteInput {
   externalSubject?: { issuer: string; subject: string } | null;
   residencyPolicyId: string;
   residencyPartition: string;
+  /**
+   * The key is derived from the request (an auth sign-up's, a SCIM create's without an
+   * Idempotency-Key), so the same request after its account was deleted must not get the deleted
+   * account back (account-creation-generation.ts). `renew`: it goes to the key's next generation.
+   * `refuse`: it is refused while the account is deleted or being deleted (a guest's, whose key
+   * cannot move to a new account). Absent: a key the caller chose, replayed as it was.
+   */
+  onDeletedAccount?: 'renew' | 'refuse';
 }
 
 export interface DurableInitialAccountDirectoryWriteDependencies extends InitialAccountDirectoryWriteDependencies {
   operationRepository: AccountCreationOperationRepository;
+  /** How a generation's account is read (the tenant's current core shards when absent). */
+  readPreviousAccount?: PreviousAccountStateReader;
 }
 
 export interface DurableInitialAccountDirectoryWriteResult extends InitialAccountDirectoryWriteResult {
@@ -395,6 +416,32 @@ async function releaseInitialAccountRouteAllocation(
   );
 }
 
+/**
+ * Releases an abandoned creation's Control allocation, if it is still only reserved: `committed`
+ * when the account was written (a committed allocation is never released), `absent` when there
+ * is none.
+ */
+export async function releaseAbandonedAccountRouteAllocation(
+  env: Env,
+  publication: AccountDirectoryPublication
+): Promise<'released' | 'committed' | 'absent'> {
+  if (!env.CONTROL?.releaseAccountRoute) {
+    throw new Error('account_directory_allocation_release_unavailable');
+  }
+  const request = accountRouteAllocationRequest(
+    await validateAccountDirectoryPublication(publication)
+  );
+  try {
+    await env.CONTROL.releaseAccountRoute({ ...request, dataRoles: [...request.dataRoles] });
+    return 'released';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message === 'control_account_allocation_release_committed') return 'committed';
+    if (message === 'control_account_allocation_release_not_found') return 'absent';
+    throw new Error('control_account_allocation_rpc_unavailable', { cause: error });
+  }
+}
+
 async function rollbackInitialReservations(
   env: Env,
   publication: AccountDirectoryPublication,
@@ -442,6 +489,87 @@ export async function executeInitialAccountDirectoryWrite(
   };
 }
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** The creator a log or an audit may name: an auth flow, or SCIM (never its token's digest). */
+function creatorKind(actorId: string): string {
+  return actorId.startsWith('auth:') ? actorId : actorId.startsWith('scim-') ? 'scim' : 'other';
+}
+
+/**
+ * The generation of a key derived from its request (account-creation-generation.ts): a warning
+ * from ACCOUNT_CREATION_GENERATION_WARNING on, and an audit when the generations are used up.
+ * Neither names the address.
+ */
+async function resolveGeneration(
+  env: Env,
+  input: DurableInitialAccountDirectoryWriteInput,
+  repository: AccountCreationOperationRepository,
+  readPreviousAccount: PreviousAccountStateReader
+): Promise<string> {
+  let key: string;
+  try {
+    key = await resolveAccountCreationGenerationKey({
+      repository,
+      tenantId: input.tenantId,
+      actorId: input.actorId,
+      idempotencyKey: input.idempotencyKey,
+      requestHash: input.requestHash,
+      readPreviousAccount,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === ACCOUNT_CREATION_GENERATIONS_EXHAUSTED) {
+      log.warn('Account creation refused: the key has used all its generations', {
+        tenantId: input.tenantId,
+        flow: creatorKind(input.actorId),
+        generations: MAX_ACCOUNT_CREATION_GENERATIONS,
+      });
+      const keyDigest = await sha256Hex(
+        `${input.tenantId}\0${input.actorId}\0${input.idempotencyKey}`
+      );
+      // One per key and UTC day, the same each time it is sent again that day (its id, its time
+      // and its content: a stored audit is never rewritten).
+      const day = Math.floor(Date.now() / 86_400_000);
+      await createAuditLog(env, {
+        id: `account-creation-refused:${keyDigest.slice(0, 48)}:${day}`,
+        createdAt: day * 86_400_000,
+        tenantId: input.tenantId,
+        userId: 'system',
+        action: 'account.creation_refused',
+        resource: 'account_creation',
+        resourceId: keyDigest,
+        severity: 'warning',
+        ipAddress: 'system',
+        userAgent: 'Authrim account provisioning',
+        metadata: JSON.stringify({
+          reason: 'generations_exhausted',
+          flow: creatorKind(input.actorId),
+          generations: MAX_ACCOUNT_CREATION_GENERATIONS,
+        }),
+      }).catch((auditError: unknown) =>
+        log.error(
+          'Account creation refusal not audited',
+          {},
+          auditError instanceof Error ? auditError : new Error('audit_failed')
+        )
+      );
+    }
+    throw error;
+  }
+  const generation = accountCreationGenerationOf(input.idempotencyKey, key);
+  if (generation >= ACCOUNT_CREATION_GENERATION_WARNING) {
+    log.warn('Account creation key renewed after many deletions', {
+      tenantId: input.tenantId,
+      flow: creatorKind(input.actorId),
+      generation,
+    });
+  }
+  return key;
+}
+
 export async function executeDurableInitialAccountDirectoryWrite(
   env: Env,
   input: DurableInitialAccountDirectoryWriteInput,
@@ -451,10 +579,17 @@ export async function executeDurableInitialAccountDirectoryWrite(
   if (!Number.isSafeInteger(now) || now < 1) {
     throw new Error('account_directory_write_time_invalid');
   }
+  const readPreviousAccount = input.onDeletedAccount
+    ? (dependencies.readPreviousAccount ?? previousAccountStateReader(env))
+    : null;
+  const idempotencyKey =
+    readPreviousAccount && input.onDeletedAccount === 'renew'
+      ? await resolveGeneration(env, input, dependencies.operationRepository, readPreviousAccount)
+      : input.idempotencyKey;
   let operation = await dependencies.operationRepository.acquire({
     tenantId: input.tenantId,
     actorId: input.actorId,
-    idempotencyKey: input.idempotencyKey,
+    idempotencyKey,
     requestHash: input.requestHash,
     candidateOperationId: input.candidateOperationId,
     candidateUserId: input.candidateUserId,
@@ -470,6 +605,22 @@ export async function executeDurableInitialAccountDirectoryWrite(
       throw new Error('directory_identifier_reservation_conflict');
     }
     throw new Error(`account_creation_operation_${operation.status}`);
+  }
+  if (operation.status !== 'succeeded') {
+    // Resumed (or begun) now: recorded before any effect, so the clean-up of unfinished sign-ups
+    // never gives up a creation a request is moving (and a given-up one is refused here).
+    operation = await dependencies.operationRepository.touch(operation, now);
+  }
+  // An account already written (a resume, a replay) is read again here: deleted since the
+  // generation was chosen (or, for `refuse`, at all), it is neither handed back nor published
+  // again. Refused like a deletion under way; a `renew` retry goes on to the next generation once
+  // the removal has finished.
+  if (
+    readPreviousAccount &&
+    (operation.status === 'directory_pending' || operation.status === 'succeeded') &&
+    (await readPreviousAccount(operation)) !== 'live'
+  ) {
+    throw new Error(ACCOUNT_CREATION_PREVIOUS_ACCOUNT_DELETING);
   }
   let publication = operation.publication;
   if (!publication) {

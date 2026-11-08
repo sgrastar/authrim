@@ -1385,3 +1385,50 @@ export class CrossShardAccountExactSearchService {
     }
   }
 }
+
+/** An account's lifecycle and its directory removals, as its core shard holds them. */
+export interface AccountDeletionStateOnShard {
+  lifecycleState: string;
+  removals: { total: number; succeeded: number };
+}
+
+/**
+ * Finds the account, in any lifecycle state, on the tenant's current core shards (the registry's
+ * assignment: after a placement migration, the target's), with its directory removals on the same
+ * shard. Null when no current shard holds it; more than one is refused (an ambiguous placement).
+ */
+export async function findAccountDeletionStateOnTenantShards(
+  env: Env,
+  tenantId: string,
+  accountId: string
+): Promise<AccountDeletionStateOnShard | null> {
+  const sources = await activeRouteSources(env, tenantId);
+  const found = (
+    await mapConcurrent([...sources.core.values()], FANOUT_CONCURRENCY, async (shard) => {
+      const session = shard.source.withSession('first-primary');
+      const account = await session
+        .prepare('SELECT lifecycle_state FROM identity_accounts WHERE tenant_id = ? AND id = ?')
+        .bind(tenantId, accountId)
+        .first<{ lifecycle_state: string }>();
+      if (!account) return null;
+      const removals = await session
+        .prepare(
+          `SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded
+             FROM account_routing_outbox
+            WHERE tenant_id = ? AND account_id = ? AND event_kind = 'account_deleted'`
+        )
+        .bind(tenantId, accountId)
+        .first<{ total: number | null; succeeded: number | null }>();
+      return {
+        lifecycleState: account.lifecycle_state,
+        removals: {
+          total: Number(removals?.total ?? 0),
+          succeeded: Number(removals?.succeeded ?? 0),
+        },
+      } satisfies AccountDeletionStateOnShard;
+    })
+  ).filter((value): value is AccountDeletionStateOnShard => value !== null);
+  if (found.length > 1) throw new Error('cross_shard_account_search_ambiguous');
+  return found[0] ?? null;
+}

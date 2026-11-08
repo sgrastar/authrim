@@ -25,6 +25,8 @@ import {
 import { Context } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import { newAccountRegistrationPendingMark } from '@authrim/ar-lib-core';
+import { settleRegistrationPending } from './registration-pending';
 import type { StoreCodeRequest } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   accountAuthenticationDenialReason,
@@ -2478,6 +2480,11 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
             piiFields: canonicalProfileFields.piiFields,
             sensitiveValues: canonicalProfileFields.sensitiveValues,
             customAttributesJson: provisioningRuntimeUser.customAttributesJson,
+            registrationPending: await newAccountRegistrationPendingMark(
+              c.env,
+              tenantId,
+              'passkey'
+            ),
           });
         }
       } catch (piiError) {
@@ -2828,6 +2835,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       credentialId: credentialIDBase64URL,
       rpId: rpID,
     });
+    // Its passkey registered: no longer an unfinished sign-up's account.
+    await settleRegistrationPending(authCtx.coreAdapter, tenantId, userId);
 
     const now = Date.now();
     failureStage = 'runtime_user_lookup';
@@ -3055,6 +3064,10 @@ async function completeDirectEmailVerification(
 
   const guestDenial = await guestCredentialDenial(c, coreAdapter, tenantId, userId);
   if (guestDenial) return failed(guestDenial, 'guest_denied', userId);
+
+  // The account is proven now (a code to its address, whatever began it): no longer an unfinished
+  // sign-up's. A clear that fails is logged; the clean-up checks an account again before it acts.
+  await settleRegistrationPending(coreAdapter, tenantId, userId);
 
   const now = Date.now();
   const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
@@ -3806,6 +3819,11 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             piiFields: canonicalProfileFields.piiFields,
             sensitiveValues: canonicalProfileFields.sensitiveValues,
             customAttributesJson: runtimeUser.customAttributesJson,
+            registrationPending: await newAccountRegistrationPendingMark(
+              c.env,
+              tenantId,
+              'email_code'
+            ),
           });
         }
       } catch (error) {
@@ -3818,6 +3836,11 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         }
         const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
         if (writeFenceResponse) return writeFenceResponse;
+        // The address's previous account still being deleted, or made and deleted too often:
+        // answered as a send, so the reply does not tell what became of an address.
+        if (error instanceof Error && SUPPRESSED_PROVISIONING_REFUSALS.has(error.message)) {
+          return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
+        }
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
@@ -4017,6 +4040,12 @@ function maskEmail(email: string): string {
 }
 
 /** Answers a send that sent nothing exactly as one that did, its lifetime included. */
+/** Account provisioning's refusals that depend on what became of the address (see the send). */
+const SUPPRESSED_PROVISIONING_REFUSALS = new Set([
+  'account_creation_previous_account_deleting',
+  'account_creation_generations_exhausted',
+]);
+
 function acceptedEmailCodeSendResponse(
   c: Context<{ Bindings: Env }>,
   normalizedEmail: string,

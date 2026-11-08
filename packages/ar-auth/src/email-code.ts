@@ -16,6 +16,8 @@
 import { Context } from 'hono';
 import { setCookie, getCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
+import { newAccountRegistrationPendingMark } from '@authrim/ar-lib-core';
+import { settleRegistrationPending } from './registration-pending';
 import {
   assertGuestCredentialAuthenticationAllowed,
   getSessionStoreForNewSession,
@@ -445,6 +447,11 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
                 piiFields: canonicalProfileFields.piiFields,
                 sensitiveValues: canonicalProfileFields.sensitiveValues,
                 customAttributesJson: runtimeUser.customAttributesJson,
+                registrationPending: await newAccountRegistrationPendingMark(
+                  c.env,
+                  tenantId,
+                  'email_code'
+                ),
               });
             }
           } catch (piiError: unknown) {
@@ -867,6 +874,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         }
         return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
       }
+      // The account is proven now: no longer an unfinished sign-up's.
+      await settleRegistrationPending(accountCoreAdapter, tenantId, user.id);
       const customFields = challengeData.metadata?.custom_fields;
       const groupedRegistrationWrite = Boolean(customFields);
       if (customFields) {

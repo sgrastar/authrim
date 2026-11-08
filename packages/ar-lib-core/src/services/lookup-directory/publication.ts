@@ -216,6 +216,102 @@ export async function insertPreparedAccountDirectoryRemovals(
   await prepareAccountRemoval(adapter, guard, statements);
 }
 
+/**
+ * The removal of an account whose route was never published (an unfinished sign-up's: its
+ * creation stopped before the directory published it), prepared as a deletion's: the removals,
+ * the move to `deleting` with the publication `disabled`, and its creation's publication blocked
+ * (`registration_abandoned`), all in one write or none. Each part carries the same account
+ * condition, so on D1 they all match or none does: not held, still unpublished
+ * (`pending` / `active_pending_directory`), and its creation's publication neither succeeded nor
+ * leased by a worker whose lease is still running. The removals' route is the creation's.
+ */
+export async function insertPreparedUnpublishedAccountRemovals(
+  adapter: DatabaseAdapter,
+  values: readonly AccountDirectoryRemovalPublication[],
+  now: number
+): Promise<void> {
+  if (!Number.isSafeInteger(now) || now < 1) throw new Error('invalid_directory_removal_time');
+  if (values.length < 1 || values.length > 256) {
+    throw new Error('invalid_directory_removal_batch_size');
+  }
+  const publications = await Promise.all(values.map(validateAccountDirectoryRemovalPublication));
+  const first = publications[0];
+  if (
+    publications.some(
+      (publication) =>
+        publication.scope !== 'account' ||
+        publication.tenantId !== first.tenantId ||
+        publication.accountId !== first.accountId ||
+        publication.routeProjection.accountRouteGeneration !==
+          first.routeProjection.accountRouteGeneration
+    )
+  ) {
+    throw new Error('directory_removal_batch_identity_mismatch');
+  }
+  const routeGeneration = first.routeProjection.accountRouteGeneration;
+  const unpublished = `account.lifecycle_state IN ('active', 'deprovisioned')
+      AND account.directory_publication_state IN ('pending', 'active_pending_directory')
+      AND ${ACCOUNT_NOT_HELD_SQL}
+      AND NOT EXISTS (SELECT 1 FROM account_routing_outbox created
+        WHERE created.tenant_id = account.tenant_id AND created.account_id = account.id
+          AND created.event_kind = 'account_created'
+          AND (created.status = 'succeeded'
+            OR (created.status = 'leased'
+              AND (created.lease_expires_at IS NULL OR created.lease_expires_at > ${now}))))`;
+  const statements: PreparedStatement[] = publications.map((publication) => ({
+    sql: `INSERT INTO account_routing_outbox (
+            outbox_id, tenant_id, account_id, event_kind, route_generation,
+            route_schema_version, hmac_key_generation, payload_json, status,
+            attempt_count, created_at, updated_at
+          )
+          SELECT ?, account.tenant_id, account.id, 'account_deleted', ?, ?, ?, ?, 'prepared', 0, ?, ?
+            FROM identity_accounts account
+           WHERE account.tenant_id = ? AND account.id = ?
+             AND account.account_route_generation = ? AND ${unpublished}`,
+    params: [
+      accountDirectoryRemovalOutboxId(publication.operationId),
+      routeGeneration,
+      publication.routeProjection.schemaVersion,
+      Math.max(...publication.indexes.map((index) => index.hmacKeyGeneration)),
+      JSON.stringify(publication),
+      now,
+      now,
+      publication.tenantId,
+      publication.accountId,
+      routeGeneration,
+    ],
+  }));
+  // Before the account's move (whose condition it reads, as unpublished, as the inserts did).
+  const blockCreation: PreparedStatement = {
+    sql: `UPDATE account_routing_outbox
+             SET status = 'blocked', last_error_code = 'registration_abandoned',
+                 lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = NULL,
+                 updated_at = ?
+           WHERE tenant_id = ? AND account_id = ? AND event_kind = 'account_created'
+             AND (status IN ('prepared', 'pending', 'retry')
+               OR (status = 'leased' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?))
+             AND EXISTS (SELECT 1 FROM identity_accounts account
+               WHERE account.tenant_id = account_routing_outbox.tenant_id
+                 AND account.id = account_routing_outbox.account_id
+                 AND account.account_route_generation = ? AND ${unpublished})`,
+    params: [now, first.tenantId, first.accountId, now, routeGeneration],
+  };
+  const moveAccount: PreparedStatement = {
+    sql: `UPDATE identity_accounts AS account
+             SET lifecycle_state = 'deleting', directory_publication_state = 'disabled',
+                 updated_at = ?, deleted_at = COALESCE(deleted_at, ?)
+           WHERE account.tenant_id = ? AND account.id = ? AND account.account_route_generation = ?
+             AND ${unpublished}`,
+    params: [now * 1000, now * 1000, first.tenantId, first.accountId, routeGeneration],
+  };
+  const guard = accountRemovalHoldGuardStatement(first.tenantId, first.accountId, now);
+  // The creation's publication may have no row left to block (already blocked or dead): the only
+  // part allowed to match nothing.
+  await prepareAccountRemoval(adapter, guard, [...statements, blockCreation, moveAccount], {
+    optional: new Set([statements.length]),
+  });
+}
+
 type TransactionRunner = <T>(fn: (tx: TransactionContext) => Promise<T>) => Promise<T>;
 
 /** The adapter's retry on a confirmed serialization conflict (Aurora DSQL), or its transaction. */
@@ -238,8 +334,10 @@ function retryableTransaction(adapter: DatabaseAdapter): TransactionRunner {
 async function prepareAccountRemoval(
   adapter: DatabaseAdapter,
   guard: PreparedStatement,
-  statements: PreparedStatement[]
+  statements: PreparedStatement[],
+  options: { optional?: ReadonlySet<number> } = {}
 ): Promise<void> {
+  const required = (index: number) => !options.optional?.has(index);
   if (adapter.getType() === 'd1') {
     const results = await adapter.batch([guard, ...statements]);
     if (results.length !== statements.length + 1 || results.some((result) => !result.success)) {
@@ -252,7 +350,7 @@ async function prepareAccountRemoval(
       throw new Error(DIRECTORY_REMOVAL_ACCOUNT_HELD);
     }
     // Point writes; D1 also counts what triggers write, so more than one means matched.
-    if (results.slice(1).some((result) => result.rowsAffected < 1)) {
+    if (results.slice(1).some((result, index) => required(index) && result.rowsAffected < 1)) {
       throw new Error('directory_removal_account_prepare_failed');
     }
     return;
@@ -265,9 +363,12 @@ async function prepareAccountRemoval(
     const guarded = await tx.execute(guard.sql, guard.params);
     if (!guarded.success) throw new Error('directory_removal_account_prepare_failed');
     if (guarded.rowsAffected !== 1) return false;
-    for (const statement of statements) {
+    for (const [index, statement] of statements.entries()) {
       const result = await tx.execute(statement.sql, statement.params);
-      if (!result.success || result.rowsAffected !== 1) {
+      if (
+        !result.success ||
+        (required(index) ? result.rowsAffected !== 1 : result.rowsAffected > 1)
+      ) {
         throw new Error('directory_removal_account_prepare_failed');
       }
     }

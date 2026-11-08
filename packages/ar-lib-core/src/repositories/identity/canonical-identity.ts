@@ -6,6 +6,11 @@ import {
   validateAccountDirectoryPublication,
   type AccountDirectoryPublication,
 } from '../../services/lookup-directory/publication';
+import {
+  accountRegistrationPendingInsertStatement,
+  isValidAccountRegistrationPendingMark,
+  type AccountRegistrationPendingMark,
+} from '../../services/account-registration-pending-mark';
 import { createLogger } from '../../utils/logger';
 import { generateId, getCurrentTimestamp } from '../base';
 import {
@@ -556,6 +561,11 @@ export interface CreateCanonicalIdentityGraphInput {
   account?: Omit<CreateIdentityAccountInput, 'primary_subject_id'>;
   link?: Omit<CreateSubjectAccountLinkInput, 'subject_id' | 'account_id'>;
   profile?: Omit<CreateProfileInput, 'subject_id'>;
+  /**
+   * An account a sign-up makes before it is proven: marked in its own batch (never after it), so
+   * an unfinished sign-up's account is always one the clean-up finds.
+   */
+  registrationPending?: { userId: string; mark: AccountRegistrationPendingMark };
 }
 
 export interface CanonicalIdentityGraph {
@@ -849,6 +859,23 @@ export class CanonicalIdentityRepository {
           outboxNow,
         ],
       });
+    }
+    if (input.registrationPending) {
+      const pending = input.registrationPending;
+      if (
+        !pending.userId ||
+        input.account?.id !== `account:${pending.userId}` ||
+        !isValidAccountRegistrationPendingMark(pending.mark)
+      ) {
+        throw new Error('account_registration_pending_invalid');
+      }
+      statements.push(
+        accountRegistrationPendingInsertStatement(
+          resolveTenantId(this.tenantId, input.account?.tenant_id),
+          pending.userId,
+          pending.mark
+        )
+      );
     }
     const results = await this.adapter.batch(statements);
     // D1's batch metadata may report zero affected rows for a successful INSERT/UPDATE even

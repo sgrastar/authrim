@@ -200,6 +200,138 @@ export class AccountCreationOperationRepository {
     return parseRow(row);
   }
 
+  /**
+   * The actor's operations of any of the given keys (an auth request's generations), at most one
+   * per key (the table's unique key), read from the primary.
+   */
+  async findByIdempotencyKeys(input: {
+    tenantId: string;
+    actorId: string;
+    idempotencyKeys: readonly string[];
+  }): Promise<AccountCreationOperation[]> {
+    const tenantId = id(input.tenantId, 'account_creation_tenant_id_invalid');
+    const actorId = id(input.actorId, 'account_creation_actor_id_invalid');
+    if (input.idempotencyKeys.length === 0 || input.idempotencyKeys.length > 64) {
+      throw new Error('account_creation_operation_input_invalid');
+    }
+    const rows = await this.adapter.query<AccountCreationOperationRow>(
+      `SELECT operation_id, tenant_id, actor_id, idempotency_key,
+              allocation_idempotency_key, request_hash, user_id, account_id,
+              status, publication_json, last_error_code
+         FROM account_creation_operations
+        WHERE tenant_id = ? AND actor_id = ?
+          AND idempotency_key IN (${input.idempotencyKeys.map(() => '?').join(', ')})`,
+      [tenantId, actorId, ...input.idempotencyKeys],
+      { consistencyClass: 'primary_required' }
+    );
+    return Promise.all(
+      rows
+        .filter((row) => row.tenant_id === tenantId && row.actor_id === actorId)
+        .map((row) => parseRow(row))
+    );
+  }
+
+  /** The operation that created the account (one per account), with when it last moved. */
+  async findByAccountId(input: {
+    tenantId: string;
+    accountId: string;
+  }): Promise<{ operation: AccountCreationOperation; updatedAt: number } | null> {
+    const tenantId = id(input.tenantId, 'account_creation_tenant_id_invalid');
+    const accountId = id(input.accountId, 'account_creation_account_id_invalid');
+    const row = await this.adapter.queryOne<AccountCreationOperationRow & { updated_at: number }>(
+      `SELECT operation_id, tenant_id, actor_id, idempotency_key,
+              allocation_idempotency_key, request_hash, user_id, account_id,
+              status, publication_json, last_error_code, updated_at
+         FROM account_creation_operations
+        WHERE tenant_id = ? AND account_id = ?`,
+      [tenantId, accountId],
+      { consistencyClass: 'primary_required' }
+    );
+    if (!row) return null;
+    return { operation: await parseRow(row), updatedAt: Number(row.updated_at) };
+  }
+
+  /**
+   * Gives up an unfinished creation (blocked, `registration_abandoned`, which nothing moves on
+   * from), only as it was read: not succeeded, and not moved since `updatedAt` (a resume that moved
+   * it keeps it). Whether it is given up now (or already was, as the row shows now).
+   */
+  async abandon(input: {
+    operation: AccountCreationOperation;
+    updatedAt: number;
+    now: number;
+  }): Promise<boolean> {
+    if (input.operation.status === 'blocked') {
+      if (input.operation.lastErrorCode !== 'registration_abandoned') {
+        // Blocked for another reason (the directory worker's retries used up, a reservation
+        // conflict): given up for good, only as it was read.
+        await this.adapter.execute(
+          `UPDATE account_creation_operations
+              SET last_error_code = 'registration_abandoned', updated_at = ?
+            WHERE operation_id = ? AND tenant_id = ? AND status = 'blocked'
+              AND updated_at = ? AND COALESCE(last_error_code, '') = ?`,
+          [
+            input.now,
+            input.operation.operationId,
+            input.operation.tenantId,
+            input.updatedAt,
+            input.operation.lastErrorCode ?? '',
+          ]
+        );
+      }
+      // Given up (by this call, or by a clean-up before): checked on the row as it is now.
+      const row = await this.findRow(input.operation.tenantId, input.operation.operationId);
+      return row?.status === 'blocked' && row.last_error_code === 'registration_abandoned';
+    }
+    if (
+      !['preparing', 'reserved', 'writing', 'directory_pending'].includes(input.operation.status)
+    ) {
+      return false;
+    }
+    const result = await this.adapter.execute(
+      `UPDATE account_creation_operations
+          SET status = 'blocked', last_error_code = 'registration_abandoned', updated_at = ?
+        WHERE operation_id = ? AND tenant_id = ? AND status = ? AND updated_at = ?`,
+      [
+        input.now,
+        input.operation.operationId,
+        input.operation.tenantId,
+        input.operation.status,
+        input.updatedAt,
+      ]
+    );
+    if (result.rowsAffected === 1) return true;
+    // Another run of the clean-up gave it up first (the same decision), or it moved on.
+    const row = await this.findRow(input.operation.tenantId, input.operation.operationId);
+    return row?.status === 'blocked' && row.last_error_code === 'registration_abandoned';
+  }
+
+  /**
+   * Records that a request is resuming the unfinished operation now, before it does anything: its
+   * `updated_at` becomes now (never later: resends cannot push it ahead), as long as its status is
+   * the one read. A clean-up gives up only an operation idle for hours, so the value it read differs
+   * from now and its compare-and-set notices. Given up meanwhile (blocked, canceled), the resume is
+   * refused.
+   */
+  async touch(operation: AccountCreationOperation, now: number): Promise<AccountCreationOperation> {
+    if (!Number.isSafeInteger(now) || now < 1) {
+      throw new Error('account_creation_operation_transition_invalid');
+    }
+    await this.adapter.execute(
+      `UPDATE account_creation_operations
+          SET updated_at = CASE WHEN updated_at > ? THEN updated_at ELSE ? END
+        WHERE operation_id = ? AND tenant_id = ? AND status = ?`,
+      [now, now, operation.operationId, operation.tenantId, operation.status]
+    );
+    const row = await this.findRow(operation.tenantId, operation.operationId);
+    if (!row) throw new Error('account_creation_operation_not_found');
+    const reflected = await parseRow(row);
+    if (reflected.status === 'blocked' || reflected.status === 'canceled') {
+      throw new Error(`account_creation_operation_${reflected.status}`);
+    }
+    return reflected;
+  }
+
   async findForPublication(
     value: AccountDirectoryPublication
   ): Promise<AccountCreationOperation | null> {

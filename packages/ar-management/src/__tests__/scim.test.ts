@@ -107,6 +107,8 @@ const accountCreationState = vi.hoisted(() => ({
   capacityUnavailable: false,
   registryGenerationPropagating: false,
   bindingUnavailable: false,
+  /** An error the account creation throws ('' for none). */
+  failWith: '',
   calls: [] as Array<Record<string, unknown>>,
   pause: null as null | (() => Promise<void>),
   inFlight: 0,
@@ -287,6 +289,7 @@ vi.mock('../account-directory-producer', () => ({
       if (accountCreationState.capacityUnavailable) {
         throw new Error('control_account_allocation_capacity_unavailable');
       }
+      if (accountCreationState.failWith) throw new Error(accountCreationState.failWith);
       if (accountCreationState.registryGenerationPropagating) {
         throw new Error('lookup_registry_generation_mismatch');
       }
@@ -689,6 +692,7 @@ describe('SCIM 2.0 Endpoints', () => {
     accountCreationState.capacityUnavailable = false;
     accountCreationState.registryGenerationPropagating = false;
     accountCreationState.bindingUnavailable = false;
+    accountCreationState.failWith = '';
     accountCreationState.calls = [];
     accountCreationState.pause = null;
     accountCreationState.inFlight = 0;
@@ -1641,6 +1645,31 @@ describe('SCIM 2.0 Endpoints', () => {
       });
       expect(accountCreationState.calls[0]?.actorId).toMatch(/^scim-token:[a-f0-9]{64}$/u);
       expect(accountCreationState.calls[0]?.actorId).not.toContain('valid-scim-token');
+      // Its key is the payload's: the same user created again after a deletion is a new account.
+      expect(accountCreationState.calls[0]?.idempotencyKey).toMatch(/^scim-create:[a-f0-9]{64}$/u);
+      expect(accountCreationState.calls[0]?.onDeletedAccount).toBe('renew');
+    });
+
+    it.each([
+      ['account_creation_previous_account_deleting', 503, undefined],
+      ['account_creation_generations_exhausted', 409, 'uniqueness'],
+    ])('answers %s with %i', async (code, status, scimType) => {
+      accountCreationState.failWith = code;
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'recreated-user',
+          emails: [{ value: 'recreated.user@example.com', primary: true }],
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(status);
+      const body = await res.json<{ scimType?: string; detail: string }>();
+      expect(body.scimType).toBe(scimType);
+      expect(body.detail).not.toContain('recreated.user@example.com');
     });
 
     it('returns an operation resource when directory publication continues asynchronously', async () => {
@@ -1669,6 +1698,24 @@ describe('SCIM 2.0 Endpoints', () => {
         `http://localhost/scim/v2/Operations/${body.operationId}`
       );
       expect(accountCreationState.calls[0]?.idempotencyKey).toBe('scim-create-pending-1');
+      expect(accountCreationState.calls[0]?.onDeletedAccount).toBeUndefined();
+    });
+
+    it("keeps the derived keys' namespace from an explicit idempotency key", async () => {
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': `scim-create:${'a'.repeat(64)}:g31` },
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'namespace-user',
+          emails: [{ value: 'namespace.user@example.com', primary: true }],
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(400);
+      expect(accountCreationState.calls).toHaveLength(0);
     });
 
     it('rejects an unsafe explicit idempotency key before provisioning', async () => {

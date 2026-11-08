@@ -584,8 +584,14 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       }),
       expect.objectContaining({ writeAuthoritative: expect.any(Function) })
     );
+    // The caller's runtime user as it sent it, with the unfinished sign-up's mark added.
     expect(mocks.writeAuthoritative).toHaveBeenCalledWith(
-      expect.objectContaining({ runtimeUser: request.runtimeUser })
+      expect.objectContaining({
+        runtimeUser: {
+          ...request.runtimeUser,
+          registrationPending: expect.objectContaining({ flow: 'email_code' }) as unknown,
+        },
+      })
     );
   });
 
@@ -605,6 +611,48 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     }
   );
 
+  it('marks an email code or passkey sign-up account by its flow alone, outside the hashes', async () => {
+    const before = Math.floor(Date.now() / 1000);
+    await worker().provisionAuthAccount(input());
+    const written = mocks.writeAuthoritative.mock.calls[0][0] as {
+      runtimeUser: { registrationPending?: { flow: string; createdAt: number; expiresAt: number } };
+    };
+    const mark = written.runtimeUser.registrationPending!;
+    expect(mark.flow).toBe('email_code');
+    expect(mark.createdAt).toBeGreaterThanOrEqual(before);
+    expect(mark.expiresAt - mark.createdAt).toBe(72 * 3600);
+    // The request's hash is the same as before the mark existed (a resumed start asks the same).
+    expect(JSON.stringify(mocks.hashRequest.mock.calls[0][0])).not.toContain('registrationPending');
+
+    // A caller never asks for it (an unknown key), and a guest's account is not one.
+    await expect(
+      worker().provisionAuthAccount(input({ registrationPending: true } as never))
+    ).rejects.toThrow();
+    mocks.writeAuthoritative.mockClear();
+    await worker().provisionAuthAccount(
+      input({
+        flow: 'passkey',
+        email: null,
+        runtimeUser: {
+          active: true,
+          emailVerified: false,
+          userType: 'end_user',
+          sourceRef: 'auth:passkey',
+          piiFields: { name: true },
+          sensitiveValues: { name: 'Passkey User' },
+          customAttributesJson: JSON.stringify({ preferred_username: 'user-a' }),
+        },
+      })
+    );
+    expect(
+      (
+        mocks.writeAuthoritative.mock.calls[0][0] as {
+          runtimeUser: { registrationPending?: { flow: string } };
+        }
+      ).runtimeUser.registrationPending?.flow
+    ).toBe('passkey');
+  });
+
   it('does not broaden symbol-prefixed candidate IDs beyond the NanoID contract', async () => {
     await expect(
       worker().provisionAuthAccount(input({ candidateUserId: '_not-a-canonical-nanoid' }))
@@ -618,6 +666,34 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       'auth_account_provisioning_internal_error'
     );
   });
+
+  it("asks for a new generation after a deletion; a guest's key is refused instead", async () => {
+    await worker().provisionAuthAccount(input());
+    expect(mocks.execute).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ onDeletedAccount: 'renew' }),
+      expect.anything()
+    );
+    const guest = guestInput();
+    mocks.tenantQuery.mockResolvedValueOnce({
+      id: guest.guestResumeCredential?.id,
+      user_id: 'user-a',
+    });
+    await worker().provisionAuthAccount(guest);
+    expect(mocks.execute).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ onDeletedAccount: 'refuse' }),
+      expect.anything()
+    );
+  });
+
+  it.each(['account_creation_previous_account_deleting', 'account_creation_generations_exhausted'])(
+    'passes the safe refusal %s through',
+    async (code) => {
+      mocks.execute.mockRejectedValueOnce(new Error(code));
+      await expect(worker().provisionAuthAccount(input())).rejects.toThrow(code);
+    }
+  );
 
   it.each(['registered', 'upgrading', 'anonymous'])(
     'rejects guest provisioning with registration state %s before writing',
@@ -675,6 +751,11 @@ describe('AuthAccountProvisioningEntrypoint', () => {
         request.guestResumeCredential?.credentialHash,
       ])
     );
+    // A guest's account is no unfinished sign-up's: never marked for its clean-up.
+    expect(
+      (mocks.writeAuthoritative.mock.calls.at(-1)?.[0] as { runtimeUser: Record<string, unknown> })
+        .runtimeUser
+    ).not.toHaveProperty('registrationPending');
   });
 
   it('provisions an email-less passkey account without creating an email lookup index', async () => {
