@@ -16,6 +16,9 @@
  * - Data Deletion Callback: Facebook requires apps to implement a callback URL
  *   that receives signed requests when users request data deletion.
  *   Configure in: App Dashboard → Settings → Basic → User Data Deletion
+ *   Authrim serves it at POST {issuer}/auth/external/{provider}/data-deletion, and the
+ *   Deauthorize Callback (Facebook Login → Settings) at
+ *   POST {issuer}/auth/external/{provider}/deauthorize (handlers/facebook-data-deletion.ts).
  * - Permission Revocation: Use DELETE /me/permissions to revoke all permissions,
  *   or DELETE /me/permissions/{permission} to revoke specific ones.
  *
@@ -212,6 +215,32 @@ export async function generateAppSecretProof(
   return Array.from(hashArray)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/** Whether a URL's host is the given host or one of its subdomains. */
+function hostIs(url: string | undefined, host: string): boolean {
+  if (!url) return false;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hostname === host || hostname.endsWith(`.${host}`);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a provider configuration signs in with Facebook Login: an OAuth 2.0 provider whose
+ * authorization or token endpoint is Facebook's. Only such a provider takes Facebook's signed
+ * callbacks (data deletion, deauthorize); its name alone does not make it one.
+ */
+export function isFacebookLoginProvider(
+  provider: Pick<UpstreamProvider, 'providerType' | 'authorizationEndpoint' | 'tokenEndpoint'>
+): boolean {
+  if (provider.providerType !== 'oauth2') return false;
+  return (
+    hostIs(provider.authorizationEndpoint, 'facebook.com') ||
+    hostIs(provider.tokenEndpoint, 'graph.facebook.com')
+  );
 }
 
 // =============================================================================

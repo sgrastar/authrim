@@ -68,7 +68,13 @@ export interface ExternalIdPSettings {
   'external_idp.jit_allow_user_without_org': boolean;
   'external_idp.jit_default_role_id': string;
   'external_idp.jit_allow_unverified_domain_mappings': boolean;
+
+  // Provider callbacks
+  'external_idp.signed_request_max_age_seconds': number;
 }
+
+/** How long after it was issued a provider's signed request (Facebook) is still accepted. */
+export const DEFAULT_SIGNED_REQUEST_MAX_AGE_SECONDS = 600;
 
 /**
  * External IdP Settings Metadata
@@ -166,6 +172,21 @@ export const EXTERNAL_IDP_SETTINGS_META: Record<keyof ExternalIdPSettings, Setti
     dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
     default: false,
   },
+  'external_idp.signed_request_max_age_seconds': {
+    key: 'external_idp.signed_request_max_age_seconds',
+    type: 'number',
+    default: DEFAULT_SIGNED_REQUEST_MAX_AGE_SECONDS,
+    envKey: 'EXTERNAL_IDP_SIGNED_REQUEST_MAX_AGE_SECONDS',
+    envNumber: 'strict-in-range',
+    label: 'Signed Request Max Age',
+    description:
+      "Seconds after it was issued that an identity provider's signed request is still accepted (Facebook's data deletion and deauthorize callbacks). Shorter is safer.",
+    min: 60,
+    max: 3600,
+    integer: true,
+    unit: 's',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -191,4 +212,5 @@ export const EXTERNAL_IDP_DEFAULTS: ExternalIdPSettings = {
   'external_idp.jit_allow_user_without_org': true,
   'external_idp.jit_default_role_id': 'role_end_user',
   'external_idp.jit_allow_unverified_domain_mappings': false,
+  'external_idp.signed_request_max_age_seconds': DEFAULT_SIGNED_REQUEST_MAX_AGE_SECONDS,
 };

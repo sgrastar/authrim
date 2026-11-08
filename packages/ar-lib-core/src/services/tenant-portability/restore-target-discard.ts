@@ -101,6 +101,7 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
     credential_offers: byTenantId,
     device_codes: byTenantId,
     external_idp_auth_states: byTenantId,
+    external_idp_data_deletion_requests: byTenantId,
     flow_interaction_steps: byTenantId,
     flow_interactions: byTenantId,
     password_reset_tokens: byTenantId,
