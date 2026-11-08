@@ -2881,6 +2881,109 @@ describe('Router Worker', () => {
       expect(res.headers.get('Content-Security-Policy')).toBeNull();
     });
 
+    describe('Account Page on a custom domain', () => {
+      const accountPageEnv = (
+        tenantHost: { resolveTenantForHost: ReturnType<typeof vi.fn> } | undefined,
+        defaultTenantId: string
+      ) => ({
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        DEFAULT_TENANT_ID: defaultTenantId,
+        SETTINGS: createMockKV({
+          'settings:tenant:vanity-acme:self-service': JSON.stringify({
+            'self-service.account_page_enabled': true,
+            'self-service.account_page_path': '/acme-account',
+          }),
+        }),
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: createMockFetcher('LOGIN_UI_WORKER'),
+        ...(tenantHost ? { TENANT_HOST: tenantHost } : {}),
+      });
+
+      it('reads the settings of the tenant that owns the custom domain', async () => {
+        const tenantHost = {
+          resolveTenantForHost: vi.fn(async () => ({ tenantId: 'vanity-acme' })),
+        };
+        const env = accountPageEnv(tenantHost, 'vanity-default-1');
+
+        const first = await app.fetch(new Request('https://id.acme.test/acme-account'), env);
+        const second = await app.fetch(new Request('https://id.acme.test/acme-account/x'), env);
+
+        expect(first.status).toBe(200);
+        expect(await first.json()).toMatchObject({ path: '/account' });
+        expect(second.status).toBe(200);
+        // Answered once per isolate, then from the cache.
+        expect(tenantHost.resolveTenantForHost).toHaveBeenCalledTimes(1);
+        expect(tenantHost.resolveTenantForHost).toHaveBeenCalledWith('id.acme.test');
+      });
+
+      it('asks again once a cached answer expires', async () => {
+        const tenantHost = {
+          resolveTenantForHost: vi.fn(async () => ({ tenantId: 'vanity-acme' })),
+        };
+        const env = accountPageEnv(tenantHost, 'vanity-default-6');
+        const now = vi.spyOn(Date, 'now');
+        now.mockReturnValue(1_000_000);
+        await app.fetch(new Request('https://id.ttl.test/acme-account'), env);
+        now.mockReturnValue(1_000_000 + 59_000);
+        await app.fetch(new Request('https://id.ttl.test/acme-account'), env);
+        expect(tenantHost.resolveTenantForHost).toHaveBeenCalledTimes(1);
+        now.mockReturnValue(1_000_000 + 61_000);
+        await app.fetch(new Request('https://id.ttl.test/acme-account'), env);
+        expect(tenantHost.resolveTenantForHost).toHaveBeenCalledTimes(2);
+      });
+
+      it('falls back to the default tenant when the lookup fails, without caching it', async () => {
+        const tenantHost = {
+          resolveTenantForHost: vi.fn(async () => {
+            throw new Error('unavailable');
+          }),
+        };
+        const env = accountPageEnv(tenantHost, 'vanity-default-2');
+
+        const first = await app.fetch(new Request('https://id.fail.test/acme-account'), env);
+        await app.fetch(new Request('https://id.fail.test/acme-account'), env);
+
+        expect(first.status).toBe(404);
+        // Once per request (not cached across requests), however many checks ask.
+        expect(tenantHost.resolveTenantForHost).toHaveBeenCalledTimes(2);
+      });
+
+      it('ignores a malformed tenant id from the lookup', async () => {
+        const tenantHost = {
+          resolveTenantForHost: vi.fn(async () => ({ tenantId: '../vanity-acme' })),
+        };
+        const res = await app.fetch(
+          new Request('https://id.malformed.test/acme-account'),
+          accountPageEnv(tenantHost, 'vanity-default-3')
+        );
+
+        expect(res.status).toBe(404);
+      });
+
+      it('does not ask for hosts inside BASE_DOMAIN', async () => {
+        const tenantHost = {
+          resolveTenantForHost: vi.fn(async () => ({ tenantId: 'vanity-acme' })),
+        };
+        await app.fetch(
+          new Request('https://vanity-sub.example.com/acme-account'),
+          accountPageEnv(tenantHost, 'vanity-default-4')
+        );
+
+        expect(tenantHost.resolveTenantForHost).not.toHaveBeenCalled();
+      });
+
+      it('keeps the default tenant on a custom domain while TENANT_HOST is not bound', async () => {
+        const res = await app.fetch(
+          new Request('https://id.unbound.test/acme-account'),
+          accountPageEnv(undefined, 'vanity-default-5')
+        );
+
+        expect(res.status).toBe(404);
+      });
+    });
+
     it('should leave Account Page prefixes to 404 when self-service is disabled', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
       const settings = createMockKV({

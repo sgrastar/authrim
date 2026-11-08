@@ -146,6 +146,29 @@ describe('tenant-vanity-domain-resolver', () => {
     expect(adapter.queryOne).not.toHaveBeenCalled();
   });
 
+  it('throws a failed lookup in strict mode instead of reading it as no tenant', async () => {
+    resolverMocks.resolveAlias.mockRejectedValueOnce(new Error('registry_read_failed'));
+    const env = {
+      AUTHRIM_ENVIRONMENT_NAME: 'test',
+      TENANT_RUNTIME_REGISTRY: {} as never,
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+    };
+
+    await expect(
+      resolveTenantFromVanityHost(env, 'login.example.com', { strict: true })
+    ).rejects.toThrow('registry_read_failed');
+
+    resolverMocks.resolveAlias.mockRejectedValueOnce(new Error('registry_read_failed'));
+    await expect(resolveTenantFromVanityHost(env, 'login.example.com')).resolves.toBeNull();
+  });
+
+  it('reads a deployment without the lookup registry as no tenant, even in strict mode', async () => {
+    await expect(
+      resolveTenantFromVanityHost({}, 'login.example.com', { strict: true })
+    ).resolves.toBeNull();
+    expect(resolverMocks.resolveAlias).not.toHaveBeenCalled();
+  });
+
   it('rejects a Lookup owner that is not active at the exact destination', async () => {
     const adapter = createMockAdapter();
     resolverMocks.resolveAlias.mockResolvedValueOnce({

@@ -19,7 +19,7 @@ export const SAML_DR_WRITER_COMPONENTS = [
 export type SamlDrWriterComponent = (typeof SAML_DR_WRITER_COMPONENTS)[number];
 
 const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
-  'ar-discovery': ['guarded:fetch'],
+  'ar-discovery': ['guarded:fetch', 'read-only:TenantHostEntrypoint.resolveTenantForHost'],
   'ar-token': [
     'guarded:fetch',
     'guarded:rpc:AgentDownscopeEntrypoint.exchangeAgentAccessToken',

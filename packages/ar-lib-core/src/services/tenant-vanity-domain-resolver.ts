@@ -181,9 +181,17 @@ async function queryActiveVanityTenant(
   return row && isUsableVanityDomain(row) ? row.tenant_id : null;
 }
 
+/**
+ * The tenant that owns a custom domain, or null when none does.
+ *
+ * `strict`: a lookup that fails (registry, D1) throws instead of reading as "no tenant", so a
+ * caller that caches the answer does not cache an outage. A deployment without the lookup
+ * registry still reads as "no tenant": that is configuration, not a failure to retry.
+ */
 export async function resolveTenantFromVanityHost(
   env: Partial<Env>,
-  host: string | null | undefined
+  host: string | null | undefined,
+  options: { strict?: boolean } = {}
 ): Promise<string | null> {
   const hostname = normalizeHostname(host);
   if (!hostname) return null;
@@ -243,6 +251,12 @@ export async function resolveTenantFromVanityHost(
     return tenantId;
   } catch (error) {
     log.warn('Failed to resolve tenant from vanity host', { hostname, error: String(error) });
+    if (
+      options.strict &&
+      !(error instanceof Error && error.message === 'tenant_vanity_lookup_unavailable')
+    ) {
+      throw error;
+    }
     return null;
   }
 }

@@ -86,6 +86,12 @@ interface Env extends SamlDrWriterEnv {
    * through it with the Router's Origin and IP checks as RPC arguments (login-ui-edge.ts).
    */
   LOGIN_UI_EDGE?: LoginUiEdgeBinding;
+  /**
+   * ar-discovery's `TenantHostEntrypoint`: which tenant a custom domain belongs to. The Router
+   * has no tenant database, so without it settings on a custom domain read as the default
+   * tenant's.
+   */
+  TENANT_HOST?: TenantHostBinding;
   /** Admin UI Worker service binding */
   ADMIN_UI_WORKER?: Fetcher;
   /** User-owned service site Worker service binding */
@@ -785,9 +791,78 @@ function getConfiguredUrlHostname(value: string | undefined): string | null {
   }
 }
 
-function getRequestTenantId(c: Context<{ Bindings: Env }>): string {
-  const hostResult = validateHostHeader(c.req.header('Host'), c.env);
-  return hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
+interface TenantHostBinding {
+  resolveTenantForHost(host: string): Promise<{ tenantId: string | null }>;
+}
+
+/** Custom domain -> tenant answers from TENANT_HOST, per isolate. */
+const vanityHostTenantCache = new Map<string, { tenantId: string | null; expiresAt: number }>();
+const VANITY_HOST_TENANT_CACHE_TTL_MS = 60_000;
+const VANITY_HOST_NO_TENANT_CACHE_TTL_MS = 30_000;
+const VANITY_HOST_TENANT_CACHE_MAX_ENTRIES = 1_000;
+const TENANT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
+
+/**
+ * The tenant whose settings apply to this request: from the host name (tenant subdomain or the
+ * primary tenant), or, in multi-tenant mode on a host outside BASE_DOMAIN, the tenant that owns
+ * that custom domain (asked of ar-discovery). Anything that cannot be resolved reads as the
+ * default tenant, as before.
+ */
+/** One answer per request: the account page and service site checks both ask. */
+const requestTenantIds = new WeakMap<Request, Promise<string>>();
+
+function getRequestTenantId(c: Context<{ Bindings: Env }>): Promise<string> {
+  let tenantId = requestTenantIds.get(c.req.raw);
+  if (!tenantId) {
+    tenantId = resolveRequestTenantId(c);
+    requestTenantIds.set(c.req.raw, tenantId);
+  }
+  return tenantId;
+}
+
+async function resolveRequestTenantId(c: Context<{ Bindings: Env }>): Promise<string> {
+  const host = c.req.header('Host');
+  const hostResult = validateHostHeader(host, c.env);
+  if (hostResult.valid && hostResult.tenantId) return hostResult.tenantId;
+
+  const defaultTenantId = getDefaultTenantId(c.env);
+  const baseDomain = c.env.BASE_DOMAIN?.toLowerCase();
+  const hostname = (host ?? new URL(c.req.url).host).split(':')[0]?.trim().toLowerCase();
+  if (
+    !baseDomain ||
+    !hostname ||
+    hostname === baseDomain ||
+    hostname.endsWith(`.${baseDomain}`) ||
+    !c.env.TENANT_HOST
+  ) {
+    return defaultTenantId;
+  }
+
+  const now = Date.now();
+  const cached = vanityHostTenantCache.get(hostname);
+  if (cached && cached.expiresAt > now) return cached.tenantId ?? defaultTenantId;
+
+  let tenantId: string | null;
+  try {
+    const result = await c.env.TENANT_HOST.resolveTenantForHost(hostname);
+    tenantId =
+      typeof result?.tenantId === 'string' && TENANT_ID_PATTERN.test(result.tenantId)
+        ? result.tenantId
+        : null;
+  } catch (error) {
+    // Not cached: the next request asks again.
+    log.warn('Failed to resolve tenant for custom domain', { hostname, error: String(error) });
+    return defaultTenantId;
+  }
+  if (vanityHostTenantCache.size >= VANITY_HOST_TENANT_CACHE_MAX_ENTRIES) {
+    vanityHostTenantCache.clear();
+  }
+  vanityHostTenantCache.set(hostname, {
+    tenantId,
+    expiresAt:
+      now + (tenantId ? VANITY_HOST_TENANT_CACHE_TTL_MS : VANITY_HOST_NO_TENANT_CACHE_TTL_MS),
+  });
+  return tenantId ?? defaultTenantId;
 }
 
 function hasCookie(request: Request, cookieName: string): boolean {
@@ -832,7 +907,7 @@ function parseSettingsRecord(raw: string | null): Record<string, unknown> {
 }
 
 async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
-  const tenantId = getRequestTenantId(c);
+  const tenantId = await getRequestTenantId(c);
   const cached = accountPageSettingsCache.get(tenantId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
@@ -860,7 +935,7 @@ async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
 }
 
 async function resolveServiceSiteFallbackSettings(c: Context<{ Bindings: Env }>) {
-  const tenantId = getRequestTenantId(c);
+  const tenantId = await getRequestTenantId(c);
   const cached = serviceSiteSettingsCache.get(tenantId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached;

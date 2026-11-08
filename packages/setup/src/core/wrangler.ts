@@ -1334,7 +1334,12 @@ export function generateWranglerConfig(
   // Service Bindings for ar-router (required for routing to other workers)
   if (component === 'ar-router') {
     // Core services (always required)
-    const services: Array<{ binding: string; service: string; entrypoint?: string }> = [
+    const services: Array<{
+      binding: string;
+      service: string;
+      entrypoint?: string;
+      props?: Record<string, string>;
+    }> = [
       { binding: 'OP_DISCOVERY', service: `${env}-ar-discovery` },
       { binding: 'OP_AUTH', service: `${env}-ar-auth` },
       { binding: 'OP_TOKEN', service: `${env}-ar-token` },
@@ -1350,6 +1355,16 @@ export function generateWranglerConfig(
     services.push({ binding: 'OP_ASYNC', service: `${env}-ar-async` });
     services.push({ binding: 'OP_SAML', service: `${env}-ar-saml` });
     services.push({ binding: 'OP_VC', service: `${env}-ar-vc` });
+    if (multiTenantEnabled) {
+      // Which tenant a custom domain belongs to: the Router has no tenant database, so it asks
+      // ar-discovery (TenantHostEntrypoint checks these props).
+      services.push({
+        binding: 'TENANT_HOST',
+        service: `${env}-ar-discovery`,
+        entrypoint: 'TenantHostEntrypoint',
+        props: { caller: 'ar-router', audience: 'authrim-tenant-host-v1', environmentId: env },
+      });
+    }
     if (config.components.loginUi) {
       services.push({ binding: 'LOGIN_UI_WORKER', service: `${env}-ar-login-ui` });
       // The Login UI's edge entrypoint: the Router passes its Origin and IP checks as RPC
