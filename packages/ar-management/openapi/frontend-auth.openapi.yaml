@@ -1486,6 +1486,67 @@ components:
                   description: >-
                     Background of the secondary buttons as a hex colour, with an optional alpha
                     channel. Empty when none is set, in which case the palette's own colour applies.
+                linkColor:
+                  type: string
+                  description: >-
+                    Colour of the text links. Empty when none is set, in which case the accent applies.
+                headerBackgroundColor:
+                  type: string
+                  description: >-
+                    Background of the header bar along the top of the page. Empty when none is set, in which case the palette's own colour applies.
+                headerTextColor:
+                  type: string
+                  description: >-
+                    Text colour of the header bar. Empty when none is set, in which case the palette's own colour applies.
+                footerBackgroundColor:
+                  type: string
+                  description: >-
+                    Background of the footer bar along the bottom of the page. Empty when none is set, in which case the palette's own colour applies.
+                footerTextColor:
+                  type: string
+                  description: >-
+                    Text and link colour of the footer bar. Empty when none is set, in which case the palette's own colour applies.
+                darkColors:
+                  type: object
+                  description: >-
+                    The colours used in dark mode, by colour name. A colour not listed follows the palette's
+                    own dark colour, not its light-mode value.
+                  properties:
+                    background:
+                      type: string
+                    form_area:
+                      type: string
+                    accent:
+                      type: string
+                    link:
+                      type: string
+                    title:
+                      type: string
+                    text:
+                      type: string
+                    copy:
+                      type: string
+                    field:
+                      type: string
+                    secondary_button:
+                      type: string
+                    header_background:
+                      type: string
+                    header_text:
+                      type: string
+                    footer_background:
+                      type: string
+                    footer_text:
+                      type: string
+                  additionalProperties: false
+                headerAlign:
+                  type: string
+                  enum: [left, center, right]
+                  description: Where the header bar places the brand.
+                footerAlign:
+                  type: string
+                  enum: [left, center, right]
+                  description: Where the footer bar places its text and links.
                 brandPanelLogoDisplay:
                   type: string
                   enum:

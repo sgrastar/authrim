@@ -26,6 +26,14 @@ function authenticationMethods(): AuthenticationMethodsResponse {
 				titleColor: '#fefefe',
 				textColor: '#eeeeee',
 				copyColor: '#cccccc',
+				// Fixed to dark mode: the server serves the colours it set as its dark ones.
+				darkColors: {
+					background: '#112233',
+					accent: '#336699',
+					title: '#fefefe',
+					text: '#eeeeee',
+					copy: '#cccccc'
+				},
 				logoDisplay: 'auto',
 				logoLayout: 'row',
 				headerEnabled: true,

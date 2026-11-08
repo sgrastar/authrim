@@ -183,3 +183,75 @@ describe('loginUIPageStore', () => {
 		expect(loginUIPageStore.customCss).toBe('.auth-page { opacity: 0.99; }');
 	});
 });
+
+describe('loginUIPageStore colours by mode and bars', () => {
+	const config = (pageTemplate: Record<string, unknown>): LoginUIConfig =>
+		({ theme: 'auto', pageTemplate }) as unknown as LoginUIConfig;
+
+	it('shows the light colours in light mode and the dark ones in dark mode', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(
+			config({
+				accentColor: '#336699',
+				linkColor: '#123456',
+				headerBackgroundColor: '#ffffff',
+				fieldColor: '#ffffff',
+				darkColors: { accent: '#93aef2', header_background: '#101010', field: '#202020' }
+			})
+		);
+		store.setColourMode('light');
+		expect(store.accentColor).toBe('#336699');
+		expect(store.linkColor).toBe('#123456');
+		expect(store.headerBackgroundColor).toBe('#ffffff');
+		expect(store.fieldTextColor).toBe('#000000');
+		expect(document.documentElement.style.getPropertyValue('--login-accent-color')).toBe('#336699');
+
+		store.setColourMode('dark');
+		expect(store.accentColor).toBe('#93aef2');
+		expect(store.headerBackgroundColor).toBe('#101010');
+		expect(store.fieldTextColor).toBe('#ffffff');
+		// Not set for dark mode: the palette's dark colour applies, not the light one.
+		expect(store.linkColor).toBe('');
+		expect(document.documentElement.style.getPropertyValue('--login-accent-color')).toBe('#93aef2');
+		expect(document.documentElement.style.getPropertyValue('--login-link-color')).toBe('');
+	});
+
+	it('drops dark colours it would not apply', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(
+			config({ darkColors: { accent: 'not-a-colour', background: 'url(x)', nope: '#000000' } })
+		);
+		store.setColourMode('dark');
+		expect(store.accentColor).toBe('');
+		expect(store.backgroundColor).toBe('');
+	});
+
+	it('puts the choices in a bar only while that bar is shown', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(
+			config({ headerStyle: 'bar', footerStyle: 'bar', topbarPosition: 'header_right' })
+		);
+		expect(store.headerBar).toBe(true);
+		expect(store.topbarPosition).toBe('header_right');
+
+		store.setFromUIConfig(config({ headerStyle: 'center', topbarPosition: 'header_right' }));
+		expect(store.headerBar).toBe(false);
+		expect(store.topbarPosition).toBe('below_card');
+
+		store.setFromUIConfig(
+			config({ footerStyle: 'bar', footerEnabled: false, topbarPosition: 'footer_left' })
+		);
+		expect(store.footerBar).toBe(false);
+		expect(store.topbarPosition).toBe('bottom_left');
+	});
+
+	it('reads the bar alignments, starting left for the header and centred for the footer', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(config({}));
+		expect([store.headerAlign, store.footerAlign]).toEqual(['left', 'center']);
+		store.setFromUIConfig(config({ headerAlign: 'right', footerAlign: 'left' }));
+		expect([store.headerAlign, store.footerAlign]).toEqual(['right', 'left']);
+		store.setFromUIConfig(config({ headerAlign: 'middle' }));
+		expect(store.headerAlign).toBe('left');
+	});
+});

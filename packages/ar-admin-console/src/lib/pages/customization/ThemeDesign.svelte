@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import Tabs from '#lib/ui/patterns/Tabs.svelte';
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import ColorField from '#lib/ui/primitives/ColorField.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import ThemeGroup from './ThemeGroup.svelte';
+	import { draftColour, setDraftColour, THEME_COLOURS } from './theme-colours';
 	import {
 		FONT_STACKS,
 		TOPBAR_POSITIONS,
@@ -18,93 +20,83 @@
 	/**
 	 * Design: colours, type, and how the screens are set: the colour mode, the form's spacing and
 	 * the topbar (the colour-mode and language choices). `scheme` is the mode the screens are
-	 * shown in now, so the colour fields show the colours that apply in it.
+	 * shown in now; `mode` is the one the preview simulates while the theme follows the device.
 	 */
-	let { draft = $bindable(), scheme }: { draft: ThemeDraft; scheme: 'light' | 'dark' } = $props();
+	let {
+		draft = $bindable(),
+		scheme,
+		mode = $bindable('light')
+	}: { draft: ThemeDraft; scheme: 'light' | 'dark'; mode?: 'light' | 'dark' } = $props();
 
 	const fonts: readonly ThemeFont[] = ['system', 'serif', 'rounded', 'mono'];
 	const modes: readonly ColourMode[] = ['auto', 'light', 'dark'];
 	const fontScales: readonly FontScale[] = ['compact', 'comfortable', 'spacious'];
-	const defaults = $derived(paletteColours(draft.palette, scheme));
+
+	/**
+	 * The colours are set per mode: a tab for each. The tab follows the mode the preview shows, and
+	 * choosing one shows the preview in that mode (while the theme follows the device; a fixed mode
+	 * keeps the preview as it is, and its other colours can still be set).
+	 */
+	let colourTab = $derived<'light' | 'dark'>(scheme);
+	const colourTabs = $derived([
+		{ id: 'light', label: t('th.mode.light') },
+		{ id: 'dark', label: t('th.mode.dark') }
+	]);
+	function pickColourTab(id: string) {
+		colourTab = id === 'dark' ? 'dark' : 'light';
+		if (draft.mode === 'auto') mode = colourTab;
+	}
 
 	// An empty colour is the palette's own (the field shows it), so going back to the palette's
 	// colours is emptying them. Nothing changes until the theme is saved.
-	const COLOUR_FIELDS = [
-		'background',
-		'cardColor',
-		'accent',
-		'titleColor',
-		'textColor',
-		'copyColor',
-		'fieldColor',
-		'secondaryButtonColor'
-	] as const;
-	const customised = $derived(COLOUR_FIELDS.some((field) => draft[field] !== ''));
-	function resetColours() {
-		for (const field of COLOUR_FIELDS) draft[field] = '';
+	const customised = (tab: 'light' | 'dark') =>
+		THEME_COLOURS.some((colour) => draftColour(draft, colour, tab) !== '');
+	function resetColours(tab: 'light' | 'dark') {
+		for (const colour of THEME_COLOURS) setDraftColour(draft, colour, tab, '');
 	}
-	// "Form bottom" places the choices on Split's form side, so only Split offers it (a value it
-	// already has stays listed, so the field never shows blank).
+	// "Form bottom" places the choices on Split's form side, so only Split offers it; the header
+	// and footer places need that bar. A value it already has stays listed, so the field never
+	// shows blank.
 	const topbars = $derived(
 		TOPBAR_POSITIONS.filter(
 			(value) =>
-				draft.template === 'split' || !value.startsWith('form_') || value === draft.topbarPosition
+				value === draft.topbarPosition ||
+				((draft.template === 'split' || !value.startsWith('form_')) &&
+					(draft.header || !value.startsWith('header_')) &&
+					(draft.footer || !value.startsWith('footer_')))
 		)
 	);
 </script>
 
 <ThemeGroup title={t('th.g.colours')} info={t('th.g.colours.d')}>
 	{#snippet actions()}
-		<Button variant="ghost" size="sm" icon="reset" disabled={!customised} onclick={resetColours}
-			>{t('th.c.reset')}</Button
+		<Button
+			variant="ghost"
+			size="sm"
+			icon="reset"
+			disabled={!customised(colourTab)}
+			onclick={() => resetColours(colourTab)}>{t('th.c.reset')}</Button
 		>
 	{/snippet}
-	<div class="colours">
-		<ColorField
-			label={t('th.c.background')}
-			alpha
-			fallback={defaults.background}
-			bind:value={draft.background}
-		/>
-		<ColorField
-			label={t('th.c.card')}
-			alpha
-			fallback={defaults.card}
-			bind:value={draft.cardColor}
-		/>
-		<!-- No opacity: the buttons it fills need a solid colour to pick their label colour against. -->
-		<ColorField label={t('th.c.accent')} fallback={defaults.accent} bind:value={draft.accent} />
-		<ColorField
-			label={t('th.c.title')}
-			alpha
-			fallback={defaults.title}
-			bind:value={draft.titleColor}
-		/>
-		<ColorField
-			label={t('th.c.text')}
-			alpha
-			fallback={defaults.text}
-			bind:value={draft.textColor}
-		/>
-		<ColorField
-			label={t('th.c.copy')}
-			alpha
-			fallback={defaults.copy}
-			bind:value={draft.copyColor}
-		/>
-		<ColorField
-			label={t('th.c.field')}
-			alpha
-			fallback={defaults.card}
-			bind:value={draft.fieldColor}
-		/>
-		<ColorField
-			label={t('th.c.secondaryButton')}
-			alpha
-			fallback={defaults.card}
-			bind:value={draft.secondaryButtonColor}
-		/>
-	</div>
+	<Tabs label={t('th.c.modes')} items={colourTabs} value={colourTab} onchange={pickColourTab}>
+		{#snippet panel(id)}
+			{@const tab = id === 'dark' ? 'dark' : 'light'}
+			{@const defaults = paletteColours(draft.palette, tab)}
+			<div class="colours">
+				{#each THEME_COLOURS as colour (colour.field)}
+					<ColorField
+						label={t(colour.label as MessageKey)}
+						alpha={colour.alpha}
+						fallback={colour.fallback(defaults)}
+						bind:value={
+							() => draftColour(draft, colour, tab),
+							(value) => setDraftColour(draft, colour, tab, value)
+						}
+					/>
+				{/each}
+			</div>
+		{/snippet}
+	</Tabs>
 </ThemeGroup>
 
 <ThemeGroup title={t('th.g.type')} info={t('th.g.type.d')}>

@@ -4,6 +4,7 @@
  */
 import type { PaletteId } from './theme-palettes';
 import type { LoginUIImageFilter } from '@authrim/ar-lib-core/utils/login-ui-image-filters';
+import type { LoginUIThemeColors } from '@authrim/ar-lib-core/utils/login-ui-theme-colors';
 
 export type ThemeTemplate = 'standard' | 'split' | 'minimal';
 export type ThemeFont = 'system' | 'serif' | 'rounded' | 'mono';
@@ -13,8 +14,8 @@ export type FontScale = 'compact' | 'comfortable' | 'spacious';
 export type ColourMode = 'auto' | 'light' | 'dark';
 /**
  * Where the colour-mode and language choices sit (the real screens' `topbar_position`): in the
- * main area between the header and the footer, or (`form_bottom_*`, Split only) at the bottom of
- * the form side alone.
+ * main area between the header and the footer, in the header or footer bar (`header_*`,
+ * `footer_*`), or (`form_bottom_*`, Split only) at the bottom of the form side alone.
  */
 export type TopbarPosition =
 	| 'below_card'
@@ -23,10 +24,19 @@ export type TopbarPosition =
 	| 'bottom_left'
 	| 'bottom_center'
 	| 'bottom_right'
+	| 'header_left'
+	| 'header_center'
+	| 'header_right'
+	| 'footer_left'
+	| 'footer_center'
+	| 'footer_right'
 	| 'form_bottom_left'
 	| 'form_bottom_center'
 	| 'form_bottom_right'
 	| 'hidden';
+/** Where a bar (the header or the footer) places what it shows. */
+export type BarAlign = 'left' | 'center' | 'right';
+export const BAR_ALIGNS: readonly BarAlign[] = ['left', 'center', 'right'];
 export type LogoDisplay = 'both' | 'logo' | 'name';
 
 /** The Split template: how it is framed and laid out (the legacy login-ui.split_* settings). */
@@ -71,12 +81,22 @@ export interface ThemeDraft {
 	fieldColor: string;
 	/** The secondary buttons' background (the main button takes the accent). */
 	secondaryButtonColor: string;
+	/** The text links (the sign-in / sign-up switch); empty follows the accent. */
+	linkColor: string;
+	headerBackground: string;
+	headerText: string;
+	footerBackground: string;
+	footerText: string;
+	/** The colours of dark mode, by name; one not set follows the palette's dark colour. */
+	darkColours: LoginUIThemeColors;
 	font: ThemeFont;
 	fontScale: FontScale;
 	mode: ColourMode;
 	topbarPosition: TopbarPosition;
 	header: boolean;
 	footer: boolean;
+	headerAlign: BarAlign;
+	footerAlign: BarAlign;
 	themeToggle: boolean;
 	languageSelect: boolean;
 	/** The brand's name, in small capitals over the brand panel's title (Split only). */
@@ -150,6 +170,12 @@ export const TOPBAR_POSITIONS: readonly TopbarPosition[] = [
 	'bottom_left',
 	'bottom_center',
 	'bottom_right',
+	'header_left',
+	'header_center',
+	'header_right',
+	'footer_left',
+	'footer_center',
+	'footer_right',
 	'form_bottom_left',
 	'form_bottom_center',
 	'form_bottom_right',
@@ -175,12 +201,20 @@ export function newThemeDraft(): ThemeDraft {
 		copyColor: '',
 		fieldColor: '',
 		secondaryButtonColor: '',
+		linkColor: '',
+		headerBackground: '',
+		headerText: '',
+		footerBackground: '',
+		footerText: '',
+		darkColours: {},
 		font: 'system',
 		fontScale: 'comfortable',
 		mode: 'auto',
 		topbarPosition: 'below_card',
 		header: true,
 		footer: true,
+		headerAlign: 'left',
+		footerAlign: 'center',
 		themeToggle: true,
 		languageSelect: true,
 		brandName: 'Authrim',

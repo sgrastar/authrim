@@ -186,6 +186,50 @@
 	{/snippet}
 </Story>
 
+<!-- The header and footer as bars along the whole page (as the admin console's theme editor
+     writes them): the brand in the middle of the header, the choices at its end, the footer's text
+     at its end, each bar with its own colours. Dark mode takes the dark colours set for it; one not
+     set (the link here) follows the palette's dark colour. -->
+<Story name="Header and footer bars">
+	{#snippet template()}
+		<ShellGallery
+			columns={1}
+			height={560}
+			cells={[
+				{ label: 'standard, light', template: 'standard' as const, scheme: 'light' as const },
+				{ label: 'standard, dark', template: 'standard' as const, scheme: 'dark' as const },
+				{ label: 'split, light', template: 'split' as const, scheme: 'light' as const }
+			].map((cell) => ({
+				...cell,
+				palette: 'glass' as const,
+				kind: 'signup' as const,
+				ui: {
+					pageTemplate: {
+						...(cell.template === 'split' ? { layout: 'split_panel' as const } : {}),
+						headerStyle: 'bar' as const,
+						footerStyle: 'bar' as const,
+						headerAlign: 'center' as const,
+						footerAlign: 'right' as const,
+						topbarPosition: 'header_right' as const,
+						headerBackgroundColor: '#1f2a44',
+						headerTextColor: '#ffffff',
+						footerBackgroundColor: '#ffffffcc',
+						footerTextColor: '#1f2a44',
+						linkColor: '#b4235a',
+						darkColors: {
+							header_background: '#0b0e16',
+							header_text: '#eef1f6',
+							footer_background: '#0b0e16cc',
+							footer_text: '#aeb9d0'
+						}
+					},
+					appearance: { backgroundImageUrl: SAMPLE_BACKGROUND_URL }
+				}
+			}))}
+		/>
+	{/snippet}
+</Story>
+
 <Story name="Split panel: background modes">
 	{#snippet template()}
 		<ShellGallery

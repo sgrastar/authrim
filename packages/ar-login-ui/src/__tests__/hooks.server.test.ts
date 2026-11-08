@@ -126,7 +126,7 @@ describe('Login UI proxy hooks', () => {
 				authenticationMethods: {
 					ui: {
 						theme: 'dark',
-						pageTemplate: { backgroundColor: '#112233' }
+						pageTemplate: { darkColors: { background: '#112233' } }
 					}
 				}
 			},
@@ -872,14 +872,28 @@ describe('Login UI proxy hooks', () => {
 		expect(shouldResolveLoginChallengeThemeTarget('/login')).toBe(true);
 		expect(shouldResolveLoginChallengeThemeTarget('/signup')).toBe(true);
 		expect(shouldResolveLoginChallengeThemeTarget('/account')).toBe(false);
+		// Dark mode opens on the background set for dark mode; the light one is not used there.
 		expect(
 			resolveInitialLoginUIAppearance({
 				ui: {
 					theme: 'dark',
-					pageTemplate: { backgroundColor: '#112233' }
+					pageTemplate: { backgroundColor: '#112233', darkColors: { background: '#223344' } }
 				}
 			} as never)
-		).toEqual({ background: '#112233', colorScheme: 'dark' });
+		).toEqual({ background: '#223344', colorScheme: 'dark' });
+		expect(
+			resolveInitialLoginUIAppearance({
+				ui: { theme: 'dark', pageTemplate: { backgroundColor: '#112233' } }
+			} as never)
+		).toEqual({ background: '#0b0e16', colorScheme: 'dark' });
+		expect(
+			resolveInitialLoginUIAppearance({
+				ui: {
+					theme: 'auto',
+					pageTemplate: { backgroundColor: '#112233', darkColors: { background: '#223344' } }
+				}
+			} as never)
+		).toEqual({ background: '#112233', colorScheme: 'light dark', darkBackground: '#223344' });
 		// Without a configured colour: the page background of the theme template in the mode
 		// (Meridian when none is set), as app.css paints it.
 		expect(resolveInitialLoginUIAppearance(null)).toEqual({

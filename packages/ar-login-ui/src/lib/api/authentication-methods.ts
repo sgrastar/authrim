@@ -169,6 +169,13 @@ export interface LoginUIConfig {
 		fieldColor?: string;
 		/** Secondary button background: hex with an optional alpha channel; empty when none is set. */
 		secondaryButtonColor?: string;
+		linkColor?: string;
+		headerBackgroundColor?: string;
+		headerTextColor?: string;
+		footerBackgroundColor?: string;
+		footerTextColor?: string;
+		/** Dark-mode colours by name (see @authrim/ar-lib-core/utils/login-ui-theme-colors). */
+		darkColors?: Record<string, string>;
 		brandPanelLogoDisplay?: 'inherit' | 'auto' | 'image' | 'text' | 'hidden';
 		/** @deprecated Derived from `template`. */
 		layout: 'centered_card' | 'split_panel' | 'fullbleed_card';
@@ -196,12 +203,20 @@ export interface LoginUIConfig {
 			| 'form_bottom_left'
 			| 'form_bottom_center'
 			| 'form_bottom_right'
+			| 'header_left'
+			| 'header_center'
+			| 'header_right'
+			| 'footer_left'
+			| 'footer_center'
+			| 'footer_right'
 			| 'hidden';
 		themeToggleEnabled?: boolean;
 		languageSelectEnabled?: boolean;
 		languageSwitcherPosition: 'below_card' | 'top_right' | 'hidden';
 		headerStyle?: 'center' | 'bar';
 		footerStyle?: 'simple' | 'bar';
+		headerAlign?: 'left' | 'center' | 'right';
+		footerAlign?: 'left' | 'center' | 'right';
 		splitFrame?: 'full' | 'card';
 		splitPanelSide?: 'left' | 'right';
 		splitPanelWidth?: 'narrow' | 'wide';

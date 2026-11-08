@@ -88,6 +88,87 @@
 <!-- Filters on the background image: the "⋯" beside the folder adds one, each gets a slider under
      the opacity, and the bin removes it. The preview draws them in order. -->
 <Story
+	name="Header and footer bars"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const outline = () => canvasElement.querySelector('.outline') as HTMLElement;
+		// The brand in the middle of the header; the footer's text at the end.
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('th.f.headerAlign') }),
+			'center'
+		);
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('th.f.footerAlign') }),
+			'right'
+		);
+		await waitFor(() =>
+			expect(
+				outline().querySelector('.outline__header .outline__zone--center .brand')
+			).not.toBeNull()
+		);
+		await expect(
+			outline().querySelector('.outline__footer .outline__zone--right .outline__footer-text')
+		).not.toBeNull();
+		// The colour-mode and language choices in the header, on its end side.
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('th.f.topbar') }),
+			'header_right'
+		);
+		await waitFor(() =>
+			expect(
+				outline().querySelector('.outline__header .outline__zone--right .tools')
+			).not.toBeNull()
+		);
+		// The bars take their own colours.
+		await userEvent.type(
+			await canvas.findByRole('textbox', { name: t('th.c.headerBackground') }),
+			'#1f2a44'
+		);
+		await userEvent.type(
+			await canvas.findByRole('textbox', { name: t('th.c.headerText') }),
+			'#ffffff'
+		);
+		await waitFor(() => expect(outline().style.getPropertyValue('--ol-header-bg')).toBe('#1f2a44'));
+		await expect(outline().style.getPropertyValue('--ol-header-text')).toBe('#ffffff');
+	}}
+>
+	{#snippet template()}
+		<Page><ThemeEditor /></Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Theme definition shows what saving writes"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByText(t('th.def.title')));
+		const field = await canvas.findByRole('textbox', { name: t('th.def.field') });
+		const definition = () => JSON.parse((field as HTMLTextAreaElement).value);
+		await expect(definition()).toMatchObject({
+			'login-ui.header_style': 'bar',
+			'login-ui.footer_style': 'bar',
+			'login-ui.palette': 'meridian'
+		});
+		// It follows the edits.
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await userEvent.type(await canvas.findByRole('textbox', { name: t('th.c.link') }), '#1a73e8');
+		await waitFor(() => expect(definition()['login-ui.link_color']).toBe('#1a73e8'));
+		// The tab turned over: read once it has settled (the checks after the story read colours).
+		await waitFor(() =>
+			expect(
+				document.getAnimations().filter((animation) => animation.playState === 'running')
+			).toHaveLength(0)
+		);
+	}}
+>
+	{#snippet template()}
+		<Page><ThemeEditor /></Page>
+	{/snippet}
+</Story>
+
+<Story
 	name="Background image filters"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
@@ -306,7 +387,8 @@
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
 		await userEvent.click(await canvas.findByLabelText(t('th.t.header')));
 		const screen = canvasElement.querySelector('.outline') as HTMLElement;
-		const card = canvasElement.querySelector('.outline__card') as HTMLElement;
+		// The form's column: the card and what goes under it (the sign-up link, the choices).
+		const card = canvasElement.querySelector('.outline__col') as HTMLElement;
 		const middle = (box: DOMRect) => box.top + box.height / 2;
 		// The form stays in the middle of the screen: the missing header does not move it.
 		const offset = Math.abs(
@@ -351,11 +433,20 @@
 		await expect(background).toHaveValue('');
 		await expect(background).toHaveAttribute('placeholder', '#eef1f6');
 		await expect(accent).toHaveAttribute('placeholder', '#2f52c4');
+		// Showing dark mode opens the dark colours: the fields show its colours, and set its own.
 		await userEvent.click(await canvas.findByRole('radio', { name: t('th.mode.dark') }));
-		await waitFor(() => expect(background).toHaveAttribute('placeholder', '#0b0e16'));
-		await expect(accent).toHaveAttribute('placeholder', '#93aef2');
+		await waitFor(() =>
+			expect(canvas.getByRole('tab', { name: t('th.mode.dark') })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			)
+		);
+		const darkBackground = await canvas.findByRole('textbox', { name: t('th.c.background') });
+		const darkAccent = await canvas.findByRole('textbox', { name: t('th.c.accent') });
+		await waitFor(() => expect(darkBackground).toHaveAttribute('placeholder', '#0b0e16'));
+		await expect(darkAccent).toHaveAttribute('placeholder', '#93aef2');
 		// A colour of one's own replaces it, in the preview too.
-		await userEvent.type(accent, '#b4235a');
+		await userEvent.type(darkAccent, '#b4235a');
 		const outline = canvasElement.querySelector('.outline') as HTMLElement;
 		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#b4235a'));
 	}}

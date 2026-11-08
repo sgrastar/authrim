@@ -9,6 +9,7 @@
 	import { apiBgPresets, type BgPresetSource } from './bg-presets';
 	import ThemePreview from './ThemePreview.svelte';
 	import { newThemeDraft, type ThemeDraft } from './theme-draft';
+	import type { StoredTheme } from './theme-values';
 	import { THEME_SECTIONS, type PreviewScreen } from './theme-sections';
 
 	/**
@@ -24,9 +25,11 @@
 		draft?: ThemeDraft;
 		/** Where the background presets come from (the Admin API unless given). */
 		presets?: BgPresetSource;
+		/** The theme as stored, when one is open: its definition shows what saving writes over it. */
+		stored?: StoredTheme;
 	}
 
-	let { draft = $bindable(newThemeDraft()), presets = apiBgPresets }: Props = $props();
+	let { draft = $bindable(newThemeDraft()), presets = apiBgPresets, stored }: Props = $props();
 	let section = $state<string>(THEME_SECTIONS[0].id);
 	let screen = $state<PreviewScreen>('signIn');
 	let mode = $state<'light' | 'dark'>('light');
@@ -47,7 +50,7 @@
 						{#if id === 'layout'}
 							<ThemeLayout bind:draft />
 						{:else if id === 'look'}
-							<ThemeDesign bind:draft {scheme} />
+							<ThemeDesign bind:draft {scheme} bind:mode />
 						{:else if id === 'content'}
 							<ThemeContent bind:draft />
 						{:else}
@@ -65,7 +68,7 @@
 
 	<!-- Custom CSS needs room to read, and it is rarely touched: under both columns, not a tab. -->
 	<div class="advanced">
-		<ThemeAdvanced bind:draft />
+		<ThemeAdvanced bind:draft {stored} />
 	</div>
 </div>
 

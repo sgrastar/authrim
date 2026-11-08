@@ -31,6 +31,13 @@ import {
   parseLoginUIImageFilters,
   type LoginUIImageFilter,
 } from '@authrim/ar-lib-core/utils/login-ui-image-filters';
+import {
+  isValidLoginUIThemeColor,
+  LOGIN_UI_THEME_COLOR_NAMES,
+  parseLoginUIDarkColors,
+  type LoginUIThemeColorName,
+  type LoginUIThemeColors,
+} from '@authrim/ar-lib-core/utils/login-ui-theme-colors';
 import type { Context } from 'hono';
 import type {
   Env,
@@ -209,6 +216,12 @@ type LoginUITopbarPosition =
   | 'form_bottom_left'
   | 'form_bottom_center'
   | 'form_bottom_right'
+  | 'header_left'
+  | 'header_center'
+  | 'header_right'
+  | 'footer_left'
+  | 'footer_center'
+  | 'footer_right'
   | 'hidden';
 
 const LOGIN_UI_TOPBAR_POSITIONS: readonly LoginUITopbarPosition[] = [
@@ -221,8 +234,17 @@ const LOGIN_UI_TOPBAR_POSITIONS: readonly LoginUITopbarPosition[] = [
   'form_bottom_left',
   'form_bottom_center',
   'form_bottom_right',
+  'header_left',
+  'header_center',
+  'header_right',
+  'footer_left',
+  'footer_center',
+  'footer_right',
   'hidden',
 ];
+
+const LOGIN_UI_BAR_ALIGNS = ['left', 'center', 'right'] as const;
+type LoginUIBarAlign = (typeof LOGIN_UI_BAR_ALIGNS)[number];
 
 interface UIConfig {
   /**
@@ -267,6 +289,13 @@ interface UIConfig {
     formAreaColor: string;
     fieldColor: string;
     secondaryButtonColor: string;
+    linkColor: string;
+    headerBackgroundColor: string;
+    headerTextColor: string;
+    footerBackgroundColor: string;
+    footerTextColor: string;
+    /** Dark-mode colours by name; a colour not listed follows the palette in dark mode. */
+    darkColors: LoginUIThemeColors;
     logoDisplay: 'auto' | 'image' | 'text' | 'hidden';
     brandPanelLogoDisplay: 'inherit' | 'auto' | 'image' | 'text' | 'hidden';
     logoLayout: 'stack' | 'row';
@@ -281,6 +310,8 @@ interface UIConfig {
     languageSwitcherPosition: 'below_card' | 'top_right' | 'hidden';
     headerStyle: 'center' | 'bar';
     footerStyle: 'simple' | 'bar';
+    headerAlign: LoginUIBarAlign;
+    footerAlign: LoginUIBarAlign;
     splitFrame: 'full' | 'card';
     formFrame: 'full' | 'card';
     splitPanelSide: 'left' | 'right';
@@ -466,6 +497,12 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     formAreaColor: '',
     fieldColor: '',
     secondaryButtonColor: '',
+    linkColor: '',
+    headerBackgroundColor: '',
+    headerTextColor: '',
+    footerBackgroundColor: '',
+    footerTextColor: '',
+    darkColors: {},
     logoDisplay: 'auto',
     brandPanelLogoDisplay: 'inherit',
     logoLayout: 'stack',
@@ -480,6 +517,8 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     languageSwitcherPosition: 'below_card',
     headerStyle: 'center',
     footerStyle: 'simple',
+    headerAlign: 'left',
+    footerAlign: 'center',
     splitFrame: 'full',
     formFrame: 'full',
     splitPanelSide: 'left',
@@ -571,6 +610,12 @@ interface LoginUIKVSettings {
   'login-ui.form_area_color'?: string;
   'login-ui.field_color'?: string;
   'login-ui.secondary_button_color'?: string;
+  'login-ui.link_color'?: string;
+  'login-ui.header_background_color'?: string;
+  'login-ui.header_text_color'?: string;
+  'login-ui.footer_background_color'?: string;
+  'login-ui.footer_text_color'?: string;
+  'login-ui.dark_colors'?: string;
   'login-ui.brand_name'?: string;
   'login-ui.header_name'?: string;
   'login-ui.logo_url'?: string;
@@ -605,6 +650,8 @@ interface LoginUIKVSettings {
   'login-ui.language_switcher_position'?: string;
   'login-ui.header_style'?: string;
   'login-ui.footer_style'?: string;
+  'login-ui.header_align'?: string;
+  'login-ui.footer_align'?: string;
   'login-ui.split_frame'?: string;
   'login-ui.form_frame'?: string;
   'login-ui.split_panel_side'?: string;
@@ -704,6 +751,14 @@ interface LoginUIResolved {
   formAreaColor: string;
   fieldColor: string;
   secondaryButtonColor: string;
+  linkColor: string;
+  headerBackgroundColor: string;
+  headerTextColor: string;
+  footerBackgroundColor: string;
+  footerTextColor: string;
+  darkColors: LoginUIThemeColors;
+  /** Whether a scope (platform, tenant or client) wrote the dark set, even an empty one. */
+  darkColorsSet: boolean;
   brandName: string;
   headerName: string;
   logoUrl: string | null;
@@ -738,6 +793,8 @@ interface LoginUIResolved {
   languageSwitcherPosition: UIConfig['pageTemplate']['languageSwitcherPosition'];
   headerStyle: UIConfig['pageTemplate']['headerStyle'];
   footerStyle: UIConfig['pageTemplate']['footerStyle'];
+  headerAlign: UIConfig['pageTemplate']['headerAlign'];
+  footerAlign: UIConfig['pageTemplate']['footerAlign'];
   splitFrame: UIConfig['pageTemplate']['splitFrame'];
   formFrame: UIConfig['pageTemplate']['formFrame'];
   splitPanelSide: UIConfig['pageTemplate']['splitPanelSide'];
@@ -1123,6 +1180,14 @@ function readHeaderName(value: unknown, fallback: string): string {
 }
 
 /** `#rgb`, `#rrggbb` or `#rrggbbaa` (the last carries alpha), rgb()/rgba() or a colour name. */
+/**
+ * A colour of a theme read as the shared module checks it (the same rule for its dark-mode value,
+ * the Login UI and the admin console), so a value one refuses is refused by all.
+ */
+function readThemeColor(name: LoginUIThemeColorName, value: unknown, fallback: string): string {
+  return isValidLoginUIThemeColor(name, value) ? (value as string).trim() : fallback;
+}
+
 function readSafeColor(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback;
   const trimmed = value.trim();
@@ -1217,6 +1282,40 @@ function readPalette(kvSettings: LoginUIKVSettings, fallback: LoginUIPaletteId):
   return fallback;
 }
 
+/**
+ * The dark-mode colours a resolved Login UI serves. A Login UI fixed to dark mode for which no
+ * scope ever wrote a dark set chose its colours for dark mode before there was one: its light
+ * colours (as they are served, by their own rules) are its dark ones, as the admin console opens
+ * such a theme too. Otherwise a dark colour not set follows the palette's dark colour.
+ */
+function servedDarkColors(resolved: LoginUIResolved): LoginUIThemeColors {
+  return resolved.theme === 'dark' && !resolved.darkColorsSet
+    ? lightColorsAsDark(resolved)
+    : { ...resolved.darkColors };
+}
+
+/** The light colours of a resolved Login UI, as dark-mode colours. */
+function lightColorsAsDark(resolved: LoginUIResolved): LoginUIThemeColors {
+  const light: Record<LoginUIThemeColorName, string> = {
+    background: resolved.backgroundColor,
+    form_area: resolved.formAreaColor,
+    accent: resolved.accentColor,
+    link: resolved.linkColor,
+    title: resolved.titleColor,
+    text: resolved.textColor,
+    copy: resolved.copyColor,
+    field: resolved.fieldColor,
+    secondary_button: resolved.secondaryButtonColor,
+    header_background: resolved.headerBackgroundColor,
+    header_text: resolved.headerTextColor,
+    footer_background: resolved.footerBackgroundColor,
+    footer_text: resolved.footerTextColor,
+  };
+  const dark: LoginUIThemeColors = {};
+  for (const name of LOGIN_UI_THEME_COLOR_NAMES) if (light[name]) dark[name] = light[name];
+  return dark;
+}
+
 function resolveLoginUIFromKVSettings(
   kvSettings: LoginUIKVSettings,
   defaults: LoginUIResolved
@@ -1241,7 +1340,7 @@ function resolveLoginUIFromKVSettings(
     ? parseConfiguredPrimaryLoginUILocales(kvSettings['login-ui.primary_locales'])
     : defaults.primaryLocales;
 
-  return {
+  const resolved: LoginUIResolved = {
     theme: readEnum(kvSettings['login-ui.theme'], ['auto', 'light', 'dark'], defaults.theme),
     themeFixed: readBoolean(kvSettings['login-ui.theme_fixed'], defaults.themeFixed),
     template: readTemplate(kvSettings, defaults.template),
@@ -1270,6 +1369,32 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.secondary_button_color'],
       defaults.secondaryButtonColor
     ),
+    linkColor: readThemeColor('link', kvSettings['login-ui.link_color'], defaults.linkColor),
+    headerBackgroundColor: readThemeColor(
+      'header_background',
+      kvSettings['login-ui.header_background_color'],
+      defaults.headerBackgroundColor
+    ),
+    headerTextColor: readThemeColor(
+      'header_text',
+      kvSettings['login-ui.header_text_color'],
+      defaults.headerTextColor
+    ),
+    footerBackgroundColor: readThemeColor(
+      'footer_background',
+      kvSettings['login-ui.footer_background_color'],
+      defaults.footerBackgroundColor
+    ),
+    footerTextColor: readThemeColor(
+      'footer_text',
+      kvSettings['login-ui.footer_text_color'],
+      defaults.footerTextColor
+    ),
+    darkColors:
+      kvSettings['login-ui.dark_colors'] === undefined
+        ? { ...defaults.darkColors }
+        : parseLoginUIDarkColors(kvSettings['login-ui.dark_colors']),
+    darkColorsSet: defaults.darkColorsSet || kvSettings['login-ui.dark_colors'] !== undefined,
     brandName: kvSettings['login-ui.brand_name'] || defaults.brandName,
     headerName: readHeaderName(kvSettings['login-ui.header_name'], defaults.headerName),
     liteLogo: checkLiteLogoDataUri(kvSettings['login-ui.lite_logo']).ok
@@ -1395,6 +1520,16 @@ function resolveLoginUIFromKVSettings(
       ['simple', 'bar'],
       defaults.footerStyle
     ),
+    headerAlign: readEnum(
+      kvSettings['login-ui.header_align'],
+      LOGIN_UI_BAR_ALIGNS,
+      defaults.headerAlign
+    ),
+    footerAlign: readEnum(
+      kvSettings['login-ui.footer_align'],
+      LOGIN_UI_BAR_ALIGNS,
+      defaults.footerAlign
+    ),
     splitFrame: readEnum(kvSettings['login-ui.split_frame'], ['full', 'card'], defaults.splitFrame),
     formFrame: readEnum(kvSettings['login-ui.form_frame'], ['full', 'card'], defaults.formFrame),
     splitPanelSide: readEnum(
@@ -1469,6 +1604,7 @@ function resolveLoginUIFromKVSettings(
             alt?: string;
           }>(kvSettings['login-ui.custom_blocks']),
   };
+  return resolved;
 }
 
 async function applyClientLoginUIOverride(
@@ -1517,6 +1653,13 @@ async function getLoginUISettings(
     formAreaColor: DEFAULT_UI_CONFIG.pageTemplate.formAreaColor,
     fieldColor: DEFAULT_UI_CONFIG.pageTemplate.fieldColor,
     secondaryButtonColor: DEFAULT_UI_CONFIG.pageTemplate.secondaryButtonColor,
+    linkColor: DEFAULT_UI_CONFIG.pageTemplate.linkColor,
+    headerBackgroundColor: DEFAULT_UI_CONFIG.pageTemplate.headerBackgroundColor,
+    headerTextColor: DEFAULT_UI_CONFIG.pageTemplate.headerTextColor,
+    footerBackgroundColor: DEFAULT_UI_CONFIG.pageTemplate.footerBackgroundColor,
+    footerTextColor: DEFAULT_UI_CONFIG.pageTemplate.footerTextColor,
+    darkColors: { ...DEFAULT_UI_CONFIG.pageTemplate.darkColors },
+    darkColorsSet: false,
     brandName: DEFAULT_UI_CONFIG.branding.brandName,
     headerName: DEFAULT_UI_CONFIG.branding.headerName,
     logoUrl: DEFAULT_UI_CONFIG.branding.logoUrl,
@@ -1551,6 +1694,8 @@ async function getLoginUISettings(
     languageSwitcherPosition: DEFAULT_UI_CONFIG.pageTemplate.languageSwitcherPosition,
     headerStyle: DEFAULT_UI_CONFIG.pageTemplate.headerStyle,
     footerStyle: DEFAULT_UI_CONFIG.pageTemplate.footerStyle,
+    headerAlign: DEFAULT_UI_CONFIG.pageTemplate.headerAlign,
+    footerAlign: DEFAULT_UI_CONFIG.pageTemplate.footerAlign,
     splitFrame: DEFAULT_UI_CONFIG.pageTemplate.splitFrame,
     formFrame: DEFAULT_UI_CONFIG.pageTemplate.formFrame,
     splitPanelSide: DEFAULT_UI_CONFIG.pageTemplate.splitPanelSide,
@@ -2489,6 +2634,12 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
       formAreaColor: loginUI.formAreaColor,
       fieldColor: loginUI.fieldColor,
       secondaryButtonColor: loginUI.secondaryButtonColor,
+      linkColor: loginUI.linkColor,
+      headerBackgroundColor: loginUI.headerBackgroundColor,
+      headerTextColor: loginUI.headerTextColor,
+      footerBackgroundColor: loginUI.footerBackgroundColor,
+      footerTextColor: loginUI.footerTextColor,
+      darkColors: servedDarkColors(loginUI),
       logoDisplay: loginUI.logoDisplay,
       brandPanelLogoDisplay: loginUI.brandPanelLogoDisplay,
       logoLayout: loginUI.logoLayout,
@@ -2503,6 +2654,8 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
       languageSwitcherPosition: loginUI.languageSwitcherPosition,
       headerStyle: loginUI.headerStyle,
       footerStyle: loginUI.footerStyle,
+      headerAlign: loginUI.headerAlign,
+      footerAlign: loginUI.footerAlign,
       splitFrame: loginUI.splitFrame,
       formFrame: loginUI.formFrame,
       splitPanelSide: loginUI.splitPanelSide,
