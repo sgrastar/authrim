@@ -1108,6 +1108,58 @@ describe('log archive setup contract', () => {
     ).toBeGreaterThan(f.calls.findIndex((call) => call.path === `${catalogPath}/enable`));
   });
 
+  it('accepts a 204 disable answer once the catalog reads back as the same inactive one', async () => {
+    implemented.push('scheduled');
+    const seed = (f: ReturnType<typeof fixture>) => {
+      f.remote.set(`basin-catalog/${f.archive.bucketName}`, {
+        id: 'old-catalog-id',
+        name: `${accountId}_${f.archive.bucketName}`,
+        status: 'active',
+      });
+      f.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '2026-10-31T00:00:00Z' }];
+      const original = f.fetcher.getMockImplementation()!;
+      f.fetcher.mockImplementation(async (url, init) => {
+        const response = await original(url, init);
+        // Cloudflare may answer the disable with 204 and no body.
+        return String(url).endsWith('/disable') ? new Response(null, { status: 204 }) : response;
+      });
+      return original;
+    };
+    const ok = fixture('scheduled');
+    seed(ok);
+    await expect(provisionLogArchive(ok.options)).resolves.toMatchObject({
+      catalog: { id: 'catalog-id' },
+    });
+    expect(ok.calls.some((call) => call.path.endsWith('/delete?force=true'))).toBe(true);
+    const swapped = fixture('scheduled');
+    const original = seed(swapped);
+    const catalogPath = `basin-catalog/${swapped.archive.bucketName}`;
+    let disabledOnce = false;
+    swapped.fetcher.mockImplementation(async (url, init) => {
+      if (
+        disabledOnce &&
+        String(url).endsWith(`/${catalogPath}`) &&
+        (init?.method ?? 'GET') === 'GET'
+      )
+        // The 200 form of an inactive catalog, now naming a different catalog.
+        return new Response(
+          JSON.stringify({
+            success: true,
+            result: { ...swapped.remote.get(catalogPath)!, id: 'someone-else' },
+          }),
+          { status: 200 }
+        );
+      const response = await original(url, init);
+      if (!String(url).endsWith('/disable')) return response;
+      disabledOnce = true;
+      return new Response(null, { status: 204 });
+    });
+    await expect(provisionLogArchive(swapped.options)).rejects.toThrow(
+      'log_archive_catalog_ownership_unproven'
+    );
+    expect(swapped.calls.some((call) => call.path.includes('/delete'))).toBe(false);
+  });
+
   it('puts a disabled unrecorded Catalog back when its entries are not all older', async () => {
     implemented.push('scheduled');
     const f = fixture('scheduled');

@@ -766,11 +766,16 @@ function catalogTimestamp(value: unknown): number {
 async function readCatalogState(
   options: LogArchiveProvisionOptions,
   path: string
-): Promise<{ state: 'present'; catalog: RemoteResource } | { state: 'inactive' | 'missing' }> {
+): Promise<
+  | { state: 'present'; catalog: RemoteResource }
+  | { state: 'inactive'; catalog?: RemoteResource }
+  | { state: 'missing' }
+> {
   try {
     const catalog = await options.api.request<RemoteResource>(path);
     const status = object(catalog).status;
-    if (status === 'inactive') return { state: 'inactive' };
+    // The 200 form still names the catalog; the 40402 form does not.
+    if (status === 'inactive') return { state: 'inactive', catalog };
     if (status !== 'active') throw new Error('log_archive_catalog_state_unknown');
     return { state: 'present', catalog };
   } catch (error) {
@@ -926,8 +931,20 @@ async function removeStaleCatalog(
   options.onProgress?.(
     `  Removing a Catalog left by an earlier bucket named ${options.archive.bucketName}...`
   );
+  // Cloudflare answers the disable either with the catalog or with 204 and no body. Without an id
+  // in the answer, the catalog is read again: it must be inactive, and the same one where the
+  // answer still names it.
   const disabled = object(await options.api.request<RemoteResource>(`${path}/disable`, 'POST'));
-  if (disabled.id !== catalog.id) throw new Error('log_archive_catalog_ownership_unproven');
+  if (disabled.id !== undefined) {
+    if (disabled.id !== catalog.id) throw new Error('log_archive_catalog_ownership_unproven');
+  } else {
+    const after = await readCatalogState(options, path);
+    if (
+      after.state !== 'inactive' ||
+      (after.catalog !== undefined && object(after.catalog).id !== catalog.id)
+    )
+      throw new Error('log_archive_catalog_ownership_unproven');
+  }
   await options.api.request(`${path}/delete?force=true`, 'POST');
   if ((await readCatalogState(options, path)).state !== 'missing')
     throw new Error('log_archive_stale_catalog_deletion_unconfirmed');
