@@ -140,7 +140,11 @@ export async function invalidateTenantVanityDomainCache(
   ]);
 }
 
-async function resolveTenantDefaultStore(env: Partial<Env>, tenantId: string) {
+async function resolveTenantDefaultStore(
+  env: Partial<Env>,
+  tenantId: string,
+  options: { readOnly?: boolean } = {}
+) {
   if (
     !env.AUTHRIM_ENVIRONMENT_NAME ||
     !env.TENANT_RUNTIME_REGISTRY ||
@@ -154,6 +158,8 @@ async function resolveTenantDefaultStore(env: Partial<Env>, tenantId: string) {
     dataRole: 'tenant_core/default',
     shardGroup: 'default',
     shardIndex: 0,
+    // Read-only callers leave no trace: a routing failure is thrown but not reported.
+    ...(options.readOnly ? { sideEffects: 'none' as const } : {}),
   });
 }
 
@@ -181,9 +187,19 @@ async function queryActiveVanityTenant(
   return row && isUsableVanityDomain(row) ? row.tenant_id : null;
 }
 
+/**
+ * The tenant that owns a custom domain, or null when none does.
+ *
+ * `strict`: a lookup that fails (registry, D1) throws instead of reading as "no tenant", so a
+ * caller that caches the answer does not cache an outage. A deployment without the lookup
+ * registry still reads as "no tenant": that is configuration, not a failure to retry.
+ * `readOnly`: nothing is written: the KV hint is read but never written or cleared, and a tenant
+ * database routing failure is not reported (for read-only RPC surfaces).
+ */
 export async function resolveTenantFromVanityHost(
   env: Partial<Env>,
-  host: string | null | undefined
+  host: string | null | undefined,
+  options: { strict?: boolean; readOnly?: boolean } = {}
 ): Promise<string | null> {
   const hostname = normalizeHostname(host);
   if (!hostname) return null;
@@ -194,11 +210,11 @@ export async function resolveTenantFromVanityHost(
     try {
       const cached = await kv.get(cacheKey);
       if (cached) {
-        const store = await resolveTenantDefaultStore(env, cached);
+        const store = await resolveTenantDefaultStore(env, cached, options);
         if ((await queryActiveVanityTenant(store.source, hostname, cached)) === cached) {
           return cached;
         }
-        await kv.delete(cacheKey).catch(() => {});
+        if (!options.readOnly) await kv.delete(cacheKey).catch(() => {});
       }
     } catch {
       // KV is only a hint. Continue through the signed Lookup directory.
@@ -222,7 +238,7 @@ export async function resolveTenantFromVanityHost(
     const alias = await new LookupRouteResolver(env, assignments).resolveAlias({ index });
     if (!alias) return null;
 
-    const store = await resolveTenantDefaultStore(env, alias.tenantId);
+    const store = await resolveTenantDefaultStore(env, alias.tenantId, options);
     const projection = alias.routeProjection;
     if (
       projection.tenantRouteGeneration > store.bindingRouteGeneration ||
@@ -239,10 +255,18 @@ export async function resolveTenantFromVanityHost(
     if (tenantId !== alias.tenantId) {
       throw new Error('tenant_vanity_alias_destination_revalidation_failed');
     }
-    await kv?.put(cacheKey, tenantId, { expirationTtl: CACHE_TTL_SECONDS }).catch(() => {});
+    if (!options.readOnly) {
+      await kv?.put(cacheKey, tenantId, { expirationTtl: CACHE_TTL_SECONDS }).catch(() => {});
+    }
     return tenantId;
   } catch (error) {
     log.warn('Failed to resolve tenant from vanity host', { hostname, error: String(error) });
+    if (
+      options.strict &&
+      !(error instanceof Error && error.message === 'tenant_vanity_lookup_unavailable')
+    ) {
+      throw error;
+    }
     return null;
   }
 }
