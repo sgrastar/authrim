@@ -244,6 +244,9 @@ vi.mock('../account-provisioning', async (importOriginal) => ({
         runtimeUser: Record<string, unknown>;
       }
     ) => {
+      // As the provisioner: an email code's or a passkey's account is an unfinished sign-up's,
+      // marked with it (72 h by default).
+      const now = Math.floor(Date.now() / 1000);
       const { CanonicalRuntimeUserStore: Store } =
         await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
       await new Store({
@@ -254,6 +257,15 @@ vi.mock('../account-provisioning', async (importOriginal) => ({
         ...(input.runtimeUser as unknown as Parameters<CanonicalRuntimeUserStore['syncUser']>[0]),
         userId: input.candidateUserId,
         email: input.email,
+        ...(['email_code', 'passkey'].includes((input as unknown as { flow: string }).flow)
+          ? {
+              registrationPending: {
+                flow: (input as unknown as { flow: 'email_code' | 'passkey' }).flow,
+                createdAt: now,
+                expiresAt: now + 72 * 3600,
+              },
+            }
+          : {}),
       });
       if (input.email) world.identifierRoutes.set(input.email, input.candidateUserId);
       return {
@@ -282,11 +294,13 @@ import {
 } from '../passkey';
 import { totpLoginStartHandler, totpLoginVerifyHandler, totpSignupActivateHandler } from '../totp';
 import { passkeyCredentialLookupSubject } from '@authrim/ar-lib-core';
+import { freshInstallMigrationFiles } from './helpers/real-sql';
 
 function migrate(folder: string): SqliteDatabase {
   const db = new DatabaseSync(':memory:');
   const directory = path.resolve(__dirname, '../../../../migrations', folder, 'd1');
-  for (const file of [`001_0_5_0_${folder}_baseline.sql`]) {
+  // A fresh installation's files (the baseline, then the migrations after it).
+  for (const file of freshInstallMigrationFiles(folder)) {
     db.exec(renderPortableMigrationSql(readFileSync(path.join(directory, file), 'utf8'), 'sqlite'));
   }
   return db;
@@ -534,10 +548,26 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       expect(world.storedChallenges).toEqual([
         expect.objectContaining({ id: `passkey_reg:${NEW_USER}`, userId: NEW_USER }),
       ]);
+      // Unfinished until its passkey is registered: marked with the account, in its database.
+      expect(
+        count(
+          databases.accountCore.raw,
+          `SELECT COUNT(*) AS n FROM account_registration_pending
+            WHERE user_id = ? AND flow = 'passkey' AND expires_at - created_at = 259200`,
+          NEW_USER
+        )
+      ).toBe(1);
     });
 
     it('stores a registered passkey in the account database, not the metadata database', async () => {
       world.challenge = { challenge: 'registration-challenge', userId: USER };
+      // The sign-up that made the account is unfinished until its passkey is registered.
+      databases.accountCore.raw
+        .prepare(
+          `INSERT INTO account_registration_pending (tenant_id, user_id, flow, created_at, expires_at)
+           VALUES (?, ?, 'passkey', 1, 2)`
+        )
+        .run(TENANT, USER);
       const hono = app(allocationScope, databases, (h) =>
         h.post('/api/auth/passkeys/register/verify', passkeyRegisterVerifyHandler)
       );
@@ -576,6 +606,14 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       ).toBe(1);
       expect(count(databases.metadata.raw, 'SELECT COUNT(*) AS n FROM passkeys')).toBe(0);
       expect(count(databases.metadata.raw, 'SELECT COUNT(*) AS n FROM identity_accounts')).toBe(0);
+      // Its passkey registered: the account is no longer one the clean-up deletes.
+      expect(
+        count(
+          databases.accountCore.raw,
+          'SELECT COUNT(*) AS n FROM account_registration_pending WHERE user_id = ?',
+          USER
+        )
+      ).toBe(0);
     });
 
     it('ends the session it opened when the passkey cannot be stored', async () => {

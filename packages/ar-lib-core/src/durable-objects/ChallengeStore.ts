@@ -74,6 +74,7 @@ export type ChallengeType =
   | 'admin_step_up_requirement' // An admin operation refused for want of an L2 receipt
   | 'admin_step_up_receipt' // Single-use L2 receipt for one admin operation
   | 'external_idp_link_intent' // Account Page request to link an external account (one use)
+  | 'external_idp_callback_relay' // A provider's form post relayed from the platform issuer host
   | 'login_method_removal_lock' // Serialises an account's removals of sign-in methods
   | 'lite_pow_used' // A lite Login UI proof of work already spent (kept until it expires)
   | 'invitation_email_code' // Code sent to the email an invitation names

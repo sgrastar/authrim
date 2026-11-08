@@ -76,6 +76,7 @@ const mocks = vi.hoisted(() => {
     readLiteMode: vi.fn(),
     verifyEmailVerificationProtocol: vi.fn(),
     markOtpLoginEmailVerified: vi.fn(),
+    clearAccountRegistrationPending: vi.fn(async () => undefined),
     ensureDatabaseAdapter: vi.fn((source) => source),
     resolveOtpAccountCoreDataContextByIdentifierFromHono: vi.fn(),
     resolveAccountDataContextByIdentifierFromHono: vi.fn(),
@@ -320,6 +321,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveOtpAccountCoreDataContextByIdentifierFromHono:
       mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono,
     markOtpLoginEmailVerified: mocks.markOtpLoginEmailVerified,
+    clearAccountRegistrationPending: mocks.clearAccountRegistrationPending,
     ensureDatabaseAdapter: mocks.ensureDatabaseAdapter,
     resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
     ensureAccountAuthenticationState: vi.fn(async (_env, _tenant, _user, loader) => loader()),
@@ -6370,6 +6372,16 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       'user_existing',
       expect.any(Number)
     );
+    // The account proven: its unfinished sign-up's mark cleared in its own core store, before
+    // the answer (whatever the code was for).
+    expect(mocks.clearAccountRegistrationPending).toHaveBeenCalledWith(
+      { adapter: 'tenant-core' },
+      'tenant_test',
+      'user_existing'
+    );
+    expect(mocks.clearAccountRegistrationPending.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.authCodeStore.storeCodeRpc.mock.invocationCallOrder[0]
+    );
     expect(context.executionCtx.waitUntil).not.toHaveBeenCalled();
   });
 
@@ -6407,6 +6419,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
     expect(invalidResponse.ok).toBe(false);
     expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    // A wrong code proves nothing: the account stays an unfinished sign-up's.
+    expect(mocks.clearAccountRegistrationPending).not.toHaveBeenCalled();
 
     const validResponse = await directEmailCodeVerifyHandler(
       enableEmailOtp(createContext(request)) as never
@@ -6415,6 +6429,43 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(validResponse.status).toBe(200);
     expect(mocks.challengeStore.getChallengeRpc).toHaveBeenCalledTimes(2);
     expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+    expect(mocks.clearAccountRegistrationPending).toHaveBeenCalledTimes(1);
+  });
+
+  it('signs in though the unfinished sign-up mark cannot be cleared (the clean-up checks again)', async () => {
+    mocks.clearAccountRegistrationPending.mockRejectedValueOnce(new Error('core unavailable'));
+    const codeVerifier = 'email-code-clear-failure-verifier';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    const challengeData = {
+      challenge: 'hashed-email-code',
+      userId: 'user_existing',
+      email: 'user@example.com',
+      metadata: {
+        code_challenge: codeChallenge,
+        client_id: 'web-client',
+        channel: 'browser',
+        scope: 'openid email',
+        usage: 'signup',
+        transaction_id: 'attempt_clear_failure',
+        issued_at: Date.now() - 10_000,
+      },
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
+    mocks.verifyEmailCodeHash.mockResolvedValueOnce(true);
+    const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+    const response = await directEmailCodeVerifyHandler(
+      enableEmailOtp(
+        createContext({
+          attempt_id: 'attempt_clear_failure',
+          code: '123456',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        })
+      ) as never
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.clearAccountRegistrationPending).toHaveBeenCalledTimes(1);
   });
 
   describe('a code sent again within an email-code sign-up', () => {

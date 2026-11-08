@@ -32,6 +32,10 @@
             {
               "path": "006_external_idp_data_deletion_requests.sql",
               "checksum": "edf5b7a5fea4a2821140d30667bdd39bb58be092d5e96dbea2bf815d4f0644dc"
+            },
+            {
+              "path": "007_account_registration_pending.sql",
+              "checksum": "8603b8e6d123432eabf36bb1ca8f2bf668f08c74c84cef3341f77e10a11ff7e2"
             }
           ]
         },
@@ -139,6 +143,10 @@
             {
               "path": "005_flow_interaction_submit_claim.sql",
               "checksum": "601c831bac4b2af2406ac88da40654a8ae0680efca879afb4191b4f0b36bc05f"
+            },
+            {
+              "path": "007_account_registration_pending.sql",
+              "checksum": "63d2e00eb3f4aefb1d3bfdbc74b6a6eb187c80df7458fd123d34d74403f4d2e2"
             }
           ]
         },
@@ -194,6 +202,10 @@
         {
           "path": "006_external_idp_data_deletion_requests.sql",
           "checksum": "edf5b7a5fea4a2821140d30667bdd39bb58be092d5e96dbea2bf815d4f0644dc"
+        },
+        {
+          "path": "007_account_registration_pending.sql",
+          "checksum": "8603b8e6d123432eabf36bb1ca8f2bf668f08c74c84cef3341f77e10a11ff7e2"
         }
       ]
     },
@@ -328,6 +340,10 @@
         {
           "path": "005_flow_interaction_submit_claim.sql",
           "checksum": "601c831bac4b2af2406ac88da40654a8ae0680efca879afb4191b4f0b36bc05f"
+        },
+        {
+          "path": "007_account_registration_pending.sql",
+          "checksum": "63d2e00eb3f4aefb1d3bfdbc74b6a6eb187c80df7458fd123d34d74403f4d2e2"
         }
       ]
     },

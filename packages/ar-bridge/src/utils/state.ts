@@ -178,6 +178,30 @@ interface DbAuthState {
  *
  * @returns The auth state if valid and not already consumed, null otherwise
  */
+/**
+ * Whether `state` names a sign-in of `providerId` that is still waiting for its answer (stored,
+ * unexpired, not consumed). Reads only: the state is consumed where the answer is handled.
+ */
+export async function isPendingAuthState(
+  env: Env,
+  tenantId: string,
+  providerId: string,
+  state: string
+): Promise<boolean> {
+  const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'bridge-auth-state:peek',
+    { tenantId }
+  );
+  const row = await coreAdapter.queryOne<{ found: number }>(
+    `SELECT 1 AS found FROM external_idp_auth_states
+     WHERE tenant_id = ? AND provider_id = ? AND state = ? AND expires_at > ? AND consumed_at IS NULL
+     LIMIT 1`,
+    [tenantId, providerId, state, Date.now()]
+  );
+  return row !== null && row !== undefined;
+}
+
 export async function consumeAuthState(
   env: Env,
   tenantId: string,

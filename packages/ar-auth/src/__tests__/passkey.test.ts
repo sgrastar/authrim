@@ -1302,7 +1302,12 @@ describe('Passkey Handlers', () => {
         expect.stringContaining('INSERT INTO user_custom_fields')
       );
       expect(mockUserCoreRepository.updateLastLogin).toHaveBeenCalledWith('user-123');
-      expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
+      // Nothing else of the core is written but the unfinished sign-up's mark, cleared.
+      expect(mockCoreAdapter.execute).toHaveBeenCalledTimes(1);
+      expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
+        'DELETE FROM account_registration_pending WHERE tenant_id = ? AND user_id = ?',
+        [expect.any(String), 'user-123']
+      );
     });
 
     it('rejects a consumed or expired registration challenge before WebAuthn verification', async () => {

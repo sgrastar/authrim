@@ -1,3 +1,4 @@
+import type { AccountRegistrationPendingMark } from '../../services/account-registration-pending-mark';
 import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter } from '../../db/adapter';
 import {
@@ -26,6 +27,8 @@ export interface CanonicalRuntimeUserStoreOptions {
 
 export interface CanonicalRuntimeUserCreateInput {
   userId: string;
+  /** A sign-up's account made before it is proven: marked with it (only when it is created). */
+  registrationPending?: AccountRegistrationPendingMark;
   email?: string | null;
   name?: string | null;
   active?: boolean;
@@ -274,6 +277,7 @@ function toCreateInput(input: CanonicalRuntimeUserCreateInput): CanonicalRuntime
       ...(input.sensitiveValues ?? {}),
     },
     inlineProfileFields: input.inlineProfileFields,
+    registrationPending: input.registrationPending,
   };
 }
 

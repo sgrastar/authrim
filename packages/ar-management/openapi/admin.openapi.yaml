@@ -2302,8 +2302,11 @@ paths:
         without mutating tenant state. The account-lifecycle category exposes
         account-lifecycle.guest.deletion_enabled (boolean, default false),
         account-lifecycle.guest.deletion_after_days (integer 1-3650, default 30),
-        account-lifecycle.guest.upgrade_enabled (boolean, default true), and
-        account-lifecycle.guest.upgrade_hold_minutes (integer 1-60, default 10).
+        account-lifecycle.guest.upgrade_enabled (boolean, default true),
+        account-lifecycle.guest.upgrade_hold_minutes (integer 1-60, default 10), and
+        account-lifecycle.registration.pending_ttl_hours (integer 1-720, default 72: how long the
+        account an unfinished email-code or passkey sign-up made is kept before its clean-up;
+        env ACCOUNT_REGISTRATION_PENDING_TTL_HOURS).
         Authentication-methods settings include authentication-methods.guest.login_enabled
         (default false), authentication-methods.passkey.guest_upgrade_enabled and
         authentication-methods.email_otp.guest_upgrade_enabled (both default true).

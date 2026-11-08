@@ -54,6 +54,7 @@ export function freshDatabase(family: Family) {
   for (const file of [
     `001_0_5_0_${family}_baseline.sql`,
     ...(family === 'admin' ? ['009_login_ui_themes.sql', '012_admin_groups.sql'] : []),
+    ...(family === 'core' ? ['007_account_registration_pending.sql'] : []),
     ...(family === 'pii'
       ? ['003_screen_responses.sql', '004_account_pii_erasure_markers.sql']
       : []),

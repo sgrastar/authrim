@@ -313,6 +313,7 @@ export * from './services/runtime-data-context';
 export * from './services/account-provisioning';
 export * from './services/external-idp-token-revocation';
 export * from './services/account-tombstone';
+export * from './services/account-registration-pending';
 export * from './services/tombstone-hmac-keyring';
 export * from './services/sign-in-attempts';
 export * from './services/pii-access-log';

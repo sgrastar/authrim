@@ -25,6 +25,7 @@ import {
   buildIssuerUrl,
   getDefaultTenantId,
   getTenantIdFromContext,
+  getExternalCallbackRelayOrigin,
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
   DIAGNOSTIC_FLOW_ID_HEADER,
@@ -51,7 +52,19 @@ import {
   resolveSessionTtl,
 } from '@authrim/ar-lib-core';
 import { externalSignInMayCreateAccount, isLiteExternalFlow } from '../services/lite-start';
-import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from '../utils/state';
+import {
+  consumeAuthState,
+  getAuthStateCookieName,
+  isPendingAuthState,
+  matchesAuthStateCookie,
+} from '../utils/state';
+import {
+  boundedRelayParams,
+  CALLBACK_RELAY_PARAM,
+  keepRelayedCallback,
+  relayedCallbackUrl,
+  takeRelayedCallback,
+} from '../services/callback-relay';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import {
   assertExternalProviderUsageAllowed,
@@ -138,6 +151,103 @@ async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
   }
 
   return { code, idToken, state, error, errorDescription, issuer, responseJwt, tenantId, user };
+}
+
+type CallbackParams = Awaited<ReturnType<typeof getCallbackParams>>;
+
+/**
+ * The callback on the platform issuer host for a tenant whose sign-ins start on its primary
+ * custom domain (services/callback-relay.ts): a provider's form post is kept for the sign-in it
+ * answers, which must still be waiting for it, and the browser goes on to the same callback on
+ * the custom domain, where its cookies are. Nothing else is done here.
+ */
+async function relayCallbackToCanonicalOrigin(
+  c: Context<{ Bindings: Env }>,
+  canonicalOrigin: string,
+  providerIdOrSlug: string
+): Promise<Response> {
+  const log = getLogger(c).module('CALLBACK');
+  try {
+    const params = await getCallbackParams(c);
+    const kept = boundedRelayParams({
+      code: params.code,
+      idToken: params.idToken,
+      state: params.state,
+      error: params.error,
+      errorDescription: params.errorDescription,
+      issuer: params.issuer,
+      responseJwt: params.responseJwt,
+      user: params.user,
+    });
+    if (!kept) return redirectWithError(c, 'invalid_request', 'Invalid provider response');
+    let state = kept.state;
+    if (!state && kept.responseJwt) {
+      try {
+        state = extractUnverifiedJarmState(kept.responseJwt);
+      } catch {
+        state = undefined;
+      }
+    }
+    if (!state) return redirectWithError(c, 'invalid_request', 'Missing state');
+    const provider = await getProviderByIdOrSlug(c.env, providerIdOrSlug, params.tenantId);
+    if (!provider) return redirectWithError(c, 'unknown_provider', 'Provider not found');
+    if (!(await isPendingAuthState(c.env, params.tenantId, provider.id, state))) {
+      return redirectWithError(c, 'invalid_state', 'State validation failed or expired');
+    }
+    const handle = await keepRelayedCallback(c.env, {
+      tenantId: params.tenantId,
+      providerKey: providerIdOrSlug,
+      state,
+      params: kept,
+    });
+    if (!handle) {
+      return redirectWithError(c, 'invalid_state', 'The provider response was already received');
+    }
+    return new Response(null, {
+      status: 303,
+      headers: {
+        Location: relayedCallbackUrl(providerIdOrSlug, canonicalOrigin, handle),
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+      },
+    });
+  } catch (error) {
+    log.warn('Failed to relay the provider response to the custom domain', {
+      errorName: error instanceof Error ? error.name : 'Unknown',
+    });
+    return redirectWithError(c, 'server_error', 'The sign-in could not be completed');
+  }
+}
+
+/**
+ * The answer the browser brings to the callback: a relayed one taken by its handle (only by the
+ * browser that started the sign-in), or the query / form body's own. Null for a handle that names
+ * no answer for this browser.
+ */
+async function readCallbackParams(
+  c: Context<{ Bindings: Env }>,
+  providerIdOrSlug: string
+): Promise<CallbackParams | null> {
+  const handle = c.req.method === 'GET' ? c.req.query(CALLBACK_RELAY_PARAM) : undefined;
+  if (handle === undefined) return getCallbackParams(c);
+  const tenantId = getTenantIdFromContext(c);
+  const relayed = await takeRelayedCallback(c, {
+    tenantId,
+    providerKey: providerIdOrSlug,
+    handle,
+  });
+  if (!relayed) return null;
+  return {
+    code: relayed.code,
+    idToken: relayed.idToken,
+    state: relayed.state,
+    error: relayed.error,
+    errorDescription: relayed.errorDescription,
+    issuer: relayed.issuer,
+    responseJwt: relayed.responseJwt,
+    tenantId,
+    user: relayed.user,
+  };
 }
 
 /**
@@ -953,7 +1063,16 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   const log = getLogger(c).module('CALLBACK');
   const providerIdOrSlug = c.req.param('provider');
   if (!providerIdOrSlug) return redirectWithError(c, 'invalid_request', 'Missing provider');
-  const callbackParams = await getCallbackParams(c);
+  const relayOrigin = getExternalCallbackRelayOrigin(c);
+  if (relayOrigin) return relayCallbackToCanonicalOrigin(c, relayOrigin, providerIdOrSlug);
+  const callbackParams = await readCallbackParams(c, providerIdOrSlug);
+  if (!callbackParams) {
+    return redirectWithError(
+      c,
+      'invalid_state',
+      'The provider response is not available to this browser'
+    );
+  }
   let { code, state, error, errorDescription, issuer } = callbackParams;
   const { idToken, responseJwt, tenantId, user } = callbackParams;
   let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
