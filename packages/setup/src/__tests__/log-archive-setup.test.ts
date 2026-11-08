@@ -576,7 +576,7 @@ describe('log archive setup contract', () => {
     denied.overrides.set('tokens/permission_groups?scope=com.cloudflare.api.account', {
       status: 403,
     });
-    await expect(provisionLogArchive(denied.options)).rejects.toThrow('permission_or_subscription');
+    await expect(provisionLogArchive(denied.options)).rejects.toThrow('permission_required');
     expect(denied.calls.some((call) => call.method !== 'GET')).toBe(false);
     const broad = fixture('pipeline');
     broad.overrides.set('tokens/read-id', {
@@ -606,7 +606,7 @@ describe('log archive setup contract', () => {
     ).resolves.toBeUndefined();
     expect(f.calls.map((call) => call.path)).toEqual(['tokens/verify', 'tokens/verify']);
     await expect(f.options.api.verifyCatalogCredentials(tokenRead, tokenWrite)).rejects.toThrow(
-      'permission_or_subscription'
+      'permission_required'
     );
     await expect(
       f.options.api.verifyCatalogCredentials(tokenRead, tokenRead, undefined, {
@@ -619,7 +619,7 @@ describe('log archive setup contract', () => {
     implemented.push('scheduled');
     const f = fixture('scheduled');
     f.overrides.set('tokens/permission_groups?scope=com.cloudflare.api.account', { status: 403 });
-    await expect(preflightLogArchive(f.options)).rejects.toThrow('permission_or_subscription');
+    await expect(preflightLogArchive(f.options)).rejects.toThrow('permission_required');
     await expect(
       preflightLogArchive({ ...f.options, catalogPolicyVerified: true })
     ).resolves.toBeUndefined();
@@ -677,9 +677,9 @@ describe('log archive setup contract', () => {
         },
         'POST'
       );
-      expect(error.code).toBe('log_archive_permission_or_subscription_required');
+      expect(error.code).toBe('log_archive_permission_required');
       expect(error.status).toBe(403);
-      expect(error.message).toContain('log_archive_permission_or_subscription_required');
+      expect(error.message).toContain('log_archive_permission_required');
       expect(error.message).toContain('step pipeline_stream');
       expect(error.message).toContain('HTTP 403');
       expect(error.message).toContain('code 1234: Workers Paid plan is required');
@@ -917,7 +917,7 @@ describe('log archive setup contract', () => {
       for (const raw of ['null', '"nope"', '7', '[]']) {
         const error = await refusal('pipelines/v1/streams', { raw }, 'POST');
         expect(error).toBeInstanceOf(LogArchiveApiError);
-        expect(error.code).toBe('log_archive_permission_or_subscription_required');
+        expect(error.code).toBe('log_archive_permission_required');
         expect(error.message).toContain('step pipeline_stream, HTTP 403');
       }
     });
@@ -939,6 +939,108 @@ describe('log archive setup contract', () => {
       expect(malformed.message).toContain('step pipeline_stream, HTTP 403');
     });
 
+    it('fetches the current login once after a 401 on its own credential and retries', async () => {
+      const seen: string[] = [];
+      const fetcher = vi.fn(
+        async (_url: string | URL | Request, init?: Parameters<typeof fetch>[1]) => {
+          const bearer = new Headers(init?.headers).get('authorization') ?? '';
+          seen.push(bearer);
+          return bearer === 'Bearer fresh-token'
+            ? new Response(JSON.stringify({ success: true, result: { ok: true } }), { status: 200 })
+            : new Response(
+                JSON.stringify({
+                  success: false,
+                  errors: [{ code: 10000, message: 'Authentication error' }],
+                }),
+                { status: 401 }
+              );
+        }
+      ) as unknown as typeof fetch;
+      const refresh = vi.fn(async () => 'fresh-token');
+      const api = new LogArchiveApi(accountId, 'expired-token', fetcher, refresh);
+      await expect(api.request('basin-catalog/bucket')).resolves.toEqual({ ok: true });
+      expect(seen).toEqual(['Bearer expired-token', 'Bearer fresh-token']);
+      // The refreshed login is kept for the calls that follow.
+      await api.request('basin-catalog/bucket');
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(seen.at(-1)).toBe('Bearer fresh-token');
+    });
+
+    it('reports a 401 as an authentication failure when no newer login exists', async () => {
+      const fetcher = vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              errors: [{ code: 10000, message: 'Authentication error' }],
+            }),
+            { status: 401 }
+          )
+      ) as unknown as typeof fetch;
+      const api = new LogArchiveApi(accountId, 'same-token', fetcher, async () => 'same-token');
+      await expect(api.request('basin-catalog/bucket')).rejects.toMatchObject({
+        status: 401,
+        code: 'log_archive_cloudflare_authentication_failed',
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      // A call made with an explicit token (a Catalog token) never swaps in the login.
+      const refresh = vi.fn(async () => 'fresh-token');
+      const explicit = new LogArchiveApi(accountId, 'login', fetcher, refresh);
+      await expect(
+        explicit.request('tokens/verify', 'GET', undefined, 'catalog-token')
+      ).rejects.toMatchObject({ code: 'log_archive_cloudflare_authentication_failed' });
+      expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('retries a 401 at most once and never on 403 or a failed refresh', async () => {
+      const answer = (status: number) =>
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({ success: false, errors: [{ code: 10000, message: 'denied' }] }),
+              { status }
+            )
+        ) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+      // Cloudflare echoes both credentials back: neither may reach the error text.
+      const stillRefused = vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              errors: [{ code: 10000, message: 'rejected Qx7old and Qx7new' }],
+            }),
+            { status: 401 }
+          )
+      ) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+      const refresh = vi.fn(async () => 'Qx7new');
+      const api = new LogArchiveApi(accountId, 'Qx7old', stillRefused, refresh);
+      const error = await api.request('basin-catalog/bucket', 'POST', {}).catch((e) => e);
+      expect(error).toMatchObject({ code: 'log_archive_cloudflare_authentication_failed' });
+      expect(stillRefused).toHaveBeenCalledTimes(2);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(String(error.message)).toContain('code 10000');
+      expect(String(error.message)).not.toContain('Qx7old');
+      expect(String(error.message)).not.toContain('Qx7new');
+      const forbidden = answer(403);
+      const unused = vi.fn(async () => 'fresh');
+      await expect(
+        new LogArchiveApi(accountId, 'login', forbidden, unused).request('basin-catalog/bucket')
+      ).rejects.toMatchObject({ code: 'log_archive_permission_required' });
+      expect(unused).not.toHaveBeenCalled();
+      expect(forbidden).toHaveBeenCalledTimes(1);
+      for (const failing of [
+        async () => null,
+        async () => '  ',
+        async () => Promise.reject(new Error('x')),
+      ]) {
+        const refused = answer(401);
+        await expect(
+          new LogArchiveApi(accountId, 'login', refused, failing).request('basin-catalog/bucket')
+        ).rejects.toMatchObject({ code: 'log_archive_cloudflare_authentication_failed' });
+        expect(refused).toHaveBeenCalledTimes(1);
+      }
+    });
+
     it('keeps a 404 as the plain resource-not-found signal that callers branch on', async () => {
       const f = fixture('pipeline');
       f.overrides.set('basin-catalog/bucket', { status: 404 });
@@ -955,7 +1057,7 @@ describe('log archive setup contract', () => {
     const f = fixture('scheduled');
     const path = `basin-catalog/${f.archive.bucketName}/enable`;
     f.overrides.set(path, { status: 403 });
-    await expect(provisionLogArchive(f.options)).rejects.toThrow('permission_or_subscription');
+    await expect(provisionLogArchive(f.options)).rejects.toThrow('permission_required');
     expect(f.checkpoints['catalog:LOG_ARCHIVE_CATALOG'].state).toBe('create_rejected');
     f.overrides.delete(path);
     await expect(provisionLogArchive(f.options)).resolves.toMatchObject({ mode: 'scheduled' });

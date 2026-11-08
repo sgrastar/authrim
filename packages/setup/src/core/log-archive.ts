@@ -292,27 +292,47 @@ export class LogArchiveApiError extends Error {
   }
 }
 
-/** Does not retry mutations after an ambiguous response. The provisioning WAL owns recovery. */
+/**
+ * Does not retry mutations after an ambiguous response. The provisioning WAL owns recovery.
+ * The one retry it makes is after a 401 on its own credential, which Cloudflare refused before
+ * acting: a Wrangler OAuth token lasts an hour and can expire in the middle of a long run, so
+ * `refreshToken` (when given) is asked for the current one and the call is sent once more.
+ */
 export class LogArchiveApi {
   constructor(
     readonly accountId: string,
-    private readonly token: string,
-    private readonly fetcher: typeof fetch = fetch
+    private token: string,
+    private readonly fetcher: typeof fetch = fetch,
+    private readonly refreshToken?: () => Promise<string | null | undefined>
   ) {
     if (!ACCOUNT_ID.test(accountId) || !token.trim())
       throw new Error('log_archive_cloudflare_credentials_invalid');
   }
 
-  async request<T>(path: string, method = 'GET', body?: unknown, token = this.token): Promise<T> {
-    const response = await this.fetcher(
-      `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/${path}`,
-      {
+  async request<T>(
+    path: string,
+    method = 'GET',
+    body?: unknown,
+    explicitToken?: string
+  ): Promise<T> {
+    const send = (bearer: string) =>
+      this.fetcher(`https://api.cloudflare.com/client/v4/accounts/${this.accountId}/${path}`, {
         method,
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(30_000),
+      });
+    const staleToken = this.token;
+    let token = explicitToken ?? this.token;
+    let response = await send(token);
+    if (response.status === 401 && explicitToken === undefined && this.refreshToken) {
+      const fresh = (await this.refreshToken().catch(() => null))?.trim();
+      if (fresh && fresh !== token) {
+        this.token = fresh;
+        token = fresh;
+        response = await send(token);
       }
-    );
+    }
     if (response.status === 404) {
       // Only numeric codes are kept: they tell an inactive catalog (40402) from a missing one.
       let providerCodes: number[] = [];
@@ -352,15 +372,17 @@ export class LogArchiveApi {
       // numeric codes and a redacted, short message of steps that carry no credential are kept.
       throw new LogArchiveApiError(
         response.status,
-        response.status === 401 || response.status === 403
-          ? 'log_archive_permission_or_subscription_required'
-          : 'log_archive_cloudflare_request_failed',
+        response.status === 401
+          ? 'log_archive_cloudflare_authentication_failed'
+          : response.status === 403
+            ? 'log_archive_permission_required'
+            : 'log_archive_cloudflare_request_failed',
         {
           step,
           cloudflare: cloudflareErrorsFrom(
             step,
             payload.errors,
-            credentialValues([this.token, token], body)
+            credentialValues([staleToken, this.token, token], body)
           ),
         }
       );

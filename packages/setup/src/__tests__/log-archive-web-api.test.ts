@@ -153,7 +153,7 @@ describe('Catalog setup API', () => {
   });
   it.each([
     new Error('log_archive_catalog_read_token_not_read_only'),
-    new LogArchiveApiError(403, 'log_archive_permission_or_subscription_required'),
+    new LogArchiveApiError(403, 'log_archive_permission_required'),
   ])('passes through verification codes and provider status', async (error) => {
     vi.mocked(LogArchiveApi.prototype.verifyCatalogCredentials).mockRejectedValue(error);
     const response = await createApiRoutes().request(
@@ -165,7 +165,7 @@ describe('Catalog setup API', () => {
   });
   it('returns the stable code, and the refused step and Cloudflare’s answer as detail', async () => {
     vi.mocked(LogArchiveApi.prototype.verifyCatalogCredentials).mockRejectedValue(
-      new LogArchiveApiError(403, 'log_archive_permission_or_subscription_required', {
+      new LogArchiveApiError(403, 'log_archive_permission_required', {
         step: 'token_verify',
         cloudflare: [{ code: 10000, message: 'Authentication error' }],
       })
@@ -177,7 +177,7 @@ describe('Catalog setup API', () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       success: false,
-      error: 'log_archive_permission_or_subscription_required',
+      error: 'log_archive_permission_required',
       detail: 'step token_verify, HTTP 403, Cloudflare: code 10000: Authentication error',
     });
   });

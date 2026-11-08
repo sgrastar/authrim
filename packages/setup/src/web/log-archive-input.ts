@@ -221,9 +221,14 @@ const messages = [
     'Supply explicit Catalog tokens or a bootstrap token, with no mixing of sources.',
   ],
   [
-    ['log_archive_permission_or_subscription_required'],
-    'Cloudflareが要求を拒否しました。権限不足か、契約が必要な機能の可能性があります。括弧内の step と Cloudflare のエラーで、拒否された呼び出しを確認してください。Pipelineによるログ保存にはWorkers Paid、R2 Data CatalogにはR2の契約が必要です。手動で入力したトークンを検証する場合は、ログイン中の認証情報にAPI Tokensの読み取り権限も必要です。',
-    'Cloudflare refused the request: a missing permission, or a feature that needs a plan. The step and the Cloudflare error in brackets show which call was refused. Pipeline log storage needs Workers Paid and R2 Data Catalog needs R2. Verifying manually entered tokens also needs a login credential that can read API Tokens.',
+    ['log_archive_cloudflare_authentication_failed'],
+    'Cloudflareが認証情報を受け付けませんでした（401）。括弧内の step で拒否された呼び出しを確認してください。トークンの検証（token_verify など）なら、入力したCatalogトークンが正しく有効か確認し、必要なら再発行してください。それ以外の呼び出しはログイン中の認証情報を使います。`wrangler login` でログインし直すか、CLOUDFLARE_API_TOKEN を確認して再試行してください。',
+    'Cloudflare did not accept the credential (401). The step in brackets shows which call was refused. For a token check (such as token_verify), make sure the Catalog token you entered is correct and active, and reissue it if needed. Other calls use the login credential: run `wrangler login` again or check CLOUDFLARE_API_TOKEN, then retry.',
+  ],
+  [
+    ['log_archive_permission_required'],
+    'Cloudflareが要求を拒否しました（403）。括弧内の step と Cloudflare のエラーで、権限が足りない呼び出しを確認してください。手動で入力したトークンを検証する場合は、ログイン中の認証情報にAPI Tokensの読み取り権限も必要です。',
+    'Cloudflare refused the request (403). The step and the Cloudflare error in brackets show which call lacked a permission. Verifying manually entered tokens also needs a login credential that can read API Tokens.',
   ],
   [
     [
