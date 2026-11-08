@@ -708,7 +708,8 @@ describe('the lite account page', () => {
 			passkeyPage();
 			routes['/api/account/passkeys/pk1'] = () =>
 				json({ error: 'reauth_required', reauth_required: true }, 403);
-			// More passkeys than the transaction has room to list: the list is left out.
+			// An account's every passkey listed (more than a sign-in's sixteen), kept whole.
+			let listed = 40;
 			routes['/api/account/reauth/passkey/options'] = () =>
 				json({
 					challenge_id: 'rp-1',
@@ -716,7 +717,7 @@ describe('the lite account page', () => {
 						challenge: 'c'.repeat(43),
 						rpId: 'id.example',
 						userVerification: 'required',
-						allowCredentials: Array.from({ length: 40 }, (_, i) => ({
+						allowCredentials: Array.from({ length: listed }, (_, i) => ({
 							id: `${'k'.repeat(90)}${i}`,
 							type: 'public-key'
 						}))
@@ -731,12 +732,28 @@ describe('the lite account page', () => {
 			const ceremony = (await view()) as {
 				stepUp: { passkey: { options: { allowCredentials: unknown[] } } };
 			};
-			expect(ceremony.stepUp.passkey.options.allowCredentials).toEqual([]);
+			expect(ceremony.stepUp.passkey.options.allowCredentials).toHaveLength(40);
 			await expect(post('stepup_switch', { step_up: at })).resolves.toMatchObject({
 				notice: 'step_up_switched'
 			});
 			const switched = (await view()) as Page & { stepUp: { passkey: unknown } };
 			expect(switched.stepUp).toMatchObject({ at, passkey: null, email: null });
+			// So many that the transaction has no room for them: the passkey is a way it cannot take.
+			listed = 200;
+			await expect(post('stepup_passkey_start', { step_up: at })).resolves.toMatchObject({
+				status: 409,
+				data: { error: 'passkey_too_many' }
+			});
+			// A method chosen already: nothing else started over it (another way has its button).
+			routes['/api/account/reauth/email-code/send'] = () =>
+				json({ challenge_id: 'rc-1', expires_in: 300, masked_email: 'a***@example.com' });
+			await post('stepup_email_send', { step_up: at });
+			await expect(post('stepup_email_send', { step_up: at })).resolves.toMatchObject({
+				notice: 'step_up_underway'
+			});
+			await expect(post('stepup_passkey_start', { step_up: at })).resolves.toMatchObject({
+				notice: 'step_up_underway'
+			});
 		});
 
 		it('offers the authenticator only with an active one, and gives a held change up', async () => {
@@ -800,6 +817,40 @@ describe('the lite account page', () => {
 				status: 409,
 				data: { error: 'remaining_method' }
 			});
+		});
+
+		it("registers next to an account's every passkey (an exclude list too large left out)", async () => {
+			passkeyPage();
+			let excluded = 40;
+			routes['/api/account/passkeys/options'] = () =>
+				json({
+					challenge_id: 'pc-1',
+					options: {
+						rp: { id: 'id.example', name: 'Authrim' },
+						user: { id: 'dXNlci0x', name: 'a@example.com', displayName: 'a' },
+						challenge: 'Y2hhbGxlbmdl',
+						pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+						timeout: 60000,
+						excludeCredentials: Array.from({ length: excluded }, (_, i) => ({
+							id: `${'k'.repeat(90)}${i}`,
+							type: 'public-key'
+						})),
+						authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
+						attestation: 'none'
+					}
+				});
+			await view();
+			await post('passkey_add', { device_name: '' });
+			const kept = (await view()) as {
+				widgets: { passkeyCreate: { registration: { excludeCredentials: unknown[] } } };
+			};
+			expect(kept.widgets.passkeyCreate.registration.excludeCredentials).toHaveLength(40);
+			store = fakeStore();
+			excluded = 200;
+			await view();
+			await post('passkey_add', { device_name: '', op: 'z'.repeat(22) });
+			const dropped = (await view()) as typeof kept;
+			expect(dropped.widgets.passkeyCreate.registration.excludeCredentials).toEqual([]);
 		});
 
 		it('draws one ceremony at a time (a step-up gives a passkey being added up)', async () => {

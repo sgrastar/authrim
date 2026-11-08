@@ -29,13 +29,14 @@ import type { LiteTxnView } from './txn-client';
 const STEP_UP_TTL_MS = 600_000;
 /** How long ar-management keeps a passkey challenge (5 minutes). */
 const PASSKEY_TTL_MS = 300_000;
-/** Kept in the transaction (its few kilobytes): creation options larger than this are refused. */
-const MAX_REGISTRATION_CHARS = 3000;
+/**
+ * The options kept in the transaction (its few kilobytes, one ceremony at a time): a passkey's
+ * creation options or a step-up's request options, at most this long.
+ */
+const MAX_OPTIONS_CHARS = 6000;
 const CHALLENGE_ID = /^[A-Za-z0-9_.:-]{1,256}$/u;
 /** An account's passkeys, all in its step-up's allow list (ar-management answers every one). */
 const MAX_ACCOUNT_PASSKEYS = 1000;
-/** The step-up's options kept in the transaction: an allow list larger is left out (below). */
-const MAX_STEP_UP_OPTIONS_CHARS = 3000;
 /** How long a check taken waits before another post may make it (a post that never ended). */
 const CHECK_TTL_MS = 30_000;
 
@@ -112,7 +113,7 @@ export function readLiteAccountPasskeyCreate(
 	now = Date.now()
 ): LiteAccountPasskeyCreate | null {
 	const held = record(data.accountPasskeyCreate);
-	const registration = readLitePasskeyCreationOptions(held.registration);
+	const registration = readLitePasskeyCreationOptions(held.registration, MAX_ACCOUNT_PASSKEYS);
 	const id = challengeId(held.challengeId);
 	return id && registration && typeof held.expiresAt === 'number' && held.expiresAt > now
 		? {
@@ -197,15 +198,21 @@ async function startPasskeyAdd(
 		return holdForStepUp(post, { action: 'passkey_add', args: { deviceName } });
 	}
 	const json = record(answer?.json);
-	const registration = readLitePasskeyCreationOptions(json.options);
+	const read = readLitePasskeyCreationOptions(json.options, MAX_ACCOUNT_PASSKEYS);
 	const id = challengeId(json.challenge_id);
+	// An exclude list too large for the transaction's room is left out: it only keeps a device from
+	// registering twice, and ar-management refuses a credential already registered.
+	const registration =
+		read && JSON.stringify(read).length > MAX_OPTIONS_CHARS
+			? { ...read, excludeCredentials: [] }
+			: read;
 	if (answer?.status !== 200 || !registration || !id) {
 		return fail(answer && answer.status < 500 ? 400 : 503, {
 			error: 'action_failed' as const,
 			widget: 'passkeys'
 		});
 	}
-	if (JSON.stringify(registration).length > MAX_REGISTRATION_CHARS) {
+	if (JSON.stringify(registration).length > MAX_OPTIONS_CHARS) {
 		return fail(400, { error: 'action_failed' as const, widget: 'passkeys' });
 	}
 	const kept = await move(post, {
@@ -313,6 +320,15 @@ async function proven(event: RequestEvent, post: LiteAccountPost, stepUp: LiteAc
 	return action(event, { ...post, txn: cleared }, stepUp.pending.args);
 }
 
+/** Whether a method is chosen already or a check is under way (nothing else is started over it). */
+function busy(stepUp: LiteAccountStepUp, now = Date.now()): boolean {
+	return (
+		stepUp.email !== null ||
+		stepUp.passkey !== null ||
+		(stepUp.checkingAt !== null && now - stepUp.checkingAt < CHECK_TTL_MS)
+	);
+}
+
 /**
  * Takes the check of a proof, before ar-management spends its challenge: of posts that read the
  * same (a double submit, another tab), one only checks; the others draw the page. The post with the
@@ -356,6 +372,9 @@ export async function liteAccountStepUpEmailSendAction(event: RequestEvent) {
 	const opened = await openStepUp(event);
 	if ('failure' in opened) return opened.failure;
 	const { post, stepUp } = opened;
+	// A method chosen already (a code sent, a ceremony drawn) or a check taken: the page as it is
+	// (another way is chosen with its own button).
+	if (busy(stepUp)) return { notice: 'step_up_underway' as const, widget: 'account' };
 	// One send at a time: taken first (a move from the version this post read), so of posts that
 	// read the same only one sends; one taken within the last minute is another post's.
 	if (stepUp.sendingAt !== null && Date.now() - stepUp.sendingAt < 60_000) {
@@ -445,6 +464,7 @@ export async function liteAccountStepUpPasskeyStartAction(event: RequestEvent) {
 	const opened = await openStepUp(event);
 	if ('failure' in opened) return opened.failure;
 	const { post, stepUp } = opened;
+	if (busy(stepUp)) return { notice: 'step_up_underway' as const, widget: 'account' };
 	const answer = await post.backend
 		.request('/api/account/reauth/passkey/options', { json: {} })
 		.catch(() => null);
@@ -452,12 +472,13 @@ export async function liteAccountStepUpPasskeyStartAction(event: RequestEvent) {
 	const read = readLitePasskeyOptions(json.options, MAX_ACCOUNT_PASSKEYS);
 	const id = challengeId(json.challenge_id);
 	if (answer?.status !== 200 || !read || !id) return stepUpFailure(answer);
-	// An allow list too large for the transaction's room is left out: the browser then offers the
-	// passkeys it holds for this site (ar-management checks the one used is the account's own).
-	const options =
-		JSON.stringify(read).length > MAX_STEP_UP_OPTIONS_CHARS
-			? { ...read, allowCredentials: [] }
-			: read;
+	// The allow list is kept whole (a credential that is not discoverable is found only by it): one
+	// too large for the transaction's room makes the passkey a way this page cannot take; another
+	// way is offered.
+	if (JSON.stringify(read).length > MAX_OPTIONS_CHARS) {
+		return fail(409, { error: 'passkey_too_many' as const, widget: 'account' });
+	}
+	const options = read;
 	const kept = await move(post, {
 		accountStepUp: {
 			...stepUp,
