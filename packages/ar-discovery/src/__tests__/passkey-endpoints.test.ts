@@ -26,6 +26,55 @@ function selfServiceKey(tenantId: string) {
   return `settings:tenant:${tenantId}:self-service`;
 }
 
+function loginUiKey(tenantId: string) {
+  return `settings:tenant:${tenantId}:login-ui`;
+}
+
+/** A `login-ui` document publishing one builder page with the given placement and widget. */
+function publishedPage(options: {
+  placementId: string;
+  blockType: string;
+  condition?: string;
+  enabled?: boolean;
+}) {
+  return JSON.stringify({
+    'login-ui.account_pages': JSON.stringify({
+      schema_version: 'authrim.account_pages.v1',
+      default_page_id: 'custom',
+      pages: [
+        {
+          id: 'custom',
+          name: 'Custom',
+          published_version: 1,
+          published_at: '2026-11-08T00:00:00.000Z',
+          published: {
+            schema_version: 'authrim.account_page.v1',
+            resolved_at: '2026-11-08T00:00:00.000Z',
+            screens: [
+              {
+                id: options.placementId,
+                screen_key: 'custom_security',
+                width: 'full',
+                enabled: options.enabled ?? true,
+                condition: options.condition ?? 'always',
+                show_for_guests: true,
+              },
+            ],
+            screen_snapshots: {
+              custom_security: {
+                screen_kind: 'account',
+                screen_key: 'custom_security',
+                fields: [{ block_type: options.blockType, field: 'widget', label: 'Widget' }],
+                localizations: {},
+              },
+            },
+          },
+        },
+      ],
+    }),
+  });
+}
+
 async function request(
   options: {
     tenantId?: string;
@@ -127,6 +176,47 @@ describe('passkeyEndpointsHandler', () => {
     });
 
     expect(response.status).toBe(404);
+  });
+
+  it('points at the placement of a custom published page that shows the passkey widget', async () => {
+    const response = await request({
+      settings: {
+        [loginUiKey('default')]: publishedPage({
+          placementId: 'security-keys',
+          blockType: 'account_passkey_widget',
+        }),
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      enroll: 'https://auth.example.com/account#security-keys',
+      manage: 'https://auth.example.com/account#security-keys',
+    });
+  });
+
+  it.each([
+    ['without the passkey widget', { blockType: 'account_profile_widget' }],
+    ['with the placement disabled', { blockType: 'account_passkey_widget', enabled: false }],
+    [
+      'shown only to some accounts',
+      { blockType: 'account_passkey_widget', condition: 'multiple_sessions' },
+    ],
+  ])('returns 404 for a custom published page %s', async (_label, page) => {
+    const response = await request({
+      settings: { [loginUiKey('default')]: publishedPage({ placementId: 'security', ...page }) },
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  it('uses the built-in page when the login-ui document is damaged', async () => {
+    const response = await request({ settings: { [loginUiKey('default')]: '{bad' } });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      enroll: 'https://auth.example.com/account#passkeys',
+    });
   });
 
   it('reads the self-service document from AUTHRIM_CONFIG when SETTINGS is not bound', async () => {

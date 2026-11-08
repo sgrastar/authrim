@@ -121,10 +121,11 @@ paths:
         - Discovery
       summary: Return the W3C passkey endpoints for this origin.
       description: >-
-        W3C A Well-Known URL for Passkey Endpoints. Both URLs point at the passkeys section of the
-        account page on the request host. Published only while the tenant allows passkey sign-in,
-        the account page is enabled, and the Router serves the account page on the host (Login UI
-        path proxy on); otherwise 404.
+        W3C A Well-Known URL for Passkey Endpoints. Both URLs point at the placement of the
+        published account page that shows the passkey list, on the request host. Published only
+        while the tenant allows passkey sign-in, the account page is enabled and shows the passkey
+        list to everyone, and the Router serves the account page on the host (Login UI path proxy
+        on); otherwise 404.
       responses:
         '200':
           $ref: '#/components/responses/PasskeyEndpoints'

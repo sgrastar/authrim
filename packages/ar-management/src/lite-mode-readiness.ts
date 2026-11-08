@@ -35,6 +35,7 @@ import {
   type Env,
   type LiteModeIssue,
   type ScreenField,
+  publishedAccountPageFromSettings,
 } from '@authrim/ar-lib-core';
 import { buildCanonicalTenantIssuerUrl } from '@authrim/ar-lib-core/services/tenant-vanity-domain-resolver';
 import {
@@ -42,7 +43,6 @@ import {
   resolveBuiltInAuthenticationMethods,
   resolveDirectoryPasswordMethod,
 } from './authentication-methods';
-import { publishedAccountPageFromSettings } from './account-capabilities';
 
 type AnyContext = Context;
 

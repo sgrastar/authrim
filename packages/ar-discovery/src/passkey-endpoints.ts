@@ -2,12 +2,13 @@
  * W3C "A Well-Known URL for Passkey Endpoints": `/.well-known/passkey-endpoints`.
  *
  * Tells password managers and browsers where a person can create a passkey (`enroll`) and manage
- * the ones they have (`manage`) for this origin. Both point at the passkeys section of the
- * Authrim account page, which the Router serves on the request host at the tenant's account page
- * path.
+ * the ones they have (`manage`) for this origin. Both point at the placement of the published
+ * Authrim account page that shows the passkey list, which the Router serves on the request host
+ * at the tenant's account page path.
  *
- * Published only while the tenant lets people sign in with a passkey and the account page is on:
- * otherwise there is nowhere useful to send anyone, so the resource does not exist (404).
+ * Published only while the tenant lets people sign in with a passkey, the account page is on and
+ * it shows the passkey list: otherwise there is nowhere useful to send anyone, so the resource
+ * does not exist (404).
  *
  * https://w3c.github.io/webappsec-passkey-endpoints/
  */
@@ -19,11 +20,10 @@ import {
   getCacheTTL,
   getLogger,
   getTenantIdFromContext,
+  passkeyPlacementId,
+  publishedAccountPageFromSettings,
   validateAccountPagePath,
 } from '@authrim/ar-lib-core';
-
-/** The account page placement that holds the passkey list and the "add a passkey" button. */
-export const PASSKEY_ACCOUNT_PLACEMENT_ID = 'passkeys';
 
 export interface PasskeyEndpointsResponse {
   enroll: string;
@@ -91,6 +91,25 @@ export function accountPagePathFromDocument(raw: string | null | undefined): str
     : SELF_SERVICE_DEFAULTS['self-service.account_page_path'];
 }
 
+/**
+ * The tenant's `login-ui` settings, read the way the account capabilities API reads them (which
+ * decides what the account page shows): a document that cannot be understood counts as nothing
+ * set, so the built-in page applies.
+ */
+export function loginUiSettingsFromDocument(
+  raw: string | null | undefined
+): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function notFound(c: Context<{ Bindings: Env }>, cacheControl: string) {
   c.header('Cache-Control', cacheControl);
   c.header('Vary', 'Host');
@@ -104,13 +123,18 @@ export async function passkeyEndpointsHandler(c: Context<{ Bindings: Env }>) {
 
   let passkeyLoginEnabled: boolean;
   let accountPagePath: string | null;
+  let placementId: string | null;
   try {
-    const [authenticationMethodsRaw, selfServiceRaw] = await Promise.all([
+    const [authenticationMethodsRaw, selfServiceRaw, loginUiRaw] = await Promise.all([
       c.env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`) ?? null,
       settingsKv?.get(`settings:tenant:${tenantId}:self-service`) ?? null,
+      c.env.SETTINGS?.get(`settings:tenant:${tenantId}:login-ui`) ?? null,
     ]);
     passkeyLoginEnabled = passkeyLoginEnabledFromDocument(authenticationMethodsRaw);
     accountPagePath = accountPagePathFromDocument(selfServiceRaw);
+    placementId = passkeyPlacementId(
+      publishedAccountPageFromSettings(loginUiSettingsFromDocument(loginUiRaw))
+    );
   } catch (error) {
     // Unreadable settings: not published, and not cached, so it returns once they can be read.
     log.warn('Failed to read settings for passkey endpoints', { tenantId }, error as Error);
@@ -119,13 +143,13 @@ export async function passkeyEndpointsHandler(c: Context<{ Bindings: Env }>) {
 
   const ttl = await getCacheTTL(c.env, 'discovery');
   const cacheControl = `public, max-age=${ttl}`;
-  if (!passkeyLoginEnabled || accountPagePath === null) {
+  if (!passkeyLoginEnabled || accountPagePath === null || placementId === null) {
     return notFound(c, cacheControl);
   }
 
   // The origin the request came to (the tenant's own domain in multi-tenant deployments).
   const origin = new URL(buildRequestIssuerUrl(c.req.raw, c.env, tenantId)).origin;
-  const url = `${origin}${accountPagePath}#${PASSKEY_ACCOUNT_PLACEMENT_ID}`;
+  const url = `${origin}${accountPagePath}#${placementId}`;
   const body: PasskeyEndpointsResponse = { enroll: url, manage: url };
 
   c.header('Cache-Control', cacheControl);
