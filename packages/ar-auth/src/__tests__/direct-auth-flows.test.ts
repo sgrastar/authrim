@@ -3662,6 +3662,44 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it.each(['account_creation_previous_account_deleting', 'account_creation_generations_exhausted'])(
+    'answers a refused account (%s) as a send, sending nothing',
+    async (code) => {
+      mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
+      mocks.provisionTenantD1EmailAccount.mockRejectedValueOnce(new Error(code));
+      const context = enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        )
+      );
+      context.get = vi.fn((key: string) => {
+        if (key === 'tenantId') return 'tenant_test';
+        if (key === 'tenantMetadataContext') {
+          return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
+        }
+        return undefined;
+      }) as never;
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(context as never);
+
+      // The shape and status of any accepted send: nothing tells what became of the address.
+      expect(response.status).toBe(200);
+      const body = await response.json<Record<string, unknown>>();
+      expect(Object.keys(body).sort()).toEqual(['attempt_id', 'expires_in', 'masked_email']);
+      expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+    }
+  );
+
   it('returns 202 without sending an OTP while a tenant-D1 account route is pending', async () => {
     mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
       new Error('account_data_route_not_found')

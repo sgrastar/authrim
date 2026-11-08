@@ -1006,6 +1006,10 @@ async function provisionValidatedAccount(
         externalSubject: validated.externalSubject,
         residencyPolicyId: env.DEFAULT_RESIDENCY_PROFILE_ID ?? 'builtin:residency:default',
         residencyPartition: 'default',
+        // The key is fixed by the request: the same sign-up after its account was deleted makes a
+        // new one. A guest's is refused instead: its key is the browser's resume credential, whose
+        // device row the deletion leaves (a new account could not take it over).
+        onDeletedAccount: validated.flow === 'guest' ? 'refuse' : 'renew',
       },
       {
         operationRepository: new AccountCreationOperationRepository(operationAdapter),
@@ -1725,7 +1729,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       rethrowBackupMutationUnavailable(error);
       if (
         error instanceof Error &&
-        /^(auth_account_provisioning_(rpc_caller_unauthorized|input_invalid|input_too_large|runtime_user_invalid|directory_unavailable)|account_creation_operation_(blocked|canceled))$/u.test(
+        /^(auth_account_provisioning_(rpc_caller_unauthorized|input_invalid|input_too_large|runtime_user_invalid|directory_unavailable)|account_creation_operation_(blocked|canceled)|account_creation_(previous_account_deleting|generations_exhausted))$/u.test(
           error.message
         )
       ) {
@@ -1759,7 +1763,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       rethrowBackupMutationUnavailable(error);
       if (
         error instanceof Error &&
-        /^(external_idp_account_provisioning_(rpc_caller_unauthorized|input_invalid)|auth_account_provisioning_(input_invalid|input_too_large|runtime_user_invalid|directory_unavailable)|account_creation_operation_(blocked|canceled)|external_idp_identity_authority_conflict)$/u.test(
+        /^(external_idp_account_provisioning_(rpc_caller_unauthorized|input_invalid)|auth_account_provisioning_(input_invalid|input_too_large|runtime_user_invalid|directory_unavailable)|account_creation_operation_(blocked|canceled)|account_creation_(previous_account_deleting|generations_exhausted)|external_idp_identity_authority_conflict)$/u.test(
           error.message
         )
       ) {
