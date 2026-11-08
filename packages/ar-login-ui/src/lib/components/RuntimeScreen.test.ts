@@ -499,3 +499,66 @@ describe('RuntimeScreen answer parts', () => {
 		expect(body).toContain('grid-column: 3 / span 1;');
 	});
 });
+
+describe('auth switch link part', () => {
+	const part = {
+		field: 'auth.switch_link',
+		label: "Don't have an account? Create one",
+		required: false,
+		block_type: 'auth_switch_link',
+		order: 110
+	};
+
+	it('draws the link to the other screen where the part is placed', () => {
+		const { body } = render(RuntimeScreen, {
+			props: { screen: { fields: [emailField, part] }, switchLinkHref: '/signup' }
+		});
+		expect(body).toContain('href="/signup"');
+		expect(body).toContain('auth-bottom-link--in-card');
+		// The part is the last line, after the field.
+		expect(body.indexOf('name@example.edu')).toBeLessThan(body.indexOf('href="/signup"'));
+	});
+
+	it('uses the screen language for the standard wording, in either direction', () => {
+		setLocale('ja');
+		const login = render(RuntimeScreen, {
+			props: { screen: { fields: [part] }, switchLinkHref: '/signup', authMethodMode: 'login' }
+		}).body;
+		expect(login).toContain(loadedLocales.ja.login_createAccount);
+		const signup = render(RuntimeScreen, {
+			props: {
+				screen: { fields: [{ ...part, label: 'Already have an account? Sign in' }] },
+				switchLinkHref: '/login',
+				authMethodMode: 'signup'
+			}
+		}).body;
+		expect(signup).toContain(loadedLocales.ja.register_alreadyHaveAccount);
+		setLocale('en');
+	});
+
+	it('uses the standard wording when the label is empty, and keeps a custom label', () => {
+		const empty = render(RuntimeScreen, {
+			props: { screen: { fields: [{ ...part, label: '' }] }, switchLinkHref: '/signup' }
+		}).body;
+		expect(empty).toContain("Don't have an account? Create one");
+		const custom = render(RuntimeScreen, {
+			props: {
+				screen: { fields: [{ ...part, label: 'Join us' }] },
+				switchLinkHref: '/signup'
+			}
+		}).body;
+		expect(custom).toContain('Join us');
+	});
+
+	it('draws nothing without a place to go, or when the part is hidden', () => {
+		const none = render(RuntimeScreen, { props: { screen: { fields: [emailField, part] } } }).body;
+		expect(none).not.toContain('auth-bottom-link');
+		const hidden = render(RuntimeScreen, {
+			props: {
+				screen: { fields: [emailField, { ...part, display_condition: { mode: 'hidden' } }] },
+				switchLinkHref: '/signup'
+			}
+		}).body;
+		expect(hidden).not.toContain('auth-bottom-link');
+	});
+});

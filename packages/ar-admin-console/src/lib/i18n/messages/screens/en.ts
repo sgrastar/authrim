@@ -88,6 +88,9 @@ export const enScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.part.security_verification.desc': 'A security check such as a CAPTCHA.',
 	'sc.part.guest_login_widget': 'Guest login',
 	'sc.part.guest_login_widget.desc': 'A guest sign-in button and how long guest data is kept.',
+	'sc.part.auth_switch_link': 'Sign-in / sign-up link',
+	'sc.part.auth_switch_link.desc':
+		'The link to the other sign-in screen: from sign in to sign up, and back. Its address comes from the page.',
 	'sc.part.account_upgrade_widget': 'Guest registration',
 	'sc.part.account_upgrade_widget.desc':
 		'Guest registration and the date the guest account will be deleted.',

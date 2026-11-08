@@ -87,6 +87,9 @@ export const arScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.part.security_verification.desc': 'تحقق أمني مثل CAPTCHA.',
 	'sc.part.guest_login_widget': 'دخول الضيف',
 	'sc.part.guest_login_widget.desc': 'زر الدخول كضيف ومدة الاحتفاظ ببيانات الضيف.',
+	'sc.part.auth_switch_link': 'رابط تسجيل الدخول / إنشاء الحساب',
+	'sc.part.auth_switch_link.desc':
+		'الرابط إلى شاشة الدخول الأخرى: من تسجيل الدخول إلى إنشاء حساب والعكس. وجهته تحددها الصفحة.',
 	'sc.part.account_upgrade_widget': 'تسجيل الضيف',
 	'sc.part.account_upgrade_widget.desc': 'تسجيل الضيف وتاريخ حذف حساب الضيف.',
 	'sc.part.account_profile_widget': 'ملف المستخدم',

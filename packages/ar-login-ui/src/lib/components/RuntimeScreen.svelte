@@ -5,6 +5,7 @@
 		FlowRuntimeConsentPolicyOption,
 		FlowRuntimeDestinationFieldConsentContent
 	} from '#lib/api/flow-runtime.js';
+	import AuthSwitchLink from '#lib/components/AuthSwitchLink.svelte';
 	import PinCodeInput from '#lib/components/PinCodeInput.svelte';
 	import SanitizedHtml from '#lib/components/SanitizedHtml.svelte';
 	import TurnstileWidget from '#lib/components/TurnstileWidget.svelte';
@@ -86,6 +87,11 @@
 		guestEnabled?: boolean;
 		guestRetentionDescription?: string;
 		onGuestLogin?: () => void;
+		/**
+		 * Where the `auth_switch_link` part goes: the other sign-in screen (sign up from sign in, and
+		 * back). The page decides; empty draws no link.
+		 */
+		switchLinkHref?: string;
 		fieldValues?: Record<string, string | boolean>;
 		fieldErrors?: Record<string, string>;
 		authMethodMode?: 'login' | 'signup';
@@ -132,6 +138,7 @@
 		guestEnabled = false,
 		guestRetentionDescription = '',
 		onGuestLogin,
+		switchLinkHref = '',
 		fieldValues = {},
 		fieldErrors = {},
 		authMethodMode = 'login',
@@ -221,7 +228,11 @@
 		const field = readString(value.field);
 		const label =
 			readString(value.label) ??
-			(value.block_type === 'guest_login_widget' ? $LL.login_guestContinue() : field);
+			(value.block_type === 'guest_login_widget'
+				? $LL.login_guestContinue()
+				: value.block_type === 'auth_switch_link'
+					? switchLinkLabel(undefined)
+					: field);
 		if (!field || !label) return null;
 		return {
 			field,
@@ -373,6 +384,7 @@
 		if (!shouldRenderField(field)) return false;
 		const blockType = field.block_type ?? 'identity_field';
 		if (blockType === 'guest_login_widget') return guestEnabled && authMethodMode === 'login';
+		if (blockType === 'auth_switch_link') return Boolean(switchLinkHref);
 		if (blockType === 'auth_widget') {
 			return authMethodAvailable(authWidgetMethod(field));
 		}
@@ -380,6 +392,18 @@
 			return shouldShowSecurityVerification(field) && Boolean(humanVerificationSiteKey);
 		}
 		return true;
+	}
+
+	/** The standard wording of the link part: the label it is saved with, in English. */
+	const standardSwitchLinkLabels = new Set([
+		"Don't have an account? Create one",
+		'Already have an account? Sign in'
+	]);
+	function switchLinkLabel(label: unknown): string {
+		if (typeof label === 'string' && label && !standardSwitchLinkLabels.has(label)) return label;
+		return authMethodMode === 'signup'
+			? $LL.register_alreadyHaveAccount()
+			: $LL.login_createAccount();
 	}
 
 	const defaultAuthWidgetLabels = {
@@ -977,6 +1001,16 @@
 				</button>
 			{/if}
 		</div>
+	{:else if blockType === 'auth_switch_link'}
+		{#if switchLinkHref}
+			<p class="auth-bottom-link auth-bottom-link--in-card">
+				<AuthSwitchLink
+					href={switchLinkHref}
+					label={switchLinkLabel(field.label)}
+					loadingLabel={$LL.common_loading()}
+				/>
+			</p>
+		{/if}
 	{:else if blockType === 'guest_login_widget'}
 		{#if guestEnabled && authMethodMode === 'login'}
 			<div class="runtime-auth-widget">

@@ -22,6 +22,7 @@ export const PART_KINDS: readonly { kind: string; group: PartGroup; icon: IconNa
 	{ kind: 'consent_widget', group: 'input', icon: 'handshake' },
 	{ kind: 'security_verification', group: 'signin', icon: 'shieldCheck' },
 	{ kind: 'guest_login_widget', group: 'signin', icon: 'userCircleDashed' },
+	{ kind: 'auth_switch_link', group: 'signin', icon: 'link' },
 	{ kind: 'account_upgrade_widget', group: 'account', icon: 'userPlus' },
 	{ kind: 'account_profile_widget', group: 'account', icon: 'userCircle' },
 	{ kind: 'account_device_list_widget', group: 'security', icon: 'devices' },

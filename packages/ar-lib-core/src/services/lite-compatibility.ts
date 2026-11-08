@@ -26,6 +26,12 @@ export const LITE_FLOW_COMPONENTS: ReadonlySet<string> = new Set([
   'condition',
 ]);
 
+/**
+ * Screen blocks the lite UI leaves out without refusing the screen: it draws its own link to the
+ * other sign-in screen, so the part has nothing to add.
+ */
+export const LITE_IGNORED_SCREEN_BLOCK_TYPES: ReadonlySet<string> = new Set(['auth_switch_link']);
+
 /** Screen blocks the lite UI renders on sign-in, sign-up, code entry and consent screens. */
 export const LITE_SCREEN_BLOCK_TYPES: ReadonlySet<string> = new Set([
   'identity_field',
@@ -133,6 +139,7 @@ export function liteScreenIssues(
   for (const field of fields) {
     if (hidden(field, enabledMethods)) continue;
     const blockType = field.block_type ?? 'identity_field';
+    if (LITE_IGNORED_SCREEN_BLOCK_TYPES.has(blockType)) continue;
     if (!LITE_SCREEN_BLOCK_TYPES.has(blockType)) {
       issues.push({ code: 'screen_block_unsupported', subject: screenKey, detail: blockType });
       continue;

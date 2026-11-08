@@ -16,6 +16,18 @@ export function partName(kind: string): string {
 	return name === key ? kind : name;
 }
 
+/**
+ * The label a new part is added with: its name, except the sign-in / sign-up link, whose label is
+ * the wording it shows (the standard English one, which the screens show in the visitor's
+ * language until the admin writes their own).
+ */
+export function newPartLabel(kind: string, screenKind: string): string {
+	if (kind !== 'auth_switch_link') return partName(kind);
+	return screenKind === 'registration'
+		? 'Already have an account? Sign in'
+		: "Don't have an account? Create one";
+}
+
 export const partDescription = (kind: string) => t(`sc.part.${kind}.desc` as MessageKey);
 
 export const groupName = (group: PartGroup) => t(`sc.group.${group}` as MessageKey);

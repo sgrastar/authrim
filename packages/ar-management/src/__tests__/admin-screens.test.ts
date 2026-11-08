@@ -340,6 +340,7 @@ describe('admin screens', () => {
       'heading.registration',
       'auth.passkey',
       ...expectedDefaultAuthFieldNames.slice(1),
+      'auth.switch_link',
     ]);
     const loginFields = screensByKey.get('login')?.fields as Array<Record<string, unknown>>;
     expect(
@@ -607,6 +608,7 @@ describe('admin screens', () => {
       'heading.registration',
       'auth.passkey',
       ...expectedDefaultAuthFieldNames.slice(1),
+      'auth.switch_link',
     ]);
   });
 
@@ -723,6 +725,7 @@ describe('admin screens', () => {
       'heading.registration',
       'auth.passkey',
       ...expectedDefaultAuthFieldNames.slice(1),
+      'auth.switch_link',
     ]);
   });
 
@@ -774,6 +777,7 @@ describe('admin screens', () => {
       'heading.registration',
       'auth.passkey',
       ...expectedDefaultAuthFieldNames.slice(1),
+      'auth.switch_link',
     ]);
   });
 
@@ -837,6 +841,7 @@ describe('admin screens', () => {
       'heading.registration',
       'auth.passkey',
       ...expectedDefaultAuthFieldNames.slice(1),
+      'auth.switch_link',
     ]);
   });
 
