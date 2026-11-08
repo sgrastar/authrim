@@ -130,3 +130,56 @@ nav.lang {
 nav.lang a {
 	margin: 0 0.35rem;
 }
+.account-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 1rem;
+	margin-top: 1rem;
+}
+.account-screen {
+	grid-column: span 1;
+	display: grid;
+	gap: 0.5rem;
+	align-content: start;
+}
+.account-screen.full {
+	grid-column: 1/-1;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.account-screen.full > .account-block {
+	grid-column: 1/-1;
+}
+.account-screen.full > .account-block[data-column='1'] {
+	grid-column: 1;
+}
+.account-screen.full > .account-block[data-column='2'] {
+	grid-column: 2;
+}
+.account-widget {
+	border: 1px solid currentColor;
+	border-radius: 0.5rem;
+	padding: 0.75rem;
+}
+.launcher-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+	gap: 0.5rem;
+	padding: 0;
+	list-style: none;
+}
+.backup-codes {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+	gap: 0.25rem;
+	padding: 0;
+	list-style: none;
+}
+@media (max-width: 760px) {
+	.account-grid,
+	.account-screen.full {
+		grid-template-columns: 1fr;
+	}
+	.account-screen.full > .account-block[data-column] {
+		grid-column: 1/-1;
+	}
+}

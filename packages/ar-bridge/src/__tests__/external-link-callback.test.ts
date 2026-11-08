@@ -150,12 +150,33 @@ const env = {
   RP_TOKEN_ENCRYPTION_KEY: 'unused',
 } as unknown as Env;
 
-async function callback(query: string) {
+async function callback(query: string, browserSession?: string) {
   const app = new Hono<{ Bindings: Env }>();
   app.get('/auth/external/:provider/callback', handleExternalCallback);
+  const cookies = [`${await getAuthStateCookieName(STATE)}=${STATE}`];
+  if (browserSession !== undefined) cookies.push(`authrim_session=${browserSession}`);
   return app.request(
     `/auth/external/corp/callback?${query}&state=${STATE}`,
-    { headers: { Cookie: `${await getAuthStateCookieName(STATE)}=${STATE}` } },
+    { headers: { Cookie: cookies.join('; ') } },
+    env
+  );
+}
+
+/** A provider's form post back (Apple's form_post): a cross-site POST, its Lax cookies not sent. */
+async function formPostCallback(withStateCookie: boolean) {
+  const app = new Hono<{ Bindings: Env }>();
+  app.post('/auth/external/:provider/callback', handleExternalCallback);
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+  };
+  if (withStateCookie) headers.Cookie = `${await getAuthStateCookieName(STATE)}=${STATE}`;
+  return app.request(
+    '/auth/external/corp/callback',
+    {
+      method: 'POST',
+      headers,
+      body: new URLSearchParams({ code: 'upstream-code', state: STATE }).toString(),
+    },
     env
   );
 }
@@ -257,6 +278,60 @@ describe('external callback: linking from the account page', () => {
     expect(mocks.recordActivity).not.toHaveBeenCalled();
     expectNoSignIn(response);
   });
+
+  it('links on a form post that carries the state cookie but no session cookie', async () => {
+    const response = await formPostCallback(true);
+
+    expect(response.headers.get('location')).toBe(`${ACCOUNT_PAGE}?social_link=linked`);
+    // The stored session only (no browser session to read).
+    expect(mocks.readAccountSession).toHaveBeenCalledTimes(1);
+    expect(mocks.readAccountSession).toHaveBeenCalledWith(env, 'default', 'session-a');
+    expect(mocks.handleIdentity).toHaveBeenCalledOnce();
+  });
+
+  it('links nothing on a form post without the state cookie of the browser that started', async () => {
+    const response = await formPostCallback(false);
+
+    expect(response.status).toBe(302);
+    expect(mocks.consumeAuthState).not.toHaveBeenCalled();
+    expect(mocks.handleIdentity).not.toHaveBeenCalled();
+    expect(mocks.recordActivity).not.toHaveBeenCalled();
+  });
+
+  it('links when the browser brings back the session that asked for it', async () => {
+    const response = await callback('code=upstream-code', 'session-a');
+
+    expect(response.headers.get('location')).toBe(`${ACCOUNT_PAGE}?social_link=linked`);
+    expect(mocks.readAccountSession).toHaveBeenCalledTimes(2);
+    expect(mocks.readAccountSession).toHaveBeenLastCalledWith(env, 'default', 'session-a');
+    expect(mocks.handleIdentity).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [
+      'another session of another user',
+      'session-b',
+      liveSession({ sessionId: 'session-b', userId: 'user-b' }),
+    ],
+    ['another session of the same user', 'session-c', liveSession({ sessionId: 'session-c' })],
+    ['a session no longer live', 'session-gone', null],
+    ['a session cookie it cannot read', '%E0%A4%A', null],
+  ])(
+    'returns session_expired without linking when the browser now sends %s',
+    async (_label, cookie, current) => {
+      mocks.readAccountSession.mockImplementation(
+        async (_env: unknown, _tenant: unknown, id: unknown) =>
+          id === 'session-a' ? liveSession() : current
+      );
+
+      const response = await callback('code=upstream-code', cookie);
+
+      expect(response.headers.get('location')).toBe(linkError('session_expired'));
+      expect(mocks.handleIdentity).not.toHaveBeenCalled();
+      expect(mocks.recordActivity).not.toHaveBeenCalled();
+      expectNoSignIn(response);
+    }
+  );
 
   it.each([
     ['access_denied', 'cancelled'],

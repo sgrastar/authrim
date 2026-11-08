@@ -151,7 +151,11 @@ export const TRANSPORTS = new Set(['usb', 'nfc', 'ble', 'internal', 'hybrid', 's
 const MAX_ALLOWED_CREDENTIALS = 16;
 
 /** The options as the ceremony may use them, or null when anything is off. */
-export function readLitePasskeyOptions(value: unknown): LitePasskeyOptions | null {
+export function readLitePasskeyOptions(
+	value: unknown,
+	/** The most credentials taken in the allow list (a sign-in's is short; an account's is all). */
+	maxAllowed = MAX_ALLOWED_CREDENTIALS
+): LitePasskeyOptions | null {
 	const options = record(value);
 	const challenge = options.challenge;
 	const rpId = options.rpId;
@@ -168,7 +172,7 @@ export function readLitePasskeyOptions(value: unknown): LitePasskeyOptions | nul
 			? options.userVerification
 			: 'required';
 	const listed = Array.isArray(options.allowCredentials) ? options.allowCredentials : [];
-	if (listed.length > MAX_ALLOWED_CREDENTIALS) return null;
+	if (listed.length > maxAllowed) return null;
 	const allowCredentials: LitePasskeyOptions['allowCredentials'] = [];
 	for (const entry of listed) {
 		const credential = record(entry);

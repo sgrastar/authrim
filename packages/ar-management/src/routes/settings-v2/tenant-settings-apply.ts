@@ -207,7 +207,9 @@ export async function applyTenantSettingsChange(
     !dryRun &&
     !input.liteGuarded &&
     !input.litePolicyRecord &&
-    (category === 'authentication-methods' || category === 'login-ui')
+    (category === 'authentication-methods' ||
+      category === 'login-ui' ||
+      category === 'self-service')
   ) {
     const bodyPromise = input.readBody();
     const readBody = () => bodyPromise;
