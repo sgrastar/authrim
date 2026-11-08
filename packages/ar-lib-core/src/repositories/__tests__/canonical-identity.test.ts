@@ -150,6 +150,50 @@ describe('CanonicalIdentityRepository', () => {
     });
   });
 
+  it('marks an unfinished sign-up account in the graph batch, never apart from it', async () => {
+    const batch = vi
+      .spyOn(adapter, 'batch')
+      .mockImplementation(async (statements) => statements.map(() => ({ success: true }) as never));
+    const mark = { flow: 'email_code' as const, createdAt: 1_000, expiresAt: 1_000 + 72 * 3600 };
+
+    await repository.createIdentityGraph({
+      subject: { id: 'subject:user-pending' },
+      account: { id: 'account:user-pending', legacy_user_id: 'user-pending' },
+      link: { id: 'link-pending' },
+      registrationPending: { userId: 'user-pending', mark },
+    });
+
+    expect(batch).toHaveBeenCalledTimes(1);
+    const statement = batch.mock.calls[0][0].find((candidate) =>
+      candidate.sql.includes('account_registration_pending')
+    );
+    expect(statement?.params).toEqual(['tenant-a', 'user-pending', 'email_code', 1_000, 260_200]);
+    expect(statement?.sql).toContain('ON CONFLICT (tenant_id, user_id) DO NOTHING');
+
+    // A mark for another account, or one that is not a mark, writes nothing.
+    batch.mockClear();
+    await expect(
+      repository.createIdentityGraph({
+        subject: { id: 'subject:user-b' },
+        account: { id: 'account:user-b' },
+        link: { id: 'link-b' },
+        registrationPending: { userId: 'user-c', mark },
+      })
+    ).rejects.toThrow('account_registration_pending_invalid');
+    await expect(
+      repository.createIdentityGraph({
+        subject: { id: 'subject:user-d' },
+        account: { id: 'account:user-d' },
+        link: { id: 'link-d' },
+        registrationPending: {
+          userId: 'user-d',
+          mark: { ...mark, flow: 'totp' as never },
+        },
+      })
+    ).rejects.toThrow('account_registration_pending_invalid');
+    expect(batch).not.toHaveBeenCalled();
+  });
+
   it('guards writes against cross-tenant input', async () => {
     await expect(
       repository.createSubject({

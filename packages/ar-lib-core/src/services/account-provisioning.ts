@@ -54,7 +54,10 @@ export interface AuthAccountProvisioningInput {
   externalSubject?: { issuer: string; subject: string } | null;
   guestResumeCredential?: AuthGuestResumeCredentialProvisioningInput | null;
   externalIdentity?: AuthExternalIdpIdentityProvisioningInput | null;
-  runtimeUser: Omit<CanonicalRuntimeUserWriteInput, 'userId' | 'tenantId'> & {
+  runtimeUser: Omit<
+    CanonicalRuntimeUserWriteInput,
+    'userId' | 'tenantId' | 'registrationPending'
+  > & {
     piiFields?: Partial<Record<CanonicalSensitiveUserField, boolean>>;
     sensitiveValues?: Partial<Record<CanonicalSensitiveUserField, unknown>>;
   };

@@ -55,7 +55,7 @@ const TABLE_GROUPS: Partial<
       web_origin_registry webhook_configs
     `,
     users: `
-      account_creation_operations account_legal_hold_states account_lifecycle_event_outbox account_webhook_outbox
+      account_creation_operations account_legal_hold_states account_lifecycle_event_outbox account_registration_pending account_webhook_outbox
       assurance_evidence attribute_release_consents attribute_verifications consent_records
       contact_points contact_verifications delegations device_installations
       device_secrets directory_auth_migration_transactions directory_auth_migration_user_states directory_identity_links
