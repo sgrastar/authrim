@@ -4126,7 +4126,7 @@ describe('Admin API Handlers', () => {
           ([, action, , resourceId]) => action === 'user.pii_deleted' && resourceId === userId
         );
       expect(call).toBeDefined();
-      return { details: call![4] as Record<string, unknown>, severity: call![5] };
+      return { details: call![4], severity: call![5] };
     }
 
     it('finds the user, writes the tombstone and erases PII in the account databases', async () => {
