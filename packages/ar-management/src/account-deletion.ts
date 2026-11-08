@@ -62,6 +62,14 @@ export interface DeleteAccountInput {
   endSessions: AccountDeletionSessionEnd;
   /** The erasure's time (epoch seconds); the producer's own when absent. */
   erasedAtSeconds?: number;
+  /**
+   * How the directory removal is prepared (the move to `deleting` in its write): the published
+   * route's when absent; an unpublished account's on its creation's route
+   * (prepareUnpublishedAccountDirectoryRemoval).
+   */
+  prepareRemoval?: (
+    input: Parameters<typeof prepareAccountDirectoryRemoval>[1]
+  ) => Promise<Awaited<ReturnType<typeof prepareAccountDirectoryRemoval>>>;
 }
 
 export type DeleteAccountResult = { status: 'deleted' } | { status: 'held'; holdId: string };
@@ -88,7 +96,9 @@ export async function deleteAccount(
       sourceVersionMs: deletingVersionMs,
       operationId: deletingOperationId,
     });
-    const removals = await prepareAccountDirectoryRemoval(env, { tenantId, userId, core, pii });
+    const removals = input.prepareRemoval
+      ? await input.prepareRemoval({ tenantId, userId, core, pii })
+      : await prepareAccountDirectoryRemoval(env, { tenantId, userId, core, pii });
     // Holds fenced off before anything is erased (see fenceAccountDeletion).
     await fenceAccountDeletion(core, { tenantId, userId });
     // The tombstone first, in the PII database (GDPR audit trail): it also stops later writes of

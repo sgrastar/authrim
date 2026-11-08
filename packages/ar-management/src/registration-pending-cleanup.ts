@@ -12,9 +12,14 @@
  * - It is then deleted by the shared saga (account-deletion.ts): its tombstone keeps no keyed
  *   fingerprint of the address (the person may sign up again), and the audit records the system
  *   with the reason, never the address.
- * - A held account, an account whose route is not published (a provisioning never finished), and
- *   a failed attempt keep their mark, moved later (24 h, 24 h, 6 h): the rows behind them get
- *   their turn, and nothing is retried in a loop. Each is counted, by reason, in the run's log.
+ * - An account whose route was never published (its creation stopped before the directory
+ *   published it, so no Lookup search finds it) is deleted on its creation's route once that
+ *   creation has stood still for 3 hours: its operation is given up first, its removal releases
+ *   what the creation reserved, and its Control allocation goes back while still only reserved (a
+ *   committed one is counted in the run's log). One still moving is moved later (24 h).
+ * - A held account and a failed attempt keep their mark, moved later (24 h, 6 h): the rows
+ *   behind them get their turn, and nothing is retried in a loop. Each is counted, by reason, in
+ *   the run's log.
  * - Per tenant: an off switch (on by default), at most so many deletions and so many seconds per
  *   run (KV, env, then conservative defaults).
  *
@@ -31,10 +36,19 @@ import {
   type Env,
   type Logger,
 } from '@authrim/ar-lib-core';
+import {
+  resolveAuthCorePersistenceAdapterFromEnv,
+  validateAccountDirectoryPublication,
+  type AccountDirectoryPublication,
+} from '@authrim/ar-lib-core';
+import { AccountCreationOperationRepository } from './account-creation-operation';
+import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 import { deleteAccount, type AccountDeletionSessionEnd } from './account-deletion';
+import { releaseAbandonedAccountRouteAllocation } from './account-directory-producer';
 import {
   AccountDeletionHeldError,
   hasUnfinishedAccountDeletion,
+  prepareUnpublishedAccountDirectoryRemoval,
 } from './account-directory-removal-producer';
 import { CrossShardAccountExactSearchService } from './cross-shard-account-list';
 import { auditSessionEndLogoutStarted, enqueueSessionEndLogout } from './session-end-logout';
@@ -49,11 +63,18 @@ const OWNED_PAGE_SIZE = 5;
 const RETRY_FAILED_SECONDS = 6 * 3600;
 const RETRY_HELD_SECONDS = 24 * 3600;
 const RETRY_UNPUBLISHED_SECONDS = 24 * 3600;
+/**
+ * How long an unpublished account's creation must have stood still before it is given up: well
+ * past the Lookup reservation's lease and the directory worker's retry budget (2 h each), and so
+ * past any provisioning token's resume (5 min) and any re-send that moved it.
+ */
+const UNPUBLISHED_IDLE_SECONDS = 3 * 3600;
 /** The whole run's time, whatever the tenants' own budgets (maintenance does other work too). */
 const RUN_BUDGET_MS = 10_000;
 
 export type RegistrationCleanupOutcome =
   | 'deleted'
+  | 'deleted_unpublished'
   | 'completed'
   | 'not_registered'
   | 'already_deleted'
@@ -82,6 +103,15 @@ interface AccountRow {
   lifecycle_state: string | null;
   directory_publication_state: string | null;
   metadata_json: string | null;
+  account_route_generation: number;
+  /** Epoch milliseconds. */
+  updated_at: number;
+}
+
+/** What a run counts besides its outcomes. */
+interface RegistrationCleanupStats {
+  /** Deleted unpublished accounts whose Control allocation stays (committed: never released). */
+  allocationsCommitted: number;
 }
 
 function errorCode(error: unknown): string {
@@ -285,11 +315,13 @@ async function cleanUpOne(
   row: PendingRow,
   nowSeconds: number,
   log: Logger,
-  startDeletion: () => boolean
+  startDeletion: () => boolean,
+  stats: RegistrationCleanupStats
 ): Promise<RegistrationCleanupOutcome | 'limit'> {
   const core = shard.adapter;
   const account = await core.queryOne<AccountRow>(
-    `SELECT id, registration_state, lifecycle_state, directory_publication_state, metadata_json
+    `SELECT id, registration_state, lifecycle_state, directory_publication_state, metadata_json,
+            account_route_generation, updated_at
        FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ?`,
     [tenantId, row.user_id]
   );
@@ -309,7 +341,10 @@ async function cleanUpOne(
     (account.lifecycle_state === 'deleted' &&
       (await hasUnfinishedAccountDeletion(core, { tenantId, userId: row.user_id })));
   if (ours && account.lifecycle_state === 'deleted' && !unfinished) {
-    // This clean-up's, finished before its audit was written (or its mark dropped): both now.
+    // This clean-up's, finished before its audit was written (or its mark dropped): both now,
+    // with an unpublished one's allocation.
+    const creation = await unpublishedCreation(core, tenantId, account);
+    if (creation) await releaseDeletedCreationAllocation(env, creation.publication, stats);
     await auditDeletion(env, tenantId, row, row.expires_at);
     await dropMark(core, tenantId, row);
     return 'deleted';
@@ -319,6 +354,28 @@ async function cleanUpOne(
   if (!resuming && account.registration_state !== 'registered') {
     await dropMark(core, tenantId, row);
     return 'not_registered';
+  }
+  // A creation never published (the directory never had its route): deleted on its creation's
+  // route, which no Lookup search can find, once it has stood still long enough.
+  const creation = await unpublishedCreation(core, tenantId, account);
+  if (
+    creation &&
+    (resuming ||
+      account.directory_publication_state === 'pending' ||
+      account.directory_publication_state === 'active_pending_directory')
+  ) {
+    return cleanUpUnpublished(env, {
+      tenantId,
+      shard,
+      row,
+      account,
+      creation,
+      resuming,
+      nowSeconds,
+      log,
+      startDeletion,
+      stats,
+    });
   }
   const routes = await new CrossShardAccountExactSearchService(env).find({
     tenantId,
@@ -376,6 +433,187 @@ async function cleanUpOne(
   return 'deleted';
 }
 
+/**
+ * The account's creation, when its route was never published: its account_created publication
+ * (on the account's own shard, for its route generation) that has not succeeded. Null when the
+ * creation was published, or when there is no such row.
+ */
+async function unpublishedCreation(
+  core: DatabaseAdapter,
+  tenantId: string,
+  account: AccountRow
+): Promise<{ publication: AccountDirectoryPublication; leasedUntil: number | null } | null> {
+  const row = await core.queryOne<{
+    payload_json: string;
+    status: string;
+    lease_expires_at: number | null;
+  }>(
+    `SELECT payload_json, status, lease_expires_at FROM account_routing_outbox
+      WHERE tenant_id = ? AND account_id = ? AND event_kind = 'account_created'
+        AND route_generation = ?
+      ORDER BY CASE status WHEN 'succeeded' THEN 0 ELSE 1 END, outbox_id
+      LIMIT 1`,
+    [tenantId, account.id, account.account_route_generation]
+  );
+  if (!row || row.status === 'succeeded') return null;
+  const publication = await validateAccountDirectoryPublication(
+    JSON.parse(row.payload_json) as AccountDirectoryPublication
+  );
+  if (publication.tenantId !== tenantId || publication.accountId !== account.id) {
+    throw new Error('registration_cleanup_creation_mismatch');
+  }
+  return {
+    publication,
+    leasedUntil:
+      row.status === 'leased' ? Number(row.lease_expires_at ?? Number.MAX_SAFE_INTEGER) : null,
+  };
+}
+
+/**
+ * An unfinished sign-up's account whose route was never published. Taken only when its creation
+ * has stood still (its operation unmoved, or none, for UNPUBLISHED_IDLE_SECONDS, and not a
+ * succeeded one): its operation is given up first (only as it was read, so a re-send that moved it
+ * keeps it), then the account is deleted by the shared saga on its creation's route (the removal
+ * prepared with the move to `deleting`, and only while no worker's live lease or a success stands
+ * on its publication). Its Control allocation is released when still only reserved; a committed
+ * one is counted.
+ */
+async function cleanUpUnpublished(
+  env: Env,
+  input: {
+    tenantId: string;
+    shard: { adapter: DatabaseAdapter; bindingRef: string };
+    row: PendingRow;
+    account: AccountRow;
+    creation: { publication: AccountDirectoryPublication; leasedUntil: number | null };
+    resuming: boolean;
+    nowSeconds: number;
+    log: Logger;
+    startDeletion: () => boolean;
+    stats: RegistrationCleanupStats;
+  }
+): Promise<RegistrationCleanupOutcome | 'limit'> {
+  const { tenantId, shard, row, account, nowSeconds } = input;
+  const creation = input.creation.publication;
+  const core = shard.adapter;
+  const ours = row.created_at === 0;
+  const coreTarget = creation.routeProjection.targets.find(
+    (target) => target.dataRole === 'tenant_core/users'
+  );
+  const piiTarget = creation.routeProjection.targets.find(
+    (target) => target.dataRole === 'tenant_pii'
+  );
+  if (!coreTarget || !piiTarget || coreTarget.bindingRef !== shard.bindingRef) {
+    if (!ours) await postpone(core, tenantId, row, nowSeconds, RETRY_UNPUBLISHED_SECONDS);
+    return 'route_unavailable';
+  }
+  const pii = routeAdapter(env, piiTarget.bindingRef, 'pii');
+  const operations = new AccountCreationOperationRepository(
+    await resolveAuthCorePersistenceAdapterFromEnv(env, 'registration-cleanup-operation', {
+      tenantId,
+    })
+  );
+  if (!input.resuming) {
+    const found = await operations.findByAccountId({ tenantId, accountId: account.id });
+    const lastMoved = found ? found.updatedAt : Math.floor(Number(account.updated_at) / 1000);
+    // This clean-up's deletion whose creation it already gave up (this run before, or another
+    // run now): carried on, never handed back (another run may be in the middle of it).
+    const givenUp =
+      ours &&
+      found?.operation.status === 'blocked' &&
+      found.operation.lastErrorCode === 'registration_abandoned';
+    if (
+      !givenUp &&
+      (found?.operation.status === 'succeeded' ||
+        !Number.isSafeInteger(lastMoved) ||
+        lastMoved > nowSeconds - UNPUBLISHED_IDLE_SECONDS ||
+        // A worker publishing it now (its lease still running).
+        (input.creation.leasedUntil !== null && input.creation.leasedUntil > nowSeconds))
+    ) {
+      // Still moving (or finished): the published path, or a later run, takes it. A deletion this
+      // clean-up began is never handed back here (another run may be in the middle of it, having
+      // given the creation up after this one read it): kept as it is, tried again.
+      if (!ours) await postpone(core, tenantId, row, nowSeconds, RETRY_UNPUBLISHED_SECONDS);
+      return 'route_unpublished';
+    }
+    if (!givenUp && (await proven(core, pii, tenantId, row.user_id, account))) {
+      await dropMark(core, tenantId, row);
+      return 'completed';
+    }
+    // A standing hold: nothing is given up (the saga checks again, for one placed later).
+    if (await findActiveAccountLegalHold(core, tenantId, row.user_id)) {
+      if (ours) await abandonDeletion(core, tenantId, row, nowSeconds, RETRY_HELD_SECONDS);
+      else await postpone(core, tenantId, row, nowSeconds, RETRY_HELD_SECONDS);
+      return 'held';
+    }
+    if (!input.startDeletion()) return 'limit';
+    if (!ours && !(await beginDeletion(core, tenantId, row, nowSeconds))) {
+      return 'route_unavailable';
+    }
+    // Given up before the account changes: a re-send acquiring it from now on is refused.
+    if (
+      found &&
+      !(await operations.abandon({
+        operation: found.operation,
+        updatedAt: found.updatedAt,
+        now: nowSeconds,
+      }))
+    ) {
+      await abandonDeletion(core, tenantId, row, nowSeconds, RETRY_UNPUBLISHED_SECONDS);
+      return 'route_unpublished';
+    }
+  } else if (!input.startDeletion()) {
+    return 'limit';
+  }
+  const decidedAt = ours ? row.expires_at : nowSeconds;
+  let deleted: Awaited<ReturnType<typeof deleteAccount>>;
+  try {
+    deleted = await deleteAccount(env, {
+      tenantId,
+      userId: row.user_id,
+      core,
+      pii,
+      email: null,
+      tombstone: {
+        deletedBy: 'system',
+        reason: 'registration_abandoned',
+        metadata: { source: 'registration_cleanup', flow: row.flow, route: 'unpublished' },
+      },
+      endSessions: systemSessionEnd(env, tenantId, input.log),
+      prepareRemoval: (removal) =>
+        prepareUnpublishedAccountDirectoryRemoval(env, { ...removal, creation }, nowSeconds),
+    });
+  } catch (error) {
+    if (error instanceof AccountDeletionHeldError) deleted = { status: 'held', holdId: '' };
+    else throw error;
+  }
+  if (deleted.status === 'held') {
+    // A hold placed since the check: the account stays, as the hold requires; its creation stays
+    // given up (a creation under a hold is not resumed).
+    await abandonDeletion(core, tenantId, row, nowSeconds, RETRY_HELD_SECONDS);
+    return 'held';
+  }
+  await releaseDeletedCreationAllocation(env, creation, input.stats);
+  await auditDeletion(env, tenantId, row, decidedAt);
+  await dropMark(core, tenantId, { ...row, created_at: 0, expires_at: decidedAt });
+  return 'deleted_unpublished';
+}
+
+/**
+ * A deleted unpublished account's Control allocation, released while still only reserved (a
+ * release is idempotent: a deletion finished again releases nothing more); a committed one, which
+ * Control never releases, is counted.
+ */
+async function releaseDeletedCreationAllocation(
+  env: Env,
+  creation: AccountDirectoryPublication,
+  stats: RegistrationCleanupStats
+): Promise<void> {
+  if ((await releaseAbandonedAccountRouteAllocation(env, creation)) === 'committed') {
+    stats.allocationsCommitted++;
+  }
+}
+
 async function tenantPolicy(
   env: Env,
   tenantId: string
@@ -416,6 +654,7 @@ export async function processRegistrationPendingCleanup(
 ): Promise<Record<RegistrationCleanupOutcome, number> & { skippedTenants: number }> {
   const counts = {
     deleted: 0,
+    deleted_unpublished: 0,
     completed: 0,
     not_registered: 0,
     already_deleted: 0,
@@ -426,6 +665,7 @@ export async function processRegistrationPendingCleanup(
     failed: 0,
     skippedTenants: 0,
   };
+  const stats: RegistrationCleanupStats = { allocationsCommitted: 0 };
   const runDeadline = now() + RUN_BUDGET_MS;
   const shards = targets.flatMap((target) =>
     target.adapters.map((shard) => ({ tenantId: target.tenantId, shard }))
@@ -529,7 +769,16 @@ export async function processRegistrationPendingCleanup(
       if ((deletions.get(tenantId) ?? 0) >= policy.maxPerRun || now() >= deadline) break;
       let outcome: RegistrationCleanupOutcome | 'limit';
       try {
-        outcome = await cleanUpOne(env, tenantId, shard, row, nowSeconds, log, startDeletion);
+        outcome = await cleanUpOne(
+          env,
+          tenantId,
+          shard,
+          row,
+          nowSeconds,
+          log,
+          startDeletion,
+          stats
+        );
       } catch (error) {
         outcome = 'failed';
         log.warn('Unfinished sign-up not cleaned up', { error: errorCode(error) });
@@ -543,6 +792,12 @@ export async function processRegistrationPendingCleanup(
   }
   if (Object.values(counts).some((count) => count > 0)) {
     log.info('Unfinished sign-up clean-up run', counts);
+  }
+  if (stats.allocationsCommitted > 0) {
+    // Their capacity stays counted in Control: no release exists for a committed allocation.
+    log.warn('Unpublished sign-up accounts deleted with their Control allocation kept', {
+      allocationsCommitted: stats.allocationsCommitted,
+    });
   }
   return counts;
 }
