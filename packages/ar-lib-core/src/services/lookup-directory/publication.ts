@@ -100,6 +100,17 @@ function accountRemovalHoldGuardStatement(
   };
 }
 
+/**
+ * The account states an identifier's directory removal runs for: an active account, and a
+ * suspended or locked one (unlinking an identifier changes neither state). An account being
+ * deleted has its whole route removed by the deletion instead.
+ */
+export const IDENTIFIER_REMOVAL_ACCOUNT_LIFECYCLE_STATES: readonly string[] = [
+  'active',
+  'suspended',
+  'locked',
+];
+
 function accountDirectoryRemovalOutboxStatement(
   publication: AccountDirectoryRemovalPublication,
   now: number
@@ -113,7 +124,9 @@ function accountDirectoryRemovalOutboxStatement(
       ? `account.lifecycle_state IN ('active', 'deprovisioned', 'deleting')
            AND account.directory_publication_state IN ('active', 'disabled')
            AND ${ACCOUNT_NOT_HELD_SQL}`
-      : `account.lifecycle_state = 'active'
+      : // An identifier of a suspended or locked account can be removed too (an identity
+        // provider's data deletion unlinks it); the account's state is left as it is.
+        `account.lifecycle_state IN (${IDENTIFIER_REMOVAL_ACCOUNT_LIFECYCLE_STATES.map((state) => `'${state}'`).join(', ')})
            AND account.directory_publication_state = 'active'`;
   return {
     sql: `INSERT INTO account_routing_outbox (

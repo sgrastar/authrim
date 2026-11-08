@@ -149,6 +149,12 @@ export type ExternalIdpRouteRemovalInput = ExternalIdpRoutePublicationInput & {
    * checks it is still held right before it writes (withLoginMethodRemovalLock).
    */
   removalLeaseOwner?: string;
+  /**
+   * Also remove the link of a suspended or locked account (the identity provider asked for its
+   * data to be deleted); the account's state is left as it is. Without it only an active
+   * account's link is removed.
+   */
+  restrictedAccountAllowed?: true;
 };
 export type ExternalIdpRouteRemovalResult = AuthPasskeyRoutePublicationResult;
 
@@ -158,6 +164,8 @@ export interface ExternalIdpRouteRemovalStatusInput {
   accountId: string;
   userId: string;
   operationId: string;
+  /** As for the removal: also read the operation of a suspended or locked account. */
+  restrictedAccountAllowed?: true;
 }
 
 export interface ExternalIdpPiiSourceShardListInput {

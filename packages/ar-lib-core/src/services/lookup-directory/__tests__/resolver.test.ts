@@ -1,3 +1,4 @@
+import { createD1ConsistencyRequest } from '../../control-plane';
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LookupAliasIndex, LookupBlindIndex } from '../blind-index';
@@ -148,6 +149,28 @@ describe('LookupRouteResolver', () => {
     expect(first).toEqual(second);
     expect(lookup.withSession).toHaveBeenCalledTimes(1);
     expect(assignments.resolveActiveAssignment).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads the directory itself when asked to bypass the cache, and drops a route gone since', async () => {
+    // Cached first; then the identifier left the account (the directory has no membership).
+    const lookup = database(session([row()]), session([]), session([]), session([]));
+    const resolver = new LookupRouteResolver(
+      { LOOKUP_SHARD_0001: lookup.binding },
+      provider(assignment())
+    );
+    expect(await resolver.resolveMemberships({ indexes: [INDEX] })).toHaveLength(1);
+
+    expect(
+      await resolver.resolveMemberships({
+        indexes: [INDEX],
+        bypassCache: true,
+        consistency: createD1ConsistencyRequest('primary_required'),
+      })
+    ).toEqual([]);
+    // The stale route is not served from the cache afterwards either.
+    expect(await resolver.resolveMemberships({ indexes: [INDEX] })).toEqual([]);
+    expect(lookup.withSession).toHaveBeenCalledTimes(4);
+    expect(lookup.withSession.mock.calls[1]).toEqual(['first-primary']);
   });
 
   it('does not create a cross-request negative cache', async () => {

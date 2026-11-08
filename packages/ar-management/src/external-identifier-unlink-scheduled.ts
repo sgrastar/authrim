@@ -1,5 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import {
+  IDENTIFIER_REMOVAL_ACCOUNT_LIFECYCLE_STATES,
   accountDirectoryRemovalOutboxId,
   createLookupBlindIndexes,
   ensureDatabaseAdapter,
@@ -164,7 +165,7 @@ async function authoritativeRoute(
   );
   if (
     !row ||
-    row.lifecycle_state !== 'active' ||
+    !IDENTIFIER_REMOVAL_ACCOUNT_LIFECYCLE_STATES.includes(row.lifecycle_state) ||
     row.directory_publication_state !== 'active' ||
     Number(row.account_route_generation) !== projection.accountRouteGeneration
   ) {

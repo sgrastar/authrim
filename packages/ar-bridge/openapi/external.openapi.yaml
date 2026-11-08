@@ -724,8 +724,9 @@ paths:
         '503':
           description: >-
             `temporarily_unavailable`: another change to how the account signs in is running, or
-            the account is not active (suspended, locked, being deleted) and nothing was done.
-            Retry after the Retry-After delay. Never recorded as done.
+            the account is being deleted (the deletion erases the link) and nothing was done
+            here. Retry after the Retry-After delay. Never recorded as done. A suspended or
+            locked account is unlinked like an active one.
   /auth/external/{provider}/data-deletion/{code}:
     get:
       operationId: getFacebookDataDeletionStatus
@@ -800,8 +801,9 @@ paths:
         '503':
           description: >-
             `temporarily_unavailable`: another change to how the account signs in is running, or
-            the account is not active (suspended, locked, being deleted) and nothing was done.
-            Retry after the Retry-After delay. Never recorded as done.
+            the account is being deleted (the deletion erases the link) and nothing was done
+            here. Retry after the Retry-After delay. Never recorded as done. A suspended or
+            locked account is unlinked like an active one.
   /api/external/{provider}/data-deletion/{code}:
     get:
       operationId: getFacebookDataDeletionStatusApi
@@ -863,7 +865,7 @@ paths:
           description: The app secret is unavailable or the unlink could not be completed safely.
         '503':
           description: >-
-            Another change to how the account signs in is running, or the account is not active
+            Another change to how the account signs in is running, or the account is being deleted
             (nothing was done); retry later.
   /api/external/{provider}/deauthorize:
     post:
@@ -894,7 +896,7 @@ paths:
           description: The app secret is unavailable or the unlink could not be completed safely.
         '503':
           description: >-
-            Another change to how the account signs in is running, or the account is not active
+            Another change to how the account signs in is running, or the account is being deleted
             (nothing was done); retry later.
 components:
   securitySchemes:

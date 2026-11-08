@@ -20,9 +20,18 @@
  * removal (nor the saga's directory cleanup, which does not look at holds for an identifier). It
  * is reported to the administrator (`attention: 'hold_placed_during_unlink'`, audit warning).
  *
- * An account that is not active (suspended, locked, being deleted) is not touched: the unlink
- * saga and its directory cleanup only run for active accounts. Such a request is refused as
- * temporarily unavailable, never recorded as done.
+ * Every account is resolved from the Lookup directory's primary (`freshRoute`), not a cached
+ * route: the request is about who holds the subject now (a cached route may name an account the
+ * subject has since left).
+ *
+ * A suspended or locked account is unlinked as an active one is (the saga and its directory
+ * cleanup accept them for this, `restrictedAccountAllowed`); its state is left as it is. An
+ * account being deleted is left to its deletion, which erases its linked identities: under a
+ * legal hold that deletion stops with the data kept, so the request is retained; without one the
+ * deletion is still running and the request is refused as temporarily unavailable (a copy sent
+ * shortly after finds the account deleted). A deleted account holds no data from the provider:
+ * the request is completed. An account in any other state is refused as temporarily
+ * unavailable, never recorded as done.
  */
 
 import type { Env } from '@authrim/ar-lib-core';
@@ -46,7 +55,12 @@ export type ProviderDataDeletionOutcome =
   | 'unlink_pending'
   /** No account holds a link for the subject. */
   | 'no_link'
-  /** The account is not active (suspended, locked, being deleted): nothing was done. */
+  /** The account is deleted: its deletion erased the link. */
+  | 'account_deleted'
+  /**
+   * The account is being deleted (no hold), or in a state that is neither active, suspended,
+   * locked nor deleted: nothing was done, and the request is not recorded as done.
+   */
   | 'account_inactive'
   /** A legal hold on the account keeps its data: nothing was erased. */
   | 'retained';
@@ -152,6 +166,42 @@ async function findOpenUnlinkOperation(
 }
 
 /**
+ * The answer for a subject whose account is not active, suspended or locked: read again whatever
+ * its state, to tell an account being deleted (left to its deletion; retained under a hold) and a
+ * deleted one (completed) from any other (refused for now).
+ */
+async function answerForRemovedAccount(
+  env: Env,
+  input: { tenantId: string; providerId: string; providerUserId: string }
+): Promise<ProviderDataDeletionResult> {
+  let account: Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>>;
+  try {
+    account = await resolveAccountDataContextByIdentifier(env, {
+      tenantId: input.tenantId,
+      indexKind: 'external_subject',
+      identifier: { issuer: input.providerId, subject: input.providerUserId },
+      acceptLifecycle: 'any',
+      freshRoute: true,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') {
+      return { outcome: 'no_link' };
+    }
+    if (isInactiveAccountError(error)) return { outcome: 'account_inactive' };
+    throw error;
+  }
+  const base = { userId: account.legacyUserId, accountId: account.accountId };
+  if (account.lifecycleState === 'deleted') return { outcome: 'account_deleted', ...base };
+  if (account.lifecycleState === 'deleting') {
+    // A deletion a hold stopped stays here with the data kept.
+    return (await hasActiveAccountLegalHold(account.coreDb, input.tenantId, account.accountId))
+      ? { outcome: 'retained', ...base }
+      : { outcome: 'account_inactive', ...base };
+  }
+  return { outcome: 'account_inactive', ...base };
+}
+
+/**
  * The answer when the account holds no link this request may remove: the route still names the
  * account, so an earlier unlink of the subject may still be running (or have stopped).
  */
@@ -214,10 +264,13 @@ export async function unlinkProviderSubject(
   const { tenantId, providerId, providerUserId } = input;
   let account: Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>>;
   try {
+    // Active, suspended or locked: the accounts whose link this request removes.
     account = await resolveAccountDataContextByIdentifier(env, {
       tenantId,
       indexKind: 'external_subject',
       identifier: { issuer: providerId, subject: providerUserId },
+      acceptLifecycle: 'restricted',
+      freshRoute: true,
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'account_data_route_not_found') {
@@ -227,7 +280,7 @@ export async function unlinkProviderSubject(
       // it retries that step.)
       return { outcome: 'no_link' };
     }
-    if (isInactiveAccountError(error)) return { outcome: 'account_inactive' };
+    if (isInactiveAccountError(error)) return answerForRemovedAccount(env, input);
     throw error;
   }
 
@@ -289,6 +342,7 @@ export async function unlinkProviderSubject(
         providerId: identity.providerId,
         providerUserId: identity.providerUserId,
         removalLeaseOwner: lease.owner,
+        restrictedAccountAllowed: true,
       });
       // Still under the lease: a copy of this request waiting for it now leaves any link alone.
       await input.payloadGuard?.markRemoved();
@@ -476,8 +530,9 @@ export async function readDataDeletionRequestState(
 
 /**
  * Whether a pending unlink has finished, or the account is gone altogether (deleted, its route
- * removed with everything it held). A stopped (blocked) unlink, or one of an account that is not
- * active now, is still pending.
+ * removed with everything it held). A stopped (blocked) unlink, or one of an account being
+ * deleted now, is still pending; a suspended or locked account's unlink is looked up as an
+ * active one's.
  */
 async function isUnlinkFinished(
   env: Env,
@@ -487,20 +542,40 @@ async function isUnlinkFinished(
 ): Promise<boolean> {
   let account: Awaited<ReturnType<typeof resolveAccountDataContext>>;
   try {
-    account = await resolveAccountDataContext(env, { tenantId, accountId });
+    account = await resolveAccountDataContext(env, {
+      tenantId,
+      accountId,
+      acceptLifecycle: 'restricted',
+      freshRoute: true,
+    });
   } catch (error) {
     // The account's own route is removed only by its deletion, which also erases what an open
     // unlink of it still held (raw values cleared, the operation blocked as account_deleted:
     // ar-management account-directory-removal-producer.ts).
     if (error instanceof Error && error.message === 'account_data_route_not_found') return true;
-    if (isInactiveAccountError(error)) return false;
-    throw error;
+    if (!isInactiveAccountError(error)) throw error;
+    // Being deleted since (still pending: a hold may stop that deletion), or deleted (its
+    // deletion erased what the unlink left).
+    try {
+      const removed = await resolveAccountDataContext(env, {
+        tenantId,
+        accountId,
+        acceptLifecycle: 'any',
+        freshRoute: true,
+      });
+      return removed.lifecycleState === 'deleted';
+    } catch (again) {
+      if (again instanceof Error && again.message === 'account_data_route_not_found') return true;
+      if (isInactiveAccountError(again)) return false;
+      throw again;
+    }
   }
   const provisioner = env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
   if (!provisioner)
     throw new ProviderDataDeletionError('external_idp_account_provisioner_unavailable');
   try {
     const status = await provisioner.getExternalIdpRouteRemovalStatus({
+      restrictedAccountAllowed: true,
       schemaVersion: 1,
       tenantId,
       accountId,

@@ -943,6 +943,54 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     expect(mocks.tenantBatch).not.toHaveBeenCalled();
   });
 
+  it('resolves a suspended or locked account only when the caller allows it', async () => {
+    const props = {
+      caller: 'ar-bridge',
+      environmentId: 'test',
+      audience: 'authrim-external-idp-account-provisioning-v1',
+    };
+    for (const restricted of [false, true]) {
+      mocks.resolveAccountDataContext.mockClear();
+      const request = {
+        ...externalIdpRouteInput({
+          operationId: 'external-idp-route-remove-66666666666666666666666666666666',
+          idempotencyKey: `auth-external-idp-route-remove:${'6'.repeat(64)}`,
+        }),
+        ...(restricted ? { restrictedAccountAllowed: true as const } : {}),
+      };
+      mocks.tenantQuery.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+      await expect(worker({ props }).removeExternalIdpRoute(request)).rejects.toThrow(
+        'external_idp_route_removal_authority_not_found'
+      );
+      expect(mocks.resolveAccountDataContext).toHaveBeenCalledWith(
+        expect.anything(),
+        restricted
+          ? expect.objectContaining({ acceptLifecycle: 'restricted' })
+          : expect.not.objectContaining({ acceptLifecycle: expect.anything() as unknown })
+      );
+    }
+    // Only `true` is accepted.
+    await expect(
+      worker({ props }).removeExternalIdpRoute({
+        ...externalIdpRouteInput({
+          operationId: 'external-idp-route-remove-77777777777777777777777777777777',
+          idempotencyKey: `auth-external-idp-route-remove:${'7'.repeat(64)}`,
+        }),
+        restrictedAccountAllowed: 'yes',
+      })
+    ).rejects.toThrow('external_idp_route_removal_input_invalid');
+    await expect(
+      worker({ props }).getExternalIdpRouteRemovalStatus({
+        schemaVersion: 1,
+        tenantId: 'tenant-a',
+        accountId: 'account:user-a',
+        userId: 'user-a',
+        operationId: 'external-idp-route-remove-77777777777777777777777777777777',
+        restrictedAccountAllowed: false,
+      })
+    ).rejects.toThrow('external_idp_route_removal_status_input_invalid');
+  });
+
   it('refuses a malformed removal lease owner', async () => {
     const request = {
       ...externalIdpRouteInput({

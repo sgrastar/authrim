@@ -27,23 +27,32 @@ const world = vi.hoisted(() => {
   const state: {
     core: unknown;
     pii: unknown;
-    route: 'found' | 'missing' | 'inactive';
+    route: 'found' | 'missing';
+    /** The account's lifecycle state, as the resolver reads it at the destination. */
+    lifecycle: string;
     lockBusy: boolean;
-  } = { core: undefined, pii: undefined, route: 'found', lockBusy: false };
+  } = { core: undefined, pii: undefined, route: 'found', lifecycle: 'active', lockBusy: false };
   return state;
 });
 
 vi.mock('@authrim/ar-lib-core', async (original) => {
   const actual = await original<typeof import('@authrim/ar-lib-core')>();
-  const context = () => {
+  // As the resolver: active accounts, plus suspended/locked with `restricted`, any with `any`.
+  const context = (input?: { acceptLifecycle?: 'restricted' | 'any' }) => {
     if (world.route === 'missing') throw new Error('account_data_route_not_found');
-    if (world.route === 'inactive') {
+    const accepted =
+      world.lifecycle === 'active' ||
+      input?.acceptLifecycle === 'any' ||
+      (input?.acceptLifecycle === 'restricted' &&
+        ['suspended', 'locked'].includes(world.lifecycle));
+    if (!accepted) {
       throw new Error('lookup_destination_revalidation_failed', { cause: 'account_inactive' });
     }
     return {
       tenantId: TENANT,
       accountId: ACCOUNT,
       legacyUserId: USER,
+      lifecycleState: world.lifecycle,
       membership: { routeProjection: { schemaVersion: 1 } },
       coreDb: world.core,
       piiDb: world.pii,
@@ -51,8 +60,12 @@ vi.mock('@authrim/ar-lib-core', async (original) => {
   };
   return {
     ...actual,
-    resolveAccountDataContextByIdentifier: vi.fn(async () => context()),
-    resolveAccountDataContext: vi.fn(async () => context()),
+    resolveAccountDataContextByIdentifier: vi.fn(
+      async (_env: unknown, input: { acceptLifecycle?: 'restricted' | 'any' }) => context(input)
+    ),
+    resolveAccountDataContext: vi.fn(
+      async (_env: unknown, input: { acceptLifecycle?: 'restricted' | 'any' }) => context(input)
+    ),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => world.core),
     resolveEffectiveSettings: vi.fn(async () => ({})),
     withLoginMethodRemovalLock: vi.fn(
@@ -207,6 +220,7 @@ describe('provider data deletion (real Core and PII schemas)', () => {
     world.core = core;
     world.pii = pii;
     world.route = 'found';
+    world.lifecycle = 'active';
     world.lockBusy = false;
     rpc = provisioner();
     seedLink('link-facebook', FACEBOOK, FACEBOOK_USER);
@@ -395,22 +409,125 @@ describe('provider data deletion (real Core and PII schemas)', () => {
     expect(links()).toEqual([{ id: 'link-google', provider_id: GOOGLE }]);
   });
 
-  it('does nothing for an account that is not active, and never records it as done', async () => {
-    world.route = 'inactive';
+  it.each(['suspended', 'locked'])(
+    'unlinks a %s account as an active one, and the status follows it',
+    async (lifecycle) => {
+      world.lifecycle = lifecycle;
+      core.raw
+        .prepare('UPDATE identity_accounts SET lifecycle_state = ? WHERE id = ?')
+        .run(lifecycle, ACCOUNT);
+      const result = await unlinkProviderSubject(env(), {
+        tenantId: TENANT,
+        providerId: FACEBOOK,
+        providerUserId: FACEBOOK_USER,
+        requestIssuedAt: ISSUED,
+      });
+      expect(result).toMatchObject({
+        outcome: 'unlink_pending',
+        linkedIdentityId: 'link-facebook',
+      });
+      expect(rpc.removeExternalIdpRoute).toHaveBeenCalledWith(
+        expect.objectContaining({ restrictedAccountAllowed: true })
+      );
+      expect(links()).toEqual([{ id: 'link-google', provider_id: GOOGLE }]);
+      // The account's own state is not this request's to change.
+      expect(core.raw.prepare('SELECT lifecycle_state FROM identity_accounts').get()).toEqual({
+        lifecycle_state: lifecycle,
+      });
+      // Resolved from the directory's primary, never from a cached route.
+      const { resolveAccountDataContextByIdentifier } = await import('@authrim/ar-lib-core');
+      expect(vi.mocked(resolveAccountDataContextByIdentifier)).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ acceptLifecycle: 'restricted', freshRoute: true })
+      );
+
+      const { confirmationCode } = await createDataDeletionRequest(env(), {
+        tenantId: TENANT,
+        providerId: FACEBOOK,
+        result,
+      });
+      pii.raw
+        .prepare(
+          `UPDATE external_identifier_unlink_operations
+              SET state = 'completed', issuer_json = NULL, subject_json = NULL,
+                  raw_values_erased_at = 1, completed_at = 1`
+        )
+        .run();
+      expect(
+        await readDataDeletionRequestState(env(), {
+          tenantId: TENANT,
+          providerId: FACEBOOK,
+          confirmationCode,
+        })
+      ).toBe('completed');
+      expect(rpc.getExternalIdpRouteRemovalStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ restrictedAccountAllowed: true })
+      );
+    }
+  );
+
+  it('retains the request for an account whose deletion a legal hold stopped', async () => {
+    world.lifecycle = 'deleting';
+    core.raw
+      .prepare(
+        `INSERT INTO legal_holds (id, tenant_id, subject_type, subject_id, state, reason_code,
+                                  created_by, created_at, updated_at)
+         VALUES ('hold-1', ?, 'account', ?, 'active', 'litigation', 'admin-1', 1, 1)`
+      )
+      .run(TENANT, ACCOUNT);
     const result = await unlinkProviderSubject(env(), {
       tenantId: TENANT,
       providerId: FACEBOOK,
       providerUserId: FACEBOOK_USER,
       requestIssuedAt: ISSUED,
     });
-    expect(result).toEqual({ outcome: 'account_inactive' });
+    expect(result).toMatchObject({ outcome: 'retained', userId: USER });
     expect(rpc.removeExternalIdpRoute).not.toHaveBeenCalled();
-    expect(links()).toHaveLength(2);
-    await expect(
-      createDataDeletionRequest(env(), { tenantId: TENANT, providerId: FACEBOOK, result })
-    ).rejects.toThrow('data_deletion_request_not_recordable');
-    expect(statusRows()).toHaveLength(0);
+    const { state } = await createDataDeletionRequest(env(), {
+      tenantId: TENANT,
+      providerId: FACEBOOK,
+      result,
+    });
+    expect(state).toBe('retained');
   });
+
+  it('completes a request for a deleted account (its deletion erased the link)', async () => {
+    world.lifecycle = 'deleted';
+    const result = await unlinkProviderSubject(env(), {
+      tenantId: TENANT,
+      providerId: FACEBOOK,
+      providerUserId: FACEBOOK_USER,
+      requestIssuedAt: ISSUED,
+    });
+    expect(result).toMatchObject({ outcome: 'account_deleted' });
+    expect(rpc.removeExternalIdpRoute).not.toHaveBeenCalled();
+    const { state } = await createDataDeletionRequest(env(), {
+      tenantId: TENANT,
+      providerId: FACEBOOK,
+      result,
+    });
+    expect(state).toBe('completed');
+  });
+
+  it.each(['deleting', 'deprovisioned'])(
+    'does nothing for a %s account (no hold), and never records it as done',
+    async (lifecycle) => {
+      world.lifecycle = lifecycle;
+      const result = await unlinkProviderSubject(env(), {
+        tenantId: TENANT,
+        providerId: FACEBOOK,
+        providerUserId: FACEBOOK_USER,
+        requestIssuedAt: ISSUED,
+      });
+      expect(result).toMatchObject({ outcome: 'account_inactive' });
+      expect(rpc.removeExternalIdpRoute).not.toHaveBeenCalled();
+      expect(links()).toHaveLength(2);
+      await expect(
+        createDataDeletionRequest(env(), { tenantId: TENANT, providerId: FACEBOOK, result })
+      ).rejects.toThrow('data_deletion_request_not_recordable');
+      expect(statusRows()).toHaveLength(0);
+    }
+  );
 
   it('keeps a stopped (blocked) unlink pending, for a repeated request too', async () => {
     const first = await unlinkProviderSubject(env(), {
@@ -474,7 +591,7 @@ describe('provider data deletion (real Core and PII schemas)', () => {
     });
   });
 
-  it('keeps a pending request pending while the account is not active, done once it is gone', async () => {
+  it('keeps a pending request pending while the account is being deleted, done once deleted', async () => {
     const result = await unlinkProviderSubject(env(), {
       tenantId: TENANT,
       providerId: FACEBOOK,
@@ -492,9 +609,14 @@ describe('provider data deletion (real Core and PII schemas)', () => {
         providerId: FACEBOOK,
         confirmationCode,
       });
-    world.route = 'inactive';
+    // Suspended since: looked up as before (still pending until the cleanup finishes).
+    world.lifecycle = 'suspended';
     expect(await read()).toBe('pending');
-    world.route = 'missing';
+    // Being deleted since: pending (a hold may stop that deletion).
+    world.lifecycle = 'deleting';
+    expect(await read()).toBe('pending');
+    // Deleted: its deletion erased what was left.
+    world.lifecycle = 'deleted';
     expect(await read()).toBe('completed');
     expect(statusRows()[0]).toMatchObject({ state: 'completed', account_id: null });
   });
