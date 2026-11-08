@@ -758,14 +758,24 @@ function catalogTimestamp(value: unknown): number {
   return Date.parse(value);
 }
 
-/** Classifies a catalog read: present, inactive (40402) or missing (40401); anything else throws. */
+/**
+ * Classifies a catalog read: present (active), inactive or missing; anything else throws.
+ * Cloudflare reports a disabled catalog either as 200 with status "inactive" or as 404 code
+ * 40402, and a bucket that never had one as 404 code 40401.
+ */
 async function readCatalogState(
   options: LogArchiveProvisionOptions,
   path: string
 ): Promise<{ state: 'present'; catalog: RemoteResource } | { state: 'inactive' | 'missing' }> {
   try {
-    return { state: 'present', catalog: await options.api.request<RemoteResource>(path) };
+    const catalog = await options.api.request<RemoteResource>(path);
+    const status = object(catalog).status;
+    if (status === 'inactive') return { state: 'inactive' };
+    if (status !== 'active') throw new Error('log_archive_catalog_state_unknown');
+    return { state: 'present', catalog };
   } catch (error) {
+    if (error instanceof Error && error.message === 'log_archive_catalog_state_unknown')
+      throw error;
     if (!(error instanceof LogArchiveApiError) || error.status !== 404) throw error;
     const codes = error.providerCodes;
     if (codes.length === 1 && codes[0] === CATALOG_INACTIVE_CODE) return { state: 'inactive' };

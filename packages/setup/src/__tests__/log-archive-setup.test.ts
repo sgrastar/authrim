@@ -173,6 +173,19 @@ function fixture(mode: 'pipeline' | 'scheduled') {
       } else if (method === 'POST' && path.split('?')[0].endsWith('/delete')) {
         remote.delete(catalogPath);
         result = null;
+      } else if (
+        path.startsWith(`${catalogPath}/namespaces`) &&
+        remote.get(catalogPath)?.status === 'inactive'
+      ) {
+        // Listings answer only while the catalog is active.
+        return new Response(
+          JSON.stringify({
+            success: false,
+            result: null,
+            errors: [{ code: 40402, message: 'Warehouse inactive' }],
+          }),
+          { status: 404 }
+        );
       } else if (path.split('?')[0] === `${catalogPath}/namespaces`) {
         const parent = new URL(`https://example.invalid/${path}`).searchParams.get('parent') ?? '';
         const listed = (staleEntries.namespaces ?? []).filter(
@@ -1064,6 +1077,35 @@ describe('log archive setup contract', () => {
       .filter((call) => call.method === 'POST' && call.path.startsWith(catalogPath))
       .map((call) => call.path.slice(catalogPath.length));
     expect(posts.slice(0, 4)).toEqual(['/enable', '/disable', '/delete?force=true', '/enable']);
+  });
+
+  it('treats a 200 answer with status inactive like a 40402 disabled Catalog', async () => {
+    implemented.push('scheduled');
+    const f = fixture('scheduled');
+    const catalogPath = `basin-catalog/${f.archive.bucketName}`;
+    f.remote.set(catalogPath, {
+      id: 'old-catalog-id',
+      name: `${accountId}_${f.archive.bucketName}`,
+      status: 'inactive',
+    });
+    f.staleEntries.namespaces = [{ name: ['authrim'], createdAt: '2026-10-31T00:00:00Z' }];
+    f.overrides.set(catalogPath, { result: { ...f.remote.get(catalogPath)! } });
+    const enable = f.fetcher.getMockImplementation()!;
+    f.fetcher.mockImplementation(async (url, init) => {
+      // Only the first read sees the 200 + inactive form; later reads follow the remote state.
+      if (String(url).endsWith(`/${catalogPath}/enable`)) f.overrides.delete(catalogPath);
+      return enable(url, init);
+    });
+    await expect(provisionLogArchive(f.options)).resolves.toMatchObject({
+      catalog: { id: 'catalog-id' },
+    });
+    const posts = f.calls
+      .filter((call) => call.method === 'POST' && call.path.startsWith(catalogPath))
+      .map((call) => call.path.slice(catalogPath.length));
+    expect(posts.slice(0, 4)).toEqual(['/enable', '/disable', '/delete?force=true', '/enable']);
+    expect(
+      f.calls.findIndex((call) => call.path.startsWith(`${catalogPath}/namespaces`))
+    ).toBeGreaterThan(f.calls.findIndex((call) => call.path === `${catalogPath}/enable`));
   });
 
   it('puts a disabled unrecorded Catalog back when its entries are not all older', async () => {
