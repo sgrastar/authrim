@@ -1409,6 +1409,29 @@ app.get('/.well-known/did.json', async (c) => {
 });
 
 /**
+ * W3C passkey endpoints: OP_DISCOVERY builds the response, but both URLs point at the account
+ * page, which only this Worker serves. Not published (404) unless the account page is served on
+ * this host: the Login UI path proxy is on and the tenant's account page is enabled.
+ */
+app.get('/.well-known/passkey-endpoints', async (c) => {
+  // Not cached: a 404 here must not outlive turning the account page or the proxy on.
+  const notPublished = () => {
+    const response = notFoundResponse();
+    response.headers.set('Cache-Control', 'no-store');
+    return response;
+  };
+  if (!isLoginUiPathProxyEnabled(c.env) || !c.env.AR_LOGIN_UI_URL) {
+    return notPublished();
+  }
+  const accountPage = await resolveAccountPageSettings(c);
+  if (!accountPage.enabled) {
+    return notPublished();
+  }
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_DISCOVERY.fetch(request);
+});
+
+/**
  * Discovery endpoints - Route to OP_DISCOVERY worker
  * - /.well-known/openid-configuration
  * - /.well-known/oauth-authorization-server
