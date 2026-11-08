@@ -1609,4 +1609,357 @@ describe('the lite account page', () => {
 			).resolves.toMatchObject({ status: 503, data: { error: 'favorite_failed' } });
 		});
 	});
+
+	describe('a guest registering the account', () => {
+		const TOKEN = 'a'.repeat(64);
+		let state: Record<string, unknown>;
+		const guestPage = () => {
+			methods = {
+				passkey: { enabled: true },
+				totp: { enabled: false },
+				external: { enabled: false }
+			};
+			state = {
+				registration_state: 'guest',
+				upgrade_eligible: true,
+				upgrade_in_progress: false,
+				allowed_methods: ['email', 'passkey'],
+				deletion_due_at: null
+			};
+			routes['/api/account/capabilities'] = () =>
+				json({
+					account_page: {
+						definition: { screens: [{ id: 'upgrade', screen_key: 'k' }] },
+						screens: [
+							{
+								screen_key: 'k',
+								fields: [{ block_type: 'account_upgrade_widget', field: 'account.upgrade' }]
+							}
+						]
+					}
+				});
+			routes['/api/account/profile'] = () => profile('guest', ['anon']);
+			routes['/api/account/guest-upgrade'] = () => json(state);
+		};
+		type Page = {
+			widgets: {
+				guest: { guest: boolean; eligible: boolean } | null;
+				guestAttempt: { method: string; operationId: string } | null;
+				guestPasskey: { operation: string; registration: unknown } | null;
+				guestRecovered: boolean;
+			};
+		};
+
+		it('registers with an address: a code sent to it confirms it', async () => {
+			guestPage();
+			routes['/api/account/guest-upgrade/start'] = (body) =>
+				json({
+					operation_id: 'op-1',
+					upgrade_token: TOKEN,
+					method: body.method,
+					expires_at: Math.floor(Date.now() / 1000) + 600
+				});
+			const completes: Array<Record<string, unknown>> = [];
+			routes['/api/account/guest-upgrade/complete'] = (body) => {
+				completes.push(body);
+				return body.code === '123456'
+					? json({ success: true, user_id: 'user-a' })
+					: json({ error: 'invalid_upgrade_proof' }, 400);
+			};
+			const first = (await view()) as Page;
+			expect(first.widgets.guest).toMatchObject({ guest: true, eligible: true });
+			await expect(
+				post('guest_start', { method: 'email', email: ' new@example.com ' })
+			).resolves.toEqual({ notice: 'guest_code_sent', widget: 'guest' });
+			expect(calls.at(-1)?.body).toEqual({ method: 'email', email: 'new@example.com' });
+			const waiting = (await view()) as Page;
+			expect(waiting.widgets.guestAttempt).toEqual({
+				method: 'email',
+				operationId: 'op-1',
+				spent: false
+			});
+			// An older page's start (or a double submit) is refused over it, and sends nothing.
+			const starts = calls.filter(
+				(call) => call.path === '/api/account/guest-upgrade/start'
+			).length;
+			await expect(
+				post('guest_start', { method: 'email', email: 'other@example.com' })
+			).resolves.toMatchObject({ status: 409, data: { error: 'guest_attempt_exists' } });
+			expect(calls.filter((call) => call.path === '/api/account/guest-upgrade/start')).toHaveLength(
+				starts
+			);
+			// The token is kept for the server only: never drawn.
+			expect(JSON.stringify(waiting)).not.toContain(TOKEN);
+			await expect(
+				post('guest_confirm', { operation: 'op-1', code: '000000' })
+			).resolves.toMatchObject({ status: 400, data: { error: 'code_invalid' } });
+			// A wrong code keeps the attempt (the code entered again).
+			expect(store.txn.data.accountGuestUpgrade).toBeDefined();
+			// A form of another attempt does nothing.
+			await expect(
+				post('guest_confirm', { operation: 'op-0', code: '123456' })
+			).resolves.toMatchObject({ status: 409 });
+			await expect(post('guest_confirm', { operation: 'op-1', code: '123456' })).resolves.toEqual({
+				notice: 'guest_registered',
+				widget: 'guest'
+			});
+			expect(completes.at(-1)).toEqual({
+				operation_id: 'op-1',
+				upgrade_token: TOKEN,
+				code: '123456'
+			});
+			expect(JSON.stringify(store.txn.data)).not.toContain('123456');
+			// The page drawn then (the account now registered) says it done, and keeps no attempt.
+			state = { ...state, registration_state: 'registered' };
+			routes['/api/account/profile'] = () => profile('registered', ['otp']);
+			const done = (await view()) as Page & {
+				placements: Array<{ blocks: Array<{ widget?: string }> }>;
+			};
+			expect(done.widgets.guestRecovered).toBe(true);
+			expect(done.placements.flatMap((placement) => placement.blocks)).toEqual([
+				expect.objectContaining({ widget: 'account_upgrade_widget' })
+			]);
+			expect(store.txn.data.accountGuestUpgrade).toBeUndefined();
+		});
+
+		it('registers with a passkey through its ceremony, once on the page', async () => {
+			guestPage();
+			routes['/api/account/guest-upgrade/start'] = () =>
+				json({
+					operation_id: 'op-2',
+					upgrade_token: TOKEN,
+					method: 'passkey',
+					expires_at: Math.floor(Date.now() / 1000) + 600,
+					options: {
+						rp: { id: 'id.example', name: 'Authrim' },
+						user: { id: 'dXNlci0x', name: 'guest', displayName: 'guest' },
+						challenge: 'Y2hhbGxlbmdl',
+						pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+						timeout: 60000,
+						excludeCredentials: [],
+						authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+						attestation: 'none'
+					}
+				});
+			routes['/api/account/guest-upgrade/complete'] = () => json({ status: 'in_progress' }, 202);
+			await view();
+			await post('guest_start', { method: 'passkey' });
+			const drawn = (await view()) as Page;
+			expect(drawn.widgets.guestPasskey).toMatchObject({ operation: 'op-2' });
+			const credential = JSON.stringify({
+				id: 'cred',
+				rawId: 'cred',
+				type: 'public-key',
+				response: { clientDataJSON: 'e30', attestationObject: 'e30' },
+				clientExtensionResults: {}
+			});
+			await expect(
+				post('guest_passkey_finish', { operation: 'op-2', credential })
+			).resolves.toEqual({ notice: 'guest_pending', widget: 'guest' });
+			// Its ceremony spent (never drawn again), kept until the account is seen registered.
+			expect(store.txn.data.accountGuestUpgrade).toMatchObject({ spent: true, options: null });
+			const pending = (await view()) as Page;
+			expect(pending.widgets.guestPasskey).toBeNull();
+			await expect(
+				post('guest_passkey_finish', { operation: 'op-2', credential })
+			).resolves.toMatchObject({ status: 409 });
+			state = { ...state, registration_state: 'registered' };
+			routes['/api/account/profile'] = () => profile('registered', ['webauthn']);
+			const done = (await view()) as Page;
+			expect(done.widgets.guestRecovered).toBe(true);
+			expect(store.txn.data.accountGuestUpgrade).toBeUndefined();
+		});
+
+		it('says an address taken, and signs the guest out to sign in to that account', async () => {
+			guestPage();
+			routes['/api/account/guest-upgrade/start'] = () =>
+				json({
+					operation_id: 'op-3',
+					upgrade_token: TOKEN,
+					method: 'email',
+					expires_at: Math.floor(Date.now() / 1000) + 600
+				});
+			routes['/api/account/guest-upgrade/complete'] = () =>
+				json({ error: 'identity_already_registered', existing_login_available: true }, 409);
+			await view();
+			await post('guest_start', { method: 'email', email: 'taken@example.com' });
+			await expect(
+				post('guest_confirm', { operation: 'op-3', code: '123456' })
+			).resolves.toMatchObject({
+				status: 409,
+				data: { error: 'guest_collision', existingLogin: true }
+			});
+			// Asked first: nothing is given up until confirmed.
+			await expect(post('guest_existing_login')).resolves.toEqual({
+				confirmExistingLogin: true,
+				widget: 'guest'
+			});
+			expect(store.txn.state).not.toBe('abandoned');
+			expect(calls.some((call) => call.path === '/api/v1/auth/direct/logout')).toBe(false);
+			await expect(post('guest_existing_login', { confirm: 'guest' })).rejects.toMatchObject({
+				status: 303,
+				location: '/login?prompt=login'
+			});
+			expect(store.txn.state).toBe('abandoned');
+		});
+
+		it('says registered when the account became so meanwhile, and keeps no attempt', async () => {
+			guestPage();
+			routes['/api/account/guest-upgrade/start'] = () =>
+				json({
+					operation_id: 'op-4',
+					upgrade_token: TOKEN,
+					method: 'email',
+					expires_at: Math.floor(Date.now() / 1000) + 600
+				});
+			await view();
+			await post('guest_start', { method: 'email', email: 'a@example.com' });
+			state = { ...state, registration_state: 'registered' };
+			const page = (await view()) as Page;
+			expect(page.widgets.guestRecovered).toBe(true);
+			expect(store.txn.data.accountGuestUpgrade).toBeUndefined();
+		});
+
+		it('draws no registration for a registered account, and reads no guest status', async () => {
+			guestPage();
+			routes['/api/account/profile'] = () => profile('registered', ['pwd']);
+			routes['/api/account/guest-upgrade'] = () => json({ error: 'guest_unavailable' }, 409);
+			const page = (await view()) as {
+				placements: Array<{ blocks: Array<{ widget?: string }> }>;
+			};
+			expect(page.placements.flatMap((placement) => placement.blocks)).toEqual([]);
+			expect(calls.some((call) => call.path === '/api/account/guest-upgrade')).toBe(false);
+		});
+
+		it('checks one proof at a time, and saves a start whatever moved meanwhile', async () => {
+			guestPage();
+			routes['/api/account/guest-upgrade/start'] = () => {
+				// Another post moved the transaction while the code was sent.
+				store.set({ version: store.txn.version + 1 });
+				return json({
+					operation_id: 'op-5',
+					upgrade_token: TOKEN,
+					method: 'email',
+					expires_at: Math.floor(Date.now() / 1000) + 600
+				});
+			};
+			let completes = 0;
+			routes['/api/account/guest-upgrade/complete'] = () => {
+				completes++;
+				return json({ status: 'in_progress' }, 202);
+			};
+			await view();
+			await expect(
+				post('guest_start', { method: 'email', email: 'a@example.com' })
+			).resolves.toMatchObject({ notice: 'guest_code_sent' });
+			expect(store.txn.data.accountGuestUpgrade).toMatchObject({ operationId: 'op-5' });
+			expect(store.txn.data.accountGuestStarting).toBeUndefined();
+			// A check under way: another is told to wait, ar-management not asked.
+			store.set({
+				data: {
+					...store.txn.data,
+					accountGuestUpgrade: {
+						...(store.txn.data.accountGuestUpgrade as object),
+						checkingAt: Date.now()
+					}
+				}
+			});
+			await expect(
+				post('guest_confirm', { operation: 'op-5', code: '123456' })
+			).resolves.toMatchObject({ status: 409, data: { error: 'busy' } });
+			expect(completes).toBe(0);
+		});
+
+		it('offers to start again when a spent attempt is not under way, even past its time', async () => {
+			guestPage();
+			await view();
+			store.set({
+				data: {
+					...store.txn.data,
+					accountGuestUpgrade: {
+						operationId: 'op-6',
+						token: TOKEN,
+						method: 'passkey',
+						expiresAt: Date.now() - 1,
+						options: null,
+						spent: true,
+						checkingAt: null
+					}
+				}
+			});
+			const page = (await view()) as Page & {
+				widgets: { guest: { inProgress: boolean } };
+			};
+			expect(page.widgets.guestAttempt).toMatchObject({ operationId: 'op-6', spent: true });
+			expect(page.widgets.guest.inProgress).toBe(false);
+			await expect(post('guest_reset', { operation: 'op-6' })).resolves.toMatchObject({
+				notice: 'guest_reset'
+			});
+			expect(store.txn.data.accountGuestUpgrade).toBeUndefined();
+		});
+
+		it('says an address’s registration done though it ended past the code’s time', async () => {
+			guestPage();
+			routes['/api/account/guest-upgrade/start'] = () =>
+				json({
+					operation_id: 'op-7',
+					upgrade_token: TOKEN,
+					method: 'email',
+					expires_at: Math.floor(Date.now() / 1000) + 600
+				});
+			routes['/api/account/guest-upgrade/complete'] = () => json({ status: 'in_progress' }, 202);
+			await view();
+			await post('guest_start', { method: 'email', email: 'a@example.com' });
+			await expect(post('guest_confirm', { operation: 'op-7', code: '123456' })).resolves.toEqual({
+				notice: 'guest_pending',
+				widget: 'guest'
+			});
+			expect(store.txn.data.accountGuestUpgrade).toMatchObject({ spent: true });
+			// The code's time passes; the registration then ends.
+			store.set({
+				data: {
+					...store.txn.data,
+					accountGuestUpgrade: {
+						...(store.txn.data.accountGuestUpgrade as object),
+						expiresAt: Date.now() - 1
+					}
+				}
+			});
+			state = { ...state, registration_state: 'registered' };
+			routes['/api/account/profile'] = () => profile('registered', ['otp']);
+			expect(((await view()) as Page).widgets.guestRecovered).toBe(true);
+		});
+
+		it('keeps an address’s attempt whose code’s time passed while ar-management answered', async () => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			try {
+				guestPage();
+				routes['/api/account/guest-upgrade/start'] = () =>
+					json({
+						operation_id: 'op-8',
+						upgrade_token: TOKEN,
+						method: 'email',
+						expires_at: Math.floor(Date.now() / 1000) + 60
+					});
+				routes['/api/account/guest-upgrade/complete'] = () => {
+					vi.setSystemTime(Date.now() + 120_000);
+					return json({ status: 'in_progress' }, 202);
+				};
+				await view();
+				await post('guest_start', { method: 'email', email: 'a@example.com' });
+				await expect(post('guest_confirm', { operation: 'op-8', code: '123456' })).resolves.toEqual(
+					{ notice: 'guest_pending', widget: 'guest' }
+				);
+				expect(store.txn.data.accountGuestUpgrade).toMatchObject({
+					operationId: 'op-8',
+					spent: true
+				});
+				state = { ...state, registration_state: 'registered' };
+				routes['/api/account/profile'] = () => profile('registered', ['otp']);
+				expect(((await view()) as Page).widgets.guestRecovered).toBe(true);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
 });

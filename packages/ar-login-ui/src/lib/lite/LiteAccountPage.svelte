@@ -163,7 +163,24 @@
 				</form>
 			</section>
 		{/if}
-		{#if data.widgets.passkeyCreate}
+		{#if data.widgets.guestPasskey}
+			<!-- A guest's registration with a passkey: its ceremony, once on the page. -->
+			<section class="account-widget" id="guest-passkey">
+				<h2>{data.text.guestPasskey}</h2>
+				<form
+					method="post"
+					action={actionOf(data.search, 'guest_passkey_finish')}
+					data-lite-passkey-create={JSON.stringify(data.widgets.guestPasskey.registration)}
+					data-lite-passkey-unsupported={data.text.passkeyUnsupported}
+					data-lite-passkey-error={data.text.passkeyCeremonyFailed}
+				>
+					{@render hidden(data.txnId, data.csrfToken, data.op)}
+					<input type="hidden" name="operation" value={data.widgets.guestPasskey.operation} />
+					<input type="hidden" name="credential" value="" />
+					<button type="submit">{data.text.guestPasskey}</button>
+				</form>
+			</section>
+		{:else if data.widgets.passkeyCreate}
 			<!-- The new passkey's ceremony, once on the page (whatever the widgets placed): the fixed
 			     script creates it on the button's press. -->
 			<section class="account-widget" id="passkey-create">
@@ -217,7 +234,7 @@
 				</section>
 			{/each}
 		</div>
-		{#if data.stepUp?.passkey || data.widgets.passkeyCreate}
+		{#if data.stepUp?.passkey || data.widgets.passkeyCreate || data.widgets.guestPasskey}
 			<noscript><p role="alert">{data.text.javascriptRequired}</p></noscript>
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -- a constant, allowed by its CSP hash -->
 			{@html passkeyTag}

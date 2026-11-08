@@ -46,6 +46,12 @@ import {
 	liteAccountSocialActions,
 	liteAccountSocialOutcome
 } from './account-social';
+import {
+	liteAccountGuest,
+	liteAccountGuestActions,
+	liteAccountGuestAttemptStale,
+	readLiteAccountGuestAttempt
+} from './account-guest';
 import { liteAccountLauncherActions, liteAccountLaunchers } from './account-launcher';
 import { cspHashSource } from './csp';
 import { qrDataUri } from './qr';
@@ -311,7 +317,8 @@ export async function liteAccountPage(event: RequestEvent) {
 		passkeyList,
 		totpList,
 		socialList,
-		launcherList
+		launcherList,
+		guestStatus
 	] = await Promise.all([
 		drawn.has('account_session_widget')
 			? (sessions ?? read(backend, '/api/account/sessions'))
@@ -333,8 +340,43 @@ export async function liteAccountPage(event: RequestEvent) {
 		drawn.has('account_passkey_widget') ? read(backend, '/api/account/passkeys') : null,
 		drawn.has('account_totp_widget') ? read(backend, '/api/account/totp') : null,
 		drawn.has('account_social_account_widget') ? read(backend, '/api/external/links') : null,
-		drawn.has('account_launcher_widget') ? read(backend, '/api/account/launchers') : null
+		drawn.has('account_launcher_widget') ? read(backend, '/api/account/launchers') : null,
+		// (Only a guest's, or one whose registration is under way: a registered account has none.)
+		drawn.has('account_upgrade_widget') &&
+		(conditions.registrationState === 'guest' || readLiteAccountGuestAttempt(txn.data) !== null)
+			? read(backend, '/api/account/guest-upgrade')
+			: null
 	]);
+	// A guest's registration under way. One past its time is removed; one whose account is now
+	// registered (its answer lost, or finished in the background) is said done and removed.
+	let guestAttempt = readLiteAccountGuestAttempt(txn.data);
+	let guestRecovered = false;
+	const guestView = guestStatus?.ok ? liteAccountGuest(guestStatus.json, LL, locale) : null;
+	const registeredNow =
+		conditions.registrationState === 'registered' || (guestView !== null && !guestView.guest);
+	if (liteAccountGuestAttemptStale(txn.data) || (guestAttempt && registeredNow)) {
+		guestRecovered = guestAttempt !== null && registeredNow;
+		const cleared = await txns
+			.transition(txn.id, {
+				expectedVersion: txn.version,
+				to: 'pending',
+				patch: { accountGuestUpgrade: null }
+			})
+			.catch(() => null);
+		if (cleared?.ok) txn = cleared.txn;
+		guestAttempt = null;
+	}
+	// The registration widget is a guest's (and says a registration done): a registered account
+	// draws none (the SPA's).
+	const shownPlacements =
+		guestRecovered || conditions.registrationState === 'guest'
+			? placements
+			: placements.map((placement) => ({
+					...placement,
+					blocks: placement.blocks.filter(
+						(block) => !(block.kind === 'widget' && block.widget === 'account_upgrade_widget')
+					)
+				}));
 	// An authenticator being added: its secret and QR code (drawn once, by its widget).
 	let enroll = drawn.has('account_totp_widget') ? readLiteAccountTotpEnroll(txn.data) : null;
 	// A setup whose credential is no longer pending (activated, or removed, when the post that did
@@ -372,9 +414,11 @@ export async function liteAccountPage(event: RequestEvent) {
 		passkeys: passkeyList?.ok ? liteAccountPasskeys(passkeyList.json, LL, locale) : null,
 		// A passkey being added: its ceremony.
 		passkeyCreate: (() => {
-			// One ceremony at a time: none while a step-up is asked for.
+			// One ceremony at a time: none while a step-up is asked for, or a guest registers with one.
 			const create =
-				drawn.has('account_passkey_widget') && !readLiteAccountStepUp(txn.data)
+				drawn.has('account_passkey_widget') &&
+				!readLiteAccountStepUp(txn.data) &&
+				guestAttempt?.method !== 'passkey'
 					? readLiteAccountPasskeyCreate(txn.data)
 					: null;
 			return create ? { registration: create.registration, challenge: create.challengeId } : null;
@@ -394,6 +438,24 @@ export async function liteAccountPage(event: RequestEvent) {
 		socialOutcome: drawn.has('account_social_account_widget')
 			? liteAccountSocialOutcome(event.url, LL)
 			: null,
+		guest: guestView,
+		guestRecovered,
+		guestAttempt:
+			guestAttempt && drawn.has('account_upgrade_widget')
+				? {
+						method: guestAttempt.method,
+						operationId: guestAttempt.operationId,
+						spent: guestAttempt.spent
+					}
+				: null,
+		// A guest registering with a passkey: its ceremony (once on the page).
+		guestPasskey:
+			guestAttempt?.method === 'passkey' &&
+			guestAttempt.options &&
+			drawn.has('account_upgrade_widget') &&
+			!readLiteAccountStepUp(txn.data)
+				? { registration: guestAttempt.options, operation: guestAttempt.operationId }
+				: null,
 		launcher: launcherList?.ok ? liteAccountLaunchers(launcherList.json, event.url, locale) : null,
 		// An authenticator may be added (the tenant offers them: the SPA's widget's condition).
 		totpAddEnabled: conditions.totpManagementEnabled,
@@ -410,7 +472,7 @@ export async function liteAccountPage(event: RequestEvent) {
 		: null;
 	// A passkey ceremony drawn (a step-up's, or one adding a passkey): its fixed script, allowed by
 	// its hash.
-	if (stepUp?.passkey || widgets.passkeyCreate) {
+	if (stepUp?.passkey || widgets.passkeyCreate || widgets.guestPasskey) {
 		event.locals.liteCsp = { scriptHashes: [await cspHashSource(LITE_PASSKEY_SCRIPT)] };
 	}
 	if (widgets.activity?.nextCursor) {
@@ -433,7 +495,7 @@ export async function liteAccountPage(event: RequestEvent) {
 		guest:
 			(record(record(profile.json).session).amr as unknown[] | undefined)?.includes('anon') ??
 			false,
-		placements,
+		placements: shownPlacements,
 		widgets,
 		stepUp,
 		text: {
@@ -520,7 +582,20 @@ export async function liteAccountPage(event: RequestEvent) {
 			launcherNoMatches: LL.account_launcherNoMatches(),
 			launcherFavorite: LL.account_launcherFavoriteAdd(),
 			launcherUnfavorite: LL.account_launcherFavoriteRemove(),
-			launcherFavoriteFailed: LL.account_launcherFavoriteUpdateFailed()
+			launcherFavoriteFailed: LL.account_launcherFavoriteUpdateFailed(),
+			guestDescription: LL.account_guestDescription(),
+			guestEmail: LL.account_guestEmail(),
+			guestSend: LL.account_guestSend(),
+			guestPasskey: LL.account_guestPasskey(),
+			guestCode: LL.account_guestCode(),
+			guestConfirm: LL.account_guestConfirm(),
+			guestPending: LL.account_guestPending(),
+			guestRetry: LL.account_guestRetry(),
+			guestError: LL.account_guestError(),
+			guestCollision: LL.account_guestCollision(),
+			guestExistingLogin: LL.account_guestExistingLogin(),
+			guestRegistered: LL.account_guestRegistered(),
+			guestChangeMethod: LL.account_guestChangeMethod()
 		}
 	};
 }
@@ -623,6 +698,7 @@ export const liteAccountActions = {
 	...liteAccountTotpActions,
 	...liteAccountSocialActions,
 	...liteAccountLauncherActions,
+	...liteAccountGuestActions,
 	sign_out: liteAccountSignOutAction,
 	profile_save: liteAccountProfileSaveAction,
 	session_revoke: liteAccountSessionRevokeAction

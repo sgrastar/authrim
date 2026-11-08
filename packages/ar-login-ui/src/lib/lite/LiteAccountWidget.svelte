@@ -361,6 +361,96 @@
 				</ul>
 			{/if}
 		{/if}
+	{:else if widget === 'account_upgrade_widget'}
+		{@const guest = data.widgets.guest}
+		{@const attempt = data.widgets.guestAttempt}
+		{#if notice('guest') === 'guest_registered' || data.widgets.guestRecovered}
+			<p role="status">{data.text.guestRegistered}</p>
+		{:else if guest === null}
+			<p role="alert">{data.text.loadFailed}</p>
+		{:else if guest.guest}
+			<p class="muted">{data.text.guestDescription}</p>
+			<p class="muted">{guest.due}</p>
+			{#if mine('guest') && form && 'confirmExistingLogin' in form}
+				<!-- A guest signed out cannot come back to this account: asked first. -->
+				<p role="alert">{data.text.guestSignOutWarning}</p>
+				<form method="post" action={actionOf(data.search, 'guest_existing_login')}>
+					{@render hidden()}
+					<input type="hidden" name="confirm" value="guest" />
+					<button type="submit">{data.text.guestExistingLogin}</button>
+					<a href={data.search || '?'}>{data.text.cancel}</a>
+				</form>
+			{:else if failed('guest') === 'guest_collision'}
+				<p role="alert">{data.text.guestCollision}</p>
+				{#if form && 'existingLogin' in form && form.existingLogin}
+					<form method="post" action={actionOf(data.search, 'guest_existing_login')}>
+						{@render hidden()}
+						<button type="submit">{data.text.guestExistingLogin}</button>
+					</form>
+				{/if}
+			{:else if failed('guest') === 'busy'}
+				<p role="alert">{data.text.busy}</p>
+			{:else if failed('guest') === 'code_invalid'}
+				<p role="alert">{data.text.codeInvalid}</p>
+			{:else if failed('guest')}
+				<p role="alert">{data.text.guestError}</p>
+			{/if}
+			{#if notice('guest') === 'guest_pending' || guest.inProgress || attempt?.spent}
+				<p role="status">{data.text.guestPending}</p>
+				<p><a href={data.search || '?'}>{data.text.guestRetry}</a></p>
+				{#if attempt && !guest.inProgress}
+					<!-- Not under way at ar-management (its proof never reached it): given up here. -->
+					<form method="post" action={actionOf(data.search, 'guest_reset')}>
+						{@render hidden()}
+						<input type="hidden" name="operation" value={attempt.operationId} />
+						<button type="submit">{data.text.guestChangeMethod}</button>
+					</form>
+				{/if}
+			{:else if attempt}
+				{#if attempt.method === 'email'}
+					<form method="post" action={actionOf(data.search, 'guest_confirm')}>
+						{@render hidden()}
+						<input type="hidden" name="operation" value={attempt.operationId} />
+						<label>
+							{data.text.guestCode}
+							<input
+								name="code"
+								inputmode="numeric"
+								autocomplete="one-time-code"
+								pattern={'[0-9]{6}'}
+								maxlength="6"
+								required
+							/>
+						</label>
+						<button type="submit">{data.text.guestConfirm}</button>
+					</form>
+				{/if}
+				<form method="post" action={actionOf(data.search, 'guest_reset')}>
+					{@render hidden()}
+					<input type="hidden" name="operation" value={attempt.operationId} />
+					<button type="submit">{data.text.guestChangeMethod}</button>
+				</form>
+			{:else if guest.eligible}
+				{#if guest.methods.email}
+					<form method="post" action={actionOf(data.search, 'guest_start')}>
+						{@render hidden()}
+						<input type="hidden" name="method" value="email" />
+						<label>
+							{data.text.guestEmail}
+							<input name="email" type="email" autocomplete="email" maxlength="254" required />
+						</label>
+						<button type="submit">{data.text.guestSend}</button>
+					</form>
+				{/if}
+				{#if guest.methods.passkey}
+					<form method="post" action={actionOf(data.search, 'guest_start')}>
+						{@render hidden()}
+						<input type="hidden" name="method" value="passkey" />
+						<button type="submit">{data.text.guestPasskey}</button>
+					</form>
+				{/if}
+			{/if}
+		{/if}
 	{:else if widget === 'account_device_list_widget'}
 		<p class="muted">{data.text.devicesDescription}</p>
 		{#if data.widgets.devices === null}
