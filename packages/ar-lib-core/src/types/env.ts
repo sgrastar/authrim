@@ -29,6 +29,7 @@ import type {
   AuthAccountProvisioningServiceBinding,
   ExternalIdpAccountProvisioningServiceBinding,
 } from '../services/account-provisioning';
+import type { ExternalIdpAdminServiceBinding } from '../services/external-idp-token-revocation';
 
 export interface KeyManagerPublicServiceBinding {
   getAllPublicKeys(tenantId: string): Promise<JWK[]>;
@@ -519,8 +520,9 @@ export interface Env extends LogIcebergSettingsEnv {
   /**
    * ar-bridge's admin API, reached only through the named ExternalIdpAdminEntrypoint (props-authenticated).
    * ar-bridge's public fetch refuses /api/admin/*, so the management step-up gate cannot be bypassed.
+   * Its one RPC revokes a user's upstream tokens before a PII-only deletion erases them.
    */
-  EXTERNAL_IDP_ADMIN?: Fetcher;
+  EXTERNAL_IDP_ADMIN?: ExternalIdpAdminServiceBinding;
   CONTROL?: ControlServiceBinding; // Narrow Control Worker RPC facade for ar-management
   ACCOUNT_DIRECTORY?: AccountDirectoryServiceBinding; // Named ar-management directory coordinator RPC
   GUEST_UPGRADE_READINESS?: {

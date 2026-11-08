@@ -26739,7 +26739,18 @@ paths:
         values: an identifier change (`identifier_change_in_progress`), an external identifier's
         unlinking (`external_unlink_in_progress`), a guest registration
         (`guest_upgrade_in_progress`) or an identity provider's account creation
-        (`account_provisioning_pending`); nothing is erased then.
+        (`account_provisioning_pending`); nothing is erased then (and no token is revoked).
+
+        Before the stored provider tokens are erased, they are revoked at each identity provider
+        (RFC 7009, by the bridge; once erased they could no longer be revoked). The revocation is
+        best-effort: the providers are asked side by side and given
+        `external_idp.token_revocation_timeout_ms` (default 3000 ms, 500 to 10000), and a
+        provider that has no revocation endpoint, refuses, cannot be reached or does not answer
+        in time does not stop or fail the deletion; its grant stays valid at the provider until
+        it expires. A token stored while the deletion runs (a sign-in through the provider) may be
+        erased without being revoked. The outcome is recorded in the `user.pii_deleted`
+        audit entry (`upstream_token_revocation`: `status` and counts by outcome, never a token;
+        a warning when not every token was revoked), not in the response.
       responses:
         '200':
           $ref: '#/components/responses/UserPiiDelete'

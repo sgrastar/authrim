@@ -311,6 +311,7 @@ export * from './services/settings-history';
 export * from './services/auth-core-persistence-context';
 export * from './services/runtime-data-context';
 export * from './services/account-provisioning';
+export * from './services/external-idp-token-revocation';
 export * from './services/account-tombstone';
 export * from './services/tombstone-hmac-keyring';
 export * from './services/sign-in-attempts';

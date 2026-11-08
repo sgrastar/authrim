@@ -36,6 +36,7 @@ vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original)
 }));
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DatabaseAdapter, Env, GuestLifecycleRow } from '@authrim/ar-lib-core';
+import { createAuditLogFromContext } from '@authrim/ar-lib-core';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 let newLogFixture: Awaited<ReturnType<typeof logProducerFixture>>;
 const auditBackgroundWork: Promise<unknown>[] = [];
@@ -304,6 +305,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   });
   return {
     ...actual,
+    // Pass-through, so a test can read an entry's details (the stored copy is encrypted).
+    createAuditLogFromContext: vi.fn(actual.createAuditLogFromContext),
     checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
       registrationCheck.override ?? actual.checkEmailRegistration(...args),
     createAccountAuthContextFromHono: vi.fn((c, tenantId) => {
@@ -4097,6 +4100,34 @@ describe('Admin API Handlers', () => {
         piiDb: dbs.accountPiiDb,
       }));
     }
+    /** ar-bridge's admin entrypoint, with its token revocation RPC. */
+    function upstreamRevocationBridge(
+      revoke: (input: unknown) => Promise<unknown> = async () => ({
+        schemaVersion: 1,
+        identities: [],
+      })
+    ) {
+      return {
+        fetch: vi.fn(),
+        connect: vi.fn(),
+        revokeUserLinkedIdentityTokens: vi.fn(revoke),
+      } as unknown as NonNullable<Env['EXTERNAL_IDP_ADMIN']> & {
+        revokeUserLinkedIdentityTokens: ReturnType<typeof vi.fn>;
+      };
+    }
+    /** The `user.pii_deleted` audit entry's details and severity. */
+    function piiDeletedAudit(userId: string): {
+      details: Record<string, unknown>;
+      severity: unknown;
+    } {
+      const call = vi
+        .mocked(createAuditLogFromContext)
+        .mock.calls.find(
+          ([, action, , resourceId]) => action === 'user.pii_deleted' && resourceId === userId
+        );
+      expect(call).toBeDefined();
+      return { details: call![4] as Record<string, unknown>, severity: call![5] };
+    }
 
     it('finds the user, writes the tombstone and erases PII in the account databases', async () => {
       const userId = 'user-routed-delete-pii';
@@ -4168,12 +4199,16 @@ describe('Admin API Handlers', () => {
       const userId = `user-routed-delete-pii-wait-${code}`;
       const dbs = createRoutedAccountDatabases(userId);
       dbs.accountPiiFirst.push([fragment, { operation_id: 'op', id: 'li' }]);
+      // Tokens are stored, but nothing is revoked while the deletion waits.
+      dbs.accountPiiFirst.push(['AS upstream_token_identity', { upstream_token_identity: 1 }]);
       routeAccountSources(dbs);
+      const bridge = upstreamRevocationBridge();
       const c = piiDeleteContext({
         method: 'DELETE',
         params: { id: userId },
         db: dbs.metadataDb,
         dbPII: dbs.metadataPiiDb,
+        envOverrides: { EXTERNAL_IDP_ADMIN: bridge },
       });
 
       await adminUserDeletePiiHandler(c);
@@ -4183,6 +4218,7 @@ describe('Admin API Handlers', () => {
         expect.stringContaining('INSERT INTO users_pii_tombstone')
       );
       expect(dbs.accountPiiSqls.some((sql) => /^\s*(UPDATE|DELETE)/u.test(sql))).toBe(false);
+      expect(bridge.revokeUserLinkedIdentityTokens).not.toHaveBeenCalled();
     });
 
     it('answers 409 when an operation started while it erased (to be run again)', async () => {
@@ -4194,12 +4230,21 @@ describe('Admin API Handlers', () => {
         'FROM identity_identifier_replacement_operations',
         () => (++checks > 1 ? { operation_id: 'op' } : undefined),
       ]);
+      dbs.accountPiiFirst.push(['AS upstream_token_identity', { upstream_token_identity: 1 }]);
       routeAccountSources(dbs);
+      const erasedAtCall: boolean[] = [];
+      const bridge = upstreamRevocationBridge(async () => {
+        erasedAtCall.push(
+          dbs.accountPiiSqls.some((sql) => sql.includes('UPDATE linked_identities'))
+        );
+        return { schemaVersion: 1, identities: [{ providerId: 'p1', outcome: 'revoked' }] };
+      });
       const c = piiDeleteContext({
         method: 'DELETE',
         params: { id: userId },
         db: dbs.metadataDb,
         dbPII: dbs.metadataPiiDb,
+        envOverrides: { EXTERNAL_IDP_ADMIN: bridge },
       });
 
       await adminUserDeletePiiHandler(c);
@@ -4227,6 +4272,157 @@ describe('Admin API Handlers', () => {
       expect(dbs.accountPiiSqls).toContainEqual(
         expect.stringContaining('UPDATE identity_sensitive_values')
       );
+      // Unlike a 409 before anything is erased, this one has erased the tokens: they were
+      // revoked first (once: there is no second pass).
+      expect(erasedAtCall).toEqual([false]);
+      expect(piiDeletedAudit(userId).details).toMatchObject({
+        retry_required: true,
+        upstream_token_revocation: { status: 'completed', identities: 1 },
+      });
+    });
+
+    it('revokes the stored upstream tokens at the bridge before erasing them', async () => {
+      const userId = 'user-routed-delete-pii-revoke';
+      const dbs = createRoutedAccountDatabases(userId);
+      let presenceChecks = 0;
+      // Stored at the first pass; erased by it, so none at the second.
+      dbs.accountPiiFirst.push([
+        'AS upstream_token_identity',
+        () => (++presenceChecks === 1 ? { upstream_token_identity: 1 } : undefined),
+      ]);
+      routeAccountSources(dbs);
+      const erasedAtCall: boolean[] = [];
+      const bridge = upstreamRevocationBridge(async () => {
+        erasedAtCall.push(
+          dbs.accountPiiSqls.some((sql) => sql.includes('UPDATE linked_identities'))
+        );
+        return { schemaVersion: 1, identities: [{ providerId: 'p1', outcome: 'revoked' }] };
+      });
+      const c = piiDeleteContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+        envOverrides: { EXTERNAL_IDP_ADMIN: bridge },
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+      // The tenant and the user only (ar-bridge reads and decrypts the tokens itself), before the
+      // erasure nulled them; the second pass found none stored and made no call.
+      expect(bridge.revokeUserLinkedIdentityTokens).toHaveBeenCalledTimes(1);
+      expect(bridge.revokeUserLinkedIdentityTokens).toHaveBeenCalledWith({
+        schemaVersion: 1,
+        tenantId: 'default',
+        userId,
+        timeoutMs: 3000,
+      });
+      expect(erasedAtCall).toEqual([false]);
+      expect(presenceChecks).toBe(2);
+      expect(piiDeletedAudit(userId)).toMatchObject({
+        details: {
+          upstream_token_revocation: {
+            status: 'completed',
+            identities: 1,
+            outcomes: { revoked: 1 },
+          },
+        },
+        severity: 'info',
+      });
+    });
+
+    it('revokes tokens stored since the first pass before the second erasure', async () => {
+      const userId = 'user-routed-delete-pii-revoke-twice';
+      const dbs = createRoutedAccountDatabases(userId);
+      dbs.accountPiiFirst.push(['AS upstream_token_identity', { upstream_token_identity: 1 }]);
+      routeAccountSources(dbs);
+      const erasuresAtCall: number[] = [];
+      const bridge = upstreamRevocationBridge(async () => {
+        erasuresAtCall.push(
+          dbs.accountPiiSqls.filter((sql) => sql.includes('UPDATE linked_identities')).length
+        );
+        return { schemaVersion: 1, identities: [{ providerId: 'p1', outcome: 'revoked' }] };
+      });
+      const c = piiDeleteContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+        envOverrides: { EXTERNAL_IDP_ADMIN: bridge },
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      // Each call came before its own erasure pass.
+      expect(erasuresAtCall).toEqual([0, 1]);
+      expect(piiDeletedAudit(userId).details).toMatchObject({
+        upstream_token_revocation: { status: 'completed', identities: 2, outcomes: { revoked: 2 } },
+      });
+    });
+
+    it('erases and answers success when the revocation fails, recording it in the audit', async () => {
+      const userId = 'user-routed-delete-pii-revoke-fails';
+      const dbs = createRoutedAccountDatabases(userId);
+      let presenceChecks = 0;
+      dbs.accountPiiFirst.push([
+        'AS upstream_token_identity',
+        () => (++presenceChecks === 1 ? { upstream_token_identity: 1 } : undefined),
+      ]);
+      routeAccountSources(dbs);
+      const bridge = upstreamRevocationBridge(async () => {
+        throw new Error('idp unreachable: refresh token plain-refresh-token');
+      });
+      const c = piiDeleteContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+        envOverrides: { EXTERNAL_IDP_ADMIN: bridge },
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, pii_status: 'deleted' })
+      );
+      expect(dbs.accountPiiSqls).toContainEqual(
+        expect.stringContaining('UPDATE linked_identities')
+      );
+      const audit = piiDeletedAudit(userId);
+      // Recorded as a warning: a grant may still be valid at the provider.
+      expect(audit).toMatchObject({
+        details: { upstream_token_revocation: { status: 'failed', identities: 0 } },
+        severity: 'warning',
+      });
+      expect(JSON.stringify(audit)).not.toContain('plain-refresh-token');
+    });
+
+    it('does not revoke while a legal hold keeps the PII', async () => {
+      const userId = 'user-routed-held-pii-revoke';
+      const dbs = createRoutedAccountDatabases(userId);
+      dbs.accountCoreResults.first.push([
+        'FROM legal_holds hold',
+        { hold_id: 'legal-hold:routed', reason_code: 'regulatory_review' },
+      ]);
+      dbs.accountPiiFirst.push(['AS upstream_token_identity', { upstream_token_identity: 1 }]);
+      routeAccountSources(dbs);
+      const bridge = upstreamRevocationBridge();
+      const c = piiDeleteContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+        envOverrides: { EXTERNAL_IDP_ADMIN: bridge },
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'legal_hold_active' }),
+        409
+      );
+      expect(bridge.revokeUserLinkedIdentityTokens).not.toHaveBeenCalled();
     });
 
     it("keeps the erased address's keyed index and the requested retention in the tombstone", async () => {
