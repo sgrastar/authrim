@@ -299,7 +299,10 @@ export async function liteAccountPasskeyAddFinishAction(event: RequestEvent) {
 			{ action: 'passkey_add', args: { deviceName: create.deviceName ?? '' } }
 		);
 	}
-	if (answer?.status === 200) return { notice: 'passkey_added' as const, widget: 'passkeys' };
+	// (ar-management answers a passkey registered with 201.)
+	if (answer?.status === 201 || answer?.status === 200) {
+		return { notice: 'passkey_added' as const, widget: 'passkeys' };
+	}
 	return fail(answer && answer.status < 500 ? 400 : 503, {
 		error: 'passkey_failed' as const,
 		widget: 'passkeys'
@@ -325,6 +328,7 @@ function busy(stepUp: LiteAccountStepUp, now = Date.now()): boolean {
 	return (
 		stepUp.email !== null ||
 		stepUp.passkey !== null ||
+		(stepUp.sendingAt !== null && now - stepUp.sendingAt < 60_000) ||
 		(stepUp.checkingAt !== null && now - stepUp.checkingAt < CHECK_TTL_MS)
 	);
 }
@@ -372,14 +376,13 @@ export async function liteAccountStepUpEmailSendAction(event: RequestEvent) {
 	const opened = await openStepUp(event);
 	if ('failure' in opened) return opened.failure;
 	const { post, stepUp } = opened;
-	// A method chosen already (a code sent, a ceremony drawn) or a check taken: the page as it is
-	// (another way is chosen with its own button).
-	if (busy(stepUp)) return { notice: 'step_up_underway' as const, widget: 'account' };
-	// One send at a time: taken first (a move from the version this post read), so of posts that
-	// read the same only one sends; one taken within the last minute is another post's.
+	// A method chosen already (a code sent or being sent, a ceremony drawn) or a check taken: the
+	// page as it is (another way is chosen with its own button). One send at a time: taken first (a
+	// move from the version this post read), so of posts that read the same only one sends.
 	if (stepUp.sendingAt !== null && Date.now() - stepUp.sendingAt < 60_000) {
 		return { notice: 'step_up_code_sending' as const, widget: 'account' };
 	}
+	if (busy(stepUp)) return { notice: 'step_up_underway' as const, widget: 'account' };
 	const taken = await move(post, {
 		accountStepUp: { ...stepUp, email: null, passkey: null, sendingAt: Date.now() }
 	});

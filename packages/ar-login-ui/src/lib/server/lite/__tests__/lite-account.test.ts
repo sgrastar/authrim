@@ -754,6 +754,17 @@ describe('the lite account page', () => {
 			await expect(post('stepup_passkey_start', { step_up: at })).resolves.toMatchObject({
 				notice: 'step_up_underway'
 			});
+			// Nor a passkey started while a code is being sent (another tab's send under way).
+			await post('stepup_switch', { step_up: at });
+			store.set({
+				data: {
+					...store.txn.data,
+					accountStepUp: { ...(store.txn.data.accountStepUp as object), sendingAt: Date.now() }
+				}
+			});
+			await expect(post('stepup_passkey_start', { step_up: at })).resolves.toMatchObject({
+				notice: 'step_up_underway'
+			});
 		});
 
 		it('offers the authenticator only with an active one, and gives a held change up', async () => {
@@ -789,9 +800,10 @@ describe('the lite account page', () => {
 					}
 				});
 			let completed: Record<string, unknown> | null = null;
+			// (As ar-management: 201 for a passkey registered.)
 			routes['/api/account/passkeys/complete'] = (body) => {
 				completed = body;
-				return json({ ok: true, passkey: { id: 'pk2' } });
+				return json({ ok: true, passkey: { id: 'pk2' } }, 201);
 			};
 			routes['/api/account/passkeys/pk1'] = () =>
 				json({ error: 'remaining_login_method_required' }, 409);
