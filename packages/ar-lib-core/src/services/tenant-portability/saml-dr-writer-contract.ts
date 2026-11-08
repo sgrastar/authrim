@@ -37,6 +37,8 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
     'guarded:fetch',
     'guarded:rpc:ExternalIdpAdminEntrypoint.fetch',
     'guarded:scheduled',
+    // Reads the user's linked identities and calls the providers; writes no store.
+    'read-only:rpc:ExternalIdpAdminEntrypoint.revokeUserLinkedIdentityTokens',
   ],
   'ar-vc': [
     'excluded-transient:do:CredentialOfferStore',

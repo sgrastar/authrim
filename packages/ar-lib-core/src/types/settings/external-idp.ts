@@ -8,6 +8,11 @@
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 import { DEFAULT_PROFILE_UPDATE_FIELDS } from '../../services/profile-update-fields';
+import {
+  DEFAULT_EXTERNAL_IDP_TOKEN_REVOCATION_TIMEOUT_MS,
+  MAX_EXTERNAL_IDP_TOKEN_REVOCATION_TIMEOUT_MS,
+  MIN_EXTERNAL_IDP_TOKEN_REVOCATION_TIMEOUT_MS,
+} from '../../services/external-idp-token-revocation';
 
 /**
  * External IdP Settings Interface
@@ -71,6 +76,9 @@ export interface ExternalIdPSettings {
 
   // Provider callbacks
   'external_idp.signed_request_max_age_seconds': number;
+
+  // Upstream token revocation
+  'external_idp.token_revocation_timeout_ms': number;
 }
 
 /** How long after it was issued a provider's signed request (Facebook) is still accepted. */
@@ -187,6 +195,21 @@ export const EXTERNAL_IDP_SETTINGS_META: Record<keyof ExternalIdPSettings, Setti
     unit: 's',
     visibility: 'admin',
   },
+  'external_idp.token_revocation_timeout_ms': {
+    key: 'external_idp.token_revocation_timeout_ms',
+    type: 'number',
+    default: DEFAULT_EXTERNAL_IDP_TOKEN_REVOCATION_TIMEOUT_MS,
+    envKey: 'EXTERNAL_IDP_TOKEN_REVOCATION_TIMEOUT_MS',
+    envNumber: 'strict-in-range',
+    label: 'Token Revocation Time Limit',
+    description:
+      "Milliseconds a PII-only user deletion waits for the identity providers to revoke the user's stored tokens (side by side) before it erases them anyway (the deletion never fails on a revocation; an unrevoked token stays valid at the provider until it expires).",
+    min: MIN_EXTERNAL_IDP_TOKEN_REVOCATION_TIMEOUT_MS,
+    max: MAX_EXTERNAL_IDP_TOKEN_REVOCATION_TIMEOUT_MS,
+    integer: true,
+    unit: 'ms',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -213,4 +236,5 @@ export const EXTERNAL_IDP_DEFAULTS: ExternalIdPSettings = {
   'external_idp.jit_default_role_id': 'role_end_user',
   'external_idp.jit_allow_unverified_domain_mappings': false,
   'external_idp.signed_request_max_age_seconds': DEFAULT_SIGNED_REQUEST_MAX_AGE_SECONDS,
+  'external_idp.token_revocation_timeout_ms': DEFAULT_EXTERNAL_IDP_TOKEN_REVOCATION_TIMEOUT_MS,
 };
