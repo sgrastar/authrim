@@ -15,7 +15,12 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID, resolveTenantFromRequest } from '../utils/tenant-context';
-import { getRequestHost, isMultiTenantEnabled, validateTenantExistsAsync } from '../utils/issuer';
+import {
+  buildIssuerUrl,
+  getRequestHost,
+  isMultiTenantEnabled,
+  validateTenantExistsAsync,
+} from '../utils/issuer';
 import { validateTenantRequestBinding } from '../utils/tenant-binding-policy';
 import {
   classifyTenantRequestPath,
@@ -223,6 +228,62 @@ function shouldAttemptVanityHostResolution(
   return true;
 }
 
+/** An external IdP's authorization response endpoint (the Bridge's `:provider/callback`). */
+const EXTERNAL_IDP_CALLBACK_PATH = /^\/(?:auth|api)\/external\/[^/]+\/callback$/u;
+
+/** The context's own variable store, as the relay origin is kept in it. */
+interface RelayOriginContext {
+  get(key: string): unknown;
+  set(key: string, value: string): void;
+}
+
+/** The context key under which a relayed external IdP callback finds its canonical origin. */
+const EXTERNAL_CALLBACK_RELAY_ORIGIN = 'externalCallbackRelayOrigin';
+
+/**
+ * The tenant's canonical origin (its primary custom domain), when this request is an external
+ * IdP's form post brought to the callback registered at the provider: on the tenant's platform
+ * issuer host (`buildIssuerUrl`), which the redirect URI names, while the tenant's protocol traffic
+ * lives on its primary custom domain. Such a post is let through (the host is platform-controlled:
+ * it is not the tenant's to configure) for the Bridge only to relay it there, where the browser's
+ * own cookies for the sign-in are; nothing else is answered on that host. Null for any other
+ * request.
+ */
+async function resolveExternalCallbackRelayOrigin(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  requestHost: string,
+  coreDb: AnyTenantMetadataContext['coreDb'] | undefined,
+  timingSpans: DiagnosticTimingSpan[] | null
+): Promise<string | null> {
+  if (c.req.method !== 'POST' || !EXTERNAL_IDP_CALLBACK_PATH.test(c.req.path)) return null;
+  let platformHost: string;
+  try {
+    platformHost = new URL(buildIssuerUrl(c.env, tenantId)).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (platformHost !== requestHost) return null;
+  const primaryVanity = await timeDiagnosticSpan(timingSpans, 'rc_primary_vanity', () =>
+    getPrimaryTenantVanityDomain(
+      { AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG, tenantCoreDb: coreDb },
+      tenantId
+    )
+  );
+  if (!primaryVanity || primaryVanity.hostname === requestHost) return null;
+  return `https://${primaryVanity.hostname}`;
+}
+
+/**
+ * The canonical origin an external IdP callback on the platform issuer host is to be relayed to
+ * (set by the request context middleware, see resolveExternalCallbackRelayOrigin); null when the
+ * callback is on the host its sign-in started on and is handled where it is.
+ */
+export function getExternalCallbackRelayOrigin(c: object): string | null {
+  const value = (c as unknown as RelayOriginContext).get(EXTERNAL_CALLBACK_RELAY_ORIGIN);
+  return typeof value === 'string' && value ? value : null;
+}
+
 function isPublicAuthenticationMethodsPath(path: string): boolean {
   return path === '/api/auth/authentication-methods';
 }
@@ -319,6 +380,25 @@ function isReservedUiHost(env: Partial<Env>, requestHost: string | undefined): b
   }
 
   return loginUiHost !== getPrimaryTenantIssuerHostname(env);
+}
+
+/**
+ * The tenant a custom (vanity) domain belongs to, decided the way this middleware decides it for
+ * an ordinary protocol or REST request: only in multi-tenant mode and only for a host outside
+ * BASE_DOMAIN (a configured Login UI or Admin UI host there is looked up too, as below). Null
+ * when the host is not a vanity host or no active tenant owns it; throws when the lookup fails.
+ * Writes nothing, not even the resolver's KV hint.
+ * For Workers that need the same answer without running this middleware (the Router asks
+ * through ar-discovery's TenantHostEntrypoint).
+ */
+export async function resolveVanityHostTenantId(
+  env: Partial<Env>,
+  host: string | null | undefined
+): Promise<string | null> {
+  const requestHost = host?.split(':')[0]?.trim().toLowerCase();
+  if (!requestHost) return null;
+  if (!shouldAttemptVanityHostResolution(env, requestHost, 'public_protocol_or_rest')) return null;
+  return resolveTenantFromVanityHost(env, requestHost, { strict: true, readOnly: true });
 }
 
 export function requestContextMiddleware(options: RequestContextMiddlewareOptions = {}) {
@@ -515,9 +595,25 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       }
     }
 
+    // An external IdP's form post to the callback registered at it (on the platform issuer host)
+    // for a tenant whose protocol traffic lives on its primary custom domain: let through for the
+    // Bridge to relay it there. It is not answered on this host, so neither canonicalized nor
+    // bound to the tenant's configured hosts (the platform issuer host is never one of them).
+    const externalCallbackRelayOrigin =
+      isMultiTenantEnabled(c.env) && tenantResult.success && requestHost
+        ? await resolveExternalCallbackRelayOrigin(
+            c,
+            tenantId,
+            requestHost,
+            tenantMetadataContext?.coreDb,
+            timingSpans
+          )
+        : null;
+
     // The legacy tenant subdomain is a platform-controlled alias, so it can be
     // canonicalized before tenant-configured host binding is evaluated.
     if (
+      !externalCallbackRelayOrigin &&
       isMultiTenantEnabled(c.env) &&
       tenantResult.success &&
       requestHost &&
@@ -552,6 +648,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     }
 
     const shouldValidateTenantBinding =
+      !externalCallbackRelayOrigin &&
       isMultiTenantEnabled(c.env) &&
       requestClass === 'public_protocol_or_rest' &&
       !!tenantId &&
@@ -575,7 +672,12 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     // Every public protocol transaction for a tenant has exactly one issuer
     // namespace. Validate that the incoming host is tenant-bound before
     // canonicalizing it so an unapproved alias cannot disclose tenant routing.
-    if (isMultiTenantEnabled(c.env) && tenantResult.success && requestHost) {
+    if (
+      !externalCallbackRelayOrigin &&
+      isMultiTenantEnabled(c.env) &&
+      tenantResult.success &&
+      requestHost
+    ) {
       const primaryVanity = await timeDiagnosticSpan(timingSpans, 'rc_primary_vanity', () =>
         getPrimaryTenantVanityDomain(
           {
@@ -619,6 +721,12 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     ctx.set('startTime', startTime);
     if (tenantMetadataContext) {
       ctx.set('tenantMetadataContext', tenantMetadataContext);
+    }
+    if (externalCallbackRelayOrigin) {
+      (c as unknown as RelayOriginContext).set(
+        EXTERNAL_CALLBACK_RELAY_ORIGIN,
+        externalCallbackRelayOrigin
+      );
     }
     // Log request start
     logger.debug('Request started', {

@@ -32,7 +32,11 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
-import type { Env } from '@authrim/ar-lib-core';
+import type {
+  Env,
+  RevokeUserLinkedIdentityTokensInput,
+  RevokeUserLinkedIdentityTokensResult,
+} from '@authrim/ar-lib-core';
 import {
   rateLimitMiddleware,
   RateLimitProfiles,
@@ -55,6 +59,7 @@ import {
 } from '@authrim/ar-lib-core';
 
 // Import handlers
+import { revokeUserLinkedIdentityTokens } from './services/user-token-revocation';
 import { handleListProviders } from './handlers/list';
 import { handleExternalStart } from './handlers/start';
 import { handleThirdPartyInitiatedLogin } from './handlers/initiate-login';
@@ -414,16 +419,20 @@ export interface ExternalIdpAdminProps {
   environmentId: string;
 }
 
-/** Private admin fetch entrypoint bound only by ar-management (authenticated by binding props). */
+/** Private admin entrypoint bound only by ar-management (authenticated by binding props). */
 export class ExternalIdpAdminEntrypoint extends WorkerEntrypoint<Env, ExternalIdpAdminProps> {
-  fetch(request: Request): Promise<Response> {
+  private callerAuthorized(): boolean {
     const props = this.ctx.props;
-    if (
-      props?.caller !== 'ar-management' ||
-      props.audience !== EXTERNAL_IDP_ADMIN_AUDIENCE ||
-      !this.env.AUTHRIM_ENVIRONMENT_NAME ||
-      props.environmentId !== this.env.AUTHRIM_ENVIRONMENT_NAME
-    ) {
+    return (
+      props?.caller === 'ar-management' &&
+      props.audience === EXTERNAL_IDP_ADMIN_AUDIENCE &&
+      Boolean(this.env.AUTHRIM_ENVIRONMENT_NAME) &&
+      props.environmentId === this.env.AUTHRIM_ENVIRONMENT_NAME
+    );
+  }
+
+  fetch(request: Request): Promise<Response> {
+    if (!this.callerAuthorized()) {
       return Promise.resolve(Response.json({ error: 'access_denied' }, { status: 403 }));
     }
     if (!isAllowedExternalIdpAdminPath(new URL(request.url).pathname)) {
@@ -432,6 +441,18 @@ export class ExternalIdpAdminEntrypoint extends WorkerEntrypoint<Env, ExternalId
     return runSamlDrCoveredFetch(this.env, this.ctx, (coveredEnv, coveredContext) =>
       Promise.resolve(app.fetch(request, coveredEnv, coveredContext))
     );
+  }
+
+  /**
+   * Revoke the user's stored upstream tokens at their providers, before a PII-only deletion
+   * erases them. Takes the tenant and the user only: the tokens are read and decrypted here and
+   * never cross the binding. Read-only for the stores (DR contract: read-only).
+   */
+  async revokeUserLinkedIdentityTokens(
+    input: RevokeUserLinkedIdentityTokensInput
+  ): Promise<RevokeUserLinkedIdentityTokensResult> {
+    if (!this.callerAuthorized()) throw new Error('access_denied');
+    return revokeUserLinkedIdentityTokens(this.env, input);
   }
 }
 

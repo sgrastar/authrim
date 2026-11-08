@@ -283,7 +283,9 @@ export class LogArchiveApiError extends Error {
   constructor(
     readonly status: number,
     code: string,
-    readonly detail?: LogArchiveFailureDetail
+    readonly detail?: LogArchiveFailureDetail,
+    /** Cloudflare's numeric error codes of a 404 (e.g. 40402: the catalog exists but is inactive). */
+    readonly providerCodes: readonly number[] = []
   ) {
     super(detail ? `${code} (${formatLogArchiveFailure(status, detail)})` : code);
     this.code = code;
@@ -311,8 +313,20 @@ export class LogArchiveApi {
         signal: AbortSignal.timeout(30_000),
       }
     );
-    if (response.status === 404)
-      throw new LogArchiveApiError(404, 'log_archive_resource_not_found');
+    if (response.status === 404) {
+      // Only numeric codes are kept: they tell an inactive catalog (40402) from a missing one.
+      let providerCodes: number[] = [];
+      try {
+        const errors = object(await response.json()).errors;
+        if (Array.isArray(errors))
+          providerCodes = errors
+            .map((entry) => object(entry).code)
+            .filter((code): code is number => typeof code === 'number');
+      } catch {
+        // A 404 without a JSON body is still a plain not-found.
+      }
+      throw new LogArchiveApiError(404, 'log_archive_resource_not_found', undefined, providerCodes);
+    }
     if (response.status === 204 && response.ok) return undefined as T;
     const step = logArchiveStepLabel(path);
     let payload: { success?: boolean; result?: T; errors?: unknown };
@@ -450,6 +464,8 @@ export interface LogArchiveProvisionOptions {
   checkpoint: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
   /** R2 ownership must be verified with the existing marker + creation_date implementation. */
   assertBucketOwned: () => Promise<void>;
+  /** The owned bucket's creation_date; catalog entries older than it belong to an earlier bucket. */
+  bucketCreationDate?: string;
   /** The scheduled writer creates the table through the same Iceberg schema/client as runtime. */
   prepareScheduledTable: (catalog: { catalogUri: string; warehouse: string }) => Promise<void>;
   loadArchiveTable: () => Promise<IcebergLoadedTable>;
@@ -704,6 +720,236 @@ async function probeOwnedEmptyTable(
   };
 }
 
+interface CatalogEntryPage {
+  namespaces?: unknown;
+  identifiers?: unknown;
+  details?: unknown;
+  next_page_token?: unknown;
+}
+
+const STALE_CATALOG_ENTRY_LIMIT = 1000;
+/** Cloudflare's 404 code for a catalog that exists but is disabled ("Warehouse inactive"). */
+const CATALOG_INACTIVE_CODE = 40402;
+/** Cloudflare's 404 code for a bucket that never had a catalog ("Warehouse not found"). */
+const CATALOG_MISSING_CODE = 40401;
+const CATALOG_TIMESTAMP =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u;
+
+/** An RFC 3339 instant with a zone whose date and time exist on the calendar, else NaN. */
+function catalogTimestamp(value: unknown): number {
+  if (typeof value !== 'string') return Number.NaN;
+  const match = CATALOG_TIMESTAMP.exec(value);
+  if (!match) return Number.NaN;
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = match
+    .slice(1)
+    .map((part) => (part === undefined ? 0 : Number(part)));
+  const calendar = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendar.getUTCFullYear() !== year ||
+    calendar.getUTCMonth() !== month - 1 ||
+    calendar.getUTCDate() !== day ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  )
+    return Number.NaN;
+  return Date.parse(value);
+}
+
+/**
+ * Classifies a catalog read: present (active), inactive or missing; anything else throws.
+ * Cloudflare reports a disabled catalog either as 200 with status "inactive" or as 404 code
+ * 40402, and a bucket that never had one as 404 code 40401.
+ */
+async function readCatalogState(
+  options: LogArchiveProvisionOptions,
+  path: string
+): Promise<
+  | { state: 'present'; catalog: RemoteResource }
+  | { state: 'inactive'; catalog?: RemoteResource }
+  | { state: 'missing' }
+> {
+  try {
+    const catalog = await options.api.request<RemoteResource>(path);
+    const status = object(catalog).status;
+    // The 200 form still names the catalog; the 40402 form does not.
+    if (status === 'inactive') return { state: 'inactive', catalog };
+    if (status !== 'active') throw new Error('log_archive_catalog_state_unknown');
+    return { state: 'present', catalog };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'log_archive_catalog_state_unknown')
+      throw error;
+    if (!(error instanceof LogArchiveApiError) || error.status !== 404) throw error;
+    const codes = error.providerCodes;
+    if (codes.length === 1 && codes[0] === CATALOG_INACTIVE_CODE) return { state: 'inactive' };
+    if (codes.length === 1 && codes[0] === CATALOG_MISSING_CODE) return { state: 'missing' };
+    throw new Error('log_archive_catalog_state_unknown');
+  }
+}
+
+/**
+ * Proves every namespace and table of the (active) catalog was created, and every table last
+ * updated, before the owned bucket was created. Anything newer, malformed or past the inventory
+ * limit is refused. An empty catalog holds no table to lose and is accepted.
+ */
+async function assertCatalogPredatesBucket(
+  options: LogArchiveProvisionOptions,
+  path: string,
+  bucketCreatedAt: number
+): Promise<void> {
+  const unproven = () => new Error('log_archive_catalog_ownership_unproven');
+  const predates = (value: unknown) => catalogTimestamp(value) < bucketCreatedAt;
+  const isName = (value: unknown, length: number): value is string[] =>
+    Array.isArray(value) &&
+    value.length === length &&
+    value.every((part) => typeof part === 'string' && part.length > 0);
+  let entries = 0;
+  const count = () => {
+    if (++entries > STALE_CATALOG_ENTRY_LIMIT) throw unproven();
+  };
+  const list = async (base: string, query: Record<string, string>): Promise<CatalogEntryPage[]> => {
+    const pages: CatalogEntryPage[] = [];
+    let token: string | undefined;
+    do {
+      const params = new URLSearchParams({ ...query, page_size: '1000', return_details: 'true' });
+      if (token) params.set('page_token', token);
+      const page = object(await options.api.request<CatalogEntryPage>(`${base}?${params}`));
+      pages.push(page);
+      const next = page.next_page_token;
+      if (next !== undefined && next !== null && typeof next !== 'string') throw unproven();
+      token = next || undefined;
+      if (pages.length > STALE_CATALOG_ENTRY_LIMIT) throw unproven();
+    } while (token);
+    return pages;
+  };
+  const pending: string[][] = [[]];
+  while (pending.length > 0) {
+    const parent = pending.pop()!;
+    const query: Record<string, string> =
+      parent.length > 0 ? { parent: parent.join('\u001f') } : {};
+    const seen = new Set<string>();
+    for (const page of await list(`${path}/namespaces`, query)) {
+      const { namespaces: names, details } = page;
+      if (!Array.isArray(names) || !Array.isArray(details) || names.length !== details.length)
+        throw unproven();
+      for (const name of names) {
+        if (!isName(name, parent.length + 1) || !sameJson(name.slice(0, -1), parent))
+          throw unproven();
+        const key = JSON.stringify(name);
+        if (seen.has(key)) throw unproven();
+        seen.add(key);
+        const matches = details.map(object).filter((entry) => sameJson(entry.namespace, name));
+        if (matches.length !== 1 || !predates(matches[0].created_at)) throw unproven();
+        count();
+        pending.push(name);
+        const tablesPath = `${path}/namespaces/${encodeURIComponent(name.join('\u001f'))}/tables`;
+        const tableNames = new Set<string>();
+        const detailed = new Set<string>();
+        for (const tables of await list(tablesPath, {})) {
+          const { identifiers, details: tableDetails } = tables;
+          if (
+            !Array.isArray(identifiers) ||
+            !Array.isArray(tableDetails) ||
+            identifiers.length !== tableDetails.length
+          )
+            throw unproven();
+          const pageNames = new Set<string>();
+          for (const identifier of identifiers.map(object)) {
+            if (
+              typeof identifier.name !== 'string' ||
+              !identifier.name ||
+              !sameJson(identifier.namespace, name) ||
+              tableNames.has(identifier.name)
+            )
+              throw unproven();
+            tableNames.add(identifier.name);
+            pageNames.add(identifier.name);
+          }
+          for (const table of tableDetails.map(object)) {
+            const identifier = object(table.identifier);
+            if (
+              typeof identifier.name !== 'string' ||
+              !pageNames.has(identifier.name) ||
+              detailed.has(identifier.name) ||
+              !sameJson(identifier.namespace, name) ||
+              !predates(table.created_at) ||
+              !predates(table.updated_at)
+            )
+              throw unproven();
+            detailed.add(identifier.name);
+            count();
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Removes a catalog left by an earlier bucket of the same name: a catalog outlives its bucket,
+ * so deleting a bucket and creating one with the same name brings the old catalog and its table
+ * entries back, while their data went with the old bucket. Called only when Setup holds no
+ * record of enabling it. An inactive catalog cannot be listed, so it is enabled for the
+ * inventory and disabled again when its entries are not all older than the owned bucket.
+ *
+ * Known limits: Cloudflare offers no conditional delete and lists only active catalogs, so this
+ * assumes nothing writes to the catalog from the start of the inventory to the disable (an entry
+ * updated after it was listed is not seen), and a process killed after the inventory enable
+ * leaves a formerly inactive catalog active.
+ */
+async function removeStaleCatalog(
+  options: LogArchiveProvisionOptions,
+  path: string,
+  catalog: RemoteResource | undefined
+): Promise<void> {
+  const bucketCreatedAt = catalogTimestamp(options.bucketCreationDate);
+  if (!Number.isFinite(bucketCreatedAt)) throw new Error('log_archive_catalog_ownership_unproven');
+  const warehouse = `${options.api.accountId}_${options.archive.bucketName}`;
+  const reenabled = !catalog;
+  try {
+    if (!catalog) catalog = await options.api.request<RemoteResource>(`${path}/enable`, 'POST');
+    if (!catalog.id || catalog.name !== warehouse)
+      throw new Error('log_archive_catalog_response_invalid');
+    await assertCatalogPredatesBucket(options, path, bucketCreatedAt);
+  } catch (error) {
+    // Put an inactive catalog back as it was found, also when the enable's answer was lost;
+    // an active one was never changed.
+    if (reenabled) {
+      try {
+        await options.api.request(`${path}/disable`, 'POST');
+      } catch {
+        // A rerun sees an active catalog and cannot tell it was inactive: say so and stop.
+        throw new Error('log_archive_catalog_restore_failed_disable_it_manually', {
+          cause: error,
+        });
+      }
+    }
+    throw error;
+  }
+  options.onProgress?.(
+    `  Removing a Catalog left by an earlier bucket named ${options.archive.bucketName}...`
+  );
+  // Cloudflare answers the disable either with the catalog or with 204 and no body. Without an id
+  // in the answer, the catalog is read again and must be the same one, inactive. The 40402 form
+  // names no catalog, so it proves nothing and stops before the force delete.
+  const disabled = object(await options.api.request<RemoteResource>(`${path}/disable`, 'POST'));
+  let disabledId = disabled.id;
+  if (disabledId === undefined) {
+    const after = await readCatalogState(options, path);
+    if (after.state !== 'inactive' || after.catalog === undefined)
+      throw new Error('log_archive_catalog_ownership_unproven');
+    const seen = object(after.catalog);
+    if (seen.name !== warehouse) throw new Error('log_archive_catalog_ownership_unproven');
+    disabledId = seen.id;
+  }
+  if (disabledId !== catalog.id) throw new Error('log_archive_catalog_ownership_unproven');
+  await options.api.request(`${path}/delete?force=true`, 'POST');
+  if ((await readCatalogState(options, path)).state !== 'missing')
+    throw new Error('log_archive_stale_catalog_deletion_unconfirmed');
+}
+
 export async function provisionLogArchive(
   options: LogArchiveProvisionOptions
 ): Promise<LogArchiveLock> {
@@ -713,12 +959,16 @@ export async function provisionLogArchive(
   const identity = plan.resources.find((resource) => resource.kind === 'catalog')!;
   const path = `basin-catalog/${encodeURIComponent(options.archive.bucketName)}`;
   const prior = options.checkpoints['catalog:LOG_ARCHIVE_CATALOG'];
-  let catalog: RemoteResource | undefined;
-  try {
-    catalog = await options.api.request<RemoteResource>(path);
-  } catch (error) {
-    if (!(error instanceof LogArchiveApiError) || error.status !== 404) throw error;
+  const read = await readCatalogState(options, path);
+  let catalog = read.state === 'present' ? read.catalog : undefined;
+  let inactive = read.state === 'inactive';
+  if ((catalog || inactive) && !prior?.id && prior?.state !== 'create_issued') {
+    await removeStaleCatalog(options, path, catalog);
+    catalog = undefined;
+    inactive = false;
   }
+  // A recorded catalog that is now disabled must not be silently re-enabled with its contents.
+  if (inactive && prior?.id) throw new Error('log_archive_recorded_catalog_inactive');
   if (catalog) {
     if (
       !prior?.id ||

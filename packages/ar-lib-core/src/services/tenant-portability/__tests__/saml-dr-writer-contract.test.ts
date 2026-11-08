@@ -155,6 +155,13 @@ describe('installed SAML DR writer capability contract', () => {
         .sort()
     );
     expect(
+      samlDrWriterSurfaces('ar-discovery').filter((surface) => surface.startsWith('read-only:'))
+    ).toEqual(
+      array('packages/ar-discovery/src/index.ts', 'SAML_DR_READ_ONLY_SURFACES')
+        .map((surface) => `read-only:${surface}`)
+        .sort()
+    );
+    expect(
       samlDrWriterSurfaces('ar-plugin-runner').filter((surface) => surface.startsWith('read-only:'))
     ).toEqual(
       array('packages/ar-plugin-runner/src/worker.ts', 'SAML_DR_READ_ONLY_SURFACES')

@@ -770,6 +770,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     account-lifecycle.guest.deletion_enabled
     account-lifecycle.guest.upgrade_enabled
     account-lifecycle.deletion.block_reregistration
+    account-lifecycle.registration.cleanup_enabled
   `,
     ],
     [
@@ -779,6 +780,9 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     account-lifecycle.guest.deletion_after_days
     account-lifecycle.guest.upgrade_hold_minutes
+    account-lifecycle.registration.pending_ttl_hours
+    account-lifecycle.registration.cleanup_max_per_run
+    account-lifecycle.registration.cleanup_time_budget_seconds
     account-lifecycle.deletion.tombstone_retention_days
   `,
     ],
@@ -1163,6 +1167,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     external_idp.signed_request_max_age_seconds
+    external_idp.token_revocation_timeout_ms
   `,
     ],
     [

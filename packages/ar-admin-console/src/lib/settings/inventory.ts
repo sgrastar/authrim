@@ -231,6 +231,9 @@ place('authentication/social', 'Creating users on first sign-in', {
 place('authentication/social', 'Provider callbacks', {
 	advanced: ['external_idp.signed_request_max_age_seconds']
 });
+place('authentication/social', 'Token revocation', {
+	advanced: ['external_idp.token_revocation_timeout_ms']
+});
 
 place('authentication/enterprise', 'SAML', {
 	advanced: ['tenant.saml_attribute_release_failure_message_mode'],
@@ -478,6 +481,16 @@ place('users/lifecycle', 'Guest accounts', {
 		'account-lifecycle.guest.deletion_after_days',
 		'account-lifecycle.guest.upgrade_enabled',
 		'account-lifecycle.guest.upgrade_hold_minutes'
+	]
+});
+place('users/lifecycle', 'Unfinished sign-ups', {
+	primary: [
+		'account-lifecycle.registration.cleanup_enabled',
+		'account-lifecycle.registration.pending_ttl_hours'
+	],
+	advanced: [
+		'account-lifecycle.registration.cleanup_max_per_run',
+		'account-lifecycle.registration.cleanup_time_budget_seconds'
 	]
 });
 place('users/lifecycle', 'Deleted accounts', {

@@ -4,7 +4,11 @@ import { AuthorizationCodeStore } from '../../durable-objects/AuthorizationCodeS
 import { PARRequestStore } from '../../durable-objects/PARRequestStore';
 import type { Env } from '../../types/env';
 import { buildRequestIssuerUrl } from '../../utils/issuer';
-import { getTenantIdFromContext, requestContextMiddleware } from '../request-context';
+import {
+  getExternalCallbackRelayOrigin,
+  getTenantIdFromContext,
+  requestContextMiddleware,
+} from '../request-context';
 
 const securityRegressionIt =
   process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
@@ -235,6 +239,21 @@ describe('issuer alias authorization record boundary', () => {
       return c.json({ user_id: consumed.userId, issuer: issuerForRequest(c) });
     });
 
+    // The Bridge's external IdP callback (and a path next to it), saying whether it is to relay.
+    for (const path of [
+      '/auth/external/:provider/callback',
+      '/api/external/:provider/callback',
+      '/auth/external/:provider/logout/callback',
+    ]) {
+      const answer = (c: Parameters<typeof getTenantIdFromContext>[0]) =>
+        c.json({
+          tenant: getTenantIdFromContext(c),
+          relay_to: getExternalCallbackRelayOrigin(c),
+        });
+      app.post(path, answer);
+      app.get(path, answer);
+    }
+
     return app;
   }
 
@@ -328,6 +347,102 @@ describe('issuer alias authorization record boundary', () => {
     await expect(protocolResponse.json()).resolves.toEqual({
       error: 'not_found',
       error_description: 'Tenant not found',
+    });
+  });
+
+  describe("an external IdP's form post to the callback registered on the platform issuer host", () => {
+    const formPost = (host: string, path = '/auth/external/apple/callback') =>
+      new Request(`https://${host}${path}`, {
+        method: 'POST',
+        headers: { Host: host, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'code=c&state=s',
+      });
+
+    it.each(['/auth/external/apple/callback', '/api/external/apple/callback'])(
+      'is let through on the tenant subdomain, to be relayed to the primary custom domain (%s)',
+      async (path) => {
+        const response = await buildApp().request(
+          formPost(tenantSubdomain, path),
+          undefined,
+          buildEnv({ includeAlias: false })
+        );
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toEqual({
+          tenant: tenantId,
+          relay_to: `https://${primaryHost}`,
+        });
+      }
+    );
+
+    it('is let through on the naked domain when it is the primary tenant’s issuer', async () => {
+      const env = {
+        ...buildEnv({ includeAlias: false }),
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        DEFAULT_TENANT_ID: tenantId,
+      } as Env;
+      const response = await buildApp().request(formPost(baseDomain), undefined, env);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        tenant: tenantId,
+        relay_to: `https://${primaryHost}`,
+      });
+    });
+
+    it('is handled where it lands on the primary custom domain (no relay)', async () => {
+      const response = await buildApp().request(
+        formPost(primaryHost),
+        undefined,
+        buildEnv({ includeAlias: false })
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ tenant: tenantId, relay_to: null });
+    });
+
+    it('is not let through on another alias of the tenant (not the registered host)', async () => {
+      const response = await buildApp().request(
+        formPost(aliasHost),
+        undefined,
+        buildEnv({ includeAlias: true })
+      );
+      expect(response.status).toBe(404);
+    });
+
+    it('is handled where it lands for a tenant without a primary custom domain', async () => {
+      vanityMocks.getPrimaryTenantVanityDomain.mockResolvedValue(null);
+      const env = {
+        BASE_DOMAIN: baseDomain,
+        AUTHRIM_CONFIG: createMockKV({ [`v1:tenant-exists:${tenantId}`]: 'true' }),
+      } as Env;
+      const response = await buildApp().request(formPost(tenantSubdomain), undefined, env);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ tenant: tenantId, relay_to: null });
+    });
+
+    it('lets nothing else through on the tenant subdomain', async () => {
+      const env = buildEnv({ includeAlias: false });
+      const app = buildApp();
+
+      // Another path next to the callback, a protocol endpoint: refused as before.
+      for (const request of [
+        formPost(tenantSubdomain, '/auth/external/apple/logout/callback'),
+        formPost(tenantSubdomain, '/token'),
+      ]) {
+        const response = await app.request(request, undefined, env);
+        expect(response.status).toBe(404);
+      }
+
+      // The callback by GET (a query answer) is canonicalized to the custom domain as before.
+      const query = await app.request(
+        new Request(`https://${tenantSubdomain}/auth/external/apple/callback?code=c&state=s`, {
+          headers: { Host: tenantSubdomain, Accept: 'text/html' },
+        }),
+        undefined,
+        env
+      );
+      expect(query.status).toBe(308);
+      expect(query.headers.get('location')).toBe(
+        `https://${primaryHost}/auth/external/apple/callback?code=c&state=s`
+      );
     });
   });
 });

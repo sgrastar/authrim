@@ -1859,6 +1859,13 @@ crons = ["*/15 * * * *"]
     ]);
     // workers_dev should be false when custom domain is set
     expect(routerConfig.workers_dev).toBe(false);
+    // Custom domains: the Router asks ar-discovery which tenant owns the host.
+    expect(routerConfig.services).toContainEqual({
+      binding: 'TENANT_HOST',
+      service: 'test-ar-discovery',
+      entrypoint: 'TenantHostEntrypoint',
+      props: { caller: 'ar-router', audience: 'authrim-tenant-host-v1', environmentId: 'test' },
+    });
   });
 
   it('uses tenant.baseDomain, not api.custom, as the multi-tenant wildcard route base', () => {
@@ -2125,6 +2132,7 @@ crons = ["*/15 * * * *"]
         { binding: 'ADMIN_UI_WORKER', service: 'test-ar-admin-ui' },
       ])
     );
+    expect(routerConfig.services?.map((service) => service.binding)).not.toContain('TENANT_HOST');
   });
 
   it('adds service site binding to ar-router when configured', () => {

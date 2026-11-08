@@ -9,6 +9,7 @@ import {
   forgetCachedAnonymizedUserId,
   DIRECTORY_REMOVAL_ACCOUNT_HELD,
   insertPreparedAccountDirectoryRemovals,
+  insertPreparedUnpublishedAccountRemovals,
   markAccountDirectoryRemovalReady,
   validateAccountDirectoryPublication,
   validateAccountDirectoryRemovalPublication,
@@ -147,17 +148,18 @@ async function existingRemovals(
   );
 }
 
-export async function prepareAccountDirectoryRemoval(
+/**
+ * The account's directory removals: its account_id indexes with each chunk of the identifiers it
+ * holds now (its address, linked identities, passkeys, guest resume credentials), plus
+ * `extraIndexes` (what an unpublished creation reserved), on the given route.
+ */
+async function accountRemovalPublications(
   env: Env,
   input: PrepareAccountDirectoryRemovalInput,
-  now = Math.floor(Date.now() / 1000)
+  routeProjection: AccountDirectoryRemovalPublication['routeProjection'],
+  extraIndexes: readonly LookupBlindIndex[]
 ): Promise<AccountDirectoryRemovalPublication[]> {
-  if (!Number.isSafeInteger(now) || now < 1) throw new Error('invalid_directory_removal_time');
   const accountId = `account:${input.userId}`;
-  const existing = await existingRemovals(input.core, input.tenantId, accountId);
-  if (existing.length > 0) return existing;
-
-  const route = await activeRoute(input.core, input.tenantId, accountId);
   const [emailRow, externalSubjects, passkeySubjects, guestResumeCredentials, runtimeKeys] =
     await Promise.all([
       input.pii.queryOne<EmailRow>(
@@ -186,12 +188,16 @@ export async function prepareAccountDirectoryRemoval(
       loadLookupHmacRuntimeKeys(env),
     ]);
   const email = parseEmail(emailRow);
-  const accountIndexes = await createLookupBlindIndexes(
-    'account_id',
-    accountId,
-    runtimeKeys.readKeys
+  const accountIndexes = Array.from(
+    new Map(
+      [
+        ...extraIndexes.filter((index) => index.indexKind === 'account_id'),
+        ...(await createLookupBlindIndexes('account_id', accountId, runtimeKeys.readKeys)),
+      ].map((index) => [indexIdentity(index), index])
+    ).values()
   );
   const removable = [
+    ...extraIndexes.filter((index) => index.indexKind !== 'account_id'),
     ...(email ? await createLookupBlindIndexes('email_exact', email, runtimeKeys.readKeys) : []),
     ...(
       await Promise.all(
@@ -225,12 +231,27 @@ export async function prepareAccountDirectoryRemoval(
         tenantId: input.tenantId,
         accountId,
         idempotencyKey: `${prefix}:${index + 1}`,
-        routeProjection: route.routeProjection,
+        routeProjection,
         scope: 'account',
         indexes: [...accountIndexes, ...chunk],
       })
     )
   );
+  return publications;
+}
+
+export async function prepareAccountDirectoryRemoval(
+  env: Env,
+  input: PrepareAccountDirectoryRemovalInput,
+  now = Math.floor(Date.now() / 1000)
+): Promise<AccountDirectoryRemovalPublication[]> {
+  if (!Number.isSafeInteger(now) || now < 1) throw new Error('invalid_directory_removal_time');
+  const accountId = `account:${input.userId}`;
+  const existing = await existingRemovals(input.core, input.tenantId, accountId);
+  if (existing.length > 0) return existing;
+
+  const route = await activeRoute(input.core, input.tenantId, accountId);
+  const publications = await accountRemovalPublications(env, input, route.routeProjection, []);
   try {
     // Refused while a legal hold stands on the account, in the same write that moves it to
     // `deleting` (after which no hold can be placed): a held account is left as it was.
@@ -260,6 +281,43 @@ export class AccountDeletionHeldError extends Error {
     super('account_deletion_legal_hold');
     this.name = 'AccountDeletionHeldError';
   }
+}
+
+/**
+ * The directory removal of an account whose route was never published (an unfinished sign-up's
+ * creation that stopped): on its creation's route, with what the creation reserved and what the
+ * account holds now, prepared with the account's move to `deleting` and its creation's
+ * publication blocked (insertPreparedUnpublishedAccountRemovals). A retry adopts the removals an
+ * earlier attempt prepared. A legal hold refuses it (AccountDeletionHeldError).
+ */
+export async function prepareUnpublishedAccountDirectoryRemoval(
+  env: Env,
+  input: PrepareAccountDirectoryRemovalInput & { creation: AccountDirectoryPublication },
+  now = Math.floor(Date.now() / 1000)
+): Promise<AccountDirectoryRemovalPublication[]> {
+  if (!Number.isSafeInteger(now) || now < 1) throw new Error('invalid_directory_removal_time');
+  const accountId = `account:${input.userId}`;
+  const existing = await existingRemovals(input.core, input.tenantId, accountId);
+  if (existing.length > 0) return existing;
+  const creation = await validateAccountDirectoryPublication(input.creation);
+  if (creation.tenantId !== input.tenantId || creation.accountId !== accountId) {
+    throw new Error('account_directory_removal_route_mismatch');
+  }
+  const publications = await accountRemovalPublications(
+    env,
+    input,
+    creation.routeProjection,
+    creation.indexes
+  );
+  try {
+    await insertPreparedUnpublishedAccountRemovals(input.core, publications, now);
+  } catch (error) {
+    if (error instanceof Error && error.message === DIRECTORY_REMOVAL_ACCOUNT_HELD) {
+      throw new AccountDeletionHeldError();
+    }
+    throw error;
+  }
+  return publications;
 }
 
 /**

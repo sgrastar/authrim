@@ -19,7 +19,7 @@ export const SAML_DR_WRITER_COMPONENTS = [
 export type SamlDrWriterComponent = (typeof SAML_DR_WRITER_COMPONENTS)[number];
 
 const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
-  'ar-discovery': ['guarded:fetch'],
+  'ar-discovery': ['guarded:fetch', 'read-only:rpc:TenantHostEntrypoint.resolveTenantForHost'],
   'ar-token': [
     'guarded:fetch',
     'guarded:rpc:AgentDownscopeEntrypoint.exchangeAgentAccessToken',
@@ -37,6 +37,8 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
     'guarded:fetch',
     'guarded:rpc:ExternalIdpAdminEntrypoint.fetch',
     'guarded:scheduled',
+    // Reads the user's linked identities and calls the providers; writes no store.
+    'read-only:rpc:ExternalIdpAdminEntrypoint.revokeUserLinkedIdentityTokens',
   ],
   'ar-vc': [
     'excluded-transient:do:CredentialOfferStore',

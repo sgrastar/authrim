@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+
+const revokeUser = vi.hoisted(() => vi.fn());
+vi.mock('../services/user-token-revocation', () => ({
+  revokeUserLinkedIdentityTokens: revokeUser,
+}));
+
 import worker, { ExternalIdpAdminEntrypoint } from '../index';
 
 const props = {
@@ -76,5 +82,42 @@ describe('ExternalIdpAdminEntrypoint', () => {
     expect(body).not.toContain('"access_denied"');
     expect(body).not.toContain('"not_found"');
     expect(response.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe('ExternalIdpAdminEntrypoint.revokeUserLinkedIdentityTokens', () => {
+  const input = {
+    schemaVersion: 1 as const,
+    tenantId: 'tenant-a',
+    userId: 'user-1',
+    timeoutMs: 500,
+  };
+
+  it.each([
+    ['missing props', null],
+    ['wrong caller', { ...props, caller: 'ar-auth' }],
+    ['wrong audience', { ...props, audience: 'other' }],
+    ['wrong environment', { ...props, environmentId: 'prod' }],
+  ])('refuses %s before reading anything', async (_name, p) => {
+    revokeUser.mockReset();
+    await expect(entry(p).revokeUserLinkedIdentityTokens(input)).rejects.toThrow('access_denied');
+    expect(revokeUser).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the Worker has no environment name', async () => {
+    revokeUser.mockReset();
+    await expect(entry(props, {}).revokeUserLinkedIdentityTokens(input)).rejects.toThrow(
+      'access_denied'
+    );
+    expect(revokeUser).not.toHaveBeenCalled();
+  });
+
+  it("passes only the caller's input to the revocation", async () => {
+    const answer = { schemaVersion: 1, identities: [] };
+    revokeUser.mockReset().mockResolvedValue(answer);
+
+    await expect(entry().revokeUserLinkedIdentityTokens(input)).resolves.toBe(answer);
+
+    expect(revokeUser).toHaveBeenCalledWith(env, input);
   });
 });

@@ -7,6 +7,10 @@ import {
   type PiiOnlyErasureBlocker,
 } from './account-pii-only-erasure';
 import {
+  mergeUpstreamTokenRevocationSummaries,
+  revokeUpstreamTokensBeforeErasure,
+} from './pii-only-upstream-token-revocation';
+import {
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
@@ -75,18 +79,16 @@ import {
 } from './account-directory-errors';
 import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
 import {
-  attemptImmediateAccountDirectoryRemovals,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
   fenceAccountDeletion,
   AccountDeletionHeldError,
-  markAccountDirectoryRemovalsReady,
-  prepareAccountDirectoryRemoval,
 } from './account-directory-removal-producer';
 import {
   CrossShardAccountExactSearchService,
   CrossShardAccountListService,
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
+import { deleteAccount } from './account-deletion';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 import { isInactiveAccountRouteError } from './account-route-errors';
 import {
@@ -1975,78 +1977,43 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       ) {
         throw new Error('admin_user_route_projection_invalid');
       }
-      const legalHold = await findActiveAccountLegalHold(core, tenantId, userId);
-      if (legalHold) {
+      // The shared saga (account-deletion.ts). A retry after the projection was erased has no
+      // address left; its tombstone, if any, was written by the first attempt.
+      const deleted = await deleteAccount(c.env, {
+        tenantId,
+        userId,
+        core,
+        pii,
+        email: projection?.email,
+        tombstone: {
+          deletedBy: 'admin',
+          reason: 'admin_action',
+          metadata: { source: 'admin_api' },
+        },
+        endSessions: (operationId, work) =>
+          withAdminSessionEndLogout(
+            c,
+            {
+              tenantId,
+              trigger: {
+                action: 'user.deleted',
+                operationId,
+                actorId: adminActorIdFromContext(c),
+              },
+            },
+            work
+          ),
+      });
+      if (deleted.status === 'held') {
         return c.json(
           {
             error: 'legal_hold_active',
             error_description: 'User is under legal hold and cannot be deleted',
-            hold_id: legalHold.holdId,
+            hold_id: deleted.holdId,
           },
           409
         );
       }
-      // A retry after the projection was erased has no address left; its tombstone, if any, was
-      // written by the first attempt.
-      const tombstoneInput = await prepareAccountTombstone(c.env, {
-        tenantId,
-        email: projection?.email,
-      });
-      // The sessions the deletion ends: their relying parties are told after the response (each
-      // logout token carries the sub recorded with its session-client, not one read from the
-      // account being removed), also when a later step fails.
-      const deletingOperationId = crypto.randomUUID();
-      await withAdminSessionEndLogout(
-        c,
-        {
-          tenantId,
-          trigger: {
-            action: 'user.deleted',
-            operationId: deletingOperationId,
-            actorId: adminActorIdFromContext(c),
-          },
-        },
-        async (ended) => {
-          const deletingVersionMs = Date.now();
-          await transitionEndingSessions(c.env, ended, {
-            tenantId,
-            userId,
-            lifecycle: 'deleting',
-            sourceVersionMs: deletingVersionMs,
-            operationId: deletingOperationId,
-          });
-          const removals = await prepareAccountDirectoryRemoval(c.env, {
-            tenantId,
-            userId,
-            core,
-            pii,
-          });
-          // Holds fenced off before anything is erased (see fenceAccountDeletion).
-          await fenceAccountDeletion(core, { tenantId, userId });
-          await writeAccountTombstone(pii, {
-            tenantId,
-            userId,
-            prepared: tombstoneInput,
-            deletedBy: 'admin',
-            reason: 'admin_action',
-            metadata: { source: 'admin_api' },
-          });
-          await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId, core });
-          await new CanonicalRuntimeUserWriter(
-            new CanonicalIdentityRepository(core, tenantId),
-            pii
-          ).deleteRuntimeUser(userId);
-          await transitionEndingSessions(c.env, ended, {
-            tenantId,
-            userId,
-            lifecycle: 'deleted',
-            sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-            operationId: crypto.randomUUID(),
-          });
-          await markAccountDirectoryRemovalsReady(core, removals);
-          await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, removals);
-        }
-      );
       await invalidateUserCache(c.env, tenantId, userId);
       await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
         registration_state: projection?.registration_state,
@@ -2523,29 +2490,66 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       addressJson: null,
       customAttributesJson: null,
     });
-    // The values the writer only marked deleted, the linked identities' provider profile, the
-    // custom attributes and the screen response records (the tombstone written above keeps a
-    // later screen from recording new ones). The sign-in identifiers stay.
+    // The erasure below nulls the linked identities' stored provider tokens, after which their
+    // grants can no longer be revoked: ar-bridge revokes them first. Best-effort and time-limited:
+    // a revocation that fails or is slow never stops the deletion (its audit entry records it).
+    // A token a sign-in stores between that read and the erasure is erased unrevoked (no lock is
+    // shared with sign-ins; the window lasts at most the time limit).
+    const revocationLog = getLogger(c).module('ADMIN-USER');
+    const firstRevocation = await revokeUpstreamTokensBeforeErasure(
+      c.env,
+      accountPii,
+      { tenantId, userId },
+      revocationLog
+    );
+    // The values the writer only marked deleted, the linked identities' provider profile and
+    // tokens, the custom attributes and the screen response records (the tombstone written above
+    // keeps a later screen from recording new ones). The sign-in identifiers stay.
     await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
     // An operation started since the check above keeps its values until it has finished: the
     // deletion is not reported done (running it again then erases them). One that finished in
     // the meantime is erased by a second pass (the erasure is idempotent).
     const startedSince = await findPiiOnlyErasureBlocker(accountPii, { tenantId, userId });
+    let secondRevocation = null;
     if (!startedSince) {
       // A change finished in the meantime also kept its addresses in a webhook snapshot (the
       // deletion's own removal notice stays, as above).
       await redactEarlierWebhookEmailSnapshots(accountPii, { tenantId, userId });
+      // Tokens stored since the first pass (an identity provider's account creation finished,
+      // or a sign-in through a provider): revoked too. Without any, no call is made.
+      secondRevocation = await revokeUpstreamTokensBeforeErasure(
+        c.env,
+        accountPii,
+        { tenantId, userId },
+        revocationLog
+      );
       await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
     }
+    const upstreamTokenRevocation = mergeUpstreamTokenRevocationSummaries(
+      firstRevocation,
+      secondRevocation
+    );
 
     await invalidateUserCache(c.env, tenantId, userId);
     // Recorded also when an operation holds part of it: the PII was erased.
     const auditDetails = {
       reason: deletionReason,
       retention_days: retentionDays,
+      upstream_token_revocation: upstreamTokenRevocation,
       ...(startedSince ? { retry_required: true, waiting_for: startedSince } : {}),
     };
-    await createAuditLogFromContext(c, 'user.pii_deleted', 'user', userId, auditDetails);
+    // A grant left valid at a provider (not revoked) is worth an administrator's look.
+    const revocationSettled =
+      upstreamTokenRevocation.status === 'no_tokens' ||
+      upstreamTokenRevocation.status === 'completed';
+    await createAuditLogFromContext(
+      c,
+      'user.pii_deleted',
+      'user',
+      userId,
+      auditDetails,
+      revocationSettled ? 'info' : 'warning'
+    );
     scheduleAdminAuditLog(c, 'user.pii_deleted', userId, 'success', auditDetails);
 
     if (startedSince) {

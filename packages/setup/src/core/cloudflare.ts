@@ -9377,6 +9377,7 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
         else if (resource.state === 'identified') await options.onResourceIdentified(resource);
         else await options.onResourceProvisioned(resource);
       },
+      bucketCreationDate: bucket.creationDate,
       assertBucketOwned: async () => {
         if (!bucket.creationDate || !bucket.ownershipId || !bucket.ownershipMarkerKey)
           throw new Error('log_archive_bucket_ownership_incomplete');

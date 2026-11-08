@@ -210,6 +210,17 @@ export const POSTGRES_RESTORE_EXTENSION_CONTRACTS: readonly PostgresRestoreTable
   },
   {
     family: 'core',
+    datasetId: 'core.account_registration_pending',
+    table: 'account_registration_pending',
+    columns: ['tenant_id', 'user_id', 'flow', 'created_at', 'expires_at'],
+    sqliteIntegerColumns: ['created_at', 'expires_at'],
+    postgresBooleanColumns: [],
+    postgresJsonbColumns: [],
+    primaryKey: ['tenant_id', 'user_id'],
+    tenantColumn: 'tenant_id',
+  },
+  {
+    family: 'core',
     datasetId: 'core.account_webhook_outbox',
     table: 'account_webhook_outbox',
     columns: [
