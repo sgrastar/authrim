@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { renderPortableMigrationSql } from '../../migrations/sql-portability';
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../types/env';
@@ -5,6 +9,7 @@ import { clearLookupRouteMemoryCache, createLookupBlindIndexes } from '../lookup
 import { clearTenantDatabaseResolverMemoryCache } from '../tenant-database-resolver';
 import { signTenantRuntimeRegistrySnapshot } from '../tenant-runtime-registry-snapshot';
 import {
+  probeAccountForProviderDataDeletion,
   resolveAccountDataContext,
   resolveAccountDataContextByIdentifierFromHono,
   resolveAccountDataContextFromHono,
@@ -101,6 +106,8 @@ function d1(input: {
   accountLifecycleState?: string | null;
   /** The shard metadata's binding (default: the one routed to). */
   metadataBindingRef?: string;
+  /** Rows the provider data deletion probe reads (legal hold, linked identity, unlink op). */
+  probeRows?: { legalHold?: boolean; linkedIdentity?: boolean; rawUnlinkOperation?: boolean };
 }): D1Database {
   const session = {
     prepare: vi.fn((sql: string) => {
@@ -116,6 +123,15 @@ function d1(input: {
               data_role: input.role,
               residency_partition: 'default',
             };
+          }
+          if (sql.includes('FROM legal_holds')) {
+            return input.probeRows?.legalHold ? { id: 'hold-1' } : null;
+          }
+          if (sql.includes('FROM linked_identities')) {
+            return input.probeRows?.linkedIdentity ? { id: 'link-1' } : null;
+          }
+          if (sql.includes('FROM external_identifier_unlink_operations')) {
+            return input.probeRows?.rawUnlinkOperation ? { operation_id: 'op-1' } : null;
           }
           if (sql.includes('FROM identity_accounts')) {
             if (input.accountLifecycleState === null) return null;
@@ -155,6 +171,90 @@ function d1(input: {
     dump: vi.fn(),
     withSession: vi.fn(() => session),
     _session: session,
+  } as unknown as D1Database;
+}
+
+type ProbeSqlValue = string | number | null;
+interface ProbeSqlite {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...values: ProbeSqlValue[]): unknown;
+    get(...values: ProbeSqlValue[]): Record<string, ProbeSqlValue> | undefined;
+  };
+}
+// The runtime is Node22+, while Core's supported Node ambient types predate node:sqlite.
+const { DatabaseSync: ProbeDatabase } = createRequire(import.meta.url)('node:sqlite') as {
+  DatabaseSync: new (filename: string) => ProbeSqlite;
+};
+
+/** A fresh database with a family's 0.5.0 baseline, for the probe's own SQL. */
+function probeSchema(family: 'core' | 'pii'): ProbeSqlite {
+  const database = new ProbeDatabase(':memory:');
+  const file = path.resolve(
+    __dirname,
+    `../../../../../migrations/${family}/d1/001_0_5_0_${family}_baseline.sql`
+  );
+  database.exec(renderPortableMigrationSql(readFileSync(file, 'utf8'), 'sqlite'));
+  return database;
+}
+
+/**
+ * As d1(), but every statement other than the route revalidation (shard metadata, the account
+ * row) runs, with its bound values, on a real database: the probe's legal hold, linked identity
+ * and unlink operation queries.
+ */
+function realSqlD1(input: {
+  role: 'tenant_core/users' | 'tenant_pii';
+  database: ProbeSqlite;
+  accountLifecycleState: string;
+}) {
+  const session = {
+    prepare: vi.fn((sql: string) => {
+      let values: ProbeSqlValue[] = [];
+      const statement = {
+        bind: vi.fn((...bound: ProbeSqlValue[]) => {
+          values = bound;
+          return statement;
+        }),
+        all: vi.fn(async () => ({ success: true, results: [], meta: {} })),
+        first: vi.fn(async () => {
+          if (sql.includes('authrim_control_plane_shard_metadata')) {
+            return {
+              binding_ref: input.role === 'tenant_pii' ? 'TDB_PII_A' : 'TDB_USERS_A',
+              data_role: input.role,
+              residency_partition: 'default',
+            };
+          }
+          if (sql.includes('FROM identity_accounts') && !sql.includes('legal_holds')) {
+            return {
+              id: 'account:user-a',
+              legacy_user_id: 'user-a',
+              lifecycle_state: input.accountLifecycleState,
+              directory_publication_state: 'disabled',
+              account_route_generation: 3,
+            };
+          }
+          return input.database.prepare(sql).get(...values) ?? null;
+        }),
+      };
+      return statement;
+    }),
+    batch: vi.fn(async (statements: Array<{ first(): Promise<unknown> }>) =>
+      Promise.all(
+        statements.map(async (statement) => {
+          const row = await statement.first();
+          return { success: true, results: row === null ? [] : [row], meta: {} };
+        })
+      )
+    ),
+    getBookmark: vi.fn(() => 'bookmark'),
+  } as unknown as D1DatabaseSession;
+  return {
+    prepare: vi.fn(),
+    batch: vi.fn(),
+    exec: vi.fn(),
+    dump: vi.fn(),
+    withSession: vi.fn(() => session),
   } as unknown as D1Database;
 }
 
@@ -612,8 +712,6 @@ describe('runtime account data context', () => {
     ['locked', 'restricted', true],
     ['deleting', 'restricted', false],
     ['deleted', 'restricted', false],
-    ['deleting', 'any', true],
-    ['deleted', 'any', true],
     ['active', undefined, true],
   ] as const)(
     'resolves a %s account with acceptLifecycle %s only when accepted (%s)',
@@ -641,6 +739,251 @@ describe('runtime account data context', () => {
       }
     }
   );
+
+  it('accepts no lifecycle acceptance beyond restricted, even through a cast', async () => {
+    await expect(
+      resolveAccountDataContext(env(), {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+        acceptLifecycle: 'any' as unknown as 'restricted',
+      })
+    ).rejects.toThrow('account_data_lifecycle_acceptance_invalid');
+  });
+
+  it('refuses a fresh route through the runtime ports rather than serving a cached one', async () => {
+    const resolveAccount = vi.fn();
+    const ports = { ...env(), RUNTIME_DATA_PORTS: { resolveAccount } } as unknown as Env;
+    await expect(
+      resolveAccountDataContext(ports, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+        freshRoute: true,
+      })
+    ).rejects.toThrow('account_data_fresh_route_unsupported');
+    await expect(
+      probeAccountForProviderDataDeletion(ports, {
+        tenantId: 'tenant-a',
+        account: { accountId: 'user-a' },
+        remains: { unlinkOperationId: 'op-1' },
+      })
+    ).rejects.toThrow('account_data_fresh_route_unsupported');
+    expect(resolveAccount).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'deleted',
+      {},
+      { lifecycleState: 'deleted', legalHoldActive: false, providerDataRemains: false },
+    ],
+    ['deleted', { linkedIdentity: true }, { lifecycleState: 'deleted', providerDataRemains: true }],
+    [
+      'deleted',
+      { rawUnlinkOperation: true },
+      { lifecycleState: 'deleted', providerDataRemains: true },
+    ],
+    ['deleting', { legalHold: true }, { lifecycleState: 'deleting', legalHoldActive: true }],
+  ] as const)(
+    'probes a %s account read-only (%o)',
+    async (accountLifecycleState, probeRows, expected) => {
+      const bindings = env();
+      (bindings as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+        probeRows,
+      });
+      (bindings as unknown as Record<string, unknown>).TDB_PII_A = d1({
+        role: 'tenant_pii',
+        probeRows,
+      });
+      const probe = await probeAccountForProviderDataDeletion(bindings, {
+        tenantId: 'tenant-a',
+        account: { accountId: 'user-a' },
+        remains: { issuer: 'provider-a', subject: 'subject-a' },
+      });
+      expect(probe).toMatchObject({ accountId: 'account:user-a', ...expected });
+      // No database handle leaves the probe.
+      expect(Object.keys(probe).sort()).toEqual(
+        [
+          'accountId',
+          'legacyUserId',
+          'lifecycleState',
+          'legalHoldActive',
+          'providerDataRemains',
+        ].sort()
+      );
+    }
+  );
+
+  describe('provider data deletion probe on the real schemas', () => {
+    const digest = async (value: string) =>
+      Array.from(
+        new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))),
+        (byte) => byte.toString(16).padStart(2, '0')
+      ).join('');
+    let core: ProbeSqlite;
+    let pii: ProbeSqlite;
+
+    function probeEnv(): Env {
+      const bindings = env();
+      (bindings as unknown as Record<string, unknown>).TDB_USERS_A = realSqlD1({
+        role: 'tenant_core/users',
+        database: core,
+        accountLifecycleState: 'deleted',
+      });
+      (bindings as unknown as Record<string, unknown>).TDB_PII_A = realSqlD1({
+        role: 'tenant_pii',
+        database: pii,
+        accountLifecycleState: 'deleted',
+      });
+      return bindings;
+    }
+
+    function link(tenantId: string, userId: string, providerId: string, subject: string) {
+      pii
+        .prepare(
+          `INSERT INTO linked_identities (id, tenant_id, user_id, provider_id, provider_user_id,
+                                          linked_at, provisioning_state)
+           VALUES (?, ?, ?, ?, ?, 1, 'pending')`
+        )
+        .run(`${tenantId}:${userId}:${subject}`, tenantId, userId, providerId, subject);
+    }
+
+    /** As the saga writes one: the operation (its link must exist then), then the link goes. */
+    async function operation(input: {
+      id: string;
+      tenantId?: string;
+      accountId?: string;
+      subject?: string;
+      erased?: boolean;
+    }) {
+      const tenantId = input.tenantId ?? 'tenant-a';
+      const subject = input.subject ?? 'subject-a';
+      link(tenantId, 'user-a', 'provider-a', subject);
+      pii
+        .prepare(
+          `INSERT INTO external_identifier_unlink_operations (
+             operation_id, tenant_id, account_id, user_id, issuer_json, subject_json,
+             issuer_sha256, subject_sha256, route_projection_json, state, created_at, updated_at
+           ) VALUES (?, ?, ?, 'user-a', ?, ?, ?, ?, '{}', 'pending', 1, 1)`
+        )
+        .run(
+          input.id,
+          tenantId,
+          input.accountId ?? 'account:user-a',
+          JSON.stringify('provider-a'),
+          JSON.stringify(subject),
+          await digest('provider-a'),
+          await digest(subject)
+        );
+      pii
+        .prepare(
+          'DELETE FROM linked_identities WHERE tenant_id = ? AND user_id = ? AND provider_user_id = ?'
+        )
+        .run(tenantId, 'user-a', subject);
+      if (input.erased) {
+        // As the account's deletion leaves it (account-directory-removal-producer).
+        pii
+          .prepare(
+            `UPDATE external_identifier_unlink_operations
+                SET state = 'blocked', issuer_json = NULL, subject_json = NULL,
+                    raw_values_erased_at = 1, error_code = 'account_deleted'
+              WHERE operation_id = ?`
+          )
+          .run(input.id);
+      }
+    }
+
+    const bySubject = (env: Env) =>
+      probeAccountForProviderDataDeletion(env, {
+        tenantId: 'tenant-a',
+        account: { accountId: 'user-a' },
+        remains: { issuer: 'provider-a', subject: 'subject-a' },
+      });
+    const byOperation = (env: Env, unlinkOperationId: string) =>
+      probeAccountForProviderDataDeletion(env, {
+        tenantId: 'tenant-a',
+        account: { accountId: 'user-a' },
+        remains: { unlinkOperationId },
+      });
+
+    beforeEach(() => {
+      core = probeSchema('core');
+      pii = probeSchema('pii');
+      core.exec(
+        `INSERT INTO identity_accounts (id, tenant_id, account_type, lifecycle_state,
+                                        legacy_user_id, created_at, updated_at)
+         VALUES ('account:user-a', 'tenant-a', 'person', 'deleted', 'user-a', 1, 1),
+                ('account:user-b', 'tenant-a', 'person', 'active', 'user-b', 1, 1)`
+      );
+    });
+
+    it('finds nothing left when nothing for the subject or operation is held', async () => {
+      // Rows of another tenant, account or subject do not count.
+      await operation({ id: 'op-tenant', tenantId: 'tenant-b' });
+      await operation({ id: 'op-account', accountId: 'account:user-b' });
+      await operation({ id: 'op-subject', subject: 'subject-other' });
+      await operation({ id: 'op-erased', erased: true });
+      link('tenant-b', 'user-a', 'provider-a', 'subject-a');
+      link('tenant-a', 'user-b', 'provider-a', 'subject-a');
+      link('tenant-a', 'user-a', 'provider-a', 'subject-other');
+      link('tenant-a', 'user-a', 'provider-other', 'subject-a');
+      core.exec(
+        `INSERT INTO legal_holds (id, tenant_id, subject_type, subject_id, state, reason_code,
+                                  created_by, created_at, updated_at)
+         VALUES ('hold-b', 'tenant-a', 'account', 'account:user-b', 'active', 'litigation',
+                 'admin', 1, 1)`
+      );
+      await expect(bySubject(probeEnv())).resolves.toEqual({
+        accountId: 'account:user-a',
+        legacyUserId: 'user-a',
+        lifecycleState: 'deleted',
+        legalHoldActive: false,
+        providerDataRemains: false,
+      });
+      await expect(byOperation(probeEnv(), 'op-erased')).resolves.toMatchObject({
+        providerDataRemains: false,
+      });
+      // Another tenant's or account's operation of the same id is not this one.
+      await expect(byOperation(probeEnv(), 'op-tenant')).resolves.toMatchObject({
+        providerDataRemains: false,
+      });
+      await expect(byOperation(probeEnv(), 'op-account')).resolves.toMatchObject({
+        providerDataRemains: false,
+      });
+    });
+
+    it('finds the linked identity of the subject, in any provisioning state', async () => {
+      link('tenant-a', 'user-a', 'provider-a', 'subject-a');
+      await expect(bySubject(probeEnv())).resolves.toMatchObject({ providerDataRemains: true });
+    });
+
+    it('finds an unlink operation of the subject that still holds its raw values', async () => {
+      await operation({ id: 'op-raw' });
+      await expect(bySubject(probeEnv())).resolves.toMatchObject({ providerDataRemains: true });
+      await expect(byOperation(probeEnv(), 'op-raw')).resolves.toMatchObject({
+        providerDataRemains: true,
+      });
+    });
+
+    it("reports the account's active legal hold only", async () => {
+      core.exec(
+        `INSERT INTO legal_holds (id, tenant_id, subject_type, subject_id, state, reason_code,
+                                  created_by, created_at, released_by, released_at,
+                                  release_reason, updated_at)
+         VALUES ('hold-released', 'tenant-a', 'account', 'account:user-a', 'released',
+                 'litigation', 'admin', 1, 'admin', 2, 'closed', 2)`
+      );
+      await expect(bySubject(probeEnv())).resolves.toMatchObject({ legalHoldActive: false });
+      core.exec(
+        `INSERT INTO legal_holds (id, tenant_id, subject_type, subject_id, state, reason_code,
+                                  created_by, created_at, updated_at)
+         VALUES ('hold-a', 'tenant-a', 'account', 'account:user-a', 'active', 'litigation',
+                 'admin', 1, 1)`
+      );
+      await expect(bySubject(probeEnv())).resolves.toMatchObject({ legalHoldActive: true });
+    });
+  });
 
   it.each(['suspended', 'locked', 'deleted'])(
     'resolves the PII store of a %s account for its audit pseudonym, verified there',
