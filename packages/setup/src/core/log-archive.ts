@@ -766,11 +766,16 @@ function catalogTimestamp(value: unknown): number {
 async function readCatalogState(
   options: LogArchiveProvisionOptions,
   path: string
-): Promise<{ state: 'present'; catalog: RemoteResource } | { state: 'inactive' | 'missing' }> {
+): Promise<
+  | { state: 'present'; catalog: RemoteResource }
+  | { state: 'inactive'; catalog?: RemoteResource }
+  | { state: 'missing' }
+> {
   try {
     const catalog = await options.api.request<RemoteResource>(path);
     const status = object(catalog).status;
-    if (status === 'inactive') return { state: 'inactive' };
+    // The 200 form still names the catalog; the 40402 form does not.
+    if (status === 'inactive') return { state: 'inactive', catalog };
     if (status !== 'active') throw new Error('log_archive_catalog_state_unknown');
     return { state: 'present', catalog };
   } catch (error) {
@@ -926,8 +931,20 @@ async function removeStaleCatalog(
   options.onProgress?.(
     `  Removing a Catalog left by an earlier bucket named ${options.archive.bucketName}...`
   );
+  // Cloudflare answers the disable either with the catalog or with 204 and no body. Without an id
+  // in the answer, the catalog is read again and must be the same one, inactive. The 40402 form
+  // names no catalog, so it proves nothing and stops before the force delete.
   const disabled = object(await options.api.request<RemoteResource>(`${path}/disable`, 'POST'));
-  if (disabled.id !== catalog.id) throw new Error('log_archive_catalog_ownership_unproven');
+  let disabledId = disabled.id;
+  if (disabledId === undefined) {
+    const after = await readCatalogState(options, path);
+    if (after.state !== 'inactive' || after.catalog === undefined)
+      throw new Error('log_archive_catalog_ownership_unproven');
+    const seen = object(after.catalog);
+    if (seen.name !== warehouse) throw new Error('log_archive_catalog_ownership_unproven');
+    disabledId = seen.id;
+  }
+  if (disabledId !== catalog.id) throw new Error('log_archive_catalog_ownership_unproven');
   await options.api.request(`${path}/delete?force=true`, 'POST');
   if ((await readCatalogState(options, path)).state !== 'missing')
     throw new Error('log_archive_stale_catalog_deletion_unconfirmed');
