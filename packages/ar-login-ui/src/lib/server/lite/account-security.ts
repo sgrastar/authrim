@@ -203,7 +203,9 @@ function widgetOf(action: string): string {
 		? 'passkeys'
 		: action.startsWith('totp_')
 			? 'totp'
-			: 'account';
+			: action.startsWith('social_')
+				? 'social'
+				: 'account';
 }
 
 export type PendingAction = (

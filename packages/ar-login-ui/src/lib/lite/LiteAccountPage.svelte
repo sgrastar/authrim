@@ -1,5 +1,6 @@
 <script lang="ts">
 	import LiteAccountWidget from './LiteAccountWidget.svelte';
+	import LiteRelay from './LiteRelay.svelte';
 	import LiteShell from './LiteShell.svelte';
 	import { LITE_PASSKEY_SCRIPT } from './passkey-ceremony.js';
 	import type { ActionData, PageData } from '../../routes/__lite/account/$types';
@@ -35,7 +36,11 @@
 	<input type="hidden" name="op" value={op} />
 {/snippet}
 
-{#if data.page === 'error'}
+{#if data.page === 'relay'}
+	<LiteShell title={data.title} brandName={data.brandName} logo={data.logo}>
+		<LiteRelay target={data.relay} continueLabel={data.continueLabel} />
+	</LiteShell>
+{:else if data.page === 'error'}
 	<LiteShell title={data.title} brandName={data.brandName} logo={data.logo}>
 		<h1>{data.title}</h1>
 		<p>{data.message}</p>

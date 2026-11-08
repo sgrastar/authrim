@@ -41,6 +41,11 @@ import {
 	liteAccountTotpEnrollStale,
 	readLiteAccountTotpEnroll
 } from './account-totp';
+import {
+	liteAccountSocial,
+	liteAccountSocialActions,
+	liteAccountSocialOutcome
+} from './account-social';
 import { cspHashSource } from './csp';
 import { qrDataUri } from './qr';
 import { LITE_PASSKEY_SCRIPT } from '#lib/lite/passkey-ceremony.js';
@@ -75,10 +80,15 @@ function accountReturn(event: RequestEvent): string {
 	return `${path}${query ? `?${query}` : ''}`;
 }
 
-/** The page's query (`?…`, or empty) without a form action's key. */
+/**
+ * The page's query (`?…`, or empty) without a form action's key, nor a link's outcome (said once,
+ * on the page the provider sent back to).
+ */
 function pageQuery(event: RequestEvent, set: Record<string, string> = {}): string {
 	const search = new URLSearchParams(event.url.search);
 	for (const key of [...search.keys()]) if (key.startsWith('/')) search.delete(key);
+	search.delete('social_link');
+	search.delete('reason');
 	for (const [key, value] of Object.entries(set)) search.set(key, value);
 	const query = search.toString();
 	return query ? `?${query}` : '';
@@ -133,6 +143,15 @@ function widgetDefaults(LL: Awaited<ReturnType<typeof liteMessages>>['LL']) {
 
 export async function liteAccountPage(event: RequestEvent) {
 	const { LL } = await liteMessages(event.locals.locale);
+	// A link started by the action: the relay page to its start (the load starts nothing else).
+	if (event.locals.liteRelay) {
+		return {
+			page: 'relay' as const,
+			title: LL.account_title(),
+			relay: { method: 'get' as const, url: event.locals.liteRelay.url },
+			continueLabel: event.locals.liteRelay.continueLabel
+		};
+	}
 	const methods = await authenticationMethods(event);
 	// The tenant offers no account page: home.
 	if (methods?.ui.selfService?.accountPageEnabled !== true) redirect(303, '/');
@@ -283,7 +302,7 @@ export async function liteAccountPage(event: RequestEvent) {
 		)
 	);
 	const cursor = event.url.searchParams.get('activity_cursor');
-	const [sessionList, deviceList, consentList, activityList, passkeyList, totpList] =
+	const [sessionList, deviceList, consentList, activityList, passkeyList, totpList, socialList] =
 		await Promise.all([
 			drawn.has('account_session_widget')
 				? (sessions ?? read(backend, '/api/account/sessions'))
@@ -303,10 +322,35 @@ export async function liteAccountPage(event: RequestEvent) {
 					)
 				: null,
 			drawn.has('account_passkey_widget') ? read(backend, '/api/account/passkeys') : null,
-			drawn.has('account_totp_widget') ? read(backend, '/api/account/totp') : null
+			drawn.has('account_totp_widget') ? read(backend, '/api/account/totp') : null,
+			drawn.has('account_social_account_widget') ? read(backend, '/api/external/links') : null
 		]);
 	// An authenticator being added: its secret and QR code (drawn once, by its widget).
-	const enroll = drawn.has('account_totp_widget') ? readLiteAccountTotpEnroll(txn.data) : null;
+	let enroll = drawn.has('account_totp_widget') ? readLiteAccountTotpEnroll(txn.data) : null;
+	// A setup whose credential is no longer pending (activated, or removed, when the post that did
+	// it could not clear it): its secret removed now, never drawn again.
+	const pendingIds = new Set(
+		(Array.isArray(record(totpList?.ok ? totpList.json : null).credentials)
+			? (record(totpList?.ok ? totpList.json : null).credentials as unknown[])
+			: []
+		)
+			.map(record)
+			.filter((row) => row.status === 'pending')
+			.map((row) => row.id)
+	);
+	// Drawn only when the list confirms it pending (a list not read draws none: the setup is kept).
+	if (enroll && !totpList?.ok) enroll = null;
+	if (enroll && totpList?.ok && !pendingIds.has(enroll.credentialId)) {
+		const cleared = await txns
+			.transition(txn.id, {
+				expectedVersion: txn.version,
+				to: 'pending',
+				patch: { accountTotpEnroll: null }
+			})
+			.catch(() => null);
+		if (cleared?.ok) txn = cleared.txn;
+		enroll = null;
+	}
 	const widgets = {
 		profile: liteAccountProfile(profile.json),
 		sessions: sessionList?.ok ? liteAccountSessions(sessionList.json, LL, locale) : null,
@@ -332,6 +376,13 @@ export async function liteAccountPage(event: RequestEvent) {
 					secret: enroll.secret,
 					qr: await qrDataUri(enroll.otpauthUri)
 				}
+			: null,
+		social: socialList?.ok
+			? liteAccountSocial(socialList.json, record(m.external).providers, LL, locale)
+			: null,
+		// A link's outcome, on the page the provider sent back to.
+		socialOutcome: drawn.has('account_social_account_widget')
+			? liteAccountSocialOutcome(event.url, LL)
 			: null,
 		// An authenticator may be added (the tenant offers them: the SPA's widget's condition).
 		totpAddEnabled: conditions.totpManagementEnabled,
@@ -435,7 +486,16 @@ export async function liteAccountPage(event: RequestEvent) {
 			totpDeleteCode: LL.account_totpDeleteCode(),
 			totpPending: LL.account_totpPending(),
 			totpDone: LL.account_totpDone(),
-			deleteTotp: LL.account_delete()
+			deleteTotp: LL.account_delete(),
+			socialEmpty: LL.account_socialEmpty(),
+			socialLinkHeading: LL.account_socialLinkHeading(),
+			socialNoProviders: LL.account_socialNoProviders(),
+			socialUnlink: LL.account_socialUnlink(),
+			socialUnlinked: LL.account_socialUnlinked(),
+			socialAlreadyLinkedHere: LL.account_socialErrorAlreadyLinkedHere(),
+			socialLastMethod: LL.account_socialErrorLastMethod(),
+			socialInProgress: LL.account_socialErrorInProgress(),
+			socialFailed: LL.account_socialErrorFailed()
 		}
 	};
 }
@@ -536,6 +596,7 @@ export async function liteAccountSessionRevokeAction(event: RequestEvent) {
 export const liteAccountActions = {
 	...liteAccountSecurityActions,
 	...liteAccountTotpActions,
+	...liteAccountSocialActions,
 	sign_out: liteAccountSignOutAction,
 	profile_save: liteAccountProfileSaveAction,
 	session_revoke: liteAccountSessionRevokeAction

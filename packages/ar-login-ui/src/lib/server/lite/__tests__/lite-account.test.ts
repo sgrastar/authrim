@@ -1124,6 +1124,29 @@ describe('the lite account page', () => {
 			expect(store.txn.data.accountTotpEnroll).toBeUndefined();
 		});
 
+		it('removes a setup whose authenticator was activated though its post could not', async () => {
+			totpPage();
+			await view();
+			await post('totp_add', { label: '' });
+			expect(store.txn.data.accountTotpEnroll).toBeDefined();
+			// Activated (its post's clear refused, say): the list shows it active.
+			totpState = [{ id: 'tc-1', status: 'active' }];
+			const page = (await view()) as Page;
+			expect(page.widgets.totpEnroll).toBeNull();
+			expect(store.txn.data.accountTotpEnroll).toBeUndefined();
+		});
+
+		it('draws no setup when the list cannot tell it is still pending', async () => {
+			totpPage();
+			await view();
+			await post('totp_add', { label: '' });
+			routes['/api/account/totp'] = () => json({ error: 'temporarily_unavailable' }, 503);
+			const page = (await view()) as Page;
+			expect(page.widgets.totpEnroll).toBeNull();
+			// Kept, for the page drawn again once the list is read.
+			expect(store.txn.data.accountTotpEnroll).toBeDefined();
+		});
+
 		it('gives a setup up with its authenticator removed, and a setup past its time', async () => {
 			totpPage();
 			totpState = [{ id: 'tc-1', status: 'pending' }];
@@ -1278,6 +1301,226 @@ describe('the lite account page', () => {
 			await expect(
 				post('stepup_totp', { step_up: held.stepUp!.at, code: '654321' })
 			).resolves.toEqual({ backupCodes: ['UUUU-VVVV-WWWW'], widget: 'totp' });
+		});
+	});
+
+	describe('linked external accounts', () => {
+		const INTENT = 'i'.repeat(43);
+		let recent: boolean;
+		const socialPage = () => {
+			methods = {
+				passkey: { enabled: false },
+				emailCode: { enabled: true, reauthEnabled: true },
+				totp: { enabled: false },
+				external: {
+					enabled: true,
+					providers: [
+						{ id: 'google', name: 'Google', startMode: 'oauth_redirect' },
+						{ id: 'github', name: 'GitHub', startMode: 'oauth_redirect' }
+					]
+				}
+			};
+			recent = true;
+			routes['/api/account/capabilities'] = () =>
+				json({
+					account_page: {
+						definition: { screens: [{ id: 'social', screen_key: 'k' }] },
+						screens: [
+							{
+								screen_key: 'k',
+								fields: [{ block_type: 'account_social_account_widget', field: 'account.social' }]
+							}
+						]
+					}
+				});
+			routes['/api/external/links'] = (body, init) => {
+				if (init.method !== 'POST') {
+					return json({
+						identities: [
+							{
+								id: 'li-1',
+								providerId: 'p-google',
+								providerSlug: 'google',
+								providerName: 'Google',
+								linkedAt: 1
+							}
+						]
+					});
+				}
+				if (!recent) return json({ error: 'reauth_required', reauth_required: true }, 403);
+				return json({
+					authorization_url: `https://id.example/auth/external/${String(body.provider_id)}/start?link_intent=${INTENT}`
+				});
+			};
+		};
+		type Page = {
+			page: string;
+			search: string;
+			widgets: {
+				social: {
+					identities: Array<{ id: string }>;
+					linkable: Array<{ id: string }>;
+				} | null;
+				socialOutcome: { kind: string; message: string } | null;
+			};
+			stepUp: null | { at: string };
+		};
+		const act = async (action: string, form: Record<string, string>) => {
+			const e = event({ action, form: { txn: 'txn-1', csrf: 'csrf-1', op: OP, ...form } });
+			const result = await (actions as Record<string, (e: RequestEvent) => Promise<unknown>>)[
+				action
+			](e);
+			return { e, result };
+		};
+
+		it('lists the accounts linked and the providers left, and says a link’s outcome once', async () => {
+			socialPage();
+			const page = (await view()) as Page;
+			expect(page.widgets.social?.identities.map((identity) => identity.id)).toEqual(['li-1']);
+			expect(page.widgets.social?.linkable.map((provider) => provider.id)).toEqual(['github']);
+			expect(page.widgets.socialOutcome).toBeNull();
+			const back = (await view('/account?social_link=error&reason=already_linked&lang=en')) as Page;
+			expect(back.widgets.socialOutcome).toMatchObject({ kind: 'error' });
+			// The page's forms carry it not (it is said once).
+			expect(back.search).toBe('?lang=en');
+		});
+
+		it('leaves for the start of the link by the relay page', async () => {
+			socialPage();
+			await view();
+			const { e, result } = await act('social_link', { provider: 'github' });
+			expect(result).toEqual({ started: true, widget: 'social' });
+			expect(calls.at(-1)).toMatchObject({
+				path: '/api/external/links',
+				body: { provider_id: 'github' }
+			});
+			const target = `https://id.example/auth/external/github/start?link_intent=${INTENT}`;
+			expect(e.locals.liteRelay).toMatchObject({ url: target });
+			const drawn = (await (load as unknown as (e: RequestEvent) => Promise<unknown>)(e)) as {
+				page: string;
+				relay: { method: string; url: string };
+			};
+			expect(drawn).toMatchObject({ page: 'relay', relay: { method: 'get', url: target } });
+		});
+
+		it('sends the browser nowhere else, and says a provider linked meanwhile', async () => {
+			socialPage();
+			await view();
+			routes['/api/external/links'] = () =>
+				json({
+					authorization_url: `https://id.example/auth/external/x/start?link_intent=${INTENT}&redirect_uri=https://evil.example`
+				});
+			const away = await act('social_link', { provider: 'github' });
+			// (An answer ar-bridge should not give: the page's own failure.)
+			expect(away.result).toMatchObject({ status: 503, data: { widget: 'social' } });
+			expect(away.e.locals.liteRelay).toBeUndefined();
+			routes['/api/external/links'] = () => json({ error: 'already_linked' }, 409);
+			await expect(post('social_link', { provider: 'github' })).resolves.toMatchObject({
+				status: 409,
+				data: { error: 'already_linked_here' }
+			});
+			await expect(post('social_link', { provider: 'a/b' })).resolves.toMatchObject({
+				status: 400
+			});
+		});
+
+		it('holds a link for a step-up, and leaves for its start once proven', async () => {
+			socialPage();
+			recent = false;
+			routes['/api/account/reauth/email-code/send'] = () =>
+				json({ challenge_id: 'rc-1', expires_in: 300, masked_email: 'a***@example.com' });
+			routes['/api/account/reauth/email-code/complete'] = () => {
+				recent = true;
+				return json({ ok: true, reauth: {} });
+			};
+			await view();
+			await expect(post('social_link', { provider: 'github' })).resolves.toMatchObject({
+				status: 403,
+				data: { stepUp: true, widget: 'social' }
+			});
+			const held = (await view()) as Page;
+			await post('stepup_email_send', { step_up: held.stepUp!.at });
+			const { e, result } = await act('stepup_email_verify', {
+				step_up: held.stepUp!.at,
+				challenge: 'rc-1',
+				code: '123456'
+			});
+			expect(result).toEqual({ started: true, widget: 'social' });
+			expect(e.locals.liteRelay).toMatchObject({
+				url: `https://id.example/auth/external/github/start?link_intent=${INTENT}`
+			});
+		});
+
+		it('unlinks an account once asked, and keeps the last way to sign in', async () => {
+			socialPage();
+			let removable = true;
+			routes['/api/external/links/li-1'] = (_body, init) => {
+				if (init.method !== 'DELETE') return json({}, 405);
+				if (!recent) return json({ error: 'reauth_required', reauth_required: true }, 403);
+				return removable
+					? json({ success: true, cleanup_pending: false })
+					: json({ error: 'remaining_login_method_required' }, 400);
+			};
+			await view();
+			await expect(post('social_unlink', { identity: 'li-1' })).resolves.toEqual({
+				confirmUnlink: 'li-1',
+				widget: 'social'
+			});
+			expect(calls.some((call) => call.path === '/api/external/links/li-1')).toBe(false);
+			await expect(post('social_unlink', { identity: 'li-1', confirm: '1' })).resolves.toEqual({
+				notice: 'social_unlinked',
+				widget: 'social'
+			});
+			removable = false;
+			await expect(
+				post('social_unlink', { identity: 'li-1', confirm: '1' })
+			).resolves.toMatchObject({
+				status: 400,
+				data: { error: 'remaining_login_method_required', widget: 'social' }
+			});
+			recent = false;
+			await expect(
+				post('social_unlink', { identity: 'li-1', confirm: '1' })
+			).resolves.toMatchObject({ status: 403, data: { stepUp: true, widget: 'social' } });
+			expect(store.txn.data.accountStepUp).toMatchObject({
+				pending: { action: 'social_unlink', args: { id: 'li-1' } }
+			});
+			// Proven: the account held is unlinked, once.
+			removable = true;
+			routes['/api/account/reauth/totp/complete'] = () => {
+				recent = true;
+				return json({ ok: true, reauth: {} });
+			};
+			routes['/api/account/totp'] = () => json({ credentials: [{ id: 't1', status: 'active' }] });
+			methods = { ...methods, totp: { enabled: true } };
+			const held = (await view()) as Page;
+			const deletes = () => calls.filter((call) => call.path === '/api/external/links/li-1').length;
+			const before = deletes();
+			await expect(
+				post('stepup_totp', { step_up: held.stepUp!.at, code: '654321' })
+			).resolves.toEqual({ notice: 'social_unlinked', widget: 'social' });
+			expect(deletes()).toBe(before + 1);
+			expect(store.txn.data.accountStepUp).toBeUndefined();
+			// A proof posted again makes nothing again.
+			await expect(
+				post('stepup_totp', { step_up: held.stepUp!.at, code: '654321' })
+			).resolves.toMatchObject({ status: 409 });
+			expect(deletes()).toBe(before + 1);
+		});
+
+		it('starts a link on the tenant’s own domain, whatever host ar-bridge names', async () => {
+			socialPage();
+			routes['/api/external/links'] = (_body, init) =>
+				init.method === 'POST'
+					? json({
+							authorization_url: `https://tenant.authrim.example/auth/external/github/start?link_intent=${INTENT}`
+						})
+					: json({ identities: [] });
+			await view();
+			const { e } = await act('social_link', { provider: 'github' });
+			expect(e.locals.liteRelay).toMatchObject({
+				url: `https://id.example/auth/external/github/start?link_intent=${INTENT}`
+			});
 		});
 	});
 });

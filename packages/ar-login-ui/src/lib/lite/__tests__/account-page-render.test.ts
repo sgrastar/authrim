@@ -115,4 +115,80 @@ describe('the lite account page markup', () => {
 		expect(body.match(/name="proof"/gu)).toHaveLength(1);
 		expect(body).toContain('/totp_regenerate"');
 	});
+
+	it('asks before an account is unlinked, and offers each provider left', () => {
+		const { body } = render(AccountPage, {
+			props: {
+				data: {
+					page: 'account',
+					brandName: 'Acme',
+					logo: null,
+					txnId: 'txn-1',
+					csrfToken: 'csrf-1',
+					op: 'o'.repeat(22),
+					search: '',
+					guest: false,
+					stepUp: null,
+					placements: [
+						{
+							id: 'a',
+							width: 'full',
+							overview: false,
+							blocks: [
+								{
+									kind: 'widget',
+									widget: 'account_social_account_widget',
+									title: 'Accounts',
+									column: null
+								}
+							]
+						}
+					],
+					widgets: {
+						profile: { name: null, email: null, emailVerified: false },
+						sessions: null,
+						devices: null,
+						consents: null,
+						activity: null,
+						activityIncomplete: false,
+						activityNextHref: null,
+						passkeys: null,
+						passkeyCreate: null,
+						totp: null,
+						totpEnroll: null,
+						totpAddEnabled: false,
+						social: {
+							identities: [
+								{
+									id: 'li-1',
+									name: 'Google',
+									email: null,
+									meta: 'Linked',
+									confirm: 'Unlink Google?',
+									confirmAction: 'Unlink Google'
+								},
+								{
+									id: 'li-2',
+									name: 'GitHub',
+									email: null,
+									meta: 'Linked',
+									confirm: 'Unlink GitHub?',
+									confirmAction: 'Unlink GitHub'
+								}
+							],
+							linkable: [{ id: 'apple', label: 'Link Apple' }]
+						},
+						socialOutcome: { kind: 'success', message: 'Linked.' }
+					},
+					text: new Proxy({}, { get: (_target, key) => String(key) })
+				} as never,
+				form: { confirmUnlink: 'li-1', widget: 'social' } as never
+			}
+		});
+		expect(body).toContain('Unlink Google?');
+		expect(body.match(/name="confirm" value="1"/gu)).toHaveLength(1);
+		expect(body).not.toContain('Unlink GitHub?');
+		expect(body).toContain('name="provider" value="apple"');
+		expect(body).toContain('Linked.');
+	});
 });

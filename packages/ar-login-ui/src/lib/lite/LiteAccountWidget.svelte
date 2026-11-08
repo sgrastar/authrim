@@ -221,6 +221,68 @@
 				</ul>
 			{/if}
 		{/if}
+	{:else if widget === 'account_social_account_widget'}
+		{@const social = data.widgets.social}
+		{@const confirming =
+			mine('social') && form && 'confirmUnlink' in form ? String(form.confirmUnlink) : null}
+		{#if data.widgets.socialOutcome}
+			<p role={data.widgets.socialOutcome.kind === 'error' ? 'alert' : 'status'}>
+				{data.widgets.socialOutcome.message}
+			</p>
+		{/if}
+		{#if notice('social') === 'social_unlinked'}
+			<p role="status">{data.text.socialUnlinked}</p>
+		{/if}
+		{#if failed('social') === 'already_linked_here'}
+			<p role="alert">{data.text.socialAlreadyLinkedHere}</p>
+		{:else if failed('social') === 'remaining_login_method_required'}
+			<p role="alert">{data.text.socialLastMethod}</p>
+		{:else if failed('social') === 'operation_in_progress'}
+			<p role="alert">{data.text.socialInProgress}</p>
+		{:else if failed('social')}
+			<p role="alert">{data.text.socialFailed}</p>
+		{/if}
+		{#if social === null}
+			<p role="alert">{data.text.loadFailed}</p>
+		{:else}
+			{#if social.identities.length === 0}
+				<p class="muted">{data.text.socialEmpty}</p>
+			{:else}
+				<ul>
+					{#each social.identities as identity (identity.id)}
+						<li>
+							<strong>{identity.name}</strong>
+							{#if identity.email}<span>{identity.email}</span>{/if}
+							<p class="muted">{identity.meta}</p>
+							<form method="post" action={actionOf(data.search, 'social_unlink')}>
+								{@render hidden()}
+								<input type="hidden" name="identity" value={identity.id} />
+								{#if confirming === identity.id}
+									<p>{identity.confirm}</p>
+									<input type="hidden" name="confirm" value="1" />
+									<button type="submit">{identity.confirmAction}</button>
+									<a href={data.search || '?'}>{data.text.cancel}</a>
+								{:else}
+									<button type="submit">{data.text.socialUnlink}</button>
+								{/if}
+							</form>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			<h3>{data.text.socialLinkHeading}</h3>
+			{#if social.linkable.length === 0}
+				<p class="muted">{data.text.socialNoProviders}</p>
+			{:else}
+				{#each social.linkable as provider (provider.id)}
+					<form method="post" action={actionOf(data.search, 'social_link')}>
+						{@render hidden()}
+						<input type="hidden" name="provider" value={provider.id} />
+						<button type="submit">{provider.label}</button>
+					</form>
+				{/each}
+			{/if}
+		{/if}
 	{:else if widget === 'account_device_list_widget'}
 		<p class="muted">{data.text.devicesDescription}</p>
 		{#if data.widgets.devices === null}
