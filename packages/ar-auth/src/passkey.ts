@@ -7,6 +7,8 @@ import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml
 import { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import { newAccountRegistrationPendingMark } from '@authrim/ar-lib-core';
+import { settleRegistrationPending } from './registration-pending';
 import {
   assertGuestCredentialAuthenticationAllowed,
   isAuthenticationMethodUsageAvailable,
@@ -489,6 +491,11 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
             piiFields: canonicalProfileFields.piiFields,
             sensitiveValues: canonicalProfileFields.sensitiveValues,
             customAttributesJson: provisioningRuntimeUser.customAttributesJson,
+            registrationPending: await newAccountRegistrationPendingMark(
+              c.env,
+              tenantId,
+              'passkey'
+            ),
           });
         }
       } catch (piiError: unknown) {
@@ -793,6 +800,8 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         rpId: rpID,
       });
 
+      // Its passkey registered: no longer an unfinished sign-up's account.
+      await settleRegistrationPending(authCtx.coreAdapter, tenantId, userId);
       // Registration creates an authenticated session, so retain it as the user's first login.
       await runtimeUsers.touchLastLogin(userId, now);
 

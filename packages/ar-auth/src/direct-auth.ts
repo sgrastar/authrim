@@ -25,6 +25,8 @@ import {
 import { Context } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import { newAccountRegistrationPendingMark } from '@authrim/ar-lib-core';
+import { settleRegistrationPending } from './registration-pending';
 import type { StoreCodeRequest } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   accountAuthenticationDenialReason,
@@ -2478,6 +2480,11 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
             piiFields: canonicalProfileFields.piiFields,
             sensitiveValues: canonicalProfileFields.sensitiveValues,
             customAttributesJson: provisioningRuntimeUser.customAttributesJson,
+            registrationPending: await newAccountRegistrationPendingMark(
+              c.env,
+              tenantId,
+              'passkey'
+            ),
           });
         }
       } catch (piiError) {
@@ -2828,6 +2835,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       credentialId: credentialIDBase64URL,
       rpId: rpID,
     });
+    // Its passkey registered: no longer an unfinished sign-up's account.
+    await settleRegistrationPending(authCtx.coreAdapter, tenantId, userId);
 
     const now = Date.now();
     failureStage = 'runtime_user_lookup';
@@ -3055,6 +3064,10 @@ async function completeDirectEmailVerification(
 
   const guestDenial = await guestCredentialDenial(c, coreAdapter, tenantId, userId);
   if (guestDenial) return failed(guestDenial, 'guest_denied', userId);
+
+  // The account is proven now (a code to its address, whatever began it): no longer an unfinished
+  // sign-up's. A clear that fails is logged; the clean-up checks an account again before it acts.
+  await settleRegistrationPending(coreAdapter, tenantId, userId);
 
   const now = Date.now();
   const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
@@ -3806,6 +3819,11 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             piiFields: canonicalProfileFields.piiFields,
             sensitiveValues: canonicalProfileFields.sensitiveValues,
             customAttributesJson: runtimeUser.customAttributesJson,
+            registrationPending: await newAccountRegistrationPendingMark(
+              c.env,
+              tenantId,
+              'email_code'
+            ),
           });
         }
       } catch (error) {

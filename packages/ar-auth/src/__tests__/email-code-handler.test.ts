@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  clearAccountRegistrationPending: vi.fn(async () => undefined),
   findByEmail: vi.fn(),
   findById: vi.fn(),
   findForOtpLogin: vi.fn(),
@@ -48,6 +49,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
+    clearAccountRegistrationPending: mocks.clearAccountRegistrationPending,
     checkEmailRegistration: async (...args: unknown[]) =>
       registrationCheck.override ??
       actual.checkEmailRegistration(
@@ -1289,6 +1291,13 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.markOtpLoginEmailVerified).not.toHaveBeenCalled();
       expect(mocks.markEmailVerifiedForOtpLogin).not.toHaveBeenCalled();
       expect(mocks.markEmailVerifiedAndTouchLastLogin).not.toHaveBeenCalled();
+      // Proven now, though its address was verified before (an invitation's sign-up): its
+      // unfinished sign-up's mark is cleared in the account's own core store.
+      expect(mocks.clearAccountRegistrationPending).toHaveBeenCalledWith(
+        { adapter: 'tenant-core' },
+        'tenant-1',
+        'user-1'
+      );
     });
 
     it('fails closed when the consumed challenge cannot resolve a tenant-D1 account route', async () => {
@@ -1339,6 +1348,11 @@ describe('email code handlers through HTTP', () => {
       expect(response.status).toBe(200);
       expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).not.toHaveBeenCalled();
       expect(mocks.resolveAccountDataContextFromHono).not.toHaveBeenCalled();
+      expect(mocks.clearAccountRegistrationPending).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-1',
+        'user-1'
+      );
     });
 
     it('continues login when optional custom-field persistence fails', async () => {

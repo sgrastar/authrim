@@ -4,6 +4,7 @@ import {
   persistAccountEmailMutation,
 } from '../../services/account-webhook-snapshots';
 import type { AccountRegistrationState } from '../../services/guest-lifecycle';
+import type { AccountRegistrationPendingMark } from '../../services/account-registration-pending-mark';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { getCurrentTimestamp } from '../base';
 import { createLogger } from '../../utils/logger';
@@ -40,6 +41,8 @@ export interface CanonicalRuntimeUserWriteInput {
   inlineProfileFields?: Record<string, string | number | boolean | null>;
   addressJson?: string | null;
   customAttributesJson?: string | null;
+  /** A sign-up's account made before it is proven: marked with it (only when it is created). */
+  registrationPending?: AccountRegistrationPendingMark;
 }
 
 export interface CanonicalRuntimeUserWriteResult {
@@ -157,6 +160,9 @@ export class CanonicalRuntimeUserWriter {
           locale: null,
           zoneinfo: null,
         },
+        ...(input.registrationPending
+          ? { registrationPending: { userId: input.userId, mark: input.registrationPending } }
+          : {}),
       },
       directoryPublication
     );

@@ -779,6 +779,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     account-lifecycle.guest.deletion_after_days
     account-lifecycle.guest.upgrade_hold_minutes
+    account-lifecycle.registration.pending_ttl_hours
     account-lifecycle.deletion.tombstone_retention_days
   `,
     ],

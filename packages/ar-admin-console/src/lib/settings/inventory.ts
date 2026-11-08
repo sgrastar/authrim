@@ -483,6 +483,9 @@ place('users/lifecycle', 'Guest accounts', {
 		'account-lifecycle.guest.upgrade_hold_minutes'
 	]
 });
+place('users/lifecycle', 'Unfinished sign-ups', {
+	primary: ['account-lifecycle.registration.pending_ttl_hours']
+});
 place('users/lifecycle', 'Deleted accounts', {
 	primary: [
 		'account-lifecycle.deletion.tombstone_retention_days',

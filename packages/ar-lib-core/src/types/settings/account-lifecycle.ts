@@ -5,6 +5,7 @@ export interface AccountLifecycleSettings {
   'account-lifecycle.guest.deletion_after_days': number;
   'account-lifecycle.guest.upgrade_enabled': boolean;
   'account-lifecycle.guest.upgrade_hold_minutes': number;
+  'account-lifecycle.registration.pending_ttl_hours': number;
   'account-lifecycle.deletion.tombstone_retention_days': number;
   'account-lifecycle.deletion.block_reregistration': boolean;
 }
@@ -14,6 +15,7 @@ export const ACCOUNT_LIFECYCLE_DEFAULTS: AccountLifecycleSettings = {
   'account-lifecycle.guest.deletion_after_days': 30,
   'account-lifecycle.guest.upgrade_enabled': true,
   'account-lifecycle.guest.upgrade_hold_minutes': 10,
+  'account-lifecycle.registration.pending_ttl_hours': 72,
   'account-lifecycle.deletion.tombstone_retention_days': 90,
   'account-lifecycle.deletion.block_reregistration': false,
 };
@@ -61,6 +63,22 @@ export const ACCOUNT_LIFECYCLE_SETTINGS_META: Record<keyof AccountLifecycleSetti
       max: 60,
       integer: true,
       unit: 'minutes',
+      visibility: 'page',
+    },
+    'account-lifecycle.registration.pending_ttl_hours': {
+      key: 'account-lifecycle.registration.pending_ttl_hours',
+      type: 'number',
+      default: 72,
+      envKey: 'ACCOUNT_REGISTRATION_PENDING_TTL_HOURS',
+      // A whole number of hours within the range, or not taken (never 1.5 → 1 or 72x → 72).
+      envNumber: 'strict-in-range',
+      label: 'Unfinished sign-up clean-up',
+      description:
+        'A sign-up makes the account when the code is sent or the passkey is started. One never finished is deleted this many hours after it began (new sign-ups take the value of their start), so the email address can be used again.',
+      min: 1,
+      max: 720,
+      integer: true,
+      unit: 'hours',
       visibility: 'page',
     },
     'account-lifecycle.deletion.tombstone_retention_days': {
