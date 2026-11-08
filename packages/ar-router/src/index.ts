@@ -29,6 +29,7 @@ import {
   BodyLimitExceededError,
   readRequestBytesWithLimit,
   redactSecretPathSegments,
+  redactingAccessLogPrinter,
   publicLoginUiAssetResourcePolicy,
 } from '@authrim/ar-lib-core';
 
@@ -1030,7 +1031,8 @@ function notFoundResponse(): Response {
 
 // Middleware
 app.use('*', redirectExternalHttpToHttps);
-app.use('*', logger());
+// Access log without the bearer secrets some paths carry (confirmation codes, offer codes).
+app.use('*', logger(redactingAccessLogPrinter));
 
 app.use('*', async (c, next) => {
   const loginUiHost = getConfiguredUrlHostname(c.env.LOGIN_UI_URL);

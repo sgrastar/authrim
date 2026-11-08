@@ -1374,15 +1374,73 @@ function redactCredentials(text: string): string {
   });
 }
 
-/** Request paths whose final segment is a bearer secret (the pre-authorized code). */
-const SECRET_PATH_PATTERN = /^(\/vci\/offers\/)[^/]+/;
+/**
+ * Request paths with a segment that is a bearer secret, as the router's segments (each one
+ * percent-decoded): a credential offer's pre-authorized code (`/vci/offers/<code>`), and a
+ * provider data deletion request's confirmation code (`/(auth|api)/external/<provider>/
+ * data-deletion/<code>`), which opens the request's status. Each rule names the index of the
+ * secret segment when the path is one of them.
+ */
+const SECRET_PATH_RULES: readonly ((segments: readonly string[]) => number | null)[] = [
+  (s) => (s[0] === 'vci' && s[1] === 'offers' && s[2] ? 2 : null),
+  (s) =>
+    (s[0] === 'auth' || s[0] === 'api') &&
+    s[1] === 'external' &&
+    s[2] &&
+    s[3] === 'data-deletion' &&
+    s[4]
+      ? 4
+      : null,
+];
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
 
 /**
  * Request path safe to log: segments that carry a credential (`/vci/offers/<pre-authorized
- * code>`) are replaced, everything else is returned unchanged.
+ * code>`, `/auth/external/<provider>/data-deletion/<confirmation code>`) are replaced,
+ * everything else is returned unchanged.
+ *
+ * The path is matched segment by segment as the router reads it: each segment percent-decoded
+ * on its own (an encoded `/` inside one, as in a provider slug, stays inside it), and empty
+ * segments (repeated slashes) skipped, so `/%61uth/external/...` is no way around it. A path
+ * that matches is written with its segments as they came (repeated slashes collapsed).
  */
 export function redactSecretPathSegments(path: string): string {
-  return path.replace(SECRET_PATH_PATTERN, '$1[REDACTED]');
+  if (!path.startsWith('/')) return path;
+  const raw = path.slice(1).split('/');
+  // A trailing empty segment is kept (it is not one of the secret ones); others are skipped.
+  const kept = raw.filter((segment, index) => segment !== '' || index === raw.length - 1);
+  const decoded = kept.map(decodeSegment);
+  for (const rule of SECRET_PATH_RULES) {
+    const secret = rule(decoded);
+    if (secret !== null) {
+      return `/${kept.map((segment, index) => (index === secret ? '[REDACTED]' : segment)).join('/')}`;
+    }
+  }
+  return path;
+}
+
+/**
+ * An access log line (hono/logger: `<-- GET /path`, `--> GET /path 200 3ms`) safe to write: each
+ * path in it as redactSecretPathSegments leaves it.
+ */
+export function redactSecretPathsInLogLine(line: string): string {
+  return line
+    .split(' ')
+    .map((part) => (part.startsWith('/') ? redactSecretPathSegments(part) : part))
+    .join(' ');
+}
+
+/** hono/logger's print function, with the secret path segments redacted. */
+export function redactingAccessLogPrinter(message: string, ...rest: string[]): void {
+  // eslint-disable-next-line no-console -- hono/logger's own printer is console.log
+  console.log(redactSecretPathsInLogLine(message), ...rest);
 }
 
 /**

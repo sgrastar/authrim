@@ -230,8 +230,8 @@ async function handleSignedCallback(
   }
 
   if (result.outcome === 'account_inactive') {
-    // Suspended, locked or being deleted: the unlink cannot run, and nothing was erased. Never
-    // answered as done. A retry must come within the signed request's max age (a later one needs
+    // Being deleted (no hold; the deletion is still erasing), or in a state the unlink does not
+    // run for: nothing was erased here. Never answered as done. A retry must come within the signed request's max age (a later one needs
     // a new signed request), so the retry delay stays well inside the shortest allowed (60 s).
     await recordCallbackAudit(c, log, { tenantId, kind, provider, result });
     c.header('Retry-After', '30');
@@ -342,8 +342,13 @@ async function recordCallbackAudit(
         ...(result.linkedIdentityId ? { linked_identity_id: result.linkedIdentityId } : {}),
         ...(result.unlinkOperationId ? { unlink_operation_id: result.unlinkOperationId } : {}),
         ...(result.attention ? { attention: result.attention } : {}),
+        // A digest, not the code: whoever reads the audit log cannot use it at the status URL,
+        // and a code a person quotes is matched by hashing it (SHA-256, hex).
         ...(input.confirmationCode
-          ? { confirmation_code: input.confirmationCode, status: input.state }
+          ? {
+              confirmation_code_sha256: await sha256Hex(input.confirmationCode),
+              status: input.state,
+            }
           : {}),
       }),
       // Data the person asked to have erased is kept (a hold, an inactive account, a stopped
@@ -366,12 +371,24 @@ async function recordCallbackAudit(
 // Status
 // =============================================================================
 
-const STATUS_MESSAGES: Record<DataDeletionRequestState, string> = {
+/**
+ * The state the public status shows. A request a legal hold keeps (`retained`) shows a neutral
+ * state that gives no reason: whether a hold exists, and why, is for the operator to tell.
+ */
+export type PublicDataDeletionStatus = 'pending' | 'completed' | 'operator_action_required';
+
+export function publicDataDeletionStatus(
+  state: DataDeletionRequestState
+): PublicDataDeletionStatus {
+  return state === 'retained' ? 'operator_action_required' : state;
+}
+
+const STATUS_MESSAGES: Record<PublicDataDeletionStatus, string> = {
   pending: 'Your request is being processed. The data received from Facebook is being removed.',
   completed:
     'Your request is complete. The data received from Facebook has been deleted, and Facebook is no longer linked for signing in.',
-  retained:
-    'Your request could not be completed: the data must be kept for a legal obligation. Contact the service operator for details.',
+  operator_action_required:
+    'This request requires individual handling by the service operator. Contact the service operator for details.',
 };
 
 function escapeHtml(value: string): string {
@@ -413,7 +430,8 @@ export async function handleFacebookDataDeletionStatus(
   }
   if (!state) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
-  if (wantsJson(c)) return c.json({ confirmation_code: code, status: state });
+  const status = publicDataDeletionStatus(state);
+  if (wantsJson(c)) return c.json({ confirmation_code: code, status });
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -426,8 +444,8 @@ export async function handleFacebookDataDeletionStatus(
 <main>
 <h1>Data deletion request</h1>
 <p>Confirmation code: <code>${escapeHtml(code)}</code></p>
-<p>Status: <strong>${escapeHtml(state)}</strong></p>
-<p>${escapeHtml(STATUS_MESSAGES[state])}</p>
+<p>Status: <strong>${escapeHtml(status.replace(/_/gu, ' '))}</strong></p>
+<p>${escapeHtml(STATUS_MESSAGES[status])}</p>
 </main>
 </body>
 </html>`;

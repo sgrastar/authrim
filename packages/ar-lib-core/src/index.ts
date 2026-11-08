@@ -526,6 +526,8 @@ export {
   maskIpAddress,
   redactSecretsInText,
   redactSecretPathSegments,
+  redactSecretPathsInLogLine,
+  redactingAccessLogPrinter,
   redactCompactJwts,
   redactPhoneNumbers,
   redactPiiText,

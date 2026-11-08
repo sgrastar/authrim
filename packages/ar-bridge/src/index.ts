@@ -55,6 +55,7 @@ import {
   getLogger,
   createLogger,
   diagnosticLoggingMiddleware,
+  redactingAccessLogPrinter,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -110,7 +111,8 @@ import { refreshExpiringTokensForScheduledTenants } from './services/token-refre
 const app = new Hono<{ Bindings: Env }>();
 
 // Middleware
-app.use('*', logger());
+// Access log without the bearer secrets some paths carry (confirmation codes, offer codes).
+app.use('*', logger(redactingAccessLogPrinter));
 app.use('*', requestContextMiddleware());
 app.use('*', pluginContextMiddleware());
 
