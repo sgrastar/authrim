@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { ADMIN_PERMISSIONS, type AdminAuthContext, type Env } from '@authrim/ar-lib-core';
-import { releaseRolloutMutationFenceMiddleware } from '../release-rollout-mutation-fence';
+import {
+  releaseRolloutMutationFenceMiddleware,
+  type FenceClientLookup,
+} from '../release-rollout-mutation-fence';
 
-function app(control?: Env['CONTROL'], adminAuth?: AdminAuthContext) {
+function app(
+  control?: Env['CONTROL'],
+  adminAuth?: AdminAuthContext,
+  findClient?: FenceClientLookup
+) {
   const router = new Hono<{ Bindings: Env }>();
   if (adminAuth) {
     router.use('/api/admin/*', async (c, next) => {
@@ -14,10 +21,11 @@ function app(control?: Env['CONTROL'], adminAuth?: AdminAuthContext) {
       return next();
     });
   }
-  router.use('/api/admin/*', releaseRolloutMutationFenceMiddleware());
+  router.use('/api/admin/*', releaseRolloutMutationFenceMiddleware({ findClient }));
   router.get('/api/admin/settings', (c) => c.json({ ok: true }));
   router.put('/api/admin/settings', (c) => c.json({ ok: true }));
   router.post('/api/admin/clients', async (c) => c.json({ body: await c.req.json() }));
+  router.put('/api/admin/clients/:id', async (c) => c.json({ body: await c.req.json() }));
   router.post('/api/admin/logout', (c) => c.json({ ok: true }));
   router.post(
     '/api/admin/platform/control-plane/release-rollout/:operationId/targets/:targetId/retry',
@@ -399,6 +407,129 @@ describe('release rollout mutation fence', () => {
         )
       ).status
     ).toBe(409);
+  });
+
+  it("lets the setup machine repair only the existing Login UI client's exact body", async () => {
+    const control = {
+      getReleaseMigrationRolloutStatus: vi.fn(async () => ({
+        operationId: 'release-1',
+        sourceVersion: '0.5.0',
+        targetVersion: '0.5.1',
+        phase: 'verifying' as const,
+        completedTargets: 3,
+        totalTargets: 3,
+        adminMutationMode: 'read_only' as const,
+        lastErrorCode: null,
+        updatedAt: 1_800_000_000,
+      })),
+    } as unknown as Env['CONTROL'];
+    const setupMachine: AdminAuthContext = {
+      userId: 'machine:authrim-setup',
+      authMethod: 'machine_access_token',
+      actorType: 'machine',
+      principalType: 'setup_tool',
+      clientId: 'authrim-setup',
+      actorId: 'amp_authrim_setup',
+      roles: [],
+      permissions: [ADMIN_PERMISSIONS.CLIENTS_WRITE],
+    };
+    const clients: Record<string, { client_name: string; is_trusted: boolean }> = {
+      'login-ui-1': { client_name: 'Login UI', is_trusted: true },
+      'untrusted-login-ui': { client_name: 'Login UI', is_trusted: false },
+      'app-1': { client_name: 'Customer app', is_trusted: true },
+    };
+    const findClient = vi.fn<FenceClientLookup>(async (_c, id) => clients[id] ?? null);
+    const origin = 'https://first.example.test';
+    const payload = {
+      client_name: 'Login UI',
+      description: 'System-managed public OAuth client used by the built-in Authrim Login UI.',
+      redirect_uris: [
+        `${origin}/callback`,
+        `${origin}/reauth/callback`,
+        `${origin}/device/callback`,
+        `${origin}/ciba/callback`,
+      ],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      scope: 'openid profile email',
+      is_trusted: true,
+      skip_consent: true,
+      token_endpoint_auth_method: 'none',
+      require_pkce: true,
+      browser_public_client_mode: 'cookie_fallback',
+      browser_refresh_token_policy: 'disabled',
+      web_origin_registry: {
+        origins: [
+          { origin, cors: { allowed: true }, handoff_allowed: true, iframe_allowed: false },
+        ],
+      },
+    };
+    const put = (
+      router: ReturnType<typeof app>['router'],
+      env: Env,
+      clientId: string,
+      body: unknown
+    ) =>
+      router.request(
+        `/api/admin/clients/${clientId}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        env
+      );
+
+    const { router, env } = app(control, setupMachine, findClient);
+    const accepted = await put(router, env, 'login-ui-1', payload);
+    expect(accepted.status).toBe(200);
+    await expect(accepted.json()).resolves.toEqual({ body: payload });
+
+    // Another client, an untrusted look-alike, or no such client: still paused.
+    for (const id of ['app-1', 'untrusted-login-ui', 'missing-client']) {
+      expect((await put(router, env, id, payload)).status, id).toBe(409);
+    }
+    // Any other body: still paused.
+    for (const body of [
+      { ...payload, scope: 'openid profile email offline_access' },
+      { ...payload, client_name: 'Customer app' },
+      { ...payload, extra: true },
+      {
+        ...payload,
+        redirect_uris: ['https://evil.example/callback', ...payload.redirect_uris.slice(1)],
+      },
+    ]) {
+      expect((await put(router, env, 'login-ui-1', body)).status).toBe(409);
+    }
+    // Not under the client path, or not a PUT: still paused.
+    expect(
+      (
+        await router.request(
+          '/api/admin/clients/login-ui-1/secret',
+          { method: 'PUT', body: JSON.stringify(payload) },
+          env
+        )
+      ).status
+    ).toBe(409);
+
+    // A lookup that fails keeps the write paused.
+    const failing = app(
+      control,
+      setupMachine,
+      vi.fn<FenceClientLookup>(async () => {
+        throw new Error('database unavailable');
+      })
+    );
+    expect((await put(failing.router, failing.env, 'login-ui-1', payload)).status).toBe(409);
+
+    // Only the setup machine with clients:write.
+    for (const auth of [
+      { ...setupMachine, permissions: [] },
+      { ...setupMachine, principalType: 'admin_user', actorType: 'user', clientId: 'admin-ui' },
+    ] as AdminAuthContext[]) {
+      const other = app(control, auth, findClient);
+      expect((await put(other.router, other.env, 'login-ui-1', payload)).status).toBe(409);
+    }
   });
 
   it('fails closed when a configured Control status reader cannot verify state', async () => {
