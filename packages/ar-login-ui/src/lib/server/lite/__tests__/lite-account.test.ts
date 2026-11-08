@@ -637,9 +637,12 @@ describe('the lite account page', () => {
 			await expect(post('stepup_email_send', { step_up: at })).resolves.toMatchObject({
 				notice: 'step_up_code_sent'
 			});
-			expect(((await view()) as Page).stepUp?.email).toEqual({ maskedEmail: 'a***@example.com' });
+			expect(((await view()) as Page).stepUp?.email).toEqual({
+				maskedEmail: 'a***@example.com',
+				challenge: 'rc-1'
+			});
 			await expect(
-				post('stepup_email_verify', { step_up: at, code: '000000' })
+				post('stepup_email_verify', { step_up: at, challenge: 'rc-1', code: '000000' })
 			).resolves.toMatchObject({
 				status: 400,
 				data: { error: 'code_invalid' }
@@ -668,13 +671,72 @@ describe('the lite account page', () => {
 				notice: 'step_up_code_sent'
 			});
 			// Proven: the held removal is made (once), the step-up given up.
-			await expect(post('stepup_email_verify', { step_up: at, code: '123456' })).resolves.toEqual({
+			// A form of the code spent (an older page) checks nothing against the new one.
+			await expect(
+				post('stepup_email_verify', { step_up: at, challenge: 'rc-1', code: '123456' })
+			).resolves.toMatchObject({ status: 409, data: { error: 'step_up_gone' } });
+			// A check another post took (a double submit): not made twice.
+			const current = (store.txn.data.accountStepUp as { email: { challengeId: string } }).email
+				.challengeId;
+			store.set({
+				data: {
+					...store.txn.data,
+					accountStepUp: { ...(store.txn.data.accountStepUp as object), checkingAt: Date.now() }
+				}
+			});
+			await expect(
+				post('stepup_email_verify', { step_up: at, challenge: current, code: '123456' })
+			).resolves.toMatchObject({ notice: 'step_up_checking' });
+			store.set({
+				data: {
+					...store.txn.data,
+					accountStepUp: { ...(store.txn.data.accountStepUp as object), checkingAt: null }
+				}
+			});
+			await expect(
+				post('stepup_email_verify', { step_up: at, challenge: current, code: '123456' })
+			).resolves.toEqual({
 				notice: 'passkey_deleted',
 				widget: 'passkeys'
 			});
 			expect(deletes).toBe(2);
 			expect(store.txn.data.accountStepUp).toBeUndefined();
 			expect(((await view()) as Page).stepUp).toBeNull();
+		});
+
+		it("switches to another way (the change still held), and takes an account's every passkey", async () => {
+			passkeyPage();
+			routes['/api/account/passkeys/pk1'] = () =>
+				json({ error: 'reauth_required', reauth_required: true }, 403);
+			// More passkeys than the transaction has room to list: the list is left out.
+			routes['/api/account/reauth/passkey/options'] = () =>
+				json({
+					challenge_id: 'rp-1',
+					options: {
+						challenge: 'c'.repeat(43),
+						rpId: 'id.example',
+						userVerification: 'required',
+						allowCredentials: Array.from({ length: 40 }, (_, i) => ({
+							id: `${'k'.repeat(90)}${i}`,
+							type: 'public-key'
+						}))
+					}
+				});
+			await view();
+			await post('passkey_delete', { passkey: 'pk1' });
+			const at = ((await view()) as Page).stepUp!.at;
+			await expect(post('stepup_passkey_start', { step_up: at })).resolves.toMatchObject({
+				notice: 'step_up_ceremony'
+			});
+			const ceremony = (await view()) as {
+				stepUp: { passkey: { options: { allowCredentials: unknown[] } } };
+			};
+			expect(ceremony.stepUp.passkey.options.allowCredentials).toEqual([]);
+			await expect(post('stepup_switch', { step_up: at })).resolves.toMatchObject({
+				notice: 'step_up_switched'
+			});
+			const switched = (await view()) as Page & { stepUp: { passkey: unknown } };
+			expect(switched.stepUp).toMatchObject({ at, passkey: null, email: null });
 		});
 
 		it('offers the authenticator only with an active one, and gives a held change up', async () => {

@@ -365,6 +365,7 @@ export async function liteAccountPage(event: RequestEvent) {
 			consentEmpty: LL.account_consentEmpty(),
 			activityMore: LL.account_activityLoadMore(),
 			activityIncomplete: LL.account_activityIncomplete(),
+			anotherWay: LL.lite_reauthAnotherWay(),
 			stepUpTitle: LL.account_reauthTitle(),
 			stepUpDescription: LL.account_reauthDescription(),
 			stepUpNoMethods: LL.account_reauthNoMethods(),

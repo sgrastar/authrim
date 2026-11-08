@@ -32,6 +32,12 @@ const PASSKEY_TTL_MS = 300_000;
 /** Kept in the transaction (its few kilobytes): creation options larger than this are refused. */
 const MAX_REGISTRATION_CHARS = 3000;
 const CHALLENGE_ID = /^[A-Za-z0-9_.:-]{1,256}$/u;
+/** An account's passkeys, all in its step-up's allow list (ar-management answers every one). */
+const MAX_ACCOUNT_PASSKEYS = 1000;
+/** The step-up's options kept in the transaction: an allow list larger is left out (below). */
+const MAX_STEP_UP_OPTIONS_CHARS = 3000;
+/** How long a check taken waits before another post may make it (a post that never ended). */
+const CHECK_TTL_MS = 30_000;
 
 /** A change held for its step-up: the action, and what it was posted with. */
 export interface LiteAccountPending {
@@ -46,6 +52,8 @@ export interface LiteAccountStepUp {
 	email: { challengeId: string; maskedEmail: string | null } | null;
 	/** When a post took the send of a code (the others meanwhile draw the page). */
 	sendingAt: number | null;
+	/** When a post took the check of a proof (one at a time: a spent challenge checks no more). */
+	checkingAt: number | null;
 	/** A passkey challenge got (its ceremony is drawn). */
 	passkey: { challengeId: string; options: LitePasskeyOptions; expiresAt: number } | null;
 }
@@ -69,11 +77,12 @@ export function readLiteAccountStepUp(
 	}
 	const email = record(held.email);
 	const passkey = record(held.passkey);
-	const options = readLitePasskeyOptions(passkey.options);
+	const options = readLitePasskeyOptions(passkey.options, MAX_ACCOUNT_PASSKEYS);
 	return {
 		pending: { action: pending.action, args },
 		at: held.at,
 		sendingAt: typeof held.sendingAt === 'number' ? held.sendingAt : null,
+		checkingAt: typeof held.checkingAt === 'number' ? held.checkingAt : null,
 		email: challengeId(email.challengeId)
 			? {
 					challengeId: email.challengeId as string,
@@ -142,7 +151,14 @@ async function move(
 async function holdForStepUp(post: LiteAccountPost, pending: LiteAccountPending) {
 	// Alone on the page: a passkey being added is given up with it (one ceremony at a time).
 	const kept = await move(post, {
-		accountStepUp: { pending, at: Date.now(), email: null, passkey: null, sendingAt: null },
+		accountStepUp: {
+			pending,
+			at: Date.now(),
+			email: null,
+			passkey: null,
+			sendingAt: null,
+			checkingAt: null
+		},
 		accountPasskeyCreate: null
 	});
 	if (!kept) return retryLater();
@@ -297,6 +313,20 @@ async function proven(event: RequestEvent, post: LiteAccountPost, stepUp: LiteAc
 	return action(event, { ...post, txn: cleared }, stepUp.pending.args);
 }
 
+/**
+ * Takes the check of a proof, before ar-management spends its challenge: of posts that read the
+ * same (a double submit, another tab), one only checks; the others draw the page. The post with the
+ * transaction it took it at, or the answer.
+ */
+async function takeCheck(post: LiteAccountPost, stepUp: LiteAccountStepUp) {
+	if (stepUp.checkingAt !== null && Date.now() - stepUp.checkingAt < CHECK_TTL_MS) {
+		return { answer: { notice: 'step_up_checking' as const, widget: 'account' } };
+	}
+	const taken = await move(post, { accountStepUp: { ...stepUp, checkingAt: Date.now() } });
+	if (!taken) return { answer: retryLater() };
+	return { post: { ...post, txn: taken } };
+}
+
 /** The step-up the post is for (the form names the held change it was drawn for). */
 async function openStepUp(event: RequestEvent) {
 	const opened = await openAccountPost(event);
@@ -366,10 +396,16 @@ export async function liteAccountStepUpEmailVerifyAction(event: RequestEvent) {
 	if ('failure' in opened) return opened.failure;
 	const { post, stepUp } = opened;
 	const code = (post.fields.get('code') ?? '').replace(/\s+/gu, '');
-	if (!stepUp.email) return fail(409, { error: 'step_up_failed' as const, widget: 'account' });
-	if (!/^\d{6}$/u.test(code))
+	// A form drawn for another code (an older page, sent again since): nothing checked with it.
+	if (!stepUp.email || post.fields.get('challenge') !== stepUp.email.challengeId) {
+		return fail(409, { error: 'step_up_gone' as const, widget: 'account' });
+	}
+	if (!/^\d{6}$/u.test(code)) {
 		return fail(400, { error: 'code_invalid' as const, widget: 'account' });
-	const answer = await post.backend
+	}
+	const took = await takeCheck(post, stepUp);
+	if ('answer' in took) return took.answer;
+	const answer = await took.post.backend
 		.request('/api/account/reauth/email-code/complete', {
 			json: { challenge_id: stepUp.email.challengeId, code }
 		})
@@ -377,10 +413,10 @@ export async function liteAccountStepUpEmailVerifyAction(event: RequestEvent) {
 	if (answer?.status !== 200 || record(answer.json).ok !== true) {
 		// ar-management spends the challenge on its check, a wrong code included: the held change
 		// stays, and the page offers the methods again (a new code, or another way).
-		await move(post, { accountStepUp: { ...stepUp, email: null } });
+		await move(took.post, { accountStepUp: { ...stepUp, email: null, checkingAt: null } });
 		return stepUpFailure(answer);
 	}
-	return proven(event, post, stepUp);
+	return proven(event, took.post, stepUp);
 }
 
 /** `stepup_totp`: an authenticator code checked; the held change made. */
@@ -392,11 +428,16 @@ export async function liteAccountStepUpTotpAction(event: RequestEvent) {
 	if (!/^(\d{6}|\d{8})$/u.test(code)) {
 		return fail(400, { error: 'code_invalid' as const, widget: 'account' });
 	}
-	const answer = await post.backend
+	const took = await takeCheck(post, stepUp);
+	if ('answer' in took) return took.answer;
+	const answer = await took.post.backend
 		.request('/api/account/reauth/totp/complete', { json: { code } })
 		.catch(() => null);
-	if (answer?.status !== 200 || record(answer.json).ok !== true) return stepUpFailure(answer);
-	return proven(event, post, stepUp);
+	if (answer?.status !== 200 || record(answer.json).ok !== true) {
+		await move(took.post, { accountStepUp: { ...stepUp, checkingAt: null } });
+		return stepUpFailure(answer);
+	}
+	return proven(event, took.post, stepUp);
 }
 
 /** `stepup_passkey_start`: a passkey challenge (its ceremony is drawn next). */
@@ -408,9 +449,15 @@ export async function liteAccountStepUpPasskeyStartAction(event: RequestEvent) {
 		.request('/api/account/reauth/passkey/options', { json: {} })
 		.catch(() => null);
 	const json = record(answer?.json);
-	const options = readLitePasskeyOptions(json.options);
+	const read = readLitePasskeyOptions(json.options, MAX_ACCOUNT_PASSKEYS);
 	const id = challengeId(json.challenge_id);
-	if (answer?.status !== 200 || !options || !id) return stepUpFailure(answer);
+	if (answer?.status !== 200 || !read || !id) return stepUpFailure(answer);
+	// An allow list too large for the transaction's room is left out: the browser then offers the
+	// passkeys it holds for this site (ar-management checks the one used is the account's own).
+	const options =
+		JSON.stringify(read).length > MAX_STEP_UP_OPTIONS_CHARS
+			? { ...read, allowCredentials: [] }
+			: read;
 	const kept = await move(post, {
 		accountStepUp: {
 			...stepUp,
@@ -432,17 +479,30 @@ export async function liteAccountStepUpPasskeyFinishAction(event: RequestEvent) 
 	}
 	const credential = readLitePasskeyCredential(post.fields.get('credential'));
 	if (!credential) return fail(400, { error: 'passkey_failed' as const, widget: 'account' });
-	const answer = await post.backend
+	const took = await takeCheck(post, stepUp);
+	if ('answer' in took) return took.answer;
+	const answer = await took.post.backend
 		.request('/api/account/reauth/passkey/complete', {
 			json: { challenge_id: stepUp.passkey.challengeId, credential }
 		})
 		.catch(() => null);
 	if (answer?.status !== 200 || record(answer.json).ok !== true) {
 		// The challenge is spent: a new one is got for the next try.
-		await move(post, { accountStepUp: { ...stepUp, passkey: null } });
+		await move(took.post, { accountStepUp: { ...stepUp, passkey: null, checkingAt: null } });
 		return stepUpFailure(answer);
 	}
-	return proven(event, post, stepUp);
+	return proven(event, took.post, stepUp);
+}
+
+/** `stepup_switch`: the method chosen given up (its code or ceremony), the held change kept. */
+export async function liteAccountStepUpSwitchAction(event: RequestEvent) {
+	const opened = await openStepUp(event);
+	if ('failure' in opened) return opened.failure;
+	const kept = await move(opened.post, {
+		accountStepUp: { ...opened.stepUp, email: null, passkey: null }
+	});
+	if (!kept) return retryLater();
+	return { notice: 'step_up_switched' as const, widget: 'account' };
 }
 
 /** `stepup_cancel`: the held change given up. */
@@ -483,7 +543,9 @@ export async function liteAccountStepUpView(
 			email: on('emailCode') && Boolean(input.profile.email) && input.profile.emailVerified,
 			totp: totpActive
 		},
-		email: stepUp.email ? { maskedEmail: stepUp.email.maskedEmail } : null,
+		email: stepUp.email
+			? { maskedEmail: stepUp.email.maskedEmail, challenge: stepUp.email.challengeId }
+			: null,
 		passkey: stepUp.passkey
 			? { options: stepUp.passkey.options, challenge: stepUp.passkey.challengeId }
 			: null
@@ -499,5 +561,6 @@ export const liteAccountSecurityActions = {
 	stepup_totp: liteAccountStepUpTotpAction,
 	stepup_passkey_start: liteAccountStepUpPasskeyStartAction,
 	stepup_passkey_finish: liteAccountStepUpPasskeyFinishAction,
+	stepup_switch: liteAccountStepUpSwitchAction,
 	stepup_cancel: liteAccountStepUpCancelAction
 };

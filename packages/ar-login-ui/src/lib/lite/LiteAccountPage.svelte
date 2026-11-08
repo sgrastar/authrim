@@ -93,6 +93,7 @@
 					<form method="post" action={actionOf(data.search, 'stepup_email_verify')}>
 						{@render hidden(data.txnId, data.csrfToken, data.op)}
 						<input type="hidden" name="step_up" value={data.stepUp.at} />
+						<input type="hidden" name="challenge" value={data.stepUp.email.challenge} />
 						<label>
 							{data.text.stepUpCode}
 							<input
@@ -141,6 +142,14 @@
 							<button type="submit">{data.text.stepUpTotp}</button>
 						</form>
 					{/if}
+				{/if}
+				{#if data.stepUp.passkey || data.stepUp.email}
+					<!-- Another way: the method chosen given up, the change still held. -->
+					<form method="post" action={actionOf(data.search, 'stepup_switch')}>
+						{@render hidden(data.txnId, data.csrfToken, data.op)}
+						<input type="hidden" name="step_up" value={data.stepUp.at} />
+						<button type="submit">{data.text.anotherWay}</button>
+					</form>
 				{/if}
 				<form method="post" action={actionOf(data.search, 'stepup_cancel')}>
 					{@render hidden(data.txnId, data.csrfToken, data.op)}
