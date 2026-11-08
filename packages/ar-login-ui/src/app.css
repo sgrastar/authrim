@@ -853,7 +853,7 @@ tr.expired {
 	.auth-page--entry-motion .auth-topbar,
 	.auth-page--entry-motion .auth-client-card,
 	.auth-page--entry-motion .auth-entry-form > .card,
-	.auth-page--entry-motion .auth-bottom-link {
+	.auth-page--entry-motion .auth-bottom-link:not(.auth-bottom-link--in-card) {
 		animation: auth-entry-reveal 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
 	}
 
@@ -970,7 +970,7 @@ tr.expired {
 		--auth-entry-delay: 660ms;
 	}
 
-	.auth-page--entry-motion .auth-bottom-link {
+	.auth-page--entry-motion .auth-bottom-link:not(.auth-bottom-link--in-card) {
 		animation-delay: 1000ms;
 	}
 }
@@ -4118,8 +4118,9 @@ tr.expired {
 	--glass-gloss: linear-gradient(transparent, transparent);
 }
 
-/* The page's own text (the header, the footer, the link under the card) lies on the picture, not on
-   a pane: over a tenant's picture each sits on a small pane of its own. A minimal form has no card,
+/* The page's own text (the header, the footer) lies on the picture, not on a pane: over a tenant's
+   picture each sits on a small pane of its own. The sign-in / sign-up link is the last line of the
+   card, so it has no pane. A link on the page itself (the other screens') keeps one. A minimal form has no card,
    so it keeps one here. Not in the split template: there the header and the link are inside the
    form side (already a pane), and the footer is a full-width bar of its own. */
 [data-has-page-background-image='true']:is(
@@ -4127,7 +4128,11 @@ tr.expired {
 		[data-login-theme='clear-glass']
 	):where(:not([data-page-layout='split_panel']))
 	.auth-page
-	:is(.auth-header, .auth-footer:not(.auth-bar), .auth-bottom-link) {
+	:is(
+		.auth-header,
+		.auth-footer:not(.auth-bar),
+		.auth-bottom-link:not(.auth-bottom-link--in-card)
+	) {
 	background: var(--bg-card);
 	border-radius: var(--radius-md);
 	backdrop-filter: blur(14px) saturate(140%);
@@ -4217,7 +4222,11 @@ tr.expired {
 			[data-login-theme='clear-glass']
 		)
 		.auth-page
-		:is(.auth-header, .auth-footer:not(.auth-bar), .auth-bottom-link) {
+		:is(
+			.auth-header,
+			.auth-footer:not(.auth-bar),
+			.auth-bottom-link:not(.auth-bottom-link--in-card)
+		) {
 		backdrop-filter: none;
 		-webkit-backdrop-filter: none;
 	}

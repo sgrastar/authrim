@@ -93,9 +93,7 @@
 		const match = /^(header|footer)_(left|center|right)$/.exec(topbar);
 		return match ? { bar: match[1], side: match[2] } : null;
 	});
-	// Split's form filling its side is the card itself: the link sits in it, at its end.
-	const switchInCard = $derived(split && draft.formFrame === 'full');
-	// The link under the card that switches between signing in and signing up.
+	// The link that switches between signing in and signing up: the last line of the card.
 	const switchLink = $derived(
 		screen === 'signIn'
 			? tIn(draft.language, 'th.preview.toSignUp')
@@ -110,11 +108,6 @@
 	let backgroundUrl = $state<string | null>(null);
 	let panelUrl = $state<string | null>(null);
 	let cardUrl = $state<string | null>(null);
-	// The glasses over a picture lay the page's own text (here the link under the card) on a small
-	// pane of its own, as the Login UI does; not in Split, where it is inside the form side.
-	const switchPane = $derived(
-		(draft.palette === 'glass' || draft.palette === 'clear-glass') && !!backgroundUrl && !split
-	);
 
 	function imageUrl(value: string | File | null, set: (url: string | null) => void) {
 		if (value instanceof File) {
@@ -415,13 +408,8 @@
 										<span class="outline__button">{tIn(draft.language, 'th.preview.continue')}</span
 										>
 									{/if}
-									{#if switchLink && switchInCard}<p class="outline__switch">{switchLink}</p>{/if}
+									{#if switchLink}<p class="outline__switch">{switchLink}</p>{/if}
 								</div>
-								{#if switchLink && !switchInCard}
-									<p class="outline__switch" class:outline__switch--pane={switchPane}>
-										{switchLink}
-									</p>
-								{/if}
 								{#if showTools && topbar === 'below_card'}{@render tools()}{/if}
 							</div>
 						</div>
@@ -874,21 +862,14 @@
 		color: var(--ol-header-text, var(--ol-copy, var(--ol-text, var(--text-secondary))));
 	}
 
-	/* The link under the card that switches between signing in and signing up. */
-	/* Spaced by the column (or the card) it sits in, as the Login UI's link under the card. */
-	.outline__switch {
+	/* The link that switches between signing in and signing up: the last line of the card, spaced
+	   by the card's own gap. */
+	.outline__card .outline__switch {
 		margin: 0;
 		text-align: center;
 		font-size: var(--preview-fs-small);
 		font-weight: var(--fw-semibold);
 		color: var(--ol-link);
-	}
-
-	.outline__switch--pane {
-		justify-self: center;
-		padding: 2px 12px;
-		border-radius: var(--ol-control-radius);
-		background: var(--ol-card);
 	}
 
 	/* Floating over the stage or over the form side: its top end corner. */
