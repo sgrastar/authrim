@@ -91,6 +91,9 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.part.guest_login_widget': 'Gast-Anmeldung',
 	'sc.part.guest_login_widget.desc':
 		'Eine Schaltfläche für die Gast-Anmeldung und wie lange Gastdaten bleiben.',
+	'sc.part.auth_switch_link': 'Link zur anderen Anmeldeseite',
+	'sc.part.auth_switch_link.desc':
+		'Der Link zur anderen Seite: von der Anmeldung zur Registrierung und zurück. Das Ziel bestimmt die Seite.',
 	'sc.part.account_upgrade_widget': 'Gast-Registrierung',
 	'sc.part.account_upgrade_widget.desc': 'Gast-Registrierung und das Löschdatum des Gastkontos.',
 	'sc.part.account_profile_widget': 'Benutzerprofil',

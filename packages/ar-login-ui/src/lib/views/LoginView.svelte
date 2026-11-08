@@ -70,6 +70,7 @@
 	 */
 	import { Button, Input, Card, Alert } from '#lib/components/index.js';
 	import AuthSwitchLink from '#lib/components/AuthSwitchLink.svelte';
+	import { screenHasPart } from '#lib/authrim/screen-parts.js';
 	import RuntimeScreen from '#lib/components/RuntimeScreen.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import type { RuntimeAuthMethod } from '#lib/authrim/runtime-auth-handles.js';
@@ -235,9 +236,10 @@
 	const externalIdpBusy = $derived(loading.externalIdp != null);
 </script>
 
-<!-- Create Account Link: the last line of the card (the error card too) -->
-{#snippet createAccountLink()}
-	{#if signupHref}
+<!-- Create Account Link: the last line of the card, for a screen that has no link part of its own
+     (and always on the error card, which shows no screen) -->
+{#snippet createAccountLink(always: boolean)}
+	{#if signupHref && (always || !screenHasPart(runtimeStep?.screen, 'auth_switch_link'))}
 		<p class="auth-bottom-link auth-bottom-link--in-card">
 			<AuthSwitchLink
 				href={signupHref}
@@ -330,7 +332,7 @@
 		<Alert variant="error" class="mb-0">
 			{methodsError}
 		</Alert>
-		{@render createAccountLink()}
+		{@render createAccountLink(true)}
 	</Card>
 {:else}
 	<!-- Login Card -->
@@ -424,6 +426,7 @@
 					<div class="runtime-screen-step mb-4">
 						<RuntimeScreen
 							screen={runtimeStep.screen}
+							switchLinkHref={signupHref ?? ''}
 							guestEnabled={guest.enabled}
 							guestRetentionDescription={guest.retentionDescription}
 							{onGuestLogin}
@@ -758,7 +761,7 @@
 				/>
 			{/if}
 
-			{@render createAccountLink()}
+			{@render createAccountLink(false)}
 		</Card>
 	</form>
 {/if}

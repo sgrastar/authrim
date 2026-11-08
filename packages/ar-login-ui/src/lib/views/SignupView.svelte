@@ -63,6 +63,7 @@
 	 */
 	import { Button, Input, Card, Alert } from '#lib/components/index.js';
 	import AuthSwitchLink from '#lib/components/AuthSwitchLink.svelte';
+	import { screenHasPart } from '#lib/authrim/screen-parts.js';
 	import RuntimeScreen from '#lib/components/RuntimeScreen.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { handleCodeEnterKey } from '#lib/utils/code-enter-key.js';
@@ -331,6 +332,7 @@
 					<div class="runtime-screen-step mb-4">
 						<RuntimeScreen
 							screen={runtimeStep.screen}
+							switchLinkHref={loginHref ?? ''}
 							headingOverride={title}
 							disabled={busy}
 							authMethodMode="signup"
@@ -667,8 +669,8 @@
 				</p>
 			{/if}
 
-			<!-- Sign In Link: the last line of the card -->
-			{#if loginHref}
+			<!-- Sign In Link: the last line of the card, for a screen that has no link part of its own -->
+			{#if loginHref && !(runtimeStep && !invitationEmailCode && screenHasPart(runtimeStep.screen, 'auth_switch_link'))}
 				<p class="auth-bottom-link auth-bottom-link--in-card">
 					<AuthSwitchLink
 						href={loginHref}

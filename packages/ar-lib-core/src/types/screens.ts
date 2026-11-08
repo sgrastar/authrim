@@ -10,6 +10,12 @@ export type ScreenBlockType =
   | 'identity_field'
   | 'auth_widget'
   | 'guest_login_widget'
+  /**
+   * The link to the other sign-in screen: from sign in to sign up ("Don't have an account?") and
+   * back ("Already have an account?"). The page decides where it goes; the part decides where on
+   * the screen it sits, and what it says (its label, empty for the standard wording).
+   */
+  | 'auth_switch_link'
   | 'code_input_widget'
   | 'consent_widget'
   | 'heading'

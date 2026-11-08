@@ -98,7 +98,7 @@
 							>
 						{:else if part.kind === 'divider'}
 							<span class="screen__divider"><span>{part.label}</span></span>
-						{:else if part.kind === 'link'}
+						{:else if part.kind === 'link' || part.kind === 'auth_switch_link'}
 							<span class="screen__link">{part.label}</span>
 						{:else if part.kind === 'guest_login_widget'}
 							<span class="screen__button screen__button--quiet">{part.label}</span>

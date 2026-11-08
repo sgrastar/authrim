@@ -193,7 +193,11 @@ const clearDark = {
 	...tokens(app, `${BOUNDARY}[data-theme='dark'][data-login-theme='clear-glass'] {`)
 };
 
-/** Over a tenant's picture (and in the split card) the glasses' panes are protected. */
+/**
+ * In the split template's floating card (over the tenant's brand panel, of any colour) the glasses'
+ * panes are protected. Over the page's own picture they are not: the form area colour sets how
+ * dense they are.
+ */
 const PHOTOS: Rgb[] = [
 	[0, 0, 0],
 	[255, 255, 255],
@@ -201,22 +205,22 @@ const PHOTOS: Rgb[] = [
 ];
 const pictureLight = tokens(
 	app,
-	"[data-login-theme='glass'][data-has-page-background-image='true'],"
+	"[data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card']:not("
 );
 const pictureDark = tokens(
 	app,
-	"[data-theme='dark'][data-login-theme='glass'][data-has-page-background-image='true'],"
+	"[data-theme='dark'][data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card'],"
 );
-/** A glass over a white, a black or a dark-blue photo, with the protection applied. */
+/** A glass over a white, a black or a dark-blue brand panel, with the protection applied. */
 const onPicture = (name: string, light: Values, dark: Values): Case[] => [
 	{
-		name: `${name} light over a picture`,
+		name: `${name} light in the split card`,
 		values: { ...light, ...pictureLight },
 		behind: PHOTOS,
 		paneOnly: true
 	},
 	{
-		name: `${name} dark over a picture`,
+		name: `${name} dark in the split card`,
 		values: { ...dark, ...pictureLight, ...pictureDark },
 		behind: PHOTOS,
 		paneOnly: true
@@ -411,16 +415,16 @@ describe('theme contrast', () => {
 		{ name: 'clear glass light', scheme: 'light', base: clearLight },
 		{ name: 'clear glass dark', scheme: 'dark', base: clearDark }
 	])(
-		'$name: text on a pane over a tenant picture meets AA over a white or a black photo',
+		'$name: text on the split card meets AA over a white or a black brand panel',
 		({ scheme, base }) => {
-			// One rule makes both glasses' panes opaque enough over a picture.
+			// One rule makes both glasses' floating card opaque enough over the brand panel.
 			const pictureLight = tokens(
 				app,
-				"[data-login-theme='glass'][data-has-page-background-image='true'],"
+				"[data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card']:not("
 			);
 			const pictureDark = tokens(
 				app,
-				"[data-theme='dark'][data-login-theme='glass'][data-has-page-background-image='true'],"
+				"[data-theme='dark'][data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card'],"
 			);
 			const values = {
 				...base,

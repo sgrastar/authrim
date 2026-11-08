@@ -16,6 +16,7 @@ import { runtimeAutoSubmitHandle } from '#lib/authrim/flow-runtime-steps.js';
 import {
 	LITE_AUTH_METHODS,
 	LITE_FLOW_COMPONENTS,
+	LITE_IGNORED_SCREEN_BLOCK_TYPES,
 	LITE_SCREEN_BLOCK_TYPES
 } from '@authrim/ar-lib-core/services/lite-compatibility';
 import type { LiteBackendClient } from './backend-client';
@@ -418,6 +419,8 @@ export function decideLiteStep(
 		if (!isDisplayConditionMet(raw as never, isAvailable)) continue;
 		if (blockType === 'auth_widget' && !isAvailable(authWidgetMethod(raw as never))) continue;
 		if (blockType === 'guest_login_widget' && only.guestEnabled === false) continue;
+		// The lite pages draw their own link to the other sign-in screen.
+		if (LITE_IGNORED_SCREEN_BLOCK_TYPES.has(blockType)) continue;
 		if (!LITE_SCREEN_BLOCK_TYPES.has(blockType) || (only.blocks && !only.blocks.has(blockType))) {
 			reasons.push(`block:${blockType}`);
 			continue;

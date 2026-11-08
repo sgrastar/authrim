@@ -90,6 +90,9 @@ export const jaScreens = {
 	'sc.part.guest_login_widget': 'ゲストログイン',
 	'sc.part.guest_login_widget.desc':
 		'ゲストとして入るボタンと、データの保持期間の説明を表示します。',
+	'sc.part.auth_switch_link': 'サインイン／サインアップの切り替え',
+	'sc.part.auth_switch_link.desc':
+		'もう一方の画面（サインイン⇔サインアップ）へのリンクです。行き先はページが決めます。',
 	'sc.part.account_upgrade_widget': 'ゲストの本登録',
 	'sc.part.account_upgrade_widget.desc': 'ゲストの本登録と、削除予定日時を表示します。',
 	'sc.part.account_profile_widget': 'ユーザー情報',

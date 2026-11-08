@@ -52,7 +52,7 @@
 		roleOf,
 		translationRows
 	} from './screen-builder';
-	import { partName } from './screen-copy';
+	import { newPartLabel, partName } from './screen-copy';
 	import { screenErrorKey } from './screen-errors';
 	import {
 		builderToFields,
@@ -396,7 +396,7 @@
 	const role = (part: LayoutPart) => roleOf(part, value.settings[part.id]);
 
 	function create(kind: string): LayoutPart {
-		const part = { id: newId(kind), kind, label: partName(kind) };
+		const part = { id: newId(kind), kind, label: newPartLabel(kind, value.kind) };
 		draft.value.settings = {
 			...draft.value.settings,
 			[part.id]: newPartSettings(kind, schemaFields, () => `${kind}_${counter + 1}`)

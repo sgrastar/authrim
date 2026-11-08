@@ -12,6 +12,7 @@ export type ScreenBlockType =
 	| 'identity_field'
 	| 'auth_widget'
 	| 'guest_login_widget'
+	| 'auth_switch_link'
 	| 'code_input_widget'
 	| 'consent_widget'
 	| 'heading'
