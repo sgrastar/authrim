@@ -354,6 +354,63 @@ describe('external identifier unlink scheduled recovery', () => {
     });
   });
 
+  /** The test databases with the few statement methods these cases use, typed. */
+  type TypedDatabase = {
+    prepare(sql: string): {
+      run(...values: SqlValue[]): unknown;
+      get(...values: SqlValue[]): unknown;
+      all(...values: SqlValue[]): unknown[];
+    };
+  };
+  const typed = (database: unknown) => database as TypedDatabase;
+
+  async function runUnlink(): Promise<boolean> {
+    const { ensureDatabaseAdapter } = await import('@authrim/ar-lib-core');
+    return processOneScheduledExternalIdentifierUnlink(
+      env(),
+      ensureDatabaseAdapter(piiD1.binding, 'test-pii'),
+      'owner-a',
+      100
+    );
+  }
+
+  it.each(['suspended', 'locked'])(
+    'completes the unlink of a %s account and leaves its state as it is',
+    async (lifecycleState) => {
+      typed(core).prepare('UPDATE identity_accounts SET lifecycle_state = ?').run(lifecycleState);
+      await expect(runUnlink()).resolves.toBe(true);
+      expect(
+        typed(pii)
+          .prepare(
+            `SELECT state, subject_json FROM external_identifier_unlink_operations
+              WHERE operation_id = 'unlink-a'`
+          )
+          .get()
+      ).toEqual({ state: 'completed', subject_json: null });
+      expect(
+        typed(lookup).prepare('SELECT DISTINCT lifecycle_state FROM lookup_identifiers').all()
+      ).toEqual([{ lifecycle_state: 'disabled' }]);
+      expect(
+        typed(core)
+          .prepare('SELECT lifecycle_state, directory_publication_state FROM identity_accounts')
+          .get()
+      ).toEqual({ lifecycle_state: lifecycleState, directory_publication_state: 'active' });
+    }
+  );
+
+  it('does not run an identifier removal for an account being deleted', async () => {
+    typed(core).prepare("UPDATE identity_accounts SET lifecycle_state = 'deleting'").run();
+    await runUnlink().catch(() => false);
+    const operation = typed(pii)
+      .prepare(
+        `SELECT state, subject_json IS NOT NULL AS raw_kept
+           FROM external_identifier_unlink_operations WHERE operation_id = 'unlink-a'`
+      )
+      .get();
+    expect(operation).toMatchObject({ raw_kept: 1 });
+    expect(operation).not.toMatchObject({ state: 'completed' });
+  });
+
   it('fails closed and retains raw recovery data when the stored digest is corrupted', async () => {
     pii
       .prepare(

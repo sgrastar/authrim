@@ -181,6 +181,11 @@ export class LookupRouteResolver {
     indexes: readonly LookupBlindIndex[];
     requestCache?: LookupRouteRequestCache;
     consistency?: D1ConsistencyRequest;
+    /**
+     * Read the directory itself (no request or memory cache), for a caller that must not act on
+     * a route cached before the identifier moved. The fresh answer refreshes the memory cache.
+     */
+    bypassCache?: boolean;
   }): Promise<ResolvedLookupMembership[]> {
     if (input.indexes.length < 1 || input.indexes.length > 2) {
       throw new Error('lookup_route_index_count_invalid');
@@ -200,12 +205,12 @@ export class LookupRouteResolver {
           index.virtualBucket
         );
         const cacheKey = await routeCacheKey(index, assignment);
-        const requestCached = input.requestCache?.get(cacheKey);
+        const requestCached = input.bypassCache ? undefined : input.requestCache?.get(cacheKey);
         if (requestCached) return cloneMemberships(requestCached);
 
         const now = this.now();
         const memoryCached = memoryCache.get(cacheKey);
-        if (memoryCached && memoryCached.expiresAt > now) {
+        if (!input.bypassCache && memoryCached && memoryCached.expiresAt > now) {
           memoryCache.delete(cacheKey);
           memoryCache.set(cacheKey, memoryCached);
           const memberships = cloneMemberships(memoryCached.memberships);
@@ -222,6 +227,8 @@ export class LookupRouteResolver {
         );
         const memberships = cloneMemberships(result.memberships);
         input.requestCache?.set(cacheKey, memberships);
+        // A fresh read that finds none also drops a cached route (the identifier moved or went).
+        if (memberships.length === 0) memoryCache.delete(cacheKey);
         if (memberships.length > 0) {
           pruneMemoryCache(now);
           memoryCache.set(cacheKey, {

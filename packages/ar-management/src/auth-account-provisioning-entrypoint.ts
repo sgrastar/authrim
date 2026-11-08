@@ -739,7 +739,9 @@ const REMOVAL_LEASE_OWNER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 function validateExternalIdpRouteRemovalInput(value: unknown): ExternalIdpRouteRemovalInput {
   boundedJson(value);
   const keys = jsonObject(value)
-    ? Object.keys(value).filter((key) => key !== 'removalLeaseOwner')
+    ? Object.keys(value).filter(
+        (key) => key !== 'removalLeaseOwner' && key !== 'restrictedAccountAllowed'
+      )
     : [];
   if (
     !jsonObject(value) ||
@@ -748,6 +750,7 @@ function validateExternalIdpRouteRemovalInput(value: unknown): ExternalIdpRouteR
     (value.removalLeaseOwner !== undefined &&
       (typeof value.removalLeaseOwner !== 'string' ||
         !REMOVAL_LEASE_OWNER.test(value.removalLeaseOwner))) ||
+    (value.restrictedAccountAllowed !== undefined && value.restrictedAccountAllowed !== true) ||
     value.schemaVersion !== 1 ||
     typeof value.operationId !== 'string' ||
     !SAFE_ID.test(value.operationId) ||
@@ -773,10 +776,14 @@ function validateExternalIdpRouteRemovalStatusInput(
   value: unknown
 ): ExternalIdpRouteRemovalStatusInput {
   boundedJson(value);
+  const keys = jsonObject(value)
+    ? Object.keys(value).filter((key) => key !== 'restrictedAccountAllowed')
+    : [];
   if (
     !jsonObject(value) ||
-    Object.keys(value).length !== EXTERNAL_IDP_ROUTE_REMOVAL_STATUS_KEYS.size ||
-    Object.keys(value).some((key) => !EXTERNAL_IDP_ROUTE_REMOVAL_STATUS_KEYS.has(key)) ||
+    keys.length !== EXTERNAL_IDP_ROUTE_REMOVAL_STATUS_KEYS.size ||
+    keys.some((key) => !EXTERNAL_IDP_ROUTE_REMOVAL_STATUS_KEYS.has(key)) ||
+    (value.restrictedAccountAllowed !== undefined && value.restrictedAccountAllowed !== true) ||
     value.schemaVersion !== 1 ||
     typeof value.tenantId !== 'string' ||
     !SAFE_ID.test(value.tenantId) ||
@@ -1084,6 +1091,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       const context = await resolveAccountDataContext(env, {
         tenantId: validated.tenantId,
         accountId: validated.accountId,
+        ...(validated.restrictedAccountAllowed ? { acceptLifecycle: 'restricted' as const } : {}),
       });
       if (context.accountId !== validated.accountId || context.legacyUserId !== validated.userId) {
         throw new Error('external_idp_route_removal_status_account_mismatch');
@@ -1145,6 +1153,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         const context = await resolveAccountDataContext(env, {
           tenantId: validated.tenantId,
           accountId: validated.accountId,
+          ...(validated.restrictedAccountAllowed ? { acceptLifecycle: 'restricted' as const } : {}),
         });
         if (
           context.accountId !== validated.accountId ||

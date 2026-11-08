@@ -70,10 +70,27 @@ export interface PortableTenantMetadataContext {
 
 export type AnyTenantMetadataContext = TenantMetadataContext | PortableTenantMetadataContext;
 
+/**
+ * Which accounts a context may be resolved for besides active ones (an opt-in for callers that
+ * act on the account's data, never for an authentication decision):
+ * - `restricted`: also suspended and locked accounts (directory publication still active).
+ * - `any`: every account the route still names, whatever its state (being deleted, deleted,
+ *   publication disabled), so the caller can tell those states apart.
+ */
+export type AccountLifecycleAcceptance = 'restricted' | 'any';
+
+/** The account states `restricted` accepts besides `active`. */
+export const RESTRICTED_ACCOUNT_LIFECYCLE_STATES: readonly string[] = ['suspended', 'locked'];
+
 export interface AccountDataContext {
   tenantId: string;
   accountId: string;
   legacyUserId: string;
+  /**
+   * The account's lifecycle state where the account was read (absent from runtime ports, which
+   * resolve active accounts only).
+   */
+  lifecycleState?: string;
   membership: ResolvedLookupMembership;
   coreDb: DatabaseSource;
   piiDb: DatabaseSource;
@@ -215,6 +232,8 @@ type AccountRouteIdentifierInput = {
   identifier: string | { issuer: string; subject: string };
   expectedAccountId?: string;
   nowMs?: number;
+  /** Read the Lookup membership from the directory's primary, not from a cached route. */
+  freshRoute?: boolean;
 };
 
 type RouteTarget = ResolvedLookupMembership['routeProjection']['targets'][number];
@@ -235,7 +254,14 @@ async function resolveAccountMembershipByIdentifier(env: Env, input: AccountRout
   ]);
   const indexes = await createLookupBlindIndexes(input.indexKind, input.identifier, keys.readKeys);
   const resolver = new LookupRouteResolver(env as unknown as Record<string, unknown>, assignments);
-  const memberships = (await resolver.resolveMemberships({ indexes })).filter((membership) => {
+  const memberships = (
+    await resolver.resolveMemberships({
+      indexes,
+      ...(input.freshRoute
+        ? { bypassCache: true, consistency: createD1ConsistencyRequest('primary_required') }
+        : {}),
+    })
+  ).filter((membership) => {
     if (membership.tenantId !== input.tenantId) return false;
     return (
       input.expectedAccountId === undefined || membership.accountId === input.expectedAccountId
@@ -332,7 +358,7 @@ async function resolveAccountRouteBaseByIdentifier(
 async function resolveCoreAccountDestination(
   base: AccountCoreRouteResolutionBase,
   tenantId: string,
-  options: { otpTrustedEmail?: string } = {}
+  options: { otpTrustedEmail?: string; acceptLifecycle?: AccountLifecycleAcceptance } = {}
 ): Promise<{
   target: ResolvedLookupTarget;
   account: AccountDestinationRow;
@@ -429,21 +455,25 @@ async function resolveCoreAccountDestination(
       ) {
         return false;
       }
+      const accepted = (row: AccountDestinationRow): boolean =>
+        options.acceptLifecycle === 'any' ||
+        (row.directory_publication_state === 'active' &&
+          (row.lifecycle_state === 'active' ||
+            (options.acceptLifecycle === 'restricted' &&
+              RESTRICTED_ACCOUNT_LIFECYCLE_STATES.includes(row.lifecycle_state))));
       // The shard is the one routed to; only the account there is gone or no longer active.
       if (
         account.value === null ||
         (account.value.id === base.accountId &&
           Number(account.value.account_route_generation) ===
             base.membership.accountRouteGeneration &&
-          (account.value.lifecycle_state !== 'active' ||
-            account.value.directory_publication_state !== 'active'))
+          !accepted(account.value))
       ) {
         return 'account_inactive';
       }
       if (
         account.value?.id !== base.accountId ||
-        account.value.lifecycle_state !== 'active' ||
-        account.value.directory_publication_state !== 'active' ||
+        !accepted(account.value) ||
         Number(account.value.account_route_generation) !== base.membership.accountRouteGeneration
       ) {
         return false;
@@ -536,11 +566,19 @@ export async function resolveAccountDataContextByIdentifier(
     identifier: string | { issuer: string; subject: string };
     expectedAccountId?: string;
     nowMs?: number;
+    /** See AccountLifecycleAcceptance. Runtime ports resolve active accounts only. */
+    acceptLifecycle?: AccountLifecycleAcceptance;
+    /**
+     * Read the route from the Lookup directory's primary instead of a cached one (up to the
+     * memory cache's lifetime old), for a caller that acts on who holds the identifier now.
+     */
+    freshRoute?: boolean;
   }
 ): Promise<AccountDataContext> {
   if (env.RUNTIME_DATA_PORTS) {
     if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
-    const resolved = await env.RUNTIME_DATA_PORTS.resolveAccount(input);
+    const { acceptLifecycle: _acceptLifecycle, freshRoute: _freshRoute, ...portInput } = input;
+    const resolved = await env.RUNTIME_DATA_PORTS.resolveAccount(portInput);
     const expectedAccountId = input.expectedAccountId
       ? normalizeAccountId(input.expectedAccountId)
       : input.indexKind === 'account_id' && typeof input.identifier === 'string'
@@ -564,7 +602,7 @@ export async function resolveAccountDataContextByIdentifier(
   // Both are checked; a failure of the PII destination is reported before the core's, so that an
   // inactive account is reported only where both destinations are the ones routed to.
   const [coreSettled, piiSettled] = await Promise.allSettled([
-    resolveCoreAccountDestination(base, input.tenantId),
+    resolveCoreAccountDestination(base, input.tenantId, { acceptLifecycle: input.acceptLifecycle }),
     resolvePiiAccountDestination(base),
   ]);
   if (piiSettled.status === 'rejected') throw piiSettled.reason;
@@ -582,6 +620,7 @@ export async function resolveAccountDataContextByIdentifier(
     tenantId: input.tenantId,
     accountId,
     legacyUserId: accountRow.legacy_user_id,
+    lifecycleState: accountRow.lifecycle_state,
     membership,
     coreDb: core.source,
     piiDb: pii.source,
@@ -768,7 +807,15 @@ export async function resolveOtpAccountCoreDataContextByIdentifier(
 
 export async function resolveAccountDataContext(
   env: Env,
-  input: { tenantId: string; accountId: string; nowMs?: number }
+  input: {
+    tenantId: string;
+    accountId: string;
+    nowMs?: number;
+    /** See AccountLifecycleAcceptance. */
+    acceptLifecycle?: AccountLifecycleAcceptance;
+    /** See resolveAccountDataContextByIdentifier. */
+    freshRoute?: boolean;
+  }
 ): Promise<AccountDataContext> {
   const accountId = normalizeAccountId(input.accountId);
   return resolveAccountDataContextByIdentifier(env, {
@@ -777,6 +824,8 @@ export async function resolveAccountDataContext(
     identifier: accountId,
     expectedAccountId: accountId,
     nowMs: input.nowMs,
+    ...(input.acceptLifecycle ? { acceptLifecycle: input.acceptLifecycle } : {}),
+    ...(input.freshRoute ? { freshRoute: true } : {}),
   });
 }
 
