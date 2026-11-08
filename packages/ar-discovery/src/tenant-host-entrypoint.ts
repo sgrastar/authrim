@@ -4,8 +4,8 @@
  * The Router has no tenant database or lookup registry, so on a host outside BASE_DOMAIN it
  * cannot tell which tenant's settings (account page, service site) apply. This Worker resolves
  * custom domains for its own requests already; this entrypoint gives the Router the same answer.
- * Read-only: it reads the lookup registry and the tenant's vanity domain row (and refreshes the
- * KV hint the resolver keeps). Answers null when no tenant owns the host, and throws when the
+ * Read-only: it reads the lookup registry, the resolver's KV hint and the tenant's vanity domain
+ * row, and writes nothing. Answers null when no tenant owns the host, and throws when the
  * lookup fails, so the Router never caches an outage as "no tenant".
  */
 import { WorkerEntrypoint } from 'cloudflare:workers';

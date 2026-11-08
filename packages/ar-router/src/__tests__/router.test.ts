@@ -2894,6 +2894,11 @@ describe('Router Worker', () => {
             'self-service.account_page_enabled': true,
             'self-service.account_page_path': '/acme-account',
           }),
+          // The default tenant serves the same prefix, so falling back to it would be visible.
+          [`settings:tenant:${defaultTenantId}:self-service`]: JSON.stringify({
+            'self-service.account_page_enabled': true,
+            'self-service.account_page_path': '/acme-account',
+          }),
         }),
         ENABLE_LOGIN_UI_PROXY: 'true',
         AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
@@ -2934,7 +2939,7 @@ describe('Router Worker', () => {
         expect(tenantHost.resolveTenantForHost).toHaveBeenCalledTimes(2);
       });
 
-      it('falls back to the default tenant when the lookup fails, without caching it', async () => {
+      it('serves no account page when the lookup fails, without caching it', async () => {
         const tenantHost = {
           resolveTenantForHost: vi.fn(async () => {
             throw new Error('unavailable');
@@ -2974,13 +2979,35 @@ describe('Router Worker', () => {
         expect(tenantHost.resolveTenantForHost).not.toHaveBeenCalled();
       });
 
+      it('serves no account page on a custom domain no tenant owns', async () => {
+        const tenantHost = { resolveTenantForHost: vi.fn(async () => ({ tenantId: null })) };
+        const res = await app.fetch(
+          new Request('https://id.unowned.test/acme-account'),
+          accountPageEnv(tenantHost, 'vanity-default-7')
+        );
+
+        expect(res.status).toBe(404);
+        expect(tenantHost.resolveTenantForHost).toHaveBeenCalledTimes(1);
+      });
+
       it('keeps the default tenant on a custom domain while TENANT_HOST is not bound', async () => {
         const res = await app.fetch(
           new Request('https://id.unbound.test/acme-account'),
           accountPageEnv(undefined, 'vanity-default-5')
         );
 
-        expect(res.status).toBe(404);
+        expect(res.status).toBe(200);
+      });
+
+      it('keeps the default tenant on the configured Login UI host without asking', async () => {
+        const tenantHost = { resolveTenantForHost: vi.fn(async () => ({ tenantId: null })) };
+        const res = await app.fetch(new Request('https://login.ui.test/acme-account'), {
+          ...accountPageEnv(tenantHost, 'vanity-default-8'),
+          LOGIN_UI_URL: 'https://login.ui.test',
+        });
+
+        expect(res.status).toBe(200);
+        expect(tenantHost.resolveTenantForHost).not.toHaveBeenCalled();
       });
     });
 

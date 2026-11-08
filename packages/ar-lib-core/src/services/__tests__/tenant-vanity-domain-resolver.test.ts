@@ -162,6 +162,80 @@ describe('tenant-vanity-domain-resolver', () => {
     await expect(resolveTenantFromVanityHost(env, 'login.example.com')).resolves.toBeNull();
   });
 
+  it('neither writes nor clears the KV hint in read-only mode', async () => {
+    const kv = createMockKV();
+    vi.mocked(kv.get).mockResolvedValueOnce('tenant-stale');
+    const staleAdapter = createMockAdapter();
+    vi.mocked(staleAdapter.queryOne).mockResolvedValueOnce(null);
+    resolverMocks.resolveTenantStore.mockResolvedValueOnce({ source: staleAdapter });
+    resolverMocks.resolveAlias.mockResolvedValueOnce(null);
+
+    await expect(
+      resolveTenantFromVanityHost(
+        {
+          AUTHRIM_CONFIG: kv,
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          TENANT_RUNTIME_REGISTRY: {} as never,
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+        },
+        'login.example.com',
+        { strict: true, readOnly: true }
+      )
+    ).resolves.toBeNull();
+    expect(kv.delete).not.toHaveBeenCalled();
+    expect(kv.put).not.toHaveBeenCalled();
+    expect(resolverMocks.resolveTenantStore).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tenantId: 'tenant-stale', sideEffects: 'none' })
+    );
+  });
+
+  it('resolves the destination store without side effects in read-only mode', async () => {
+    const adapter = createMockAdapter();
+    resolverMocks.resolveAlias.mockResolvedValueOnce({
+      tenantId: 'tenant-123',
+      routeProjection: {
+        schemaVersion: 1,
+        tenantRouteGeneration: 3,
+        residencyPolicyId: 'policy-1',
+        target: {
+          dataRole: 'tenant_core/default',
+          residencyPartition: 'global',
+          shardId: 'core-1',
+          bindingRef: 'TDB_CORE_001',
+          requiredBindingRouteGeneration: 3,
+        },
+      },
+    });
+    resolverMocks.resolveTenantStore.mockResolvedValueOnce({
+      source: adapter,
+      residencyPolicyId: 'policy-1',
+      residencyPartition: 'global',
+      shardId: 'core-1',
+      bindingRef: 'TDB_CORE_001',
+      bindingRouteGeneration: 3,
+    });
+    vi.mocked(adapter.queryOne).mockResolvedValueOnce({
+      tenant_id: 'tenant-123',
+      status: 'active',
+      is_active: 1,
+    });
+
+    await resolveTenantFromVanityHost(
+      {
+        AUTHRIM_ENVIRONMENT_NAME: 'test',
+        TENANT_RUNTIME_REGISTRY: {} as never,
+        TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+      },
+      'login.example.com',
+      { strict: true, readOnly: true }
+    );
+    expect(resolverMocks.resolveTenantStore).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tenantId: 'tenant-123', sideEffects: 'none' })
+    );
+  });
+
   it('reads a deployment without the lookup registry as no tenant, even in strict mode', async () => {
     await expect(
       resolveTenantFromVanityHost({}, 'login.example.com', { strict: true })

@@ -122,7 +122,9 @@ app.fetch = (request, env, context) =>
   );
 export const SAML_DR_WRITER_SURFACES = ['fetch'] as const;
 /** Read-only RPC: no tenant data is written, so no SAML DR admission is taken. */
-export const SAML_DR_READ_ONLY_SURFACES = ['TenantHostEntrypoint.resolveTenantForHost'] as const;
+export const SAML_DR_READ_ONLY_SURFACES = [
+  'rpc:TenantHostEntrypoint.resolveTenantForHost',
+] as const;
 export default app;
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';
 export { TenantHostEntrypoint } from './tenant-host-entrypoint';

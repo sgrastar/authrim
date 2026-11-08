@@ -21,6 +21,7 @@ import {
   parseAllowedOrigins,
   csrfProtectionMiddleware,
   validateHostHeader,
+  isValidTenantIdentifier,
   getDefaultTenantId,
   AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION,
   readAuthenticationMethodsCacheRevision,
@@ -800,18 +801,20 @@ const vanityHostTenantCache = new Map<string, { tenantId: string | null; expires
 const VANITY_HOST_TENANT_CACHE_TTL_MS = 60_000;
 const VANITY_HOST_NO_TENANT_CACHE_TTL_MS = 30_000;
 const VANITY_HOST_TENANT_CACHE_MAX_ENTRIES = 1_000;
-const TENANT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 
 /**
  * The tenant whose settings apply to this request: from the host name (tenant subdomain or the
  * primary tenant), or, in multi-tenant mode on a host outside BASE_DOMAIN, the tenant that owns
- * that custom domain (asked of ar-discovery). Anything that cannot be resolved reads as the
- * default tenant, as before.
+ * that custom domain (asked of ar-discovery).
+ *
+ * Null for a custom domain no tenant owns, or one that could not be resolved: host-scoped
+ * features then stay off instead of applying another tenant's settings. The configured UI hosts
+ * and deployments without TENANT_HOST keep the default tenant, as before.
  */
 /** One answer per request: the account page and service site checks both ask. */
-const requestTenantIds = new WeakMap<Request, Promise<string>>();
+const requestTenantIds = new WeakMap<Request, Promise<string | null>>();
 
-function getRequestTenantId(c: Context<{ Bindings: Env }>): Promise<string> {
+function getRequestTenantId(c: Context<{ Bindings: Env }>): Promise<string | null> {
   let tenantId = requestTenantIds.get(c.req.raw);
   if (!tenantId) {
     tenantId = resolveRequestTenantId(c);
@@ -820,7 +823,7 @@ function getRequestTenantId(c: Context<{ Bindings: Env }>): Promise<string> {
   return tenantId;
 }
 
-async function resolveRequestTenantId(c: Context<{ Bindings: Env }>): Promise<string> {
+async function resolveRequestTenantId(c: Context<{ Bindings: Env }>): Promise<string | null> {
   const host = c.req.header('Host');
   const hostResult = validateHostHeader(host, c.env);
   if (hostResult.valid && hostResult.tenantId) return hostResult.tenantId;
@@ -833,26 +836,27 @@ async function resolveRequestTenantId(c: Context<{ Bindings: Env }>): Promise<st
     !hostname ||
     hostname === baseDomain ||
     hostname.endsWith(`.${baseDomain}`) ||
-    !c.env.TENANT_HOST
+    !c.env.TENANT_HOST ||
+    isConfiguredUiHostname(c.env, hostname)
   ) {
     return defaultTenantId;
   }
 
   const now = Date.now();
   const cached = vanityHostTenantCache.get(hostname);
-  if (cached && cached.expiresAt > now) return cached.tenantId ?? defaultTenantId;
+  if (cached && cached.expiresAt > now) return cached.tenantId;
 
   let tenantId: string | null;
   try {
     const result = await c.env.TENANT_HOST.resolveTenantForHost(hostname);
     tenantId =
-      typeof result?.tenantId === 'string' && TENANT_ID_PATTERN.test(result.tenantId)
+      typeof result?.tenantId === 'string' && isValidTenantIdentifier(result.tenantId)
         ? result.tenantId
         : null;
   } catch (error) {
     // Not cached: the next request asks again.
     log.warn('Failed to resolve tenant for custom domain', { hostname, error: String(error) });
-    return defaultTenantId;
+    return null;
   }
   if (vanityHostTenantCache.size >= VANITY_HOST_TENANT_CACHE_MAX_ENTRIES) {
     vanityHostTenantCache.clear();
@@ -862,7 +866,14 @@ async function resolveRequestTenantId(c: Context<{ Bindings: Env }>): Promise<st
     expiresAt:
       now + (tenantId ? VANITY_HOST_TENANT_CACHE_TTL_MS : VANITY_HOST_NO_TENANT_CACHE_TTL_MS),
   });
-  return tenantId ?? defaultTenantId;
+  return tenantId;
+}
+
+/** The configured public Login UI / Admin UI hosts, which belong to the deployment. */
+function isConfiguredUiHostname(env: Env, hostname: string): boolean {
+  return [env.LOGIN_UI_URL, env.ADMIN_UI_URL].some(
+    (url) => getConfiguredUrlHostname(url) === hostname
+  );
 }
 
 function hasCookie(request: Request, cookieName: string): boolean {
@@ -908,6 +919,14 @@ function parseSettingsRecord(raw: string | null): Record<string, unknown> {
 
 async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
   const tenantId = await getRequestTenantId(c);
+  if (tenantId === null) {
+    // A custom domain no tenant owns (or that could not be resolved): no account page here.
+    return {
+      enabled: false,
+      path: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
+      expiresAt: 0,
+    };
+  }
   const cached = accountPageSettingsCache.get(tenantId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
@@ -936,6 +955,7 @@ async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
 
 async function resolveServiceSiteFallbackSettings(c: Context<{ Bindings: Env }>) {
   const tenantId = await getRequestTenantId(c);
+  if (tenantId === null) return { enabled: false, expiresAt: 0 };
   const cached = serviceSiteSettingsCache.get(tenantId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
