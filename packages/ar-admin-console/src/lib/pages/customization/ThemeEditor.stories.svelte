@@ -639,7 +639,7 @@
 		const accent = await canvas.findByRole('textbox', { name: t('th.c.accent') });
 		// Empty, but each shows the real screens' colour for the mode shown (light to begin with).
 		await expect(background).toHaveValue('');
-		await expect(background).toHaveAttribute('placeholder', '#eef1f6');
+		await expect(background).toHaveAttribute('placeholder', '#ffffff');
 		await expect(accent).toHaveAttribute('placeholder', '#2f52c4');
 		// Showing dark mode opens the dark colours: the fields show its colours, and set its own.
 		await userEvent.click(await canvas.findByRole('radio', { name: t('th.mode.dark') }));
@@ -651,7 +651,7 @@
 		);
 		const darkBackground = await canvas.findByRole('textbox', { name: t('th.c.background') });
 		const darkAccent = await canvas.findByRole('textbox', { name: t('th.c.accent') });
-		await waitFor(() => expect(darkBackground).toHaveAttribute('placeholder', '#0b0e16'));
+		await waitFor(() => expect(darkBackground).toHaveAttribute('placeholder', '#0a0a0b'));
 		await expect(darkAccent).toHaveAttribute('placeholder', '#93aef2');
 		// A colour of one's own replaces it, in the preview too.
 		await userEvent.type(darkAccent, '#b4235a');
