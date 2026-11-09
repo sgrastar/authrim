@@ -58,4 +58,26 @@ describe('wildcard DNS manual action guidance', () => {
       'https://dash.cloudflare.com/acct-123/authrim.com/dns/records'
     );
   });
+
+  it('keeps the registrable domain for two-part country TLDs', () => {
+    expect(getCloudflareDnsRecordsDashboardUrl('acct-123', 'tenant.login.example.co.jp')).toBe(
+      'https://dash.cloudflare.com/acct-123/example.co.jp/dns/records'
+    );
+    const action = getWildcardDnsManualAction('login.example.co.jp');
+    expect(action.zoneName).toBe('example.co.jp');
+    expect(action.dashboardRecordName).toBe('*.login');
+    expect(action.recordName).toBe('*.login.example.co.jp');
+  });
+
+  it('uses the apex wildcard record name when the base domain is the zone', () => {
+    const action = getWildcardDnsManualAction('example.com');
+    expect(action.zoneName).toBe('example.com');
+    expect(action.dashboardRecordName).toBe('*');
+    expect(action.steps).toContain('Name (required): *');
+  });
+
+  it('does not build a dashboard URL without an account or a domain', () => {
+    expect(getCloudflareDnsRecordsDashboardUrl(undefined, 'example.com')).toBeNull();
+    expect(getCloudflareDnsRecordsDashboardUrl('acct-123', '  ')).toBeNull();
+  });
 });

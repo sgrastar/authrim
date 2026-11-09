@@ -239,4 +239,189 @@ describe('createCloudflareAgentAccessTokenAuthenticator', () => {
     expect(result.response.status).toBe(404);
     expect(verifyJwt).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['revoked Grant', { status: 'revoked' }],
+    ['another client', { clientId: 'client-2' }],
+    ['another delegator', { delegatorId: 'admin-2' }],
+    ['stale consent version', { consentVersion: 3 }],
+    ['missing expiry', { expiresAt: undefined }],
+    ['expired Grant', { expiresAt: 100 }],
+  ])('rejects a signed token against a %s', async (_description, changes) => {
+    const repo = repository({ ...grant, ...changes } as AgentGrantContract);
+    const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+      now: () => 100,
+      verifyJwt: vi.fn().mockResolvedValue(claims()),
+      validateDpop: vi.fn(),
+      createRepository: () => repo,
+    });
+
+    const result = await authenticate(request(), environment());
+
+    expect(result.allowed).toBe(false);
+    if (result.allowed) throw new Error('expected rejection');
+    expect(result.response.status).toBe(401);
+    expect(result.response.headers.get('cache-control')).toBe('no-store');
+    expect(result.auditContext.code).toBe('AGENT_MCP_GRANT_OR_CONSENT_INVALID');
+    expect(result).not.toHaveProperty('props');
+    expect(repo.getGrant).toHaveBeenCalledExactlyOnceWith('tenant-1', 'grant-1');
+  });
+
+  it.each([
+    ['no current permissions', null, true],
+    ['reduced live permission ceiling', [], true],
+    ['withdrawn consent', ['admin:users:read'], false],
+  ])(
+    'rejects %s even while the token and Grant are valid',
+    async (_description, permissions, consent) => {
+      const repo = repository();
+      repo.getActiveDelegatorPermissions.mockResolvedValue(permissions);
+      repo.hasCurrentConsent.mockResolvedValue(consent);
+      const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+        now: () => 100,
+        verifyJwt: vi.fn().mockResolvedValue(claims()),
+        validateDpop: vi.fn(),
+        createRepository: () => repo,
+      });
+
+      const result = await authenticate(request(), environment());
+
+      expect(result.allowed).toBe(false);
+      if (result.allowed) throw new Error('expected rejection');
+      expect(result.response.status).toBe(401);
+      expect(result.auditContext.code).toBe('AGENT_MCP_GRANT_OR_CONSENT_INVALID');
+      expect(repo.hasCurrentConsent).toHaveBeenCalledWith(
+        'tenant-1',
+        'grant-1',
+        'admin-1',
+        'client-1',
+        2
+      );
+    }
+  );
+
+  it.each([
+    ['blank scope', '  ', grant.scopes],
+    ['scope outside the Grant', 'agent:write', ['agent:read']],
+    ['unknown scope', 'agent:unknown', grant.scopes],
+  ])('rejects a token with %s', async (_description, scope, grantScopes) => {
+    const repo = repository({ ...grant, scopes: grantScopes as AgentGrantContract['scopes'] });
+    const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+      now: () => 100,
+      verifyJwt: vi.fn().mockResolvedValue(claims({ scope })),
+      validateDpop: vi.fn(),
+      createRepository: () => repo,
+    });
+
+    const result = await authenticate(request(), environment());
+
+    expect(result.allowed).toBe(false);
+    if (result.allowed) throw new Error('expected rejection');
+    expect(result.response.status).toBe(401);
+    expect(result.auditContext.code).toBe('AGENT_MCP_GRANT_OR_CONSENT_INVALID');
+  });
+
+  it('returns 503 without disclosing a repository failure', async () => {
+    const repo = repository();
+    repo.getGrant.mockRejectedValue(new Error('private database hostname'));
+    const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+      now: () => 100,
+      verifyJwt: vi.fn().mockResolvedValue(claims()),
+      validateDpop: vi.fn(),
+      createRepository: () => repo,
+    });
+
+    const result = await authenticate(request(), environment());
+
+    expect(result.allowed).toBe(false);
+    if (result.allowed) throw new Error('expected rejection');
+    expect(result.response.status).toBe(503);
+    expect(result.auditContext.code).toBe('AGENT_MCP_AUTHORIZATION_STATE_UNAVAILABLE');
+    expect(await result.response.text()).not.toContain('private database hostname');
+  });
+
+  it.each([
+    ['missing proof', {}, 'AGENT_MCP_DPOP_PROOF_REQUIRED', 401],
+    ['invalid proof', { dpop: 'proof' }, 'AGENT_MCP_DPOP_PROOF_INVALID', 401],
+    ['unavailable validator', { dpop: 'proof' }, 'AGENT_MCP_DPOP_VALIDATION_UNAVAILABLE', 503],
+  ])(
+    'does not contact the Grant repository for a DPoP token with %s',
+    async (_description, headers, code, status) => {
+      const repo = repository();
+      const validateDpop = vi.fn();
+      if (code === 'AGENT_MCP_DPOP_VALIDATION_UNAVAILABLE') {
+        validateDpop.mockRejectedValue(new Error('private verification endpoint'));
+      } else {
+        validateDpop.mockResolvedValue({ valid: false });
+      }
+      const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+        verifyJwt: vi
+          .fn()
+          .mockResolvedValue(claims({ token_binding: 'dpop', cnf: { jkt: 'expected-jkt' } })),
+        validateDpop,
+        createRepository: () => repo,
+      });
+
+      const result = await authenticate(
+        request({ authorization: 'DPoP access-token', ...headers }),
+        environment()
+      );
+
+      expect(result.allowed).toBe(false);
+      if (result.allowed) throw new Error('expected rejection');
+      expect(result.response.status).toBe(status);
+      expect(result.auditContext.code).toBe(code);
+      expect(await result.response.text()).not.toContain('private verification endpoint');
+      expect(repo.getGrant).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    [
+      'Bearer with a DPoP claim',
+      claims({ token_binding: 'dpop', cnf: { jkt: 'jkt' } }),
+      'Bearer access-token',
+    ],
+    ['DPoP with a bearer claim', claims(), 'DPoP access-token'],
+    ['bearer claim with confirmation key', claims({ cnf: { jkt: 'jkt' } }), 'Bearer access-token'],
+    ['wrong actor subject', claims({ act: { sub: 'client:other' } }), 'Bearer access-token'],
+    ['wrong Admin subject', claims({ sub: 'user:admin-1' }), 'Bearer access-token'],
+  ])(
+    'rejects %s before reading authorization state',
+    async (_description, tokenClaims, authorization) => {
+      const repo = repository();
+      const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+        verifyJwt: vi.fn().mockResolvedValue(tokenClaims),
+        validateDpop: vi.fn(),
+        createRepository: () => repo,
+      });
+
+      const result = await authenticate(request({ authorization }), environment());
+
+      expect(result.allowed).toBe(false);
+      if (result.allowed) throw new Error('expected rejection');
+      expect(result.response.status).toBe(401);
+      expect(repo.getGrant).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not verify a token with a malformed authorization header', async () => {
+    const verifyJwt = vi.fn();
+    const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+      verifyJwt,
+      validateDpop: vi.fn(),
+      createRepository: () => repository(),
+    });
+
+    const result = await authenticate(
+      request({ authorization: 'Bearer access token' }),
+      environment()
+    );
+
+    expect(result.allowed).toBe(false);
+    if (result.allowed) throw new Error('expected rejection');
+    expect(result.response.status).toBe(401);
+    expect(result.auditContext.code).toBe('AGENT_MCP_AUTHORIZATION_HEADER_INVALID');
+    expect(verifyJwt).not.toHaveBeenCalled();
+  });
 });

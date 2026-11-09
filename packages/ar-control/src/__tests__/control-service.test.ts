@@ -1223,6 +1223,69 @@ describe('ControlService tenant shard provisioning', () => {
     ).rejects.toThrow('control_tenant_shard_assignment_incomplete');
   });
 
+  it('does not choose a region when a tenant has two active residencies', async () => {
+    const repository = new FakeRepository();
+    repository.activeResidencies = [
+      {
+        residency_policy_id: 'residency-default',
+        residency_partition: 'jp',
+        jurisdiction: null,
+        location_hint: 'apac',
+        policy_generation: 1,
+      },
+      {
+        residency_policy_id: 'residency-eu',
+        residency_partition: 'eu',
+        jurisdiction: 'eu',
+        location_hint: null,
+        policy_generation: 2,
+      },
+    ];
+    const readTargets = vi.spyOn(repository, 'listActiveTenantShardTargets');
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    await expect(
+      service.getTenantRegionShardPolicy({ tenantId: 'tenant-test' }, 'env-test')
+    ).rejects.toThrow('control_tenant_region_shard_residency_missing');
+    expect(readTargets).not.toHaveBeenCalled();
+  });
+
+  it('does not publish a provisioning region without its authoritative residency partition', async () => {
+    const repository = new FakeRepository();
+    repository.tenantPlacementPolicy = {
+      ...required(repository.tenantPlacementPolicy),
+      state: 'provisioning',
+    };
+    repository.partition = null;
+    repository.runtimeRouteTargets = (
+      ['tenant_core/default', 'tenant_core/users', 'tenant_pii'] as const
+    ).map((dataRole, index) => ({
+      shardId: `provisioning-shard-${index}`,
+      dataRole,
+      residencyPolicyId: 'residency-default',
+      residencyPartition: 'jp',
+      routeGeneration: 1,
+      bindingRef: `TDB_PROVISIONING_${index}`,
+      databaseId: `provisioning-database-${index}`,
+      databaseName: `provisioning-database-name-${index}`,
+      allocationScope: 'shared_pool' as const,
+      ownerTenantId: null,
+      assignmentGeneration: 1,
+    }));
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    await expect(
+      service.getTenantProvisioningRegionShardPolicy(
+        {
+          tenantId: 'tenant-test',
+          residencyPolicyId: 'residency-default',
+          residencyPartition: 'jp',
+        },
+        'env-test'
+      )
+    ).rejects.toThrow('control_tenant_region_shard_residency_missing');
+  });
+
   it('fails closed for incomplete or wrong-owner runtime route targets', async () => {
     const repository = new FakeRepository();
     repository.tenantPlacementPolicy = {
@@ -1384,6 +1447,102 @@ describe('ControlService tenant shard provisioning', () => {
       lookupShards: [],
       tenantShards: [],
     });
+  });
+
+  it('rejects malformed tenant deletion requests before reading Control storage', async () => {
+    const repository = new FakeRepository();
+    const readFinalization = vi.spyOn(repository, 'getTenantDeletionFinalization');
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    for (const request of [
+      [],
+      { tenantId: 'tenant-test', operationId: 'delete-1', unexpected: 'tenant-other' },
+      { tenantId: 'tenant/other', operationId: 'delete-1' },
+      { tenantId: 'tenant-test', operationId: 'delete/other' },
+    ]) {
+      await expect(service.getTenantDeletionInventory(request, 'env-test')).rejects.toThrow();
+    }
+    expect(readFinalization).not.toHaveBeenCalled();
+  });
+
+  it('returns an existing deletion finalization without requiring a remaining tenant policy', async () => {
+    const repository = new FakeRepository();
+    repository.tenantPlacementPolicy = null;
+    repository.deletionFinalization = {
+      environmentId: 'env-test',
+      tenantId: 'tenant-test',
+      operationId: 'delete-1',
+      state: 'finalized',
+      finalizedAt: NOW - 1,
+    };
+    const readPolicy = vi.spyOn(repository, 'getTenantPlacementPolicy');
+    const readLookupShards = vi.spyOn(repository, 'listTenantDeletionLookupShards');
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    await expect(
+      service.getTenantDeletionInventory(
+        { tenantId: 'tenant-test', operationId: 'delete-1' },
+        'env-test'
+      )
+    ).resolves.toEqual({
+      environmentId: 'env-test',
+      tenantId: 'tenant-test',
+      operationId: 'delete-1',
+      state: 'finalized',
+      lookupShards: [],
+      tenantShards: [],
+    });
+    expect(readPolicy).not.toHaveBeenCalled();
+    expect(readLookupShards).not.toHaveBeenCalled();
+  });
+
+  it('does not finalize deletion when lookup and tenant shard bindings collide', async () => {
+    const repository = new FakeRepository();
+    repository.deletionLookupShards = [
+      { lookupShardId: 'lookup-1', bindingRef: 'TDB_DELETE_0', status: 'active' },
+    ];
+    repository.deletionTenantShards = (
+      ['tenant_core/default', 'tenant_core/users', 'tenant_pii'] as const
+    ).map((dataRole, index) => ({
+      shardId: `delete-shard-${index}`,
+      dataRole,
+      residencyPolicyId: 'residency-default',
+      residencyPartition: 'jp',
+      bindingRef: `TDB_DELETE_${index}`,
+      status: 'active' as const,
+      allocationScope: 'shared_pool' as const,
+      ownerTenantId: null,
+    }));
+    const finalize = vi.spyOn(repository, 'finalizeTenantDeletionControlState');
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    await expect(
+      service.finalizeTenantDeletionControlState(
+        { tenantId: 'tenant-test', operationId: 'delete-1' },
+        'env-test'
+      )
+    ).rejects.toThrow('control_tenant_deletion_inventory_invalid');
+    expect(finalize).not.toHaveBeenCalled();
+  });
+
+  it('does not list deletion shards after the tenant placement policy is retired', async () => {
+    const repository = new FakeRepository();
+    repository.tenantPlacementPolicy = {
+      ...required(repository.tenantPlacementPolicy),
+      state: 'retired',
+    };
+    const readLookupShards = vi.spyOn(repository, 'listTenantDeletionLookupShards');
+    const readTenantShards = vi.spyOn(repository, 'listTenantDeletionShards');
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    await expect(
+      service.getTenantDeletionInventory(
+        { tenantId: 'tenant-test', operationId: 'delete-1' },
+        'env-test'
+      )
+    ).rejects.toThrow('control_tenant_deletion_policy_unavailable');
+    expect(readLookupShards).not.toHaveBeenCalled();
+    expect(readTenantShards).not.toHaveBeenCalled();
   });
 
   it('reuses healthy capacity without creating a Control operation', async () => {

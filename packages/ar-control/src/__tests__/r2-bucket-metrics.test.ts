@@ -111,4 +111,53 @@ describe('Control R2 bucket metric aggregation', () => {
       unavailableReason: 'metric_report_stale',
     });
   });
+
+  it('keeps a report current through the exact freshness deadline', async () => {
+    const db = database();
+    await reportR2BucketMetrics(db, 'test', 'ar-plugin-runner', { metrics: [pluginMetric] }, 1_000);
+    const inventory = await getR2BucketMetricInventory(db, 'test', 1_000 + 24 * 60 * 60 * 1000);
+    expect(inventory.metrics.find((metric) => metric.binding === 'PLUGIN_BUNDLES')).toMatchObject({
+      availability: 'current',
+      unavailableReason: null,
+    });
+  });
+
+  it.each([
+    ['negative object count', { objectCount: -1 }],
+    ['fractional byte count', { totalBytes: 1.5 }],
+    ['future oldest object', { oldestObjectAt: 2_001 }],
+    ['future measurement', { measuredAt: 303_001 }],
+    ['malformed encryption method', { encryptionMethods: { 'secret/key': 1 } }],
+    ['negative encryption count', { encryptionMethods: { aes: -1 } }],
+    ['non-boolean scan flag', { scanComplete: 1 }],
+    ['unbounded retention policy', { retentionPolicy: 'x'.repeat(257) }],
+  ])('rejects %s without persisting a partial report', async (_reason, override) => {
+    const db = database();
+    await expect(
+      reportR2BucketMetrics(
+        db,
+        'test',
+        'ar-plugin-runner',
+        { metrics: [{ ...pluginMetric, ...override }] },
+        3_000
+      )
+    ).rejects.toThrow('invalid_r2_bucket_metric_report');
+    const inventory = await getR2BucketMetricInventory(db, 'test', 3_000);
+    expect(inventory.metrics.find((metric) => metric.binding === 'PLUGIN_BUNDLES')).toMatchObject({
+      availability: 'pending',
+      reportedAt: null,
+    });
+  });
+
+  it('rejects a duplicate binding before persisting either metric', async () => {
+    const db = database();
+    const metric = { ...pluginMetric, binding: 'PUBLIC_ASSETS' as const };
+    await expect(
+      reportR2BucketMetrics(db, 'test', 'ar-management', { metrics: [metric, metric] }, 3_000)
+    ).rejects.toThrow('invalid_r2_bucket_metric_report');
+    const inventory = await getR2BucketMetricInventory(db, 'test', 3_000);
+    expect(inventory.metrics.find((item) => item.binding === 'PUBLIC_ASSETS')?.availability).toBe(
+      'pending'
+    );
+  });
 });

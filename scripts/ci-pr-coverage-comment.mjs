@@ -6,7 +6,11 @@ import { pathToFileURL } from 'node:url';
 
 const MARKER = '<!-- authrim-ci-coverage-summary -->';
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.svelte']);
-const EXCLUDED_PACKAGES = new Set(['@authrim/ar-admin-ui', '@authrim/ar-login-ui']);
+const EXCLUDED_PACKAGES = new Set([
+  '@authrim/ar-admin-console',
+  '@authrim/ar-admin-ui',
+  '@authrim/ar-login-ui',
+]);
 const IGNORED_DIRS = new Set([
   '.svelte-kit',
   '.turbo',
@@ -455,7 +459,7 @@ export function buildComment({ packages, totals, repositorySuites, packageSizes 
 ## Coverage Summary
 
 Generated after **Lint, Type Check, Test, and Build** completed for \`${sha}\`.
-Admin UI and Login UI are excluded from coverage and code/test counts while UI coverage is being refined; their build sizes are included.
+Admin Console is excluded from coverage and code/test counts while it is under development. Admin UI and Login UI are excluded while their coverage is being refined. Their build sizes are included.
 
 ### Overview
 

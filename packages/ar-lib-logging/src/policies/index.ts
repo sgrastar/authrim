@@ -575,7 +575,11 @@ export async function loadPublishedRuntimeLoggingPolicySnapshot<TPolicy>(input: 
   const rawPointer = await input.kv.get(pointerKey);
   if (rawPointer === null) return null;
   const pointer = parseSnapshotPointer(rawPointer);
-  if (!pointer?.objectRef) {
+  if (
+    !pointer?.objectRef ||
+    pointer.scopeType !== input.scopeType ||
+    pointer.scopeId !== input.scopeId
+  ) {
     return unreadable();
   }
 

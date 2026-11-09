@@ -62,4 +62,42 @@ describe('Cloudflare dynamic configuration Resource reader', () => {
       current.reader.readPlan({ ...subject, grantGeneration: 1 }, 'plan-1')
     ).resolves.toMatchObject({ id: 'plan-1', digest: 'digest' });
   });
+
+  it('does not look up a Plan for an inactive tenant', async () => {
+    const current = reader({ isActiveTenant: vi.fn().mockResolvedValue(false) });
+
+    await expect(current.reader.readPlan(subject, 'plan-1')).resolves.toBeNull();
+    expect(current.repository.getLatestPlan).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { grantId: 'grant-2' },
+    { grantGeneration: 3 },
+    { consentVersion: 4 },
+    { actorSub: 'machine:other' },
+    { clientId: 'client-2' },
+  ])('keeps a Plan private when one authorization identity differs: %#', async (difference) => {
+    const plan = {
+      id: 'plan-1',
+      tenantId: 'tenant-1',
+      grantId: subject.grantId,
+      grantGeneration: subject.grantGeneration,
+      consentVersion: subject.consentVersion,
+      actorSub: subject.actorSub,
+      clientId: subject.clientId,
+      definitionDigest: 'digest',
+      status: 'ready',
+      stage: 'apply',
+      version: 1,
+      createdAt: 1,
+      updatedAt: 2,
+      expiresAt: 10,
+    };
+    const current = reader({ getLatestPlan: vi.fn().mockResolvedValue(plan) });
+
+    await expect(
+      current.reader.readPlan({ ...subject, ...difference }, 'plan-1')
+    ).resolves.toBeNull();
+    expect(current.repository.getLatestPlan).toHaveBeenCalledExactlyOnceWith('tenant-1', 'plan-1');
+  });
 });

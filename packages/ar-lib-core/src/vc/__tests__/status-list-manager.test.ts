@@ -174,8 +174,8 @@ describe('StatusListManager', () => {
     it('should reject oversized stored encoded lists', async () => {
       const list = await manager.createStatusList('tenant1', 'revocation', 8, LEGACY);
       const stored = repository.getAll().find((candidate) => candidate.id === list.id);
-      expect(stored).toBeDefined();
-      stored!.encoded_list = 'A'.repeat(2048);
+      if (!stored) throw new Error('status list was not stored');
+      stored.encoded_list = 'A'.repeat(2048);
 
       await expect(manager.getStatus('tenant1', list.id, 0)).rejects.toThrow(
         'status list exceeds maximum size'
@@ -240,6 +240,48 @@ describe('StatusListManager', () => {
 
       expect(tenant1Alloc.listId).not.toBe(tenant2Alloc.listId);
     });
+
+    it('uses a list created by another allocator after a create conflict', async () => {
+      const create = repository.create.bind(repository);
+      vi.spyOn(repository, 'create').mockImplementationOnce(async (record) => {
+        await create(record);
+        throw new Error('UNIQUE constraint failed');
+      });
+
+      const allocation = await manager.allocateIndex('tenant1', 'revocation');
+
+      expect(allocation).toMatchObject({ index: 0 });
+      expect(repository.getAll()).toHaveLength(1);
+      expect(repository.getAll()[0]).toMatchObject({ id: allocation.listId, used_count: 1 });
+    });
+
+    it('retries a transient allocation conflict without consuming another slot', async () => {
+      const list = await manager.createStatusList('tenant1', 'revocation', 8, LEGACY);
+      const increment = repository.incrementUsedCount.bind(repository);
+      const incrementSpy = vi
+        .spyOn(repository, 'incrementUsedCount')
+        .mockRejectedValueOnce(new Error('UNIQUE constraint failed'))
+        .mockImplementation(increment);
+
+      const allocation = await manager.allocateIndex('tenant1', 'revocation');
+
+      expect(allocation).toMatchObject({ listId: list.id, index: 0 });
+      expect(incrementSpy).toHaveBeenCalledTimes(2);
+      expect((await manager.getStatusList('tenant1', list.id))?.used_count).toBe(1);
+    });
+
+    it('stops on a non-retryable storage failure without changing allocation state', async () => {
+      const list = await manager.createStatusList('tenant1', 'revocation', 8, LEGACY);
+      const incrementSpy = vi
+        .spyOn(repository, 'incrementUsedCount')
+        .mockRejectedValue(new Error('database unavailable'));
+
+      await expect(manager.allocateIndex('tenant1', 'revocation')).rejects.toThrow(
+        'database unavailable'
+      );
+      expect(incrementSpy).toHaveBeenCalledOnce();
+      expect((await manager.getStatusList('tenant1', list.id))?.used_count).toBe(0);
+    });
   });
 
   describe('updateStatus', () => {
@@ -298,6 +340,18 @@ describe('StatusListManager', () => {
       await expect(
         manager.updateStatus('tenant1', 'non-existent', 0, StatusValue.INVALID)
       ).rejects.toThrow('Status list not found: non-existent');
+    });
+
+    it('does not let another tenant read or update a status-list entry', async () => {
+      const list = await manager.createStatusList('tenant1', 'revocation', 8, LEGACY);
+
+      await expect(manager.getStatus('tenant2', list.id, 0)).rejects.toThrow(
+        `Status list not found: ${list.id}`
+      );
+      await expect(
+        manager.updateStatus('tenant2', list.id, 0, StatusValue.INVALID)
+      ).rejects.toThrow(`Status list not found: ${list.id}`);
+      expect(await manager.getStatus('tenant1', list.id, 0)).toBe(StatusValue.VALID);
     });
   });
 
