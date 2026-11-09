@@ -1491,6 +1491,16 @@ components:
                   description: >-
                     Background of the secondary buttons as a hex colour, with an optional alpha
                     channel. Empty when none is set, in which case the palette's own colour applies.
+                themeToggleBackgroundColor:
+                  type: string
+                  description: >-
+                    Background of the light/dark toggle with an optional alpha channel. Its icon
+                    colour is selected automatically; empty uses the palette.
+                languageSelectBackgroundColor:
+                  type: string
+                  description: >-
+                    Background of the language selector with an optional alpha channel. Its text
+                    colour is selected automatically; empty uses the palette.
                 linkColor:
                   type: string
                   description: >-
@@ -1537,6 +1547,10 @@ components:
                       type: string
                     secondary_button:
                       type: string
+                    theme_toggle_background:
+                      type: string
+                    language_select_background:
+                      type: string
                     header_background:
                       type: string
                     header_text:
@@ -1568,6 +1582,21 @@ components:
               type: object
               additionalProperties: true
               properties:
+                darkImages:
+                  type:
+                    - object
+                    - 'null'
+                  description: >-
+                    Dark-mode logo, page background, and form-area images. Null means the theme
+                    predates per-mode images and uses its light images in both modes. Null URLs
+                    within an object mean that image is intentionally absent in dark mode.
+                  properties:
+                    logoUrl:
+                      type: [string, 'null']
+                    backgroundImageUrl:
+                      type: [string, 'null']
+                    loginPanelBackgroundImageUrl:
+                      type: [string, 'null']
                 backgroundImageOpacity:
                   type: number
                   minimum: 0

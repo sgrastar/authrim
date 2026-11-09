@@ -290,6 +290,8 @@ interface UIConfig {
     brandPanelBackgroundColor: string;
     fieldColor: string;
     secondaryButtonColor: string;
+    themeToggleBackgroundColor: string;
+    languageSelectBackgroundColor: string;
     linkColor: string;
     headerBackgroundColor: string;
     headerTextColor: string;
@@ -330,6 +332,8 @@ interface UIConfig {
   };
   appearance: {
     backgroundImageUrl: string | null;
+    /** Null keeps legacy light-image fallback; an object gives each dark image its own value. */
+    darkImages: DarkImageUrls | null;
     backgroundImageOpacity: number;
     backgroundImageGrayscale: boolean;
     backgroundImageFilters: LoginUIImageFilter[];
@@ -359,6 +363,12 @@ interface UIConfig {
     accountPageEnabled: boolean;
     accountPagePath: string;
   };
+}
+
+interface DarkImageUrls {
+  logoUrl: string | null;
+  backgroundImageUrl: string | null;
+  loginPanelBackgroundImageUrl: string | null;
 }
 
 interface AuthenticationMethodsMeta {
@@ -499,6 +509,8 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     brandPanelBackgroundColor: '',
     fieldColor: '',
     secondaryButtonColor: '',
+    themeToggleBackgroundColor: '',
+    languageSelectBackgroundColor: '',
     linkColor: '',
     headerBackgroundColor: '',
     headerTextColor: '',
@@ -538,6 +550,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
   },
   appearance: {
     backgroundImageUrl: null,
+    darkImages: null,
     backgroundImageOpacity: 100,
     backgroundImageGrayscale: false,
     backgroundImageFilters: [],
@@ -613,12 +626,15 @@ interface LoginUIKVSettings {
   'login-ui.brand_panel_background_color'?: string;
   'login-ui.field_color'?: string;
   'login-ui.secondary_button_color'?: string;
+  'login-ui.theme_toggle_background_color'?: string;
+  'login-ui.language_select_background_color'?: string;
   'login-ui.link_color'?: string;
   'login-ui.header_background_color'?: string;
   'login-ui.header_text_color'?: string;
   'login-ui.footer_background_color'?: string;
   'login-ui.footer_text_color'?: string;
   'login-ui.dark_colors'?: string;
+  'login-ui.dark_images'?: string;
   'login-ui.brand_name'?: string;
   'login-ui.header_name'?: string;
   'login-ui.logo_url'?: string;
@@ -755,6 +771,8 @@ interface LoginUIResolved {
   brandPanelBackgroundColor: string;
   fieldColor: string;
   secondaryButtonColor: string;
+  themeToggleBackgroundColor: string;
+  languageSelectBackgroundColor: string;
   linkColor: string;
   headerBackgroundColor: string;
   headerTextColor: string;
@@ -763,6 +781,8 @@ interface LoginUIResolved {
   darkColors: LoginUIThemeColors;
   /** Whether a scope (platform, tenant or client) wrote the dark set, even an empty one. */
   darkColorsSet: boolean;
+  darkImages: DarkImageUrls | null;
+  darkImagesSet: boolean;
   brandName: string;
   headerName: string;
   logoUrl: string | null;
@@ -1298,6 +1318,29 @@ function servedDarkColors(resolved: LoginUIResolved): LoginUIThemeColors {
     : { ...resolved.darkColors };
 }
 
+function readDarkImages(value: unknown): DarkImageUrls {
+  const empty: DarkImageUrls = {
+    logoUrl: null,
+    backgroundImageUrl: null,
+    loginPanelBackgroundImageUrl: null,
+  };
+  if (typeof value !== 'string' || value.length > 12_288) return empty;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return empty;
+    const images = parsed as Record<string, unknown>;
+    const safe = (url: unknown) =>
+      typeof url === 'string' && isValidLoginUIImageUrl(url) ? url : null;
+    return {
+      logoUrl: safe(images.logo),
+      backgroundImageUrl: safe(images.background),
+      loginPanelBackgroundImageUrl: safe(images.form_area),
+    };
+  } catch {
+    return empty;
+  }
+}
+
 /** The light colours of a resolved Login UI, as dark-mode colours. */
 function lightColorsAsDark(resolved: LoginUIResolved): LoginUIThemeColors {
   const light: Record<LoginUIThemeColorName, string> = {
@@ -1311,6 +1354,8 @@ function lightColorsAsDark(resolved: LoginUIResolved): LoginUIThemeColors {
     copy: resolved.copyColor,
     field: resolved.fieldColor,
     secondary_button: resolved.secondaryButtonColor,
+    theme_toggle_background: resolved.themeToggleBackgroundColor,
+    language_select_background: resolved.languageSelectBackgroundColor,
     header_background: resolved.headerBackgroundColor,
     header_text: resolved.headerTextColor,
     footer_background: resolved.footerBackgroundColor,
@@ -1379,6 +1424,16 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.secondary_button_color'],
       defaults.secondaryButtonColor
     ),
+    themeToggleBackgroundColor: readThemeColor(
+      'theme_toggle_background',
+      kvSettings['login-ui.theme_toggle_background_color'],
+      defaults.themeToggleBackgroundColor
+    ),
+    languageSelectBackgroundColor: readThemeColor(
+      'language_select_background',
+      kvSettings['login-ui.language_select_background_color'],
+      defaults.languageSelectBackgroundColor
+    ),
     linkColor: readThemeColor('link', kvSettings['login-ui.link_color'], defaults.linkColor),
     headerBackgroundColor: readThemeColor(
       'header_background',
@@ -1405,6 +1460,11 @@ function resolveLoginUIFromKVSettings(
         ? { ...defaults.darkColors }
         : parseLoginUIDarkColors(kvSettings['login-ui.dark_colors']),
     darkColorsSet: defaults.darkColorsSet || kvSettings['login-ui.dark_colors'] !== undefined,
+    darkImages:
+      kvSettings['login-ui.dark_images'] === undefined
+        ? defaults.darkImages
+        : readDarkImages(kvSettings['login-ui.dark_images']),
+    darkImagesSet: defaults.darkImagesSet || kvSettings['login-ui.dark_images'] !== undefined,
     brandName: kvSettings['login-ui.brand_name'] || defaults.brandName,
     headerName: readHeaderName(kvSettings['login-ui.header_name'], defaults.headerName),
     liteLogo: checkLiteLogoDataUri(kvSettings['login-ui.lite_logo']).ok
@@ -1664,6 +1724,8 @@ async function getLoginUISettings(
     brandPanelBackgroundColor: DEFAULT_UI_CONFIG.pageTemplate.brandPanelBackgroundColor,
     fieldColor: DEFAULT_UI_CONFIG.pageTemplate.fieldColor,
     secondaryButtonColor: DEFAULT_UI_CONFIG.pageTemplate.secondaryButtonColor,
+    themeToggleBackgroundColor: DEFAULT_UI_CONFIG.pageTemplate.themeToggleBackgroundColor,
+    languageSelectBackgroundColor: DEFAULT_UI_CONFIG.pageTemplate.languageSelectBackgroundColor,
     linkColor: DEFAULT_UI_CONFIG.pageTemplate.linkColor,
     headerBackgroundColor: DEFAULT_UI_CONFIG.pageTemplate.headerBackgroundColor,
     headerTextColor: DEFAULT_UI_CONFIG.pageTemplate.headerTextColor,
@@ -1671,6 +1733,8 @@ async function getLoginUISettings(
     footerTextColor: DEFAULT_UI_CONFIG.pageTemplate.footerTextColor,
     darkColors: { ...DEFAULT_UI_CONFIG.pageTemplate.darkColors },
     darkColorsSet: false,
+    darkImages: null,
+    darkImagesSet: false,
     brandName: DEFAULT_UI_CONFIG.branding.brandName,
     headerName: DEFAULT_UI_CONFIG.branding.headerName,
     logoUrl: DEFAULT_UI_CONFIG.branding.logoUrl,
@@ -2646,6 +2710,8 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
       brandPanelBackgroundColor: loginUI.brandPanelBackgroundColor,
       fieldColor: loginUI.fieldColor,
       secondaryButtonColor: loginUI.secondaryButtonColor,
+      themeToggleBackgroundColor: loginUI.themeToggleBackgroundColor,
+      languageSelectBackgroundColor: loginUI.languageSelectBackgroundColor,
       linkColor: loginUI.linkColor,
       headerBackgroundColor: loginUI.headerBackgroundColor,
       headerTextColor: loginUI.headerTextColor,
@@ -2685,6 +2751,7 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
     },
     appearance: {
       backgroundImageUrl: loginUI.backgroundImageUrl,
+      darkImages: loginUI.darkImagesSet ? loginUI.darkImages : null,
       backgroundImageOpacity: loginUI.backgroundImageOpacity,
       backgroundImageGrayscale: loginUI.backgroundImageGrayscale,
       backgroundImageFilters: loginUI.backgroundImageFilters,

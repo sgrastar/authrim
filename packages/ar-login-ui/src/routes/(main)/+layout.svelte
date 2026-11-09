@@ -52,6 +52,7 @@
 	themeStore.primeFromHint(untrack(() => data.themeHint));
 	// The colours of the mode the page opens in, from the first render (then kept in step below).
 	loginUIPageStore.setColourMode(untrack(() => themeStore.mode));
+	brandingStore.setColourMode(untrack(() => themeStore.mode));
 
 	// Root layouts persist during client-side navigation. Apply newly embedded route data before
 	// Svelte updates the page so login/signup transitions never retain the previous/default theme.
@@ -72,7 +73,10 @@
 	}
 
 	// The tenant's colours are set per mode: show the ones of the mode the page is in.
-	$effect(() => loginUIPageStore.setColourMode(themeStore.mode));
+	$effect(() => {
+		loginUIPageStore.setColourMode(themeStore.mode);
+		brandingStore.setColourMode(themeStore.mode);
+	});
 
 	// Initialize theme on mount
 	// Resolution order: localStorage → tenant (API) → system → default
@@ -166,6 +170,12 @@
 	style:--login-form-area-color={loginUIPageStore.formAreaColor || undefined}
 	style:--login-brand-panel-background-color={loginUIPageStore.brandPanelBackgroundColor ||
 		undefined}
+	style:--login-theme-toggle-background-color={loginUIPageStore.themeToggleBackgroundColor ||
+		undefined}
+	style:--login-theme-toggle-text-color={loginUIPageStore.themeToggleTextColor || undefined}
+	style:--login-language-select-background-color={loginUIPageStore.languageSelectBackgroundColor ||
+		undefined}
+	style:--login-language-select-text-color={loginUIPageStore.languageSelectTextColor || undefined}
 	style:--login-page-background-opacity={String(loginUIPageStore.backgroundImageOpacity / 100)}
 	style:--login-brand-panel-image-layer={loginUIPageStore.brandPanelImageLayer ?? undefined}
 	style:--login-brand-panel-image-opacity={String(loginUIPageStore.brandPanelImageOpacity / 100)}

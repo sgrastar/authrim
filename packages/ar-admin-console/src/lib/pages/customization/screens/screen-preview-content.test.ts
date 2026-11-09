@@ -13,21 +13,31 @@ const listed = (index: number): ScreenListItem => ({
 });
 
 describe('saved screen previews', () => {
-	it('offers registration, login, then profile completion and omits other kinds', () => {
+	it('offers saved registration, login, then profile completion without system templates', () => {
 		const signIn = listed(0);
 		const signUp = listed(1);
 		const survey = listed(2);
-		const profile = {
-			...listed(2),
-			id: 'screen_profile',
-			screen_kind: 'profile_completion' as const
-		};
+		const profile = listed(3);
+		const customLogin = { ...signIn, id: 'screen_login_copy', is_system: false };
+		const customProfile = { ...profile, id: 'screen_profile_copy', is_system: false };
 		const anotherSignUp = { ...listed(1), id: 'screen_signup_copy' };
 		expect(
-			themeScreenPreviews([signIn, survey, signUp, profile, anotherSignUp]).map(
-				(screen) => screen.id
-			)
-		).toEqual(['screen_signup', 'screen_signup_copy', 'screen_login', 'screen_profile']);
+			themeScreenPreviews([
+				signIn,
+				survey,
+				signUp,
+				profile,
+				customLogin,
+				customProfile,
+				anotherSignUp
+			]).map((screen) => screen.id)
+		).toEqual(['screen_signup', 'screen_signup_copy', 'screen_login_copy', 'screen_profile_copy']);
+	});
+
+	it('falls back to system screens only when no eligible saved screen exists', () => {
+		expect(
+			themeScreenPreviews([listed(3), listed(0), listed(2)]).map((screen) => screen.id)
+		).toEqual(['screen_login', 'screen_profile']);
 	});
 
 	it('uses the saved parts and keeps implicit parts in separate rows', () => {

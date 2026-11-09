@@ -541,12 +541,15 @@ place('customization/login-ui', 'Colours', {
 		'login-ui.brand_panel_background_color',
 		'login-ui.field_color',
 		'login-ui.secondary_button_color',
+		'login-ui.theme_toggle_background_color',
+		'login-ui.language_select_background_color',
 		'login-ui.link_color',
 		'login-ui.header_background_color',
 		'login-ui.header_text_color',
 		'login-ui.footer_background_color',
 		'login-ui.footer_text_color',
-		'login-ui.dark_colors'
+		'login-ui.dark_colors',
+		'login-ui.dark_images'
 	]
 });
 place('customization/login-ui', 'Layout', {

@@ -209,14 +209,25 @@
 	/* The switcher's controls are app.css classes (they are shared with the authentication pages'
 	   top bar), so the flat surface is applied to them here rather than through Card or Button. */
 	.account-preferences :global(:is(.theme-toggle, .auth-lang-select)) {
-		background: var(--control-surface);
 		backdrop-filter: var(--surface-backdrop-filter);
 		-webkit-backdrop-filter: var(--surface-backdrop-filter);
 		transition: var(--surface-transition);
 	}
 
-	.account-preferences :global(:is(.theme-toggle, .auth-lang-select):hover) {
-		background: var(--control-hover-surface);
+	.account-preferences :global(.theme-toggle) {
+		background: var(--login-theme-toggle-background-color, var(--control-surface));
+	}
+
+	.account-preferences :global(.auth-lang-select) {
+		background: var(--login-language-select-background-color, var(--control-surface));
+	}
+
+	.account-preferences :global(.theme-toggle:hover) {
+		background: var(--login-theme-toggle-background-color, var(--control-hover-surface));
+	}
+
+	.account-preferences :global(.auth-lang-select:hover) {
+		background: var(--login-language-select-background-color, var(--control-hover-surface));
 	}
 
 	/* ConfiguredFooter is shared with the authentication pages; its placement is the shell's. */

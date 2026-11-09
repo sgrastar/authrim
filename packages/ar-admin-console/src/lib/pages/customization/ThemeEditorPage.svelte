@@ -20,6 +20,7 @@
 	import { themeErrorKey } from './theme-errors';
 	import {
 		draftToValues,
+		DARK_THEME_IMAGES,
 		needsResave,
 		openStored,
 		THEME_IMAGES,
@@ -202,6 +203,11 @@
 		for (const image of THEME_IMAGES) {
 			if (draft[image.field] === sent[image.field]) draft[image.field] = uploaded[image.field];
 		}
+		for (const image of DARK_THEME_IMAGES) {
+			if (draft.darkImages[image.field] === sent.darkImages[image.field]) {
+				draft.darkImages[image.field] = uploaded.darkImages[image.field];
+			}
+		}
 	}
 
 	async function save() {
@@ -221,6 +227,7 @@
 		// Its nested parts are copied: edits made after the save must not change what it compares with.
 		const sent: ThemeDraft = {
 			...draft,
+			darkImages: $state.snapshot(draft.darkImages),
 			texts: $state.snapshot(draft.texts),
 			backgroundFilters: $state.snapshot(draft.backgroundFilters)
 		};

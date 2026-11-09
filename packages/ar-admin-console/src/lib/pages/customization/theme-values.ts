@@ -1,8 +1,9 @@
 /**
  * A saved theme's values (Login UI settings, keyed `login-ui.*`) and the editor's draft, both
  * ways. Saving writes the whole look the draft shows, so that applying the theme makes the
- * screens look as the editor does; colours and images left empty are not written (the template's
- * own apply). Reading starts from a new draft and takes each value that is valid, so a value the
+ * screens look as the editor does; light images left empty are not written (the template's own
+ * apply), while the dark image set records explicit empty choices. Reading starts from a new
+ * draft and takes each value that is valid, so a value the
  * editor does not know (written elsewhere) falls back to the editor's default.
  *
  * The header and the footer are always the bars the preview draws (`header_style` and
@@ -56,6 +57,12 @@ export const THEME_IMAGES = [
 	{ field: 'cardImage', key: 'login_panel_background_image_url', kind: 'panel-background' }
 ] as const;
 
+export const DARK_THEME_IMAGES = [
+	{ field: 'logo', kind: 'logo' },
+	{ field: 'backgroundImage', kind: 'background' },
+	{ field: 'cardImage', kind: 'panel-background' }
+] as const;
+
 type ImageField = (typeof THEME_IMAGES)[number]['field'];
 
 /** Which keys each control of the editor writes. */
@@ -94,6 +101,7 @@ const FIELD_KEYS: readonly (readonly [keyof ThemeDraft, readonly string[]])[] = 
 	['customCss', ['custom_css']],
 	...THEME_COLOURS.map((colour) => [colour.field, [`${colour.name}_color`]] as const),
 	['darkColours', ['dark_colors']],
+	['darkImages', ['dark_images']],
 	...THEME_IMAGES.map((image) => [image.field, [image.key]] as const)
 ];
 
@@ -153,6 +161,12 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 	// Written even when empty: a theme with the key has a dark set of its own (none set is the
 	// palette's), one without it was saved before there was one (see valuesToDraft).
 	values[KEY('dark_colors')] = formatLoginUIDarkColors(draft.darkColours);
+	values[KEY('dark_images')] = JSON.stringify({
+		logo: typeof draft.darkImages.logo === 'string' ? draft.darkImages.logo : '',
+		background:
+			typeof draft.darkImages.backgroundImage === 'string' ? draft.darkImages.backgroundImage : '',
+		form_area: typeof draft.darkImages.cardImage === 'string' ? draft.darkImages.cardImage : ''
+	});
 	for (const image of THEME_IMAGES) {
 		const value = draft[image.field];
 		if (typeof value === 'string' && value) values[KEY(image.key)] = value;
@@ -216,6 +230,7 @@ export function draftToValues(draft: ThemeDraft, stored?: StoredTheme): ThemeVal
 	// A theme saved before there was a dark set gets one when it is saved (see valuesToDraft): the
 	// one the editor shows, though it was not changed.
 	if (!(KEY('dark_colors') in base)) values[KEY('dark_colors')] = fresh[KEY('dark_colors')];
+	if (!(KEY('dark_images') in base)) values[KEY('dark_images')] = fresh[KEY('dark_images')];
 	// The header and footer are the preview's bars, whatever a stored theme said.
 	values[KEY('header_style')] = 'bar';
 	values[KEY('footer_style')] = 'bar';
@@ -397,6 +412,31 @@ export function valuesToDraft(values: ThemeValues): ThemeDraft {
 		const url = v(image.key);
 		draft[image.field as ImageField] = typeof url === 'string' && url ? url : null;
 	}
+	const darkImages = v('dark_images');
+	if (typeof darkImages === 'string') {
+		try {
+			const parsed: unknown = JSON.parse(darkImages);
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				const images = parsed as Record<string, unknown>;
+				draft.darkImages = {
+					logo: typeof images.logo === 'string' && images.logo ? images.logo : null,
+					backgroundImage:
+						typeof images.background === 'string' && images.background ? images.background : null,
+					cardImage:
+						typeof images.form_area === 'string' && images.form_area ? images.form_area : null
+				};
+			}
+		} catch {
+			// A malformed stored value behaves as an explicitly empty dark set.
+		}
+	} else {
+		// Older themes used the light image in both modes. Show that choice before their next save.
+		draft.darkImages = {
+			logo: draft.logo,
+			backgroundImage: draft.backgroundImage,
+			cardImage: draft.cardImage
+		};
+	}
 	const localizations = localizationsOf(v('text_localizations'));
 	for (const { value: language } of TEXT_LANGUAGES) {
 		const entry = localizations[language as TextLanguage] ?? {};
@@ -414,10 +454,14 @@ export async function uploadThemeImages(
 	draft: ThemeDraft,
 	upload: (kind: string, file: File) => Promise<string>
 ): Promise<ThemeDraft> {
-	const next = { ...draft };
+	const next = { ...draft, darkImages: { ...draft.darkImages } };
 	for (const image of THEME_IMAGES) {
 		const value = draft[image.field];
 		if (value instanceof File) next[image.field] = await upload(image.kind, value);
+	}
+	for (const image of DARK_THEME_IMAGES) {
+		const value = draft.darkImages[image.field];
+		if (value instanceof File) next.darkImages[image.field] = await upload(image.kind, value);
 	}
 	return next;
 }

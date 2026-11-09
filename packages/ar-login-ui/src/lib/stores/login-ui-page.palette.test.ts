@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoginUIConfig } from '#lib/api/authentication-methods.js';
+import { createBrandingStore } from './branding.svelte';
 import { createLoginUIPageStore } from './login-ui-page.svelte';
 
 vi.mock('$app/env', () => ({ browser: true }));
@@ -159,6 +160,34 @@ describe('loginUIPageStore templates and palettes', () => {
 		expect(html().getAttribute('data-has-brand-panel-background-color')).toBe('false');
 	});
 
+	it('uses readable ink on the toggle and language selector backgrounds in each mode', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(
+			config({
+				themeToggleBackgroundColor: '#111111',
+				languageSelectBackgroundColor: '#eeeeee',
+				darkColors: {
+					theme_toggle_background: '#f5f5f5',
+					language_select_background: '#222222'
+				}
+			})
+		);
+		expect(store.themeToggleTextColor).toBe('#ffffff');
+		expect(store.languageSelectTextColor).toBe('#000000');
+		expect(html().style.getPropertyValue('--login-theme-toggle-background-color')).toBe('#111111');
+		expect(html().style.getPropertyValue('--login-language-select-text-color')).toBe('#000000');
+		store.setColourMode('dark');
+		expect(store.themeToggleTextColor).toBe('#000000');
+		expect(store.languageSelectTextColor).toBe('#ffffff');
+		expect(html().style.getPropertyValue('--login-theme-toggle-background-color')).toBe('#f5f5f5');
+		expect(html().style.getPropertyValue('--login-language-select-background-color')).toBe(
+			'#222222'
+		);
+		store.setFromUIConfig(config({ themeToggleBackgroundColor: 'url(x)' }));
+		expect(html().style.getPropertyValue('--login-theme-toggle-background-color')).toBe('');
+		expect(html().style.getPropertyValue('--login-theme-toggle-text-color')).toBe('');
+	});
+
 	it('applies the image opacities and the brand panel image', () => {
 		const store = createLoginUIPageStore();
 		store.setFromUIConfig(
@@ -188,6 +217,74 @@ describe('loginUIPageStore templates and palettes', () => {
 			'url("https://example.com/panel.jpg")'
 		);
 		expect(html().getAttribute('data-has-brand-panel-image')).toBe('true');
+	});
+
+	it('changes the page and form images with the mode without falling back from an empty dark slot', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(
+			config(
+				{},
+				{
+					appearance: {
+						backgroundImageUrl: 'https://example.com/light-bg.jpg',
+						loginPanelBackgroundImageUrl: 'https://example.com/light-form.jpg',
+						darkImages: {
+							logoUrl: null,
+							backgroundImageUrl: 'https://example.com/dark-bg.jpg',
+							loginPanelBackgroundImageUrl: null
+						},
+						customCss: null,
+						headerText: null,
+						footerText: null,
+						footerLinks: [],
+						customBlocks: []
+					}
+				}
+			)
+		);
+		expect(store.backgroundImageUrl).toBe('https://example.com/light-bg.jpg');
+		expect(store.loginPanelBackgroundImageUrl).toBe('https://example.com/light-form.jpg');
+		store.setColourMode('dark');
+		expect(store.backgroundImageUrl).toBe('https://example.com/dark-bg.jpg');
+		expect(store.loginPanelBackgroundImageUrl).toBeNull();
+		expect(html().getAttribute('data-has-login-panel-background-image')).toBe('false');
+		expect(html().style.getPropertyValue('--login-page-background-layer')).toBe(
+			'url("https://example.com/dark-bg.jpg")'
+		);
+		expect(html().style.getPropertyValue('--login-panel-background-layer')).toBe('');
+		store.setColourMode('light');
+		expect(html().getAttribute('data-has-login-panel-background-image')).toBe('true');
+	});
+
+	it('keeps legacy light images in dark mode until a dark image set is provided', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(
+			config(
+				{},
+				{
+					appearance: {
+						backgroundImageUrl: 'https://example.com/light-bg.jpg',
+						customCss: null,
+						headerText: null,
+						footerText: null,
+						footerLinks: [],
+						customBlocks: []
+					}
+				}
+			)
+		);
+		store.setColourMode('dark');
+		expect(store.backgroundImageUrl).toBe('https://example.com/light-bg.jpg');
+	});
+
+	it('selects the logo for each mode and treats an empty dark logo as intentional', () => {
+		const branding = createBrandingStore();
+		branding.set('Example', 'https://example.com/light-logo.png', null, true);
+		expect(branding.logoUrl).toBe('https://example.com/light-logo.png');
+		branding.setColourMode('dark');
+		expect(branding.logoUrl).toBeNull();
+		branding.set('Example', 'https://example.com/light-logo.png');
+		expect(branding.logoUrl).toBe('https://example.com/light-logo.png');
 	});
 
 	it('refuses a brand panel image that is not a safe image URL', () => {

@@ -92,7 +92,7 @@
 						{:else if id === 'content'}
 							<ThemeContent bind:draft />
 						{:else}
-							<ThemeImages bind:draft {presets} />
+							<ThemeImages bind:draft {presets} {scheme} bind:mode />
 						{/if}
 					</div>
 				{/snippet}

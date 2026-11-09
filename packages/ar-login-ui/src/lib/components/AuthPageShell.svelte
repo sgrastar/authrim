@@ -117,6 +117,12 @@
 	style:--login-form-area-color={loginUIPageStore.formAreaColor || undefined}
 	style:--login-brand-panel-background-color={loginUIPageStore.brandPanelBackgroundColor ||
 		undefined}
+	style:--login-theme-toggle-background-color={loginUIPageStore.themeToggleBackgroundColor ||
+		undefined}
+	style:--login-theme-toggle-text-color={loginUIPageStore.themeToggleTextColor || undefined}
+	style:--login-language-select-background-color={loginUIPageStore.languageSelectBackgroundColor ||
+		undefined}
+	style:--login-language-select-text-color={loginUIPageStore.languageSelectTextColor || undefined}
 	data-has-field-color={loginUIPageStore.fieldColor ? 'true' : undefined}
 	style:--bg-input={loginUIPageStore.fieldColor || undefined}
 	style:--field-bg={loginUIPageStore.fieldColor || undefined}

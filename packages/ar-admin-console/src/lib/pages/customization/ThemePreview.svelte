@@ -151,8 +151,15 @@
 		set(value ? apiAssetUrl(value) : null);
 	}
 
-	$effect(() => imageUrl(draft.logo, (url) => (logoUrl = url)));
-	$effect(() => imageUrl(draft.backgroundImage, (url) => (backgroundUrl = url)));
+	$effect(() =>
+		imageUrl(scheme === 'dark' ? draft.darkImages.logo : draft.logo, (url) => (logoUrl = url))
+	);
+	$effect(() =>
+		imageUrl(
+			scheme === 'dark' ? draft.darkImages.backgroundImage : draft.backgroundImage,
+			(url) => (backgroundUrl = url)
+		)
+	);
 	/**
 	 * A set colour that text is laid on, as the Login UI takes it: hex (3, 6 or 8 digits) or rgb(),
 	 * with the black or white label that reads better on it (its alpha left aside). Anything else
@@ -184,6 +191,8 @@
 	// chosen against it, as the Login UI draws it.
 	const accent = $derived(own.accent ? labelled(own.accent) : null);
 	const button2 = $derived(labelled(own.secondaryButtonColor));
+	const toggleBackground = $derived(labelled(own.themeToggleBackground));
+	const languageBackground = $derived(labelled(own.languageSelectBackground));
 	// The picture's filters in order, as the Login UI draws them.
 	const backgroundFilter = $derived(loginUIImageFilterCss(draft.backgroundFilters));
 	// A blurred picture fades at its edges: it is drawn that much larger, as the Login UI's blur
@@ -192,7 +201,12 @@
 		2 * (draft.backgroundFilters.find((filter) => filter.name === 'blur')?.value ?? 0)
 	);
 	$effect(() => imageUrl(draft.panelImage, (url) => (panelUrl = url)));
-	$effect(() => imageUrl(draft.cardImage, (url) => (cardUrl = url)));
+	$effect(() =>
+		imageUrl(
+			scheme === 'dark' ? draft.darkImages.cardImage : draft.cardImage,
+			(url) => (cardUrl = url)
+		)
+	);
 
 	// The brand side's picture is its own; the background image runs behind the whole screen.
 	const brandLayer = $derived(
@@ -229,7 +243,7 @@
 			>
 		{/if}
 		{#if draft.languageSelect}
-			<span class="tools__item"
+			<span class="tools__item tools__item--language"
 				><Icon name="globe" />{draft.language.toUpperCase()}<Icon name="caret" /></span
 			>
 		{/if}
@@ -337,6 +351,10 @@
 				data-button2={button2 ? 'set' : undefined}
 				style:--ol-button2={button2?.fill}
 				style:--ol-button2-text={button2?.label}
+				style:--ol-toggle-bg={toggleBackground?.fill}
+				style:--ol-toggle-ink={toggleBackground?.label}
+				style:--ol-language-bg={languageBackground?.fill}
+				style:--ol-language-ink={languageBackground?.label}
 				style:--ol-density={DENSITIES[draft.fontScale]}
 				style:--ol-card-radius={`${shape.cardRadius}px`}
 				style:--ol-control-radius={`${shape.controlRadius}px`}
@@ -1006,6 +1024,13 @@
 		width: 34px;
 		justify-content: center;
 		padding: 0;
+		background: var(--ol-toggle-bg, var(--ol-card));
+		color: var(--ol-toggle-ink, var(--ol-text));
+	}
+
+	.tools__item--language {
+		background: var(--ol-language-bg, var(--ol-card));
+		color: var(--ol-language-ink, var(--ol-text));
 	}
 
 	.outline__footer {

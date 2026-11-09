@@ -22,6 +22,8 @@ export type ThemeColourField =
 	| 'copyColor'
 	| 'fieldColor'
 	| 'secondaryButtonColor'
+	| 'themeToggleBackground'
+	| 'languageSelectBackground'
 	| 'headerBackground'
 	| 'headerText'
 	| 'footerBackground'
@@ -96,6 +98,22 @@ export const THEME_COLOURS: readonly ThemeColour[] = [
 		label: 'th.c.secondaryButton',
 		alpha: true,
 		fallback: (p) => p.card
+	},
+	{
+		field: 'themeToggleBackground',
+		name: 'theme_toggle_background',
+		label: 'th.c.themeToggleBackground',
+		alpha: true,
+		fallback: (p) => p.card,
+		strict: true
+	},
+	{
+		field: 'languageSelectBackground',
+		name: 'language_select_background',
+		label: 'th.c.languageSelectBackground',
+		alpha: true,
+		fallback: (p) => p.card,
+		strict: true
 	},
 	{
 		field: 'headerBackground',

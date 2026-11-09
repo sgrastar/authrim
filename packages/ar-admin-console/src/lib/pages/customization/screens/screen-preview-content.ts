@@ -46,8 +46,13 @@ export function themeScreenPreviews(
 	screens: readonly ScreenListItem[],
 	choices?: ChoiceSource
 ): ScreenPreviewContent[] {
+	const eligible = screens.filter((screen) =>
+		THEME_PREVIEW_KINDS.some((kind) => kind === screen.screen_kind)
+	);
+	const saved = eligible.filter((screen) => !screen.is_system);
+	const offered = saved.length > 0 ? saved : eligible.filter((screen) => screen.is_system);
 	return THEME_PREVIEW_KINDS.flatMap((kind) =>
-		screens
+		offered
 			.filter((screen) => screen.screen_kind === kind)
 			.map((screen) => ({ ...savedScreenPreview(screen), choices }))
 	);

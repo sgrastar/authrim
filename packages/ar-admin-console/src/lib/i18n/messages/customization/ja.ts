@@ -94,6 +94,8 @@ export const jaCustomization = {
 	'th.c.copy': 'コピー文',
 	'th.c.field': '入力欄',
 	'th.c.secondaryButton': 'サブボタン',
+	'th.c.themeToggleBackground': 'ライト・ダーク切替の背景',
+	'th.c.languageSelectBackground': '言語選択の背景',
 	'th.c.link': 'リンク色',
 	'th.c.headerBackground': 'ヘッダーの背景',
 	'th.c.headerText': 'ヘッダーの文字',
@@ -209,6 +211,8 @@ export const jaCustomization = {
 	'th.g.bgImage.d':
 		'画面全体の背景に敷く、横長の画像です。Split では、右側のフォームの背景になります。',
 	'th.i.logo': 'ロゴの画像',
+	'th.i.modes': '画像の表示モード',
+	'th.i.effectsBothModes': '透明度と効果はライト・ダーク共通です。',
 	'th.i.favicon': 'ファビコンの画像',
 	'th.i.bgImage': '背景の画像',
 	'th.i.bgOpacity': '背景画像の透明度',

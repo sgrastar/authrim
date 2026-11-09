@@ -171,6 +171,10 @@ export interface LoginUIConfig {
 		fieldColor?: string;
 		/** Secondary button background: hex with an optional alpha channel; empty when none is set. */
 		secondaryButtonColor?: string;
+		/** Light/dark toggle background; its icon colour is selected automatically. */
+		themeToggleBackgroundColor?: string;
+		/** Language selector background; its text colour is selected automatically. */
+		languageSelectBackgroundColor?: string;
 		linkColor?: string;
 		headerBackgroundColor?: string;
 		headerTextColor?: string;
@@ -235,6 +239,12 @@ export interface LoginUIConfig {
 	};
 	appearance?: {
 		backgroundImageUrl: string | null;
+		/** Null means an older theme uses the light images in both modes. An empty URL is intentional. */
+		darkImages?: {
+			logoUrl: string | null;
+			backgroundImageUrl: string | null;
+			loginPanelBackgroundImageUrl: string | null;
+		} | null;
 		/** Percentage, 0-100. */
 		backgroundImageOpacity?: number;
 		backgroundImageGrayscale?: boolean;

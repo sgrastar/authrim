@@ -97,6 +97,8 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.c.copy': 'Copy',
 	'th.c.field': 'حقول الإدخال',
 	'th.c.secondaryButton': 'الأزرار الثانوية',
+	'th.c.themeToggleBackground': 'خلفية زر الوضع الفاتح والداكن',
+	'th.c.languageSelectBackground': 'خلفية اختيار اللغة',
 	'th.c.link': 'الروابط',
 	'th.c.headerBackground': 'خلفية الترويسة',
 	'th.c.headerText': 'نص الترويسة',
@@ -213,6 +215,8 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.g.bgImage.d':
 		'A wide image behind the whole screen. With Split, it sits behind the form side.',
 	'th.i.logo': 'Logo image',
+	'th.i.modes': 'وضع الصور',
+	'th.i.effectsBothModes': 'تنطبق الشفافية والتأثيرات على الوضعين.',
 	'th.i.favicon': 'Favicon image',
 	'th.i.bgImage': 'Background image',
 	'th.i.bgOpacity': 'Background image opacity',

@@ -1958,8 +1958,8 @@ tr.expired {
 	padding: 0;
 	border-radius: var(--radius-sm);
 	border: 1px solid var(--border);
-	background: var(--bg-glass);
-	color: var(--text-secondary);
+	background: var(--login-theme-toggle-background-color, var(--bg-glass));
+	color: var(--login-theme-toggle-text-color, var(--text-secondary));
 	cursor: pointer;
 	transition: all var(--transition-fast);
 	backdrop-filter: var(--blur-sm);
@@ -1967,8 +1967,8 @@ tr.expired {
 }
 
 .theme-toggle:hover {
-	background: var(--bg-subtle);
-	color: var(--text-primary);
+	background: var(--login-theme-toggle-background-color, var(--bg-subtle));
+	color: var(--login-theme-toggle-text-color, var(--text-primary));
 	border-color: var(--primary);
 }
 
@@ -2722,8 +2722,8 @@ tr.expired {
 	line-height: 1.25;
 	border: 1px solid var(--border);
 	border-radius: var(--radius-sm);
-	background: var(--bg-glass);
-	color: var(--text-primary);
+	background: var(--login-language-select-background-color, var(--bg-glass));
+	color: var(--login-language-select-text-color, var(--text-primary));
 	cursor: pointer;
 	backdrop-filter: var(--blur-sm);
 	-webkit-backdrop-filter: var(--blur-sm);
@@ -2737,8 +2737,8 @@ tr.expired {
 }
 
 .auth-lang-select option {
-	background: var(--bg-card);
-	color: var(--text-primary);
+	background: var(--login-language-select-background-color, var(--bg-card));
+	color: var(--login-language-select-text-color, var(--text-primary));
 }
 
 /* --- Responsive adjustments --- */

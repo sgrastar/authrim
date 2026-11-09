@@ -38,6 +38,29 @@
 </Story>
 
 <Story
+	name="Custom backgrounds and readable ink"
+	play={async ({ canvasElement }) => {
+		const toggle = within(canvasElement).getByRole('button');
+		const language = within(canvasElement).getByRole('combobox');
+		await expect(getComputedStyle(toggle).backgroundColor).toBe('rgb(17, 17, 17)');
+		await expect(getComputedStyle(toggle).color).toBe('rgb(255, 255, 255)');
+		await expect(getComputedStyle(language).backgroundColor).toBe('rgb(238, 238, 238)');
+		await expect(getComputedStyle(language).color).toBe('rgb(0, 0, 0)');
+	}}
+>
+	{#snippet template()}
+		<LoginUIFrame
+			ui={{
+				pageTemplate: {
+					themeToggleBackgroundColor: '#111111',
+					languageSelectBackgroundColor: '#eeeeee'
+				}
+			}}><LanguageSwitcher /></LoginUIFrame
+		>
+	{/snippet}
+</Story>
+
+<Story
 	name="Toggle flips the colour scheme"
 	play={async ({ canvasElement }) => {
 		const boundary = canvasElement.querySelector('.login-ui-theme-boundary');
