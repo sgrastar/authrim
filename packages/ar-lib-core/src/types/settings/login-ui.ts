@@ -84,6 +84,8 @@ export interface LoginUISettings {
   'login-ui.brand_panel_background_color': string;
   'login-ui.field_color': string;
   'login-ui.secondary_button_color': string;
+  'login-ui.theme_toggle_background_color': string;
+  'login-ui.language_select_background_color': string;
   'login-ui.link_color': string;
   'login-ui.header_background_color': string;
   'login-ui.header_text_color': string;
@@ -91,6 +93,8 @@ export interface LoginUISettings {
   'login-ui.footer_text_color': string;
   /** Dark-mode colours: a JSON object from colour name to colour (utils/login-ui-theme-colors). */
   'login-ui.dark_colors': string;
+  /** JSON object of dark logo, background and form-area images; empty entries mean no image. */
+  'login-ui.dark_images': string;
 
   // Branding
   'login-ui.brand_name': string;
@@ -363,6 +367,26 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
       'Background colour of the secondary buttons (such as Continue under an input). #rgb, #rrggbb or #rrggbbaa. Empty follows the palette',
     visibility: 'public',
   },
+  'login-ui.theme_toggle_background_color': {
+    key: 'login-ui.theme_toggle_background_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_THEME_TOGGLE_BACKGROUND_COLOR',
+    label: 'Theme Toggle Background Color',
+    description:
+      'Background colour of the light/dark toggle. Empty follows the palette; the icon colour is chosen automatically',
+    visibility: 'public',
+  },
+  'login-ui.language_select_background_color': {
+    key: 'login-ui.language_select_background_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_LANGUAGE_SELECT_BACKGROUND_COLOR',
+    label: 'Language Selector Background Color',
+    description:
+      'Background colour of the language selector. Empty follows the palette; the text colour is chosen automatically',
+    visibility: 'public',
+  },
   'login-ui.link_color': {
     key: 'login-ui.link_color',
     type: 'string',
@@ -420,7 +444,17 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     envKey: 'LOGIN_UI_DARK_COLORS',
     label: 'Dark Mode Colors',
     description:
-      'Colours used in dark mode, as a JSON object from colour name (background, form_area, brand_panel_background, accent, link, title, text, copy, field, secondary_button, header_background, header_text, footer_background, footer_text) to colour. A colour not listed follows the palette in dark mode',
+      'Colours used in dark mode, as a JSON object from colour name (background, form_area, brand_panel_background, accent, link, title, text, copy, field, secondary_button, theme_toggle_background, language_select_background, header_background, header_text, footer_background, footer_text) to colour. A colour not listed follows the palette in dark mode',
+    visibility: 'public',
+  },
+  'login-ui.dark_images': {
+    key: 'login-ui.dark_images',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_DARK_IMAGES',
+    label: 'Dark Mode Images',
+    description:
+      'JSON object with logo, background and form_area image URLs. An empty value for an image explicitly hides it in dark mode; an absent setting keeps legacy light-image fallback',
     visibility: 'public',
   },
   'login-ui.form_area_color': {
@@ -1136,12 +1170,15 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.brand_panel_background_color': '',
   'login-ui.field_color': '',
   'login-ui.secondary_button_color': '',
+  'login-ui.theme_toggle_background_color': '',
+  'login-ui.language_select_background_color': '',
   'login-ui.link_color': '',
   'login-ui.header_background_color': '',
   'login-ui.header_text_color': '',
   'login-ui.footer_background_color': '',
   'login-ui.footer_text_color': '',
   'login-ui.dark_colors': '',
+  'login-ui.dark_images': '',
   'login-ui.brand_name': 'Authrim',
   'login-ui.header_name': '',
   'login-ui.logo_url': '',
@@ -1228,12 +1265,15 @@ export const LOGIN_UI_THEME_KEYS = [
   'login-ui.brand_panel_background_color',
   'login-ui.field_color',
   'login-ui.secondary_button_color',
+  'login-ui.theme_toggle_background_color',
+  'login-ui.language_select_background_color',
   'login-ui.link_color',
   'login-ui.header_background_color',
   'login-ui.header_text_color',
   'login-ui.footer_background_color',
   'login-ui.footer_text_color',
   'login-ui.dark_colors',
+  'login-ui.dark_images',
   'login-ui.brand_name',
   'login-ui.header_name',
   'login-ui.logo_url',

@@ -27,6 +27,23 @@
 				? [{ id: `${match[1]}/${match[2]}`, category: match[1], name: match[2], url }]
 				: [];
 		});
+	const STORY_SCREENS = [
+		...MOCK_SCREENS,
+		{
+			...MOCK_SCREENS[0],
+			id: 'screen_login_copy',
+			screen_key: 'login_custom',
+			display_name: 'Login copy',
+			is_system: false
+		},
+		{
+			...MOCK_SCREENS[3],
+			id: 'screen_profile_copy',
+			screen_key: 'profile_completion_custom',
+			display_name: 'Profile completion copy',
+			is_system: false
+		}
+	];
 	const { Story } = defineMeta({
 		title: 'Pages/Customization/Theme editor',
 		component: ThemeEditor,
@@ -36,7 +53,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Themes → a theme: how the tenant’s sign-in screens look. The theme page (`ThemeEditorPage`) puts this editor under its header (the theme’s name, Save, Apply) and loads and saves the draft through `/api/admin/login-ui/themes`.\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded; custom CSS is not applied in the preview. The console picker shows saved registration, login, and profile completion screens in that order. Standalone stories without a screens client retain the sample outline.'
+						'Customization → Themes → a theme: how the tenant’s sign-in screens look. The theme page (`ThemeEditorPage`) puts this editor under its header (the theme’s name, Save, Apply) and loads and saves the draft through `/api/admin/login-ui/themes`.\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded; custom CSS is not applied in the preview. The console picker shows saved registration, login, and profile completion screens in that order; if none are saved, it shows system screens of those kinds. Standalone stories without a screens client retain the sample outline.'
 				}
 			}
 		}
@@ -70,25 +87,89 @@
 		await waitFor(() =>
 			expect([...(picker as HTMLSelectElement).options].map((option) => option.value)).toEqual([
 				'screen_signup',
-				'screen_login',
-				'screen_profile'
+				'screen_login_copy',
+				'screen_profile_copy'
 			])
 		);
 		await expect(picker).toHaveValue('screen_signup');
 		await userEvent.selectOptions(picker, 'screen_signup');
 		await waitFor(() => expect(canvas.getByText('Create your account')).toBeVisible());
 		await expect(canvas.getByText(/Given name/)).toBeVisible();
-		await userEvent.selectOptions(picker, 'screen_login');
+		await userEvent.selectOptions(picker, 'screen_login_copy');
 		await waitFor(() => expect(canvas.getByText('Sign in with Passkey')).toBeVisible());
-		await userEvent.selectOptions(picker, 'screen_profile');
+		await userEvent.selectOptions(picker, 'screen_profile_copy');
 		await waitFor(() => expect(canvas.getByText('Preferred username')).toBeVisible());
 	}}
 >
 	{#snippet template()}
 		<Page>
 			<ThemeEditor
-				screensClient={createFakeScreens({ screens: MOCK_SCREENS })}
+				screensClient={createFakeScreens({ screens: STORY_SCREENS })}
 				choices={schemaChoices}
+			/>
+		</Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="System screens when none is saved"
+	play={async ({ canvasElement }) => {
+		const picker = await within(canvasElement).findByRole('combobox', {
+			name: t('th.preview.screen')
+		});
+		await waitFor(() =>
+			expect([...(picker as HTMLSelectElement).options].map((option) => option.value)).toEqual([
+				'screen_login',
+				'screen_profile'
+			])
+		);
+	}}
+>
+	{#snippet template()}
+		<Page>
+			<ThemeEditor
+				screensClient={createFakeScreens({
+					screens: MOCK_SCREENS.filter((screen) => screen.is_system)
+				})}
+			/>
+		</Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Topbar control colours choose readable ink"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const toggle = canvasElement.querySelector('.tools__item--icon') as HTMLElement;
+		const language = canvasElement.querySelector('.tools__item--language') as HTMLElement;
+		await expect(getComputedStyle(toggle).backgroundColor).toBe('rgb(17, 17, 17)');
+		await expect(getComputedStyle(toggle).color).toBe('rgb(255, 255, 255)');
+		await expect(getComputedStyle(language).backgroundColor).toBe('rgb(238, 238, 238)');
+		await expect(getComputedStyle(language).color).toBe('rgb(0, 0, 0)');
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await expect(
+			canvas.getByRole('textbox', { name: t('th.c.themeToggleBackground') })
+		).toHaveValue('#111111');
+		await expect(
+			canvas.getByRole('textbox', { name: t('th.c.languageSelectBackground') })
+		).toHaveValue('#eeeeee');
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
+		await waitFor(() => expect(getComputedStyle(toggle).color).toBe('rgb(0, 0, 0)'));
+		await expect(getComputedStyle(language).color).toBe('rgb(255, 255, 255)');
+	}}
+>
+	{#snippet template()}
+		<Page>
+			<ThemeEditor
+				draft={{
+					...newThemeDraft(),
+					themeToggleBackground: '#111111',
+					languageSelectBackground: '#eeeeee',
+					darkColours: {
+						theme_toggle_background: '#f5f5f5',
+						language_select_background: '#222222'
+					}
+				}}
 			/>
 		</Page>
 	{/snippet}
@@ -258,8 +339,8 @@
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
 		// No picture, nothing to filter: the menu waits for one.
 		await expect(canvas.getByRole('button', { name: t('th.f.add') })).toBeDisabled();
-		// Logo, favicon, background: the third.
-		const [, , background] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
+		// Logo, background: the second.
+		const [, background] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
 		await userEvent.upload(background, new File(['x'], 'bg.png', { type: 'image/png' }));
 		await waitFor(() => expect(layer()).not.toBeNull());
 		const add = async (name: string) => {
@@ -313,6 +394,50 @@
 				draft={{ ...newThemeDraft(), backgroundImage: PAPER_PRESET }}
 			/>
 		</Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Images are independent in light and dark modes"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const image = () => canvasElement.querySelector('.outline > .outline__image');
+		const formImage = () => canvasElement.querySelector('.outline__card .outline__image');
+		const logo = () => canvasElement.querySelector('.outline .brand__logo[src]');
+		const svg = (name: string, first: string, last: string) =>
+			new File(
+				[
+					`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="${first}"/><stop offset="1" stop-color="${last}"/></linearGradient></defs><rect width="320" height="240" fill="url(#g)"/></svg>`
+				],
+				name,
+				{ type: 'image/svg+xml' }
+			);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
+		const lightFiles = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
+		await userEvent.upload(lightFiles[0], svg('logo.svg', '#f1c27d', '#cc8150'));
+		await userEvent.upload(lightFiles[1], svg('background.svg', '#e2f3d9', '#9bc7c2'));
+		await userEvent.upload(lightFiles[2], svg('form.svg', '#fdf4db', '#e5c5a1'));
+		await waitFor(() => expect(image()).not.toBeNull());
+		await expect(formImage()).not.toBeNull();
+		await expect(logo()).not.toBeNull();
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
+		await waitFor(() => expect(image()).toBeNull());
+		await expect(formImage()).toBeNull();
+		await expect(logo()).toBeNull();
+		// A dark image can be chosen without filling the other two dark slots.
+		const darkBackground =
+			canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]')[1];
+		await userEvent.upload(darkBackground, svg('dark-background.svg', '#193c45', '#0d1f34'));
+		await waitFor(() => expect(image()).not.toBeNull());
+		await expect(formImage()).toBeNull();
+		await expect(logo()).toBeNull();
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.light') }));
+		await waitFor(() => expect(formImage()).not.toBeNull());
+		await expect(logo()).not.toBeNull();
+	}}
+>
+	{#snippet template()}
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -590,7 +715,7 @@
 		const png = new File(['x'], 'card.png', { type: 'image/png' });
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
 		const files = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
-		await userEvent.upload(files[files.length - 1], png);
+		await userEvent.upload(files[2], png);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
 		await userEvent.selectOptions(
 			await canvas.findByRole('combobox', { name: t('th.f.topbar') }),
@@ -1028,10 +1153,10 @@
 			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
 		);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		// Logo, favicon, background, brand panel: the last two are the ones under test.
+		// Logo, background, form area, favicon, brand panel: the second and last are tested.
 		const files = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
-		await userEvent.upload(files[2], png('background.png'));
-		await userEvent.upload(files[3], png('panel.png'));
+		await userEvent.upload(files[1], png('background.png'));
+		await userEvent.upload(files[4], png('panel.png'));
 		const layers = canvasElement.querySelectorAll<HTMLElement>('.outline__image');
 		await expect(layers.length).toBe(2);
 		await expect(layers[0].closest('.outline__panel')).toBeNull();
@@ -1114,8 +1239,8 @@
 		const files = () => canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
 		const layer = () => canvasElement.querySelector<HTMLElement>('.outline__card .outline__image');
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		// Standard: logo, favicon, background, form area (the last).
-		await userEvent.upload(files()[3], png);
+		// Standard: logo, background, form area, favicon.
+		await userEvent.upload(files()[2], png);
 		await waitFor(() => expect(layer()).not.toBeNull());
 		const [opacity] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="range"]');
 		fireEvent.input(opacity, { target: { value: '30' } });

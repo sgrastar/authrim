@@ -98,6 +98,8 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.c.copy': 'Copy',
 	'th.c.field': 'Eingabefelder',
 	'th.c.secondaryButton': 'Sekundäre Schaltflächen',
+	'th.c.themeToggleBackground': 'Hintergrund des Hell-Dunkel-Schalters',
+	'th.c.languageSelectBackground': 'Hintergrund der Sprachauswahl',
 	'th.c.link': 'Links',
 	'th.c.headerBackground': 'Kopfzeile: Hintergrund',
 	'th.c.headerText': 'Kopfzeile: Text',
@@ -214,6 +216,8 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.g.bgImage.d':
 		'A wide image behind the whole screen. With Split, it sits behind the form side.',
 	'th.i.logo': 'Logo image',
+	'th.i.modes': 'Bildmodus',
+	'th.i.effectsBothModes': 'Deckkraft und Effekte gelten für beide Modi.',
 	'th.i.favicon': 'Favicon image',
 	'th.i.bgImage': 'Background image',
 	'th.i.bgOpacity': 'Background image opacity',

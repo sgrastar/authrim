@@ -1,10 +1,10 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect } from 'storybook/test';
+	import { expect, within } from 'storybook/test';
 	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import PageSample from '#lib/storybook/PageSample.svelte';
 	import ShellGallery from '#lib/storybook/ShellGallery.svelte';
-	import { SAMPLE_BACKGROUND_URL } from '#lib/storybook/config.js';
+	import { SAMPLE_BACKGROUND_URL, SAMPLE_LOGO_URL } from '#lib/storybook/config.js';
 	import type { LoginUIOverrides } from '#lib/storybook/config.js';
 
 	const { Story } = defineMeta({
@@ -120,6 +120,47 @@
 					ui: { ...page({ logoDisplay: 'auto' }), branding: { logoUrl: null } }
 				}
 			]}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Images can be intentionally absent in dark mode"
+	play={async ({ canvasElement }) => {
+		const figures = within(canvasElement).getAllByRole('figure');
+		const [light, dark] = figures;
+		await expect(light.querySelector('[data-has-page-background-image="true"]')).not.toBeNull();
+		await expect(
+			light.querySelector('[data-has-login-panel-background-image="true"]')
+		).not.toBeNull();
+		await expect(light.querySelector('img.auth-header__logo')).not.toBeNull();
+		await expect(dark.querySelector('[data-has-page-background-image="false"]')).not.toBeNull();
+		await expect(
+			dark.querySelector('[data-has-login-panel-background-image="false"]')
+		).not.toBeNull();
+		await expect(dark.querySelector('img.auth-header__logo')).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<ShellGallery
+			columns={2}
+			height={380}
+			cells={['light', 'dark'].map((scheme) => ({
+				label: scheme,
+				scheme: scheme as 'light' | 'dark',
+				ui: {
+					branding: { logoUrl: SAMPLE_LOGO_URL },
+					appearance: {
+						backgroundImageUrl: SAMPLE_BACKGROUND_URL,
+						loginPanelBackgroundImageUrl: SAMPLE_BACKGROUND_URL,
+						darkImages: {
+							logoUrl: null,
+							backgroundImageUrl: null,
+							loginPanelBackgroundImageUrl: null
+						}
+					}
+				}
+			}))}
 		/>
 	{/snippet}
 </Story>

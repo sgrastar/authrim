@@ -23,6 +23,8 @@ export const LOGIN_UI_THEME_COLOR_NAMES = [
   'copy',
   'field',
   'secondary_button',
+  'theme_toggle_background',
+  'language_select_background',
   'header_background',
   'header_text',
   'footer_background',

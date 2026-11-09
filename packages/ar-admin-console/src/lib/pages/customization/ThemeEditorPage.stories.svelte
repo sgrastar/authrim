@@ -134,13 +134,15 @@
 </Story>
 
 <Story
-	name="Bar and brand area colours survive save"
+	name="Bar, brand and topbar control colours survive save"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: 'Spring campaign' });
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
 		const colors = [
 			[t('th.c.brandPanelBackground'), '#090d1e'],
+			[t('th.c.themeToggleBackground'), '#111111'],
+			[t('th.c.languageSelectBackground'), '#eeeeee'],
 			[t('th.c.headerBackground'), '#112233'],
 			[t('th.c.headerText'), '#fefefe'],
 			[t('th.c.footerBackground'), '#445566'],
@@ -162,6 +164,8 @@
 		const light = (await colorClient.get('thm_1')).theme.values;
 		await expect(light).toMatchObject({
 			'login-ui.brand_panel_background_color': '#090d1e61',
+			'login-ui.theme_toggle_background_color': '#111111',
+			'login-ui.language_select_background_color': '#eeeeee',
 			'login-ui.header_background_color': '#112233',
 			'login-ui.header_text_color': '#fefefe',
 			'login-ui.footer_background_color': '#445566',
@@ -169,6 +173,8 @@
 		});
 		await expect(valuesToDraft(light)).toMatchObject({
 			brandPanelBackground: '#090d1e61',
+			themeToggleBackground: '#111111',
+			languageSelectBackground: '#eeeeee',
 			headerBackground: '#112233',
 			headerText: '#fefefe',
 			footerBackground: '#445566',
@@ -177,6 +183,8 @@
 		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
 		for (const [label, value] of [
 			[t('th.c.brandPanelBackground'), '#010203'],
+			[t('th.c.themeToggleBackground'), '#f5f5f5'],
+			[t('th.c.languageSelectBackground'), '#222222'],
 			[t('th.c.headerBackground'), '#0a0b0c'],
 			[t('th.c.headerText'), '#fafafa'],
 			[t('th.c.footerBackground'), '#141516'],
@@ -195,6 +203,8 @@
 		const dark = (await colorClient.get('thm_1')).theme.values;
 		await expect(JSON.parse(dark['login-ui.dark_colors'] as string)).toMatchObject({
 			brand_panel_background: '#01020380',
+			theme_toggle_background: '#f5f5f5',
+			language_select_background: '#222222',
 			header_background: '#0a0b0c',
 			header_text: '#fafafa',
 			footer_background: '#141516',

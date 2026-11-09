@@ -79,6 +79,48 @@ describe('theme values', () => {
 		expect(valuesToDraft(draftToValues(newThemeDraft()))).toEqual(newThemeDraft());
 	});
 
+	it('keeps each dark image explicitly unset when the light mode has an image', () => {
+		const draft = {
+			...newThemeDraft(),
+			logo: 'https://cdn.example.test/light-logo.png',
+			backgroundImage: 'https://cdn.example.test/light-bg.png',
+			cardImage: 'https://cdn.example.test/light-form.png',
+			darkImages: {
+				logo: null,
+				backgroundImage: 'https://cdn.example.test/dark-bg.png',
+				cardImage: null
+			}
+		};
+		const values = draftToValues(draft);
+		expect(JSON.parse(values['login-ui.dark_images'] as string)).toEqual({
+			logo: '',
+			background: 'https://cdn.example.test/dark-bg.png',
+			form_area: ''
+		});
+		expect(valuesToDraft(values)).toEqual(draft);
+	});
+
+	it('opens older themes with their light images in both modes and writes that choice on save', () => {
+		const old = {
+			'login-ui.logo_url': 'https://cdn.example.test/logo.png',
+			'login-ui.background_image_url': 'https://cdn.example.test/bg.png',
+			'login-ui.login_panel_background_image_url': 'https://cdn.example.test/form.png'
+		};
+		const opened = openStored(old);
+		expect(opened.opened.darkImages).toEqual({
+			logo: old['login-ui.logo_url'],
+			backgroundImage: old['login-ui.background_image_url'],
+			cardImage: old['login-ui.login_panel_background_image_url']
+		});
+		expect(
+			JSON.parse(draftToValues(opened.opened, opened)['login-ui.dark_images'] as string)
+		).toEqual({
+			logo: old['login-ui.logo_url'],
+			background: old['login-ui.background_image_url'],
+			form_area: old['login-ui.login_panel_background_image_url']
+		});
+	});
+
 	it('saves the background image filters in order and opens them again', () => {
 		const draft: ThemeDraft = {
 			...newThemeDraft(),
@@ -138,6 +180,8 @@ describe('theme values', () => {
 			...newThemeDraft(),
 			linkColor: '#1a73e8',
 			brandPanelBackground: '#090d1e61',
+			themeToggleBackground: '#111111',
+			languageSelectBackground: '#f0f0f0',
 			headerBackground: '#ffffffcc',
 			headerText: '#101010',
 			footerBackground: '#000000',
@@ -148,6 +192,8 @@ describe('theme values', () => {
 			darkColours: {
 				accent: '#93aef2',
 				brand_panel_background: '#01020380',
+				theme_toggle_background: '#eeeeee',
+				language_select_background: '#222222',
 				header_background: '#0b0e16'
 			}
 		};
@@ -155,6 +201,8 @@ describe('theme values', () => {
 		expect(values).toMatchObject({
 			'login-ui.link_color': '#1a73e8',
 			'login-ui.brand_panel_background_color': '#090d1e61',
+			'login-ui.theme_toggle_background_color': '#111111',
+			'login-ui.language_select_background_color': '#f0f0f0',
 			'login-ui.header_background_color': '#ffffffcc',
 			'login-ui.header_text_color': '#101010',
 			'login-ui.footer_background_color': '#000000',
@@ -165,17 +213,21 @@ describe('theme values', () => {
 			'login-ui.header_style': 'bar',
 			'login-ui.footer_style': 'bar',
 			'login-ui.dark_colors':
-				'{"brand_panel_background":"#01020380","accent":"#93aef2","header_background":"#0b0e16"}'
+				'{"brand_panel_background":"#01020380","accent":"#93aef2","theme_toggle_background":"#eeeeee","language_select_background":"#222222","header_background":"#0b0e16"}'
 		});
 		expect(valuesToDraft(values)).toMatchObject({
 			linkColor: '#1a73e8',
 			brandPanelBackground: '#090d1e61',
+			themeToggleBackground: '#111111',
+			languageSelectBackground: '#f0f0f0',
 			headerAlign: 'center',
 			footerAlign: 'right',
 			topbarPosition: 'header_right',
 			darkColours: {
 				brand_panel_background: '#01020380',
 				accent: '#93aef2',
+				theme_toggle_background: '#eeeeee',
+				language_select_background: '#222222',
 				header_background: '#0b0e16'
 			}
 		});
@@ -188,11 +240,15 @@ describe('theme values', () => {
 			'login-ui.link_color': 'rgb(100%, 0%, 0%)',
 			'login-ui.header_background_color': '#1f2a44',
 			'login-ui.brand_panel_background_color': 'url(x)',
+			'login-ui.theme_toggle_background_color': 'red',
+			'login-ui.language_select_background_color': '#ffffff',
 			'login-ui.title_color': 'red'
 		});
 		expect(draft.linkColor).toBe('');
 		expect(draft.headerBackground).toBe('#1f2a44');
 		expect(draft.brandPanelBackground).toBe('');
+		expect(draft.themeToggleBackground).toBe('');
+		expect(draft.languageSelectBackground).toBe('#ffffff');
 		// The older colours keep their wider rule.
 		expect(draft.titleColor).toBe('red');
 	});
@@ -350,12 +406,13 @@ describe('theme values', () => {
 
 	it('keeps a stored theme with no values as it is, not as a new one', () => {
 		// Only what the editor always draws is written: the header and footer as bars, and a dark
-		// set (empty: the palette's).
+		// set (empty: the palette's) and an explicitly empty dark image set.
 		const values = draftToValues(valuesToDraft({}), openStored({}));
 		expect(values).toEqual({
 			'login-ui.header_style': 'bar',
 			'login-ui.footer_style': 'bar',
-			'login-ui.dark_colors': ''
+			'login-ui.dark_colors': '',
+			'login-ui.dark_images': '{"logo":"","background":"","form_area":""}'
 		});
 	});
 
@@ -370,13 +427,21 @@ describe('theme values', () => {
 
 	it('uploads chosen files and keeps stored URLs', async () => {
 		const file = new File(['x'], 'bg.png', { type: 'image/png' });
+		const darkFile = new File(['y'], 'dark-form.png', { type: 'image/png' });
 		const upload = vi.fn(async (kind: string) => `/api/assets/acme/login-ui/${kind}/x.png`);
 		const draft = await uploadThemeImages(
-			{ ...newThemeDraft(), backgroundImage: file, logo: 'https://cdn.example.test/logo.png' },
+			{
+				...newThemeDraft(),
+				backgroundImage: file,
+				logo: 'https://cdn.example.test/logo.png',
+				darkImages: { logo: null, backgroundImage: null, cardImage: darkFile }
+			},
 			upload
 		);
-		expect(upload).toHaveBeenCalledExactlyOnceWith('background', file);
+		expect(upload).toHaveBeenNthCalledWith(1, 'background', file);
+		expect(upload).toHaveBeenNthCalledWith(2, 'panel-background', darkFile);
 		expect(draft.backgroundImage).toBe('/api/assets/acme/login-ui/background/x.png');
+		expect(draft.darkImages.cardImage).toBe('/api/assets/acme/login-ui/panel-background/x.png');
 		expect(draft.logo).toBe('https://cdn.example.test/logo.png');
 	});
 });

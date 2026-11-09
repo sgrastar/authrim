@@ -46,7 +46,10 @@
 
 	const stores = initializeLoginUIStores();
 	const { brandingStore, loginUIPageStore, themeStore } = stores;
-	$effect(() => loginUIPageStore.setColourMode(themeStore.mode));
+	$effect(() => {
+		loginUIPageStore.setColourMode(themeStore.mode);
+		brandingStore.setColourMode(themeStore.mode);
+	});
 
 	// A part is shown on a centred page whatever the theme's own layout is: a split panel grid
 	// around a single button says nothing about the button.
@@ -144,6 +147,12 @@
 	style:--login-form-area-color={loginUIPageStore.formAreaColor || undefined}
 	style:--login-brand-panel-background-color={loginUIPageStore.brandPanelBackgroundColor ||
 		undefined}
+	style:--login-theme-toggle-background-color={loginUIPageStore.themeToggleBackgroundColor ||
+		undefined}
+	style:--login-theme-toggle-text-color={loginUIPageStore.themeToggleTextColor || undefined}
+	style:--login-language-select-background-color={loginUIPageStore.languageSelectBackgroundColor ||
+		undefined}
+	style:--login-language-select-text-color={loginUIPageStore.languageSelectTextColor || undefined}
 	style:--login-page-background-opacity={String(loginUIPageStore.backgroundImageOpacity / 100)}
 	style:--login-brand-panel-image-layer={loginUIPageStore.brandPanelImageLayer ?? undefined}
 	style:--login-brand-panel-image-opacity={String(loginUIPageStore.brandPanelImageOpacity / 100)}

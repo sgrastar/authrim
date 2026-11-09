@@ -83,6 +83,11 @@ interface ServedLoginUi {
   appearance: {
     backgroundImageUrl: string | null;
     loginPanelBackgroundImageUrl: string | null;
+    darkImages: {
+      logoUrl: string | null;
+      backgroundImageUrl: string | null;
+      loginPanelBackgroundImageUrl: string | null;
+    } | null;
     backgroundImageGrayscale: boolean;
     brandPanelImageGrayscale: boolean;
     backgroundImageOpacity: number;
@@ -328,6 +333,7 @@ describe('Authentication Methods API', () => {
 
       expect(body.ui.appearance.backgroundImageUrl).toBeNull();
       expect(body.ui.appearance.loginPanelBackgroundImageUrl).toBeNull();
+      expect((body as { ui: ServedLoginUi }).ui.appearance.darkImages).toBeNull();
       expect(body.ui.appearance.thumbnailUrl).toBeNull();
       expect(body.ui.appearance.customCss).toBeNull();
       expect(body.ui.appearance.headerText).toBeNull();
@@ -335,6 +341,29 @@ describe('Authentication Methods API', () => {
       expect(body.ui.appearance.footerText).toBeNull();
       expect(body.ui.appearance.footerLinks).toEqual([]);
       expect(body.ui.appearance.customBlocks).toEqual([]);
+    });
+
+    it('serves mode-specific images and preserves intentionally empty dark image slots', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.logo_url': 'https://example.com/light-logo.png',
+          'login-ui.background_image_url': 'https://example.com/light-bg.png',
+          'login-ui.login_panel_background_image_url': 'https://example.com/light-form.png',
+          'login-ui.dark_images': JSON.stringify({
+            logo: '',
+            background: 'https://example.com/dark-bg.png',
+            form_area: 'http://example.com/unsafe-form.png',
+          }),
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = await res.json<{ ui: ServedLoginUi }>();
+      expect(body.ui.appearance.darkImages).toEqual({
+        logoUrl: null,
+        backgroundImageUrl: 'https://example.com/dark-bg.png',
+        loginPanelBackgroundImageUrl: null,
+      });
     });
 
     it('should include meta with cacheTTL and revision', async () => {
@@ -2038,6 +2067,8 @@ describe('Authentication Methods API', () => {
           'login-ui.theme': 'auto',
           'login-ui.link_color': 'rgb(100%, 0%, 0%)',
           'login-ui.brand_panel_background_color': '#090d1e61',
+          'login-ui.theme_toggle_background_color': '#111111',
+          'login-ui.language_select_background_color': 'url(x)',
           'login-ui.header_background_color': '#1f2a44',
           'login-ui.footer_text_color': 'rgba(10, 20, 30, 0.5)',
           'login-ui.header_align': 'center',
@@ -2046,6 +2077,8 @@ describe('Authentication Methods API', () => {
           'login-ui.dark_colors': JSON.stringify({
             accent: '#93aef2',
             brand_panel_background: '#01020380',
+            theme_toggle_background: '#eeeeee',
+            language_select_background: '#222222',
             link: 'red',
           }),
         }),
@@ -2059,12 +2092,19 @@ describe('Authentication Methods API', () => {
       expect(body.ui.pageTemplate).toMatchObject({
         linkColor: '',
         brandPanelBackgroundColor: '#090d1e61',
+        themeToggleBackgroundColor: '#111111',
+        languageSelectBackgroundColor: '',
         headerBackgroundColor: '#1f2a44',
         footerTextColor: 'rgba(10, 20, 30, 0.5)',
         headerAlign: 'center',
         footerAlign: 'center',
         topbarPosition: 'header_right',
-        darkColors: { accent: '#93aef2', brand_panel_background: '#01020380' },
+        darkColors: {
+          accent: '#93aef2',
+          brand_panel_background: '#01020380',
+          theme_toggle_background: '#eeeeee',
+          language_select_background: '#222222',
+        },
       });
     });
 

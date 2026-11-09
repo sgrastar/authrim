@@ -39,6 +39,8 @@ const READ_COLOUR: Record<LoginUIThemeColorName, (value: unknown) => string> = {
 	copy: (value) => sanitizeColor(value as string) || '',
 	field: (value) => labelledColor(value as string),
 	secondary_button: (value) => labelledColor(value as string),
+	theme_toggle_background: (value) => labelledColor(value as string),
+	language_select_background: (value) => labelledColor(value as string),
 	header_background: (value) => sanitizeColor(value as string) || '',
 	header_text: (value) => sanitizeColor(value as string) || '',
 	footer_background: (value) => sanitizeColor(value as string) || '',
@@ -361,6 +363,8 @@ export function createLoginUIPageStore() {
 	let brandPanelBackgroundColor = $state('');
 	let fieldColor = $state('');
 	let secondaryButtonColor = $state('');
+	let themeToggleBackgroundColor = $state('');
+	let languageSelectBackgroundColor = $state('');
 	let headerName = $state('');
 	let brandPanelLogoDisplay = $state<BrandPanelLogoDisplay>('inherit');
 	let backgroundImageOpacity = $state(100);
@@ -390,6 +394,9 @@ export function createLoginUIPageStore() {
 	let footerAlign = $state<BarAlign>('center');
 	let backgroundImageUrl = $state<string | null>(null);
 	let loginPanelBackgroundImageUrl = $state<string | null>(null);
+	let darkBackgroundImageUrl = $state<string | null>(null);
+	let darkLoginPanelBackgroundImageUrl = $state<string | null>(null);
+	let darkImagesSet = $state(false);
 	let loginPanelBackgroundColor = $state('');
 	let loginPanelBackgroundGradientColor = $state('');
 	let loginPanelBackgroundOpacity = $state(70);
@@ -426,9 +433,15 @@ export function createLoginUIPageStore() {
 	/** `inherit` follows the logo display of the form side. */
 	// Grayscale counts only while there is a picture to turn gray (the glass palette's own light,
 	// shown when there is no page picture, keeps its colour).
-	const pageBackgroundGray = () => backgroundImageGrayscale && !!backgroundImageUrl;
+	const effectiveBackgroundImageUrl = () =>
+		colourMode === 'dark' && darkImagesSet ? darkBackgroundImageUrl : backgroundImageUrl;
+	const effectiveLoginPanelBackgroundImageUrl = () =>
+		colourMode === 'dark' && darkImagesSet
+			? darkLoginPanelBackgroundImageUrl
+			: loginPanelBackgroundImageUrl;
+	const pageBackgroundGray = () => backgroundImageGrayscale && !!effectiveBackgroundImageUrl();
 	const loginPanelBackgroundGray = () =>
-		loginPanelBackgroundGrayscale && !!loginPanelBackgroundImageUrl;
+		loginPanelBackgroundGrayscale && !!effectiveLoginPanelBackgroundImageUrl();
 	const brandPanelImageGray = () => brandPanelImageGrayscale && !!brandPanelImageUrl;
 
 	function effectiveBrandPanelLogoDisplay(): LogoDisplay {
@@ -480,6 +493,34 @@ export function createLoginUIPageStore() {
 		setOptionalStyleProperty('--login-link-color', current('link', linkColor) || null);
 		setOptionalStyleProperty('--login-form-area-color', formArea || null);
 		setOptionalStyleProperty('--login-brand-panel-background-color', brandPanelBackground || null);
+		const toggleBackground = current('theme_toggle_background', themeToggleBackgroundColor);
+		const languageBackground = current('language_select_background', languageSelectBackgroundColor);
+		setOptionalStyleProperty('--login-theme-toggle-background-color', toggleBackground || null);
+		setOptionalStyleProperty('--login-theme-toggle-text-color', labelColorOn(toggleBackground));
+		setOptionalStyleProperty(
+			'--login-language-select-background-color',
+			languageBackground || null
+		);
+		setOptionalStyleProperty(
+			'--login-language-select-text-color',
+			labelColorOn(languageBackground)
+		);
+	}
+
+	function applyDocumentImages() {
+		if (!browser) return;
+		const pageImage = effectiveBackgroundImageUrl();
+		const panelImage = effectiveLoginPanelBackgroundImageUrl();
+		const html = document.documentElement;
+		html.setAttribute('data-has-page-background-image', pageImage ? 'true' : 'false');
+		html.setAttribute('data-has-login-panel-background-image', panelImage ? 'true' : 'false');
+		html.setAttribute('data-page-background-grayscale', String(pageBackgroundGray()));
+		html.setAttribute('data-login-panel-background-grayscale', String(loginPanelBackgroundGray()));
+		setOptionalStyleProperty('--login-page-background-layer', pageImage ? cssUrl(pageImage) : null);
+		setOptionalStyleProperty(
+			'--login-panel-background-layer',
+			panelImage ? cssUrl(panelImage) : null
+		);
 	}
 
 	function applyDocumentState(customCss: string | null) {
@@ -501,31 +542,15 @@ export function createLoginUIPageStore() {
 		html.setAttribute('data-split-panel-side', splitPanelSide);
 		html.setAttribute('data-split-panel-width', splitPanelWidth);
 		html.setAttribute('data-split-background-mode', splitBackgroundMode);
-		html.setAttribute('data-has-page-background-image', backgroundImageUrl ? 'true' : 'false');
-		html.setAttribute(
-			'data-has-login-panel-background-image',
-			loginPanelBackgroundImageUrl ? 'true' : 'false'
-		);
 		html.setAttribute('data-brand-content-mode', brandContentMode);
 		html.setAttribute('data-brand-position', brandPosition);
 		html.setAttribute('data-brand-align', brandAlign);
 		html.setAttribute('data-logo-display', logoDisplay);
 		html.setAttribute('data-brand-panel-logo-display', effectiveBrandPanelLogoDisplay());
 		html.setAttribute('data-has-brand-panel-image', brandPanelImageUrl ? 'true' : 'false');
-		html.setAttribute('data-page-background-grayscale', String(pageBackgroundGray()));
-		html.setAttribute('data-login-panel-background-grayscale', String(loginPanelBackgroundGray()));
 		html.setAttribute('data-brand-panel-image-grayscale', String(brandPanelImageGray()));
 		applyDocumentColours();
-		setOptionalStyleProperty(
-			'--login-page-background-layer',
-			backgroundImageUrl && isValidImageUrl(backgroundImageUrl) ? cssUrl(backgroundImageUrl) : null
-		);
-		setOptionalStyleProperty(
-			'--login-panel-background-layer',
-			loginPanelBackgroundImageUrl && isValidImageUrl(loginPanelBackgroundImageUrl)
-				? cssUrl(loginPanelBackgroundImageUrl)
-				: null
-		);
+		applyDocumentImages();
 		setOptionalStyleProperty(
 			'--login-panel-background-fill',
 			loginPanelBackgroundColor
@@ -570,6 +595,12 @@ export function createLoginUIPageStore() {
 		brandPanelBackgroundColor = READ_COLOUR.brand_panel_background(page?.brandPanelBackgroundColor);
 		fieldColor = READ_COLOUR.field(page?.fieldColor);
 		secondaryButtonColor = READ_COLOUR.secondary_button(page?.secondaryButtonColor);
+		themeToggleBackgroundColor = READ_COLOUR.theme_toggle_background(
+			page?.themeToggleBackgroundColor
+		);
+		languageSelectBackgroundColor = READ_COLOUR.language_select_background(
+			page?.languageSelectBackgroundColor
+		);
 		linkColor = READ_COLOUR.link(page?.linkColor);
 		headerBackgroundColor = READ_COLOUR.header_background(page?.headerBackgroundColor);
 		headerTextColor = READ_COLOUR.header_text(page?.headerTextColor);
@@ -607,6 +638,17 @@ export function createLoginUIPageStore() {
 			appearance?.loginPanelBackgroundImageUrl &&
 			isValidImageUrl(appearance.loginPanelBackgroundImageUrl)
 				? appearance.loginPanelBackgroundImageUrl
+				: null;
+		darkImagesSet = !!appearance?.darkImages;
+		darkBackgroundImageUrl =
+			appearance?.darkImages?.backgroundImageUrl &&
+			isValidImageUrl(appearance.darkImages.backgroundImageUrl)
+				? appearance.darkImages.backgroundImageUrl
+				: null;
+		darkLoginPanelBackgroundImageUrl =
+			appearance?.darkImages?.loginPanelBackgroundImageUrl &&
+			isValidImageUrl(appearance.darkImages.loginPanelBackgroundImageUrl)
+				? appearance.darkImages.loginPanelBackgroundImageUrl
 				: null;
 		loginPanelBackgroundColor = sanitizeColor(page?.loginPanelBackgroundColor) || '';
 		loginPanelBackgroundGradientColor =
@@ -677,6 +719,7 @@ export function createLoginUIPageStore() {
 			if (mode === colourMode) return;
 			colourMode = mode;
 			applyDocumentColours();
+			applyDocumentImages();
 		},
 		/** The form area colour (hex with optional alpha); empty while the palette's applies. */
 		get formAreaColor() {
@@ -701,6 +744,18 @@ export function createLoginUIPageStore() {
 		/** Black or white, whichever reads better on the secondary button colour. */
 		get secondaryButtonTextColor() {
 			return labelColorOn(current('secondary_button', secondaryButtonColor));
+		},
+		get themeToggleBackgroundColor() {
+			return current('theme_toggle_background', themeToggleBackgroundColor);
+		},
+		get themeToggleTextColor() {
+			return labelColorOn(current('theme_toggle_background', themeToggleBackgroundColor));
+		},
+		get languageSelectBackgroundColor() {
+			return current('language_select_background', languageSelectBackgroundColor);
+		},
+		get languageSelectTextColor() {
+			return labelColorOn(current('language_select_background', languageSelectBackgroundColor));
 		},
 		get linkColor() {
 			return current('link', linkColor);
@@ -743,10 +798,12 @@ export function createLoginUIPageStore() {
 		},
 		/** `url("…")` for the page background image, or null (the same value the stylesheet reads). */
 		get backgroundImageLayer() {
-			return backgroundImageUrl ? cssUrl(backgroundImageUrl) : null;
+			const url = effectiveBackgroundImageUrl();
+			return url ? cssUrl(url) : null;
 		},
 		get loginPanelBackgroundLayer() {
-			return loginPanelBackgroundImageUrl ? cssUrl(loginPanelBackgroundImageUrl) : null;
+			const url = effectiveLoginPanelBackgroundImageUrl();
+			return url ? cssUrl(url) : null;
 		},
 		get brandPanelImageLayer() {
 			return brandPanelImageUrl ? cssUrl(brandPanelImageUrl) : null;
@@ -760,7 +817,7 @@ export function createLoginUIPageStore() {
 		},
 		/** The CSS filter on the page picture ('' when there is none, or no picture). */
 		get backgroundImageFilter() {
-			return backgroundImageUrl ? backgroundImageFilter : '';
+			return effectiveBackgroundImageUrl() ? backgroundImageFilter : '';
 		},
 		get brandPanelImageGrayscale() {
 			return brandPanelImageGray();
@@ -803,10 +860,10 @@ export function createLoginUIPageStore() {
 			return current('copy', copyColor);
 		},
 		get backgroundImageUrl() {
-			return backgroundImageUrl;
+			return effectiveBackgroundImageUrl();
 		},
 		get loginPanelBackgroundImageUrl() {
-			return loginPanelBackgroundImageUrl;
+			return effectiveLoginPanelBackgroundImageUrl();
 		},
 		get loginPanelBackgroundColor() {
 			return loginPanelBackgroundColor;

@@ -93,6 +93,8 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.c.copy': 'Copy',
 	'th.c.field': 'Input fields',
 	'th.c.secondaryButton': 'Secondary buttons',
+	'th.c.themeToggleBackground': 'Light/dark toggle background',
+	'th.c.languageSelectBackground': 'Language selector background',
 	'th.c.link': 'Links',
 	'th.c.headerBackground': 'Header background',
 	'th.c.headerText': 'Header text',
@@ -209,6 +211,8 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.g.bgImage.d':
 		'A wide image behind the whole screen. With Split, it sits behind the form side.',
 	'th.i.logo': 'Logo image',
+	'th.i.modes': 'Image mode',
+	'th.i.effectsBothModes': 'Opacity and effects apply to both modes.',
 	'th.i.favicon': 'Favicon image',
 	'th.i.bgImage': 'Background image',
 	'th.i.bgOpacity': 'Background image opacity',

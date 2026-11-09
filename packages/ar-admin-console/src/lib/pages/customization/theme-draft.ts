@@ -83,6 +83,9 @@ export interface ThemeDraft {
 	fieldColor: string;
 	/** The secondary buttons' background (the main button takes the accent). */
 	secondaryButtonColor: string;
+	/** The light/dark toggle and language selector backgrounds. Their ink is automatic. */
+	themeToggleBackground: string;
+	languageSelectBackground: string;
 	/** The text links (the sign-in / sign-up switch); empty follows the accent. */
 	linkColor: string;
 	headerBackground: string;
@@ -121,6 +124,12 @@ export interface ThemeDraft {
 	texts: Record<TextLanguage, ThemeTexts>;
 	/** A stored image's URL, a newly chosen file, or none. */
 	logo: string | File | null;
+	/** Dark images are independent: null means show no image in that mode. */
+	darkImages: {
+		logo: string | File | null;
+		backgroundImage: string | File | null;
+		cardImage: string | File | null;
+	};
 	favicon: string | File | null;
 	backgroundImage: string | File | null;
 	/** 0–100: how much of the background image shows through (100 = as it is). */
@@ -204,6 +213,8 @@ export function newThemeDraft(): ThemeDraft {
 		copyColor: '',
 		fieldColor: '',
 		secondaryButtonColor: '',
+		themeToggleBackground: '',
+		languageSelectBackground: '',
 		linkColor: '',
 		headerBackground: '',
 		headerText: '',
@@ -235,6 +246,7 @@ export function newThemeDraft(): ThemeDraft {
 		language: 'en',
 		texts: { en: emptyTexts(), ja: emptyTexts(), de: emptyTexts(), ar: emptyTexts() },
 		logo: null,
+		darkImages: { logo: null, backgroundImage: null, cardImage: null },
 		favicon: null,
 		backgroundImage: null,
 		backgroundOpacity: 100,
