@@ -4,6 +4,7 @@
 	import { hasPermission } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { createFakeSchemaSetting } from '#lib/api/fake/schema-setting-fake.js';
+	import ScreenCreatePage from '#lib/pages/customization/screens/ScreenCreatePage.svelte';
 	import ScreenEditorPage from '#lib/pages/customization/screens/ScreenEditorPage.svelte';
 	import ScreenList from '#lib/pages/customization/screens/ScreenList.svelte';
 	import { useSchemaChoices } from '#lib/pages/customization/screens/schema-choices.svelte.js';
@@ -29,12 +30,14 @@
 </script>
 
 {#if id === null}
-	<ScreenList
+	<ScreenList client={mockScreens} {canWrite} hrefOf={consoleHref} onopen={open} />
+{:else if id === 'new'}
+	<ScreenCreatePage
 		client={mockScreens}
 		{canWrite}
-		hrefOf={consoleHref}
-		choices={schema.choices}
-		onopen={open}
+		oncancel={() => goto(withPersona(LIST))}
+		oncreated={(screenId) =>
+			goto(withPersona(`${LIST}/${encodeURIComponent(screenId)}`), { replace: true })}
 	/>
 {:else}
 	<ScreenEditorPage

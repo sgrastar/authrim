@@ -25,6 +25,8 @@
 	import TranslationTable, { type TranslationRow } from '#lib/ui/builder/TranslationTable.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
+	import Columns from '#lib/ui/patterns/Columns.svelte';
+	import ColumnSpan from '#lib/ui/patterns/ColumnSpan.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
@@ -80,11 +82,11 @@
 	import { editorValue, newScreenValue, type EditorValue } from './screen-editor';
 
 	/**
-	 * A screen's page: a new one (`id` "new") or a saved one. Its basics, then tabs: the builder
-	 * (parts on the left, the page in rows in the middle, the selected part's settings on the
-	 * right), a preview, the translations, where it is used and, for a screen that keeps response
-	 * records, what people answered. A built-in screen is shown, not edited: it is duplicated to be
-	 * changed. A save names the version it was made from, so another admin's save is not lost.
+	 * A screen's detail page, with the builder first (parts on the left, rows in the middle,
+	 * selected-part settings on the right). Other tabs show a preview, translations, usage,
+	 * responses when permitted, and basic settings. A built-in screen is shown, not edited: it is
+	 * duplicated to be changed. A save names the version it was made from, so another admin's save
+	 * is not lost. The component still supports an unsaved state for its isolated Storybook test.
 	 */
 	interface Props {
 		client: ScreensClient;
@@ -499,7 +501,8 @@
 		// Every saved custom screen: records kept before a part stopped keeping them stay readable.
 		...(!isNew && canReadResponses && loaded && !loaded.is_system
 			? [{ id: 'responses', label: t('sc.editor.tab.responses'), icon: 'clipboardText' as const }]
-			: [])
+			: []),
+		{ id: 'basics', label: t('sc.editor.basics'), icon: 'gear' as const }
 	]);
 	const kindOptions = $derived(
 		SCREEN_KINDS.map((kind) => ({ value: kind, label: t(`sc.kind.${kind}` as MessageKey) }))
@@ -519,10 +522,10 @@
 					<BackLink href={listHref}>{t('sc.editor.back')}</BackLink>
 				{/snippet}
 				{#snippet badges()}
+					{#if loaded?.is_system}
+						<Badge tone="info">{t('sc.source.system')}</Badge>
+					{/if}
 					{#if loaded}
-						<Badge tone={loaded.is_system ? 'info' : 'neutral'}>
-							{loaded.is_system ? t('sc.source.system') : t('sc.source.custom')}
-						</Badge>
 						{#if !loaded.is_active}<Badge tone="warning">{t('sc.status.inactive')}</Badge>{/if}
 					{/if}
 				{/snippet}
@@ -569,73 +572,82 @@
 					<Callout>{t('sc.editor.readOnly')}</Callout>
 				{/if}
 
-				<Card title={t('sc.editor.basics')}>
-					<fieldset class="basics" disabled={readonly}>
-						<TextField
-							field="name"
-							label={t('sc.editor.name')}
-							maxlength={200}
-							required
-							bind:value={draft.value.name}
-						/>
-						<TextField
-							field="key"
-							label={t('sc.editor.key')}
-							hint={t('sc.editor.keyHint')}
-							maxlength={96}
-							readonly={!isNew}
-							required
-							bind:value={draft.value.key}
-						/>
-						<Select
-							field="kind"
-							label={t('sc.editor.kind')}
-							options={kindOptions}
-							bind:value={draft.value.kind}
-						/>
-						<SegmentedControl
-							label={t('sc.editor.canvas')}
-							hideLabel={false}
-							size="sm"
-							value={value.canvas}
-							options={[
-								{ value: 'narrow', label: t('sc.editor.canvasNarrow') },
-								{ value: 'wide', label: t('sc.editor.canvasWide') }
-							]}
-							onchange={(next) => (draft.value.canvas = next === 'wide' ? 'wide' : 'narrow')}
-						/>
-						<div class="basics__wide">
-							<TextArea
-								field="description"
-								label={t('sc.editor.description')}
-								rows={2}
-								bind:value={draft.value.description}
-							/>
-						</div>
-						<Checkbox field="active" bind:checked={draft.value.active}
-							>{t('sc.editor.active')}</Checkbox
-						>
-					</fieldset>
-				</Card>
-
-				{#if !readonly && missing.length > 0}
-					<Callout tone="warning" title={t('sc.editor.missingTitle')}>
-						<span class="missing">
-							{#each missing as key (key)}
-								<Button size="sm" icon="plus" onclick={() => add(kindFor(key), key)}>
-									{t('sc.editor.missingAdd', { key })}
-								</Button>
-							{/each}
-						</span>
-					</Callout>
-				{/if}
-				{#if keepsRecords(value)}
-					<Callout>{t('sc.editor.recordNote')}</Callout>
-				{/if}
+				{#snippet basicsForm()}
+					<Card title={t('sc.editor.basics')}>
+						<fieldset class="basics">
+							<Columns columns={2} minWidth="280px">
+								<TextField
+									field="name"
+									label={t('sc.editor.name')}
+									maxlength={200}
+									disabled={readonly}
+									required
+									bind:value={draft.value.name}
+								/>
+								<TextField
+									field="key"
+									label={t('sc.editor.key')}
+									info={t('sc.editor.keyHint')}
+									maxlength={96}
+									disabled={readonly || !isNew}
+									required
+									bind:value={draft.value.key}
+								/>
+								<Select
+									field="kind"
+									label={t('sc.editor.kind')}
+									options={kindOptions}
+									disabled={readonly}
+									bind:value={draft.value.kind}
+								/>
+								<SegmentedControl
+									label={t('sc.editor.canvas')}
+									hideLabel={false}
+									size="sm"
+									disabled={readonly}
+									value={value.canvas}
+									options={[
+										{ value: 'narrow', label: t('sc.editor.canvasNarrow') },
+										{ value: 'wide', label: t('sc.editor.canvasWide') }
+									]}
+									onchange={(next) => (draft.value.canvas = next === 'wide' ? 'wide' : 'narrow')}
+								/>
+								<ColumnSpan>
+									<TextArea
+										field="description"
+										label={t('sc.editor.description')}
+										rows={2}
+										disabled={readonly}
+										bind:value={draft.value.description}
+									/>
+								</ColumnSpan>
+								<ColumnSpan>
+									<Checkbox field="active" disabled={readonly} bind:checked={draft.value.active}
+										>{t('sc.editor.active')}</Checkbox
+									>
+								</ColumnSpan>
+							</Columns>
+						</fieldset>
+					</Card>
+				{/snippet}
 
 				<Tabs label={title} items={tabs} bind:value={tab}>
 					{#snippet panel(current)}
 						{#if current === 'items'}
+							{#if !readonly && missing.length > 0}
+								<Callout tone="warning" title={t('sc.editor.missingTitle')}>
+									<span class="missing">
+										{#each missing as key (key)}
+											<Button size="sm" icon="plus" onclick={() => add(kindFor(key), key)}>
+												{t('sc.editor.missingAdd', { key })}
+											</Button>
+										{/each}
+									</span>
+								</Callout>
+							{/if}
+							{#if keepsRecords(value)}
+								<Callout>{t('sc.editor.recordNote')}</Callout>
+							{/if}
 							<p class="hint">{t('sc.editor.builderHint')}</p>
 							<div class="builder">
 								<Card title={t('sc.editor.parts')}>
@@ -706,6 +718,8 @@
 								labelOf={answerLabel}
 								choiceOf={answerChoice}
 							/>
+						{:else if current === 'basics'}
+							{@render basicsForm()}
 						{/if}
 					{/snippet}
 				</Tabs>
@@ -725,17 +739,11 @@
 
 <style>
 	.basics {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: var(--space-field) var(--space-section);
+		max-inline-size: 1000px;
 		min-inline-size: 0;
 		margin: 0;
 		padding: 0;
 		border: 0;
-	}
-
-	.basics__wide {
-		grid-column: 1 / -1;
 	}
 
 	.missing {
@@ -760,12 +768,6 @@
 
 	@media (max-width: 1080px) {
 		.builder {
-			grid-template-columns: minmax(0, 1fr);
-		}
-	}
-
-	@media (max-width: 720px) {
-		.basics {
 			grid-template-columns: minmax(0, 1fr);
 		}
 	}

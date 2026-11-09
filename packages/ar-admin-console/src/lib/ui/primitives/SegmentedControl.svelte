@@ -110,6 +110,7 @@
 
 	.segmented__track {
 		display: inline-flex;
+		justify-self: start;
 		max-width: 100%;
 		gap: 2px;
 		padding: 2px;
@@ -121,6 +122,7 @@
 
 	.segmented--block .segmented__track {
 		display: flex;
+		justify-self: stretch;
 	}
 
 	.segmented--block .segment {

@@ -26,15 +26,11 @@
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { screenErrorKey } from './screen-errors';
-	import { fieldsToBuilder, legacyYesNoIds } from './screen-layout';
-	import type { ChoiceSource } from './screen-model';
-	import ScreenPreview from './ScreenPreview.svelte';
 
 	/**
-	 * Customization → Screens: every screen of the tenant (the built-in ones first), with a preview
-	 * on the right (below the table on a narrow window) of the row under the pointer or holding
-	 * the focus. A row opens its screen. The row's menu opens, duplicates or deletes it: a built-in
-	 * screen and one a flow or an account page uses are not deleted.
+	 * Customization → Screens: tenant-created screens only. Built-in system screens are available
+	 * as templates in the creation wizard. A row opens its detail page; screens in use cannot be
+	 * deleted.
 	 */
 	interface Props {
 		client: ScreensClient;
@@ -42,11 +38,9 @@
 		/** Where a screen's page is (`new` for a new one). */
 		hrefOf: (id: string) => string;
 		onopen: (id: string) => void;
-		/** The choices of the Identity Schema's attributes, for choice parts in the preview. */
-		choices?: ChoiceSource;
 	}
 
-	let { client, canWrite, hrefOf, onopen, choices }: Props = $props();
+	let { client, canWrite, hrefOf, onopen }: Props = $props();
 
 	let screens = $state<ScreenListItem[]>([]);
 	let usagesComplete = $state(true);
@@ -55,7 +49,6 @@
 	let deleting = $state<ScreenListItem | null>(null);
 	let query = $state('');
 	let kind = $state<ScreenKind | ''>('');
-	let picked = $state<string | null>(null);
 	// The page is gone: a duplicate finishing late does not take the admin anywhere.
 	let gone = false;
 	onDestroy(() => (gone = true));
@@ -78,29 +71,13 @@
 		const needle = query.trim().toLowerCase();
 		return screens.filter(
 			(screen) =>
+				!screen.is_system &&
 				(!kind || screen.screen_kind === kind) &&
 				(!needle ||
 					screen.display_name.toLowerCase().includes(needle) ||
 					screen.screen_key.toLowerCase().includes(needle))
 		);
 	});
-	/** The screen in the preview: the one picked while it is listed, else the first one listed. */
-	const previewed = $derived(shown.find((screen) => screen.id === picked) ?? shown[0] ?? null);
-	/** Parts saved without an id get one of their own, unique within the preview. */
-	const preview = $derived.by(() => {
-		if (!previewed) return null;
-		let next = 0;
-		return fieldsToBuilder(previewed.fields, (prefix) => `${prefix}-preview-${++next}`);
-	});
-
-	/** The row under the pointer or holding the focus is the one previewed. */
-	function pick(event: Event) {
-		const row = event.target instanceof Element ? event.target.closest('tbody tr') : null;
-		if (!row?.parentElement) return;
-		const screen = shown[[...row.parentElement.children].indexOf(row)];
-		if (screen) picked = screen.id;
-	}
-
 	const kindLabel = (value: ScreenKind) => t(`sc.kind.${value}` as MessageKey);
 	const inUse = (screen: ScreenListItem) =>
 		screen.usage.flows + screen.usage.account_pages > 0 || !usagesComplete;
@@ -189,12 +166,12 @@
 	};
 
 	const columns = $derived([
-		// Five columns at most: the table sits beside the preview and must fit without scrolling
-		// sideways (a table of six or more keeps a wide minimum).
+		// Keep the table readable on narrow screens.
 		{ key: 'name', label: t('sc.list.col.name') },
-		{ key: 'kind', label: t('sc.list.col.kind'), width: '20%' },
-		{ key: 'usage', label: t('sc.list.col.usage'), width: '20%' },
-		{ key: 'updated', label: t('sc.list.col.updated'), width: '19%' },
+		{ key: 'kind', label: t('sc.list.col.kind'), width: '18%' },
+		{ key: 'usage', label: t('sc.list.col.usage'), width: '18%' },
+		{ key: 'created', label: t('sc.list.col.created'), width: '15%' },
+		{ key: 'updated', label: t('sc.list.col.updated'), width: '15%' },
 		...(canWrite
 			? [
 					{
@@ -209,7 +186,7 @@
 </script>
 
 <Page>
-	<PageHeader title={t('nav.custom.screens')} description={t('sc.list.desc')}>
+	<PageHeader title={t('nav.custom.screens')}>
 		{#snippet actions()}
 			{#if canWrite}
 				<Button variant="primary" icon="plus" href={hrefOf('new')}>{t('sc.list.create')}</Button>
@@ -250,71 +227,47 @@
 			/>
 		</FilterBar>
 
-		<div class="screens">
-			<Card title={t('sc.list.title')} flush>
-				<!-- Hovering or focusing a row only changes what the preview shows. -->
-				<div class="screens__table" role="presentation" onpointerover={pick} onfocusin={pick}>
-					<DataTable
-						caption={t('sc.list.title')}
-						{columns}
-						rows={shown}
-						rowKey={(row) => row.id}
-						onrowopen={(row) => onopen(row.id)}
-						rowOpenLabel={(row) => t('sc.list.open', { name: row.display_name })}
-						dense
-					>
-						{#snippet cell(row, column)}
-							{#if column.key === 'name'}
-								<CellText title={row.display_name} description={row.screen_key}>
-									<!-- Only what needs noticing: a screen that is off. -->
-									{#if !row.is_active}<Badge tone="warning">{t('sc.status.inactive')}</Badge>{/if}
-								</CellText>
-							{:else if column.key === 'kind'}
-								{kindLabel(row.screen_kind)}
-							{:else if column.key === 'usage'}
-								{usageText(row)}
-							{:else if column.key === 'updated'}
-								<!-- The date: it fits the column; the time is in its title. -->
-								<DateTime value={row.updated_at} style="date" stacked />
-							{:else}
-								<ActionMenu
-									size="sm"
-									label={t('sc.list.actions', { name: row.display_name })}
-									actions={actionsOf(row)}
-								/>
-							{/if}
-						{/snippet}
-						{#snippet empty()}
-							<EmptyState
-								icon="list"
-								title={filtered ? t('sc.list.emptyFiltered') : t('sc.list.empty')}
-							/>
-						{/snippet}
-					</DataTable>
-				</div>
-			</Card>
-
-			<aside class="screens__preview" aria-label={t('sc.preview.title')}>
-				<Card
-					title={previewed ? previewed.display_name : t('sc.preview.title')}
-					info={t('sc.preview.note')}
-				>
-					{#if !previewed || !preview}
-						<p class="screens__hint">{t('sc.preview.pick')}</p>
-					{:else if preview.rows.length === 0}
-						<p class="screens__hint">{t('sc.preview.empty')}</p>
+		<Card title={t('sc.list.title')} flush>
+			<DataTable
+				caption={t('sc.list.title')}
+				{columns}
+				rows={shown}
+				rowKey={(row) => row.id}
+				onrowopen={(row) => onopen(row.id)}
+				rowOpenLabel={(row) => t('sc.list.open', { name: row.display_name })}
+				dense
+			>
+				{#snippet cell(row, column)}
+					{#if column.key === 'name'}
+						<CellText title={row.display_name} description={row.screen_key}>
+							<!-- Only what needs noticing: a screen that is off. -->
+							{#if !row.is_active}<Badge tone="warning">{t('sc.status.inactive')}</Badge>{/if}
+						</CellText>
+					{:else if column.key === 'kind'}
+						{kindLabel(row.screen_kind)}
+					{:else if column.key === 'usage'}
+						{usageText(row)}
+					{:else if column.key === 'created'}
+						<DateTime value={row.created_at} style="date" stacked />
+					{:else if column.key === 'updated'}
+						<!-- The date: it fits the column; the time is in its title. -->
+						<DateTime value={row.updated_at} style="date" stacked />
 					{:else}
-						<ScreenPreview
-							rows={preview.rows}
-							settings={preview.settings}
-							rowSettings={preview.rowSettings}
-							legacyYesNo={legacyYesNoIds(preview.origins)}
-							{choices}
+						<ActionMenu
+							size="sm"
+							label={t('sc.list.actions', { name: row.display_name })}
+							actions={actionsOf(row)}
 						/>
 					{/if}
-				</Card>
-			</aside>
-		</div>
+				{/snippet}
+				{#snippet empty()}
+					<EmptyState
+						icon="list"
+						title={filtered ? t('sc.list.emptyFiltered') : t('sc.list.empty')}
+					/>
+				{/snippet}
+			</DataTable>
+		</Card>
 	{/if}
 </Page>
 
@@ -328,34 +281,3 @@
 	onconfirm={() => deleting && remove(deleting)}
 	oncancel={() => (deleting = null)}
 />
-
-<style>
-	/* The table and the preview side by side; the preview under the table on a narrow window. */
-	.screens {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
-		gap: var(--space-section);
-		align-items: start;
-	}
-
-	.screens__preview {
-		position: sticky;
-		top: var(--space-section);
-	}
-
-	.screens__hint {
-		margin: 0;
-		color: var(--text-secondary);
-	}
-
-	/* Below this the table beside the preview would be too narrow to read. */
-	@media (max-width: 1200px) {
-		.screens {
-			grid-template-columns: minmax(0, 1fr);
-		}
-
-		.screens__preview {
-			position: static;
-		}
-	}
-</style>

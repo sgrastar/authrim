@@ -6,12 +6,10 @@
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import ScreenList from '#lib/pages/customization/screens/ScreenList.svelte';
-	import { useSchemaChoices } from '#lib/pages/customization/screens/schema-choices.svelte.js';
 
 	const BASE = '/admin/customization/screens';
 	const canWrite = $derived(hasPermission(adminAccess.current, 'admin:settings:write'));
 	const hrefOf = (id: string) => `${BASE}/${encodeURIComponent(id)}`;
-	const schema = useSchemaChoices(() => tenantScope.tenantId);
 </script>
 
 <svelte:head>
@@ -19,11 +17,5 @@
 </svelte:head>
 
 {#key tenantScope.tenantId}
-	<ScreenList
-		client={httpScreens}
-		{canWrite}
-		{hrefOf}
-		choices={schema.choices}
-		onopen={(id) => goto(hrefOf(id))}
-	/>
+	<ScreenList client={httpScreens} {canWrite} {hrefOf} onopen={(id) => goto(hrefOf(id))} />
 {/key}

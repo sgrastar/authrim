@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Screens (`/api/admin/screens`): every screen, the built-in ones first, with a preview of the one picked on the right (under the table on a narrow window). The preview shows the row under the pointer (or holding the focus); a row opens its screen (`…/screens/<id>`). Its menu opens, duplicates or deletes it: a built-in screen, and one a flow or an account page uses, say why they cannot be deleted in place of the action. The list narrows by kind and by name or key.'
+						'Customization → Screens (`/api/admin/screens`): saved tenant screens. Built-in templates appear in the new-screen wizard instead of this list. A row opens its detail page (`…/screens/<id>`). Its menu opens, duplicates or deletes it; a screen used by a flow or account page explains why it cannot be deleted. The list narrows by kind and by name or key. New screens start from the Create screen action.'
 				}
 			}
 		}
@@ -24,13 +24,13 @@
 	const onopen = fn();
 	const hrefOf = (id: string) => `/admin/customization/screens/${id}`;
 	const usages = {
-		screen_login: [
+		screen_survey: [
 			{
 				kind: 'flow' as const,
 				flow_id: 'flow_login',
 				flow_name: 'Default sign-in',
-				node_id: 'login',
-				node_title: 'Sign in',
+				node_id: 'survey',
+				node_title: 'Welcome survey',
 				stage: 'published' as const
 			}
 		]
@@ -38,20 +38,24 @@
 </script>
 
 <Story
-	name="Screens with a preview"
+	name="Saved screens"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const survey = await canvas.findByText('Welcome survey');
-		// The row under the pointer is previewed.
-		await userEvent.hover(survey);
-		const preview = within(canvas.getByRole('complementary', { name: t('sc.preview.title') }));
-		await waitFor(() => expect(preview.getByText(/How did you hear about us\?/)).toBeVisible());
+		await expect(canvas.getByText('Sign up')).toBeInTheDocument();
+		await expect(canvas.queryByText('Sign in')).toBeNull();
+		await expect(canvas.queryByRole('complementary', { name: t('sc.preview.title') })).toBeNull();
+		const headers = canvas.getAllByRole('columnheader').map((header) => header.textContent?.trim());
+		await expect(headers.indexOf(t('sc.list.col.created'))).toBeLessThan(
+			headers.indexOf(t('sc.list.col.updated'))
+		);
 		// A row opens its screen.
 		await userEvent.click(survey);
 		await waitFor(() => expect(onopen).toHaveBeenCalledWith('screen_survey'));
 		// The list narrows by name or key.
-		await userEvent.type(canvas.getByRole('searchbox', { name: t('sc.list.search') }), 'login');
-		await waitFor(() => expect(canvas.queryByText('Welcome survey')).toBeNull());
+		await userEvent.type(canvas.getByRole('searchbox', { name: t('sc.list.search') }), 'welcome');
+		await waitFor(() => expect(canvas.queryByText('Sign up')).toBeNull());
+		await expect(canvas.getByText('Welcome survey')).toBeInTheDocument();
 	}}
 >
 	{#snippet template()}
@@ -68,12 +72,12 @@
 	name="A screen in use is not deleted"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await canvas.findAllByText('Sign in');
+		await canvas.findByText('Welcome survey');
 		await userEvent.click(
-			canvas.getByRole('button', { name: t('sc.list.actions', { name: 'Sign in' }) })
+			canvas.getByRole('button', { name: t('sc.list.actions', { name: 'Welcome survey' }) })
 		);
 		const reason = await within(canvasElement.ownerDocument.body).findByRole('menuitem', {
-			name: t('sc.delete.system')
+			name: t('sc.delete.inUse')
 		});
 		await expect(reason).toBeDisabled();
 	}}

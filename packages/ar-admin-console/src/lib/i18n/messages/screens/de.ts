@@ -1,13 +1,29 @@
 import type { jaScreens } from './ja';
 
 export const deScreens: Record<keyof typeof jaScreens, string> = {
-	'sc.list.desc':
-		'Legen Sie fest, was jede Seite der Login-UI zeigt (Anmeldung, Registrierung, Profilergänzung, Kontoseite und mehr). Eine Standardseite wird vor dem Bearbeiten kopiert.',
 	'sc.list.create': 'Seite erstellen',
+	'sc.create.intro':
+		'Wählen Sie eine Vorlage und legen Sie Name und Schlüssel fest. Danach können Sie die Bausteine bearbeiten.',
+	'sc.create.choose': 'Vorlage auswählen',
+	'sc.create.chooseDesc': 'Wählen Sie eine Kategorie und sehen Sie sich eine Vorlage an.',
+	'sc.create.details': 'Angaben eingeben',
+	'sc.create.detailsDesc': 'Geben Sie der neuen Seite einen Namen und einen eindeutigen Schlüssel.',
+	'sc.create.templates': 'Seitenvorlagen',
+	'sc.create.blank': 'Mit einer leeren Seite beginnen',
+	'sc.create.blankHeading': 'Seitenüberschrift',
+	'sc.create.selected': 'Ausgewählte Vorlage: {name}',
+	'sc.create.loading': 'Vorlagen werden geladen',
+	'sc.create.retry': 'Erneut versuchen',
+	'sc.create.category.registration': 'Registrierung',
+	'sc.create.category.login': 'Anmeldung',
+	'sc.create.category.account': 'Kontoseite',
+	'sc.create.category.consent': 'Einwilligung',
+	'sc.create.category.other': 'Sonstiges',
 	'sc.list.title': 'Seiten',
 	'sc.list.col.name': 'Name',
 	'sc.list.col.kind': 'Art',
 	'sc.list.col.usage': 'Verwendet in',
+	'sc.list.col.created': 'Erstellt',
 	'sc.list.col.updated': 'Aktualisiert',
 	'sc.list.actions': 'Aktionen für {name}',
 	'sc.list.open': '{name} öffnen',

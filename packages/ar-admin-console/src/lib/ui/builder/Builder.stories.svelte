@@ -1,5 +1,9 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import {
+		LOGIN_UI_LOCALES,
+		getLoginUILanguageDisplayName
+	} from '@authrim/ar-lib-core/types/login-ui-languages';
 	import { named, subcomponents } from '../stories/subcomponents';
 	import PartPalette from './PartPalette.svelte';
 	import {
@@ -30,7 +34,7 @@
 			docs: {
 				description: {
 					component:
-						'Parts for building a page by arranging parts (the Login UI screens).\n\n- **LayoutCanvas** — the page as rows of one to three columns. Each row shows its column count as buttons drawn like the layout; fewer columns move the parts of the removed columns into the last one kept, so nothing is lost. Drag a part into any column (a line shows where it lands) or between rows to make a new row; drag a row by its grip. Keyboard: Alt + arrow keys move the focused part, and every move is read out.\n- **PartPalette** — the parts that can be added; drag one in, or click it to add it after the selected part.\n- **PreviewFrame** — the page at phone or desktop width, as a picture (inert).\n- **OptionListEditor** — the options of a dropdown or radio buttons: the label people see and the value that is stored, reordered with arrows; a value used twice is flagged.\n- **TranslationTable** — every text of the page side by side per language; the source column stays while languages scroll sideways, empty entries show the default wording, headings count what is left.\n\nThe layout itself lives in `layout-model.ts` (pure, unit-tested). Unlike the legacy editor, columns are a property of a row you can see and change — not a hidden marker between parts.'
+						'Parts for building a page by arranging parts (the Login UI screens).\n\n- **LayoutCanvas** — the page as rows of one to three columns. Each row shows its column count as buttons drawn like the layout; fewer columns move the parts of the removed columns into the last one kept, so nothing is lost. Drag a part into any column (a line shows where it lands) or between rows to make a new row; drag a row by its grip. Keyboard: Alt + arrow keys move the focused part, and every move is read out.\n- **PartPalette** — the parts that can be added; drag one in, or click it to add it after the selected part.\n- **PreviewFrame** — the page at phone or desktop width, as a picture (inert).\n- **OptionListEditor** — the options of a dropdown or radio buttons: the label people see and the value that is stored, reordered with arrows; a value used twice is flagged.\n- **TranslationTable** — every text of the page side by side across supported languages. The source column stays fixed while language columns scroll; compact cells edit translations in place. Empty entries show the default wording, and language headings count what is left.\n\nThe layout itself lives in `layout-model.ts` (pure, unit-tested). Unlike the legacy editor, columns are a property of a row you can see and change — not a hidden marker between parts.'
 				}
 			}
 		}
@@ -51,7 +55,7 @@
 		{ value: 'us', label: 'United States' },
 		{ value: 'us', label: 'USA' }
 	]);
-	let translations = $state({ title: { en: 'Create your account' } } as Record<
+	let translations = $state({ title: { ja: 'アカウントを作成' } } as Record<
 		string,
 		Record<string, string>
 	>);
@@ -110,22 +114,30 @@
 	{/snippet}
 </Story>
 
-<Story name="Translation table">
+<Story
+	name="Translation table"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const translation = canvas.getByRole('textbox', {
+			name: `${sample('partAuth')} — ${getLoginUILanguageDisplayName('ja', false)}`
+		});
+		await userEvent.type(translation, 'パスキーで作成');
+		await expect(translation).toHaveValue('パスキーで作成');
+	}}
+>
 	{#snippet template()}
 		<div style="max-width:760px">
 			<TranslationTable
 				label={sample('tabLocalize')}
-				source={{ code: 'ja', name: '日本語' }}
-				locales={[
-					{ code: 'en', name: 'English' },
-					{ code: 'de', name: 'Deutsch' },
-					{ code: 'fr', name: 'Français' },
-					{ code: 'ar', name: 'العربية' }
-				]}
+				source={{ code: '', name: t('sc.editor.sourceText') }}
+				locales={LOGIN_UI_LOCALES.map((code) => ({
+					code,
+					name: getLoginUILanguageDisplayName(code, false)
+				}))}
 				rows={[
-					{ id: 'title', label: sample('partHeading'), source: 'アカウントを作成' },
-					{ id: 'passkey', label: sample('partAuth'), source: 'パスキーで作成' },
-					{ id: 'or', label: sample('partDivider'), source: 'または' }
+					{ id: 'title', label: sample('partHeading'), source: 'Create your account' },
+					{ id: 'passkey', label: sample('partAuth'), source: 'Sign up with a passkey' },
+					{ id: 'or', label: sample('partDivider'), source: 'or' }
 				]}
 				bind:values={translations}
 			/>

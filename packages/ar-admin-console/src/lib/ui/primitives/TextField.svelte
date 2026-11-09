@@ -3,6 +3,7 @@
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import type { HTMLInputAttributes } from 'svelte/elements';
 	import { useBusy } from '../busy/busy';
+	import InfoTip from './InfoTip.svelte';
 
 	/**
 	 * Labelled single-line input. `placeholder` shows an example of the expected format, never
@@ -16,6 +17,8 @@
 		size?: 'md' | 'sm';
 		value?: string;
 		hint?: string;
+		/** Longer explanation behind a "?" beside the label. */
+		info?: string;
 		error?: string;
 		/**
 		 * Show the length under the field ("12/100" with `maxlength`, otherwise just the count).
@@ -34,6 +37,7 @@
 		size = 'md',
 		value = $bindable(''),
 		hint,
+		info,
 		error,
 		counter = false,
 		id,
@@ -55,6 +59,7 @@
 	const describedBy = $derived(
 		[
 			hint ? `${inputId}-hint` : '',
+			info ? `${inputId}-info` : '',
 			error ? `${inputId}-error` : '',
 			counter ? `${inputId}-count` : ''
 		]
@@ -76,10 +81,15 @@
 	class:is-busy={busy()}
 	class:is-changed={isChanged}
 >
-	<label class="field__label" class:sr-only={hideLabel} for={inputId}>
-		{label}{#if isChanged}<span class="sr-only"> ({t('common.changed')})</span>{/if}
-		{#if required}<span class="field__req" aria-hidden="true">*</span>{/if}
-	</label>
+	<div class="field__heading">
+		<label class="field__label" class:sr-only={hideLabel} for={inputId}>
+			{label}{#if isChanged}<span class="sr-only"> ({t('common.changed')})</span>{/if}
+			{#if required}<span class="field__req" aria-hidden="true">*</span>{/if}
+		</label>
+		{#if info}
+			<InfoTip label="{t('common.moreInfo')}: {label}" text={info} id="{inputId}-info" />
+		{/if}
+	</div>
 	<input
 		class="field__input"
 		id={inputId}
@@ -115,6 +125,12 @@
 		font-size: var(--fs-label);
 		font-weight: var(--fw-semibold);
 		color: var(--text-secondary);
+	}
+
+	.field__heading {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 	}
 
 	.field__req {

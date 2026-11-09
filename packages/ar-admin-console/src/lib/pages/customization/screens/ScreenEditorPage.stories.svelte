@@ -1,6 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
+	import { getLoginUILanguageDisplayName } from '@authrim/ar-lib-core/types/login-ui-languages';
 	import { createFakeScreens } from '#lib/api/fake/screens-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { MOCK_SCREENS } from '#lib/mock/fixtures/screens.js';
@@ -19,7 +20,7 @@
 			docs: {
 				description: {
 					component:
-						'A screen’s page (`…/screens/new`, `…/screens/<id>`): its basics, then tabs — the builder (parts, the page in rows of up to three columns, the selected part’s settings), a preview, the translations into the Login UI’s languages, where it is used and, for a screen that keeps response records, what signed-in people answered (shown to those who may view users). A built-in screen is shown, not edited: “Duplicate to edit” makes a copy, which can be reset to it later. A save names the version it was made from: another admin’s save since is reported, not overwritten.'
+						'A saved screen’s detail page (`…/screens/<id>`): its basics and tabs — the builder (parts, the page in rows of up to three columns, the selected part’s settings), a preview, translations, where it is used and, for screens that keep response records, what people answered (shown only to admins who may view users). A built-in screen is shown, not edited: “Duplicate to edit” makes a copy. A save names the version it was made from, so another admin’s save is not overwritten. The new screen route has its own creation wizard.'
 				}
 			}
 		}
@@ -75,10 +76,78 @@
 </Story>
 
 <Story
+	name="Basic information"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('sc.editor.basics') }));
+		await expect(canvasElement.querySelector('fieldset.basics > .columns')).not.toBeNull();
+		await expect(canvasElement.querySelector('.page-head__badges .badge')).toBeNull();
+		await expect(
+			canvas.getByRole('textbox', { name: new RegExp(t('sc.editor.key')) })
+		).toBeDisabled();
+		await expect(
+			canvas.getByRole('button', {
+				name: `${t('common.moreInfo')}: ${t('sc.editor.key')}`
+			})
+		).toBeEnabled();
+		await expect(canvas.getByRole('radio', { name: t('sc.editor.canvasNarrow') })).toBeChecked();
+	}}
+>
+	{#snippet template()}
+		<ScreenEditorPage
+			{...common}
+			client={createFakeScreens({ screens: MOCK_SCREENS })}
+			id="screen_signup"
+			schemaFields={demoSchemaFields()}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Localization"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('sc.editor.tab.localize') }));
+		const table = await canvas.findByRole('region', { name: t('sc.editor.tab.localize') });
+		const ja = getLoginUILanguageDisplayName('ja', false);
+		await expect(
+			within(table).getByRole('columnheader', { name: new RegExp(ja) })
+		).toBeInTheDocument();
+		await expect(
+			within(table).getByRole('rowheader', { name: /Create your account/ })
+		).toBeInTheDocument();
+		const translation = within(table).getByRole('textbox', {
+			name: `${t('sc.editor.name')} — ${ja}`
+		});
+		await userEvent.type(translation, '新規登録');
+		await expect(translation).toHaveValue('新規登録');
+	}}
+>
+	{#snippet template()}
+		<ScreenEditorPage
+			{...common}
+			client={createFakeScreens({ screens: MOCK_SCREENS })}
+			id="screen_signup"
+			schemaFields={demoSchemaFields()}
+		/>
+	{/snippet}
+</Story>
+
+<Story
 	name="Another admin saved first"
 	play={async ({ canvasElement }) => {
 		toast.dismissAll();
 		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('sc.editor.basics') }));
+		await expect(canvasElement.querySelector('.page-head__badges .badge')).toBeNull();
+		await expect(
+			canvas.getByRole('textbox', { name: new RegExp(t('sc.editor.key')) })
+		).toBeDisabled();
+		await expect(
+			canvas.getByRole('button', {
+				name: `${t('common.moreInfo')}: ${t('sc.editor.key')}`
+			})
+		).toBeEnabled();
 		const name = await canvas.findByRole('textbox', { name: new RegExp(t('sc.editor.name')) });
 		await userEvent.type(name, ' (new)');
 		await userEvent.click(canvas.getByRole('button', { name: t('sc.editor.save') }));
@@ -124,15 +193,17 @@
 </Story>
 
 <Story
-	name="New screen"
+	name="Unsaved editor state"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('sc.editor.basics') }));
 		const name = await canvas.findByRole('textbox', { name: new RegExp(t('sc.editor.name')) });
 		await userEvent.type(name, 'Terms check');
 		await userEvent.type(
 			canvas.getByRole('textbox', { name: new RegExp(t('sc.editor.key')) }),
 			'terms_check'
 		);
+		await userEvent.click(canvas.getByRole('tab', { name: t('sc.editor.tab.items') }));
 		// The palette's entry (the first button of the name; the part placed is the next).
 		await userEvent.click(
 			canvas.getAllByRole('button', { name: new RegExp(t('sc.part.checkbox')) })[0]
