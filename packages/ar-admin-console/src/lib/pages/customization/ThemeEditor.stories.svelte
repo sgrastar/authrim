@@ -558,9 +558,49 @@
 		const canvas = within(canvasElement);
 		// Custom CSS is not a tab: it sits under the preview and the inspector.
 		const css = await canvas.findByRole('textbox', { name: t('th.f.css') });
+		await expect((css as HTMLTextAreaElement).value).toContain('/* Header */');
+		await expect((css as HTMLTextAreaElement).value).toContain('.auth-page .auth-bar__title {}');
+		await userEvent.clear(css);
 		// "{{" types one "{" (user-event reads a single "{" as the start of a key such as {Enter}).
 		await userEvent.type(css, '.card {{ border-radius: 0; }');
 		await expect(css).toHaveValue('.card { border-radius: 0; }');
+	}}
+>
+	{#snippet template()}
+		<Page><ThemeEditor /></Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Colour field order"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await waitFor(() =>
+			expect(
+				Array.from(canvasElement.querySelectorAll('.colours .color__label'), (label) =>
+					label.textContent?.trim()
+				)
+			).toEqual(
+				[
+					'background',
+					'title',
+					'text',
+					'copy',
+					'field',
+					'accent',
+					'secondaryButton',
+					'themeToggleBackground',
+					'languageSelectBackground',
+					'headerBackground',
+					'headerText',
+					'footerBackground',
+					'footerText',
+					'card',
+					'link'
+				].map((name) => t(`th.c.${name}` as Parameters<typeof t>[0]))
+			)
+		);
 	}}
 >
 	{#snippet template()}

@@ -53,36 +53,6 @@ export const THEME_COLOURS: readonly ThemeColour[] = [
 		fallback: (p) => p.background
 	},
 	{
-		field: 'cardColor',
-		name: 'form_area',
-		label: 'th.c.card',
-		alpha: true,
-		fallback: (p) => p.card
-	},
-	{
-		field: 'brandPanelBackground',
-		name: 'brand_panel_background',
-		label: 'th.c.brandPanelBackground',
-		alpha: true,
-		fallback: () => '#090d1e61',
-		strict: true
-	},
-	{
-		field: 'accent',
-		name: 'accent',
-		label: 'th.c.accent',
-		alpha: false,
-		fallback: (p) => p.accent
-	},
-	{
-		field: 'linkColor',
-		name: 'link',
-		label: 'th.c.link',
-		alpha: true,
-		fallback: (p) => p.accent,
-		strict: true
-	},
-	{
 		field: 'titleColor',
 		name: 'title',
 		label: 'th.c.title',
@@ -92,6 +62,13 @@ export const THEME_COLOURS: readonly ThemeColour[] = [
 	{ field: 'textColor', name: 'text', label: 'th.c.text', alpha: true, fallback: (p) => p.text },
 	{ field: 'copyColor', name: 'copy', label: 'th.c.copy', alpha: true, fallback: (p) => p.copy },
 	{ field: 'fieldColor', name: 'field', label: 'th.c.field', alpha: true, fallback: (p) => p.card },
+	{
+		field: 'accent',
+		name: 'accent',
+		label: 'th.c.accent',
+		alpha: false,
+		fallback: (p) => p.accent
+	},
 	{
 		field: 'secondaryButtonColor',
 		name: 'secondary_button',
@@ -145,6 +122,30 @@ export const THEME_COLOURS: readonly ThemeColour[] = [
 		label: 'th.c.footerText',
 		alpha: true,
 		fallback: (p) => p.copy,
+		strict: true
+	},
+	// Additional controls not in the primary colour sequence stay available after it.
+	{
+		field: 'cardColor',
+		name: 'form_area',
+		label: 'th.c.card',
+		alpha: true,
+		fallback: (p) => p.card
+	},
+	{
+		field: 'brandPanelBackground',
+		name: 'brand_panel_background',
+		label: 'th.c.brandPanelBackground',
+		alpha: true,
+		fallback: () => '#090d1e61',
+		strict: true
+	},
+	{
+		field: 'linkColor',
+		name: 'link',
+		label: 'th.c.link',
+		alpha: true,
+		fallback: (p) => p.accent,
 		strict: true
 	}
 ];
