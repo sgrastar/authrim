@@ -4,7 +4,7 @@
  * Tests for HAIP abstraction layer (Phase 9).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   HaipPolicyEvaluator,
   getHaipPolicy,
@@ -359,6 +359,97 @@ describe('HAIP Policy', () => {
 
         expect(result.valid).toBe(false);
         expect(result.errors.length).toBeGreaterThanOrEqual(5);
+      });
+
+      it('enforces the optional JAR, KB-JWT, type, and trust-chain requirements independently', () => {
+        const evaluator = new HaipPolicyEvaluator({ ...HAIP_DRAFT_06, requireTrustChain: true });
+        const valid: HaipVerificationInput = {
+          algorithm: 'ES256',
+          format: 'dc+sd-jwt',
+          holderBindingVerified: true,
+          issuerTrusted: true,
+          statusValid: true,
+          usedRequestObject: true,
+          kbJwtHasNonce: true,
+          kbJwtHasAudience: true,
+          hasCorrectTypHeader: true,
+          trustChainVerified: true,
+        };
+        const failures: Array<[keyof HaipVerificationInput, string]> = [
+          ['usedRequestObject', 'Request object (JAR) is required'],
+          ['kbJwtHasNonce', 'Nonce in KB-JWT is required'],
+          ['kbJwtHasAudience', 'Audience in KB-JWT is required'],
+          ['hasCorrectTypHeader', "Type header 'dc+sd-jwt' is required"],
+          ['trustChainVerified', 'Trust chain verification is required'],
+        ];
+
+        expect(evaluator.validateVerificationResult(valid).valid).toBe(true);
+        for (const [field, message] of failures) {
+          const result = evaluator.validateVerificationResult({ ...valid, [field]: false });
+          expect(result).toMatchObject({ valid: false, haipCompliant: false });
+          expect(result.errors).toEqual([expect.stringContaining(message)]);
+        }
+      });
+
+      it('marks a missing holder JWK as a compliance warning without invalidating the credential', () => {
+        const evaluator = new HaipPolicyEvaluator();
+        const result = evaluator.validateVerificationResult({
+          algorithm: 'ES256',
+          format: 'dc+sd-jwt',
+          holderBindingVerified: true,
+          issuerTrusted: true,
+          statusValid: true,
+          cnfUsesJwk: false,
+        });
+
+        expect(result.valid).toBe(true);
+        expect(result.haipCompliant).toBe(false);
+        expect(result.errors).toEqual([]);
+        expect(result.warnings).toEqual([expect.stringContaining('cnf.jwk')]);
+      });
+
+      it('applies the client ID scheme allow-list to the validation result', () => {
+        const strict = new HaipPolicyEvaluator();
+        const standard = new HaipPolicyEvaluator(STANDARD_POLICY);
+        const result = strict.validateVerificationResult({
+          algorithm: 'ES256',
+          format: 'dc+sd-jwt',
+          holderBindingVerified: true,
+          issuerTrusted: true,
+          statusValid: true,
+          clientIdScheme: 'redirect_uri',
+        });
+
+        expect(strict.isClientIdSchemeAllowed('redirect_uri')).toBe(false);
+        expect(strict.isClientIdSchemeAllowed('x509_san_dns')).toBe(true);
+        expect(result.valid).toBe(false);
+        expect(result.errors).toEqual([expect.stringContaining("Client ID scheme 'redirect_uri'")]);
+        expect(standard.isClientIdSchemeAllowed('redirect_uri')).toBe(true);
+      });
+
+      it('accepts expiry exactly at the skew boundary and rejects it one second beyond', () => {
+        const now = 1_800_000_000;
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(now * 1000);
+        try {
+          const evaluator = new HaipPolicyEvaluator();
+          const valid: HaipVerificationInput = {
+            algorithm: 'ES256',
+            format: 'dc+sd-jwt',
+            holderBindingVerified: true,
+            issuerTrusted: true,
+            statusValid: true,
+            expiresAt: now - 300,
+          };
+
+          expect(evaluator.isExpired(now - 300)).toBe(false);
+          expect(evaluator.validateVerificationResult(valid).valid).toBe(true);
+          expect(evaluator.isExpired(now - 301)).toBe(true);
+          const expired = evaluator.validateVerificationResult({ ...valid, expiresAt: now - 301 });
+          expect(expired.valid).toBe(false);
+          expect(expired.errors).toEqual([expect.stringContaining('Credential has expired')]);
+        } finally {
+          clock.mockRestore();
+        }
       });
     });
 

@@ -173,6 +173,12 @@ describe('tenant database setup helpers', () => {
         addedBindings: 2,
       }).state
     ).toBe('strong_warning');
+    expect(
+      evaluateTenantDatabaseBindingCapacity({
+        currentBindings: 4999,
+        addedBindings: 1,
+      }).state
+    ).toBe('exceeds_limit');
   });
 
   it('evaluates assignment account and storage warning thresholds', () => {
@@ -198,6 +204,22 @@ describe('tenant database setup helpers', () => {
     expect(strong.reasons).toContain('storage_ratio_strong_threshold');
   });
 
+  it('escalates on storage use even when account statistics are unavailable', () => {
+    const warning = evaluateTenantDatabaseSizeWarning(
+      { d1FileSizeBytes: 70 },
+      { maxD1SizeBytes: 100 }
+    );
+    expect(warning).toMatchObject({
+      state: 'warning',
+      reasons: ['storage_ratio_warning_threshold'],
+      accountCount: null,
+      storageRatio: 0.7,
+    });
+    expect(
+      evaluateTenantDatabaseSizeWarning({ d1FileSizeBytes: 90 }, { maxD1SizeBytes: 100 })
+    ).toMatchObject({ state: 'strong_warning', reasons: ['storage_ratio_strong_threshold'] });
+  });
+
   it('evaluates tenant stats freshness with a 36 hour default stale threshold', () => {
     const now = new Date('2026-05-16T12:00:00.000Z');
 
@@ -207,6 +229,10 @@ describe('tenant database setup helpers', () => {
     );
     expect(evaluateTenantDatabaseStatsFreshness('2026-05-14T23:59:59.000Z', { now }).state).toBe(
       'stale'
+    );
+    expect(evaluateTenantDatabaseStatsFreshness('invalid', { now }).state).toBe('unknown');
+    expect(evaluateTenantDatabaseStatsFreshness('2026-05-15T00:00:00.000Z', { now }).state).toBe(
+      'fresh'
     );
   });
 
@@ -274,6 +300,30 @@ describe('tenant database setup helpers', () => {
     expect(sql).toContain('WHEN tenant_database_active_pointers.generation = excluded.generation');
     expect(sql).toContain('THEN tenant_database_active_pointers.runtime_generation');
     expect(sql).toContain('ELSE tenant_database_active_pointers.runtime_generation + 1');
+  });
+
+  it.each([
+    [{ shardGroup: "bad'group" }, 'tenant_database_shard_group_invalid'],
+    [{ shardIndex: -1 }, 'tenant_database_shard_index_invalid'],
+    [{ shardIndex: 2, shardCount: 2 }, 'tenant_database_shard_index_out_of_range'],
+    [{ shardCount: 33 }, 'tenant_database_shard_count_invalid'],
+    [{ shardKeyStrategy: "bad'strategy" }, 'tenant_database_shard_key_strategy_invalid'],
+  ] as const)('rejects invalid shard metadata before emitting registry SQL', (overrides, error) => {
+    expect(() =>
+      buildTenantDatabaseRegistrySql({
+        tenantId: 'tenant-a',
+        resources: [
+          {
+            role: 'tenant_core',
+            databaseName: 'tenant-a-core',
+            binding: 'TDB_TENANT_A_CORE',
+            databaseId: 'core-id',
+            generation: 1,
+            ...overrides,
+          },
+        ],
+      })
+    ).toThrow(error);
   });
 
   it('signs routing-critical registry fields before activation SQL is emitted', () => {
@@ -471,6 +521,20 @@ describe('tenant database setup helpers', () => {
           cloudflareDatabaseId: 'fresh-id',
         },
       ],
+    });
+  });
+
+  it('reports missing lock entries only for explicitly requested tenant bindings', () => {
+    const result = reconcileTenantDatabaseDerivedBindings({
+      lock: { d1: {} },
+      cloudflareD1Databases: [],
+      expectedBindings: ['DB', 'TEST_TDB_ALPHA_ABC123_CORE'],
+    });
+
+    expect(result).toEqual({
+      checkedBindings: 1,
+      status: 'drift_detected',
+      issues: [{ type: 'missing_lock_entry', binding: 'TEST_TDB_ALPHA_ABC123_CORE' }],
     });
   });
 });

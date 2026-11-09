@@ -2649,11 +2649,6 @@
       "count": 7
     }
   },
-  "src/vc/__tests__/status-list-manager.test.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "src/vc/__tests__/status-list.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1

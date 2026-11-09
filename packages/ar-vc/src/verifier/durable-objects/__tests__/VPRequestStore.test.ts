@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SqlStorageCursor, SqlStorageValue } from '@cloudflare/workers-types';
 /* eslint-disable @typescript-eslint/no-base-to-string */
 import { VPRequestStore } from '../VPRequestStore';
@@ -149,18 +149,23 @@ class MemoryVpSql {
       row.error_code = p[0];
       row.error_description = p[1];
       row.reservation_id = null;
+      row.lease_expires_at = null;
       return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("SET status = 'pending'")) {
-      const idIndex = p.length === 4 ? 0 : 0;
-      const row = this.rows.get(String(p[idIndex]));
-      if (row) {
-        row.status = 'pending';
-        row.response_fingerprint = null;
-        row.reservation_id = null;
-        row.lease_expires_at = null;
-      }
-      return cursor(row ? [{ id: 'changed' }] : [], row ? 1 : 0) as never;
+      const row = this.rows.get(String(p[0]));
+      const allowed =
+        row?.tenant_id === p[1] &&
+        row.status === 'processing' &&
+        (p.length === 3
+          ? row.lease_expires_at !== null && Number(row.lease_expires_at) <= Number(p[2])
+          : row.reservation_id === p[2] && Number(row.expires_at) > Number(p[3]));
+      if (!allowed || !row) return cursor() as never;
+      row.status = 'pending';
+      row.response_fingerprint = null;
+      row.reservation_id = null;
+      row.lease_expires_at = null;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("SET status = 'expired'")) {
       if (q.includes('WHERE id = ?')) {
@@ -329,5 +334,269 @@ describe('VPRequestStore security state machine', () => {
       })
     ).toEqual({ reserved: false, reason: 'expired' });
     expect(store.getRequestRpc({ id: 'request-a', tenantId: 'tenant-b', now: 1_500 })).toBeNull();
+  });
+
+  it('does not let a second request reuse a fingerprint reserved by another request', () => {
+    store.createRequestRpc(request('request-a'));
+    store.createRequestRpc(request('request-b'));
+    const first = store.reserveResponseRpc({
+      id: 'request-a',
+      tenantId: 'tenant-a',
+      responseFingerprint: 'shared-fingerprint',
+      now: 2_000,
+    });
+
+    expect(first.reserved).toBe(true);
+    expect(
+      store.reserveResponseRpc({
+        id: 'request-b',
+        tenantId: 'tenant-a',
+        responseFingerprint: 'shared-fingerprint',
+        now: 2_001,
+      })
+    ).toEqual({ reserved: false, reason: 'replayed' });
+    expect(store.getRequestRpc({ id: 'request-b', tenantId: 'tenant-a', now: 2_002 })?.status).toBe(
+      'pending'
+    );
+  });
+
+  it('reclaims an expired lease and rejects completion with the old reservation', () => {
+    store.createRequestRpc(request('request-a', { expiresAt: 200_000 }));
+    const first = store.reserveResponseRpc({
+      id: 'request-a',
+      tenantId: 'tenant-a',
+      responseFingerprint: 'first-response',
+      now: 2_000,
+      leaseMs: 5_000,
+    });
+    expect(first.reserved).toBe(true);
+    const second = store.reserveResponseRpc({
+      id: 'request-a',
+      tenantId: 'tenant-a',
+      responseFingerprint: 'second-response',
+      now: 7_000,
+    });
+    expect(second.reserved).toBe(true);
+    if (!first.reserved || !second.reserved) return;
+
+    expect(
+      store.completeResponseRpc({
+        id: 'request-a',
+        tenantId: 'tenant-a',
+        reservationId: first.reservationId,
+      })
+    ).toBe(false);
+    expect(
+      store.completeResponseRpc({
+        id: 'request-a',
+        tenantId: 'tenant-a',
+        reservationId: second.reservationId,
+      })
+    ).toBe(true);
+    expect(store.getRequestRpc({ id: 'request-a', tenantId: 'tenant-a', now: 8_000 })?.status).toBe(
+      'verified'
+    );
+  });
+
+  it('keeps a failed response terminal and limits its stored description', () => {
+    store.createRequestRpc(request('request-a'));
+    const reserved = store.reserveResponseRpc({
+      id: 'request-a',
+      tenantId: 'tenant-a',
+      responseFingerprint: 'response-a',
+      now: 2_000,
+    });
+    if (!reserved.reserved) throw new Error('Expected the first response to reserve');
+
+    expect(
+      store.failResponseRpc({
+        id: 'request-a',
+        tenantId: 'tenant-a',
+        reservationId: 'wrong-reservation',
+        errorCode: 'invalid_presentation',
+      })
+    ).toBe(false);
+    expect(
+      store.failResponseRpc({
+        id: 'request-a',
+        tenantId: 'tenant-a',
+        reservationId: reserved.reservationId,
+        errorCode: 'invalid_presentation',
+        errorDescription: 'x'.repeat(800),
+      })
+    ).toBe(true);
+    expect(
+      store.getRequestRpc({ id: 'request-a', tenantId: 'tenant-a', now: 3_000 })
+    ).toMatchObject({
+      status: 'failed',
+      errorCode: 'invalid_presentation',
+      errorDescription: 'x'.repeat(500),
+    });
+    expect(
+      store.completeResponseRpc({
+        id: 'request-a',
+        tenantId: 'tenant-a',
+        reservationId: reserved.reservationId,
+      })
+    ).toBe(false);
+  });
+
+  it('releases only the matching reservation and permits a different retry', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(3_000);
+    try {
+      store.createRequestRpc(request('request-a'));
+      const first = store.reserveResponseRpc({
+        id: 'request-a',
+        tenantId: 'tenant-a',
+        responseFingerprint: 'first-response',
+        now: 2_000,
+      });
+      if (!first.reserved) throw new Error('Expected the first response to reserve');
+      expect(
+        store.releaseResponseRpc({
+          id: 'request-a',
+          tenantId: 'tenant-b',
+          reservationId: first.reservationId,
+        })
+      ).toBe(false);
+      expect(
+        store.releaseResponseRpc({
+          id: 'request-a',
+          tenantId: 'tenant-a',
+          reservationId: 'wrong-reservation',
+        })
+      ).toBe(false);
+      expect(
+        store.releaseResponseRpc({
+          id: 'request-a',
+          tenantId: 'tenant-a',
+          reservationId: first.reservationId,
+        })
+      ).toBe(true);
+      expect(
+        store.getRequestRpc({ id: 'request-a', tenantId: 'tenant-a', now: 3_000 })?.status
+      ).toBe('pending');
+      expect(
+        store.reserveResponseRpc({
+          id: 'request-a',
+          tenantId: 'tenant-a',
+          responseFingerprint: 'second-response',
+          now: 3_001,
+        }).reserved
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe('internal HTTP adapter', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(2_000);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const post = (path: string, body: unknown) =>
+      new Request(`https://coordinator.internal${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    it('creates and reads a request while enforcing the tenant in the query', async () => {
+      const created = await store.fetch(post('/create', request('request-a')));
+      expect(created.status).toBe(201);
+      expect((await created.json<{ id: string }>()).id).toBe('request-a');
+
+      const allowed = await store.fetch(
+        new Request('https://coordinator.internal/get?id=request-a&tenant_id=tenant-a')
+      );
+      expect(allowed.status).toBe(200);
+      expect((await allowed.json<VPRequestState>()).status).toBe('pending');
+
+      const denied = await store.fetch(
+        new Request('https://coordinator.internal/get?id=request-a&tenant_id=tenant-b')
+      );
+      expect(denied.status).toBe(404);
+      expect(await denied.json<{ error: string }>()).toEqual({ error: 'not_found' });
+      expect((await store.fetch(new Request('https://coordinator.internal/unknown'))).status).toBe(
+        404
+      );
+    });
+
+    it('requires the status capability and does not let the body override a query tenant', async () => {
+      store.createRequestRpc(request('request-a'));
+      const wrongCapability = await store.fetch(
+        post('/status', {
+          id: 'request-a',
+          tenantId: 'tenant-a',
+          statusTokenHash: 'wrong-hash',
+        })
+      );
+      expect(wrongCapability.status).toBe(404);
+
+      const wrongTenant = await store.fetch(
+        post('/status?id=request-a&tenant_id=tenant-b', {
+          id: 'request-a',
+          tenantId: 'tenant-a',
+          statusTokenHash: 'status-token-hash',
+        })
+      );
+      expect(wrongTenant.status).toBe(404);
+
+      const allowed = await store.fetch(
+        post('/status', {
+          id: 'request-a',
+          tenantId: 'tenant-a',
+          statusTokenHash: 'status-token-hash',
+        })
+      );
+      expect(allowed.status).toBe(200);
+      expect((await allowed.json<VPRequestState>()).id).toBe('request-a');
+    });
+
+    it('returns reservation and completion results without exposing internal errors', async () => {
+      store.createRequestRpc(request('request-a'));
+      const reserved = await store.fetch(
+        post('/reserve', {
+          id: 'request-a',
+          tenantId: 'tenant-a',
+          responseFingerprint: 'response-a',
+          now: 2_000,
+        })
+      );
+      const reservation = await reserved.json<{ reserved: boolean; reservationId: string }>();
+      expect(reservation.reserved).toBe(true);
+
+      const rejected = await store.fetch(
+        post('/complete', {
+          id: 'request-a',
+          tenantId: 'tenant-a',
+          reservationId: 'wrong-reservation',
+        })
+      );
+      expect(await rejected.json<{ completed: boolean }>()).toEqual({ completed: false });
+
+      const completed = await store.fetch(
+        post('/complete', {
+          id: 'request-a',
+          tenantId: 'tenant-a',
+          reservationId: reservation.reservationId,
+        })
+      );
+      expect(await completed.json<{ completed: boolean }>()).toEqual({ completed: true });
+      expect(
+        store.getRequestRpc({ id: 'request-a', tenantId: 'tenant-a', now: 2_001 })?.status
+      ).toBe('verified');
+
+      const invalid = await store.fetch(post('/create', { id: 'request-b' }));
+      expect(invalid.status).toBe(500);
+      expect(await invalid.json<{ error: string }>()).toEqual({ error: 'internal_error' });
+      expect(store.getRequestRpc({ id: 'request-b', tenantId: 'tenant-a', now: 2_001 })).toBeNull();
+    });
   });
 });

@@ -4,6 +4,92 @@ import { rewrapLogChunkObject } from '../r2-chunk-rewrap';
 import { encryptLogChunkBody } from '../r2-chunk-writer';
 
 describe('rewrapLogChunkObject', () => {
+  it.each(['', 'logs/source.bin', 'x'.repeat(1025)])(
+    'rejects an invalid target key before reading the source',
+    async (targetObjectKey) => {
+      const bucket = { get: vi.fn(), put: vi.fn() } as unknown as R2Bucket;
+      await expect(
+        rewrapLogChunkObject({
+          bucket,
+          objectCatalogId: 'obj-1',
+          objectKey: 'logs/source.bin',
+          targetObjectKey,
+          chunkId: 'chunk-1',
+          tenantKey: 'tenant-a',
+          logType: 'audit',
+          plane: 'archive',
+          compression: 'none',
+          from: { keyBytes: new Uint8Array(32), encryptionScope: 'scope', keyVersion: 1 },
+          to: { keyBytes: new Uint8Array(32), encryptionScope: 'scope', keyVersion: 2 },
+        })
+      ).rejects.toThrow('log_chunk_rewrap_target_object_key_invalid');
+      expect(bucket.get).not.toHaveBeenCalled();
+      expect(bucket.put).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not create or catalog a target when the source object is missing', async () => {
+    const bucket = {
+      get: vi.fn(async () => null),
+      put: vi.fn(),
+    } as unknown as R2Bucket;
+    const updateRewrappedObject = vi.fn();
+    await expect(
+      rewrapLogChunkObject({
+        bucket,
+        objectCatalogId: 'obj-1',
+        objectKey: 'logs/source.bin',
+        targetObjectKey: 'logs/target.bin',
+        chunkId: 'chunk-1',
+        tenantKey: 'tenant-a',
+        logType: 'audit',
+        plane: 'archive',
+        compression: 'none',
+        from: { keyBytes: new Uint8Array(32), encryptionScope: 'scope', keyVersion: 1 },
+        to: { keyBytes: new Uint8Array(32), encryptionScope: 'scope', keyVersion: 2 },
+        catalogUpdater: { updateRewrappedObject },
+      })
+    ).rejects.toThrow('log_chunk_rewrap_object_not_found');
+    expect(bucket.put).not.toHaveBeenCalled();
+    expect(updateRewrappedObject).not.toHaveBeenCalled();
+  });
+
+  it('bounds streamed bytes even if R2 reports a smaller object size', async () => {
+    const bucket = {
+      get: vi.fn(async () => ({
+        size: 2,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(Uint8Array.from([1, 2]));
+            controller.enqueue(Uint8Array.from([3, 4]));
+            controller.close();
+          },
+        }),
+      })),
+      put: vi.fn(),
+    } as unknown as R2Bucket;
+    const updateRewrappedObject = vi.fn();
+    await expect(
+      rewrapLogChunkObject({
+        bucket,
+        objectCatalogId: 'obj-1',
+        objectKey: 'logs/source.bin',
+        targetObjectKey: 'logs/target.bin',
+        chunkId: 'chunk-1',
+        tenantKey: 'tenant-a',
+        logType: 'audit',
+        plane: 'archive',
+        compression: 'none',
+        from: { keyBytes: new Uint8Array(32), encryptionScope: 'scope', keyVersion: 1 },
+        to: { keyBytes: new Uint8Array(32), encryptionScope: 'scope', keyVersion: 2 },
+        maxBytes: 3,
+        catalogUpdater: { updateRewrappedObject },
+      })
+    ).rejects.toThrow('log_chunk_rewrap_object_too_large');
+    expect(bucket.put).not.toHaveBeenCalled();
+    expect(updateRewrappedObject).not.toHaveBeenCalled();
+  });
+
   it('rejects oversized R2 objects before buffering chunk bodies', async () => {
     const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
     const bucket = {
@@ -121,8 +207,11 @@ describe('rewrapLogChunkObject', () => {
         keyVersion: 2,
       })
     );
+    const targetBody = objects.get(targetKey);
+    expect(targetBody).toBeDefined();
+    if (!targetBody) throw new Error('Missing rewrapped target');
     const decoded = await decryptLogChunkBody({
-      storedBody: objects.get(targetKey)!,
+      storedBody: targetBody,
       keyBytes: toKey,
       tenantKey: 'tenant',
       logType: 'audit',
@@ -133,5 +222,57 @@ describe('rewrapLogChunkObject', () => {
       expectedKeyVersion: 2,
     });
     expect(decoded.body).toEqual(plaintext);
+  });
+
+  it('rejects a different encrypted target without updating the catalog', async () => {
+    const sourceKey = 'logs/tenant/archive/audit/source.bin';
+    const targetKey = 'logs/tenant/archive/audit/target.bin';
+    const fromKey = new Uint8Array(32).fill(1);
+    const toKey = new Uint8Array(32).fill(2);
+    const common = {
+      tenantKey: 'tenant',
+      logType: 'audit' as const,
+      plane: 'archive' as const,
+      chunkId: 'chunk-1',
+      compression: 'none' as const,
+    };
+    const source = await encryptLogChunkBody(new TextEncoder().encode('original'), {
+      ...common,
+      keyBytes: fromKey,
+      encryptionScope: 'scope',
+      keyVersion: 1,
+      objectKey: sourceKey,
+    });
+    const conflicting = await encryptLogChunkBody(new TextEncoder().encode('different'), {
+      ...common,
+      keyBytes: toKey,
+      encryptionScope: 'scope',
+      keyVersion: 2,
+      objectKey: targetKey,
+    });
+    const bucket = {
+      get: vi.fn(async (key: string) => {
+        const body = key === sourceKey ? source : key === targetKey ? conflicting : null;
+        return body
+          ? ({ size: body.length, arrayBuffer: async () => body.buffer } as R2ObjectBody)
+          : null;
+      }),
+      put: vi.fn(async () => null),
+    } as unknown as R2Bucket;
+    const updateRewrappedObject = vi.fn();
+
+    await expect(
+      rewrapLogChunkObject({
+        ...common,
+        bucket,
+        objectCatalogId: 'obj-1',
+        objectKey: sourceKey,
+        targetObjectKey: targetKey,
+        from: { keyBytes: fromKey, encryptionScope: 'scope', keyVersion: 1 },
+        to: { keyBytes: toKey, encryptionScope: 'scope', keyVersion: 2 },
+        catalogUpdater: { updateRewrappedObject },
+      })
+    ).rejects.toThrow('log_chunk_rewrap_target_object_conflict');
+    expect(updateRewrappedObject).not.toHaveBeenCalled();
   });
 });
