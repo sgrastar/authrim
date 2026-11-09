@@ -541,9 +541,9 @@
 			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
 		);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
-		// The title starts with the default wording of the real screen.
+		// The shared title works across registration, sign-in and account screens.
 		await expect(await canvas.findByRole('textbox', { name: t('th.f.panelTitle') })).toHaveValue(
-			'Welcome to your account.'
+			'Ready when you are.'
 		);
 	}}
 >
