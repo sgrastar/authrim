@@ -46,6 +46,21 @@ describe('validateLoginUICustomCss', () => {
     expect(result.sanitizedCss).toContain("[data-split-background-mode='panel']");
   });
 
+  it('allows the actual header, footer and button selectors in the editor scaffold', () => {
+    const result = validateLoginUICustomCss(`
+      .auth-page .auth-bar--header { padding: 24px; }
+      .auth-bar__brand { gap: 8px; }
+      .auth-page .auth-bar__title { color: white; }
+      .auth-page .auth-bar__subtitle { color: #eee; }
+      .auth-page .auth-bar--footer { background-color: #111; }
+      .auth-page .btn-primary { border-radius: 6px; }
+      .auth-page .btn-secondary { border-radius: 6px; }
+    `);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
   it('allows the template, palette, form frame and form-row topbar selectors', () => {
     const result = validateLoginUICustomCss(`
       [data-login-template='split'] .auth-container {
