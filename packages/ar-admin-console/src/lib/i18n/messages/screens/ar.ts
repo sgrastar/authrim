@@ -51,7 +51,8 @@ export const arScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.preview.title': 'المعاينة',
 	'sc.preview.pick': 'اختر صفًا من الجدول لعرض شاشته هنا.',
 	'sc.preview.empty': 'لا تحتوي هذه الشاشة على أجزاء.',
-	'sc.preview.note': 'تستخدم هذه الشاشة المظهر المطبّق حاليًا. عناصر المعاينة غير تفاعلية.',
+	'sc.preview.note':
+		'يستخدم محتوى الشاشة المظهر المطبّق حاليًا. لا تُعرض الترويسة والتذييل وأزرار التبديل داخل الشاشة.',
 	'sc.preview.themeLoadFailed': 'تعذّر تحميل المظهر المطبّق',
 	'sc.action.open': 'فتح',
 	'sc.action.copy': 'تكرار',

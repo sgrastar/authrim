@@ -51,5 +51,5 @@
 		<Button size="sm" onclick={() => (retry += 1)}>{t('common.retry')}</Button>
 	</Callout>
 {:else}
-	<ThemePreview {draft} {scheme} {preview} bind:mode note={t('sc.preview.note')} />
+	<ThemePreview {draft} {scheme} {preview} bind:mode contentOnly note={t('sc.preview.note')} />
 {/if}

@@ -50,7 +50,8 @@ export const jaScreens = {
 	'sc.preview.title': 'プレビュー',
 	'sc.preview.pick': '表の行を選ぶと、そのスクリーンをここに表示します。',
 	'sc.preview.empty': 'このスクリーンには部品がありません。',
-	'sc.preview.note': '現在適用中のテーマで表示しています。プレビュー内は操作できません。',
+	'sc.preview.note':
+		'現在適用中のテーマでスクリーンの内容を表示しています。ヘッダー、フッター、表示切替は省略しています。',
 	'sc.preview.themeLoadFailed': '適用中のテーマを読み込めませんでした',
 	'sc.action.open': '開く',
 	'sc.action.copy': '複製',

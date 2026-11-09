@@ -41,6 +41,8 @@
 		previews?: readonly ScreenPreviewContent[];
 		screensLoading?: boolean;
 		note?: string;
+		/** Screen editor: show only the themed screen parts, without the surrounding Login UI chrome. */
+		contentOnly?: boolean;
 	}
 
 	let {
@@ -51,7 +53,8 @@
 		preview,
 		previews,
 		screensLoading = false,
-		note
+		note,
+		contentOnly = false
 	}: Props = $props();
 
 	// What is not set here is the real screens' own colour, in the mode shown.
@@ -126,7 +129,9 @@
 				? tIn(draft.language, 'th.preview.toSignIn')
 				: null
 	);
-	const showTools = $derived((draft.themeToggle || draft.languageSelect) && topbar !== 'hidden');
+	const showTools = $derived(
+		!contentOnly && (draft.themeToggle || draft.languageSelect) && topbar !== 'hidden'
+	);
 
 	/** A chosen file is shown through an object URL, released when it is replaced or removed. */
 	let logoUrl = $state<string | null>(null);
@@ -346,7 +351,7 @@
 				{/if}
 				<!-- The header runs along the top of the whole screen, over the brand panel too, as the footer
 				     runs along the bottom. The brand panel has no header of its own. -->
-				{#if draft.header}
+				{#if draft.header && !contentOnly}
 					<header class="outline__header outline__bar" inert>
 						{#each BAR_ALIGNS as zone (zone)}
 							<div class="outline__zone outline__zone--{zone}">
@@ -411,7 +416,7 @@
 										></span>
 									{/if}
 									{#if showTools && topbar === 'in_card'}{@render tools()}{/if}
-									{#if !draft.header && !split}{@render brand()}{/if}
+									{#if !draft.header && !split && !contentOnly}{@render brand()}{/if}
 									{#if localized && actual}
 										<ScreenPreview
 											rows={localized.rows}
@@ -492,7 +497,7 @@
 					{/if}
 				</div>
 				<!-- The footer runs along the bottom of the whole screen, under the brand panel too. -->
-				{#if draft.footer}
+				{#if draft.footer && !contentOnly}
 					<!-- The one part that is not inert: its links work and open in a new window. -->
 					<footer class="outline__footer outline__bar">
 						{#each BAR_ALIGNS as zone (zone)}
