@@ -54,7 +54,7 @@ export interface Screen {
 	updated_at: number;
 }
 
-/** A screen as one row of the list: in full (the list shows its preview), with its usage. */
+/** A saved screen as one row of the list, with its usage and fields for creation templates. */
 export interface ScreenListItem extends Screen {
 	usage: ScreenUsageCount;
 }

@@ -1,13 +1,29 @@
 import type { jaScreens } from './ja';
 
 export const enScreens: Record<keyof typeof jaScreens, string> = {
-	'sc.list.desc':
-		'Decide what each Login UI page shows (sign-in, sign-up, profile completion, the account page and more). A built-in screen is copied before it is edited.',
 	'sc.list.create': 'Create screen',
+	'sc.create.intro':
+		'Choose a template, then name your screen. You can edit its parts after creation.',
+	'sc.create.choose': 'Choose a template',
+	'sc.create.chooseDesc': 'Choose a category and preview a screen template.',
+	'sc.create.details': 'Enter details',
+	'sc.create.detailsDesc': 'Name the new screen and give it a unique key.',
+	'sc.create.templates': 'Screen templates',
+	'sc.create.blank': 'Start with a blank screen',
+	'sc.create.blankHeading': 'Screen heading',
+	'sc.create.selected': 'Selected template: {name}',
+	'sc.create.loading': 'Loading templates',
+	'sc.create.retry': 'Try again',
+	'sc.create.category.registration': 'Sign-up',
+	'sc.create.category.login': 'Sign-in',
+	'sc.create.category.account': 'Account page',
+	'sc.create.category.consent': 'Consent',
+	'sc.create.category.other': 'Other',
 	'sc.list.title': 'Screens',
 	'sc.list.col.name': 'Name',
 	'sc.list.col.kind': 'Kind',
 	'sc.list.col.usage': 'Used by',
+	'sc.list.col.created': 'Created',
 	'sc.list.col.updated': 'Updated',
 	'sc.list.actions': 'Actions for {name}',
 	'sc.list.open': 'Open {name}',

@@ -15,27 +15,47 @@ const part = (patch: Partial<ScreenField>): ScreenField => ({
 });
 
 describe('fieldsToBuilder', () => {
-	it('puts parts before any layout row in one row of one column', () => {
+	it('puts each ungrouped template part in its own one-column row', () => {
 		const screen = fieldsToBuilder(
 			[
 				part({ block_type: 'heading', block_id: 'title', field: 'title', label: 'Hello' }),
-				part({ block_id: 'given' })
+				part({ block_type: 'auth_widget', block_id: 'passkey', field: 'passkey' }),
+				part({ block_type: 'divider', block_id: 'or', field: 'or', text: 'or' }),
+				part({ block_type: 'auth_widget', block_id: 'mail', field: 'mail' })
 			],
 			ids()
 		);
 
-		expect(screen.rows).toEqual([
-			{
-				id: 'row-new-1',
-				columns: [
-					[
-						{ id: 'title', kind: 'heading', label: 'Hello' },
-						{ id: 'given', kind: 'identity_field', label: 'Given name' }
-					]
-				]
-			}
+		expect(screen.rows.map((row) => row.columns.map((column) => column.map((p) => p.id)))).toEqual([
+			[['title']],
+			[['passkey']],
+			[['or']],
+			[['mail']]
 		]);
+		expect(screen.rows.map((row) => row.columns.length)).toEqual([1, 1, 1, 1]);
 		expect(screen.rowSettings['row-new-1']).toEqual({ mode: 'always', feature: 'passkey' });
+		const saved = builderToFields(screen);
+		expect(saved.filter((field) => field.block_type === 'layout_row')).toHaveLength(3);
+		expect(
+			fieldsToBuilder(saved, ids()).rows.map((row) => row.columns[0].map((part) => part.id))
+		).toEqual([['title'], ['passkey'], ['or'], ['mail']]);
+	});
+
+	it('keeps parts in an explicit two-column layout row together', () => {
+		const screen = fieldsToBuilder(
+			[
+				part({ block_type: 'heading', block_id: 'title', field: 'title' }),
+				part({ block_type: 'layout_row', block_id: 'pair', field: 'pair', layout_columns: 2 }),
+				part({ block_id: 'first', layout_column: 1 }),
+				part({ block_id: 'second', layout_column: 2 })
+			],
+			ids()
+		);
+
+		expect(screen.rows.map((row) => row.columns.map((column) => column.map((p) => p.id)))).toEqual([
+			[['title']],
+			[['first'], ['second']]
+		]);
 	});
 
 	it('reads a layout row up to the next one, by named column or in turn', () => {
@@ -82,7 +102,7 @@ describe('fieldsToBuilder', () => {
 			ids()
 		);
 
-		expect(screen.rows[0].columns[0].map((p) => p.kind)).toEqual(['checkbox', 'select']);
+		expect(screen.rows.map((row) => row.columns[0][0].kind)).toEqual(['checkbox', 'select']);
 		expect(screen.settings.plan).toMatchObject({
 			linked: false,
 			answerTargets: ['record'],
@@ -98,10 +118,10 @@ describe('fieldsToBuilder', () => {
 			ids()
 		);
 
-		expect(screen.rows[0].columns[0].map((p) => p.id)).toEqual([
+		expect(screen.rows.map((row) => row.columns[0][0].id)).toEqual([
 			'x',
-			'identity_field-new-2',
-			'identity_field-new-3'
+			'identity_field-new-3',
+			'identity_field-new-5'
 		]);
 	});
 });
@@ -133,18 +153,20 @@ describe('builderToFields', () => {
 
 		expect(fields.map((field) => [field.block_type, field.block_id, field.layout_column])).toEqual([
 			['heading', 'title', undefined],
+			['layout_row', 'row-new-2', undefined],
 			['identity_field', 'agree', undefined],
 			['layout_row', 'names', undefined],
 			['identity_field', 'given', 1],
 			['identity_field', 'family', 2]
 		]);
-		expect(fields[1]).toMatchObject({ value_type: 'boolean', store_to_profile: true });
-		expect(fields[3]).toMatchObject({ future_property: 'kept', field: 'given_name' });
-		expect(fields.map((field) => field.order)).toEqual([10, 20, 30, 40, 50]);
+		expect(fields[2]).toMatchObject({ value_type: 'boolean', store_to_profile: true });
+		expect(fields[4]).toMatchObject({ future_property: 'kept', field: 'given_name' });
+		expect(fields.map((field) => field.order)).toEqual([10, 20, 30, 40, 50, 60]);
 		// Read back, it is the same screen.
 		const again = fieldsToBuilder(fields, ids());
 		expect(again.rows.map((row) => row.columns.map((c) => c.map((p) => p.id)))).toEqual([
-			[['title', 'agree']],
+			[['title']],
+			[['agree']],
 			[['given'], ['family']]
 		]);
 	});
@@ -221,7 +243,9 @@ describe('builderToFields', () => {
 			],
 			ids()
 		);
-		const [plan, country] = builderToFields(screen);
+		const [plan, country] = builderToFields(screen).filter(
+			(field) => field.block_type !== 'layout_row'
+		);
 
 		expect(plan).toMatchObject({
 			store_to_profile: false,
@@ -263,7 +287,7 @@ describe('builderToFields', () => {
 			placeholder: 'kept',
 			href: '/help'
 		});
-		expect(fields[1]).toMatchObject({ text: 'kept', required: false });
+		expect(fields[2]).toMatchObject({ text: 'kept', required: false });
 	});
 
 	it('drops where an answer goes once it is stored to the profile', () => {
@@ -309,7 +333,9 @@ describe('builderToFields', () => {
 		screen.settings.news.linked = false;
 		screen.settings.news.field = 'news_answer';
 
-		const [terms, news] = builderToFields(screen);
+		const [terms, news] = builderToFields(screen).filter(
+			(field) => field.block_type !== 'layout_row'
+		);
 		expect(terms).toMatchObject({
 			block_type: 'identity_field',
 			value_type: 'boolean',

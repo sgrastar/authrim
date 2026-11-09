@@ -115,9 +115,8 @@
 						</th>
 						{#each locales as locale (locale.code)}
 							{@const changed = isChanged(row.id, locale.code)}
-							<td>
+							<td class:is-changed={changed}>
 								<input
-									class:is-changed={changed}
 									value={valueOf(row.id, locale.code)}
 									placeholder={row.source}
 									lang={locale.code}
@@ -173,8 +172,7 @@
 		padding: 10px 12px;
 	}
 
-	tbody th,
-	tbody td {
+	tbody th {
 		padding-block: 6px;
 	}
 
@@ -246,17 +244,22 @@
 	}
 
 	td {
-		min-width: 220px;
+		min-width: 180px;
+		padding: 4px;
+	}
+
+	td.is-changed {
+		background: var(--changed-bg);
 	}
 
 	input {
 		width: 100%;
-		min-width: 200px;
-		height: var(--control-h-dense);
-		padding: 0 9px;
-		border: 1px solid var(--border-strong);
-		border-radius: var(--radius-control);
-		background: var(--bg-input);
+		min-width: 10rem;
+		height: var(--control-h-sm);
+		padding: 0 6px;
+		border: 1px solid transparent;
+		border-radius: var(--radius-xs);
+		background: transparent;
 		color: var(--text-primary);
 		font: inherit;
 		font-size: var(--fs-body);
@@ -267,15 +270,16 @@
 		opacity: 1;
 	}
 
-	input:focus-visible {
-		border-color: var(--focus-ring);
-		outline: 2px solid color-mix(in srgb, var(--focus-ring) 35%, transparent);
-		outline-offset: 0;
+	input:hover {
+		border-color: var(--border);
+		background: var(--bg-input);
 	}
 
-	input.is-changed {
-		border-color: var(--changed-edge);
-		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-input);
+	input:focus-visible {
+		border-color: var(--focus-ring);
+		background: var(--bg-input);
+		outline: 2px solid color-mix(in srgb, var(--focus-ring) 35%, transparent);
+		outline-offset: 0;
 	}
 
 	input[readonly] {

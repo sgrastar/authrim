@@ -45,7 +45,7 @@ const saved: ScreenField[] = [
 describe('screen translations', () => {
 	it('reads a part by its id, or by its place for one saved without an id', () => {
 		const screen = fieldsToBuilder(saved, ids());
-		const plan = screen.rows[0].columns[0][2].id;
+		const plan = screen.rows[2].columns[0][0].id;
 		const translations = localizationsToTranslations(
 			{
 				ja: {
@@ -74,7 +74,7 @@ describe('screen translations', () => {
 
 	it('saves only the texts the screen still has, under each part id', () => {
 		const screen = fieldsToBuilder(saved, ids());
-		const plan = screen.rows[0].columns[0][2].id;
+		const plan = screen.rows[2].columns[0][0].id;
 		const localizations = translationsToLocalizations(
 			{
 				[SCREEN_TEXT.name]: { ja: ' ようこそ ' },

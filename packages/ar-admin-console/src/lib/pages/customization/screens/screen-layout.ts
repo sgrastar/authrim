@@ -5,8 +5,8 @@
  * How a screen is saved: its parts in order, with `layout_row` parts between them. A layout row
  * starts a row of `layout_columns` columns (1–3) that runs until the next layout row; a part in it
  * names its column (`layout_column`, from 1), or is placed in the next column in turn. Parts before
- * the first layout row are one row of one column. The Login UI (RuntimeScreen.svelte) and the
- * legacy editor read it the same way.
+ * the first layout row have no explicit grouping and the builder presents each in its own
+ * one-column row. The Login UI (RuntimeScreen.svelte) displays those parts vertically as well.
  *
  * What the builder does not edit is kept: each part (and row) is saved over the field it was read
  * from, so properties it does not know survive a save.
@@ -149,9 +149,11 @@ export function fieldsToBuilder(
 	const ordered = [...fields].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 	let row: LayoutRow | null = null;
 	let placed = 0;
+	let explicitRow = false;
 	for (const field of ordered) {
 		if (!isRecord(field)) continue;
 		if (field.block_type === 'layout_row') {
+			explicitRow = true;
 			const id = idOf(field, 'row');
 			row = {
 				id,
@@ -163,7 +165,7 @@ export function fieldsToBuilder(
 			screen.origins[id] = field;
 			continue;
 		}
-		if (!row) {
+		if (!row || !explicitRow) {
 			const id = newId('row');
 			row = { id, columns: [[]] };
 			placed = 0;
