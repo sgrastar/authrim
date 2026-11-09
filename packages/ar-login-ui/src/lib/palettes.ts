@@ -5,39 +5,25 @@
  * The admin console keeps a mirror of the palette ids (`theme-palettes.ts`): an id there must be
  * one this file knows, or the real screens fall back to the default.
  *
- * The stylesheet is still keyed on the pre-palette names (`data-login-theme`, `data-page-layout`).
- * `legacyThemeFor` and `layoutFor` translate, so the existing rules keep painting the three
- * palettes they already cover, and `flat` is the one palette with rules of its own.
+ * `legacyThemeFor` and `layoutFor` select the stylesheet rules for each palette and template.
  */
 
-export const PALETTE_IDS = [
-	'meridian',
-	'classic',
-	'swiss-grid',
-	'glass',
-	'clear-glass',
-	'flat'
-] as const;
+export const PALETTE_IDS = ['clean', 'classic', 'swiss-grid', 'glass', 'clear-glass'] as const;
 export type PaletteId = (typeof PALETTE_IDS)[number];
-export const DEFAULT_PALETTE: PaletteId = 'meridian';
+export const DEFAULT_PALETTE: PaletteId = 'clean';
 
 export const TEMPLATE_IDS = ['standard', 'split', 'minimal'] as const;
 export type TemplateId = (typeof TEMPLATE_IDS)[number];
 export const DEFAULT_TEMPLATE: TemplateId = 'standard';
 
-/**
- * The value `data-login-theme` takes: the pre-palette names the stylesheet is still keyed on
- * (`classic`, `meridian`, `split-brand-panel`), and the palettes that came after them. The old
- * `fullbleed-glass` is Swiss Grid now; it is read from an older server, never written.
- */
+/** The CSS selector name used for a palette, with the named split preset also supported. */
 export type LegacyThemeName =
 	| 'classic'
-	| 'meridian'
+	| 'clean'
 	| 'split-brand-panel'
 	| 'swiss-grid'
 	| 'glass'
-	| 'clear-glass'
-	| 'flat';
+	| 'clear-glass';
 
 export function readPalette(value: unknown): PaletteId | null {
 	return typeof value === 'string' && (PALETTE_IDS as readonly string[]).includes(value)
@@ -51,14 +37,13 @@ export function readTemplate(value: unknown): TemplateId | null {
 		: null;
 }
 
-/** The pre-palette theme name for a palette: the one whose rules paint that palette. */
-export function legacyThemeFor(palette: PaletteId, template: TemplateId): LegacyThemeName {
+/** The CSS theme selector whose rules paint this palette. */
+export function legacyThemeFor(palette: PaletteId): LegacyThemeName {
 	if (palette === 'classic') return 'classic';
 	if (palette === 'swiss-grid') return 'swiss-grid';
 	if (palette === 'glass') return 'glass';
 	if (palette === 'clear-glass') return 'clear-glass';
-	if (palette === 'flat') return 'flat';
-	return template === 'split' ? 'split-brand-panel' : 'meridian';
+	return 'clean';
 }
 
 /** The pre-template `data-page-layout` for a template. `minimal` shares the centred layout. */
@@ -71,10 +56,9 @@ export function layoutFor(template: TemplateId): 'centered_card' | 'split_panel'
  * styles load, so the first frame does not flash another colour.
  */
 export const PALETTE_BACKGROUNDS: Record<PaletteId, { light: string; dark: string }> = {
-	meridian: { light: '#eef1f6', dark: '#0b0e16' },
+	clean: { light: '#ffffff', dark: '#0a0a0b' },
 	classic: { light: '#eeeae3', dark: '#0f0d0c' },
 	'swiss-grid': { light: '#f6f5f1', dark: '#121210' },
 	glass: { light: '#e9ecf2', dark: '#14161b' },
-	'clear-glass': { light: '#dce3e9', dark: '#111419' },
-	flat: { light: '#ffffff', dark: '#0a0a0b' }
+	'clear-glass': { light: '#dce3e9', dark: '#111419' }
 };

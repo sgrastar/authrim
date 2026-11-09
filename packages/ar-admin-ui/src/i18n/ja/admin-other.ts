@@ -349,8 +349,7 @@ const adminOther = {
 	admin_theme_duplicated_success: '「{name}」として複製しました。',
 	admin_theme_discard_confirm: '未保存のテーマ変更を破棄しますか？',
 	admin_theme_saved_success: '「{name}」を保存しました。',
-	admin_theme_template_meridian_description:
-		'中央カード、淡い背景にコバルトのアクセント。画像は任意です。',
+	admin_theme_template_clean_description: '白と細い線。影もすりガラスも使いません。',
 	admin_theme_template_split_brand_panel_description:
 		'ブランドパネルとコンパクトなフォーム領域を持つ2カラムページです。',
 	admin_theme_template_fullbleed_glass_description:

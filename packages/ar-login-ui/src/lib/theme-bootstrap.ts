@@ -1,13 +1,8 @@
 import { PALETTE_BACKGROUNDS, type PaletteId } from './palettes.js';
 
 export type LoginUIThemeMode = 'light' | 'dark';
-/** A pre-palette theme name, or a palette id (those that came after the old names have none). */
-export type LoginUIThemeTemplate =
-	| 'classic'
-	| 'meridian'
-	| 'split-brand-panel'
-	| 'fullbleed-glass'
-	| PaletteId;
+/** A named theme preset or a palette id, used before the stylesheet loads. */
+export type LoginUIThemeTemplate = 'classic' | 'split-brand-panel' | 'fullbleed-glass' | PaletteId;
 
 export const LOGIN_UI_THEME_HINT_COOKIE = 'authrim_theme_hint';
 /** Where the visitor's own light / dark choice is kept (localStorage). */
@@ -15,7 +10,7 @@ export const LOGIN_UI_THEME_STORAGE_KEY = 'authrim-theme';
 export const LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS = 60 * 60;
 
 /** The theme template the Login UI uses when none is set (login-ui.theme_template). */
-export const DEFAULT_LOGIN_UI_THEME_TEMPLATE: LoginUIThemeTemplate = 'meridian';
+export const DEFAULT_LOGIN_UI_THEME_TEMPLATE: LoginUIThemeTemplate = 'clean';
 
 /**
  * The page background of each theme template in each mode, as app.css and themes.css paint it
@@ -24,15 +19,14 @@ export const DEFAULT_LOGIN_UI_THEME_TEMPLATE: LoginUIThemeTemplate = 'meridian';
  */
 const THEME_TEMPLATE_BACKGROUNDS: Record<LoginUIThemeTemplate, Record<LoginUIThemeMode, string>> = {
 	classic: { light: '#eeeae3', dark: '#0f0d0c' },
-	meridian: { light: '#eef1f6', dark: '#0b0e16' },
-	'split-brand-panel': { light: '#eef1f6', dark: '#0b0e16' },
+	clean: PALETTE_BACKGROUNDS.clean,
+	'split-brand-panel': PALETTE_BACKGROUNDS.clean,
 	// The old Full-bleed glass is Swiss Grid now; an older server may still send the old name.
 	'fullbleed-glass': PALETTE_BACKGROUNDS['swiss-grid'],
 	// The palette ids not already named above; the palette table is the single source.
 	'swiss-grid': PALETTE_BACKGROUNDS['swiss-grid'],
 	glass: PALETTE_BACKGROUNDS.glass,
-	'clear-glass': PALETTE_BACKGROUNDS['clear-glass'],
-	flat: PALETTE_BACKGROUNDS.flat
+	'clear-glass': PALETTE_BACKGROUNDS['clear-glass']
 };
 
 export function normalizeLoginUIThemeMode(value: unknown): LoginUIThemeMode | null {

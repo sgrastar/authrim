@@ -9,16 +9,15 @@ describe('buildLoginUIConfig with a template and a palette', () => {
 			for (const palette of PALETTE_IDS) {
 				const ui = buildLoginUIConfig({ template, palette, scheme: 'light' });
 				expect(ui.pageTemplate).toMatchObject({ template, palette, layout: layoutFor(template) });
-				// The pre-palette name the server sends alongside, for older Login UI builds (the
-				// table of ar-management's deriveLegacyThemeTemplate).
-				const meridianName = template === 'split' ? 'split-brand-panel' : 'meridian';
+				// The themeTemplate value the server sends alongside the palette and template
+				// (the table of ar-management's deriveLegacyThemeTemplate).
+				const cleanName = template === 'split' ? 'split-brand-panel' : 'clean';
 				const legacy: Record<(typeof PALETTE_IDS)[number], string> = {
-					meridian: meridianName,
+					clean: cleanName,
 					classic: 'classic',
 					'swiss-grid': 'fullbleed-glass',
-					glass: meridianName,
-					'clear-glass': meridianName,
-					flat: meridianName
+					glass: cleanName,
+					'clear-glass': cleanName
 				};
 				expect(ui.themeTemplate).toBe(legacy[palette]);
 			}
@@ -29,7 +28,7 @@ describe('buildLoginUIConfig with a template and a palette', () => {
 		// The server does not derive the position from the template: below the card unless set.
 		for (const template of TEMPLATE_IDS) {
 			expect(
-				buildLoginUIConfig({ template, palette: 'meridian', scheme: 'light' }).pageTemplate
+				buildLoginUIConfig({ template, palette: 'clean', scheme: 'light' }).pageTemplate
 					?.topbarPosition
 			).toBe('below_card');
 		}
@@ -53,7 +52,7 @@ describe('buildLoginUIConfig with a template and a palette', () => {
 		}
 		// A story that names the template keeps it, whatever else it sets.
 		const named = buildLoginUIConfig(
-			{ template: 'split', palette: 'flat', scheme: 'light' },
+			{ template: 'split', palette: 'clean', scheme: 'light' },
 			{ pageTemplate: { layout: 'split_panel', template: 'minimal' } }
 		);
 		expect(named.pageTemplate?.template).toBe('minimal');
@@ -88,8 +87,8 @@ describe('toolbar values', () => {
 		expect(templateFrom('split')).toBe('split');
 		expect(templateFrom('hero')).toBe('standard');
 		expect(templateFrom(undefined)).toBe('standard');
-		expect(paletteFrom('flat')).toBe('flat');
-		expect(paletteFrom('split-brand-panel')).toBe('meridian');
-		expect(paletteFrom(7)).toBe('meridian');
+		expect(paletteFrom('clean')).toBe('clean');
+		expect(paletteFrom('split-brand-panel')).toBe('clean');
+		expect(paletteFrom(7)).toBe('clean');
 	});
 });

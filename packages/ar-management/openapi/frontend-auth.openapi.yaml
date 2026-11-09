@@ -528,7 +528,7 @@ components:
                 headerName: ''
               pageTemplate:
                 template: standard
-                palette: meridian
+                palette: clean
                 formFrame: full
             meta:
               cacheTTL: 60
@@ -1448,13 +1448,12 @@ components:
                 palette:
                   type: string
                   enum:
-                    - meridian
+                    - clean
                     - classic
                     - swiss-grid
                     - glass
                     - clear-glass
-                    - flat
-                  default: meridian
+                  default: clean
                   description: >-
                     Built-in colour and shape set. `swiss-grid` is flat, square and high contrast, drawn
                     as the Admin console's Swiss Grid theme is; `glass` is frosted glass (blurred,

@@ -261,10 +261,10 @@ interface UIConfig {
   /** With `theme` light/dark: that mode always applies and the Login UI hides its toggle. */
   themeFixed: boolean;
   /**
-   * @deprecated Derived from `pageTemplate.palette` / `pageTemplate.template` for older Login UI
-   * builds still in browser caches. New code reads `pageTemplate.palette` and `.template`.
+   * @deprecated Derived from `pageTemplate.palette` / `pageTemplate.template`.
+   * New code reads `pageTemplate.palette` and `.template`.
    */
-  themeTemplate: 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
+  themeTemplate: 'classic' | 'clean' | 'split-brand-panel' | 'fullbleed-glass';
   branding: {
     logoUrl: string | null;
     faviconUrl: string | null;
@@ -487,7 +487,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
   lite: { mode: 'off', logo: null },
   theme: 'auto',
   themeFixed: false,
-  themeTemplate: 'meridian',
+  themeTemplate: 'clean',
   branding: {
     logoUrl: null,
     faviconUrl: null,
@@ -1257,8 +1257,8 @@ function readCustomCss(value: unknown, fallback: string | null): string | null {
 /** The palette a deprecated `login-ui.theme_template` value stands for. */
 const LEGACY_THEME_TEMPLATE_PALETTE: Record<string, LoginUIPaletteId> = {
   classic: 'classic',
-  meridian: 'meridian',
-  'split-brand-panel': 'meridian',
+  clean: 'clean',
+  'split-brand-panel': 'clean',
   // The old Full-bleed glass look is now the Swiss Grid palette; `glass` is a new palette.
   'fullbleed-glass': 'swiss-grid',
 };
@@ -1286,7 +1286,7 @@ function readTemplate(
 
 /**
  * The palette: `login-ui.palette` when it names a built-in, else derived from the deprecated
- * `login-ui.theme_template`, else the inherited value (the default `meridian` at the root).
+ * `login-ui.theme_template`, else the inherited value (the default `clean` at the root).
  */
 function readPalette(kvSettings: LoginUIKVSettings, fallback: LoginUIPaletteId): LoginUIPaletteId {
   const configured = kvSettings['login-ui.palette'];
@@ -2674,9 +2674,9 @@ function deriveLegacyThemeTemplate(
   template: LoginUITemplateId
 ): UIConfig['themeTemplate'] {
   if (palette === 'classic') return 'classic';
-  // An older Login UI build knows no Swiss Grid, Glass, Clear glass or Flat: it gets the nearest name it has.
+  // The theme template accompanies the independent palette and layout settings.
   if (palette === 'swiss-grid') return 'fullbleed-glass';
-  return template === 'split' ? 'split-brand-panel' : 'meridian';
+  return template === 'split' ? 'split-brand-panel' : 'clean';
 }
 
 /**

@@ -24,7 +24,7 @@
 			docs: {
 				description: {
 					component:
-						'A tenant picks a **theme** (palette and shape: Meridian, Classic, Split brand panel, Full-bleed glass), a **layout** (centred card, split panel, full-bleed card) and light or dark. They are separate settings; the Admin console\'s theme page offers them as presets. The **brand panel** is the element only the split layout adds, and it needs `brand content` other than "none". On narrow screens (up to 640px) the panel is hidden.'
+						'A tenant picks a **theme** (palette and shape: Clean, Classic, Split brand panel, Full-bleed glass), a **layout** (centred card, split panel, full-bleed card) and light or dark. They are separate settings; the Admin console\'s theme page offers them as presets. The **brand panel** is the element only the split layout adds, and it needs `brand content` other than "none". On narrow screens (up to 640px) the panel is hidden.'
 				}
 			}
 		}

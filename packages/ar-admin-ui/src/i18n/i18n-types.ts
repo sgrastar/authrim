@@ -32372,7 +32372,7 @@ type RootTranslation = {
 	/**
 	 * C​e​n​t​e​r​e​d​ ​c​a​r​d​,​ ​c​o​b​a​l​t​ ​o​n​ ​c​o​o​l​ ​p​a​p​e​r​,​ ​i​m​a​g​e​ ​o​p​t​i​o​n​a​l​.
 	 */
-	admin_theme_template_meridian_description: string;
+	admin_theme_template_clean_description: string;
 	/**
 	 * T​w​o​-​c​o​l​u​m​n​ ​p​a​g​e​ ​w​i​t​h​ ​a​ ​b​r​a​n​d​ ​p​a​n​e​l​ ​a​n​d​ ​c​o​m​p​a​c​t​ ​f​o​r​m​ ​a​r​e​a​.
 	 */
@@ -66222,7 +66222,7 @@ Remove this role from {email}?
 	/**
 	 * Centered card, cobalt on cool paper, image optional.
 	 */
-	admin_theme_template_meridian_description: () => LocalizedString;
+	admin_theme_template_clean_description: () => LocalizedString;
 	/**
 	 * Two-column page with a brand panel and compact form area.
 	 */

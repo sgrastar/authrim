@@ -84,7 +84,7 @@
 	] as const;
 
 	type ThemeTemplateOption = {
-		id: 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
+		id: 'classic' | 'clean' | 'split-brand-panel' | 'fullbleed-glass';
 		name: string;
 		description: string;
 		layout: 'centered_card' | 'split_panel' | 'fullbleed_card';
@@ -126,14 +126,14 @@
 
 	const themeTemplateOptions: ThemeTemplateOption[] = [
 		{
-			id: 'meridian',
-			name: 'Meridian',
-			description: 'Centered card, cobalt on cool paper, image optional.',
+			id: 'clean',
+			name: 'Clean',
+			description: 'White and thin lines. No shadow, no frost.',
 			layout: 'centered_card',
 			theme: 'light',
 			backgroundColor: '',
 			fontFamily: 'system',
-			swatch: ['#eef1f6', '#ffffff', '#2f52c4']
+			swatch: ['#ffffff', '#ffffff', '#2f52c4']
 		},
 		{
 			id: 'split-brand-panel',
@@ -376,7 +376,7 @@
 	let hasChanges = $derived(pendingPatches.length > 0);
 	let currentThemeTemplate = $derived(
 		themeTemplateOptions.find(
-			(option) => option.id === getLiveString('login-ui.theme_template', 'meridian')
+			(option) => option.id === getLiveString('login-ui.theme_template', 'clean')
 		) ?? themeTemplateOptions[0]
 	);
 	let customThemesDoc = $derived(parseCustomThemesDoc(getLiveString('login-ui.custom_themes', '')));
@@ -943,7 +943,7 @@
 					const name = typeof item.name === 'string' ? item.name.trim() : '';
 					const base = themeTemplateOptions.some((o) => o.id === item.base)
 						? (item.base as ThemeTemplateOption['id'])
-						: 'meridian';
+						: 'clean';
 					if (!id || !name) return null;
 					const rawValues =
 						item.values && typeof item.values === 'object'
@@ -988,7 +988,7 @@
 	}
 
 	function themeTemplateDescription(option: ThemeTemplateOption): string {
-		if (option.id === 'meridian') return $LL.admin_theme_template_meridian_description();
+		if (option.id === 'clean') return $LL.admin_theme_template_clean_description();
 		if (option.id === 'split-brand-panel') {
 			return $LL.admin_theme_template_split_brand_panel_description();
 		}
@@ -1863,7 +1863,7 @@
 										class:fullbleed={previewPageLayout === 'fullbleed_card'}
 										class:dark={previewColorMode === 'dark'}
 										class:light={previewColorMode === 'light'}
-										class:template-meridian={previewTemplate.id === 'meridian'}
+										class:template-clean={previewTemplate.id === 'clean'}
 										class:template-split={previewTemplate.id === 'split-brand-panel'}
 										class:template-fullbleed={previewTemplate.id === 'fullbleed-glass'}
 										class:template-classic={previewTemplate.id === 'classic'}
@@ -2308,7 +2308,7 @@
 														</label>
 													{/if}
 													{#if previewSplitBackgroundMode === 'brand'}
-														{#each [{ label: 'Panel color', key: 'login-ui.login_panel_background_color', fallback: previewColorMode === 'dark' ? '#131a2a' : '#ffffff' }, { label: 'Panel gradient', key: 'login-ui.login_panel_background_gradient_color', fallback: previewColorMode === 'dark' ? '#1a2336' : '#eef1f6' }] as field (field.key)}
+														{#each [{ label: 'Panel color', key: 'login-ui.login_panel_background_color', fallback: previewColorMode === 'dark' ? '#0a0a0b' : '#ffffff' }, { label: 'Panel gradient', key: 'login-ui.login_panel_background_gradient_color', fallback: previewColorMode === 'dark' ? '#111113' : '#ffffff' }] as field (field.key)}
 															<div class="inspector-color-row">
 																<span class="inspector-field-label">{field.label}</span>
 																<input
@@ -2401,7 +2401,7 @@
 											class="preview-accordion-content"
 										>
 											<div class="inspector-fields">
-												{#each [{ label: 'Background', key: 'login-ui.background_color', fallback: previewColorMode === 'dark' ? '#0b0e16' : '#eef1f6' }, { label: 'Accent', key: 'login-ui.accent_color', fallback: previewTemplate.id === 'fullbleed-glass' ? (previewColorMode === 'dark' ? '#e8623f' : '#b0301b') : previewColorMode === 'dark' ? '#93aef2' : '#2f52c4' }, { label: 'Title', key: 'login-ui.title_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Text', key: 'login-ui.text_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Copy', key: 'login-ui.copy_color', fallback: previewColorMode === 'dark' ? '#aeb9d0' : '#55617c' }] as field (field.key)}
+												{#each [{ label: 'Background', key: 'login-ui.background_color', fallback: previewColorMode === 'dark' ? '#0a0a0b' : '#ffffff' }, { label: 'Accent', key: 'login-ui.accent_color', fallback: previewTemplate.id === 'fullbleed-glass' ? (previewColorMode === 'dark' ? '#e8623f' : '#b0301b') : previewColorMode === 'dark' ? '#93aef2' : '#2f52c4' }, { label: 'Title', key: 'login-ui.title_color', fallback: previewColorMode === 'dark' ? '#f4f4f5' : '#111827' }, { label: 'Text', key: 'login-ui.text_color', fallback: previewColorMode === 'dark' ? '#d4d4d8' : '#374151' }, { label: 'Copy', key: 'login-ui.copy_color', fallback: previewColorMode === 'dark' ? '#a1a1aa' : '#6b7280' }] as field (field.key)}
 													<div class="inspector-color-row">
 														<span class="inspector-field-label">{field.label}</span>
 														<input
@@ -3798,19 +3798,19 @@
 	}
 
 	.login-preview-page {
-		--preview-bg-page: #eef1f6;
+		--preview-bg-page: #ffffff;
 		--preview-bg-card: #ffffff;
-		--preview-bg-glass: #f7f9fc;
-		--preview-bg-input: #f7f9fc;
-		--preview-text: #182238;
-		--preview-text-secondary: #55617c;
-		--preview-text-muted: #8a94ab;
-		--preview-border: rgba(24, 34, 56, 0.14);
+		--preview-bg-glass: #ffffff;
+		--preview-bg-input: #ffffff;
+		--preview-text: #111827;
+		--preview-text-secondary: #374151;
+		--preview-text-muted: #6b7280;
+		--preview-border: rgba(17, 24, 39, 0.16);
 		--preview-primary: #2f52c4;
 		--preview-primary-text: #ffffff;
-		--preview-card-radius: 20px;
+		--preview-card-radius: 8px;
 		--preview-card-padding: 20px;
-		--preview-control-radius: 12px;
+		--preview-control-radius: 8px;
 		--preview-screen-gap: 0.875rem;
 		--preview-copy-size: 0.8125rem;
 		--preview-label-size: 0.8125rem;
@@ -3833,9 +3833,7 @@
 		padding: 48px 20px;
 		overflow: auto;
 		background-color: var(--preview-background-color, var(--preview-bg-page));
-		background-image:
-			radial-gradient(1100px 460px at 50% -140px, rgba(47, 82, 196, 0.1), transparent 68%),
-			var(--preview-background-image, none);
+		background-image: var(--preview-background-image, none);
 		background-position: center;
 		background-size: cover;
 		color: var(--preview-text-color, var(--preview-text));
@@ -3844,14 +3842,14 @@
 	}
 
 	.login-preview-page.dark {
-		--preview-bg-page: #0b0e16;
-		--preview-bg-card: #131a2a;
-		--preview-bg-glass: #1a2336;
-		--preview-bg-input: #1a2336;
-		--preview-text: #eef2fa;
-		--preview-text-secondary: #aeb9d0;
-		--preview-text-muted: #7683a0;
-		--preview-border: rgba(147, 174, 242, 0.18);
+		--preview-bg-page: #0a0a0b;
+		--preview-bg-card: #0a0a0b;
+		--preview-bg-glass: #111113;
+		--preview-bg-input: #111113;
+		--preview-text: #f4f4f5;
+		--preview-text-secondary: #d4d4d8;
+		--preview-text-muted: #a1a1aa;
+		--preview-border: rgba(244, 244, 245, 0.2);
 		--preview-primary: #93aef2;
 		--preview-primary-text: #0c1327;
 	}
@@ -3931,6 +3929,11 @@
 		background: var(--preview-bg-card);
 		box-shadow: 0 24px 72px rgba(0, 0, 0, 0.18);
 		backdrop-filter: blur(18px) saturate(140%);
+	}
+
+	.login-preview-page:is(.template-clean, .template-split) .preview-card {
+		box-shadow: none;
+		backdrop-filter: none;
 	}
 
 	.preview-card-body {

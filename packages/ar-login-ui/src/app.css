@@ -997,90 +997,6 @@ tr.expired {
 	--login-page-max-width: 420px;
 }
 
-/* Meridian: cobalt on cool paper (mock: mocks/meridian.html).
-   split-brand-panel shares the Meridian palette (mock: mocks/split-brand-panel.html). */
-:is(:root, .login-ui-theme-boundary)[data-login-theme='meridian'],
-:is(:root, .login-ui-theme-boundary)[data-login-theme='split-brand-panel'] {
-	--login-page-background-color: #eef1f6;
-	--login-page-overlay: radial-gradient(
-		1100px 460px at 50% -140px,
-		rgba(47, 82, 196, 0.1),
-		transparent 68%
-	);
-	/* The tenant's main button colour (accent), when set, in place of cobalt; as every palette. */
-	--primary: var(--login-accent-color, #2f52c4);
-	--primary-hover: var(--login-accent-color, #24409e);
-	--primary-light: rgba(47, 82, 196, 0.08);
-	--gradient-primary: linear-gradient(135deg, #2f52c4 0%, #24409e 100%);
-	--bg-page: #eef1f6;
-	--bg-card: #ffffff;
-	--bg-glass: #f7f9fc;
-	--bg-input: #f7f9fc;
-	--bg-subtle: rgba(24, 34, 56, 0.05);
-	--border: rgba(24, 34, 56, 0.12);
-	--border-glass: rgba(24, 34, 56, 0.1);
-	--text-primary: #182238;
-	--text-secondary: #55617c;
-	--text-muted: #656c7d;
-	--radius-sm: 8px;
-	--radius-md: 10px;
-	--radius-lg: 12px;
-	--radius-xl: 20px;
-	--card-radius: 20px;
-	--card-padding: 24px;
-	--button-radius: 12px;
-	--input-radius: 12px;
-	--input-border: rgba(24, 34, 56, 0.16);
-	--button-primary-bg: var(--login-accent-color, #2f52c4);
-	--button-primary-text: var(--login-accent-text, #ffffff);
-	--button-secondary-bg: #ffffff;
-	--button-secondary-border: rgba(24, 34, 56, 0.18);
-	--button-secondary-text: #182238;
-	--card-bg-muted: #f4f6fb;
-	--surface-muted: #f4f6fb;
-	--accent-color: #2f52c4;
-	--border-color: rgba(24, 34, 56, 0.12);
-	--shadow-sm: 0 1px 2px rgba(24, 34, 56, 0.04), 0 10px 32px rgba(24, 34, 56, 0.08);
-	--panel-glass-bg: rgba(255, 255, 255, 0.5);
-	--login-page-max-width: 420px;
-}
-
-:is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='meridian'],
-:is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='split-brand-panel'] {
-	--login-page-background-color: #0b0e16;
-	--login-page-overlay: radial-gradient(
-		1100px 460px at 50% -140px,
-		rgba(147, 174, 242, 0.09),
-		transparent 68%
-	);
-	--primary: var(--login-accent-color, #93aef2);
-	--primary-hover: var(--login-accent-color, #b3c6f7);
-	--primary-light: rgba(147, 174, 242, 0.12);
-	--gradient-primary: linear-gradient(135deg, #93aef2 0%, #7a97e8 100%);
-	--bg-page: #0b0e16;
-	--bg-card: #131a2a;
-	--bg-glass: #1a2336;
-	--bg-input: #1a2336;
-	--bg-subtle: rgba(147, 174, 242, 0.08);
-	--border: rgba(147, 174, 242, 0.16);
-	--border-glass: rgba(147, 174, 242, 0.14);
-	--text-primary: #eef2fa;
-	--text-secondary: #aeb9d0;
-	--text-muted: #7683a0;
-	--input-border: rgba(147, 174, 242, 0.22);
-	--button-primary-bg: var(--login-accent-color, #93aef2);
-	--button-primary-text: var(--login-accent-text, #0c1327);
-	--button-secondary-bg: #172033;
-	--button-secondary-border: rgba(147, 174, 242, 0.24);
-	--button-secondary-text: #eef2fa;
-	--card-bg-muted: #172033;
-	--surface-muted: #172033;
-	--accent-color: #93aef2;
-	--border-color: rgba(147, 174, 242, 0.16);
-	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 40px rgba(0, 0, 0, 0.45);
-	--panel-glass-bg: rgba(11, 14, 22, 0.4);
-}
-
 /* The brand panel always sits on a dark photographic or navy surface, whatever the palette. Keep
    its content on dedicated high-contrast colors instead of inheriting form colors. */
 :is(:root, .login-ui-theme-boundary)[data-login-theme='split-brand-panel'],
@@ -2924,9 +2840,10 @@ tr.expired {
 }
 
 /* === Palettes and templates (login-ui.palette, login-ui.template) ===
-   The pre-palette themes above paint meridian, classic and glass. `flat` is the palette with
+   The presets above paint classic and glass. `clean` is the palette with
    rules of its own: no shadow, small corners, a hairline border in place of a card surface. */
-:is(:root, .login-ui-theme-boundary)[data-login-theme='flat'] {
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clean'],
+:is(:root, .login-ui-theme-boundary)[data-login-theme='split-brand-panel'] {
 	--login-page-background-color: #ffffff;
 	--login-page-overlay: transparent;
 	--primary: var(--login-accent-color, #2f52c4);
@@ -2966,7 +2883,8 @@ tr.expired {
 	--login-page-max-width: 420px;
 }
 
-:is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='flat'] {
+:is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='clean'],
+:is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='split-brand-panel'] {
 	--login-page-background-color: #0a0a0b;
 	--primary: var(--login-accent-color, #93aef2);
 	--primary-hover: color-mix(in srgb, var(--primary) 82%, white);

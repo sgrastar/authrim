@@ -71,8 +71,8 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.g.palette': 'Palette',
 	'th.g.palette.d':
 		'The colours and the shape of the form area. It combines with any template; colours set under Design replace its own.',
-	'th.palette.meridian': 'Meridian',
-	'th.palette.meridian.d': 'Cool blue on pale paper. Softly rounded.',
+	'th.palette.clean': 'Clean',
+	'th.palette.clean.d': 'White and thin lines. No shadow, no frost.',
 	'th.palette.classic': 'Classic',
 	'th.palette.classic.d': 'Warm neutrals. Gently rounded.',
 	'th.palette.swiss-grid': 'Swiss Grid',
@@ -83,8 +83,6 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.palette.clear-glass': 'Clear glass',
 	'th.palette.clear-glass.d':
 		'Clear panes, seen by an iridescent rim, glints along the edges and a reflection. Pill-shaped buttons.',
-	'th.palette.flat': 'Flat',
-	'th.palette.flat.d': 'White and thin lines. No shadow, no frost.',
 	'th.g.colours': 'Colours',
 	'th.g.colours.d':
 		'Light and dark each have their own colours. An empty colour uses the standard one, which the field shows.',

@@ -253,10 +253,10 @@ describe('Authentication Methods API', () => {
       expect((body as { ui: ServedLoginUi }).ui.branding.headerName).toBe('');
       expect(body.ui.branding.logoUrl).toBeNull();
       expect(body.ui.branding.faviconUrl).toBeNull();
-      expect(body.ui.themeTemplate).toBe('meridian');
+      expect(body.ui.themeTemplate).toBe('clean');
       expect(body.ui.pageTemplate).toMatchObject({
         template: 'standard',
-        palette: 'meridian',
+        palette: 'clean',
         layout: 'centered_card',
         formAreaColor: '',
         formFrame: 'full',
@@ -2497,7 +2497,7 @@ describe('Authentication Methods API', () => {
       expect(ui.pageTemplate.layout).toBe(template === 'split' ? 'split_panel' : 'centered_card');
     });
 
-    it.each(['meridian', 'classic', 'swiss-grid', 'glass', 'clear-glass', 'flat'])(
+    it.each(['clean', 'classic', 'swiss-grid', 'glass', 'clear-glass'])(
       'serves the palette %s',
       async (palette) => {
         const ui = await getUi({ 'login-ui.palette': palette });
@@ -2508,14 +2508,13 @@ describe('Authentication Methods API', () => {
     it.each([
       // An older Login UI build knows only the four old names: it gets the nearest one it has.
       ['classic', 'standard', 'classic'],
-      ['meridian', 'standard', 'meridian'],
-      ['meridian', 'split', 'split-brand-panel'],
+      ['clean', 'standard', 'clean'],
+      ['clean', 'split', 'split-brand-panel'],
       ['swiss-grid', 'standard', 'fullbleed-glass'],
-      ['glass', 'standard', 'meridian'],
+      ['glass', 'standard', 'clean'],
       ['glass', 'split', 'split-brand-panel'],
-      ['clear-glass', 'standard', 'meridian'],
+      ['clear-glass', 'standard', 'clean'],
       ['clear-glass', 'split', 'split-brand-panel'],
-      ['flat', 'standard', 'meridian'],
     ])(
       'sends the palette %s on the %s template as the old name %s',
       async (palette, template, legacy) => {
@@ -2524,11 +2523,14 @@ describe('Authentication Methods API', () => {
       }
     );
 
-    it('falls back to the defaults for unknown template and palette ids', async () => {
-      const ui = await getUi({ 'login-ui.template': 'fullbleed', 'login-ui.palette': 'neon' });
-      expect(ui.pageTemplate.template).toBe('standard');
-      expect(ui.pageTemplate.palette).toBe('meridian');
-    });
+    it.each(['neon', 'meridian', 'flat'])(
+      'falls back to Clean for unsupported palette %s',
+      async (palette) => {
+        const ui = await getUi({ 'login-ui.template': 'fullbleed', 'login-ui.palette': palette });
+        expect(ui.pageTemplate.template).toBe('standard');
+        expect(ui.pageTemplate.palette).toBe('clean');
+      }
+    );
 
     it('never returns fullbleed_card as the layout', async () => {
       const ui = await getUi({ 'login-ui.page_layout': 'fullbleed_card' });
@@ -2552,8 +2554,8 @@ describe('Authentication Methods API', () => {
 
     it.each([
       ['classic', 'classic'],
-      ['meridian', 'meridian'],
-      ['split-brand-panel', 'meridian'],
+      ['clean', 'clean'],
+      ['split-brand-panel', 'clean'],
       // The old Full-bleed glass is Swiss Grid now; `glass` is a new palette.
       ['fullbleed-glass', 'swiss-grid'],
     ])(
@@ -2568,9 +2570,9 @@ describe('Authentication Methods API', () => {
     it('prefers the palette over the deprecated theme_template', async () => {
       const ui = await getUi({
         'login-ui.theme_template': 'classic',
-        'login-ui.palette': 'flat',
+        'login-ui.palette': 'clean',
       });
-      expect(ui.pageTemplate.palette).toBe('flat');
+      expect(ui.pageTemplate.palette).toBe('clean');
     });
 
     it('inherits a platform template when the tenant sets nothing', async () => {
@@ -2579,12 +2581,12 @@ describe('Authentication Methods API', () => {
         {
           'settings:platform:login-ui': JSON.stringify({
             'login-ui.template': 'minimal',
-            'login-ui.palette': 'flat',
+            'login-ui.palette': 'clean',
           }),
         }
       );
       expect(ui.pageTemplate.template).toBe('minimal');
-      expect(ui.pageTemplate.palette).toBe('flat');
+      expect(ui.pageTemplate.palette).toBe('clean');
     });
 
     it('serves auto, light and dark as the theme mode and rejects other values', async () => {
@@ -2660,7 +2662,7 @@ describe('Authentication Methods API', () => {
     it('ignores an inherited property name as the deprecated theme_template', async () => {
       for (const legacy of ['constructor', 'toString', '__proto__']) {
         const ui = await getUi({ 'login-ui.theme_template': legacy });
-        expect(ui.pageTemplate.palette, legacy).toBe('meridian');
+        expect(ui.pageTemplate.palette, legacy).toBe('clean');
       }
     });
 

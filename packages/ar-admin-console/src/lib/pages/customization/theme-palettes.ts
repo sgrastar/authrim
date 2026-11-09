@@ -8,7 +8,7 @@
  * palette it knows, or the real screens fall back to the default.
  */
 
-export type PaletteId = 'meridian' | 'classic' | 'swiss-grid' | 'glass' | 'clear-glass' | 'flat';
+export type PaletteId = 'clean' | 'classic' | 'swiss-grid' | 'glass' | 'clear-glass';
 
 /** The colours that apply while a colour field is empty (the fields show these). */
 export interface PaletteColours {
@@ -49,28 +49,28 @@ export interface ThemePalette {
 	shape: PaletteShape;
 }
 
-export const DEFAULT_PALETTE: PaletteId = 'meridian';
+export const DEFAULT_PALETTE: PaletteId = 'clean';
 
 export const THEME_PALETTES: readonly ThemePalette[] = [
 	{
-		id: 'meridian',
+		id: 'clean',
 		light: {
-			background: '#eef1f6',
+			background: '#ffffff',
 			card: '#ffffff',
 			accent: '#2f52c4',
-			title: '#182238',
-			text: '#182238',
-			copy: '#55617c'
+			title: '#111827',
+			text: '#374151',
+			copy: '#6b7280'
 		},
 		dark: {
-			background: '#0b0e16',
-			card: '#131a2a',
+			background: '#0a0a0b',
+			card: '#0a0a0b',
 			accent: '#93aef2',
-			title: '#eef2fa',
-			text: '#eef2fa',
-			copy: '#aeb9d0'
+			title: '#f4f4f5',
+			text: '#d4d4d8',
+			copy: '#a1a1aa'
 		},
-		shape: { cardRadius: 20, controlRadius: 12, shadow: 'soft', frost: false }
+		shape: { cardRadius: 8, controlRadius: 8, shadow: 'none', frost: false }
 	},
 	{
 		id: 'classic',
@@ -167,26 +167,6 @@ export const THEME_PALETTES: readonly ThemePalette[] = [
 			shadow: 'clear',
 			frost: true
 		}
-	},
-	{
-		id: 'flat',
-		light: {
-			background: '#ffffff',
-			card: '#ffffff',
-			accent: '#2f52c4',
-			title: '#111827',
-			text: '#374151',
-			copy: '#6b7280'
-		},
-		dark: {
-			background: '#0a0a0b',
-			card: '#0a0a0b',
-			accent: '#93aef2',
-			title: '#f4f4f5',
-			text: '#d4d4d8',
-			copy: '#a1a1aa'
-		},
-		shape: { cardRadius: 8, controlRadius: 8, shadow: 'none', frost: false }
 	}
 ];
 

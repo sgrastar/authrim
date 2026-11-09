@@ -132,7 +132,7 @@ interface FooterLink {
 	url: string;
 }
 
-const DEFAULT_THEME_TEMPLATE: ThemeTemplate = 'meridian';
+const DEFAULT_THEME_TEMPLATE: ThemeTemplate = 'clean';
 const DEFAULT_PAGE_LAYOUT: PageLayout = 'centered_card';
 
 function readThemeTemplate(value: unknown): ThemeTemplate {
@@ -143,8 +143,7 @@ function readThemeTemplate(value: unknown): ThemeTemplate {
 		value === 'swiss-grid' ||
 		value === 'glass' ||
 		value === 'clear-glass' ||
-		value === 'flat' ||
-		value === 'meridian'
+		value === 'clean'
 		? value
 		: DEFAULT_THEME_TEMPLATE;
 }
@@ -155,7 +154,7 @@ function paletteOfThemeTemplate(value: ThemeTemplate): PaletteId {
 	if (value === 'swiss-grid') return 'swiss-grid';
 	if (value === 'glass') return 'glass';
 	if (value === 'clear-glass') return 'clear-glass';
-	if (value === 'flat') return 'flat';
+	if (value === 'clean') return 'clean';
 	return DEFAULT_PALETTE;
 }
 
@@ -589,7 +588,7 @@ export function createLoginUIPageStore() {
 		template = servedTemplate ?? templateOfLayout(layout);
 		const legacyTheme = readThemeTemplate(ui?.themeTemplate);
 		palette = servedPalette ?? paletteOfThemeTemplate(legacyTheme);
-		themeTemplate = servedPalette ? legacyThemeFor(servedPalette, template) : legacyTheme;
+		themeTemplate = servedPalette ? legacyThemeFor(servedPalette) : legacyTheme;
 		formFrame = readFormFrame(page?.formFrame);
 		formAreaColor = READ_COLOUR.form_area(page?.formAreaColor);
 		brandPanelBackgroundColor = READ_COLOUR.brand_panel_background(page?.brandPanelBackgroundColor);

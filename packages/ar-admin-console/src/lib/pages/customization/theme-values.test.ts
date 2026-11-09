@@ -319,7 +319,7 @@ describe('theme values', () => {
 			'login-ui.logo_display': 'text'
 		});
 		expect(draft.template).toBe('standard');
-		expect(draft.palette).toBe('meridian');
+		expect(draft.palette).toBe('clean');
 		expect(draft.backgroundOpacity).toBe(100);
 		// The panel follows the header when it inherits.
 		expect(draft.brandLogoDisplay).toBe('name');
