@@ -404,14 +404,19 @@
 		const image = () => canvasElement.querySelector('.outline > .outline__image');
 		const formImage = () => canvasElement.querySelector('.outline__card .outline__image');
 		const logo = () => canvasElement.querySelector('.outline .brand__logo[src]');
+		const svg = (name: string, first: string, last: string) =>
+			new File(
+				[
+					`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="${first}"/><stop offset="1" stop-color="${last}"/></linearGradient></defs><rect width="320" height="240" fill="url(#g)"/></svg>`
+				],
+				name,
+				{ type: 'image/svg+xml' }
+			);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
 		const lightFiles = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
-		await userEvent.upload(lightFiles[0], new File(['light'], 'logo.png', { type: 'image/png' }));
-		await userEvent.upload(
-			lightFiles[1],
-			new File(['light'], 'background.png', { type: 'image/png' })
-		);
-		await userEvent.upload(lightFiles[2], new File(['light'], 'form.png', { type: 'image/png' }));
+		await userEvent.upload(lightFiles[0], svg('logo.svg', '#f1c27d', '#cc8150'));
+		await userEvent.upload(lightFiles[1], svg('background.svg', '#e2f3d9', '#9bc7c2'));
+		await userEvent.upload(lightFiles[2], svg('form.svg', '#fdf4db', '#e5c5a1'));
 		await waitFor(() => expect(image()).not.toBeNull());
 		await expect(formImage()).not.toBeNull();
 		await expect(logo()).not.toBeNull();
@@ -422,10 +427,7 @@
 		// A dark image can be chosen without filling the other two dark slots.
 		const darkBackground =
 			canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]')[1];
-		await userEvent.upload(
-			darkBackground,
-			new File(['dark'], 'dark-background.png', { type: 'image/png' })
-		);
+		await userEvent.upload(darkBackground, svg('dark-background.svg', '#193c45', '#0d1f34'));
 		await waitFor(() => expect(image()).not.toBeNull());
 		await expect(formImage()).toBeNull();
 		await expect(logo()).toBeNull();
