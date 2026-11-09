@@ -45,6 +45,17 @@
 	}
 </script>
 
+<ThemeGroup title={t('th.g.favicon')} info={t('th.g.favicon.d')}>
+	<ImageUpload
+		resolveUrl={apiAssetUrl}
+		label={t('th.i.favicon')}
+		shape="square"
+		accept="image/png,image/svg+xml,.ico"
+		maxBytes={128 * 1024}
+		bind:value={draft.favicon}
+	/>
+</ThemeGroup>
+
 <Tabs label={t('th.i.modes')} items={tabs} value={imageTab} onchange={pickTab}>
 	{#snippet panel(id)}
 		{@const tab = id === 'dark' ? 'dark' : 'light'}
@@ -133,17 +144,6 @@
 		</div>
 	{/snippet}
 </Tabs>
-
-<ThemeGroup title={t('th.g.favicon')} info={t('th.g.favicon.d')}>
-	<ImageUpload
-		resolveUrl={apiAssetUrl}
-		label={t('th.i.favicon')}
-		shape="square"
-		accept="image/png,image/svg+xml,.ico"
-		maxBytes={128 * 1024}
-		bind:value={draft.favicon}
-	/>
-</ThemeGroup>
 
 {#if split}
 	<ThemeGroup title={t('th.g.panelImage')} info={t('th.g.panelImage.d')}>
