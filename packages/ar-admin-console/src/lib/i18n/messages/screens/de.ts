@@ -53,7 +53,8 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.preview.pick': 'Wählen Sie eine Zeile der Tabelle, um ihre Seite hier zu sehen.',
 	'sc.preview.empty': 'Diese Seite hat keine Bausteine.',
 	'sc.preview.note':
-		'Ein grobes Bild der Bausteine. Wie sie wirklich aussehen, bestimmt das Theme.',
+		'Diese Seite verwendet das aktuell angewendete Theme. Die Vorschau ist nicht bedienbar.',
+	'sc.preview.themeLoadFailed': 'Das angewendete Theme konnte nicht geladen werden',
 	'sc.action.open': 'Öffnen',
 	'sc.action.copy': 'Duplizieren',
 	'sc.action.delete': 'Löschen',

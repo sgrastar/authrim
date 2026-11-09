@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import type { ScreenListItem, ScreensClient } from '#lib/api/screens.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Tabs from '#lib/ui/patterns/Tabs.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
 	import ThemeAdvanced from './ThemeAdvanced.svelte';
 	import ThemeContent from './ThemeContent.svelte';
 	import ThemeLayout from './ThemeLayout.svelte';
@@ -8,6 +11,8 @@
 	import ThemeImages from './ThemeImages.svelte';
 	import { apiBgPresets, type BgPresetSource } from './bg-presets';
 	import ThemePreview from './ThemePreview.svelte';
+	import { savedScreenPreview } from './screens/screen-preview-content';
+	import type { ChoiceSource } from './screens/screen-model';
 	import { newThemeDraft, type ThemeDraft } from './theme-draft';
 	import type { StoredTheme } from './theme-values';
 	import { THEME_SECTIONS, type PreviewScreen } from './theme-sections';
@@ -27,12 +32,49 @@
 		presets?: BgPresetSource;
 		/** The theme as stored, when one is open: its definition shows what saving writes over it. */
 		stored?: StoredTheme;
+		/** Saved screens to use instead of the standalone sample outline. */
+		screensClient?: ScreensClient;
+		choices?: ChoiceSource;
 	}
 
-	let { draft = $bindable(newThemeDraft()), presets = apiBgPresets, stored }: Props = $props();
+	let {
+		draft = $bindable(newThemeDraft()),
+		presets = apiBgPresets,
+		stored,
+		screensClient,
+		choices
+	}: Props = $props();
 	let section = $state<string>(THEME_SECTIONS[0].id);
 	let screen = $state<PreviewScreen>('signIn');
 	let mode = $state<'light' | 'dark'>('light');
+	let screens = $state<ScreenListItem[]>([]);
+	let screenPhase = $state<'loading' | 'ready' | 'failed'>('loading');
+	let retryScreens = $state(0);
+	const previews = $derived(
+		screensClient
+			? screens.map((screen) => ({ ...savedScreenPreview(screen), choices }))
+			: undefined
+	);
+
+	$effect(() => {
+		const client = screensClient;
+		const attempt = retryScreens;
+		if (!client) return;
+		const controller = new AbortController();
+		screens = [];
+		screenPhase = 'loading';
+		void client
+			.list(controller.signal)
+			.then((result) => {
+				if (controller.signal.aborted || attempt !== retryScreens) return;
+				screens = result.screens;
+				screenPhase = 'ready';
+			})
+			.catch(() => {
+				if (!controller.signal.aborted && attempt === retryScreens) screenPhase = 'failed';
+			});
+		return () => controller.abort();
+	});
 
 	// The mode the screens are shown in: the one fixed, or (auto) the one the preview simulates.
 	const scheme = $derived(draft.mode === 'auto' ? mode : draft.mode);
@@ -62,7 +104,19 @@
 		</div>
 
 		<aside class="workspace__preview">
-			<ThemePreview {draft} {scheme} bind:screen bind:mode />
+			{#if screenPhase === 'failed'}
+				<Callout tone="warning" title={t('sc.list.loadFailed')}>
+					<Button size="sm" onclick={() => (retryScreens += 1)}>{t('common.retry')}</Button>
+				</Callout>
+			{/if}
+			<ThemePreview
+				{draft}
+				{scheme}
+				{previews}
+				screensLoading={screenPhase === 'loading'}
+				bind:screen
+				bind:mode
+			/>
 		</aside>
 	</div>
 

@@ -3,9 +3,12 @@
 	import { page } from '$app/state';
 	import { hasPermission } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
+	import { createFakeSchemaSetting } from '#lib/api/fake/schema-setting-fake.js';
 	import ThemeEditorPage from '#lib/pages/customization/ThemeEditorPage.svelte';
 	import ThemeList from '#lib/pages/customization/ThemeList.svelte';
+	import { useSchemaChoices } from '#lib/pages/customization/screens/schema-choices.svelte.js';
 	import { mockThemes, mockUploadAsset } from '../../fixtures/themes';
+	import { mockScreens } from '../../fixtures/screens';
 
 	// One page for the list and a theme, as the console has two routes: the address says which
 	// (…/branding, …/branding/new, …/branding/<id>).
@@ -21,6 +24,7 @@
 		hasPermission(adminAccess.current, 'admin:settings:write') ||
 			hasPermission(adminAccess.current, 'admin:settings:login_ui:update')
 	);
+	const schema = useSchemaChoices(() => 'mock', createFakeSchemaSetting({ delay: 100 }));
 	// Links on the page are console links; the mock turns them into its own when they are clicked.
 	const consoleHref = (themeId: string) =>
 		`/admin/customization/branding/${encodeURIComponent(themeId)}`;
@@ -32,6 +36,8 @@
 {:else}
 	<ThemeEditorPage
 		client={mockThemes}
+		screensClient={mockScreens}
+		choices={schema.choices}
 		{id}
 		{canWrite}
 		upload={mockUploadAsset}

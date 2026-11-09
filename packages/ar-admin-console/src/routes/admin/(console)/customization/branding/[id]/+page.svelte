@@ -4,9 +4,11 @@
 	import { hasPermission } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { httpLoginUiThemes, uploadLoginUiAsset } from '#lib/api/login-ui-themes.js';
+	import { httpScreens } from '#lib/api/screens.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import ThemeEditorPage from '#lib/pages/customization/ThemeEditorPage.svelte';
+	import { useSchemaChoices } from '#lib/pages/customization/screens/schema-choices.svelte.js';
 	import LeaveConfirm from '#lib/ui/save/LeaveConfirm.svelte';
 
 	const BASE = '/admin/customization/branding';
@@ -15,6 +17,7 @@
 		hasPermission(adminAccess.current, 'admin:settings:write') ||
 			hasPermission(adminAccess.current, 'admin:settings:login_ui:update')
 	);
+	const schema = useSchemaChoices(() => tenantScope.tenantId);
 
 	let dirty = $state(false);
 	/** Where the admin was going when the page had unsaved changes. */
@@ -55,6 +58,8 @@
 {#key tenantScope.tenantId}
 	<ThemeEditorPage
 		client={httpLoginUiThemes}
+		screensClient={httpScreens}
+		choices={schema.choices}
 		{id}
 		{canWrite}
 		upload={uploadLoginUiAsset}

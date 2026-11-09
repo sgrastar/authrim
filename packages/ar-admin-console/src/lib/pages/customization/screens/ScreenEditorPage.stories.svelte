@@ -176,6 +176,10 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText(t('sc.editor.systemNote'));
+		await waitFor(() =>
+			expect(canvasElement.querySelector('.outline')).toHaveAttribute('data-template', 'split')
+		);
+		await waitFor(() => expect(canvas.getByText('Sign in with Passkey')).toBeVisible());
 		// The builder is not offered: the screen is shown, not edited.
 		await expect(canvas.queryByRole('tab', { name: t('sc.editor.tab.items') })).toBeNull();
 		await userEvent.click(canvas.getByRole('button', { name: t('sc.editor.copyToEdit') }));
@@ -187,6 +191,10 @@
 			{...common}
 			client={createFakeScreens({ screens: MOCK_SCREENS })}
 			id="screen_login"
+			loadTheme={async () => ({
+				'login-ui.template': 'split',
+				'login-ui.brand_name': 'Preview brand'
+			})}
 			schemaFields={demoSchemaFields()}
 		/>
 	{/snippet}

@@ -7,6 +7,11 @@
 	import Icon from '#lib/ui/icons/Icon.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
+	import ScreenPreview from './screens/ScreenPreview.svelte';
+	import {
+		localizedScreenPreview,
+		type ScreenPreviewContent
+	} from './screens/screen-preview-content';
 	import { BAR_ALIGNS, DENSITIES, FONT_STACKS, type ThemeDraft } from './theme-draft';
 	import { draftColour, THEME_COLOURS, type ThemeColourField } from './theme-colours';
 	import { paletteColours, paletteOf } from './theme-palettes';
@@ -16,8 +21,8 @@
 	/**
 	 * The sign-in screens as the tenant's end users will see them, drawn from what is being edited
 	 * (brand, colours, type, texts, logo, background, template). The toolbar picks the screen, the
-	 * colour mode and phone or desktop width. The screens are an outline of a sign-in screen for
-	 * now (fields are empty boxes); the real screens replace them later and the frame stays.
+	 * colour mode and phone or desktop width. Saved screen parts can be placed in the same frame;
+	 * the standalone Storybook examples retain the sample outline when no screen is supplied.
 	 *
 	 * One outline only: the frame is the screen itself, at the full width of the column on
 	 * desktop and narrowed to a phone's width (centred) on mobile, so the preview gets all the room.
@@ -30,9 +35,24 @@
 		scheme: 'light' | 'dark';
 		screen?: PreviewScreen;
 		mode?: 'light' | 'dark';
+		/** One screen being edited, without a picker. */
+		preview?: ScreenPreviewContent;
+		/** Saved screens offered in the theme editor's picker. */
+		previews?: readonly ScreenPreviewContent[];
+		screensLoading?: boolean;
+		note?: string;
 	}
 
-	let { draft, scheme, screen = $bindable('signIn'), mode = $bindable('light') }: Props = $props();
+	let {
+		draft,
+		scheme,
+		screen = $bindable('signIn'),
+		mode = $bindable('light'),
+		preview,
+		previews,
+		screensLoading = false,
+		note
+	}: Props = $props();
 
 	// What is not set here is the real screens' own colour, in the mode shown.
 	const defaults = $derived(paletteColours(draft.palette, scheme));
@@ -59,7 +79,12 @@
 	const screenOption = $derived(
 		PREVIEW_SCREENS.find((option) => option.value === screen) ?? PREVIEW_SCREENS[0]
 	);
-	const screenLabel = $derived(t(screenOption.label));
+	let selectedId = $state('');
+	const actual = $derived(
+		preview ?? previews?.find((item) => item.id === selectedId) ?? previews?.[0] ?? null
+	);
+	const localized = $derived(actual ? localizedScreenPreview(actual, draft.language) : null);
+	const screenLabel = $derived(localized?.label ?? t(screenOption.label));
 	const texts = $derived(draft.texts[draft.language]);
 	// What an empty item falls back to is read in the language being edited, not the console's.
 	// The heading is the screen's default wording, read in the language being edited.
@@ -208,16 +233,33 @@
 	<div class="theme-preview__head">
 		<h2 id="theme-preview-title">{t('th.preview.title')}</h2>
 		<div class="theme-preview__controls">
-			<Select
-				label={t('th.preview.screen')}
-				hideLabel
-				options={PREVIEW_SCREENS.map((option) => ({
-					value: option.value,
-					label: t(option.label)
-				}))}
-				value={screen}
-				onchange={(value) => (screen = value as PreviewScreen)}
-			/>
+			{#if !preview}
+				{#if previews !== undefined}
+					{#if previews.length > 0}
+						<Select
+							label={t('th.preview.screen')}
+							hideLabel
+							options={previews.map((item) => ({
+								value: item.id,
+								label: localizedScreenPreview(item, draft.language).label
+							}))}
+							value={actual?.id ?? ''}
+							onchange={(value) => (selectedId = value)}
+						/>
+					{/if}
+				{:else}
+					<Select
+						label={t('th.preview.screen')}
+						hideLabel
+						options={PREVIEW_SCREENS.map((option) => ({
+							value: option.value,
+							label: t(option.label)
+						}))}
+						value={screen}
+						onchange={(value) => (screen = value as PreviewScreen)}
+					/>
+				{/if}
+			{/if}
 			<SegmentedControl
 				label={t('th.preview.mode')}
 				hideLabel
@@ -260,6 +302,7 @@
 				data-admin-theme="standard"
 				data-scheme={scheme}
 				data-template={draft.template}
+				data-screen-id={actual?.id}
 				lang={draft.language}
 				dir={localeDir(draft.language)}
 				style:--ol-bg={own.background || defaults.background}
@@ -267,7 +310,7 @@
 				style:--ol-panel={defaults.card}
 				style:--ol-accent={accent?.solid || defaults.accent}
 				style:--ol-link={own.linkColor || accent?.solid || defaults.accent}
-				style:--ol-accent-text={accent?.label}
+				style:--ol-accent-text={accent?.label || labelled(defaults.accent)?.label}
 				style:--ol-title={own.titleColor || defaults.title}
 				style:--ol-text={own.textColor || defaults.text}
 				style:--ol-copy={own.copyColor || defaults.copy}
@@ -356,7 +399,7 @@
 					{/if}
 					<div class="outline__main">
 						<div class="outline__body">
-							<div class="outline__col">
+							<div class="outline__col" class:outline__col--wide={actual?.canvas === 'wide'}>
 								<div class="outline__card">
 									<!-- The login area's own picture, under what the box holds (not drawn in Minimal). -->
 									{#if cardUrl && draft.template !== 'minimal'}
@@ -369,46 +412,65 @@
 									{/if}
 									{#if showTools && topbar === 'in_card'}{@render tools()}{/if}
 									{#if !draft.header && !split}{@render brand()}{/if}
-									<h3>{title}</h3>
-									{#if screen === 'signIn'}
-										<!-- This tenant has no password: passkey and email, and an external IdP (mock). -->
-										<p class="outline__lead">{tIn(draft.language, 'th.preview.leadSignIn')}</p>
-										<span class="outline__button">
-											<Icon name="fingerprint" />{tIn(draft.language, 'th.preview.passkey')}
-										</span>
-										<span class="outline__divider">{tIn(draft.language, 'th.preview.or')}</span>
-										<div class="outline__group">
-											<span class="outline__label">{tIn(draft.language, 'th.preview.email')}</span>
-											<span class="outline__field"></span>
-										</div>
-										<span class="outline__button outline__button--plain"
-											>{tIn(draft.language, 'th.preview.continue')}</span
-										>
-										<span class="outline__button outline__button--plain"
-											>{tIn(draft.language, 'th.preview.idp')}</span
-										>
+									{#if localized && actual}
+										<ScreenPreview
+											rows={localized.rows}
+											settings={localized.settings}
+											rowSettings={actual.rowSettings}
+											choices={actual.choices}
+											legacyYesNo={actual.legacyYesNo}
+											wide={actual.canvas === 'wide'}
+										/>
+									{:else if previews !== undefined}
+										<p class="outline__lead">
+											{screensLoading ? t('common.loading') : t('sc.list.empty')}
+										</p>
 									{:else}
-										{#if screen === 'signUp'}
+										<h3>{title}</h3>
+										{#if screen === 'signIn'}
+											<!-- This tenant has no password: passkey and email, and an external IdP (mock). -->
+											<p class="outline__lead">{tIn(draft.language, 'th.preview.leadSignIn')}</p>
+											<span class="outline__button">
+												<Icon name="fingerprint" />{tIn(draft.language, 'th.preview.passkey')}
+											</span>
+											<span class="outline__divider">{tIn(draft.language, 'th.preview.or')}</span>
 											<div class="outline__group">
 												<span class="outline__label">{tIn(draft.language, 'th.preview.email')}</span
 												>
 												<span class="outline__field"></span>
 											</div>
-										{:else if screen === 'code'}
-											<p class="outline__lead">{tIn(draft.language, 'th.preview.leadCode')}</p>
-											<div class="outline__group">
-												<span class="outline__label">{tIn(draft.language, 'th.screen.code')}</span>
-												<span class="outline__field"></span>
-											</div>
-										{:else if screen === 'consent'}
-											<p class="outline__lead">{tIn(draft.language, 'th.preview.leadConsent')}</p>
+											<span class="outline__button outline__button--plain"
+												>{tIn(draft.language, 'th.preview.continue')}</span
+											>
+											<span class="outline__button outline__button--plain"
+												>{tIn(draft.language, 'th.preview.idp')}</span
+											>
 										{:else}
-											<p class="outline__lead">{tIn(draft.language, 'th.preview.leadError')}</p>
+											{#if screen === 'signUp'}
+												<div class="outline__group">
+													<span class="outline__label"
+														>{tIn(draft.language, 'th.preview.email')}</span
+													>
+													<span class="outline__field"></span>
+												</div>
+											{:else if screen === 'code'}
+												<p class="outline__lead">{tIn(draft.language, 'th.preview.leadCode')}</p>
+												<div class="outline__group">
+													<span class="outline__label">{tIn(draft.language, 'th.screen.code')}</span
+													>
+													<span class="outline__field"></span>
+												</div>
+											{:else if screen === 'consent'}
+												<p class="outline__lead">{tIn(draft.language, 'th.preview.leadConsent')}</p>
+											{:else}
+												<p class="outline__lead">{tIn(draft.language, 'th.preview.leadError')}</p>
+											{/if}
+											<span class="outline__button"
+												>{tIn(draft.language, 'th.preview.continue')}</span
+											>
 										{/if}
-										<span class="outline__button">{tIn(draft.language, 'th.preview.continue')}</span
-										>
+										{#if switchLink}<p class="outline__switch">{switchLink}</p>{/if}
 									{/if}
-									{#if switchLink}<p class="outline__switch">{switchLink}</p>{/if}
 								</div>
 								{#if showTools && topbar === 'below_card'}{@render tools()}{/if}
 							</div>
@@ -458,7 +520,7 @@
 		</div>
 	</div>
 
-	<p class="theme-preview__note">{t('th.preview.note')}</p>
+	<p class="theme-preview__note">{note ?? t('th.preview.note')}</p>
 </section>
 
 <style>
@@ -1068,6 +1130,10 @@
 		justify-items: center;
 		gap: 16px;
 		width: min(100%, 420px);
+	}
+
+	.outline__col--wide {
+		width: min(100%, 720px);
 	}
 
 	.outline__card > :global(.tools) {
