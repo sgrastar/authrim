@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { hasPermission } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
+	import { readAppliedThemeValues } from '#lib/api/login-ui-themes.js';
 	import { httpScreens } from '#lib/api/screens.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -19,6 +20,7 @@
 	<ScreenCreatePage
 		client={httpScreens}
 		{canWrite}
+		loadTheme={(signal) => readAppliedThemeValues(tenantScope.tenantId, signal)}
 		oncancel={() => goto(BASE)}
 		oncreated={(id) => goto(`${BASE}/${encodeURIComponent(id)}`, { replace: true })}
 	/>

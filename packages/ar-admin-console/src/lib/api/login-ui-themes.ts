@@ -9,6 +9,7 @@
  */
 import { API_BASE_URL, adminFetch } from './admin-request';
 import { errorFromResponse } from './api-error';
+import { httpSettings } from './settings';
 
 const BASE = `${API_BASE_URL}/api/admin/login-ui/themes`;
 
@@ -152,6 +153,15 @@ export const httpLoginUiThemes: LoginUiThemesClient = {
 		return active ?? { theme_id: id, version: version ?? 0 };
 	}
 };
+
+/** The live values can differ from an applied theme's latest saved, unapplied version. */
+export async function readAppliedThemeValues(
+	tenantId: string | null,
+	signal?: AbortSignal
+): Promise<ThemeValues> {
+	if (!tenantId) return {};
+	return (await httpSettings.get({ level: 'tenant', tenantId }, 'login-ui', signal)).values;
+}
 
 /** Uploads an image for the Login UI (`logo`, `background`, `panel-background`, `favicon`). */
 export async function uploadLoginUiAsset(kind: string, file: File): Promise<string> {

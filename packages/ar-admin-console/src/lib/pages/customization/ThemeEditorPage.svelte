@@ -2,6 +2,8 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { ApiError } from '#lib/api/api-error.js';
 	import type { LoginUiThemesClient } from '#lib/api/login-ui-themes.js';
+	import type { ScreensClient } from '#lib/api/screens.js';
+	import type { ChoiceSource } from './screens/screen-model';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
@@ -35,6 +37,8 @@
 	 */
 	interface Props {
 		client: LoginUiThemesClient;
+		screensClient?: ScreensClient;
+		choices?: ChoiceSource;
 		/** The theme, or "new". */
 		id: string;
 		canWrite: boolean;
@@ -50,6 +54,8 @@
 
 	let {
 		client,
+		screensClient,
+		choices,
 		id,
 		canWrite,
 		upload,
@@ -302,7 +308,7 @@
 				oninput={() => (nameError = undefined)}
 			/>
 		</div>
-		<ThemeEditor bind:draft {stored} />
+		<ThemeEditor bind:draft {stored} {screensClient} {choices} />
 	{/if}
 </Page>
 

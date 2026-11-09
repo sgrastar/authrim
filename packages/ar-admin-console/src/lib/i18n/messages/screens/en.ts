@@ -52,7 +52,9 @@ export const enScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.preview.title': 'Preview',
 	'sc.preview.pick': 'Pick a row of the table to see its screen here.',
 	'sc.preview.empty': 'This screen has no parts.',
-	'sc.preview.note': 'A rough picture of the parts. The theme decides how they really look.',
+	'sc.preview.note':
+		'Screen content uses the currently applied theme. Header, footer, and in-page switches are omitted.',
+	'sc.preview.themeLoadFailed': 'The applied theme could not be loaded',
 	'sc.action.open': 'Open',
 	'sc.action.copy': 'Duplicate',
 	'sc.action.delete': 'Delete',

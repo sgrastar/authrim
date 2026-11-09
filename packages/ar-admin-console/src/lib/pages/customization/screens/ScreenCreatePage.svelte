@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import { ApiError } from '#lib/api/api-error.js';
+	import type { ThemeValues } from '#lib/api/login-ui-themes.js';
 	import type { ScreenListItem, ScreensClient } from '#lib/api/screens.js';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -15,7 +16,8 @@
 	import Page from '#lib/ui/templates/Page.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { screenErrorKey } from './screen-errors';
-	import { fieldsToBuilder } from './screen-layout';
+	import { fieldsToBuilder, legacyYesNoIds } from './screen-layout';
+	import { savedScreenPreview, type ScreenPreviewContent } from './screen-preview-content';
 	import {
 		SCREEN_CATEGORIES,
 		screenInputFromTemplate,
@@ -23,16 +25,17 @@
 		screenTemplates,
 		type ScreenCategory
 	} from './screen-creation';
-	import ScreenPreview from './ScreenPreview.svelte';
+	import ActiveThemeScreenPreview from './ActiveThemeScreenPreview.svelte';
 
 	interface Props {
 		client: ScreensClient;
 		canWrite: boolean;
 		oncancel: () => void;
 		oncreated: (id: string) => void;
+		loadTheme?: (signal: AbortSignal) => Promise<ThemeValues>;
 	}
 
-	let { client, canWrite, oncancel, oncreated }: Props = $props();
+	let { client, canWrite, oncancel, oncreated, loadTheme }: Props = $props();
 	let phase = $state<'loading' | 'ready' | 'forbidden' | 'failed'>('loading');
 	let screens = $state<ScreenListItem[]>([]);
 	let current = $state(0);
@@ -103,8 +106,9 @@
 		});
 	});
 
-	function previewOf(template: NonNullable<typeof selected>) {
-		const fields = template.source?.fields ?? [
+	function previewOf(template: NonNullable<typeof selected>): ScreenPreviewContent {
+		if (template.source) return savedScreenPreview(template.source);
+		const fields = [
 			{
 				field: 'title',
 				label: t('sc.create.blankHeading'),
@@ -114,7 +118,16 @@
 			}
 		];
 		let next = 0;
-		return fieldsToBuilder(fields, (prefix) => `${prefix}-preview-${++next}`);
+		const read = fieldsToBuilder(fields, (prefix) => `${prefix}-preview-${++next}`);
+		return {
+			id: template.id,
+			label: template.label,
+			canvas: 'narrow',
+			rows: read.rows,
+			settings: read.settings,
+			rowSettings: read.rowSettings,
+			legacyYesNo: legacyYesNoIds(read.origins)
+		};
 	}
 
 	async function create() {
@@ -186,13 +199,8 @@
 								<p class="template-description">{template.source.description}</p>
 							{/if}
 							<div class="template-preview" aria-label={t('sc.preview.title')}>
-								<ScreenPreview
-									rows={preview.rows}
-									settings={preview.settings}
-									rowSettings={preview.rowSettings}
-								/>
+								<ActiveThemeScreenPreview {loadTheme} {preview} />
 							</div>
-							<p class="template-note">{t('sc.preview.note')}</p>
 						{/snippet}
 					</ColumnBrowser>
 				{:else}
@@ -237,8 +245,7 @@
 		font-size: var(--fs-heading);
 	}
 
-	.template-description,
-	.template-note {
+	.template-description {
 		margin: 0;
 		color: var(--text-secondary);
 		font-size: var(--fs-small);

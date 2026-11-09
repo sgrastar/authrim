@@ -1,7 +1,10 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fireEvent, userEvent, waitFor, within } from 'storybook/test';
+	import { createFakeScreens } from '#lib/api/fake/screens-fake.js';
 	import { t, tIn } from '#lib/i18n/i18n.svelte.js';
+	import { MOCK_SCREENS } from '#lib/mock/fixtures/screens.js';
+	import { schemaChoices } from '#lib/ui/stories/screen-parts.js';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import ThemeEditor from './ThemeEditor.svelte';
 	import type { BgPreset } from './bg-presets';
@@ -32,7 +35,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Themes → a theme: how the tenant’s sign-in screens look. The theme page (`ThemeEditorPage`) puts this editor under its header (the theme’s name, Save, Apply) and loads and saves the draft through `/api/admin/login-ui/themes`.\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded; custom CSS is not applied in the preview. The preview shows an outline of a sign-in screen, not the real screens.'
+						'Customization → Themes → a theme: how the tenant’s sign-in screens look. The theme page (`ThemeEditorPage`) puts this editor under its header (the theme’s name, Save, Apply) and loads and saves the draft through `/api/admin/login-ui/themes`.\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded; custom CSS is not applied in the preview. The console picker shows actual saved screen parts; standalone stories without a screens client retain the sample outline.'
 				}
 			}
 		}
@@ -55,6 +58,35 @@
 >
 	{#snippet template()}
 		<Page><ThemeEditor /></Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Saved screen parts"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const picker = await canvas.findByRole('combobox', { name: t('th.preview.screen') });
+		await waitFor(() =>
+			expect(
+				[...(picker as HTMLSelectElement).options].some(
+					(option) => option.value === 'screen_signup'
+				)
+			).toBe(true)
+		);
+		await userEvent.selectOptions(picker, 'screen_signup');
+		await waitFor(() => expect(canvas.getByText('Create your account')).toBeVisible());
+		await expect(canvas.getByText(/Given name/)).toBeVisible();
+		await userEvent.selectOptions(picker, 'screen_survey');
+		await waitFor(() => expect(canvas.getByText(/How did you hear about us\?/)).toBeVisible());
+	}}
+>
+	{#snippet template()}
+		<Page>
+			<ThemeEditor
+				screensClient={createFakeScreens({ screens: MOCK_SCREENS })}
+				choices={schemaChoices}
+			/>
+		</Page>
 	{/snippet}
 </Story>
 

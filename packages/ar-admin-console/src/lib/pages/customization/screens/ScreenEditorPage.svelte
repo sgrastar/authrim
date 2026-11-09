@@ -5,6 +5,7 @@
 		getLoginUILanguageDisplayName
 	} from '@authrim/ar-lib-core/types/login-ui-languages';
 	import { ApiError } from '#lib/api/api-error.js';
+	import type { ThemeValues } from '#lib/api/login-ui-themes.js';
 	import {
 		SCREEN_KINDS,
 		type Screen,
@@ -21,7 +22,6 @@
 	} from '#lib/ui/builder/layout-model.js';
 	import LayoutCanvas from '#lib/ui/builder/LayoutCanvas.svelte';
 	import PartPalette from '#lib/ui/builder/PartPalette.svelte';
-	import PreviewFrame from '#lib/ui/builder/PreviewFrame.svelte';
 	import TranslationTable, { type TranslationRow } from '#lib/ui/builder/TranslationTable.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
@@ -46,6 +46,7 @@
 	import Page from '#lib/ui/templates/Page.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import PartSettingsPanel from './PartSettingsPanel.svelte';
+	import ActiveThemeScreenPreview from './ActiveThemeScreenPreview.svelte';
 	import {
 		kindsFor,
 		newPartSettings,
@@ -76,7 +77,6 @@
 		localizationsToTranslations,
 		translationsToLocalizations
 	} from './screen-texts';
-	import ScreenPreview from './ScreenPreview.svelte';
 	import ScreenResponses from './ScreenResponses.svelte';
 	import ScreenUsages from './ScreenUsages.svelte';
 	import { editorValue, newScreenValue, type EditorValue } from './screen-editor';
@@ -108,6 +108,8 @@
 		oncreated: (id: string) => void;
 		/** A copy was made to edit: open it. */
 		onopen: (id: string) => void;
+		/** Reads the currently applied Login UI settings for the preview. */
+		loadTheme?: (signal: AbortSignal) => Promise<ThemeValues>;
 	}
 
 	let {
@@ -121,7 +123,8 @@
 		schemaHref,
 		listHref,
 		oncreated,
-		onopen
+		onopen,
+		loadTheme
 	}: Props = $props();
 
 	const isNew = $derived(id === 'new');
@@ -138,7 +141,6 @@
 	let tab = $state('items');
 	let selected = $state<string | null>(null);
 	let selectedRow = $state<string | null>(null);
-	let previewWidth = $state<'mobile' | 'desktop'>('mobile');
 	let resetting = $state(false);
 	let copying = $state(false);
 
@@ -690,15 +692,20 @@
 								{/if}
 							</div>
 						{:else if current === 'preview'}
-							<PreviewFrame label={title} bind:width={previewWidth}>
-								<ScreenPreview
-									legacyYesNo={legacyYesNoIds(origins)}
-									rows={value.rows}
-									settings={value.settings}
-									rowSettings={value.rowSettings}
-									{choices}
-								/>
-							</PreviewFrame>
+							<ActiveThemeScreenPreview
+								{loadTheme}
+								preview={{
+									id,
+									label: title,
+									canvas: value.canvas,
+									rows: value.rows,
+									settings: value.settings,
+									rowSettings: value.rowSettings,
+									choices,
+									legacyYesNo: legacyYesNoIds(origins),
+									translations: value.translations
+								}}
+							/>
 						{:else if current === 'localize'}
 							<TranslationTable
 								label={t('sc.editor.tab.localize')}

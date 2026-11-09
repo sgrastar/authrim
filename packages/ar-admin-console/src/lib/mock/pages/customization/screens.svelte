@@ -9,6 +9,7 @@
 	import ScreenList from '#lib/pages/customization/screens/ScreenList.svelte';
 	import { useSchemaChoices } from '#lib/pages/customization/screens/schema-choices.svelte.js';
 	import { mockScreens } from '../../fixtures/screens';
+	import { mockAppliedThemeValues } from '../../fixtures/themes';
 
 	// One page for the list and a screen, as the console has two routes: the address says which
 	// (…/screens, …/screens/new, …/screens/<id>).
@@ -35,6 +36,7 @@
 	<ScreenCreatePage
 		client={mockScreens}
 		{canWrite}
+		loadTheme={mockAppliedThemeValues}
 		oncancel={() => goto(withPersona(LIST))}
 		oncreated={(screenId) =>
 			goto(withPersona(`${LIST}/${encodeURIComponent(screenId)}`), { replace: true })}
@@ -45,6 +47,7 @@
 		{id}
 		{canWrite}
 		{canReadResponses}
+		loadTheme={mockAppliedThemeValues}
 		schemaFields={schema.fields}
 		choices={schema.choices}
 		requiredAtSignUp={schema.requiredAtSignUp}

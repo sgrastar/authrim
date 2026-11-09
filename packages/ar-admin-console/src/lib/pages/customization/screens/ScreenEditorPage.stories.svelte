@@ -176,6 +176,28 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText(t('sc.editor.systemNote'));
+		await waitFor(() =>
+			expect(canvasElement.querySelector('.outline')).toHaveAttribute('data-template', 'split')
+		);
+		const outline = canvasElement.querySelector<HTMLElement>('.outline');
+		expect(outline?.querySelector('.outline__header')).toBeNull();
+		expect(outline?.querySelector('.outline__footer')).toBeNull();
+		expect(outline?.querySelector('.tools')).toBeNull();
+		expect(outline?.style.getPropertyValue('--ol-accent')).toBe('#d36a25');
+		expect(outline?.style.getPropertyValue('--ol-card')).toBe('#ffffff99');
+		expect(outline?.querySelector<HTMLElement>(':scope > .outline__image')?.style.opacity).toBe(
+			'0.37'
+		);
+		expect(outline?.querySelector<HTMLElement>(':scope > .outline__image')?.style.filter).toBe(
+			'blur(4px) brightness(80%)'
+		);
+		expect(
+			outline?.querySelector<HTMLElement>('.outline__panel > .outline__image')?.style.opacity
+		).toBe('0.58');
+		expect(
+			outline?.querySelector<HTMLElement>('.outline__card > .outline__image')?.style.opacity
+		).toBe('0.42');
+		await waitFor(() => expect(canvas.getByText('Sign in with Passkey')).toBeVisible());
 		// The builder is not offered: the screen is shown, not edited.
 		await expect(canvas.queryByRole('tab', { name: t('sc.editor.tab.items') })).toBeNull();
 		await userEvent.click(canvas.getByRole('button', { name: t('sc.editor.copyToEdit') }));
@@ -183,10 +205,25 @@
 	}}
 >
 	{#snippet template()}
+		{@const transparentImage = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='}
 		<ScreenEditorPage
 			{...common}
 			client={createFakeScreens({ screens: MOCK_SCREENS })}
 			id="screen_login"
+			loadTheme={async () => ({
+				'login-ui.template': 'split',
+				'login-ui.brand_name': 'Preview brand',
+				'login-ui.topbar_position': 'in_card',
+				'login-ui.accent_color': '#d36a25',
+				'login-ui.form_area_color': '#ffffff99',
+				'login-ui.background_image_url': transparentImage,
+				'login-ui.background_image_opacity': 37,
+				'login-ui.background_image_filters': 'blur:4;brightness:80',
+				'login-ui.brand_panel_image_url': transparentImage,
+				'login-ui.brand_panel_image_opacity': 58,
+				'login-ui.login_panel_background_image_url': transparentImage,
+				'login-ui.login_panel_background_opacity': 42
+			})}
 			schemaFields={demoSchemaFields()}
 		/>
 	{/snippet}
