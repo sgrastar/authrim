@@ -1476,6 +1476,11 @@ components:
                   description: >-
                     Form area background as a hex colour, with an optional alpha channel. Empty when
                     none is set, in which case the palette's own colour applies.
+                brandPanelBackgroundColor:
+                  type: string
+                  description: >-
+                    Background tint over the Split brand area and its image, with an optional alpha
+                    channel. Empty uses the built-in scrim.
                 fieldColor:
                   type: string
                   description: >-
@@ -1515,6 +1520,8 @@ components:
                     background:
                       type: string
                     form_area:
+                      type: string
+                    brand_panel_background:
                       type: string
                     accent:
                       type: string

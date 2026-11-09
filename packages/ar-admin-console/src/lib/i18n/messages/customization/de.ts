@@ -91,6 +91,7 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.c.reset': 'Standardfarben wiederherstellen',
 	'th.c.background': 'Background',
 	'th.c.card': 'Form area',
+	'th.c.brandPanelBackground': 'Markenbereich: Hintergrund',
 	'th.c.accent': 'Hauptschaltfläche',
 	'th.c.title': 'Title text',
 	'th.c.text': 'Body text',

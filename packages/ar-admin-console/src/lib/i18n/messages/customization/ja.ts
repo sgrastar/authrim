@@ -87,6 +87,7 @@ export const jaCustomization = {
 	'th.c.reset': 'デフォルト色に戻す',
 	'th.c.background': '背景',
 	'th.c.card': 'フォームエリア',
+	'th.c.brandPanelBackground': 'ブランドエリアの背景',
 	'th.c.accent': '主要ボタン',
 	'th.c.title': 'タイトルの文字',
 	'th.c.text': '本文の文字',

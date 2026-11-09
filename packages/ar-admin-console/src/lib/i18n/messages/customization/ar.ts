@@ -90,6 +90,7 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.c.reset': 'استعادة الألوان الافتراضية',
 	'th.c.background': 'Background',
 	'th.c.card': 'Form area',
+	'th.c.brandPanelBackground': 'خلفية منطقة العلامة',
 	'th.c.accent': 'الزر الرئيسي',
 	'th.c.title': 'Title text',
 	'th.c.text': 'Body text',

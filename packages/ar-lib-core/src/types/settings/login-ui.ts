@@ -81,6 +81,7 @@ export interface LoginUISettings {
   'login-ui.text_color': string;
   'login-ui.copy_color': string;
   'login-ui.form_area_color': string;
+  'login-ui.brand_panel_background_color': string;
   'login-ui.field_color': string;
   'login-ui.secondary_button_color': string;
   'login-ui.link_color': string;
@@ -419,7 +420,7 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     envKey: 'LOGIN_UI_DARK_COLORS',
     label: 'Dark Mode Colors',
     description:
-      'Colours used in dark mode, as a JSON object from colour name (background, form_area, accent, link, title, text, copy, field, secondary_button, header_background, header_text, footer_background, footer_text) to colour. A colour not listed follows the palette in dark mode',
+      'Colours used in dark mode, as a JSON object from colour name (background, form_area, brand_panel_background, accent, link, title, text, copy, field, secondary_button, header_background, header_text, footer_background, footer_text) to colour. A colour not listed follows the palette in dark mode',
     visibility: 'public',
   },
   'login-ui.form_area_color': {
@@ -430,6 +431,16 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     label: 'Form Area Color',
     description:
       'Colour of the form area: the card, or the form side of the split template. #rgb, #rrggbb or #rrggbbaa. Empty follows the palette. In the split template the legacy login panel background colour wins when set',
+    visibility: 'public',
+  },
+  'login-ui.brand_panel_background_color': {
+    key: 'login-ui.brand_panel_background_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_BRAND_PANEL_BACKGROUND_COLOR',
+    label: 'Brand Panel Background Color',
+    description:
+      'Background tint over the Split brand area, including its image. Supports a transparent colour; empty follows the built-in scrim',
     visibility: 'public',
   },
   'login-ui.brand_name': {
@@ -1122,6 +1133,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.text_color': '',
   'login-ui.copy_color': '',
   'login-ui.form_area_color': '',
+  'login-ui.brand_panel_background_color': '',
   'login-ui.field_color': '',
   'login-ui.secondary_button_color': '',
   'login-ui.link_color': '',
@@ -1213,6 +1225,7 @@ export const LOGIN_UI_THEME_KEYS = [
   'login-ui.text_color',
   'login-ui.copy_color',
   'login-ui.form_area_color',
+  'login-ui.brand_panel_background_color',
   'login-ui.field_color',
   'login-ui.secondary_button_color',
   'login-ui.link_color',

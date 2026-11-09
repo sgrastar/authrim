@@ -86,6 +86,7 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.c.reset': 'Reset to default colours',
 	'th.c.background': 'Background',
 	'th.c.card': 'Form area',
+	'th.c.brandPanelBackground': 'Brand area background',
 	'th.c.accent': 'Main button',
 	'th.c.title': 'Title text',
 	'th.c.text': 'Body text',

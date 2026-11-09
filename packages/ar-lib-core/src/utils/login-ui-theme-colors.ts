@@ -15,6 +15,7 @@
 export const LOGIN_UI_THEME_COLOR_NAMES = [
   'background',
   'form_area',
+  'brand_panel_background',
   'accent',
   'link',
   'title',

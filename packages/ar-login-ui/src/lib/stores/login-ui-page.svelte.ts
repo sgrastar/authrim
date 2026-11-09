@@ -30,6 +30,7 @@ function labelledColor(colour: string | undefined): string {
 const READ_COLOUR: Record<LoginUIThemeColorName, (value: unknown) => string> = {
 	background: (value) => sanitizeColor(value as string) || '',
 	form_area: (value) => sanitizeColor(value as string) || '',
+	brand_panel_background: (value) => sanitizeColor(value as string) || '',
 	// Applied opaque, from a colour every renderer resolves alike (see accent-text.ts).
 	accent: (value) => normalizeAccentColor(sanitizeColor(value as string)) || '',
 	link: (value) => sanitizeColor(value as string) || '',
@@ -357,6 +358,7 @@ export function createLoginUIPageStore() {
 	let palette = $state<PaletteId>(DEFAULT_PALETTE);
 	let formFrame = $state<FormFrame>('full');
 	let formAreaColor = $state('');
+	let brandPanelBackgroundColor = $state('');
 	let fieldColor = $state('');
 	let secondaryButtonColor = $state('');
 	let headerName = $state('');
@@ -457,8 +459,13 @@ export function createLoginUIPageStore() {
 		if (!browser) return;
 		const html = document.documentElement;
 		const formArea = current('form_area', formAreaColor);
+		const brandPanelBackground = current('brand_panel_background', brandPanelBackgroundColor);
 		const accent = current('accent', accentColor);
 		html.setAttribute('data-has-form-area-color', formArea ? 'true' : 'false');
+		html.setAttribute(
+			'data-has-brand-panel-background-color',
+			brandPanelBackground ? 'true' : 'false'
+		);
 		html.setAttribute('data-has-accent-color', accent ? 'true' : 'false');
 		setOptionalStyleProperty(
 			'--login-page-background-color',
@@ -472,6 +479,7 @@ export function createLoginUIPageStore() {
 		setOptionalStyleProperty('--login-copy-color', current('copy', copyColor) || null);
 		setOptionalStyleProperty('--login-link-color', current('link', linkColor) || null);
 		setOptionalStyleProperty('--login-form-area-color', formArea || null);
+		setOptionalStyleProperty('--login-brand-panel-background-color', brandPanelBackground || null);
 	}
 
 	function applyDocumentState(customCss: string | null) {
@@ -559,6 +567,7 @@ export function createLoginUIPageStore() {
 		themeTemplate = servedPalette ? legacyThemeFor(servedPalette, template) : legacyTheme;
 		formFrame = readFormFrame(page?.formFrame);
 		formAreaColor = READ_COLOUR.form_area(page?.formAreaColor);
+		brandPanelBackgroundColor = READ_COLOUR.brand_panel_background(page?.brandPanelBackgroundColor);
 		fieldColor = READ_COLOUR.field(page?.fieldColor);
 		secondaryButtonColor = READ_COLOUR.secondary_button(page?.secondaryButtonColor);
 		linkColor = READ_COLOUR.link(page?.linkColor);
@@ -672,6 +681,10 @@ export function createLoginUIPageStore() {
 		/** The form area colour (hex with optional alpha); empty while the palette's applies. */
 		get formAreaColor() {
 			return current('form_area', formAreaColor);
+		},
+		/** The optional Split brand area tint, including its alpha channel. */
+		get brandPanelBackgroundColor() {
+			return current('brand_panel_background', brandPanelBackgroundColor);
 		},
 		/** The text input colour (hex with optional alpha); empty while the palette's applies. */
 		get fieldColor() {

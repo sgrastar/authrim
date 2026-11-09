@@ -1422,6 +1422,11 @@ tr.expired {
 	background: rgba(9, 13, 30, 0.38);
 }
 
+[data-page-layout='split_panel'][data-has-brand-panel-background-color='true']
+	.auth-brand-panel::before {
+	background: var(--login-brand-panel-background-color);
+}
+
 .auth-brand-panel__content {
 	position: relative;
 	z-index: 1;

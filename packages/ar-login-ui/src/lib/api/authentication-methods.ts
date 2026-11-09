@@ -165,6 +165,8 @@ export interface LoginUIConfig {
 		formFrame?: 'card' | 'full';
 		/** Hex colour with an optional alpha channel; empty when none is set. */
 		formAreaColor?: string;
+		/** Optional tint over the Split brand area and its image. */
+		brandPanelBackgroundColor?: string;
 		/** Text input background: hex with an optional alpha channel; empty when none is set. */
 		fieldColor?: string;
 		/** Secondary button background: hex with an optional alpha channel; empty when none is set. */

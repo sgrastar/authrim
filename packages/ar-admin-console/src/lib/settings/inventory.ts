@@ -538,6 +538,7 @@ place('customization/login-ui', 'Colours', {
 		'login-ui.text_color',
 		'login-ui.copy_color',
 		'login-ui.form_area_color',
+		'login-ui.brand_panel_background_color',
 		'login-ui.field_color',
 		'login-ui.secondary_button_color',
 		'login-ui.link_color',

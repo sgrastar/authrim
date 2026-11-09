@@ -17,6 +17,8 @@
 	import { paletteColours, paletteOf } from './theme-palettes';
 	import { parseFooter } from './footer-links';
 	import { PREVIEW_SCREENS, type PreviewScreen } from './theme-sections';
+	/** The Split screen's built-in brand scrim, matching the Login UI. */
+	const BRAND_SCRIM = '#090d1e';
 
 	/**
 	 * The sign-in screens as the tenant's end users will see them, drawn from what is being edited
@@ -307,12 +309,17 @@
 				data-admin-theme="standard"
 				data-scheme={scheme}
 				data-template={draft.template}
+				data-form-area={own.cardColor ? 'set' : 'palette'}
+				data-brand-area={own.brandPanelBackground ? 'set' : 'palette'}
 				data-screen-id={actual?.id}
 				lang={draft.language}
 				dir={localeDir(draft.language)}
 				style:--ol-bg={own.background || defaults.background}
 				style:--ol-card={own.cardColor || defaults.card}
 				style:--ol-panel={defaults.card}
+				style:--ol-form-area-own={own.cardColor || undefined}
+				style:--ol-brand-bg={own.brandPanelBackground || undefined}
+				style:--ol-brand-scrim={BRAND_SCRIM}
 				style:--ol-accent={accent?.solid || defaults.accent}
 				style:--ol-link={own.linkColor || accent?.solid || defaults.accent}
 				style:--ol-accent-text={accent?.label || labelled(defaults.accent)?.label}
@@ -706,11 +713,24 @@
 		color: var(--panel-title);
 	}
 
+	.outline__panel::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: 1;
+		pointer-events: none;
+		background: linear-gradient(
+			to top,
+			color-mix(in srgb, var(--ol-brand-scrim) 62%, transparent),
+			color-mix(in srgb, var(--ol-brand-scrim) 8%, transparent) 58%,
+			transparent
+		);
+	}
+
 	/*
 	 * Over the background image the brand side is see-through, as on the real screen (the image is
-	 * shared by both sides): no fill, only a scrim like the real screen's (in a named colour, as the
-	 * console allows no literal colours), darker where the content sits. The scrim lies over the
-	 * brand side's own picture and under the text, as on the real screen.
+	 * shared by both sides): no fill, only a near-black scrim like the real screen's, darker where
+	 * the content sits. The scrim lies over the brand side's own picture and under the text.
 	 */
 	.outline__panel--over-image {
 		/* The real screen's light ink for the brand side, in either mode: the scrim is dark. */
@@ -720,34 +740,24 @@
 		background: none;
 	}
 
-	.outline__panel--over-image::before {
-		content: '';
-		position: absolute;
-		inset: 0;
-		z-index: 1;
-		pointer-events: none;
-		background: linear-gradient(
-			to top,
-			color-mix(in srgb, midnightblue 62%, transparent),
-			color-mix(in srgb, midnightblue 8%, transparent) 58%,
-			transparent
-		);
-	}
-
-	.outline__panel--over-image[data-position='top']::before {
+	.outline__panel[data-position='top']::before {
 		background: linear-gradient(
 			to bottom,
-			color-mix(in srgb, midnightblue 62%, transparent),
-			color-mix(in srgb, midnightblue 8%, transparent) 58%,
+			color-mix(in srgb, var(--ol-brand-scrim) 62%, transparent),
+			color-mix(in srgb, var(--ol-brand-scrim) 8%, transparent) 58%,
 			transparent
 		);
 	}
 
-	.outline__panel--over-image[data-position='center']::before {
-		background: color-mix(in srgb, midnightblue 38%, transparent);
+	.outline__panel[data-position='center']::before {
+		background: color-mix(in srgb, var(--ol-brand-scrim) 38%, transparent);
 	}
 
-	.outline__panel--over-image .outline__panel-content {
+	.outline[data-brand-area='set'] .outline__panel::before {
+		background: var(--ol-brand-bg);
+	}
+
+	.outline__panel .outline__panel-content {
 		z-index: 2;
 	}
 
@@ -817,13 +827,18 @@
 	 * no picture behind it, so it is a plain card (or the fill chosen for it).
 	 */
 	.outline__stage--split .outline__main {
-		background: color-mix(in srgb, var(--ol-panel) 72%, transparent);
+		background: var(--ol-form-area-own, color-mix(in srgb, var(--ol-panel) 72%, transparent));
 		backdrop-filter: blur(16px);
 	}
 
 	/* The line between the two sides, on the side the brand panel is not. */
 	.outline__stage--split .outline__main {
 		border-inline-start: 1px solid var(--border);
+	}
+
+	/* The real form side stops blurring the page when it has an explicit colour. */
+	.outline[data-form-area='set'] .outline__stage--split .outline__main {
+		backdrop-filter: none;
 	}
 
 	.outline__stage--right .outline__main {
@@ -1066,7 +1081,8 @@
 			0 12px 32px color-mix(in srgb, var(--ol-text) 10%, transparent);
 	}
 
-	.outline[data-shadow='clear'] .outline__card::after {
+	.outline[data-shadow='clear'] .outline__card::after,
+	.outline[data-shadow='clear'] .outline__stage--formcard .outline__col::after {
 		content: '';
 		position: absolute;
 		inset: 0;
@@ -1110,23 +1126,30 @@
 		backdrop-filter: blur(3px) saturate(115%);
 	}
 
-	/* Split, form frame "Full": the form area fills its side, no card around it. */
+	/* Split, form frame "Full": the form side is the surface. The form and its tools stay
+	   together in the middle, as in the Login UI's auth-container. */
 	.outline__stage--formfull .outline__body {
-		padding: 0;
-		place-items: stretch;
+		padding: 48px 40px 32px;
+		place-items: center;
 	}
 
 	.outline__stage--formfull .outline__col {
-		grid-template-rows: minmax(0, 1fr) auto;
-		width: 100%;
-		height: 100%;
+		gap: 20px;
+		width: min(100%, 400px);
 	}
 
-	.outline__stage--formfull .outline__card {
-		align-content: center;
-		height: 100%;
+	.outline__stage--formfull .outline__col--wide {
+		width: min(100%, 760px);
+	}
+
+	.outline .outline__stage--formfull .outline__card {
+		width: 100%;
+		padding: 0;
 		border: 0;
 		border-radius: 0;
+		background: transparent;
+		box-shadow: none;
+		backdrop-filter: none;
 	}
 
 	/* The card, with the topbar below it when it sits there. */
@@ -1139,6 +1162,54 @@
 
 	.outline__col--wide {
 		width: min(100%, 720px);
+	}
+
+	/* The real floating form frame is the outer column: it contains both the form and the
+	   switches below it. The form's inner card has no second surface. */
+	.outline__stage--formcard .outline__col {
+		position: relative;
+		width: min(100%, 440px);
+		padding: 32px;
+		border: 1px solid var(--border);
+		border-radius: var(--ol-card-radius, var(--radius-lg));
+		background: var(--ol-card);
+		box-shadow: var(--shadow-lg);
+	}
+
+	.outline__stage--formcard.outline__stage--wide .outline__col {
+		width: min(100%, 640px);
+	}
+
+	.outline__stage--formcard.outline__stage--wide .outline__col--wide {
+		width: min(100%, 760px);
+	}
+
+	.outline[data-shadow='glass'] .outline__stage--formcard .outline__col {
+		border-color: color-mix(in srgb, white 65%, transparent);
+		box-shadow:
+			0 8px 32px color-mix(in srgb, var(--ol-text) 12%, transparent),
+			inset 0 1px 0 color-mix(in srgb, white 70%, transparent);
+		backdrop-filter: blur(24px) saturate(160%);
+	}
+
+	.outline[data-shadow='clear'] .outline__stage--formcard .outline__col {
+		border-color: transparent;
+		background:
+			linear-gradient(120deg, color-mix(in srgb, white 42%, transparent), transparent 46%),
+			var(--ol-card);
+		box-shadow:
+			0 0 24px color-mix(in srgb, var(--ol-text) 22%, transparent),
+			0 12px 32px color-mix(in srgb, var(--ol-text) 10%, transparent);
+		backdrop-filter: blur(3px) saturate(115%);
+	}
+
+	.outline .outline__stage--formcard .outline__card {
+		padding: 0;
+		border: 0;
+		border-radius: 0;
+		background: transparent;
+		box-shadow: none;
+		backdrop-filter: none;
 	}
 
 	.outline__card > :global(.tools) {
@@ -1160,7 +1231,8 @@
 
 	/* No card box, so no rim either (nor on a split side the form fills). */
 	.outline[data-template='minimal'] .outline__card::after,
-	.outline__stage--formfull .outline__card::after {
+	.outline__stage--formfull .outline__card::after,
+	.outline__stage--formcard .outline__card::after {
 		display: none;
 	}
 

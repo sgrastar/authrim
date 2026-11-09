@@ -2037,12 +2037,17 @@ describe('Authentication Methods API', () => {
         'settings:tenant:default:login-ui': JSON.stringify({
           'login-ui.theme': 'auto',
           'login-ui.link_color': 'rgb(100%, 0%, 0%)',
+          'login-ui.brand_panel_background_color': '#090d1e61',
           'login-ui.header_background_color': '#1f2a44',
           'login-ui.footer_text_color': 'rgba(10, 20, 30, 0.5)',
           'login-ui.header_align': 'center',
           'login-ui.footer_align': 'nowhere',
           'login-ui.topbar_position': 'header_right',
-          'login-ui.dark_colors': JSON.stringify({ accent: '#93aef2', link: 'red' }),
+          'login-ui.dark_colors': JSON.stringify({
+            accent: '#93aef2',
+            brand_panel_background: '#01020380',
+            link: 'red',
+          }),
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -2053,12 +2058,13 @@ describe('Authentication Methods API', () => {
       expect(res.status).toBe(200);
       expect(body.ui.pageTemplate).toMatchObject({
         linkColor: '',
+        brandPanelBackgroundColor: '#090d1e61',
         headerBackgroundColor: '#1f2a44',
         footerTextColor: 'rgba(10, 20, 30, 0.5)',
         headerAlign: 'center',
         footerAlign: 'center',
         topbarPosition: 'header_right',
-        darkColors: { accent: '#93aef2' },
+        darkColors: { accent: '#93aef2', brand_panel_background: '#01020380' },
       });
     });
 

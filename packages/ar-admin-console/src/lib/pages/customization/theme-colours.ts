@@ -14,6 +14,7 @@ export const NO_FILL = '#00000000';
 export type ThemeColourField =
 	| 'background'
 	| 'cardColor'
+	| 'brandPanelBackground'
 	| 'accent'
 	| 'linkColor'
 	| 'titleColor'
@@ -55,6 +56,14 @@ export const THEME_COLOURS: readonly ThemeColour[] = [
 		label: 'th.c.card',
 		alpha: true,
 		fallback: (p) => p.card
+	},
+	{
+		field: 'brandPanelBackground',
+		name: 'brand_panel_background',
+		label: 'th.c.brandPanelBackground',
+		alpha: true,
+		fallback: () => '#090d1e61',
+		strict: true
 	},
 	{
 		field: 'accent',

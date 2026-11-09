@@ -1,10 +1,10 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
+	import { expect, fireEvent, fn, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeLoginUiThemes } from '#lib/api/fake/login-ui-themes-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import ThemeEditorPage from './ThemeEditorPage.svelte';
-	import { draftToValues } from './theme-values';
+	import { draftToValues, valuesToDraft } from './theme-values';
 	import { newThemeDraft } from './theme-draft';
 
 	const { Story } = defineMeta({
@@ -33,6 +33,7 @@
 		created_at: Date.UTC(2026, 10, 1),
 		updated_at: Date.UTC(2026, 10, 5)
 	};
+	const colorClient = createFakeLoginUiThemes({ themes: [saved] });
 </script>
 
 <Story
@@ -123,6 +124,87 @@
 	{#snippet template()}
 		<ThemeEditorPage
 			client={createFakeLoginUiThemes({ themes: [saved] })}
+			id="thm_1"
+			canWrite
+			{upload}
+			listHref="/admin/customization/branding"
+			{oncreated}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Bar and brand area colours survive save"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Spring campaign' });
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		const colors = [
+			[t('th.c.brandPanelBackground'), '#090d1e'],
+			[t('th.c.headerBackground'), '#112233'],
+			[t('th.c.headerText'), '#fefefe'],
+			[t('th.c.footerBackground'), '#445566'],
+			[t('th.c.footerText'), '#eeeeee']
+		] as const;
+		for (const [label, value] of colors) {
+			await userEvent.type(canvas.getByRole('textbox', { name: label }), value);
+		}
+		fireEvent.input(
+			canvas.getByRole('slider', {
+				name: t('color.opacity', { name: t('th.c.brandPanelBackground') })
+			}),
+			{ target: { value: '38' } }
+		);
+		const save = canvas.getByRole('button', { name: t('th.page.save') });
+		await expect(save).toBeEnabled();
+		await userEvent.click(save);
+		await waitFor(() => expect(save).toBeDisabled());
+		const light = (await colorClient.get('thm_1')).theme.values;
+		await expect(light).toMatchObject({
+			'login-ui.brand_panel_background_color': '#090d1e61',
+			'login-ui.header_background_color': '#112233',
+			'login-ui.header_text_color': '#fefefe',
+			'login-ui.footer_background_color': '#445566',
+			'login-ui.footer_text_color': '#eeeeee'
+		});
+		await expect(valuesToDraft(light)).toMatchObject({
+			brandPanelBackground: '#090d1e61',
+			headerBackground: '#112233',
+			headerText: '#fefefe',
+			footerBackground: '#445566',
+			footerText: '#eeeeee'
+		});
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
+		for (const [label, value] of [
+			[t('th.c.brandPanelBackground'), '#010203'],
+			[t('th.c.headerBackground'), '#0a0b0c'],
+			[t('th.c.headerText'), '#fafafa'],
+			[t('th.c.footerBackground'), '#141516'],
+			[t('th.c.footerText'), '#dedede']
+		] as const) {
+			await userEvent.type(canvas.getByRole('textbox', { name: label }), value);
+		}
+		fireEvent.input(
+			canvas.getByRole('slider', {
+				name: t('color.opacity', { name: t('th.c.brandPanelBackground') })
+			}),
+			{ target: { value: '50' } }
+		);
+		await userEvent.click(save);
+		await waitFor(() => expect(save).toBeDisabled());
+		const dark = (await colorClient.get('thm_1')).theme.values;
+		await expect(JSON.parse(dark['login-ui.dark_colors'] as string)).toMatchObject({
+			brand_panel_background: '#01020380',
+			header_background: '#0a0b0c',
+			header_text: '#fafafa',
+			footer_background: '#141516',
+			footer_text: '#dedede'
+		});
+	}}
+>
+	{#snippet template()}
+		<ThemeEditorPage
+			client={colorClient}
 			id="thm_1"
 			canWrite
 			{upload}
