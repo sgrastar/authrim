@@ -885,7 +885,7 @@ describe('Login UI proxy hooks', () => {
 			resolveInitialLoginUIAppearance({
 				ui: { theme: 'dark', pageTemplate: { backgroundColor: '#112233' } }
 			} as never)
-		).toEqual({ background: '#0b0e16', colorScheme: 'dark' });
+		).toEqual({ background: '#0a0a0b', colorScheme: 'dark' });
 		expect(
 			resolveInitialLoginUIAppearance({
 				ui: {
@@ -895,13 +895,13 @@ describe('Login UI proxy hooks', () => {
 			} as never)
 		).toEqual({ background: '#112233', colorScheme: 'light dark', darkBackground: '#223344' });
 		// Without a configured colour: the page background of the theme template in the mode
-		// (Meridian when none is set), as app.css paints it.
+		// (Clean when none is set), as app.css paints it.
 		expect(resolveInitialLoginUIAppearance(null)).toEqual({
-			background: '#eef1f6',
+			background: '#ffffff',
 			colorScheme: 'light'
 		});
 		expect(resolveInitialLoginUIAppearance(null, { theme: 'dark' })).toEqual({
-			background: '#0b0e16',
+			background: '#0a0a0b',
 			colorScheme: 'dark'
 		});
 		expect(
@@ -916,23 +916,23 @@ describe('Login UI proxy hooks', () => {
 
 	it('opens an auto tenant in the visitor’s last mode', async () => {
 		const { resolveInitialLoginUIAppearance } = await import('../hooks.server');
-		const auto = { ui: { theme: 'auto', pageTemplate: { palette: 'meridian' } } } as never;
+		const auto = { ui: { theme: 'auto', pageTemplate: { palette: 'clean' } } } as never;
 
 		expect(resolveInitialLoginUIAppearance(auto, { theme: 'dark' })).toEqual({
-			background: '#0b0e16',
+			background: '#0a0a0b',
 			colorScheme: 'dark'
 		});
 		expect(resolveInitialLoginUIAppearance(auto, { theme: 'light' })).toEqual({
-			background: '#eef1f6',
+			background: '#ffffff',
 			colorScheme: 'light'
 		});
 		// No usable hint: light, and the system's colour scheme takes over. The dark first-frame
 		// colour is given for the script that settles the mode before the first paint.
 		for (const hint of [undefined, { theme: null }, { theme: 'sepia' }]) {
 			expect(resolveInitialLoginUIAppearance(auto, hint)).toEqual({
-				background: '#eef1f6',
+				background: '#ffffff',
 				colorScheme: 'light dark',
-				darkBackground: '#0b0e16'
+				darkBackground: '#0a0a0b'
 			});
 		}
 		// A hint (or any tenant that names a mode) needs no script.
@@ -942,10 +942,10 @@ describe('Login UI proxy hooks', () => {
 		// `auto` cannot be fixed: a stored themeFixed changes nothing, the hint is still used.
 		expect(
 			resolveInitialLoginUIAppearance(
-				{ ui: { theme: 'auto', themeFixed: true, pageTemplate: { palette: 'meridian' } } } as never,
+				{ ui: { theme: 'auto', themeFixed: true, pageTemplate: { palette: 'clean' } } } as never,
 				{ theme: 'dark' }
 			)
-		).toEqual({ background: '#0b0e16', colorScheme: 'dark' });
+		).toEqual({ background: '#0a0a0b', colorScheme: 'dark' });
 	});
 
 	it('adds the first-paint script only for an auto tenant without a hint', async () => {
@@ -955,7 +955,7 @@ describe('Login UI proxy hooks', () => {
 			const event = {
 				request: new Request(url),
 				url,
-				locals: { authenticationMethods: { ui: { theme, pageTemplate: { palette: 'meridian' } } } },
+				locals: { authenticationMethods: { ui: { theme, pageTemplate: { palette: 'clean' } } } },
 				cookies: {
 					get: (name: string) => (name === 'authrim_theme_hint' ? hint : undefined),
 					set: vi.fn()
@@ -978,7 +978,7 @@ describe('Login UI proxy hooks', () => {
 
 		const first = await render('auto');
 		expect(first).toContain('<script>');
-		expect(first).toContain('"#0b0e16"');
+		expect(first).toContain('"#0a0a0b"');
 		expect(first).not.toContain('__AUTHRIM_');
 		for (const html of [
 			await render('auto', 'dark'),
@@ -995,7 +995,7 @@ describe('Login UI proxy hooks', () => {
 		const light = (ui: object) =>
 			resolveInitialLoginUIAppearance({ ui: { theme: 'light', ...ui } } as never).background;
 
-		expect(light({ pageTemplate: { palette: 'flat' } })).toBe('#ffffff');
+		expect(light({ pageTemplate: { palette: 'clean' } })).toBe('#ffffff');
 		expect(light({ pageTemplate: { palette: 'swiss-grid' } })).toBe('#f6f5f1');
 		expect(light({ pageTemplate: { palette: 'glass' } })).toBe('#e9ecf2');
 		expect(light({ pageTemplate: { palette: 'clear-glass' } })).toBe('#dce3e9');

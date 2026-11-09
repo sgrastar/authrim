@@ -54,6 +54,9 @@ describe('validateLoginUICustomCss', () => {
       [data-login-palette='glass'] .auth-page {
         backdrop-filter: blur(8px);
       }
+      [data-login-palette='clean'] .auth-page {
+        color: #111111;
+      }
       [data-form-frame='full'] .auth-container {
         border-radius: 0;
       }
@@ -66,6 +69,7 @@ describe('validateLoginUICustomCss', () => {
     expect(result.errors).toEqual([]);
     expect(result.sanitizedCss).toContain("[data-login-template='split']");
     expect(result.sanitizedCss).toContain("[data-login-palette='glass']");
+    expect(result.sanitizedCss).toContain("[data-login-palette='clean']");
     expect(result.sanitizedCss).toContain("[data-form-frame='full']");
     expect(result.sanitizedCss).toContain("[data-topbar-position='form_bottom_center']");
   });
@@ -74,6 +78,8 @@ describe('validateLoginUICustomCss', () => {
     for (const selector of [
       "[data-login-template='fullbleed'] .auth-page",
       "[data-login-palette='neon'] .auth-page",
+      "[data-login-palette='meridian'] .auth-page",
+      "[data-login-palette='flat'] .auth-page",
       "[data-form-frame='floating'] .auth-container",
     ]) {
       const result = validateLoginUICustomCss(`${selector} { color: red; }`);

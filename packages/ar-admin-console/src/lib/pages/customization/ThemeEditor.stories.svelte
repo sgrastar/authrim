@@ -311,7 +311,7 @@
 		await expect(definition()).toMatchObject({
 			'login-ui.header_style': 'bar',
 			'login-ui.footer_style': 'bar',
-			'login-ui.palette': 'meridian'
+			'login-ui.palette': 'clean'
 		});
 		// It follows the edits.
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
@@ -1302,9 +1302,9 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const outline = canvasElement.querySelector('.outline') as HTMLElement;
-		// Meridian to begin with: its blue accent, rounded form area.
+		// Clean to begin with: its blue accent and quiet, lightly rounded form area.
 		await expect(outline.style.getPropertyValue('--ol-accent')).toBe('#2f52c4');
-		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('20px');
+		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('8px');
 		await userEvent.click(
 			await canvas.findByRole('radio', { name: new RegExp(t('th.palette.glass')) })
 		);

@@ -174,9 +174,7 @@ const BOUNDARY = ':is(:root, .login-ui-theme-boundary)';
 const classic = (selector: string) => tokens(themes, selector);
 const page = (values: Record<string, string>) => [colour(values['--bg-page']).rgb];
 
-const meridianLight = tokens(app, `${BOUNDARY}[data-login-theme='meridian'],`);
-const meridianDark = tokens(app, `${BOUNDARY}[data-theme='dark'][data-login-theme='meridian'],`);
-// Swiss Grid and Glass: light is the base, dark overrides it (as flat does).
+// Swiss Grid and Glass: light is the base, dark overrides it (as Clean does).
 const swissLight = tokens(app, `${BOUNDARY}[data-login-theme='swiss-grid'] {`);
 const swissDark = {
 	...swissLight,
@@ -271,10 +269,10 @@ const GLASS_FALLBACKS: Case[] = [
 	...withFallbacks('clear glass', clearLight, clearDark)
 ];
 
-const flatLight = tokens(app, `${BOUNDARY}[data-login-theme='flat'] {`);
-const flatDark = {
-	...flatLight,
-	...tokens(app, `${BOUNDARY}[data-theme='dark'][data-login-theme='flat'] {`)
+const cleanLight = tokens(app, `${BOUNDARY}[data-login-theme='clean'],`);
+const cleanDark = {
+	...cleanLight,
+	...tokens(app, `${BOUNDARY}[data-theme='dark'][data-login-theme='clean'],`)
 };
 
 const classicLight = classic(":root,\n[data-theme='light'] {");
@@ -283,10 +281,10 @@ const classicDark = classic("/* === Dark Theme === */\n[data-theme='dark'] {");
 const CASES: Case[] = [
 	{ name: 'classic light', values: classicLight, behind: page(classicLight) },
 	{ name: 'classic dark', values: classicDark, behind: page(classicDark) },
-	{ name: 'meridian / split light', values: meridianLight, behind: page(meridianLight) },
-	{ name: 'meridian / split dark', values: meridianDark, behind: page(meridianDark) },
-	{ name: 'flat light', values: flatLight, behind: page(flatLight) },
-	{ name: 'flat dark', values: flatDark, behind: page(flatDark) },
+	{ name: 'split preset light', values: cleanLight, behind: page(cleanLight) },
+	{ name: 'split preset dark', values: cleanDark, behind: page(cleanDark) },
+	{ name: 'clean light', values: cleanLight, behind: page(cleanLight) },
+	{ name: 'clean dark', values: cleanDark, behind: page(cleanDark) },
 	{ name: 'swiss grid light', values: swissLight, behind: page(swissLight) },
 	{ name: 'swiss grid dark', values: swissDark, behind: page(swissDark) },
 	{ name: 'glass light', values: glassLight, behind: glassBehind(glassLight) },
@@ -364,8 +362,8 @@ describe('theme contrast', () => {
 	});
 
 	it.each([
-		{ name: 'meridian / split light', values: meridianLight },
-		{ name: 'meridian / split dark', values: meridianDark },
+		{ name: 'split preset light', values: cleanLight },
+		{ name: 'split preset dark', values: cleanDark },
 		{ name: 'swiss grid light', values: swissLight },
 		{ name: 'swiss grid dark', values: swissDark }
 	])('$name: primary button text meets AA', ({ values }) => {
@@ -579,10 +577,10 @@ describe('first paint', () => {
 		const expected: Array<[string, 'light' | 'dark', Record<string, string>]> = [
 			['classic', 'light', classicLight],
 			['classic', 'dark', classicDark],
-			['meridian', 'light', meridianLight],
-			['meridian', 'dark', meridianDark],
-			['split-brand-panel', 'light', meridianLight],
-			['split-brand-panel', 'dark', meridianDark],
+			['clean', 'light', cleanLight],
+			['clean', 'dark', cleanDark],
+			['split-brand-panel', 'light', cleanLight],
+			['split-brand-panel', 'dark', cleanDark],
 			['swiss-grid', 'light', swissLight],
 			['swiss-grid', 'dark', swissDark],
 			['glass', 'light', glassLight],

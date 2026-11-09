@@ -68,8 +68,8 @@ export const jaCustomization = {
 	'th.g.palette': 'パレット',
 	'th.g.palette.d':
 		'フォームエリアの色と形です。どのテンプレートとも組み合わせられます。「デザイン」で指定した色は、パレットの色より優先されます。',
-	'th.palette.meridian': 'メリディアン',
-	'th.palette.meridian.d': '淡い紙色に青。角は丸めです。',
+	'th.palette.clean': 'クリーン',
+	'th.palette.clean.d': '白と細い線。影もすりガラスも使いません。',
 	'th.palette.classic': 'クラシック',
 	'th.palette.classic.d': '温かみのある中間色。角は少し丸めです。',
 	'th.palette.swiss-grid': 'スイスグリッド',
@@ -79,8 +79,6 @@ export const jaCustomization = {
 	'th.palette.clear-glass': '透明ガラス',
 	'th.palette.clear-glass.d':
 		'後ろが透けて見えるガラス。虹色の縁、縁の光、斜めの映り込みで形が分かります。ボタンは丸い形です。',
-	'th.palette.flat': 'フラット',
-	'th.palette.flat.d': '白と細い線。影もすりガラスも使いません。',
 	'th.g.colours': '色',
 	'th.g.colours.d':
 		'ライトとダークのそれぞれで設定できます。空のままにすると、欄に出ている標準の色を使います。',

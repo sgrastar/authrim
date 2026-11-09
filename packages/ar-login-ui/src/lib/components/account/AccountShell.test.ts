@@ -32,7 +32,7 @@ function renderShell(
 						applyAuthenticationMethodsToLoginUI(
 							{
 								methods: {} as AuthenticationMethodsResponse['methods'],
-								ui: buildLoginUIConfig({ theme: 'meridian', scheme: 'light' }, ui),
+								ui: buildLoginUIConfig({ theme: 'clean', scheme: 'light' }, ui),
 								meta: { cacheTTL: 0, revision: 'test' }
 							},
 							stores

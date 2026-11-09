@@ -22,7 +22,7 @@ The Login UI will not get a next-generation rewrite. This Storybook exists so th
 ## Toolbar
 
 - **Template** — Standard (default), Split, Minimal: the structure of the page. A story that does not pin its own template follows this.
-- **Palette** — Meridian (default), Classic, Swiss Grid, Frosted glass, Clear glass, Flat: the colours and the shape of the form area. A story that does not pin its own palette follows this. Template and palette combine freely (3 × 6), as on the Admin console's Themes page.
+- **Palette** — Clean (default), Classic, Swiss Grid, Frosted glass, Clear glass: the colours and the shape of the form area. A story that does not pin its own palette follows this. Template and palette combine freely (3 × 5), as on the Admin console's Themes page.
 - **Scheme** — light or dark. Each palette carries its own colours in each.
 - **Language** — all 21 languages of the Login UI. Arabic switches the layout to right-to-left. Labels an admin typed in a screen stay as typed, as they do on the real page.
 
@@ -33,12 +33,12 @@ The galleries (**Page shell / Palettes and templates**, **Themes and layouts**) 
 A tenant sets these independently:
 
 1. **Template** (`pageTemplate.template`) — `standard` (a centred card), `split` (a brand panel beside the form; `form_frame` full or card) or `minimal` (the form sits on the page). It also sets the page layout.
-2. **Palette** (`pageTemplate.palette`) — `meridian`, `classic`, `swiss-grid`, `glass`, `clear-glass` or `flat`: the colours and the shape of the form area. **Swiss Grid** is drawn the way the Admin console's Swiss Grid theme is: paper and ink, square corners, a 1px ink ring in place of a shadow, heavy tight headings, one orange for focus (its tokens are checked against the Admin console's). **Frosted glass** (`glass`) blurs what is behind its panes (24px): a translucent white face with a fine grain, one light line along the top edge and a soft shadow. **Clear glass** (`clear-glass`) hardly blurs (3px): it is seen by its edges, an iridescent rim, glints of light along the top and bottom edges and a diagonal reflection across the face; its buttons are pills. Both lay soft blots of colour over the page colour so there is something behind the glass. Without blur (reduced transparency, or a browser without backdrop-filter) their panes turn opaque.
+2. **Palette** (`pageTemplate.palette`) — `clean`, `classic`, `swiss-grid`, `glass` or `clear-glass`: the colours and the shape of the form area. **Swiss Grid** is drawn the way the Admin console's Swiss Grid theme is: paper and ink, square corners, a 1px ink ring in place of a shadow, heavy tight headings, one orange for focus (its tokens are checked against the Admin console's). **Frosted glass** (`glass`) blurs what is behind its panes (24px): a translucent white face with a fine grain, one light line along the top edge and a soft shadow. **Clear glass** (`clear-glass`) hardly blurs (3px): it is seen by its edges, an iridescent rim, glints of light along the top and bottom edges and a diagonal reflection across the face; its buttons are pills. Both lay soft blots of colour over the page colour so there is something behind the glass. Without blur (reduced transparency, or a browser without backdrop-filter) their panes turn opaque.
 3. **Light or dark** — see above.
 
 The **brand panel** (logo, title and text beside the form) exists only in the split template and only when its content is not "none". It disappears below 640px width.
 
-The four pre-palette names (Meridian, Classic, Split brand panel, Full-bleed glass) are what an older server sends as `themeTemplate`. They map to a template and a palette: Meridian is standard + meridian, Classic is standard + classic, Split brand panel is split + meridian, Full-bleed glass is standard + swiss-grid (it became Swiss Grid; Frosted glass and Clear glass are new palettes). The galleries under **Themes and layouts** still pin a frame to one of them with the `theme` prop.
+The four theme presets (Clean, Classic, Split brand panel, Full-bleed glass) are also represented by `themeTemplate`. They map to a template and a palette: Clean is standard + clean, Classic is standard + classic, Split brand panel is split + clean, Full-bleed glass is standard + swiss-grid (it became Swiss Grid; Frosted glass and Clear glass are new palettes). The galleries under **Themes and layouts** still pin a frame to one of them with the `theme` prop.
 
 ## How a story is set up
 

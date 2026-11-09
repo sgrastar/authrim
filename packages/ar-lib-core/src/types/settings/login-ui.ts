@@ -28,15 +28,14 @@ export const DEFAULT_LOGIN_UI_TEMPLATE: LoginUITemplateId = 'standard';
  * which ids may be stored and returned. Add a palette there first, then add its id here.
  */
 export const LOGIN_UI_PALETTE_IDS = [
-  'meridian',
+  'clean',
   'classic',
   'swiss-grid',
   'glass',
   'clear-glass',
-  'flat',
 ] as const;
 export type LoginUIPaletteId = (typeof LOGIN_UI_PALETTE_IDS)[number];
-export const DEFAULT_LOGIN_UI_PALETTE: LoginUIPaletteId = 'meridian';
+export const DEFAULT_LOGIN_UI_PALETTE: LoginUIPaletteId = 'clean';
 
 /** Unknown or missing palette ids read as the default palette. */
 export function normalizeLoginUIPaletteId(value: unknown): LoginUIPaletteId {
@@ -218,12 +217,12 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
   'login-ui.theme_template': {
     key: 'login-ui.theme_template',
     type: 'enum',
-    default: 'meridian',
+    default: 'clean',
     envKey: 'LOGIN_UI_THEME_TEMPLATE',
     label: 'Theme Template (deprecated)',
     description:
       'Deprecated: replaced by login-ui.palette. Still accepted; the Login UI API derives the palette from it only when login-ui.palette was never set',
-    enum: ['classic', 'meridian', 'split-brand-panel', 'fullbleed-glass'],
+    enum: ['classic', 'clean', 'split-brand-panel', 'fullbleed-glass'],
     visibility: 'public',
     deprecated: true,
   },
@@ -1153,7 +1152,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.theme_fixed': false,
   'login-ui.template': DEFAULT_LOGIN_UI_TEMPLATE,
   'login-ui.palette': DEFAULT_LOGIN_UI_PALETTE,
-  'login-ui.theme_template': 'meridian',
+  'login-ui.theme_template': 'clean',
   'login-ui.published_version': 0,
   'login-ui.published_at': '',
   'login-ui.published_snapshot': '',

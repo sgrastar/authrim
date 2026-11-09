@@ -149,7 +149,7 @@ export interface LoginUIConfig {
 	/** When true the visitor cannot change the colour mode. Absent on older servers. */
 	themeFixed?: boolean;
 	/** @deprecated Derived server-side from `pageTemplate.palette` and `.template`. */
-	themeTemplate?: 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
+	themeTemplate?: 'classic' | 'clean' | 'split-brand-panel' | 'fullbleed-glass';
 	branding: {
 		logoUrl: string | null;
 		faviconUrl?: string | null;
@@ -161,7 +161,7 @@ export interface LoginUIConfig {
 		/** Page structure. Absent on older servers, which send only `layout`. */
 		template?: 'standard' | 'split' | 'minimal';
 		/** Built-in colour and shape set. Absent on older servers. */
-		palette?: 'meridian' | 'classic' | 'swiss-grid' | 'glass' | 'clear-glass' | 'flat';
+		palette?: 'clean' | 'classic' | 'swiss-grid' | 'glass' | 'clear-glass';
 		formFrame?: 'card' | 'full';
 		/** Hex colour with an optional alpha channel; empty when none is set. */
 		formAreaColor?: string;

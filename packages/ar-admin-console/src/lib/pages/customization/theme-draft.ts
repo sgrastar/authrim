@@ -203,7 +203,7 @@ function emptyTexts(): ThemeTexts {
 export function newThemeDraft(): ThemeDraft {
 	return {
 		template: 'standard',
-		palette: 'meridian',
+		palette: 'clean',
 		background: '',
 		cardColor: '',
 		brandPanelBackground: '',

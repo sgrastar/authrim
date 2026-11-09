@@ -346,7 +346,7 @@ const adminOther = {
 	admin_theme_duplicated_success: 'Duplicated as "{name:string}".',
 	admin_theme_discard_confirm: 'Discard unsaved theme changes?',
 	admin_theme_saved_success: 'Saved "{name:string}".',
-	admin_theme_template_meridian_description: 'Centered card, cobalt on cool paper, image optional.',
+	admin_theme_template_clean_description: 'White and thin lines. No shadow, no frost.',
 	admin_theme_template_split_brand_panel_description:
 		'Two-column page with a brand panel and compact form area.',
 	admin_theme_template_fullbleed_glass_description:

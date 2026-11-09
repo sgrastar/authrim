@@ -49,27 +49,27 @@ describe('loginUIPageStore templates and palettes', () => {
 
 	it('reads the template and palette a current server sends', () => {
 		const store = createLoginUIPageStore();
-		store.setFromUIConfig(config({ template: 'split', palette: 'flat', layout: 'split_panel' }));
+		store.setFromUIConfig(config({ template: 'split', palette: 'clean', layout: 'split_panel' }));
 
 		expect(store.template).toBe('split');
-		expect(store.palette).toBe('flat');
+		expect(store.palette).toBe('clean');
 		expect(store.layout).toBe('split_panel');
 		expect(html().getAttribute('data-login-template')).toBe('split');
-		expect(html().getAttribute('data-login-palette')).toBe('flat');
-		expect(html().getAttribute('data-login-theme')).toBe('flat');
+		expect(html().getAttribute('data-login-palette')).toBe('clean');
+		expect(html().getAttribute('data-login-theme')).toBe('clean');
 		expect(html().getAttribute('data-page-layout')).toBe('split_panel');
 	});
 
 	it.each([
-		['meridian', 'standard', 'meridian'],
-		['meridian', 'split', 'split-brand-panel'],
-		['meridian', 'minimal', 'meridian'],
+		['clean', 'standard', 'clean'],
+		['clean', 'split', 'clean'],
+		['clean', 'minimal', 'clean'],
 		['classic', 'split', 'classic'],
 		['swiss-grid', 'standard', 'swiss-grid'],
 		['swiss-grid', 'split', 'swiss-grid'],
 		['glass', 'standard', 'glass'],
 		['glass', 'split', 'glass'],
-		['flat', 'minimal', 'flat']
+		['clear-glass', 'standard', 'clear-glass']
 	] as const)(
 		'paints the %s palette on the %s template with the %s rules',
 		(palette, template, theme) => {
@@ -85,7 +85,7 @@ describe('loginUIPageStore templates and palettes', () => {
 
 	it('gives the minimal template the centred layout', () => {
 		const store = createLoginUIPageStore();
-		store.setFromUIConfig(config({ template: 'minimal', palette: 'meridian' }));
+		store.setFromUIConfig(config({ template: 'minimal', palette: 'clean' }));
 
 		expect(store.layout).toBe('centered_card');
 		expect(html().getAttribute('data-login-template')).toBe('minimal');
@@ -112,9 +112,9 @@ describe('loginUIPageStore templates and palettes', () => {
 			})
 		);
 
-		expect(store.palette).toBe('meridian');
+		expect(store.palette).toBe('clean');
 		expect(store.template).toBe('standard');
-		expect(html().getAttribute('data-login-theme')).toBe('meridian');
+		expect(html().getAttribute('data-login-theme')).toBe('clean');
 	});
 
 	it('applies the form frame and the form area colour', () => {

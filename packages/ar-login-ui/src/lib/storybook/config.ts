@@ -50,15 +50,13 @@ export type LoginUIConfigInput =
 	| { theme?: undefined; template: TemplateId; palette: PaletteId; scheme: Scheme };
 
 /**
- * The pre-palette `themeTemplate` the server sends alongside a palette and template, for older
- * Login UI builds. Swiss Grid is the former Glass (`fullbleed-glass`); the two glasses and `flat`
- * did not exist then, so they are sent as the Meridian name of their template
- * (the same derivation as `deriveLegacyThemeTemplate` in ar-management).
+ * The `themeTemplate` value sent alongside a palette and template. It uses the same derivation
+ * as `deriveLegacyThemeTemplate` in ar-management.
  */
 function serverLegacyTheme(palette: PaletteId, template: TemplateId): ThemeTemplate {
 	if (palette === 'classic') return 'classic';
 	if (palette === 'swiss-grid') return 'fullbleed-glass';
-	return template === 'split' ? 'split-brand-panel' : 'meridian';
+	return template === 'split' ? 'split-brand-panel' : 'clean';
 }
 
 export function buildLoginUIConfig(

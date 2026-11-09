@@ -162,7 +162,7 @@ describe('Login UI layout SSR theme bootstrap', () => {
 		});
 
 		expect(body).toContain('data-theme="light"');
-		expect(body).toContain('data-login-theme="meridian"');
+		expect(body).toContain('data-login-theme="clean"');
 		expect(body).not.toContain('split-brand-panel');
 		expect(body).not.toContain('Example Identity');
 	});

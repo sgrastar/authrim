@@ -10,7 +10,7 @@ describe('loginUIPageStore', () => {
 	beforeEach(() => {
 		document.documentElement.removeAttribute('style');
 		document.documentElement.setAttribute('data-theme', 'dark');
-		document.documentElement.setAttribute('data-login-theme', 'meridian');
+		document.documentElement.setAttribute('data-login-theme', 'clean');
 		const themeColor = document.querySelector("meta[name='theme-color']");
 		if (themeColor) themeColor.remove();
 		const newThemeColor = document.createElement('meta');

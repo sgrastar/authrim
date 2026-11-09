@@ -28,20 +28,19 @@ export const TEMPLATE_LABELS: Record<TemplateId, string> = {
 	minimal: 'Minimal'
 };
 export const PALETTE_LABELS: Record<PaletteId, string> = {
-	meridian: 'Meridian (default)',
+	clean: 'Clean (default)',
 	classic: 'Classic',
 	'swiss-grid': 'Swiss Grid',
 	glass: 'Frosted glass',
-	'clear-glass': 'Clear glass',
-	flat: 'Flat'
+	'clear-glass': 'Clear glass'
 };
 
 /**
- * The four pre-palette theme names. The toolbar no longer offers them; the galleries
+ * The four named theme presets. The toolbar no longer offers them; the galleries
  * (`Themes and layouts`) still pin a frame to one with the `theme` prop.
  */
 export const THEME_TEMPLATES = [
-	'meridian',
+	'clean',
 	'classic',
 	'split-brand-panel',
 	'fullbleed-glass'
@@ -51,7 +50,7 @@ export type ThemeTemplate = (typeof THEME_TEMPLATES)[number];
 export type Scheme = 'light' | 'dark';
 
 export const THEME_TEMPLATE_LABELS: Record<ThemeTemplate, string> = {
-	meridian: 'Meridian (default)',
+	clean: 'Clean (default)',
 	classic: 'Classic',
 	'split-brand-panel': 'Split brand panel',
 	// The old Full-bleed glass is the Swiss Grid palette now; an older server's name still reads as it.

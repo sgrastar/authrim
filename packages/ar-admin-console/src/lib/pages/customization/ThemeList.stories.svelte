@@ -41,8 +41,8 @@
 	});
 	const saved = [
 		theme('thm_1', 'Spring campaign', 'split', 'clear-glass', 3, HOUR),
-		theme('thm_2', 'Default', 'standard', 'meridian', 1, 30 * HOUR),
-		theme('thm_3', 'Partner portal', 'minimal', 'flat', 2, 72 * HOUR)
+		theme('thm_2', 'Default', 'standard', 'clean', 1, 30 * HOUR),
+		theme('thm_3', 'Partner portal', 'minimal', 'classic', 2, 72 * HOUR)
 	];
 	const onopen = fn();
 	const hrefOf = (id: string) => `/admin/customization/branding/${id}`;

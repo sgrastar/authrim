@@ -21,7 +21,7 @@
 			docs: {
 				description: {
 					component:
-						"Colour and shape tokens of each theme, read live from the CSS. A page is the product of the **theme** (Meridian, Classic, Split brand panel, Full-bleed glass: palette and corner shapes), light or dark, and the **layout** (see Page shell). Each theme brings its own palette in each mode; Full-bleed glass takes its accent from the tenant's accent colour."
+						"Colour and shape tokens of each theme, read live from the CSS. A page is the product of the **theme** (Clean, Classic, Split brand panel, Full-bleed glass: palette and corner shapes), light or dark, and the **layout** (see Page shell). Each theme brings its own palette in each mode; Full-bleed glass takes its accent from the tenant's accent colour."
 				}
 			}
 		}
