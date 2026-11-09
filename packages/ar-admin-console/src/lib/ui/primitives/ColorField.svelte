@@ -87,8 +87,8 @@
 	});
 	$effect(() => report(invalid));
 
-	/** The opacity in effect, 0–100: an empty field is the theme's own colour, fully opaque. */
-	const opacity = $derived(alpha ? splitAlpha(value).alpha : 100);
+	/** The opacity shown by the slider, including the fallback colour while the field is empty. */
+	const opacity = $derived(alpha ? splitAlpha(value || fallback).alpha : 100);
 
 	function store(rgb: string, percent: number) {
 		const next = alpha ? joinAlpha(rgb, percent) : rgb;
@@ -97,14 +97,14 @@
 	}
 
 	function set(next: string) {
-		store(next, opacity);
+		store(next, value ? opacity : 100);
 		text = next;
 		invalid = false;
 	}
 
 	/** The slider: with no colour yet, it applies to the colour in effect. */
 	function setOpacity(percent: number) {
-		const base = rgbOf(value) || normalizeHex(fallback) || '#000000';
+		const base = rgbOf(value) || normalizeHex(rgbOf(fallback)) || '#000000';
 		store(base, percent);
 		text = base;
 		invalid = false;
@@ -119,7 +119,7 @@
 			return;
 		}
 		invalid = hex === null;
-		if (hex) store(hex, opacity);
+		if (hex) store(hex, value ? opacity : 100);
 	}
 
 	const againstHex = $derived(contrastWith ? normalizeHex(contrastWith) : null);
@@ -150,7 +150,7 @@
 		<span class="color__swatch" style:--swatch={value || fallback || 'transparent'}>
 			<input
 				type="color"
-				value={rgbOf(value) || fallback || '#000000'}
+				value={rgbOf(value) || rgbOf(fallback) || '#000000'}
 				aria-label={t('color.pick', { name: label })}
 				disabled={off}
 				oninput={(event) => set(event.currentTarget.value)}

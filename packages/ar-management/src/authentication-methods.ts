@@ -287,6 +287,7 @@ interface UIConfig {
     textColor: string;
     copyColor: string;
     formAreaColor: string;
+    brandPanelBackgroundColor: string;
     fieldColor: string;
     secondaryButtonColor: string;
     linkColor: string;
@@ -495,6 +496,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     textColor: '',
     copyColor: '',
     formAreaColor: '',
+    brandPanelBackgroundColor: '',
     fieldColor: '',
     secondaryButtonColor: '',
     linkColor: '',
@@ -608,6 +610,7 @@ interface LoginUIKVSettings {
   'login-ui.text_color'?: string;
   'login-ui.copy_color'?: string;
   'login-ui.form_area_color'?: string;
+  'login-ui.brand_panel_background_color'?: string;
   'login-ui.field_color'?: string;
   'login-ui.secondary_button_color'?: string;
   'login-ui.link_color'?: string;
@@ -749,6 +752,7 @@ interface LoginUIResolved {
   textColor: string;
   copyColor: string;
   formAreaColor: string;
+  brandPanelBackgroundColor: string;
   fieldColor: string;
   secondaryButtonColor: string;
   linkColor: string;
@@ -1299,6 +1303,7 @@ function lightColorsAsDark(resolved: LoginUIResolved): LoginUIThemeColors {
   const light: Record<LoginUIThemeColorName, string> = {
     background: resolved.backgroundColor,
     form_area: resolved.formAreaColor,
+    brand_panel_background: resolved.brandPanelBackgroundColor,
     accent: resolved.accentColor,
     link: resolved.linkColor,
     title: resolved.titleColor,
@@ -1364,6 +1369,11 @@ function resolveLoginUIFromKVSettings(
     textColor: readSafeColor(kvSettings['login-ui.text_color'], defaults.textColor),
     copyColor: readSafeColor(kvSettings['login-ui.copy_color'], defaults.copyColor),
     formAreaColor: readSafeColor(kvSettings['login-ui.form_area_color'], defaults.formAreaColor),
+    brandPanelBackgroundColor: readThemeColor(
+      'brand_panel_background',
+      kvSettings['login-ui.brand_panel_background_color'],
+      defaults.brandPanelBackgroundColor
+    ),
     fieldColor: readSafeColor(kvSettings['login-ui.field_color'], defaults.fieldColor),
     secondaryButtonColor: readSafeColor(
       kvSettings['login-ui.secondary_button_color'],
@@ -1651,6 +1661,7 @@ async function getLoginUISettings(
     textColor: DEFAULT_UI_CONFIG.pageTemplate.textColor,
     copyColor: DEFAULT_UI_CONFIG.pageTemplate.copyColor,
     formAreaColor: DEFAULT_UI_CONFIG.pageTemplate.formAreaColor,
+    brandPanelBackgroundColor: DEFAULT_UI_CONFIG.pageTemplate.brandPanelBackgroundColor,
     fieldColor: DEFAULT_UI_CONFIG.pageTemplate.fieldColor,
     secondaryButtonColor: DEFAULT_UI_CONFIG.pageTemplate.secondaryButtonColor,
     linkColor: DEFAULT_UI_CONFIG.pageTemplate.linkColor,
@@ -2632,6 +2643,7 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
       textColor: loginUI.textColor,
       copyColor: loginUI.copyColor,
       formAreaColor: loginUI.formAreaColor,
+      brandPanelBackgroundColor: loginUI.brandPanelBackgroundColor,
       fieldColor: loginUI.fieldColor,
       secondaryButtonColor: loginUI.secondaryButtonColor,
       linkColor: loginUI.linkColor,

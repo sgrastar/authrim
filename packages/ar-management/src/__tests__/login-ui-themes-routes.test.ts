@@ -304,6 +304,40 @@ describe('login UI theme routes', () => {
     );
   });
 
+  it('keeps bar and brand-area colours through save, read, update and apply', async () => {
+    const colours = {
+      'login-ui.brand_panel_background_color': '#090d1e61',
+      'login-ui.header_background_color': '#11223380',
+      'login-ui.header_text_color': '#fefefe',
+      'login-ui.footer_background_color': '#445566',
+      'login-ui.footer_text_color': '#eeeeee',
+    };
+    const created = await call('POST', '/', { name: 'Bars', values: colours });
+    expect(created.status).toBe(201);
+    const { theme } = await created.json<ThemeBody>();
+    expect(
+      (await (await call('GET', `/${theme.id}`)).json<ThemeBody>()).theme.values
+    ).toMatchObject(colours);
+
+    const changed = {
+      ...colours,
+      'login-ui.brand_panel_background_color': '#01020380',
+      'login-ui.footer_background_color': '#66778899',
+    };
+    const updated = await call(
+      'PUT',
+      `/${theme.id}`,
+      { name: 'Bars', values: changed },
+      { 'If-Match': '"1"' }
+    );
+    expect(updated.status).toBe(200);
+    expect(
+      (await (await call('GET', `/${theme.id}`)).json<ThemeBody>()).theme.values
+    ).toMatchObject(changed);
+    expect((await call('POST', `/${theme.id}/apply`, { version: 2 })).status).toBe(200);
+    expect(mocks.state.document.own).toMatchObject(changed);
+  });
+
   it('keeps the tenants apart', async () => {
     const theme = await createTheme('Mine', { 'login-ui.template': 'split' });
     onTenant('tenant-b');

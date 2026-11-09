@@ -111,6 +111,34 @@
 	{/snippet}
 </Story>
 
+<Story
+	name="With a translucent fallback"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const hex = canvas.getByRole('textbox');
+		const slider = canvas.getByRole('slider');
+		await expect(hex).toHaveAttribute('placeholder', '#090d1e61');
+		await expect(slider).toHaveAttribute('aria-valuetext', '38%');
+		await expect(canvasElement.querySelector('input[type="color"]')).toHaveValue('#090d1e');
+		await userEvent.type(hex, '#112233');
+		await waitFor(() => expect(slider).toHaveAttribute('aria-valuetext', '100%'));
+		fireEvent.input(slider, { target: { value: '40' } });
+		await waitFor(() =>
+			expect(
+				(canvasElement.querySelector('.color__swatch') as HTMLElement).style.getPropertyValue(
+					'--swatch'
+				)
+			).toBe('#11223366')
+		);
+		await userEvent.clear(hex);
+		await waitFor(() => expect(slider).toHaveAttribute('aria-valuetext', '38%'));
+	}}
+>
+	{#snippet template()}
+		<ColorField label={button()} fallback="#090d1e61" alpha />
+	{/snippet}
+</Story>
+
 <Story name="With a palette">
 	{#snippet template()}
 		<ColorField

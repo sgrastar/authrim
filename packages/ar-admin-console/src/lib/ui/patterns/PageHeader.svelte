@@ -16,6 +16,10 @@
 		eyebrow?: Snippet;
 		/** What the page is, as badges at the top end of the title row (its kind, its status). */
 		badges?: Snippet;
+		/** A small action beside the title, such as editing its name. */
+		titleAction?: Snippet;
+		/** Replaces the visible title while it is edited; the page heading remains for navigation. */
+		titleEditor?: Snippet;
 		/** The title element, so a page that replaces what was on screen can move focus to it. */
 		titleElement?: HTMLHeadingElement | null;
 	}
@@ -27,6 +31,8 @@
 		actions,
 		eyebrow,
 		badges,
+		titleAction,
+		titleEditor,
 		titleElement = $bindable(null)
 	}: Props = $props();
 </script>
@@ -36,7 +42,17 @@
 	{#if eyebrow}<div class="page-head__eyebrow">{@render eyebrow()}</div>{/if}
 	<div class="page-head__row">
 		<div class="page-head__text">
-			<h1 bind:this={titleElement} tabindex="-1">{title}</h1>
+			{#if titleEditor}
+				<h1 class="sr-only" bind:this={titleElement} tabindex="-1">{title}</h1>
+				{@render titleEditor()}
+			{:else if titleAction}
+				<div class="page-head__title-inline">
+					<h1 bind:this={titleElement} tabindex="-1">{title}</h1>
+					{@render titleAction()}
+				</div>
+			{:else}
+				<h1 bind:this={titleElement} tabindex="-1">{title}</h1>
+			{/if}
 			{#if description}<p>{description}</p>{/if}
 		</div>
 		{#if badges || actions}
@@ -98,6 +114,13 @@
 	.page-head__text {
 		min-width: 0;
 		flex: 1 1 320px;
+	}
+
+	.page-head__title-inline {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		min-width: 0;
 	}
 
 	h1 {

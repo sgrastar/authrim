@@ -115,6 +115,8 @@
 		loginUIPageStore.loginPanelBackgroundOpacity / 100
 	)}
 	style:--login-form-area-color={loginUIPageStore.formAreaColor || undefined}
+	style:--login-brand-panel-background-color={loginUIPageStore.brandPanelBackgroundColor ||
+		undefined}
 	data-has-field-color={loginUIPageStore.fieldColor ? 'true' : undefined}
 	style:--bg-input={loginUIPageStore.fieldColor || undefined}
 	style:--field-bg={loginUIPageStore.fieldColor || undefined}

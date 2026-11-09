@@ -137,6 +137,7 @@ describe('theme values', () => {
 		const draft = {
 			...newThemeDraft(),
 			linkColor: '#1a73e8',
+			brandPanelBackground: '#090d1e61',
 			headerBackground: '#ffffffcc',
 			headerText: '#101010',
 			footerBackground: '#000000',
@@ -144,11 +145,16 @@ describe('theme values', () => {
 			headerAlign: 'center' as const,
 			footerAlign: 'right' as const,
 			topbarPosition: 'header_right' as const,
-			darkColours: { accent: '#93aef2', header_background: '#0b0e16' }
+			darkColours: {
+				accent: '#93aef2',
+				brand_panel_background: '#01020380',
+				header_background: '#0b0e16'
+			}
 		};
 		const values = draftToValues(draft);
 		expect(values).toMatchObject({
 			'login-ui.link_color': '#1a73e8',
+			'login-ui.brand_panel_background_color': '#090d1e61',
 			'login-ui.header_background_color': '#ffffffcc',
 			'login-ui.header_text_color': '#101010',
 			'login-ui.footer_background_color': '#000000',
@@ -158,14 +164,20 @@ describe('theme values', () => {
 			'login-ui.topbar_position': 'header_right',
 			'login-ui.header_style': 'bar',
 			'login-ui.footer_style': 'bar',
-			'login-ui.dark_colors': '{"accent":"#93aef2","header_background":"#0b0e16"}'
+			'login-ui.dark_colors':
+				'{"brand_panel_background":"#01020380","accent":"#93aef2","header_background":"#0b0e16"}'
 		});
 		expect(valuesToDraft(values)).toMatchObject({
 			linkColor: '#1a73e8',
+			brandPanelBackground: '#090d1e61',
 			headerAlign: 'center',
 			footerAlign: 'right',
 			topbarPosition: 'header_right',
-			darkColours: { accent: '#93aef2', header_background: '#0b0e16' }
+			darkColours: {
+				brand_panel_background: '#01020380',
+				accent: '#93aef2',
+				header_background: '#0b0e16'
+			}
 		});
 		// No dark colour set: written empty (the theme has a dark set, the palette's).
 		expect(draftToValues(newThemeDraft())['login-ui.dark_colors']).toBe('');
@@ -175,10 +187,12 @@ describe('theme values', () => {
 		const draft = valuesToDraft({
 			'login-ui.link_color': 'rgb(100%, 0%, 0%)',
 			'login-ui.header_background_color': '#1f2a44',
+			'login-ui.brand_panel_background_color': 'url(x)',
 			'login-ui.title_color': 'red'
 		});
 		expect(draft.linkColor).toBe('');
 		expect(draft.headerBackground).toBe('#1f2a44');
+		expect(draft.brandPanelBackground).toBe('');
 		// The older colours keep their wider rule.
 		expect(draft.titleColor).toBe('red');
 	});

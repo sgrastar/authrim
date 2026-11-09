@@ -120,6 +120,9 @@
 	data-login-panel-background-grayscale={String(loginUIPageStore.loginPanelBackgroundGrayscale)}
 	data-brand-panel-image-grayscale={String(loginUIPageStore.brandPanelImageGrayscale)}
 	data-has-form-area-color={loginUIPageStore.formAreaColor ? 'true' : 'false'}
+	data-has-brand-panel-background-color={loginUIPageStore.brandPanelBackgroundColor
+		? 'true'
+		: 'false'}
 	data-has-accent-color={loginUIPageStore.accentColor ? 'true' : 'false'}
 	data-branding-loaded={brandingStore.isLoaded ? '' : undefined}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
@@ -139,6 +142,8 @@
 		loginUIPageStore.loginPanelBackgroundOpacity / 100
 	)}
 	style:--login-form-area-color={loginUIPageStore.formAreaColor || undefined}
+	style:--login-brand-panel-background-color={loginUIPageStore.brandPanelBackgroundColor ||
+		undefined}
 	style:--login-page-background-opacity={String(loginUIPageStore.backgroundImageOpacity / 100)}
 	style:--login-brand-panel-image-layer={loginUIPageStore.brandPanelImageLayer ?? undefined}
 	style:--login-brand-panel-image-opacity={String(loginUIPageStore.brandPanelImageOpacity / 100)}

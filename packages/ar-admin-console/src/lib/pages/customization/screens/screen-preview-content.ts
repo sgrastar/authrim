@@ -1,4 +1,4 @@
-import type { ScreenListItem } from '#lib/api/screens.js';
+import type { ScreenKind, ScreenListItem } from '#lib/api/screens.js';
 import type { LayoutRow } from '#lib/ui/builder/layout-model.js';
 import type { Translations } from '#lib/ui/builder/TranslationTable.svelte';
 import { textId } from './screen-builder';
@@ -33,6 +33,24 @@ export function savedScreenPreview(screen: ScreenListItem): ScreenPreviewContent
 		legacyYesNo: legacyYesNoIds(read.origins),
 		translations: localizationsToTranslations(screen.localizations, screen.fields, read)
 	};
+}
+
+/** The theme picker shows these screen kinds in this order, keeping list order within each kind. */
+const THEME_PREVIEW_KINDS = [
+	'registration',
+	'login',
+	'profile_completion'
+] as const satisfies readonly ScreenKind[];
+
+export function themeScreenPreviews(
+	screens: readonly ScreenListItem[],
+	choices?: ChoiceSource
+): ScreenPreviewContent[] {
+	return THEME_PREVIEW_KINDS.flatMap((kind) =>
+		screens
+			.filter((screen) => screen.screen_kind === kind)
+			.map((screen) => ({ ...savedScreenPreview(screen), choices }))
+	);
 }
 
 /** Apply the preview language without changing the screen draft or its saved fields. */

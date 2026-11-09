@@ -599,6 +599,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.text_color
     login-ui.copy_color
     login-ui.form_area_color
+    login-ui.brand_panel_background_color
     login-ui.field_color
     login-ui.secondary_button_color
     login-ui.link_color

@@ -72,6 +72,8 @@ export interface ThemeDraft {
 	background: string;
 	/** The form area: the box that holds the sign-in form. */
 	cardColor: string;
+	/** The tint over the Split brand panel, including its image. */
+	brandPanelBackground: string;
 	accent: string;
 	titleColor: string;
 	textColor: string;
@@ -195,6 +197,7 @@ export function newThemeDraft(): ThemeDraft {
 		palette: 'meridian',
 		background: '',
 		cardColor: '',
+		brandPanelBackground: '',
 		accent: '',
 		titleColor: '',
 		textColor: '',

@@ -11,7 +11,7 @@
 	import ThemeImages from './ThemeImages.svelte';
 	import { apiBgPresets, type BgPresetSource } from './bg-presets';
 	import ThemePreview from './ThemePreview.svelte';
-	import { savedScreenPreview } from './screens/screen-preview-content';
+	import { themeScreenPreviews } from './screens/screen-preview-content';
 	import type { ChoiceSource } from './screens/screen-model';
 	import { newThemeDraft, type ThemeDraft } from './theme-draft';
 	import type { StoredTheme } from './theme-values';
@@ -50,11 +50,7 @@
 	let screens = $state<ScreenListItem[]>([]);
 	let screenPhase = $state<'loading' | 'ready' | 'failed'>('loading');
 	let retryScreens = $state(0);
-	const previews = $derived(
-		screensClient
-			? screens.map((screen) => ({ ...savedScreenPreview(screen), choices }))
-			: undefined
-	);
+	const previews = $derived(screensClient ? themeScreenPreviews(screens, choices) : undefined);
 
 	$effect(() => {
 		const client = screensClient;

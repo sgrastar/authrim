@@ -42,6 +42,11 @@
 		{ id: 'light', label: t('th.mode.light') },
 		{ id: 'dark', label: t('th.mode.dark') }
 	]);
+	const visibleColours = $derived(
+		THEME_COLOURS.filter(
+			(colour) => draft.template === 'split' || colour.field !== 'brandPanelBackground'
+		)
+	);
 	function pickColourTab(id: string) {
 		colourTab = id === 'dark' ? 'dark' : 'light';
 		if (draft.mode === 'auto') mode = colourTab;
@@ -50,9 +55,9 @@
 	// An empty colour is the palette's own (the field shows it), so going back to the palette's
 	// colours is emptying them. Nothing changes until the theme is saved.
 	const customised = (tab: 'light' | 'dark') =>
-		THEME_COLOURS.some((colour) => draftColour(draft, colour, tab) !== '');
+		visibleColours.some((colour) => draftColour(draft, colour, tab) !== '');
 	function resetColours(tab: 'light' | 'dark') {
-		for (const colour of THEME_COLOURS) setDraftColour(draft, colour, tab, '');
+		for (const colour of visibleColours) setDraftColour(draft, colour, tab, '');
 	}
 	// "Form bottom" places the choices on Split's form side, so only Split offers it; the header
 	// and footer places need that bar. A value it already has stays listed, so the field never
@@ -83,7 +88,7 @@
 			{@const tab = id === 'dark' ? 'dark' : 'light'}
 			{@const defaults = paletteColours(draft.palette, tab)}
 			<div class="colours">
-				{#each THEME_COLOURS as colour (colour.field)}
+				{#each visibleColours as colour (colour.field)}
 					<ColorField
 						label={t(colour.label as MessageKey)}
 						alpha={colour.alpha}

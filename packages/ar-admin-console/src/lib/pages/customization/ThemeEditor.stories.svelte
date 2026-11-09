@@ -18,6 +18,8 @@
 	);
 	const PAPER_PRESET =
 		Object.values(PRESET_FILES).find((url) => url.includes('indigo-washi')) ?? null;
+	const FOREST_PRESET =
+		Object.values(PRESET_FILES).find((url) => url.includes('misty-japanese-forest-deer')) ?? null;
 	const storyPresets = async (): Promise<BgPreset[]> =>
 		Object.entries(PRESET_FILES).flatMap(([path, url]) => {
 			const match = /\/backgrounds\/([^/]+)\/([^/]+)\.webp$/.exec(path);
@@ -25,7 +27,6 @@
 				? [{ id: `${match[1]}/${match[2]}`, category: match[1], name: match[2], url }]
 				: [];
 		});
-
 	const { Story } = defineMeta({
 		title: 'Pages/Customization/Theme editor',
 		component: ThemeEditor,
@@ -35,7 +36,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Themes → a theme: how the tenant’s sign-in screens look. The theme page (`ThemeEditorPage`) puts this editor under its header (the theme’s name, Save, Apply) and loads and saves the draft through `/api/admin/login-ui/themes`.\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded; custom CSS is not applied in the preview. The console picker shows actual saved screen parts; standalone stories without a screens client retain the sample outline.'
+						'Customization → Themes → a theme: how the tenant’s sign-in screens look. The theme page (`ThemeEditorPage`) puts this editor under its header (the theme’s name, Save, Apply) and loads and saves the draft through `/api/admin/login-ui/themes`.\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded; custom CSS is not applied in the preview. The console picker shows saved registration, login, and profile completion screens in that order. Standalone stories without a screens client retain the sample outline.'
 				}
 			}
 		}
@@ -67,17 +68,20 @@
 		const canvas = within(canvasElement);
 		const picker = await canvas.findByRole('combobox', { name: t('th.preview.screen') });
 		await waitFor(() =>
-			expect(
-				[...(picker as HTMLSelectElement).options].some(
-					(option) => option.value === 'screen_signup'
-				)
-			).toBe(true)
+			expect([...(picker as HTMLSelectElement).options].map((option) => option.value)).toEqual([
+				'screen_signup',
+				'screen_login',
+				'screen_profile'
+			])
 		);
+		await expect(picker).toHaveValue('screen_signup');
 		await userEvent.selectOptions(picker, 'screen_signup');
 		await waitFor(() => expect(canvas.getByText('Create your account')).toBeVisible());
 		await expect(canvas.getByText(/Given name/)).toBeVisible();
-		await userEvent.selectOptions(picker, 'screen_survey');
-		await waitFor(() => expect(canvas.getByText(/How did you hear about us\?/)).toBeVisible());
+		await userEvent.selectOptions(picker, 'screen_login');
+		await waitFor(() => expect(canvas.getByText('Sign in with Passkey')).toBeVisible());
+		await userEvent.selectOptions(picker, 'screen_profile');
+		await waitFor(() => expect(canvas.getByText('Preferred username')).toBeVisible());
 	}}
 >
 	{#snippet template()}
@@ -100,6 +104,8 @@
 				'outline__panel--over-image'
 			)
 		);
+		const panel = canvasElement.querySelector('.outline__panel') as HTMLElement;
+		await expect(getComputedStyle(panel, '::before').backgroundColor).toContain('0.38');
 	}}
 >
 	{#snippet template()}
@@ -110,10 +116,53 @@
 					template: 'split',
 					palette: 'clear-glass',
 					formFrame: 'card',
-					backgroundImage: PAPER_PRESET
+					backgroundImage: FOREST_PRESET
 				}}
 			/>
 		</Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Split brand area background is editable"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await expect(
+			canvas.queryByRole('textbox', { name: t('th.c.brandPanelBackground') })
+		).toBeNull();
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.tab.layout') }));
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
+		);
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.tab.look') }));
+		const field = await canvas.findByRole('textbox', { name: t('th.c.brandPanelBackground') });
+		await expect(field).toHaveAttribute('placeholder', '#090d1e61');
+		await userEvent.type(field, '#112233');
+		fireEvent.input(
+			canvas.getByRole('slider', {
+				name: t('color.opacity', { name: t('th.c.brandPanelBackground') })
+			}),
+			{ target: { value: '40' } }
+		);
+		const outline = canvasElement.querySelector('.outline') as HTMLElement;
+		const panel = canvasElement.querySelector('.outline__panel') as HTMLElement;
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-brand-bg')).toBe('#11223366'));
+		await expect(getComputedStyle(panel, '::before').backgroundColor).toContain('17, 34, 51');
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
+		const darkField = await canvas.findByRole('textbox', { name: t('th.c.brandPanelBackground') });
+		await userEvent.type(darkField, '#445566');
+		fireEvent.input(
+			canvas.getByRole('slider', {
+				name: t('color.opacity', { name: t('th.c.brandPanelBackground') })
+			}),
+			{ target: { value: '50' } }
+		);
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-brand-bg')).toBe('#44556680'));
+	}}
+>
+	{#snippet template()}
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -699,6 +748,39 @@
 </Story>
 
 <Story
+	name="Split full form area matches the live layout"
+	play={async ({ canvasElement }) => {
+		const main = canvasElement.querySelector('.outline__main') as HTMLElement;
+		const card = canvasElement.querySelector('.outline__card') as HTMLElement;
+		const tools = canvasElement.querySelector('.outline__col > .tools') as HTMLElement;
+		await expect(getComputedStyle(main).backgroundColor).toBe('rgba(17, 34, 51, 0.4)');
+		await expect(getComputedStyle(main).backdropFilter).toBe('none');
+		await expect(getComputedStyle(card).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+		await expect(card.getBoundingClientRect().height).toBeLessThan(
+			main.getBoundingClientRect().height
+		);
+		await expect(
+			tools.getBoundingClientRect().top - card.getBoundingClientRect().bottom
+		).toBeLessThan(30);
+	}}
+>
+	{#snippet template()}
+		<Page>
+			<ThemeEditor
+				draft={{
+					...newThemeDraft(),
+					template: 'split',
+					palette: 'classic',
+					formFrame: 'full',
+					cardColor: '#11223366',
+					backgroundImage: PAPER_PRESET
+				}}
+			/>
+		</Page>
+	{/snippet}
+</Story>
+
+<Story
 	name="Floating form area has the brand panel's picture behind it"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
@@ -741,9 +823,12 @@
 		const frame = await canvas.findByRole('combobox', { name: t('th.f.formFrame') });
 		const height = (selector: string) =>
 			(canvasElement.querySelector(selector) as HTMLElement).getBoundingClientRect().height;
-		// Full (to begin with): the form area fills its side, with no card around it.
+		// Full (to begin with): the form side is the surface; its content has no second card.
 		await expect(frame).toHaveValue('full');
-		await expect(height('.outline__card')).toBeGreaterThan(height('.outline__main') - 60);
+		await expect(
+			getComputedStyle(canvasElement.querySelector('.outline__card') as HTMLElement).backgroundColor
+		).toBe('rgba(0, 0, 0, 0)');
+		await expect(height('.outline__card')).toBeLessThan(height('.outline__main'));
 		await expect(
 			parseFloat(
 				getComputedStyle(canvasElement.querySelector('.outline__card') as HTMLElement)
@@ -756,11 +841,21 @@
 			expect(height('.outline__card')).toBeLessThan(height('.outline__main') - 40)
 		);
 		await expect(
+			getComputedStyle(canvasElement.querySelector('.outline__col') as HTMLElement).backgroundColor
+		).not.toBe('rgba(0, 0, 0, 0)');
+		await expect(
 			parseFloat(
-				getComputedStyle(canvasElement.querySelector('.outline__card') as HTMLElement)
+				getComputedStyle(canvasElement.querySelector('.outline__col') as HTMLElement)
 					.borderTopLeftRadius
 			)
 		).toBeGreaterThan(0);
+		const outer = (
+			canvasElement.querySelector('.outline__col') as HTMLElement
+		).getBoundingClientRect();
+		const tools = (
+			canvasElement.querySelector('.outline__col > .tools') as HTMLElement
+		).getBoundingClientRect();
+		await expect(tools.bottom).toBeLessThan(outer.bottom);
 	}}
 >
 	{#snippet template()}

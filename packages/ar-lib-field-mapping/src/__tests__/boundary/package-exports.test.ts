@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,19 +8,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, '../../..');
 const repositoryRoot = resolve(packageRoot, '../..');
 const barePackageSpecifier = ['@authrim', 'ar-lib-field-mapping'].join('/');
-const ignoredRepositoryDirectories = new Set([
-  '.git',
-  '.next',
-  '.svelte-kit',
-  '.turbo',
-  '.wrangler',
-  'build',
-  'coverage',
-  'dist',
-  'node_modules',
-  'playwright-report',
-  'test-results',
-]);
 const guardedSourceExtensions = new Set([
   '.astro',
   '.cjs',
@@ -101,7 +89,7 @@ describe('package export boundary', () => {
   it('forbids the removed bare-root import throughout the repository', () => {
     const violations: string[] = [];
 
-    for (const file of listRepositorySourceFiles(repositoryRoot)) {
+    for (const file of listRepositorySourceFiles()) {
       const source = readFileSync(file, 'utf8');
       if (hasBareRootReference(source)) {
         violations.push(relative(repositoryRoot, file));
@@ -122,34 +110,16 @@ describe('package export boundary', () => {
     ).toBe(false);
     expect(hasBareRootReference(`{ "${barePackageSpecifier}": "workspace:*" }`)).toBe(false);
   });
-
-  it('excludes transient test workspaces without excluding tracked dot-directories', () => {
-    expect(shouldIgnoreRepositoryDirectory('.test-generated-env-example')).toBe(true);
-    expect(shouldIgnoreRepositoryDirectory('.test-keys-example')).toBe(true);
-    expect(shouldIgnoreRepositoryDirectory('.github')).toBe(false);
-  });
 });
 
-function listRepositorySourceFiles(dir: string): string[] {
-  const files: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory() && shouldIgnoreRepositoryDirectory(entry.name)) {
-      continue;
-    }
-    const path = resolve(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...listRepositorySourceFiles(path));
-      continue;
-    }
-    if (entry.isFile() && guardedSourceExtensions.has(extname(path))) {
-      files.push(path);
-    }
-  }
-  return files;
-}
-
-function shouldIgnoreRepositoryDirectory(name: string): boolean {
-  return ignoredRepositoryDirectories.has(name) || name.startsWith('.test-');
+function listRepositorySourceFiles(): string[] {
+  // Generated builds and temporary workspaces can contain many files and make the repository-wide
+  // check time out. The source contract applies to files tracked by this checkout, including
+  // tracked dot-directories such as .github.
+  return execFileSync('git', ['ls-files', '-z'], { cwd: repositoryRoot, encoding: 'utf8' })
+    .split('\0')
+    .filter((file) => file && guardedSourceExtensions.has(extname(file)))
+    .map((file) => resolve(repositoryRoot, file));
 }
 
 function hasBareRootReference(source: string): boolean {

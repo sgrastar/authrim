@@ -141,6 +141,24 @@ describe('loginUIPageStore templates and palettes', () => {
 		expect(html().style.getPropertyValue('--login-form-area-color')).toBe('');
 	});
 
+	it('applies the Split brand area tint per colour mode and rejects unsafe values', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(
+			config({
+				template: 'split',
+				brandPanelBackgroundColor: '#090d1e61',
+				darkColors: { brand_panel_background: '#01020380' }
+			})
+		);
+		expect(html().style.getPropertyValue('--login-brand-panel-background-color')).toBe('#090d1e61');
+		expect(html().getAttribute('data-has-brand-panel-background-color')).toBe('true');
+		store.setColourMode('dark');
+		expect(html().style.getPropertyValue('--login-brand-panel-background-color')).toBe('#01020380');
+		store.setFromUIConfig(config({ brandPanelBackgroundColor: 'url(javascript:alert(1))' }));
+		expect(html().style.getPropertyValue('--login-brand-panel-background-color')).toBe('');
+		expect(html().getAttribute('data-has-brand-panel-background-color')).toBe('false');
+	});
+
 	it('applies the image opacities and the brand panel image', () => {
 		const store = createLoginUIPageStore();
 		store.setFromUIConfig(
