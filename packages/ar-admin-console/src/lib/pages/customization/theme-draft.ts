@@ -235,7 +235,7 @@ export function newThemeDraft(): ThemeDraft {
 		headerName: 'Authrim',
 		logoDisplay: 'both',
 		brandLogoDisplay: 'both',
-		panelTitle: 'Welcome to your account.',
+		panelTitle: 'Ready when you are.',
 		panelText: '',
 		splitFrame: 'full',
 		splitSide: 'left',

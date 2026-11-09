@@ -151,8 +151,7 @@
 			brandContentMode: 'logo_copy',
 			brandPosition: 'center',
 			brandAlign: 'left',
-			brandPanelTitle: 'Welcome to your account.',
-			brandPanelText: 'Add supporting guidance or brand messaging for this sign-in experience.'
+			brandPanelTitle: 'Ready when you are.'
 		},
 		{
 			id: 'fullbleed-glass',

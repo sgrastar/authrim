@@ -339,8 +339,8 @@
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
 		// No picture, nothing to filter: the menu waits for one.
 		await expect(canvas.getByRole('button', { name: t('th.f.add') })).toBeDisabled();
-		// Logo, background: the second.
-		const [, background] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
+		// Favicon, logo, background: the third.
+		const [, , background] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
 		await userEvent.upload(background, new File(['x'], 'bg.png', { type: 'image/png' }));
 		await waitFor(() => expect(layer()).not.toBeNull());
 		const add = async (name: string) => {
@@ -414,9 +414,9 @@
 			);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
 		const lightFiles = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
-		await userEvent.upload(lightFiles[0], svg('logo.svg', '#f1c27d', '#cc8150'));
-		await userEvent.upload(lightFiles[1], svg('background.svg', '#e2f3d9', '#9bc7c2'));
-		await userEvent.upload(lightFiles[2], svg('form.svg', '#fdf4db', '#e5c5a1'));
+		await userEvent.upload(lightFiles[1], svg('logo.svg', '#f1c27d', '#cc8150'));
+		await userEvent.upload(lightFiles[2], svg('background.svg', '#e2f3d9', '#9bc7c2'));
+		await userEvent.upload(lightFiles[3], svg('form.svg', '#fdf4db', '#e5c5a1'));
 		await waitFor(() => expect(image()).not.toBeNull());
 		await expect(formImage()).not.toBeNull();
 		await expect(logo()).not.toBeNull();
@@ -426,7 +426,7 @@
 		await expect(logo()).toBeNull();
 		// A dark image can be chosen without filling the other two dark slots.
 		const darkBackground =
-			canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]')[1];
+			canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]')[2];
 		await userEvent.upload(darkBackground, svg('dark-background.svg', '#193c45', '#0d1f34'));
 		await waitFor(() => expect(image()).not.toBeNull());
 		await expect(formImage()).toBeNull();
@@ -461,10 +461,12 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		// In the document, not "visible": the page fades in when it is entered.
+		// The shared favicon sits above the mode-specific tabs.
+		const favicon = await canvas.findByRole('heading', { name: t('th.g.favicon') });
+		const lightTab = await canvas.findByRole('tab', { name: t('th.mode.light') });
 		await expect(
-			await canvas.findByRole('heading', { name: t('th.g.favicon') })
-		).toBeInTheDocument();
+			favicon.compareDocumentPosition(lightTab) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
 	}}
 >
 	{#snippet template()}
@@ -539,9 +541,9 @@
 			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
 		);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
-		// The title starts with the default wording of the real screen.
+		// The shared title works across registration, sign-in and account screens.
 		await expect(await canvas.findByRole('textbox', { name: t('th.f.panelTitle') })).toHaveValue(
-			'Welcome to your account.'
+			'Ready when you are.'
 		);
 	}}
 >
@@ -715,7 +717,7 @@
 		const png = new File(['x'], 'card.png', { type: 'image/png' });
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
 		const files = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
-		await userEvent.upload(files[2], png);
+		await userEvent.upload(files[3], png);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
 		await userEvent.selectOptions(
 			await canvas.findByRole('combobox', { name: t('th.f.topbar') }),
@@ -1153,9 +1155,9 @@
 			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
 		);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		// Logo, background, form area, favicon, brand panel: the second and last are tested.
+		// Favicon, logo, background, form area, brand panel: the third and last are tested.
 		const files = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
-		await userEvent.upload(files[1], png('background.png'));
+		await userEvent.upload(files[2], png('background.png'));
 		await userEvent.upload(files[4], png('panel.png'));
 		const layers = canvasElement.querySelectorAll<HTMLElement>('.outline__image');
 		await expect(layers.length).toBe(2);
@@ -1216,7 +1218,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		// Logo, favicon, background, form area: the brand panel's picture is not offered without Split.
+		// Favicon, logo, background, form area: the brand panel's picture is not offered without Split.
 		await expect(canvasElement.querySelectorAll('input[type="file"]')).toHaveLength(4);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.layout') }));
 		await userEvent.click(
@@ -1239,8 +1241,8 @@
 		const files = () => canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
 		const layer = () => canvasElement.querySelector<HTMLElement>('.outline__card .outline__image');
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		// Standard: logo, background, form area, favicon.
-		await userEvent.upload(files()[2], png);
+		// Standard: favicon, logo, background, form area.
+		await userEvent.upload(files()[3], png);
 		await waitFor(() => expect(layer()).not.toBeNull());
 		const [opacity] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="range"]');
 		fireEvent.input(opacity, { target: { value: '30' } });
