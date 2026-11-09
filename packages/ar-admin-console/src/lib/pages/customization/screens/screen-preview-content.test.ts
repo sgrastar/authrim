@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ScreenListItem } from '#lib/api/screens.js';
 import { MOCK_SCREENS } from '#lib/mock/fixtures/screens.js';
-import { localizedScreenPreview, savedScreenPreview } from './screen-preview-content';
+import {
+	localizedScreenPreview,
+	savedScreenPreview,
+	themeScreenPreviews
+} from './screen-preview-content';
 
 const listed = (index: number): ScreenListItem => ({
 	...structuredClone(MOCK_SCREENS[index]),
@@ -9,6 +13,23 @@ const listed = (index: number): ScreenListItem => ({
 });
 
 describe('saved screen previews', () => {
+	it('offers registration, login, then profile completion and omits other kinds', () => {
+		const signIn = listed(0);
+		const signUp = listed(1);
+		const survey = listed(2);
+		const profile = {
+			...listed(2),
+			id: 'screen_profile',
+			screen_kind: 'profile_completion' as const
+		};
+		const anotherSignUp = { ...listed(1), id: 'screen_signup_copy' };
+		expect(
+			themeScreenPreviews([signIn, survey, signUp, profile, anotherSignUp]).map(
+				(screen) => screen.id
+			)
+		).toEqual(['screen_signup', 'screen_signup_copy', 'screen_login', 'screen_profile']);
+	});
+
 	it('uses the saved parts and keeps implicit parts in separate rows', () => {
 		const preview = savedScreenPreview(listed(0));
 		expect(preview.rows.map((row) => row.columns.flat().map((part) => part.label))).toEqual([

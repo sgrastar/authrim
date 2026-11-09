@@ -25,7 +25,6 @@
 				? [{ id: `${match[1]}/${match[2]}`, category: match[1], name: match[2], url }]
 				: [];
 		});
-
 	const { Story } = defineMeta({
 		title: 'Pages/Customization/Theme editor',
 		component: ThemeEditor,
@@ -35,7 +34,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Themes → a theme: how the tenant’s sign-in screens look. The theme page (`ThemeEditorPage`) puts this editor under its header (the theme’s name, Save, Apply) and loads and saves the draft through `/api/admin/login-ui/themes`.\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded; custom CSS is not applied in the preview. The console picker shows actual saved screen parts; standalone stories without a screens client retain the sample outline.'
+						'Customization → Themes → a theme: how the tenant’s sign-in screens look. The theme page (`ThemeEditorPage`) puts this editor under its header (the theme’s name, Save, Apply) and loads and saves the draft through `/api/admin/login-ui/themes`.\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded; custom CSS is not applied in the preview. The console picker shows saved registration, login, and profile completion screens in that order. Standalone stories without a screens client retain the sample outline.'
 				}
 			}
 		}
@@ -67,17 +66,20 @@
 		const canvas = within(canvasElement);
 		const picker = await canvas.findByRole('combobox', { name: t('th.preview.screen') });
 		await waitFor(() =>
-			expect(
-				[...(picker as HTMLSelectElement).options].some(
-					(option) => option.value === 'screen_signup'
-				)
-			).toBe(true)
+			expect([...(picker as HTMLSelectElement).options].map((option) => option.value)).toEqual([
+				'screen_signup',
+				'screen_login',
+				'screen_profile'
+			])
 		);
+		await expect(picker).toHaveValue('screen_signup');
 		await userEvent.selectOptions(picker, 'screen_signup');
 		await waitFor(() => expect(canvas.getByText('Create your account')).toBeVisible());
 		await expect(canvas.getByText(/Given name/)).toBeVisible();
-		await userEvent.selectOptions(picker, 'screen_survey');
-		await waitFor(() => expect(canvas.getByText(/How did you hear about us\?/)).toBeVisible());
+		await userEvent.selectOptions(picker, 'screen_login');
+		await waitFor(() => expect(canvas.getByText('Sign in with Passkey')).toBeVisible());
+		await userEvent.selectOptions(picker, 'screen_profile');
+		await waitFor(() => expect(canvas.getByText('Preferred username')).toBeVisible());
 	}}
 >
 	{#snippet template()}

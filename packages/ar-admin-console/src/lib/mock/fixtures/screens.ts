@@ -3,7 +3,7 @@ import type { Screen } from '#lib/api/screens.js';
 
 const AT = Date.UTC(2026, 10, 1, 9, 0, 0);
 
-/** The mock's screens: two built-in ones, a sign-up copy, and a survey that keeps records. */
+/** The mock's screens: built-in sign-in and profile completion, a sign-up copy, and a survey. */
 export const MOCK_SCREENS: Screen[] = [
 	{
 		id: 'screen_login',
@@ -156,6 +156,24 @@ export const MOCK_SCREENS: Screen[] = [
 		version: 2,
 		created_at: AT,
 		updated_at: AT + 2 * 86_400_000
+	},
+	{
+		id: 'screen_profile',
+		screen_key: 'profile_completion',
+		display_name: 'Profile completion',
+		description: 'The built-in profile completion screen',
+		screen_kind: 'profile_completion',
+		fields: [
+			{ field: 'name', label: 'Name', required: true },
+			{ field: 'preferred_username', label: 'Preferred username', required: false }
+		],
+		localizations: {},
+		settings: { canvas_layout: 'narrow' },
+		is_active: true,
+		is_system: true,
+		version: 1,
+		created_at: AT,
+		updated_at: AT
 	}
 ];
 
