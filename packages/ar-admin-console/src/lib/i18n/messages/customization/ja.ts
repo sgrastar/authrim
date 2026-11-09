@@ -43,6 +43,8 @@ export const jaCustomization = {
 	'th.page.new': '新しいテーマ',
 	'th.page.back': 'テーマの一覧',
 	'th.page.name': 'テーマ名',
+	'th.page.editName': 'テーマ名を編集',
+	'th.page.nameDone': '完了',
 	'th.page.nameHint': '一覧で見分けるための名前です（80 文字まで）。',
 	'th.page.nameRequired': 'テーマ名を入力してください。',
 	'th.page.save': '保存',

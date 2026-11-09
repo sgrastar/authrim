@@ -16,7 +16,7 @@
 			docs: {
 				description: {
 					component:
-						'A theme’s page (`…/branding/new`, `…/branding/<id>`). The console’s header carries the way back to the list, the theme’s name, whether it is applied, and Save and Apply; the name is entered just under it, and the theme editor fills the rest. Images chosen in the editor are uploaded on Save. A theme with unsaved changes is not applied: save first, so that what is applied is what was saved.'
+						'A theme’s page (`…/branding/new`, `…/branding/<id>`). The console’s header carries the way back to the list, an editable theme name, whether it is applied, and Save and Apply. The name is edited in place with Done and Cancel; the theme editor fills the rest. Images chosen in the editor are uploaded on Save. A theme with unsaved changes is not applied: save first, so that what is applied is what was saved.'
 				}
 			}
 		}
@@ -91,10 +91,52 @@
 </Story>
 
 <Story
+	name="Rename in place"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Spring campaign' });
+		const edit = canvas.getByRole('button', { name: t('th.page.editName') });
+		await userEvent.click(edit);
+		const name = canvas.getByRole('textbox', { name: t('th.page.name') });
+		await expect(name).toHaveValue('Spring campaign');
+		await expect(name).toHaveFocus();
+		await userEvent.clear(name);
+		await userEvent.type(name, 'Temporary name');
+		await userEvent.click(canvas.getByRole('button', { name: t('common.cancel') }));
+		await expect(canvas.getByRole('heading', { name: 'Spring campaign' })).toBeVisible();
+		await expect(canvas.getByRole('button', { name: t('th.page.editName') })).toHaveFocus();
+		await expect(canvas.getByRole('button', { name: t('th.page.save') })).toBeDisabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('th.page.editName') }));
+		await userEvent.clear(canvas.getByRole('textbox', { name: t('th.page.name') }));
+		await userEvent.click(canvas.getByRole('button', { name: t('th.page.nameDone') }));
+		await expect(canvas.getByText(t('th.page.nameRequired'))).toBeVisible();
+		await userEvent.type(canvas.getByRole('textbox', { name: t('th.page.name') }), 'Late spring');
+		await userEvent.click(canvas.getByRole('button', { name: t('th.page.nameDone') }));
+		await expect(canvas.getByRole('heading', { name: 'Late spring' })).toBeVisible();
+		await expect(canvas.queryByRole('textbox', { name: t('th.page.name') })).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: t('th.page.save') }));
+		await waitFor(() =>
+			expect(canvas.getByRole('button', { name: t('th.page.save') })).toBeDisabled()
+		);
+	}}
+>
+	{#snippet template()}
+		<ThemeEditorPage
+			client={createFakeLoginUiThemes({ themes: [saved] })}
+			id="thm_1"
+			canWrite
+			{upload}
+			listHref="/admin/customization/branding"
+			{oncreated}
+		/>
+	{/snippet}
+</Story>
+
+<Story
 	name="Applied theme, saved again since"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await canvas.findByDisplayValue('Spring campaign');
+		await canvas.findByRole('heading', { name: 'Spring campaign' });
 		await waitFor(() => expect(canvas.getByText(t('th.list.pending'))).toBeVisible());
 		// Nothing changed yet: nothing to save.
 		await expect(canvas.getByRole('button', { name: t('th.page.save') })).toBeDisabled();

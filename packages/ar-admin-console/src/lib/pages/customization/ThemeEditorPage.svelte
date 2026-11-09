@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, untrack } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { ApiError } from '#lib/api/api-error.js';
 	import type { LoginUiThemesClient } from '#lib/api/login-ui-themes.js';
 	import type { ScreensClient } from '#lib/api/screens.js';
@@ -12,7 +12,7 @@
 	import BackLink from '#lib/ui/primitives/BackLink.svelte';
 	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
-	import TextField from '#lib/ui/primitives/TextField.svelte';
+	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import ThemeEditor from './ThemeEditor.svelte';
@@ -31,7 +31,7 @@
 	/**
 	 * A theme's page: a new one (`id` "new") or a saved one. The console's header carries the way
 	 * back to the list, the theme's name, whether it is applied, and Save and Apply; the theme's
-	 * name is entered just under it, and the editor fills the rest. Images chosen in the editor are
+	 * name is edited in place there, and the editor fills the rest. Images chosen in the editor are
 	 * uploaded when the theme is saved. A theme with unsaved changes is not applied (save first),
 	 * so that what is applied is what was saved.
 	 */
@@ -78,7 +78,41 @@
 	let saved = $state('');
 	let busy = $state(false);
 	let nameError = $state<string>();
+	let editingName = $state(false);
+	let nameBeforeEdit = '';
+	let nameInput = $state<HTMLInputElement>();
+	let editNameButton = $state<HTMLButtonElement>();
 	let confirming = $state(false);
+
+	function beginNameEdit() {
+		nameBeforeEdit = name;
+		nameError = undefined;
+		editingName = true;
+		void tick().then(() => {
+			nameInput?.focus();
+			nameInput?.select();
+		});
+	}
+
+	function finishNameEdit() {
+		const trimmed = name.trim();
+		if (!trimmed) {
+			nameError = t('th.page.nameRequired');
+			nameInput?.focus();
+			return;
+		}
+		name = trimmed;
+		nameError = undefined;
+		editingName = false;
+		void tick().then(() => editNameButton?.focus());
+	}
+
+	function cancelNameEdit() {
+		name = nameBeforeEdit;
+		nameError = undefined;
+		editingName = false;
+		void tick().then(() => editNameButton?.focus());
+	}
 
 	/** What is compared to tell a change: the name and the draft as they would be saved. */
 	const snapshotOf = (theName: string, theDraft: ThemeDraft) =>
@@ -113,12 +147,15 @@
 		phase = 'loading';
 		if (isNew) {
 			name = '';
+			nameBeforeEdit = '';
+			editingName = canWrite;
 			draft = newThemeDraft();
 			stored = undefined;
 			version = 0;
 			appliedVersion = null;
 			saved = snapshot();
 			phase = 'ready';
+			if (editingName) void tick().then(() => nameInput?.focus());
 			return;
 		}
 		try {
@@ -130,6 +167,8 @@
 			}
 			if (!current()) return;
 			name = theme.name;
+			nameBeforeEdit = theme.name;
+			editingName = false;
 			draft = valuesToDraft(theme.values);
 			stored = openStored(theme.values);
 			version = theme.version;
@@ -167,8 +206,12 @@
 
 	async function save() {
 		const trimmed = name.trim();
-		nameError = trimmed ? undefined : t('th.page.nameRequired');
-		if (!trimmed) return;
+		if (!trimmed) {
+			if (!editingName) beginNameEdit();
+			nameError = t('th.page.nameRequired');
+			return;
+		}
+		nameError = undefined;
 		busy = true;
 		saving = { id, visit: loads };
 		// The theme as it was when the save started: what it is saved over, and its version.
@@ -204,7 +247,11 @@
 			stored = { values: theme.values, opened: uploaded };
 			version = theme.version;
 			saved = snapshotOf(trimmed, uploaded);
-			if (name.trim() === trimmed) name = theme.name;
+			nameBeforeEdit = theme.name;
+			if (name.trim() === trimmed) {
+				name = theme.name;
+				editingName = false;
+			}
 			if (isNew) {
 				created = theme.id;
 				toast.success(t('th.toast.created'));
@@ -215,8 +262,10 @@
 		} catch (error) {
 			if (error instanceof Gone) return;
 			const key = themeErrorKey(error, 'th.error.save');
-			if (key === 'th.error.nameTaken') nameError = t(key);
-			else toast.error(t(key));
+			if (key === 'th.error.nameTaken') {
+				if (!editingName) beginNameEdit();
+				nameError = t(key);
+			} else toast.error(t(key));
 		} finally {
 			busy = false;
 		}
@@ -248,8 +297,59 @@
 	};
 </script>
 
+{#snippet editNameAction()}
+	<IconButton
+		icon="pencil"
+		size="sm"
+		label={t('th.page.editName')}
+		bind:element={editNameButton}
+		onclick={beginNameEdit}
+	/>
+{/snippet}
+
+{#snippet editNameForm()}
+	<form
+		class="name-editor"
+		onsubmit={(event) => {
+			event.preventDefault();
+			finishNameEdit();
+		}}
+	>
+		<div class="name-editor__row">
+			<label class="sr-only" for="theme-name">{t('th.page.name')}</label>
+			<input
+				id="theme-name"
+				bind:this={nameInput}
+				bind:value={name}
+				maxlength="80"
+				aria-required="true"
+				aria-invalid={nameError ? 'true' : undefined}
+				aria-describedby={nameError ? 'theme-name-error' : 'theme-name-hint'}
+				oninput={() => (nameError = undefined)}
+				onkeydown={(event) => {
+					if (event.key === 'Escape') {
+						event.preventDefault();
+						cancelNameEdit();
+					}
+				}}
+			/>
+			<Button type="submit" variant="primary" size="sm">{t('th.page.nameDone')}</Button>
+			<Button variant="ghost" size="sm" onclick={cancelNameEdit}>{t('common.cancel')}</Button>
+		</div>
+		{#if nameError}
+			<p class="name-editor__error" id="theme-name-error" role="alert">{nameError}</p>
+		{:else}
+			<p class="name-editor__hint" id="theme-name-hint">{t('th.page.nameHint')}</p>
+		{/if}
+	</form>
+{/snippet}
+
 <Page>
-	<PageHeader {title}>
+	<PageHeader
+		{title}
+		titleAction={canWrite && phase === 'ready' && !editingName ? editNameAction : undefined}
+		titleEditor={canWrite && phase === 'ready' && editingName ? editNameForm : undefined}
+	>
 		{#snippet back()}
 			<BackLink href={listHref}>{t('th.page.back')}</BackLink>
 		{/snippet}
@@ -295,19 +395,6 @@
 			{/snippet}
 		</EmptyState>
 	{:else}
-		<div class="name">
-			<TextField
-				label={t('th.page.name')}
-				hint={t('th.page.nameHint')}
-				bind:value={name}
-				maxlength={80}
-				counter
-				required
-				readonly={!canWrite}
-				error={nameError}
-				oninput={() => (nameError = undefined)}
-			/>
-		</div>
 		<ThemeEditor bind:draft {stored} {screensClient} {choices} />
 	{/if}
 </Page>
@@ -323,8 +410,54 @@
 />
 
 <style>
-	/* The name is one short line: it does not need the page's width. */
-	.name {
-		max-width: 480px;
+	.name-editor {
+		display: grid;
+		gap: 4px;
+		width: min(100%, 520px);
+	}
+
+	.name-editor__row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.name-editor input {
+		flex: 1 1 220px;
+		min-width: 0;
+		height: calc(var(--fs-page-title) * 1.6);
+		padding: 0 10px;
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius-control);
+		background: var(--bg-input);
+		color: var(--text-primary);
+		font: inherit;
+		font-size: var(--fs-page-title);
+		font-weight: var(--heading-weight);
+	}
+
+	.name-editor input:focus-visible {
+		border-color: var(--focus-ring);
+		outline: 2px solid color-mix(in srgb, var(--focus-ring) 35%, transparent);
+		outline-offset: 0;
+	}
+
+	.name-editor input[aria-invalid='true'] {
+		border-color: var(--danger);
+	}
+
+	.name-editor__hint,
+	.name-editor__error {
+		margin: 0;
+		font-size: var(--fs-caption);
+	}
+
+	.name-editor__hint {
+		color: var(--text-muted);
+	}
+
+	.name-editor__error {
+		color: var(--danger);
 	}
 </style>

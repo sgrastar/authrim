@@ -45,6 +45,8 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.page.new': 'سمة جديدة',
 	'th.page.back': 'السمات',
 	'th.page.name': 'اسم السمة',
+	'th.page.editName': 'تعديل اسم السمة',
+	'th.page.nameDone': 'تم',
 	'th.page.nameHint': 'اسم يميّزها في القائمة (حتى 80 حرفًا).',
 	'th.page.nameRequired': 'أدخل اسم السمة.',
 	'th.page.save': 'حفظ',

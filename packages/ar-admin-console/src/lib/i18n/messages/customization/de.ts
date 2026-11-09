@@ -46,6 +46,8 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.page.new': 'Neues Theme',
 	'th.page.back': 'Themes',
 	'th.page.name': 'Name des Themes',
+	'th.page.editName': 'Theme-Namen bearbeiten',
+	'th.page.nameDone': 'Fertig',
 	'th.page.nameHint': 'Ein Name, um es in der Liste zu erkennen (bis zu 80 Zeichen).',
 	'th.page.nameRequired': 'Geben Sie einen Namen ein.',
 	'th.page.save': 'Speichern',
