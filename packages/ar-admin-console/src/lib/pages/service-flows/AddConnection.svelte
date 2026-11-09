@@ -55,6 +55,8 @@
 	 * page when it should do the same for any other way out (a link, a closed tab; see LeaveGuard).
 	 */
 	interface Props {
+		/** Only offer sign-up and sign-in flows (the first live service-flow slice). */
+		accountOnly?: boolean;
 		prefill?: ConnectionKind;
 		/** A sign-up, sign-in or sync flow to open with. */
 		prefillAccount?: FlowId;
@@ -70,6 +72,7 @@
 	}
 
 	let {
+		accountOnly = false,
 		prefill,
 		prefillAccount,
 		filled = 'wizard',
@@ -109,15 +112,27 @@
 	 */
 	let where = $state<string>(
 		untrack(() =>
-			prefillAccount ? (isSyncFlow(prefillAccount) ? 'sync' : 'account') : answers.direction
+			accountOnly
+				? 'account'
+				: prefillAccount
+					? isSyncFlow(prefillAccount)
+						? 'sync'
+						: 'account'
+					: answers.direction
 		)
 	);
 	/** The answer is a flow defined by a table (sign-up, sign-in, CSV, SCIM), not a connection. */
 	const forAccount = $derived(where === 'account' || where === 'sync');
-	let current = $state(untrack(() => step));
+	let current = $state(untrack(() => (accountOnly ? Math.max(0, step - 1) : step)));
 	let reviewing = $state(untrack(() => review));
 
-	const steps = $derived(forAccount ? accountWizardSteps(account.flow) : stepsFor(answers));
+	const steps = $derived(
+		accountOnly
+			? accountWizardSteps(account.flow).slice(1)
+			: forAccount
+				? accountWizardSteps(account.flow)
+				: stepsFor(answers)
+	);
 	/** Both questions are answered, so the rest of the steps are known. */
 	const chosen = $derived(
 		forAccount
@@ -125,7 +140,11 @@
 			: !!answers.direction && !!answers.kind && KINDS_OF[answers.direction].includes(answers.kind)
 	);
 	/** Nothing has been entered yet: leaving costs nothing. */
-	const pristine = $derived(!forAccount && isPristine(answers));
+	const pristine = $derived(
+		accountOnly
+			? account.flow === '' && Object.keys(account.form.values).length === 0
+			: !forAccount && isPristine(answers)
+	);
 
 	let asking = $state(false);
 	$effect(() => {
@@ -244,7 +263,7 @@
 		bind:current
 		canNext={canNext(stepId)}
 		stepsNote={chosen ? undefined : t('sf.wizard.stepsNote')}
-		context={chosen && current >= 2
+		context={chosen && current >= (accountOnly ? 1 : 2)
 			? forAccount && account.flow
 				? t(FLOWS[account.flow].title)
 				: kindProtocol(answers.kind as ConnectionKind)
