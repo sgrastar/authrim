@@ -135,7 +135,7 @@ export async function probeLogIcebergReadiness(
   );
   const id = await logIcebergRecordId(record);
   return runTenantBackupCoveredEffect(
-    { CONTROL: env.CONTROL, TENANT_BACKUP_WRAPPING_KEY: 'required' },
+    { ...env, TENANT_BACKUP_WRAPPING_KEY: 'required' },
     { environment: true },
     async () => {
       const existing = await ports.admin.queryOne<{ payload_hmac: string; state: string }>(

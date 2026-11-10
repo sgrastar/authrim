@@ -15,6 +15,7 @@ import {
 import { consumeLogIcebergMessage } from '../log-iceberg-runtime';
 import { emitLogIcebergRow } from '../log-iceberg-emitter';
 import { logProducerFixture } from './log-iceberg-producer-fixture';
+import { withTenantBackupMutationCoverage } from '../tenant-portability/covered-mutation';
 
 vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
   ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
@@ -51,6 +52,16 @@ async function fixture(mode: 'scheduled' | 'pipeline') {
   return { ...f, attempt, ports, probe: () => probeLogIcebergReadiness(f.env, attempt, ports) };
 }
 describe('real non-PII post-deploy archive probe', () => {
+  it('reuses the environment backup permit already held by the runtime smoke operation', async () => {
+    const f = await fixture('pipeline');
+    const acquire = vi.fn(async () => ({ admitted: true }));
+    Object.assign(f.env.CONTROL ?? {}, { acquireEnvironmentBackupMutationPermit: acquire });
+    const covered = withTenantBackupMutationCoverage(f.env, { environment: true });
+    expect(await probeLogIcebergReadiness(covered, f.attempt, f.ports)).toMatchObject({
+      state: 'pending',
+    });
+    expect(acquire).not.toHaveBeenCalled();
+  });
   it('exports only the owned scheduled probe and proves Parquet/read/crypto without moving other eligible logs', async () => {
     const f = await fixture('scheduled');
     await emitLogIcebergRow(f.env, {
