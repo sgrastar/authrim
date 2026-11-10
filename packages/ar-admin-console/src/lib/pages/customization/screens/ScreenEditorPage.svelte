@@ -4,6 +4,7 @@
 		LOGIN_UI_LOCALES,
 		getLoginUILanguageDisplayName
 	} from '@authrim/ar-lib-core/types/login-ui-languages';
+	import { DEFAULT_ACCOUNT_SCREEN_KEYS } from '@authrim/ar-lib-core/types/screens';
 	import { ApiError } from '#lib/api/api-error.js';
 	import type { ThemeValues } from '#lib/api/login-ui-themes.js';
 	import {
@@ -145,6 +146,10 @@
 	let copying = $state(false);
 
 	const isSystem = $derived(loaded?.is_system === true);
+	const defaultAccountKeys = new Set<string>(DEFAULT_ACCOUNT_SCREEN_KEYS);
+	const isDefaultAccount = $derived(
+		loaded?.screen_kind === 'account' && defaultAccountKeys.has(loaded.screen_key)
+	);
 	const readonly = $derived(isSystem || !canWrite);
 	const value = $derived(draft.value);
 
@@ -599,7 +604,7 @@
 									field="kind"
 									label={t('sc.editor.kind')}
 									options={kindOptions}
-									disabled={readonly}
+									disabled={readonly || isDefaultAccount}
 									bind:value={draft.value.kind}
 								/>
 								<SegmentedControl

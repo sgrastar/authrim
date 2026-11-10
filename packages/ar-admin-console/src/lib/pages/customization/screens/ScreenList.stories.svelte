@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Screens (`/api/admin/screens`): saved tenant screens. Built-in templates appear in the new-screen wizard instead of this list. A row opens its detail page (`…/screens/<id>`). Its menu opens, duplicates or deletes it; a screen used by a flow or account page explains why it cannot be deleted. The list narrows by kind and by name or key. The data columns sort, and creation and update dates include the time zone. New screens start from the Create screen action.'
+						'Customization → Screens (`/api/admin/screens`): saved tenant screens and editable default account screens appear in separate tables. Built-in authentication templates appear in the new-screen wizard. A row opens its detail page (`…/screens/<id>`). Its menu opens, duplicates or deletes it when allowed. The list narrows by kind and by name or key. Each table sorts independently, and creation and update dates include the time zone.'
 				}
 			}
 		}
@@ -42,10 +42,17 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const survey = await canvas.findByText('Welcome survey');
+		const screensTable = canvas.getByRole('table', { name: t('sc.list.title') });
+		const accountTable = canvas.getByRole('table', { name: t('sc.list.accountTable') });
+		await expect(within(screensTable).queryByText('User profile')).toBeNull();
+		await expect(within(accountTable).getByText('User profile')).toBeInTheDocument();
+		await expect(within(accountTable).getAllByRole('row')).toHaveLength(12);
 		await expect(canvas.getByText('Sign up')).toBeInTheDocument();
 		await expect(canvas.queryByText('Sign in')).toBeNull();
 		await expect(canvas.queryByRole('complementary', { name: t('sc.preview.title') })).toBeNull();
-		const headers = canvas.getAllByRole('columnheader').map((header) => header.textContent?.trim());
+		const headers = within(screensTable)
+			.getAllByRole('columnheader')
+			.map((header) => header.textContent?.trim());
 		await expect(headers.indexOf(t('sc.list.col.created'))).toBeLessThan(
 			headers.indexOf(t('sc.list.col.updated'))
 		);
@@ -97,20 +104,21 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText('Welcome survey');
+		const screensTable = within(canvas.getByRole('table', { name: t('sc.list.title') }));
 		const firstName = () =>
-			within(canvas.getAllByRole('row')[1]).getAllByRole('cell')[0].textContent ?? '';
+			within(screensTable.getAllByRole('row')[1]).getAllByRole('cell')[0].textContent ?? '';
 		const signupRow = canvas.getByText('Sign up').closest('tr');
 		await expect(signupRow).not.toBeNull();
 		for (const date of signupRow!.querySelectorAll('time')) {
 			await expect(date.textContent).toMatch(/\d{1,2}:\d{2}/);
 		}
 		await expect(signupRow!.querySelectorAll('time')).toHaveLength(2);
-		const updated = canvas.getByRole('button', { name: t('sc.list.col.updated') });
+		const updated = screensTable.getByRole('button', { name: t('sc.list.col.updated') });
 		await userEvent.click(updated);
 		await waitFor(() => expect(firstName()).toContain('Sign up'));
 		await userEvent.click(updated);
 		await waitFor(() => expect(firstName()).toContain('Welcome survey'));
-		await userEvent.click(canvas.getByRole('button', { name: t('sc.list.col.usage') }));
+		await userEvent.click(screensTable.getByRole('button', { name: t('sc.list.col.usage') }));
 		await waitFor(() => expect(firstName()).toContain('Sign up'));
 	}}
 >

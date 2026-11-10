@@ -8,6 +8,7 @@ import {
 import {
   MAX_SCREEN_FIELD_OPTIONS,
   MAX_SCREEN_OPTION_LABEL_LENGTH,
+  DEFAULT_ACCOUNT_SCREEN_KEYS,
   OIDC_STANDARD_CLAIM_SCOPE,
   MAX_SCREEN_OPTION_VALUE_LENGTH,
   RESERVED_CLAIMS,
@@ -1731,8 +1732,9 @@ export const DEFAULT_SCREENS: Array<{
   },
 ];
 
-/** The keys of the built-in screens: a custom screen cannot take one. */
+/** The keys of the default screens: a newly created screen cannot take one. */
 const RESERVED_SCREEN_KEYS = new Set(DEFAULT_SCREENS.map((screen) => screen.screen_key));
+const DEFAULT_ACCOUNT_KEYS = new Set<string>(DEFAULT_ACCOUNT_SCREEN_KEYS);
 
 function invalid(c: AdminContext, error_description: string): Response {
   return c.json({ error: 'invalid_request', error_description }, 400);
@@ -2807,6 +2809,16 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
             [screen.screen_kind, nowMs(), tenantId, existing.id]
           );
         }
+        // Account screens were previously immutable presets. Keep their records, IDs and
+        // localizations, then make them editable tenant screens once on the next list read.
+        if (screen.screen_kind === 'account') {
+          await authCtx.coreAdapter.execute(
+            `UPDATE screens
+                SET is_system = 0, updated_at = ?, version = version + 1
+              WHERE tenant_id = ? AND id = ? AND is_system = 1`,
+            [nowMs(), tenantId, existing.id]
+          );
+        }
       }
       continue;
     }
@@ -2826,7 +2838,7 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
         serializeJson(mergeDefaultScreenLocalizations(screen, screen.fields, {})),
         serializeJson(screen.settings),
         1,
-        1,
+        screen.screen_kind === 'account' ? 0 : 1,
         nowMs(),
         nowMs(),
       ]
@@ -2887,11 +2899,19 @@ export async function adminScreenGetHandler(c: AdminContext) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const row = await authCtx.coreAdapter.queryOne<Row>(
+    let row = await authCtx.coreAdapter.queryOne<Row>(
       'SELECT * FROM screens WHERE tenant_id = ? AND id = ?',
       [tenantId, c.req.param('id')]
     );
     if (!row) return notFound(c, 'Screen not found');
+    if (row.screen_kind === 'account' && readBoolean(row.is_system, false)) {
+      await ensureDefaultScreens(c, tenantId);
+      row = await authCtx.coreAdapter.queryOne<Row>(
+        'SELECT * FROM screens WHERE tenant_id = ? AND id = ?',
+        [tenantId, c.req.param('id')]
+      );
+      if (!row) return notFound(c, 'Screen not found');
+    }
     const screen = toResponse(row);
     const { usages, complete } = await collectScreenUsages(c.env, authCtx.coreAdapter, tenantId, [
       screen,
@@ -2927,8 +2947,7 @@ async function adminScreenCreateUnguarded(c: AdminContext) {
     }
     const schemaProblem = await schemaProblemOf(authCtx.coreAdapter, tenantId, fields);
     if (schemaProblem) return invalid(c, schemaProblem);
-    // The built-in keys belong to the system screens (also when a tenant has not got them yet):
-    // the run time falls back to them, so a custom screen must not take one.
+    // Default keys are reserved even before tenant initialization: runtime pages refer to them.
     const taken =
       RESERVED_SCREEN_KEYS.has(screenKey) ||
       (await authCtx.coreAdapter.queryOne<Row>(
@@ -2995,7 +3014,7 @@ async function adminScreenUpdateUnguarded(c: AdminContext) {
     if (!id) return invalid(c, 'Screen id is required');
     const authCtx = createAuthContextFromHono(c, tenantId);
     const existing = await authCtx.coreAdapter.queryOne<Row>(
-      `SELECT id, is_system, screen_kind, fields_json, version
+      `SELECT id, screen_key, is_system, screen_kind, fields_json, version
          FROM screens WHERE tenant_id = ? AND id = ?`,
       [tenantId, id]
     );
@@ -3032,6 +3051,9 @@ async function adminScreenUpdateUnguarded(c: AdminContext) {
     if (body.screen_kind !== undefined) {
       if (!SCREEN_KINDS.has(body.screen_kind as ScreenKind))
         return invalid(c, 'Invalid screen_kind');
+      if (DEFAULT_ACCOUNT_KEYS.has(String(existing.screen_key)) && body.screen_kind !== 'account') {
+        return invalid(c, 'A default account screen must remain an account screen');
+      }
       sets.push('screen_kind = ?');
       params.push(body.screen_kind);
     }
@@ -3115,6 +3137,8 @@ async function adminScreenDeleteUnguarded(c: AdminContext) {
     if (!existing) return notFound(c, 'Screen not found');
     if (readBoolean(existing.is_system, false))
       return invalid(c, 'System screens cannot be deleted');
+    if (DEFAULT_ACCOUNT_KEYS.has(String(existing.screen_key)))
+      return invalid(c, 'Default account screens cannot be deleted; disable them instead');
     // If-Match is optional here (a delete names no content), but honoured when sent.
     const expected = parseIfMatchVersion(c);
     if (Number.isNaN(expected)) return invalid(c, 'If-Match must be a screen version');

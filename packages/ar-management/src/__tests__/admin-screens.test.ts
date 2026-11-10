@@ -135,7 +135,7 @@ beforeEach(() => {
   mocks.db.execute.mockReset();
 
   mocks.db.queryOne.mockImplementation(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('FROM screens') && sql.includes('screen_key')) {
+    if (sql.includes('FROM screens') && sql.includes('screen_key = ?')) {
       const tenantId = String(params[0]);
       const screenKey = String(params[1]);
       return rows.find((row) => row.tenant_id === tenantId && row.screen_key === screenKey) ?? null;
@@ -173,6 +173,11 @@ beforeEach(() => {
         const id = String(params[3]);
         const row = rows.find((item) => item.tenant_id === tenantId && item.id === id);
         if (row) row.screen_kind = screenKind;
+      } else if (sql.includes('SET is_system')) {
+        const tenantId = String(params[1]);
+        const id = String(params[2]);
+        const row = rows.find((item) => item.tenant_id === tenantId && item.id === id);
+        if (row) row.is_system = 0;
       } else if (sql.includes('SET fields_json')) {
         const fieldsJson = String(params[0]);
         const tenantId = String(params[2]);
@@ -267,9 +272,9 @@ describe('admin screens', () => {
     rows.push({
       id: 'screen-system',
       tenant_id: 'tenant-1',
-      screen_key: 'account_profile',
+      screen_key: 'login',
       display_name: 'Profile',
-      screen_kind: 'account',
+      screen_kind: 'login',
       fields_json: '[]',
       settings_json: '{}',
       is_system: 1,
@@ -302,6 +307,12 @@ describe('admin screens', () => {
       display_name: 'Code input',
       is_system: 1,
     });
+    expect(screens.filter((screen) => screen.screen_kind === 'account')).toHaveLength(11);
+    expect(
+      screens
+        .filter((screen) => screen.screen_kind === 'account')
+        .every((screen) => !screen.is_system)
+    ).toBe(true);
     const overviewFields = screensByKey.get('account_overview')?.fields as Array<
       Record<string, unknown>
     >;
@@ -484,6 +495,7 @@ describe('admin screens', () => {
     expect(fields[0]).not.toHaveProperty('text');
     expect(jaFields['heading.account_overview-0']).toEqual({ label: 'アカウントを管理' });
     expect(jaFields).not.toHaveProperty('link.account_security-1');
+    expect(overview?.is_system).toBe(0);
   });
 
   it('preserves email and name fields added to the registration system screen', async () => {

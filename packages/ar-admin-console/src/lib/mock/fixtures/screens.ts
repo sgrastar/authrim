@@ -1,9 +1,35 @@
 import { createFakeScreens } from '#lib/api/fake/screens-fake.js';
-import type { Screen } from '#lib/api/screens.js';
+import type { Screen, ScreenField } from '#lib/api/screens.js';
 
 const AT = Date.UTC(2026, 10, 1, 9, 0, 0);
 
-/** The mock's screens: built-in sign-in and profile completion, a sign-up copy, and a survey. */
+const ACCOUNT_PREVIEWS: Array<{
+	key: string;
+	name: string;
+	widget: ScreenField['block_type'];
+}> = [
+	{ key: 'account_activity', name: 'Account activity', widget: 'account_activity_widget' },
+	{ key: 'account_overview', name: 'Account overview', widget: 'heading' },
+	{ key: 'account_launchers', name: 'Application launchers', widget: 'account_launcher_widget' },
+	{ key: 'account_totp', name: 'Authenticator app', widget: 'account_totp_widget' },
+	{
+		key: 'account_social_accounts',
+		name: 'Connected accounts',
+		widget: 'account_social_account_widget'
+	},
+	{
+		key: 'account_devices',
+		name: 'Connected apps and devices',
+		widget: 'account_device_list_widget'
+	},
+	{ key: 'account_consents', name: 'Consent information', widget: 'account_consent_widget' },
+	{ key: 'account_custom', name: 'Custom guidance', widget: 'heading' },
+	{ key: 'account_passkeys', name: 'Passkeys', widget: 'account_passkey_widget' },
+	{ key: 'account_sessions', name: 'Signed-in devices', widget: 'account_session_widget' },
+	{ key: 'account_profile', name: 'User profile', widget: 'account_profile_widget' }
+];
+
+/** The mock's screens: built-in auth templates plus saved flow and account screens. */
 export const MOCK_SCREENS: Screen[] = [
 	{
 		id: 'screen_login',
@@ -174,7 +200,24 @@ export const MOCK_SCREENS: Screen[] = [
 		version: 1,
 		created_at: AT,
 		updated_at: AT
-	}
+	},
+	...ACCOUNT_PREVIEWS.map(
+		({ key, name, widget }, index): Screen => ({
+			id: `screen_${key}`,
+			screen_key: key,
+			display_name: name,
+			description: null,
+			screen_kind: 'account',
+			fields: [{ field: key, label: name, required: false, block_type: widget, order: 10 }],
+			localizations: {},
+			settings: { canvas_layout: 'wide' },
+			is_active: true,
+			is_system: false,
+			version: 1,
+			created_at: AT + index * 1000,
+			updated_at: AT + index * 1000
+		})
+	)
 ];
 
 export const mockScreens = createFakeScreens({

@@ -33,6 +33,7 @@ import {
   adminScreensListHandler,
   adminScreenUpdateHandler,
 } from '../admin-screens';
+import { DEFAULT_ACCOUNT_SCREEN_KEYS } from '@authrim/ar-lib-core/types/screens';
 import { flowUsages, screenRefsInFlowDocument } from '../admin-screen-usage';
 
 const MIGRATION = new URL(
@@ -159,6 +160,83 @@ beforeEach(() => {
 });
 
 describe('screen versions', () => {
+  it('creates editable account screens and preserves edits across subsequent lists', async () => {
+    const first = await call(adminScreensListHandler);
+    expect(first.status).toBe(200);
+    const accountScreens = (
+      first.body.screens as Array<{
+        id: string;
+        screen_key: string;
+        screen_kind: string;
+        is_system: number;
+        version: number;
+        fields: Array<Record<string, unknown>>;
+      }>
+    ).filter((screen) => screen.screen_kind === 'account');
+    expect(accountScreens.map((screen) => screen.screen_key).sort()).toEqual(
+      [...DEFAULT_ACCOUNT_SCREEN_KEYS].sort()
+    );
+    expect(accountScreens.every((screen) => screen.is_system === 0)).toBe(true);
+
+    const profile = accountScreens.find((screen) => screen.screen_key === 'account_profile');
+    if (!profile) throw new Error('Default account profile screen is missing');
+    const changed = await call(adminScreenUpdateHandler, {
+      id: profile.id,
+      ifMatch: `"${profile.version}"`,
+      body: {
+        display_name: 'My profile',
+        fields: [
+          ...profile.fields,
+          { field: 'heading.profile', label: 'My profile', required: false, block_type: 'heading' },
+        ],
+      },
+    });
+    expect(changed.status).toBe(200);
+    const updatedVersion = (changed.body.screen as { version: number }).version;
+    const second = await call(adminScreensListHandler);
+    const saved = (second.body.screens as Array<Record<string, unknown>>).find(
+      (screen) => screen.screen_key === 'account_profile'
+    );
+    expect(saved).toMatchObject({
+      id: profile.id,
+      display_name: 'My profile',
+      is_system: 0,
+      version: updatedVersion,
+    });
+    expect(saved?.fields).toHaveLength(2);
+
+    const wrongKind = await call(adminScreenUpdateHandler, {
+      id: profile.id,
+      ifMatch: `"${updatedVersion}"`,
+      body: { screen_kind: 'custom' },
+    });
+    expect(wrongKind.status).toBe(400);
+
+    const removed = await call(adminScreenDeleteHandler, { id: profile.id });
+    expect(removed.status).toBe(400);
+    expect(removed.body.error_description).toContain('disable');
+  });
+
+  it('converts existing system account screens without changing their IDs', async () => {
+    await call(adminScreensListHandler);
+    db.prepare(
+      "UPDATE screens SET is_system = 1 WHERE tenant_id = 'tenant-a' AND screen_key = 'account_profile'"
+    ).run();
+    const id = (
+      db
+        .prepare(
+          "SELECT id FROM screens WHERE tenant_id = 'tenant-a' AND screen_key = 'account_profile'"
+        )
+        .get() as { id: string }
+    ).id;
+    const read = await call(adminScreenGetHandler, { id });
+    expect(read.status).toBe(200);
+    expect(read.body.screen).toMatchObject({ id, is_system: 0 });
+    expect(db.prepare('SELECT is_system FROM screens WHERE id = ?').get(id)).toMatchObject({
+      is_system: 0,
+    });
+  });
+
   it('starts at 1 and names it in the ETag', async () => {
     const screen = await createScreen('profile_extra');
     expect(screen.version).toBe(1);
