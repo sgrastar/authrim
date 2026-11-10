@@ -36,7 +36,13 @@ function freshDatabase(family: 'core' | 'pii' | 'admin') {
   // The 0.5.0 baseline, and the later admin tables the backup registry requires.
   for (const file of [
     `001_0_5_0_${family}_baseline.sql`,
-    ...(family === 'admin' ? ['009_login_ui_themes.sql', '012_admin_groups.sql'] : []),
+    ...(family === 'admin'
+      ? [
+          '009_login_ui_themes.sql',
+          '012_admin_groups.sql',
+          '013_authentication_method_profiles.sql',
+        ]
+      : []),
     ...(family === 'core' ? ['007_account_registration_pending.sql'] : []),
     ...(family === 'pii'
       ? ['003_screen_responses.sql', '004_account_pii_erasure_markers.sql']
