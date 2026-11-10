@@ -11,10 +11,33 @@ export const CUSTOM_CSS_SCAFFOLD = `/* Page */
 /* Form */
 .auth-container {}
 .auth-page .card {}
-.auth-page .auth-section-title {}
 .auth-page .input {}
 
+/* Headings and text */
+.auth-page .card-body {}
+.auth-page .auth-header__title {}
+.auth-page .auth-header__subtitle {}
+.auth-page .auth-section-title {}
+.auth-page .auth-section-subtitle {}
+.auth-page .runtime-screen-heading h2 {}
+.auth-page .runtime-screen-heading p {}
+.auth-page .runtime-screen-text {}
+.auth-page .runtime-screen-field {}
+.auth-page .runtime-screen-field small {}
+.auth-page .auth-brand-panel h2 {}
+.auth-page .auth-brand-panel p {}
+
+/* Links */
+.auth-page a {}
+.auth-page .auth-bottom-link a {}
+.auth-page .runtime-consent-link {}
+.auth-page .auth-footer__links a {}
+
 /* Buttons */
+.auth-page .runtime-auth-button:not(.secondary) {}
+.auth-page .runtime-auth-button.secondary {}
+.auth-page .runtime-auth-button:not(.secondary):hover {}
+.auth-page .runtime-auth-button.secondary:hover {}
 .auth-page .btn-primary {}
 .auth-page .btn-secondary {}
 
