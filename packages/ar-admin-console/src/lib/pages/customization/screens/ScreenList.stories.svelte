@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Screens (`/api/admin/screens`): saved tenant screens. Built-in templates appear in the new-screen wizard instead of this list. A row opens its detail page (`…/screens/<id>`). Its menu opens, duplicates or deletes it; a screen used by a flow or account page explains why it cannot be deleted. The list narrows by kind and by name or key. New screens start from the Create screen action.'
+						'Customization → Screens (`/api/admin/screens`): saved tenant screens. Built-in templates appear in the new-screen wizard instead of this list. A row opens its detail page (`…/screens/<id>`). Its menu opens, duplicates or deletes it; a screen used by a flow or account page explains why it cannot be deleted. The list narrows by kind and by name or key. The data columns sort, and creation and update dates include the time zone. New screens start from the Create screen action.'
 				}
 			}
 		}
@@ -80,6 +80,38 @@
 			name: t('sc.delete.inUse')
 		});
 		await expect(reason).toBeDisabled();
+	}}
+>
+	{#snippet template()}
+		<ScreenList
+			client={createFakeScreens({ screens: MOCK_SCREENS, usages })}
+			canWrite
+			{hrefOf}
+			{onopen}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Dates and sorting"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('Welcome survey');
+		const firstName = () =>
+			within(canvas.getAllByRole('row')[1]).getAllByRole('cell')[0].textContent ?? '';
+		const signupRow = canvas.getByText('Sign up').closest('tr');
+		await expect(signupRow).not.toBeNull();
+		for (const date of signupRow!.querySelectorAll('time')) {
+			await expect(date.textContent).toMatch(/\d{1,2}:\d{2}/);
+		}
+		await expect(signupRow!.querySelectorAll('time')).toHaveLength(2);
+		const updated = canvas.getByRole('button', { name: t('sc.list.col.updated') });
+		await userEvent.click(updated);
+		await waitFor(() => expect(firstName()).toContain('Sign up'));
+		await userEvent.click(updated);
+		await waitFor(() => expect(firstName()).toContain('Welcome survey'));
+		await userEvent.click(canvas.getByRole('button', { name: t('sc.list.col.usage') }));
+		await waitFor(() => expect(firstName()).toContain('Sign up'));
 	}}
 >
 	{#snippet template()}

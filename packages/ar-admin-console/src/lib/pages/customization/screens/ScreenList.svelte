@@ -7,12 +7,12 @@
 		type ScreenListItem,
 		type ScreensClient
 	} from '#lib/api/screens.js';
-	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import { i18n, t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import CellText from '#lib/ui/patterns/CellText.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
-	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import DataTable, { type SortState } from '#lib/ui/patterns/DataTable.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import FilterBar from '#lib/ui/patterns/FilterBar.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
@@ -22,6 +22,7 @@
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import SearchField from '#lib/ui/primitives/SearchField.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
+	import { sortRows } from '#lib/ui/patterns/table-sort.js';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
@@ -49,6 +50,7 @@
 	let deleting = $state<ScreenListItem | null>(null);
 	let query = $state('');
 	let kind = $state<ScreenKind | ''>('');
+	let sort = $state<SortState | null>(null);
 	// The page is gone: a duplicate finishing late does not take the admin anywhere.
 	let gone = false;
 	onDestroy(() => (gone = true));
@@ -79,6 +81,21 @@
 		);
 	});
 	const kindLabel = (value: ScreenKind) => t(`sc.kind.${value}` as MessageKey);
+	function sortValue(screen: ScreenListItem, key: string): string | number {
+		switch (key) {
+			case 'name':
+				return screen.display_name;
+			case 'kind':
+				return kindLabel(screen.screen_kind);
+			case 'usage':
+				return screen.usage.flows + screen.usage.account_pages;
+			case 'created':
+				return screen.created_at;
+			default:
+				return screen.updated_at;
+		}
+	}
+	const rows = $derived(sortRows(shown, sort, sortValue, i18n.locale));
 	const inUse = (screen: ScreenListItem) =>
 		screen.usage.flows + screen.usage.account_pages > 0 || !usagesComplete;
 
@@ -167,11 +184,11 @@
 
 	const columns = $derived([
 		// Keep the table readable on narrow screens.
-		{ key: 'name', label: t('sc.list.col.name') },
-		{ key: 'kind', label: t('sc.list.col.kind'), width: '18%' },
-		{ key: 'usage', label: t('sc.list.col.usage'), width: '18%' },
-		{ key: 'created', label: t('sc.list.col.created'), width: '15%' },
-		{ key: 'updated', label: t('sc.list.col.updated'), width: '15%' },
+		{ key: 'name', label: t('sc.list.col.name'), sortable: true },
+		{ key: 'kind', label: t('sc.list.col.kind'), width: '18%', sortable: true },
+		{ key: 'usage', label: t('sc.list.col.usage'), width: '18%', sortable: true },
+		{ key: 'created', label: t('sc.list.col.created'), width: '15%', sortable: true },
+		{ key: 'updated', label: t('sc.list.col.updated'), width: '15%', sortable: true },
 		...(canWrite
 			? [
 					{
@@ -231,7 +248,8 @@
 			<DataTable
 				caption={t('sc.list.title')}
 				{columns}
-				rows={shown}
+				{rows}
+				bind:sort
 				rowKey={(row) => row.id}
 				onrowopen={(row) => onopen(row.id)}
 				rowOpenLabel={(row) => t('sc.list.open', { name: row.display_name })}
@@ -248,10 +266,9 @@
 					{:else if column.key === 'usage'}
 						{usageText(row)}
 					{:else if column.key === 'created'}
-						<DateTime value={row.created_at} style="date" stacked />
+						<DateTime value={row.created_at} stacked />
 					{:else if column.key === 'updated'}
-						<!-- The date: it fits the column; the time is in its title. -->
-						<DateTime value={row.updated_at} style="date" stacked />
+						<DateTime value={row.updated_at} stacked />
 					{:else}
 						<ActionMenu
 							size="sm"

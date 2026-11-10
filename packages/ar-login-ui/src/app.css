@@ -1146,6 +1146,34 @@ tr.expired {
 	max-width: var(--login-page-max-width, 420px);
 }
 
+/* The form image sits over the card colour and under its content. A separate layer keeps the
+   image's opacity and grayscale independent from the form controls and glass effects. */
+[data-page-layout]:not(
+		[data-page-layout='split_panel']
+	)[data-has-login-panel-background-image='true']:not([data-login-template='minimal'])
+	:is(.auth-container > .card, .auth-container > form > .card) {
+	position: relative;
+	isolation: isolate;
+}
+
+[data-page-layout]:not(
+		[data-page-layout='split_panel']
+	)[data-has-login-panel-background-image='true']:not([data-login-template='minimal'])
+	:is(.auth-container > .card, .auth-container > form > .card)
+	> .card-background-image {
+	display: block;
+	position: absolute;
+	inset: 0;
+	z-index: -2;
+	pointer-events: none;
+	background-image: var(--login-panel-background-layer, none);
+	background-position: center;
+	background-size: cover;
+	background-repeat: no-repeat;
+	opacity: var(--login-panel-background-opacity, 0.7);
+	filter: var(--login-panel-background-filter, none);
+}
+
 .auth-main {
 	display: contents;
 }
@@ -1437,7 +1465,7 @@ tr.expired {
 	-webkit-backdrop-filter: blur(32px) saturate(160%);
 }
 
-[data-page-layout='split_panel'][data-split-background-mode='panel'][data-has-login-panel-background-image='true']
+[data-page-layout='split_panel'][data-has-login-panel-background-image='true']
 	.auth-container::before {
 	display: block;
 }
@@ -2704,7 +2732,7 @@ tr.expired {
 		background: var(--login-panel-background-fill, var(--bg-card));
 	}
 
-	[data-page-layout='split_panel'][data-split-background-mode='panel'][data-has-login-panel-background-image='true']
+	[data-page-layout='split_panel'][data-has-login-panel-background-image='true']
 		.auth-main::before {
 		content: '';
 		position: absolute;
@@ -2741,7 +2769,7 @@ tr.expired {
 		-webkit-backdrop-filter: none;
 	}
 
-	[data-page-layout='split_panel'][data-split-background-mode='panel'][data-has-login-panel-background-image='true']
+	[data-page-layout='split_panel'][data-has-login-panel-background-image='true']
 		.auth-container::before {
 		display: none;
 	}
@@ -3028,13 +3056,6 @@ tr.expired {
 	[data-page-layout='split_panel'][data-form-frame='card'][data-split-background-mode='brand']
 		.auth-container {
 		background: var(--login-panel-background-fill, var(--login-form-area-color, var(--bg-card)));
-	}
-
-	/* The login panel's own picture (split_background_mode panel) has no place in the card: the
-	   attributes only outweigh the rule that shows it. */
-	[data-page-layout='split_panel'][data-form-frame='card'][data-split-background-mode][data-has-login-panel-background-image]
-		.auth-container::before {
-		display: none;
 	}
 
 	/* Below the card, the switches take the stage's foot: the card leaves that room. */
