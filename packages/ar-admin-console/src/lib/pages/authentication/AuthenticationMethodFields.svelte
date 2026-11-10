@@ -57,7 +57,7 @@
 							{/if}
 						</div>
 						{#if method.id === 'directory_password'}
-							<Link href="/admin/directory-authentication" standalone
+							<Link href="/admin/authentication/directory" standalone
 								>{t('am.methods.directorySettings')}</Link
 							>
 						{/if}

@@ -313,7 +313,7 @@
 
 <style>
 	.name-editor {
-		min-width: min(100%, 480px);
+		width: min(100%, 520px);
 	}
 	.name-editor__row {
 		display: flex;

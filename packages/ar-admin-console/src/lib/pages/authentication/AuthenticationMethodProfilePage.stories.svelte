@@ -55,7 +55,7 @@
 		await canvas.findByText(t('am.methods.notConfigured'));
 		await expect(
 			canvas.getByRole('link', { name: t('am.methods.directorySettings') })
-		).toHaveAttribute('href', '/admin/directory-authentication');
+		).toHaveAttribute('href', '/admin/authentication/directory');
 	}}
 >
 	{#snippet template()}

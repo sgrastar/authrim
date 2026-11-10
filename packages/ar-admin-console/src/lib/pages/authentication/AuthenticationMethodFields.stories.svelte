@@ -63,7 +63,7 @@
 		await expect(canvas.getByText(t('am.methods.notConfigured'))).toBeInTheDocument();
 		await expect(
 			canvas.getByRole('link', { name: t('am.methods.directorySettings') })
-		).toHaveAttribute('href', '/admin/directory-authentication');
+		).toHaveAttribute('href', '/admin/authentication/directory');
 		for (const method of BUILT_IN_METHODS) {
 			const help = canvas.getByRole('button', {
 				name: t('am.methods.about', { name: t(method.label) })
