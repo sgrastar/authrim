@@ -13,6 +13,7 @@ import { jaScreens } from './screens/ja';
 import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
 import { jaTeam } from './team/ja';
+import { jaAuthMethods } from './auth-methods/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -34,6 +35,7 @@ export const ja = {
 	...jaStepUp,
 	...jaAdminAudit,
 	...jaTeam,
+	...jaAuthMethods,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
@@ -71,7 +73,7 @@ export const ja = {
 	'nav.apps.apis': 'API / リソース',
 	'nav.apps.keys': 'Initial Access Token',
 	'nav.apps.webhooks': 'Webhook',
-	'nav.auth.methods': 'ログイン方法',
+	'nav.auth.methods': '認証方式',
 	'nav.auth.social': 'ソーシャル接続',
 	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'ディレクトリ認証',

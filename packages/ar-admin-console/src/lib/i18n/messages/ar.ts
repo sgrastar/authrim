@@ -14,6 +14,7 @@ import { arScreens } from './screens/ar';
 import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
 import { arTeam } from './team/ar';
+import { arAuthMethods } from './auth-methods/ar';
 
 export const ar = {
 	...arSettings,
@@ -31,6 +32,7 @@ export const ar = {
 	...arStepUp,
 	...arAdminAudit,
 	...arTeam,
+	...arAuthMethods,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
@@ -68,7 +70,7 @@ export const ar = {
 	'nav.apps.apis': 'الواجهات / الموارد',
 	'nav.apps.keys': 'رموز الوصول الأولية',
 	'nav.apps.webhooks': 'خطافات الويب',
-	'nav.auth.methods': 'طرق تسجيل الدخول',
+	'nav.auth.methods': 'طرق المصادقة',
 	'nav.auth.social': 'الاتصالات الاجتماعية',
 	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'مصادقة الدليل',

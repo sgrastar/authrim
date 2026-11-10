@@ -88,6 +88,14 @@ export {
   type LoginUIThemeSummary,
   type LoginUIThemeUpdateResult,
 } from './login-ui-theme';
+export {
+  AUTHENTICATION_METHOD_PROFILE_LIMIT,
+  AuthenticationMethodProfileRepository,
+  type AuthenticationMethodProfile,
+  type AuthenticationMethodProfileInput,
+  type AuthenticationMethodProfileCreateResult,
+  type AuthenticationMethodProfileUpdateResult,
+} from './authentication-method-profile';
 export { AdminAuditLogRepository, type AdminAuditLogFilterOptions } from './admin-audit-log';
 export { AdminIpAllowlistRepository } from './admin-ip-allowlist';
 export {

@@ -670,6 +670,30 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     description: 'saved login UI themes read',
   }),
   rule({
+    pattern: '/api/admin/authentication-method-profiles',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'authentication method profiles read',
+  }),
+  rule({
+    pattern: '/api/admin/authentication-method-profiles/*',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'authentication method profile read',
+  }),
+  rule({
+    pattern: '/api/admin/authentication-method-profiles',
+    methods: [...WRITE_METHODS, ...DELETE_METHODS],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'authentication method profiles write',
+  }),
+  rule({
+    pattern: '/api/admin/authentication-method-profiles/*',
+    methods: [...WRITE_METHODS, ...DELETE_METHODS],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'authentication method profile write and delete',
+  }),
+  rule({
     pattern: '/api/admin/login-ui/themes/*',
     methods: READ_METHODS,
     permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
