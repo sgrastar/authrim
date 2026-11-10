@@ -35,10 +35,11 @@
 		label?: string;
 		entries: readonly PaletteEntry[];
 		groups?: readonly PaletteGroup[];
+		showIcons?: boolean;
 		onadd: (kind: string) => void;
 	}
 
-	let { label = t('builder.parts'), entries, groups, onadd }: Props = $props();
+	let { label = t('builder.parts'), entries, groups, showIcons = true, onadd }: Props = $props();
 
 	const uid = $props.id();
 	const busy = useBusy();
@@ -72,7 +73,8 @@
 			}}
 			onclick={() => onadd(entry.kind)}
 		>
-			{#if entry.icon}<span class="palette__icon"><Icon name={entry.icon} /></span>{/if}
+			{#if showIcons && entry.icon}<span class="palette__icon"><Icon name={entry.icon} /></span
+				>{/if}
 			<span class="palette__name">{entry.label}</span>
 			<span class="palette__add" aria-hidden="true"><Icon name="plus" /></span>
 		</button>

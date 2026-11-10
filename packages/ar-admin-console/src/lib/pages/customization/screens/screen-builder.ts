@@ -110,17 +110,11 @@ export function translationRows(
 }
 
 /**
- * The settings a new part starts with. An input part is linked to the first attribute it can
- * store in; with none, it keeps its answer off the profile under a key of its own.
+ * The settings a new part starts with. Inputs always use an Identity Schema attribute. When
+ * none fits yet, the attribute stays empty until the admin chooses or creates one.
  */
-export function newPartSettings(
-	kind: string,
-	schemaFields: readonly SchemaField[],
-	ownKey: () => string
-): PartSettings {
+export function newPartSettings(kind: string, schemaFields: readonly SchemaField[]): PartSettings {
 	if (!INPUT_KINDS.has(kind)) return defaultSettings({ field: '' });
 	const fitting = schemaFields.find((field) => fieldFits(kind, field));
-	return fitting
-		? defaultSettings({ field: fitting.key })
-		: defaultSettings({ linked: false, field: ownKey() });
+	return defaultSettings({ field: fitting?.key ?? '' });
 }

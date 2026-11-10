@@ -20,7 +20,7 @@
 			docs: {
 				description: {
 					component:
-						'A saved screen’s detail page (`…/screens/<id>`): its basics and tabs — the builder (parts, the page in rows of up to three columns, the selected part’s settings), a preview, translations, where it is used and, for screens that keep response records, what people answered (shown only to admins who may view users). A built-in screen is shown, not edited: “Duplicate to edit” makes a copy. A save names the version it was made from, so another admin’s save is not overwritten. The new screen route has its own creation wizard.'
+						'A saved screen’s detail page (`…/screens/<id>`): its basics and tabs — the builder (parts, the page in rows of up to three columns, the selected part’s settings), a preview, translations, and where it is used. Response records and their settings are temporarily hidden. A built-in screen is shown, not edited: “Duplicate to edit” makes a copy. Changes use the Save Bar, and deletion is confirmed from the detail page. The new screen route has its own creation wizard.'
 				}
 			}
 		}
@@ -36,39 +36,26 @@
 		oncreated,
 		onopen
 	};
-	const responses = {
-		screen_survey: [
-			{
-				id: 'r1',
-				user_id: 'user_1',
-				screen_key: 'welcome_survey',
-				flow_id: 'flow_login',
-				flow_version_id: 'v1',
-				interaction_id: 'i1',
-				step_id: 'survey:step',
-				answers: { heard_from: 'friend', note: 'Glad to be here' },
-				created_at: Date.UTC(2026, 10, 2),
-				updated_at: Date.UTC(2026, 10, 2)
-			}
-		]
-	};
 </script>
 
 <Story
-	name="A survey that keeps response records"
+	name="Survey response settings hidden"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText('How did you hear about us?');
-		await userEvent.click(canvas.getByRole('tab', { name: t('sc.editor.tab.responses') }));
-		// A choice is shown by its label; the answer key by the part's label.
-		await waitFor(() => expect(canvas.getByText('A friend')).toBeVisible());
-		await expect(canvas.getByText('Glad to be here')).toBeVisible();
+		await expect(canvas.queryByRole('tab', { name: t('sc.editor.tab.responses') })).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: /Select How did you hear/ }));
+		const linked = canvas.getByRole('checkbox', { name: t('sc.set.linkDb') });
+		await expect(linked).toBeChecked();
+		await expect(linked).toBeDisabled();
+		await expect(canvas.queryByRole('textbox', { name: t('sc.set.answerKey') })).toBeNull();
+		await expect(canvas.queryByText(t('sc.set.answerTargets'))).toBeNull();
 	}}
 >
 	{#snippet template()}
 		<ScreenEditorPage
 			{...common}
-			client={createFakeScreens({ screens: MOCK_SCREENS, responses })}
+			client={createFakeScreens({ screens: MOCK_SCREENS })}
 			id="screen_survey"
 			schemaFields={demoSchemaFields()}
 		/>
@@ -150,7 +137,7 @@
 		).toBeEnabled();
 		const name = await canvas.findByRole('textbox', { name: new RegExp(t('sc.editor.name')) });
 		await userEvent.type(name, ' (new)');
-		await userEvent.click(canvas.getByRole('button', { name: t('sc.editor.save') }));
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
 		await within(document.body).findByText(t('sc.error.conflict'));
 		await waitForSettledToasts();
 	}}
@@ -164,7 +151,7 @@
 				// Someone saved version 3 a moment ago: this page still holds version 2.
 				update: (id, _version, input) => client.update(id, 99, input)
 			}}
-			id="screen_survey"
+			id="screen_signup"
 			schemaFields={demoSchemaFields()}
 		/>
 		<Toaster />
@@ -245,7 +232,7 @@
 		await userEvent.click(
 			canvas.getAllByRole('button', { name: new RegExp(t('sc.part.checkbox')) })[0]
 		);
-		await userEvent.click(canvas.getByRole('button', { name: t('sc.editor.save') }));
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
 		await waitFor(() => expect(oncreated).toHaveBeenCalled());
 	}}
 >

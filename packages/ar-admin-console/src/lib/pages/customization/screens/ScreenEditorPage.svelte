@@ -78,14 +78,13 @@
 		localizationsToTranslations,
 		translationsToLocalizations
 	} from './screen-texts';
-	import ScreenResponses from './ScreenResponses.svelte';
 	import ScreenUsages from './ScreenUsages.svelte';
 	import { editorValue, newScreenValue, type EditorValue } from './screen-editor';
 
 	/**
 	 * A screen's detail page, with the builder first (parts on the left, rows in the middle,
 	 * selected-part settings on the right). Other tabs show a preview, translations, usage,
-	 * responses when permitted, and basic settings. A built-in screen is shown, not edited: it is
+	 * and basic settings. A built-in screen is shown, not edited: it is
 	 * duplicated to be changed. A save names the version it was made from, so another admin's save
 	 * is not lost. The component still supports an unsaved state for its isolated Storybook test.
 	 */
@@ -94,8 +93,8 @@
 		/** The screen, or "new". */
 		id: string;
 		canWrite: boolean;
-		/** May read the response records (they are personal data). */
-		canReadResponses: boolean;
+		/** Reserved for the response tab while its UX is hidden. */
+		canReadResponses?: boolean;
 		/** The tenant's attributes, and an enum attribute's choices. */
 		schemaFields: readonly SchemaField[];
 		choices: ChoiceSource;
@@ -109,6 +108,8 @@
 		oncreated: (id: string) => void;
 		/** A copy was made to edit: open it. */
 		onopen: (id: string) => void;
+		/** The screen was deleted: return to its list. */
+		ondeleted?: () => void;
 		/** Reads the currently applied Login UI settings for the preview. */
 		loadTheme?: (signal: AbortSignal) => Promise<ThemeValues>;
 	}
@@ -117,7 +118,6 @@
 		client,
 		id,
 		canWrite,
-		canReadResponses,
 		schemaFields,
 		choices,
 		requiredAtSignUp = [],
@@ -125,6 +125,7 @@
 		listHref,
 		oncreated,
 		onopen,
+		ondeleted,
 		loadTheme
 	}: Props = $props();
 
@@ -144,11 +145,25 @@
 	let selectedRow = $state<string | null>(null);
 	let resetting = $state(false);
 	let copying = $state(false);
+	let deleting = $state(false);
+	let deletingBusy = $state(false);
 
 	const isSystem = $derived(loaded?.is_system === true);
 	const defaultScreenKeys = new Set<string>(EDITABLE_DEFAULT_SCREEN_KEYS);
 	const isDefaultScreen = $derived(loaded !== null && defaultScreenKeys.has(loaded.screen_key));
 	const readonly = $derived(isSystem || !canWrite);
+	const canDelete = $derived(
+		loaded !== null && !readonly && !isDefaultScreen && usagesComplete && usages.length === 0
+	);
+	const deleteHint = $derived(
+		isSystem
+			? t('sc.delete.system')
+			: isDefaultScreen
+				? t('sc.delete.default')
+				: !usagesComplete || usages.length > 0
+					? t('sc.delete.inUse')
+					: undefined
+	);
 	const value = $derived(draft.value);
 
 	let counter = 0;
@@ -245,14 +260,8 @@
 				return t('sc.editor.labelRequired', { name: partName(part.kind) });
 			}
 			const settings = from.settings[part.id];
-			if (INPUT_KINDS.has(part.kind) && settings && !settings.linked) {
-				if (!settings.field.trim()) {
-					return t('sc.editor.answerKeyRequired', { name: part.label || partName(part.kind) });
-				}
-				if (settings.answerTargets.length === 0) {
-					return t('sc.editor.targetsRequired', { name: part.label || partName(part.kind) });
-				}
-			}
+			if (INPUT_KINDS.has(part.kind) && (!settings?.linked || !settings.field.trim()))
+				return t('sc.editor.identityRequired', { name: part.label || partName(part.kind) });
 		}
 		return null;
 	}
@@ -321,11 +330,9 @@
 				screen_kind: source.screen_kind,
 				fields: source.fields,
 				localizations: source.localizations,
-				settings: {
-					...source.settings,
-					base_preset_key: source.screen_key,
-					base_preset_version: 1
-				},
+				settings: source.is_system
+					? { ...source.settings, base_preset_key: source.screen_key, base_preset_version: 1 }
+					: source.settings,
 				is_active: source.is_active
 			});
 			if (gone || visit !== loads || target !== id) return;
@@ -335,6 +342,29 @@
 			toast.error(t(screenErrorKey(error, 'sc.error.copy')));
 		} finally {
 			copying = false;
+		}
+	}
+
+	async function remove() {
+		if (!loaded || !canDelete || deletingBusy) return;
+		const target = loaded.id;
+		deletingBusy = true;
+		try {
+			await client.remove(target, version);
+		} catch (error) {
+			toast.error(t(screenErrorKey(error, 'sc.error.delete')));
+			return;
+		} finally {
+			deletingBusy = false;
+		}
+		if (gone || id !== target) return;
+		deleting = false;
+		draft.discard();
+		toast.success(t('sc.toast.deleted'));
+		if (ondeleted) ondeleted();
+		else {
+			loaded = null;
+			phase = 'missing';
 		}
 	}
 
@@ -410,7 +440,7 @@
 		const part = { id: newId(kind), kind, label: newPartLabel(kind, value.kind) };
 		draft.value.settings = {
 			...draft.value.settings,
-			[part.id]: newPartSettings(kind, schemaFields, () => `${kind}_${counter + 1}`)
+			[part.id]: newPartSettings(kind, schemaFields)
 		};
 		return part;
 	}
@@ -465,11 +495,6 @@
 		);
 	}
 
-	const keepsRecords = (from: EditorValue) =>
-		Object.values(from.settings).some(
-			(settings) => !settings.linked && settings.answerTargets.includes('record')
-		);
-
 	// Translations
 	const texts = $derived<TranslationRow[]>([
 		{ id: SCREEN_TEXT.name, label: t('sc.editor.name'), source: value.name },
@@ -489,28 +514,11 @@
 		name: getLoginUILanguageDisplayName(code, false)
 	}));
 
-	const answerLabel = (key: string) => {
-		const entry = Object.entries(value.settings).find(
-			([, settings]) => !settings.linked && settings.field === key
-		);
-		const part =
-			entry && value.rows.flatMap((row) => row.columns.flat()).find((p) => p.id === entry[0]);
-		return part?.label || undefined;
-	};
-	const answerChoice = (key: string, choice: string) =>
-		Object.values(value.settings)
-			.find((settings) => !settings.linked && settings.field === key)
-			?.options.find((option) => option.value === choice)?.label || undefined;
-
 	const tabs = $derived([
 		...(readonly ? [] : [{ id: 'items', label: t('sc.editor.tab.items'), icon: 'list' as const }]),
 		{ id: 'preview', label: t('sc.editor.tab.preview'), icon: 'app' as const },
 		{ id: 'localize', label: t('sc.editor.tab.localize'), icon: 'translate' as const },
 		...(isNew ? [] : [{ id: 'usage', label: t('sc.editor.tab.usage'), icon: 'link' as const }]),
-		// Every saved custom screen: records kept before a part stopped keeping them stay readable.
-		...(!isNew && canReadResponses && loaded && !loaded.is_system
-			? [{ id: 'responses', label: t('sc.editor.tab.responses'), icon: 'clipboardText' as const }]
-			: []),
 		{ id: 'basics', label: t('sc.editor.basics'), icon: 'gear' as const }
 	]);
 	const kindOptions = $derived(
@@ -523,7 +531,7 @@
 	};
 </script>
 
-<SaveScope {draft} onsave={save} bar={false}>
+<SaveScope {draft} onsave={save}>
 	{#snippet children(controls)}
 		<Page>
 			<PageHeader {title}>
@@ -549,15 +557,20 @@
 								{t('sc.editor.resetPreset')}
 							</Button>
 						{/if}
+						{#if loaded}
+							<Button icon="copy" disabled={controls.dirty} loading={copying} onclick={copyToEdit}>
+								{t('sc.action.copy')}
+							</Button>
+						{/if}
+					{/if}
+					{#if phase === 'ready' && loaded && canWrite}
 						<Button
-							variant="primary"
-							loading={controls.saving}
-							disabled={!controls.dirty && !isNew}
-							attention={controls.dirty}
-							onclick={controls.save}
+							variant="danger"
+							icon="trash"
+							title={deleteHint}
+							disabled={!canDelete || controls.saving}
+							onclick={() => (deleting = true)}>{t('sc.action.delete')}</Button
 						>
-							{t('sc.editor.save')}
-						</Button>
 					{/if}
 				{/snippet}
 			</PageHeader>
@@ -654,13 +667,10 @@
 									</span>
 								</Callout>
 							{/if}
-							{#if keepsRecords(value)}
-								<Callout>{t('sc.editor.recordNote')}</Callout>
-							{/if}
 							<p class="hint">{t('sc.editor.builderHint')}</p>
 							<div class="builder">
 								<Card title={t('sc.editor.parts')}>
-									<PartPalette {entries} {groups} onadd={(kind) => add(kind)} />
+									<PartPalette {entries} {groups} showIcons={false} onadd={(kind) => add(kind)} />
 								</Card>
 								<LayoutCanvas
 									label={title}
@@ -725,13 +735,6 @@
 							/>
 						{:else if current === 'usage'}
 							<ScreenUsages {usages} complete={usagesComplete} />
-						{:else if current === 'responses' && loaded}
-							<ScreenResponses
-								{client}
-								screenId={loaded.id}
-								labelOf={answerLabel}
-								choiceOf={answerChoice}
-							/>
 						{:else if current === 'basics'}
 							{@render basicsForm()}
 						{/if}
@@ -741,6 +744,17 @@
 		</Page>
 	{/snippet}
 </SaveScope>
+
+<ConfirmDialog
+	open={deleting}
+	title={t('sc.delete.title', { name: loaded?.display_name ?? '' })}
+	body={t('sc.delete.body')}
+	confirmLabel={t('sc.action.delete')}
+	tone="danger"
+	busy={deletingBusy}
+	onconfirm={() => void remove()}
+	oncancel={() => (deleting = false)}
+/>
 
 <ConfirmDialog
 	open={resetting}
@@ -775,7 +789,7 @@
 
 	.builder {
 		display: grid;
-		grid-template-columns: minmax(250px, 290px) minmax(0, 1fr) minmax(260px, 320px);
+		grid-template-columns: minmax(200px, 232px) minmax(0, 1fr) minmax(260px, 300px);
 		gap: var(--space-section);
 		align-items: start;
 	}

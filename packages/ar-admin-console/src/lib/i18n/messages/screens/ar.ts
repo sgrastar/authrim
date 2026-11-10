@@ -223,6 +223,7 @@ export const arScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.editor.partsRequired': 'ضع جزءًا واحدًا على الأقل',
 	'sc.editor.labelRequired': 'جزء بلا تسمية ({name})',
 	'sc.editor.answerKeyRequired': 'جزء بلا مفتاح إجابة ({name})',
+	'sc.editor.identityRequired': 'اختر سمة من مخطط الهوية لهذا الجزء ({name})',
 	'sc.editor.partNotForKind': 'لا يمكن لهذا النوع من الشاشات أن يحتوي على جزء ({name})',
 	'sc.editor.oneAccountWidget': 'تحتوي صفحة الحساب على مكوّن واحد على الأكثر',
 	'sc.editor.targetsRequired': 'جزء ليس لإجابته وجهة ({name})',

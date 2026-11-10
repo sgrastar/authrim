@@ -238,6 +238,8 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.editor.partsRequired': 'Platzieren Sie mindestens einen Baustein',
 	'sc.editor.labelRequired': 'Ein Baustein hat keine Beschriftung ({name})',
 	'sc.editor.answerKeyRequired': 'Ein Baustein hat keinen Antwortschlüssel ({name})',
+	'sc.editor.identityRequired':
+		'Wählen Sie ein Identity-Schema-Attribut für diesen Baustein ({name})',
 	'sc.editor.partNotForKind': 'Diese Art von Seite kann einen Baustein nicht enthalten ({name})',
 	'sc.editor.oneAccountWidget': 'Eine Kontoseite enthält höchstens ein Widget',
 	'sc.editor.targetsRequired': 'Ein Baustein hat kein Ziel für seine Antwort ({name})',
