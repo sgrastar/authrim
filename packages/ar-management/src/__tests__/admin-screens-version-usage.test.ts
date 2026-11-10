@@ -32,8 +32,12 @@ import {
   adminScreenGetHandler,
   adminScreensListHandler,
   adminScreenUpdateHandler,
+  getActiveAccountScreens,
 } from '../admin-screens';
-import { DEFAULT_ACCOUNT_SCREEN_KEYS } from '@authrim/ar-lib-core/types/screens';
+import {
+  DEFAULT_ACCOUNT_SCREEN_KEYS,
+  EDITABLE_DEFAULT_SCREEN_KEYS,
+} from '@authrim/ar-lib-core/types/screens';
 import { flowUsages, screenRefsInFlowDocument } from '../admin-screen-usage';
 
 const MIGRATION = new URL(
@@ -163,7 +167,7 @@ describe('screen versions', () => {
   it('creates editable account screens and preserves edits across subsequent lists', async () => {
     const first = await call(adminScreensListHandler);
     expect(first.status).toBe(200);
-    const accountScreens = (
+    const allAccountScreens = (
       first.body.screens as Array<{
         id: string;
         screen_key: string;
@@ -173,10 +177,27 @@ describe('screen versions', () => {
         fields: Array<Record<string, unknown>>;
       }>
     ).filter((screen) => screen.screen_kind === 'account');
+    const accountScreens = allAccountScreens.filter((screen) => screen.is_system === 0);
+    const accountTemplates = allAccountScreens.filter((screen) => screen.is_system === 1);
     expect(accountScreens.map((screen) => screen.screen_key).sort()).toEqual(
       [...DEFAULT_ACCOUNT_SCREEN_KEYS].sort()
     );
-    expect(accountScreens.every((screen) => screen.is_system === 0)).toBe(true);
+    expect(accountTemplates.map((screen) => screen.screen_key).sort()).toEqual(
+      DEFAULT_ACCOUNT_SCREEN_KEYS.map((key) => `${key}_template`).sort()
+    );
+    const byKey = new Map(
+      (first.body.screens as Array<{ screen_key: string; is_system: number }>).map((screen) => [
+        screen.screen_key,
+        screen,
+      ])
+    );
+    for (const key of EDITABLE_DEFAULT_SCREEN_KEYS) {
+      expect(byKey.get(key)?.is_system).toBe(0);
+      expect(byKey.get(`${key}_template`)?.is_system).toBe(1);
+    }
+    const runtimeScreens = await getActiveAccountScreens(context() as never, 'tenant-a');
+    expect(runtimeScreens).toHaveLength(11);
+    expect(runtimeScreens.every((screen) => !screen.is_system)).toBe(true);
 
     const profile = accountScreens.find((screen) => screen.screen_key === 'account_profile');
     if (!profile) throw new Error('Default account profile screen is missing');
@@ -204,6 +225,11 @@ describe('screen versions', () => {
       version: updatedVersion,
     });
     expect(saved?.fields).toHaveLength(2);
+    const template = (second.body.screens as Array<Record<string, unknown>>).find(
+      (screen) => screen.screen_key === 'account_profile_template'
+    );
+    expect(template).toMatchObject({ is_system: 1, display_name: 'User profile' });
+    expect(template?.fields).toHaveLength(1);
 
     const wrongKind = await call(adminScreenUpdateHandler, {
       id: profile.id,
@@ -313,13 +339,15 @@ describe('screen versions', () => {
 
   it('raises the version when a system screen is brought up to date', async () => {
     await call(adminScreensListHandler);
-    // An older copy of the system login screen: its localizations are missing.
+    // An older copy of the system login template: its localizations are missing.
     db.prepare(
-      "UPDATE screens SET localizations_json = '{}' WHERE tenant_id = 'tenant-a' AND screen_key = 'login'"
+      "UPDATE screens SET localizations_json = '{}' WHERE tenant_id = 'tenant-a' AND screen_key = 'login_template'"
     ).run();
     await call(adminScreensListHandler);
     const row = db
-      .prepare("SELECT version FROM screens WHERE tenant_id = 'tenant-a' AND screen_key = 'login'")
+      .prepare(
+        "SELECT version FROM screens WHERE tenant_id = 'tenant-a' AND screen_key = 'login_template'"
+      )
       .get() as { version: number };
     expect(row.version).toBeGreaterThan(1);
   });

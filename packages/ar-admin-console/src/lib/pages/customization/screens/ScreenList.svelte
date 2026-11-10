@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import { DEFAULT_ACCOUNT_SCREEN_KEYS } from '@authrim/ar-lib-core/types/screens';
+	import { EDITABLE_DEFAULT_SCREEN_KEYS } from '@authrim/ar-lib-core/types/screens';
 	import { ApiError } from '#lib/api/api-error.js';
 	import {
 		SCREEN_KINDS,
@@ -52,7 +52,7 @@
 	let kind = $state<ScreenKind | ''>('');
 	let screenSort = $state<SortState | null>(null);
 	let accountSort = $state<SortState | null>(null);
-	const defaultAccountKeys = new Set<string>(DEFAULT_ACCOUNT_SCREEN_KEYS);
+	const defaultScreenKeys = new Set<string>(EDITABLE_DEFAULT_SCREEN_KEYS);
 	// The page is gone: a duplicate finishing late does not take the admin anywhere.
 	let gone = false;
 	onDestroy(() => (gone = true));
@@ -175,15 +175,15 @@
 			// Why it cannot be deleted, in place of the action, when it cannot.
 			label: screen.is_system
 				? t('sc.delete.system')
-				: defaultAccountKeys.has(screen.screen_key)
-					? t('sc.delete.defaultAccount')
+				: defaultScreenKeys.has(screen.screen_key)
+					? t('sc.delete.default')
 					: inUse(screen)
 						? t('sc.delete.inUse')
 						: t('sc.action.delete'),
 			icon: 'trash',
 			danger: true,
 			disabled:
-				busy || screen.is_system || defaultAccountKeys.has(screen.screen_key) || inUse(screen),
+				busy || screen.is_system || defaultScreenKeys.has(screen.screen_key) || inUse(screen),
 			onselect: () => (deleting = screen)
 		}
 	];

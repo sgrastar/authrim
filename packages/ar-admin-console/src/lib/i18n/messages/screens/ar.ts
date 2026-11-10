@@ -64,7 +64,7 @@ export const arScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.delete.body': 'لا يمكن استعادة الشاشة المحذوفة.',
 	'sc.delete.inUse': 'لا يمكن حذف شاشة مستخدمة',
 	'sc.delete.system': 'لا يمكن حذف شاشة قياسية',
-	'sc.delete.defaultAccount': 'لا يمكن حذف شاشة الحساب الافتراضية. عطّلها بدلًا من ذلك',
+	'sc.delete.default': 'لا يمكن حذف الشاشة الافتراضية. عطّلها بدلًا من ذلك',
 	'sc.toast.deleted': 'حُذفت الشاشة',
 	'sc.toast.copied': 'كُرّرت الشاشة',
 	'sc.error.delete': 'تعذّر حذف الشاشة',

@@ -32,6 +32,7 @@ import {
   adminScreenUpdateHandler,
   adminScreensListHandler,
 } from '../admin-screens';
+import { EDITABLE_DEFAULT_SCREEN_KEYS } from '@authrim/ar-lib-core/types/screens';
 
 type ScreenRow = Record<string, unknown> & {
   id: string;
@@ -272,9 +273,9 @@ describe('admin screens', () => {
     rows.push({
       id: 'screen-system',
       tenant_id: 'tenant-1',
-      screen_key: 'login',
+      screen_key: 'profile_completion',
       display_name: 'Profile',
-      screen_kind: 'login',
+      screen_kind: 'profile_completion',
       fields_json: '[]',
       settings_json: '{}',
       is_system: 1,
@@ -299,20 +300,25 @@ describe('admin screens', () => {
     expect(consent).toMatchObject({
       screen_kind: 'consent',
       display_name: 'Consent',
-      is_system: 1,
+      is_system: 0,
     });
     expect(consent?.settings).toEqual({ canvas_layout: 'narrow' });
     expect(screensByKey.get('code_input')).toMatchObject({
       screen_kind: 'code_input',
       display_name: 'Code input',
-      is_system: 1,
+      is_system: 0,
     });
-    expect(screens.filter((screen) => screen.screen_kind === 'account')).toHaveLength(11);
-    expect(
-      screens
-        .filter((screen) => screen.screen_kind === 'account')
-        .every((screen) => !screen.is_system)
-    ).toBe(true);
+    for (const key of ['registration', 'login', 'consent', 'code_input']) {
+      expect(screensByKey.get(key)).toMatchObject({ is_system: 0 });
+      expect(screensByKey.get(`${key}_template`)).toMatchObject({ is_system: 1 });
+    }
+    const accountScreens = screens.filter((screen) => screen.screen_kind === 'account');
+    expect(accountScreens.filter((screen) => !screen.is_system)).toHaveLength(11);
+    expect(accountScreens.filter((screen) => screen.is_system)).toHaveLength(11);
+    expect(screensByKey.get('account_overview_template')).toMatchObject({
+      is_system: 1,
+      display_name: 'Account overview',
+    });
     const overviewFields = screensByKey.get('account_overview')?.fields as Array<
       Record<string, unknown>
     >;
@@ -416,24 +422,13 @@ describe('admin screens', () => {
     expect(codeInputZhCn?.['auth.code_input-1']?.text).toBe(
       '请输入电子邮件或身份验证器应用中的验证码。'
     );
-    expect(rows.map((row) => row.screen_key).sort()).toEqual([
-      'account_activity',
-      'account_consents',
-      'account_custom',
-      'account_devices',
-      'account_launchers',
-      'account_overview',
-      'account_passkeys',
-      'account_profile',
-      'account_sessions',
-      'account_social_accounts',
-      'account_totp',
-      'code_input',
-      'consent',
-      'login',
-      'profile_completion',
-      'registration',
-    ]);
+    expect(rows.map((row) => row.screen_key).sort()).toEqual(
+      [
+        ...EDITABLE_DEFAULT_SCREEN_KEYS,
+        ...EDITABLE_DEFAULT_SCREEN_KEYS.map((key) => `${key}_template`),
+        'profile_completion',
+      ].sort()
+    );
   });
 
   it('removes the retired account overview description and security link from existing defaults', async () => {

@@ -63,8 +63,7 @@ export const jaScreens = {
 	'sc.delete.body': '削除したスクリーンは元に戻せません。',
 	'sc.delete.inUse': '使われているスクリーンは削除できません',
 	'sc.delete.system': '標準のスクリーンは削除できません',
-	'sc.delete.defaultAccount':
-		'標準のアカウントスクリーンは削除できません。不要な場合は無効にしてください',
+	'sc.delete.default': '標準のスクリーンは削除できません。不要な場合は無効にしてください',
 	'sc.toast.deleted': 'スクリーンを削除しました',
 	'sc.toast.copied': 'スクリーンを複製しました',
 	'sc.error.delete': 'スクリーンを削除できませんでした',

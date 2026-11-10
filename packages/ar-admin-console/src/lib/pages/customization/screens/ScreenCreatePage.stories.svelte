@@ -55,6 +55,65 @@
 </Story>
 
 <Story
+	name="Sign-up, sign-in, code and consent templates"
+	play={async ({ canvasElement }) => {
+		const browser = await within(canvasElement).findByRole('group', {
+			name: t('sc.create.templates')
+		});
+		const categories = within(browser);
+		await userEvent.click(
+			categories.getByRole('button', { name: new RegExp(t('sc.create.category.registration')) })
+		);
+		await expect(categories.getByRole('button', { name: 'Registration' })).toBeInTheDocument();
+		await userEvent.click(
+			categories.getByRole('button', { name: new RegExp(t('sc.create.category.login')) })
+		);
+		await expect(categories.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+		await expect(categories.getByRole('button', { name: 'Code input' })).toBeInTheDocument();
+		await userEvent.click(
+			categories.getByRole('button', { name: new RegExp(t('sc.create.category.consent')) })
+		);
+		await expect(categories.getByRole('button', { name: 'Consent' })).toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<ScreenCreatePage
+			client={createFakeScreens({ screens: MOCK_SCREENS })}
+			canWrite
+			{oncancel}
+			oncreated={createdFromPreset}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Account templates remain available"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const browser = await canvas.findByRole('group', { name: t('sc.create.templates') });
+		await userEvent.click(
+			within(browser).getByRole('button', { name: new RegExp(t('sc.create.category.account')) })
+		);
+		await expect(
+			within(browser).getByRole('button', { name: 'Account overview' })
+		).toBeInTheDocument();
+		await expect(within(browser).getByRole('button', { name: 'User profile' })).toBeInTheDocument();
+		await expect(within(browser).queryByRole('button', { name: t('sc.create.blank') })).toBeNull();
+		await userEvent.click(within(browser).getByRole('button', { name: 'Account overview' }));
+		await expect(canvas.getByRole('button', { name: t('wizard.next') })).toBeEnabled();
+	}}
+>
+	{#snippet template()}
+		<ScreenCreatePage
+			client={createFakeScreens({ screens: MOCK_SCREENS })}
+			canWrite
+			{oncancel}
+			oncreated={createdFromPreset}
+		/>
+	{/snippet}
+</Story>
+
+<Story
 	name="Create a custom starter"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);

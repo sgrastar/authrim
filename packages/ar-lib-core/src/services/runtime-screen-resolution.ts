@@ -9,6 +9,7 @@
  * screen falls back to the system one).
  */
 import type { DatabaseAdapter } from '../db/adapter';
+import { EDITABLE_DEFAULT_SCREEN_KEYS } from '../types/screens';
 
 /** Screen keys a tenant without its own screen falls back to the `default` tenant's system screen for. */
 export const DEFAULT_RUNTIME_SCREEN_KEYS: ReadonlySet<string> = new Set([
@@ -18,6 +19,7 @@ export const DEFAULT_RUNTIME_SCREEN_KEYS: ReadonlySet<string> = new Set([
   'code_input',
   'consent',
 ]);
+const EDITABLE_DEFAULT_KEYS = new Set<string>(EDITABLE_DEFAULT_SCREEN_KEYS);
 
 export interface RuntimeScreenRow {
   id: string;
@@ -62,11 +64,17 @@ export async function resolveRuntimeScreenRow(
     );
   const fallbackScreenRef =
     screenRef === 'basic_profile' ? defaultScreenKeyForRuntimeComponent(component) : screenRef;
-  return (
+  const tenantScreen =
     (await queryScreen(tenantId, screenRef)) ??
-    (screenRef === 'basic_profile' ? await queryScreen(tenantId, fallbackScreenRef) : null) ??
-    (DEFAULT_RUNTIME_SCREEN_KEYS.has(fallbackScreenRef)
-      ? await queryScreen('default', fallbackScreenRef, true)
-      : null)
-  );
+    (screenRef === 'basic_profile' ? await queryScreen(tenantId, fallbackScreenRef) : null);
+  if (tenantScreen || !DEFAULT_RUNTIME_SCREEN_KEYS.has(fallbackScreenRef)) return tenantScreen;
+  // During migration the original default-tenant row may still be system-owned. Once it becomes
+  // editable, its separate immutable template supplies the same runtime fallback.
+  const originalSystemScreen = await queryScreen('default', fallbackScreenRef, true);
+  if (originalSystemScreen) return originalSystemScreen;
+  if (!EDITABLE_DEFAULT_KEYS.has(fallbackScreenRef)) return null;
+  const template = await queryScreen('default', `${fallbackScreenRef}_template`, true);
+  // Runtime behavior and the response still use the requested built-in key. In particular,
+  // login's default divider conditions depend on the canonical `login` screen key.
+  return template ? { ...template, screen_key: fallbackScreenRef } : null;
 }

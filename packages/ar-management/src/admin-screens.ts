@@ -8,7 +8,7 @@ import {
 import {
   MAX_SCREEN_FIELD_OPTIONS,
   MAX_SCREEN_OPTION_LABEL_LENGTH,
-  DEFAULT_ACCOUNT_SCREEN_KEYS,
+  EDITABLE_DEFAULT_SCREEN_KEYS,
   OIDC_STANDARD_CLAIM_SCOPE,
   MAX_SCREEN_OPTION_VALUE_LENGTH,
   RESERVED_CLAIMS,
@@ -1732,9 +1732,30 @@ export const DEFAULT_SCREENS: Array<{
   },
 ];
 
-/** The keys of the default screens: a newly created screen cannot take one. */
-const RESERVED_SCREEN_KEYS = new Set(DEFAULT_SCREENS.map((screen) => screen.screen_key));
-const DEFAULT_ACCOUNT_KEYS = new Set<string>(DEFAULT_ACCOUNT_SCREEN_KEYS);
+const EDITABLE_DEFAULT_KEYS = new Set<string>(EDITABLE_DEFAULT_SCREEN_KEYS);
+/** Independent, immutable templates for editable default screens. */
+const DEFAULT_EDITABLE_TEMPLATES = DEFAULT_SCREENS.filter((screen) =>
+  EDITABLE_DEFAULT_KEYS.has(screen.screen_key)
+).map((source) => ({ ...source, screen_key: `${source.screen_key}_template`, source }));
+const DEFAULT_SCREEN_SEEDS = [
+  ...DEFAULT_SCREENS.map((screen) => ({ screen, source: screen, template: false })),
+  ...DEFAULT_EDITABLE_TEMPLATES.map((screen) => ({
+    screen,
+    source: screen.source,
+    template: true,
+  })),
+];
+
+/** The keys of default screens and templates: a newly created screen cannot take one. */
+const RESERVED_SCREEN_KEYS = new Set(
+  [...DEFAULT_SCREENS, ...DEFAULT_EDITABLE_TEMPLATES].map((screen) => screen.screen_key)
+);
+const EDITABLE_DEFAULT_KINDS = new Map(
+  DEFAULT_SCREENS.filter((screen) => EDITABLE_DEFAULT_KEYS.has(screen.screen_key)).map((screen) => [
+    screen.screen_key,
+    screen.screen_kind,
+  ])
+);
 
 function invalid(c: AdminContext, error_description: string): Response {
   return c.json({ error: 'invalid_request', error_description }, 400);
@@ -2766,7 +2787,7 @@ function toResponse(row: Row): ScreenResponse {
 
 export async function ensureDefaultScreens(c: AdminContext, tenantId: string): Promise<void> {
   const authCtx = createAuthContextFromHono(c, tenantId);
-  for (const screen of DEFAULT_SCREENS) {
+  for (const { screen, source, template } of DEFAULT_SCREEN_SEEDS) {
     const existing = await authCtx.coreAdapter.queryOne<Row>(
       `SELECT id, screen_kind, fields_json, localizations_json, is_system
          FROM screens
@@ -2776,12 +2797,12 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
     if (existing) {
       if (readBoolean(existing.is_system, false)) {
         const fields = parseJson<ScreenField[]>(existing.fields_json, screen.fields);
-        const mergedFields = mergeDefaultScreenFieldMetadata(screen, fields);
+        const mergedFields = mergeDefaultScreenFieldMetadata(source, fields);
         const currentLocalizations = normalizeLocalizations(
           parseJson<Record<string, ScreenLocalization>>(existing.localizations_json, {})
         );
         const mergedLocalizations = mergeDefaultScreenLocalizations(
-          screen,
+          source,
           mergedFields.length > 0 ? mergedFields : screen.fields,
           currentLocalizations
         );
@@ -2809,9 +2830,8 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
             [screen.screen_kind, nowMs(), tenantId, existing.id]
           );
         }
-        // Account screens were previously immutable presets. Keep their records, IDs and
-        // localizations, then make them editable tenant screens once on the next list read.
-        if (screen.screen_kind === 'account') {
+        // Convert the former system preset in place. Its ID, content, and localizations remain.
+        if (EDITABLE_DEFAULT_KEYS.has(screen.screen_key) && !template) {
           await authCtx.coreAdapter.execute(
             `UPDATE screens
                 SET is_system = 0, updated_at = ?, version = version + 1
@@ -2835,10 +2855,10 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
         screen.description,
         screen.screen_kind,
         serializeJson(screen.fields),
-        serializeJson(mergeDefaultScreenLocalizations(screen, screen.fields, {})),
+        serializeJson(mergeDefaultScreenLocalizations(source, screen.fields, {})),
         serializeJson(screen.settings),
         1,
-        screen.screen_kind === 'account' ? 0 : 1,
+        EDITABLE_DEFAULT_KEYS.has(screen.screen_key) && !template ? 0 : 1,
         nowMs(),
         nowMs(),
       ]
@@ -2854,7 +2874,7 @@ export async function getActiveAccountScreens(
   const authCtx = createAuthContextFromHono(c, tenantId);
   const rows = await authCtx.coreAdapter.query(
     `SELECT * FROM screens
-     WHERE tenant_id = ? AND screen_kind = 'account' AND is_active = 1
+     WHERE tenant_id = ? AND screen_kind = 'account' AND is_active = 1 AND is_system = 0
      ORDER BY display_name ASC`,
     [tenantId]
   );
@@ -2904,7 +2924,7 @@ export async function adminScreenGetHandler(c: AdminContext) {
       [tenantId, c.req.param('id')]
     );
     if (!row) return notFound(c, 'Screen not found');
-    if (row.screen_kind === 'account' && readBoolean(row.is_system, false)) {
+    if (EDITABLE_DEFAULT_KEYS.has(String(row.screen_key)) && readBoolean(row.is_system, false)) {
       await ensureDefaultScreens(c, tenantId);
       row = await authCtx.coreAdapter.queryOne<Row>(
         'SELECT * FROM screens WHERE tenant_id = ? AND id = ?',
@@ -3051,8 +3071,9 @@ async function adminScreenUpdateUnguarded(c: AdminContext) {
     if (body.screen_kind !== undefined) {
       if (!SCREEN_KINDS.has(body.screen_kind as ScreenKind))
         return invalid(c, 'Invalid screen_kind');
-      if (DEFAULT_ACCOUNT_KEYS.has(String(existing.screen_key)) && body.screen_kind !== 'account') {
-        return invalid(c, 'A default account screen must remain an account screen');
+      const defaultKind = EDITABLE_DEFAULT_KINDS.get(String(existing.screen_key));
+      if (defaultKind && body.screen_kind !== defaultKind) {
+        return invalid(c, 'A default screen must keep its original kind');
       }
       sets.push('screen_kind = ?');
       params.push(body.screen_kind);
@@ -3137,8 +3158,8 @@ async function adminScreenDeleteUnguarded(c: AdminContext) {
     if (!existing) return notFound(c, 'Screen not found');
     if (readBoolean(existing.is_system, false))
       return invalid(c, 'System screens cannot be deleted');
-    if (DEFAULT_ACCOUNT_KEYS.has(String(existing.screen_key)))
-      return invalid(c, 'Default account screens cannot be deleted; disable them instead');
+    if (EDITABLE_DEFAULT_KEYS.has(String(existing.screen_key)))
+      return invalid(c, 'Default screens cannot be deleted; disable them instead');
     // If-Match is optional here (a delete names no content), but honoured when sent.
     const expected = parseIfMatchVersion(c);
     if (Number.isNaN(expected)) return invalid(c, 'If-Match must be a screen version');

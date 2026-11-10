@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Screens (`/api/admin/screens`): saved tenant screens and editable default account screens appear in separate tables. Built-in authentication templates appear in the new-screen wizard. A row opens its detail page (`…/screens/<id>`). Its menu opens, duplicates or deletes it when allowed. The list narrows by kind and by name or key. Each table sorts independently, and creation and update dates include the time zone.'
+						'Customization → Screens (`/api/admin/screens`): saved tenant screens, including editable default sign-up, sign-in, consent, code entry and account screens. Account screens have their own table. Independent built-in templates remain in the new-screen wizard. A row opens its detail page (`…/screens/<id>`). Its menu opens, duplicates or deletes it when allowed. The list narrows by kind and by name or key. Each table sorts independently, and creation and update dates include the time zone.'
 				}
 			}
 		}
@@ -48,7 +48,12 @@
 		await expect(within(accountTable).getByText('User profile')).toBeInTheDocument();
 		await expect(within(accountTable).getAllByRole('row')).toHaveLength(12);
 		await expect(canvas.getByText('Sign up')).toBeInTheDocument();
-		await expect(canvas.queryByText('Sign in')).toBeNull();
+		await expect(within(screensTable).getByText('Sign in')).toBeInTheDocument();
+		for (const name of ['Registration', 'Consent', 'Code input']) {
+			await expect(
+				within(screensTable).getByRole('button', { name: t('sc.list.open', { name }) })
+			).toBeInTheDocument();
+		}
 		await expect(canvas.queryByRole('complementary', { name: t('sc.preview.title') })).toBeNull();
 		const headers = within(screensTable)
 			.getAllByRole('columnheader')
@@ -124,7 +129,12 @@
 >
 	{#snippet template()}
 		<ScreenList
-			client={createFakeScreens({ screens: MOCK_SCREENS, usages })}
+			client={createFakeScreens({
+				screens: MOCK_SCREENS.filter((screen) =>
+					['screen_signup', 'screen_survey'].includes(screen.id)
+				),
+				usages
+			})}
 			canWrite
 			{hrefOf}
 			{onopen}

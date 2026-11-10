@@ -254,6 +254,15 @@ export const DEFAULT_ACCOUNT_SCREEN_KEYS = [
   'account_custom',
 ] as const;
 
+/** Tenant screens created on first use while their built-in templates remain immutable. */
+export const EDITABLE_DEFAULT_SCREEN_KEYS = [
+  'registration',
+  'login',
+  'consent',
+  'code_input',
+  ...DEFAULT_ACCOUNT_SCREEN_KEYS,
+] as const;
+
 export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
   schema_version: 'authrim.account_page.v1',
   base_preset_id: 'authrim-default',

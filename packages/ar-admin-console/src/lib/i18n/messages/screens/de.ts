@@ -65,8 +65,8 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.delete.body': 'Eine gelöschte Seite kann nicht wiederhergestellt werden.',
 	'sc.delete.inUse': 'Eine verwendete Seite kann nicht gelöscht werden',
 	'sc.delete.system': 'Eine Standardseite kann nicht gelöscht werden',
-	'sc.delete.defaultAccount':
-		'Eine Standardkontoseite kann nicht gelöscht werden. Deaktivieren Sie sie stattdessen',
+	'sc.delete.default':
+		'Eine Standardseite kann nicht gelöscht werden. Deaktivieren Sie sie stattdessen',
 	'sc.toast.deleted': 'Seite gelöscht',
 	'sc.toast.copied': 'Seite dupliziert',
 	'sc.error.delete': 'Die Seite konnte nicht gelöscht werden',

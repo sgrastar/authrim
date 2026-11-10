@@ -65,7 +65,7 @@ export const enScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.delete.body': 'A deleted screen cannot be restored.',
 	'sc.delete.inUse': 'A screen in use cannot be deleted',
 	'sc.delete.system': 'A built-in screen cannot be deleted',
-	'sc.delete.defaultAccount': 'A default account screen cannot be deleted. Disable it instead',
+	'sc.delete.default': 'A default screen cannot be deleted. Disable it instead',
 	'sc.toast.deleted': 'Screen deleted',
 	'sc.toast.copied': 'Screen duplicated',
 	'sc.error.delete': 'The screen could not be deleted',
