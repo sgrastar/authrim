@@ -14,6 +14,7 @@ import { enScreens } from './screens/en';
 import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
 import { enTeam } from './team/en';
+import { enAuthMethods } from './auth-methods/en';
 
 export const en = {
 	...enSettings,
@@ -31,6 +32,7 @@ export const en = {
 	...enStepUp,
 	...enAdminAudit,
 	...enTeam,
+	...enAuthMethods,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
@@ -68,7 +70,7 @@ export const en = {
 	'nav.apps.apis': 'APIs / Resources',
 	'nav.apps.keys': 'Initial access tokens',
 	'nav.apps.webhooks': 'Webhooks',
-	'nav.auth.methods': 'Sign-in methods',
+	'nav.auth.methods': 'Authentication methods',
 	'nav.auth.social': 'Social connections',
 	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'Directory authentication',

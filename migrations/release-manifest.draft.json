@@ -102,6 +102,10 @@
             {
               "path": "012_admin_groups.sql",
               "checksum": "7ae1ed299a343913d59766635841c1fc87ed41c3c2188dc4891c41efadce5861"
+            },
+            {
+              "path": "013_authentication_method_profiles.sql",
+              "checksum": "b61f761ba41b4e50e052fa1074be890783098fb5229cfd525423f5159ff489e8"
             }
           ]
         },
@@ -280,6 +284,10 @@
         {
           "path": "012_admin_groups.sql",
           "checksum": "7ae1ed299a343913d59766635841c1fc87ed41c3c2188dc4891c41efadce5861"
+        },
+        {
+          "path": "013_authentication_method_profiles.sql",
+          "checksum": "b61f761ba41b4e50e052fa1074be890783098fb5229cfd525423f5159ff489e8"
         }
       ]
     },

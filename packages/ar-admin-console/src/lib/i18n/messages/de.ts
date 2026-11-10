@@ -14,6 +14,7 @@ import { deScreens } from './screens/de';
 import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 import { deTeam } from './team/de';
+import { deAuthMethods } from './auth-methods/de';
 
 export const de = {
 	...deSettings,
@@ -31,6 +32,7 @@ export const de = {
 	...deStepUp,
 	...deAdminAudit,
 	...deTeam,
+	...deAuthMethods,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
@@ -68,7 +70,7 @@ export const de = {
 	'nav.apps.apis': 'APIs / Ressourcen',
 	'nav.apps.keys': 'Initiale Zugriffstoken',
 	'nav.apps.webhooks': 'Webhooks',
-	'nav.auth.methods': 'Anmeldeverfahren',
+	'nav.auth.methods': 'Authentifizierungsmethoden',
 	'nav.auth.social': 'Soziale Verbindungen',
 	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'Verzeichnisauthentifizierung',
