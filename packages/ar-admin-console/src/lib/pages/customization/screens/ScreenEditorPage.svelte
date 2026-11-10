@@ -4,6 +4,7 @@
 		LOGIN_UI_LOCALES,
 		getLoginUILanguageDisplayName
 	} from '@authrim/ar-lib-core/types/login-ui-languages';
+	import { EDITABLE_DEFAULT_SCREEN_KEYS } from '@authrim/ar-lib-core/types/screens';
 	import { ApiError } from '#lib/api/api-error.js';
 	import type { ThemeValues } from '#lib/api/login-ui-themes.js';
 	import {
@@ -145,6 +146,8 @@
 	let copying = $state(false);
 
 	const isSystem = $derived(loaded?.is_system === true);
+	const defaultScreenKeys = new Set<string>(EDITABLE_DEFAULT_SCREEN_KEYS);
+	const isDefaultScreen = $derived(loaded !== null && defaultScreenKeys.has(loaded.screen_key));
 	const readonly = $derived(isSystem || !canWrite);
 	const value = $derived(draft.value);
 
@@ -345,7 +348,11 @@
 		try {
 			const { screens } = await client.list();
 			if (gone || visit !== loads || target !== id) return;
-			const preset = screens.find((screen) => screen.is_system && screen.screen_key === baseKey);
+			const preset = screens.find(
+				(screen) =>
+					screen.is_system &&
+					(screen.screen_key === baseKey || screen.screen_key === `${baseKey}_template`)
+			);
 			if (!preset) throw new ApiError(404, 'not_found', 'Preset not found');
 			const read = fieldsToBuilder(preset.fields, newId);
 			origins = { ...origins, ...read.origins };
@@ -599,7 +606,7 @@
 									field="kind"
 									label={t('sc.editor.kind')}
 									options={kindOptions}
-									disabled={readonly}
+									disabled={readonly || isDefaultScreen}
 									bind:value={draft.value.kind}
 								/>
 								<SegmentedControl

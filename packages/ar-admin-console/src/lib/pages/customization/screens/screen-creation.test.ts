@@ -57,6 +57,24 @@ describe('screen creation templates', () => {
 		expect(items.some((item) => item.id === custom.id || item.id === empty.id)).toBe(false);
 	});
 
+	it('keeps an account template separate from its editable default screen', () => {
+		const saved = {
+			...row(1),
+			screen_key: 'account_overview',
+			screen_kind: 'account' as const,
+			is_system: false
+		};
+		const template = {
+			...row(2),
+			screen_key: 'account_overview_template',
+			screen_kind: 'account' as const
+		};
+		const items = screenTemplates([saved, template], 'Blank');
+		expect(items.filter((item) => item.groupId === 'account')).toMatchObject([
+			{ id: template.id, source: template }
+		]);
+	});
+
 	it('copies a preset and records its source without sharing mutable data', () => {
 		const source = row(1);
 		const template = screenTemplates([source], 'Blank').find((item) => item.id === source.id)!;

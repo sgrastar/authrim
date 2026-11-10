@@ -107,7 +107,7 @@
 					})
 				},
 				{
-					label: 'card, login panel picture (panel mode) is not drawn on the card',
+					label: 'card, form area picture (panel mode) is drawn on the card',
 					ui: ui('split', 'clean', {
 						branding: { logoUrl: SAMPLE_LOGO_URL },
 						appearance: {

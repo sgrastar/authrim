@@ -22,6 +22,7 @@ import {
   buildIssuerUrl,
   createAuthContextFromHono,
   DEFAULT_RUNTIME_SCREEN_KEYS,
+  EDITABLE_DEFAULT_SCREEN_KEYS,
   getLitePolicyStore,
   humanVerificationSettingsKey,
   isLoginUILiteSelectable,
@@ -47,6 +48,7 @@ import {
 type AnyContext = Context;
 
 const MAX_LISTED_CLIENTS = 20;
+const TEMPLATE_SCREEN_KEYS = new Set(EDITABLE_DEFAULT_SCREEN_KEYS.map((key) => `${key}_template`));
 
 interface ScreenRow {
   screen_key: string;
@@ -180,18 +182,30 @@ export async function liteScreenIssuesForTenant(
     `SELECT screen_key, screen_kind, fields_json FROM screens WHERE tenant_id = ? AND is_active = 1`,
     [tenantId]
   );
-  const own = new Set(rows.map((row) => row.screen_key));
+  // Templates are not tenant pages and must not count as active screens or suppress fallback.
+  const activeRows = rows.filter((row) => !TEMPLATE_SCREEN_KEYS.has(row.screen_key));
+  const own = new Set(activeRows.map((row) => row.screen_key));
   const fallbackKeys = [...DEFAULT_RUNTIME_SCREEN_KEYS].filter((key) => !own.has(key));
+  const fallbackRefs = fallbackKeys.flatMap((key) =>
+    TEMPLATE_SCREEN_KEYS.has(`${key}_template`) ? [key, `${key}_template`] : [key]
+  );
   const systemRows =
-    fallbackKeys.length > 0
+    fallbackRefs.length > 0
       ? await db.query<ScreenRow>(
           `SELECT screen_key, screen_kind, fields_json FROM screens
             WHERE tenant_id = 'default' AND is_system = 1 AND is_active = 1
-              AND screen_key IN (${fallbackKeys.map(() => '?').join(', ')})`,
-          fallbackKeys
+              AND screen_key IN (${fallbackRefs.map(() => '?').join(', ')})`,
+          fallbackRefs
         )
       : [];
-  return [...rows, ...systemRows].flatMap((row) =>
+  const fallbacks = fallbackKeys
+    .map(
+      (key) =>
+        systemRows.find((row) => row.screen_key === key) ??
+        systemRows.find((row) => row.screen_key === `${key}_template`)
+    )
+    .filter((row): row is ScreenRow => row !== undefined);
+  return [...activeRows, ...fallbacks].flatMap((row) =>
     liteIssuesOfScreen(
       {
         screen_key: row.screen_key,

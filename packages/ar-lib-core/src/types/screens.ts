@@ -239,6 +239,30 @@ export interface AccountPagesDocument {
 
 export const ACCOUNT_PAGE_PRESET_VERSION = 3;
 
+/** Account screens created for each tenant and editable from the screen list. */
+export const DEFAULT_ACCOUNT_SCREEN_KEYS = [
+  'account_overview',
+  'account_launchers',
+  'account_profile',
+  'account_devices',
+  'account_sessions',
+  'account_passkeys',
+  'account_totp',
+  'account_consents',
+  'account_activity',
+  'account_social_accounts',
+  'account_custom',
+] as const;
+
+/** Tenant screens created on first use while their built-in templates remain immutable. */
+export const EDITABLE_DEFAULT_SCREEN_KEYS = [
+  'registration',
+  'login',
+  'consent',
+  'code_input',
+  ...DEFAULT_ACCOUNT_SCREEN_KEYS,
+] as const;
+
 export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
   schema_version: 'authrim.account_page.v1',
   base_preset_id: 'authrim-default',
