@@ -26,7 +26,6 @@ export const arAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.page.editName': 'تعديل اسم الملف',
 	'am.page.nameDone': 'تم',
 	'am.page.description': 'اختر طرق تسجيل الدخول المتاحة في هذا الملف.',
-	'am.page.save': 'حفظ',
 	'am.page.saved': 'تم حفظ ملف التعريف.',
 	'am.page.loadFailed': 'تعذر تحميل ملف التعريف.',
 	'am.page.notFound': 'لم يُعثر على ملف التعريف.',

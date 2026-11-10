@@ -26,7 +26,6 @@ export const deAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.page.editName': 'Profilnamen bearbeiten',
 	'am.page.nameDone': 'Fertig',
 	'am.page.description': 'Legen Sie die in diesem Profil verfügbaren Anmeldeverfahren fest.',
-	'am.page.save': 'Speichern',
 	'am.page.saved': 'Profil gespeichert.',
 	'am.page.loadFailed': 'Das Profil konnte nicht geladen werden.',
 	'am.page.notFound': 'Profil nicht gefunden.',

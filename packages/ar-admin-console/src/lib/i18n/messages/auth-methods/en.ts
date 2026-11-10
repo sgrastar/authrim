@@ -26,7 +26,6 @@ export const enAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.page.editName': 'Edit profile name',
 	'am.page.nameDone': 'Done',
 	'am.page.description': 'Choose the sign-in methods available in this profile.',
-	'am.page.save': 'Save',
 	'am.page.saved': 'Profile saved.',
 	'am.page.loadFailed': 'Could not load the profile.',
 	'am.page.notFound': 'Profile not found.',

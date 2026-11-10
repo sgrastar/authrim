@@ -14,6 +14,7 @@
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import SaveBar from '#lib/ui/patterns/SaveBar.svelte';
 	import BackLink from '#lib/ui/primitives/BackLink.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
@@ -165,6 +166,16 @@
 		editingName = false;
 		void tick().then(() => editNameButton?.focus());
 	}
+	function discard() {
+		if (busy || phase !== 'ready' || !saved) return;
+		const original = JSON.parse(saved) as { name: string; values: AuthenticationMethodValues };
+		name = original.name;
+		nameBeforeEdit = original.name;
+		values = structuredClone(original.values);
+		nameError = '';
+		editingName = isNew && canWrite;
+		void tick().then(() => (editingName ? nameInput : editNameButton)?.focus());
+	}
 
 	function changeValue(key: string, checked: boolean) {
 		values = { ...values, [key]: checked };
@@ -215,7 +226,7 @@
 		}
 	}
 
-	const title = $derived(isNew ? t('am.page.new') : name || t('am.list.title'));
+	const title = $derived(name || (isNew ? t('am.page.new') : t('am.list.title')));
 </script>
 
 {#snippet nameAction()}
@@ -274,17 +285,6 @@
 		titleEditor={canWrite && phase === 'ready' && !isSystem && editingName ? nameForm : undefined}
 	>
 		{#snippet back()}<BackLink href={listHref}>{t('am.page.back')}</BackLink>{/snippet}
-		{#snippet actions()}
-			{#if canWrite && phase === 'ready'}
-				<Button
-					variant="primary"
-					loading={busy}
-					attention={dirty}
-					disabled={!dirty && !isNew}
-					onclick={save}>{t('am.page.save')}</Button
-				>
-			{/if}
-		{/snippet}
 	</PageHeader>
 	{#if phase === 'loading'}
 		<LoadingState label={t('common.loading')} />
@@ -305,6 +305,9 @@
 						>{t('common.retry')}</Button
 					>{/if}{/snippet}
 		</EmptyState>
+	{/if}
+	{#if canWrite && phase === 'ready'}
+		<SaveBar {dirty} saving={busy} invalid={nameError !== ''} onsave={save} ondiscard={discard} />
 	{/if}
 </Page>
 

@@ -24,7 +24,6 @@ export const jaAuthMethods = {
 	'am.page.editName': 'プロフィール名を編集',
 	'am.page.nameDone': '完了',
 	'am.page.description': 'このプロフィールで利用できる認証方式を設定します。',
-	'am.page.save': '保存',
 	'am.page.saved': 'プロフィールを保存しました。',
 	'am.page.loadFailed': 'プロフィールを読み込めませんでした。',
 	'am.page.notFound': 'プロフィールが見つかりません。',

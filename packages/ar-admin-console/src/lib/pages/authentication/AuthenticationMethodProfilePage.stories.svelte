@@ -29,7 +29,9 @@
 		const canvas = within(canvasElement);
 		const name = await canvas.findByRole('textbox', { name: t('am.page.name') });
 		await userEvent.type(name, 'Members');
-		await userEvent.click(canvas.getByRole('button', { name: t('am.page.save') }));
+		await userEvent.click(canvas.getByRole('button', { name: t('am.page.nameDone') }));
+		await expect(canvas.getByRole('heading', { name: 'Members' })).toBeInTheDocument();
+		await userEvent.click(await canvas.findByRole('button', { name: t('common.save') }));
 		await waitFor(() => expect(oncreated).toHaveBeenCalledWith('amp_1'));
 	}}
 >
@@ -56,6 +58,15 @@
 		await expect(
 			canvas.getByRole('link', { name: t('am.methods.directorySettings') })
 		).toHaveAttribute('href', '/admin/authentication/directory');
+		const did = canvas.getByRole('checkbox', { name: /DID/ });
+		await expect(did).not.toBeChecked();
+		await userEvent.click(did);
+		const bar = await canvas.findByRole('region', { name: t('common.unsaved') });
+		await userEvent.click(within(bar).getByRole('button', { name: t('common.discard') }));
+		await waitFor(() => expect(did).not.toBeChecked());
+		await waitFor(() =>
+			expect(canvas.queryByRole('region', { name: t('common.unsaved') })).toBeNull()
+		);
 	}}
 >
 	{#snippet template()}
