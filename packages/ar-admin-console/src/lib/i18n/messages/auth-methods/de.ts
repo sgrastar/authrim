@@ -41,13 +41,29 @@ export const deAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.methods.title': 'Verfügbare Anmeldeverfahren',
 	'am.methods.description': 'Wählen Sie für jeden Zweck die zulässigen Verfahren aus.',
 	'am.methods.method': 'Verfahren',
+	'am.methods.about': 'Über {name}',
 	'am.methods.signup': 'Registrierung',
 	'am.methods.login': 'Anmeldung',
 	'am.methods.reauth': 'Erneute Anmeldung',
 	'am.methods.accountLink': 'Kontoverknüpfung',
 	'am.methods.passkey': 'Passkey',
+	'am.methods.passkeyHint':
+		'Passkeys für Anmeldung, Registrierung und erneute Anmeldung verwenden.',
 	'am.methods.emailOtp': 'Einmalcode per E-Mail',
+	'am.methods.emailOtpHint':
+		'E-Mail-Codes für Anmeldung, Registrierung und erneute Anmeldung verwenden.',
 	'am.methods.totp': 'Authenticator-App (TOTP)',
+	'am.methods.totpHint':
+		'TOTP-Authenticator-Apps für Anmeldung, Registrierung, erneute Anmeldung und Kontoverknüpfung verwenden.',
+	'am.methods.did': 'DID',
+	'am.methods.didHint':
+		'Konten mit einer verknüpften DID (did:web oder did:key) können sich durch Signieren einer Challenge anmelden. Nur Mandanten, die diese Einstellung aktivieren, können sie verwenden.',
+	'am.methods.directoryPassword': 'Directory Password',
+	'am.methods.directoryPasswordHint':
+		'Passwörter eines Organisationsverzeichnisses über Authrim Wordwarden prüfen.',
+	'am.methods.notConfigured': 'Nicht konfiguriert',
+	'am.methods.directoryDisabled': 'Deaktiviert',
+	'am.methods.directorySettings': 'Verzeichnisauthentifizierung konfigurieren',
 	'am.methods.none': 'Keine',
 	'am.guest.title': 'Gast',
 	'am.guest.login': 'Gastanmeldung zulassen',

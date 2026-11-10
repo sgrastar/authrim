@@ -19,7 +19,7 @@
 	import Page from '#lib/ui/templates/Page.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
-	import { BUILT_IN_METHODS, METHOD_USES, methodKey } from './authentication-method-fields';
+	import { BUILT_IN_METHODS, methodKey } from './authentication-method-fields';
 
 	interface Props {
 		client: AuthenticationMethodProfilesClient;
@@ -82,7 +82,7 @@
 	function methodSummary(profile: AuthenticationMethodProfile): string {
 		return (
 			BUILT_IN_METHODS.filter((method) =>
-				METHOD_USES.some((use) => profile.values[methodKey(method.id, use.id)] === true)
+				method.supports.some((use) => profile.values[methodKey(method.id, use)] === true)
 			)
 				.map((method) => t(method.label))
 				.join(' · ') || t('am.methods.none')

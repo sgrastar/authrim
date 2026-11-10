@@ -20,6 +20,7 @@
 		}
 	});
 	const oncreated = fn();
+	const directoryStatusClient = { get: async () => 'unconfigured' as const };
 </script>
 
 <Story
@@ -35,6 +36,8 @@
 	{#snippet template()}
 		<AuthenticationMethodProfilePage
 			client={createFakeAuthenticationMethodProfiles()}
+			{directoryStatusClient}
+			tenantId="acme"
 			id="new"
 			canWrite
 			listHref="/admin/authentication/methods"
@@ -49,11 +52,17 @@
 		const canvas = within(canvasElement);
 		await canvas.findByText(t('am.list.active'));
 		await expect(canvas.getByText(t('am.methods.totp'))).toBeInTheDocument();
+		await canvas.findByText(t('am.methods.notConfigured'));
+		await expect(
+			canvas.getByRole('link', { name: t('am.methods.directorySettings') })
+		).toHaveAttribute('href', '/admin/directory-authentication');
 	}}
 >
 	{#snippet template()}
 		<AuthenticationMethodProfilePage
 			client={createFakeAuthenticationMethodProfiles()}
+			{directoryStatusClient}
+			tenantId="acme"
 			id="default"
 			canWrite
 			listHref="/admin/authentication/methods"

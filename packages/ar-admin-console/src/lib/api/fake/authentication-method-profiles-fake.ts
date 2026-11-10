@@ -17,6 +17,8 @@ const defaults = {
 	'authentication-methods.totp.login_enabled': false,
 	'authentication-methods.totp.reauth_enabled': false,
 	'authentication-methods.totp.account_link_enabled': false,
+	'authentication-methods.did.login_enabled': false,
+	'authentication-methods.directory_password.enabled': false,
 	'authentication-methods.guest.login_enabled': false,
 	'authentication-methods.passkey.guest_upgrade_enabled': true,
 	'authentication-methods.email_otp.guest_upgrade_enabled': true

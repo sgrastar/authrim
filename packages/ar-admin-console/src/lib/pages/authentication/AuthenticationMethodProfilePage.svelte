@@ -6,6 +6,10 @@
 		AuthenticationMethodProfilesClient,
 		AuthenticationMethodValues
 	} from '#lib/api/authentication-method-profiles.js';
+	import type {
+		DirectoryPasswordStatus,
+		DirectoryPasswordStatusClient
+	} from '#lib/api/directory-password-status.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
@@ -20,19 +24,31 @@
 
 	interface Props {
 		client: AuthenticationMethodProfilesClient;
+		directoryStatusClient: DirectoryPasswordStatusClient;
+		tenantId: string | null;
 		id: string;
 		canWrite: boolean;
 		listHref: string;
 		oncreated: (id: string) => void;
 		dirty?: boolean;
 	}
-	let { client, id, canWrite, listHref, oncreated, dirty = $bindable(false) }: Props = $props();
+	let {
+		client,
+		directoryStatusClient,
+		tenantId,
+		id,
+		canWrite,
+		listHref,
+		oncreated,
+		dirty = $bindable(false)
+	}: Props = $props();
 	const isNew = $derived(id === 'new');
 	let phase = $state<'loading' | 'ready' | 'missing' | 'forbidden' | 'failed'>('loading');
 	let name = $state('');
 	let values = $state<AuthenticationMethodValues>({});
 	let version = $state<number | string>(0);
 	let isSystem = $state(false);
+	let directoryStatus = $state<DirectoryPasswordStatus | null>(null);
 	let saved = $state('');
 	let busy = $state(false);
 	let nameError = $state('');
@@ -42,6 +58,7 @@
 	let editNameButton = $state<HTMLButtonElement>();
 	let gone = false;
 	let loads = 0;
+	let directoryLoads = 0;
 	let created: string | null = null;
 	onDestroy(() => {
 		gone = true;
@@ -99,6 +116,26 @@
 			created = null;
 			if (!justCreated) void load();
 		});
+	});
+
+	async function loadDirectoryStatus(currentTenantId: string | null) {
+		const turn = ++directoryLoads;
+		directoryStatus = null;
+		if (!currentTenantId) return;
+		try {
+			const status = await directoryStatusClient.get(currentTenantId);
+			if (gone || turn !== directoryLoads) return;
+			directoryStatus = status;
+		} catch {
+			// Directory Authentication has its own read permission. An unavailable status must not
+			// be presented as "not configured".
+			if (gone || turn !== directoryLoads) return;
+			directoryStatus = null;
+		}
+	}
+	$effect(() => {
+		const currentTenantId = tenantId;
+		untrack(() => void loadDirectoryStatus(currentTenantId));
 	});
 
 	function beginNameEdit() {
@@ -255,7 +292,7 @@
 	{#if phase === 'loading'}
 		<LoadingState label={t('common.loading')} />
 	{:else if phase === 'ready'}
-		<AuthenticationMethodFields {values} {canWrite} onchange={changeValue} />
+		<AuthenticationMethodFields {values} {canWrite} {directoryStatus} onchange={changeValue} />
 	{:else}
 		<EmptyState
 			icon={phase === 'forbidden' ? 'lock' : 'warningCircle'}

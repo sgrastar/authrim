@@ -67,7 +67,11 @@
 					name: 'Members',
 					is_system: false,
 					version: 2,
-					values: { 'authentication-methods.passkey.login_enabled': true },
+					values: {
+						'authentication-methods.passkey.login_enabled': true,
+						'authentication-methods.did.login_enabled': true,
+						'authentication-methods.directory_password.enabled': true
+					},
 					created_at: Date.UTC(2026, 10, 1),
 					updated_at: Date.UTC(2026, 10, 7)
 				}
