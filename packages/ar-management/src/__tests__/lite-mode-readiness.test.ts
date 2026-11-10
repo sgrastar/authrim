@@ -68,6 +68,7 @@ import {
   evaluateLiteReadiness,
   liteAccountPageIssuesFromLoginUISettings,
   liteIssuesOfFlowRuntime,
+  liteScreenIssuesForTenant,
   liteIssuesOfScreenRemoval,
   liteMethodIssuesFromAuthenticationMethods,
   liteMethodsOnInAuthenticationMethods,
@@ -123,6 +124,65 @@ describe('evaluateLiteReadiness', () => {
 
   it('finds nothing for a tenant on the seeded system screens with supported methods', async () => {
     await expect(evaluateLiteReadiness(context(), 'tenant-a')).resolves.toEqual([]);
+  });
+
+  it('checks saved screens and runtime fallbacks without counting templates as tenant pages', async () => {
+    insertScreen('tenant-a', 'login', 'login', [
+      { field: 'heading', label: 'Sign in', required: false, block_type: 'heading' },
+    ]);
+    insertScreen(
+      'tenant-a',
+      'login_template',
+      'login',
+      [
+        {
+          field: 'directory',
+          label: 'Directory',
+          required: false,
+          block_type: 'auth_widget',
+          auth_method: 'directory_password',
+        },
+      ],
+      1
+    );
+    expect(
+      await liteScreenIssuesForTenant(
+        mocks.adapter as never,
+        'tenant-a',
+        new Set(['directory_password'])
+      )
+    ).toEqual([]);
+
+    db.prepare("DELETE FROM screens WHERE tenant_id = 'tenant-a' AND screen_key = 'login'").run();
+    db.prepare(
+      "UPDATE screens SET is_system = 0 WHERE tenant_id = 'default' AND screen_key = 'login'"
+    ).run();
+    insertScreen(
+      'default',
+      'login_template',
+      'login',
+      [
+        {
+          field: 'directory',
+          label: 'Directory',
+          required: false,
+          block_type: 'auth_widget',
+          auth_method: 'directory_password',
+        },
+      ],
+      1
+    );
+    expect(
+      await liteScreenIssuesForTenant(
+        mocks.adapter as never,
+        'tenant-a',
+        new Set(['directory_password'])
+      )
+    ).toContainEqual({
+      code: 'screen_method_unsupported',
+      subject: 'login_template',
+      detail: 'directory_password',
+    });
   });
 
   it('reports the release lock and a missing policy store', async () => {

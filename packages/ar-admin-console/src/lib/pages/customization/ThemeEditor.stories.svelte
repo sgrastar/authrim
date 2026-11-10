@@ -87,6 +87,8 @@
 		await waitFor(() =>
 			expect([...(picker as HTMLSelectElement).options].map((option) => option.value)).toEqual([
 				'screen_signup',
+				'screen_default_registration',
+				'screen_default_login',
 				'screen_login_copy',
 				'screen_profile_copy'
 			])
@@ -119,6 +121,7 @@
 		});
 		await waitFor(() =>
 			expect([...(picker as HTMLSelectElement).options].map((option) => option.value)).toEqual([
+				'template_registration',
 				'screen_login',
 				'screen_profile'
 			])

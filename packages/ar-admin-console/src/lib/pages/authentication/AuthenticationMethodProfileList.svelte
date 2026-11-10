@@ -14,12 +14,11 @@
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
 	import ActionMenu, { type MenuAction } from '#lib/ui/primitives/ActionMenu.svelte';
-	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
-	import { BUILT_IN_METHODS, METHOD_USES, methodKey } from './authentication-method-fields';
+	import { BUILT_IN_METHODS, methodKey } from './authentication-method-fields';
 
 	interface Props {
 		client: AuthenticationMethodProfilesClient;
@@ -82,7 +81,7 @@
 	function methodSummary(profile: AuthenticationMethodProfile): string {
 		return (
 			BUILT_IN_METHODS.filter((method) =>
-				METHOD_USES.some((use) => profile.values[methodKey(method.id, use.id)] === true)
+				method.supports.some((use) => profile.values[methodKey(method.id, use)] === true)
 			)
 				.map((method) => t(method.label))
 				.join(' · ') || t('am.methods.none')
@@ -91,10 +90,10 @@
 
 	const columns = $derived([
 		{ key: 'name', label: t('am.list.name') },
-		{ key: 'methods', label: t('am.list.methods'), width: '28%' },
-		{ key: 'created', label: t('am.list.created'), width: '16%' },
-		{ key: 'updated', label: t('am.list.updated'), width: '16%' },
-		{ key: 'status', label: t('am.list.status'), width: '9%' },
+		{ key: 'methods', label: t('am.list.methods'), width: '26%' },
+		{ key: 'usage', label: t('am.list.usage'), width: '16%' },
+		{ key: 'created', label: t('am.list.created'), width: '15%' },
+		{ key: 'updated', label: t('am.list.updated'), width: '15%' },
 		...(canWrite
 			? [
 					{
@@ -137,12 +136,12 @@
 				{#snippet cell(profile, column)}
 					{#if column.key === 'name'}<CellText title={profile.name} />
 					{:else if column.key === 'methods'}{methodSummary(profile)}
+					{:else if column.key === 'usage'}
+						{t('am.usage.none')}
 					{:else if column.key === 'created'}
 						{#if profile.created_at}<DateTime value={profile.created_at} stacked />{:else}—{/if}
 					{:else if column.key === 'updated'}
 						{#if profile.updated_at}<DateTime value={profile.updated_at} stacked />{:else}—{/if}
-					{:else if column.key === 'status'}
-						{#if profile.is_system}<Badge>{t('am.list.default')}</Badge>{/if}
 					{:else if column.key === 'actions' && !profile.is_system}
 						<ActionMenu
 							size="sm"

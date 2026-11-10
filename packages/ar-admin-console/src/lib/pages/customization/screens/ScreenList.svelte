@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
+	import { EDITABLE_DEFAULT_SCREEN_KEYS } from '@authrim/ar-lib-core/types/screens';
 	import { ApiError } from '#lib/api/api-error.js';
 	import {
 		SCREEN_KINDS,
@@ -7,12 +8,12 @@
 		type ScreenListItem,
 		type ScreensClient
 	} from '#lib/api/screens.js';
-	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import { i18n, t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import CellText from '#lib/ui/patterns/CellText.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
-	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import DataTable, { type Column, type SortState } from '#lib/ui/patterns/DataTable.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import FilterBar from '#lib/ui/patterns/FilterBar.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
@@ -22,15 +23,15 @@
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import SearchField from '#lib/ui/primitives/SearchField.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
+	import { sortRows } from '#lib/ui/patterns/table-sort.js';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { screenErrorKey } from './screen-errors';
 
 	/**
-	 * Customization → Screens: tenant-created screens only. Built-in system screens are available
-	 * as templates in the creation wizard. A row opens its detail page; screens in use cannot be
-	 * deleted.
+	 * Customization → Screens: tenant screens, with account screens in their own table. Built-in
+	 * system screens remain available as templates in the creation wizard.
 	 */
 	interface Props {
 		client: ScreensClient;
@@ -49,6 +50,9 @@
 	let deleting = $state<ScreenListItem | null>(null);
 	let query = $state('');
 	let kind = $state<ScreenKind | ''>('');
+	let screenSort = $state<SortState | null>(null);
+	let accountSort = $state<SortState | null>(null);
+	const defaultScreenKeys = new Set<string>(EDITABLE_DEFAULT_SCREEN_KEYS);
 	// The page is gone: a duplicate finishing late does not take the admin anywhere.
 	let gone = false;
 	onDestroy(() => (gone = true));
@@ -79,6 +83,36 @@
 		);
 	});
 	const kindLabel = (value: ScreenKind) => t(`sc.kind.${value}` as MessageKey);
+	function sortValue(screen: ScreenListItem, key: string): string | number {
+		switch (key) {
+			case 'name':
+				return screen.display_name;
+			case 'kind':
+				return kindLabel(screen.screen_kind);
+			case 'usage':
+				return screen.usage.flows + screen.usage.account_pages;
+			case 'created':
+				return screen.created_at;
+			default:
+				return screen.updated_at;
+		}
+	}
+	const screenRows = $derived(
+		sortRows(
+			shown.filter((screen) => screen.screen_kind !== 'account'),
+			screenSort,
+			sortValue,
+			i18n.locale
+		)
+	);
+	const accountRows = $derived(
+		sortRows(
+			shown.filter((screen) => screen.screen_kind === 'account'),
+			accountSort,
+			sortValue,
+			i18n.locale
+		)
+	);
 	const inUse = (screen: ScreenListItem) =>
 		screen.usage.flows + screen.usage.account_pages > 0 || !usagesComplete;
 
@@ -141,12 +175,15 @@
 			// Why it cannot be deleted, in place of the action, when it cannot.
 			label: screen.is_system
 				? t('sc.delete.system')
-				: inUse(screen)
-					? t('sc.delete.inUse')
-					: t('sc.action.delete'),
+				: defaultScreenKeys.has(screen.screen_key)
+					? t('sc.delete.default')
+					: inUse(screen)
+						? t('sc.delete.inUse')
+						: t('sc.action.delete'),
 			icon: 'trash',
 			danger: true,
-			disabled: busy || screen.is_system || inUse(screen),
+			disabled:
+				busy || screen.is_system || defaultScreenKeys.has(screen.screen_key) || inUse(screen),
 			onselect: () => (deleting = screen)
 		}
 	];
@@ -167,11 +204,11 @@
 
 	const columns = $derived([
 		// Keep the table readable on narrow screens.
-		{ key: 'name', label: t('sc.list.col.name') },
-		{ key: 'kind', label: t('sc.list.col.kind'), width: '18%' },
-		{ key: 'usage', label: t('sc.list.col.usage'), width: '18%' },
-		{ key: 'created', label: t('sc.list.col.created'), width: '15%' },
-		{ key: 'updated', label: t('sc.list.col.updated'), width: '15%' },
+		{ key: 'name', label: t('sc.list.col.name'), sortable: true },
+		{ key: 'kind', label: t('sc.list.col.kind'), width: '18%', sortable: true },
+		{ key: 'usage', label: t('sc.list.col.usage'), width: '18%', sortable: true },
+		{ key: 'created', label: t('sc.list.col.created'), width: '15%', sortable: true },
+		{ key: 'updated', label: t('sc.list.col.updated'), width: '15%', sortable: true },
 		...(canWrite
 			? [
 					{
@@ -184,6 +221,28 @@
 			: [])
 	]);
 </script>
+
+{#snippet screenCell(row: ScreenListItem, column: Column)}
+	{#if column.key === 'name'}
+		<CellText title={row.display_name} description={row.screen_key}>
+			{#if !row.is_active}<Badge tone="warning">{t('sc.status.inactive')}</Badge>{/if}
+		</CellText>
+	{:else if column.key === 'kind'}
+		{kindLabel(row.screen_kind)}
+	{:else if column.key === 'usage'}
+		{usageText(row)}
+	{:else if column.key === 'created'}
+		<DateTime value={row.created_at} stacked />
+	{:else if column.key === 'updated'}
+		<DateTime value={row.updated_at} stacked />
+	{:else}
+		<ActionMenu
+			size="sm"
+			label={t('sc.list.actions', { name: row.display_name })}
+			actions={actionsOf(row)}
+		/>
+	{/if}
+{/snippet}
 
 <Page>
 	<PageHeader title={t('nav.custom.screens')}>
@@ -227,47 +286,55 @@
 			/>
 		</FilterBar>
 
-		<Card title={t('sc.list.title')} flush>
-			<DataTable
-				caption={t('sc.list.title')}
-				{columns}
-				rows={shown}
-				rowKey={(row) => row.id}
-				onrowopen={(row) => onopen(row.id)}
-				rowOpenLabel={(row) => t('sc.list.open', { name: row.display_name })}
-				dense
-			>
-				{#snippet cell(row, column)}
-					{#if column.key === 'name'}
-						<CellText title={row.display_name} description={row.screen_key}>
-							<!-- Only what needs noticing: a screen that is off. -->
-							{#if !row.is_active}<Badge tone="warning">{t('sc.status.inactive')}</Badge>{/if}
-						</CellText>
-					{:else if column.key === 'kind'}
-						{kindLabel(row.screen_kind)}
-					{:else if column.key === 'usage'}
-						{usageText(row)}
-					{:else if column.key === 'created'}
-						<DateTime value={row.created_at} style="date" stacked />
-					{:else if column.key === 'updated'}
-						<!-- The date: it fits the column; the time is in its title. -->
-						<DateTime value={row.updated_at} style="date" stacked />
-					{:else}
-						<ActionMenu
-							size="sm"
-							label={t('sc.list.actions', { name: row.display_name })}
-							actions={actionsOf(row)}
+		{#if kind !== 'account'}
+			<Card title={t('sc.list.title')} flush>
+				<DataTable
+					caption={t('sc.list.title')}
+					{columns}
+					rows={screenRows}
+					bind:sort={screenSort}
+					rowKey={(row) => row.id}
+					onrowopen={(row) => onopen(row.id)}
+					rowOpenLabel={(row) => t('sc.list.open', { name: row.display_name })}
+					dense
+				>
+					{#snippet cell(row, column)}
+						{@render screenCell(row, column)}
+					{/snippet}
+					{#snippet empty()}
+						<EmptyState
+							icon="list"
+							title={filtered ? t('sc.list.emptyFiltered') : t('sc.list.empty')}
 						/>
-					{/if}
-				{/snippet}
-				{#snippet empty()}
-					<EmptyState
-						icon="list"
-						title={filtered ? t('sc.list.emptyFiltered') : t('sc.list.empty')}
-					/>
-				{/snippet}
-			</DataTable>
-		</Card>
+					{/snippet}
+				</DataTable>
+			</Card>
+		{/if}
+
+		{#if !kind || kind === 'account'}
+			<Card title={t('sc.list.accountTable')} flush>
+				<DataTable
+					caption={t('sc.list.accountTable')}
+					{columns}
+					rows={accountRows}
+					bind:sort={accountSort}
+					rowKey={(row) => row.id}
+					onrowopen={(row) => onopen(row.id)}
+					rowOpenLabel={(row) => t('sc.list.open', { name: row.display_name })}
+					dense
+				>
+					{#snippet cell(row, column)}
+						{@render screenCell(row, column)}
+					{/snippet}
+					{#snippet empty()}
+						<EmptyState
+							icon="list"
+							title={filtered ? t('sc.list.emptyFiltered') : t('sc.list.emptyAccount')}
+						/>
+					{/snippet}
+				</DataTable>
+			</Card>
+		{/if}
 	{/if}
 </Page>
 

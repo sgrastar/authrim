@@ -14,7 +14,7 @@
 			docs: {
 				description: {
 					component:
-						'Saved authentication method profiles. Default reflects the tenant-wide settings. New profiles are stored independently and can later be selected by a service flow.'
+						'Saved authentication method profiles. Default is a built-in profile. Profiles can later be selected by a service flow.'
 				}
 			}
 		}
@@ -28,6 +28,10 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: t('am.list.open', { name: 'Default' }) });
+		await expect(
+			canvas.getByRole('columnheader', { name: t('am.list.usage') })
+		).toBeInTheDocument();
+		await expect(canvas.getByText(t('am.usage.none'))).toBeInTheDocument();
 		await expect(canvas.getByRole('link', { name: t('am.list.create') })).toHaveAttribute(
 			'href',
 			hrefOf('new')
@@ -49,6 +53,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText('Members');
+		await expect(canvas.getAllByText(t('am.usage.none'))).toHaveLength(2);
 		await userEvent.click(canvas.getByText('Members'));
 		await waitFor(() => expect(onopen).toHaveBeenCalledWith('amp_members'));
 	}}
@@ -61,7 +66,11 @@
 					name: 'Members',
 					is_system: false,
 					version: 2,
-					values: { 'authentication-methods.passkey.login_enabled': true },
+					values: {
+						'authentication-methods.passkey.login_enabled': true,
+						'authentication-methods.did.login_enabled': true,
+						'authentication-methods.directory_password.enabled': true
+					},
 					created_at: Date.UTC(2026, 10, 1),
 					updated_at: Date.UTC(2026, 10, 7)
 				}

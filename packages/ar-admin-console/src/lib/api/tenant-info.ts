@@ -113,10 +113,10 @@ const DEPRECATED = new Set(['saml.metadata']);
 const OPENABLE = new Set([
 	'well_known.openid_configuration',
 	'well_known.oauth_authorization_server',
+	'well_known.credential_issuer_metadata',
 	'well_known.jwks',
 	'saml.idp_metadata',
-	'saml.sp_metadata',
-	'vc.credential_issuer_metadata'
+	'saml.sp_metadata'
 ]);
 
 /** An address that may be linked to: http or https only, never another scheme. */
@@ -127,6 +127,27 @@ export function tenantInfoFromRow(row: Row): TenantInfo {
 	const components = record(row.components);
 	const profiles = row.runtime_profiles ? record(row.runtime_profiles) : null;
 	const effective = record(profiles?.effective);
+	const { credential_issuer_metadata: wellKnownCredentialIssuerMetadata, ...wellKnown } = record(
+		row.well_known
+	);
+	const vc = { ...record(row.vc) };
+	const credentialIssuerMetadata =
+		wellKnownCredentialIssuerMetadata ?? vc.credential_issuer_metadata;
+	delete vc.credential_issuer_metadata;
+	// The API groups this URL with VC endpoints; on the page it belongs with the other
+	// /.well-known/ documents. Keep using the URL supplied by the API.
+	const endpointRows: Row = {
+		...row,
+		well_known: {
+			openid_configuration: wellKnown.openid_configuration,
+			oauth_authorization_server: wellKnown.oauth_authorization_server,
+			...(typeof credentialIssuerMetadata === 'string'
+				? { credential_issuer_metadata: credentialIssuerMetadata }
+				: {}),
+			...wellKnown
+		},
+		vc
+	};
 	return {
 		tenantId: text(row.tenant_id),
 		name: text(row.tenant_name),
@@ -154,7 +175,7 @@ export function tenantInfoFromRow(row: Row): TenantInfo {
 		profilesError: orNull(row.runtime_profiles_error),
 		endpoints: ENDPOINT_GROUPS.map((id) => ({
 			id,
-			endpoints: Object.entries(record(row[id]))
+			endpoints: Object.entries(record(endpointRows[id]))
 				.filter(([name, url]) => typeof url === 'string' && !DEPRECATED.has(`${id}.${name}`))
 				.map(([name, url]) => ({
 					id: name,
