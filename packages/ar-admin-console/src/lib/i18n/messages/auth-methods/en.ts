@@ -2,16 +2,13 @@ import type { jaAuthMethods } from './ja';
 
 export const enAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.list.title': 'Sign-in method profiles',
-	'am.list.description':
-		'Manage sign-in method profiles. Default is the current tenant-wide configuration.',
+	'am.list.description': 'Manage sign-in method profiles.',
 	'am.list.create': 'Create profile',
 	'am.list.name': 'Profile name',
 	'am.list.methods': 'Available methods',
 	'am.list.usage': 'Usage',
 	'am.list.created': 'Created',
 	'am.list.updated': 'Updated',
-	'am.list.active': 'Active',
-	'am.usage.default': 'Tenant default',
 	'am.usage.none': 'Not used',
 	'am.list.empty': 'No profiles yet',
 	'am.list.actions': 'Actions for {name}',
@@ -28,7 +25,6 @@ export const enAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.page.nameTaken': 'A profile with this name already exists.',
 	'am.page.editName': 'Edit profile name',
 	'am.page.nameDone': 'Done',
-	'am.page.defaultDescription': 'The sign-in methods currently used by this tenant.',
 	'am.page.description': 'Choose the sign-in methods available in this profile.',
 	'am.page.save': 'Save',
 	'am.page.saved': 'Profile saved.',

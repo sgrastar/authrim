@@ -50,7 +50,7 @@
 	name="Default profile"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await canvas.findByText(t('am.list.active'));
+		await canvas.findByRole('heading', { name: 'Default' });
 		await expect(canvas.getByText(t('am.methods.totp'))).toBeInTheDocument();
 		await canvas.findByText(t('am.methods.notConfigured'));
 		await expect(

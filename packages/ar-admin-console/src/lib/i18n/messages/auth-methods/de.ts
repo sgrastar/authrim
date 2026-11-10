@@ -2,16 +2,13 @@ import type { jaAuthMethods } from './ja';
 
 export const deAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.list.title': 'Anmeldeverfahren-Profile',
-	'am.list.description':
-		'Anmeldeverfahren-Profile verwalten. „Default“ ist die aktuelle mandantenweite Konfiguration.',
+	'am.list.description': 'Anmeldeverfahren-Profile verwalten.',
 	'am.list.create': 'Profil erstellen',
 	'am.list.name': 'Profilname',
 	'am.list.methods': 'Verfügbare Verfahren',
 	'am.list.usage': 'Verwendung',
 	'am.list.created': 'Erstellt',
 	'am.list.updated': 'Aktualisiert',
-	'am.list.active': 'Aktiv',
-	'am.usage.default': 'Mandantenstandard',
 	'am.usage.none': 'Nicht verwendet',
 	'am.list.empty': 'Noch keine Profile',
 	'am.list.actions': 'Aktionen für {name}',
@@ -28,7 +25,6 @@ export const deAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.page.nameTaken': 'Ein Profil mit diesem Namen existiert bereits.',
 	'am.page.editName': 'Profilnamen bearbeiten',
 	'am.page.nameDone': 'Fertig',
-	'am.page.defaultDescription': 'Die derzeit für diesen Mandanten verwendeten Anmeldeverfahren.',
 	'am.page.description': 'Legen Sie die in diesem Profil verfügbaren Anmeldeverfahren fest.',
 	'am.page.save': 'Speichern',
 	'am.page.saved': 'Profil gespeichert.',

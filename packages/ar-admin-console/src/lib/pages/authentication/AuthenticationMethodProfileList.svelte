@@ -14,7 +14,6 @@
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
 	import ActionMenu, { type MenuAction } from '#lib/ui/primitives/ActionMenu.svelte';
-	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
@@ -135,12 +134,10 @@
 				rowOpenLabel={(profile) => t('am.list.open', { name: profile.name })}
 			>
 				{#snippet cell(profile, column)}
-					{#if column.key === 'name'}<CellText title={profile.name}>
-							{#if profile.is_system}<Badge tone="success">{t('am.list.active')}</Badge>{/if}
-						</CellText>
+					{#if column.key === 'name'}<CellText title={profile.name} />
 					{:else if column.key === 'methods'}{methodSummary(profile)}
 					{:else if column.key === 'usage'}
-						{t(profile.is_system ? 'am.usage.default' : 'am.usage.none')}
+						{t('am.usage.none')}
 					{:else if column.key === 'created'}
 						{#if profile.created_at}<DateTime value={profile.created_at} stacked />{:else}—{/if}
 					{:else if column.key === 'updated'}

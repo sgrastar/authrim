@@ -2,16 +2,13 @@ import type { jaAuthMethods } from './ja';
 
 export const arAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.list.title': 'ملفات تعريف طرق تسجيل الدخول',
-	'am.list.description':
-		'إدارة ملفات طرق تسجيل الدخول. يعكس الملف Default الإعدادات الحالية للمستأجر.',
+	'am.list.description': 'إدارة ملفات طرق تسجيل الدخول.',
 	'am.list.create': 'إنشاء ملف تعريف',
 	'am.list.name': 'اسم الملف',
 	'am.list.methods': 'الطرق المتاحة',
 	'am.list.usage': 'أماكن الاستخدام',
 	'am.list.created': 'تاريخ الإنشاء',
 	'am.list.updated': 'تاريخ التحديث',
-	'am.list.active': 'نشط',
-	'am.usage.default': 'الإعداد الافتراضي للمستأجر',
 	'am.usage.none': 'غير مستخدم',
 	'am.list.empty': 'لا توجد ملفات تعريف بعد',
 	'am.list.actions': 'إجراءات {name}',
@@ -28,7 +25,6 @@ export const arAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.page.nameTaken': 'يوجد ملف تعريف بهذا الاسم بالفعل.',
 	'am.page.editName': 'تعديل اسم الملف',
 	'am.page.nameDone': 'تم',
-	'am.page.defaultDescription': 'طرق تسجيل الدخول المستخدمة حاليًا لهذا المستأجر.',
 	'am.page.description': 'اختر طرق تسجيل الدخول المتاحة في هذا الملف.',
 	'am.page.save': 'حفظ',
 	'am.page.saved': 'تم حفظ ملف التعريف.',

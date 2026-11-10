@@ -15,7 +15,6 @@
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
 	import BackLink from '#lib/ui/primitives/BackLink.svelte';
-	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
@@ -268,15 +267,13 @@
 <Page>
 	<PageHeader
 		{title}
-		description={isSystem ? t('am.page.defaultDescription') : t('am.page.description')}
+		description={t('am.page.description')}
 		titleAction={canWrite && phase === 'ready' && !isSystem && !editingName
 			? nameAction
 			: undefined}
 		titleEditor={canWrite && phase === 'ready' && !isSystem && editingName ? nameForm : undefined}
 	>
 		{#snippet back()}<BackLink href={listHref}>{t('am.page.back')}</BackLink>{/snippet}
-		{#snippet badges()}{#if isSystem}<Badge tone="success">{t('am.list.active')}</Badge
-				>{/if}{/snippet}
 		{#snippet actions()}
 			{#if canWrite && phase === 'ready'}
 				<Button
