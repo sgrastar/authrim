@@ -31,6 +31,9 @@
 		// Endpoints are named by what they are for, by protocol, and can be copied.
 		await canvas.findByRole('heading', { name: t('tg.ep.group.saml') });
 		await canvas.findByText(t('tg.ep.saml.idp_metadata'));
+		await canvas.findByRole('link', {
+			name: /\.well-known\/openid-credential-issuer/
+		});
 		await canvas.findByRole('button', { name: t('tg.copy', { name: t('tg.ep.oidc.token') }) });
 		// Nothing here is a setting: no fields, and no logo.
 		await expect(canvas.queryAllByRole('textbox')).toHaveLength(0);
