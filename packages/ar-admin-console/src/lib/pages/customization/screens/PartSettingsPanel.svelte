@@ -26,7 +26,6 @@
 		METHODS,
 		SCHEMA_TYPES_FOR,
 		fieldFits,
-		type AnswerTarget,
 		type ChoiceSource,
 		type DisplayCondition,
 		type PartSettings,
@@ -36,8 +35,8 @@
 	/**
 	 * The settings of the part (or row) selected in the screen builder. Fields carry SaveScope
 	 * `field` paths, so changes are marked. A part linked to an attribute picks it from the
-	 * Identity Schema (`schemaFields`); one kept off the profile names its own answer key and where
-	 * the answer goes (the flow and its event, the response record, or both).
+	 * Identity Schema (`schemaFields`). Existing unlinked fields keep their saved values until an
+	 * attribute is chosen here; the answer configuration is hidden while its UX is reconsidered.
 	 */
 	interface Props {
 		part?: LayoutPart | null;
@@ -125,14 +124,6 @@
 		CHOICE_KINDS.has(kind)
 			? setting('storeChoices')
 			: setting('storeTypes', { types: (SCHEMA_TYPES_FOR[kind] ?? []).join(' / ') });
-
-	/** Turns a target on or off; the last one is kept (an answer must go somewhere). */
-	function setTarget(settings: PartSettings, target: AnswerTarget, on: boolean) {
-		const next = on
-			? [...new Set([...settings.answerTargets, target])]
-			: settings.answerTargets.filter((item) => item !== target);
-		if (next.length > 0) settings.answerTargets = next;
-	}
 </script>
 
 {#snippet conditionFields(condition: DisplayCondition, path: string)}
@@ -179,43 +170,20 @@
 			{/if}
 
 			{#if INPUT_KINDS.has(part.kind)}
-				<Checkbox field="{path}.linked" info={setting('linkDbDesc')} bind:checked={settings.linked}>
+				<Checkbox checked disabled>
 					{setting('linkDb')}
 				</Checkbox>
-				{#if settings.linked}
-					<SelectMenu
-						field="{path}.field"
-						label={setting('identity')}
-						options={fieldOptions(part.kind)}
-						hint={storeHint(part.kind)}
-						bind:value={settings.field}
-					/>
-				{:else}
-					<TextField
-						field="{path}.field"
-						label={setting('answerKey')}
-						hint={setting('answerKeyHint')}
-						maxlength={100}
-						bind:value={settings.field}
-					/>
-					<div class="targets" role="group" aria-label={setting('answerTargets')}>
-						<p class="targets__title">{setting('answerTargets')}</p>
-						<Checkbox
-							description={setting('targetFlowHint')}
-							checked={settings.answerTargets.includes('flow_event')}
-							onchange={(event) => setTarget(settings!, 'flow_event', event.currentTarget.checked)}
-						>
-							{setting('targetFlow')}
-						</Checkbox>
-						<Checkbox
-							description={setting('targetRecordHint')}
-							checked={settings.answerTargets.includes('record')}
-							onchange={(event) => setTarget(settings!, 'record', event.currentTarget.checked)}
-						>
-							{setting('targetRecord')}
-						</Checkbox>
-					</div>
-				{/if}
+				<SelectMenu
+					field="{path}.field"
+					label={setting('identity')}
+					options={fieldOptions(part.kind)}
+					hint={storeHint(part.kind)}
+					value={settings.linked ? settings.field : ''}
+					onchange={(field) => {
+						settings!.linked = true;
+						settings!.field = field;
+					}}
+				/>
 				{#if part.kind === 'checkbox' && legacyYesNo && settings.linked}
 					<TextField
 						field="{path}.placeholder"
@@ -371,18 +339,6 @@
 		margin: 0;
 		padding: 0;
 		border: 0;
-	}
-
-	.targets {
-		display: grid;
-		gap: 8px;
-	}
-
-	.targets__title {
-		margin: 0;
-		color: var(--text-secondary);
-		font-size: var(--fs-label);
-		font-weight: var(--fw-semibold);
 	}
 
 	code {

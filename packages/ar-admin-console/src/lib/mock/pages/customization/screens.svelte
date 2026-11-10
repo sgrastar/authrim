@@ -56,5 +56,6 @@
 		oncreated={(screenId) =>
 			goto(withPersona(`${LIST}/${encodeURIComponent(screenId)}`), { replaceState: true })}
 		onopen={open}
+		ondeleted={() => void goto(withPersona(LIST))}
 	/>
 {/if}

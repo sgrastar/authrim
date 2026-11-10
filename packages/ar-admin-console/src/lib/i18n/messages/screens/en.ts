@@ -234,6 +234,7 @@ export const enScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.editor.partsRequired': 'Place at least one part',
 	'sc.editor.labelRequired': 'A part has no label ({name})',
 	'sc.editor.answerKeyRequired': 'A part has no answer key ({name})',
+	'sc.editor.identityRequired': 'Choose an Identity Schema attribute for this part ({name})',
 	'sc.editor.partNotForKind': 'This kind of screen cannot hold a part ({name})',
 	'sc.editor.oneAccountWidget': 'An account page holds one widget at most',
 	'sc.editor.targetsRequired': 'A part has nowhere for its answer to go ({name})',

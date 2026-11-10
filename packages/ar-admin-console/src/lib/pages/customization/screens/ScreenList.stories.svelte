@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Screens (`/api/admin/screens`): saved tenant screens, including editable default sign-up, sign-in, consent, code entry and account screens. Account screens have their own table. Independent built-in templates remain in the new-screen wizard. A row opens its detail page (`…/screens/<id>`). Its menu opens, duplicates or deletes it when allowed. The list narrows by kind and by name or key. Each table sorts independently, and creation and update dates include the time zone.'
+						'Customization → Screens (`/api/admin/screens`): saved tenant screens, including editable default sign-up, sign-in, consent, code entry and account screens. Account screens have their own table. Independent built-in templates remain in the new-screen wizard. A row opens its detail page (`…/screens/<id>`), where it can be duplicated or deleted when allowed. The list narrows by kind and by name or key. Each table sorts independently, and creation and update dates have room for their time zones.'
 				}
 			}
 		}
@@ -81,17 +81,15 @@
 </Story>
 
 <Story
-	name="A screen in use is not deleted"
+	name="Rows open without action menus"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await canvas.findByText('Welcome survey');
-		await userEvent.click(
-			canvas.getByRole('button', { name: t('sc.list.actions', { name: 'Welcome survey' }) })
-		);
-		const reason = await within(canvasElement.ownerDocument.body).findByRole('menuitem', {
-			name: t('sc.delete.inUse')
-		});
-		await expect(reason).toBeDisabled();
+		const survey = await canvas.findByText('Welcome survey');
+		await expect(
+			canvas.queryByRole('button', { name: t('sc.list.actions', { name: 'Welcome survey' }) })
+		).toBeNull();
+		await userEvent.click(survey);
+		await waitFor(() => expect(onopen).toHaveBeenCalledWith('screen_survey'));
 	}}
 >
 	{#snippet template()}

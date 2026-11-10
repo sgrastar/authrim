@@ -234,6 +234,7 @@ export const jaScreens = {
 	'sc.editor.partsRequired': '部品を 1 つ以上置いてください',
 	'sc.editor.labelRequired': 'ラベルのない部品があります（{name}）',
 	'sc.editor.answerKeyRequired': '回答のキーが空の部品があります（{name}）',
+	'sc.editor.identityRequired': '保存先の項目を選択してください（{name}）',
 	'sc.editor.partNotForKind': 'この種類のスクリーンには置けない部品があります（{name}）',
 	'sc.editor.oneAccountWidget': 'アカウントページのウィジェットは 1 つまでです',
 	'sc.editor.targetsRequired': '回答の保存先が選ばれていない部品があります（{name}）',
