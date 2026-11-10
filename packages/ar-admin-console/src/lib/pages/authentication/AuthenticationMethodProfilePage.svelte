@@ -238,7 +238,8 @@
 		titleEditor={canWrite && phase === 'ready' && !isSystem && editingName ? nameForm : undefined}
 	>
 		{#snippet back()}<BackLink href={listHref}>{t('am.page.back')}</BackLink>{/snippet}
-		{#snippet badges()}{#if isSystem}<Badge>{t('am.list.default')}</Badge>{/if}{/snippet}
+		{#snippet badges()}{#if isSystem}<Badge tone="success">{t('am.list.active')}</Badge
+				>{/if}{/snippet}
 		{#snippet actions()}
 			{#if canWrite && phase === 'ready'}
 				<Button

@@ -43,7 +43,14 @@
 	{/snippet}
 </Story>
 
-<Story name="Default profile">
+<Story
+	name="Default profile"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(t('am.list.active'));
+		await expect(canvas.getByText(t('am.methods.totp'))).toBeInTheDocument();
+	}}
+>
 	{#snippet template()}
 		<AuthenticationMethodProfilePage
 			client={createFakeAuthenticationMethodProfiles()}

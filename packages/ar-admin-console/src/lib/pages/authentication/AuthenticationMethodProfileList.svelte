@@ -91,10 +91,10 @@
 
 	const columns = $derived([
 		{ key: 'name', label: t('am.list.name') },
-		{ key: 'methods', label: t('am.list.methods'), width: '28%' },
-		{ key: 'created', label: t('am.list.created'), width: '16%' },
-		{ key: 'updated', label: t('am.list.updated'), width: '16%' },
-		{ key: 'status', label: t('am.list.status'), width: '9%' },
+		{ key: 'methods', label: t('am.list.methods'), width: '26%' },
+		{ key: 'usage', label: t('am.list.usage'), width: '16%' },
+		{ key: 'created', label: t('am.list.created'), width: '15%' },
+		{ key: 'updated', label: t('am.list.updated'), width: '15%' },
 		...(canWrite
 			? [
 					{
@@ -135,14 +135,16 @@
 				rowOpenLabel={(profile) => t('am.list.open', { name: profile.name })}
 			>
 				{#snippet cell(profile, column)}
-					{#if column.key === 'name'}<CellText title={profile.name} />
+					{#if column.key === 'name'}<CellText title={profile.name}>
+							{#if profile.is_system}<Badge tone="success">{t('am.list.active')}</Badge>{/if}
+						</CellText>
 					{:else if column.key === 'methods'}{methodSummary(profile)}
+					{:else if column.key === 'usage'}
+						{t(profile.is_system ? 'am.usage.default' : 'am.usage.none')}
 					{:else if column.key === 'created'}
 						{#if profile.created_at}<DateTime value={profile.created_at} stacked />{:else}—{/if}
 					{:else if column.key === 'updated'}
 						{#if profile.updated_at}<DateTime value={profile.updated_at} stacked />{:else}—{/if}
-					{:else if column.key === 'status'}
-						{#if profile.is_system}<Badge>{t('am.list.default')}</Badge>{/if}
 					{:else if column.key === 'actions' && !profile.is_system}
 						<ActionMenu
 							size="sm"

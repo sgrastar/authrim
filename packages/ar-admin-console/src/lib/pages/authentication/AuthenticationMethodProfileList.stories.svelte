@@ -28,6 +28,11 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: t('am.list.open', { name: 'Default' }) });
+		await expect(
+			canvas.getByRole('columnheader', { name: t('am.list.usage') })
+		).toBeInTheDocument();
+		await expect(canvas.getByText(t('am.usage.default'))).toBeInTheDocument();
+		await expect(canvas.getByText(t('am.list.active'))).toBeInTheDocument();
 		await expect(canvas.getByRole('link', { name: t('am.list.create') })).toHaveAttribute(
 			'href',
 			hrefOf('new')
@@ -49,6 +54,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText('Members');
+		await expect(canvas.getByText(t('am.usage.none'))).toBeInTheDocument();
 		await userEvent.click(canvas.getByText('Members'));
 		await waitFor(() => expect(onopen).toHaveBeenCalledWith('amp_members'));
 	}}

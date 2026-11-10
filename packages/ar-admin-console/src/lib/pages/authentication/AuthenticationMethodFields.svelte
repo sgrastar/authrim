@@ -100,6 +100,7 @@
 	}
 	.method-grid__cell {
 		display: flex;
+		align-items: center;
 		justify-content: center;
 	}
 	.method-grid__mobile-label {

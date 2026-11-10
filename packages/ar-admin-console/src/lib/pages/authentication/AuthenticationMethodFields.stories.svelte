@@ -1,5 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import { expect, within } from 'storybook/test';
 	import AuthenticationMethodFields from './AuthenticationMethodFields.svelte';
 
 	const { Story } = defineMeta({
@@ -25,7 +26,24 @@
 	};
 </script>
 
-<Story name="Full page">
+<Story
+	name="Full page"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const cell = canvas.getAllByRole('checkbox')[0].closest('.method-grid__cell');
+		const box = cell?.querySelector('.checkbox__box');
+		await expect(cell).not.toBeNull();
+		await expect(box).not.toBeNull();
+		const cellRect = cell!.getBoundingClientRect();
+		const boxRect = box!.getBoundingClientRect();
+		await expect(
+			Math.abs(cellRect.x + cellRect.width / 2 - boxRect.x - boxRect.width / 2)
+		).toBeLessThan(1);
+		await expect(
+			Math.abs(cellRect.y + cellRect.height / 2 - boxRect.y - boxRect.height / 2)
+		).toBeLessThan(1);
+	}}
+>
 	{#snippet template()}
 		<div style="padding: 24px">
 			<AuthenticationMethodFields {values} canWrite onchange={() => {}} />
