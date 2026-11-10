@@ -215,6 +215,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'methods',
 				label: 'nav.auth.methods',
 				icon: 'fingerprint',
+				details: true,
 				legacyRoutes: ['/admin/authentication-methods', '/admin/authentication-methods/[profileId]']
 			},
 			{
