@@ -49,6 +49,23 @@ describe('shell model', () => {
 		expect(subNavRows(resolveNavPath('/admin/platform')!, t)).toEqual([]);
 	});
 
+	it('keeps authentication methods selected in profile detail and creation pages', () => {
+		for (const path of [
+			'/admin/authentication/methods/default',
+			'/admin/authentication/methods/new'
+		]) {
+			const location = resolveNavPath(path);
+			expect(location?.area.id, path).toBe('authentication');
+			expect(location?.item?.id, path).toBe('methods');
+			expect(showsSubNav(location!), path).toBe(true);
+			expect(
+				subNavRows(location!, t).find((row) => row.type === 'item' && row.active)
+			).toMatchObject({
+				href: '/admin/authentication/methods'
+			});
+		}
+	});
+
 	it('tags platform-scope items that are not plain defaults', () => {
 		const rows = subNavRows(resolveNavPath('/admin/platform/users/all')!, t);
 		const all = rows.find((row) => row.type === 'item' && row.key.endsWith(':all'));
