@@ -43,6 +43,20 @@ describe('tenant info from the wire', () => {
 			'acs',
 			'slo'
 		]);
+		const discovery = info.endpoints.find((group) => group.id === 'well_known')!;
+		expect(discovery.endpoints.map((endpoint) => endpoint.id)).toEqual([
+			'openid_configuration',
+			'oauth_authorization_server',
+			'credential_issuer_metadata',
+			'jwks',
+			'webfinger'
+		]);
+		expect(
+			discovery.endpoints.find((endpoint) => endpoint.id === 'credential_issuer_metadata')?.url
+		).toBe('https://acme.auth.example.com/.well-known/openid-credential-issuer');
+		expect(info.endpoints.find((group) => group.id === 'vc')?.endpoints).not.toContainEqual(
+			expect.objectContaining({ id: 'credential_issuer_metadata' })
+		);
 	});
 
 	it('marks what a browser can open, and nothing else', () => {
@@ -54,7 +68,7 @@ describe('tenant info from the wire', () => {
 		expect(flat['well_known.openid_configuration']).toBe(true);
 		expect(flat['well_known.jwks']).toBe(true);
 		expect(flat['saml.idp_metadata']).toBe(true);
-		expect(flat['vc.credential_issuer_metadata']).toBe(true);
+		expect(flat['well_known.credential_issuer_metadata']).toBe(true);
 		// Needs a parameter, a body or a token.
 		expect(flat['well_known.webfinger']).toBe(false);
 		expect(flat['oidc.token']).toBe(false);
