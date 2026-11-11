@@ -10,7 +10,12 @@
 		DirectoryPasswordStatus,
 		DirectoryPasswordStatusClient
 	} from '#lib/api/directory-password-status.js';
+	import { keepsCopy, type ProfileLayer } from '#lib/api/profile-layer.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
+	import ProfileLayerBadges from './ProfileLayerBadges.svelte';
+	import ProfileLayerNotice from './ProfileLayerNotice.svelte';
+	import { layerEditable } from './profile-layer-model';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
@@ -19,6 +24,7 @@
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
+	import { provideBusy } from '#lib/ui/busy/busy.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import AuthenticationMethodFields from './AuthenticationMethodFields.svelte';
 
@@ -48,6 +54,13 @@
 	let values = $state<AuthenticationMethodValues>({});
 	let version = $state<number | string>(0);
 	let isSystem = $state(false);
+	/** The platform layer: a platform profile, or Default with the platform's under it. */
+	let layer = $state<ProfileLayer | null>(null);
+	/** The profile whose own values the admin is about to remove (fixed when asked). */
+	let revertTarget = $state<string | null>(null);
+	const isPlatform = $derived(layer?.scope === 'platform');
+	/** The admin may save, and the platform lets the tenant change it now. */
+	const editable = $derived(canWrite && layerEditable(layer));
 	let directoryStatus = $state<DirectoryPasswordStatus | null>(null);
 	let saved = $state('');
 	let busy = $state(false);
@@ -64,6 +77,9 @@
 		gone = true;
 	});
 
+	// While a save or a revert is on its way the form takes no input: the answer replaces it.
+	provideBusy(() => busy);
+
 	const snapshot = (theName = name, theValues = values) =>
 		JSON.stringify({ name: theName.trim(), values: theValues });
 	$effect(() => {
@@ -76,12 +92,14 @@
 		values = structuredClone(profile.values);
 		version = profile.version;
 		isSystem = profile.is_system;
+		layer = profile.layer;
 		editingName = false;
 		saved = snapshot();
 		phase = 'ready';
 	}
 
 	async function load() {
+		revertTarget = null;
 		const turn = ++loads;
 		const target = id;
 		phase = 'loading';
@@ -94,6 +112,7 @@
 				values = structuredClone(profile.values);
 				version = 0;
 				isSystem = false;
+				layer = null;
 				editingName = canWrite;
 				saved = snapshot();
 				phase = 'ready';
@@ -182,7 +201,7 @@
 	}
 
 	async function save() {
-		if (busy || !canWrite || phase !== 'ready') return;
+		if (busy || !editable || phase !== 'ready') return;
 		if (!name.trim()) {
 			nameError = t('am.page.nameRequired');
 			editingName = true;
@@ -198,9 +217,15 @@
 		busy = true;
 		try {
 			const profile =
-				target === 'new' ? await client.create(input) : await client.update(target, version, input);
+				target === 'new'
+					? await client.create(input)
+					: isPlatform
+						? // A platform profile: the tenant's copy of it.
+							await client.saveCopy(target, layer?.copyVersion ?? null, input.values)
+						: await client.update(target, version, input);
 			if (gone || turn !== loads || id !== target) return;
 			version = profile.version;
+			layer = profile.layer;
 			saved = sent;
 			toast.success(t('am.page.saved'));
 			if (target === 'new') {
@@ -216,11 +241,43 @@
 				nameInput?.focus();
 				return;
 			}
+			if (error instanceof ApiError && error.code === 'profile_creation_not_allowed') {
+				toast.error(t('pl.creationNotAllowed'));
+				return;
+			}
+			// The platform set the tenant's values aside meanwhile: show what holds now.
+			if (error instanceof ApiError && error.code === 'profile_not_editable') {
+				toast.error(t('pl.notEditable'));
+				void load();
+				return;
+			}
 			toast.error(
 				error instanceof ApiError && error.status === 409
 					? t('am.page.conflict')
 					: t('am.page.saveFailed')
 			);
+		} finally {
+			busy = false;
+		}
+	}
+
+	/** "Use the platform's values": removes the tenant's copy (or Default's own settings). */
+	async function revert() {
+		const target = revertTarget;
+		revertTarget = null;
+		// Only what was asked about, and only one that keeps values over the platform's.
+		if (busy || !canWrite || phase !== 'ready' || target !== id) return;
+		if (target !== 'default' && !keepsCopy(layer)) return;
+		const turn = loads;
+		busy = true;
+		try {
+			const profile = await client.revert(target);
+			if (gone || turn !== loads || id !== target) return;
+			setProfile(profile);
+			toast.success(t('pl.revertSuccess'));
+		} catch {
+			if (gone || turn !== loads || id !== target) return;
+			toast.error(t('pl.revertFailed'));
 		} finally {
 			busy = false;
 		}
@@ -279,17 +336,26 @@
 	<PageHeader
 		{title}
 		description={t('am.page.description')}
-		titleAction={canWrite && phase === 'ready' && !isSystem && !editingName
+		titleAction={canWrite && phase === 'ready' && !isSystem && !isPlatform && !editingName
 			? nameAction
 			: undefined}
-		titleEditor={canWrite && phase === 'ready' && !isSystem && editingName ? nameForm : undefined}
+		titleEditor={canWrite && phase === 'ready' && !isSystem && !isPlatform && editingName
+			? nameForm
+			: undefined}
 	>
 		{#snippet back()}<BackLink href={listHref}>{t('am.page.back')}</BackLink>{/snippet}
+		{#snippet badges()}<ProfileLayerBadges {layer} size="md" />{/snippet}
 	</PageHeader>
 	{#if phase === 'loading'}
 		<LoadingState label={t('common.loading')} />
 	{:else if phase === 'ready'}
-		<AuthenticationMethodFields {values} {canWrite} {directoryStatus} onchange={changeValue} />
+		<ProfileLayerNotice {layer} {canWrite} {busy} onrevert={() => (revertTarget = id)} />
+		<AuthenticationMethodFields
+			{values}
+			canWrite={editable}
+			{directoryStatus}
+			onchange={changeValue}
+		/>
 	{:else}
 		<EmptyState
 			icon={phase === 'forbidden' ? 'lock' : 'warningCircle'}
@@ -306,10 +372,20 @@
 					>{/if}{/snippet}
 		</EmptyState>
 	{/if}
-	{#if canWrite && phase === 'ready'}
+	{#if editable && phase === 'ready'}
 		<SaveBar {dirty} saving={busy} invalid={nameError !== ''} onsave={save} ondiscard={discard} />
 	{/if}
 </Page>
+
+<ConfirmDialog
+	open={revertTarget !== null && revertTarget === id}
+	title={t('pl.revertTitle', { name })}
+	body={t('pl.revertBody')}
+	confirmLabel={t('pl.revert')}
+	{busy}
+	onconfirm={revert}
+	oncancel={() => (revertTarget = null)}
+/>
 
 <style>
 	.name-editor {

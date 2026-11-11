@@ -72,7 +72,8 @@
 						'authentication-methods.directory_password.enabled': true
 					},
 					created_at: Date.UTC(2026, 10, 1),
-					updated_at: Date.UTC(2026, 10, 7)
+					updated_at: Date.UTC(2026, 10, 7),
+					layer: null
 				}
 			])}
 			canWrite

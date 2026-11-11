@@ -16,6 +16,7 @@ import { arAdminAudit } from './admin-audit/ar';
 import { arTeam } from './team/ar';
 import { arAuthMethods } from './auth-methods/ar';
 import { arSessionProfiles } from './session-profiles/ar';
+import { arProfileLayer } from './profile-layer/ar';
 import { arLaunchers } from './launchers/ar';
 
 export const ar = {
@@ -36,6 +37,7 @@ export const ar = {
 	...arTeam,
 	...arAuthMethods,
 	...arSessionProfiles,
+	...arProfileLayer,
 	...arLaunchers,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
