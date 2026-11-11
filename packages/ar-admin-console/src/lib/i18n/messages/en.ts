@@ -17,6 +17,7 @@ import { enTeam } from './team/en';
 import { enAuthMethods } from './auth-methods/en';
 import { enSessionProfiles } from './session-profiles/en';
 import { enProfileLayer } from './profile-layer/en';
+import { enPlatformProfiles } from './platform-profiles/en';
 import { enLaunchers } from './launchers/en';
 
 export const en = {
@@ -38,6 +39,7 @@ export const en = {
 	...enAuthMethods,
 	...enSessionProfiles,
 	...enProfileLayer,
+	...enPlatformProfiles,
 	...enLaunchers,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',

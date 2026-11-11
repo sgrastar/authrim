@@ -363,5 +363,40 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'persona.support': 'Support (limited)',
 	'persona.support.desc': 'Only helps users (unlocking, signing out). Does not see settings.',
 	'persona.viewer': 'Viewer (limited)',
-	'persona.viewer.desc': 'Sees users, apps and settings, and changes nothing.'
+	'persona.viewer.desc': 'Sees users, apps and settings, and changes nothing.',
+	// The platform's Default methods and the profile switches (platform profile pages).
+	'set.k.authentication-methods.passkey.signup_enabled': 'Passkey: Sign-up',
+	'set.k.authentication-methods.passkey.login_enabled': 'Passkey: Sign-in',
+	'set.k.authentication-methods.passkey.reauth_enabled': 'Passkey: Re-authentication',
+	'set.k.authentication-methods.passkey.account_link_enabled': 'Passkey: Account linking',
+	'set.k.authentication-methods.email_otp.signup_enabled': 'Email one-time code: Sign-up',
+	'set.k.authentication-methods.email_otp.login_enabled': 'Email one-time code: Sign-in',
+	'set.k.authentication-methods.email_otp.reauth_enabled': 'Email one-time code: Re-authentication',
+	'set.k.authentication-methods.email_otp.account_link_enabled':
+		'Email one-time code: Account linking',
+	'set.k.authentication-methods.totp.signup_enabled': 'Authenticator app (TOTP): Sign-up',
+	'set.k.authentication-methods.totp.login_enabled': 'Authenticator app (TOTP): Sign-in',
+	'set.k.authentication-methods.totp.reauth_enabled': 'Authenticator app (TOTP): Re-authentication',
+	'set.k.authentication-methods.totp.account_link_enabled':
+		'Authenticator app (TOTP): Account linking',
+	'set.k.authentication-methods.did.login_enabled': 'DID: Sign-in',
+	'set.k.authentication-methods.directory_password.enabled': 'Directory Password: Sign-in',
+	'set.k.authentication-methods.guest.login_enabled': 'Allow guest sign-in',
+	'set.k.authentication-methods.passkey.guest_upgrade_enabled': 'Upgrade a guest with a passkey',
+	'set.k.authentication-methods.email_otp.guest_upgrade_enabled':
+		'Upgrade a guest with an email one-time code',
+	'set.k.authentication-methods.totp.preset': 'Authenticator app preset',
+	'set.k.authentication-methods.totp.preset.compatible': 'Compatible',
+	'set.k.authentication-methods.totp.preset.strong': 'Strong',
+	'set.k.authentication-methods.totp.default_acr': 'ACR of an authenticator app sign-in',
+	'set.k.profiles.method.tenant_change_allowed':
+		"Tenants may change the platform's method profiles",
+	'set.k.profiles.method.tenant_create_allowed': 'Tenants may create method profiles of their own',
+	'set.k.profiles.method.default_locked': "Lock the Default methods (tenants' values do not apply)",
+	'set.k.profiles.session.tenant_change_allowed':
+		"Tenants may change the platform's session profiles",
+	'set.k.profiles.session.tenant_create_allowed':
+		'Tenants may create session profiles of their own',
+	'set.k.profiles.session.default_locked':
+		"Lock the Default session rules (tenants' values do not apply)"
 };

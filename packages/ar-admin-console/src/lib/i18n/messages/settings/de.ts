@@ -372,5 +372,43 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'persona.support': 'Support (eingeschränkt)',
 	'persona.support.desc': 'Hilft nur Benutzern (entsperren, abmelden). Sieht keine Einstellungen.',
 	'persona.viewer': 'Lesezugriff (eingeschränkt)',
-	'persona.viewer.desc': 'Sieht Benutzer, Apps und Einstellungen und ändert nichts.'
+	'persona.viewer.desc': 'Sieht Benutzer, Apps und Einstellungen und ändert nichts.',
+	// The platform's Default methods and the profile switches (platform profile pages).
+	'set.k.authentication-methods.passkey.signup_enabled': 'Passkey: Registrierung',
+	'set.k.authentication-methods.passkey.login_enabled': 'Passkey: Anmeldung',
+	'set.k.authentication-methods.passkey.reauth_enabled': 'Passkey: Erneute Anmeldung',
+	'set.k.authentication-methods.passkey.account_link_enabled': 'Passkey: Kontoverknüpfung',
+	'set.k.authentication-methods.email_otp.signup_enabled': 'Einmalcode per E-Mail: Registrierung',
+	'set.k.authentication-methods.email_otp.login_enabled': 'Einmalcode per E-Mail: Anmeldung',
+	'set.k.authentication-methods.email_otp.reauth_enabled':
+		'Einmalcode per E-Mail: Erneute Anmeldung',
+	'set.k.authentication-methods.email_otp.account_link_enabled':
+		'Einmalcode per E-Mail: Kontoverknüpfung',
+	'set.k.authentication-methods.totp.signup_enabled': 'Authenticator-App (TOTP): Registrierung',
+	'set.k.authentication-methods.totp.login_enabled': 'Authenticator-App (TOTP): Anmeldung',
+	'set.k.authentication-methods.totp.reauth_enabled': 'Authenticator-App (TOTP): Erneute Anmeldung',
+	'set.k.authentication-methods.totp.account_link_enabled':
+		'Authenticator-App (TOTP): Kontoverknüpfung',
+	'set.k.authentication-methods.did.login_enabled': 'DID: Anmeldung',
+	'set.k.authentication-methods.directory_password.enabled': 'Directory Password: Anmeldung',
+	'set.k.authentication-methods.guest.login_enabled': 'Gastanmeldung zulassen',
+	'set.k.authentication-methods.passkey.guest_upgrade_enabled': 'Gastkonto mit Passkey umwandeln',
+	'set.k.authentication-methods.email_otp.guest_upgrade_enabled':
+		'Gastkonto mit E-Mail-Einmalcode umwandeln',
+	'set.k.authentication-methods.totp.preset': 'Voreinstellung der Authenticator-App',
+	'set.k.authentication-methods.totp.preset.compatible': 'Kompatibel',
+	'set.k.authentication-methods.totp.preset.strong': 'Stark',
+	'set.k.authentication-methods.totp.default_acr': 'ACR einer Anmeldung mit Authenticator-App',
+	'set.k.profiles.method.tenant_change_allowed':
+		'Mandanten dürfen Methodenprofile der Plattform ändern',
+	'set.k.profiles.method.tenant_create_allowed':
+		'Mandanten dürfen eigene Methodenprofile erstellen',
+	'set.k.profiles.method.default_locked':
+		'Default-Methoden sperren (Werte der Mandanten gelten nicht)',
+	'set.k.profiles.session.tenant_change_allowed':
+		'Mandanten dürfen Sitzungsprofile der Plattform ändern',
+	'set.k.profiles.session.tenant_create_allowed':
+		'Mandanten dürfen eigene Sitzungsprofile erstellen',
+	'set.k.profiles.session.default_locked':
+		'Default-Sitzungsregeln sperren (Werte der Mandanten gelten nicht)'
 };

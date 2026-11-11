@@ -215,7 +215,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'session-profiles',
 				label: 'nav.auth.sessionProfiles',
 				icon: 'clock',
-				platform: 'tenant',
+				// In platform scope: the platform's session profiles and its Default.
 				details: true,
 				// The profiles API answers to the session settings' access (SSO is held with them).
 				requires: { settings: ['session'] },
