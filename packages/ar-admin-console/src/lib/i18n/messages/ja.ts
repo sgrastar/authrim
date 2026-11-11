@@ -15,6 +15,7 @@ import { jaAdminAudit } from './admin-audit/ja';
 import { jaTeam } from './team/ja';
 import { jaAuthMethods } from './auth-methods/ja';
 import { jaSessionProfiles } from './session-profiles/ja';
+import { jaLaunchers } from './launchers/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -38,6 +39,7 @@ export const ja = {
 	...jaTeam,
 	...jaAuthMethods,
 	...jaSessionProfiles,
+	...jaLaunchers,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',

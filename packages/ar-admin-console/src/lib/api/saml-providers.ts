@@ -3,10 +3,12 @@ import { errorFromResponse } from './api-error';
 
 /**
  * The tenant's SAML service providers, as far as choosing one needs them
- * (`GET /api/admin/saml-providers`, the `saml_sp` ones): its entity ID, its name and whether it
- * is enabled.
+ * (`GET /api/admin/saml-providers`, the `saml_sp` ones): its ID, its entity ID, its name and
+ * whether it is enabled.
  */
 export interface SamlServiceProviderOption {
+	/** The provider's own ID (what an application launcher refers to). */
+	id: string;
 	entityId: string;
 	name: string;
 	enabled: boolean;
@@ -27,6 +29,7 @@ export function serviceProviderFromRow(value: unknown): SamlServiceProviderOptio
 	const entityId = object(row.config).entityId;
 	if (typeof entityId !== 'string' || !entityId) return null;
 	return {
+		id: typeof row.id === 'string' ? row.id : '',
 		entityId,
 		name: typeof row.name === 'string' && row.name.trim() ? row.name : entityId,
 		enabled: row.enabled === true

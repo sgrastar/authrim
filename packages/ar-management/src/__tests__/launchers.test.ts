@@ -61,6 +61,7 @@ import {
   accountLauncher,
   adminLauncherCreateHandler,
   adminLauncherDeleteHandler,
+  adminLauncherGetHandler,
   adminLauncherOrderHandler,
   adminLauncherUpdateHandler,
   buildLaunchTarget,
@@ -89,6 +90,7 @@ function launcher(
     icon_value: 'book-open',
     icon_color: '#ffffff',
     background_color: '#2563eb',
+    tile_background_color: null,
     grid_width: 2,
     sort_order: 10,
     enabled: true,
@@ -136,6 +138,7 @@ function adminApp(): Hono {
   const app = new Hono();
   app.post('/launchers', adminLauncherCreateHandler);
   app.put('/launchers/order', adminLauncherOrderHandler);
+  app.get('/launchers/:id', adminLauncherGetHandler);
   app.put('/launchers/:id', adminLauncherUpdateHandler);
   app.delete('/launchers/:id', adminLauncherDeleteHandler);
   return app;
@@ -271,11 +274,15 @@ describe('launcher visibility', () => {
 describe('account launcher representation', () => {
   it('omits target, application, and audience configuration', () => {
     const result = accountLauncher(
-      launcher({ ...baseVisibility, mode: 'users', user_ids: ['user-1'] }),
+      launcher(
+        { ...baseVisibility, mode: 'users', user_ids: ['user-1'] },
+        { tile_background_color: '#fde68a' }
+      ),
       true
     );
     expect(result).toMatchObject({
       id: 'launcher-1',
+      tile_background_color: '#fde68a',
       favorite: true,
       launch_href: '/api/account/launchers/launcher-1/launch',
     });
@@ -503,6 +510,63 @@ describe('admin launcher persistence', () => {
         application_id: null,
       },
     });
+  });
+
+  it('stores a tile background colour and rejects one that is not #rrggbb', async () => {
+    const stored = await adminApp().request('/launchers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(createBody({ tile_background_color: '#FDE68A' })),
+    });
+    expect(stored.status).toBe(201);
+    await expect(stored.json()).resolves.toMatchObject({
+      launcher: { tile_background_color: '#fde68a' },
+    });
+
+    const refused = await adminApp().request('/launchers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(createBody({ tile_background_color: 'yellow' })),
+    });
+    expect(refused.status).toBe(400);
+  });
+
+  it('keeps the tile colour and place when an update leaves them out', async () => {
+    const existing = launcher(baseVisibility, { tile_background_color: '#fde68a', sort_order: 40 });
+    mocked.adapter.queryOne.mockResolvedValue(launcherRow(existing));
+    const { sort_order: _sort, tile_background_color: _tile, ...body } = createBody();
+
+    const response = await adminApp().request(`/launchers/${existing.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      launcher: { tile_background_color: '#fde68a', sort_order: 40 },
+    });
+  });
+
+  it('reads one launcher definition of the tenant', async () => {
+    const existing = launcher(baseVisibility, { name: 'Payroll' });
+    mocked.adapter.queryOne.mockResolvedValue(launcherRow(existing));
+
+    const response = await adminApp().request(`/launchers/${existing.id}`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ launcher: existing });
+    expect(mocked.adapter.queryOne).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE tenant_id = ? AND id = ?'),
+      ['tenant-a', existing.id]
+    );
+  });
+
+  it('answers 404 for a launcher the tenant does not have', async () => {
+    const response = await adminApp().request('/launchers/missing');
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error: 'not_found' });
   });
 
   it('deletes an existing launcher definition', async () => {

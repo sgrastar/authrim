@@ -107,6 +107,7 @@ export const launcher = (overrides: Partial<AccountLauncher> = {}): AccountLaunc
 	icon_value: 'calendar',
 	icon_color: '#ffffff',
 	background_color: '#2563eb',
+	tile_background_color: null,
 	grid_width: 2,
 	sort_order: 1,
 	enabled: true,
@@ -152,6 +153,25 @@ export const launchers = (): AccountLauncher[] => [
 		allow_favorite: false,
 		launch_href: '#launch-mail'
 	})
+];
+
+/** Tiles in the admin's own colours: a dark one (white text) and a light one (black text). */
+export const colouredLaunchers = (): AccountLauncher[] => [
+	launcher({
+		tile_background_color: '#1e3a8a',
+		icon_color: '#1e3a8a',
+		background_color: '#ffffff'
+	}),
+	launcher({
+		id: 'launcher-wiki',
+		name: 'Wiki',
+		description: 'Handbooks and how-tos.',
+		category: 'Knowledge',
+		icon_value: 'book-open',
+		tile_background_color: '#fde68a',
+		launch_href: '#launch-wiki'
+	}),
+	...launchers().slice(1, 3)
 ];
 
 export const guestUpgradeStatus = (
