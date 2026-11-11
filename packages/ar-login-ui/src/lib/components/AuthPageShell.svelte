@@ -106,6 +106,7 @@
 	style:--login-copy-color={loginUIPageStore.copyColor || undefined}
 	style:--login-page-background-layer={loginUIPageStore.backgroundImageLayer ?? undefined}
 	style:--login-panel-background-layer={loginUIPageStore.loginPanelBackgroundLayer ?? undefined}
+	style:--login-page-image-dim={loginUIPageStore.backgroundImageDimLayer ?? undefined}
 	style:--login-panel-background-fill={loginUIPageStore.loginPanelBackgroundColor
 		? loginUIPageStore.loginPanelBackgroundGradientColor
 			? `linear-gradient(135deg, ${loginUIPageStore.loginPanelBackgroundColor}, ${loginUIPageStore.loginPanelBackgroundGradientColor})`
@@ -146,12 +147,8 @@
 	style:--login-page-image-tone={loginUIPageStore.backgroundImageGrayscale
 		? 'linear-gradient(#808080, #808080)'
 		: undefined}
-	style:--login-panel-background-filter={loginUIPageStore.loginPanelBackgroundGrayscale
-		? 'grayscale(1)'
-		: undefined}
-	style:--login-brand-panel-image-filter={loginUIPageStore.brandPanelImageGrayscale
-		? 'grayscale(1)'
-		: undefined}
+	style:--login-panel-background-filter={loginUIPageStore.loginPanelBackgroundFilter || undefined}
+	style:--login-brand-panel-image-filter={loginUIPageStore.brandPanelImageFilter || undefined}
 >
 	{#if loginUIPageStore.backgroundImageFilter}<span class="auth-image-filter" aria-hidden="true"
 		></span>{/if}

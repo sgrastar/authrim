@@ -32,8 +32,7 @@ export function applyAuthenticationMethodsToLoginUI(
 	brandingStore.set(
 		authenticationMethods.ui.branding.brandName || '',
 		authenticationMethods.ui.branding.logoUrl || null,
-		authenticationMethods.ui.appearance?.darkImages?.logoUrl || null,
-		!!authenticationMethods.ui.appearance?.darkImages
+		authenticationMethods.ui.appearance?.darkImages?.logoUrl || null
 	);
 
 	if (typeof document === 'undefined') return;

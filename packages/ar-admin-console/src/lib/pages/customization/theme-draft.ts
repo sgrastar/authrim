@@ -124,12 +124,15 @@ export interface ThemeDraft {
 	texts: Record<TextLanguage, ThemeTexts>;
 	/** A stored image's URL, a newly chosen file, or none. */
 	logo: string | File | null;
-	/** Dark images are independent: null means show no image in that mode. */
+	/**
+	 * The images set apart for dark mode: the logo only (null: the light logo in both modes). The
+	 * pictures are the same in both modes, each darkened in dark mode by its own `…DarkDim`.
+	 */
 	darkImages: {
 		logo: string | File | null;
-		backgroundImage: string | File | null;
-		cardImage: string | File | null;
 	};
+	/** 0–100: how much the background picture is darkened in dark mode (0 = not at all). */
+	backgroundDarkDim: number;
 	favicon: string | File | null;
 	backgroundImage: string | File | null;
 	/** 0–100: how much of the background image shows through (100 = as it is). */
@@ -139,11 +142,17 @@ export interface ThemeDraft {
 	/** The picture on the Split template's brand panel, apart from the page background. */
 	panelImage: string | File | null;
 	panelImageOpacity: number;
-	panelImageGrayscale: boolean;
+	/** 0–100: how much the brand panel picture is darkened in dark mode. */
+	panelImageDarkDim: number;
+	/** Filters on the brand panel picture, in the order they apply (each at most once). */
+	panelImageFilters: LoginUIImageFilter[];
 	/** The picture inside the form area (the box with the form), for Standard and Split. */
 	cardImage: string | File | null;
 	cardImageOpacity: number;
-	cardImageGrayscale: boolean;
+	/** 0–100: how much the form-area picture is darkened in dark mode. */
+	cardImageDarkDim: number;
+	/** Filters on the form-area picture, in the order they apply (each at most once). */
+	cardImageFilters: LoginUIImageFilter[];
 	customCss: string;
 }
 
@@ -246,17 +255,20 @@ export function newThemeDraft(): ThemeDraft {
 		language: 'en',
 		texts: { en: emptyTexts(), ja: emptyTexts(), de: emptyTexts(), ar: emptyTexts() },
 		logo: null,
-		darkImages: { logo: null, backgroundImage: null, cardImage: null },
+		darkImages: { logo: null },
+		backgroundDarkDim: 0,
 		favicon: null,
 		backgroundImage: null,
 		backgroundOpacity: 100,
 		backgroundFilters: [],
 		panelImage: null,
 		panelImageOpacity: 100,
-		panelImageGrayscale: false,
+		panelImageDarkDim: 0,
+		panelImageFilters: [],
 		cardImage: null,
 		cardImageOpacity: 100,
-		cardImageGrayscale: false,
+		cardImageDarkDim: 0,
+		cardImageFilters: [],
 		customCss: ''
 	};
 }

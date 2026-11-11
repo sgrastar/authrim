@@ -304,7 +304,7 @@ describe('login UI theme routes', () => {
     );
   });
 
-  it('keeps bar colours and dark images through save, read, update and apply', async () => {
+  it('keeps bar colours, the dark logo and the dark dimming through save, read, update and apply', async () => {
     const colours = {
       'login-ui.brand_panel_background_color': '#090d1e61',
       'login-ui.theme_toggle_background_color': '#111111',
@@ -313,11 +313,8 @@ describe('login UI theme routes', () => {
       'login-ui.header_text_color': '#fefefe',
       'login-ui.footer_background_color': '#445566',
       'login-ui.footer_text_color': '#eeeeee',
-      'login-ui.dark_images': JSON.stringify({
-        logo: '',
-        background: 'https://example.com/dark-bg.png',
-        form_area: '',
-      }),
+      'login-ui.dark_images': JSON.stringify({ logo: '' }),
+      'login-ui.background_image_dark_dim': 0,
     };
     const created = await call('POST', '/', { name: 'Bars', values: colours });
     expect(created.status).toBe(201);
@@ -332,11 +329,10 @@ describe('login UI theme routes', () => {
       'login-ui.theme_toggle_background_color': '#eeeeee',
       'login-ui.language_select_background_color': '#222222',
       'login-ui.footer_background_color': '#66778899',
-      'login-ui.dark_images': JSON.stringify({
-        logo: 'https://example.com/dark-logo.png',
-        background: '',
-        form_area: '',
-      }),
+      'login-ui.dark_images': JSON.stringify({ logo: 'https://example.com/dark-logo.png' }),
+      'login-ui.background_image_dark_dim': 40,
+      'login-ui.login_panel_background_dark_dim': 25,
+      'login-ui.brand_panel_image_dark_dim': 10,
     };
     const updated = await call(
       'PUT',

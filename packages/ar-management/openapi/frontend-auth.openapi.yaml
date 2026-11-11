@@ -1586,15 +1586,11 @@ components:
                     - object
                     - 'null'
                   description: >-
-                    Dark-mode logo, page background, and form-area images. Null means the theme
-                    predates per-mode images and uses its light images in both modes. Null URLs
-                    within an object mean that image is intentionally absent in dark mode.
+                    The image set apart for dark mode: the logo. Null, or a null logoUrl, means
+                    the light logo is used in dark mode too. The page background and form-area
+                    pictures are the same in both modes (see backgroundImageDarkDim and the others).
                   properties:
                     logoUrl:
-                      type: [string, 'null']
-                    backgroundImageUrl:
-                      type: [string, 'null']
-                    loginPanelBackgroundImageUrl:
                       type: [string, 'null']
                 backgroundImageOpacity:
                   type: number
@@ -1602,6 +1598,30 @@ components:
                   maximum: 100
                   default: 100
                   description: Opacity of the page background image, as a percentage.
+                backgroundImageDarkDim:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  default: 0
+                  description: >-
+                    How much the page background picture is darkened in dark mode, as a percentage (0 leaves it as it
+                    is; 100 is black).
+                loginPanelBackgroundDarkDim:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  default: 0
+                  description: >-
+                    How much the form-area picture is darkened in dark mode, as a percentage (0 leaves it as it
+                    is; 100 is black).
+                brandPanelImageDarkDim:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  default: 0
+                  description: >-
+                    How much the split template's brand panel picture is darkened in dark mode, as a percentage (0 leaves it as it
+                    is; 100 is black).
                 backgroundImageGrayscale:
                   type: boolean
                   default: false
@@ -1612,6 +1632,62 @@ components:
                   description: >-
                     Filters on the page background image, in the order they apply. Each filter
                     appears at most once.
+                  items:
+                    type: object
+                    required: [name, value]
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          [
+                            grayscale,
+                            blur,
+                            brightness,
+                            contrast,
+                            saturate,
+                            hue-rotate,
+                            sepia,
+                            invert,
+                          ]
+                      value:
+                        type: integer
+                        description: >-
+                          blur 0-20 px; brightness and contrast 0-200 %; saturate 0-300 %;
+                          hue-rotate 0-360 deg; grayscale, sepia and invert 0-100 %.
+                loginPanelBackgroundImageFilters:
+                  type: array
+                  default: []
+                  description: >-
+                    Filters on the form-area picture, in the order they apply, as backgroundImageFilters. An
+                    older grayscale switch is served as a full grayscale filter first.
+                  items:
+                    type: object
+                    required: [name, value]
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          [
+                            grayscale,
+                            blur,
+                            brightness,
+                            contrast,
+                            saturate,
+                            hue-rotate,
+                            sepia,
+                            invert,
+                          ]
+                      value:
+                        type: integer
+                        description: >-
+                          blur 0-20 px; brightness and contrast 0-200 %; saturate 0-300 %;
+                          hue-rotate 0-360 deg; grayscale, sepia and invert 0-100 %.
+                brandPanelImageFilters:
+                  type: array
+                  default: []
+                  description: >-
+                    Filters on the split template's brand panel picture, in the order they apply, as backgroundImageFilters. An
+                    older grayscale switch is served as a full grayscale filter first.
                   items:
                     type: object
                     required: [name, value]

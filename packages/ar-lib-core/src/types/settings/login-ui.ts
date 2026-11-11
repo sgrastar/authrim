@@ -92,7 +92,7 @@ export interface LoginUISettings {
   'login-ui.footer_text_color': string;
   /** Dark-mode colours: a JSON object from colour name to colour (utils/login-ui-theme-colors). */
   'login-ui.dark_colors': string;
-  /** JSON object of dark logo, background and form-area images; empty entries mean no image. */
+  /** JSON object of the dark-mode logo (`logo`); an empty or absent logo uses the light one. */
   'login-ui.dark_images': string;
 
   // Branding
@@ -116,12 +116,16 @@ export interface LoginUISettings {
   // Appearance
   'login-ui.background_image_url': string;
   'login-ui.background_image_opacity': number;
+  'login-ui.background_image_dark_dim': number;
+  'login-ui.login_panel_background_dark_dim': number;
+  'login-ui.brand_panel_image_dark_dim': number;
   'login-ui.background_image_grayscale': boolean;
   'login-ui.background_image_filters': string;
   'login-ui.login_panel_background_image_url': string;
   'login-ui.brand_panel_image_url': string;
   'login-ui.brand_panel_image_opacity': number;
   'login-ui.brand_panel_image_grayscale': boolean;
+  'login-ui.brand_panel_image_filters': string;
   'login-ui.custom_css': string;
   'login-ui.header_enabled': boolean;
   'login-ui.subtitle_enabled': boolean;
@@ -145,6 +149,7 @@ export interface LoginUISettings {
   'login-ui.login_panel_background_gradient_color': string;
   'login-ui.login_panel_background_opacity': number;
   'login-ui.login_panel_background_grayscale': boolean;
+  'login-ui.login_panel_background_filters': string;
   'login-ui.brand_content_mode': string;
   'login-ui.brand_position': string;
   'login-ui.brand_align': string;
@@ -453,7 +458,7 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     envKey: 'LOGIN_UI_DARK_IMAGES',
     label: 'Dark Mode Images',
     description:
-      'JSON object with logo, background and form_area image URLs. An empty value for an image explicitly hides it in dark mode; an absent setting keeps legacy light-image fallback',
+      'JSON object with the dark-mode logo URL (logo). An empty or absent logo uses the light logo. The pictures are the same in both modes (each darkened in dark mode by its own *_dark_dim); older background and form_area entries are ignored',
     visibility: 'public',
   },
   'login-ui.form_area_color': {
@@ -641,6 +646,45 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     unit: 'percent',
     visibility: 'public',
   },
+  'login-ui.background_image_dark_dim': {
+    key: 'login-ui.background_image_dark_dim',
+    type: 'number',
+    default: 0,
+    envKey: 'LOGIN_UI_BACKGROUND_IMAGE_DARK_DIM',
+    label: 'Background Image Darkening in Dark Mode',
+    description:
+      'How much the page background image is darkened in dark mode, from not at all to black',
+    min: 0,
+    max: 100,
+    unit: 'percent',
+    visibility: 'public',
+  },
+  'login-ui.login_panel_background_dark_dim': {
+    key: 'login-ui.login_panel_background_dark_dim',
+    type: 'number',
+    default: 0,
+    envKey: 'LOGIN_UI_LOGIN_PANEL_BACKGROUND_DARK_DIM',
+    label: 'Form Area Image Darkening in Dark Mode',
+    description:
+      'How much the form-area picture is darkened in dark mode, from not at all to black',
+    min: 0,
+    max: 100,
+    unit: 'percent',
+    visibility: 'public',
+  },
+  'login-ui.brand_panel_image_dark_dim': {
+    key: 'login-ui.brand_panel_image_dark_dim',
+    type: 'number',
+    default: 0,
+    envKey: 'LOGIN_UI_BRAND_PANEL_IMAGE_DARK_DIM',
+    label: 'Brand Panel Image Darkening in Dark Mode',
+    description:
+      'How much the split template brand panel picture is darkened in dark mode, from not at all to black',
+    min: 0,
+    max: 100,
+    unit: 'percent',
+    visibility: 'public',
+  },
   'login-ui.background_image_grayscale': {
     key: 'login-ui.background_image_grayscale',
     type: 'boolean',
@@ -658,6 +702,26 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     label: 'Background Image Filters',
     description:
       'Filters on the page background image, in order: name:value pairs joined by ";" (for example "hue-rotate:200;blur:4")',
+    visibility: 'public',
+  },
+  'login-ui.login_panel_background_filters': {
+    key: 'login-ui.login_panel_background_filters',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_LOGIN_PANEL_BACKGROUND_FILTERS',
+    label: 'Form Area Image Filters',
+    description:
+      'Filters on the form-area picture, in order, as login-ui.background_image_filters (for example "grayscale:100;blur:2")',
+    visibility: 'public',
+  },
+  'login-ui.brand_panel_image_filters': {
+    key: 'login-ui.brand_panel_image_filters',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_BRAND_PANEL_IMAGE_FILTERS',
+    label: 'Brand Panel Image Filters',
+    description:
+      'Filters on the split template brand panel picture, in order, as login-ui.background_image_filters',
     visibility: 'public',
   },
   'login-ui.brand_panel_image_url': {
@@ -1195,12 +1259,16 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.show_english_language_names': false,
   'login-ui.background_image_url': '',
   'login-ui.background_image_opacity': 100,
+  'login-ui.background_image_dark_dim': 0,
+  'login-ui.login_panel_background_dark_dim': 0,
+  'login-ui.brand_panel_image_dark_dim': 0,
   'login-ui.background_image_grayscale': false,
   'login-ui.background_image_filters': '',
   'login-ui.login_panel_background_image_url': '',
   'login-ui.brand_panel_image_url': '',
   'login-ui.brand_panel_image_opacity': 100,
   'login-ui.brand_panel_image_grayscale': false,
+  'login-ui.brand_panel_image_filters': '',
   'login-ui.custom_css': '',
   'login-ui.header_enabled': true,
   'login-ui.subtitle_enabled': true,
@@ -1224,6 +1292,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.login_panel_background_gradient_color': '',
   'login-ui.login_panel_background_opacity': 70,
   'login-ui.login_panel_background_grayscale': false,
+  'login-ui.login_panel_background_filters': '',
   'login-ui.brand_content_mode': 'logo_copy',
   'login-ui.brand_position': 'center',
   'login-ui.brand_align': 'left',
@@ -1284,14 +1353,19 @@ export const LOGIN_UI_THEME_KEYS = [
   'login-ui.brand_panel_text',
   'login-ui.background_image_url',
   'login-ui.background_image_opacity',
+  'login-ui.background_image_dark_dim',
+  'login-ui.login_panel_background_dark_dim',
+  'login-ui.brand_panel_image_dark_dim',
   'login-ui.background_image_grayscale',
   'login-ui.background_image_filters',
   'login-ui.login_panel_background_image_url',
   'login-ui.login_panel_background_opacity',
   'login-ui.login_panel_background_grayscale',
+  'login-ui.login_panel_background_filters',
   'login-ui.brand_panel_image_url',
   'login-ui.brand_panel_image_opacity',
   'login-ui.brand_panel_image_grayscale',
+  'login-ui.brand_panel_image_filters',
   'login-ui.custom_css',
   'login-ui.header_enabled',
   'login-ui.subtitle_enabled',

@@ -139,20 +139,23 @@
 </Story>
 
 <Story
-	name="Images can be intentionally absent in dark mode"
+	name="Dark mode keeps the pictures and the logo, darkening the pictures"
 	play={async ({ canvasElement }) => {
 		const figures = within(canvasElement).getAllByRole('figure');
 		const [light, dark] = figures;
-		await expect(light.querySelector('[data-has-page-background-image="true"]')).not.toBeNull();
-		await expect(
-			light.querySelector('[data-has-login-panel-background-image="true"]')
-		).not.toBeNull();
-		await expect(light.querySelector('img.auth-header__logo')).not.toBeNull();
-		await expect(dark.querySelector('[data-has-page-background-image="false"]')).not.toBeNull();
-		await expect(
-			dark.querySelector('[data-has-login-panel-background-image="false"]')
-		).not.toBeNull();
-		await expect(dark.querySelector('img.auth-header__logo')).toBeNull();
+		for (const figure of [light, dark]) {
+			await expect(figure.querySelector('[data-has-page-background-image="true"]')).not.toBeNull();
+			await expect(
+				figure.querySelector('[data-has-login-panel-background-image="true"]')
+			).not.toBeNull();
+			await expect(figure.querySelector('img.auth-header__logo')).not.toBeNull();
+		}
+		const veil = (figure: HTMLElement) =>
+			(
+				figure.querySelector('[style*="--login-page-image-dim"]') as HTMLElement | null
+			)?.style.getPropertyValue('--login-page-image-dim') ?? '';
+		await expect(veil(light)).toBe('');
+		await expect(veil(dark)).toContain('rgb(0 0 0 / 45%)');
 	}}
 >
 	{#snippet template()}
@@ -167,11 +170,7 @@
 					appearance: {
 						backgroundImageUrl: SAMPLE_BACKGROUND_URL,
 						loginPanelBackgroundImageUrl: SAMPLE_BACKGROUND_URL,
-						darkImages: {
-							logoUrl: null,
-							backgroundImageUrl: null,
-							loginPanelBackgroundImageUrl: null
-						}
+						backgroundImageDarkDim: 45
 					}
 				}
 			}))}
