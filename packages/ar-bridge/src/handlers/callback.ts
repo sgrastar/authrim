@@ -49,10 +49,9 @@ import {
   AR_ERROR_CODES,
   createErrorResponse,
   safeFetchJson,
-  resolveSessionTtl,
 } from '@authrim/ar-lib-core';
 import { externalSignInMayCreateAccount, isLiteExternalFlow } from '../services/lite-start';
-import { loadExternalSignUpPolicy } from '../services/external-email-check';
+import { externalSessionProfile, loadExternalSignUpPolicy } from '../services/external-email-check';
 import {
   consumeAuthState,
   getAuthStateCookieName,
@@ -459,9 +458,20 @@ async function completeExternalAuthentication(
       return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
     }
 
+    // session.default_ttl (external IdP sign-in has no lifetime setting of its own), as the
+    // Flow's session profile sets it; and the Flow's method profile takes this provider.
+    const flowSession = await externalSessionProfile(c.env, {
+      tenantId,
+      interactionId: authState.attemptInteractionId,
+      provider,
+      isNewUser: result.isNewUser === true,
+    });
+    if (!flowSession.allowed) {
+      scheduleExternalSignInFailure(c, authState, result.userId, 'method_disabled');
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
-    // session.default_ttl: external IdP sign-in has no lifetime setting of its own.
-    const sessionTTL = (await resolveSessionTtl(c.env, tenantId, 'default')).seconds;
+    const sessionTTL = flowSession.profiled.ttl.seconds;
     const encryptionKey = getEncryptionKeyOrUndefined(c.env);
     const upstreamIdTokenEncrypted =
       input.upstreamIdToken && encryptionKey
@@ -490,6 +500,7 @@ async function completeExternalAuthentication(
         ...(input.reauthProvenAt !== undefined
           ? { reauth_proven_amr: ['external_idp'], reauth_proven_at: input.reauthProvenAt }
           : {}),
+        ...flowSession.profiled.snapshot,
       },
       tenantId
     );

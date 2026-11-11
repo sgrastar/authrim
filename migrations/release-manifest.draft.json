@@ -106,6 +106,10 @@
             {
               "path": "013_authentication_method_profiles.sql",
               "checksum": "b61f761ba41b4e50e052fa1074be890783098fb5229cfd525423f5159ff489e8"
+            },
+            {
+              "path": "014_session_profiles.sql",
+              "checksum": "b30b9d46d5c0023b37e04905e3cd3934c303ce123c1d59c95d563465f1e4f534"
             }
           ]
         },
@@ -293,6 +297,10 @@
         {
           "path": "013_authentication_method_profiles.sql",
           "checksum": "b61f761ba41b4e50e052fa1074be890783098fb5229cfd525423f5159ff489e8"
+        },
+        {
+          "path": "014_session_profiles.sql",
+          "checksum": "b30b9d46d5c0023b37e04905e3cd3934c303ce123c1d59c95d563465f1e4f534"
         }
       ]
     },

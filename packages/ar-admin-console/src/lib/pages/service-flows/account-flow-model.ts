@@ -46,6 +46,105 @@ export type {
 export { emptyFlowState, isSyncFlow } from './flow-spec';
 export { SYNC_FLOW_IDS } from './sync-flow-spec';
 
+/**
+ * Where a person goes once the flow is done (the Login UI's own post-sign-in setting otherwise):
+ * the same choices for a sign-up (`reg.*`) and a sign-in (`login.*`). A sign-in may also leave
+ * it to the tenant's own setting (`tenant`).
+ */
+function completionFields(p: 'reg' | 'login'): AccountField[] {
+	return [
+		{
+			key: `${p}.after`,
+			kind: 'select',
+			label: 'af.field.reg.after',
+			options: choices('after', [
+				...(p === 'login' ? ['tenant'] : []),
+				'account',
+				'home',
+				'custom_url',
+				'app_login',
+				'saml_login',
+				'service_site'
+			]),
+			required: true,
+			initial: p === 'login' ? 'tenant' : 'account'
+		},
+		{
+			key: `${p}.redirectUrl`,
+			kind: 'text',
+			label: 'af.field.reg.redirectUrl',
+			hint: 'af.hint.reg.redirectUrl',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'custom_url'
+		},
+		{
+			key: `${p}.servicePath`,
+			kind: 'text',
+			label: 'af.field.reg.servicePath',
+			hint: 'af.hint.reg.servicePath',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'service_site'
+		},
+		{
+			key: `${p}.appClient`,
+			kind: 'client',
+			label: 'af.field.reg.appClient',
+			hint: p === 'login' ? 'af.hint.login.appClient' : 'af.hint.reg.appClient',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'app_login'
+		},
+		{
+			key: `${p}.appRedirectUri`,
+			kind: 'client-redirect',
+			clientKey: `${p}.appClient`,
+			label: 'af.field.reg.appRedirectUri',
+			hint: 'af.hint.reg.appRedirectUri',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'app_login'
+		},
+		{
+			key: `${p}.appScope`,
+			kind: 'text',
+			label: 'af.field.reg.appScope',
+			hint: 'af.hint.reg.appScope',
+			options: () => [],
+			required: true,
+			initial: 'openid profile email',
+			showWhen: (values) => values[`${p}.after`] === 'app_login'
+		},
+		{
+			key: `${p}.appReturnTo`,
+			kind: 'text',
+			label: 'af.field.reg.appReturnTo',
+			hint: 'af.hint.reg.appReturnTo',
+			options: () => [],
+			showWhen: (values) => values[`${p}.after`] === 'app_login'
+		},
+		// `login-entry.saml_login_*`: an IdP-initiated sign-in to the provider.
+		{
+			key: `${p}.samlSp`,
+			kind: 'saml-sp',
+			label: 'af.field.reg.samlSp',
+			hint: p === 'login' ? 'af.hint.login.samlSp' : 'af.hint.reg.samlSp',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'saml_login'
+		},
+		{
+			key: `${p}.samlRelayState`,
+			kind: 'text',
+			label: 'af.field.reg.samlRelayState',
+			hint: 'af.hint.reg.samlRelayState',
+			options: () => [],
+			showWhen: (values) => values[`${p}.after`] === 'saml_login'
+		}
+	];
+}
+
 const ACCOUNT_PARTS: Record<string, AccountPart> = {
 	'reg-about': {
 		id: 'reg-about',
@@ -228,93 +327,16 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		// account_page_*`, `service-site.fallback_enabled`), as the current Admin UI sets it.
 		fields: [
 			{
-				key: 'reg.after',
-				kind: 'select',
-				label: 'af.field.reg.after',
-				options: choices('after', [
-					'account',
-					'home',
-					'custom_url',
-					'app_login',
-					'saml_login',
-					'service_site'
-				]),
-				required: true,
-				initial: 'account'
-			},
-			{
-				key: 'reg.redirectUrl',
-				kind: 'text',
-				label: 'af.field.reg.redirectUrl',
-				hint: 'af.hint.reg.redirectUrl',
+				// The session the new account is signed in with.
+				key: 'reg.sessionProfile',
+				kind: 'session-profile',
+				label: 'sp.field.label',
+				hint: 'sp.field.hint',
 				options: () => [],
 				required: true,
-				showWhen: (values) => values['reg.after'] === 'custom_url'
+				initial: 'default'
 			},
-			{
-				key: 'reg.servicePath',
-				kind: 'text',
-				label: 'af.field.reg.servicePath',
-				hint: 'af.hint.reg.servicePath',
-				options: () => [],
-				required: true,
-				showWhen: (values) => values['reg.after'] === 'service_site'
-			},
-			{
-				key: 'reg.appClient',
-				kind: 'client',
-				label: 'af.field.reg.appClient',
-				hint: 'af.hint.reg.appClient',
-				options: () => [],
-				required: true,
-				showWhen: (values) => values['reg.after'] === 'app_login'
-			},
-			{
-				key: 'reg.appRedirectUri',
-				kind: 'client-redirect',
-				clientKey: 'reg.appClient',
-				label: 'af.field.reg.appRedirectUri',
-				hint: 'af.hint.reg.appRedirectUri',
-				options: () => [],
-				required: true,
-				showWhen: (values) => values['reg.after'] === 'app_login'
-			},
-			{
-				key: 'reg.appScope',
-				kind: 'text',
-				label: 'af.field.reg.appScope',
-				hint: 'af.hint.reg.appScope',
-				options: () => [],
-				required: true,
-				initial: 'openid profile email',
-				showWhen: (values) => values['reg.after'] === 'app_login'
-			},
-			{
-				key: 'reg.appReturnTo',
-				kind: 'text',
-				label: 'af.field.reg.appReturnTo',
-				hint: 'af.hint.reg.appReturnTo',
-				options: () => [],
-				showWhen: (values) => values['reg.after'] === 'app_login'
-			},
-			// `login-entry.saml_login_*`: an IdP-initiated sign-in to the provider.
-			{
-				key: 'reg.samlSp',
-				kind: 'saml-sp',
-				label: 'af.field.reg.samlSp',
-				hint: 'af.hint.reg.samlSp',
-				options: () => [],
-				required: true,
-				showWhen: (values) => values['reg.after'] === 'saml_login'
-			},
-			{
-				key: 'reg.samlRelayState',
-				kind: 'text',
-				label: 'af.field.reg.samlRelayState',
-				hint: 'af.hint.reg.samlRelayState',
-				options: () => [],
-				showWhen: (values) => values['reg.after'] === 'saml_login'
-			}
+			...completionFields('reg')
 		]
 	},
 	'login-methods': {
@@ -337,24 +359,15 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		id: 'login-validation',
 		label: 'af.part.login-validation',
 		lead: 'af.lead.login-validation',
-		note: 'af.note.login-validation',
-		fields: [
-			{
-				key: 'login.failures',
-				kind: 'select',
-				label: 'af.field.login.failures',
-				options: choices('failures', ['delay', 'lock', 'none']),
-				required: true
-			},
-			{
-				key: 'login.unregistered',
-				kind: 'select',
-				label: 'af.field.login.unregistered',
-				hint: 'af.hint.login.unregistered',
-				options: choices('unregistered', ['guide', 'generic']),
-				required: true
-			}
-		]
+		// Repeated failures and unregistered addresses follow the tenant's security settings.
+		fields: []
+	},
+	'login-result': {
+		id: 'login-result',
+		label: 'af.part.login-result',
+		lead: 'af.lead.login-result',
+		note: 'af.note.login-result',
+		fields: completionFields('login')
 	},
 	'login-session': {
 		id: 'login-session',
@@ -362,32 +375,14 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		lead: 'af.lead.login-session',
 		fields: [
 			{
-				key: 'login.lifetime',
-				kind: 'select',
-				label: 'af.field.login.lifetime',
-				options: choices('lifetime', ['8h', '24h', '7d']),
-				required: true
-			},
-			{
-				key: 'login.reauth',
-				kind: 'select',
-				label: 'af.field.login.reauth',
-				options: choices('reauth', ['idle', 'none'])
-			}
-		]
-	},
-	'login-return': {
-		id: 'login-return',
-		label: 'af.part.login-return',
-		lead: 'af.lead.login-return',
-		note: 'af.note.login-return',
-		fields: [
-			{
-				key: 'login.failure',
-				kind: 'select',
-				label: 'af.field.login.failure',
-				options: choices('failure', ['error', 'stay']),
-				required: true
+				key: 'login.sessionProfile',
+				kind: 'session-profile',
+				label: 'sp.field.label',
+				hint: 'sp.field.hint',
+				options: () => [],
+				required: true,
+				// Every tenant has its Default profile (its own session settings).
+				initial: 'default'
 			}
 		]
 	}
@@ -437,7 +432,7 @@ export const FLOWS: Record<FlowId, AccountFlowDef> = {
 		general: ['login-validation'],
 		groups: [
 			{ id: 'authenticate', label: 'af.group.authenticate', parts: ['login-methods'] },
-			{ id: 'finish', label: 'af.group.finish', parts: ['login-session', 'login-return'] }
+			{ id: 'finish', label: 'af.group.finish', parts: ['login-session', 'login-result'] }
 		]
 	},
 	...SYNC_FLOWS

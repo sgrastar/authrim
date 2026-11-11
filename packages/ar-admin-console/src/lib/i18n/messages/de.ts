@@ -15,6 +15,7 @@ import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 import { deTeam } from './team/de';
 import { deAuthMethods } from './auth-methods/de';
+import { deSessionProfiles } from './session-profiles/de';
 
 export const de = {
 	...deSettings,
@@ -33,6 +34,7 @@ export const de = {
 	...deAdminAudit,
 	...deTeam,
 	...deAuthMethods,
+	...deSessionProfiles,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',

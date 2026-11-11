@@ -17,6 +17,7 @@ import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   generateCheckSessionIframeHtml,
   getSessionStoreBySessionId,
+  sessionExtensionPolicyOfData,
   getSessionClientMetadata,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
@@ -510,8 +511,22 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    // session.refresh_default turns extension off; session.max_ttl bounds it from creation.
-    const extension = await resolveSessionExtensionPolicy(c.env, tenantId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
+    // session.refresh_default turns extension off; session.max_ttl bounds it from creation. A
+    // session made under a session profile keeps the rules it was made with.
+    const current = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+    if (!current) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Session not found or has expired',
+        },
+        404
+      );
+    }
+    const extension =
+      sessionExtensionPolicyOfData(current.data) ??
+      (await resolveSessionExtensionPolicy(c.env, tenantId));
     if (!extension.enabled) {
       return c.json(
         {
@@ -522,7 +537,6 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
     const session = (await sessionStore.extendSessionRpc(
       sessionId,
       extendSeconds,

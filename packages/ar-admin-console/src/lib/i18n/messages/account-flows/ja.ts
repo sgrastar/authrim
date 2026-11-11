@@ -56,7 +56,6 @@ export const jaAccountFlows = {
 	'af.part.login-methods': '認証方式プロフィール',
 	'af.part.login-validation': '認証の検証条件',
 	'af.part.login-session': 'セッション確立',
-	'af.part.login-return': '認証結果の返却',
 
 	'af.lead.reg-methods': '登録で使う認証方式を、認証方式プロフィールから選びます。',
 	'af.lead.reg-verification': '登録するメールアドレスを本人が受け取れるか、メールで確かめます。',
@@ -64,16 +63,13 @@ export const jaAccountFlows = {
 	'af.lead.reg-policy': '登録のときの同意を、いつ、どう求めるかを決めます。',
 	'af.lead.reg-result': '登録が終わったあと、どこへ移動するかを決めます。',
 	'af.lead.login-methods': 'ログインで使う認証方式を、認証方式プロフィールから選びます。',
-	'af.lead.login-validation': '利用者の認証が成立したと判断する条件を決めます。',
+	'af.lead.login-validation':
+		'繰り返し失敗したときの扱いや、登録されていない人への応答は、テナント全体のセキュリティ設定に従います。',
 	'af.lead.login-session': '必要な認証が済んだあとに、Authrim のセッションを作ります。',
-	'af.lead.login-return': 'ログインの結果を、呼び出し元に返します。',
 
 	'af.note.reg-statements':
 		'アプリへの情報提供の同意とは別です。それは各接続のフローで設定します。',
 	'af.note.reg-policy': '同意しなかった場合は、登録を確定しません。',
-	'af.note.login-validation': '必要な追加認証が終わるまで、認証は成立しません。',
-	'af.note.login-return':
-		'アプリへのトークンの発行と属性の提供の同意は、各接続のフローで設定します。',
 
 	'af.field.reg.methodProfile': '使うプロフィール',
 	'af.profile.create': '新しく認証方式プロフィールを作成',
@@ -174,13 +170,6 @@ export const jaAccountFlows = {
 	'af.field.reg.statements': '登録のときに同意してもらう文面',
 	'af.field.reg.consentWhen': '同意を求めるとき',
 	'af.field.reg.after': '完了後の動作',
-	'af.field.login.failures': '認証に失敗が続いたとき',
-	'af.field.login.unregistered': '登録されていない人が来たとき',
-	'af.hint.login.unregistered':
-		'登録済みかどうかを知らせないために、失敗したとだけ伝えることもできます。',
-	'af.field.login.lifetime': 'セッションの有効期間',
-	'af.field.login.reauth': '再認証を求めるとき',
-	'af.field.login.failure': '失敗・中断したとき',
 
 	'af.field.reg.extraWhen': '外部プロバイダーから登録するとき、メールで確認する場合',
 	'af.extraWhen.no-email': 'プロバイダーからメールアドレスを取得できなかったとき',
@@ -343,16 +332,13 @@ export const jaAccountFlows = {
 	'af.expiry.15m': '15 分',
 	'af.consentWhen.signup': '登録のときだけ',
 	'af.consentWhen.version': '登録のときと、文面が変わったとき',
-	'af.failures.delay': '少しずつ待たせる',
-	'af.failures.lock': '一定時間ロックする',
-	'af.failures.none': '制限しない',
-	'af.unregistered.guide': '新規登録へ案内する',
-	'af.unregistered.generic': 'ログインに失敗したとだけ伝える',
-	'af.lifetime.8h': '8 時間',
-	'af.lifetime.24h': '24 時間',
-	'af.lifetime.7d': '7 日',
-	'af.reauth.idle': '一定時間操作がないとき',
-	'af.reauth.none': '求めない',
-	'af.failure.error': '呼び出し元にエラーを返す',
-	'af.failure.stay': 'ログイン画面にとどまる'
+	'af.after.tenant': 'テナントの設定に従う',
+	'af.part.login-result': 'ログイン後の動作',
+	'af.lead.login-result': 'ログインが終わったあと、どこへ移動するかを決めます。',
+	'af.note.login-result':
+		'アプリや SAML から始まったログインは、それぞれの戻り先へ戻ります。ここで決めるのは、ログイン画面から直接ログインしたときの移動先です。',
+	'af.hint.login.appClient':
+		'ログインが終わったら、選んだサービス（Client）にそのままログインします。Client 側で First Party App と App Login が有効になっている必要があります。',
+	'af.hint.login.samlSp':
+		'ログインが終わったら、選んだ SAML のサービス（SP）に IdP 起点の SSO でそのままログインします。SP 側が IdP 起点の SAML 応答を受け付ける設定になっている必要があります。'
 } as const;

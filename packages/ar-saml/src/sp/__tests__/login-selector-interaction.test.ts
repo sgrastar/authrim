@@ -290,7 +290,7 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
     }
   );
 
-  it('continues without association when the selected start cannot check Flow storage', async () => {
+  it('refuses the selected start when it cannot check Flow storage', async () => {
     const { links } = await selection('int-selector');
     env.TEST_CORE = {
       ...adapter,
@@ -299,9 +299,7 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
       },
     };
     const response = await request(links[0]);
-    expect(response.status).toBe(200);
-    expect(stored().context).toBeUndefined();
-    await recordFromContext(stored().context, stored().requestId);
-    expect(await attempts()).toEqual([]);
+    // Its Flow's profiles hold the sign-in: it is not started as one that names none.
+    expect(response.status).toBe(503);
   });
 });

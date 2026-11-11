@@ -10,6 +10,8 @@ import type { ClientsClient } from '#lib/api/clients.js';
 import type { FlowsClient } from '#lib/api/flows.js';
 import type { SamlProvidersClient } from '#lib/api/saml-providers.js';
 import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentication-method-profiles-fake.js';
+import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
+import type { SessionProfilesClient } from '#lib/api/session-profiles.js';
 import { createFakeClients } from '#lib/api/fake/clients-fake.js';
 import { createFakeSamlProviders } from '#lib/api/fake/saml-providers-fake.js';
 import { createFakeScreens } from '#lib/api/fake/screens-fake.js';
@@ -21,6 +23,8 @@ const FLOW_RESOURCES = Symbol('flow-resources');
 
 export interface FlowResources {
 	methodProfiles: AuthenticationMethodProfilesClient;
+	/** The tenant's session profiles (how long a session the flow makes lasts, single sign-on). */
+	sessionProfiles: SessionProfilesClient;
 	screens: ScreensClient;
 	/** The tenant's clients (where a sign-up can go on to sign in to another service). */
 	clients: ClientsClient;
@@ -50,6 +54,7 @@ export function useFlowResources(): FlowResources {
 	// One for the whole page, so a profile made in one setting is still there in the next.
 	fallback ??= {
 		methodProfiles: createFakeAuthenticationMethodProfiles(),
+		sessionProfiles: createFakeSessionProfiles(),
 		screens: createFakeScreens({ screens: MOCK_SCREENS }),
 		clients: createFakeClients(),
 		samlProviders: createFakeSamlProviders(),

@@ -199,8 +199,11 @@ export type RegistrationPolicyRead =
   | { ok: true; policy: RegistrationPolicy }
   | { ok: false; field: string; reason: string };
 
-/** A stored completion, or why it is not one. */
-function readCompletion(
+/**
+ * A stored completion (where a Flow sends the person once it is done: a sign-up's, or a
+ * sign-in's), or why it is not one.
+ */
+export function readFlowCompletion(
   value: unknown
 ): { ok: true; completion: RegistrationCompletion | null } | { ok: false; reason: string } {
   if (value === null || value === undefined) return { ok: true, completion: null };
@@ -353,7 +356,7 @@ export function readRegistrationPolicy(value: unknown, strict = false): Registra
 
   let completion: RegistrationCompletion | null = fallback.completion;
   if (raw.completion !== undefined) {
-    const read = readCompletion(raw.completion);
+    const read = readFlowCompletion(raw.completion);
     if (!read.ok) {
       if (strict) return { ok: false, field: 'completion', reason: read.reason };
     } else {
@@ -408,5 +411,19 @@ export function registrationProfileRefOfRuntime(runtime: unknown): string {
     (candidate) => isRecord(candidate) && candidate.component === REGISTRATION_POLICY_COMPONENT
   ) as Record<string, unknown> | undefined;
   const ref = step && isRecord(step.config) ? step.config.authentication_profile_ref : undefined;
+  return typeof ref === 'string' && ref.trim() && ref.length <= 200 ? ref.trim() : 'default';
+}
+
+/**
+ * The session profile a published registration Flow makes the new account's session with (its
+ * registration step's `session_profile_ref`): `default` when it names none, the tenant's then.
+ */
+export function registrationSessionProfileRefOfRuntime(runtime: unknown): string {
+  const steps = isRecord(runtime) && isRecord(runtime.ui) ? runtime.ui.steps : undefined;
+  if (!Array.isArray(steps)) return 'default';
+  const step = steps.find(
+    (candidate) => isRecord(candidate) && candidate.component === REGISTRATION_POLICY_COMPONENT
+  ) as Record<string, unknown> | undefined;
+  const ref = step && isRecord(step.config) ? step.config.session_profile_ref : undefined;
   return typeof ref === 'string' && ref.trim() && ref.length <= 200 ? ref.trim() : 'default';
 }

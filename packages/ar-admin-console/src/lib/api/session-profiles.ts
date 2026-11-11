@@ -1,0 +1,87 @@
+/**
+ * Session profiles (`/api/admin/session-profiles`): how long a session lasts, whether it can be
+ * extended, and single sign-on, by name. Default is the tenant's own session settings.
+ */
+import { API_BASE_URL, adminFetch } from './admin-request';
+import { errorFromResponse } from './api-error';
+
+const BASE = `${API_BASE_URL}/api/admin/session-profiles`;
+export type SessionProfileValues = Record<string, unknown>;
+
+export interface SessionProfile {
+	id: string;
+	name: string;
+	is_system: boolean;
+	values: SessionProfileValues;
+	version: number | string;
+	created_at: number | null;
+	updated_at: number | null;
+}
+
+export interface SessionProfileInput {
+	name: string;
+	values: SessionProfileValues;
+}
+
+export interface SessionProfilesClient {
+	list(signal?: AbortSignal): Promise<SessionProfile[]>;
+	get(id: string, signal?: AbortSignal): Promise<SessionProfile>;
+	create(input: SessionProfileInput): Promise<SessionProfile>;
+	update(id: string, version: number | string, input: SessionProfileInput): Promise<SessionProfile>;
+	remove(id: string): Promise<void>;
+}
+
+const object = (value: unknown): Record<string, unknown> =>
+	value !== null && typeof value === 'object' && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: {};
+
+export function sessionProfileFromRow(value: unknown): SessionProfile {
+	const row = object(value);
+	return {
+		id: typeof row.id === 'string' ? row.id : '',
+		name: typeof row.name === 'string' ? row.name : '',
+		is_system: row.is_system === true,
+		values: object(row.values),
+		version: typeof row.version === 'number' || typeof row.version === 'string' ? row.version : 0,
+		created_at: typeof row.created_at === 'number' ? row.created_at : null,
+		updated_at: typeof row.updated_at === 'number' ? row.updated_at : null
+	};
+}
+
+async function responseBody(response: Response): Promise<Record<string, unknown>> {
+	if (!response.ok) throw await errorFromResponse(response);
+	if (response.status === 204) return {};
+	return object(await response.json().catch(() => ({})));
+}
+
+const path = (id: string) => `${BASE}/${encodeURIComponent(id)}`;
+const request = (method: string, body: unknown) => ({
+	method,
+	includeJsonContentType: true,
+	body: JSON.stringify(body)
+});
+
+export const httpSessionProfiles: SessionProfilesClient = {
+	async list(signal) {
+		const body = await responseBody(await adminFetch(BASE, { signal }));
+		return Array.isArray(body.profiles) ? body.profiles.map(sessionProfileFromRow) : [];
+	},
+	async get(id, signal) {
+		const body = await responseBody(await adminFetch(path(id), { signal }));
+		return sessionProfileFromRow(body.profile);
+	},
+	async create(input) {
+		const body = await responseBody(await adminFetch(BASE, request('POST', input)));
+		return sessionProfileFromRow(body.profile);
+	},
+	async update(id, version, input) {
+		const body = await responseBody(
+			await adminFetch(path(id), request('PUT', { ...input, version }))
+		);
+		return sessionProfileFromRow(body.profile);
+	},
+	async remove(id) {
+		await responseBody(await adminFetch(path(id), { method: 'DELETE' }));
+	}
+};

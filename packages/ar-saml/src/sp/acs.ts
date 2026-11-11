@@ -43,7 +43,11 @@ import {
   updateProfileOnLogin,
   readExternalProviderReauthPolicy,
   readExternalProviderUsagePolicy,
-  resolveSessionTtl,
+  loadInteractionFlowProfileRefs,
+  normalizeMethodHandle,
+  profileAllowsHandle,
+  readAuthenticationProfile,
+  resolveProfiledSessionTtl,
   checkEmailRegistration,
   readLiteModeAuthoritative,
 } from '@authrim/ar-lib-core';
@@ -329,6 +333,45 @@ async function handleSPACSFor(
       );
     }
 
+    // The Flow the start checked: its authentication method profile takes this IdP (as the
+    // switches above, for sign-in or, for a start of ours, sign-up), and its session profile sets
+    // the session made below. One no longer there or live is as a sign-in that names none (its
+    // stale settings are not used); one that cannot be read refuses the sign-in.
+    let flowRefs: Awaited<ReturnType<typeof loadInteractionFlowProfileRefs>> = null;
+    if (attemptInteractionId && !reauthentication) {
+      try {
+        const read = await loadInteractionFlowProfileRefs(
+          await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-flow-profiles', { tenantId }),
+          tenantId,
+          attemptInteractionId
+        );
+        flowRefs = read && read.live ? read : null;
+        if (flowRefs && flowRefs.methodProfileRef !== 'default' && usageKey) {
+          const profile = await readAuthenticationProfile(env, tenantId, flowRefs.methodProfileRef);
+          const handle = normalizeMethodHandle(`saml:${usageKey.providerId}`);
+          // Each use as the Flow takes it, on top of the tenant's switches: what the sign-in then
+          // does (sign in to an existing account, create one) is held to both.
+          usagePolicy = {
+            loginEnabled: usagePolicy.loginEnabled && profileAllowsHandle(profile, handle, 'login'),
+            signupEnabled:
+              usagePolicy.signupEnabled && profileAllowsHandle(profile, handle, 'signup'),
+          };
+          const allowed =
+            usagePolicy.loginEnabled || (validatedRequest !== null && usagePolicy.signupEnabled);
+          if (!allowed) {
+            log.warn('SAML sign-in refused: the sign-in Flow does not take this IdP', { issuer });
+            return recordFailure(
+              createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED),
+              'method_disabled'
+            );
+          }
+        }
+      } catch (error) {
+        log.warn('SAML sign-in Flow could not be read; refusing the sign-in', {}, error as Error);
+        return recordFailure(samlUsageUnavailableResponse(c), 'service_unavailable');
+      }
+    }
+
     const assertionUse = await checkAndRecordBearerAssertionUse(
       env,
       tenantId,
@@ -430,15 +473,23 @@ async function handleSPACSFor(
       reauthProvenAt = proven;
     }
 
-    // Create session (session.default_ttl: SAML sign-in has no lifetime setting of its own)
-    const sessionTtl = await resolveSessionTtl(env, tenantId, 'default');
+    // Create session (session.default_ttl: SAML sign-in has no lifetime setting of its own), as
+    // the session profile of the Flow the start checked sets it.
+    const profiled = await resolveProfiledSessionTtl(
+      env,
+      tenantId,
+      'default',
+      flowRefs?.sessionProfileRef ?? 'default'
+    );
+    const sessionTtl = profiled.ttl;
     const sessionId = await createSession(
       env,
       userId,
       tenantId,
       sessionTtl.seconds,
       authnContextClassRef,
-      reauthProvenAt
+      reauthProvenAt,
+      { ...profiled.snapshot }
     );
 
     // Publish SAML authentication success event (non-blocking)
@@ -2437,7 +2488,9 @@ async function createSession(
   tenantId: string,
   ttlSeconds: number,
   authnContextClassRef?: string,
-  reauthProvenAt?: number
+  reauthProvenAt?: number,
+  /** What the session keeps of its session profile. */
+  profileData: Record<string, unknown> = {}
 ): Promise<string> {
   const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env, tenantId);
 
@@ -2462,6 +2515,7 @@ async function createSession(
         ...(reauthProvenAt !== undefined
           ? { reauth_proven_amr: ['saml'], reauth_proven_at: reauthProvenAt }
           : {}),
+        ...profileData,
       },
     }),
   });

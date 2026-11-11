@@ -694,6 +694,30 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     description: 'authentication method profile write and delete',
   }),
   rule({
+    pattern: '/api/admin/session-profiles',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'session profiles read',
+  }),
+  rule({
+    pattern: '/api/admin/session-profiles/*',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'session profile read',
+  }),
+  rule({
+    pattern: '/api/admin/session-profiles',
+    methods: [...WRITE_METHODS, ...DELETE_METHODS],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'session profiles write',
+  }),
+  rule({
+    pattern: '/api/admin/session-profiles/*',
+    methods: [...WRITE_METHODS, ...DELETE_METHODS],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'session profile write and delete',
+  }),
+  rule({
     pattern: '/api/admin/login-ui/themes/*',
     methods: READ_METHODS,
     permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],

@@ -1,5 +1,10 @@
 import {
+  loadInteractionFlowProfileRefs,
   loadInteractionRegistrationPolicy,
+  profileAllowsHandle,
+  readAuthenticationProfile,
+  resolveProfiledSessionTtl,
+  type ProfiledSessionTtl,
   normalizeMethodHandle,
   loadTenantRegistrationPolicy,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -39,18 +44,80 @@ export async function loadExternalSignUpPolicy(
   env: Env,
   tenantId: string,
   interactionId: string | undefined
-): Promise<{ policy: RegistrationPolicy; profileRef: string } | null> {
+): Promise<{ policy: RegistrationPolicy; profileRef: string; sessionProfileRef: string } | null> {
   const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'bridge-external-sign-up', {
     tenantId,
   });
   const named = interactionId
     ? await loadInteractionRegistrationPolicy(core, tenantId, interactionId)
     : null;
-  if (named && named.live) return { policy: named.policy, profileRef: named.profileRef };
+  if (named && named.live) {
+    return {
+      policy: named.policy,
+      profileRef: named.profileRef,
+      sessionProfileRef: named.sessionProfileRef,
+    };
+  }
   return loadTenantRegistrationPolicy(core, tenantId);
 }
 
 /** The handle an external provider has in a Flow step (as the runtime names it). */
 export function providerHandle(provider: { slug?: string | null; id: string }): string {
   return normalizeMethodHandle(provider.slug || provider.id);
+}
+
+/**
+ * What the Flow an external sign-in runs sets for it: whether its authentication method profile
+ * takes the provider (a sign-in; a sign-up was held to its registration Flow before the account
+ * was made), and the session's lifetime by its session profile. A sign-up's session follows the
+ * registration Flow it was held to; a sign-in's, the Flow of the interaction the start checked.
+ * A read that fails is thrown: no session is made under settings the Flow may not allow.
+ */
+export async function externalSessionProfile(
+  env: Env,
+  input: {
+    tenantId: string;
+    interactionId: string | undefined;
+    provider: { slug?: string | null; id: string };
+    isNewUser: boolean;
+  }
+): Promise<{ allowed: boolean; profiled: ProfiledSessionTtl }> {
+  if (input.isNewUser) {
+    const signUp = await loadExternalSignUpPolicy(env, input.tenantId, input.interactionId);
+    return {
+      allowed: true,
+      profiled: await resolveProfiledSessionTtl(
+        env,
+        input.tenantId,
+        'default',
+        signUp?.sessionProfileRef ?? 'default'
+      ),
+    };
+  }
+  const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'bridge-external-sign-in', {
+    tenantId: input.tenantId,
+  });
+  const read = input.interactionId
+    ? await loadInteractionFlowProfileRefs(core, input.tenantId, input.interactionId)
+    : null;
+  // One gone or no longer live since the start: as a sign-in that names none (its stale
+  // settings are not used).
+  const refs = read && read.live ? read : null;
+  const methodRef = refs?.methodProfileRef ?? 'default';
+  const allowed =
+    methodRef === 'default' ||
+    profileAllowsHandle(
+      await readAuthenticationProfile(env, input.tenantId, methodRef),
+      providerHandle(input.provider),
+      'login'
+    );
+  return {
+    allowed,
+    profiled: await resolveProfiledSessionTtl(
+      env,
+      input.tenantId,
+      'default',
+      refs?.sessionProfileRef ?? 'default'
+    ),
+  };
 }

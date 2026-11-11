@@ -25,14 +25,19 @@ import {
 import { Context } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
-import { newAccountRegistrationPendingMark } from '@authrim/ar-lib-core';
+import {
+  newAccountRegistrationPendingMark,
+  normalizeMethodHandle,
+  SIGN_IN_ATTEMPT_INTERACTION_METADATA_KEY,
+  signInAttemptInteractionFromMetadata,
+} from '@authrim/ar-lib-core';
 import { settleRegistrationPending } from './registration-pending';
 import {
   NO_POLICY,
   eligibilityRefusal,
   notifyExistingAccountSignUp,
   profileAllowsSignUp,
-  registrationCompletionRedirect,
+  flowCompletionRedirect,
   registrationRefusalResponse,
   signUpCodeTtlSeconds,
   signUpPolicyFor,
@@ -165,7 +170,11 @@ import {
   type HumanVerificationAction,
 } from './human-verification';
 import { readLiteMode } from './lite-mode';
-import { resolveSessionTtl } from './session-ttl';
+import {
+  interactionAllowsSignInMethod,
+  sessionTtlForInteraction,
+  sessionTtlForProfile,
+} from './flow-session-profile';
 import {
   continueSAMLChallenge,
   isBrowserSessionOnlyChallenge,
@@ -275,6 +284,23 @@ export function isDirectAuthClientChannelAllowed(
   }
 
   return true;
+}
+
+/**
+ * The Flow step handle of the method a Direct Auth artifact was made by: the method, or an
+ * external provider's handle for an external IdP login. Null when the artifact names none.
+ */
+function directSessionMethodHandle(metadata: Record<string, unknown>): string | null {
+  const method = typeof metadata.method === 'string' ? metadata.method : '';
+  if (method === 'external_idp') {
+    for (const key of ['provider_slug', 'provider_id', 'provider']) {
+      const value = metadata[key];
+      if (typeof value === 'string' && value) return normalizeMethodHandle(value);
+    }
+    return null;
+  }
+  if (method === 'passkey_signup') return 'passkey';
+  return method || null;
 }
 
 async function rejectIfAuthenticationMethodDisabled(
@@ -1832,8 +1858,9 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
         // The switch checked here is checked again before the session is created.
         usage: turnstileAction,
         ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
-        // The Flow interaction this attempt belongs to, once checked (for its failure records).
-        ...(await signInAttemptInteractionMetadata(c, tenantId)),
+        // The Flow interaction this attempt belongs to, once checked: its failure records, and the
+        // Flow whose profiles the session follows. One named but not checked fails the start.
+        ...(await signInAttemptInteractionMetadata(c, tenantId, undefined, { strict: true })),
       },
     });
 
@@ -2169,6 +2196,14 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         // was proven then, not when the artifact was stored or redeemed.
         proven_at: proofVerifiedAtMs,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
+        // The Flow interaction the start checked: the session follows its profiles.
+        ...(signInAttemptInteractionFromMetadata(challengeData.metadata)
+          ? {
+              [SIGN_IN_ATTEMPT_INTERACTION_METADATA_KEY]: signInAttemptInteractionFromMetadata(
+                challengeData.metadata
+              ),
+            }
+          : {}),
       },
       assurance.settings
     );
@@ -3216,10 +3251,19 @@ async function completeDirectEmailVerification(
       scope: metadataString(metadata, 'scope'),
       transaction_id: metadataString(metadata, 'transaction_id') || transactionId,
       is_new_user: isNewUser,
+      // What the code was sent for (sign-up or sign-in), as the challenge recorded it.
+      usage,
       // When the email was proven (milliseconds), as the passkey artifact records it.
       proven_at: provenAtMs,
       authorization_challenge_id: metadataString(metadata, 'authorization_challenge_id'),
       runtime_interaction_id: metadataString(metadata, 'runtime_interaction_id'),
+      // The interaction the send checked (a header names it too): the session follows its Flow.
+      ...(signInAttemptInteractionFromMetadata(metadata)
+        ? {
+            [SIGN_IN_ATTEMPT_INTERACTION_METADATA_KEY]:
+              signInAttemptInteractionFromMetadata(metadata),
+          }
+        : {}),
     },
     assuranceSettings
   );
@@ -4027,8 +4071,11 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       usage: emailCodeUsage,
       ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
       ...(boundRuntimeInteractionId ? { runtime_interaction_id: boundRuntimeInteractionId } : {}),
-      // The same interaction, once checked live in this tenant, for the attempt's failure records.
-      ...(await signInAttemptInteractionMetadata(c, tenantId, boundRuntimeInteractionId)),
+      // The same interaction, once checked live in this tenant: its failure records, and the Flow
+      // whose profiles the session follows. One named but not checked fails the send.
+      ...(await signInAttemptInteractionMetadata(c, tenantId, boundRuntimeInteractionId, {
+        strict: true,
+      })),
       ...(signupInvitation ?? {}),
       ...(Object.keys(customFieldValues).length > 0 ? { custom_fields: customFieldValues } : {}),
     };
@@ -4544,7 +4591,58 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     );
     if (guestDenial) return guestDenial;
 
-    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'direct_auth');
+    // The Flow the sign-in ran (bound to the artifact on the server) takes this method, and its
+    // session profile sets how long the session lasts and how it may be extended.
+    // The interaction a start step checked, else the one the artifact was made in.
+    const runtimeInteractionId =
+      signInAttemptInteractionFromMetadata(metadata) ??
+      (typeof metadata.runtime_interaction_id === 'string'
+        ? metadata.runtime_interaction_id
+        : null);
+    // What the proof was for, as its challenge recorded it (not how new the account is).
+    const signedUp = metadata.method === 'passkey_signup' || metadata.usage === 'signup';
+    const signInMethod = directSessionMethodHandle(metadata);
+    let profiled: Awaited<ReturnType<typeof sessionTtlForInteraction>>;
+    try {
+      if (
+        signInMethod &&
+        !(await interactionAllowsSignInMethod(
+          c,
+          tenantId,
+          runtimeInteractionId,
+          signInMethod,
+          signedUp ? 'signup' : 'login'
+        ))
+      ) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+          extensions: { authentication_method: signInMethod, usage: signedUp ? 'signup' : 'login' },
+        });
+      }
+      // A sign-up with no Flow interaction follows the tenant's registration Flow, as its
+      // methods and policy did.
+      profiled =
+        signedUp && !runtimeInteractionId
+          ? await sessionTtlForProfile(
+              c,
+              tenantId,
+              'direct_auth',
+              (await signUpPolicyFor(c, tenantId, null)).sessionProfileRef
+            )
+          : await sessionTtlForInteraction(c, tenantId, 'direct_auth', runtimeInteractionId);
+    } catch (error) {
+      log.error('Direct Auth session profile unavailable', {
+        action: 'direct_auth_session_profile',
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Session settings are unavailable.',
+        },
+        503
+      );
+    }
+    const sessionTtl = profiled.ttl;
     const now = Date.now();
     // The session was authenticated when its artifact's proof was verified, not when it is
     // redeemed; an artifact without one (an external IdP login) counts from now.
@@ -4619,9 +4717,10 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         authTime,
         client_id,
         direct_auth_channel: channel,
-        ...(typeof metadata.runtime_interaction_id === 'string'
-          ? { runtime_interaction_id: metadata.runtime_interaction_id }
-          : {}),
+        // The interaction the sign-in ran in (the one its start checked, else the artifact's).
+        ...(runtimeInteractionId ? { runtime_interaction_id: runtimeInteractionId } : {}),
+        // What the session keeps of its profile: extending it later follows the same rules.
+        ...profiled.snapshot,
         // When the authentication was proven, not when it is stored or redeemed: an assurance
         // step-up counts only proof made after it began.
         ...directSessionProvenAt(metadata),
@@ -4659,13 +4758,8 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     // session made within it; else the tenant's.
     const postLoginRedirect = authorizationContinuation
       ? authorizationContinuation.redirectUrl
-      : ((await registrationCompletionRedirect(
-          c,
-          tenantId,
-          typeof metadata.runtime_interaction_id === 'string'
-            ? metadata.runtime_interaction_id
-            : null
-        )) ?? (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl);
+      : ((await flowCompletionRedirect(c, tenantId, runtimeInteractionId)) ??
+        (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl);
 
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');

@@ -58,7 +58,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.part.login-methods': 'Anmeldeverfahren-Profil',
 	'af.part.login-validation': 'Prüfregeln',
 	'af.part.login-session': 'Sitzung einrichten',
-	'af.part.login-return': 'Ergebnis zurückgeben',
 
 	'af.lead.reg-methods':
 		'Wählen Sie das Profil für Anmeldeverfahren, das diese Registrierung verwendet.',
@@ -70,18 +69,14 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'Legen Sie fest, wann und wie bei der Registrierung um Einwilligung gebeten wird.',
 	'af.lead.reg-result': 'Legen Sie fest, wohin die Person nach der Registrierung geht.',
 	'af.lead.login-methods': 'Wählen Sie das Anmeldeverfahren-Profil für diese Anmeldung.',
-	'af.lead.login-validation': 'Legen Sie fest, wann eine Person als authentifiziert gilt.',
+	'af.lead.login-validation':
+		'Wiederholte Fehlversuche und die Antwort an nicht registrierte Personen folgen den Sicherheitseinstellungen des Mandanten.',
 	'af.lead.login-session':
 		'Sobald die erforderliche Authentifizierung abgeschlossen ist, erstellt Authrim die Sitzung.',
-	'af.lead.login-return': 'Das Ergebnis der Anmeldung geht an den Aufrufer zurück.',
 
 	'af.note.reg-statements':
 		'Unabhängig von der Zustimmung, Informationen mit einer App zu teilen. Diese wird im Ablauf der jeweiligen Verbindung festgelegt.',
 	'af.note.reg-policy': 'Stimmt die Person nicht zu, wird das Konto nicht angelegt.',
-	'af.note.login-validation':
-		'Die Authentifizierung gilt erst als erfolgreich, wenn ein zusätzlicher Schritt abgeschlossen ist.',
-	'af.note.login-return':
-		'Die Ausstellung von Tokens an eine App und die Zustimmung zur Weitergabe von Attributen werden im Ablauf der jeweiligen Verbindung festgelegt.',
 
 	'af.field.reg.methodProfile': 'Zu verwendendes Profil',
 	'af.profile.create': 'Neues Profil für Anmeldeverfahren erstellen',
@@ -184,13 +179,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.field.reg.statements': 'Erklärungen, denen bei der Registrierung zugestimmt wird',
 	'af.field.reg.consentWhen': 'Wann um Einwilligung gebeten wird',
 	'af.field.reg.after': 'Nach dem Abschluss',
-	'af.field.login.failures': 'Nach wiederholten Fehlversuchen',
-	'af.field.login.unregistered': 'Wenn jemand kommt, der nicht registriert ist',
-	'af.hint.login.unregistered':
-		'Damit Dritte nicht erfahren, ob ein Konto existiert, können Sie nur melden, dass die Anmeldung fehlgeschlagen ist.',
-	'af.field.login.lifetime': 'Wie lange eine Sitzung dauert',
-	'af.field.login.reauth': 'Wann erneut zur Anmeldung aufgefordert wird',
-	'af.field.login.failure': 'Wenn die Anmeldung fehlschlägt oder abgebrochen wird',
 
 	'af.field.reg.extraWhen':
 		'Zusätzlich per E-Mail bestätigen, bei Registrierung über einen anderen Anbieter',
@@ -363,16 +351,13 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.expiry.15m': '15 Minuten',
 	'af.consentWhen.signup': 'Nur bei der Registrierung',
 	'af.consentWhen.version': 'Bei der Registrierung und wenn sich eine Erklärung ändert',
-	'af.failures.delay': 'Bei jedem Versuch etwas länger warten lassen',
-	'af.failures.lock': 'Für eine Weile sperren',
-	'af.failures.none': 'Keine Begrenzung',
-	'af.unregistered.guide': 'Auf die Registrierung verweisen',
-	'af.unregistered.generic': 'Nur melden, dass die Anmeldung fehlgeschlagen ist',
-	'af.lifetime.8h': '8 Stunden',
-	'af.lifetime.24h': '24 Stunden',
-	'af.lifetime.7d': '7 Tage',
-	'af.reauth.idle': 'Nach einer Zeit ohne Aktivität',
-	'af.reauth.none': 'Nie',
-	'af.failure.error': 'Einen Fehler an den Aufrufer zurückgeben',
-	'af.failure.stay': 'Auf der Anmeldeseite bleiben'
+	'af.after.tenant': 'Der Einstellung des Mandanten folgen',
+	'af.part.login-result': 'Nach der Anmeldung',
+	'af.lead.login-result': 'Legen Sie fest, wohin Personen nach der Anmeldung gelangen.',
+	'af.note.login-result':
+		'Eine von einer App oder per SAML begonnene Anmeldung kehrt dorthin zurück, woher sie kam. Hier legen Sie fest, wohin eine direkt auf dem Anmeldebildschirm vorgenommene Anmeldung führt.',
+	'af.hint.login.appClient':
+		'Nach der Anmeldung wird die Person direkt beim gewählten Dienst (Client) angemeldet. Beim Client müssen First Party App und App Login eingeschaltet sein.',
+	'af.hint.login.samlSp':
+		'Nach der Anmeldung wird die Person per IdP-initiiertem SSO direkt beim gewählten SAML-Dienst (SP) angemeldet. Der SP muss IdP-initiierte SAML-Antworten annehmen.'
 };

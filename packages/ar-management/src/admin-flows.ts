@@ -35,8 +35,10 @@ import {
   validateFlowEditorState,
   validateFlowRuntimeContractPackage,
   AuthenticationMethodProfileRepository,
+  SessionProfileRepository,
   buildRegistrationFlowEditor,
   defaultRegistrationFlowSpec,
+  readFlowCompletion,
   readRegistrationPolicy,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
@@ -395,14 +397,19 @@ function consentReferenceIssueLevel(
   return 'warning';
 }
 
-/** Whether the tenant has an authentication method profile (in the admin database). */
+/** Which kind of profile a step names: its methods, or its session. */
+type ProfileKind = 'method' | 'session';
+
+/** Whether the tenant has a profile of the kind (in the admin database). */
 function profileExistsIn(c: AdminContext, tenantId: string) {
-  return async (id: string): Promise<boolean> => {
+  return async (id: string, kind: ProfileKind = 'method'): Promise<boolean> => {
     try {
-      const profile = await new AuthenticationMethodProfileRepository(
-        requireDedicatedAdminDatabaseAdapter(c.env, 'admin-flows')
-      ).find(tenantId, id);
-      return profile !== null;
+      const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-flows');
+      const repository =
+        kind === 'session'
+          ? new SessionProfileRepository(adapter)
+          : new AuthenticationMethodProfileRepository(adapter);
+      return (await repository.find(tenantId, id)) !== null;
     } catch {
       return false;
     }
@@ -413,8 +420,8 @@ async function validateDraftReferences(
   db: DatabaseAdapter,
   tenantId: string,
   editor: FlowEditorState,
-  /** Whether the tenant has the authentication method profile (not `default`, always there). */
-  profileExists: (id: string) => Promise<boolean> = async () => false
+  /** Whether the tenant has the profile (not `default`, always there). */
+  profileExists: (id: string, kind?: ProfileKind) => Promise<boolean> = async () => false
 ): Promise<FlowValidationIssue[]> {
   const issues: FlowValidationIssue[] = [];
   const completionProtocols = editorCompletionProtocols(editor);
@@ -433,6 +440,17 @@ async function validateDraftReferences(
           ref: { type: 'reference', id: profileRef, key: 'authentication_profile_ref' },
         });
       }
+      const sessionRef = readConfigString(node.config, 'session_profile_ref');
+      if (sessionRef && sessionRef !== 'default' && !(await profileExists(sessionRef, 'session'))) {
+        issues.push({
+          level: 'error',
+          code: 'unsupported_session_profile',
+          message: `Session profile is not available: ${sessionRef}.`,
+          path: `${path}.session_profile_ref`,
+          node_id: node.id,
+          ref: { type: 'reference', id: sessionRef, key: 'session_profile_ref' },
+        });
+      }
     }
     // A registration step's policy (who may sign up, an address in use…), checked as it is
     // saved: the runtime reads it field by field and would quietly fall back on a bad one.
@@ -449,6 +467,21 @@ async function validateDraftReferences(
             node_id: node.id,
           });
         }
+      }
+    }
+
+    // A sign-in step's destination once signed in, checked as a sign-up's is: the runtime would
+    // quietly use the tenant's own destination for one it cannot read.
+    if (node.type === 'authentication' && isRecord(node.config) && node.config.completion != null) {
+      const read = readFlowCompletion(node.config.completion);
+      if (!read.ok) {
+        issues.push({
+          level: 'error',
+          code: 'invalid_login_completion',
+          message: `Sign-in completion: ${read.reason}.`,
+          path: `${path}.completion`,
+          node_id: node.id,
+        });
       }
     }
 

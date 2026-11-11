@@ -18,6 +18,7 @@ import {
   createErrorResponse,
   emailDomainAllowed,
   getLogger,
+  loadInteractionFlowProfileRefs,
   loadInteractionRegistrationPolicy,
   loadTenantRegistrationPolicy,
   produceNotificationDelivery,
@@ -50,6 +51,8 @@ export interface SignUpPolicy {
   source: 'interaction' | 'tenant' | 'none';
   /** The authentication method profile the Flow signs people up with (`default`: the tenant's). */
   profileRef: string;
+  /** The session profile the new account's session is made with (`default`: the tenant's). */
+  sessionProfileRef: string;
 }
 
 /** A sign-up held to no registration Flow: the tenant's behaviour as it was. */
@@ -58,6 +61,7 @@ export const NO_POLICY: SignUpPolicy = {
   fromFlow: false,
   source: 'none',
   profileRef: 'default',
+  sessionProfileRef: 'default',
 };
 
 /**
@@ -101,6 +105,7 @@ export async function signUpPolicyFor(
       fromFlow: read.policy !== LEGACY_REGISTRATION_POLICY,
       source: 'interaction',
       profileRef: read.profileRef,
+      sessionProfileRef: read.sessionProfileRef,
     };
   }
   // No registration interaction (none named, or one of a sign-in Flow, or one no longer live):
@@ -112,6 +117,7 @@ export async function signUpPolicyFor(
       fromFlow: tenantFlow.policy !== LEGACY_REGISTRATION_POLICY,
       source: 'tenant',
       profileRef: tenantFlow.profileRef,
+      sessionProfileRef: tenantFlow.sessionProfileRef,
     };
   }
   return NO_POLICY;
@@ -222,18 +228,27 @@ export async function notifyExistingAccountSignUp(
 }
 
 /**
- * Where a person goes once a session is made within a registration Flow that sets its own
- * destination (`completion`); null otherwise (the tenant's post-sign-in destination holds). Only
- * a live interaction of the tenant counts, and the destination is checked as the tenant's is.
+ * Where a person goes once a session is made within a Flow that sets its own destination
+ * (`completion`): a registration Flow's, or a sign-in Flow's; null otherwise (the tenant's
+ * post-sign-in destination holds). Only a live interaction of the tenant counts, and the
+ * destination is checked as the tenant's is.
  */
-export async function registrationCompletionRedirect(
+export async function flowCompletionRedirect(
   c: AuthContext,
   tenantId: string,
   interactionId: string | null | undefined
 ): Promise<string | null> {
   if (!interactionId) return null;
   const signUp = await signUpPolicyFor(c, tenantId, interactionId);
-  const completion = signUp.source === 'interaction' ? signUp.policy.completion : null;
+  let completion = signUp.source === 'interaction' ? signUp.policy.completion : null;
+  if (!completion && signUp.source !== 'interaction' && INTERACTION_ID.test(interactionId)) {
+    const signIn = await loadInteractionFlowProfileRefs(
+      createAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantId,
+      interactionId
+    );
+    completion = signIn && signIn.live && signIn.flowKind === 'login' ? signIn.completion : null;
+  }
   if (!completion) return null;
   return (await resolveRegistrationCompletionRedirectUrl(c.env, tenantId, completion)).redirectUrl;
 }

@@ -45,14 +45,16 @@ export interface AccountChoice {
 export interface AccountField {
 	key: string;
 	/**
-	 * `profile`: one of the tenant's sign-in method profiles, by id; `screen`: one of its screens
-	 * of `screenKinds`, by id. Their choices are loaded, not listed here.
+	 * `profile`: one of the tenant's sign-in method profiles, by id; `session-profile`: one of its
+	 * session profiles, by id; `screen`: one of its screens of `screenKinds`, by id. Their choices
+	 * are loaded, not listed here.
 	 */
 	kind:
 		| 'select'
 		| 'checks'
 		| 'text'
 		| 'profile'
+		| 'session-profile'
 		| 'screen'
 		| 'client'
 		| 'client-redirect'

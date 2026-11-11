@@ -2,6 +2,7 @@ import type { DatabaseAdapter } from '../../db/adapter';
 import {
   registrationPolicyOfRuntime,
   registrationProfileRefOfRuntime,
+  registrationSessionProfileRefOfRuntime,
   type RegistrationPolicy,
 } from '../../types/registration-policy';
 
@@ -10,7 +11,7 @@ import {
  * be one (an object whose `ui.steps` is a list). One that cannot be read, or reads as something
  * else, is thrown: a broken Flow is not a Flow without a policy, and the sign-up is not taken.
  */
-function readPublishedRuntime(value: unknown): Record<string, unknown> | null {
+export function readPublishedRuntime(value: unknown): Record<string, unknown> | null {
   if (typeof value !== 'string' || value === '') return null;
   let runtime: unknown;
   try {
@@ -38,6 +39,8 @@ export interface InteractionRegistrationPolicy {
   policy: RegistrationPolicy;
   /** The authentication method profile it signs people up with (`default`: the tenant's). */
   profileRef: string;
+  /** The session profile the new account's session is made with (`default`: the tenant's). */
+  sessionProfileRef: string;
   flowId: string;
   flowVersionId: string;
   /** The interaction is live (created or active, not expired). */
@@ -79,6 +82,7 @@ export async function loadInteractionRegistrationPolicy(
   return {
     policy: registrationPolicyOfRuntime(runtime),
     profileRef: registrationProfileRefOfRuntime(runtime),
+    sessionProfileRef: registrationSessionProfileRefOfRuntime(runtime),
     flowId: interaction.flow_id,
     flowVersionId: interaction.flow_version_id,
     live:
@@ -95,7 +99,7 @@ export async function loadInteractionRegistrationPolicy(
 export async function loadTenantRegistrationPolicy(
   db: DatabaseAdapter,
   tenantId: string
-): Promise<{ policy: RegistrationPolicy; profileRef: string } | null> {
+): Promise<{ policy: RegistrationPolicy; profileRef: string; sessionProfileRef: string } | null> {
   const row = await db.queryOne<{ runtime_snapshot_json: string | null }>(
     `SELECT v.runtime_snapshot_json AS runtime_snapshot_json
        FROM flow_assignments a
@@ -115,5 +119,6 @@ export async function loadTenantRegistrationPolicy(
   return {
     policy: registrationPolicyOfRuntime(runtime),
     profileRef: registrationProfileRefOfRuntime(runtime),
+    sessionProfileRef: registrationSessionProfileRefOfRuntime(runtime),
   };
 }

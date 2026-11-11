@@ -30,14 +30,28 @@ import {
  * the interaction a start body already carries), when it is a live interaction of the tenant;
  * empty otherwise. The start step's client is not compared: the Login UI signs in as its own
  * Direct Auth client, while the interaction belongs to the relying party's client.
+ *
+ * `strict`: for a start whose Flow decides the methods and session, a check that cannot be made
+ * is thrown instead of leaving the interaction out.
  */
 export async function signInAttemptInteractionMetadata(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
-  bodyInteractionId?: string | null
+  bodyInteractionId?: string | null,
+  options: { strict?: boolean } = {}
 ): Promise<Record<string, string>> {
   const interactionId = bodyInteractionId ?? c.req.header(SIGN_IN_ATTEMPT_INTERACTION_HEADER);
   if (!interactionId) return {};
+  if (options.strict) {
+    // The Flow's profiles hold the sign-in to its methods and session: a check that cannot be
+    // made is thrown, never taken as no Flow at all. One that is not a live interaction of the
+    // tenant is left out, as one never named (the tenant's own settings then).
+    const validated = await resolveSignInAttemptInteraction(
+      createAuthContextFromHono(c, tenantId).coreAdapter,
+      { tenantId, interactionId }
+    );
+    return validated ? { [SIGN_IN_ATTEMPT_INTERACTION_METADATA_KEY]: validated } : {};
+  }
   try {
     const validated = await resolveSignInAttemptInteraction(
       createAuthContextFromHono(c, tenantId).coreAdapter,
