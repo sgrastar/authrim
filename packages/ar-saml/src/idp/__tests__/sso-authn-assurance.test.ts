@@ -92,7 +92,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ),
     getSessionStoreBySessionId: vi.fn(() => ({ stub: fakeSessionStore() })),
     isShardedSessionId: vi.fn((id: string) => id.startsWith('s')),
-    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({})),
+    // No sign-in Flow is assigned: a session the sign-in made answers the request it was sent for.
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({ queryOne: async () => null })),
     requireAdminDatabaseAdapter: vi.fn(() => ({ query: vi.fn(async () => []) })),
     resolveRuntimeIdentityMappingBinding: vi.fn(async () => ({
       id: 'binding',
@@ -1008,6 +1009,44 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const back = await resume('s-1');
       expect(back.status).toBe(200);
       expect(mocks.buildResponse).toHaveBeenCalledOnce();
+    });
+
+    it('does not answer with a session the sign-in made outside the SP’s own Flow', async () => {
+      // The SP's sign-in Flow names its own session profile; the session records no interaction.
+      const core = await import('@authrim/ar-lib-core');
+      const flowReads: string[] = [];
+      vi.mocked(core.resolveAuthCorePersistenceAdapterFromEnv).mockResolvedValue({
+        queryOne: async (sql: string) => {
+          flowReads.push(sql);
+          return sql.includes('FROM flow_assignments')
+            ? {
+                runtime_snapshot_json: JSON.stringify({
+                  flow_kind: 'login',
+                  ui: {
+                    steps: [
+                      {
+                        id: 'auth:step',
+                        component: 'authentication_method_selector',
+                        config: { session_profile_ref: 'short' },
+                      },
+                    ],
+                  },
+                }),
+              }
+            : null;
+        },
+      } as never);
+      const first = await post(authnRequestXml());
+      expect(first.status).toBe(302);
+      setSession('s-1', { amr: ['pwd'], proven_at: Date.now() });
+      const back = await resume('s-1');
+      // Sent to sign in again, under the SP's Flow.
+      expect(back.status).toBe(302);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+      expect(flowReads.some((sql) => sql.includes('FROM flow_assignments'))).toBe(true);
+      vi.mocked(core.resolveAuthCorePersistenceAdapterFromEnv).mockResolvedValue({
+        queryOne: async () => null,
+      } as never);
     });
 
     it('also asks for the AAL the request needs after the sign-in it asked for', async () => {

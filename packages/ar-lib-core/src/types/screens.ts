@@ -64,6 +64,63 @@ export const SCREEN_CHOICE_BLOCK_TYPES = ['select', 'radio'] as const;
 export const MAX_SCREEN_FIELD_OPTIONS = 100;
 export const MAX_SCREEN_OPTION_VALUE_LENGTH = 128;
 export const MAX_SCREEN_OPTION_LABEL_LENGTH = 100;
+export type ScreenLinkStyle = 'text' | 'button';
+export const SCREEN_LINK_STYLES: readonly ScreenLinkStyle[] = ['text', 'button'];
+/**
+ * What a `link` part does. `url` opens its `href`; the others leave the screen by one of its
+ * exits, and where an exit leads is the Flow's to decide (an edge from that handle of the screen
+ * node), not the screen's: `next` submits the screen (handle `submitted`), `skip` leaves it
+ * without its answers (`skipped`), `exit` leaves it by an exit of its own name (`link_exit`), and
+ * `back` returns to the screen shown before it.
+ */
+export type ScreenLinkAction = 'url' | 'next' | 'back' | 'skip' | 'exit';
+export const SCREEN_LINK_ACTIONS: readonly ScreenLinkAction[] = [
+  'url',
+  'next',
+  'back',
+  'skip',
+  'exit',
+];
+/** An exit's name, as a link part gives it and the Flow's edge names the handle. */
+export const SCREEN_LINK_EXIT_PATTERN = /^[a-z][a-z0-9_]{0,39}$/u;
+/** The handles a screen node has of its own: no exit may take their names. */
+export const SCREEN_RESERVED_EXITS: readonly string[] = ['submitted', 'skipped', 'next'];
+
+/**
+ * The exits a screen's link parts add to the screen node's own (`submitted`, and `skipped` when a
+ * part skips), in the order they first appear. Read from saved fields, so only well-formed names.
+ */
+export function screenLinkExits(
+  fields: readonly Pick<
+    ScreenField,
+    'block_type' | 'link_action' | 'link_exit' | 'display_condition'
+  >[]
+): string[] {
+  const exits: string[] = [];
+  // A part never shown offers no way out: hidden itself, or in a hidden row (a row's condition
+  // holds for the parts after it, up to the next row, as the Login UI draws them).
+  let rowHidden = false;
+  for (const field of fields) {
+    if (field.block_type === 'layout_row') {
+      rowHidden = field.display_condition?.mode === 'hidden';
+      continue;
+    }
+    if (field.block_type !== 'link' || rowHidden || field.display_condition?.mode === 'hidden') {
+      continue;
+    }
+    const exit =
+      field.link_action === 'skip'
+        ? 'skipped'
+        : field.link_action === 'exit' &&
+            typeof field.link_exit === 'string' &&
+            SCREEN_LINK_EXIT_PATTERN.test(field.link_exit) &&
+            !SCREEN_RESERVED_EXITS.includes(field.link_exit)
+          ? field.link_exit
+          : null;
+    if (exit && !exits.includes(exit)) exits.push(exit);
+  }
+  return exits;
+}
 export type ScreenCanvasLayout = 'narrow' | 'wide';
 export type ScreenHumanVerificationTiming = 'initial' | 'submit';
 export type ScreenDisplayConditionMode = 'always' | 'feature_enabled' | 'hidden';
@@ -99,7 +156,17 @@ export interface ScreenField {
   text?: string | null;
   help_text?: string | null;
   placeholder?: string | null;
+  /** A `link` part whose action is `url` (the default): where it goes. */
   href?: string | null;
+  /**
+   * A `link` part: what it does (`url` when absent). Only `url` has a destination of its own;
+   * the others name an exit of the screen, which the Flow connects.
+   */
+  link_action?: ScreenLinkAction | null;
+  /** A `link` part whose action is `exit`: the exit's name (`SCREEN_LINK_EXIT_PATTERN`). */
+  link_exit?: string | null;
+  /** A `link` part: drawn as a text link (the default) or as a button. */
+  link_style?: ScreenLinkStyle | null;
   human_verification_timing?: ScreenHumanVerificationTiming | null;
   display_condition?: ScreenDisplayCondition | null;
   layout_columns?: number | null;
@@ -238,6 +305,30 @@ export interface AccountPagesDocument {
 }
 
 export const ACCOUNT_PAGE_PRESET_VERSION = 3;
+
+/** Account screens created for each tenant and editable from the screen list. */
+export const DEFAULT_ACCOUNT_SCREEN_KEYS = [
+  'account_overview',
+  'account_launchers',
+  'account_profile',
+  'account_devices',
+  'account_sessions',
+  'account_passkeys',
+  'account_totp',
+  'account_consents',
+  'account_activity',
+  'account_social_accounts',
+  'account_custom',
+] as const;
+
+/** Tenant screens created on first use while their built-in templates remain immutable. */
+export const EDITABLE_DEFAULT_SCREEN_KEYS = [
+  'registration',
+  'login',
+  'consent',
+  'code_input',
+  ...DEFAULT_ACCOUNT_SCREEN_KEYS,
+] as const;
 
 export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
   schema_version: 'authrim.account_page.v1',

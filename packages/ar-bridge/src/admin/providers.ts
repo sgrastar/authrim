@@ -394,6 +394,7 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       auto_link_email?: boolean;
       jit_provisioning?: boolean;
       require_email_verified?: boolean;
+      trust_email?: boolean;
       always_fetch_userinfo?: boolean;
       enable_sso?: boolean;
       icon_url?: string | null;
@@ -630,6 +631,8 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
         body.auto_link_email ?? (defaults.autoLinkEmail as boolean | undefined) ?? true,
       jitProvisioning: body.jit_provisioning !== false,
       requireEmailVerified: body.require_email_verified !== false,
+      // Default off: an address the provider gives is not taken as checked unless the tenant says so.
+      trustEmail: body.trust_email === true,
       alwaysFetchUserinfo: body.always_fetch_userinfo === true,
       enableSso: body.enable_sso !== false,
       providerQuirks,
@@ -789,6 +792,7 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
       auto_link_email?: boolean;
       jit_provisioning?: boolean;
       require_email_verified?: boolean;
+      trust_email?: boolean;
       always_fetch_userinfo?: boolean;
       enable_sso?: boolean;
       icon_url?: string | null;
@@ -844,6 +848,7 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
     if (body.jit_provisioning !== undefined) updates.jitProvisioning = body.jit_provisioning;
     if (body.require_email_verified !== undefined)
       updates.requireEmailVerified = body.require_email_verified;
+    if (body.trust_email !== undefined) updates.trustEmail = body.trust_email === true;
     if (body.always_fetch_userinfo !== undefined)
       updates.alwaysFetchUserinfo = body.always_fetch_userinfo;
     if (body.enable_sso !== undefined) updates.enableSso = body.enable_sso;

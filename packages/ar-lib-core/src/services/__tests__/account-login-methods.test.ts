@@ -442,8 +442,13 @@ describe('isAuthenticationMethodUsageAvailable', () => {
     ).resolves.toBe(false);
   });
   describe('a stored document', () => {
+    // The tenant's document as given; the platform's documents (its Default) are not there.
     const rawEnv = (raw: string | null | undefined) =>
-      ({ SETTINGS: { get: vi.fn(async () => raw) } }) as unknown as Env;
+      ({
+        SETTINGS: {
+          get: vi.fn(async (key: string) => (key.startsWith('settings:tenant:') ? raw : null)),
+        },
+      }) as unknown as Env;
 
     it.each([
       ['null', null],

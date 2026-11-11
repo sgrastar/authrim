@@ -604,6 +604,38 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'application launchers'
   ),
   ...byMethod(
+    '/api/admin/platform/authentication-method-profiles',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform authentication method profiles',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/platform/authentication-method-profiles/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform authentication method profile',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/platform/session-profiles',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform session profiles',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/platform/session-profiles/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform session profile',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
     '/api/admin/platform/settings/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
@@ -692,6 +724,30 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     methods: [...WRITE_METHODS, ...DELETE_METHODS],
     permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
     description: 'authentication method profile write and delete',
+  }),
+  rule({
+    pattern: '/api/admin/session-profiles',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'session profiles read',
+  }),
+  rule({
+    pattern: '/api/admin/session-profiles/*',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'session profile read',
+  }),
+  rule({
+    pattern: '/api/admin/session-profiles',
+    methods: [...WRITE_METHODS, ...DELETE_METHODS],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'session profiles write',
+  }),
+  rule({
+    pattern: '/api/admin/session-profiles/*',
+    methods: [...WRITE_METHODS, ...DELETE_METHODS],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'session profile write and delete',
   }),
   rule({
     pattern: '/api/admin/login-ui/themes/*',
@@ -1650,6 +1706,14 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE,
     ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE,
     'platform D1 read replication',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/platform/service-site',
+    ADMIN_PERMISSIONS.CONTROL_PLANE_READ,
+    ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION,
+    ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION,
+    'platform service site attachment',
     PLATFORM_ADMIN_ROLES
   ),
   rule({

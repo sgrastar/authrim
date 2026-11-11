@@ -45,6 +45,7 @@ import type {
   LoginUITextLocalizations,
 } from '@authrim/ar-lib-core';
 import {
+  layerTenantSettingsDocument,
   isLoginUiPresetAssetPath,
   HUMAN_VERIFICATION_FLOWS,
   humanVerificationConfigValid,
@@ -332,11 +333,22 @@ interface UIConfig {
   };
   appearance: {
     backgroundImageUrl: string | null;
-    /** Null keeps legacy light-image fallback; an object gives each dark image its own value. */
+    /** The dark-mode logo; null (or a null logo) uses the light logo in dark mode too. */
     darkImages: DarkImageUrls | null;
     backgroundImageOpacity: number;
+    /** 0–100: how much each picture is darkened in dark mode (page, form area, brand panel). */
+    backgroundImageDarkDim: number;
+    loginPanelBackgroundDarkDim: number;
+    brandPanelImageDarkDim: number;
     backgroundImageGrayscale: boolean;
     backgroundImageFilters: LoginUIImageFilter[];
+    /**
+     * Filters on the form-area and brand panel pictures, in order. An older grayscale switch
+     * (pageTemplate.loginPanelBackgroundGrayscale, brandPanelImageGrayscale) is served as a full
+     * grayscale filter first, unless a grayscale filter is set.
+     */
+    loginPanelBackgroundImageFilters: LoginUIImageFilter[];
+    brandPanelImageFilters: LoginUIImageFilter[];
     loginPanelBackgroundImageUrl: string | null;
     brandPanelImageUrl: string | null;
     brandPanelImageOpacity: number;
@@ -365,10 +377,12 @@ interface UIConfig {
   };
 }
 
+/**
+ * The images set apart for dark mode: the logo only. The page and form-area pictures are the same
+ * in both modes, each darkened in dark mode by its own dimming (`backgroundImageDarkDim`…).
+ */
 interface DarkImageUrls {
   logoUrl: string | null;
-  backgroundImageUrl: string | null;
-  loginPanelBackgroundImageUrl: string | null;
 }
 
 interface AuthenticationMethodsMeta {
@@ -552,8 +566,13 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     backgroundImageUrl: null,
     darkImages: null,
     backgroundImageOpacity: 100,
+    backgroundImageDarkDim: 0,
+    loginPanelBackgroundDarkDim: 0,
+    brandPanelImageDarkDim: 0,
     backgroundImageGrayscale: false,
     backgroundImageFilters: [],
+    loginPanelBackgroundImageFilters: [],
+    brandPanelImageFilters: [],
     loginPanelBackgroundImageUrl: null,
     brandPanelImageUrl: null,
     brandPanelImageOpacity: 100,
@@ -651,8 +670,13 @@ interface LoginUIKVSettings {
   'login-ui.show_english_language_names'?: boolean | string;
   'login-ui.background_image_url'?: string;
   'login-ui.background_image_opacity'?: number | string;
+  'login-ui.background_image_dark_dim'?: number | string;
+  'login-ui.login_panel_background_dark_dim'?: number | string;
+  'login-ui.brand_panel_image_dark_dim'?: number | string;
   'login-ui.background_image_grayscale'?: boolean | string;
   'login-ui.background_image_filters'?: string;
+  'login-ui.login_panel_background_filters'?: string;
+  'login-ui.brand_panel_image_filters'?: string;
   'login-ui.login_panel_background_image_url'?: string;
   'login-ui.brand_panel_image_url'?: string;
   'login-ui.brand_panel_image_opacity'?: number | string;
@@ -799,8 +823,13 @@ interface LoginUIResolved {
   showEnglishLanguageNames: boolean;
   backgroundImageUrl: string | null;
   backgroundImageOpacity: number;
+  backgroundImageDarkDim: number;
+  loginPanelBackgroundDarkDim: number;
+  brandPanelImageDarkDim: number;
   backgroundImageGrayscale: boolean;
   backgroundImageFilters: LoginUIImageFilter[];
+  loginPanelBackgroundFilters: LoginUIImageFilter[];
+  brandPanelImageFilters: LoginUIImageFilter[];
   loginPanelBackgroundImageUrl: string | null;
   brandPanelImageUrl: string | null;
   brandPanelImageOpacity: number;
@@ -1237,6 +1266,19 @@ function readAccentColor(value: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * A picture's filters with its older grayscale switch folded in: a full grayscale filter first
+ * (the switch was applied before any filter), unless the filters have a grayscale of their own.
+ */
+function withLegacyGrayscale(
+  filters: readonly LoginUIImageFilter[],
+  grayscale: boolean
+): LoginUIImageFilter[] {
+  return grayscale && !filters.some((filter) => filter.name === 'grayscale')
+    ? [{ name: 'grayscale', value: 100 }, ...filters]
+    : [...filters];
+}
+
 function readBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
   // Number('') and Number('  ') are 0, which would read an empty stored value as the minimum.
   const parsed =
@@ -1319,11 +1361,7 @@ function servedDarkColors(resolved: LoginUIResolved): LoginUIThemeColors {
 }
 
 function readDarkImages(value: unknown): DarkImageUrls {
-  const empty: DarkImageUrls = {
-    logoUrl: null,
-    backgroundImageUrl: null,
-    loginPanelBackgroundImageUrl: null,
-  };
+  const empty: DarkImageUrls = { logoUrl: null };
   if (typeof value !== 'string' || value.length > 12_288) return empty;
   try {
     const parsed: unknown = JSON.parse(value);
@@ -1331,11 +1369,8 @@ function readDarkImages(value: unknown): DarkImageUrls {
     const images = parsed as Record<string, unknown>;
     const safe = (url: unknown) =>
       typeof url === 'string' && isValidLoginUIImageUrl(url) ? url : null;
-    return {
-      logoUrl: safe(images.logo),
-      backgroundImageUrl: safe(images.background),
-      loginPanelBackgroundImageUrl: safe(images.form_area),
-    };
+    // Older themes also named dark page and form-area pictures: those are no longer apart.
+    return { logoUrl: safe(images.logo) };
   } catch {
     return empty;
   }
@@ -1520,6 +1555,24 @@ function resolveLoginUIFromKVSettings(
       0,
       100
     ),
+    backgroundImageDarkDim: readBoundedNumber(
+      kvSettings['login-ui.background_image_dark_dim'],
+      defaults.backgroundImageDarkDim,
+      0,
+      100
+    ),
+    loginPanelBackgroundDarkDim: readBoundedNumber(
+      kvSettings['login-ui.login_panel_background_dark_dim'],
+      defaults.loginPanelBackgroundDarkDim,
+      0,
+      100
+    ),
+    brandPanelImageDarkDim: readBoundedNumber(
+      kvSettings['login-ui.brand_panel_image_dark_dim'],
+      defaults.brandPanelImageDarkDim,
+      0,
+      100
+    ),
     backgroundImageGrayscale: readBoolean(
       kvSettings['login-ui.background_image_grayscale'],
       defaults.backgroundImageGrayscale
@@ -1528,6 +1581,14 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.background_image_filters'] === undefined
         ? defaults.backgroundImageFilters
         : parseLoginUIImageFilters(kvSettings['login-ui.background_image_filters']),
+    loginPanelBackgroundFilters:
+      kvSettings['login-ui.login_panel_background_filters'] === undefined
+        ? defaults.loginPanelBackgroundFilters
+        : parseLoginUIImageFilters(kvSettings['login-ui.login_panel_background_filters']),
+    brandPanelImageFilters:
+      kvSettings['login-ui.brand_panel_image_filters'] === undefined
+        ? defaults.brandPanelImageFilters
+        : parseLoginUIImageFilters(kvSettings['login-ui.brand_panel_image_filters']),
     loginPanelBackgroundImageUrl: isValidLoginUIImageUrl(
       kvSettings['login-ui.login_panel_background_image_url']
     )
@@ -1751,8 +1812,13 @@ async function getLoginUISettings(
     showEnglishLanguageNames: DEFAULT_UI_CONFIG.showEnglishLanguageNames,
     backgroundImageUrl: DEFAULT_UI_CONFIG.appearance.backgroundImageUrl,
     backgroundImageOpacity: DEFAULT_UI_CONFIG.appearance.backgroundImageOpacity,
+    backgroundImageDarkDim: DEFAULT_UI_CONFIG.appearance.backgroundImageDarkDim,
+    loginPanelBackgroundDarkDim: DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundDarkDim,
+    brandPanelImageDarkDim: DEFAULT_UI_CONFIG.appearance.brandPanelImageDarkDim,
     backgroundImageGrayscale: DEFAULT_UI_CONFIG.appearance.backgroundImageGrayscale,
     backgroundImageFilters: [...DEFAULT_UI_CONFIG.appearance.backgroundImageFilters],
+    loginPanelBackgroundFilters: [...DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageFilters],
+    brandPanelImageFilters: [...DEFAULT_UI_CONFIG.appearance.brandPanelImageFilters],
     loginPanelBackgroundImageUrl: DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageUrl,
     brandPanelImageUrl: DEFAULT_UI_CONFIG.appearance.brandPanelImageUrl,
     brandPanelImageOpacity: DEFAULT_UI_CONFIG.appearance.brandPanelImageOpacity,
@@ -2197,6 +2263,8 @@ interface HumanVerificationPluginConfig extends Record<string, unknown> {
 }
 
 interface BuiltInMethodsResolved {
+  /** The settings (the tenant's, or the platform's layer) could not be read: defaults stand in. */
+  unreadable?: boolean;
   passkeyLoginEnabled: boolean;
   passkeySignupEnabled: boolean;
   passkeyReauthEnabled: boolean;
@@ -2220,11 +2288,23 @@ export async function resolveBuiltInAuthenticationMethods(
 ): Promise<BuiltInMethodsResolved> {
   try {
     const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-    return builtInAuthenticationMethodsFromSettings(
-      kvJson ? (JSON.parse(kvJson) as AuthenticationMethodKVSettings) : null
+    const stored: unknown = kvJson ? JSON.parse(kvJson) : {};
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+      return { ...builtInAuthenticationMethodsFromSettings(null), unreadable: true };
+    }
+    // The platform's Default methods under the tenant's (default-profile-layer.ts).
+    // Read afresh: this answer is cached under the current revision (up to a day), so it must not
+    // be made from a platform document an isolate read before the change that bumped it.
+    const layered = await layerTenantSettingsDocument(
+      env,
+      'authentication-methods',
+      stored as Record<string, unknown>,
+      { fresh: true }
     );
+    return builtInAuthenticationMethodsFromSettings(layered);
   } catch {
-    return builtInAuthenticationMethodsFromSettings(null);
+    // Read as the defaults, and marked: an answer made from them is not cached.
+    return { ...builtInAuthenticationMethodsFromSettings(null), unreadable: true };
   }
 }
 
@@ -2753,8 +2833,19 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
       backgroundImageUrl: loginUI.backgroundImageUrl,
       darkImages: loginUI.darkImagesSet ? loginUI.darkImages : null,
       backgroundImageOpacity: loginUI.backgroundImageOpacity,
+      backgroundImageDarkDim: loginUI.backgroundImageDarkDim,
+      loginPanelBackgroundDarkDim: loginUI.loginPanelBackgroundDarkDim,
+      brandPanelImageDarkDim: loginUI.brandPanelImageDarkDim,
       backgroundImageGrayscale: loginUI.backgroundImageGrayscale,
       backgroundImageFilters: loginUI.backgroundImageFilters,
+      loginPanelBackgroundImageFilters: withLegacyGrayscale(
+        loginUI.loginPanelBackgroundFilters,
+        loginUI.loginPanelBackgroundGrayscale
+      ),
+      brandPanelImageFilters: withLegacyGrayscale(
+        loginUI.brandPanelImageFilters,
+        loginUI.brandPanelImageGrayscale
+      ),
       loginPanelBackgroundImageUrl: loginUI.loginPanelBackgroundImageUrl,
       brandPanelImageUrl: loginUI.brandPanelImageUrl,
       brandPanelImageOpacity: loginUI.brandPanelImageOpacity,
@@ -3098,7 +3189,9 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     };
     // An answer that could not read the lite policy is not kept: it would serve 503, or a mode the
     // store did not say, until it expires.
-    const uncacheable = samlAvailability.unreadable || !liteRead.authoritative;
+    // Nor is one made from method defaults that stood in for settings that could not be read.
+    const uncacheable =
+      samlAvailability.unreadable || !liteRead.authoritative || builtInMethods.unreadable === true;
 
     const response: AuthenticationMethodsResponse = {
       methods,

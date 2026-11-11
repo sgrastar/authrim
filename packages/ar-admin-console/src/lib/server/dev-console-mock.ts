@@ -9,7 +9,14 @@ import type { CategoryName } from '@authrim/ar-lib-core/types/settings/catalog';
 import type { SettingsPatchRequest } from '@authrim/ar-lib-core/utils/settings-manager';
 import { persona, type PersonaId } from '#lib/access/personas.js';
 import { ApiError } from '#lib/api/api-error.js';
+import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentication-method-profiles-fake.js';
+import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
+import type { AuthenticationMethodProfilesClient } from '#lib/api/authentication-method-profiles.js';
+import type { SessionProfilesClient } from '#lib/api/session-profiles.js';
+import { MOCK_CLIENTS } from '#lib/api/fake/clients-fake.js';
+import { MOCK_SAML_SERVICE_PROVIDERS } from '#lib/api/fake/saml-providers-fake.js';
 import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
+import { mockScreens } from '#lib/mock/fixtures/screens.js';
 import type { SettingsTarget } from '#lib/api/settings.js';
 
 const DEV_ADMIN_MOCK_FLAG = 'AUTHRIM_ADMIN_UI_DEV_MOCK';
@@ -18,6 +25,20 @@ const DEV_ADMIN_MOCK_SENTINEL = '__AUTHRIM_ADMIN_UI_DEV_MOCK_SENTINEL__';
 const DEV_ADMIN_MOCK_PERSONA = 'AUTHRIM_ADMIN_UI_DEV_MOCK_PERSONA';
 const TENANT_ID = 'dev-tenant';
 const NOW = 1780704000000;
+
+type MockFlow = {
+	id: string;
+	display_name: string;
+	kind: string;
+	status: string;
+	editor: unknown;
+	published_version_id: string | null;
+	created_at: number;
+	updated_at: number;
+};
+/** The mock tenant's Flows: none at first (the sign-up flow is made by the first save). */
+const mockFlows = new Map<string, MockFlow>();
+const mockFlowAssignments: Array<Record<string, unknown>> = [];
 
 type EnvLike = Record<string, unknown> | undefined;
 
@@ -109,6 +130,62 @@ async function handleSettings(
 			return json({ error: error.code, message: error.message, ...error.body }, error.status);
 		}
 		throw error;
+	}
+	return null;
+}
+
+/** In-memory sign-in method and session profiles; reset when the dev server restarts. */
+const methodProfiles = createFakeAuthenticationMethodProfiles();
+const sessionProfiles = createFakeSessionProfiles();
+
+async function handleProfiles(
+	event: RequestEvent,
+	rest: string[],
+	method: string,
+	profiles: AuthenticationMethodProfilesClient | SessionProfilesClient
+): Promise<Response | null> {
+	const [id] = rest;
+	if (rest.length === 0 && method === 'GET') {
+		return json({ profiles: await profiles.list() });
+	}
+	if (rest.length === 0 && method === 'POST') {
+		const body = await readJson(event);
+		const name = typeof body.name === 'string' ? body.name.trim() : '';
+		if (!name) return json({ error: 'invalid_request' }, 400);
+		const taken = (await profiles.list()).some((profile) => profile.name === name);
+		if (taken) return json({ error: 'profile_name_taken' }, 409);
+		const values =
+			body.values && typeof body.values === 'object'
+				? (body.values as Record<string, unknown>)
+				: {};
+		return json({ profile: await profiles.create({ name, values }) }, 201);
+	}
+	if (rest.length !== 1) return null;
+	if (method === 'GET') {
+		try {
+			return json({ profile: await profiles.get(id) });
+		} catch {
+			return json({ error: 'not_found' }, 404);
+		}
+	}
+	if (method === 'PUT') {
+		const body = await readJson(event);
+		const name = typeof body.name === 'string' ? body.name.trim() : '';
+		const values =
+			body.values && typeof body.values === 'object'
+				? (body.values as Record<string, unknown>)
+				: {};
+		const version =
+			typeof body.version === 'number' || typeof body.version === 'string' ? body.version : 0;
+		try {
+			return json({ profile: await profiles.update(id, version, { name, values }) });
+		} catch {
+			return json({ error: 'conflict' }, 409);
+		}
+	}
+	if (method === 'DELETE') {
+		await profiles.remove(id);
+		return new Response(null, { status: 204 });
 	}
 	return null;
 }
@@ -263,6 +340,94 @@ export async function handleDevAdminMock(
 	}
 	if (segments[0] === 'me' && segments[1] === 'passkeys') {
 		const response = await handlePasskeys(event, segments.slice(2), method);
+		if (response) return response;
+	}
+	// The screens a service flow chooses from (read only here).
+	if (segments[0] === 'screens' && segments.length === 1 && method === 'GET') {
+		const list = await mockScreens.list();
+		return json({ screens: list.screens, usages_complete: list.usagesComplete });
+	}
+	// The tenant's Flows and their assignments, kept in memory (the sign-up flow is saved here).
+	if (segments[0] === 'flow-assignments' && segments.length === 1) {
+		if (method === 'GET') return json({ assignments: mockFlowAssignments });
+		if (method === 'PUT') {
+			const body = (await event.request.json().catch(() => ({}))) as Record<string, unknown>;
+			const kind = String(body.flow_kind ?? '');
+			for (let i = mockFlowAssignments.length - 1; i >= 0; i--) {
+				if (mockFlowAssignments[i].flow_kind === kind) mockFlowAssignments.splice(i, 1);
+			}
+			const assignment = {
+				id: `assignment_${kind}`,
+				target_type: 'tenant',
+				target_id: null,
+				flow_kind: kind,
+				flow_id: String(body.flow_id ?? ''),
+				enabled: true
+			};
+			mockFlowAssignments.push(assignment);
+			return json({ assignment });
+		}
+	}
+	if (segments[0] === 'flows') {
+		const id = segments[1];
+		if (!id && method === 'POST') {
+			const body = (await event.request.json().catch(() => ({}))) as Record<string, unknown>;
+			const flow = {
+				id: `flow_${mockFlows.size + 1}`,
+				display_name: String(body.display_name ?? ''),
+				kind: String(body.kind ?? ''),
+				status: 'draft',
+				editor: body.editor ?? null,
+				published_version_id: null,
+				created_at: Math.floor(Date.now() / 1000),
+				updated_at: Math.floor(Date.now() / 1000)
+			};
+			mockFlows.set(flow.id, flow);
+			return json({ flow }, 201);
+		}
+		const flow = id ? mockFlows.get(id) : undefined;
+		if (flow && segments.length === 2 && method === 'GET') return json({ flow });
+		if (flow && segments.length === 2 && (method === 'PATCH' || method === 'PUT')) {
+			const body = (await event.request.json().catch(() => ({}))) as Record<string, unknown>;
+			if (typeof body.display_name === 'string') flow.display_name = body.display_name;
+			if (body.editor !== undefined) flow.editor = body.editor;
+			flow.updated_at = Math.floor(Date.now() / 1000);
+			return json({ flow });
+		}
+		if (flow && segments[2] === 'publish' && method === 'POST') {
+			flow.status = 'published';
+			flow.published_version_id = `${flow.id}_v${Date.now()}`;
+			return json({ version: { id: flow.published_version_id } });
+		}
+	}
+	// The SAML service providers a flow can go on to sign in to (read only here).
+	if (segments[0] === 'saml-providers' && segments.length === 1 && method === 'GET') {
+		return json({
+			providers: MOCK_SAML_SERVICE_PROVIDERS.map((provider, index) => ({
+				id: `saml_sp_${index + 1}`,
+				name: provider.name,
+				providerType: 'saml_sp',
+				config: { entityId: provider.entityId },
+				enabled: provider.enabled
+			}))
+		});
+	}
+	// The clients a flow can go on to sign in to (read only here).
+	if (segments[0] === 'clients' && segments.length === 1 && method === 'GET') {
+		return json({
+			clients: MOCK_CLIENTS.map((client) => ({
+				client_id: client.id,
+				client_name: client.name,
+				redirect_uris: client.redirectUris
+			}))
+		});
+	}
+	if (segments[0] === 'authentication-method-profiles') {
+		const response = await handleProfiles(event, segments.slice(1), method, methodProfiles);
+		if (response) return response;
+	}
+	if (segments[0] === 'session-profiles') {
+		const response = await handleProfiles(event, segments.slice(1), method, sessionProfiles);
 		if (response) return response;
 	}
 	if (segments[0] === 'logout' && method === 'POST') return json({ success: true });

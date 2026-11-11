@@ -26,9 +26,12 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
 		'بعد أن يلغي الاسترداد الأخير العوامل الثانية للمسؤول، المدة التي يمكنه خلالها تسجيل عامل أول من جديد باستخدام مفتاح المرور وحده.',
 	'settings.json.object': 'أدخل كائن JSON (بين القوسين { }).',
-	'set.page.stayingSignedIn': 'البقاء مسجلاً للدخول',
-	'set.page.stayingSignedIn.desc':
-		'المدة التي يبقى فيها الأشخاص مسجلين للدخول بعد تسجيل دخولهم، والمدة التي تحتفظ فيها تطبيقاتهم بهذا الدخول.',
+	'set.page.sessionProfiles': 'ملفات تعريف الجلسة',
+	'set.page.sessionProfiles.desc':
+		'المدة التي يبقى فيها الشخص مسجلاً للدخول بعد تسجيل دخوله، وتسجيل الدخول الموحد.',
+	'set.page.logout.desc':
+		'كيف تُبلَّغ التطبيقات بأن شخصاً ما سجّل خروجه. عناوين تسجيل الخروج الخاصة بكل تطبيق تتبع التطبيق نفسه.',
+	'set.page.logout': 'تسجيل الخروج',
 	'set.page.signingKeys': 'مفاتيح التوقيع',
 	'set.page.signingKeys.desc': 'كيف يوقّع هذا المستأجر رموزه.',
 	'set.section.idTokenSigning': 'توقيع رموز الهوية',
@@ -84,9 +87,9 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 		'عند الإيقاف: يُوقَّع كل رمز هوية بخوارزمية المستأجر، ويُرفض تسجيل التطبيقات بخوارزمية أخرى.',
 	'set.k.security.fapi_enabled': 'تطبيق FAPI 2.0',
 	'set.k.security.fapi_enabled.desc': 'تطبيق ملف أمان FAPI 2.0 على كل تطبيقات المستأجر.',
-	'set.page.appDefaults': 'الإعدادات الافتراضية للتطبيقات',
-	'set.page.appDefaults.desc':
-		'تسري هذه القواعد على جميع تطبيقات المستأجر؛ ولا يجوز لإعدادات التطبيق تخفيف المتطلبات الأمنية.',
+	'set.page.tokens': 'الرموز المميزة والبروتوكولات',
+	'set.page.tokens.desc':
+		'مدة صلاحية الرموز المميزة التي تحصل عليها التطبيقات، وما يجب أن يستوفيه كل تطبيق، والإعدادات الافتراضية للبروتوكولات. يمكن لكل تطبيق تجاوزها (ولا يمكن التنازل عن أي متطلب).',
 	'set.section.authRequests': 'طلبات التفويض',
 	'set.section.authRequests.desc': 'ما يجب أن يتضمنه طلب تسجيل الدخول من التطبيق.',
 	'set.section.authRequests.advanced': 'كائنات الطلب الموقّعة والمشفّرة',

@@ -177,7 +177,7 @@ const TABLE_GROUPS: Partial<
       field_catalog_entries field_catalog_versions field_catalogs field_mapping_activations
       field_mapping_sets field_mapping_versions identity_mapping_test_users
       internal_notification_delivery_routes key_material_refs
-      key_registries key_versions authentication_method_profiles login_ui_themes logging_destination_overrides logging_fallback_policies
+      key_registries key_versions authentication_method_profiles session_profiles login_ui_themes logging_destination_overrides logging_fallback_policies
       logging_key_material_bodies logging_key_registry logging_key_versions logging_policy_snapshots
       logging_quota_policies mapping_conflict_rules mapping_release_rules mapping_rule_edges
       mapping_rules mapping_templates mapping_transform_steps mapping_validation_rules
@@ -200,9 +200,12 @@ const TABLE_GROUPS: Partial<
     `,
     // platform_settings_documents holds platform-wide settings and settings_legacy_import_state
     // the environment's one-time settings import (no tenant identity): the target environment
-    // keeps its own, so a tenant backup neither exports nor replaces them.
+    // keeps its own, so a tenant backup neither exports nor replaces them. The platform's
+    // profiles are the environment's too: a tenant's change to one (a row with base_profile_id)
+    // is the tenant's, and depends on the target environment having that platform profile.
     external: `
       admin_database_connections admin_storage_destinations platform_settings_documents
+      platform_authentication_method_profiles platform_session_profiles
       settings_legacy_import_state
       admin_machine_credential_permissions admin_machine_credential_tenant_scopes admin_machine_credentials
       admin_machine_principal_permissions admin_machine_principal_tenant_scopes admin_machine_principals
@@ -266,6 +269,7 @@ const TABLE_GROUPS: Partial<
       control_tenant_shard_allocations control_tenant_shard_assignments control_tenant_shards control_worker_binding_reconciler_leases
       control_worker_binding_reconciliations control_worker_deployment_leases control_worker_desired_bindings control_worker_inventory_change_events
       control_worker_inventory_drift_findings control_worker_observed_bindings control_worker_required_data_roles
+      control_service_site_bindings
     `,
     ephemeral: `tenant_backup_boundary_plans tenant_backup_boundary_receipts tenant_backup_mutation_permits tenant_backup_mutation_boundaries tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages authrim_runtime_probes`,
   },

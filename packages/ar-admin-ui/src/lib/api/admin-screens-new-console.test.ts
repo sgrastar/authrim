@@ -14,7 +14,8 @@ describe('screenNeedsNewConsole', () => {
 			screenNeedsNewConsole([
 				field({}),
 				field({ field: 'agree', value_type: 'boolean' }),
-				field({ field: 'row', block_type: 'layout_row', layout_columns: 2 })
+				field({ field: 'row', block_type: 'layout_row', layout_columns: 2 }),
+				field({ field: 'help', block_type: 'link', href: '/help', link_style: 'text' })
 			])
 		).toBe(false);
 	});
@@ -27,7 +28,13 @@ describe('screenNeedsNewConsole', () => {
 		['an answer kept off the profile', field({ store_to_profile: false })],
 		['where such an answer goes', field({ answer_targets: ['record'] })],
 		['its own options', field({ options: [{ value: 'a', label: 'A' }] })],
-		['a three-column row', field({ block_type: 'layout_row', layout_columns: 3 })]
+		['a three-column row', field({ block_type: 'layout_row', layout_columns: 3 })],
+		[
+			'a link leaving by an exit',
+			field({ block_type: 'link', link_action: 'exit', link_exit: 'social' })
+		],
+		['a link going back', field({ block_type: 'link', link_action: 'back' })],
+		['a link drawn as a button', field({ block_type: 'link', href: '/help', link_style: 'button' })]
 	])('leaves a screen with %s to the new admin console', (_name, part) => {
 		expect(screenNeedsNewConsole([field({}), part])).toBe(true);
 	});

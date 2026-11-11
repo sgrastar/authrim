@@ -68,7 +68,9 @@
 	let serviceSiteError = $state('');
 	let serviceSiteSuccessMessage = $state('');
 	let serviceSiteSaving = $state(false);
-	type PostLoginBehavior = 'home' | 'account' | 'custom_url' | 'app_login';
+	// `saml_login` is set from the new admin console only: shown with no choice selected here, and
+	// kept as it is unless another choice is made.
+	type PostLoginBehavior = 'home' | 'account' | 'custom_url' | 'app_login' | 'saml_login';
 	type AppLoginClientOption = {
 		clientId: string;
 		name: string;
@@ -414,6 +416,7 @@
 		return value === 'account' ||
 			value === 'custom_url' ||
 			value === 'app_login' ||
+			value === 'saml_login' ||
 			value === 'home'
 			? value
 			: 'home';

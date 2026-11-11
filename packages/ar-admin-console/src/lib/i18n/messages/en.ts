@@ -15,6 +15,8 @@ import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
 import { enTeam } from './team/en';
 import { enAuthMethods } from './auth-methods/en';
+import { enSessionProfiles } from './session-profiles/en';
+import { enLaunchers } from './launchers/en';
 
 export const en = {
 	...enSettings,
@@ -33,6 +35,8 @@ export const en = {
 	...enAdminAudit,
 	...enTeam,
 	...enAuthMethods,
+	...enSessionProfiles,
+	...enLaunchers,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
@@ -66,11 +70,11 @@ export const en = {
 	'nav.access.policies': 'Policies',
 	'nav.access.simulator': 'Access simulator',
 	'nav.apps.all': 'Service flows',
-	'nav.apps.defaults': 'App defaults',
+	'nav.auth.tokens': 'Tokens and protocols',
 	'nav.apps.apis': 'APIs / Resources',
 	'nav.apps.keys': 'Initial access tokens',
 	'nav.apps.webhooks': 'Webhooks',
-	'nav.auth.methods': 'Authentication methods',
+	'nav.auth.methods': 'Sign-in method profiles',
 	'nav.auth.social': 'Social connections',
 	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'Directory authentication',
@@ -109,7 +113,8 @@ export const en = {
 	'nav.auth.tokenRefresh': 'External token refresh',
 	'nav.auth.discovery': 'Tenant discovery',
 	'nav.auth.ipAllowlist': 'IP allowlist',
-	'nav.auth.stayingSignedIn': 'Staying signed in',
+	'nav.auth.sessionProfiles': 'Session profiles',
+	'nav.auth.logout': 'Logout',
 	'nav.custom.loginUi': 'Login UI',
 	'nav.custom.accountPage': 'Account page',
 	'nav.custom.launchers': 'Launchers',

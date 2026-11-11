@@ -34,8 +34,11 @@ import {
   readExternalProviderReauthPolicy,
   verifyHumanVerificationWithRunner,
   resolveSignInAttemptInteraction,
+  assertInteractionAnswersChallenge,
+  isInteractionChallengeMismatchError,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
+import { clientSsoOverride, signInFlowProfileSso } from '../services/silent-sso';
 import {
   consumeLiteExternalStart,
   liteExternalCallbackUrl,
@@ -544,19 +547,59 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
 
     // 7b. The Flow interaction this sign-in belongs to, once checked a live interaction of the
     // tenant: the callback records the sign-in's failures with it. A link is not a sign-in.
-    // Best effort: a check that cannot be made leaves the sign-in unrecorded, never refused.
     const requestedInteractionId = link
       ? undefined
       : lite
         ? (lite.start.interactionId ?? undefined)
         : query('runtime_interaction_id');
-    const attemptInteractionId = requestedInteractionId
-      ? await (async () =>
-          resolveSignInAttemptInteraction(
-            createAuthContextFromHono(c, tenantIdResolved).coreAdapter,
-            { tenantId: tenantIdResolved, interactionId: requestedInteractionId }
-          ))().catch(() => null)
-      : null;
+    // Its Flow's profiles also hold the sign-in (methods, session): a check that cannot be made
+    // refuses the start; one that is not a live interaction of the tenant is left out.
+    let attemptInteractionId: string | null = null;
+    if (requestedInteractionId) {
+      try {
+        attemptInteractionId = await resolveSignInAttemptInteraction(
+          createAuthContextFromHono(c, tenantIdResolved).coreAdapter,
+          { tenantId: tenantIdResolved, interactionId: requestedInteractionId }
+        );
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The sign-in flow is unavailable.',
+          },
+          503
+        );
+      }
+    }
+    // A sign-in that answers an authorization request may only name an interaction started for
+    // it (another request's Flow would lend it its methods and session).
+    if (attemptInteractionId && authorizationChallengeId) {
+      try {
+        await assertInteractionAnswersChallenge(
+          createAuthContextFromHono(c, tenantIdResolved).coreAdapter,
+          tenantIdResolved,
+          attemptInteractionId,
+          authorizationChallengeId
+        );
+      } catch (error) {
+        if (isInteractionChallengeMismatchError(error)) {
+          return c.json(
+            {
+              error: 'authorization_challenge_mismatch',
+              error_description: 'The sign-in was not started for this authorization request.',
+            },
+            403
+          );
+        }
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The sign-in flow is unavailable.',
+          },
+          503
+        );
+      }
+    }
 
     // 8. Store state in D1 (including code_challenge for client-side PKCE)
     await storeAuthState(c.env, {
@@ -580,6 +623,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         : {}),
       ...(signupInvitation ?? {}),
       ...(attemptInteractionId ? { attemptInteractionId } : {}),
+      ...(authorizationChallengeId ? { flowChallengeId: authorizationChallengeId } : {}),
       expiresAt: getStateExpiresAt(),
     });
 
@@ -637,6 +681,8 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       // Check SSO settings
       // Priority: Client KV > Tenant KV > Client ENV > Tenant ENV > Default (provider.enableSso)
       let ssoEnabled = provider.enableSso !== false; // Default from provider config
+      let clientSet = false;
+      let profileSet: boolean | null = null;
 
       try {
         const [settingsManagerModule, clientSettingsModule, oauthSettingsModule] =
@@ -660,13 +706,17 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         // 1. Try client-level setting first (highest priority)
         if (clientId) {
           try {
-            const clientSsoSetting = await settingsManager.get('client.sso_enabled', {
+            // Only a value set for the client counts: its category default is no override (as
+            // authorize reads it), so the profile and the tenant are still asked.
+            const clientSettings = await settingsManager.getAll('client', {
               type: 'client',
               id: clientId,
               tenantId,
             });
-            if (typeof clientSsoSetting === 'boolean') {
+            const clientSsoSetting = clientSsoOverride(clientSettings);
+            if (clientSsoSetting !== null) {
               ssoEnabled = clientSsoSetting;
+              clientSet = true;
               log.debug('SSO setting from client config', { clientId, ssoEnabled });
             }
           } catch (error) {
@@ -678,13 +728,27 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           }
         }
 
-        // 2. If client setting not found, try tenant-level setting
-        if (ssoEnabled === (provider.enableSso !== false)) {
+        // 2. Where the client sets nothing, the session profile of the sign-in Flow the client
+        // uses (as authorize decides it); one that cannot be read turns single sign-on off.
+        if (!clientSet) {
+          profileSet = await signInFlowProfileSso(
+            c.env,
+            createAuthContextFromHono(c, tenantIdResolved).coreAdapter,
+            tenantIdResolved,
+            clientId
+          );
+          if (profileSet !== null) ssoEnabled = profileSet;
+        }
+
+        // 3. If neither set it, try tenant-level setting
+        if (!clientSet && profileSet === null && ssoEnabled === (provider.enableSso !== false)) {
           try {
-            const tenantSsoSetting = await settingsManager.get('oauth.sso_enabled', {
-              type: 'tenant',
-              id: tenantIdResolved,
-            });
+            // The tenant's Default session rules over the platform's (default-profile-layer.ts).
+            const { resolveEffectiveSettings } =
+              await import('@authrim/ar-lib-core/services/effective-settings');
+            const tenantSsoSetting = (
+              await resolveEffectiveSettings(c.env, 'oauth', { tenantId: tenantIdResolved })
+            )['oauth.sso_enabled'];
             if (typeof tenantSsoSetting === 'boolean') {
               ssoEnabled = tenantSsoSetting;
               log.debug('SSO setting from tenant config', {
@@ -693,8 +757,10 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
               });
             }
           } catch (error) {
-            // Tenant setting not found - use provider default
-            log.debug('Tenant SSO setting not found, using provider default', {
+            // Settings that cannot be read turn single sign-on off (as authorize does), rather
+            // than leaving the provider's default where the platform may have locked it off.
+            ssoEnabled = false;
+            log.warn('Tenant SSO setting unreadable, single sign-on off', {
               tenantId: tenantIdResolved,
               error: error instanceof Error ? error.message : String(error),
             });

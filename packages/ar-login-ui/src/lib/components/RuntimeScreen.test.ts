@@ -562,3 +562,82 @@ describe('auth switch link part', () => {
 		expect(hidden).not.toContain('auth-bottom-link');
 	});
 });
+
+describe('a link part', () => {
+	const linkScreen = (
+		link: Record<string, unknown>,
+		backScreens: string[] = [],
+		options: { withNext?: boolean } = {}
+	) => {
+		setLocale('en');
+		return render(RuntimeScreen, {
+			props: {
+				screen: {
+					fields: [
+						{ field: 'note', label: 'Note', required: false, block_type: 'identity_field' },
+						{ field: 'link.back', label: 'Back', required: false, block_type: 'link', ...link }
+					]
+				},
+				authMethodMode: 'signup',
+				fieldValues: {},
+				methodAvailability: {},
+				backScreens,
+				onBack: () => {},
+				...(options.withNext === false ? {} : { onNext: () => {} }),
+				onExit: () => {}
+			}
+		}).body;
+	};
+
+	it('is drawn as a link, not as an input', () => {
+		const body = linkScreen({ href: '/help' });
+		expect(body).toMatch(
+			/<a[^>]*href="\/help"[^>]*class="runtime-screen-link__text[^"]*"[^>]*>Back<\/a>/u
+		);
+		expect(body).not.toMatch(/<input[^>]*name="link\.back"/u);
+	});
+
+	it('draws an unsafe URL as text only', () => {
+		const body = linkScreen({ href: 'javascript:alert(1)' });
+		expect(body).not.toContain('javascript:');
+		expect(body).toContain('Back');
+	});
+
+	it('goes back to the screen before only where there is one, drawn as a button when its part says so', () => {
+		const usable = linkScreen({ link_action: 'back' }, ['step_one']);
+		expect(usable).toMatch(
+			/<button[^>]*class="runtime-screen-link__text[^"]*"[^>]*>Back<\/button>/u
+		);
+		expect(usable).not.toMatch(/<button[^>]*disabled[^>]*>Back<\/button>/u);
+		expect(linkScreen({ link_action: 'back' }, [])).toMatch(
+			/<button[^>]*disabled[^>]*>Back<\/button>/u
+		);
+		expect(linkScreen({ link_action: 'back', link_style: 'button' }, ['step_one'])).toMatch(
+			/<button[^>]*class="runtime-auth-button secondary[^"]*"[^>]*>Back<\/button>/u
+		);
+		expect(linkScreen({ href: '/help', link_style: 'button' })).toMatch(
+			/<a[^>]*class="runtime-auth-button secondary[^"]*"[^>]*>Back<\/a>/u
+		);
+	});
+
+	it('submits the screen, or leaves it by an exit, as a button (never a URL)', () => {
+		expect(linkScreen({ link_action: 'next' })).toMatch(/<button[^>]*>Back<\/button>/u);
+		// No Continue on the screen (a sign-in one): the part is shown disabled.
+		expect(linkScreen({ link_action: 'next' }, [], { withNext: false })).toMatch(
+			/<button[^>]*disabled[^>]*>Back<\/button>/u
+		);
+		for (const link of [
+			{ link_action: 'skip' },
+			{ link_action: 'exit', link_exit: 'social', href: '/elsewhere' }
+		]) {
+			const body = linkScreen(link);
+			expect(body).toMatch(/<button[^>]*>Back<\/button>/u);
+			expect(body).not.toMatch(/<button[^>]*disabled[^>]*>Back<\/button>/u);
+			expect(body).not.toContain('/elsewhere');
+		}
+		// An exit without a proper name does nothing: drawn as text.
+		expect(linkScreen({ link_action: 'exit', link_exit: 'Not A Name' })).not.toMatch(
+			/<button[^>]*>Back<\/button>/u
+		);
+	});
+});

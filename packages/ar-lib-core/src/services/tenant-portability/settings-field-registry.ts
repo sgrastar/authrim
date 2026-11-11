@@ -78,6 +78,22 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'session',
+      'string',
+      'value',
+      `
+    session.default_profile.base_version
+  `,
+    ],
+    [
+      'authentication-methods',
+      'string',
+      'value',
+      `
+    authentication-methods.default_profile.base_version
+  `,
+    ],
+    [
       'oauth',
       'string',
       'url_or_asset',
@@ -521,6 +537,19 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'profiles',
+      'boolean',
+      'value',
+      `
+    profiles.method.tenant_change_allowed
+    profiles.method.tenant_create_allowed
+    profiles.session.tenant_change_allowed
+    profiles.session.tenant_create_allowed
+    profiles.method.default_locked
+    profiles.session.default_locked
+  `,
+    ],
+    [
       'dcr',
       'boolean',
       'value',
@@ -581,6 +610,9 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.published_version
     login-ui.login_panel_background_opacity
     login-ui.background_image_opacity
+    login-ui.background_image_dark_dim
+    login-ui.login_panel_background_dark_dim
+    login-ui.brand_panel_image_dark_dim
     login-ui.brand_panel_image_opacity
     login-ui.account_page_published_version
     login-ui.active_theme_version
@@ -629,6 +661,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.rollback_snapshot
     login-ui.custom_css
     login-ui.background_image_filters
+    login-ui.login_panel_background_filters
+    login-ui.brand_panel_image_filters
     login-ui.dark_colors
     login-ui.dark_images
     login-ui.text_localizations
@@ -708,6 +742,9 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     authentication-methods.human_verification.reauth_enabled
     authentication-methods.directory_password.enabled
     authentication-methods.signup.flow_required
+    authentication-methods.passkey.enabled
+    authentication-methods.email_otp.enabled
+    authentication-methods.totp.enabled
   `,
     ],
     [
@@ -907,6 +944,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     login-entry.app_login_client_id
     login-entry.app_login_scope
+    login-entry.saml_login_sp_entity_id
+    login-entry.saml_login_relay_state
   `,
     ],
     [

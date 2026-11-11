@@ -16,6 +16,10 @@ import {
   type DatabaseSource,
   type Env,
   type SettingScope,
+  defaultProfileLayerFrom,
+  isDefaultLayerCategory,
+  isDefaultLayerKey,
+  LEGACY_METHOD_SWITCHES,
 } from '@authrim/ar-lib-core';
 import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 import {
@@ -287,6 +291,66 @@ export async function applyTenantSettingsChange(
             reason: 'tenant_ui_validation_failed',
           });
           return errorResponse(c, 'validation_failed', tenantUiError, 400);
+        }
+      }
+
+      // A Default profile's settings cannot be set or turned off while the platform sets the
+      // tenant's values aside (its Default locked, or tenants not allowed to change its
+      // profiles). Clearing them ("back to the platform's") is always allowed. The switches are
+      // read from the canonical store, not the runtime cache. Reads skip such values anyway
+      // (default-profile-layer.ts): this keeps a save from looking as if it took effect.
+      // A method's older single switch is read and removed only: set, it would decide the
+      // method's uses outside the Default's checks.
+      if (category === 'authentication-methods') {
+        const legacy = [...Object.keys(body.set ?? {}), ...(body.disable ?? [])].filter((key) =>
+          Object.prototype.hasOwnProperty.call(LEGACY_METHOD_SWITCHES, key)
+        );
+        if (legacy.length) {
+          input.onRefusal?.({ kind: 'value', code: 'legacy_setting_read_only' });
+          await auditFailure({
+            category,
+            scope,
+            reason: 'legacy_setting_read_only',
+            metadata: { keys: legacy },
+          });
+          return errorResponse(
+            c,
+            'legacy_setting_read_only',
+            "A method's older single switch can only be cleared; set the switch of each use instead",
+            400,
+            { keys: legacy }
+          );
+        }
+      }
+      if (isDefaultLayerCategory(category)) {
+        const touched = [...Object.keys(body.set ?? {}), ...(body.disable ?? [])].filter((key) =>
+          isDefaultLayerKey(category, key)
+        );
+        if (touched.length) {
+          const profiles = await manager.getAll('profiles', { type: 'platform' });
+          const { tenantSetAside } = defaultProfileLayerFrom(
+            category,
+            { values: {}, sources: {} },
+            profiles
+          );
+          if (tenantSetAside) {
+            input.onRefusal?.({ kind: 'state', code: `default_profile_${tenantSetAside}` });
+            await auditFailure({
+              category,
+              scope,
+              reason: `default_profile_${tenantSetAside}`,
+              metadata: { keys: touched },
+            });
+            return errorResponse(
+              c,
+              'default_profile_not_editable',
+              tenantSetAside === 'locked'
+                ? "The platform has locked its Default; the tenant's own values do not apply"
+                : 'The platform does not let tenants change its profiles',
+              403,
+              { reason: tenantSetAside, keys: touched }
+            );
+          }
         }
       }
 

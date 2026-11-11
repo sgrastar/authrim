@@ -78,9 +78,20 @@ import {
   screenAnswersOf,
   publishEvent,
   isSAMLAuthorizationChallenge,
+  flowProfileRefsOfRuntime,
+  layerTenantSettingsDocument,
 } from '@authrim/ar-lib-core';
 import { resolveRuntimeScreenRow } from '@authrim/ar-lib-core/services/runtime-screen-resolution';
 import { applyRuntimeScreenOptions, runtimeAttributeKey } from './runtime-screen-options';
+import { screenRoutingHandle } from './runtime-screen-exits';
+import { narrowHandlesByProfile, readAuthenticationProfile } from './authentication-profile';
+import {
+  BACK_LOOKBACK,
+  backTargets,
+  type BackStep,
+  type BackTarget,
+  type BackVisit,
+} from './runtime-back-navigation';
 import {
   hasSignInMethodPart,
   readRuntimeScreenAnswers,
@@ -124,6 +135,13 @@ interface SubmitRequest {
   contract_hash?: string;
   signature?: string;
   input?: unknown;
+  /** Going back (`/back`): the key of the screen to go back to. */
+  target_screen?: string;
+  /**
+   * The visit of the step the request was made on (`current_visit_id`), when the client knows it:
+   * a request made on an earlier visit of the same step (before going back and on) is refused.
+   */
+  visit_id?: string;
 }
 
 interface EmailVerificationChallengeRequest {
@@ -1010,28 +1028,36 @@ function resolveTarget(body: StartRequest): ResolvedTarget | null {
   const explicitTargetType = body.target_type;
   const explicitTargetId = readString(body.target_id, 200);
 
+  // The app a Flow is chosen for is the app the interaction is recorded and checked for: a target
+  // that names one app (or the tenant) while the request names another is refused, or the Flow of
+  // one would run for another's authorization request (sign-in-flow-binding).
   if (explicitTargetType) {
     if (explicitTargetType === 'tenant') {
-      return { targetType: 'tenant', targetId: null, clientId, samlSpId };
+      if (clientId || samlSpId) return null;
+      return { targetType: 'tenant', targetId: null, clientId: null, samlSpId: null };
     }
     if (explicitTargetType === 'oidc_client' && explicitTargetId) {
+      if (samlSpId || (clientId && clientId !== explicitTargetId)) return null;
       return {
         targetType: 'oidc_client',
         targetId: explicitTargetId,
-        clientId: clientId ?? explicitTargetId,
-        samlSpId,
+        clientId: explicitTargetId,
+        samlSpId: null,
       };
     }
     if (explicitTargetType === 'saml_sp' && explicitTargetId) {
+      if (clientId || (samlSpId && samlSpId !== explicitTargetId)) return null;
       return {
         targetType: 'saml_sp',
         targetId: explicitTargetId,
-        clientId,
-        samlSpId: samlSpId ?? explicitTargetId,
+        clientId: null,
+        samlSpId: explicitTargetId,
       };
     }
     return null;
   }
+  // Both an OIDC client and a SAML SP: which app it is for cannot be told.
+  if (clientId && samlSpId) return null;
 
   if (clientId) {
     return { targetType: 'oidc_client', targetId: clientId, clientId, samlSpId };
@@ -1572,11 +1598,19 @@ async function resolveRuntimeAuthenticationHandles(
   c: AuthContext,
   tenantId: string,
   flowKind: FlowKind,
-  component: string
+  component: string,
+  /** The step's authentication method profile (`default`: the tenant's methods as they are). */
+  profileRef: string | null = null
 ): Promise<string[]> {
   const env = c.env;
   const rawSettings = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-  const settings = parseJsonRecord(rawSettings);
+  // The platform's Default methods under the tenant's (default-profile-layer.ts). Unreadable, it
+  // is thrown (the step fails) rather than offering methods the platform may have turned off.
+  const settings = await layerTenantSettingsDocument(
+    env,
+    'authentication-methods',
+    parseJsonRecord(rawSettings)
+  );
   const usage =
     component === 'registration_method_selector' || flowKind === 'registration'
       ? 'signup'
@@ -1649,7 +1683,9 @@ async function resolveRuntimeAuthenticationHandles(
     handles.push(...(await fetchRuntimeExternalProviderHandles(c, tenantId, usage, usageById)));
   }
 
-  return [...new Set(handles)];
+  // The tenant's methods, narrowed by the step's profile (authentication-profile.ts).
+  const profile = await readAuthenticationProfile(env, tenantId, profileRef);
+  return narrowHandlesByProfile([...new Set(handles)], profile, usage);
 }
 
 function requestedLanguage(requestContext: FlowRequestContext): string {
@@ -1952,7 +1988,7 @@ export async function resolveSignUpScreen(
   type Visit = { step_id: string; created_at: number; state_json: string | null };
   let visits = await db.query<Visit>(
     `SELECT step_id, created_at, state_json FROM flow_interaction_steps
-      WHERE tenant_id = ? AND interaction_id = ?
+      WHERE tenant_id = ? AND interaction_id = ? AND state <> 'skipped'
       ORDER BY created_at DESC, id DESC
       LIMIT ${SIGN_UP_STEP_LOOKBACK}`,
     [tenantId, interaction.id]
@@ -1963,7 +1999,7 @@ export async function resolveSignUpScreen(
     const boundary = visits[visits.length - 1].created_at;
     const sameSecond = await db.query<Visit>(
       `SELECT step_id, created_at, state_json FROM flow_interaction_steps
-        WHERE tenant_id = ? AND interaction_id = ? AND created_at = ?
+        WHERE tenant_id = ? AND interaction_id = ? AND state <> 'skipped' AND created_at = ?
         LIMIT ${SIGN_UP_SAME_SECOND_LIMIT + 1}`,
       [tenantId, interaction.id, boundary]
     );
@@ -2270,7 +2306,8 @@ async function hydrateRuntimeContract(
           c,
           tenantId,
           runtime.flow_kind,
-          step.component
+          step.component,
+          readString(config.authentication_profile_ref, 200)
         );
         // Never advertise a guest action that has no route through the published Flow.
         if (
@@ -2712,6 +2749,23 @@ function resolveNextStep(
   return { step: runtime.ui.steps[currentIndex + 1] ?? null };
 }
 
+/**
+ * The handle a step's submit is routed by: a screen's own exit with no edge of its own follows
+ * the screen's submit, and an exit the screen does not offer is `undefined` (see
+ * `screenRoutingHandle`); every other handle as it was sent.
+ */
+function routingHandleOf(
+  step: FlowRuntimeStep,
+  editor: FlowEditorState | null,
+  handle: string | null
+): string | null | undefined {
+  if (step.component !== 'screen') return handle;
+  const outgoing = (editor?.edges ?? [])
+    .filter((edge) => edge.source === step.source_node_id)
+    .map((edge) => edge.source_handle);
+  return screenRoutingHandle(parseJsonRecord(step.config).screen, handle, outgoing);
+}
+
 function getRuntimeStepIndex(runtime: FlowRuntimeContract, step: FlowRuntimeStep): number {
   return runtime.ui.steps.findIndex(
     (candidate) => candidate.id === step.id && candidate.source_node_id === step.source_node_id
@@ -2966,7 +3020,7 @@ async function resolveSessionCheckSelectedHandle(
   c: AuthContext,
   tenantId: string,
   requestContext: FlowRequestContext,
-  options: { createdAfterMs?: number } = {}
+  options: RuntimeSessionOptions = {}
 ): Promise<{
   selectedHandle: 'continue' | 'authenticate' | null;
   userId: string | null;
@@ -3199,13 +3253,49 @@ function interactionStartedAtMs(interaction: FlowInteractionRow): number {
     : (interaction.expires_at - FLOW_RUNTIME_INTERACTION_TTL_SECONDS + 1) * 1000;
 }
 
+/**
+ * Which sessions an interaction takes, beyond what its authorization request asks
+ * (`resolveSessionForChallenge`).
+ *
+ * - A registration: only a sign-in made since it began (`createdAfterMs`).
+ * - Any Flow: a session made since it began must have been made in it (`madeIn`). Its sign-in ran
+ *   under this Flow's profiles only then; one made in another interaction (another request's Flow,
+ *   with wider methods or a longer session) or in none would carry this Flow's request on settings
+ *   it does not allow. A session from before the interaction is single sign-on, which the request
+ *   judges. A sign-in route that does not record its interaction in the session is taken only
+ *   while this Flow sets nothing of its own (both profiles Default).
+ */
+interface RuntimeSessionOptions {
+  createdAfterMs?: number;
+  madeIn?: { interactionId: string; startedAtMs: number; profilesAreDefault: boolean };
+}
+
 function sessionOptionsForRuntime(
   runtime: FlowRuntimeContract,
   interaction: FlowInteractionRow
-): { createdAfterMs?: number } {
-  return runtime.flow_kind === 'registration'
-    ? { createdAfterMs: interactionStartedAtMs(interaction) }
-    : {};
+): RuntimeSessionOptions {
+  const startedAtMs = interactionStartedAtMs(interaction);
+  const refs = flowProfileRefsOfRuntime(runtime);
+  return {
+    ...(runtime.flow_kind === 'registration' ? { createdAfterMs: startedAtMs } : {}),
+    madeIn: {
+      interactionId: interaction.id,
+      startedAtMs,
+      profilesAreDefault:
+        refs.methodProfileRef === 'default' && refs.sessionProfileRef === 'default',
+    },
+  };
+}
+
+/** Whether a session may stand for the interaction (see `RuntimeSessionOptions.madeIn`). */
+function sessionMadeInInteraction(
+  session: Session,
+  madeIn: RuntimeSessionOptions['madeIn']
+): boolean {
+  if (!madeIn || session.createdAt < madeIn.startedAtMs) return true;
+  const recorded = session.data?.runtime_interaction_id;
+  if (typeof recorded === 'string' && recorded) return recorded === madeIn.interactionId;
+  return madeIn.profilesAreDefault;
 }
 
 /**
@@ -3225,8 +3315,7 @@ async function resolveSessionForChallenge(
   c: AuthContext,
   tenantId: string,
   authorizationChallengeId: string | undefined | null,
-  options: {
-    createdAfterMs?: number;
+  options: RuntimeSessionOptions & {
     /**
      * Judge the authorization request (is it gone) even with no session to judge: a request that
      * is gone is found out at once, not when the user has signed in to no purpose.
@@ -3236,10 +3325,13 @@ async function resolveSessionForChallenge(
 ): Promise<SessionForChallenge> {
   const current = await getCurrentSession(c, tenantId);
   // A registration is answered only by a sign-in made since it began: a session from before
-  // (another account's, or the same one's) is no proof of this registration.
+  // (another account's, or the same one's) is no proof of this registration. A session made
+  // since the interaction began in another (or none) is no proof of it either: the person signs
+  // in again, under this Flow.
   const session =
     current?.userId &&
-    (options.createdAfterMs === undefined || current.createdAt >= options.createdAfterMs)
+    (options.createdAfterMs === undefined || current.createdAt >= options.createdAfterMs) &&
+    sessionMadeInInteraction(current, options.madeIn)
       ? current
       : null;
   if (!authorizationChallengeId || (!session && !options.judgeChallengeWithoutSession)) {
@@ -4071,9 +4163,11 @@ async function persistInitialAutoAdvancedSteps(input: {
   nextStep: FlowRuntimeStep;
   userId: string | null;
   now: number;
-}): Promise<void> {
-  if (input.autoAdvancedSteps.length === 0) return;
+}): Promise<string> {
+  if (input.autoAdvancedSteps.length === 0) return input.initialStepRowId;
 
+  // The visit of the step the person is shown (the interaction's current visit).
+  let visitId = input.initialStepRowId;
   await writeAtomically(input.db, (write) => {
     for (let index = 0; index < input.autoAdvancedSteps.length; index += 1) {
       const advanced = input.autoAdvancedSteps[index];
@@ -4112,13 +4206,14 @@ async function persistInitialAutoAdvancedSteps(input: {
       }
     }
 
+    visitId = generateId();
     write(
       `INSERT INTO flow_interaction_steps (
         id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
         created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
       [
-        generateId(),
+        visitId,
         input.tenantId,
         input.interaction.id,
         input.nextStep.source_node_id,
@@ -4144,6 +4239,7 @@ async function persistInitialAutoAdvancedSteps(input: {
       ]
     );
   });
+  return visitId;
 }
 
 function createInitialAutoAdvanceAuditEvents(input: {
@@ -5488,6 +5584,32 @@ async function resumeInteractionOnce(
     throw error;
   }
   if ((written.rowsAffected ?? 0) === 0) return 'busy';
+  // The visit of the current step: a page drawn for an earlier visit of the same step (before
+  // going back and on again) is told apart by it.
+  const currentVisit = interaction.current_step_id
+    ? await db.queryOne<{ id: string }>(
+        `SELECT id FROM flow_interaction_steps
+          WHERE tenant_id = ? AND interaction_id = ? AND step_id = ?
+            AND state IN ('pending', 'waiting_input', 'processing')
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1`,
+        [tenantId, interaction.id, interaction.current_step_id]
+      )
+    : null;
+  // A submit took the step between the write above and this read: read the interaction again
+  // rather than answer a step without its visit.
+  if (interaction.current_step_id && !currentVisit) return 'busy';
+  const backScreens = await runtimeBackScreens(
+    db,
+    tenantId,
+    interaction.id,
+    interaction.current_step_id,
+    {
+      runtime: contract,
+      editor: parseEditorSnapshot(version.editor_snapshot_json),
+      requestContext,
+    }
+  );
 
   return c.json({
     schema_version: FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
@@ -5498,6 +5620,7 @@ async function resumeInteractionOnce(
       flow_version_id: interaction.flow_version_id,
       current_node_id: interaction.current_node_id,
       current_step_id: interaction.current_step_id,
+      current_visit_id: currentVisit?.id ?? null,
       expires_at: interaction.expires_at,
     },
     contract,
@@ -5505,6 +5628,8 @@ async function resumeInteractionOnce(
     signature,
     expires_in: Math.max(0, interaction.expires_at - now),
     resumed: true,
+    // The screens a link on the current screen can go back to (see `/back`).
+    back_screens: backScreens,
   });
 }
 
@@ -5845,8 +5970,9 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       'Published Flow runtime has no displayable initial step'
     );
   }
+  let currentVisitId = stepRowId;
   if (initialDisplayResolution.autoAdvancedSteps.length > 0) {
-    await timeRuntimeStartSpan(timing, 'persist_auto_advance', () =>
+    currentVisitId = await timeRuntimeStartSpan(timing, 'persist_auto_advance', () =>
       persistInitialAutoAdvancedSteps({
         db,
         tenantId,
@@ -5903,6 +6029,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       flow_version_id: version.id,
       current_node_id: initialCurrentStep.source_node_id,
       current_step_id: initialCurrentStep.id,
+      current_visit_id: currentVisitId,
       expires_at: expiresAt,
     },
     assignment: {
@@ -6169,7 +6296,23 @@ export async function loginRuntimeEmailVerificationChallengeHandler(c: AuthConte
   });
 }
 
-export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
+/**
+ * A live interaction a request may act on at its current step: the Flow runtime is on, the
+ * interaction is active and not expired, the contract the browser holds is the one signed for it,
+ * and the step the request names is the current one. Otherwise, the error to answer.
+ */
+async function openRuntimeStepRequest(c: AuthContext): Promise<
+  | Response
+  | {
+      tenantId: string;
+      interactionId: string;
+      interaction: FlowInteractionRow;
+      db: DatabaseAdapter;
+      body: SubmitRequest;
+      selectedHandle: string | null;
+      now: number;
+    }
+> {
   const tenantId = getTenantIdFromContext(c);
   const enabled = await isLoginRuntimeFlowEnabled(c.env, tenantId);
   if (!enabled) {
@@ -6353,6 +6496,14 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
 
+  return { tenantId, interactionId, interaction, db, body, selectedHandle, now };
+}
+
+export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
+  const opened = await openRuntimeStepRequest(c);
+  if (opened instanceof Response) return opened;
+  const { tenantId, interactionId, interaction, db, body, selectedHandle, now } = opened;
+
   // From here on this submit holds the interaction: a second submit of the same step (another
   // tab, a retried request) is answered step_conflict before it records anything.
   // The claim's expiry and the window to act in are counted from the same moment, the claim's.
@@ -6403,6 +6554,338 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   }
 }
 
+/** The steps of a hydrated runtime as going back sees them: each with the key of its screen. */
+function backStepsOf(runtime: FlowRuntimeContract): Map<string, BackStep> {
+  return new Map(
+    runtime.ui.steps.map((step) => {
+      const screen = parseJsonRecord(parseJsonRecord(step.config).screen);
+      return [
+        step.id,
+        {
+          id: step.id,
+          component: step.component,
+          screenKey: readString(screen.screen_key, 200),
+        },
+      ];
+    })
+  );
+}
+
+/**
+ * The screens the person can go back to from the interaction's current step, nearest first (see
+ * runtime-back-navigation). Read from the interaction's completed visits.
+ */
+async function runtimeBackTargets(
+  db: DatabaseAdapter,
+  tenantId: string,
+  interactionId: string,
+  currentStepId: string | null,
+  flow: RuntimeBackFlow
+): Promise<BackTarget[]> {
+  const { runtime, editor, requestContext } = flow;
+  const steps = backStepsOf(runtime);
+  const current = currentStepId ? steps.get(currentStepId) : undefined;
+  if (!current || current.component !== 'screen') return [];
+  const visits = await db.query<BackVisit>(
+    `SELECT id, step_id, selected_handle, created_at, state_json FROM flow_interaction_steps
+      WHERE tenant_id = ? AND interaction_id = ? AND state = 'completed'
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${BACK_LOOKBACK}`,
+    [tenantId, interactionId]
+  );
+  // A full page may have cut the oldest second short: its visits are left out (the way back
+  // stops before them rather than pass one it did not read).
+  const oldestSecond =
+    visits.length === BACK_LOOKBACK
+      ? Math.min(...visits.map((visit) => Number(visit.created_at)))
+      : null;
+  const read =
+    oldestSecond === null
+      ? visits
+      : visits.filter((visit) => Number(visit.created_at) !== oldestSecond);
+  // Where the Flow goes from a visit, by the way out it took (as a submit resolves it).
+  const nextStepIdOf = (visit: BackVisit) => {
+    const index = runtime.ui.steps.findIndex((step) => step.id === visit.step_id);
+    if (index < 0) return null;
+    const routed = routingHandleOf(runtime.ui.steps[index], editor, visit.selected_handle ?? null);
+    if (routed === undefined) return null;
+    return resolveNextStep(runtime, index, editor, routed, requestContext).step?.id ?? null;
+  };
+  return backTargets(current, read, steps, nextStepIdOf);
+}
+
+/** What going back reads of the Flow: its hydrated runtime, its graph and the request. */
+interface RuntimeBackFlow {
+  runtime: FlowRuntimeContract;
+  editor: FlowEditorState | null;
+  requestContext: FlowRequestContext;
+}
+
+/** The keys of the screens a link on the current screen can go back to (for the browser). */
+async function runtimeBackScreens(
+  db: DatabaseAdapter,
+  tenantId: string,
+  interactionId: string,
+  currentStepId: string | null,
+  flow: RuntimeBackFlow
+): Promise<string[]> {
+  const targets = await runtimeBackTargets(db, tenantId, interactionId, currentStepId, flow);
+  return targets.map((target) => target.screenKey);
+}
+
+/** The interaction's published runtime, hydrated as the browser was given it; null when gone. */
+async function hydratedInteractionRuntime(
+  c: AuthContext,
+  db: DatabaseAdapter,
+  tenantId: string,
+  interaction: FlowInteractionRow
+): Promise<RuntimeBackFlow | null> {
+  const version = await getFlowVersion(
+    db,
+    tenantId,
+    interaction.flow_id,
+    interaction.flow_version_id
+  );
+  const runtimeSnapshot = version ? parseRuntimeSnapshot(version.runtime_snapshot_json) : null;
+  if (!version || !runtimeSnapshot) return null;
+  const editor = parseEditorSnapshot(version.editor_snapshot_json);
+  const requestContext = getRequestContextFromInteraction(interaction);
+  const runtime = await hydrateRuntimeContract(
+    c,
+    db,
+    tenantId,
+    normalizeRuntime(
+      runtimeSnapshot,
+      {
+        flow_id: interaction.flow_id,
+        flow_kind: runtimeSnapshot.flow_kind,
+        target_type: interaction.saml_sp_id
+          ? 'saml_sp'
+          : interaction.client_id
+            ? 'oidc_client'
+            : 'tenant',
+        target_id: interaction.saml_sp_id ?? interaction.client_id,
+        published_version_id: interaction.flow_version_id,
+      },
+      version,
+      requestContext
+    ),
+    requestContext,
+    editor
+  );
+  return { runtime, editor, requestContext };
+}
+
+/**
+ * `POST /api/v1/login/interactions/:interaction_id/back`: from the current screen, back to a
+ * screen passed before with only screens since (a screen part `link` with `link_screen`). The
+ * screens passed since are undone and shown again as the person goes on; their answers stay with
+ * the interaction until they are submitted again. Held like a submit (claimRuntimeSubmit), so it
+ * and a submit of the same step cannot both land.
+ */
+export async function loginRuntimeInteractionBackHandler(c: AuthContext) {
+  const opened = await openRuntimeStepRequest(c);
+  if (opened instanceof Response) return opened;
+  const { tenantId, interactionId, interaction, db, body, now } = opened;
+  const targetScreen = readString(body.target_screen, 96);
+  const notAllowed = () =>
+    runtimeError(
+      c,
+      409,
+      'back_not_allowed',
+      'This screen cannot be gone back to from here',
+      'AR_FLOW_BACK_NOT_ALLOWED',
+      'recoverable',
+      'retry_step',
+      interactionId
+    );
+  if (!targetScreen) return notAllowed();
+
+  const flow = await hydratedInteractionRuntime(c, db, tenantId, interaction);
+  const runtime = flow?.runtime;
+  const current = runtime ? findCurrentStep(runtime, interaction) : null;
+  if (!flow || !runtime || !current) {
+    return runtimeError(
+      c,
+      409,
+      'flow_version_unavailable',
+      'Published Flow version is unavailable',
+      'AR_FLOW_VERSION_UNAVAILABLE',
+      'configuration_error',
+      'contact_administrator',
+      interactionId
+    );
+  }
+
+  const claimedAtMs = Date.now();
+  const claim: RuntimeSubmitClaim = {
+    id: crypto.randomUUID(),
+    saved: false,
+    actBeforeMs: claimedAtMs + FLOW_SUBMIT_CLAIM_ACT_WINDOW_MS,
+  };
+  const claimed = await claimRuntimeSubmit(
+    db,
+    tenantId,
+    interaction,
+    claim.id,
+    Math.floor(claimedAtMs / 1000)
+  );
+  if (claimed === 'not_active') {
+    return runtimeError(
+      c,
+      409,
+      'interaction_not_active',
+      'Flow interaction is no longer active',
+      'AR_FLOW_NOT_ACTIVE',
+      'restart_required',
+      'restart_interaction',
+      interactionId
+    );
+  }
+  if (claimed === 'conflict') return stepConflictError(c, interactionId);
+  try {
+    // Made on an earlier visit of this screen (another tab, before going back and on): not this one.
+    const submittedVisitId = readOptionalString(body.visit_id, 200);
+    if (submittedVisitId) {
+      const visit = await db.queryOne<{ id: string }>(
+        `SELECT id FROM flow_interaction_steps
+          WHERE tenant_id = ? AND interaction_id = ? AND step_id = ?
+            AND state IN ('pending', 'waiting_input', 'processing')
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1`,
+        [tenantId, interactionId, current.step.id]
+      );
+      if (visit?.id !== submittedVisitId) return stepConflictError(c, interactionId);
+    }
+    // Read under the claim: no submit can move the interaction on while the way back is chosen.
+    const targets = await runtimeBackTargets(
+      db,
+      tenantId,
+      interactionId,
+      interaction.current_step_id,
+      flow
+    );
+    const target = targets.find((candidate) => candidate.screenKey === targetScreen);
+    const targetStep = target
+      ? runtime.ui.steps.find((step) => step.id === target.stepId)
+      : undefined;
+    if (!target || !targetStep) return notAllowed();
+    const heldByThisClaim = `EXISTS (
+         SELECT 1 FROM flow_interactions
+          WHERE tenant_id = ? AND id = ? AND submit_claim_id = ? AND submit_claim_expires_at IS NULL)`;
+    if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
+    const undone = JSON.stringify({
+      returned_to_step_id: target.stepId,
+      returned_at_ms: Date.now(),
+    });
+    let saved: ExecuteResult[];
+    try {
+      saved = await writeAtomically(db, (write) => {
+        // The interaction first, under the claim and still at the step it was read at.
+        write(
+          `UPDATE flow_interactions
+              SET current_node_id = ?, current_step_id = ?, updated_at = ?,
+                  submit_claim_expires_at = NULL
+            WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+              AND current_step_id = ? AND submit_claim_id = ?
+              AND submit_claim_expires_at IS NOT NULL`,
+          [
+            targetStep.source_node_id,
+            targetStep.id,
+            now,
+            tenantId,
+            interactionId,
+            current.step.id,
+            claim.id,
+          ]
+        );
+        // The step left (not completed) and the screens passed since the target are undone: they
+        // are no longer behind the person.
+        write(
+          `UPDATE flow_interaction_steps
+              SET state = 'skipped', state_json = ?, updated_at = ?
+            WHERE tenant_id = ? AND interaction_id = ? AND step_id = ?
+              AND state IN ('pending', 'waiting_input', 'processing')
+              AND ${heldByThisClaim}`,
+          [undone, now, tenantId, interactionId, current.step.id, tenantId, interactionId, claim.id]
+        );
+        for (const visitId of target.undoneVisitIds) {
+          write(
+            `UPDATE flow_interaction_steps
+                SET state = 'skipped', updated_at = ?
+              WHERE tenant_id = ? AND id = ? AND interaction_id = ? AND state = 'completed'
+                AND ${heldByThisClaim}`,
+            [now, tenantId, visitId, interactionId, tenantId, interactionId, claim.id]
+          );
+        }
+        write(
+          `INSERT INTO flow_interaction_steps (
+            id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
+            created_at, updated_at
+          ) SELECT ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?
+             WHERE ${heldByThisClaim}`,
+          [
+            generateId(),
+            tenantId,
+            interactionId,
+            targetStep.source_node_id,
+            targetStep.id,
+            getStepStateForRuntimeStep(targetStep),
+            now,
+            now,
+            tenantId,
+            interactionId,
+            claim.id,
+          ]
+        );
+      });
+    } catch (error) {
+      if (isSerializationConflict(error)) return stepConflictError(c, interactionId);
+      throw error;
+    }
+    if ((saved[0]?.rowsAffected ?? 0) === 0) return stepConflictError(c, interactionId);
+    // Saved under the claim, its expiry cleared (as a submit leaves it): the next submit claims anew.
+    claim.saved = true;
+
+    await scheduleRuntimeAuditEvents(
+      c,
+      tenantId,
+      interaction,
+      [
+        {
+          eventType: 'flow.node.entered',
+          result: 'success',
+          nodeId: targetStep.source_node_id,
+          userId: interaction.user_id,
+        },
+      ],
+      'back_navigation'
+    );
+    const backScreens = await runtimeBackScreens(db, tenantId, interactionId, targetStep.id, flow);
+    return c.json({
+      schema_version: FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
+      interaction: {
+        id: interactionId,
+        state: interaction.state,
+        flow_id: interaction.flow_id,
+        flow_version_id: interaction.flow_version_id,
+        current_node_id: targetStep.source_node_id,
+        current_step_id: targetStep.id,
+        expires_at: interaction.expires_at,
+      },
+      step: runtimeStepResponse(targetStep),
+      completed: false,
+      output: null,
+      back_screens: backScreens,
+    });
+  } catch (error) {
+    if (!claim.saved && isSerializationConflict(error)) return stepConflictError(c, interactionId);
+    throw error;
+  } finally {
+    if (!claim.saved) await releaseRuntimeSubmitClaim(c, db, tenantId, interactionId, claim.id);
+  }
+}
+
 /**
  * The submit of a step, once it holds its interaction (claimRuntimeSubmit): `claim.saved` is set
  * when the step is saved under the claim; otherwise the caller lets go of it.
@@ -6428,6 +6911,11 @@ async function submitClaimedRuntimeStep(input: {
      LIMIT 1`,
     [tenantId, interactionId, interaction.current_node_id, interaction.current_step_id]
   );
+  // Made on an earlier visit of this step (another tab, before going back and on): not this one.
+  const submittedVisitId = readOptionalString(body.visit_id, 200);
+  if (stepState && submittedVisitId && submittedVisitId !== stepState.id) {
+    return stepConflictError(c, interactionId);
+  }
   if (!stepState || stepState.state === 'completed' || stepState.state === 'failed') {
     return runtimeError(
       c,
@@ -6527,7 +7015,12 @@ async function submitClaimedRuntimeStep(input: {
       sessionOptionsForRuntime(runtime, interaction)
     );
   } else {
-    branchResolution = { selectedHandle };
+    // A screen sent with no way out is its submit: its answers are read like one (no way out
+    // that reads none is taken unnamed).
+    branchResolution = {
+      selectedHandle:
+        current.step.component === 'screen' ? (selectedHandle ?? 'submitted') : selectedHandle,
+    };
   }
 
   if (branchResolution.unavailable) {
@@ -6600,10 +7093,14 @@ async function submitClaimedRuntimeStep(input: {
     }
     branchResolution.userId = verifiedUserId;
   }
-  const nextResolution =
+  const routedHandle = routingHandleOf(current.step, editor, effectiveSelectedHandle);
+  const nextResolution: { step: FlowRuntimeStep | null; errorCode?: string } =
     current.step.component === 'completion'
-      ? { step: null as FlowRuntimeStep | null }
-      : resolveNextStep(runtime, current.index, editor, effectiveSelectedHandle, requestContext);
+      ? { step: null }
+      : routedHandle === undefined
+        ? // An exit the screen does not offer (no link part names it).
+          { step: null, errorCode: 'AR_FLOW_INVALID_SELECTED_HANDLE' }
+        : resolveNextStep(runtime, current.index, editor, routedHandle, requestContext);
   if (nextResolution.errorCode) {
     await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
@@ -7167,6 +7664,13 @@ async function submitClaimedRuntimeStep(input: {
       completed,
     });
 
+  const backScreens = nextStep
+    ? await runtimeBackScreens(db, tenantId, interactionId, nextStep.id, {
+        runtime,
+        editor,
+        requestContext,
+      })
+    : [];
   return c.json({
     schema_version: FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
     interaction: {
@@ -7189,5 +7693,6 @@ async function submitClaimedRuntimeStep(input: {
           redirectUrl: completedProtocolRedirect.redirectUrl,
         })
       : null,
+    back_screens: backScreens,
   });
 }

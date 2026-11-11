@@ -891,6 +891,17 @@ export interface SAMLRequestContext {
    */
   attemptInteractionId?: string;
   /**
+   * The authorization request (challenge id) this SP-initiated sign-in answers: the ACS holds it
+   * to that request's app (the interaction must have been started for it; with none, the app's
+   * own sign-in Flow sets the methods and the session).
+   */
+  flowChallengeId?: string;
+  /**
+   * When the IdP sent the person to sign in for this request (milliseconds). A session made since
+   * answers it only if it was made in an interaction started for it (`sessionAnswersSAMLRequest`).
+   */
+  sentToSignInAt?: number;
+  /**
    * A sign-in begun at a lite Login UI start: the lite `/callback` of its transaction and grant
    * (made by the start, never from a request). The ACS answers with a handoff to it, sends its
    * failures there, and lets it create an account in a lite tenant.

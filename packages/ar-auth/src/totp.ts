@@ -1,3 +1,11 @@
+import {
+  eligibilityRefusal,
+  notifyExistingAccountSignUp,
+  profileAllowsSignUp,
+  flowCompletionRedirect,
+  registrationRefusalResponse,
+  signUpPolicyFor,
+} from './registration-policy-gate';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
@@ -9,6 +17,7 @@ import {
 } from './sign-in-attempt-recording';
 import {
   AR_ERROR_CODES,
+  SIGN_IN_ATTEMPT_INTERACTION_HEADER,
   AUTH_EVENTS,
   BROWSER_STATE_COOKIE_NAME,
   CanonicalRuntimeUserStore,
@@ -36,13 +45,21 @@ import {
   profileForTotpPreset,
   publishEvent,
   resolvePostLoginRedirectUrl,
+  signInAttemptInteractionFromMetadata,
   resolveTotpAttemptLimit,
   resolveAccountDataContextFromHono,
   verifyTotpCode,
   type AuthEventData,
   checkEmailRegistration,
+  isInteractionChallengeMismatchError,
+  layerTenantSettingsDocument,
 } from '@authrim/ar-lib-core';
-import { resolveSessionTtl } from './session-ttl';
+import {
+  interactionChallengeMismatchResponse,
+  namedInteractionChallengeRefusal,
+  sessionForChallenge,
+  sessionTtlForProfile,
+} from './flow-session-profile';
 import {
   buildCanonicalProfileRuntimeUserFields,
   persistRegistrationFieldValuesFromEnv,
@@ -113,6 +130,9 @@ interface TotpSignupChallenge {
     invite_reservation_id?: string;
     /** The invitation email-code step proved the sign-up controls this email. */
     email_verified_by_invitation?: boolean;
+    session_profile_ref?: string;
+    /** The registration interaction the options were made in (checked live then). */
+    runtime_interaction_id?: string;
   };
 }
 
@@ -172,15 +192,18 @@ async function readAuthenticationMethodSettings(
     const raw = await env.SETTINGS?.get(
       `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
     );
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+    let stored: Record<string, unknown> = {};
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+      stored = parsed as Record<string, unknown>;
     }
+    // The platform's Default methods under the tenant's (the authenticator app is off by default,
+    // so an unreadable layer, read as nothing set, leaves it off).
+    return await layerTenantSettingsDocument(env, AUTHENTICATION_METHODS_CATEGORY, stored);
   } catch {
     return {};
   }
-  return {};
 }
 
 async function isTotpUsageAvailable(
@@ -424,6 +447,32 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
     // signup-screen-check.ts).
     const screenCheck = await checkSignUpScreen(c, tenantId, { customFields });
     if (!screenCheck.ok) return signUpScreenRefusalResponse(c, screenCheck);
+    // The registration Flow's policy (registration-policy-gate.ts): who may sign up, asked before
+    // anything is looked up about the address.
+    // The registration interaction it names must have been started for the request it answers.
+    const interactionRefusal = await namedInteractionChallengeRefusal(
+      c,
+      tenantId,
+      undefined,
+      typeof body.authorization_challenge_id === 'string' ? body.authorization_challenge_id : null
+    );
+    if (interactionRefusal) return interactionRefusal;
+    const signUpPolicy = await signUpPolicyFor(c, tenantId);
+    const refusal = eligibilityRefusal(signUpPolicy.policy, {
+      email,
+      hasInvitation: typeof body.invite_token === 'string' && body.invite_token.length > 0,
+    });
+    if (refusal) return registrationRefusalResponse(c, signUpPolicy.policy, refusal);
+    if (!(await profileAllowsSignUp(c, tenantId, signUpPolicy, 'totp'))) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
+    // An authenticator-app sign-up cannot be held until its address is checked: under a Flow that
+    // checks it first (`email_check: before`), people sign up by email code or by passkey.
+    if (signUpPolicy.fromFlow && signUpPolicy.policy.email_check === 'before') {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+        extensions: { reason: 'signup_email_check_required' },
+      });
+    }
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,
@@ -468,6 +517,23 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
     const existingUser = await runtimeUsers?.findByEmail(email, { includeInactive: true });
     if (existingUser || blocked) {
+      // Under a registration Flow, what an address in use gets is its policy's (as a passkey
+      // sign-up: the owner told by email and the same refusal as any other, or its answer).
+      if (signUpPolicy.fromFlow) {
+        if (signUpPolicy.policy.duplicate === 'mail' && existingUser && !blocked) {
+          await notifyExistingAccountSignUp(c, {
+            tenantId,
+            userId: existingUser.id,
+            email,
+          });
+          return registrationRefusalResponse(
+            c,
+            { ...signUpPolicy.policy, denied_response: 'generic' },
+            'account_exists'
+          );
+        }
+        return registrationRefusalResponse(c, signUpPolicy.policy, 'account_exists');
+      }
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
@@ -528,6 +594,15 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       ttl: TOTP_SIGNUP_CHALLENGE_TTL_SECONDS,
       metadata: {
         credential_id: credentialId,
+        // The registration Flow's session profile, for the session the activation makes.
+        ...(signUpPolicy.sessionProfileRef !== 'default'
+          ? { session_profile_ref: signUpPolicy.sessionProfileRef }
+          : {}),
+        // The registration interaction it belongs to (a live one, checked when the policy was
+        // read): the activation goes to that Flow's destination, not one a later request names.
+        ...(signUpPolicy.source === 'interaction'
+          ? { runtime_interaction_id: c.req.header(SIGN_IN_ATTEMPT_INTERACTION_HEADER) }
+          : {}),
         authorization_challenge_id:
           typeof body.authorization_challenge_id === 'string'
             ? body.authorization_challenge_id
@@ -823,7 +898,24 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
     if (backupCodes instanceof Response) return backupCodes;
 
     activationStage = 'session_config';
-    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'totp');
+    let signUpSession: Awaited<ReturnType<typeof sessionTtlForProfile>>;
+    try {
+      signUpSession = await sessionTtlForProfile(
+        c,
+        tenantId,
+        'totp',
+        typeof metadata.session_profile_ref === 'string' ? metadata.session_profile_ref : null
+      );
+    } catch {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Session settings are unavailable.',
+        },
+        503
+      );
+    }
+    const sessionTtl = signUpSession.ttl;
     const authTime = Math.floor(proofVerifiedAtMs / 1000);
     const defaultAcr = await resolveTotpDefaultAcr(c.env, tenantId);
     const authorizationChallengeId = challengeData.metadata?.authorization_challenge_id;
@@ -862,6 +954,11 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
         // When the code was verified (milliseconds), for assurance step-ups.
         proven_at: proofVerifiedAtMs,
         totp_credential_id: activated.id,
+        // The registration interaction it was made in (see login-runtime-flow).
+        ...(typeof metadata.runtime_interaction_id === 'string'
+          ? { runtime_interaction_id: metadata.runtime_interaction_id }
+          : {}),
+        ...signUpSession.snapshot,
       },
       tenantId
     );
@@ -932,9 +1029,17 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
     );
 
     activationStage = 'response_build';
+    // An application's continuation first; else the registration Flow's own destination (the
+    // registration interaction its options were made in); else the tenant's.
     const postLoginRedirect = authorizationContinuation
       ? authorizationContinuation.redirectUrl
-      : (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl;
+      : ((await flowCompletionRedirect(
+          c,
+          tenantId,
+          typeof metadata.runtime_interaction_id === 'string'
+            ? metadata.runtime_interaction_id
+            : null
+        )) ?? (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl);
 
     return c.json({
       ok: true,
@@ -1102,7 +1207,20 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
       const challengeId = crypto.randomUUID();
       const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
       // The Flow interaction this attempt belongs to, once checked (for its failure records).
-      const attemptInteraction = await signInAttemptInteractionMetadata(c, tenantId);
+      let attemptInteraction: Record<string, string>;
+      try {
+        attemptInteraction = await signInAttemptInteractionMetadata(c, tenantId, undefined, {
+          strict: true,
+        });
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The sign-in flow is unavailable.',
+          },
+          503
+        );
+      }
       await timeAuthRequestDiagnosticOperation(c, 'auth_totp_challenge_store', () =>
         challengeStore.storeChallengeRpc({
           id: `totp_login:${challengeId}`,
@@ -1336,7 +1454,40 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'totp');
+      // The Flow the sign-in was started in takes TOTP, and its session profile sets the session.
+      let flowSession: Awaited<ReturnType<typeof sessionForChallenge>>;
+      try {
+        flowSession = await sessionForChallenge(
+          c,
+          tenantId,
+          'totp',
+          challengeData.metadata,
+          'totp',
+          // A challenge bound at the start equals this one (checked above).
+          authorizationChallengeId || null
+        );
+      } catch (error) {
+        if (isInteractionChallengeMismatchError(error)) {
+          return failed(interactionChallengeMismatchResponse(c), 'challenge_mismatch', userId);
+        }
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Session settings are unavailable.',
+          },
+          503
+        );
+      }
+      if (!flowSession.allowed) {
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+            extensions: { authentication_method: 'totp', usage: 'login' },
+          }),
+          'method_disabled',
+          userId
+        );
+      }
+      const sessionTtl = flowSession.profiled.ttl;
       const now = Date.now();
       const authTime = Math.floor(proofVerifiedAtMs / 1000);
       let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
@@ -1372,6 +1523,11 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
             // When the code was verified (milliseconds), for assurance step-ups.
             proven_at: proofVerifiedAtMs,
             totp_credential_id: verifiedCredentialId,
+            // The Flow interaction it was made in (see login-runtime-flow sessionMadeInInteraction).
+            ...(flowSession.interactionId
+              ? { runtime_interaction_id: flowSession.interactionId }
+              : {}),
+            ...flowSession.profiled.snapshot,
           },
           tenantId
         )
@@ -1444,9 +1600,15 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       });
       c.executionCtx.waitUntil(auditPromise);
 
+      // An application's continuation first; else the sign-in Flow's own destination; else the
+      // tenant's.
       const postLoginRedirect = authorizationContinuation
         ? authorizationContinuation.redirectUrl
-        : (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl;
+        : ((await flowCompletionRedirect(
+            c,
+            tenantId,
+            signInAttemptInteractionFromMetadata(challengeData.metadata)
+          )) ?? (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl);
 
       return c.json({
         success: true,

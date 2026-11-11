@@ -35,6 +35,20 @@
 	const page = (pageTemplate: NonNullable<LoginUIOverrides['pageTemplate']>): LoginUIOverrides => ({
 		pageTemplate
 	});
+	const FORM_IMAGE_LAYOUTS = [
+		{ label: 'standard', template: 'standard', pageTemplate: { layout: 'centered_card' } },
+		{
+			label: 'split full',
+			template: 'split',
+			pageTemplate: { layout: 'split_panel', formFrame: 'full' }
+		},
+		{
+			label: 'split card',
+			template: 'split',
+			pageTemplate: { layout: 'split_panel', formFrame: 'card', splitBackgroundMode: 'brand' }
+		},
+		{ label: 'minimal', template: 'minimal', pageTemplate: { layout: 'centered_card' } }
+	] as const;
 </script>
 
 {#snippet full(ui: LoginUIOverrides = {}, kind: 'login' | 'signup' = 'login', client = false)}
@@ -125,20 +139,23 @@
 </Story>
 
 <Story
-	name="Images can be intentionally absent in dark mode"
+	name="Dark mode keeps the pictures and the logo, darkening the pictures"
 	play={async ({ canvasElement }) => {
 		const figures = within(canvasElement).getAllByRole('figure');
 		const [light, dark] = figures;
-		await expect(light.querySelector('[data-has-page-background-image="true"]')).not.toBeNull();
-		await expect(
-			light.querySelector('[data-has-login-panel-background-image="true"]')
-		).not.toBeNull();
-		await expect(light.querySelector('img.auth-header__logo')).not.toBeNull();
-		await expect(dark.querySelector('[data-has-page-background-image="false"]')).not.toBeNull();
-		await expect(
-			dark.querySelector('[data-has-login-panel-background-image="false"]')
-		).not.toBeNull();
-		await expect(dark.querySelector('img.auth-header__logo')).toBeNull();
+		for (const figure of [light, dark]) {
+			await expect(figure.querySelector('[data-has-page-background-image="true"]')).not.toBeNull();
+			await expect(
+				figure.querySelector('[data-has-login-panel-background-image="true"]')
+			).not.toBeNull();
+			await expect(figure.querySelector('img.auth-header__logo')).not.toBeNull();
+		}
+		const veil = (figure: HTMLElement) =>
+			(
+				figure.querySelector('[style*="--login-page-image-dim"]') as HTMLElement | null
+			)?.style.getPropertyValue('--login-page-image-dim') ?? '';
+		await expect(veil(light)).toBe('');
+		await expect(veil(dark)).toContain('rgb(0 0 0 / 45%)');
 	}}
 >
 	{#snippet template()}
@@ -153,12 +170,52 @@
 					appearance: {
 						backgroundImageUrl: SAMPLE_BACKGROUND_URL,
 						loginPanelBackgroundImageUrl: SAMPLE_BACKGROUND_URL,
-						darkImages: {
-							logoUrl: null,
-							backgroundImageUrl: null,
-							loginPanelBackgroundImageUrl: null
-						}
+						backgroundImageDarkDim: 45
 					}
+				}
+			}))}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Form area image on standard and split layouts"
+	play={async ({ canvasElement }) => {
+		const [standard, splitFull, splitCard, minimal] = within(canvasElement).getAllByRole('figure');
+		const cardImage = standard.querySelector<HTMLElement>('.card-background-image');
+		await expect(cardImage).not.toBeNull();
+		await expect(getComputedStyle(cardImage!).display).toBe('block');
+		await expect(getComputedStyle(cardImage!).backgroundImage).not.toBe('none');
+		await expect(getComputedStyle(cardImage!).opacity).toBe('0.45');
+		await expect(getComputedStyle(cardImage!).filter).toBe('grayscale(1)');
+		for (const figure of [splitFull, splitCard]) {
+			const column = figure.querySelector<HTMLElement>('.auth-container');
+			await expect(column).not.toBeNull();
+			const image = getComputedStyle(column!, '::before');
+			await expect(image.display).toBe('block');
+			await expect(image.backgroundImage).not.toBe('none');
+			await expect(image.opacity).toBe('0.45');
+		}
+		const minimalImage = minimal.querySelector<HTMLElement>('.card-background-image');
+		await expect(minimalImage).not.toBeNull();
+		await expect(getComputedStyle(minimalImage!).display).toBe('none');
+	}}
+>
+	{#snippet template()}
+		<ShellGallery
+			columns={2}
+			height={460}
+			cells={FORM_IMAGE_LAYOUTS.map(({ label, template, pageTemplate }) => ({
+				label,
+				ui: {
+					pageTemplate: {
+						...pageTemplate,
+						template,
+						palette: 'clean' as const,
+						loginPanelBackgroundOpacity: 45,
+						loginPanelBackgroundGrayscale: true
+					},
+					appearance: { loginPanelBackgroundImageUrl: SAMPLE_BACKGROUND_URL }
 				}
 			}))}
 		/>

@@ -1,3 +1,4 @@
+import type { ScreenKind } from '#lib/api/screens.js';
 import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 /**
@@ -43,7 +44,26 @@ export interface AccountChoice {
 
 export interface AccountField {
 	key: string;
-	kind: 'select' | 'checks' | 'text';
+	/**
+	 * `profile`: one of the tenant's sign-in method profiles, by id; `session-profile`: one of its
+	 * session profiles, by id; `screen`: one of its screens of `screenKinds`, by id. Their choices
+	 * are loaded, not listed here.
+	 */
+	kind:
+		| 'select'
+		| 'checks'
+		| 'text'
+		| 'profile'
+		| 'session-profile'
+		| 'screen'
+		| 'client'
+		| 'client-redirect'
+		| 'saml-sp';
+	screenKinds?: readonly ScreenKind[];
+	/** A `client-redirect` field: the key of the `client` field whose redirect URIs it offers. */
+	clientKey?: string;
+	/** The value a new flow starts with (most settings start unset). */
+	initial?: AccountValue;
 	/** The label of a select, the heading of a group of checkboxes. */
 	label: MessageKey;
 	hint?: MessageKey;
@@ -58,10 +78,12 @@ export interface AccountField {
 export interface AccountPart {
 	id: string;
 	label: MessageKey;
-	lead: MessageKey;
+	lead?: MessageKey;
 	/** A fact about how the step behaves that is not a choice. */
 	note?: MessageKey;
 	fields: readonly AccountField[];
+	/** Its title can be changed (kept as `titleKey(id)` among the flow's values). */
+	renamable?: boolean;
 }
 
 export interface AccountGroup {
@@ -70,6 +92,11 @@ export interface AccountGroup {
 	parts: readonly string[];
 	/** Not there at first: added with the flow's "+" and taken away again with its ×. */
 	optional?: boolean;
+	/**
+	 * Optional and added as often as needed, up to this many: each one is a step of its own
+	 * (`<group>:<n>`), whose settings are its parts' with keys of their own (`<key>:<n>`).
+	 */
+	repeatable?: number;
 }
 
 export interface AccountFlowDef {
@@ -80,6 +107,11 @@ export interface AccountFlowDef {
 	start: { title: MessageKey; detail: MessageKey };
 	end: { title: MessageKey; detail: MessageKey };
 	groups: readonly AccountGroup[];
+	/**
+	 * The settings that apply to the whole flow, not to one of its steps. When there are any, they
+	 * take the place of the overview on the right, in one frame.
+	 */
+	general?: readonly string[];
 	/** The flow can be run from its overview (a one-shot run). */
 	run?: 'csv' | 'scim-out';
 }

@@ -20,6 +20,7 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.create.category.consent': 'Einwilligung',
 	'sc.create.category.other': 'Sonstiges',
 	'sc.list.title': 'Seiten',
+	'sc.list.accountTable': 'Kontotabelle',
 	'sc.list.col.name': 'Name',
 	'sc.list.col.kind': 'Art',
 	'sc.list.col.usage': 'Verwendet in',
@@ -28,6 +29,7 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.list.actions': 'Aktionen für {name}',
 	'sc.list.open': '{name} öffnen',
 	'sc.list.empty': 'Keine Seiten',
+	'sc.list.emptyAccount': 'Keine Kontoseiten',
 	'sc.list.emptyFiltered': 'Keine passenden Seiten',
 	'sc.list.noAccess': 'Sie dürfen Seiten nicht ansehen',
 	'sc.list.loadFailed': 'Die Seiten konnten nicht geladen werden',
@@ -63,6 +65,8 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.delete.body': 'Eine gelöschte Seite kann nicht wiederhergestellt werden.',
 	'sc.delete.inUse': 'Eine verwendete Seite kann nicht gelöscht werden',
 	'sc.delete.system': 'Eine Standardseite kann nicht gelöscht werden',
+	'sc.delete.default':
+		'Eine Standardseite kann nicht gelöscht werden. Deaktivieren Sie sie stattdessen',
 	'sc.toast.deleted': 'Seite gelöscht',
 	'sc.toast.copied': 'Seite dupliziert',
 	'sc.error.delete': 'Die Seite konnte nicht gelöscht werden',
@@ -178,6 +182,27 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.set.body': 'Text',
 	'sc.set.href': 'Linkziel',
 	'sc.set.hrefHint': 'Ein #Anker, ein /relativer Pfad oder eine https://-Adresse',
+	'sc.set.linkAction': 'Was der Link tut',
+	'sc.set.linkAction.url': 'Öffnet eine URL',
+	'sc.set.linkAction.next': 'Geht weiter (sendet ab)',
+	'sc.set.linkAction.back': 'Zurück zum vorigen Bildschirm',
+	'sc.set.linkAction.skip': 'Überspringt den Bildschirm',
+	'sc.set.linkAction.exit': 'Verlässt ihn über einen benannten Ausgang',
+	'sc.set.linkActionHint.url': 'Öffnet die angegebene URL.',
+	'sc.set.linkActionHint.next':
+		'Sendet diesen Bildschirm ab, die Antworten werden geprüft. Wohin es geht, legt der Service-Flow fest.',
+	'sc.set.linkActionHint.back':
+		'Führt zum Bildschirm direkt davor zurück. Kam dazwischen etwas anderes als Bildschirme oder gibt es keinen davor, wird er angezeigt, ist aber nicht nutzbar.',
+	'sc.set.linkActionHint.skip':
+		'Verlässt diesen Bildschirm ohne seine Antworten. Wohin es geht, legt der Service-Flow fest (bis dahin dorthin, wohin es weitergeht).',
+	'sc.set.linkActionHint.exit':
+		'Verlässt diesen Bildschirm über einen benannten Ausgang, ohne seine Antworten. Wohin es geht, legt der Service-Flow fest (bis dahin dorthin, wohin es weitergeht).',
+	'sc.set.linkExit': 'Name des Ausgangs',
+	'sc.set.linkExitHint':
+		'Kleinbuchstaben, Ziffern und _, beginnend mit einem Buchstaben (bis 40). Der Service-Flow legt unter diesem Namen fest, wohin der Ausgang führt. Nicht submitted, skipped oder next.',
+	'sc.set.linkStyle': 'Darstellung',
+	'sc.set.linkStyleText': 'Textlink',
+	'sc.set.linkStyleButton': 'Schaltfläche',
 	'sc.set.captcha': 'Wann das CAPTCHA erscheint',
 	'sc.set.captchaInitial': 'Von Anfang an',
 	'sc.set.captchaSubmit': 'Beim Absenden',
@@ -234,6 +259,11 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.editor.partsRequired': 'Platzieren Sie mindestens einen Baustein',
 	'sc.editor.labelRequired': 'Ein Baustein hat keine Beschriftung ({name})',
 	'sc.editor.answerKeyRequired': 'Ein Baustein hat keinen Antwortschlüssel ({name})',
+	'sc.editor.identityRequired':
+		'Wählen Sie ein Identity-Schema-Attribut für diesen Baustein ({name})',
+	'sc.editor.linkUrlOnly': '„{name}“: Ein Link auf der Kontoseite kann nur eine URL öffnen',
+	'sc.editor.linkExitInvalid':
+		'„{name}“: Ein Ausgangsname besteht aus Kleinbuchstaben, Ziffern und _ und beginnt mit einem Buchstaben (nicht submitted, skipped oder next)',
 	'sc.editor.partNotForKind': 'Diese Art von Seite kann einen Baustein nicht enthalten ({name})',
 	'sc.editor.oneAccountWidget': 'Eine Kontoseite enthält höchstens ein Widget',
 	'sc.editor.targetsRequired': 'Ein Baustein hat kein Ziel für seine Antwort ({name})',

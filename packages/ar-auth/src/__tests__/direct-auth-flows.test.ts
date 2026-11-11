@@ -3223,6 +3223,110 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
   });
 
+  describe('a sign-up held to the tenant’s registration Flow', () => {
+    /** The tenant's own published registration Flow, with this policy on its registration step. */
+    const withTenantFlow = (policy: Record<string, unknown>) => {
+      const runtime = {
+        ui: {
+          steps: [
+            {
+              id: 'register',
+              component: 'registration_method_selector',
+              config: { registration_policy: policy },
+            },
+          ],
+        },
+      };
+      const earlier = mocks.coreAdapter.queryOne.getMockImplementation();
+      mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, params?: unknown[]) =>
+        String(sql).includes('FROM flow_assignments')
+          ? { runtime_snapshot_json: JSON.stringify(runtime) }
+          : earlier
+            ? ((await earlier(sql, params)) as unknown)
+            : null
+      );
+    };
+    const signUp = async (email: string) => {
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+      return directPasskeySignupStartHandler(
+        createContext(
+          {
+            client_id: 'web-client',
+            email,
+            code_challenge: 'signup-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        ) as never
+      );
+    };
+
+    it('refuses an address outside its domains, by passkey and by email code alike', async () => {
+      withTenantFlow({
+        eligibility: 'domain',
+        allowed_domains: ['example.com'],
+        denied_response: 'reason',
+      });
+      const refused = await signUp('someone@elsewhere.test');
+      expect(refused.status).toBe(403);
+      expect(JSON.stringify(await refused.json())).toContain('email_domain_not_allowed');
+      expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
+
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+      const sent = await directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email: 'someone@elsewhere.test',
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+            },
+            webHeaders()
+          )
+        ) as never
+      );
+      // The usual answer (a refusal here would tell a new address from one with an account),
+      // and nothing made or sent.
+      expect(sent.status).toBe(200);
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+      expect(
+        mocks.challengeStore.storeChallengeRpc.mock.calls.filter(
+          ([request]) => (request as { type?: string }).type === 'direct_email_code'
+        )
+      ).toEqual([]);
+    });
+
+    it('answers one refusal for every reason when it says none', async () => {
+      withTenantFlow({ eligibility: 'domain', allowed_domains: ['example.com'] });
+      const refused = await signUp('someone@elsewhere.test');
+      const body = JSON.stringify(await refused.json());
+      expect(body).toContain('signup_not_allowed');
+      expect(body).not.toContain('email_domain_not_allowed');
+    });
+
+    it('tells the owner of an address in use by email, and refuses as for any other reason', async () => {
+      withTenantFlow({ duplicate: 'mail' });
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_existing',
+        email: 'existing@example.com',
+        name: 'Existing User',
+      });
+      const refused = await signUp('existing@example.com');
+      expect(refused.status).toBe(403);
+      expect(JSON.stringify(await refused.json())).toContain('signup_not_allowed');
+      expect(mocks.emailNotifier.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'existing@example.com',
+          subject: 'You already have an account',
+        })
+      );
+      expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
+    });
+  });
+
   it('sends nothing to a recently deleted address, with the usual reply', async () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
     const send = (email: string) =>
@@ -4343,6 +4447,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         contract_hash: 'contract_hash',
       },
     });
+    // The send's registration policy is read first: the interaction runs no registration Flow,
+    // and the tenant has none of its own.
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
     mocks.coreAdapter.queryOne.mockResolvedValueOnce({
       state: 'active',
       current_step_id: 'complete:step',
@@ -5907,6 +6015,87 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       }
     }
   );
+
+  /** The Direct Auth artifact last stored (its challenge record). */
+  const storedArtifact = (): Record<string, unknown> | undefined =>
+    (mocks.challengeStore.storeChallengeRpc.mock.calls as Array<[Record<string, unknown>]>)
+      .map(([record]) => record)
+      .filter((record) => record.type === 'direct_auth_code')
+      .at(-1);
+
+  it('carries the checked interaction and the code’s use into the email-code artifact', async () => {
+    const codeVerifier = 'email-code-verifier-interaction';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    const challengeData = {
+      challenge: 'hashed-email-code',
+      userId: 'user_existing',
+      email: 'user@example.com',
+      metadata: {
+        code_challenge: codeChallenge,
+        client_id: 'web-client',
+        channel: 'browser',
+        usage: 'login',
+        transaction_id: 'attempt_2',
+        issued_at: Date.now() - 10_000,
+        // Named by the header only, and checked when the code was sent.
+        attempt_interaction_id: 'int-1',
+      },
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
+    const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeVerifyHandler(
+      enableEmailOtp(
+        createContext({
+          attempt_id: 'attempt_2',
+          code: '123456',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        })
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(storedArtifact()).toMatchObject({
+      metadata: { attempt_interaction_id: 'int-1', usage: 'login' },
+    });
+  });
+
+  it('carries the checked interaction into the passkey artifact', async () => {
+    const codeVerifier = 'passkey-login-code-verifier-interaction';
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+        attempt_interaction_id: 'int-1',
+      },
+    });
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginFinishHandler(
+      createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(storedArtifact()).toMatchObject({
+      metadata: { method: 'passkey', attempt_interaction_id: 'int-1' },
+    });
+  });
 
   it('verifies an email code and returns a direct-auth artifact bound to PKCE', async () => {
     const codeVerifier = 'email-code-verifier';

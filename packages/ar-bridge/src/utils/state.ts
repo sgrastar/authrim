@@ -52,13 +52,19 @@ export async function storeAuthState(
     'bridge-auth-state:store',
     { tenantId: state.tenantId }
   );
+  // The challenge column (core migration 008) is written only when there is one, so a state
+  // without it is stored as before the column existed.
+  const challengeColumn = state.flowChallengeId ? ', flow_challenge_id' : '';
   await coreAdapter.execute(
     `INSERT INTO external_idp_auth_states (
       id, tenant_id, client_id, provider_id, state, nonce, code_verifier, code_challenge, flow_id,
       redirect_uri, user_id, session_id, original_auth_request,
       max_age, acr_values, prompt, enable_sso, reauth_challenge_id, reauth_requested_at,
-      invite_id, invite_reservation_id, attempt_interaction_id, expires_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      invite_id, invite_reservation_id, attempt_interaction_id${challengeColumn}, expires_at,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${
+      challengeColumn ? ', ?' : ''
+    }, ?, ?)`,
     [
       id,
       state.tenantId,
@@ -82,6 +88,7 @@ export async function storeAuthState(
       state.inviteId || null,
       state.inviteReservationId || null,
       state.attemptInteractionId || null,
+      ...(challengeColumn ? [state.flowChallengeId] : []),
       state.expiresAt,
       now,
     ]
@@ -162,6 +169,7 @@ interface DbAuthState {
   invite_id?: string | null;
   invite_reservation_id?: string | null;
   attempt_interaction_id?: string | null;
+  flow_challenge_id?: string | null;
   expires_at: number;
   created_at: number;
   consumed_at: number | null;
@@ -275,6 +283,7 @@ function mapDbToAuthState(db: DbAuthState): ExternalIdpAuthState {
     inviteId: db.invite_id || undefined,
     inviteReservationId: db.invite_reservation_id || undefined,
     attemptInteractionId: db.attempt_interaction_id || undefined,
+    flowChallengeId: db.flow_challenge_id || undefined,
     expiresAt: db.expires_at,
     createdAt: db.created_at,
   };

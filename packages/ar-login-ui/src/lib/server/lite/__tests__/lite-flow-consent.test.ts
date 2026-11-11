@@ -1391,3 +1391,116 @@ describe('a sign-in screen with consent', () => {
 		expect(paths()).not.toContain('/api/auth/guest/login');
 	});
 });
+
+/** A screen's link part that goes back to the screen before (`link_action: back`): `back`. */
+describe('a link back to a screen', () => {
+	const SECOND_SCREEN = {
+		id: 'second',
+		source_node_id: 'n-second',
+		component: 'screen',
+		render: true,
+		config: {
+			screen: {
+				screen_key: 'step_two',
+				display_name: 'A little more',
+				fields: [
+					{ field: 'note', label: 'Note', block_type: 'identity_field', required: true },
+					{ field: 'link.back', label: 'Back', block_type: 'link', link_action: 'back' },
+					{
+						field: 'link.social',
+						label: 'Use a social account',
+						block_type: 'link',
+						link_action: 'exit',
+						link_exit: 'social'
+					}
+				]
+			}
+		}
+	};
+	let backScreens: string[];
+	beforeEach(() => {
+		currentStep = SECOND_SCREEN;
+		backScreens = ['step_one'];
+		routes['/api/v1/login/interactions/start'] = () =>
+			json({ ...startAnswer(), back_screens: backScreens });
+		routes['/api/v1/login/interactions/int-1/back'] = () =>
+			json({ completed: false, step: SELECT_STEP, back_screens: [] });
+	});
+	const back = (form: Record<string, string> = {}) =>
+		post('back', { 'step-key': 'int-1:second', 'back-screen': 'step_one', ...form });
+	const backCalls = () => calls.filter((call) => call.path.endsWith('/back'));
+
+	it('draws the link with the screens the Flow can go back to', async () => {
+		const page = await view();
+		expect(page.backScreens).toEqual(['step_one']);
+		const fields = (page.decision as { fields: Array<Record<string, unknown>> }).fields;
+		expect(fields.filter((field) => field.blockType === 'link')).toMatchObject([
+			{ linkAction: 'back', linkExit: null, href: null, linkButton: false },
+			{ linkAction: 'exit', linkExit: 'social', href: null }
+		]);
+	});
+
+	it('goes back through the backend from the screen it was drawn on, then draws the page', async () => {
+		await expect(back()).rejects.toMatchObject({ status: 303 });
+		expect(backCalls()).toHaveLength(1);
+		expect(backCalls()[0].body).toEqual({
+			step_id: 'second',
+			node_id: 'n-second',
+			contract_hash: 'hash-1',
+			signature: 'sig-1',
+			target_screen: 'step_one'
+		});
+		// Going back is not a submit: the screen's answers are not sent anywhere.
+		expect(submitted()).toEqual([]);
+	});
+
+	it('takes a form only from the visit of the screen it was drawn on', async () => {
+		// The screen shown again (gone back to and on): another visit, and an earlier tab's form.
+		routes['/api/v1/login/interactions/start'] = () => {
+			const answer = startAnswer();
+			return json({
+				...answer,
+				interaction: { ...answer.interaction, current_visit_id: 'visit-2' },
+				back_screens: backScreens
+			});
+		};
+		expect((await view()).stepKey).toBe('int-1:second:visit-2');
+		await expect(back()).rejects.toMatchObject({ status: 303 });
+		expect(backCalls()).toEqual([]);
+		await expect(back({ 'step-key': 'int-1:second:visit-2' })).rejects.toMatchObject({
+			status: 303
+		});
+		expect(backCalls()).toHaveLength(1);
+		// The backend checks the visit too, under its claim (another tab may have moved on since).
+		expect(backCalls()[0].body.visit_id).toBe('visit-2');
+	});
+
+	it('leaves by an exit of the screen drawn, its answers not taken', async () => {
+		routes['/api/v1/login/interactions/int-1/submit'] = () =>
+			json({ completed: true, output: { redirect_url: 'https://id.example/after' } });
+		// The required note left empty: an exit is not the screen's Continue.
+		await expect(
+			post('step_exit', { 'step-key': 'int-1:second', 'exit-handle': 'social' })
+		).resolves.toEqual({ completed: true });
+		expect(submitted()).toEqual([{ handle: 'social', input: {} }]);
+	});
+
+	it('leaves by no exit the screen does not offer, nor from an older page', async () => {
+		await expect(
+			post('step_exit', { 'step-key': 'int-1:second', 'exit-handle': 'admin' })
+		).rejects.toMatchObject({ status: 303 });
+		await expect(
+			post('step_exit', { 'step-key': 'int-1:select', 'exit-handle': 'social' })
+		).rejects.toMatchObject({ status: 303 });
+		expect(submitted()).toEqual([]);
+	});
+
+	it('does not ask the backend for a screen it cannot go back to, or from an older page', async () => {
+		backScreens = [];
+		await expect(back()).rejects.toMatchObject({ status: 303 });
+		backScreens = ['step_one'];
+		await expect(back({ 'back-screen': 'step_three' })).rejects.toMatchObject({ status: 303 });
+		await expect(back({ 'step-key': 'int-1:select' })).rejects.toMatchObject({ status: 303 });
+		expect(backCalls()).toEqual([]);
+	});
+});

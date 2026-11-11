@@ -27,9 +27,12 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
 		'Wie lange ein Administrator nach der Notfallwiederherstellung, die seine zweiten Faktoren widerrufen hat, allein mit einem Passkey wieder einen ersten registrieren darf.',
 	'settings.json.object': 'Geben Sie ein JSON-Objekt ein (in geschweiften Klammern { }).',
-	'set.page.stayingSignedIn': 'Angemeldet bleiben',
-	'set.page.stayingSignedIn.desc':
-		'Wie lange Personen nach der Anmeldung angemeldet bleiben und wie lange ihre Apps diese Anmeldung behalten.',
+	'set.page.sessionProfiles': 'Sitzungsprofile',
+	'set.page.sessionProfiles.desc':
+		'Wie lange jemand nach der Anmeldung angemeldet bleibt, und Single Sign-on.',
+	'set.page.logout.desc':
+		'Wie Apps erfahren, dass sich jemand abgemeldet hat. Die Abmeldeadressen jeder App gehören zur App.',
+	'set.page.logout': 'Abmeldung',
 	'set.page.signingKeys': 'Signaturschlüssel',
 	'set.page.signingKeys.desc': 'Wie dieser Mandant seine Tokens signiert.',
 	'set.section.idTokenSigning': 'Signatur von ID-Tokens',
@@ -86,9 +89,9 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.fapi_enabled': 'FAPI 2.0 anwenden',
 	'set.k.security.fapi_enabled.desc':
 		'Das FAPI-2.0-Sicherheitsprofil auf alle Apps des Mandanten anwenden.',
-	'set.page.appDefaults': 'App-Standards',
-	'set.page.appDefaults.desc':
-		'Diese Regeln gelten für alle Apps des Mandanten; App-Einstellungen dürfen Sicherheitsanforderungen nicht abschwächen.',
+	'set.page.tokens': 'Token und Protokolle',
+	'set.page.tokens.desc':
+		'Wie lange die Token der Apps gelten, was jede App erfüllen muss, und die Protokollvorgaben. Jede App kann sie überschreiben (eine Anforderung lässt sich nicht aufheben).',
 	'set.section.authRequests': 'Autorisierungsanfragen',
 	'set.section.authRequests.desc': 'Was die Anmeldeanfrage einer App enthalten muss.',
 	'set.section.authRequests.advanced': 'Signierte und verschlüsselte Request Objects',

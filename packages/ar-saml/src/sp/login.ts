@@ -26,6 +26,8 @@ import {
   readExternalProviderUsagePolicy,
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveSignInAttemptInteraction,
+  assertInteractionAnswersChallenge,
+  isInteractionChallengeMismatchError,
   resolveSamlRequestTtlSeconds,
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
@@ -265,25 +267,68 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     }
     // The Flow interaction this sign-in belongs to, once checked a live interaction of the tenant:
     // the ACS records the sign-in's failures with it.
-    // Best effort: a check that cannot be made leaves the sign-in unrecorded, never refused.
     const requestedInteractionId = lite
       ? (lite.start.interactionId ?? undefined)
       : query('runtime_interaction_id');
-    const attemptInteractionId = requestedInteractionId
-      ? await (async () =>
-          resolveSignInAttemptInteraction(
-            await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', {
-              tenantId,
-            }),
-            { tenantId, interactionId: requestedInteractionId }
-          ))().catch(() => null)
-      : null;
+    // Its Flow's profiles also hold the sign-in (methods, session): a check that cannot be made
+    // refuses the start; one that is not a live interaction of the tenant is left out.
+    let attemptInteractionId: string | null = null;
+    if (requestedInteractionId) {
+      try {
+        attemptInteractionId = await resolveSignInAttemptInteraction(
+          await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', {
+            tenantId,
+          }),
+          { tenantId, interactionId: requestedInteractionId }
+        );
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The sign-in flow is unavailable.',
+          },
+          503
+        );
+      }
+    }
+    // A sign-in that answers an authorization request may only name an interaction started for
+    // it (another request's Flow would lend it its methods and session).
+    if (attemptInteractionId && authorizationChallengeId) {
+      try {
+        await assertInteractionAnswersChallenge(
+          await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', {
+            tenantId,
+          }),
+          tenantId,
+          attemptInteractionId,
+          authorizationChallengeId
+        );
+      } catch (error) {
+        if (isInteractionChallengeMismatchError(error)) {
+          return c.json(
+            {
+              error: 'authorization_challenge_mismatch',
+              error_description: 'The sign-in was not started for this authorization request.',
+            },
+            403
+          );
+        }
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The sign-in flow is unavailable.',
+          },
+          503
+        );
+      }
+    }
     const requestContext: SAMLRequestContext | undefined =
-      reauthentication || invitation || attemptInteractionId || lite
+      reauthentication || invitation || attemptInteractionId || authorizationChallengeId || lite
         ? {
             ...(reauthentication ? { spReauthentication: reauthentication } : {}),
             ...(invitation ? { invitation } : {}),
             ...(attemptInteractionId ? { attemptInteractionId } : {}),
+            ...(authorizationChallengeId ? { flowChallengeId: authorizationChallengeId } : {}),
             ...(lite ? { liteReturn: lite.returnUrl, liteClientId: lite.start.clientId } : {}),
           }
         : undefined;

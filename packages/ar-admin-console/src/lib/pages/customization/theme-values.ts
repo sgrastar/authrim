@@ -57,11 +57,7 @@ export const THEME_IMAGES = [
 	{ field: 'cardImage', key: 'login_panel_background_image_url', kind: 'panel-background' }
 ] as const;
 
-export const DARK_THEME_IMAGES = [
-	{ field: 'logo', kind: 'logo' },
-	{ field: 'backgroundImage', kind: 'background' },
-	{ field: 'cardImage', kind: 'panel-background' }
-] as const;
+export const DARK_THEME_IMAGES = [{ field: 'logo', kind: 'logo' }] as const;
 
 type ImageField = (typeof THEME_IMAGES)[number]['field'];
 
@@ -92,12 +88,15 @@ const FIELD_KEYS: readonly (readonly [keyof ThemeDraft, readonly string[]])[] = 
 	['brandPosition', ['brand_position']],
 	['brandAlign', ['brand_align']],
 	['backgroundOpacity', ['background_image_opacity']],
+	['backgroundDarkDim', ['background_image_dark_dim']],
+	['panelImageDarkDim', ['brand_panel_image_dark_dim']],
+	['cardImageDarkDim', ['login_panel_background_dark_dim']],
 	['panelImageOpacity', ['brand_panel_image_opacity']],
 	['cardImageOpacity', ['login_panel_background_opacity']],
 	// Grayscale is one of the filters: the older switch is written off with them.
 	['backgroundFilters', ['background_image_filters', 'background_image_grayscale']],
-	['panelImageGrayscale', ['brand_panel_image_grayscale']],
-	['cardImageGrayscale', ['login_panel_background_grayscale']],
+	['panelImageFilters', ['brand_panel_image_filters', 'brand_panel_image_grayscale']],
+	['cardImageFilters', ['login_panel_background_filters', 'login_panel_background_grayscale']],
 	['customCss', ['custom_css']],
 	...THEME_COLOURS.map((colour) => [colour.field, [`${colour.name}_color`]] as const),
 	['darkColours', ['dark_colors']],
@@ -139,12 +138,17 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 		[KEY('brand_position')]: draft.brandPosition,
 		[KEY('brand_align')]: draft.brandAlign,
 		[KEY('background_image_opacity')]: draft.backgroundOpacity,
+		[KEY('background_image_dark_dim')]: draft.backgroundDarkDim,
+		[KEY('brand_panel_image_dark_dim')]: draft.panelImageDarkDim,
+		[KEY('login_panel_background_dark_dim')]: draft.cardImageDarkDim,
 		[KEY('brand_panel_image_opacity')]: draft.panelImageOpacity,
 		[KEY('login_panel_background_opacity')]: draft.cardImageOpacity,
 		[KEY('background_image_grayscale')]: false,
 		[KEY('background_image_filters')]: formatLoginUIImageFilters(draft.backgroundFilters),
-		[KEY('brand_panel_image_grayscale')]: draft.panelImageGrayscale,
-		[KEY('login_panel_background_grayscale')]: draft.cardImageGrayscale,
+		[KEY('brand_panel_image_grayscale')]: false,
+		[KEY('brand_panel_image_filters')]: formatLoginUIImageFilters(draft.panelImageFilters),
+		[KEY('login_panel_background_grayscale')]: false,
+		[KEY('login_panel_background_filters')]: formatLoginUIImageFilters(draft.cardImageFilters),
 		[KEY('custom_css')]: draft.customCss
 	};
 	// The brand panel shows nothing of the brand, or its logo display apart from the header's.
@@ -162,10 +166,7 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 	// palette's), one without it was saved before there was one (see valuesToDraft).
 	values[KEY('dark_colors')] = formatLoginUIDarkColors(draft.darkColours);
 	values[KEY('dark_images')] = JSON.stringify({
-		logo: typeof draft.darkImages.logo === 'string' ? draft.darkImages.logo : '',
-		background:
-			typeof draft.darkImages.backgroundImage === 'string' ? draft.darkImages.backgroundImage : '',
-		form_area: typeof draft.darkImages.cardImage === 'string' ? draft.darkImages.cardImage : ''
+		logo: typeof draft.darkImages.logo === 'string' ? draft.darkImages.logo : ''
 	});
 	for (const image of THEME_IMAGES) {
 		const value = draft[image.field];
@@ -391,21 +392,25 @@ export function valuesToDraft(values: ThemeValues): ThemeDraft {
 		draft.darkColours = parseLoginUIDarkColors(formatLoginUIDarkColors(dark));
 	}
 	draft.backgroundOpacity = percentOf(v('background_image_opacity'), draft.backgroundOpacity);
+	draft.backgroundDarkDim = percentOf(v('background_image_dark_dim'), draft.backgroundDarkDim);
+	draft.panelImageDarkDim = percentOf(v('brand_panel_image_dark_dim'), draft.panelImageDarkDim);
+	draft.cardImageDarkDim = percentOf(v('login_panel_background_dark_dim'), draft.cardImageDarkDim);
 	draft.panelImageOpacity = percentOf(v('brand_panel_image_opacity'), draft.panelImageOpacity);
 	draft.cardImageOpacity = percentOf(v('login_panel_background_opacity'), draft.cardImageOpacity);
-	draft.backgroundFilters = parseLoginUIImageFilters(v('background_image_filters'));
-	// A theme saved with the older grayscale switch shows it as a full grayscale filter, first (the
-	// switch's tone is laid before any filter), unless it has a grayscale filter of its own.
-	if (
-		flagOf(v('background_image_grayscale'), false) &&
-		!draft.backgroundFilters.some((filter) => filter.name === 'grayscale')
-	) {
-		draft.backgroundFilters.unshift({ name: 'grayscale', value: 100 });
-	}
-	draft.panelImageGrayscale = flagOf(v('brand_panel_image_grayscale'), draft.panelImageGrayscale);
-	draft.cardImageGrayscale = flagOf(
-		v('login_panel_background_grayscale'),
-		draft.cardImageGrayscale
+	// A theme saved with an older grayscale switch shows it as a full grayscale filter, first (the
+	// switch was applied before any filter), unless it has a grayscale filter of its own.
+	const filtersOf = (filtersKey: string, grayscaleKey: string) => {
+		const filters = parseLoginUIImageFilters(v(filtersKey));
+		if (flagOf(v(grayscaleKey), false) && !filters.some((filter) => filter.name === 'grayscale')) {
+			filters.unshift({ name: 'grayscale', value: 100 });
+		}
+		return filters;
+	};
+	draft.backgroundFilters = filtersOf('background_image_filters', 'background_image_grayscale');
+	draft.panelImageFilters = filtersOf('brand_panel_image_filters', 'brand_panel_image_grayscale');
+	draft.cardImageFilters = filtersOf(
+		'login_panel_background_filters',
+		'login_panel_background_grayscale'
 	);
 	draft.customCss = textOf(v('custom_css'), '');
 	for (const image of THEME_IMAGES) {
@@ -418,24 +423,14 @@ export function valuesToDraft(values: ThemeValues): ThemeDraft {
 			const parsed: unknown = JSON.parse(darkImages);
 			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
 				const images = parsed as Record<string, unknown>;
+				// Older themes also named dark page and form-area pictures: those are no longer apart.
 				draft.darkImages = {
-					logo: typeof images.logo === 'string' && images.logo ? images.logo : null,
-					backgroundImage:
-						typeof images.background === 'string' && images.background ? images.background : null,
-					cardImage:
-						typeof images.form_area === 'string' && images.form_area ? images.form_area : null
+					logo: typeof images.logo === 'string' && images.logo ? images.logo : null
 				};
 			}
 		} catch {
-			// A malformed stored value behaves as an explicitly empty dark set.
+			// A malformed stored value: no dark logo (the light one shows in dark mode).
 		}
-	} else {
-		// Older themes used the light image in both modes. Show that choice before their next save.
-		draft.darkImages = {
-			logo: draft.logo,
-			backgroundImage: draft.backgroundImage,
-			cardImage: draft.cardImage
-		};
 	}
 	const localizations = localizationsOf(v('text_localizations'));
 	for (const { value: language } of TEXT_LANGUAGES) {

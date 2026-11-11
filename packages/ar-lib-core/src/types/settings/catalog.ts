@@ -32,6 +32,7 @@ import { ASSURANCE_LEVELS_CATEGORY_META } from './assurance-levels';
 import { CHECK_API_AUDIT_CATEGORY_META } from './check-api-audit';
 import { LOG_STORAGE_CATEGORY_META } from './log-storage';
 import { ADMIN_NOTICES_CATEGORY_META } from './admin-notices';
+import { PROFILES_CATEGORY_META } from './profiles';
 import { DCR_CATEGORY_META } from './dcr';
 import { LOGIN_UI_CATEGORY_META } from './login-ui';
 import { ACCOUNT_LIFECYCLE_CATEGORY_META } from './account-lifecycle';
@@ -89,6 +90,8 @@ export const ALL_CATEGORY_META = {
   'log-storage': LOG_STORAGE_CATEGORY_META,
   // Admin console notices (how long handled ones are kept)
   'admin-notices': ADMIN_NOTICES_CATEGORY_META,
+  // What tenants may do with the platform's method and session profiles
+  profiles: PROFILES_CATEGORY_META,
   // Dynamic Client Registration (RFC 7591)
   dcr: DCR_CATEGORY_META,
   // Login UI Customization
@@ -178,6 +181,10 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     // One cleanup job removes the handled notices of every tenant.
     allowedScopes: ['platform'],
   },
+  profiles: {
+    // Each switch holds for every tenant (what they may do with the platform's profiles).
+    allowedScopes: ['platform'],
+  },
 
   // Categories a tenant (and, for some, a client) can override; several also have
   // platform-wide values the tenants inherit
@@ -247,7 +254,8 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['tenant', 'client'],
   },
   'authentication-methods': {
-    allowedScopes: ['tenant'],
+    // The platform holds the Default methods (the keys that allow it); the rest is tenant-only.
+    allowedScopes: ['platform', 'tenant'],
   },
   'account-lifecycle': {
     allowedScopes: ['tenant'],

@@ -14,6 +14,8 @@ import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
 import { jaTeam } from './team/ja';
 import { jaAuthMethods } from './auth-methods/ja';
+import { jaSessionProfiles } from './session-profiles/ja';
+import { jaLaunchers } from './launchers/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -36,6 +38,8 @@ export const ja = {
 	...jaAdminAudit,
 	...jaTeam,
 	...jaAuthMethods,
+	...jaSessionProfiles,
+	...jaLaunchers,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
@@ -69,11 +73,11 @@ export const ja = {
 	'nav.access.policies': 'ポリシー',
 	'nav.access.simulator': 'アクセス検証',
 	'nav.apps.all': 'サービスフロー',
-	'nav.apps.defaults': 'アプリの既定',
+	'nav.auth.tokens': 'トークンとプロトコル',
 	'nav.apps.apis': 'API / リソース',
 	'nav.apps.keys': 'Initial Access Token',
 	'nav.apps.webhooks': 'Webhook',
-	'nav.auth.methods': '認証方式',
+	'nav.auth.methods': '認証方式プロフィール',
 	'nav.auth.social': 'ソーシャル接続',
 	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'ディレクトリ認証',
@@ -112,7 +116,8 @@ export const ja = {
 	'nav.auth.tokenRefresh': '外部トークン更新',
 	'nav.auth.discovery': 'テナント判定',
 	'nav.auth.ipAllowlist': 'IP 許可リスト',
-	'nav.auth.stayingSignedIn': 'ログイン状態の維持',
+	'nav.auth.sessionProfiles': 'セッションプロフィール',
+	'nav.auth.logout': 'ログアウト',
 	'nav.custom.loginUi': 'ログイン UI',
 	'nav.custom.accountPage': 'アカウントページ',
 	'nav.custom.launchers': 'ランチャー',

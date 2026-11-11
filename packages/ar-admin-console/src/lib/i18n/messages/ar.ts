@@ -15,6 +15,8 @@ import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
 import { arTeam } from './team/ar';
 import { arAuthMethods } from './auth-methods/ar';
+import { arSessionProfiles } from './session-profiles/ar';
+import { arLaunchers } from './launchers/ar';
 
 export const ar = {
 	...arSettings,
@@ -33,6 +35,8 @@ export const ar = {
 	...arAdminAudit,
 	...arTeam,
 	...arAuthMethods,
+	...arSessionProfiles,
+	...arLaunchers,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
@@ -66,11 +70,11 @@ export const ar = {
 	'nav.access.policies': 'السياسات',
 	'nav.access.simulator': 'محاكي الوصول',
 	'nav.apps.all': 'مسارات الخدمة',
-	'nav.apps.defaults': 'الإعدادات الافتراضية للتطبيقات',
+	'nav.auth.tokens': 'الرموز والبروتوكولات',
 	'nav.apps.apis': 'الواجهات / الموارد',
 	'nav.apps.keys': 'رموز الوصول الأولية',
 	'nav.apps.webhooks': 'خطافات الويب',
-	'nav.auth.methods': 'طرق المصادقة',
+	'nav.auth.methods': 'ملفات تعريف طرق تسجيل الدخول',
 	'nav.auth.social': 'الاتصالات الاجتماعية',
 	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'مصادقة الدليل',
@@ -109,7 +113,8 @@ export const ar = {
 	'nav.auth.tokenRefresh': 'تجديد الرموز الخارجية',
 	'nav.auth.discovery': 'اكتشاف المستأجر',
 	'nav.auth.ipAllowlist': 'قائمة عناوين IP المسموحة',
-	'nav.auth.stayingSignedIn': 'البقاء مسجلاً للدخول',
+	'nav.auth.sessionProfiles': 'ملفات تعريف الجلسة',
+	'nav.auth.logout': 'تسجيل الخروج',
 	'nav.custom.loginUi': 'واجهة تسجيل الدخول',
 	'nav.custom.accountPage': 'صفحة الحساب',
 	'nav.custom.launchers': 'نقاط الدخول',

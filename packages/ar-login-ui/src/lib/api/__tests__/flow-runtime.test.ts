@@ -69,6 +69,61 @@ describe('flow runtime API', () => {
 		);
 	});
 
+	it('goes back to a screen through the interaction resource, with the screens it can go back to', async () => {
+		const { flowRuntimeAPI, backScreensOf } = await loadApi();
+		authrimFetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				schema_version: 'authrim.login_ui.contract.v1',
+				interaction: { id: 'interaction_1', state: 'active', current_step_id: 'a:step' },
+				step: { id: 'a:step', component: 'screen' },
+				completed: false,
+				output: null,
+				back_screens: ['earlier', 'Not A Key']
+			})
+		);
+		const input = {
+			step_id: 'b:step',
+			node_id: 'b',
+			contract_hash: 'hash',
+			signature: 'sig',
+			target_screen: 'step_one'
+		};
+		const result = await flowRuntimeAPI.back('interaction_1', input);
+		expect(result.data?.step?.id).toBe('a:step');
+		expect(backScreensOf(result.data)).toEqual(['earlier']);
+		expect(authrimFetchMock).toHaveBeenCalledWith(
+			'/api/v1/login/interactions/interaction_1/back',
+			expect.objectContaining({ method: 'POST', body: JSON.stringify(input) })
+		);
+	});
+
+	it('answers a refused way back as an error', async () => {
+		const { flowRuntimeAPI } = await loadApi();
+		authrimFetchMock.mockResolvedValueOnce(
+			jsonResponse(
+				{
+					error: 'back_not_allowed',
+					error_description: 'This screen cannot be gone back to from here',
+					category: 'recoverable',
+					action: 'retry_step'
+				},
+				409
+			)
+		);
+		const result = await flowRuntimeAPI.back('interaction_1', {
+			step_id: 'b:step',
+			contract_hash: 'hash',
+			signature: 'sig',
+			target_screen: 'step_one'
+		});
+		expect(result.data).toBeUndefined();
+		expect(result.error).toMatchObject({
+			error: 'back_not_allowed',
+			category: 'recoverable',
+			action: 'retry_step'
+		});
+	});
+
 	it('submits the active runtime step to the interaction resource', async () => {
 		const { flowRuntimeAPI } = await loadApi();
 		authrimFetchMock.mockResolvedValueOnce(

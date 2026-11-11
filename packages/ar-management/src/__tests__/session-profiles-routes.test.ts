@@ -1,0 +1,448 @@
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
+import { DatabaseSync as SqliteDatabase } from 'node:sqlite';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DatabaseAdapter } from '@authrim/ar-lib-core';
+
+interface Database {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    all(...params: unknown[]): unknown[];
+    get(...params: unknown[]): unknown;
+    run(...params: unknown[]): { changes: number | bigint };
+  };
+}
+const DatabaseSync = SqliteDatabase as unknown as new (path: string) => Database;
+
+const mocks = vi.hoisted(() => {
+  const state: {
+    adapter?: DatabaseAdapter;
+    tenantId: string;
+    auth: Record<string, unknown>;
+    /** The tenant's settings documents, by category. */
+    settings: Record<string, { version: number; values: Record<string, unknown> }>;
+    audit: ReturnType<typeof vi.fn>;
+    /** The Flow (core database) that names a profile, when one does. */
+    flowUsing: string | null;
+    /** A category whose real save fails (after its dry run passed). */
+    failSave: string | null;
+    /** A category whose real save throws. */
+    throwSave: string | null;
+    /** The admin may not see oauth settings. */
+    noOauth: boolean;
+    /** The platform's documents (its Default, and the profiles switches), by category. */
+    platform: Record<string, Record<string, unknown>>;
+  } = {
+    platform: {},
+    flowUsing: null,
+    failSave: null,
+    throwSave: null,
+    noOauth: false,
+    tenantId: 'tenant-a',
+    auth: {},
+    settings: {},
+    audit: vi.fn(),
+  };
+  return state;
+});
+
+vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.audit }));
+vi.mock('../routes/settings-v2/settings-support', () => ({
+  getSettingsManager: () => ({
+    getAll: async (category: string, scope: { type: string }) => {
+      if (scope.type === 'platform') {
+        const values = { ...(mocks.platform[category] ?? {}) };
+        return {
+          version: `platform-${category}-${JSON.stringify(values)}`,
+          values,
+          sources: Object.fromEntries(Object.keys(values).map((key) => [key, 'kv'])),
+        };
+      }
+      const values = { ...mocks.settings[category].values };
+      return {
+        version: `${category}-${mocks.settings[category].version}`,
+        values,
+        sources: Object.fromEntries(Object.keys(values).map((key) => [key, 'kv'])),
+      };
+    },
+  }),
+}));
+vi.mock('../routes/settings-v2/settings-authorization', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../routes/settings-v2/settings-authorization')>();
+  return {
+    ...actual,
+    hasTenantSettingsPermission: (
+      ...args: Parameters<typeof actual.hasTenantSettingsPermission>
+    ) =>
+      mocks.noOauth && args[1] === 'oauth' ? false : actual.hasTenantSettingsPermission(...args),
+  };
+});
+vi.mock('../routes/settings-v2/tenant-settings-apply', () => ({
+  applyTenantSettingsChange: async (input: {
+    category: string;
+    dryRun?: boolean;
+    readBody: () => Promise<{ ifMatch: string; set: Record<string, unknown>; clear?: string[] }>;
+  }) => {
+    const body = await input.readBody();
+    const doc = mocks.settings[input.category];
+    if (body.ifMatch !== `${input.category}-${doc.version}`) {
+      return Response.json({ error: 'conflict' }, { status: 409 });
+    }
+    if (!input.dryRun && mocks.throwSave === input.category) throw new Error('db down');
+    if (!input.dryRun && mocks.failSave === input.category) {
+      return Response.json({ error: 'server_error' }, { status: 500 });
+    }
+    if (!input.dryRun) {
+      Object.assign(doc.values, body.set);
+      for (const key of body.clear ?? []) delete doc.values[key];
+      doc.version++;
+    }
+    return Response.json({ version: `${input.category}-${doc.version}`, rejected: {} });
+  },
+}));
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
+    // The platform's switches (KV): every one allowed unless a test sets it.
+    readProfileSwitch: vi.fn(
+      async (_env: unknown, kind: string, name: string) =>
+        (mocks as { switches?: Record<string, boolean> }).switches?.[`${kind}.${name}`] ?? true
+    ),
+    createAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: {
+        queryOne: vi.fn(async (_sql: string, params: unknown[]) =>
+          mocks.flowUsing && String(params[1]).includes(mocks.flowUsing) ? { id: 'flow-1' } : null
+        ),
+      },
+    })),
+    getRateLimitProfileAsync: vi.fn(async () => ({ profile: 'lenient' })),
+    rateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
+    getTenantIdFromContext: vi.fn(() => mocks.tenantId),
+    adminAuthMiddleware:
+      () =>
+      async (c: { set: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
+        c.set('adminAuth', mocks.auth);
+        await next();
+      },
+    createErrorResponse: vi.fn((c: { json: (body: unknown, status: number) => Response }) =>
+      c.json({ error: 'forbidden' }, 403)
+    ),
+  };
+});
+
+import { sessionProfilesRouter } from '../routes/admin-management/session-profiles';
+
+const ADMIN_MIGRATIONS = new URL('../../../../migrations/admin/d1/', import.meta.url);
+const ADMIN = {
+  userId: 'admin-1',
+  sessionId: 'sess-1',
+  authMethod: 'session',
+  actorType: 'human',
+  roles: ['ar_tenant_admin'],
+  globalRoles: [],
+  permissions: ['admin:settings:read', 'admin:settings:write'],
+  globalPermissions: [],
+  tenantScope: ['tenant-a'],
+  tenantId: 'tenant-a',
+};
+
+function call(method: string, path: string, body?: unknown) {
+  return sessionProfilesRouter.request(
+    path,
+    {
+      method,
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    },
+    {}
+  );
+}
+
+beforeEach(() => {
+  const db = new DatabaseSync(':memory:');
+  for (const file of [
+    '013_authentication_method_profiles.sql',
+    '014_session_profiles.sql',
+    '015_platform_profiles.sql',
+  ]) {
+    db.exec(readRenderedMigrationSql(ADMIN_MIGRATIONS, file));
+  }
+  const run = (sql: string) => db.prepare(sql);
+  mocks.adapter = {
+    query: async (sql: string, params: unknown[] = []) => run(sql).all(...params),
+    queryOne: async (sql: string, params: unknown[] = []) => run(sql).get(...params) ?? null,
+    execute: async (sql: string, params: unknown[] = []) => ({
+      rowsAffected: Number(run(sql).run(...params).changes),
+      success: true,
+    }),
+  } as unknown as DatabaseAdapter;
+  mocks.tenantId = 'tenant-a';
+  mocks.auth = { ...ADMIN };
+  mocks.settings = {
+    session: { version: 1, values: { 'session.default_ttl': 86_400_000 } },
+    oauth: { version: 1, values: { 'oauth.sso_enabled': true } },
+  };
+  mocks.audit.mockClear();
+  mocks.failSave = null;
+  mocks.throwSave = null;
+  mocks.noOauth = false;
+  mocks.platform = {};
+});
+
+const DEFAULT_VERSION = JSON.stringify({ session: 'session-1', oauth: 'oauth-1' });
+
+describe('session profiles', () => {
+  it('lists the live Default settings and keeps saved profiles tenant-scoped', async () => {
+    const first = await call('GET', '/');
+    expect(first.status).toBe(200);
+    const initial = await first.json<{
+      profiles: Array<{ id: string; values: Record<string, unknown>; version: unknown }>;
+    }>();
+    expect(initial.profiles).toHaveLength(1);
+    expect(initial.profiles[0]).toMatchObject({
+      id: 'default',
+      version: DEFAULT_VERSION,
+      values: { 'session.default_ttl': 86_400_000, 'oauth.sso_enabled': true },
+    });
+
+    const created = await call('POST', '/', {
+      name: 'Short',
+      values: { 'session.default_ttl': 3_600_000, 'oauth.sso_enabled': false },
+    });
+    expect(created.status).toBe(201);
+    const { profile } = await created.json<{ profile: { id: string; version: number } }>();
+    expect(profile.version).toBe(1);
+
+    mocks.tenantId = 'tenant-b';
+    mocks.auth = { ...ADMIN, tenantId: 'tenant-b', tenantScope: ['tenant-b'] };
+    expect((await call('GET', `/${profile.id}`)).status).toBe(404);
+    const other = await call('GET', '/');
+    expect((await other.json<{ profiles: unknown[] }>()).profiles).toHaveLength(1);
+  });
+
+  it('requires the saved version when updating and keeps a profile a flow uses', async () => {
+    const created = await call('POST', '/', { name: 'Short', values: {} });
+    const { profile } = await created.json<{ profile: { id: string } }>();
+    const updated = await call('PUT', `/${profile.id}`, {
+      name: 'Shorter',
+      version: 1,
+      values: { 'session.max_ttl': 86_400_000 },
+    });
+    expect(updated.status).toBe(200);
+    expect((await updated.json<{ profile: { version: number } }>()).profile.version).toBe(2);
+    expect(
+      (await call('PUT', `/${profile.id}`, { name: 'Old', version: 1, values: {} })).status
+    ).toBe(409);
+    mocks.flowUsing = profile.id;
+    try {
+      expect((await call('DELETE', `/${profile.id}`)).status).toBe(409);
+    } finally {
+      mocks.flowUsing = null;
+    }
+    expect((await call('DELETE', `/${profile.id}`)).status).toBe(204);
+    expect((await call('GET', `/${profile.id}`)).status).toBe(404);
+  });
+
+  it('takes only session lengths and single sign-on, each checked', async () => {
+    expect(
+      (await call('POST', '/', { name: 'Bad', values: { 'session.backchannel_enabled': true } }))
+        .status
+    ).toBe(400);
+    expect(
+      (await call('POST', '/', { name: 'Bad', values: { 'oauth.sso_enabled': 'yes' } })).status
+    ).toBe(400);
+    expect((await call('POST', '/', { name: 'default', values: {} })).status).toBe(400);
+  });
+
+  it('writes the Default profile to both settings documents, all or nothing', async () => {
+    const saved = await call('PUT', '/default', {
+      name: 'Default',
+      version: DEFAULT_VERSION,
+      values: { 'session.default_ttl': 7_200_000, 'oauth.sso_enabled': false },
+    });
+    expect(saved.status).toBe(200);
+    expect(mocks.settings.session.values['session.default_ttl']).toBe(7_200_000);
+    expect(mocks.settings.oauth.values['oauth.sso_enabled']).toBe(false);
+    // Read before that save: refused, and nothing written.
+    const stale = await call('PUT', '/default', {
+      name: 'Default',
+      version: DEFAULT_VERSION,
+      values: { 'session.default_ttl': 60_000 },
+    });
+    expect(stale.status).toBe(409);
+    expect(mocks.settings.session.values['session.default_ttl']).toBe(7_200_000);
+    // Only the changed document is written.
+    const sessionOnly = await call('PUT', '/default', {
+      name: 'Default',
+      version: JSON.stringify({ session: 'session-2', oauth: 'oauth-2' }),
+      values: { 'session.default_ttl': 3_600_000, 'oauth.sso_enabled': false },
+    });
+    expect(sessionOnly.status).toBe(200);
+    expect(mocks.settings.session.version).toBe(3);
+    expect(mocks.settings.oauth.version).toBe(2);
+  });
+
+  it('answers a Default save that stopped halfway with what was applied, and records it', async () => {
+    mocks.failSave = 'oauth';
+    const response = await call('PUT', '/default', {
+      name: 'Default',
+      version: DEFAULT_VERSION,
+      values: { 'session.default_ttl': 7_200_000, 'oauth.sso_enabled': false },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: 'partially_applied',
+      applied: ['session'],
+      failed: 'oauth',
+    });
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'session.profile.partially_updated', result: 'failure' })
+    );
+  });
+
+  it('shows single sign-on in Default only to an admin who may see oauth settings', async () => {
+    mocks.noOauth = true;
+    const { profile } = await (
+      await call('GET', '/default')
+    ).json<{
+      profile: { values: Record<string, unknown>; version: string };
+    }>();
+    expect(profile.values).not.toHaveProperty('oauth.sso_enabled');
+    expect(profile.values).toHaveProperty('session.default_ttl');
+    // Nor its document's version, which could tell its value apart.
+    expect(profile.version).not.toContain('oauth-1');
+    // Saving session lengths still works, and leaves single sign-on as it was.
+    const saved = await call('PUT', '/default', {
+      name: 'Default',
+      version: profile.version,
+      values: { 'session.default_ttl': 3_600_000 },
+    });
+    expect(saved.status).toBe(200);
+    expect(mocks.settings.oauth.values['oauth.sso_enabled']).toBe(true);
+    // Single sign-on itself is not changed through Default by such an admin.
+    const sso = await call('PUT', '/default', {
+      name: 'Default',
+      version: (await saved.json<{ profile: { version: string } }>()).profile.version,
+      values: { 'oauth.sso_enabled': false },
+    });
+    expect(sso.status).toBe(403);
+    expect(await sso.text()).not.toContain('oauth-');
+    expect(mocks.settings.oauth.values['oauth.sso_enabled']).toBe(true);
+  });
+
+  it('answers a second save that throws as halfway too', async () => {
+    mocks.throwSave = 'oauth';
+    const response = await call('PUT', '/default', {
+      name: 'Default',
+      version: DEFAULT_VERSION,
+      values: { 'session.default_ttl': 7_200_000, 'oauth.sso_enabled': false },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: 'partially_applied',
+      applied: ['session'],
+    });
+  });
+});
+
+describe('the Default session rules over the platform’s', () => {
+  type DefaultView = {
+    values: Record<string, unknown>;
+    version: string;
+    overridden: boolean;
+    override_inactive_reason: string | null;
+    editable: boolean;
+    locked: boolean;
+    platform_values: Record<string, unknown>;
+    platform_updated: boolean;
+  };
+  const read = async () =>
+    (await (await call('GET', '/default')).json<{ profile: DefaultView }>()).profile;
+
+  it('takes the platform’s value where the tenant holds none', async () => {
+    mocks.settings.session.values = {};
+    mocks.platform.session = { 'session.default_ttl': 3_600_000 };
+    const profile = await read();
+    expect(profile.values['session.default_ttl']).toBe(3_600_000);
+    expect(profile.platform_values['session.default_ttl']).toBe(3_600_000);
+    expect(profile.overridden).toBe(true); // the tenant still holds its single sign-on
+    expect(profile.editable).toBe(true);
+  });
+
+  it('saves a whole copy with the platform version, and reverts it', async () => {
+    mocks.settings.session.values = {};
+    mocks.settings.oauth.values = {};
+    mocks.platform.session = { 'session.default_ttl': 3_600_000, 'session.max_ttl': 7_200_000 };
+    const before = await read();
+    expect(before.overridden).toBe(false);
+    const saved = await call('PUT', '/default', {
+      name: 'Default',
+      version: before.version,
+      values: { 'session.default_ttl': 10_800_000 },
+    });
+    expect(saved.status).toBe(200);
+    const stored = mocks.settings.session.values;
+    expect(stored['session.default_ttl']).toBe(10_800_000);
+    // The rest of the copy is what held when it was made.
+    expect(stored['session.max_ttl']).toBe(7_200_000);
+    expect(String(stored['session.default_profile.base_version'])).toContain('platform-session');
+    const after = (await saved.json<{ profile: DefaultView }>()).profile;
+    expect(after.overridden).toBe(true);
+    expect(after.platform_updated).toBe(false);
+    // The platform changes its Default: the copy is told it is behind.
+    mocks.platform.session = { 'session.default_ttl': 3_600_000, 'session.max_ttl': 14_400_000 };
+    expect((await read()).platform_updated).toBe(true);
+    // Back to the platform's: the tenant's values go, the platform's hold again.
+    const reverted = await call('DELETE', '/default');
+    expect(reverted.status).toBe(200);
+    expect(mocks.settings.session.values).toEqual({});
+    const back = (await reverted.json<{ profile: DefaultView }>()).profile;
+    expect(back.values['session.max_ttl']).toBe(14_400_000);
+    expect(back.overridden).toBe(false);
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'session.profile.default_reverted' })
+    );
+  });
+
+  it.each([
+    ['locked', { 'profiles.session.default_locked': true }, 'locked'],
+    ['not allowed', { 'profiles.session.tenant_change_allowed': false }, 'changes_not_allowed'],
+  ])(
+    'sets the tenant’s values aside while %s, and refuses a change',
+    async (_, switches, reason) => {
+      mocks.platform.session = { 'session.default_ttl': 3_600_000 };
+      mocks.platform.profiles = switches;
+      const profile = await read();
+      expect(profile.values['session.default_ttl']).toBe(3_600_000);
+      expect(profile.override_inactive_reason).toBe(reason);
+      expect(profile.editable).toBe(false);
+      const refused = await call('PUT', '/default', {
+        name: 'Default',
+        version: profile.version,
+        values: { 'session.default_ttl': 18_000_000 },
+      });
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({ error: 'profile_not_editable', reason });
+      expect(mocks.settings.session.values['session.default_ttl']).toBe(86_400_000);
+      // Reverting is always allowed.
+      expect((await call('DELETE', '/default')).status).toBe(200);
+      expect(mocks.settings.session.values).toEqual({});
+    }
+  );
+
+  it('keeps single sign-on of the platform and the tenant from an admin who may not see it', async () => {
+    mocks.noOauth = true;
+    mocks.platform.oauth = { 'oauth.sso_enabled': false };
+    const profile = await read();
+    expect(profile.platform_values).not.toHaveProperty('oauth.sso_enabled');
+    expect(JSON.stringify(profile)).not.toContain('platform-oauth');
+    // Reverting leaves single sign-on as it is.
+    expect((await call('DELETE', '/default')).status).toBe(200);
+    expect(mocks.settings.oauth.values['oauth.sso_enabled']).toBe(true);
+  });
+});

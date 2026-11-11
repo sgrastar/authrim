@@ -217,14 +217,12 @@ describe('external start: the interaction a sign-in is recorded against', () => 
     expect(storedState().attemptInteractionId).toBeUndefined();
   });
 
-  it('starts the sign-in, with no interaction, when the check itself fails', async () => {
+  it('refuses the start when the check itself fails: its Flow holds the sign-in', async () => {
     mocks.resolveInteraction.mockRejectedValue(new Error('database unavailable'));
 
     const response = await start(`${SIGN_IN}&runtime_interaction_id=int-1`);
 
-    expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toBe(IDP_AUTHORIZE);
-    expect(storedState().attemptInteractionId).toBeUndefined();
+    expect(response.status).toBe(503);
   });
 
   it('stores no interaction for a start that carries none', async () => {

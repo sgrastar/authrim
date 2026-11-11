@@ -16,6 +16,7 @@ import {
   loginRuntimeInteractionStartHandler,
   insertDestinationFieldConsentRecord,
   loginRuntimeInteractionSubmitHandler,
+  loginRuntimeInteractionBackHandler,
   resolveSignUpScreen,
 } from '../login-runtime-flow';
 
@@ -2918,6 +2919,124 @@ describe('LoginUI runtime Flow handlers', () => {
     }
   });
 
+  it.each([
+    ['the tenant with an OIDC client', { target_type: 'tenant', client_id: 'client_1' }],
+    ['the tenant with a SAML SP', { target_type: 'tenant', saml_sp_id: 'https://sp.example' }],
+    [
+      'one client with another',
+      { target_type: 'oidc_client', target_id: 'client_a', client_id: 'client_b' },
+    ],
+    [
+      'one SP with another',
+      { target_type: 'saml_sp', target_id: 'https://a.example', saml_sp_id: 'https://b.example' },
+    ],
+    ['both an OIDC client and a SAML SP', { client_id: 'client_1', saml_sp_id: 'https://sp' }],
+  ])('refuses a Flow target naming %s', async (_name, target) => {
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({ body: { flow_kind: 'login', ...target } })
+    );
+    const data = await readJson(response);
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_target');
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+  });
+
+  describe('a session made while the interaction runs', () => {
+    /** The branching Flow, whose sign-in step names its own session profile. */
+    const profiledRuntime: FlowRuntimeContract = {
+      ...branchingRuntime,
+      ui: {
+        steps: branchingRuntime.ui.steps.map((step) =>
+          step.id === 'auth:step' ? { ...step, config: { session_profile_ref: 'short' } } : step
+        ),
+      },
+    };
+
+    async function submitWithSession(
+      runtimeSnapshot: FlowRuntimeContract,
+      session: { createdOffsetMs: number; data: Record<string, unknown> }
+    ) {
+      const startedAt = Date.UTC(2026, 10, 11);
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(startedAt);
+      try {
+        const { data: startData } = await startInteraction();
+        clock.mockReturnValue(startedAt + 5000);
+        resetAdapter();
+        mockSubmitQueries({
+          expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+          contractHash: String(startData.contract_hash),
+          signature: String(startData.signature),
+          currentNodeId: 'auth',
+          currentStepId: 'auth:step',
+          stepState: 'waiting_input',
+          runtimeSnapshot,
+          editorSnapshot: branchingEditor,
+          context: { protocol: 'direct', target_type: 'tenant', started_at_ms: startedAt },
+        });
+        mocks.sessionStore.getSessionRpc.mockResolvedValue({
+          userId: 'user_1',
+          expiresAt: startedAt + 60_000,
+          createdAt: startedAt + session.createdOffsetMs,
+          data: { authTime: Math.floor(startedAt / 1000), ...session.data },
+        });
+        const response = await loginRuntimeInteractionSubmitHandler(
+          createContext({
+            params: { interaction_id: 'interaction_1' },
+            headers: { Cookie: 'authrim_session=sess_runtime_1' },
+            body: {
+              step_id: 'auth:step',
+              node_id: 'auth',
+              selected_handle: 'passkey',
+              contract_hash: startData.contract_hash,
+              signature: startData.signature,
+            },
+          })
+        );
+        return { response, data: await readJson(response) };
+      } finally {
+        clock.mockRestore();
+      }
+    }
+
+    it('completes the Flow when it was made in this interaction', async () => {
+      const { response, data } = await submitWithSession(profiledRuntime, {
+        createdOffsetMs: 2000,
+        data: { runtime_interaction_id: 'interaction_1' },
+      });
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+    });
+
+    it.each([
+      ['in another interaction', { runtime_interaction_id: 'interaction_other' }],
+      ['by a route that records no interaction', {}],
+    ])('does not complete the Flow with one made %s', async (_label, sessionData) => {
+      const { data } = await submitWithSession(profiledRuntime, {
+        createdOffsetMs: 2000,
+        data: sessionData,
+      });
+      expect(data.completed).not.toBe(true);
+    });
+
+    it('takes one made before the interaction (single sign-on)', async () => {
+      const { response, data } = await submitWithSession(profiledRuntime, {
+        createdOffsetMs: -1000,
+        data: { runtime_interaction_id: 'interaction_other' },
+      });
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+    });
+
+    it('takes one from a route that records no interaction while the Flow sets nothing', async () => {
+      const { response, data } = await submitWithSession(branchingRuntime, {
+        createdOffsetMs: 2000,
+        data: {},
+      });
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+    });
+  });
+
   it('skips implicit account action nodes instead of returning a Continue step', async () => {
     const { data: startData } = await startInteraction(
       { flow_kind: 'registration', client_id: 'client_1' },
@@ -4514,7 +4633,7 @@ describe('LoginUI runtime Flow handlers', () => {
       editor?: Record<string, unknown> | null;
       flowKind?: string;
       currentStep: { node: string; step: string };
-      handle: string;
+      handle?: string;
       withSession?: boolean;
       body?: Record<string, unknown>;
       context?: Record<string, unknown>;
@@ -5534,6 +5653,105 @@ describe('LoginUI runtime Flow handlers', () => {
         ]);
       });
 
+      it('leaves by an exit a link part names: its own edge, else where the submit goes', async () => {
+        const page = (id: string) => ({
+          id: `${id}:step`,
+          source_node_id: id,
+          component: 'screen' as const,
+          render: true,
+          config: { screen_ref: 'profile_completion' },
+        });
+        const withExits = {
+          ...flowScreen,
+          fields_json: JSON.stringify([
+            ...(JSON.parse(flowScreen.fields_json) as unknown[]),
+            {
+              field: 'link.social',
+              label: 'Use a social account',
+              block_type: 'link',
+              link_action: 'exit',
+              link_exit: 'social',
+            },
+            { field: 'link.later', label: 'Later', block_type: 'link', link_action: 'skip' },
+          ]),
+        };
+        const leave = (handle: string, edges: Array<Record<string, string>>) =>
+          submitStep({
+            runtime: {
+              flow_kind: 'login',
+              ui: { steps: [screenRuntime.ui.steps[0], page('next-page'), page('social-page')] },
+            },
+            editor: {
+              nodes: [
+                { id: 'screen', type: 'screen' },
+                { id: 'next-page', type: 'screen' },
+                { id: 'social-page', type: 'screen' },
+              ],
+              edges: [
+                { id: 'a', source: 'screen', source_handle: 'submitted', target: 'next-page' },
+                ...edges,
+              ],
+            },
+            currentStep: { node: 'screen', step: 'screen:step' },
+            handle,
+            withSession: false,
+            userId: 'user_1',
+            // Answers are not read by an exit: a required one may be left empty.
+            body: { input: { fields: {} } },
+            beforeSubmit: () => readsScreen(withExits),
+          });
+        const stepOf = (result: { data: Record<string, unknown> }) =>
+          (result.data.step as { id?: string } | null)?.id;
+
+        const connected = await leave('social', [
+          { id: 'b', source: 'screen', source_handle: 'social', target: 'social-page' },
+        ]);
+        expect(connected.response.status).toBe(200);
+        expect(stepOf(connected)).toBe('social-page:step');
+
+        const unconnected = await leave('social', []);
+        expect(unconnected.response.status).toBe(200);
+        expect(stepOf(unconnected)).toBe('next-page:step');
+
+        const skipped = await leave('skipped', []);
+        expect(skipped.response.status).toBe(200);
+        expect(stepOf(skipped)).toBe('next-page:step');
+
+        // No way out named: the screen's submit, its answers read (the required plan is missing).
+        const unnamed = await submitStep({
+          runtime: {
+            flow_kind: 'login',
+            ui: { steps: [screenRuntime.ui.steps[0], page('next-page')] },
+          },
+          currentStep: { node: 'screen', step: 'screen:step' },
+          withSession: false,
+          userId: 'user_1',
+          body: { input: { fields: {} } },
+          beforeSubmit: () =>
+            readsScreen({
+              ...withExits,
+              fields_json: JSON.stringify([
+                {
+                  field: 'plan',
+                  label: 'Plan',
+                  required: true,
+                  store_to_profile: false,
+                  answer_targets: ['flow_event'],
+                },
+              ]),
+            }),
+        });
+        expect(unnamed.response.status).toBe(400);
+        expect(unnamed.data.error_code).toBe('AR_FLOW_SCREEN_ANSWERS_INVALID');
+
+        // An exit no part names is not offered, even with an edge left from it.
+        const unknown = await leave('admin', [
+          { id: 'c', source: 'screen', source_handle: 'admin', target: 'social-page' },
+        ]);
+        expect(unknown.response.status).toBe(409);
+        expect(unknown.data.error_code).toBe('AR_FLOW_INVALID_SELECTED_HANDLE');
+      });
+
       it('keeps the choices only while the interaction is still at the step', async () => {
         await submitAnswers({ plan: 'pro' }, false, undefined, undefined, flowScreen);
 
@@ -6078,6 +6296,290 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  describe('going back to a screen from a link', () => {
+    const screenStep = (name: string) => ({
+      id: `${name}:step`,
+      source_node_id: name,
+      component: 'screen' as const,
+      render: true,
+      config: { screen_ref: `page_${name}` },
+    });
+    const backRuntime: FlowRuntimeContract = {
+      flow_kind: 'login',
+      ui: {
+        // In order (no editor graph): a, b, c, then consent, then d.
+        steps: [
+          screenStep('a'),
+          screenStep('b'),
+          screenStep('c'),
+          {
+            id: 'consent:step',
+            source_node_id: 'consent',
+            component: 'consent_policy' as const,
+            render: true,
+            config: {},
+          },
+          screenStep('d'),
+        ],
+      },
+    };
+    const screenRow = (ref: string) => ({
+      id: ref,
+      screen_key: ref,
+      display_name: ref,
+      description: null,
+      screen_kind: 'custom',
+      fields_json: JSON.stringify([{ field: 'note', label: 'Note', block_type: 'text' }]),
+      localizations_json: null,
+      settings_json: null,
+    });
+    const visit = (id: string, stepId: string, ms: number) => ({
+      id,
+      step_id: stepId,
+      selected_handle: 'submitted',
+      created_at: Math.floor(ms / 1000),
+      state_json: JSON.stringify({ completed_at_ms: ms }),
+    });
+
+    async function goBack(options: {
+      currentStep: string;
+      visits: ReturnType<typeof visit>[];
+      target: string;
+      /** The visit the request names, and the one the interaction is at. */
+      visitId?: string;
+      currentVisitId?: string;
+    }) {
+      resetAdapter();
+      mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, params?: unknown[]) =>
+        String(sql).includes('FROM screens') ? screenRow(String(params?.[1])) : undefined
+      );
+      const { data: startData } = await startInteraction({ flow_kind: 'login' }, backRuntime);
+      resetAdapter();
+      const node = options.currentStep.split(':')[0];
+      mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, params?: unknown[]) => {
+        const text = String(sql);
+        if (text.includes('FROM flow_interactions')) {
+          return {
+            id: 'interaction_1',
+            flow_id: 'flow_login',
+            flow_version_id: 'fv_1',
+            user_id: null,
+            client_id: null,
+            saml_sp_id: null,
+            state: 'active',
+            current_node_id: node,
+            current_step_id: options.currentStep,
+            context_json: JSON.stringify({ protocol: 'oidc', target_type: 'tenant', locale: 'en' }),
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+            expires_at: Number((startData.interaction as Record<string, unknown>).expires_at),
+          };
+        }
+        if (text.includes('FROM flow_versions')) {
+          return {
+            id: 'fv_1',
+            flow_id: 'flow_login',
+            schema_version: 'authrim.login_ui.contract.v1',
+            runtime_snapshot_json: JSON.stringify(backRuntime),
+            editor_snapshot_json: null,
+            published_at: 1782770000,
+          };
+        }
+        if (text.includes('FROM screens')) return screenRow(String(params?.[1]));
+        if (text.includes('SELECT id FROM flow_interaction_steps')) {
+          return { id: options.currentVisitId ?? 'visit_current' };
+        }
+        return undefined;
+      });
+      // The visits as read before going back; none after (the way back has been taken).
+      mocks.coreAdapter.query.mockImplementation(async (sql: string) =>
+        String(sql).includes('FROM flow_interaction_steps') ? options.visits : []
+      );
+      const response = await loginRuntimeInteractionBackHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          body: {
+            step_id: options.currentStep,
+            node_id: node,
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+            target_screen: options.target,
+            ...(options.visitId ? { visit_id: options.visitId } : {}),
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    it('refuses a request made on an earlier visit of the screen', async () => {
+      const visits = [visit('v_a', 'a:step', 1_000), visit('v_b', 'b:step', 2_000)];
+      const stale = await goBack({
+        currentStep: 'c:step',
+        visits,
+        target: 'page_b',
+        visitId: 'visit_before',
+        currentVisitId: 'visit_now',
+      });
+      expect(stale.response.status).toBe(409);
+      expect(stale.data.error).toBe('step_conflict');
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+      const fresh = await goBack({
+        currentStep: 'c:step',
+        visits,
+        target: 'page_b',
+        visitId: 'visit_now',
+        currentVisitId: 'visit_now',
+      });
+      expect(fresh.response.status).toBe(200);
+    });
+
+    it('goes back across screens only, undoing the screens passed since', async () => {
+      const { response, data } = await goBack({
+        currentStep: 'c:step',
+        visits: [visit('v_a', 'a:step', 1_000), visit('v_b', 'b:step', 2_000)],
+        target: 'page_b',
+      });
+      expect(response.status).toBe(200);
+      expect(data.interaction).toMatchObject({ current_step_id: 'b:step', current_node_id: 'b' });
+      // The way back is read under the claim: no submit can move the interaction on meanwhile.
+      const claimAt =
+        mocks.coreAdapter.execute.mock.invocationCallOrder[
+          mocks.coreAdapter.execute.mock.calls.findIndex(([sql]) =>
+            String(sql).includes('SET submit_claim_id = ?')
+          )
+        ];
+      const visitsReadAt =
+        mocks.coreAdapter.query.mock.invocationCallOrder[
+          mocks.coreAdapter.query.mock.calls.findIndex(([sql]) =>
+            String(sql).includes('FROM flow_interaction_steps')
+          )
+        ];
+      expect(claimAt).toBeLessThan(visitsReadAt);
+      expect((data.step as Record<string, unknown>).id).toBe('b:step');
+      const statements = mocks.coreAdapter.batch.mock.calls[0]?.[0] as Array<{
+        sql: string;
+        params: unknown[];
+      }>;
+      expect(statements[0].sql).toContain('UPDATE flow_interactions');
+      expect(statements[0].params.slice(0, 2)).toEqual(['b', 'b:step']);
+      // Under the claim, and only from the step it was read at.
+      expect(statements[0].sql).toContain('AND current_step_id = ? AND submit_claim_id = ?');
+      // The step left is undone, and so is the visit of the screen gone back to.
+      expect(statements[1].sql).toContain("SET state = 'skipped'");
+      expect(statements[2].params).toContain('v_b');
+      expect(statements.some((statement) => statement.params?.includes('v_a'))).toBe(false);
+      expect(statements[statements.length - 1].sql).toContain('INSERT INTO flow_interaction_steps');
+      expect(statements[statements.length - 1].params).toContain('b:step');
+    });
+
+    it('does not go back past a step that is not a screen', async () => {
+      const { response, data } = await goBack({
+        currentStep: 'd:step',
+        visits: [
+          visit('v_a', 'a:step', 1_000),
+          visit('v_b', 'b:step', 2_000),
+          visit('v_c', 'c:step', 3_000),
+          visit('v_consent', 'consent:step', 4_000),
+        ],
+        target: 'page_c',
+      });
+      expect(response.status).toBe(409);
+      expect(data.error).toBe('back_not_allowed');
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    });
+
+    it('does not go back past a step passed without a visit of its own', async () => {
+      // c's submit went on through consent (taken as already given), which left no visit.
+      const { response, data } = await goBack({
+        currentStep: 'd:step',
+        visits: [visit('v_c', 'c:step', 3_000)],
+        target: 'page_c',
+      });
+      expect(response.status).toBe(409);
+      expect(data.error).toBe('back_not_allowed');
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    });
+
+    it('does not go forward, to a screen not passed yet', async () => {
+      const { response, data } = await goBack({
+        currentStep: 'b:step',
+        visits: [visit('v_a', 'a:step', 1_000)],
+        target: 'page_c',
+      });
+      expect(response.status).toBe(409);
+      expect(data.error).toBe('back_not_allowed');
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    });
+
+    it('does not go back from a step that is not a screen', async () => {
+      const { response, data } = await goBack({
+        currentStep: 'consent:step',
+        visits: [visit('v_a', 'a:step', 1_000), visit('v_b', 'b:step', 2_000)],
+        target: 'page_b',
+      });
+      expect(response.status).toBe(409);
+      expect(data.error).toBe('back_not_allowed');
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    });
+
+    it('refuses a tampered contract before reading the way back', async () => {
+      resetAdapter();
+      mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, params?: unknown[]) =>
+        String(sql).includes('FROM screens') ? screenRow(String(params?.[1])) : undefined
+      );
+      const { data: startData } = await startInteraction({ flow_kind: 'login' }, backRuntime);
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'b',
+        currentStepId: 'b:step',
+        runtimeSnapshot: backRuntime,
+      });
+      const response = await loginRuntimeInteractionBackHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          body: {
+            step_id: 'b:step',
+            contract_hash: startData.contract_hash,
+            signature: 'tampered',
+            target_screen: 'page_a',
+          },
+        })
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.coreAdapter.query).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    });
+  });
+
+  it('refuses a submit made on an earlier visit of the step, before it records anything', async () => {
+    const { data: startData } = await startInteraction();
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+    });
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        body: {
+          step_id: 'entry:step',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+          // The interaction's visit of the step is step_1 (mockSubmitQueries).
+          visit_id: 'step_0',
+        },
+      })
+    );
+    const data = await readJson(response);
+    expect(response.status).toBe(409);
+    expect(data.error).toBe('step_conflict');
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+  });
+
   it('rejects submit when the runtime signature does not match the active interaction', async () => {
     const { data: startData } = await startInteraction();
     resetAdapter();
@@ -6263,19 +6765,9 @@ describe('the re-authentication challenge of a SAML request', () => {
         samlChallenge(),
       ],
       [
-        'a Flow assigned to another SP than the one it is bound to',
-        samlStartBody({ target_id: 'https://other.example.test/entity' }),
-        samlChallenge(),
-      ],
-      [
         'another tenant than its own binding says',
         samlStartBody(),
         samlChallenge({ metadata: { tenant_id: 'tenant_other' } }),
-      ],
-      [
-        'a target that also names an OIDC client',
-        samlStartBody({ client_id: 'client_1' }),
-        samlChallenge(),
       ],
       [
         'a challenge that is not a re-authentication',
@@ -6293,6 +6785,20 @@ describe('the re-authentication challenge of a SAML request', () => {
       expect(response.status).toBe(403);
       expect(data.error).toBe('authorization_challenge_mismatch');
       expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'a Flow assigned to another SP than the one it is bound to',
+        samlStartBody({ target_id: 'https://other.example.test/entity' }),
+      ],
+      ['a target that also names an OIDC client', samlStartBody({ client_id: 'client_1' })],
+    ])('is refused for %s, as a target that names two apps', async (_name, body) => {
+      const { response, data } = await startWith(body, samlChallenge());
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('invalid_target');
       expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
     });
 

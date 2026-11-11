@@ -13,6 +13,15 @@ import {
   type CategoryName,
 } from '../types/settings/catalog';
 import {
+  defaultProfileLayerFrom,
+  isDefaultLayerCategory,
+  layerResolvedSettings,
+  layerTenantDocument,
+  withLegacyMethodSwitches,
+  type DefaultLayerCategory,
+  type DefaultProfileLayer,
+} from './default-profile-layer';
+import {
   createSettingsManager,
   type SettingScope,
   type SettingSource,
@@ -87,7 +96,48 @@ export async function resolveEffectiveSettingsWithSources(
   const { values, sources } = await managerFor(env, target.fresh === true).getAll(category, scope, {
     parents: settingsParentScopes(category, scope),
   });
-  return { values, sources };
+  if (!isDefaultLayerCategory(category)) return { values, sources };
+  // A Default profile's settings: the tenant's value only where the platform lets it apply.
+  const layer = await readDefaultProfileLayer(env, category, { fresh: target.fresh === true });
+  // A tenant's older single method switches stand for the uses it sets nothing for.
+  const own =
+    category === 'authentication-methods' && scope.type === 'tenant'
+      ? withLegacyMethodSwitches({ values, sources })
+      : { values, sources };
+  return layerResolvedSettings(own, layer, scope.type === 'client' ? 'client' : 'tenant');
+}
+
+/**
+ * What the platform holds for one category of a Default profile (default-profile-layer.ts): its
+ * values and whether the tenants' own values apply. A document that cannot be read is thrown, as
+ * the tenant's would be: a locked Default is not read as unlocked.
+ */
+export async function readDefaultProfileLayer(
+  env: EffectiveSettingsEnv,
+  category: DefaultLayerCategory,
+  options: Pick<EffectiveSettingsTarget, 'fresh'> = {}
+): Promise<DefaultProfileLayer> {
+  const [platform, profiles] = await Promise.all([
+    resolvePlatformSettingsWithSources(env, category, options),
+    resolvePlatformSettingsWithSources(env, 'profiles', options),
+  ]);
+  return defaultProfileLayerFrom(category, platform, profiles);
+}
+
+/**
+ * A tenant's raw settings document (as read from KV) with the platform layer of its Default
+ * under it; other categories are returned as they are. For readers that parse the document
+ * themselves. A layer that cannot be read is thrown: the reader treats it as it treats an
+ * unreadable document of the tenant's.
+ */
+export async function layerTenantSettingsDocument(
+  env: EffectiveSettingsEnv,
+  category: string,
+  document: Record<string, unknown>,
+  options: Pick<EffectiveSettingsTarget, 'fresh'> = {}
+): Promise<Record<string, unknown>> {
+  if (!isDefaultLayerCategory(category)) return document;
+  return layerTenantDocument(document, await readDefaultProfileLayer(env, category, options));
 }
 
 /**

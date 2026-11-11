@@ -6,7 +6,6 @@ import {
 	choices,
 	emptyFlowState,
 	FLOW_PREFIX,
-	includes,
 	isSyncFlow,
 	type AccountField,
 	type AccountFlowDef,
@@ -47,66 +46,155 @@ export type {
 export { emptyFlowState, isSyncFlow } from './flow-spec';
 export { SYNC_FLOW_IDS } from './sync-flow-spec';
 
-/** The connections the tenant already has, for "sign in through …" (dummy). */
-const PROVIDERS = () => [
-	{ value: 'acme', label: t('af.provider.acme') },
-	{ value: 'corporate', label: t('af.provider.corporate') }
-];
+/**
+ * Where a person goes once the flow is done (the Login UI's own post-sign-in setting otherwise):
+ * the same choices for a sign-up (`reg.*`) and a sign-in (`login.*`). A sign-in may also leave
+ * it to the tenant's own setting (`tenant`).
+ */
+function completionFields(p: 'reg' | 'login'): AccountField[] {
+	return [
+		{
+			key: `${p}.after`,
+			kind: 'select',
+			label: 'af.field.reg.after',
+			options: choices('after', [
+				...(p === 'login' ? ['tenant'] : []),
+				'account',
+				'home',
+				'custom_url',
+				'app_login',
+				'saml_login',
+				'service_site'
+			]),
+			required: true,
+			initial: p === 'login' ? 'tenant' : 'account'
+		},
+		{
+			key: `${p}.redirectUrl`,
+			kind: 'text',
+			label: 'af.field.reg.redirectUrl',
+			hint: 'af.hint.reg.redirectUrl',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'custom_url'
+		},
+		{
+			key: `${p}.servicePath`,
+			kind: 'text',
+			label: 'af.field.reg.servicePath',
+			hint: 'af.hint.reg.servicePath',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'service_site'
+		},
+		{
+			key: `${p}.appClient`,
+			kind: 'client',
+			label: 'af.field.reg.appClient',
+			hint: p === 'login' ? 'af.hint.login.appClient' : 'af.hint.reg.appClient',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'app_login'
+		},
+		{
+			key: `${p}.appRedirectUri`,
+			kind: 'client-redirect',
+			clientKey: `${p}.appClient`,
+			label: 'af.field.reg.appRedirectUri',
+			hint: 'af.hint.reg.appRedirectUri',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'app_login'
+		},
+		{
+			key: `${p}.appScope`,
+			kind: 'text',
+			label: 'af.field.reg.appScope',
+			hint: 'af.hint.reg.appScope',
+			options: () => [],
+			required: true,
+			initial: 'openid profile email',
+			showWhen: (values) => values[`${p}.after`] === 'app_login'
+		},
+		{
+			key: `${p}.appReturnTo`,
+			kind: 'text',
+			label: 'af.field.reg.appReturnTo',
+			hint: 'af.hint.reg.appReturnTo',
+			options: () => [],
+			showWhen: (values) => values[`${p}.after`] === 'app_login'
+		},
+		// `login-entry.saml_login_*`: an IdP-initiated sign-in to the provider.
+		{
+			key: `${p}.samlSp`,
+			kind: 'saml-sp',
+			label: 'af.field.reg.samlSp',
+			hint: p === 'login' ? 'af.hint.login.samlSp' : 'af.hint.reg.samlSp',
+			options: () => [],
+			required: true,
+			showWhen: (values) => values[`${p}.after`] === 'saml_login'
+		},
+		{
+			key: `${p}.samlRelayState`,
+			kind: 'text',
+			label: 'af.field.reg.samlRelayState',
+			hint: 'af.hint.reg.samlRelayState',
+			options: () => [],
+			showWhen: (values) => values[`${p}.after`] === 'saml_login'
+		}
+	];
+}
 
 const ACCOUNT_PARTS: Record<string, AccountPart> = {
 	'reg-about': {
 		id: 'reg-about',
 		label: 'af.part.about',
-		lead: 'af.lead.about',
-		note: 'af.note.about',
 		fields: aboutFields('registration')
 	},
 	'login-about': {
 		id: 'login-about',
 		label: 'af.part.about',
-		lead: 'af.lead.about',
-		note: 'af.note.about',
 		fields: aboutFields('login')
 	},
-	'reg-fields': {
-		id: 'reg-fields',
-		label: 'af.part.reg-fields',
-		lead: 'af.lead.reg-fields',
+	'reg-general': {
+		id: 'reg-general',
+		label: 'af.part.reg-general',
 		fields: [
-			{
-				key: 'reg.attributes',
-				kind: 'checks',
-				label: 'af.field.reg.attributes',
-				options: choices('attribute', ['email', 'name', 'phone', 'birthdate']),
-				required: true
-			},
 			{
 				key: 'reg.duplicate',
 				kind: 'select',
 				label: 'af.field.reg.duplicate',
 				hint: 'af.hint.reg.duplicate',
 				options: choices('duplicate', ['reject', 'login', 'mail']),
-				required: true
-			}
-		]
-	},
-	'reg-eligibility': {
-		id: 'reg-eligibility',
-		label: 'af.part.reg-eligibility',
-		lead: 'af.lead.reg-eligibility',
-		fields: [
+				required: true,
+				// Not telling others whether an address is registered.
+				initial: 'mail'
+			},
 			{
 				key: 'reg.policy',
 				kind: 'select',
 				label: 'af.field.reg.policy',
 				options: choices('eligibility', ['open', 'invite', 'domain']),
-				required: true
+				required: true,
+				initial: 'open'
+			},
+			{
+				// Who may sign up by address: the domains, one or more.
+				key: 'reg.domains',
+				kind: 'text',
+				label: 'af.field.reg.domains',
+				hint: 'af.hint.reg.domains',
+				options: () => [],
+				required: true,
+				showWhen: (values) => values['reg.policy'] === 'domain'
 			},
 			{
 				key: 'reg.denied',
 				kind: 'select',
 				label: 'af.field.reg.denied',
-				options: choices('denied', ['generic', 'reason'])
+				options: choices('denied', ['generic', 'reason']),
+				// Not telling why is the safer answer.
+				initial: 'generic'
 			}
 		]
 	},
@@ -116,20 +204,47 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		lead: 'af.lead.reg-methods',
 		fields: [
 			{
-				key: 'reg.methods',
-				kind: 'checks',
-				label: 'af.field.methods',
-				options: choices('method', ['passkey', 'password', 'external']),
-				required: true
-			},
-			{
-				key: 'reg.provider',
-				kind: 'select',
-				label: 'af.field.provider',
-				hint: 'af.hint.provider',
-				options: PROVIDERS,
+				key: 'reg.methodProfile',
+				kind: 'profile',
+				label: 'af.field.reg.methodProfile',
+				options: () => [],
 				required: true,
-				showWhen: includes('reg.methods', 'external')
+				// Every tenant has its default profile.
+				initial: 'default'
+			}
+		]
+	},
+	'reg-extra-screen': {
+		id: 'reg-extra-screen',
+		label: 'af.part.reg-extra-screen',
+		renamable: true,
+		fields: [
+			{
+				key: 'reg.extraScreen',
+				kind: 'screen',
+				// Asking for more at sign-up: another sign-up screen, or a screen of one's own.
+				screenKinds: ['registration', 'custom'],
+				label: 'af.field.reg.extraScreen',
+				options: () => [],
+				required: true
+			}
+		]
+	},
+	'reg-screen': {
+		id: 'reg-screen',
+		label: 'af.part.reg-screen',
+		renamable: true,
+		lead: 'af.lead.reg-screen',
+		fields: [
+			{
+				key: 'reg.screen',
+				kind: 'screen',
+				screenKinds: ['registration'],
+				label: 'af.field.reg.screen',
+				options: () => [],
+				required: true,
+				// The sign-up screen every tenant is made with, so a new one can sign people up.
+				initial: 'registration'
 			}
 		]
 	},
@@ -143,46 +258,33 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 				kind: 'select',
 				label: 'af.field.reg.emailCheck',
 				options: choices('emailCheck', ['before', 'later', 'none']),
-				required: true
+				required: true,
+				// What sign-up by email code does today.
+				initial: 'before'
+			},
+			{
+				// Someone from another provider may arrive with no address, or one that cannot be
+				// trusted: they are checked by email too, whatever is chosen above.
+				key: 'reg.extraWhen',
+				kind: 'checks',
+				label: 'af.field.reg.extraWhen',
+				hint: 'af.hint.reg.extraWhen',
+				options: choices('extraWhen', ['no-email', 'unverified', 'low-trust']),
+				initial: ['no-email', 'unverified']
 			},
 			{
 				key: 'reg.expiry',
 				kind: 'select',
 				label: 'af.field.reg.expiry',
-				options: choices('expiry', ['15m', '1h', '24h']),
+				hint: 'af.hint.reg.expiry',
+				options: choices('expiry', ['5m', '10m', '15m']),
 				required: true,
 				showWhen: (values) =>
-					values['reg.emailCheck'] === 'before' || values['reg.emailCheck'] === 'later'
-			}
-		]
-	},
-	'reg-extra-check': {
-		id: 'reg-extra-check',
-		label: 'af.part.reg-extra-check',
-		lead: 'af.lead.reg-extra-check',
-		note: 'af.note.reg-extra-check',
-		fields: [
-			{
-				key: 'reg.extraWhen',
-				kind: 'checks',
-				label: 'af.field.reg.extraWhen',
-				options: choices('extraWhen', ['no-email', 'unverified', 'low-trust']),
-				required: true
-			},
-			{
-				key: 'reg.extraMethod',
-				kind: 'select',
-				label: 'af.field.reg.extraMethod',
-				hint: 'af.hint.reg.extraMethod',
-				options: choices('extraMethod', ['email-code', 'sms-code']),
-				required: true
-			},
-			{
-				key: 'reg.extraExpiry',
-				kind: 'select',
-				label: 'af.field.reg.extraExpiry',
-				options: choices('codeExpiry', ['10m', '30m', '1h']),
-				required: true
+					values['reg.emailCheck'] === 'before' ||
+					values['reg.emailCheck'] === 'later' ||
+					(Array.isArray(values['reg.extraWhen']) && values['reg.extraWhen'].length > 0),
+				// The shortest: the safer one.
+				initial: '5m'
 			}
 		]
 	},
@@ -216,39 +318,25 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 			}
 		]
 	},
-	'reg-account': {
-		id: 'reg-account',
-		label: 'af.part.reg-account',
-		lead: 'af.lead.reg-account',
-		note: 'af.note.reg-account',
-		fields: [
-			{
-				key: 'reg.state',
-				kind: 'select',
-				label: 'af.field.reg.state',
-				options: choices('accountState', ['active', 'pending']),
-				required: true
-			}
-		]
-	},
 	'reg-result': {
 		id: 'reg-result',
 		label: 'af.part.reg-result',
 		lead: 'af.lead.reg-result',
+		note: 'af.note.reg-result',
+		// The Login UI's own post-login setting (`login-entry.post_login_*`, `self-service.
+		// account_page_*`, `service-site.fallback_enabled`), as the current Admin UI sets it.
 		fields: [
 			{
-				key: 'reg.after',
-				kind: 'select',
-				label: 'af.field.reg.after',
-				options: choices('after', ['login', 'session']),
-				required: true
+				// The session the new account is signed in with.
+				key: 'reg.sessionProfile',
+				kind: 'session-profile',
+				label: 'sp.field.label',
+				hint: 'sp.field.hint',
+				options: () => [],
+				required: true,
+				initial: 'default'
 			},
-			{
-				key: 'reg.interrupted',
-				kind: 'select',
-				label: 'af.field.reg.interrupted',
-				options: choices('interrupted', ['resume', 'restart'])
-			}
+			...completionFields('reg')
 		]
 	},
 	'login-methods': {
@@ -257,20 +345,13 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		lead: 'af.lead.login-methods',
 		fields: [
 			{
-				key: 'login.methods',
-				kind: 'checks',
-				label: 'af.field.methods',
-				options: choices('method', ['passkey', 'password', 'otp', 'external']),
-				required: true
-			},
-			{
-				key: 'login.provider',
-				kind: 'select',
-				label: 'af.field.provider',
-				hint: 'af.hint.provider',
-				options: PROVIDERS,
+				key: 'login.methodProfile',
+				kind: 'profile',
+				label: 'af.field.reg.methodProfile',
+				options: () => [],
 				required: true,
-				showWhen: includes('login.methods', 'external')
+				// Every tenant has its default profile.
+				initial: 'default'
 			}
 		]
 	},
@@ -278,51 +359,15 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		id: 'login-validation',
 		label: 'af.part.login-validation',
 		lead: 'af.lead.login-validation',
-		note: 'af.note.login-validation',
-		fields: [
-			{
-				key: 'login.failures',
-				kind: 'select',
-				label: 'af.field.login.failures',
-				options: choices('failures', ['delay', 'lock', 'none']),
-				required: true
-			},
-			{
-				key: 'login.unregistered',
-				kind: 'select',
-				label: 'af.field.login.unregistered',
-				hint: 'af.hint.login.unregistered',
-				options: choices('unregistered', ['guide', 'generic']),
-				required: true
-			}
-		]
+		// Repeated failures and unregistered addresses follow the tenant's security settings.
+		fields: []
 	},
-	'login-conditions': {
-		id: 'login-conditions',
-		label: 'af.part.login-conditions',
-		lead: 'af.lead.login-conditions',
-		fields: [
-			{
-				key: 'login.stepUpWhen',
-				kind: 'select',
-				label: 'af.field.login.stepUpWhen',
-				options: choices('stepUpWhen', ['always', 'risk', 'sensitive']),
-				required: true
-			},
-			{
-				key: 'login.stepUpFactor',
-				kind: 'select',
-				label: 'af.field.login.stepUpFactor',
-				options: choices('method', ['passkey', 'otp']),
-				required: true
-			},
-			{
-				key: 'login.stepUpUnavailable',
-				kind: 'select',
-				label: 'af.field.login.stepUpUnavailable',
-				options: choices('stepUpUnavailable', ['deny', 'enroll'])
-			}
-		]
+	'login-result': {
+		id: 'login-result',
+		label: 'af.part.login-result',
+		lead: 'af.lead.login-result',
+		note: 'af.note.login-result',
+		fields: completionFields('login')
 	},
 	'login-session': {
 		id: 'login-session',
@@ -330,32 +375,14 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		lead: 'af.lead.login-session',
 		fields: [
 			{
-				key: 'login.lifetime',
-				kind: 'select',
-				label: 'af.field.login.lifetime',
-				options: choices('lifetime', ['8h', '24h', '7d']),
-				required: true
-			},
-			{
-				key: 'login.reauth',
-				kind: 'select',
-				label: 'af.field.login.reauth',
-				options: choices('reauth', ['idle', 'none'])
-			}
-		]
-	},
-	'login-return': {
-		id: 'login-return',
-		label: 'af.part.login-return',
-		lead: 'af.lead.login-return',
-		note: 'af.note.login-return',
-		fields: [
-			{
-				key: 'login.failure',
-				kind: 'select',
-				label: 'af.field.login.failure',
-				options: choices('failure', ['error', 'stay']),
-				required: true
+				key: 'login.sessionProfile',
+				kind: 'session-profile',
+				label: 'sp.field.label',
+				hint: 'sp.field.hint',
+				options: () => [],
+				required: true,
+				// Every tenant has its Default profile (its own session settings).
+				initial: 'default'
 			}
 		]
 	}
@@ -372,14 +399,18 @@ export const FLOWS: Record<FlowId, AccountFlowDef> = {
 		summary: 'af.flow.registration.summary',
 		start: { title: 'af.flow.registration.start', detail: 'af.flow.ui' },
 		end: { title: 'af.flow.registration.end', detail: 'af.flow.registration.endDetail' },
+		general: ['reg-general', 'reg-verification'],
 		groups: [
-			{ id: 'input', label: 'af.group.input', parts: ['reg-fields', 'reg-eligibility'] },
-			{ id: 'identity', label: 'af.group.identity', parts: ['reg-methods', 'reg-verification'] },
+			{ id: 'identity', label: 'af.group.identity', parts: ['reg-methods'] },
+			{ id: 'screen', label: 'af.group.screen', parts: ['reg-screen'] },
 			{
-				id: 'extra-check',
-				label: 'af.group.extraCheck',
-				parts: ['reg-extra-check'],
-				optional: true
+				id: 'extra-screen',
+				// Another screen: the same step as the first, its setting numbered on from it.
+				label: 'af.group.screen',
+				parts: ['reg-extra-screen'],
+				optional: true,
+				// Ask for everything on one more screen, or split it over two or three.
+				repeatable: 5
 			},
 			{
 				id: 'consent',
@@ -387,7 +418,7 @@ export const FLOWS: Record<FlowId, AccountFlowDef> = {
 				parts: ['reg-statements', 'reg-policy'],
 				optional: true
 			},
-			{ id: 'complete', label: 'af.group.complete', parts: ['reg-account', 'reg-result'] }
+			{ id: 'complete', label: 'af.group.complete', parts: ['reg-result'] }
 		]
 	},
 	login: {
@@ -397,19 +428,11 @@ export const FLOWS: Record<FlowId, AccountFlowDef> = {
 		summary: 'af.flow.login.summary',
 		start: { title: 'af.flow.login.start', detail: 'af.flow.ui' },
 		end: { title: 'af.flow.login.end', detail: 'af.flow.login.endDetail' },
+		// How a sign-in is checked applies to the whole flow: in a frame of its own, not a step.
+		general: ['login-validation'],
 		groups: [
-			{
-				id: 'authenticate',
-				label: 'af.group.authenticate',
-				parts: ['login-methods', 'login-validation']
-			},
-			{
-				id: 'stepup',
-				label: 'af.group.stepUp',
-				parts: ['login-conditions'],
-				optional: true
-			},
-			{ id: 'finish', label: 'af.group.finish', parts: ['login-session', 'login-return'] }
+			{ id: 'authenticate', label: 'af.group.authenticate', parts: ['login-methods'] },
+			{ id: 'finish', label: 'af.group.finish', parts: ['login-session', 'login-result'] }
 		]
 	},
 	...SYNC_FLOWS
@@ -420,31 +443,128 @@ export const ACCOUNT_FLOW_IDS: readonly AccountFlowId[] = ['registration', 'logi
 /** Every flow: sign-up and sign-in, then the user sync flows. */
 export const ALL_FLOW_IDS: readonly FlowId[] = [...ACCOUNT_FLOW_IDS, ...SYNC_FLOW_IDS];
 
-/** Every setting of a step of a flow, flat (the flow's own settings, see `aboutPart`, are not one). */
+/**
+ * Every setting of a step of a flow, flat (the flow's own settings, see `aboutPart`, and its
+ * general settings, see `generalParts`, are not one).
+ */
 export function partsOf(flow: FlowId): string[] {
 	return FLOWS[flow].groups.flatMap((group) => group.parts);
 }
 
-export function partLabel(partId: string): string {
-	return t(PARTS[partId].label);
+/** One step of a repeatable group (`<group>:<n>`, its parts `<part>:<n>`). */
+const INSTANCE = /^(.+):(\d+)$/u;
+
+/** The group and its number, for a step of a repeatable group; null for any other id. */
+function instanceOf(id: string): { base: string; n: number } | null {
+	const match = INSTANCE.exec(id);
+	return match ? { base: match[1], n: Number(match[2]) } : null;
 }
 
+/** A setting, by id: a step of a repeatable group has its part's fields under keys of its own. */
+export function partDef(partId: string): AccountPart {
+	const own = PARTS[partId];
+	if (own) return own;
+	const instance = instanceOf(partId);
+	const base = instance ? PARTS[instance.base] : undefined;
+	if (!instance || !base) throw new Error(`Unknown setting ${partId}`);
+	return {
+		...base,
+		id: partId,
+		fields: base.fields.map((field) => ({ ...field, key: `${field.key}:${instance.n}` }))
+	};
+}
+
+/** A step of the flow, by id: a group, or one step of a repeatable group (its parts numbered). */
+export function groupDef(flow: FlowId, id: string): AccountGroup | undefined {
+	const groups = FLOWS[flow].groups;
+	const own = groups.find((group) => group.id === id);
+	if (own) return own;
+	const instance = instanceOf(id);
+	const base = instance
+		? groups.find((group) => group.id === instance.base && group.repeatable)
+		: undefined;
+	if (!instance || !base) return undefined;
+	return { ...base, id, parts: base.parts.map((part) => `${part}:${instance.n}`) };
+}
+
+/** The steps of a repeatable group the flow has now, in the order they were added. */
+function instancesOf(group: AccountGroup, state: AccountFlowState): string[] {
+	return state.added
+		.filter((id) => instanceOf(id)?.base === group.id)
+		.sort((a, b) => (instanceOf(a)?.n ?? 0) - (instanceOf(b)?.n ?? 0));
+}
+
+/**
+ * Every step the flow can have now, in running order, for the flow's "+": a repeatable group's
+ * steps, then the next one it can add (until it has as many as it may).
+ */
+export function stepOrder(flow: FlowId, state: AccountFlowState): string[] {
+	return FLOWS[flow].groups.flatMap((group) => {
+		if (!group.repeatable) return [group.id];
+		const have = instancesOf(group, state);
+		const used = have.map((id) => instanceOf(id)?.n ?? 0);
+		const next = `${group.id}:${Math.max(0, ...used) + 1}`;
+		return have.length < group.repeatable ? [...have, next] : have;
+	});
+}
+
+/**
+ * A setting's default name. One of a repeatable step is numbered on from the step before the
+ * group (`{n}`: the first more screen is the second screen).
+ */
+export function partLabel(partId: string): string {
+	const instance = instanceOf(partId);
+	return t(partDef(partId).label, instance ? { n: instance.n + 1 } : undefined);
+}
+
+/** Where a setting's own title is kept among the flow's values. */
+export function titleKey(partId: string): string {
+	return `title:${partId}`;
+}
+
+/** A setting's title: the one given to it, else its default name. */
+export function partTitle(partId: string, state: AccountFlowState): string {
+	const given = state.values[titleKey(partId)];
+	return typeof given === 'string' && given.trim() ? given : partLabel(partId);
+}
+
+/** A step's name (the same for every step of a repeatable group: its settings tell them apart). */
 export function groupLabel(group: AccountGroup): string {
 	return t(group.label);
 }
 
 /** The steps as the flow is now: the fixed ones and the optional ones that were added. */
 export function visibleGroups(flow: FlowId, state: AccountFlowState): AccountGroup[] {
-	return FLOWS[flow].groups.filter((group) => !group.optional || state.added.includes(group.id));
+	return FLOWS[flow].groups.flatMap((group) => {
+		if (group.repeatable) {
+			return instancesOf(group, state).flatMap((id) => groupDef(flow, id) ?? []);
+		}
+		return !group.optional || state.added.includes(group.id) ? [group] : [];
+	});
 }
 
+/** A list counts as set once it has an entry and none is left unchosen. */
 function hasValue(value: AccountValue | undefined): boolean {
-	return Array.isArray(value) ? value.length > 0 : value !== undefined && value.trim() !== '';
+	return Array.isArray(value)
+		? value.length > 0 && value.every((entry) => entry.trim() !== '')
+		: value !== undefined && value.trim() !== '';
 }
 
 /** The fields of a setting that apply to what has been chosen so far. */
 export function shownFields(partId: string, state: AccountFlowState): AccountField[] {
-	return PARTS[partId].fields.filter((field) => !field.showWhen || field.showWhen(state.values));
+	// A step of a repeatable group asks what its group asks, of its own values.
+	const part = partDef(partId);
+	const instance = PARTS[partId] ? null : instanceOf(partId);
+	const own = (values: Record<string, AccountValue>) =>
+		instance
+			? Object.fromEntries(
+					Object.entries(values).flatMap(([key, value]) => {
+						const match = instanceOf(key);
+						return match?.n === instance.n ? [[match.base, value]] : [];
+					})
+				)
+			: values;
+	return part.fields.filter((field) => !field.showWhen || field.showWhen(own(state.values)));
 }
 
 export type PartState = 'done' | 'required' | 'todo';
@@ -458,7 +578,11 @@ export function partState(partId: string, flow: FlowId, state: AccountFlowState)
 		.filter((field) => field.required)
 		.every((field) => hasValue(state.values[field.key]));
 	if (complete) return 'done';
-	const group = FLOWS[flow].groups.find((candidate) => candidate.parts.includes(partId));
+	const group = FLOWS[flow].groups.find(
+		(candidate) =>
+			candidate.parts.includes(partId) ||
+			(candidate.repeatable && candidate.parts.includes(instanceOf(partId)?.base ?? ''))
+	);
 	return group?.optional ? 'todo' : 'required';
 }
 
@@ -478,8 +602,9 @@ export function stillToDo(
 	flow: FlowId,
 	state: AccountFlowState
 ): { id: string; label: string; state: PartState }[] {
-	// The flow's own settings (name, place) come first: they are not a step of the flow.
-	const open = [ABOUT_PART[flow], ...visibleGroups(flow, state).flatMap((group) => group.parts)]
+	// The flow's own settings (name, place) and its general settings come first: they are not a
+	// step of the flow.
+	const open = [...ownParts(flow), ...visibleGroups(flow, state).flatMap((group) => group.parts)]
 		.map((id) => ({ id, label: partLabel(id), state: partState(id, flow, state) }))
 		.filter((part) => part.state !== 'done');
 	return [
@@ -500,8 +625,7 @@ export interface SummaryRow {
 
 /** What was chosen, field by field, for the overview; a field with no value says so. */
 export function summaryRows(flow: FlowId, state: AccountFlowState): SummaryRow[] {
-	return visibleGroups(flow, state)
-		.flatMap((group) => group.parts)
+	return [...generalParts(flow), ...visibleGroups(flow, state).flatMap((group) => group.parts)]
 		.flatMap((partId) => shownFields(partId, state))
 		.map((field) => {
 			const chosen = state.values[field.key];
@@ -516,15 +640,39 @@ export function summaryRows(flow: FlowId, state: AccountFlowState): SummaryRow[]
 /** A flow with every required setting chosen (and, with `full`, the optional steps too). */
 export function sampleState(flow: FlowId, full = false): AccountFlowState {
 	const state = emptyFlowState();
-	if (full) state.added = FLOWS[flow].groups.filter((g) => g.optional).map((group) => group.id);
-	const wanted = FLOWS[flow].groups.filter((group) => full || !group.optional);
-	for (const partId of [ABOUT_PART[flow], ...wanted.flatMap((group) => group.parts)]) {
-		for (const field of PARTS[partId].fields) {
+	if (full) {
+		state.added = FLOWS[flow].groups
+			.filter((g) => g.optional)
+			.map((group) => (group.repeatable ? `${group.id}:1` : group.id));
+	}
+	const wanted = visibleGroups(flow, state);
+	for (const partId of [...ownParts(flow), ...wanted.flatMap((group) => group.parts)]) {
+		for (const field of partDef(partId).fields) {
 			if (!field.required && !full) continue;
 			// A field that is not shown for what was chosen so far is left unset, as it would be by hand.
 			if (field.showWhen && !field.showWhen(state.values)) continue;
+			if (field.initial !== undefined) {
+				state.values[field.key] = structuredClone(field.initial);
+				continue;
+			}
 			if (field.kind === 'text') {
 				state.values[field.key] = 'Sample flow';
+				continue;
+			}
+			if (field.kind === 'screen') {
+				// The mock's own sign-up screen, by its key (see `MOCK_SCREENS`).
+				state.values[field.key] = 'registration_custom';
+				continue;
+			}
+			if (field.kind === 'saml-sp') {
+				// The mock's own enabled provider (see `MOCK_SAML_SERVICE_PROVIDERS`).
+				state.values[field.key] = 'https://lms.example.edu/shibboleth';
+				continue;
+			}
+			if (field.kind === 'client' || field.kind === 'client-redirect') {
+				// The mock's own app and its first redirect URI (see `MOCK_CLIENTS`).
+				state.values[field.key] =
+					field.kind === 'client' ? 'client_member_app' : 'https://app.example.com/callback';
 				continue;
 			}
 			const first = field.options()[0]?.value;
@@ -542,9 +690,31 @@ const ABOUT_PART = Object.fromEntries(
 	Object.entries(FLOW_PREFIX).map(([flow, prefix]) => [flow, `${prefix}-about`])
 ) as Record<FlowId, string>;
 
+/** A new flow: unset, but for the settings that start with a value (see `AccountField.initial`). */
+export function initialState(flow: FlowId): AccountFlowState {
+	const state = emptyFlowState();
+	for (const partId of [...ownParts(flow), ...partsOf(flow)])
+		for (const field of PARTS[partId].fields)
+			if (field.initial !== undefined) state.values[field.key] = structuredClone(field.initial);
+	return state;
+}
+
 /** The setting that holds the flow's name and where it is used. */
 export function aboutPart(flow: FlowId): string {
 	return ABOUT_PART[flow];
+}
+
+/**
+ * The settings that apply to the whole flow rather than to one of its steps, shown in a frame of
+ * their own in place of the overview; empty when the flow has none.
+ */
+export function generalParts(flow: FlowId): readonly string[] {
+	return FLOWS[flow].general ?? [];
+}
+
+/** The settings of the flow that are not a step of it: its name and place, then its general ones. */
+function ownParts(flow: FlowId): string[] {
+	return [ABOUT_PART[flow], ...generalParts(flow)];
 }
 
 /** The name the flow goes by; until it has one, what kind of flow it is. */
@@ -558,7 +728,7 @@ export function flowName(flow: FlowId, state: AccountFlowState): string {
  * nothing else yet: what the wizard leaves behind.
  */
 export function aboutState(flow: FlowId, name: string, second: string): AccountFlowState {
-	const state = emptyFlowState();
+	const state = initialState(flow);
 	const prefix = FLOW_PREFIX[flow];
 	state.values[`${prefix}.name`] = name;
 	state.values[`${prefix}.${isSyncFlow(flow) ? 'partner' : 'scope'}`] = second;

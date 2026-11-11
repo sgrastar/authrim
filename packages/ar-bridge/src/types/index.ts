@@ -1,3 +1,5 @@
+import type { RegistrationPolicy } from '@authrim/ar-lib-core';
+
 /**
  * External IdP Types
  * Types for upstream provider configuration, linked identities, and auth state
@@ -53,6 +55,12 @@ export interface UpstreamProvider {
   autoLinkEmail: boolean;
   jitProvisioning: boolean;
   requireEmailVerified: boolean;
+  /**
+   * Whether the tenant trusts the addresses this provider gives (it checks them itself). A
+   * sign-up Flow whose policy lists `low_trust` has the address of a sign-up through a provider
+   * with this off checked by email code. Stored with the provider's quirks; default false.
+   */
+  trustEmail?: boolean;
   /**
    * Always fetch userinfo even when id_token contains claims.
    * Enable this for OIDC RP certification testing or when userinfo
@@ -174,6 +182,12 @@ export interface ExternalIdpAuthState {
    * interaction of the tenant: the callback records the sign-in's failures with it.
    */
   attemptInteractionId?: string;
+  /**
+   * The authorization request (challenge id) the sign-in answers: the callback holds it to that
+   * request's app (the interaction must have been started for it; with none, the app's own
+   * sign-in Flow holds).
+   */
+  flowChallengeId?: string;
   expiresAt: number;
   createdAt: number;
 }
@@ -284,6 +298,17 @@ export interface HandleIdentityParams {
    * a sign-in begun at a lite start, whose proof of work also met the sign-up requirement.
    */
   accountCreationAllowed?: boolean;
+  /**
+   * Reads the `external_email_check` of the registration Flow this sign-in runs (null: it runs
+   * none, so nothing extra is checked). Called only where an account would be created; a
+   * sign-in that finds its account never reads it. A sign-in that would create an account the
+   * policy asks to have its address checked creates none.
+   */
+  /**
+   * The sign-up policy an account made here is held to (the registration Flow the start named,
+   * else the tenant's own), read only where an account would be made. Null: none applies.
+   */
+  loadSignUpPolicy?: () => Promise<{ policy: RegistrationPolicy; profileRef: string } | null>;
   /**
    * True for a re-authentication, which has its own switch. Any other sign-in that finds an
    * existing account signs in to it only with a provider the tenant lets sign people in

@@ -525,9 +525,8 @@
 		await expect(button(canvas, t('wizard.next'))).toBeDisabled();
 		await choose(canvas, /^Sign-up/);
 		await next(canvas);
-		await expect(
-			canvas.getByText(/With a single login screen, one sign-up flow/)
-		).toBeInTheDocument();
+		// Just the fields: no lead or note around them.
+		await expect(canvas.queryByText(/With a single login screen, one sign-up flow/)).toBeNull();
 		// A name and a place are what it cannot start without.
 		await expect(button(canvas, 'Continue to settings')).toBeDisabled();
 		await userEvent.type(
@@ -539,6 +538,14 @@
 			'other-ui'
 		);
 		await waitFor(() => expect(button(canvas, 'Continue to settings')).toBeEnabled());
+		// On to the flow: its flow-wide settings start with their values, as any new sign-up does.
+		await userEvent.click(button(canvas, 'Continue to settings'));
+		await expect(
+			await canvas.findByRole('combobox', { name: /When the email address is already registered/ })
+		).toHaveValue('mail');
+		await expect(canvas.getByRole('textbox', { name: /Service flow name/ })).toHaveValue(
+			'Partner portal'
+		);
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -554,13 +561,11 @@
 		await expect(
 			await canvas.findByRole('heading', { name: 'Partner portal sign-in', level: 1 })
 		).toBeInTheDocument();
-		// What the wizard asked is done; the rest is required and marked so.
+		// What the wizard asked is done; the rest starts from the tenant's own.
 		await expect(canvas.getByRole('textbox', { name: /Service flow name/ })).toHaveValue(
 			'Partner portal sign-in'
 		);
-		await expect(
-			inFlow(canvasElement, /^Methods and sources.*Required.*Not set yet/)
-		).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^Establishing the session Configured/)).toBeInTheDocument();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

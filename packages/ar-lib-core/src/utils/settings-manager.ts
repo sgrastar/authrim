@@ -1010,7 +1010,8 @@ export class SettingsManager {
           return canonical.data;
         }
       }
-      let json = this.kv ? await this.kv.get(key) : null;
+      // A binding that answers undefined for a missing key reads the same as one that answers null.
+      let json = this.kv ? ((await this.kv.get(key)) ?? null) : null;
       // Bootstrapping a tenant document with nothing in the primary KV: take the creation-time
       // copy instead of starting empty. It is left pending so it gets projected to the primary KV.
       let fromLegacy = false;

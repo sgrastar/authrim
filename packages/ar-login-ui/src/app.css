@@ -757,10 +757,11 @@ tr.expired {
 			transparent
 		)
 	);
+	/* --login-page-image-dim: the dark-mode veil over the picture (login-ui.background_image_dark_dim). */
 	background-image:
 		var(--login-page-image-veil), var(--login-page-image-tone, none),
-		var(--login-page-background-layer, none);
-	background-blend-mode: normal, saturation, normal;
+		var(--login-page-image-dim, none), var(--login-page-background-layer, none);
+	background-blend-mode: normal, saturation, normal, normal;
 	background-position: center;
 	background-size: cover;
 	display: flex;
@@ -1146,6 +1147,34 @@ tr.expired {
 	max-width: var(--login-page-max-width, 420px);
 }
 
+/* The form image sits over the card colour and under its content. A separate layer keeps the
+   image's opacity and grayscale independent from the form controls and glass effects. */
+[data-page-layout]:not(
+		[data-page-layout='split_panel']
+	)[data-has-login-panel-background-image='true']:not([data-login-template='minimal'])
+	:is(.auth-container > .card, .auth-container > form > .card) {
+	position: relative;
+	isolation: isolate;
+}
+
+[data-page-layout]:not(
+		[data-page-layout='split_panel']
+	)[data-has-login-panel-background-image='true']:not([data-login-template='minimal'])
+	:is(.auth-container > .card, .auth-container > form > .card)
+	> .card-background-image {
+	display: block;
+	position: absolute;
+	inset: 0;
+	z-index: -2;
+	pointer-events: none;
+	background-image: var(--login-panel-background-layer, none);
+	background-position: center;
+	background-size: cover;
+	background-repeat: no-repeat;
+	opacity: var(--login-panel-background-opacity, 0.7);
+	filter: var(--login-panel-background-filter, none);
+}
+
 .auth-main {
 	display: contents;
 }
@@ -1307,8 +1336,8 @@ tr.expired {
 	.auth-brand-panel {
 	background-image:
 		var(--login-page-image-veil), var(--login-page-image-tone, none),
-		var(--login-page-background-layer);
-	background-blend-mode: normal, saturation, normal;
+		var(--login-page-image-dim, none), var(--login-page-background-layer);
+	background-blend-mode: normal, saturation, normal, normal;
 }
 
 [data-page-layout='split_panel'] .auth-brand-panel::before {
@@ -1437,7 +1466,7 @@ tr.expired {
 	-webkit-backdrop-filter: blur(32px) saturate(160%);
 }
 
-[data-page-layout='split_panel'][data-split-background-mode='panel'][data-has-login-panel-background-image='true']
+[data-page-layout='split_panel'][data-has-login-panel-background-image='true']
 	.auth-container::before {
 	display: block;
 }
@@ -1495,8 +1524,8 @@ tr.expired {
 			color-mix(in srgb, var(--bg-glass) 70%, transparent)
 		),
 		var(--login-page-image-veil), var(--login-page-image-tone, none),
-		var(--login-page-background-layer, none);
-	background-blend-mode: normal, normal, saturation, normal;
+		var(--login-page-image-dim, none), var(--login-page-background-layer, none);
+	background-blend-mode: normal, normal, saturation, normal, normal;
 	box-shadow: var(--shadow-xl);
 	overflow: hidden;
 }
@@ -2704,7 +2733,7 @@ tr.expired {
 		background: var(--login-panel-background-fill, var(--bg-card));
 	}
 
-	[data-page-layout='split_panel'][data-split-background-mode='panel'][data-has-login-panel-background-image='true']
+	[data-page-layout='split_panel'][data-has-login-panel-background-image='true']
 		.auth-main::before {
 		content: '';
 		position: absolute;
@@ -2741,7 +2770,7 @@ tr.expired {
 		-webkit-backdrop-filter: none;
 	}
 
-	[data-page-layout='split_panel'][data-split-background-mode='panel'][data-has-login-panel-background-image='true']
+	[data-page-layout='split_panel'][data-has-login-panel-background-image='true']
 		.auth-container::before {
 		display: none;
 	}
@@ -3030,13 +3059,6 @@ tr.expired {
 		background: var(--login-panel-background-fill, var(--login-form-area-color, var(--bg-card)));
 	}
 
-	/* The login panel's own picture (split_background_mode panel) has no place in the card: the
-	   attributes only outweigh the rule that shows it. */
-	[data-page-layout='split_panel'][data-form-frame='card'][data-split-background-mode][data-has-login-panel-background-image]
-		.auth-container::before {
-		display: none;
-	}
-
 	/* Below the card, the switches take the stage's foot: the card leaves that room. */
 	[data-page-layout='split_panel'][data-form-frame='card'][data-topbar-position='below_card']
 		.auth-main
@@ -3067,7 +3089,8 @@ tr.expired {
    a box that paints the picture would also filter the form in it. Each such box instead gets an
    empty first child (.auth-image-filter) laid just over its picture: its backdrop-filter filters
    the picture under it, and it paints over that what the box laid over the picture (the veil of
-   the picture's opacity, the framed split's glass tint), so these are not filtered. Then come the
+   the picture's opacity, the dark-mode veil, the framed split's glass tint), so these are not
+   filtered. Then come the
    palette's overlay, the brand panel's own picture and scrim, and the content.
    The boxes: the page itself, the framed split's frame, and the brand panel when the picture is
    only the panel's ("brand only"). Elsewhere the element is not drawn. */
@@ -3080,7 +3103,9 @@ tr.expired {
 	border-radius: inherit;
 	-webkit-backdrop-filter: var(--login-page-image-filter);
 	backdrop-filter: var(--login-page-image-filter);
-	background-image: var(--login-page-image-veil);
+	/* The dark-mode veil is laid over the filtered picture, so a filter never filters it (an
+	   inverted black would turn white). */
+	background-image: var(--login-page-image-veil), var(--login-page-image-dim, none);
 }
 
 /* Over the glass palettes' own page rule too. */
@@ -3149,7 +3174,7 @@ tr.expired {
 				color-mix(in srgb, var(--bg-glass) 70%, transparent),
 				color-mix(in srgb, var(--bg-glass) 70%, transparent)
 			),
-			var(--login-page-image-veil);
+			var(--login-page-image-veil), var(--login-page-image-dim, none);
 	}
 }
 
@@ -3465,9 +3490,9 @@ tr.expired {
 :is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page {
 	background-image:
 		var(--login-page-image-veil), var(--login-page-image-tone, none),
-		var(--login-page-background-layer, var(--glass-backdrop));
+		var(--login-page-image-dim, none), var(--login-page-background-layer, var(--glass-backdrop));
 	/* With no picture the glass light is three layers: each is drawn normally. */
-	background-blend-mode: normal, saturation, normal, normal, normal;
+	background-blend-mode: normal, saturation, normal, normal, normal, normal;
 }
 
 :is([data-login-theme='glass'], [data-login-theme='clear-glass']) .card {

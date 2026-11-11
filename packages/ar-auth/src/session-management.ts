@@ -17,6 +17,9 @@ import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   generateCheckSessionIframeHtml,
   getSessionStoreBySessionId,
+  readTenantSessionSettingsStrict,
+  sessionExtensionPolicyFromSettings,
+  sessionExtensionPolicyOfData,
   getSessionClientMetadata,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
@@ -32,7 +35,7 @@ import {
   BROWSER_STATE_COOKIE_NAME,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
-import { resolveSessionExtensionPolicy, resolveSessionTtl } from './session-ttl';
+import { resolveSessionTtl } from './session-ttl';
 
 function normalizeSessionOrigin(value: string | undefined | null): string | null {
   if (!value) {
@@ -510,8 +513,45 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    // session.refresh_default turns extension off; session.max_ttl bounds it from creation.
-    const extension = await resolveSessionExtensionPolicy(c.env, tenantId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
+    // session.refresh_default turns extension off; session.max_ttl bounds it from creation. A
+    // session made under a session profile keeps the rules it was made with.
+    const current = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+    if (!current) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Session not found or has expired',
+        },
+        404
+      );
+    }
+    // A session made under a named profile keeps that profile's rules; one made under Default
+    // (or before profiles) follows the tenant's rules as they are now, so turning extension off
+    // for the tenant still stops it.
+    const kept =
+      typeof current.data?.session_profile_id === 'string'
+        ? sessionExtensionPolicyOfData(current.data)
+        : null;
+    let extension = kept;
+    if (!extension) {
+      // Read strictly: settings that cannot be read do not fall back to the defaults (which
+      // allow extension) for a tenant that may have turned it off.
+      try {
+        extension = sessionExtensionPolicyFromSettings(
+          c.env,
+          await readTenantSessionSettingsStrict(c.env, tenantId)
+        );
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Session settings are unavailable.',
+          },
+          503
+        );
+      }
+    }
     if (!extension.enabled) {
       return c.json(
         {
@@ -522,7 +562,6 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
     const session = (await sessionStore.extendSessionRpc(
       sessionId,
       extendSeconds,

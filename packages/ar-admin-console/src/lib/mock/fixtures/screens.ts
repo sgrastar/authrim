@@ -1,49 +1,118 @@
 import { createFakeScreens } from '#lib/api/fake/screens-fake.js';
-import type { Screen } from '#lib/api/screens.js';
+import type { Screen, ScreenField } from '#lib/api/screens.js';
 
 const AT = Date.UTC(2026, 10, 1, 9, 0, 0);
 
-/** The mock's screens: built-in sign-in and profile completion, a sign-up copy, and a survey. */
+const LOGIN_FIELDS: ScreenField[] = [
+	{ field: 'title', label: 'Sign in', required: false, block_type: 'heading', block_id: 'title' },
+	{
+		field: 'passkey',
+		label: 'Sign in with Passkey',
+		required: false,
+		block_type: 'auth_widget',
+		block_id: 'passkey',
+		auth_method: 'passkey'
+	},
+	{
+		field: 'or',
+		label: 'Divider',
+		required: false,
+		block_type: 'divider',
+		block_id: 'or',
+		text: 'or'
+	},
+	{
+		field: 'email',
+		label: 'Email code',
+		required: false,
+		block_type: 'auth_widget',
+		block_id: 'mail',
+		auth_method: 'mail_otp'
+	}
+];
+
+const AUTH_PREVIEWS: Array<{
+	key: 'registration' | 'login' | 'consent' | 'code_input';
+	name: string;
+	fields: ScreenField[];
+}> = [
+	{
+		key: 'registration',
+		name: 'Registration',
+		fields: [
+			{ field: 'title', label: 'Create your account', required: false, block_type: 'heading' },
+			{
+				field: 'passkey',
+				label: 'Create account with Passkey',
+				required: false,
+				block_type: 'auth_widget',
+				auth_method: 'passkey'
+			}
+		]
+	},
+	{ key: 'login', name: 'Sign in', fields: LOGIN_FIELDS },
+	{
+		key: 'consent',
+		name: 'Consent',
+		fields: [
+			{
+				field: 'consent',
+				label: 'Consent confirmation',
+				required: true,
+				block_type: 'consent_widget'
+			}
+		]
+	},
+	{
+		key: 'code_input',
+		name: 'Code input',
+		fields: [
+			{
+				field: 'code',
+				label: 'Authentication code',
+				required: true,
+				block_type: 'code_input_widget',
+				auth_method: 'mail_otp'
+			}
+		]
+	}
+];
+
+const ACCOUNT_PREVIEWS: Array<{
+	key: string;
+	name: string;
+	widget: ScreenField['block_type'];
+}> = [
+	{ key: 'account_activity', name: 'Account activity', widget: 'account_activity_widget' },
+	{ key: 'account_overview', name: 'Account overview', widget: 'heading' },
+	{ key: 'account_launchers', name: 'Application launchers', widget: 'account_launcher_widget' },
+	{ key: 'account_totp', name: 'Authenticator app', widget: 'account_totp_widget' },
+	{
+		key: 'account_social_accounts',
+		name: 'Connected accounts',
+		widget: 'account_social_account_widget'
+	},
+	{
+		key: 'account_devices',
+		name: 'Connected apps and devices',
+		widget: 'account_device_list_widget'
+	},
+	{ key: 'account_consents', name: 'Consent information', widget: 'account_consent_widget' },
+	{ key: 'account_custom', name: 'Custom guidance', widget: 'heading' },
+	{ key: 'account_passkeys', name: 'Passkeys', widget: 'account_passkey_widget' },
+	{ key: 'account_sessions', name: 'Signed-in devices', widget: 'account_session_widget' },
+	{ key: 'account_profile', name: 'User profile', widget: 'account_profile_widget' }
+];
+
+/** The mock's screens: built-in auth templates plus saved flow and account screens. */
 export const MOCK_SCREENS: Screen[] = [
 	{
 		id: 'screen_login',
-		screen_key: 'login',
+		screen_key: 'login_template',
 		display_name: 'Sign in',
 		description: 'The built-in sign-in screen',
 		screen_kind: 'login',
-		fields: [
-			{
-				field: 'title',
-				label: 'Sign in',
-				required: false,
-				block_type: 'heading',
-				block_id: 'title'
-			},
-			{
-				field: 'passkey',
-				label: 'Sign in with Passkey',
-				required: false,
-				block_type: 'auth_widget',
-				block_id: 'passkey',
-				auth_method: 'passkey'
-			},
-			{
-				field: 'or',
-				label: 'Divider',
-				required: false,
-				block_type: 'divider',
-				block_id: 'or',
-				text: 'or'
-			},
-			{
-				field: 'email',
-				label: 'Email code',
-				required: false,
-				block_type: 'auth_widget',
-				block_id: 'mail',
-				auth_method: 'mail_otp'
-			}
-		],
+		fields: structuredClone(LOGIN_FIELDS),
 		localizations: { ja: { display_name: 'ログイン', fields: { title: { label: 'ログイン' } } } },
 		settings: { canvas_layout: 'narrow' },
 		is_active: true,
@@ -102,6 +171,17 @@ export const MOCK_SCREENS: Screen[] = [
 				required: false,
 				block_type: 'checkbox',
 				block_id: 'news'
+			},
+			{
+				// Leaves by an exit of its own: where it leads is the flow's to say.
+				field: 'link.social',
+				label: 'Use a social account instead',
+				required: false,
+				block_type: 'link',
+				block_id: 'social',
+				link_action: 'exit',
+				link_exit: 'social',
+				link_style: 'button'
 			}
 		],
 		localizations: {},
@@ -147,6 +227,22 @@ export const MOCK_SCREENS: Screen[] = [
 				block_id: 'note',
 				store_to_profile: false,
 				answer_targets: ['record']
+			},
+			{
+				field: 'link.skip',
+				label: 'Skip this question',
+				required: false,
+				block_type: 'link',
+				block_id: 'skip',
+				link_action: 'skip'
+			},
+			{
+				field: 'link.back',
+				label: 'Back',
+				required: false,
+				block_type: 'link',
+				block_id: 'back',
+				link_action: 'back'
 			}
 		],
 		localizations: {},
@@ -174,7 +270,75 @@ export const MOCK_SCREENS: Screen[] = [
 		version: 1,
 		created_at: AT,
 		updated_at: AT
-	}
+	},
+	...AUTH_PREVIEWS.map(
+		({ key, name, fields }, index): Screen => ({
+			id: `screen_default_${key}`,
+			screen_key: key,
+			display_name: name,
+			description: null,
+			screen_kind: key,
+			fields: structuredClone(fields),
+			localizations: {},
+			settings: { canvas_layout: 'narrow' },
+			is_active: true,
+			is_system: false,
+			version: 1,
+			created_at: AT + index * 1000,
+			updated_at: AT + index * 1000
+		})
+	),
+	...AUTH_PREVIEWS.filter(({ key }) => key !== 'login').map(
+		({ key, name, fields }, index): Screen => ({
+			id: `template_${key}`,
+			screen_key: `${key}_template`,
+			display_name: name,
+			description: null,
+			screen_kind: key,
+			fields: structuredClone(fields),
+			localizations: {},
+			settings: { canvas_layout: 'narrow' },
+			is_active: true,
+			is_system: true,
+			version: 1,
+			created_at: AT + index * 1000,
+			updated_at: AT + index * 1000
+		})
+	),
+	...ACCOUNT_PREVIEWS.map(
+		({ key, name, widget }, index): Screen => ({
+			id: `screen_${key}`,
+			screen_key: key,
+			display_name: name,
+			description: null,
+			screen_kind: 'account',
+			fields: [{ field: key, label: name, required: false, block_type: widget, order: 10 }],
+			localizations: {},
+			settings: { canvas_layout: 'wide' },
+			is_active: true,
+			is_system: false,
+			version: 1,
+			created_at: AT + index * 1000,
+			updated_at: AT + index * 1000
+		})
+	),
+	...ACCOUNT_PREVIEWS.map(
+		({ key, name, widget }, index): Screen => ({
+			id: `template_${key}`,
+			screen_key: `${key}_template`,
+			display_name: name,
+			description: null,
+			screen_kind: 'account',
+			fields: [{ field: key, label: name, required: false, block_type: widget, order: 10 }],
+			localizations: {},
+			settings: { canvas_layout: 'wide' },
+			is_active: true,
+			is_system: true,
+			version: 1,
+			created_at: AT + index * 1000,
+			updated_at: AT + index * 1000
+		})
+	)
 ];
 
 export const mockScreens = createFakeScreens({

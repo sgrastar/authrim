@@ -39,7 +39,12 @@ export interface DraftEntry {
 export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'authentication/methods', scope: 'tenant', note: 'A method × use matrix (dedicated UI).' },
 	{
-		id: 'authentication/staying-signed-in',
+		id: 'authentication/session-profiles',
+		scope: 'tenant',
+		note: 'A profile list (dedicated UI): Default is these settings of the tenant.'
+	},
+	{
+		id: 'authentication/logout',
 		scope: 'tenant',
 		note: 'A built page: these are its settings not yet applied (still read from the older logout settings).'
 	},
@@ -54,11 +59,11 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'authentication/protection', scope: 'tenant' },
 	{ id: 'authentication/ip-allowlist', scope: 'tenant' },
 	{
-		id: 'applications/defaults',
+		id: 'authentication/tokens',
 		title: 'App defaults',
 		proposed: true,
 		scope: 'tenant',
-		note: 'What every app of the tenant gets unless the app overrides it (oauth and security are tenant + app categories). Its own item under Applications, beside the service flows.'
+		note: 'What every app of the tenant gets unless the app overrides it (oauth and security are tenant + app categories). Under Authentication as Tokens and protocols, beside the profiles.'
 	},
 	{
 		id: 'applications/all',
@@ -137,6 +142,19 @@ function place(
 // ---------------------------------------------------------------------------------------------
 // Authentication
 
+place('authentication/session-profiles', 'Session profile', {
+	primary: ['session.default_ttl', 'session.refresh_default', 'oauth.sso_enabled'],
+	advanced: [
+		'session.ttl.passkey',
+		'session.ttl.email_code',
+		'session.ttl.directory_password',
+		'session.ttl.direct_auth',
+		'session.ttl.did',
+		'session.ttl.guest',
+		'session.ttl.passkey_registration',
+		'session.max_ttl'
+	]
+});
 place('authentication/methods', 'Sign-in methods', {
 	primary: [
 		'authentication-methods.passkey.login_enabled',
@@ -300,7 +318,7 @@ place('authentication/protection', 'API rate limits', {
 // ---------------------------------------------------------------------------------------------
 // Applications: the tenant's defaults for every app, and one app's own settings
 
-place('applications/defaults', 'Authorization requests', {
+place('authentication/tokens', 'Authorization requests', {
 	advanced: ['oauth.response_types_supported'],
 	search: [
 		'oauth.auth_code_ttl',
@@ -311,14 +329,14 @@ place('applications/defaults', 'Authorization requests', {
 		'oauth.par_fapi_ttl'
 	]
 });
-place('applications/defaults', 'Request objects by reference (request_uri)', {
+place('authentication/tokens', 'Request objects by reference (request_uri)', {
 	advanced: ['oauth.https_request_uri_enabled', 'oauth.https_request_uri_allowed_domains'],
 	search: ['oauth.https_request_uri_max_size', 'oauth.https_request_uri_timeout_ms']
 });
-place('applications/defaults', 'Sender-constrained tokens', {
+place('authentication/tokens', 'Sender-constrained tokens', {
 	advanced: ['security.dpop_nonce_resource_overrides']
 });
-place('applications/defaults', 'FAPI', {
+place('authentication/tokens', 'FAPI', {
 	advanced: ['security.fapi_client_assertion_audience', 'security.fapi_message_signing_enabled'],
 	search: [
 		'security.request_object_signing_algs',
@@ -329,13 +347,13 @@ place('applications/defaults', 'FAPI', {
 		'security.request_object_clock_skew_seconds'
 	]
 });
-place('applications/defaults', 'Rich authorization requests', {
+place('authentication/tokens', 'Rich authorization requests', {
 	advanced: ['feature.enable_rar']
 });
-place('applications/defaults', 'Machine-to-machine (client credentials)', {
+place('authentication/tokens', 'Machine-to-machine (client credentials)', {
 	primary: ['feature.enable_client_credentials']
 });
-place('applications/defaults', 'Token exchange', {
+place('authentication/tokens', 'Token exchange', {
 	advanced: [
 		'tokens.exchange_allowed_subject_token_types',
 		'feature.enable_id_jag',
@@ -349,19 +367,19 @@ place('applications/defaults', 'Token exchange', {
 		'tokens.id_jag_require_confidential_client'
 	]
 });
-place('applications/defaults', 'Tokens', {
+place('authentication/tokens', 'Tokens', {
 	advanced: ['oauth.userinfo_require_openid']
 });
-place('applications/defaults', 'Browser apps', {
+place('authentication/tokens', 'Browser apps', {
 	advanced: ['tenant.browser_public_client_mode']
 });
-place('applications/defaults', 'Token introspection', {
+place('authentication/tokens', 'Token introspection', {
 	advanced: ['tokens.introspection_strict_validation', 'tokens.introspection_expected_audience']
 });
-place('applications/defaults', 'Error responses', {
+place('authentication/tokens', 'Error responses', {
 	advanced: ['oauth.error_response_format', 'oauth.error_id_mode', 'oauth.error_locale']
 });
-place('applications/defaults', 'Device sign-in (Device Flow)', {
+place('authentication/tokens', 'Device sign-in (Device Flow)', {
 	advanced: [
 		'device_flow.expires_in',
 		'device_flow.user_code_charset',
@@ -377,7 +395,7 @@ place('applications/defaults', 'Device sign-in (Device Flow)', {
 		'device_flow.max_interval'
 	]
 });
-place('applications/defaults', 'Backchannel sign-in (CIBA)', {
+place('authentication/tokens', 'Backchannel sign-in (CIBA)', {
 	advanced: ['ciba.expires_in', 'ciba.binding_message_required', 'ciba.user_code_enabled'],
 	search: [
 		'ciba.poll_interval',
@@ -392,7 +410,7 @@ place('applications/defaults', 'Backchannel sign-in (CIBA)', {
 		'ciba.push_notification_timeout_ms'
 	]
 });
-place('applications/defaults', 'Dynamic client registration', {
+place('authentication/tokens', 'Dynamic client registration', {
 	primary: ['dcr.enabled'],
 	advanced: [
 		'dcr.require_initial_access_token',
@@ -402,7 +420,7 @@ place('applications/defaults', 'Dynamic client registration', {
 		'dcr.default_resource'
 	]
 });
-place('applications/defaults', 'Discovery document', {
+place('authentication/tokens', 'Discovery document', {
 	search: [
 		'discovery.claims_supported',
 		'discovery.acr_values_supported',
@@ -571,6 +589,7 @@ place('customization/login-ui', 'Layout', {
 		'login-ui.form_frame',
 		'login-ui.background_image_url',
 		'login-ui.background_image_opacity',
+		'login-ui.background_image_dark_dim',
 		'login-ui.background_image_grayscale',
 		'login-ui.background_image_filters'
 	]
@@ -584,7 +603,9 @@ place('customization/login-ui', 'Split layout', {
 		'login-ui.login_panel_background_color',
 		'login-ui.login_panel_background_gradient_color',
 		'login-ui.login_panel_background_opacity',
+		'login-ui.login_panel_background_dark_dim',
 		'login-ui.login_panel_background_grayscale',
+		'login-ui.login_panel_background_filters',
 		'login-ui.login_panel_background_image_url',
 		'login-ui.brand_content_mode',
 		'login-ui.brand_position',
@@ -592,7 +613,9 @@ place('customization/login-ui', 'Split layout', {
 		'login-ui.brand_panel_logo_display',
 		'login-ui.brand_panel_image_url',
 		'login-ui.brand_panel_image_opacity',
-		'login-ui.brand_panel_image_grayscale'
+		'login-ui.brand_panel_image_dark_dim',
+		'login-ui.brand_panel_image_grayscale',
+		'login-ui.brand_panel_image_filters'
 	]
 });
 place('customization/login-ui', 'Text', {
@@ -652,6 +675,8 @@ place(
 			'login-entry.app_login_redirect_uri',
 			'login-entry.app_login_final_return_to',
 			'login-entry.app_login_scope',
+			'login-entry.saml_login_sp_entity_id',
+			'login-entry.saml_login_relay_state',
 			'security.trusted_redirect_origins'
 		]
 	},
@@ -699,6 +724,18 @@ place('monitoring/log-settings', 'Log storage', {
 });
 place('monitoring/log-settings', 'Console notices', {
 	advanced: ['admin-notices.retention_days']
+});
+// What tenants may do with the platform's profiles (its own page comes with the platform
+// profile screens).
+place('authentication/methods', 'Platform profiles', {
+	advanced: [
+		'profiles.method.tenant_change_allowed',
+		'profiles.method.tenant_create_allowed',
+		'profiles.session.tenant_change_allowed',
+		'profiles.session.tenant_create_allowed',
+		'profiles.method.default_locked',
+		'profiles.session.default_locked'
+	]
 });
 place(
 	'monitoring/destinations',
@@ -757,7 +794,7 @@ place(
 			'OpenID certification runs only; should it be a platform-only switch?'
 	}
 );
-place('authentication/staying-signed-in', 'Logout channels and webhook', {
+place('authentication/logout', 'Logout channels and webhook', {
 	advanced: [
 		'session.backchannel_enabled',
 		'session.frontchannel_enabled',
@@ -844,6 +881,16 @@ place(
 
 place('hidden', 'Deploy-time or internal', {
 	hidden: ['tenant.user_id_format']
+});
+place('hidden', 'Kept by the profile screens', {
+	hidden: [
+		'authentication-methods.default_profile.base_version',
+		'session.default_profile.base_version',
+		// The older single switch of each method: removed by "back to the platform's".
+		'authentication-methods.passkey.enabled',
+		'authentication-methods.email_otp.enabled',
+		'authentication-methods.totp.enabled'
+	]
 });
 place('hidden', 'Kept by the theme and account page editors', {
 	hidden: [

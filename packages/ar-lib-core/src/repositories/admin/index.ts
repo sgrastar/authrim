@@ -91,11 +91,25 @@ export {
 export {
   AUTHENTICATION_METHOD_PROFILE_LIMIT,
   AuthenticationMethodProfileRepository,
+  NamedProfileRepository,
+  SessionProfileRepository,
   type AuthenticationMethodProfile,
   type AuthenticationMethodProfileInput,
   type AuthenticationMethodProfileCreateResult,
   type AuthenticationMethodProfileUpdateResult,
+  type ProfileOverride,
+  type OverrideSaveResult,
 } from './authentication-method-profile';
+export {
+  PLATFORM_PROFILE_DELETE_STALE_MS,
+  PLATFORM_PROFILE_ID_PREFIX,
+  PlatformProfileRepository,
+  isPlatformProfileId,
+  type PlatformProfile,
+  type PlatformProfileKind,
+  type PlatformProfileCreateResult,
+  type PlatformProfileUpdateResult,
+} from './platform-profile';
 export { AdminAuditLogRepository, type AdminAuditLogFilterOptions } from './admin-audit-log';
 export { AdminIpAllowlistRepository } from './admin-ip-allowlist';
 export {

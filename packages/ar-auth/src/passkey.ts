@@ -1,3 +1,9 @@
+import {
+  eligibilityRefusal,
+  profileAllowsSignUp,
+  registrationRefusalResponse,
+  signUpPolicyFor,
+} from './registration-policy-gate';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 /**
  * WebAuthn/Passkey Handler
@@ -59,6 +65,7 @@ import {
 } from './registration-field-utils';
 import { checkSignUpScreen, signUpScreenRefusalResponse } from './signup-screen-check';
 import { resolveSessionTtl } from './session-ttl';
+import { sessionTtlForProfile } from './flow-session-profile';
 import {
   isAuthenticationMethodUsageEnabled,
   type AuthenticationMethodUsage,
@@ -352,6 +359,24 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     // signup-screen-check.ts), a resumed provisioning's too: its attributes are sent again.
     const screenCheck = await checkSignUpScreen(c, tenantId, { customFields: custom_fields });
     if (!screenCheck.ok) return signUpScreenRefusalResponse(c, screenCheck);
+    // Who may sign up, by the registration Flow's policy (registration-policy-gate.ts). This route
+    // takes no invitation: a Flow that signs up the invited only is refused here.
+    const signUpPolicy = await signUpPolicyFor(c, tenantId);
+    const refusal = eligibilityRefusal(signUpPolicy.policy, {
+      email: normalizedEmail,
+      hasInvitation: false,
+    });
+    if (refusal) return registrationRefusalResponse(c, signUpPolicy.policy, refusal);
+    if (!(await profileAllowsSignUp(c, tenantId, signUpPolicy, 'passkey'))) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
+    // This route cannot hold a sign-up until its address is checked (`email_check: before`):
+    // such a sign-up goes through Direct Auth, which can.
+    if (signUpPolicy.fromFlow && signUpPolicy.policy.email_check === 'before' && normalizedEmail) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+        extensions: { reason: 'signup_email_check_required' },
+      });
+    }
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,
@@ -576,10 +601,16 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       challenge: options.challenge,
       ttl: 300, // 5 minutes
       email: normalizedEmail ?? undefined,
-      metadata:
-        Object.keys(customFieldValidation.values).length > 0
+      metadata: {
+        ...(Object.keys(customFieldValidation.values).length > 0
           ? { custom_fields: customFieldValidation.values }
-          : undefined,
+          : {}),
+        // The registration Flow's session profile, kept with the challenge for the session the
+        // finished registration makes.
+        ...(signUpPolicy.sessionProfileRef !== 'default'
+          ? { session_profile_ref: signUpPolicy.sessionProfileRef }
+          : {}),
+      },
     });
 
     return c.json({
@@ -641,6 +672,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       challenge: string;
       metadata?: {
         custom_fields?: Record<string, unknown>;
+        session_profile_ref?: string;
       };
     };
     try {
@@ -719,7 +751,25 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const passkeyId = crypto.randomUUID();
     const now = Date.now();
     const tenantId = getTenantIdFromContext(c);
-    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'passkey_registration');
+    // The registration Flow's session profile (kept with the challenge) sets the session.
+    let profiled: Awaited<ReturnType<typeof sessionTtlForProfile>>;
+    try {
+      profiled = await sessionTtlForProfile(
+        c,
+        tenantId,
+        'passkey_registration',
+        challengeData.metadata?.session_profile_ref
+      );
+    } catch {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Session settings are unavailable.',
+        },
+        503
+      );
+    }
+    const sessionTtl = profiled.ttl;
 
     if (usesRoutedAccountStorage(c)) {
       await resolveAccountDataContextFromHono(c, userId);
@@ -756,6 +806,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
           // level counts this passkey until it signs in.
           unverified_amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
+          ...profiled.snapshot,
         },
         tenantId
       )) as Session;

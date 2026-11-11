@@ -194,13 +194,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 					'/admin/iat-tokens',
 					'/admin/scim-tokens'
 				]
-			},
-			{
-				id: 'defaults',
-				label: 'nav.apps.defaults',
-				icon: 'gear',
-				platform: 'tenant',
-				legacyRoutes: []
 			}
 		],
 		legacyRoutes: []
@@ -219,11 +212,29 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				legacyRoutes: ['/admin/authentication-methods', '/admin/authentication-methods/[profileId]']
 			},
 			{
-				id: 'staying-signed-in',
-				label: 'nav.auth.stayingSignedIn',
+				id: 'session-profiles',
+				label: 'nav.auth.sessionProfiles',
 				icon: 'clock',
 				platform: 'tenant',
-				requires: { settings: ['session', 'oauth'] },
+				details: true,
+				// The profiles API answers to the session settings' access (SSO is held with them).
+				requires: { settings: ['session'] },
+				legacyRoutes: []
+			},
+			{
+				id: 'logout',
+				label: 'nav.auth.logout',
+				icon: 'logout',
+				platform: 'tenant',
+				requires: { settings: ['session'] },
+				legacyRoutes: []
+			},
+			{
+				id: 'tokens',
+				label: 'nav.auth.tokens',
+				icon: 'key',
+				platform: 'tenant',
+				requires: { settings: ['oauth', 'tokens', 'security', 'federation', 'assurance'] },
 				legacyRoutes: []
 			},
 			{
@@ -243,7 +254,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				label: 'nav.auth.enterprise',
 				icon: 'building',
 				platform: 'tenant',
-				requires: { settings: ['federation'] },
+				requires: { settings: ['federation', 'institution'] },
 				legacyRoutes: ['/admin/saml', '/admin/saml/[id]', '/admin/saml/local']
 			},
 			{
@@ -318,6 +329,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'launchers',
 				label: 'nav.custom.launchers',
 				icon: 'sparkle',
+				// The launcher editor: …/launchers/new and …/launchers/<launcher id>.
+				details: true,
 				legacyRoutes: ['/admin/launchers']
 			},
 			{

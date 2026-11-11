@@ -1,10 +1,11 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect, within } from 'storybook/test';
+	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import BackLink from '../primitives/BackLink.svelte';
 	import { sample } from '../stories/sample';
 	import PageHeader from './PageHeader.svelte';
 	import PanelHeader from './PanelHeader.svelte';
+	import PanelHeaderTitleHarness from './PanelHeaderTitleHarness.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Patterns/Panel header',
@@ -71,5 +72,27 @@
 		<PanelHeader title={sample('flowLogin')}>
 			{#snippet back()}<BackLink>{sample('allFlows')}</BackLink>{/snippet}
 		</PanelHeader>
+	{/snippet}
+</Story>
+
+<!-- A title the admin names (a screen step of a flow): the pencil beside it opens TitleEditor in its place; Done keeps it, Escape or Cancel leaves it as it was. -->
+<Story
+	name="With an editable title"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: 'Edit the title' }));
+		const field = canvas.getByRole('textbox', { name: 'Title' });
+		await waitFor(() => expect(field).toHaveFocus());
+		// The heading stays for screen readers while the field is shown.
+		await expect(canvas.getByRole('heading', { level: 2, name: 'Screen' })).toBeInTheDocument();
+		await userEvent.clear(field);
+		await userEvent.type(field, 'Your details{Enter}');
+		await expect(
+			await canvas.findByRole('heading', { level: 2, name: 'Your details' })
+		).toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<PanelHeaderTitleHarness />
 	{/snippet}
 </Story>

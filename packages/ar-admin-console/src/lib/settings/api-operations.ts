@@ -1429,6 +1429,7 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	['POST', '/api/admin/launchers', 'Create an application launcher.', 'admin'],
 	['GET', '/api/admin/launchers/options', 'List launcher editor options.', 'admin'],
 	['PUT', '/api/admin/launchers/order', 'Replace the launcher display order.', 'admin'],
+	['GET', '/api/admin/launchers/{id}', 'Get an application launcher.', 'admin'],
 	['PUT', '/api/admin/launchers/{id}', 'Update an application launcher.', 'admin'],
 	['DELETE', '/api/admin/launchers/{id}', 'Delete an application launcher.', 'admin'],
 	['GET', '/api/admin/logging-policies', 'Get logging policy matrix', 'admin'],

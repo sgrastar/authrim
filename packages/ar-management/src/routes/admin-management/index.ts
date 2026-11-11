@@ -46,6 +46,7 @@ import { adminNoticesRouter } from './admin-notices';
 import { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
 import { loginUIThemesRouter } from './login-ui-themes';
 import { authenticationMethodProfilesRouter } from './authentication-method-profiles';
+import { sessionProfilesRouter } from './session-profiles';
 import { loginUILiteModeRouter } from './login-ui-lite-mode';
 import { myAgentConsentsRouter } from './my-agent-consents';
 import { myWalletCredentialsRouter } from './my-wallet-credentials';
@@ -78,6 +79,7 @@ import {
   notificationsRouter,
 } from './logging-control';
 import { readReplicationRouter } from './read-replication';
+import { serviceSiteRouter } from './service-site';
 import { controlPlaneOperationsRouter } from './control-plane-operations';
 
 // Create main router for admin management
@@ -111,6 +113,7 @@ adminManagementRouter.route('/notices', adminNoticesRouter);
 adminManagementRouter.route('/notice-channels', adminNoticeChannelsRouter);
 adminManagementRouter.route('/login-ui/themes', loginUIThemesRouter);
 adminManagementRouter.route('/authentication-method-profiles', authenticationMethodProfilesRouter);
+adminManagementRouter.route('/session-profiles', sessionProfilesRouter);
 adminManagementRouter.route('/login-ui/lite-mode', loginUILiteModeRouter);
 adminManagementRouter.route('/me/notice-preferences', myNoticePreferencesRouter);
 adminManagementRouter.route('/me/agent-consents', myAgentConsentsRouter);
@@ -140,6 +143,7 @@ adminManagementRouter.route('/agent-bulk-plans', agentBulkPlansRouter);
 adminManagementRouter.route('/agent-templates', agentTemplatesRouter);
 adminManagementRouter.route('/agent-baselines', agentBaselinesRouter);
 adminManagementRouter.route('/platform/read-replication', readReplicationRouter);
+adminManagementRouter.route('/platform/service-site', serviceSiteRouter);
 adminManagementRouter.route('/platform/control-plane', controlPlaneOperationsRouter);
 adminManagementRouter.route('/platform/last-resort-recovery', adminLastResortRecoveryRouter);
 
@@ -171,6 +175,7 @@ export { adminNoticesRouter } from './admin-notices';
 export { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
 export { loginUIThemesRouter } from './login-ui-themes';
 export { authenticationMethodProfilesRouter } from './authentication-method-profiles';
+export { sessionProfilesRouter } from './session-profiles';
 export { loginUILiteModeRouter } from './login-ui-lite-mode';
 export { myAgentConsentsRouter } from './my-agent-consents';
 export { myWalletCredentialsRouter } from './my-wallet-credentials';
@@ -194,6 +199,7 @@ export {
 export { agentBulkPlansRouter } from './agent-bulk';
 export { agentBaselinesRouter, agentTemplatesRouter } from './agent-baselines';
 export { readReplicationRouter } from './read-replication';
+export { serviceSiteRouter } from './service-site';
 export { controlPlaneOperationsRouter } from './control-plane-operations';
 export { adminLastResortRecoveryRouter } from './admin-last-resort-recovery';
 export {

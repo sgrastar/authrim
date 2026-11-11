@@ -405,6 +405,56 @@ describe('Admin Provider API', () => {
     });
 
     it.each([
+      ['on', true, true],
+      ['off', false, false],
+      ['unset (the safer choice)', undefined, false],
+      ['not a boolean', 'yes', false],
+    ])('creates a provider with trust_email %s', async (_label, value, stored) => {
+      vi.mocked(providerStore.createProvider).mockResolvedValueOnce({
+        id: 'new-provider-id',
+        clientSecretEncrypted: 'encrypted',
+        trustEmail: stored,
+      } as never);
+      const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        body: {
+          name: 'Test Provider',
+          client_id: 'test-client-id',
+          client_secret: 'test-secret',
+          issuer: 'https://example.com',
+          ...(value !== undefined ? { trust_email: value } : {}),
+        },
+      });
+      await handleAdminCreateProvider(ctx as never);
+
+      expect(providerStore.createProvider).toHaveBeenCalledWith(
+        mockEnv,
+        expect.objectContaining({ trustEmail: stored })
+      );
+      expect(ctx.json).toHaveBeenCalledWith(expect.objectContaining({ trustEmail: stored }), 201);
+    });
+
+    it.each([true, false])('updates trust_email to %s', async (value) => {
+      vi.mocked(providerStore.updateProvider).mockResolvedValueOnce({
+        id: 'provider-123',
+        clientSecretEncrypted: 'encrypted',
+      } as never);
+      const ctx = createMockContext('PUT', '/external-idp/admin/providers/provider-123', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        params: { id: 'provider-123' },
+        body: { trust_email: value },
+      });
+      await handleAdminUpdateProvider(ctx as never);
+
+      expect(providerStore.updateProvider).toHaveBeenCalledWith(
+        mockEnv,
+        'default',
+        'provider-123',
+        { trustEmail: value }
+      );
+    });
+
+    it.each([
       ['a field that is not a profile field', ['email']],
       ['an identifier', ['preferred_username']],
       ['a field twice', ['name', 'name']],

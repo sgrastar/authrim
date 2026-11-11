@@ -30,6 +30,8 @@ import {
   createSettingsManager,
   DEFAULT_TENANT_ID,
   isCategoryAvailableAtScope,
+  isDefaultLayerCategory,
+  isDefaultLayerKey,
   isStoredLegacyValue,
   listCertificationProfileTenants,
   LEGACY_IMPORT_CONTRACT,
@@ -302,7 +304,12 @@ async function applyWrites(
         result.rejected[key] = 'Unknown setting key';
       } else if (
         !isCategoryAvailableAtScope(category, scope.type) ||
-        (settingMeta.scopes && !settingMeta.scopes.includes(scope.type))
+        (settingMeta.scopes && !settingMeta.scopes.includes(scope.type)) ||
+        // The older global sign-in defaults were set per tenant: carried to the platform's
+        // Default, they would change every tenant's methods and sessions at once.
+        (scope.type === 'platform' &&
+          isDefaultLayerCategory(category) &&
+          isDefaultLayerKey(category, key))
       ) {
         result.rejected[key] = `Not settable at ${scope.type} scope`;
       } else if (current.sources[key] === 'kv') {

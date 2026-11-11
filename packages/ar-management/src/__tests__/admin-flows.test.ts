@@ -29,9 +29,27 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       })),
     })),
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
+    // The tenant's profiles (admin database): only `members` (authentication methods) and
+    // `short` (session) exist.
+    requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({
+      queryOne: vi.fn(async (sql: string, params: unknown[]) =>
+        params[1] === (sql.includes('session_profiles') ? 'short' : 'members')
+          ? {
+              id: params[1],
+              name: 'Profile',
+              values_json: '{}',
+              version: 1,
+              created_by: null,
+              created_at: 0,
+              updated_at: 0,
+            }
+          : null
+      ),
+    })),
   };
 });
 
+import { buildLoginFlowEditor } from '@authrim/ar-lib-core';
 import {
   adminFlowAssignmentDeleteHandler,
   adminFlowAssignmentUpsertHandler,
@@ -42,6 +60,7 @@ import {
   adminFlowPublishHandler,
   adminFlowUpdateHandler,
   adminFlowValidateHandler,
+  seedDefaultRegistrationFlow,
 } from '../admin-flows';
 
 interface TestFlowRow {
@@ -729,6 +748,170 @@ describe('admin Flow management handlers', () => {
     expect(Array.isArray(body.issues)).toBe(true);
     const issueCodes = (body.issues as Array<{ code: string }>).map((issue) => issue.code);
     expect(issueCodes).not.toContain('invalid_output_handle');
+  });
+
+  it('checks a registration step’s profile and policy before it can be published', async () => {
+    const editorWith = (config: Record<string, unknown>) => ({
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        {
+          id: 'registration',
+          type: 'registration',
+          config: { outputs: [{ id: 'passkey', label: 'Passkey' }], ...config },
+        },
+        { id: 'complete', type: 'complete' },
+      ],
+      edges: [
+        { id: 'a', source: 'entry', source_handle: 'next', target: 'registration' },
+        { id: 'b', source: 'registration', source_handle: 'passkey', target: 'complete' },
+      ],
+    });
+    const codes = async (config: Record<string, unknown>) => {
+      const response = await adminFlowValidateHandler(
+        createContext({ body: { editor: editorWith(config) } })
+      );
+      const body = await readJson(response);
+      return (body.errors as Array<{ code: string }>).map((issue) => issue.code);
+    };
+
+    expect(await codes({ authentication_profile_ref: 'members' })).toEqual([]);
+    expect(await codes({ authentication_profile_ref: 'gone' })).toContain(
+      'unsupported_authentication_profile'
+    );
+    expect(
+      await codes({
+        authentication_profile_ref: 'default',
+        registration_policy: { eligibility: 'domain', allowed_domains: [] },
+      })
+    ).toContain('invalid_registration_policy');
+    expect(
+      await codes({
+        authentication_profile_ref: 'default',
+        registration_policy: { eligibility: 'domain', allowed_domains: ['example.com'] },
+      })
+    ).toEqual([]);
+  });
+
+  it('takes the sign-in Flow the console gives a tenant without one', async () => {
+    const editor = buildLoginFlowEditor({
+      profileRef: 'members',
+      sessionProfileRef: 'short',
+      completion: { behavior: 'service_site', service_site_path: '/portal' },
+    });
+    const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
+    const body = await readJson(response);
+    expect(body.errors).toEqual([]);
+    expect(body.valid).toBe(true);
+  });
+
+  it('holds the runtime that is published to the profiles the tenant may name', async () => {
+    const { validateRuntimeProfileRefs } = await import('../admin-flows');
+    const exists = async (id: string) => id === 'short' || id === 'members';
+    const runtime = (config: Record<string, unknown>) =>
+      ({
+        flow_kind: 'login',
+        ui: { steps: [{ id: 's', component: 'authentication_method_selector', config }] },
+      }) as never;
+    expect(
+      await validateRuntimeProfileRefs(
+        runtime({ authentication_profile_ref: 'members', session_profile_ref: 'default' }),
+        exists
+      )
+    ).toEqual([]);
+    // A runtime naming what the editor never showed (another's, deleted, being deleted) is refused.
+    const issues = await validateRuntimeProfileRefs(
+      runtime({ authentication_profile_ref: 'gone', session_profile_ref: 'psp_deleting' }),
+      exists
+    );
+    expect(issues.map((issue) => issue.code)).toEqual([
+      'unsupported_authentication_profile',
+      'unsupported_session_profile',
+    ]);
+    // Repeats take no room: a bad reference after many good ones is still found.
+    const padded = {
+      flow_kind: 'login',
+      extra: Array.from({ length: 300 }, () => ({ authentication_profile_ref: 'members' })),
+      ui: { steps: [{ id: 's', config: { session_profile_ref: 'gone' } }] },
+    } as never;
+    expect((await validateRuntimeProfileRefs(padded, exists)).map((i) => i.code)).toEqual([
+      'unsupported_session_profile',
+    ]);
+    // One that names too many to check is refused, not passed.
+    const many = {
+      flow_kind: 'login',
+      extra: Array.from({ length: 300 }, (_, i) => ({ authentication_profile_ref: `p${i}` })),
+    } as never;
+    expect((await validateRuntimeProfileRefs(many, async () => true)).map((i) => i.code)).toEqual([
+      'runtime_profile_refs_unchecked',
+    ]);
+  });
+
+  it('checks a sign-in step’s session profile and destination before it can be published', async () => {
+    const editorWith = (config: Record<string, unknown>) => ({
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        { id: 'authentication', type: 'authentication', config },
+        { id: 'complete', type: 'complete' },
+      ],
+      edges: [{ id: 'a', source: 'entry', source_handle: 'next', target: 'authentication' }],
+    });
+    const codes = async (config: Record<string, unknown>) => {
+      const response = await adminFlowValidateHandler(
+        createContext({ body: { editor: editorWith(config) } })
+      );
+      const body = await readJson(response);
+      return (body.errors as Array<{ code: string }>).map((issue) => issue.code);
+    };
+    const base = { authentication_profile_ref: 'default' };
+
+    expect(await codes({ ...base, session_profile_ref: 'short' })).not.toContain(
+      'unsupported_session_profile'
+    );
+    expect(await codes({ ...base, session_profile_ref: 'gone' })).toContain(
+      'unsupported_session_profile'
+    );
+    expect(await codes({ ...base, session_profile_ref: 'members' })).toContain(
+      'unsupported_session_profile'
+    );
+    expect(
+      await codes({ ...base, completion: { behavior: 'custom_url', redirect_url: '/welcome' } })
+    ).not.toContain('invalid_login_completion');
+    expect(await codes({ ...base, completion: { behavior: 'custom_url' } })).toContain(
+      'invalid_login_completion'
+    );
+    expect(await codes({ ...base, completion: { behavior: 'elsewhere' } })).toContain(
+      'invalid_login_completion'
+    );
+  });
+
+  it('gives a new tenant its sign-up: the default registration Flow, published and assigned', async () => {
+    const seeded = await seedDefaultRegistrationFlow(mocks.db as never, 'tenant-1', 1000);
+    expect(seeded).not.toBeNull();
+    const flow = flows.find((row) => row.id === seeded?.flowId);
+    expect(flow).toMatchObject({ kind: 'registration', status: 'published' });
+    expect(flow?.published_version_id).toBeTruthy();
+    const runtime = parseRuntimeJson(
+      versions.find((version) => version.id === flow?.published_version_id)
+        ?.runtime_snapshot_json as string
+    );
+    expect(runtime.ui.steps.map((step) => step.source_node_id)).toEqual([
+      'request',
+      'registration',
+      'email-check',
+      'account-create',
+      'output',
+    ]);
+    expect(assignments).toContainEqual(
+      expect.objectContaining({
+        tenant_id: 'tenant-1',
+        target_type: 'tenant',
+        target_id: null,
+        flow_kind: 'registration',
+        flow_id: seeded?.flowId,
+      })
+    );
+    // Once is enough: a tenant with a sign-up keeps it.
+    expect(await seedDefaultRegistrationFlow(mocks.db as never, 'tenant-1', 1001)).toBeNull();
   });
 
   it('increments publish version numbers returned as strings by adapters', async () => {

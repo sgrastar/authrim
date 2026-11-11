@@ -6,12 +6,16 @@
 		AuthenticationMethodProfilesClient,
 		AuthenticationMethodValues
 	} from '#lib/api/authentication-method-profiles.js';
+	import type {
+		DirectoryPasswordStatus,
+		DirectoryPasswordStatusClient
+	} from '#lib/api/directory-password-status.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import SaveBar from '#lib/ui/patterns/SaveBar.svelte';
 	import BackLink from '#lib/ui/primitives/BackLink.svelte';
-	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
@@ -20,19 +24,31 @@
 
 	interface Props {
 		client: AuthenticationMethodProfilesClient;
+		directoryStatusClient: DirectoryPasswordStatusClient;
+		tenantId: string | null;
 		id: string;
 		canWrite: boolean;
 		listHref: string;
 		oncreated: (id: string) => void;
 		dirty?: boolean;
 	}
-	let { client, id, canWrite, listHref, oncreated, dirty = $bindable(false) }: Props = $props();
+	let {
+		client,
+		directoryStatusClient,
+		tenantId,
+		id,
+		canWrite,
+		listHref,
+		oncreated,
+		dirty = $bindable(false)
+	}: Props = $props();
 	const isNew = $derived(id === 'new');
 	let phase = $state<'loading' | 'ready' | 'missing' | 'forbidden' | 'failed'>('loading');
 	let name = $state('');
 	let values = $state<AuthenticationMethodValues>({});
 	let version = $state<number | string>(0);
 	let isSystem = $state(false);
+	let directoryStatus = $state<DirectoryPasswordStatus | null>(null);
 	let saved = $state('');
 	let busy = $state(false);
 	let nameError = $state('');
@@ -42,6 +58,7 @@
 	let editNameButton = $state<HTMLButtonElement>();
 	let gone = false;
 	let loads = 0;
+	let directoryLoads = 0;
 	let created: string | null = null;
 	onDestroy(() => {
 		gone = true;
@@ -101,6 +118,26 @@
 		});
 	});
 
+	async function loadDirectoryStatus(currentTenantId: string | null) {
+		const turn = ++directoryLoads;
+		directoryStatus = null;
+		if (!currentTenantId) return;
+		try {
+			const status = await directoryStatusClient.get(currentTenantId);
+			if (gone || turn !== directoryLoads) return;
+			directoryStatus = status;
+		} catch {
+			// Directory Authentication has its own read permission. An unavailable status must not
+			// be presented as "not configured".
+			if (gone || turn !== directoryLoads) return;
+			directoryStatus = null;
+		}
+	}
+	$effect(() => {
+		const currentTenantId = tenantId;
+		untrack(() => void loadDirectoryStatus(currentTenantId));
+	});
+
 	function beginNameEdit() {
 		nameBeforeEdit = name;
 		nameError = '';
@@ -128,6 +165,16 @@
 		nameError = '';
 		editingName = false;
 		void tick().then(() => editNameButton?.focus());
+	}
+	function discard() {
+		if (busy || phase !== 'ready' || !saved) return;
+		const original = JSON.parse(saved) as { name: string; values: AuthenticationMethodValues };
+		name = original.name;
+		nameBeforeEdit = original.name;
+		values = structuredClone(original.values);
+		nameError = '';
+		editingName = isNew && canWrite;
+		void tick().then(() => (editingName ? nameInput : editNameButton)?.focus());
 	}
 
 	function changeValue(key: string, checked: boolean) {
@@ -179,7 +226,7 @@
 		}
 	}
 
-	const title = $derived(isNew ? t('am.page.new') : name || t('am.list.title'));
+	const title = $derived(name || (isNew ? t('am.page.new') : t('am.list.title')));
 </script>
 
 {#snippet nameAction()}
@@ -231,30 +278,18 @@
 <Page>
 	<PageHeader
 		{title}
-		description={isSystem ? t('am.page.defaultDescription') : t('am.page.description')}
+		description={t('am.page.description')}
 		titleAction={canWrite && phase === 'ready' && !isSystem && !editingName
 			? nameAction
 			: undefined}
 		titleEditor={canWrite && phase === 'ready' && !isSystem && editingName ? nameForm : undefined}
 	>
 		{#snippet back()}<BackLink href={listHref}>{t('am.page.back')}</BackLink>{/snippet}
-		{#snippet badges()}{#if isSystem}<Badge>{t('am.list.default')}</Badge>{/if}{/snippet}
-		{#snippet actions()}
-			{#if canWrite && phase === 'ready'}
-				<Button
-					variant="primary"
-					loading={busy}
-					attention={dirty}
-					disabled={!dirty && !isNew}
-					onclick={save}>{t('am.page.save')}</Button
-				>
-			{/if}
-		{/snippet}
 	</PageHeader>
 	{#if phase === 'loading'}
 		<LoadingState label={t('common.loading')} />
 	{:else if phase === 'ready'}
-		<AuthenticationMethodFields {values} {canWrite} onchange={changeValue} />
+		<AuthenticationMethodFields {values} {canWrite} {directoryStatus} onchange={changeValue} />
 	{:else}
 		<EmptyState
 			icon={phase === 'forbidden' ? 'lock' : 'warningCircle'}
@@ -271,11 +306,14 @@
 					>{/if}{/snippet}
 		</EmptyState>
 	{/if}
+	{#if canWrite && phase === 'ready'}
+		<SaveBar {dirty} saving={busy} invalid={nameError !== ''} onsave={save} ondiscard={discard} />
+	{/if}
 </Page>
 
 <style>
 	.name-editor {
-		width: min(100%, 540px);
+		width: min(100%, 520px);
 	}
 	.name-editor__row {
 		display: flex;

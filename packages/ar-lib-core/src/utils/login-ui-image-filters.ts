@@ -1,5 +1,7 @@
 /**
- * Filters on the Login UI's page background picture (login-ui.background_image_filters).
+ * Filters on the Login UI's pictures: the page background (login-ui.background_image_filters),
+ * the form area (login-ui.login_panel_background_filters) and the split template's brand panel
+ * (login-ui.brand_panel_image_filters).
  *
  * The setting is stored as a short text, `name:value` pairs in the order they apply, joined by
  * `;` (for example `hue-rotate:200;blur:4`). Each filter appears at most once, with a whole

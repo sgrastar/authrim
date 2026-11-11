@@ -164,7 +164,7 @@ describe('split page shell', () => {
 			/@media \(max-width: 640px\)[\s\S]*?\[data-split-background-mode='shared'\] \.auth-container,[\s\S]*?background: transparent;[\s\S]*?backdrop-filter: none;/
 		);
 		expect(css).toContain(
-			"[data-split-background-mode='panel'][data-has-login-panel-background-image='true']"
+			"[data-page-layout='split_panel'][data-has-login-panel-background-image='true']"
 		);
 	});
 

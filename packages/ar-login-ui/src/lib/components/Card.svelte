@@ -22,6 +22,7 @@
 </script>
 
 <div class="card {className}" class:hoverable class:no-padding={noPadding} {...restProps}>
+	<span class="card-background-image" aria-hidden="true"></span>
 	{#if header}
 		<div class="card-header">
 			{@render header()}
@@ -58,6 +59,10 @@
 	.card.hoverable:hover {
 		box-shadow: var(--card-shadow, var(--shadow-md));
 		transform: var(--surface-hover-transform, translateY(-4px));
+	}
+
+	.card-background-image {
+		display: none;
 	}
 
 	.card-header {

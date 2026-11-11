@@ -32,6 +32,7 @@
 	import { installPageResumeHandler } from '#lib/browser/page-resume.js';
 	import { buildAuthSwitchHref } from '#lib/authrim/auth-switch-url.js';
 	import {
+		backScreensOf,
 		flowRuntimeAPI,
 		type FlowRuntimeEmailVerificationChallenge,
 		type FlowRuntimeConsentPolicyContent,
@@ -153,6 +154,8 @@
 	let nameError = $state('');
 	let externalIdpLoading = $state<string | null>(null);
 	let runtimeFlow = $state<FlowRuntimeStartResponse | null>(null);
+	/** The screens a link part on the current screen can go back to. */
+	let runtimeBackScreens = $state<string[]>([]);
 	let runtimeFlowStep = $state<FlowRuntimeStep | null>(null);
 	// Answers that are not registration attributes, for the step they were entered on: a screen
 	// step's own parts (a profile completion, a survey) and any part kept off the profile. Another
@@ -755,6 +758,7 @@
 
 	function failRuntimeStart(message: string) {
 		runtimeFlow = null;
+		runtimeBackScreens = [];
 		runtimeFlowStep = null;
 		runtimeFlowError = message;
 		runtimeFlowBlocked = true;
@@ -785,6 +789,7 @@
 				}
 				if (!data) return;
 				runtimeFlow = data;
+				runtimeBackScreens = backScreensOf(data);
 				runtimeFlowStep = getRuntimeCurrentStep(data);
 				if (
 					data.interaction.state !== 'completed' &&
@@ -816,6 +821,7 @@
 			}
 			if (!data) return;
 			runtimeFlow = data;
+			runtimeBackScreens = backScreensOf(data);
 			runtimeFlowStep = getRuntimeCurrentStep(data);
 			if (
 				data.interaction.state !== 'completed' &&
@@ -847,8 +853,50 @@
 		});
 		if (!data) return;
 		runtimeFlow = data;
+		runtimeBackScreens = backScreensOf(data);
 		runtimeFlowStep = getRuntimeCurrentStep(data);
 		persistFlowRuntimeState(data, { postAuthRedirect: pendingPostAuthRedirect });
+	}
+
+	/**
+	 * A link part that goes back to a screen passed before: the backend moves the interaction there
+	 * (only back, and only across screens) and the page draws it. Refused, the interaction is drawn
+	 * where it is.
+	 */
+	async function goBackRuntimeScreen(screenKey: string) {
+		const flow = runtimeFlow;
+		const step = runtimeFlowStep ?? getRuntimeCurrentStep(flow);
+		if (!flow || !step || runtimeFlowLoading) return;
+		runtimeFlowLoading = true;
+		try {
+			const { data, error: apiError } = await flowRuntimeAPI.back(flow.interaction.id, {
+				step_id: step.id,
+				node_id: step.source_node_id,
+				contract_hash: flow.contract_hash,
+				signature: flow.signature,
+				target_screen: screenKey
+			});
+			if (data?.step) {
+				runtimeFlow = { ...flow, interaction: data.interaction };
+				runtimeBackScreens = backScreensOf(data);
+				runtimeFlowStep = data.step;
+				return;
+			}
+			const { data: resumed } = await flowRuntimeAPI.start({
+				resume_interaction_id: flow.interaction.id,
+				contract_hash: flow.contract_hash,
+				signature: flow.signature
+			});
+			if (resumed) {
+				runtimeFlow = resumed;
+				runtimeBackScreens = backScreensOf(resumed);
+				runtimeFlowStep = getRuntimeCurrentStep(resumed);
+			} else if (apiError) {
+				runtimeFlowError = getApiErrorMessage(apiError);
+			}
+		} finally {
+			runtimeFlowLoading = false;
+		}
 	}
 
 	async function submitRuntimeStep(
@@ -885,6 +933,7 @@
 				});
 				if (resumed) {
 					runtimeFlow = resumed;
+					runtimeBackScreens = backScreensOf(resumed);
 					runtimeFlowStep = getRuntimeCurrentStep(resumed);
 					persistFlowRuntimeState(resumed, { postAuthRedirect: pendingPostAuthRedirect });
 				} else {
@@ -901,6 +950,7 @@
 			...flow,
 			interaction: data.interaction
 		};
+		runtimeBackScreens = backScreensOf(data);
 		runtimeFlowStep = data.step ?? getRuntimeCurrentStep(runtimeFlow);
 		if (data.completed) {
 			runtimeFlowStep = null;
@@ -1930,7 +1980,8 @@
 			destinationFieldDecisions: runtimeDestinationFieldDecisions,
 			consentSelectedValues: runtimeConsentSelectedValues,
 			consentReady: canSubmitRuntimeConsent(),
-			loading: runtimeFlowLoading
+			loading: runtimeFlowLoading,
+			backScreens: runtimeBackScreens
 		}}
 		runtimeHumanVerification={showRuntimeFallbackHumanVerification}
 		methods={{
@@ -1986,6 +2037,8 @@
 		onDismissRuntimeFlowError={() => (runtimeFlowError = '')}
 		onRuntimeFieldValueChange={handleRuntimeScreenFieldValueChange}
 		onRuntimeAuthAction={handleRuntimeScreenAuthAction}
+		onRuntimeBack={goBackRuntimeScreen}
+		onRuntimeExit={(handle) => completeRuntimeOnlyStep(handle)}
 		onConsentDecisionChange={setRuntimeConsentDecision}
 		onDestinationFieldDecisionChange={setRuntimeDestinationFieldDecision}
 		onConsentSelectedValueChange={setRuntimeConsentSelectedValue}

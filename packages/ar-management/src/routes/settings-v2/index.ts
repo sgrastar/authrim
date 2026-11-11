@@ -65,6 +65,11 @@ import {
   getTenantMetadataContextFromHono,
   ADMIN_ROLES,
   requireSystemAdmin,
+  DEFAULT_LAYER_KEYS,
+  defaultProfileLayerFrom,
+  isDefaultLayerCategory,
+  layerResolvedSettings,
+  withLegacyMethodSwitches,
 } from '@authrim/ar-lib-core';
 import {
   categoryPatchNeedsState,
@@ -461,7 +466,32 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
     const result = await manager.getAll(category, scope, {
       parents: settingsParentScopes(category, scope),
     });
-    return c.json(result);
+    if (!isDefaultLayerCategory(category)) return c.json(result);
+    // The settings of a Default profile: whether the tenant's own values apply (the platform may
+    // set them aside), and what holds for each of them (default-profile-layer.ts).
+    const [profiles, platform] = await Promise.all([
+      manager.getAll('profiles', { type: 'platform' }),
+      manager.getAll(category, { type: 'platform' }),
+    ]);
+    const layer = defaultProfileLayerFrom(category, platform, profiles);
+    const effective = layerResolvedSettings(
+      category === 'authentication-methods' ? withLegacyMethodSwitches(result) : result,
+      layer,
+      'tenant'
+    );
+    return c.json({
+      ...result,
+      default_profile: {
+        keys: DEFAULT_LAYER_KEYS[category],
+        tenant_set_aside: layer.tenantSetAside,
+        effective: Object.fromEntries(
+          DEFAULT_LAYER_KEYS[category].map((key) => [
+            key,
+            { value: effective.values[key], source: effective.sources[key] },
+          ])
+        ),
+      },
+    });
   } catch (error) {
     if (error instanceof Error && error.message.includes('Unknown category')) {
       return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);

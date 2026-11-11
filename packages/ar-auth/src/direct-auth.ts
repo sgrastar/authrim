@@ -25,8 +25,24 @@ import {
 import { Context } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
-import { newAccountRegistrationPendingMark } from '@authrim/ar-lib-core';
+import {
+  newAccountRegistrationPendingMark,
+  normalizeMethodHandle,
+  SIGN_IN_ATTEMPT_INTERACTION_METADATA_KEY,
+  signInAttemptInteractionFromMetadata,
+  isInteractionChallengeMismatchError,
+} from '@authrim/ar-lib-core';
 import { settleRegistrationPending } from './registration-pending';
+import {
+  NO_POLICY,
+  eligibilityRefusal,
+  notifyExistingAccountSignUp,
+  profileAllowsSignUp,
+  flowCompletionRedirect,
+  registrationRefusalResponse,
+  signUpCodeTtlSeconds,
+  signUpPolicyFor,
+} from './registration-policy-gate';
 import type { StoreCodeRequest } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   accountAuthenticationDenialReason,
@@ -87,6 +103,7 @@ import {
   BROWSER_STATE_COOKIE_NAME,
   getBrowserStateCookieSameSite,
   produceNotificationDelivery,
+  SIGN_IN_ATTEMPT_INTERACTION_HEADER,
   resolvePostLoginRedirectUrl,
   CanonicalRuntimeUserStore,
   ensureDatabaseAdapter,
@@ -154,7 +171,13 @@ import {
   type HumanVerificationAction,
 } from './human-verification';
 import { readLiteMode } from './lite-mode';
-import { resolveSessionTtl } from './session-ttl';
+import {
+  interactionAllowsSignInMethod,
+  interactionChallengeMismatchResponse,
+  namedInteractionChallengeRefusal,
+  sessionTtlForInteraction,
+  sessionTtlForProfile,
+} from './flow-session-profile';
 import {
   continueSAMLChallenge,
   isBrowserSessionOnlyChallenge,
@@ -264,6 +287,23 @@ export function isDirectAuthClientChannelAllowed(
   }
 
   return true;
+}
+
+/**
+ * The Flow step handle of the method a Direct Auth artifact was made by: the method, or an
+ * external provider's handle for an external IdP login. Null when the artifact names none.
+ */
+function directSessionMethodHandle(metadata: Record<string, unknown>): string | null {
+  const method = typeof metadata.method === 'string' ? metadata.method : '';
+  if (method === 'external_idp') {
+    for (const key of ['provider_slug', 'provider_id', 'provider']) {
+      const value = metadata[key];
+      if (typeof value === 'string' && value) return normalizeMethodHandle(value);
+    }
+    return null;
+  }
+  if (method === 'passkey_signup') return 'passkey';
+  return method || null;
 }
 
 async function rejectIfAuthenticationMethodDisabled(
@@ -1744,6 +1784,14 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       authorization_challenge_id
     );
     if (typeof turnstileAction !== 'string') return turnstileAction.error;
+    // The Flow interaction it names must have been started for the request it answers.
+    const interactionRefusal = await namedInteractionChallengeRefusal(
+      c,
+      tenantId,
+      undefined,
+      authorization_challenge_id
+    );
+    if (interactionRefusal) return interactionRefusal;
     const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
       c,
       tenantId,
@@ -1821,8 +1869,9 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
         // The switch checked here is checked again before the session is created.
         usage: turnstileAction,
         ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
-        // The Flow interaction this attempt belongs to, once checked (for its failure records).
-        ...(await signInAttemptInteractionMetadata(c, tenantId)),
+        // The Flow interaction this attempt belongs to, once checked: its failure records, and the
+        // Flow whose profiles the session follows. One named but not checked fails the start.
+        ...(await signInAttemptInteractionMetadata(c, tenantId, undefined, { strict: true })),
       },
     });
 
@@ -2158,6 +2207,14 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         // was proven then, not when the artifact was stored or redeemed.
         proven_at: proofVerifiedAtMs,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
+        // The Flow interaction the start checked: the session follows its profiles.
+        ...(signInAttemptInteractionFromMetadata(challengeData.metadata)
+          ? {
+              [SIGN_IN_ATTEMPT_INTERACTION_METADATA_KEY]: signInAttemptInteractionFromMetadata(
+                challengeData.metadata
+              ),
+            }
+          : {}),
       },
       assurance.settings
     );
@@ -2278,6 +2335,13 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         variables: { field: 'authorization_challenge_id' },
       });
     }
+    const signupInteractionRefusal = await namedInteractionChallengeRefusal(
+      c,
+      tenantId,
+      undefined,
+      authorization_challenge_id
+    );
+    if (signupInteractionRefusal) return signupInteractionRefusal;
     const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
       c,
       tenantId,
@@ -2346,6 +2410,24 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         : null
       : createCanonicalRuntimeUserStore(c, tenantId);
 
+    // The registration Flow's policy (see registration-policy-gate.ts): who may sign up is asked
+    // before anything is looked up about the address, so a refusal tells nothing of it. A resumed
+    // provisioning passed it when it started.
+    const signUpPolicy = await signUpPolicyFor(c, tenantId);
+    if (!resumedUserId) {
+      const refusal = eligibilityRefusal(signUpPolicy.policy, {
+        email: normalizedEmail,
+        hasInvitation: typeof invite_token === 'string' && invite_token.length > 0,
+      });
+      if (refusal) return registrationRefusalResponse(c, signUpPolicy.policy, refusal);
+    }
+    // The Flow's authentication method profile may not sign people up by passkey.
+    if (!(await profileAllowsSignUp(c, tenantId, signUpPolicy, 'passkey'))) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+        extensions: { authentication_method: 'passkey', usage: 'signup' },
+      });
+    }
+
     if (normalizedEmail) {
       const existingUser = await runtimeUsers?.findByEmail(normalizedEmail);
       // The account a resumed provisioning made (the user its server-issued token names, never one
@@ -2365,6 +2447,23 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
           ).repositories.passkey.findByUserId(existingUser.id)
         ).length === 0;
       if ((existingUser && !resumedAccount) || blocked) {
+        // Under a registration Flow, what an address in use gets is its policy's: the owner told
+        // by email and the same refusal as any other (`mail`), or the refusal its answer gives.
+        if (signUpPolicy.fromFlow) {
+          if (signUpPolicy.policy.duplicate === 'mail' && existingUser && !blocked) {
+            await notifyExistingAccountSignUp(c, {
+              tenantId,
+              userId: existingUser.id,
+              email: normalizedEmail,
+            });
+            return registrationRefusalResponse(
+              c,
+              { ...signUpPolicy.policy, denied_response: 'generic' },
+              'account_exists'
+            );
+          }
+          return registrationRefusalResponse(c, signUpPolicy.policy, 'account_exists');
+        }
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
       }
       if (existingUser && resumedAccount) {
@@ -2598,6 +2697,19 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
           ? { custom_fields: customFieldValidation.values }
           : {}),
         ...(signupInvitation ? signupInvitation.reservation : {}),
+        // The registration interaction it belongs to (a live one of the tenant, checked when the
+        // policy was read): the session it ends in goes to that Flow's own destination.
+        ...(signUpPolicy.source === 'interaction'
+          ? { runtime_interaction_id: c.req.header(SIGN_IN_ATTEMPT_INTERACTION_HEADER) }
+          : {}),
+        // An address not proven yet, under a Flow that checks it before the sign-up is final:
+        // the passkey alone does not settle the sign-up (its email check does).
+        ...(signUpPolicy.fromFlow &&
+        signUpPolicy.policy.email_check === 'before' &&
+        normalizedEmail &&
+        !emailVerifiedByInvitation
+          ? { settle_after_email_check: true }
+          : {}),
       },
     });
 
@@ -2738,6 +2850,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         authorization_challenge_id?: string;
         invite_id?: string;
         invite_reservation_id?: string;
+        settle_after_email_check?: boolean;
+        runtime_interaction_id?: string;
       };
     };
 
@@ -2835,8 +2949,20 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       credentialId: credentialIDBase64URL,
       rpId: rpID,
     });
-    // Its passkey registered: no longer an unfinished sign-up's account.
-    await settleRegistrationPending(authCtx.coreAdapter, tenantId, userId);
+    // Its passkey registered: no longer an unfinished sign-up's account, unless its Flow checks
+    // the address first (then its verified email code settles it, and the clean-up removes an
+    // account whose address is never proven).
+    if (challengeData.metadata?.settle_after_email_check !== true) {
+      await settleRegistrationPending(authCtx.coreAdapter, tenantId, userId);
+    } else {
+      // Its mark now waits for the address: the clean-up takes nothing but a verified address
+      // (not this passkey, nor the sign-in it makes) as its proof.
+      await authCtx.coreAdapter.execute(
+        `UPDATE account_registration_pending SET flow = 'email_code'
+          WHERE tenant_id = ? AND user_id = ?`,
+        [tenantId, userId]
+      );
+    }
 
     const now = Date.now();
     failureStage = 'runtime_user_lookup';
@@ -2889,6 +3015,9 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         passkey_id: passkeyId,
         is_new_user: isNewUser,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
+        ...(typeof challengeData.metadata?.runtime_interaction_id === 'string'
+          ? { runtime_interaction_id: challengeData.metadata.runtime_interaction_id }
+          : {}),
       },
       assurance.settings
     );
@@ -3140,10 +3269,19 @@ async function completeDirectEmailVerification(
       scope: metadataString(metadata, 'scope'),
       transaction_id: metadataString(metadata, 'transaction_id') || transactionId,
       is_new_user: isNewUser,
+      // What the code was sent for (sign-up or sign-in), as the challenge recorded it.
+      usage,
       // When the email was proven (milliseconds), as the passkey artifact records it.
       proven_at: provenAtMs,
       authorization_challenge_id: metadataString(metadata, 'authorization_challenge_id'),
       runtime_interaction_id: metadataString(metadata, 'runtime_interaction_id'),
+      // The interaction the send checked (a header names it too): the session follows its Flow.
+      ...(signInAttemptInteractionFromMetadata(metadata)
+        ? {
+            [SIGN_IN_ATTEMPT_INTERACTION_METADATA_KEY]:
+              signInAttemptInteractionFromMetadata(metadata),
+          }
+        : {}),
     },
     assuranceSettings
   );
@@ -3523,6 +3661,13 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       );
       if (typeof resolvedAction !== 'string') return resolvedAction.error;
       challengeType = resolvedAction;
+      const interactionRefusal = await namedInteractionChallengeRefusal(
+        c,
+        tenantId,
+        boundRuntimeInteractionId,
+        authorization_challenge_id
+      );
+      if (interactionRefusal) return interactionRefusal;
     }
     const reauthUserId =
       challengeType === 'reauth'
@@ -3535,7 +3680,32 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       tenantId,
       authorization_challenge_id
     );
-    const emailCodeTtl = emailCodeLifetime.ttlSeconds;
+    // A send within a registration Flow is held to its policy (registration-policy-gate.ts). Its
+    // code lifetime is the Flow's for every send of it, a new address or not: the answer states
+    // it, and must not tell the two apart.
+    // A send held to a sign-up policy (registration-policy-gate.ts): the registration interaction
+    // it names, else the tenant's own registration Flow. Not a re-authentication's.
+    const signUpPolicy =
+      challengeType === 'reauth'
+        ? NO_POLICY
+        : await signUpPolicyFor(c, tenantId, boundRuntimeInteractionId ?? null);
+    // This endpoint signs in as well. Only a registration interaction's send is a sign-up
+    // whatever the address; one that names none is a sign-up for a new address only.
+    const inRegistration = signUpPolicy.source === 'interaction' && signUpPolicy.fromFlow;
+    // One lifetime for every send under a sign-up policy, an address with an account or not: the
+    // answer states it, and must not tell the two apart.
+    const emailCodeTtl = signUpPolicy.fromFlow
+      ? signUpCodeTtlSeconds(signUpPolicy.policy, emailCodeLifetime.ttlSeconds)
+      : emailCodeLifetime.ttlSeconds;
+    // Who may sign up: one not taken gets nothing, answered as any send (a refusal would tell a
+    // new address from one with an account, where a sign-in goes on).
+    const signUpRefused =
+      signUpPolicy.fromFlow && (inRegistration || !user)
+        ? eligibilityRefusal(signUpPolicy.policy, {
+            email: normalizedEmail,
+            hasInvitation: invitedTokenId !== null,
+          })
+        : null;
     // Answered like any other send, so the address's owner is not revealed; nothing else about the
     // address is looked at (no human verification either, whose requirements depend on it).
     if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
@@ -3593,6 +3763,22 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const emailCodeUsage: HumanVerificationAction =
       resumedSend?.usage ??
       (!user || signupResend ? 'signup' : challengeType === 'reauth' ? 'reauth' : 'login');
+    // An address with an account, sent for within a registration Flow: what it gets is the
+    // Flow's. `login`: the sign-in code it gets today. `reject`: refused, saying so. `mail`: the
+    // usual answer and no code; its owner is told by email instead.
+    // An account whose address is not proven yet (a sign-up still checking it, a passkey sign-up
+    // under `email_check: before`) is not an address in use: its code is the one it waits for.
+    const addressInUse = inRegistration && user !== null && existingEmailVerified;
+    if (addressInUse && emailCodeUsage === 'login') {
+      if (signUpPolicy.policy.duplicate === 'reject') {
+        return registrationRefusalResponse(c, signUpPolicy.policy, 'account_exists');
+      }
+    }
+    const noticeExistingAccount =
+      addressInUse &&
+      user !== null &&
+      emailCodeUsage === 'login' &&
+      signUpPolicy.policy.duplicate === 'mail';
     // The token is checked against the screen it came from (a re-authentication only ever takes
     // its own screen's token). A client that does not say keeps the earlier inference. Whatever the
     // screen, the setting for what the code does (signing up a new address) asks for a token too.
@@ -3616,6 +3802,18 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       'email_otp',
       emailCodeUsage
     );
+    // A sign-up's code, where the Flow's profile does not sign people up by email code.
+    if (
+      emailOtpEnabled &&
+      emailCodeUsage === 'signup' &&
+      !(await profileAllowsSignUp(c, tenantId, signUpPolicy, 'mail_otp'))
+    ) {
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send because the Flow profile does not offer it', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'profile_method_disabled',
+      });
+    }
     if (!emailOtpEnabled) {
       suppressEmailCodeSend = true;
       log.info('Suppressing email-code send because email OTP usage is disabled', {
@@ -3641,6 +3839,28 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         action: 'direct_email_code_send_suppressed',
         reason: 'human_verification',
         usage: turnstileAction,
+      });
+    }
+    if (signUpRefused && !suppressEmailCodeSend) {
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send because the registration policy refuses it', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'signup_policy',
+        refusal: signUpRefused,
+      });
+    }
+    // The owner of an address with an account, told of a sign-up for it (`duplicate: mail`) once
+    // the request passed human verification, like any send: no code, the usual answer.
+    if (noticeExistingAccount && user && !suppressEmailCodeSend) {
+      suppressEmailCodeSend = true;
+      await notifyExistingAccountSignUp(c, {
+        tenantId,
+        userId: user.id,
+        email: normalizedEmail,
+      });
+      log.info('Suppressing email-code send for an address that has an account', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'signup_account_exists',
       });
     }
 
@@ -3876,8 +4096,11 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       usage: emailCodeUsage,
       ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
       ...(boundRuntimeInteractionId ? { runtime_interaction_id: boundRuntimeInteractionId } : {}),
-      // The same interaction, once checked live in this tenant, for the attempt's failure records.
-      ...(await signInAttemptInteractionMetadata(c, tenantId, boundRuntimeInteractionId)),
+      // The same interaction, once checked live in this tenant: its failure records, and the Flow
+      // whose profiles the session follows. One named but not checked fails the send.
+      ...(await signInAttemptInteractionMetadata(c, tenantId, boundRuntimeInteractionId, {
+        strict: true,
+      })),
       ...(signupInvitation ?? {}),
       ...(Object.keys(customFieldValues).length > 0 ? { custom_fields: customFieldValues } : {}),
     };
@@ -4393,7 +4616,78 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     );
     if (guestDenial) return guestDenial;
 
-    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'direct_auth');
+    // The Flow the sign-in ran (bound to the artifact on the server) takes this method, and its
+    // session profile sets how long the session lasts and how it may be extended.
+    // The interaction a start step checked, else the one the artifact was made in.
+    const runtimeInteractionId =
+      signInAttemptInteractionFromMetadata(metadata) ??
+      (typeof metadata.runtime_interaction_id === 'string'
+        ? metadata.runtime_interaction_id
+        : null);
+    // What the proof was for, as its challenge recorded it (not how new the account is).
+    const signedUp = metadata.method === 'passkey_signup' || metadata.usage === 'signup';
+    const signInMethod = directSessionMethodHandle(metadata);
+    // The authorization request the session answers (the artifact's, or the one named here, as
+    // continued below): the interaction must have been started for it, and with none the app's
+    // own sign-in Flow holds (a sign-up's is its registration Flow).
+    const artifactChallengeForFlow =
+      typeof metadata.authorization_challenge_id === 'string'
+        ? metadata.authorization_challenge_id
+        : null;
+    const flowSource = {
+      interactionId: runtimeInteractionId,
+      challengeId:
+        metadata.browser_session_only === true
+          ? artifactChallengeForFlow
+          : authorization_challenge_id || artifactChallengeForFlow,
+      assignedFallback: !signedUp,
+    };
+    let profiled: Awaited<ReturnType<typeof sessionTtlForInteraction>>;
+    try {
+      if (
+        !(await interactionAllowsSignInMethod(
+          c,
+          tenantId,
+          flowSource,
+          signInMethod,
+          signedUp ? 'signup' : 'login'
+        ))
+      ) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+          extensions: {
+            authentication_method: signInMethod ?? 'unknown',
+            usage: signedUp ? 'signup' : 'login',
+          },
+        });
+      }
+      // A sign-up with no Flow interaction follows the tenant's registration Flow, as its
+      // methods and policy did.
+      profiled =
+        signedUp && !runtimeInteractionId
+          ? await sessionTtlForProfile(
+              c,
+              tenantId,
+              'direct_auth',
+              (await signUpPolicyFor(c, tenantId, null)).sessionProfileRef
+            )
+          : await sessionTtlForInteraction(c, tenantId, 'direct_auth', flowSource);
+    } catch (error) {
+      if (isInteractionChallengeMismatchError(error)) {
+        return interactionChallengeMismatchResponse(c);
+      }
+      log.error('Direct Auth session profile unavailable', {
+        action: 'direct_auth_session_profile',
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Session settings are unavailable.',
+        },
+        503
+      );
+    }
+    const sessionTtl = profiled.ttl;
     const now = Date.now();
     // The session was authenticated when its artifact's proof was verified, not when it is
     // redeemed; an artifact without one (an external IdP login) counts from now.
@@ -4468,9 +4762,10 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         authTime,
         client_id,
         direct_auth_channel: channel,
-        ...(typeof metadata.runtime_interaction_id === 'string'
-          ? { runtime_interaction_id: metadata.runtime_interaction_id }
-          : {}),
+        // The interaction the sign-in ran in (the one its start checked, else the artifact's).
+        ...(runtimeInteractionId ? { runtime_interaction_id: runtimeInteractionId } : {}),
+        // What the session keeps of its profile: extending it later follows the same rules.
+        ...profiled.snapshot,
         // When the authentication was proven, not when it is stored or redeemed: an assurance
         // step-up counts only proof made after it began.
         ...directSessionProvenAt(metadata),
@@ -4504,9 +4799,12 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       maxAge: sessionTtl.seconds,
     });
 
+    // An application's continuation first; else a registration Flow's own destination, for a
+    // session made within it; else the tenant's.
     const postLoginRedirect = authorizationContinuation
       ? authorizationContinuation.redirectUrl
-      : (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl;
+      : ((await flowCompletionRedirect(c, tenantId, runtimeInteractionId)) ??
+        (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl);
 
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');

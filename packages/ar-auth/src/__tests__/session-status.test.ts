@@ -489,6 +489,13 @@ describe('ITP session token lifecycle', () => {
   });
 
   it('refreshes a cookie session with the requested active TTL extension', async () => {
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003600000,
+      data: {},
+    });
     const context = createContext();
     context.req.json = vi.fn(async () => ({ extend_seconds: 120 }));
     mocks.sessionStore.extendSessionRpc.mockResolvedValue({
@@ -522,6 +529,13 @@ describe('ITP session token lifecycle', () => {
   it('gives the session cookies the extended lifetime when the cookie names the session', async () => {
     vi.useFakeTimers({ now: 1700000000000 });
     try {
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        id: '0_session_123',
+        userId: 'user_123',
+        createdAt: 1700000000000,
+        expiresAt: 1700003600000,
+        data: {},
+      });
       mocks.getCookie.mockReturnValue('0_session_123');
       mocks.setCookie.mockClear();
       // Plain http (local development) as well: Secure, as at sign-in.
@@ -555,6 +569,13 @@ describe('ITP session token lifecycle', () => {
   });
 
   it('extends within the tenant’s session.max_ttl, and not at all when refresh is off', async () => {
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003600000,
+      data: {},
+    });
     const { refreshSessionHandler } = await import('../session-management');
     const withSettings = (settings: Record<string, unknown>) => {
       const context = createContext();
@@ -598,6 +619,92 @@ describe('ITP session token lifecycle', () => {
       withSettings({ 'session.refresh_default': '__DISABLED__' }) as never
     );
     expect(disabled.status).toBe(403);
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('extends a session as the profile it was made with says, not the tenant', async () => {
+    const { refreshSessionHandler } = await import('../session-management');
+    const context = createContext();
+    context.req.json = vi.fn(async () => ({ extend_seconds: 120 }));
+    // The tenant would allow 30 days and extension; the session's profile does not.
+    (context as { env: unknown }).env = {
+      SETTINGS: { get: vi.fn(async () => JSON.stringify({ 'session.refresh_default': true })) },
+    };
+    const kept = (extension: Record<string, unknown>) =>
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        id: '0_session_123',
+        userId: 'user_123',
+        createdAt: 1700000000000,
+        expiresAt: 1700003600000,
+        data: { session_profile_id: 'short', session_extension: extension },
+      });
+    mocks.sessionStore.extendSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003720000,
+      data: {},
+    });
+
+    kept({ enabled: true, max_lifetime_ms: 86400 * 1000 });
+    expect((await refreshSessionHandler(context as never)).status).toBe(200);
+    expect(mocks.sessionStore.extendSessionRpc).toHaveBeenLastCalledWith(
+      '0_session_123',
+      120,
+      86400 * 1000
+    );
+
+    mocks.sessionStore.extendSessionRpc.mockClear();
+    kept({ enabled: false, max_lifetime_ms: 86400 * 1000 });
+    expect((await refreshSessionHandler(context as never)).status).toBe(403);
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('extends a Default session as the tenant says now, so its switch still stops it', async () => {
+    const { refreshSessionHandler } = await import('../session-management');
+    const context = createContext();
+    context.req.json = vi.fn(async () => ({ extend_seconds: 120 }));
+    (context as { env: unknown }).env = {
+      SETTINGS: { get: vi.fn(async () => JSON.stringify({ 'session.refresh_default': false })) },
+    };
+    // Made under Default while extension was on: the tenant has turned it off since.
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003600000,
+      data: { session_extension: { enabled: true, max_lifetime_ms: 86400 * 1000 } },
+    });
+    mocks.sessionStore.extendSessionRpc.mockClear();
+    expect((await refreshSessionHandler(context as never)).status).toBe(403);
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('does not extend a Default session when the tenant settings cannot be read', async () => {
+    const { refreshSessionHandler } = await import('../session-management');
+    const context = createContext();
+    context.req.json = vi.fn(async () => ({ extend_seconds: 120 }));
+    (context as { env: unknown }).env = {
+      SETTINGS: { get: vi.fn(async () => '{not json') },
+    };
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003600000,
+      data: {},
+    });
+    mocks.sessionStore.extendSessionRpc.mockClear();
+    expect((await refreshSessionHandler(context as never)).status).toBe(503);
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('answers a refresh of a session that is gone as not found', async () => {
+    const { refreshSessionHandler } = await import('../session-management');
+    const context = createContext();
+    context.req.json = vi.fn(async () => ({ extend_seconds: 120 }));
+    mocks.sessionStore.getSessionRpc.mockResolvedValue(null);
+    expect((await refreshSessionHandler(context as never)).status).toBe(404);
     expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
   });
 

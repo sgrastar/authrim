@@ -20,7 +20,7 @@
 			docs: {
 				description: {
 					component:
-						'A saved screen’s detail page (`…/screens/<id>`): its basics and tabs — the builder (parts, the page in rows of up to three columns, the selected part’s settings), a preview, translations, where it is used and, for screens that keep response records, what people answered (shown only to admins who may view users). A built-in screen is shown, not edited: “Duplicate to edit” makes a copy. A save names the version it was made from, so another admin’s save is not overwritten. The new screen route has its own creation wizard.'
+						'A saved screen’s detail page (`…/screens/<id>`): its basics and tabs — the builder (parts, the page in rows of up to three columns, the selected part’s settings), a preview, translations, and where it is used. Response records and their settings are temporarily hidden. A built-in screen is shown, not edited: “Duplicate to edit” makes a copy. Changes use the Save Bar, and deletion is confirmed from the detail page. The new screen route has its own creation wizard.'
 				}
 			}
 		}
@@ -28,6 +28,27 @@
 
 	const oncreated = fn();
 	const onopen = fn();
+	/** The survey with a link that leaves it by an exit of its own, drawn as a button. */
+	const withExitLink = MOCK_SCREENS.map((screen) =>
+		screen.id === 'screen_survey'
+			? {
+					...screen,
+					fields: [
+						...screen.fields,
+						{
+							field: 'link.back',
+							label: 'Use a social account',
+							required: false,
+							block_type: 'link' as const,
+							block_id: 'social',
+							link_action: 'exit' as const,
+							link_exit: 'social',
+							link_style: 'button' as const
+						}
+					]
+				}
+			: screen
+	);
 	const common = {
 		canWrite: true,
 		canReadResponses: true,
@@ -36,39 +57,64 @@
 		oncreated,
 		onopen
 	};
-	const responses = {
-		screen_survey: [
-			{
-				id: 'r1',
-				user_id: 'user_1',
-				screen_key: 'welcome_survey',
-				flow_id: 'flow_login',
-				flow_version_id: 'v1',
-				interaction_id: 'i1',
-				step_id: 'survey:step',
-				answers: { heard_from: 'friend', note: 'Glad to be here' },
-				created_at: Date.UTC(2026, 10, 2),
-				updated_at: Date.UTC(2026, 10, 2)
-			}
-		]
-	};
 </script>
 
 <Story
-	name="A survey that keeps response records"
+	name="Survey response settings hidden"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText('How did you hear about us?');
-		await userEvent.click(canvas.getByRole('tab', { name: t('sc.editor.tab.responses') }));
-		// A choice is shown by its label; the answer key by the part's label.
-		await waitFor(() => expect(canvas.getByText('A friend')).toBeVisible());
-		await expect(canvas.getByText('Glad to be here')).toBeVisible();
+		await expect(canvas.queryByRole('tab', { name: t('sc.editor.tab.responses') })).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: /Select How did you hear/ }));
+		const linked = canvas.getByRole('checkbox', { name: t('sc.set.linkDb') });
+		await expect(linked).toBeChecked();
+		await expect(linked).toBeDisabled();
+		await expect(canvas.queryByRole('textbox', { name: t('sc.set.answerKey') })).toBeNull();
+		await expect(canvas.queryByText(t('sc.set.answerTargets'))).toBeNull();
 	}}
 >
 	{#snippet template()}
 		<ScreenEditorPage
 			{...common}
-			client={createFakeScreens({ screens: MOCK_SCREENS, responses })}
+			client={createFakeScreens({ screens: MOCK_SCREENS })}
+			id="screen_survey"
+			schemaFields={demoSchemaFields()}
+		/>
+	{/snippet}
+</Story>
+
+<!-- A link part opens a URL or leaves the screen by a way out (where it leads is the flow's). -->
+<Story
+	name="A link that leaves by an exit"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('button', { name: /Select Use a social account/ })
+		);
+		const action = canvas.getByRole('combobox', { name: new RegExp(t('sc.set.linkAction')) });
+		await expect(action).toHaveValue('exit');
+		await expect(
+			canvas.getByRole('textbox', { name: new RegExp(t('sc.set.linkExit')) })
+		).toHaveValue('social');
+		await expect(canvas.getByRole('radio', { name: t('sc.set.linkStyleButton') })).toBeChecked();
+		// No destination on the screen: no URL, and no screen to choose.
+		await expect(canvas.queryByRole('textbox', { name: t('sc.set.href') })).toBeNull();
+		// Opening a URL instead: the field for it, in place of the exit's name.
+		await userEvent.selectOptions(action, 'url');
+		await expect(canvas.getByRole('textbox', { name: t('sc.set.href') })).toBeInTheDocument();
+		await expect(
+			canvas.queryByRole('textbox', { name: new RegExp(t('sc.set.linkExit')) })
+		).toBeNull();
+		// Back: neither.
+		await userEvent.selectOptions(action, 'back');
+		await expect(canvas.queryByRole('textbox', { name: t('sc.set.href') })).toBeNull();
+		await expect(canvas.getByText(t('sc.set.linkActionHint.back'))).toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<ScreenEditorPage
+			{...common}
+			client={createFakeScreens({ screens: withExitLink })}
 			id="screen_survey"
 			schemaFields={demoSchemaFields()}
 		/>
@@ -150,7 +196,7 @@
 		).toBeEnabled();
 		const name = await canvas.findByRole('textbox', { name: new RegExp(t('sc.editor.name')) });
 		await userEvent.type(name, ' (new)');
-		await userEvent.click(canvas.getByRole('button', { name: t('sc.editor.save') }));
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
 		await within(document.body).findByText(t('sc.error.conflict'));
 		await waitForSettledToasts();
 	}}
@@ -164,7 +210,7 @@
 				// Someone saved version 3 a moment ago: this page still holds version 2.
 				update: (id, _version, input) => client.update(id, 99, input)
 			}}
-			id="screen_survey"
+			id="screen_signup"
 			schemaFields={demoSchemaFields()}
 		/>
 		<Toaster />
@@ -188,9 +234,10 @@
 		expect(outline?.querySelector<HTMLElement>(':scope > .outline__image')?.style.opacity).toBe(
 			'0.37'
 		);
-		expect(outline?.querySelector<HTMLElement>(':scope > .outline__image')?.style.filter).toBe(
-			'blur(4px) brightness(80%)'
-		);
+		expect(
+			outline?.querySelector<HTMLElement>(':scope > .outline__image > .outline__picture')?.style
+				.filter
+		).toBe('blur(4px) brightness(80%)');
 		expect(
 			outline?.querySelector<HTMLElement>('.outline__panel > .outline__image')?.style.opacity
 		).toBe('0.58');
@@ -245,7 +292,7 @@
 		await userEvent.click(
 			canvas.getAllByRole('button', { name: new RegExp(t('sc.part.checkbox')) })[0]
 		);
-		await userEvent.click(canvas.getByRole('button', { name: t('sc.editor.save') }));
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
 		await waitFor(() => expect(oncreated).toHaveBeenCalled());
 	}}
 >

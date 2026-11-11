@@ -64,6 +64,94 @@
 	{/snippet}
 </Story>
 
+<!-- A screen's link part: to a URL, or out of the screen by one of its ways out; as text or a button. -->
+<Story name="Screen link parts">
+	{#snippet template()}
+		<Catalog>
+			<Specimen
+				name="Link part to a URL"
+				source="p.runtime-screen-link > a.runtime-screen-link__text | a.runtime-auth-button.secondary"
+				where="Any server-driven screen with a link part (href): a text link, or a button when its part says so. An unsafe address is drawn as text."
+			>
+				<RuntimeScreenHarness
+					framed={false}
+					screen={screenOf(
+						[
+							{ field: 'link.help', label: 'Help', block_type: 'link', href: '/help' },
+							{
+								field: 'link.terms',
+								label: 'Read the terms',
+								block_type: 'link',
+								href: 'https://example.com/terms',
+								link_style: 'button'
+							}
+						],
+						undefined,
+						'custom'
+					)}
+				/>
+			</Specimen>
+			<Specimen
+				name="Link parts that leave the screen"
+				source="p.runtime-screen-link > button.runtime-screen-link__text | button.runtime-auth-button.secondary"
+				where="A screen of a flow (link_action next, back, skip or exit): each leaves by a way out of the screen, and the Flow decides where it leads. Back goes to the screen before (back_screens), disabled where there is none."
+			>
+				<RuntimeScreenHarness
+					framed={false}
+					backScreens={['step_one']}
+					screen={screenOf(
+						[
+							{
+								field: 'link.next',
+								label: 'Continue from here',
+								block_type: 'link',
+								link_action: 'next',
+								link_style: 'button'
+							},
+							{
+								field: 'link.social',
+								label: 'Use a social account instead',
+								block_type: 'link',
+								link_action: 'exit',
+								link_exit: 'social',
+								link_style: 'button'
+							},
+							{
+								field: 'link.skip',
+								label: 'Skip for now',
+								block_type: 'link',
+								link_action: 'skip'
+							},
+							{
+								field: 'link.back',
+								label: 'Back to the previous screen',
+								block_type: 'link',
+								link_action: 'back'
+							}
+						],
+						undefined,
+						'custom'
+					)}
+				/>
+			</Specimen>
+			<Specimen
+				name="Back link with no screen before"
+				source="p.runtime-screen-link > button.runtime-screen-link__text[disabled]"
+				where="The first screen of a flow, or one after a step that cannot be passed again: a back link is shown disabled."
+			>
+				<RuntimeScreenHarness
+					framed={false}
+					screen={screenOf(
+						[{ field: 'link.back', label: 'Back', block_type: 'link', link_action: 'back' }],
+						undefined,
+						'custom'
+					)}
+				/>
+			</Specimen>
+		</Catalog>
+	{/snippet}
+</Story>
+
 <Story name="Footer links">
 	{#snippet template()}
 		<LoginUIFrame

@@ -14,6 +14,25 @@ const sessionStore = {
   createSessionRpc: vi.fn(),
 };
 
+/** The Flow's profiles (flow-session-profile.ts): by default the tenant's, as without a Flow. */
+const flowProfiles = vi.hoisted(() => ({
+  allows: vi.fn(async () => true),
+  ttl: vi.fn(async () => ({
+    ttl: { seconds: 86400, milliseconds: 86400 * 1000, key: 'session.ttl.direct_auth' },
+    snapshot: { session_extension: { enabled: true, max_lifetime_ms: 30 * 86400 * 1000 } },
+  })),
+}));
+vi.mock('../flow-session-profile', () => ({
+  interactionAllowsSignInMethod: flowProfiles.allows,
+  sessionTtlForInteraction: flowProfiles.ttl,
+  sessionTtlForProfile: flowProfiles.ttl,
+  sessionForChallenge: vi.fn(),
+  namedInteractionChallengeRefusal: vi.fn(async () => null),
+  interactionChallengeMismatchResponse: (c: {
+    json: (body: unknown, status: number) => Response;
+  }) => c.json({ error: 'authorization_challenge_mismatch' }, 403),
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   lifecycleGate.mockImplementation(actual.assertGuestCredentialAuthenticationAllowed);
@@ -322,6 +341,281 @@ describe('managed Direct Auth browser session finish', () => {
       'tenant_test'
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_managed_browser');
+  }, 15000);
+
+  it('makes the session as the Flow’s session profile says, and keeps its rules', async () => {
+    const codeVerifier = 'verifier-for-profiled-session';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'passkey',
+        runtime_interaction_id: 'interaction_1',
+      },
+    });
+    flowProfiles.ttl.mockResolvedValueOnce({
+      ttl: { seconds: 3600, milliseconds: 3600 * 1000, key: 'session.ttl.direct_auth' },
+      snapshot: {
+        session_profile_id: 'short',
+        session_extension: { enabled: false, max_lifetime_ms: 86400 * 1000 },
+      } as never,
+    });
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_profiled',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBe(200);
+    const flowSource = {
+      interactionId: 'interaction_1',
+      challengeId: null,
+      assignedFallback: true,
+    };
+    expect(flowProfiles.allows).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant_test',
+      flowSource,
+      'passkey',
+      'login'
+    );
+    expect(flowProfiles.ttl).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant_test',
+      'direct_auth',
+      flowSource
+    );
+    expect(sessionStore.createSessionRpc).toHaveBeenCalledWith(
+      'sess_managed_browser',
+      'user_123',
+      3600,
+      expect.objectContaining({
+        runtime_interaction_id: 'interaction_1',
+        session_profile_id: 'short',
+        session_extension: { enabled: false, max_lifetime_ms: 86400 * 1000 },
+      }),
+      'tenant_test'
+    );
+    expect(response.headers.get('set-cookie')).toContain('Max-Age=3600');
+  }, 15000);
+
+  it('keeps the interaction a start checked with the session, when the artifact names only that', async () => {
+    const codeVerifier = 'verifier-for-checked-interaction';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'email_code',
+        usage: 'login',
+        attempt_interaction_id: 'interaction_checked',
+      },
+    });
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_checked',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(flowProfiles.ttl).toHaveBeenCalledWith(expect.anything(), 'tenant_test', 'direct_auth', {
+      interactionId: 'interaction_checked',
+      challengeId: null,
+      assignedFallback: true,
+    });
+    expect(sessionStore.createSessionRpc).toHaveBeenCalledWith(
+      'sess_managed_browser',
+      'user_123',
+      86400,
+      expect.objectContaining({ runtime_interaction_id: 'interaction_checked' }),
+      'tenant_test'
+    );
+  }, 15000);
+
+  it('makes no session for a method the Flow’s method profile does not take', async () => {
+    const codeVerifier = 'verifier-for-refused-method';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'email_code',
+        runtime_interaction_id: 'interaction_1',
+      },
+    });
+    flowProfiles.allows.mockResolvedValueOnce(false);
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_refused',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBe(403);
+    expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  }, 15000);
+
+  it('asks the Flow about an artifact whose method is not known, rather than skipping it', async () => {
+    const codeVerifier = 'verifier-for-unknown-method';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      // An external sign-in that names no provider.
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'external_idp',
+        runtime_interaction_id: 'interaction_1',
+      },
+    });
+    flowProfiles.allows.mockResolvedValueOnce(false);
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_unknown_method',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(flowProfiles.allows).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant_test',
+      { interactionId: 'interaction_1', challengeId: null, assignedFallback: true },
+      null,
+      'login'
+    );
+    expect(response.status).toBe(403);
+    expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  }, 15000);
+
+  it('makes no session when the Flow’s session profile cannot be read', async () => {
+    const codeVerifier = 'verifier-for-unreadable-profile';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: { client_id: 'login-ui', channel: 'browser', method: 'passkey' },
+    });
+    flowProfiles.ttl.mockRejectedValueOnce(new Error('session_profile_unavailable'));
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_unreadable',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBe(503);
+    expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  }, 15000);
+
+  it('holds the session to the request it answers: refused for another request’s interaction', async () => {
+    const codeVerifier = 'verifier-for-foreign-interaction';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'email_code',
+        usage: 'login',
+        attempt_interaction_id: 'interaction_of_other_request',
+        authorization_challenge_id: 'challenge_artifact',
+      },
+    });
+    const { InteractionChallengeMismatchError } = await import('@authrim/ar-lib-core');
+    flowProfiles.allows.mockRejectedValueOnce(new InteractionChallengeMismatchError());
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_foreign',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+        authorization_challenge_id: 'challenge_named',
+      }) as never
+    );
+
+    // The request named here is the one the session would answer, so it is the one checked.
+    expect(flowProfiles.allows).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant_test',
+      {
+        interactionId: 'interaction_of_other_request',
+        challengeId: 'challenge_named',
+        assignedFallback: true,
+      },
+      'email_code',
+      'login'
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: 'authorization_challenge_mismatch' });
+    expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+    expect(challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+  }, 15000);
+
+  it('runs a sign-up with no interaction under its registration Flow, not the app’s sign-in Flow', async () => {
+    const codeVerifier = 'verifier-for-signup-no-interaction';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'passkey_signup',
+        authorization_challenge_id: 'challenge_artifact',
+      },
+    });
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_signup',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+        defer_authorization_continuation: true,
+      }) as never
+    );
+
+    expect(flowProfiles.allows).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant_test',
+      { interactionId: null, challengeId: 'challenge_artifact', assignedFallback: false },
+      'passkey',
+      'signup'
+    );
   }, 15000);
 
   it('resolves the account-scoped user store for a tenant-exclusive artifact exchange', async () => {

@@ -15,6 +15,8 @@ import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 import { deTeam } from './team/de';
 import { deAuthMethods } from './auth-methods/de';
+import { deSessionProfiles } from './session-profiles/de';
+import { deLaunchers } from './launchers/de';
 
 export const de = {
 	...deSettings,
@@ -33,6 +35,8 @@ export const de = {
 	...deAdminAudit,
 	...deTeam,
 	...deAuthMethods,
+	...deSessionProfiles,
+	...deLaunchers,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
@@ -66,11 +70,11 @@ export const de = {
 	'nav.access.policies': 'Richtlinien',
 	'nav.access.simulator': 'Zugriffssimulator',
 	'nav.apps.all': 'Serviceabläufe',
-	'nav.apps.defaults': 'App-Standards',
+	'nav.auth.tokens': 'Token und Protokolle',
 	'nav.apps.apis': 'APIs / Ressourcen',
 	'nav.apps.keys': 'Initiale Zugriffstoken',
 	'nav.apps.webhooks': 'Webhooks',
-	'nav.auth.methods': 'Authentifizierungsmethoden',
+	'nav.auth.methods': 'Anmeldeverfahren-Profile',
 	'nav.auth.social': 'Soziale Verbindungen',
 	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'Verzeichnisauthentifizierung',
@@ -109,7 +113,8 @@ export const de = {
 	'nav.auth.tokenRefresh': 'Externe Tokenerneuerung',
 	'nav.auth.discovery': 'Mandantenerkennung',
 	'nav.auth.ipAllowlist': 'IP-Zulassungsliste',
-	'nav.auth.stayingSignedIn': 'Angemeldet bleiben',
+	'nav.auth.sessionProfiles': 'Sitzungsprofile',
+	'nav.auth.logout': 'Abmeldung',
 	'nav.custom.loginUi': 'Anmeldeoberfläche',
 	'nav.custom.accountPage': 'Kontoseite',
 	'nav.custom.launchers': 'Einstiegspunkte',

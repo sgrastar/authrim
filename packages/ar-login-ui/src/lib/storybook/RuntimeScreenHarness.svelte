@@ -39,6 +39,8 @@
 		/** Wrap in the page container and card; off when a page shell already provides them. */
 		framed?: boolean;
 		onAction?: (name: string, detail?: unknown) => void;
+		/** The screens a link part can go back to (`back_screens`). */
+		backScreens?: string[];
 	} & Partial<Pick<RuntimeScreenProps, 'consentReady' | 'emailVerificationProtocolEnabled'>>;
 
 	let {
@@ -61,6 +63,7 @@
 		framed = true,
 		consentReady = true,
 		emailVerificationProtocolEnabled = false,
+		backScreens = [],
 		onAction
 	}: Props = $props();
 
@@ -113,6 +116,10 @@
 		}}
 		onAuthAction={(method, action) => onAction?.('auth', { method, action })}
 		onExternalProviderAction={(id) => onAction?.('provider', id)}
+		{backScreens}
+		onBack={(screenKey) => onAction?.('back', screenKey)}
+		onNext={() => onAction?.('next')}
+		onExit={(handle) => onAction?.('exit', handle)}
 		onConsentDecisionChange={(id, checked) => {
 			decisions[id] = checked;
 			onAction?.('consent', { id, checked });

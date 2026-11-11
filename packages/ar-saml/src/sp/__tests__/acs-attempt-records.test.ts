@@ -14,7 +14,16 @@ type SamlTestEnv = Partial<Env> & {
   SAML_STRICT_INRESPONSETO?: string;
 };
 
-const { mockSchedule, mockUsageKey, mockUsagePolicy, mockAccountLookup } = vi.hoisted(() => ({
+const {
+  mockSchedule,
+  mockUsageKey,
+  mockUsagePolicy,
+  mockAccountLookup,
+  mockFlowRefs,
+  mockMethodProfile,
+} = vi.hoisted(() => ({
+  mockFlowRefs: vi.fn(),
+  mockMethodProfile: vi.fn(),
   mockSchedule: vi.fn(),
   mockUsageKey: vi.fn(),
   mockUsagePolicy: vi.fn(),
@@ -128,6 +137,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }
     },
     resolveRuntimeIdentityMappingBinding: vi.fn().mockResolvedValue(mappingBinding()),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({})),
+    // The start's Flow: the tenant's own profiles, live.
+    resolveSignInFlowProfileRefs: mockFlowRefs,
+    readAuthenticationProfile: mockMethodProfile,
   };
 });
 
@@ -214,6 +227,10 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
     assertionStore = 'new';
     mockUsageKey.mockResolvedValue(null);
     mockUsagePolicy.mockResolvedValue({ loginEnabled: true, signupEnabled: true });
+    mockFlowRefs.mockResolvedValue({
+      refs: { methodProfileRef: 'default', sessionProfileRef: 'default' },
+      interactionId: 'int-1',
+    });
     mockAccountLookup.mockImplementation(async () => {
       const adapter = (linkedIdentity: boolean) => ({
         query: vi.fn().mockResolvedValue([]),
@@ -338,6 +355,55 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
     });
   });
 
+  it('refuses an IdP the sign-in Flow’s method profile does not take', async () => {
+    mockUsageKey.mockResolvedValue({ providerId: 'idp-1', ids: ['saml:idp-1', 'idp-1'] });
+    mockFlowRefs.mockResolvedValue({
+      refs: { methodProfileRef: 'members', sessionProfileRef: 'default' },
+      interactionId: 'int-1',
+    });
+    mockMethodProfile.mockResolvedValue({
+      kind: 'profile',
+      values: {
+        'authentication-methods.external_provider_usage': [
+          { id: 'saml:idp-1', enabled: true, loginEnabled: false, signupEnabled: false },
+        ],
+      },
+    });
+
+    const res = await callACS();
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(mockMethodProfile).toHaveBeenCalledWith(expect.anything(), 'tenant-a', 'members');
+    expect(scheduledFailures()[0]).toMatchObject({
+      interactionId: 'int-1',
+      reasonCode: 'method_disabled',
+    });
+  });
+
+  it('takes no method profile when the sign-in resolves to the Default profiles', async () => {
+    mockUsageKey.mockResolvedValue({ providerId: 'idp-1', ids: ['saml:idp-1', 'idp-1'] });
+    mockFlowRefs.mockResolvedValue({
+      refs: { methodProfileRef: 'default', sessionProfileRef: 'default' },
+      interactionId: null,
+    });
+
+    const res = await callACS();
+
+    expect(res.status).toBe(302);
+    expect(mockMethodProfile).not.toHaveBeenCalled();
+  });
+
+  it('refuses the sign-in when its Flow cannot be read', async () => {
+    mockFlowRefs.mockRejectedValue(new Error('d1 down'));
+
+    const res = await callACS();
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(scheduledFailures()).toEqual([
+      expect.objectContaining({ interactionId: 'int-1', reasonCode: 'service_unavailable' }),
+    ]);
+  });
+
   it('records service_unavailable when the IdP usage settings cannot be read', async () => {
     mockUsageKey.mockRejectedValue(new Error('kv down'));
 
@@ -402,6 +468,31 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
         method: 'saml',
         reasonCode: 'signup_disabled',
       }),
+    ]);
+  });
+
+  it('holds the account it would create to the Flow’s sign-up switch for the IdP', async () => {
+    mockUsageKey.mockResolvedValue({ providerId: 'idp-1', ids: ['saml:idp-1', 'idp-1'] });
+    mockFlowRefs.mockResolvedValue({
+      refs: { methodProfileRef: 'members', sessionProfileRef: 'default' },
+      interactionId: 'int-1',
+    });
+    // The tenant takes sign-ups through the IdP; the Flow takes only sign-ins.
+    mockMethodProfile.mockResolvedValue({
+      kind: 'profile',
+      values: {
+        'authentication-methods.external_provider_usage': [
+          { id: 'saml:idp-1', enabled: true, loginEnabled: true, signupEnabled: false },
+        ],
+      },
+    });
+    mockAccountLookup.mockRejectedValue(new Error('account_data_route_not_found'));
+
+    const res = await callACS();
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(scheduledFailures()).toEqual([
+      expect.objectContaining({ interactionId: 'int-1', reasonCode: 'signup_disabled' }),
     ]);
   });
 

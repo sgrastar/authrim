@@ -14,6 +14,8 @@ import {
   validateAccountPagePath,
   validateLoginUICustomCss,
   validatePostLoginRedirectUrl,
+  validateSamlLoginRelayState,
+  validateSamlLoginSpEntityId,
   validateTenantUIBaseUrlAsync,
   validateTrustedRedirectOrigins,
 } from '@authrim/ar-lib-core';
@@ -542,6 +544,74 @@ export async function validateAppLoginTarget(
   return { ok: true };
 }
 
+/**
+ * The SAML service provider a direct Login UI sign-in goes on to (IdP-initiated SSO): one of the
+ * tenant's enabled `saml_sp` providers, named by its entity ID, with a RelayState of at most 80
+ * bytes.
+ */
+export async function validateSamlLoginTarget(
+  env: Env,
+  tenantId: string,
+  input: { entityId: unknown; relayState: unknown },
+  sideEffects?: 'none'
+): Promise<{ ok: true } | { ok: false; status: number; error: string; message: string }> {
+  if (!validateSamlLoginSpEntityId(input.entityId)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message: 'login-entry.saml_login_sp_entity_id is required when SAML login is selected',
+    };
+  }
+  if (input.relayState !== undefined && !validateSamlLoginRelayState(input.relayState)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message:
+        'login-entry.saml_login_relay_state must be at most 80 bytes, without control characters',
+    };
+  }
+  const entityId = input.entityId.trim();
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'settings-v2-saml-login', {
+    tenantId,
+    ...(sideEffects ? { sideEffects } : {}),
+  });
+  const rows = await adapter.query<{ config_json: string | null; enabled: number | boolean }>(
+    `SELECT config_json, enabled FROM identity_providers
+      WHERE tenant_id = ? AND provider_type = 'saml_sp'`,
+    [tenantId]
+  );
+  const matches = rows.filter((row) => {
+    try {
+      const config = JSON.parse(String(row.config_json ?? '{}')) as { entityId?: unknown };
+      return config.entityId === entityId;
+    } catch {
+      return false;
+    }
+  });
+  if (matches.length !== 1) {
+    return {
+      ok: false,
+      status: matches.length === 0 ? 404 : 409,
+      error: matches.length === 0 ? 'not_found' : 'conflict',
+      message:
+        matches.length === 0
+          ? `SAML service provider "${entityId}" was not found in this tenant`
+          : `More than one SAML service provider has the entity ID "${entityId}"`,
+    };
+  }
+  if (matches[0].enabled !== 1 && matches[0].enabled !== true) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'bad_request',
+      message: `SAML service provider "${entityId}" is disabled`,
+    };
+  }
+  return { ok: true };
+}
+
 export async function validateClientAppLoginPatch(
   env: Env,
   tenantId: string,
@@ -737,6 +807,27 @@ export async function validatePostLoginRelatedPatch(
             loginEntry['login-entry.app_login_scope'] ??
             'openid profile email',
           trustedOrigins,
+        },
+        sideEffects
+      );
+      if (!validation.ok) {
+        return validation;
+      }
+    }
+
+    if (effectiveBehavior === 'saml_login') {
+      const validation = await validateSamlLoginTarget(
+        env,
+        tenantId,
+        {
+          entityId:
+            set['login-entry.saml_login_sp_entity_id'] ??
+            loginEntry['login-entry.saml_login_sp_entity_id'] ??
+            '',
+          relayState:
+            set['login-entry.saml_login_relay_state'] ??
+            loginEntry['login-entry.saml_login_relay_state'] ??
+            '',
         },
         sideEffects
       );

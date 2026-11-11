@@ -116,6 +116,11 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
     table: 'authentication_method_profiles',
     ownership: byTenantId,
   },
+  {
+    family: 'admin',
+    table: 'session_profiles',
+    ownership: byTenantId,
+  },
   ...[
     'logging_delivery_event_aggregates',
     'logging_delivery_events',

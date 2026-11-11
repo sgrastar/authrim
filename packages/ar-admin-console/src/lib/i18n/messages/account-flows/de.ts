@@ -26,9 +26,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.choose': 'Auswählen',
 	'af.general': 'Allgemeine Einstellungen',
 	'af.part.about': 'Name und Verwendungszweck',
-	'af.lead.about': 'Geben Sie diesem Ablauf einen Namen und legen Sie fest, wo er verwendet wird.',
-	'af.note.about':
-		'Bei nur einer Anmeldeseite genügen ein Registrierungsablauf und ein Anmeldeablauf. Fügen Sie einen weiteren hinzu, wenn Sie eine separate Anmeldeseite aufbauen. Um Personen für eine App oder einen Anbieter anders zu registrieren, fügen Sie einen Ablauf hinzu und wählen ihn im Ablauf der jeweiligen Verbindung aus.',
 	'af.field.name': 'Name des Serviceablaufs',
 	'af.field.scope': 'Verwendung',
 	'af.scope.default-ui': 'Die Standard-Anmeldeseite',
@@ -45,105 +42,149 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.contract.ui':
 		'Ein Vertrag, den die Anmeldeoberfläche und Ihre eigene Oberfläche gemeinsam nutzen. Wie die Seiten aussehen, wird hier nicht festgelegt.',
 
-	'af.group.input': 'Zu erfassende Angaben',
-	'af.group.identity': 'Anmeldeverfahren und Verifizierung',
+	'af.group.general': 'Übergreifende Einstellungen',
+	'af.group.complete': 'Abschluss der Registrierung',
+	'af.group.identity': 'Anmeldeverfahren',
 	'af.group.regConsent': 'Einwilligung bei der Registrierung',
-	'af.group.complete': 'Registrierung abschließen',
 	'af.group.authenticate': 'Person authentifizieren',
-	'af.group.stepUp': 'Zusätzliche Authentifizierung',
 	'af.group.finish': 'Anmeldung abschließen',
 
-	'af.part.reg-fields': 'Angaben und Schema',
-	'af.part.reg-eligibility': 'Wer sich registrieren darf',
-	'af.part.reg-methods': 'Zu registrierende Anmeldeverfahren',
-	'af.part.reg-verification': 'Person verifizieren',
+	'af.part.reg-general': 'Annahme von Registrierungen',
+	'af.part.reg-methods': 'Profil für Anmeldeverfahren',
+	'af.part.reg-verification': 'Bestätigung der E-Mail-Adresse',
 	'af.part.reg-statements': 'Einwilligungserklärungen',
 	'af.part.reg-policy': 'Einwilligungsrichtlinie',
-	'af.part.reg-account': 'Konto anlegen',
-	'af.part.reg-result': 'Wie es weitergeht',
-	'af.part.login-methods': 'Verfahren und Quellen',
+	'af.part.reg-result': 'Nach dem Abschluss',
+	'af.part.login-methods': 'Anmeldeverfahren-Profil',
 	'af.part.login-validation': 'Prüfregeln',
-	'af.part.login-conditions': 'Wann nachgefragt wird',
 	'af.part.login-session': 'Sitzung einrichten',
-	'af.part.login-return': 'Ergebnis zurückgeben',
 
-	'af.lead.reg-fields':
-		'Legen Sie fest, was erfasst wird und wie es geprüft wird. Die Anmeldeoberfläche und Ihre eigene Oberfläche verwenden dieselben Regeln.',
-	'af.lead.reg-eligibility': 'Legen Sie fest, wer sich registrieren darf.',
 	'af.lead.reg-methods':
-		'Legen Sie fest, mit welchen Anmeldeverfahren sich eine Person registriert.',
+		'Wählen Sie das Profil für Anmeldeverfahren, das diese Registrierung verwendet.',
 	'af.lead.reg-verification':
-		'Legen Sie fest, was je nach Art der Registrierung der Person verifiziert werden muss.',
+		'Prüfen Sie per E-Mail, dass die Person unter der angegebenen Adresse Post erhält.',
 	'af.lead.reg-statements':
 		'Wählen Sie die Erklärungen, etwa die Nutzungsbedingungen, denen bei der Registrierung zugestimmt wird.',
 	'af.lead.reg-policy':
 		'Legen Sie fest, wann und wie bei der Registrierung um Einwilligung gebeten wird.',
-	'af.lead.reg-account':
-		'Das Konto wird angelegt, sobald Eingabe, Verifizierung und Einwilligung vollständig sind.',
-	'af.lead.reg-result': 'Legen Sie fest, was nach der Rückgabe des Ergebnisses geschieht.',
-	'af.lead.login-methods': 'Wählen Sie die Anmeldeverfahren, die dieser Ablauf verwendet.',
-	'af.lead.login-validation': 'Legen Sie fest, wann eine Person als authentifiziert gilt.',
-	'af.lead.login-conditions':
-		'Wird ausgeführt, wenn mehr als die einfache Anmeldung geprüft werden muss.',
+	'af.lead.reg-result': 'Legen Sie fest, wohin die Person nach der Registrierung geht.',
+	'af.lead.login-methods': 'Wählen Sie das Anmeldeverfahren-Profil für diese Anmeldung.',
+	'af.lead.login-validation':
+		'Wiederholte Fehlversuche und die Antwort an nicht registrierte Personen folgen den Sicherheitseinstellungen des Mandanten.',
 	'af.lead.login-session':
 		'Sobald die erforderliche Authentifizierung abgeschlossen ist, erstellt Authrim die Sitzung.',
-	'af.lead.login-return': 'Das Ergebnis der Anmeldung geht an den Aufrufer zurück.',
 
 	'af.note.reg-statements':
 		'Unabhängig von der Zustimmung, Informationen mit einer App zu teilen. Diese wird im Ablauf der jeweiligen Verbindung festgelegt.',
 	'af.note.reg-policy': 'Stimmt die Person nicht zu, wird das Konto nicht angelegt.',
-	'af.note.reg-account':
-		'Trifft dieselbe Anfrage zweimal ein, wird nur ein einziges Konto angelegt.',
-	'af.note.login-validation':
-		'Die Authentifizierung gilt erst als erfolgreich, wenn ein zusätzlicher Schritt abgeschlossen ist.',
-	'af.note.login-return':
-		'Die Ausstellung von Tokens an eine App und die Zustimmung zur Weitergabe von Attributen werden im Ablauf der jeweiligen Verbindung festgelegt.',
 
-	'af.field.methods': 'Verfahren, die Personen nutzen können',
-	'af.field.provider': 'Zu verwendender externer Anbieter',
-	'af.hint.provider': 'Wählen Sie aus den Verbindungen, die bereits in den Serviceabläufen sind.',
-	'af.field.reg.attributes': 'Zu erfassende Angaben',
+	'af.field.reg.methodProfile': 'Zu verwendendes Profil',
+	'af.profile.create': 'Neues Profil für Anmeldeverfahren erstellen',
+	'af.profile.newTitle': 'Neues Profil für Anmeldeverfahren',
+	'af.profile.saveAndChoose': 'Speichern und auswählen',
+	'af.profile.created': 'Profil für Anmeldeverfahren erstellt.',
+	'af.profile.chosen': 'Was „{name}“ erlaubt',
+	'af.profile.loadFailed': 'Die Profile für Anmeldeverfahren konnten nicht geladen werden.',
+	'af.group.screen': 'Bildschirm',
+	'af.part.reg-screen': 'Bildschirm',
+	'af.lead.reg-screen':
+		'Wählen Sie den Bildschirm, der bei der Registrierung angezeigt wird. Nur Registrierungsbildschirme sind wählbar.',
+	'af.field.reg.screen': 'Bildschirm',
+	'af.screen.inactive': '{name} (inaktiv)',
+	'af.screen.loadFailed': 'Die Bildschirme konnten nicht geladen werden.',
+	'af.screen.none':
+		'Es gibt noch keinen wählbaren Bildschirm. Erstellen Sie einen auf der Seite der Bildschirme.',
+	'af.screen.preview': 'Vorschau des gewählten Bildschirms',
+	'af.screen.open': 'Bildschirme öffnen',
+	'af.live.notConsole':
+		'Dieser Registrierungs-Flow enthält Schritte aus dem Flow-Editor und kann hier nicht gespeichert werden.',
+	'af.live.loadFailed': 'Der Registrierungs-Flow konnte nicht geladen werden.',
+	'af.live.consentNotWired':
+		'Die Einwilligung bei der Registrierung kann noch nicht gespeichert werden. Entfernen Sie den Einwilligungsschritt, um zu speichern.',
+	'af.title.edit': 'Titel bearbeiten',
+	'af.title.label': 'Titel',
+	'af.title.done': 'Fertig',
+	'af.title.hint': 'Ein Name, um ihn im Flow zu unterscheiden (bis 40 Zeichen).',
+	'af.title.required': 'Geben Sie einen Titel ein.',
+	'af.fields.title': 'Abgefragte Angaben',
+	'af.fields.col.label': 'Angabe',
+	'af.fields.col.target': 'Gespeichert in',
+	'af.fields.required': 'Pflicht',
+	'af.fields.profile': 'Profil',
+	'af.fields.answer': 'Antwort (an den Flow)',
+	'af.fields.record': 'Antwortprotokoll',
+	'af.fields.none': 'Auf diesem Bildschirm wird nichts eingegeben.',
+	'af.exit.title': 'Wohin die Ausgänge führen',
+	'af.exit.lead':
+		'Wohin es geht, wenn der Bildschirm über eine seiner Schaltflächen oder Links verlassen wird. Der Bildschirm sagt nur, was jede tut; dieser Flow, wohin sie führt.',
+	'af.exit.submitted': 'Absenden (weiter)',
+	'af.exit.skipped': 'Überspringen („{label}“)',
+	'af.exit.named': 'Ausgang „{label}“ ({name})',
+	'af.exit.dest.next': 'Der nächste Schritt',
+	'af.exit.dest.asSubmitted': 'Wohin das Absenden führt',
+	'af.exit.back': '„{label}“ führt zum Bildschirm davor zurück.',
+	'af.note.reg-result':
+		'Eine von einer App oder per SAML gestartete Registrierung kehrt dorthin zurück. Dies gilt für Registrierungen direkt auf dem Anmeldebildschirm.',
+	'af.after.account': 'Kontoseite',
+	'af.after.home': 'Startseite',
+	'af.after.custom_url': 'Eine URL',
+	'af.after.app_login': 'Bei einem anderen Dienst anmelden (OpenID Connect)',
+	'af.after.service_site': 'Anbindung des Dienst-Workers',
+	'af.field.reg.redirectUrl': 'Ziel-URL',
+	'af.hint.reg.redirectUrl':
+		'Ein relativer Pfad wie /mypage oder eine HTTPS-URL eines vertrauenswürdigen Origins.',
+	'af.field.reg.servicePath': 'Pfad in Workers',
+	'af.hint.reg.servicePath':
+		'Ein Pfad in derselben Domain, der an den Worker des Dienstes weitergeleitet wird (etwa /app).',
+	'af.field.reg.appClient': 'Dienst für die Anmeldung',
+	'af.hint.reg.appClient':
+		'Nach der Registrierung wird die Person direkt beim gewählten Dienst (Client) angemeldet. Beim Client müssen First Party App und App Login aktiviert sein.',
+	'af.field.reg.appRedirectUri': 'Rückkehr zum Dienst (Redirect-URI)',
+	'af.hint.reg.appRedirectUri': 'Eine der für den gewählten Dienst registrierten Redirect-URIs.',
+	'af.client.denied': 'Sie haben keine Berechtigung, die Dienste (Clients) zu sehen.',
+	'af.client.loadFailed':
+		'Die Dienste (Clients) konnten nicht geladen werden. Versuchen Sie es gleich noch einmal.',
+	'af.client.none':
+		'Dieser Mandant hat noch keinen Dienst (Client). Legen Sie einen auf der Seite der Anwendungen an und wählen Sie ihn dann hier.',
+	'af.client.chooseFirst': 'Zuerst den Dienst für die Anmeldung wählen',
+	'af.after.saml_login': 'Bei einem anderen Dienst anmelden (SAML)',
+	'af.field.reg.samlSp': 'Dienst für die Anmeldung (SP)',
+	'af.hint.reg.samlSp':
+		'Nach der Registrierung wird die Person per IdP-initiiertem SSO direkt beim gewählten SAML-Dienst (SP) angemeldet. Der SP muss IdP-initiierte SAML-Antworten annehmen.',
+	'af.field.reg.samlRelayState': 'RelayState',
+	'af.hint.reg.samlRelayState':
+		'Ein Wert für den SP (optional, bis 80 Byte). Manche SPs öffnen damit nach der Anmeldung eine bestimmte Seite.',
+	'af.saml.denied': 'Sie haben keine Berechtigung, die SAML-Dienste (SPs) zu sehen.',
+	'af.saml.loadFailed':
+		'Die SAML-Dienste (SPs) konnten nicht geladen werden. Versuchen Sie es gleich noch einmal.',
+	'af.saml.none':
+		'Dieser Mandant hat noch keinen aktiven SAML-Dienst (SP). Registrieren Sie einen auf der SAML-Seite und wählen Sie ihn dann hier.',
+	'af.field.reg.appScope': 'Scope',
+	'af.hint.reg.appScope': 'Durch Leerzeichen getrennte OIDC-Scopes; openid ist erforderlich.',
+	'af.field.reg.appReturnTo': 'Final Return To',
+	'af.hint.reg.appReturnTo':
+		'Ein Pfad oder eine vertrauenswürdige HTTPS-URL nach dem Callback der Service-App (optional).',
+	'af.part.reg-extra-screen': 'Bildschirm {n}',
+	'af.field.reg.extraScreen': 'Bildschirm',
 	'af.field.reg.duplicate': 'Wenn die E-Mail-Adresse bereits registriert ist',
 	'af.hint.reg.duplicate':
 		'Damit Dritte nicht erfahren, ob eine Adresse registriert ist, wählen Sie „Gleiche Antwort geben und per E-Mail informieren“.',
 	'af.field.reg.policy': 'Wer sich registrieren darf',
 	'af.field.reg.denied': 'Antwort, wenn jemand nicht zugelassen wird',
-	'af.field.reg.emailCheck': 'E-Mail-Adresse verifizieren',
+	'af.field.reg.emailCheck': 'Zeitpunkt der Bestätigung',
+	'af.hint.reg.extraWhen':
+		'Die Person gibt einen per E-Mail gesendeten Code ein. Hat der Anbieter keine Adresse geliefert, geht er an die Adresse, die die Person eingibt. Das Konto wird erst nach der Bestätigung erstellt.',
+	'af.hint.reg.expiry': 'Wie lange der Link oder Code aus der E-Mail gültig ist.',
 	'af.field.reg.expiry': 'Wie lange die Prüfung gültig bleibt',
 	'af.field.reg.statements': 'Erklärungen, denen bei der Registrierung zugestimmt wird',
 	'af.field.reg.consentWhen': 'Wann um Einwilligung gebeten wird',
-	'af.field.reg.state': 'Zustand eines neu angelegten Kontos',
-	'af.field.reg.after': 'Nach der Registrierung',
-	'af.field.reg.interrupted': 'Wenn die Person zwischendurch abbricht',
-	'af.field.login.failures': 'Nach wiederholten Fehlversuchen',
-	'af.field.login.unregistered': 'Wenn jemand kommt, der nicht registriert ist',
-	'af.hint.login.unregistered':
-		'Damit Dritte nicht erfahren, ob ein Konto existiert, können Sie nur melden, dass die Anmeldung fehlgeschlagen ist.',
-	'af.field.login.stepUpWhen': 'Wann mehr verlangt wird',
-	'af.field.login.stepUpFactor': 'Geforderte Methode',
-	'af.field.login.stepUpUnavailable': 'Wenn die zusätzliche Methode nicht genutzt werden kann',
-	'af.field.login.lifetime': 'Wie lange eine Sitzung dauert',
-	'af.field.login.reauth': 'Wann erneut zur Anmeldung aufgefordert wird',
-	'af.field.login.failure': 'Wenn die Anmeldung fehlschlägt oder abgebrochen wird',
+	'af.field.reg.after': 'Nach dem Abschluss',
 
-	'af.group.extraCheck': 'Zusätzliche Verifizierung',
-	'af.part.reg-extra-check': 'Wann zusätzlich verifiziert wird',
-	'af.lead.reg-extra-check':
-		'Verifiziert zusätzlich, wenn die E-Mail-Adresse allein nicht ausreicht, etwa wenn sich jemand über einen anderen Anbieter registriert.',
-	'af.note.reg-extra-check': 'Das Konto wird erst angelegt, wenn die Prüfung bestanden ist.',
-	'af.field.reg.extraWhen': 'Wann eine zusätzliche Verifizierung nötig ist',
+	'af.field.reg.extraWhen':
+		'Zusätzlich per E-Mail bestätigen, bei Registrierung über einen anderen Anbieter',
 	'af.extraWhen.no-email': 'Der Anbieter hat keine E-Mail-Adresse geliefert',
 	'af.extraWhen.unverified': 'Der Anbieter gibt nicht an, dass die E-Mail-Adresse verifiziert ist',
 	'af.extraWhen.low-trust': 'Die E-Mail-Adressen des Anbieters sind nicht sehr zuverlässig',
-	'af.field.reg.extraMethod': 'Wie verifiziert wird',
-	'af.hint.reg.extraMethod':
-		'Wurde keine E-Mail-Adresse geliefert, geht der Code an die Adresse, die die Person eingibt.',
-	'af.extraMethod.email-code': 'Code per E-Mail senden',
-	'af.extraMethod.sms-code': 'Code per SMS senden',
-	'af.field.reg.extraExpiry': 'Wie lange der Code gültig bleibt',
-	'af.codeExpiry.10m': '10 Minuten',
-	'af.codeExpiry.30m': '30 Minuten',
-	'af.codeExpiry.1h': '1 Stunde',
 
 	'af.flow.scim-in.title': 'Über SCIM empfangen',
 	'af.flow.scim-in.subtitle': 'Eingehender Vertrag',
@@ -287,13 +328,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.syncGroup.sales': 'Vertrieb',
 	'af.syncGroup.support': 'Support',
 
-	'af.provider.acme': 'Acme Directory',
-	'af.provider.corporate': 'Unternehmensanmeldung',
-
-	'af.attribute.email': 'E-Mail-Adresse',
-	'af.attribute.name': 'Name',
-	'af.attribute.phone': 'Telefonnummer',
-	'af.attribute.birthdate': 'Geburtsdatum',
 	'af.method.passkey': 'Passkey',
 	'af.method.password': 'Passwort',
 	'af.method.otp': 'Einmalcode',
@@ -309,32 +343,21 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.emailCheck.before': 'Konto erst nach der Verifizierung anlegen',
 	'af.emailCheck.later': 'Nach der Registrierung zur Verifizierung auffordern',
 	'af.emailCheck.none': 'Nicht verifizieren',
+	'af.expiry.5m': '5 Minuten',
+	'af.expiry.10m': '10 Minuten',
+	'af.field.reg.domains': 'Erlaubte E-Mail-Domains',
+	'af.hint.reg.domains':
+		'Etwa example.com, durch Kommas oder Leerzeichen getrennt. Eine Subdomain gesondert angeben.',
 	'af.expiry.15m': '15 Minuten',
-	'af.expiry.1h': '1 Stunde',
-	'af.expiry.24h': '24 Stunden',
 	'af.consentWhen.signup': 'Nur bei der Registrierung',
 	'af.consentWhen.version': 'Bei der Registrierung und wenn sich eine Erklärung ändert',
-	'af.accountState.active': 'Sofort nutzbar',
-	'af.accountState.pending': 'Wartet auf die Freigabe durch einen Administrator',
-	'af.after.login': 'Auf die Anmeldung verweisen',
-	'af.after.session': 'Angemeldet lassen',
-	'af.interrupted.resume': 'Die Person kann dort weitermachen, wo sie aufgehört hat',
-	'af.interrupted.restart': 'Die Person beginnt von vorn',
-	'af.failures.delay': 'Bei jedem Versuch etwas länger warten lassen',
-	'af.failures.lock': 'Für eine Weile sperren',
-	'af.failures.none': 'Keine Begrenzung',
-	'af.unregistered.guide': 'Auf die Registrierung verweisen',
-	'af.unregistered.generic': 'Nur melden, dass die Anmeldung fehlgeschlagen ist',
-	'af.stepUpWhen.always': 'Jedes Mal',
-	'af.stepUpWhen.risk': 'Bei hohem Risiko',
-	'af.stepUpWhen.sensitive': 'Bei sensiblen Aktionen',
-	'af.stepUpUnavailable.deny': 'Anmeldung nicht zulassen',
-	'af.stepUpUnavailable.enroll': 'Eine Methode direkt vor Ort registrieren lassen',
-	'af.lifetime.8h': '8 Stunden',
-	'af.lifetime.24h': '24 Stunden',
-	'af.lifetime.7d': '7 Tage',
-	'af.reauth.idle': 'Nach einer Zeit ohne Aktivität',
-	'af.reauth.none': 'Nie',
-	'af.failure.error': 'Einen Fehler an den Aufrufer zurückgeben',
-	'af.failure.stay': 'Auf der Anmeldeseite bleiben'
+	'af.after.tenant': 'Der Einstellung des Mandanten folgen',
+	'af.part.login-result': 'Nach der Anmeldung',
+	'af.lead.login-result': 'Legen Sie fest, wohin Personen nach der Anmeldung gelangen.',
+	'af.note.login-result':
+		'Eine von einer App oder per SAML begonnene Anmeldung kehrt dorthin zurück, woher sie kam. Hier legen Sie fest, wohin eine direkt auf dem Anmeldebildschirm vorgenommene Anmeldung führt.',
+	'af.hint.login.appClient':
+		'Nach der Anmeldung wird die Person direkt beim gewählten Dienst (Client) angemeldet. Beim Client müssen First Party App und App Login eingeschaltet sein.',
+	'af.hint.login.samlSp':
+		'Nach der Anmeldung wird die Person per IdP-initiiertem SSO direkt beim gewählten SAML-Dienst (SP) angemeldet. Der SP muss IdP-initiierte SAML-Antworten annehmen.'
 };

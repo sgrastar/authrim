@@ -49,9 +49,9 @@ import {
   AR_ERROR_CODES,
   createErrorResponse,
   safeFetchJson,
-  resolveSessionTtl,
 } from '@authrim/ar-lib-core';
 import { externalSignInMayCreateAccount, isLiteExternalFlow } from '../services/lite-start';
+import { externalSessionProfile, loadExternalSignUpPolicy } from '../services/external-email-check';
 import {
   consumeAuthState,
   getAuthStateCookieName,
@@ -458,9 +458,21 @@ async function completeExternalAuthentication(
       return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
     }
 
+    // session.default_ttl (external IdP sign-in has no lifetime setting of its own), as the
+    // Flow's session profile sets it; and the Flow's method profile takes this provider.
+    const flowSession = await externalSessionProfile(c.env, {
+      tenantId,
+      interactionId: authState.attemptInteractionId,
+      challengeId: authState.flowChallengeId,
+      provider,
+      isNewUser: result.isNewUser === true,
+    });
+    if (!flowSession.allowed) {
+      scheduleExternalSignInFailure(c, authState, result.userId, 'method_disabled');
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
-    // session.default_ttl: external IdP sign-in has no lifetime setting of its own.
-    const sessionTTL = (await resolveSessionTtl(c.env, tenantId, 'default')).seconds;
+    const sessionTTL = flowSession.profiled.ttl.seconds;
     const encryptionKey = getEncryptionKeyOrUndefined(c.env);
     const upstreamIdTokenEncrypted =
       input.upstreamIdToken && encryptionKey
@@ -489,6 +501,9 @@ async function completeExternalAuthentication(
         ...(input.reauthProvenAt !== undefined
           ? { reauth_proven_amr: ['external_idp'], reauth_proven_at: input.reauthProvenAt }
           : {}),
+        // The Flow interaction it was made in (see ar-auth login-runtime-flow).
+        ...(flowSession.interactionId ? { runtime_interaction_id: flowSession.interactionId } : {}),
+        ...flowSession.profiled.snapshot,
       },
       tenantId
     );
@@ -564,6 +579,12 @@ async function completeExternalAuthentication(
     client_id: clientId,
     is_new_user: result.isNewUser,
     stitched_from_existing: result.stitchedFromExisting,
+    // The Flow interaction the sign-in ran in (checked at the start to answer the same request):
+    // the session follows its profiles and is recorded as made in it. A new account is a sign-up.
+    ...(authState.attemptInteractionId
+      ? { attempt_interaction_id: authState.attemptInteractionId }
+      : {}),
+    ...(result.isNewUser ? { usage: 'signup' } : {}),
     // The session made from this code keeps the upstream acr, as the SSO path does.
     ...(input.upstreamAcr ? { upstream_acr: input.upstreamAcr } : {}),
     ...(input.reauthProvenAt !== undefined
@@ -1838,6 +1859,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       authState.tenantId,
       authState.flowId
     );
+    // The sign-up policy an account made here is held to (the registration Flow the start named,
+    // else the tenant's own), read only where an account would be made. A link (an account already
+    // signed in) makes none.
+    const attemptInteractionId = authState.attemptInteractionId;
+    const loadSignUpPolicy = authState.userId
+      ? undefined
+      : () => loadExternalSignUpPolicy(c.env, authState.tenantId, attemptInteractionId);
     const result = await handleIdentity(c.env, {
       provider,
       userInfo,
@@ -1846,6 +1874,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       tenantId: authState.tenantId,
       ...(invitation ? { invitation } : {}),
       ...(accountCreationAllowed ? {} : { accountCreationAllowed: false }),
+      ...(loadSignUpPolicy ? { loadSignUpPolicy } : {}),
       // A re-authentication has its own switch (checked at the start).
       ...(authState.reauthRequestedAt === undefined ? {} : { reauthentication: true }),
     });

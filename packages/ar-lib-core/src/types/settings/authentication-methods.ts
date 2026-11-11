@@ -45,12 +45,37 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.directory_password.enabled': boolean;
   'authentication-methods.invitation.email_verification': 'optional' | 'required';
   'authentication-methods.signup.flow_required': boolean;
+  'authentication-methods.default_profile.base_version': string;
+  'authentication-methods.passkey.enabled': boolean;
+  'authentication-methods.email_otp.enabled': boolean;
+  'authentication-methods.totp.enabled': boolean;
 }
 
-export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
-  keyof AuthenticationMethodsSettings,
-  SettingMeta
-> = {
+/**
+ * The settings the platform's Default methods hold (services/default-profile-layer.ts): which
+ * methods each use offers, and the authenticator-app preset. They can be set at the platform
+ * (every tenant inherits them) and at a tenant. The other settings of the category name something
+ * of one tenant or tune one tenant's endpoints, and stay tenant-only.
+ */
+export const AUTHENTICATION_METHODS_DEFAULT_LAYER_KEYS = [
+  'authentication-methods.guest.login_enabled',
+  'authentication-methods.passkey.guest_upgrade_enabled',
+  'authentication-methods.email_otp.guest_upgrade_enabled',
+  ...(['passkey', 'email_otp', 'totp'] as const).flatMap((method) =>
+    (['signup', 'login', 'reauth', 'account_link'] as const).map(
+      (use) => `authentication-methods.${method}.${use}_enabled` as const
+    )
+  ),
+  'authentication-methods.did.login_enabled',
+  'authentication-methods.directory_password.enabled',
+  'authentication-methods.totp.preset',
+  'authentication-methods.totp.default_acr',
+] as const;
+const DEFAULT_LAYER_KEY_SET: ReadonlySet<string> = new Set(
+  AUTHENTICATION_METHODS_DEFAULT_LAYER_KEYS
+);
+
+const METHOD_SETTINGS: Record<keyof AuthenticationMethodsSettings, SettingMeta> = {
   'authentication-methods.email_otp.guest_upgrade_enabled': {
     key: 'authentication-methods.email_otp.guest_upgrade_enabled',
     type: 'boolean',
@@ -386,7 +411,53 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
       'Accept a passkey, email code or authenticator-app sign-up only from a live Flow interaction at a sign-in step, its values checked against the screen of that step. Off, such a sign-up that names no interaction (an app with its own form) is checked against the Identity Schema alone. External IdP sign-ups carry no attributes and are not affected',
     visibility: 'page',
   },
+  'authentication-methods.default_profile.base_version': {
+    key: 'authentication-methods.default_profile.base_version',
+    type: 'string',
+    default: '',
+    label: 'Default methods: platform version copied',
+    description:
+      "The version of the platform's Default methods when this tenant saved its own copy of them (written by the method profile screen; empty: no copy)",
+    visibility: 'internal',
+  },
+  'authentication-methods.passkey.enabled': {
+    key: 'authentication-methods.passkey.enabled',
+    type: 'boolean',
+    default: true,
+    label: 'Passkey (older single switch)',
+    description:
+      'The older single switch of the method, read for each use the tenant sets no switch for. Kept so a stored one can be seen and removed; new settings use the switch of each use',
+    visibility: 'internal',
+  },
+  'authentication-methods.email_otp.enabled': {
+    key: 'authentication-methods.email_otp.enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Email OTP (older single switch)',
+    description:
+      'The older single switch of the method, read for each use the tenant sets no switch for. Kept so a stored one can be seen and removed; new settings use the switch of each use',
+    visibility: 'internal',
+  },
+  'authentication-methods.totp.enabled': {
+    key: 'authentication-methods.totp.enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Authenticator app (older single switch)',
+    description:
+      'The older single switch of the method, read for each use the tenant sets no switch for. Kept so a stored one can be seen and removed; new settings use the switch of each use',
+    visibility: 'internal',
+  },
 };
+
+export const AUTHENTICATION_METHODS_SETTINGS_META = Object.fromEntries(
+  Object.entries(METHOD_SETTINGS).map(([key, meta]) => [
+    key,
+    {
+      ...meta,
+      scopes: DEFAULT_LAYER_KEY_SET.has(key) ? ['platform', 'tenant'] : ['tenant'],
+    } satisfies SettingMeta,
+  ])
+) as Record<keyof AuthenticationMethodsSettings, SettingMeta>;
 
 export const AUTHENTICATION_METHODS_CATEGORY_META: CategoryMeta = {
   category: 'authentication-methods',
@@ -433,4 +504,8 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.directory_password.enabled': false,
   'authentication-methods.invitation.email_verification': 'optional',
   'authentication-methods.signup.flow_required': false,
+  'authentication-methods.default_profile.base_version': '',
+  'authentication-methods.passkey.enabled': true,
+  'authentication-methods.email_otp.enabled': false,
+  'authentication-methods.totp.enabled': false,
 };

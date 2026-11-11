@@ -5,7 +5,7 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import AccountLauncherWidget from './AccountLauncherWidget.svelte';
-	import { launchers } from './fixtures';
+	import { colouredLaunchers, launchers } from './fixtures';
 
 	const { Story } = defineMeta({
 		title: 'Account/Launcher',
@@ -103,6 +103,20 @@
 <Story
 	name="Favourite failed"
 	args={{ favoriteError: 'Could not update the favorite status. Please try again.' }}
+>
+	{#snippet template(args)}{@render widget(args)}{/snippet}
+</Story>
+
+<!-- Tiles in the admin's own colours: the text turns white or black, whichever reads on it. -->
+<Story
+	name="Coloured tiles"
+	args={{ launchers: colouredLaunchers() }}
+	play={async ({ canvasElement }) => {
+		const tile = (name: string) =>
+			within(canvasElement).getByText(name).closest('li') as HTMLElement;
+		await expect(getComputedStyle(tile('Team calendar')).color).toBe('rgb(255, 255, 255)');
+		await expect(getComputedStyle(tile('Wiki')).color).toBe('rgb(0, 0, 0)');
+	}}
 >
 	{#snippet template(args)}{@render widget(args)}{/snippet}
 </Story>

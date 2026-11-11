@@ -44,6 +44,13 @@ const registrationCheck = vi.hoisted(() => ({
   override: null as null | 'blocked' | 'unavailable',
 }));
 
+// No registration Flow: the route as it is (the policy gate is tested with Direct Auth).
+vi.mock('../registration-policy-gate', async () => {
+  const actual = await vi.importActual<typeof import('../registration-policy-gate')>(
+    '../registration-policy-gate'
+  );
+  return { ...actual, signUpPolicyFor: vi.fn(async () => actual.NO_POLICY) };
+});
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual =
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');

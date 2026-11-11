@@ -110,6 +110,18 @@ const mocks = vi.hoisted(() => ({
   fetchUserInfo: vi.fn(),
 }));
 
+// The sign-in's Flow (its profiles): the tenant's own, as with no Flow.
+vi.mock('../services/external-email-check', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../services/external-email-check')>()),
+  externalSessionProfile: vi.fn(async () => ({
+    allowed: true,
+    profiled: {
+      ttl: { seconds: 3600, milliseconds: 3_600_000, key: 'session.default_ttl' },
+      snapshot: { session_extension: { enabled: true, max_lifetime_ms: 2_592_000_000 } },
+    },
+  })),
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
