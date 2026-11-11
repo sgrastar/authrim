@@ -23,6 +23,7 @@ import {
   passkeyPlacementId,
   publishedAccountPageFromSettings,
   validateAccountPagePath,
+  layerTenantSettingsDocument,
 } from '@authrim/ar-lib-core';
 
 export interface PasskeyEndpointsResponse {
@@ -49,12 +50,23 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
  * endpoint published.
  */
 export function passkeyLoginEnabledFromDocument(raw: string | null | undefined): boolean {
-  if (raw === null || raw === undefined) return true;
+  return passkeyLoginEnabledFromSettings(parseAuthenticationMethodsDocument(raw));
+}
+
+/** The tenant's authentication-methods document ({} when none); one that is not an object throws. */
+export function parseAuthenticationMethodsDocument(
+  raw: string | null | undefined
+): Record<string, unknown> {
+  if (raw === null || raw === undefined) return {};
   const parsed = JSON.parse(raw) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('authentication_methods_settings_invalid');
   }
-  const settings = parsed as Record<string, unknown>;
+  return parsed as Record<string, unknown>;
+}
+
+/** Whether passkey sign-in is on in a (layered) authentication-methods document. */
+export function passkeyLoginEnabledFromSettings(settings: Record<string, unknown>): boolean {
   return readBoolean(
     settings['authentication-methods.passkey.login_enabled'],
     readBoolean(settings['authentication-methods.passkey.enabled'], true)
@@ -130,7 +142,14 @@ export async function passkeyEndpointsHandler(c: Context<{ Bindings: Env }>) {
       settingsKv?.get(`settings:tenant:${tenantId}:self-service`) ?? null,
       c.env.SETTINGS?.get(`settings:tenant:${tenantId}:login-ui`) ?? null,
     ]);
-    passkeyLoginEnabled = passkeyLoginEnabledFromDocument(authenticationMethodsRaw);
+    // The platform's Default methods under the tenant's (default-profile-layer.ts).
+    passkeyLoginEnabled = passkeyLoginEnabledFromSettings(
+      await layerTenantSettingsDocument(
+        c.env,
+        'authentication-methods',
+        parseAuthenticationMethodsDocument(authenticationMethodsRaw)
+      )
+    );
     accountPagePath = accountPagePathFromDocument(selfServiceRaw);
     placementId = passkeyPlacementId(
       publishedAccountPageFromSettings(loginUiSettingsFromDocument(loginUiRaw))

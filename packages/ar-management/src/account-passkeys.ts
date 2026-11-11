@@ -55,6 +55,21 @@ import { attemptImmediateAccountDirectoryRemovals } from './account-directory-re
 
 const MAX_DEVICE_NAME_LENGTH = 100;
 
+/**
+ * Whether passkeys may re-authenticate, or null when the settings (the tenant's, or the
+ * platform's Default under them) cannot be read: passkeys are on by default, so an unreadable
+ * switch must not let them through.
+ */
+async function passkeyReauthAvailable(env: Env, tenantId: string): Promise<boolean | null> {
+  try {
+    return await isAuthenticationMethodUsageAvailable(env, tenantId, 'passkey', 'reauth', {
+      strict: true,
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function resolveAccountAuthContext(
   c: Context<{ Bindings: Env }>,
   userId: string,
@@ -489,7 +504,17 @@ export async function createAccountPasskeyReauthOptionsHandler(
 
   const rpID = new URL(origin).hostname;
   const tenantId = getTenantIdFromContext(c);
-  if (!(await isAuthenticationMethodUsageAvailable(c.env, tenantId, 'passkey', 'reauth'))) {
+  const passkeyReauth = await passkeyReauthAvailable(c.env, tenantId);
+  if (passkeyReauth === null) {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication method settings are unavailable; try again',
+      },
+      503
+    );
+  }
+  if (!passkeyReauth) {
     return c.json(
       {
         error: 'no_reauth_method',
@@ -576,7 +601,17 @@ export async function completeAccountPasskeyReauthHandler(
   }
 
   const tenantId = getTenantIdFromContext(c);
-  if (!(await isAuthenticationMethodUsageAvailable(c.env, tenantId, 'passkey', 'reauth'))) {
+  const passkeyReauth = await passkeyReauthAvailable(c.env, tenantId);
+  if (passkeyReauth === null) {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication method settings are unavailable; try again',
+      },
+      503
+    );
+  }
+  if (!passkeyReauth) {
     return c.json(
       {
         error: 'no_reauth_method',

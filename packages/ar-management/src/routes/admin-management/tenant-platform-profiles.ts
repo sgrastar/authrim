@@ -121,6 +121,20 @@ export async function tenantMayCreateProfile(
   return readProfileSwitch(c.env, kind, 'tenant_create_allowed', { fresh: true });
 }
 
+/** The answer to a change of a Default the platform sets the tenant's values aside for. */
+export const defaultNotEditable = (c: AdminContext, reason: 'locked' | 'changes_not_allowed') =>
+  c.json(
+    {
+      error: 'profile_not_editable',
+      error_description:
+        reason === 'locked'
+          ? 'The platform has locked its Default'
+          : 'The platform does not let tenants change its profiles',
+      reason,
+    },
+    403
+  );
+
 /** The answer to a create the platform does not allow. */
 export const creationNotAllowed = (c: AdminContext) =>
   c.json(

@@ -52,6 +52,7 @@ import {
   type AuthEventData,
   checkEmailRegistration,
   isInteractionChallengeMismatchError,
+  layerTenantSettingsDocument,
 } from '@authrim/ar-lib-core';
 import {
   interactionChallengeMismatchResponse,
@@ -191,15 +192,18 @@ async function readAuthenticationMethodSettings(
     const raw = await env.SETTINGS?.get(
       `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
     );
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+    let stored: Record<string, unknown> = {};
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+      stored = parsed as Record<string, unknown>;
     }
+    // The platform's Default methods under the tenant's (the authenticator app is off by default,
+    // so an unreadable layer, read as nothing set, leaves it off).
+    return await layerTenantSettingsDocument(env, AUTHENTICATION_METHODS_CATEGORY, stored);
   } catch {
     return {};
   }
-  return {};
 }
 
 async function isTotpUsageAvailable(

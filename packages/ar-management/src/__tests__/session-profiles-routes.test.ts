@@ -30,7 +30,10 @@ const mocks = vi.hoisted(() => {
     throwSave: string | null;
     /** The admin may not see oauth settings. */
     noOauth: boolean;
+    /** The platform's documents (its Default, and the profiles switches), by category. */
+    platform: Record<string, Record<string, unknown>>;
   } = {
+    platform: {},
     flowUsing: null,
     failSave: null,
     throwSave: null,
@@ -46,10 +49,22 @@ const mocks = vi.hoisted(() => {
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.audit }));
 vi.mock('../routes/settings-v2/settings-support', () => ({
   getSettingsManager: () => ({
-    getAll: async (category: string) => ({
-      version: `${category}-${mocks.settings[category].version}`,
-      values: { ...mocks.settings[category].values },
-    }),
+    getAll: async (category: string, scope: { type: string }) => {
+      if (scope.type === 'platform') {
+        const values = { ...(mocks.platform[category] ?? {}) };
+        return {
+          version: `platform-${category}-${JSON.stringify(values)}`,
+          values,
+          sources: Object.fromEntries(Object.keys(values).map((key) => [key, 'kv'])),
+        };
+      }
+      const values = { ...mocks.settings[category].values };
+      return {
+        version: `${category}-${mocks.settings[category].version}`,
+        values,
+        sources: Object.fromEntries(Object.keys(values).map((key) => [key, 'kv'])),
+      };
+    },
   }),
 }));
 vi.mock('../routes/settings-v2/settings-authorization', async (importOriginal) => {
@@ -67,7 +82,7 @@ vi.mock('../routes/settings-v2/tenant-settings-apply', () => ({
   applyTenantSettingsChange: async (input: {
     category: string;
     dryRun?: boolean;
-    readBody: () => Promise<{ ifMatch: string; set: Record<string, unknown> }>;
+    readBody: () => Promise<{ ifMatch: string; set: Record<string, unknown>; clear?: string[] }>;
   }) => {
     const body = await input.readBody();
     const doc = mocks.settings[input.category];
@@ -80,6 +95,7 @@ vi.mock('../routes/settings-v2/tenant-settings-apply', () => ({
     }
     if (!input.dryRun) {
       Object.assign(doc.values, body.set);
+      for (const key of body.clear ?? []) delete doc.values[key];
       doc.version++;
     }
     return Response.json({ version: `${input.category}-${doc.version}`, rejected: {} });
@@ -173,6 +189,7 @@ beforeEach(() => {
   mocks.failSave = null;
   mocks.throwSave = null;
   mocks.noOauth = false;
+  mocks.platform = {};
 });
 
 const DEFAULT_VERSION = JSON.stringify({ session: 'session-1', oauth: 'oauth-1' });
@@ -241,7 +258,6 @@ describe('session profiles', () => {
   });
 
   it('writes the Default profile to both settings documents, all or nothing', async () => {
-    expect((await call('DELETE', '/default')).status).toBe(400);
     const saved = await call('PUT', '/default', {
       name: 'Default',
       version: DEFAULT_VERSION,
@@ -330,5 +346,103 @@ describe('session profiles', () => {
       error: 'partially_applied',
       applied: ['session'],
     });
+  });
+});
+
+describe('the Default session rules over the platform’s', () => {
+  type DefaultView = {
+    values: Record<string, unknown>;
+    version: string;
+    overridden: boolean;
+    override_inactive_reason: string | null;
+    editable: boolean;
+    locked: boolean;
+    platform_values: Record<string, unknown>;
+    platform_updated: boolean;
+  };
+  const read = async () =>
+    (await (await call('GET', '/default')).json<{ profile: DefaultView }>()).profile;
+
+  it('takes the platform’s value where the tenant holds none', async () => {
+    mocks.settings.session.values = {};
+    mocks.platform.session = { 'session.default_ttl': 3_600_000 };
+    const profile = await read();
+    expect(profile.values['session.default_ttl']).toBe(3_600_000);
+    expect(profile.platform_values['session.default_ttl']).toBe(3_600_000);
+    expect(profile.overridden).toBe(true); // the tenant still holds its single sign-on
+    expect(profile.editable).toBe(true);
+  });
+
+  it('saves a whole copy with the platform version, and reverts it', async () => {
+    mocks.settings.session.values = {};
+    mocks.settings.oauth.values = {};
+    mocks.platform.session = { 'session.default_ttl': 3_600_000, 'session.max_ttl': 7_200_000 };
+    const before = await read();
+    expect(before.overridden).toBe(false);
+    const saved = await call('PUT', '/default', {
+      name: 'Default',
+      version: before.version,
+      values: { 'session.default_ttl': 10_800_000 },
+    });
+    expect(saved.status).toBe(200);
+    const stored = mocks.settings.session.values;
+    expect(stored['session.default_ttl']).toBe(10_800_000);
+    // The rest of the copy is what held when it was made.
+    expect(stored['session.max_ttl']).toBe(7_200_000);
+    expect(String(stored['session.default_profile.base_version'])).toContain('platform-session');
+    const after = (await saved.json<{ profile: DefaultView }>()).profile;
+    expect(after.overridden).toBe(true);
+    expect(after.platform_updated).toBe(false);
+    // The platform changes its Default: the copy is told it is behind.
+    mocks.platform.session = { 'session.default_ttl': 3_600_000, 'session.max_ttl': 14_400_000 };
+    expect((await read()).platform_updated).toBe(true);
+    // Back to the platform's: the tenant's values go, the platform's hold again.
+    const reverted = await call('DELETE', '/default');
+    expect(reverted.status).toBe(200);
+    expect(mocks.settings.session.values).toEqual({});
+    const back = (await reverted.json<{ profile: DefaultView }>()).profile;
+    expect(back.values['session.max_ttl']).toBe(14_400_000);
+    expect(back.overridden).toBe(false);
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'session.profile.default_reverted' })
+    );
+  });
+
+  it.each([
+    ['locked', { 'profiles.session.default_locked': true }, 'locked'],
+    ['not allowed', { 'profiles.session.tenant_change_allowed': false }, 'changes_not_allowed'],
+  ])(
+    'sets the tenant’s values aside while %s, and refuses a change',
+    async (_, switches, reason) => {
+      mocks.platform.session = { 'session.default_ttl': 3_600_000 };
+      mocks.platform.profiles = switches;
+      const profile = await read();
+      expect(profile.values['session.default_ttl']).toBe(3_600_000);
+      expect(profile.override_inactive_reason).toBe(reason);
+      expect(profile.editable).toBe(false);
+      const refused = await call('PUT', '/default', {
+        name: 'Default',
+        version: profile.version,
+        values: { 'session.default_ttl': 18_000_000 },
+      });
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({ error: 'profile_not_editable', reason });
+      expect(mocks.settings.session.values['session.default_ttl']).toBe(86_400_000);
+      // Reverting is always allowed.
+      expect((await call('DELETE', '/default')).status).toBe(200);
+      expect(mocks.settings.session.values).toEqual({});
+    }
+  );
+
+  it('keeps single sign-on of the platform and the tenant from an admin who may not see it', async () => {
+    mocks.noOauth = true;
+    mocks.platform.oauth = { 'oauth.sso_enabled': false };
+    const profile = await read();
+    expect(profile.platform_values).not.toHaveProperty('oauth.sso_enabled');
+    expect(JSON.stringify(profile)).not.toContain('platform-oauth');
+    // Reverting leaves single sign-on as it is.
+    expect((await call('DELETE', '/default')).status).toBe(200);
+    expect(mocks.settings.oauth.values['oauth.sso_enabled']).toBe(true);
   });
 });

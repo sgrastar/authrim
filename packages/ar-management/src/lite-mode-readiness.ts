@@ -37,6 +37,7 @@ import {
   type LiteModeIssue,
   type ScreenField,
   publishedAccountPageFromSettings,
+  layerTenantSettingsDocument,
 } from '@authrim/ar-lib-core';
 import { buildCanonicalTenantIssuerUrl } from '@authrim/ar-lib-core/services/tenant-vanity-domain-resolver';
 import {
@@ -66,17 +67,25 @@ function parseFields(json: string | null): ScreenField[] {
   }
 }
 
-/** The authentication-methods document the servers read (KV), or null. */
+/**
+ * The authentication-methods document the servers read (KV) with the platform's Default methods
+ * under it (default-profile-layer.ts), or null when the tenant's is not an object.
+ */
 async function readAuthenticationMethodsDocument(
   env: Env,
   tenantId: string
 ): Promise<Record<string, unknown> | null> {
   const raw = await env.SETTINGS?.get(humanVerificationSettingsKey(tenantId));
-  if (!raw) return null;
-  const parsed = JSON.parse(raw) as unknown;
-  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-    ? (parsed as Record<string, unknown>)
-    : null;
+  const parsed: unknown = raw ? JSON.parse(raw) : {};
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return layerTenantSettingsDocument(
+    env,
+    'authentication-methods',
+    parsed as Record<string, unknown>,
+    {
+      fresh: true,
+    }
+  );
 }
 
 /** The unsupported sign-in methods an authentication-methods document switches on. */

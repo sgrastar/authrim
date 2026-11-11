@@ -79,6 +79,7 @@ import {
   publishEvent,
   isSAMLAuthorizationChallenge,
   flowProfileRefsOfRuntime,
+  layerTenantSettingsDocument,
 } from '@authrim/ar-lib-core';
 import { resolveRuntimeScreenRow } from '@authrim/ar-lib-core/services/runtime-screen-resolution';
 import { applyRuntimeScreenOptions, runtimeAttributeKey } from './runtime-screen-options';
@@ -1603,7 +1604,13 @@ async function resolveRuntimeAuthenticationHandles(
 ): Promise<string[]> {
   const env = c.env;
   const rawSettings = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-  const settings = parseJsonRecord(rawSettings);
+  // The platform's Default methods under the tenant's (default-profile-layer.ts). Unreadable, it
+  // is thrown (the step fails) rather than offering methods the platform may have turned off.
+  const settings = await layerTenantSettingsDocument(
+    env,
+    'authentication-methods',
+    parseJsonRecord(rawSettings)
+  );
   const usage =
     component === 'registration_method_selector' || flowKind === 'registration'
       ? 'signup'

@@ -20,6 +20,7 @@ import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-ru
 import { getChallengeStoreForLease } from '../utils/challenge-sharding';
 import { resolveAuthCorePersistenceAdapterFromEnv } from './auth-core-persistence-context';
 import { passkeyCredentialLookupSubject } from './account-provisioning';
+import { layerTenantSettingsDocument } from './effective-settings';
 import { resolveAccountDataContextByIdentifier } from './runtime-data-context';
 
 const AUTHENTICATION_METHODS_CATEGORY = 'authentication-methods';
@@ -71,13 +72,17 @@ export async function isAuthenticationMethodUsageAvailable(
     // Only a missing document means "nothing set". When strict, an empty, blank or otherwise
     // damaged one (not JSON, or JSON that is not an object) is refused rather than read as the
     // method's default; when not strict it still reads as the default.
-    if (options.strict ? raw === null || raw === undefined : !raw) return methodDefault;
-    const settings = JSON.parse(raw as string) as unknown;
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-      if (options.strict) throw new Error('authentication_methods_settings_invalid');
-      return methodDefault;
+    let stored: Record<string, unknown> = {};
+    if (options.strict ? raw !== null && raw !== undefined : raw) {
+      const settings = JSON.parse(raw as string) as unknown;
+      if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        if (options.strict) throw new Error('authentication_methods_settings_invalid');
+        return methodDefault;
+      }
+      stored = settings as Record<string, unknown>;
     }
-    const values = settings as Record<string, unknown>;
+    // The platform's Default methods under the tenant's (default-profile-layer.ts).
+    const values = await layerTenantSettingsDocument(env, AUTHENTICATION_METHODS_CATEGORY, stored);
     const legacyEnabled = normalizeBoolean(
       values[`authentication-methods.${method}.enabled`],
       methodDefault
