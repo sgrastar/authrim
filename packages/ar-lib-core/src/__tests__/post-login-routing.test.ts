@@ -3,6 +3,7 @@ import {
   parseTrustedRedirectOrigins,
   resolvePostLoginRedirectUrl,
   resolveRegistrationCompletionRedirectUrl,
+  validatePostLoginRedirectUrl,
   validateServiceSitePath,
   validateAccountPagePath,
   validateLoginEntryPostLoginSettings,
@@ -257,6 +258,10 @@ describe('a registration Flow’s own completion', () => {
     ).resolves.toEqual({ redirectUrl: '/', behavior: 'home' });
     expect(validateServiceSitePath('/api/x')).toBe(false);
     expect(validateServiceSitePath('/\\evil.example/landing')).toBe(false);
+    // The tenant's own post-sign-in place is held to the same.
+    expect(validatePostLoginRedirectUrl('/\\evil.example/landing', [])).toBe(false);
+    expect(validatePostLoginRedirectUrl('/welcome\tx', [])).toBe(false);
+    expect(validatePostLoginRedirectUrl('/welcome', [])).toBe(true);
     expect(validateServiceSitePath('/app\nx')).toBe(false);
     expect(validateServiceSitePath('//evil.example')).toBe(false);
     expect(validateServiceSitePath('https://app.example.com')).toBe(false);

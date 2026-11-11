@@ -189,11 +189,18 @@ export function validatePostLoginRedirectUrl(
   if (!redirectUrl) {
     return false;
   }
+  // A backslash or a control character can make a browser read a path as another host
+  // (`/\evil.example`): refused anywhere in the value.
+  if (redirectUrl.includes('\\') || CONTROL_CHARACTER.test(redirectUrl)) {
+    return false;
+  }
 
   if (isSingleSlashRelativePath(redirectUrl)) {
     try {
-      const parsed = new URL(redirectUrl, 'https://authrim.local');
-      return !isReservedAuthrimPath(parsed.pathname);
+      const base = 'https://authrim.local';
+      const parsed = new URL(redirectUrl, base);
+      // What it resolves to must stay on this site.
+      return parsed.origin === base && !isReservedAuthrimPath(parsed.pathname);
     } catch {
       return false;
     }
