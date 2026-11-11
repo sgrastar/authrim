@@ -47,6 +47,8 @@ export interface ApplicationLauncher {
   icon_value: string;
   icon_color: string;
   background_color: string;
+  /** The whole tile's background; null keeps the theme's card colour. */
+  tile_background_color: string | null;
   grid_width: number;
   sort_order: number;
   enabled: boolean;

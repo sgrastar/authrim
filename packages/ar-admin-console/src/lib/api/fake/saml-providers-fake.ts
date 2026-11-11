@@ -2,8 +2,18 @@ import type { SamlProvidersClient, SamlServiceProviderOption } from '../saml-pro
 
 /** The SAML service providers of the mock tenant: one in use, one turned off. */
 export const MOCK_SAML_SERVICE_PROVIDERS: readonly SamlServiceProviderOption[] = [
-	{ entityId: 'https://lms.example.edu/shibboleth', name: 'Learning portal', enabled: true },
-	{ entityId: 'https://wiki.example.com/saml/metadata', name: 'Team wiki', enabled: false }
+	{
+		id: 'saml-sp-lms',
+		entityId: 'https://lms.example.edu/shibboleth',
+		name: 'Learning portal',
+		enabled: true
+	},
+	{
+		id: 'saml-sp-wiki',
+		entityId: 'https://wiki.example.com/saml/metadata',
+		name: 'Team wiki',
+		enabled: false
+	}
 ];
 
 export function createFakeSamlProviders(

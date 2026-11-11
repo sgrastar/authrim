@@ -16,6 +16,7 @@ import { deAdminAudit } from './admin-audit/de';
 import { deTeam } from './team/de';
 import { deAuthMethods } from './auth-methods/de';
 import { deSessionProfiles } from './session-profiles/de';
+import { deLaunchers } from './launchers/de';
 
 export const de = {
 	...deSettings,
@@ -35,6 +36,7 @@ export const de = {
 	...deTeam,
 	...deAuthMethods,
 	...deSessionProfiles,
+	...deLaunchers,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',

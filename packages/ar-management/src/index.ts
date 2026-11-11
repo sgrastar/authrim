@@ -572,6 +572,7 @@ import { adminScreenResponsesHandler } from './admin-screen-responses';
 import {
   adminLauncherCreateHandler,
   adminLauncherDeleteHandler,
+  adminLauncherGetHandler,
   adminLauncherOptionsHandler,
   adminLauncherOrderHandler,
   adminLaunchersListHandler,
@@ -2638,6 +2639,11 @@ app.put(
   '/api/admin/launchers/order',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminLauncherOrderHandler
+);
+app.get(
+  '/api/admin/launchers/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminLauncherGetHandler
 );
 app.put(
   '/api/admin/launchers/:id',
