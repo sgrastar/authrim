@@ -11,6 +11,9 @@ import { persona, type PersonaId } from '#lib/access/personas.js';
 import { ApiError } from '#lib/api/api-error.js';
 import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentication-method-profiles-fake.js';
 import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
+import { createFakePlatformProfiles } from '#lib/api/fake/platform-profiles-fake.js';
+import type { PlatformProfile, PlatformProfilesClient } from '#lib/api/platform-profiles.js';
+import { fakeLayer, fakeProfileRow, type FakeProfile } from '#lib/api/fake/profile-fake-core.js';
 import type { AuthenticationMethodProfilesClient } from '#lib/api/authentication-method-profiles.js';
 import type { SessionProfilesClient } from '#lib/api/session-profiles.js';
 import { MOCK_CLIENTS } from '#lib/api/fake/clients-fake.js';
@@ -135,8 +138,119 @@ async function handleSettings(
 }
 
 /** In-memory sign-in method and session profiles; reset when the dev server restarts. */
-const methodProfiles = createFakeAuthenticationMethodProfiles();
-const sessionProfiles = createFakeSessionProfiles();
+// One platform profile each, so the platform layer shows in the lists and editors.
+const methodProfiles = createFakeAuthenticationMethodProfiles([
+	{
+		id: 'pmp_dev',
+		name: 'Platform: passkeys only',
+		is_system: false,
+		values: { 'authentication-methods.passkey.login_enabled': true },
+		version: 0,
+		created_at: null,
+		updated_at: null,
+		layer: fakeLayer({
+			platformValues: { 'authentication-methods.passkey.login_enabled': true }
+		})
+	}
+]);
+const sessionProfiles = createFakeSessionProfiles([
+	{
+		id: 'psp_dev',
+		name: 'Platform: short sessions',
+		is_system: false,
+		values: { 'session.default_ttl': 3_600_000 },
+		version: 0,
+		created_at: null,
+		updated_at: null,
+		layer: fakeLayer({
+			locked: true,
+			editable: false,
+			platformValues: { 'session.default_ttl': 3_600_000 }
+		})
+	}
+]);
+const row = (profile: unknown) => fakeProfileRow(profile as FakeProfile);
+const fakeErrorResponse = (error: unknown, fallback: { error: string; status: number }) =>
+	error instanceof ApiError && error.status !== 0
+		? json({ ...error.body, error: error.code, error_description: error.message }, error.status)
+		: json({ error: fallback.error }, fallback.status);
+
+/** The platform's own profiles (seeded with the ones the tenant lists). */
+const platformMethodProfiles = createFakePlatformProfiles('pmp_', [
+	{
+		id: 'pmp_dev',
+		name: 'Platform: passkeys only',
+		values: { 'authentication-methods.passkey.login_enabled': true },
+		version: 1,
+		locked: false,
+		state: 'active',
+		overridingTenants: 0,
+		created_at: null,
+		updated_at: null
+	}
+]);
+const platformSessionProfiles = createFakePlatformProfiles(
+	'psp_',
+	[
+		{
+			id: 'psp_dev',
+			name: 'Platform: short sessions',
+			values: { 'session.default_ttl': 3_600_000 },
+			version: 1,
+			locked: true,
+			state: 'active',
+			overridingTenants: 1,
+			created_at: null,
+			updated_at: null
+		}
+	],
+	{ inUse: ['psp_dev'] }
+);
+const platformRow = (profile: PlatformProfile) => {
+	const { overridingTenants, ...rest } = profile;
+	return { ...rest, overriding_tenants: overridingTenants };
+};
+
+async function handlePlatformProfiles(
+	event: RequestEvent,
+	rest: string[],
+	method: string,
+	profiles: PlatformProfilesClient
+): Promise<Response | null> {
+	const [id, action] = rest;
+	const body = method === 'POST' || method === 'PUT' ? await readJson(event) : {};
+	const name = typeof body.name === 'string' ? body.name.trim() : '';
+	const values =
+		body.values && typeof body.values === 'object' ? (body.values as Record<string, unknown>) : {};
+	const version = typeof body.version === 'number' ? body.version : 0;
+	try {
+		if (rest.length === 0 && method === 'GET') {
+			return json({ profiles: (await profiles.list()).map(platformRow) });
+		}
+		if (rest.length === 0 && method === 'POST') {
+			if (!name) return json({ error: 'invalid_request' }, 400);
+			return json({ profile: platformRow(await profiles.create({ name, values })) }, 201);
+		}
+		if (rest.length === 1 && method === 'GET') {
+			return json({ profile: platformRow(await profiles.get(id)) });
+		}
+		if (rest.length === 1 && method === 'PUT') {
+			return json({ profile: platformRow(await profiles.update(id, version, { name, values })) });
+		}
+		if (rest.length === 2 && action === 'lock' && method === 'PUT') {
+			return json({
+				profile: platformRow(await profiles.setLocked(id, version, body.locked === true))
+			});
+		}
+		if (rest.length === 1 && method === 'DELETE') {
+			await profiles.remove(id);
+			return new Response(null, { status: 204 });
+		}
+	} catch (error) {
+		return fakeErrorResponse(error, { error: 'server_error', status: 500 });
+	}
+	return null;
+}
 
 async function handleProfiles(
 	event: RequestEvent,
@@ -146,7 +260,7 @@ async function handleProfiles(
 ): Promise<Response | null> {
 	const [id] = rest;
 	if (rest.length === 0 && method === 'GET') {
-		return json({ profiles: await profiles.list() });
+		return json({ profiles: (await profiles.list()).map(row) });
 	}
 	if (rest.length === 0 && method === 'POST') {
 		const body = await readJson(event);
@@ -158,12 +272,16 @@ async function handleProfiles(
 			body.values && typeof body.values === 'object'
 				? (body.values as Record<string, unknown>)
 				: {};
-		return json({ profile: await profiles.create({ name, values }) }, 201);
+		try {
+			return json({ profile: row(await profiles.create({ name, values })) }, 201);
+		} catch (error) {
+			return fakeErrorResponse(error, { error: 'server_error', status: 500 });
+		}
 	}
 	if (rest.length !== 1) return null;
 	if (method === 'GET') {
 		try {
-			return json({ profile: await profiles.get(id) });
+			return json({ profile: row(await profiles.get(id)) });
 		} catch {
 			return json({ error: 'not_found' }, 404);
 		}
@@ -175,15 +293,24 @@ async function handleProfiles(
 			body.values && typeof body.values === 'object'
 				? (body.values as Record<string, unknown>)
 				: {};
-		const version =
-			typeof body.version === 'number' || typeof body.version === 'string' ? body.version : 0;
 		try {
-			return json({ profile: await profiles.update(id, version, { name, values }) });
-		} catch {
-			return json({ error: 'conflict' }, 409);
+			// A platform profile: the tenant's copy of it.
+			if (/^p[ms]p_/.test(id)) {
+				const copyVersion = typeof body.version === 'number' ? body.version : null;
+				return json({ profile: row(await profiles.saveCopy(id, copyVersion, values)) });
+			}
+			const version =
+				typeof body.version === 'number' || typeof body.version === 'string' ? body.version : 0;
+			return json({ profile: row(await profiles.update(id, version, { name, values })) });
+		} catch (error) {
+			return fakeErrorResponse(error, { error: 'conflict', status: 409 });
 		}
 	}
 	if (method === 'DELETE') {
+		// Default and a platform profile: the tenant's own values go (back to the platform's).
+		if (id === 'default' || /^p[ms]p_/.test(id)) {
+			return json({ profile: row(await profiles.revert(id)) });
+		}
 		await profiles.remove(id);
 		return new Response(null, { status: 204 });
 	}
@@ -434,6 +561,18 @@ export async function handleDevAdminMock(
 	if (segments[0] === 'tenants' && segments[2] === 'settings' && segments.length === 4) {
 		const target: SettingsTarget = { level: 'tenant', tenantId: segments[1] };
 		const response = await handleSettings(event, target, segments[3], method);
+		if (response) return response;
+	}
+	if (
+		segments[0] === 'platform' &&
+		(segments[1] === 'authentication-method-profiles' || segments[1] === 'session-profiles')
+	) {
+		const response = await handlePlatformProfiles(
+			event,
+			segments.slice(2),
+			method,
+			segments[1] === 'session-profiles' ? platformSessionProfiles : platformMethodProfiles
+		);
 		if (response) return response;
 	}
 	if (segments[0] === 'platform' && segments[1] === 'settings' && segments.length === 3) {

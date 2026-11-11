@@ -15,6 +15,8 @@ import { jaAdminAudit } from './admin-audit/ja';
 import { jaTeam } from './team/ja';
 import { jaAuthMethods } from './auth-methods/ja';
 import { jaSessionProfiles } from './session-profiles/ja';
+import { jaProfileLayer } from './profile-layer/ja';
+import { jaPlatformProfiles } from './platform-profiles/ja';
 import { jaLaunchers } from './launchers/ja';
 
 /**
@@ -39,6 +41,8 @@ export const ja = {
 	...jaTeam,
 	...jaAuthMethods,
 	...jaSessionProfiles,
+	...jaProfileLayer,
+	...jaPlatformProfiles,
 	...jaLaunchers,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',

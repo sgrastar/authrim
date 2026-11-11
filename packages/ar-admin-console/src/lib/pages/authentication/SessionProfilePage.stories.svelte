@@ -2,6 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
+	import { fakeLayer } from '#lib/api/fake/profile-fake-core.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { settingText } from '#lib/settings/setting-text.js';
 	import SessionProfilePage from './SessionProfilePage.svelte';
@@ -40,6 +41,23 @@
 	}
 	const slow = slowSaves();
 	const label = (key: string) => t(settingText(key).label);
+	/** A platform profile the tenant sees (with the platform layer the Admin API reports). */
+	const platformProfile = (layer: Parameters<typeof fakeLayer>[0]) =>
+		createFakeSessionProfiles([
+			{
+				id: 'psp_short',
+				name: 'Short sessions',
+				is_system: false,
+				values: { 'session.default_ttl': 3_600_000, 'oauth.sso_enabled': false },
+				version: 0,
+				created_at: null,
+				updated_at: null,
+				layer: fakeLayer({
+					platformValues: { 'session.default_ttl': 3_600_000, 'oauth.sso_enabled': false },
+					...layer
+				})
+			}
+		]);
 </script>
 
 <Story
@@ -165,7 +183,8 @@
 					version: 1,
 					values: { 'session.default_ttl': 900_000, 'session.refresh_default': false },
 					created_at: Date.UTC(2026, 10, 1),
-					updated_at: Date.UTC(2026, 10, 7)
+					updated_at: Date.UTC(2026, 10, 7),
+					layer: null
 				}
 			])}
 			id="sp_kiosk"
@@ -198,6 +217,113 @@
 	{#snippet template()}
 		<SessionProfilePage
 			client={slow.client}
+			id="default"
+			canWrite
+			listHref="/admin/authentication/session-profiles"
+			{oncreated}
+		/>
+	{/snippet}
+</Story>
+
+<!-- A platform profile: saving makes the tenant's copy (the platform's stays), and the copy can be removed again. -->
+<Story
+	name="Platform profile: saved as the tenant's copy"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Short sessions' });
+		await expect(canvas.getByText(t('pl.platform'))).toBeInTheDocument();
+		await expect(canvas.getByText(t('pl.copyNote'))).toBeInTheDocument();
+		// The name is the platform's: not edited here.
+		await expect(
+			canvas.queryByRole('button', { name: t('sp.page.editName') })
+		).not.toBeInTheDocument();
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: label('oauth.sso_enabled') }),
+			'true'
+		);
+		const bar = await canvas.findByRole('region', { name: t('common.unsaved') });
+		await userEvent.click(within(bar).getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('pl.overridden'));
+		await expect(canvas.getByText(t('pl.copyActive'))).toBeInTheDocument();
+		await userEvent.click(canvas.getByRole('button', { name: t('pl.revert') }));
+		const dialog = await within(document.body).findByRole('dialog');
+		await userEvent.click(within(dialog).getByRole('button', { name: t('pl.revert') }));
+		await waitFor(() => expect(canvas.queryByText(t('pl.overridden'))).not.toBeInTheDocument());
+		await expect(canvas.getByRole('combobox', { name: label('oauth.sso_enabled') })).toHaveValue(
+			'false'
+		);
+	}}
+>
+	{#snippet template()}
+		<SessionProfilePage
+			client={platformProfile({})}
+			id="psp_short"
+			canWrite
+			listHref="/admin/authentication/session-profiles"
+			{oncreated}
+		/>
+	{/snippet}
+</Story>
+
+<!-- Locked by the platform: read only, with the reason; the tenant's copy is kept and can still be removed. -->
+<Story
+	name="Platform profile: locked"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Short sessions' });
+		await expect(canvas.getByText(t('pl.readOnlyLocked'))).toBeInTheDocument();
+		await expect(canvas.getByText(t('pl.copyKept'))).toBeInTheDocument();
+		// Read only: the fields are shown, not offered for change.
+		await expect(
+			canvas.queryByRole('combobox', { name: label('oauth.sso_enabled') })
+		).not.toBeInTheDocument();
+		await expect(
+			canvas.queryByRole('region', { name: t('common.unsaved') })
+		).not.toBeInTheDocument();
+		await expect(canvas.getByRole('button', { name: t('pl.revert') })).toBeEnabled();
+	}}
+>
+	{#snippet template()}
+		<SessionProfilePage
+			client={platformProfile({
+				locked: true,
+				editable: false,
+				overrideInactive: true,
+				overrideInactiveReason: 'locked',
+				copyVersion: 2
+			})}
+			id="psp_short"
+			canWrite
+			listHref="/admin/authentication/session-profiles"
+			{oncreated}
+		/>
+	{/snippet}
+</Story>
+
+<!-- Default with the platform's Default under it: saving keeps the tenant's own copy, and going back removes it. -->
+<Story
+	name="Default: back to the platform's values"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Default' });
+		await expect(canvas.getByText(t('pl.defaultNote'))).toBeInTheDocument();
+		await expect(canvas.queryByRole('button', { name: t('pl.revert') })).not.toBeInTheDocument();
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: label('oauth.sso_enabled') }),
+			'false'
+		);
+		const bar = await canvas.findByRole('region', { name: t('common.unsaved') });
+		await userEvent.click(within(bar).getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('pl.overridden'));
+		await userEvent.click(canvas.getByRole('button', { name: t('pl.revert') }));
+		const dialog = await within(document.body).findByRole('dialog');
+		await userEvent.click(within(dialog).getByRole('button', { name: t('pl.revert') }));
+		await waitFor(() => expect(canvas.queryByText(t('pl.overridden'))).not.toBeInTheDocument());
+	}}
+>
+	{#snippet template()}
+		<SessionProfilePage
+			client={createFakeSessionProfiles()}
 			id="default"
 			canWrite
 			listHref="/admin/authentication/session-profiles"

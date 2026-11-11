@@ -6,7 +6,12 @@
 		SessionProfilesClient,
 		SessionProfileValues
 	} from '#lib/api/session-profiles.js';
+	import { keepsCopy, type ProfileLayer } from '#lib/api/profile-layer.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
+	import ProfileLayerBadges from './ProfileLayerBadges.svelte';
+	import ProfileLayerNotice from './ProfileLayerNotice.svelte';
+	import { layerEditable } from './profile-layer-model';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
@@ -34,6 +39,13 @@
 	let values = $state<SessionProfileValues>({});
 	let version = $state<number | string>(0);
 	let isSystem = $state(false);
+	/** The platform layer: a platform profile, or Default with the platform's under it. */
+	let layer = $state<ProfileLayer | null>(null);
+	/** The profile whose own values the admin is about to remove (fixed when asked). */
+	let revertTarget = $state<string | null>(null);
+	const isPlatform = $derived(layer?.scope === 'platform');
+	/** The admin may save, and the platform lets the tenant change it now. */
+	const editable = $derived(canWrite && layerEditable(layer));
 	/** A setting cannot be saved as it is (its field says why). */
 	let fieldsInvalid = $state(false);
 	/** Changed when the fields start over (loaded, saved, discarded): their own errors go too. */
@@ -67,6 +79,7 @@
 		values = structuredClone(profile.values);
 		version = profile.version;
 		isSystem = profile.is_system;
+		layer = profile.layer;
 		editingName = false;
 		revision++;
 		saved = snapshot();
@@ -74,6 +87,7 @@
 	}
 
 	async function load() {
+		revertTarget = null;
 		const turn = ++loads;
 		const target = id;
 		phase = 'loading';
@@ -86,6 +100,7 @@
 				values = structuredClone(profile.values);
 				version = 0;
 				isSystem = false;
+				layer = null;
 				editingName = canWrite;
 				saved = snapshot();
 				phase = 'ready';
@@ -158,7 +173,7 @@
 	}
 
 	async function save() {
-		if (busy || !canWrite || phase !== 'ready') return;
+		if (busy || !editable || phase !== 'ready') return;
 		if (!name.trim()) {
 			nameError = t('sp.page.nameRequired');
 			editingName = true;
@@ -174,7 +189,12 @@
 		busy = true;
 		try {
 			const profile =
-				target === 'new' ? await client.create(input) : await client.update(target, version, input);
+				target === 'new'
+					? await client.create(input)
+					: isPlatform
+						? // A platform profile: the tenant's copy of it.
+							await client.saveCopy(target, layer?.copyVersion ?? null, input.values)
+						: await client.update(target, version, input);
 			if (gone || turn !== loads || id !== target) return;
 			// What was saved, as the API has it now (Default: the tenant's settings after the change).
 			setProfile(profile);
@@ -192,11 +212,49 @@
 				nameInput?.focus();
 				return;
 			}
+			if (error instanceof ApiError && error.code === 'profile_creation_not_allowed') {
+				toast.error(t('pl.creationNotAllowed'));
+				return;
+			}
+			// The platform set the tenant's values aside meanwhile: show what holds now.
+			if (error instanceof ApiError && error.code === 'profile_not_editable') {
+				toast.error(t('pl.notEditable'));
+				void load();
+				return;
+			}
 			toast.error(
 				error instanceof ApiError && error.status === 409
 					? t('sp.page.conflict')
 					: t('sp.page.saveFailed')
 			);
+		} finally {
+			busy = false;
+		}
+	}
+
+	/** "Use the platform's values": removes the tenant's copy (or Default's own settings). */
+	async function revert() {
+		const target = revertTarget;
+		revertTarget = null;
+		// Only what was asked about, and only one that keeps values over the platform's.
+		if (busy || !canWrite || phase !== 'ready' || target !== id) return;
+		if (target !== 'default' && !keepsCopy(layer)) return;
+		const turn = loads;
+		busy = true;
+		try {
+			const profile = await client.revert(target);
+			if (gone || turn !== loads || id !== target) return;
+			setProfile(profile);
+			toast.success(t('pl.revertSuccess'));
+		} catch (error) {
+			if (gone || turn !== loads || id !== target) return;
+			// Default's two documents: one went back and the other did not. Show what holds now.
+			if (error instanceof ApiError && error.body.error === 'partially_applied') {
+				toast.error(t('pl.revertPartial'));
+				void load();
+				return;
+			}
+			toast.error(t('pl.revertFailed'));
 		} finally {
 			busy = false;
 		}
@@ -258,20 +316,24 @@
 	<PageHeader
 		{title}
 		description={t('sp.page.description')}
-		titleAction={canWrite && phase === 'ready' && !isSystem && !editingName
+		titleAction={canWrite && phase === 'ready' && !isSystem && !isPlatform && !editingName
 			? nameAction
 			: undefined}
-		titleEditor={canWrite && phase === 'ready' && !isSystem && editingName ? nameForm : undefined}
+		titleEditor={canWrite && phase === 'ready' && !isSystem && !isPlatform && editingName
+			? nameForm
+			: undefined}
 	>
 		{#snippet back()}<BackLink href={listHref}>{t('sp.page.back')}</BackLink>{/snippet}
+		{#snippet badges()}<ProfileLayerBadges {layer} size="md" />{/snippet}
 	</PageHeader>
 	{#if phase === 'loading'}
 		<LoadingState label={t('common.loading')} />
 	{:else if phase === 'ready'}
+		<ProfileLayerNotice {layer} {canWrite} {busy} onrevert={() => (revertTarget = id)} />
 		{#key revision}
 			<SessionProfileFields
 				{values}
-				{canWrite}
+				canWrite={editable}
 				isDefault={isSystem}
 				onchange={changeValue}
 				bind:invalid={fieldsInvalid}
@@ -293,7 +355,7 @@
 					>{/if}{/snippet}
 		</EmptyState>
 	{/if}
-	{#if canWrite && phase === 'ready'}
+	{#if editable && phase === 'ready'}
 		<SaveBar
 			{dirty}
 			saving={busy}
@@ -303,6 +365,16 @@
 		/>
 	{/if}
 </Page>
+
+<ConfirmDialog
+	open={revertTarget !== null && revertTarget === id}
+	title={t('pl.revertTitle', { name })}
+	body={t('pl.revertBody')}
+	confirmLabel={t('pl.revert')}
+	{busy}
+	onconfirm={revert}
+	oncancel={() => (revertTarget = null)}
+/>
 
 <style>
 	.name-editor {

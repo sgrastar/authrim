@@ -2,6 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
+	import { fakeLayer } from '#lib/api/fake/profile-fake-core.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import SessionProfileList from './SessionProfileList.svelte';
 
@@ -60,7 +61,8 @@
 					version: 1,
 					values: { 'session.default_ttl': 900_000, 'oauth.sso_enabled': false },
 					created_at: Date.UTC(2026, 10, 1),
-					updated_at: Date.UTC(2026, 10, 7)
+					updated_at: Date.UTC(2026, 10, 7),
+					layer: null
 				}
 			])}
 			canWrite
@@ -80,5 +82,68 @@
 >
 	{#snippet template()}
 		<SessionProfileList client={createFakeSessionProfiles()} canWrite={false} {hrefOf} {onopen} />
+	{/snippet}
+</Story>
+
+<!-- The platform's profiles sit beside the tenant's own, with what holds for the tenant; one with a copy offers going back to the platform's values instead of deleting. -->
+<Story
+	name="With platform profiles"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('Short sessions');
+		await expect(canvas.getAllByText(t('pl.platform'))).toHaveLength(2);
+		await expect(canvas.getByText(t('pl.overridden'))).toBeInTheDocument();
+		await expect(canvas.getByText(t('pl.updated'))).toBeInTheDocument();
+		await expect(canvas.getByText(t('pl.inactive'))).toBeInTheDocument();
+		await userEvent.click(
+			canvas.getByRole('button', { name: t('sp.list.actions', { name: 'Short sessions' }) })
+		);
+		const menu = await within(document.body).findByRole('menu');
+		await expect(within(menu).queryByText(t('sp.list.delete'))).not.toBeInTheDocument();
+		await userEvent.click(within(menu).getByText(t('pl.revert')));
+		const dialog = await within(document.body).findByRole('dialog');
+		await userEvent.click(within(dialog).getByRole('button', { name: t('pl.revert') }));
+		await waitFor(() => expect(canvas.queryByText(t('pl.overridden'))).not.toBeInTheDocument());
+	}}
+>
+	{#snippet template()}
+		<SessionProfileList
+			client={createFakeSessionProfiles([
+				{
+					id: 'psp_short',
+					name: 'Short sessions',
+					is_system: false,
+					version: 0,
+					values: { 'session.default_ttl': 1_800_000 },
+					created_at: null,
+					updated_at: null,
+					layer: fakeLayer({
+						overridden: true,
+						platformUpdated: true,
+						copyVersion: 1,
+						platformValues: { 'session.default_ttl': 3_600_000 }
+					})
+				},
+				{
+					id: 'psp_kiosk',
+					name: 'Kiosk (platform)',
+					is_system: false,
+					version: 0,
+					values: { 'session.default_ttl': 600_000 },
+					created_at: null,
+					updated_at: null,
+					layer: fakeLayer({
+						locked: true,
+						editable: false,
+						overrideInactive: true,
+						overrideInactiveReason: 'locked',
+						copyVersion: 3
+					})
+				}
+			])}
+			canWrite
+			{hrefOf}
+			{onopen}
+		/>
 	{/snippet}
 </Story>

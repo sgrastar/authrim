@@ -16,6 +16,8 @@ import { deAdminAudit } from './admin-audit/de';
 import { deTeam } from './team/de';
 import { deAuthMethods } from './auth-methods/de';
 import { deSessionProfiles } from './session-profiles/de';
+import { deProfileLayer } from './profile-layer/de';
+import { dePlatformProfiles } from './platform-profiles/de';
 import { deLaunchers } from './launchers/de';
 
 export const de = {
@@ -36,6 +38,8 @@ export const de = {
 	...deTeam,
 	...deAuthMethods,
 	...deSessionProfiles,
+	...deProfileLayer,
+	...dePlatformProfiles,
 	...deLaunchers,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
