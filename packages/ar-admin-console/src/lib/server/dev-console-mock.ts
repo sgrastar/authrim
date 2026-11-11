@@ -11,6 +11,8 @@ import { persona, type PersonaId } from '#lib/access/personas.js';
 import { ApiError } from '#lib/api/api-error.js';
 import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentication-method-profiles-fake.js';
 import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
+import { createFakePlatformProfiles } from '#lib/api/fake/platform-profiles-fake.js';
+import type { PlatformProfile, PlatformProfilesClient } from '#lib/api/platform-profiles.js';
 import { fakeLayer, fakeProfileRow, type FakeProfile } from '#lib/api/fake/profile-fake-core.js';
 import type { AuthenticationMethodProfilesClient } from '#lib/api/authentication-method-profiles.js';
 import type { SessionProfilesClient } from '#lib/api/session-profiles.js';
@@ -170,8 +172,85 @@ const sessionProfiles = createFakeSessionProfiles([
 const row = (profile: unknown) => fakeProfileRow(profile as FakeProfile);
 const fakeErrorResponse = (error: unknown, fallback: { error: string; status: number }) =>
 	error instanceof ApiError && error.status !== 0
-		? json({ error: error.code, error_description: error.message }, error.status)
+		? json({ ...error.body, error: error.code, error_description: error.message }, error.status)
 		: json({ error: fallback.error }, fallback.status);
+
+/** The platform's own profiles (seeded with the ones the tenant lists). */
+const platformMethodProfiles = createFakePlatformProfiles('pmp_', [
+	{
+		id: 'pmp_dev',
+		name: 'Platform: passkeys only',
+		values: { 'authentication-methods.passkey.login_enabled': true },
+		version: 1,
+		locked: false,
+		state: 'active',
+		overridingTenants: 0,
+		created_at: null,
+		updated_at: null
+	}
+]);
+const platformSessionProfiles = createFakePlatformProfiles(
+	'psp_',
+	[
+		{
+			id: 'psp_dev',
+			name: 'Platform: short sessions',
+			values: { 'session.default_ttl': 3_600_000 },
+			version: 1,
+			locked: true,
+			state: 'active',
+			overridingTenants: 1,
+			created_at: null,
+			updated_at: null
+		}
+	],
+	{ inUse: ['psp_dev'] }
+);
+const platformRow = (profile: PlatformProfile) => {
+	const { overridingTenants, ...rest } = profile;
+	return { ...rest, overriding_tenants: overridingTenants };
+};
+
+async function handlePlatformProfiles(
+	event: RequestEvent,
+	rest: string[],
+	method: string,
+	profiles: PlatformProfilesClient
+): Promise<Response | null> {
+	const [id, action] = rest;
+	const body = method === 'POST' || method === 'PUT' ? await readJson(event) : {};
+	const name = typeof body.name === 'string' ? body.name.trim() : '';
+	const values =
+		body.values && typeof body.values === 'object' ? (body.values as Record<string, unknown>) : {};
+	const version = typeof body.version === 'number' ? body.version : 0;
+	try {
+		if (rest.length === 0 && method === 'GET') {
+			return json({ profiles: (await profiles.list()).map(platformRow) });
+		}
+		if (rest.length === 0 && method === 'POST') {
+			if (!name) return json({ error: 'invalid_request' }, 400);
+			return json({ profile: platformRow(await profiles.create({ name, values })) }, 201);
+		}
+		if (rest.length === 1 && method === 'GET') {
+			return json({ profile: platformRow(await profiles.get(id)) });
+		}
+		if (rest.length === 1 && method === 'PUT') {
+			return json({ profile: platformRow(await profiles.update(id, version, { name, values })) });
+		}
+		if (rest.length === 2 && action === 'lock' && method === 'PUT') {
+			return json({
+				profile: platformRow(await profiles.setLocked(id, version, body.locked === true))
+			});
+		}
+		if (rest.length === 1 && method === 'DELETE') {
+			await profiles.remove(id);
+			return new Response(null, { status: 204 });
+		}
+	} catch (error) {
+		return fakeErrorResponse(error, { error: 'server_error', status: 500 });
+	}
+	return null;
+}
 
 async function handleProfiles(
 	event: RequestEvent,
@@ -482,6 +561,18 @@ export async function handleDevAdminMock(
 	if (segments[0] === 'tenants' && segments[2] === 'settings' && segments.length === 4) {
 		const target: SettingsTarget = { level: 'tenant', tenantId: segments[1] };
 		const response = await handleSettings(event, target, segments[3], method);
+		if (response) return response;
+	}
+	if (
+		segments[0] === 'platform' &&
+		(segments[1] === 'authentication-method-profiles' || segments[1] === 'session-profiles')
+	) {
+		const response = await handlePlatformProfiles(
+			event,
+			segments.slice(2),
+			method,
+			segments[1] === 'session-profiles' ? platformSessionProfiles : platformMethodProfiles
+		);
 		if (response) return response;
 	}
 	if (segments[0] === 'platform' && segments[1] === 'settings' && segments.length === 3) {
