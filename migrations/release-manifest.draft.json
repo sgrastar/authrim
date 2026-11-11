@@ -115,7 +115,12 @@
           "dialect": "sqlite",
           "targetKind": "cloudflare-d1",
           "logicalRoles": ["control"],
-          "files": []
+          "files": [
+            {
+              "path": "003_service_site_binding.sql",
+              "checksum": "812a9b0bb20f3a7143d25f36ea569c4c5d104351bd8062d71fa3da371da88e1b"
+            }
+          ]
         },
         {
           "id": "lookup-d1",
@@ -301,6 +306,10 @@
         {
           "path": "001_0_5_0_control_baseline.sql",
           "checksum": "a6bcfe98cc742159d7f3c3b1b10c401bad0778990fde8fcd293a721a5af6284e"
+        },
+        {
+          "path": "003_service_site_binding.sql",
+          "checksum": "812a9b0bb20f3a7143d25f36ea569c4c5d104351bd8062d71fa3da371da88e1b"
         }
       ]
     },

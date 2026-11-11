@@ -17,6 +17,7 @@
 		shownEntryMethods
 	} from '#lib/runtime-screen-methods.js';
 	import { localizeRuntimeScreen } from '#lib/i18n/runtime-screen-localization.js';
+	import { linkActionOf, safeLinkHref } from '#lib/screen-link.js';
 
 	type RuntimeField = {
 		field: string;
@@ -39,6 +40,12 @@
 		show_label?: boolean;
 		/** The choices of a select or radio part (their labels in the screen's language). */
 		options?: RuntimeFieldOption[];
+		/** A link part: what it does (`link_action`), its URL, or the exit it leaves by. */
+		href?: string | null;
+		link_action?: string | null;
+		link_exit?: string | null;
+		/** A link part drawn as a button. */
+		link_style?: 'text' | 'button' | null;
 	};
 
 	type RuntimeFieldOption = { value: string; label: string };
@@ -130,6 +137,14 @@
 		onConsentDecisionChange?: (statementId: string, checked: boolean) => void;
 		onDestinationFieldDecisionChange?: (fieldKey: string, checked: boolean) => void;
 		onConsentSelectedValueChange?: (statementId: string, value: string) => void;
+		/** The screens the person can go back to now, nearest first; none: a back link is disabled. */
+		backScreens?: readonly string[];
+		/** A link part that goes back was chosen (the key of the screen before). */
+		onBack?: (screenKey: string) => void;
+		/** A link part that submits the screen (its Continue); absent where it has none. */
+		onNext?: () => void;
+		/** A link part that leaves by an exit was chosen (`skipped`, or the exit's own name). */
+		onExit?: (handle: string) => void;
 	};
 
 	let {
@@ -173,7 +188,11 @@
 		onExternalProviderAction,
 		onConsentDecisionChange,
 		onDestinationFieldDecisionChange,
-		onConsentSelectedValueChange
+		onConsentSelectedValueChange,
+		backScreens = [],
+		onBack,
+		onNext,
+		onExit
 	}: Props = $props();
 
 	function isRecord(value: unknown): value is Record<string, unknown> {
@@ -253,7 +272,12 @@
 			layout_columns: readLayoutInteger(value.layout_columns),
 			layout_column: readOptionalLayoutInteger(value.layout_column),
 			show_label: value.show_label !== false,
-			options: readOptions(value.options)
+			options: readOptions(value.options),
+			// A link part's target and style (checked again where it is drawn).
+			href: readString(value.href),
+			link_action: readString(value.link_action),
+			link_exit: readString(value.link_exit),
+			link_style: value.link_style === 'button' ? 'button' : null
 		};
 	}
 
@@ -1001,6 +1025,50 @@
 				</button>
 			{/if}
 		</div>
+	{:else if blockType === 'link'}
+		{@const link = linkActionOf(field)}
+		{@const href = link?.action === 'url' ? safeLinkHref(field.href) : null}
+		{@const linkClass =
+			field.link_style === 'button' ? 'runtime-auth-button secondary' : 'runtime-screen-link__text'}
+		{#if link?.action === 'back'}
+			<!-- Back to the screen before: the backend decides whether it may (`/back`). -->
+			{@const backTo = backScreens[0]}
+			<p class="runtime-screen-link">
+				<button
+					type="button"
+					class={linkClass}
+					disabled={disabled || !backTo || !onBack}
+					onclick={() => backTo && onBack?.(backTo)}>{field.label}</button
+				>
+			</p>
+		{:else if link?.action === 'next'}
+			<!-- The screen's own Continue, drawn where the part is. -->
+			<p class="runtime-screen-link">
+				<button
+					type="button"
+					class={linkClass}
+					disabled={disabled || !onNext}
+					onclick={() => onNext?.()}>{field.label}</button
+				>
+			</p>
+		{:else if link?.exit}
+			<!-- Leaves by an exit (a skip, or one of its own name): where it leads is the Flow's. -->
+			{@const exit = link.exit}
+			<p class="runtime-screen-link">
+				<button
+					type="button"
+					class={linkClass}
+					disabled={disabled || !onExit}
+					onclick={() => onExit?.(exit)}>{field.label}</button
+				>
+			</p>
+		{:else if href}
+			<p class="runtime-screen-link">
+				<a {href} class={linkClass}>{field.label}</a>
+			</p>
+		{:else}
+			<p class="runtime-screen-link">{field.label}</p>
+		{/if}
 	{:else if blockType === 'auth_switch_link'}
 		{#if switchLinkHref}
 			<p class="auth-bottom-link auth-bottom-link--in-card">
@@ -1541,6 +1609,31 @@
 		to {
 			transform: rotate(360deg);
 		}
+	}
+
+	.runtime-screen-link {
+		margin: 0;
+		text-align: center;
+	}
+
+	/* A link part drawn as text: a link or a back button that reads as one. */
+	.runtime-screen-link__text {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--login-link-color, var(--primary));
+		font: inherit;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+
+	.runtime-screen-link__text:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	a.runtime-auth-button {
+		text-decoration: none;
 	}
 
 	.runtime-auth-button.secondary {

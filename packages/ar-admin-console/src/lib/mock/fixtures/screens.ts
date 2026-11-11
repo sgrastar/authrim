@@ -171,6 +171,17 @@ export const MOCK_SCREENS: Screen[] = [
 				required: false,
 				block_type: 'checkbox',
 				block_id: 'news'
+			},
+			{
+				// Leaves by an exit of its own: where it leads is the flow's to say.
+				field: 'link.social',
+				label: 'Use a social account instead',
+				required: false,
+				block_type: 'link',
+				block_id: 'social',
+				link_action: 'exit',
+				link_exit: 'social',
+				link_style: 'button'
 			}
 		],
 		localizations: {},
@@ -216,6 +227,22 @@ export const MOCK_SCREENS: Screen[] = [
 				block_id: 'note',
 				store_to_profile: false,
 				answer_targets: ['record']
+			},
+			{
+				field: 'link.skip',
+				label: 'Skip this question',
+				required: false,
+				block_type: 'link',
+				block_id: 'skip',
+				link_action: 'skip'
+			},
+			{
+				field: 'link.back',
+				label: 'Back',
+				required: false,
+				block_type: 'link',
+				block_id: 'back',
+				link_action: 'back'
 			}
 		],
 		localizations: {},

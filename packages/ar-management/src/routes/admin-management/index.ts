@@ -78,6 +78,7 @@ import {
   notificationsRouter,
 } from './logging-control';
 import { readReplicationRouter } from './read-replication';
+import { serviceSiteRouter } from './service-site';
 import { controlPlaneOperationsRouter } from './control-plane-operations';
 
 // Create main router for admin management
@@ -140,6 +141,7 @@ adminManagementRouter.route('/agent-bulk-plans', agentBulkPlansRouter);
 adminManagementRouter.route('/agent-templates', agentTemplatesRouter);
 adminManagementRouter.route('/agent-baselines', agentBaselinesRouter);
 adminManagementRouter.route('/platform/read-replication', readReplicationRouter);
+adminManagementRouter.route('/platform/service-site', serviceSiteRouter);
 adminManagementRouter.route('/platform/control-plane', controlPlaneOperationsRouter);
 adminManagementRouter.route('/platform/last-resort-recovery', adminLastResortRecoveryRouter);
 
@@ -194,6 +196,7 @@ export {
 export { agentBulkPlansRouter } from './agent-bulk';
 export { agentBaselinesRouter, agentTemplatesRouter } from './agent-baselines';
 export { readReplicationRouter } from './read-replication';
+export { serviceSiteRouter } from './service-site';
 export { controlPlaneOperationsRouter } from './control-plane-operations';
 export { adminLastResortRecoveryRouter } from './admin-last-resort-recovery';
 export {

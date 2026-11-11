@@ -127,6 +127,70 @@ describe('fieldsToBuilder', () => {
 });
 
 describe('builderToFields', () => {
+	it('saves a link that opens a URL or leaves by a way out, never both, a style only for a button', () => {
+		const screen = fieldsToBuilder(
+			[
+				part({
+					block_type: 'link',
+					block_id: 'social',
+					field: 'link.social',
+					label: 'Use a social account',
+					link_action: 'exit',
+					link_exit: 'social',
+					link_style: 'button'
+				}),
+				part({
+					block_type: 'link',
+					block_id: 'help',
+					field: 'link.help',
+					label: 'Help',
+					href: '/help'
+				})
+			],
+			ids()
+		);
+		expect(screen.settings.social).toMatchObject({
+			linkAction: 'exit',
+			linkExit: 'social',
+			linkStyle: 'button'
+		});
+		expect(screen.settings.help).toMatchObject({
+			linkAction: 'url',
+			href: '/help',
+			linkStyle: 'text'
+		});
+		const [social, help] = builderToFields(screen).filter((field) => field.block_type === 'link');
+		expect(social).toMatchObject({
+			link_action: 'exit',
+			link_exit: 'social',
+			link_style: 'button'
+		});
+		expect(social).not.toHaveProperty('href');
+		expect(help).toMatchObject({ href: '/help' });
+		expect(help).not.toHaveProperty('link_action');
+		expect(help).not.toHaveProperty('link_exit');
+		expect(help).not.toHaveProperty('link_style');
+
+		// Going back instead: no exit name kept, and no URL.
+		screen.settings.social = { ...screen.settings.social, linkAction: 'back' };
+		const [back] = builderToFields(screen).filter((field) => field.block_type === 'link');
+		expect(back).toMatchObject({ link_action: 'back', link_style: 'button' });
+		expect(back).not.toHaveProperty('link_exit');
+
+		// Turned into a text link to a URL: the action and the style it had are not kept.
+		screen.settings.social = {
+			...screen.settings.social,
+			linkAction: 'url',
+			href: 'https://example.com',
+			linkStyle: 'text'
+		};
+		const [changed] = builderToFields(screen).filter((field) => field.block_type === 'link');
+		expect(changed).toMatchObject({ href: 'https://example.com' });
+		expect(changed).not.toHaveProperty('link_action');
+		expect(changed).not.toHaveProperty('link_exit');
+		expect(changed).not.toHaveProperty('link_style');
+	});
+
 	it('saves what it read as it was, a legacy yes/no field in its form', () => {
 		const saved: ScreenField[] = [
 			part({ block_type: 'heading', block_id: 'title', field: 'title', label: 'Hello', order: 10 }),

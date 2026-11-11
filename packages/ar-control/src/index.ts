@@ -33,6 +33,7 @@ import {
   type ControlShardQuarantineRequest,
   type ControlShardQuarantineRetryRequest,
   type ControlReadReplicationStartRequest,
+  type ControlServiceSiteBindingRequest,
   type ControlTenantDisasterRecoveryCancelRequest,
   type ControlTenantDisasterRecoveryDenyObservationRequest,
   type ControlTenantDisasterRecoveryLookupCheckpointRequest,
@@ -96,6 +97,9 @@ import { PluginDynamicWorkerDesiredStateService } from './plugin-dynamic-worker-
 import { PluginResourceReconciler } from './plugin-resource-reconciler';
 import { PluginResourceMigrationReconciler } from './plugin-resource-migration-reconciler';
 import { PluginResourceBindingReconciler } from './plugin-resource-binding-reconciler';
+import { ServiceSiteBindingService } from './service-site-binding';
+import { D1ServiceSiteBindingRepository } from './service-site-binding-repository';
+import { ServiceSiteBindingReconciler } from './service-site-binding-reconciler';
 import { PluginResourceCleanupService } from './plugin-resource-cleanup';
 import { handoffPluginResourceOperationsToSetup } from './plugin-resource-operator-handoff';
 import { TenantDisasterRecoveryService } from './tenant-disaster-recovery';
@@ -187,7 +191,7 @@ const log = createLogger().module('CONTROL_RPC');
 const SAFE_INTERNAL_ERROR_NAME = /^[a-zA-Z][a-zA-Z0-9]{0,79}$/u;
 
 const EXPOSED_RPC_ERROR =
-  /^(invalid_[a-z0-9_]+|backup_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|lookup_scale_out_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|account_allocation_release_(committed|not_found)|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|lookup_retention_[a-z0-9_]+|account_legal_hold_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
+  /^(invalid_[a-z0-9_]+|backup_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|lookup_scale_out_[a-z0-9_]+|read_replication_[a-z0-9_]+|service_site_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|account_allocation_release_(committed|not_found)|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|lookup_retention_[a-z0-9_]+|account_legal_hold_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
 
 async function rpcResult<T>(operation: () => Promise<T>, action = 'unknown'): Promise<T> {
   try {
@@ -1076,6 +1080,23 @@ function lookupBucketVersion(input: unknown): {
   return { virtualBucket, assignmentGeneration: value.assignmentGeneration as number };
 }
 
+function serviceSiteBindingRequest(input: unknown): ControlServiceSiteBindingRequest {
+  const value = exactInput(
+    input,
+    ['desiredState', 'workerName', 'idempotencyKey', 'requestedById'],
+    'invalid_service_site_binding_request'
+  );
+  if (
+    (value.desiredState !== 'attached' && value.desiredState !== 'detached') ||
+    (value.workerName !== null && typeof value.workerName !== 'string') ||
+    typeof value.idempotencyKey !== 'string' ||
+    typeof value.requestedById !== 'string'
+  ) {
+    throw new Error('invalid_service_site_binding_request');
+  }
+  return value as unknown as ControlServiceSiteBindingRequest;
+}
+
 function readReplicationStart(input: unknown): ControlReadReplicationStartRequest {
   const value = exactInput(
     input,
@@ -1182,6 +1203,7 @@ export const SAML_DR_CONTROL_SURFACE = {
     'applyLookupRetentionPolicyProjection',
     'applyAccountLegalHoldProjection',
     'startReadReplicationRollout',
+    'requestServiceSiteBinding',
     'initializeLookupHmacKeyState',
     'startLookupHmacRotation',
     'activateLookupHmacRotation',
@@ -1221,6 +1243,7 @@ export const SAML_DR_CONTROL_SURFACE = {
     'getProvisioningOperation',
     'getR2BucketMetrics',
     'getReadReplicationStatus',
+    'getServiceSiteBindingStatus',
     'getReleaseMigrationRolloutStatus',
     'getRuntimeRegistrySignerMetadata',
     'getShardCleanupCandidate',
@@ -2636,6 +2659,46 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
     });
   }
 
+  getServiceSiteBindingStatus() {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await new ServiceSiteBindingService(this.env.CONTROL_DB, () =>
+        Math.floor(Date.now() / 1000)
+      ).getStatus(caller.environmentId);
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    }, 'getServiceSiteBindingStatus');
+  }
+
+  requestServiceSiteBinding(input: unknown) {
+    return this.#mutation(async (env) => {
+      const caller = authorizedCaller(this.ctx.props);
+      const request = serviceSiteBindingRequest(input);
+      const workersToken = env.CLOUDFLARE_WORKERS_API_TOKEN?.trim();
+      // Without automatic provisioning nothing would ever apply the change, so refuse it up front.
+      if (env.AUTHRIM_AUTOMATIC_PROVISIONING !== 'true' || !workersToken) {
+        throw new Error('service_site_provider_mutation_unavailable');
+      }
+      const now = () => Math.floor(Date.now() / 1000);
+      const result = await new ServiceSiteBindingService(env.CONTROL_DB, now).request(
+        caller.environmentId,
+        request
+      );
+      if (result.state === 'pending') {
+        samlDrWaitUntil(
+          this.ctx,
+          new ServiceSiteBindingReconciler(
+            new D1ServiceSiteBindingRepository(env.CONTROL_DB),
+            createControlApiClients(env).workers,
+            now
+          ).reconcile(1)
+        );
+      }
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    }, 'requestServiceSiteBinding');
+  }
+
   initializeLookupHmacKeyState(input: unknown) {
     return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
@@ -3053,6 +3116,15 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
           })()
         ),
         scheduledTask(
+          'service_site_binding_reconciliation',
+          new ServiceSiteBindingReconciler(
+            new D1ServiceSiteBindingRepository(env.CONTROL_DB),
+            apiClients.workers,
+            () => Math.floor(Date.now() / 1000),
+            automaticProvisioningReady
+          ).reconcile()
+        ),
+        scheduledTask(
           'plugin_binding_reconciliation',
           new PluginResourceBindingReconciler(
             env.CONTROL_DB,
@@ -3253,6 +3325,9 @@ export { ApiMigrationEngine } from './migration-engine';
 export { PluginResourceReconciler } from './plugin-resource-reconciler';
 export { PluginResourceMigrationReconciler } from './plugin-resource-migration-reconciler';
 export { PluginResourceBindingReconciler } from './plugin-resource-binding-reconciler';
+export { ServiceSiteBindingService } from './service-site-binding';
+export { D1ServiceSiteBindingRepository } from './service-site-binding-repository';
+export { ServiceSiteBindingReconciler } from './service-site-binding-reconciler';
 export { ReleaseMigrationRolloutReconciler } from './release-migration-rollout-reconciler';
 export { PluginResourceCleanupService } from './plugin-resource-cleanup';
 export { handoffPluginResourceOperationsToSetup } from './plugin-resource-operator-handoff';

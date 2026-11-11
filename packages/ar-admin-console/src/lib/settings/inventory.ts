@@ -652,6 +652,8 @@ place(
 			'login-entry.app_login_redirect_uri',
 			'login-entry.app_login_final_return_to',
 			'login-entry.app_login_scope',
+			'login-entry.saml_login_sp_entity_id',
+			'login-entry.saml_login_relay_state',
 			'security.trusted_redirect_origins'
 		]
 	},

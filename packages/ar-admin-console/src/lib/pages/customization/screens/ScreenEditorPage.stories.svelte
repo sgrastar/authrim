@@ -28,6 +28,27 @@
 
 	const oncreated = fn();
 	const onopen = fn();
+	/** The survey with a link that leaves it by an exit of its own, drawn as a button. */
+	const withExitLink = MOCK_SCREENS.map((screen) =>
+		screen.id === 'screen_survey'
+			? {
+					...screen,
+					fields: [
+						...screen.fields,
+						{
+							field: 'link.back',
+							label: 'Use a social account',
+							required: false,
+							block_type: 'link' as const,
+							block_id: 'social',
+							link_action: 'exit' as const,
+							link_exit: 'social',
+							link_style: 'button' as const
+						}
+					]
+				}
+			: screen
+	);
 	const common = {
 		canWrite: true,
 		canReadResponses: true,
@@ -56,6 +77,44 @@
 		<ScreenEditorPage
 			{...common}
 			client={createFakeScreens({ screens: MOCK_SCREENS })}
+			id="screen_survey"
+			schemaFields={demoSchemaFields()}
+		/>
+	{/snippet}
+</Story>
+
+<!-- A link part opens a URL or leaves the screen by a way out (where it leads is the flow's). -->
+<Story
+	name="A link that leaves by an exit"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('button', { name: /Select Use a social account/ })
+		);
+		const action = canvas.getByRole('combobox', { name: new RegExp(t('sc.set.linkAction')) });
+		await expect(action).toHaveValue('exit');
+		await expect(
+			canvas.getByRole('textbox', { name: new RegExp(t('sc.set.linkExit')) })
+		).toHaveValue('social');
+		await expect(canvas.getByRole('radio', { name: t('sc.set.linkStyleButton') })).toBeChecked();
+		// No destination on the screen: no URL, and no screen to choose.
+		await expect(canvas.queryByRole('textbox', { name: t('sc.set.href') })).toBeNull();
+		// Opening a URL instead: the field for it, in place of the exit's name.
+		await userEvent.selectOptions(action, 'url');
+		await expect(canvas.getByRole('textbox', { name: t('sc.set.href') })).toBeInTheDocument();
+		await expect(
+			canvas.queryByRole('textbox', { name: new RegExp(t('sc.set.linkExit')) })
+		).toBeNull();
+		// Back: neither.
+		await userEvent.selectOptions(action, 'back');
+		await expect(canvas.queryByRole('textbox', { name: t('sc.set.href') })).toBeNull();
+		await expect(canvas.getByText(t('sc.set.linkActionHint.back'))).toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<ScreenEditorPage
+			{...common}
+			client={createFakeScreens({ screens: withExitLink })}
 			id="screen_survey"
 			schemaFields={demoSchemaFields()}
 		/>

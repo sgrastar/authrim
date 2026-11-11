@@ -135,6 +135,10 @@
 		onDismissRuntimeFlowError?: () => void;
 		onRuntimeFieldValueChange?: (field: string, value: string | boolean) => void;
 		onRuntimeAuthAction?: (method: RuntimeAuthMethod, action?: RuntimeAuthAction) => void;
+		/** A link part that goes back to a screen of the Flow was chosen (its key). */
+		onRuntimeBack?: (screenKey: string) => void;
+		/** A link part that leaves the screen by an exit was chosen (the handle it submits with). */
+		onRuntimeExit?: (handle: string) => void;
 		onRuntimeEmailKeydown?: (event: KeyboardEvent) => void;
 		runtimeShownAuthMethods?: { emailCode: boolean; totp: boolean } | null;
 		onConsentDecisionChange?: (statementId: string, checked: boolean) => void;
@@ -208,6 +212,8 @@
 		onDismissRuntimeFlowError,
 		onRuntimeFieldValueChange,
 		onRuntimeAuthAction,
+		onRuntimeBack,
+		onRuntimeExit,
 		onRuntimeEmailKeydown,
 		runtimeShownAuthMethods = $bindable(null),
 		onConsentDecisionChange,
@@ -459,6 +465,12 @@
 							verifyCodeOnEnter
 							onFieldValueChange={onRuntimeFieldValueChange}
 							onAuthAction={onRuntimeAuthAction}
+							backScreens={runtime.backScreens ?? []}
+							onBack={onRuntimeBack}
+							onNext={runtimeStep.isAuthStep || !runtime.consentReady
+								? undefined
+								: () => onRuntimeContinue?.()}
+							onExit={onRuntimeExit}
 							onEmailKeydown={onRuntimeEmailKeydown}
 							bind:shownAuthMethods={runtimeShownAuthMethods}
 							onExternalProviderAction={onExternalProvider}

@@ -3,7 +3,14 @@ import { LOGIN_ENTRY_DEFAULTS } from '../types/settings/login-entry';
 import { SELF_SERVICE_DEFAULTS } from '../types/settings/self-service';
 import { arrayBufferToBase64Url, generateSecureRandomString } from './crypto';
 
-export type PostLoginBehavior = 'home' | 'account' | 'custom_url' | 'app_login';
+export type PostLoginBehavior = 'home' | 'account' | 'custom_url' | 'app_login' | 'saml_login';
+
+/** The most bytes a SAML RelayState may have (SAML 2.0 bindings, 3.4.3 / 3.5.3). */
+export const MAX_SAML_LOGIN_RELAY_STATE_BYTES = 80;
+/** The longest SAML entity ID a post-login SAML sign-in names. */
+const MAX_SAML_ENTITY_ID_LENGTH = 1024;
+// eslint-disable-next-line no-control-regex -- a control character is what it refuses
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 
 const RESERVED_RELATIVE_PATH_PREFIXES = [
   '/admin',
@@ -204,10 +211,53 @@ export function validatePostLoginRedirectUrl(
   }
 }
 
+const POST_LOGIN_BEHAVIORS: readonly PostLoginBehavior[] = [
+  'home',
+  'account',
+  'custom_url',
+  'app_login',
+  'saml_login',
+];
+
 function readPostLoginBehavior(value: unknown): PostLoginBehavior {
-  return value === 'account' || value === 'custom_url' || value === 'app_login' || value === 'home'
-    ? value
+  return POST_LOGIN_BEHAVIORS.includes(value as PostLoginBehavior)
+    ? (value as PostLoginBehavior)
     : 'home';
+}
+
+/** A SAML service provider's entity ID as a post-login SAML sign-in names it. */
+export function validateSamlLoginSpEntityId(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const entityId = value.trim();
+  return (
+    entityId.length > 0 &&
+    entityId.length <= MAX_SAML_ENTITY_ID_LENGTH &&
+    !CONTROL_CHARACTER.test(entityId)
+  );
+}
+
+/** A RelayState for the SAML service provider: empty, or at most 80 bytes with no control characters. */
+export function validateSamlLoginRelayState(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  return (
+    new TextEncoder().encode(value).length <= MAX_SAML_LOGIN_RELAY_STATE_BYTES &&
+    !CONTROL_CHARACTER.test(value)
+  );
+}
+
+/**
+ * The SAML IdP-initiated sign-in to the service provider (`/saml/idp/init`): it uses the session
+ * the Login UI has just made, and runs the provider's own consent and assurance checks.
+ */
+function buildSamlLoginUrl(loginEntry: Record<string, unknown>): string | null {
+  const entityId = loginEntry['login-entry.saml_login_sp_entity_id'];
+  if (!validateSamlLoginSpEntityId(entityId)) return null;
+  const relayState = loginEntry['login-entry.saml_login_relay_state'];
+  const params = new URLSearchParams({ sp: entityId.trim() });
+  if (validateSamlLoginRelayState(relayState) && relayState) {
+    params.set('relay_state', relayState);
+  }
+  return `/saml/idp/init?${params.toString()}`;
 }
 
 function readNonEmptyString(value: unknown): string | null {
@@ -269,7 +319,15 @@ export async function resolvePostLoginRedirectUrl(
     readSettingsRecord(settingsKv, `settings:tenant:${tenantId}:self-service`),
     readSettingsRecord(settingsKv, `settings:tenant:${tenantId}:security`),
   ]);
+  return resolvePostLoginFrom(loginEntry, selfService, security);
+}
 
+/** Where a sign-in goes by these settings (the tenant's, or a Flow's own laid out as them). */
+function resolvePostLoginFrom(
+  loginEntry: Record<string, unknown> | null,
+  selfService: Record<string, unknown> | null,
+  security: Record<string, unknown> | null
+): PostLoginResolution {
   const behavior = readPostLoginBehavior(
     loginEntry?.['login-entry.post_login_behavior'] ??
       LOGIN_ENTRY_DEFAULTS['login-entry.post_login_behavior']
@@ -307,7 +365,90 @@ export async function resolvePostLoginRedirectUrl(
     return { redirectUrl: '/', behavior: 'home' };
   }
 
+  if (behavior === 'saml_login' && loginEntry) {
+    const samlUrl = buildSamlLoginUrl(loginEntry);
+    if (samlUrl) {
+      return { redirectUrl: samlUrl, behavior };
+    }
+    return { redirectUrl: '/', behavior: 'home' };
+  }
+
   return { redirectUrl: '/', behavior: 'home' };
+}
+
+/** A registration Flow's own completion (ar-lib-core `registration-policy.ts`). */
+export interface RegistrationCompletionInput {
+  behavior: 'account' | 'home' | 'custom_url' | 'app_login' | 'saml_login' | 'service_site';
+  redirect_url?: string;
+  app_login_client_id?: string;
+  app_login_redirect_uri?: string;
+  app_login_scope?: string;
+  app_login_final_return_to?: string;
+  saml_login_sp_entity_id?: string;
+  saml_login_relay_state?: string;
+  service_site_path?: string;
+}
+
+/** A path on this site the attached service Worker serves: relative, not one of Authrim's. */
+export function validateServiceSitePath(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const path = value.trim();
+  if (!isSingleSlashRelativePath(path) || path.length > 512) return false;
+  // A backslash or a control character can make a browser read the path as another host
+  // (`/\evil.example`): refused, and what it resolves to must stay on this site.
+  if (path.includes('\\') || CONTROL_CHARACTER.test(path)) return false;
+  try {
+    const base = 'https://authrim.local';
+    const resolved = new URL(path, base);
+    return resolved.origin === base && !isReservedAuthrimPath(resolved.pathname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where a person goes once signed up through a registration Flow that sets its own destination,
+ * checked as the tenant's post-sign-in destination is (the account page enabled, a trusted URL,
+ * the App Login client, the SAML service provider). `service_site`: a path the attached service
+ * Worker serves, only while the router passes such paths to it (`service-site.fallback_enabled`).
+ */
+export async function resolveRegistrationCompletionRedirectUrl(
+  env: PostLoginSettingsEnv,
+  tenantId: string,
+  completion: RegistrationCompletionInput
+): Promise<{ redirectUrl: string; behavior: PostLoginBehavior | 'service_site' }> {
+  const settingsKv = env.SETTINGS ?? env.AUTHRIM_CONFIG;
+  if (completion.behavior === 'service_site') {
+    const serviceSite = await readSettingsRecord(
+      settingsKv,
+      `settings:tenant:${tenantId}:service-site`
+    );
+    if (
+      serviceSite?.['service-site.fallback_enabled'] === true &&
+      validateServiceSitePath(completion.service_site_path)
+    ) {
+      return { redirectUrl: completion.service_site_path.trim(), behavior: 'service_site' };
+    }
+    return { redirectUrl: '/', behavior: 'home' };
+  }
+  const [selfService, security] = await Promise.all([
+    readSettingsRecord(settingsKv, `settings:tenant:${tenantId}:self-service`),
+    readSettingsRecord(settingsKv, `settings:tenant:${tenantId}:security`),
+  ]);
+  return resolvePostLoginFrom(
+    {
+      'login-entry.post_login_behavior': completion.behavior,
+      'login-entry.post_login_redirect_url': completion.redirect_url,
+      'login-entry.app_login_client_id': completion.app_login_client_id,
+      'login-entry.app_login_redirect_uri': completion.app_login_redirect_uri,
+      'login-entry.app_login_scope': completion.app_login_scope,
+      'login-entry.app_login_final_return_to': completion.app_login_final_return_to,
+      'login-entry.saml_login_sp_entity_id': completion.saml_login_sp_entity_id,
+      'login-entry.saml_login_relay_state': completion.saml_login_relay_state,
+    },
+    selfService,
+    security
+  );
 }
 
 export function validateLoginEntryPostLoginSettings(
@@ -316,15 +457,9 @@ export function validateLoginEntryPostLoginSettings(
 ): Record<string, string> {
   const rejected: Record<string, string> = {};
   const behavior = values['login-entry.post_login_behavior'];
-  if (
-    behavior !== undefined &&
-    behavior !== 'home' &&
-    behavior !== 'account' &&
-    behavior !== 'custom_url' &&
-    behavior !== 'app_login'
-  ) {
+  if (behavior !== undefined && !POST_LOGIN_BEHAVIORS.includes(behavior as PostLoginBehavior)) {
     rejected['login-entry.post_login_behavior'] =
-      'Value must be one of: home, account, custom_url, app_login';
+      `Value must be one of: ${POST_LOGIN_BEHAVIORS.join(', ')}`;
   }
 
   const redirectUrl = values['login-entry.post_login_redirect_url'];
@@ -340,6 +475,16 @@ export function validateLoginEntryPostLoginSettings(
   ) {
     rejected['login-entry.app_login_final_return_to'] =
       'Must be empty, a non-reserved relative path, or an HTTPS URL whose origin is trusted';
+  }
+  const entityId = values['login-entry.saml_login_sp_entity_id'];
+  if (entityId !== undefined && entityId !== '' && !validateSamlLoginSpEntityId(entityId)) {
+    rejected['login-entry.saml_login_sp_entity_id'] =
+      'Must be a SAML entity ID of at most 1024 characters, without control characters';
+  }
+  const relayState = values['login-entry.saml_login_relay_state'];
+  if (relayState !== undefined && !validateSamlLoginRelayState(relayState)) {
+    rejected['login-entry.saml_login_relay_state'] =
+      'Must be at most 80 bytes, without control characters';
   }
   return rejected;
 }

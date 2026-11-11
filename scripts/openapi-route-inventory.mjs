@@ -221,6 +221,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/service-site.ts',
+        receiverPrefixes: {
+          serviceSiteRouter: '/api/admin/platform/service-site',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/ip-allowlist.ts',
         receiverPrefixes: {
           ipAllowlistRouter: '/api/admin/ip-allowlist',

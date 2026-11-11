@@ -1297,6 +1297,39 @@ export interface ControlReadReplicationStartRequest {
   requestedById: string;
 }
 
+export type ControlServiceSiteDesiredState = 'attached' | 'detached';
+export type ControlServiceSiteBindingState =
+  | 'none'
+  | 'pending'
+  | 'settings_patched'
+  | 'rollback_required'
+  | 'succeeded'
+  | 'rolled_back'
+  | 'blocked';
+
+/** The router service binding Control keeps in line with the requested service site Worker. */
+export interface ControlServiceSiteBindingStatusView {
+  environmentId: string;
+  /** The router binding name, or null while no change was ever requested. */
+  bindingName: string | null;
+  desiredState: ControlServiceSiteDesiredState;
+  desiredWorkerName: string | null;
+  /** The Worker the router binding was last verified to point at. */
+  attachedWorkerName: string | null;
+  state: ControlServiceSiteBindingState;
+  operationId: string | null;
+  lastErrorCode: string | null;
+  updatedAt: number | null;
+}
+
+export interface ControlServiceSiteBindingRequest {
+  desiredState: ControlServiceSiteDesiredState;
+  /** Required for `attached`, ignored for `detached`. */
+  workerName: string | null;
+  idempotencyKey: string;
+  requestedById: string;
+}
+
 export interface ControlRuntimeRegistrySignerMetadata {
   keyId: string;
   algorithm: 'EdDSA';
@@ -1728,6 +1761,10 @@ export interface ControlServiceBinding {
   startReadReplicationRollout?(
     input: ControlReadReplicationStartRequest
   ): Promise<ControlReadReplicationStatusView>;
+  getServiceSiteBindingStatus?(): Promise<ControlServiceSiteBindingStatusView>;
+  requestServiceSiteBinding?(
+    input: ControlServiceSiteBindingRequest
+  ): Promise<ControlServiceSiteBindingStatusView>;
   listPendingWorkerInventoryDriftFindings(): Promise<ControlWorkerInventoryDriftNotification[]>;
   acknowledgeWorkerInventoryDriftNotifications(findingIds: string[]): Promise<void>;
   listWorkerInventoryDriftFindings?(): Promise<ControlWorkerInventoryDriftFinding[]>;

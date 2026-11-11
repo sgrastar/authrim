@@ -13,6 +13,12 @@
  * - Constant-time response (prevents user enumeration via timing)
  */
 
+import {
+  eligibilityRefusal,
+  profileAllowsSignUp,
+  signUpCodeTtlSeconds,
+  signUpPolicyFor,
+} from './registration-policy-gate';
 import { Context } from 'hono';
 import { setCookie, getCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
@@ -147,14 +153,19 @@ async function constantTimeWrapper<T>(operation: () => Promise<T>): Promise<T> {
  * failure while sending), so what comes back never tells whether the address has an account.
  * Failures are for the logs, not for the caller.
  */
-async function suppressedSendResponse(c: Context<{ Bindings: Env }>, tenantId: string) {
+async function suppressedSendResponse(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  /** The lifetime a sent code would have had (a sign-up policy's, else the tenant's). */
+  ttlSeconds?: number
+) {
   const otpSessionId = crypto.randomUUID();
   setCookie(c, OTP_SESSION_COOKIE, otpSessionId, {
     path: '/',
     httpOnly: true,
     secure: true,
     sameSite: 'Lax',
-    maxAge: await resolveEmailCodeTtlSeconds(c.env, tenantId),
+    maxAge: ttlSeconds ?? (await resolveEmailCodeTtlSeconds(c.env, tenantId)),
   });
   return c.json({
     success: true,
@@ -238,6 +249,14 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       }
 
       const tenantId = getTenantIdFromContext(c);
+      // The tenant's sign-up policy (its registration Flow's, registration-policy-gate.ts): who
+      // may sign up, and one code lifetime for every send of it, an address with an account or
+      // not (the reply's cookie states it).
+      const signUpPolicy = await signUpPolicyFor(c, tenantId);
+      const codeTtlSeconds = signUpCodeTtlSeconds(
+        signUpPolicy.policy,
+        await resolveEmailCodeTtlSeconds(c.env, tenantId)
+      );
 
       // Rate limiting check per email via RPC: the tenant's email send limit
       // (rate_limit.email_max_requests per rate_limit.email_window; 3 per 15 minutes by default)
@@ -266,7 +285,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         log.warn('Suppressing email-code send because email OTP login is disabled', {
           action: 'email_code_send_suppressed',
         });
-        return suppressedSendResponse(c, tenantId);
+        return suppressedSendResponse(c, tenantId, codeTtlSeconds);
       }
 
       const hmacSecret = c.env.OTP_HMAC_SECRET;
@@ -275,7 +294,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           action: 'email_code_send',
         });
         await auditHiddenSendFailure(c, tenantId, { reason: 'otp_secret_missing', email });
-        return suppressedSendResponse(c, tenantId);
+        return suppressedSendResponse(c, tenantId, codeTtlSeconds);
       }
 
       // From here on, what the caller sees must not depend on whether the address has an account:
@@ -330,7 +349,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           log.warn('Suppressing email-code send because email OTP signup is disabled', {
             action: 'email_code_send_suppressed',
           });
-          return suppressedSendResponse(c, tenantId);
+          return suppressedSendResponse(c, tenantId, codeTtlSeconds);
         }
 
         // The address of an account deleted within the retention period, where the tenant blocks
@@ -343,7 +362,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           log.warn('Suppressing email-code send because re-registration is not allowed', {
             action: 'email_code_send_suppressed',
           });
-          return suppressedSendResponse(c, tenantId);
+          return suppressedSendResponse(c, tenantId, codeTtlSeconds);
         }
 
         if (!user) {
@@ -362,7 +381,23 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
                 refusal: screenCheck.reason,
               }
             );
-            return suppressedSendResponse(c, tenantId);
+            return suppressedSendResponse(c, tenantId, codeTtlSeconds);
+          }
+          // Who may sign up, by the registration Flow's policy (registration-policy-gate.ts): a
+          // new address it does not take gets nothing, answered as usual. This route takes no
+          // invitation.
+          if (
+            eligibilityRefusal(signUpPolicy.policy, {
+              email: normalizedEmail,
+              hasInvitation: false,
+            }) ||
+            !(await profileAllowsSignUp(c, tenantId, signUpPolicy, 'mail_otp'))
+          ) {
+            log.warn('Suppressing email-code send because the registration policy refuses it', {
+              action: 'email_code_send_suppressed',
+              reason: 'signup_policy',
+            });
+            return suppressedSendResponse(c, tenantId, codeTtlSeconds);
           }
           const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
             c.env,
@@ -463,7 +498,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
             );
             // The reply must not tell a new address from one that has an account.
             await auditHiddenSendFailure(c, tenantId, { reason: 'account_create_failed', email });
-            return suppressedSendResponse(c, tenantId);
+            return suppressedSendResponse(c, tenantId, codeTtlSeconds);
           }
 
           user ??= {
@@ -489,7 +524,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
           hashEmail(email.toLowerCase()),
           getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
-          resolveEmailCodeTtlSeconds(c.env, getTenantIdFromContext(c)),
+          Promise.resolve(codeTtlSeconds),
         ]);
 
         await challengeStore.storeChallengeRpc({
@@ -605,7 +640,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           errorType: error instanceof Error ? error.name : 'Unknown',
         });
         await auditHiddenSendFailure(c, tenantId, { reason: 'send_failed', email });
-        return suppressedSendResponse(c, tenantId);
+        return suppressedSendResponse(c, tenantId, codeTtlSeconds);
       }
     } catch (error) {
       const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);

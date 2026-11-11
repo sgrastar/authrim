@@ -334,3 +334,50 @@ describe('upstream provider store', () => {
     await expect(getProvider({} as never, 'tenant-a', 'provider-1')).rejects.toThrow();
   });
 });
+
+describe('upstream provider trust_email (kept with the quirks)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.adapter.queryOne.mockReset();
+    mocks.adapter.execute.mockReset();
+    mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
+    mocks.resolve.mockResolvedValue(mocks.adapter);
+  });
+  // Create binds the id and tenant before the slug, update does not.
+  const storedQuirks = (index = 22) => {
+    const params = mocks.adapter.execute.mock.calls[0][1] as unknown[];
+    return JSON.parse(params[index] as string) as Record<string, unknown>;
+  };
+  it('reads it from the quirks and keeps it out of them', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(
+      dbRow({ provider_quirks: '{"requiresPrompt":true,"trustEmail":true}' })
+    );
+    const read = await getProvider({} as never, 'tenant-a', 'provider-1');
+    expect(read?.trustEmail).toBe(true);
+    expect(read?.providerQuirks).toEqual({ requiresPrompt: true });
+  });
+  it('defaults to off for a provider stored without it', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(dbRow());
+    expect((await getProvider({} as never, 'tenant-a', 'provider-1'))?.trustEmail).toBe(false);
+  });
+  it('stores it only when on, whatever the quirks a caller sent say', async () => {
+    await createProvider(
+      {} as never,
+      provider({ trustEmail: false, providerQuirks: { trustEmail: true } })
+    );
+    expect(storedQuirks()).toEqual({});
+    mocks.adapter.execute.mockClear();
+    await createProvider({} as never, provider({ trustEmail: true }));
+    expect(storedQuirks()).toEqual({ requiresPrompt: true, trustEmail: true });
+  });
+  it('keeps it when an update replaces the quirks, and changes it on request', async () => {
+    mocks.adapter.queryOne.mockResolvedValue(
+      dbRow({ provider_quirks: '{"requiresPrompt":true,"trustEmail":true}' })
+    );
+    await updateProvider({} as never, 'tenant-a', 'provider-1', { providerQuirks: { a: 1 } });
+    expect(storedQuirks(20)).toEqual({ a: 1, trustEmail: true });
+    mocks.adapter.execute.mockClear();
+    await updateProvider({} as never, 'tenant-a', 'provider-1', { trustEmail: false });
+    expect(storedQuirks(20)).toEqual({ requiresPrompt: true });
+  });
+});

@@ -14,7 +14,7 @@
 			docs: {
 				description: {
 					component:
-						'The sign-up and sign-in flows every tenant has, whether or not anything is connected. Each is one fixed contract that the Login UI and a UI of your own share: the caller at both ends, Authrim’s own steps between, each with its settings and how far it has got. Choosing a setting opens it on the right. Nothing is preselected, so a setting is done only once someone chose its values. The optional step (consent at sign-up, an additional sign-in) is added with the flow’s “+” and taken away with its ×.'
+						'The sign-up and sign-in flows every tenant has, whether or not anything is connected. Each is one fixed contract that the Login UI and a UI of your own share: the caller at both ends, Authrim’s own steps between, each with its settings and how far it has got. Choosing a setting opens it on the right. Settings that apply to the whole sign-up flow (who can sign up, an address that is already registered, verifying the person) are not a step: they sit in a frame of their own where other flows show their overview. Nothing is preselected, so a setting is done only once someone chose its values. The optional step (consent at sign-up, an additional sign-in) is added with the flow’s “+” and taken away with its ×.'
 				}
 			}
 		}
@@ -23,10 +23,12 @@
 	const inFlow = (root: HTMLElement, name: RegExp | string) =>
 		within(root.querySelector<HTMLElement>('.detail__flow')!).getByRole('button', { name });
 	/** The panel on the right, where the back-to-overview button is. */
+	const flowButtonsOf = (root: HTMLElement) =>
+		within(root.querySelector<HTMLElement>('.detail__flow')!);
 	const inPanel = (root: HTMLElement) => within(root.querySelector<HTMLElement>('.detail__panel')!);
 </script>
 
-<!-- Nothing is set: every step says so, and the overview says what is still to do. -->
+<!-- Nothing is set: every step says so. Sign-up has no overview: its flow-wide settings are there instead. -->
 <Story
 	name="Sign-up, nothing set"
 	args={{ flow: 'registration', filled: 'none' }}
@@ -45,25 +47,227 @@
 				name: /^Name and where it is used/
 			})
 		).toBeNull();
-		// What has to be set in a step carries the Required badge, in front of "Not set yet".
+		// What is asked for is the screens' (and the attribute schema's): no step of its own.
 		await expect(
-			inFlow(canvasElement, /^Details and schema.*Required.*Not set yet/)
-		).toBeInTheDocument();
+			flowButtonsOf(canvasElement).queryByRole('button', { name: /^Details and schema/ })
+		).toBeNull();
 		// The optional step is not in the flow until it is added.
 		await expect(canvas.queryByRole('button', { name: /^Consent statements/ })).toBeNull();
-		const todo = within(canvas.getByRole('heading', { name: 'Still to do' }).parentElement!);
-		await userEvent.click(todo.getByRole('button', { name: 'Who can sign up' }));
+		// No overview: the flow-wide settings take its place, and they are not steps of the flow.
+		await expect(canvas.queryByRole('heading', { name: 'Overview' })).toBeNull();
+		await expect(canvas.queryByRole('heading', { name: 'Still to do' })).toBeNull();
+		// Each in a frame of its own, creating the account included.
+		for (const name of ['Accepting sign-ups', 'Verifying the email address'])
+			await expect(canvas.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
+		// The default sign-in method profile is chosen from the start; the screen is not.
+		await expect(inFlow(canvasElement, /^Sign-in method profile.*Configured/)).toBeInTheDocument();
+		// Nothing is left to set: the screen starts as the tenant's built-in sign-up screen.
+		await expect(inFlow(canvasElement, /^Screen(?! \d).*Configured/)).toBeInTheDocument();
+		// What happens after sign-up is the flow's last step.
+		await expect(inFlow(canvasElement, /^After completion/)).toBeInTheDocument();
+		const flowButtons = within(canvasElement.querySelector<HTMLElement>('.detail__flow')!);
 		await expect(
-			canvas.getByRole('heading', { name: 'Who can sign up', level: 2 })
-		).toBeInTheDocument();
-		// Choosing makes the setting done, and the flow keeps what was chosen.
+			flowButtons.queryByRole('button', { name: /^Verifying the email address/ })
+		).toBeNull();
+		await expect(
+			canvas.getByRole('combobox', { name: /When the email address is already registered/ })
+		).toBeRequired();
+		await expect(canvas.getByRole('combobox', { name: /Who can sign up/ })).toBeRequired();
+		await expect(canvas.getByRole('combobox', { name: /When to verify/ })).toBeRequired();
+		// Opening a step and going back returns to the flow-wide settings, which keep what was chosen.
 		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: 'Who can sign up' }),
+			canvas.getByRole('combobox', { name: /Who can sign up/ }),
 			'invite'
 		);
-		await waitFor(() =>
-			expect(inFlow(canvasElement, /^Who can sign up.*Configured/)).toBeInTheDocument()
+		await userEvent.click(inFlow(canvasElement, /^Screen(?! \d)/));
+		await userEvent.click(
+			inPanel(canvasElement).getByRole('button', { name: 'Flow-wide settings' })
 		);
+		await expect(canvas.getByRole('combobox', { name: /Who can sign up/ })).toHaveValue('invite');
+	}}
+></Story>
+
+<!-- Sign-up chooses one of the tenant's sign-in method profiles, shows what it allows, and can make a new one in place. -->
+<Story
+	name="Sign-up chooses a sign-in method profile"
+	args={{ flow: 'registration', filled: 'none' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(inFlow(canvasElement, /^Sign-in method profile/));
+		const profile = await canvas.findByRole('combobox', { name: /Profile to use/ });
+		await expect(profile).toBeRequired();
+		await userEvent.selectOptions(profile, 'default');
+		// The chosen profile is shown below, as it is: it is changed on its own page.
+		await expect(
+			await canvas.findByRole('heading', { name: 'What “Default” allows' })
+		).toBeInTheDocument();
+		await expect(
+			canvas.getByRole('checkbox', {
+				name: `${t('am.methods.passkey')} / ${t('am.methods.signup')}`
+			})
+		).toBeDisabled();
+		await waitFor(() =>
+			expect(inFlow(canvasElement, /^Sign-in method profile.*Configured/)).toBeInTheDocument()
+		);
+		// A new profile is made in place, saved as a profile, and chosen.
+		await userEvent.click(canvas.getByRole('button', { name: 'Create a sign-in method profile' }));
+		const name = await canvas.findByRole('textbox', { name: /Profile name/ });
+		await waitFor(() => expect(name).toHaveFocus());
+		await userEvent.click(canvas.getByRole('button', { name: 'Save and choose' }));
+		await expect(await canvas.findByText(t('am.page.nameRequired'))).toBeInTheDocument();
+		await userEvent.type(name, 'Members');
+		await userEvent.click(canvas.getByRole('button', { name: 'Save and choose' }));
+		await expect(
+			await canvas.findByRole('heading', { name: 'What “Members” allows' })
+		).toBeInTheDocument();
+		await expect(canvas.getByRole('combobox', { name: /Profile to use/ })).toHaveDisplayValue(
+			'Members'
+		);
+	}}
+></Story>
+
+<!-- After sign-up the person can go on to sign in to another service, by OpenID Connect (a client and its redirect URI) or by SAML (a service provider), each chosen from a list, not typed. -->
+<Story
+	name="Sign-up goes on to sign in to another service"
+	args={{ flow: 'registration', filled: 'required' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(inFlow(canvasElement, /^After completion/));
+		const after = await canvas.findByRole('combobox', { name: /^After completion/ });
+		await userEvent.selectOptions(after, 'app_login');
+		const service = await canvas.findByRole('combobox', { name: /^Service to sign in to/ });
+		const back = await canvas.findByRole('combobox', { name: /^Where the service is returned to/ });
+		// No service yet: no redirect URI to choose.
+		await expect(back).toBeDisabled();
+		await userEvent.selectOptions(service, 'client_member_app');
+		await waitFor(() => expect(back).toBeEnabled());
+		const uris = [...(back as HTMLSelectElement).options].map((option) => option.value);
+		await expect(uris).toContain('https://app.example.com/callback');
+		await expect(uris).not.toContain('https://partners.example.com/oidc/callback');
+		await userEvent.selectOptions(back, 'https://app.example.com/callback');
+		// Another service: the URI chosen for the one before is not kept.
+		await userEvent.selectOptions(service, 'client_partner_portal');
+		await waitFor(() => expect(back).toHaveValue(''));
+		// By SAML: one of the tenant's enabled service providers, and a RelayState if wanted.
+		await userEvent.selectOptions(after, 'saml_login');
+		const sp = await canvas.findByRole('combobox', { name: /^Service to sign in to \(SP\)/ });
+		const providers = [...(sp as HTMLSelectElement).options].map((option) => option.value);
+		await expect(providers).toContain('https://lms.example.edu/shibboleth');
+		// The one turned off is not offered.
+		await expect(providers).not.toContain('https://wiki.example.com/saml/metadata');
+		await expect(canvas.getByRole('textbox', { name: /^RelayState/ })).toBeInTheDocument();
+	}}
+></Story>
+
+<!-- The screen is chosen among the sign-up screens only (not the built-in templates), starting as the built-in one; screens are made and changed on their own page. -->
+<Story
+	name="Sign-up chooses a sign-up screen"
+	args={{ flow: 'registration', filled: 'none' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(inFlow(canvasElement, /^Screen(?! \d)/));
+		const screen = await canvas.findByRole('combobox', { name: /^Screen/ });
+		await expect(screen).toBeRequired();
+		await waitFor(() => expect(screen).toHaveValue('registration'));
+		const offered = [...(screen as HTMLSelectElement).options].map((option) => option.value);
+		await expect(offered).toContain('registration_custom');
+		await expect(offered).not.toContain('login_template');
+		await expect(offered).not.toContain('registration_template');
+		await userEvent.selectOptions(screen, 'registration_custom');
+		await waitFor(() =>
+			expect(inFlow(canvasElement, /^Screen(?! \d).*Configured/)).toBeInTheDocument()
+		);
+		await expect(canvas.getByRole('link', { name: /Open the screens/ })).toHaveAttribute(
+			'href',
+			'/admin/customization/screens'
+		);
+		// Beside the preview, what the screen asks for: its input parts, the required ones marked.
+		const asked = await canvas.findByRole('table', { name: 'What it asks for' });
+		await expect(within(asked).getByText('given_name')).toBeInTheDocument();
+		await expect(within(asked).getAllByText('Required')).toHaveLength(2);
+		await expect(within(asked).getAllByText('Profile')).toHaveLength(3);
+		// The method is chosen on the first screen and the flow goes on by it: no ways out to route.
+		await expect(canvas.queryByRole('heading', { name: 'Where the ways out lead' })).toBeNull();
+	}}
+></Story>
+
+<!-- A screen step's title is its own: the pencil beside it edits it in place, as a sign-in method profile's name is edited. -->
+<Story
+	name="Sign-up renames a screen step"
+	args={{ flow: 'registration', filled: 'required' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(inFlow(canvasElement, /^Screen(?! \d)/));
+		await userEvent.click(await canvas.findByRole('button', { name: 'Edit the title' }));
+		const title = canvas.getByRole('textbox', { name: 'Title' });
+		await waitFor(() => expect(title).toHaveFocus());
+		// Empty: said so, and still editing.
+		await userEvent.clear(title);
+		await userEvent.click(canvas.getByRole('button', { name: 'Done' }));
+		await expect(await canvas.findByText('Enter a title.')).toBeInTheDocument();
+		await userEvent.type(title, 'Your details');
+		await userEvent.click(canvas.getByRole('button', { name: 'Done' }));
+		await expect(
+			await canvas.findByRole('heading', { level: 2, name: 'Your details' })
+		).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^Your details/)).toBeInTheDocument();
+		await waitFor(() =>
+			expect(canvas.getByRole('button', { name: 'Edit the title' })).toHaveFocus()
+		);
+		// Escape leaves it as it was.
+		await userEvent.click(canvas.getByRole('button', { name: 'Edit the title' }));
+		await userEvent.type(canvas.getByRole('textbox', { name: 'Title' }), ' and more{Escape}');
+		await expect(
+			canvas.getByRole('heading', { level: 2, name: 'Your details' })
+		).toBeInTheDocument();
+	}}
+></Story>
+
+<!-- More screens after the sign-up one, each a step of its own added with the "+" ("Screen 2", "Screen 3"…): a sign-up screen or one of one's own, with its preview. -->
+<Story
+	name="Sign-up adds more screens as steps"
+	args={{ flow: 'registration', filled: 'required' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const addAfterScreen = async () => {
+			await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[0]);
+			await userEvent.click(await canvas.findByRole('button', { name: /^Screen \d$/ }));
+		};
+		await addAfterScreen();
+		const first = await canvas.findByRole('combobox', { name: /^Screen/ });
+		const offered = [...(first as HTMLSelectElement).options].map((option) => option.value);
+		await expect(offered).toContain('welcome_survey');
+		await expect(offered).not.toContain('login_template');
+		await userEvent.selectOptions(first, 'welcome_survey');
+		await expect(
+			await canvas.findByRole('group', { name: 'Preview of the chosen screen' })
+		).toBeInTheDocument();
+		await waitFor(() => expect(inFlow(canvasElement, /^Screen 2.*Configured/)).toBeInTheDocument());
+		// Where each way out of a more screen leads is the flow's: its submit, and the skip its link
+		// part offers, which goes where the submit goes until it is given a place of its own.
+		await expect(
+			await canvas.findByRole('heading', { name: 'Where the ways out lead' })
+		).toBeInTheDocument();
+		await expect(canvas.getByRole('combobox', { name: /^Submit \(go on\)/ })).toHaveDisplayValue(
+			'The next step'
+		);
+		const skip = canvas.getByRole('combobox', { name: /^Skip/ });
+		await expect(skip).toHaveDisplayValue('Where submitting goes');
+		await expect([...(skip as HTMLSelectElement).options].map((option) => option.text)).toContain(
+			'Finishing sign-up'
+		);
+		// A second one: another step in the flow, not another row on the right.
+		await addAfterScreen();
+		await waitFor(() =>
+			expect(
+				within(canvasElement.querySelector<HTMLElement>('.detail__flow')!).getAllByRole('button', {
+					name: /^Screen \d/
+				})
+			).toHaveLength(2)
+		);
+		await expect(inFlow(canvasElement, /^Screen 3.*Not set yet/)).toBeInTheDocument();
+		// Optional: the flow stays ready with one unset.
+		await expect(canvas.getByText('Active')).toBeInTheDocument();
 	}}
 ></Story>
 
@@ -88,7 +292,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(canvas.getByText('Active')).toBeInTheDocument();
-		await expect(canvas.getByText('Everything required is set.')).toBeInTheDocument();
+		await expect(canvas.getByRole('combobox', { name: /Who can sign up/ })).toHaveValue('open');
 	}}
 ></Story>
 
@@ -130,33 +334,28 @@
 	}}
 ></Story>
 
-<!-- Someone from another provider may arrive with no email address, or one that cannot be trusted. -->
+<!-- Someone from another provider may arrive with no email address, or one that cannot be trusted: they are verified by email too, in the flow-wide settings. -->
 <Story
-	name="Adding an extra check to sign-up"
+	name="Sign-up verifies provider sign-ups by email"
 	args={{ flow: 'registration', filled: 'required' }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		// Not a step to add any more: the "+" offers only consent.
 		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[0]);
-		await userEvent.click(await canvas.findByRole('button', { name: 'Extra verification' }));
+		await expect(canvas.queryByRole('button', { name: 'Extra verification' })).toBeNull();
+		await userEvent.keyboard('{Escape}');
+		await userEvent.selectOptions(canvas.getByRole('combobox', { name: /When to verify/ }), 'none');
 		await expect(
-			await canvas.findByRole('heading', { name: 'When to verify more', level: 2 })
-		).toBeInTheDocument();
+			canvas.queryByRole('combobox', { name: /How long the check stays valid/ })
+		).toBeNull();
 		await userEvent.click(
 			canvas.getByRole('checkbox', { name: 'The provider did not give an email address' })
 		);
-		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: /How to verify/ }),
-			'email-code'
-		);
-		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: /How long the code stays valid/ }),
-			'10m'
-		);
-		await waitFor(() =>
-			expect(inFlow(canvasElement, /^When to verify more.*Configured/)).toBeInTheDocument()
-		);
-		// Optional: the flow was ready before and still is.
-		await expect(canvas.getByText('Active')).toBeInTheDocument();
+		// Checked by email, with the same expiry; no way to choose SMS.
+		await expect(
+			await canvas.findByRole('combobox', { name: /How long the check stays valid/ })
+		).toBeRequired();
+		await expect(canvas.queryByText(/SMS/)).toBeNull();
 	}}
 />
 
@@ -173,7 +372,7 @@
 			await canvas.findByRole('combobox', { name: 'External provider to use' })
 		).toBeInTheDocument();
 		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'Overview' }));
-		await expect(canvas.getByText('An external provider')).toBeInTheDocument();
+		await expect(canvas.getByText(/An external provider/)).toBeInTheDocument();
 	}}
 ></Story>
 
@@ -186,9 +385,9 @@
 		const canvas = within(canvasElement);
 		await expect(canvas.getByRole('heading', { name: '新規登録', level: 1 })).toBeInTheDocument();
 		await expect(canvas.getByText('Authrim が実行する処理')).toBeInTheDocument();
-		await expect(inFlow(canvasElement, /^登録情報・スキーマ.*必須.*未設定/)).toBeInTheDocument();
-		await userEvent.click(inFlow(canvasElement, /^登録の受付条件/));
-		await expect(canvas.getByRole('combobox', { name: '登録できる人' })).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^スクリーン(?!\d).*設定済/)).toBeInTheDocument();
+		await expect(canvas.getByRole('heading', { name: '登録の受付' })).toBeInTheDocument();
+		await expect(canvas.getByRole('combobox', { name: /登録できる人/ })).toBeInTheDocument();
 	}}
 ></Story>
 

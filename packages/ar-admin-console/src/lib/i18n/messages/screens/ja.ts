@@ -180,6 +180,27 @@ export const jaScreens = {
 	'sc.set.body': '本文',
 	'sc.set.href': 'リンク先',
 	'sc.set.hrefHint': '#見出し、/相対パス、https:// のいずれか',
+	'sc.set.linkAction': 'リンクの動作',
+	'sc.set.linkAction.url': 'URL を開く',
+	'sc.set.linkAction.next': '次へ進む（送信）',
+	'sc.set.linkAction.back': '前のスクリーンに戻る',
+	'sc.set.linkAction.skip': 'スキップする',
+	'sc.set.linkAction.exit': '名前を付けた出口から出る',
+	'sc.set.linkActionHint.url': '指定した URL を開きます。',
+	'sc.set.linkActionHint.next':
+		'このスクリーンを送信します。入力内容の確認も行われます。行き先はサービスフローで決めます。',
+	'sc.set.linkActionHint.back':
+		'直前のスクリーンに戻ります。間にスクリーン以外の処理があるときや、前のスクリーンがないときは、押せない状態で表示されます。',
+	'sc.set.linkActionHint.skip':
+		'入力内容を送らずにこのスクリーンを出ます。行き先はサービスフローで決めます（決めていなければ「次へ」と同じ先へ進みます）。',
+	'sc.set.linkActionHint.exit':
+		'入力内容を送らずに、名前を付けた出口からこのスクリーンを出ます。行き先はサービスフローで決めます（決めていなければ「次へ」と同じ先へ進みます）。',
+	'sc.set.linkExit': '出口の名前',
+	'sc.set.linkExitHint':
+		'英小文字で始まる、英小文字・数字・_ の名前（40文字まで）。サービスフローではこの名前で行き先を決めます。submitted・skipped・next は使えません。',
+	'sc.set.linkStyle': '表示形式',
+	'sc.set.linkStyleText': 'テキストリンク',
+	'sc.set.linkStyleButton': 'ボタン',
 	'sc.set.captcha': 'CAPTCHA の表示',
 	'sc.set.captchaInitial': '最初から表示',
 	'sc.set.captchaSubmit': '送信するとき',
@@ -235,6 +256,9 @@ export const jaScreens = {
 	'sc.editor.labelRequired': 'ラベルのない部品があります（{name}）',
 	'sc.editor.answerKeyRequired': '回答のキーが空の部品があります（{name}）',
 	'sc.editor.identityRequired': '保存先の項目を選択してください（{name}）',
+	'sc.editor.linkUrlOnly': '「{name}」：アカウントページのリンクは URL を開くものだけです',
+	'sc.editor.linkExitInvalid':
+		'「{name}」：出口の名前は英小文字で始まる英小文字・数字・_ にしてください（submitted・skipped・next は使えません）',
 	'sc.editor.partNotForKind': 'この種類のスクリーンには置けない部品があります（{name}）',
 	'sc.editor.oneAccountWidget': 'アカウントページのウィジェットは 1 つまでです',
 	'sc.editor.targetsRequired': '回答の保存先が選ばれていない部品があります（{name}）',

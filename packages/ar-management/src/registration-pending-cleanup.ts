@@ -134,15 +134,23 @@ async function exists(adapter: DatabaseAdapter, sql: string, params: unknown[]):
   return (await adapter.queryOne<{ found: number }>(sql, params)) !== null;
 }
 
-/** Whether the account has been proven since its sign-up began (it is a person's now). */
+/**
+ * Whether the account has been proven since its sign-up began (it is a person's now). A sign-up
+ * that waits for its address (`flow: email_code`: an email code's, or a passkey sign-up whose
+ * Flow checks the address before it is final) is not proven by a passkey or by a sign-in alone
+ * (the sign-in its passkey made): only by what a person who holds the address, or another
+ * identity, shows.
+ */
 async function proven(
   core: DatabaseAdapter,
   pii: DatabaseAdapter,
   tenantId: string,
   userId: string,
-  account: AccountRow
+  account: AccountRow,
+  flow: string
 ): Promise<boolean> {
-  if (lastLoginAt(account.metadata_json) !== null) return true;
+  const waitsForAddress = flow === 'email_code';
+  if (!waitsForAddress && lastLoginAt(account.metadata_json) !== null) return true;
   const checks = await Promise.all([
     exists(
       core,
@@ -151,10 +159,13 @@ async function proven(
           AND verification_state = 'verified' LIMIT 1`,
       [tenantId, account.id]
     ),
-    exists(core, 'SELECT 1 AS found FROM passkeys WHERE tenant_id = ? AND user_id = ? LIMIT 1', [
-      tenantId,
-      userId,
-    ]),
+    waitsForAddress
+      ? Promise.resolve(false)
+      : exists(
+          core,
+          'SELECT 1 AS found FROM passkeys WHERE tenant_id = ? AND user_id = ? LIMIT 1',
+          [tenantId, userId]
+        ),
     exists(
       core,
       `SELECT 1 AS found FROM totp_credentials
@@ -393,7 +404,7 @@ async function cleanUpOne(
     else await postpone(core, tenantId, row, nowSeconds, RETRY_UNPUBLISHED_SECONDS);
     return 'route_unpublished';
   }
-  if (!resuming && (await proven(core, pii, tenantId, row.user_id, account))) {
+  if (!resuming && (await proven(core, pii, tenantId, row.user_id, account, row.flow))) {
     await dropMark(core, tenantId, row);
     return 'completed';
   }
@@ -536,7 +547,7 @@ async function cleanUpUnpublished(
       if (!ours) await postpone(core, tenantId, row, nowSeconds, RETRY_UNPUBLISHED_SECONDS);
       return 'route_unpublished';
     }
-    if (!givenUp && (await proven(core, pii, tenantId, row.user_id, account))) {
+    if (!givenUp && (await proven(core, pii, tenantId, row.user_id, account, row.flow))) {
       await dropMark(core, tenantId, row);
       return 'completed';
     }

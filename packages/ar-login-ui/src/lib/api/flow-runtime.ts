@@ -141,6 +141,28 @@ async function withFlowRuntimeResult<T>(
 	}
 }
 
+/** Going back to a screen (`/back`): the request, and an answer shaped like a submit's. */
+export interface FlowRuntimeBackRequest {
+	step_id: string;
+	node_id?: string;
+	contract_hash: string;
+	signature: string;
+	/** The key of the screen to go back to (a link part's `link_screen`). */
+	target_screen: string;
+}
+export type FlowRuntimeBackResponse = FlowRuntimeSubmitResponse & { back_screens?: string[] };
+
+/** The screen keys an answer says a link can go back to (`back_screens`); none otherwise. */
+export function backScreensOf(answer: unknown): string[] {
+	const value =
+		answer && typeof answer === 'object' ? (answer as Record<string, unknown>).back_screens : null;
+	return Array.isArray(value)
+		? value.filter(
+				(key): key is string => typeof key === 'string' && /^[a-z0-9_-]{1,96}$/u.test(key)
+			)
+		: [];
+}
+
 export const flowRuntimeAPI = {
 	start(input: FlowRuntimeStartRequest) {
 		return withFlowRuntimeResult(() =>
@@ -156,6 +178,45 @@ export const flowRuntimeAPI = {
 				headers: Object.fromEntries(buildDiagnosticHeaders().entries())
 			})
 		);
+	},
+
+	/** From the current screen back to one passed before (the backend decides whether it may). */
+	async back(
+		interactionId: string,
+		input: FlowRuntimeBackRequest
+	): Promise<FlowRuntimeApiResult<FlowRuntimeBackResponse>> {
+		try {
+			const response = await flowRuntimeHttpClient.fetch<
+				FlowRuntimeBackResponse & {
+					error?: string;
+					error_description?: string;
+					error_details?: { category?: string; action?: string; interaction_id?: string };
+				}
+			>(
+				`${resolveApiBaseUrl()}/api/v1/login/interactions/${encodeURIComponent(interactionId)}/back`,
+				{
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						...Object.fromEntries(buildDiagnosticHeaders().entries())
+					},
+					body: JSON.stringify(input)
+				}
+			);
+			if (response.ok) return { data: response.data };
+			const body = response.data;
+			return {
+				error: {
+					error: body?.error ?? 'back_failed',
+					error_description: body?.error_description ?? 'Could not go back',
+					category: body?.error_details?.category,
+					action: body?.error_details?.action,
+					interaction_id: body?.error_details?.interaction_id
+				}
+			};
+		} catch {
+			return { error: { error: 'network_error', error_description: 'Network error occurred' } };
+		}
 	},
 
 	createEmailVerificationChallenge(
