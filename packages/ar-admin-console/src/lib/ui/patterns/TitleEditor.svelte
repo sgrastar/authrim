@@ -17,6 +17,17 @@
 		hint?: string;
 		/** Shown when Done is pressed with nothing in the field. */
 		requiredMessage: string;
+		/**
+		 * A problem the page found with the title (taken by another, missing when Save was
+		 * pressed), shown under the field. The page clears it (typically from `oninput`) and
+		 * takes the admin to the field with `focus()`.
+		 */
+		error?: string;
+		/**
+		 * Done was pressed with nothing in the field. Given, the page shows the problem itself
+		 * (through `error`), so it knows about it too; otherwise the editor shows `requiredMessage`.
+		 */
+		onrequired?: () => void;
 		maxlength?: number;
 		doneLabel: string;
 		ondone: (value: string) => void;
@@ -30,9 +41,11 @@
 		label,
 		hint,
 		requiredMessage,
+		error: pageError = '',
 		maxlength = 80,
 		doneLabel,
 		ondone,
+		onrequired,
 		oninput,
 		oncancel
 	}: Props = $props();
@@ -60,11 +73,17 @@
 		input?.focus();
 		input?.select();
 	});
+	/** Takes the admin to the field (after a problem the page found). */
+	export function focus(): void {
+		input?.focus();
+	}
+	const shownError = $derived(error || pageError);
 
 	function done() {
 		const trimmed = draft.trim();
 		if (!trimmed) {
-			error = requiredMessage;
+			if (onrequired) onrequired();
+			else error = requiredMessage;
 			input?.focus();
 			return;
 		}
@@ -88,8 +107,8 @@
 			disabled={busy()}
 			{maxlength}
 			aria-required="true"
-			aria-invalid={error ? 'true' : undefined}
-			aria-describedby={error || hint ? `${uid}-note` : undefined}
+			aria-invalid={shownError ? 'true' : undefined}
+			aria-describedby={shownError || hint ? `${uid}-note` : undefined}
 			oninput={() => {
 				error = '';
 				oninput?.(draft);
@@ -104,8 +123,8 @@
 		<Button type="submit" variant="primary" size="sm">{doneLabel}</Button>
 		<Button variant="ghost" size="sm" onclick={oncancel}>{t('common.cancel')}</Button>
 	</div>
-	{#if error}
-		<p id="{uid}-note" class="title-editor__error" role="alert">{error}</p>
+	{#if shownError}
+		<p id="{uid}-note" class="title-editor__error" role="alert">{shownError}</p>
 	{:else if hint}
 		<p id="{uid}-note" class="title-editor__hint">{hint}</p>
 	{/if}
