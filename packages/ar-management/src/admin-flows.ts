@@ -35,7 +35,9 @@ import {
   validateFlowEditorState,
   validateFlowRuntimeContractPackage,
   AuthenticationMethodProfileRepository,
+  PlatformProfileRepository,
   SessionProfileRepository,
+  isPlatformProfileId,
   buildRegistrationFlowEditor,
   defaultRegistrationFlowSpec,
   readFlowCompletion,
@@ -400,11 +402,18 @@ function consentReferenceIssueLevel(
 /** Which kind of profile a step names: its methods, or its session. */
 type ProfileKind = 'method' | 'session';
 
-/** Whether the tenant has a profile of the kind (in the admin database). */
+/**
+ * Whether the tenant may name a profile of the kind: one of its own, or one of the platform's
+ * that is not being deleted (a Flow takes no new reference to a profile on its way out).
+ */
 function profileExistsIn(c: AdminContext, tenantId: string) {
   return async (id: string, kind: ProfileKind = 'method'): Promise<boolean> => {
     try {
       const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-flows');
+      if (isPlatformProfileId(kind, id)) {
+        const platform = await new PlatformProfileRepository(adapter, kind).find(id);
+        return platform !== null && platform.state === 'active';
+      }
       const repository =
         kind === 'session'
           ? new SessionProfileRepository(adapter)
@@ -414,6 +423,73 @@ function profileExistsIn(c: AdminContext, tenantId: string) {
       return false;
     }
   };
+}
+
+/**
+ * The profiles the runtime that is published names (it is kept as given, beside the editor):
+ * each must be one the tenant may name, as the editor's are, so a runtime cannot name a profile
+ * the editor's check never saw (another's, one being deleted, one not there).
+ */
+export async function validateRuntimeProfileRefs(
+  runtime: FlowRuntimeContract,
+  profileExists: (id: string, kind?: ProfileKind) => Promise<boolean>
+): Promise<FlowValidationIssue[]> {
+  const issues: FlowValidationIssue[] = [];
+  // Each distinct reference once (repeats take no room), and a runtime too deep or naming too
+  // many to be checked is refused rather than passed unchecked.
+  const found = new Map<string, { key: string; id: string; kind: ProfileKind }>();
+  let tooLarge = false;
+  const visit = (value: unknown, depth: number): void => {
+    if (tooLarge) return;
+    if (depth > 64 || found.size > 256) {
+      tooLarge = true;
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (!isRecord(value)) return;
+    for (const [key, item] of Object.entries(value)) {
+      if (
+        (key === 'authentication_profile_ref' || key === 'session_profile_ref') &&
+        typeof item === 'string' &&
+        item &&
+        item !== 'default'
+      ) {
+        found.set(`${key}:${item}`, {
+          key,
+          id: item,
+          kind: key === 'session_profile_ref' ? 'session' : 'method',
+        });
+      }
+      visit(item, depth + 1);
+    }
+  };
+  visit(runtime, 0);
+  if (tooLarge) {
+    issues.push({
+      level: 'error',
+      code: 'runtime_profile_refs_unchecked',
+      message: 'The runtime names too many profiles, or is too deep, for them to be checked.',
+      path: '$.runtime',
+    });
+    return issues;
+  }
+  for (const ref of found.values()) {
+    if (await profileExists(ref.id, ref.kind)) continue;
+    issues.push({
+      level: 'error',
+      code:
+        ref.kind === 'session'
+          ? 'unsupported_session_profile'
+          : 'unsupported_authentication_profile',
+      message: `${ref.kind === 'session' ? 'Session' : 'Authentication method'} profile is not available: ${ref.id}.`,
+      path: '$.runtime',
+      ref: { type: 'reference', id: ref.id, key: ref.key },
+    });
+  }
+  return issues;
 }
 
 async function validateDraftReferences(
@@ -1223,6 +1299,7 @@ async function adminFlowPublishUnguarded(c: AdminContext) {
       ...validateDraft(editor, true),
       ...validateRuntimePackage(runtime, editor),
       ...(await validateDraftReferences(db, tenantId, editor, profileExistsIn(c, tenantId))),
+      ...(await validateRuntimeProfileRefs(runtime, profileExistsIn(c, tenantId))),
     ]);
     if (!validation.valid) {
       return c.json(

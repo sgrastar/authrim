@@ -874,6 +874,7 @@ import settingsV2 from './routes/settings-v2';
 import { processLegacySettingsImport } from './legacy-settings-import';
 import policyRouter from './routes/policy';
 import adminManagementRouter from './routes/admin-management';
+import { createPlatformProfilesRouter } from './routes/platform-profiles';
 import diagnosticLoggingRouter from './routes/diagnostic-logging';
 import diagnosticLogIngestRouter from './routes/diagnostic-logging/ingest';
 import {
@@ -2196,6 +2197,12 @@ app.route('/api/admin', policyRouter);
 // - GET/POST /api/admin/ip-allowlist - IP restriction list/create
 // - GET/PATCH/DELETE /api/admin/ip-allowlist/:id - IP entry CRUD
 // - GET /api/admin/admin-audit-log - Admin audit log viewing
+// The platform's method and session profiles (every tenant may use them).
+app.route(
+  '/api/admin/platform/authentication-method-profiles',
+  createPlatformProfilesRouter('method')
+);
+app.route('/api/admin/platform/session-profiles', createPlatformProfilesRouter('session'));
 app.route('/api/admin', adminManagementRouter);
 app.route('/api/approval-artifacts', approvalArtifactsRouter);
 app.route('/api/approval-receipts', approvalReceiptsRouter);

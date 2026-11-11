@@ -725,6 +725,16 @@ place('monitoring/log-settings', 'Log storage', {
 place('monitoring/log-settings', 'Console notices', {
 	advanced: ['admin-notices.retention_days']
 });
+// What tenants may do with the platform's profiles (its own page comes with the platform
+// profile screens).
+place('authentication/methods', 'Platform profiles', {
+	advanced: [
+		'profiles.method.tenant_change_allowed',
+		'profiles.method.tenant_create_allowed',
+		'profiles.session.tenant_change_allowed',
+		'profiles.session.tenant_create_allowed'
+	]
+});
 place(
 	'monitoring/destinations',
 	'Backups',

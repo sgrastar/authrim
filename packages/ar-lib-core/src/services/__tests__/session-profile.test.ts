@@ -27,7 +27,8 @@ vi.mock('../admin-database-adapter', () => ({
   requireDedicatedAdminDatabaseAdapter: () => ({}),
 }));
 vi.mock('../../repositories/admin/authentication-method-profile', () => ({
-  SessionProfileRepository: class {
+  // A tenant's own profiles (services/platform-profiles.ts reads them through this class).
+  NamedProfileRepository: class {
     async find(_tenantId: string, id: string) {
       if (profiles.fail) throw new Error('d1 unavailable');
       const values = profiles.rows.get(id);

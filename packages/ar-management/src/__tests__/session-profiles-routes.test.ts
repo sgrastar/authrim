@@ -90,6 +90,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
+    // The platform's switches (KV): every one allowed unless a test sets it.
+    readProfileSwitch: vi.fn(
+      async (_env: unknown, kind: string, name: string) =>
+        (mocks as { switches?: Record<string, boolean> }).switches?.[`${kind}.${name}`] ?? true
+    ),
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: {
         queryOne: vi.fn(async (_sql: string, params: unknown[]) =>
@@ -142,7 +147,13 @@ function call(method: string, path: string, body?: unknown) {
 
 beforeEach(() => {
   const db = new DatabaseSync(':memory:');
-  db.exec(readRenderedMigrationSql(ADMIN_MIGRATIONS, '014_session_profiles.sql'));
+  for (const file of [
+    '013_authentication_method_profiles.sql',
+    '014_session_profiles.sql',
+    '015_platform_profiles.sql',
+  ]) {
+    db.exec(readRenderedMigrationSql(ADMIN_MIGRATIONS, file));
+  }
   const run = (sql: string) => db.prepare(sql);
   mocks.adapter = {
     query: async (sql: string, params: unknown[] = []) => run(sql).all(...params),
