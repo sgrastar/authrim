@@ -277,7 +277,10 @@ function createAppLoginState(finalReturnTo: string | null): string {
   )}`;
 }
 
-function buildAppLoginAuthorizeUrl(loginEntry: Record<string, unknown>): string | null {
+function buildAppLoginAuthorizeUrl(
+  loginEntry: Record<string, unknown>,
+  trustedOrigins: readonly string[]
+): string | null {
   const clientId = readNonEmptyString(
     loginEntry['login-entry.app_login_client_id'] ??
       LOGIN_ENTRY_DEFAULTS['login-entry.app_login_client_id']
@@ -295,7 +298,16 @@ function buildAppLoginAuthorizeUrl(loginEntry: Record<string, unknown>): string 
     return null;
   }
 
-  const finalReturnTo = readNonEmptyString(loginEntry['login-entry.app_login_final_return_to']);
+  // Where the service app goes after its callback: checked here as well as where it is saved (a
+  // registration Flow's own completion is read from its policy), and left out when it is not a
+  // non-reserved path or a trusted HTTPS URL.
+  const configuredReturnTo = readNonEmptyString(
+    loginEntry['login-entry.app_login_final_return_to']
+  );
+  const finalReturnTo =
+    configuredReturnTo && validatePostLoginRedirectUrl(configuredReturnTo, trustedOrigins)
+      ? configuredReturnTo
+      : null;
   const state = createAppLoginState(finalReturnTo);
   const nonce = generateSecureRandomString(32);
   const params = new URLSearchParams({
@@ -358,7 +370,10 @@ function resolvePostLoginFrom(
   }
 
   if (behavior === 'app_login' && loginEntry) {
-    const authorizeUrl = buildAppLoginAuthorizeUrl(loginEntry);
+    const authorizeUrl = buildAppLoginAuthorizeUrl(
+      loginEntry,
+      parseTrustedRedirectOrigins(security?.['security.trusted_redirect_origins'])
+    );
     if (authorizeUrl) {
       return { redirectUrl: authorizeUrl, behavior };
     }

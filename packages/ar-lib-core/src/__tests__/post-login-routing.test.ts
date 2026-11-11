@@ -226,6 +226,18 @@ describe('a registration Flow’s own completion', () => {
     await expect(
       go({ behavior: 'custom_url', redirect_url: 'https://evil.example/' })
     ).resolves.toEqual({ redirectUrl: '/', behavior: 'home' });
+    // App Login: a return place the tenant does not trust is left out of the state.
+    const appLogin = await go({
+      behavior: 'app_login',
+      app_login_client_id: 'service_app',
+      app_login_redirect_uri: 'https://app.example.com/callback',
+      app_login_final_return_to: 'https://evil.example/landing',
+    });
+    expect(appLogin.behavior).toBe('app_login');
+    const state = new URL(appLogin.redirectUrl, 'https://id.example').searchParams.get('state');
+    expect(
+      atob((state ?? '').slice('ar_app_login.'.length).replace(/-/g, '+').replace(/_/g, '/'))
+    ).not.toContain('evil.example');
     await expect(
       go({ behavior: 'saml_login', saml_login_sp_entity_id: 'urn:sp' })
     ).resolves.toEqual({ redirectUrl: '/saml/idp/init?sp=urn%3Asp', behavior: 'saml_login' });
