@@ -165,6 +165,11 @@ function readColor(value: unknown, fallback: string): string {
     : fallback;
 }
 
+/** A colour that may be left unset (null): anything that is not `#rrggbb` reads as unset. */
+function readNullableColor(value: unknown): string | null {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/iu.test(value) ? value.toLowerCase() : null;
+}
+
 function readSamlSpEntityId(configJson: string): string | null {
   try {
     const config = JSON.parse(configJson) as Row;
@@ -268,6 +273,14 @@ function validateLauncherBody(body: Row): string | null {
     if (value !== undefined && (typeof value !== 'string' || !/^#[0-9a-f]{6}$/iu.test(value))) {
       return `${key} must be a six-digit hexadecimal color`;
     }
+  }
+  if (
+    body.tile_background_color !== undefined &&
+    body.tile_background_color !== null &&
+    (typeof body.tile_background_color !== 'string' ||
+      !/^#[0-9a-f]{6}$/iu.test(body.tile_background_color))
+  ) {
+    return 'tile_background_color must be null or a six-digit hexadecimal color';
   }
 
   if (body.visibility !== undefined) {
@@ -514,6 +527,10 @@ async function normalizeLauncherInput(
     icon_value: iconValue,
     icon_color: readColor(body.icon_color, existing?.icon_color ?? '#ffffff'),
     background_color: readColor(body.background_color, existing?.background_color ?? '#2563eb'),
+    tile_background_color:
+      body.tile_background_color === undefined
+        ? (existing?.tile_background_color ?? null)
+        : readNullableColor(body.tile_background_color),
     grid_width: readInteger(body.grid_width, existing?.grid_width ?? 2, 1, 8),
     sort_order: readInteger(body.sort_order, existing?.sort_order ?? 0, 0, 1000000),
     enabled: readBoolean(body.enabled, existing?.enabled ?? true),
@@ -582,6 +599,7 @@ function storedLauncher(value: unknown): ApplicationLauncher | null {
     icon_value: iconValue,
     icon_color: readColor(record.icon_color, '#ffffff'),
     background_color: readColor(record.background_color, '#2563eb'),
+    tile_background_color: readNullableColor(record.tile_background_color),
     grid_width: readInteger(record.grid_width, 2, 1, 8),
     sort_order: readInteger(record.sort_order, 0, 0, 1000000),
     enabled: readBoolean(record.enabled, true),
@@ -752,6 +770,21 @@ export async function adminLaunchersListHandler(c: LauncherContext): Promise<Res
       .module('ADMIN_LAUNCHERS')
       .error('Failed to list launchers', {}, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to list launchers' }, 500);
+  }
+}
+
+export async function adminLauncherGetHandler(c: LauncherContext): Promise<Response> {
+  try {
+    const id = c.req.param('id');
+    if (!id) return notFound(c);
+    const launcher = await findLauncher(c, id);
+    if (!launcher) return notFound(c);
+    return c.json({ launcher });
+  } catch (error) {
+    getLogger(c)
+      .module('ADMIN_LAUNCHERS')
+      .error('Failed to read launcher', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to read launcher' }, 500);
   }
 }
 
@@ -1121,6 +1154,7 @@ export function accountLauncher(launcher: ApplicationLauncher, favorite: boolean
     icon_value: launcher.icon_value,
     icon_color: launcher.icon_color,
     background_color: launcher.background_color,
+    tile_background_color: launcher.tile_background_color,
     grid_width: launcher.grid_width,
     sort_order: launcher.sort_order,
     enabled: launcher.enabled,

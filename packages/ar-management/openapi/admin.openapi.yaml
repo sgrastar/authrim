@@ -15093,6 +15093,31 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
   '/api/admin/launchers/{id}':
+    get:
+      tags: [Launchers]
+      operationId: getApiAdminLaunchersById
+      summary: Get an application launcher.
+      description: Returns one launcher definition of the current tenant, including disabled entries and audience rules.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Launcher definition.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launcher]
+                properties:
+                  launcher:
+                    $ref: '#/components/schemas/ApplicationLauncher'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
     put:
       tags: [Launchers]
       operationId: putApiAdminLaunchersById
@@ -53847,7 +53872,6 @@ components:
         - icon_color
         - background_color
         - grid_width
-        - sort_order
         - enabled
         - allow_favorite
         - visibility
@@ -53881,9 +53905,26 @@ components:
           enum: [phosphor, image]
         icon_value: { type: string, minLength: 1, maxLength: 2048 }
         icon_color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
-        background_color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+        background_color:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          description: Background of the square behind the icon.
+        tile_background_color:
+          type: [string, 'null']
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          description: >-
+            Background of the whole tile. Null (or omitted when creating) keeps the theme's card
+            colour; omitted on update keeps the stored value. Text on the tile is drawn in black or
+            white, whichever contrasts more.
         grid_width: { type: integer, minimum: 1, maximum: 8 }
-        sort_order: { type: integer, minimum: 0, maximum: 1000000 }
+        sort_order:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+          description: >-
+            Place in the account page's order. Omitted on update keeps the stored place (the order is
+            normally changed with PUT /api/admin/launchers/order); omitted when creating places it
+            first.
         enabled: { type: boolean }
         allow_favorite: { type: boolean }
         visibility:
@@ -53892,7 +53933,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/ApplicationLauncherInput'
         - type: object
-          required: [id, created_at, updated_at]
+          required: [id, sort_order, tile_background_color, created_at, updated_at]
           properties:
             id: { type: string }
             created_at: { type: integer, format: int64 }

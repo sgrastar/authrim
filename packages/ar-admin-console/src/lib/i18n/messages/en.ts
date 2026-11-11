@@ -16,6 +16,7 @@ import { enAdminAudit } from './admin-audit/en';
 import { enTeam } from './team/en';
 import { enAuthMethods } from './auth-methods/en';
 import { enSessionProfiles } from './session-profiles/en';
+import { enLaunchers } from './launchers/en';
 
 export const en = {
 	...enSettings,
@@ -35,6 +36,7 @@ export const en = {
 	...enTeam,
 	...enAuthMethods,
 	...enSessionProfiles,
+	...enLaunchers,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',

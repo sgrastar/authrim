@@ -329,6 +329,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'launchers',
 				label: 'nav.custom.launchers',
 				icon: 'sparkle',
+				// The launcher editor: …/launchers/new and …/launchers/<launcher id>.
+				details: true,
 				legacyRoutes: ['/admin/launchers']
 			},
 			{

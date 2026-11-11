@@ -7,6 +7,7 @@
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import type { AccountLauncher } from '#lib/api/account.js';
 	import { launcherMatchesSearch } from '../account-launcher-filter';
+	import { accentTextColor, normalizeAccentColor } from '#lib/utils/accent-text.js';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetHeadingLevel } from './types';
 
@@ -111,7 +112,14 @@
 		{:else}
 			<ul class="launcher-grid">
 				{#each filteredLaunchers as launcher (launcher.id)}
-					<li class="launcher-tile" data-width={launcher.grid_width}>
+					{@const tileBackground = normalizeAccentColor(launcher.tile_background_color)}
+					<li
+						class="launcher-tile"
+						class:launcher-tile--colored={tileBackground !== null}
+						data-width={launcher.grid_width}
+						style:--tile-bg={tileBackground}
+						style:--tile-fg={accentTextColor(tileBackground)}
+					>
 						<a
 							class="launcher-link"
 							href={launcher.launch_href}
@@ -282,6 +290,26 @@
 	}
 	.launcher-tile[data-width='8'] {
 		grid-column: span 8;
+	}
+	/* A tile in the admin's own colour: its text in black or white, whichever reads on it. */
+	.launcher-tile--colored {
+		border-color: var(--tile-bg);
+		background: var(--tile-bg);
+		color: var(--tile-fg);
+	}
+	/* Secondary text and the star take the same black or white: a lighter mix would fall below
+	   4.5:1 on mid-tone tiles, and the theme's star colour could match the tile. The filled star
+	   still tells a favourite apart. */
+	.launcher-tile--colored .launcher-description,
+	.launcher-tile--colored .launcher-meta,
+	.launcher-tile--colored .favorite-button,
+	.launcher-tile--colored .favorite-button.active {
+		color: var(--tile-fg);
+	}
+	/* Its hover face is made from the tile's colour too, so the black or white star stays readable. */
+	.launcher-tile--colored .favorite-button:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--tile-fg) 14%, var(--tile-bg));
+		color: var(--tile-fg);
 	}
 	.launcher-tile:hover {
 		border-color: color-mix(in srgb, var(--primary) 45%, var(--border));

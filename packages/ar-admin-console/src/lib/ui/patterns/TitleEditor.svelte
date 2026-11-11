@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { useBusy } from '../busy/busy';
 	import Button from '../primitives/Button.svelte';
 
 	/**
@@ -19,6 +20,8 @@
 		maxlength?: number;
 		doneLabel: string;
 		ondone: (value: string) => void;
+		/** Each change while typing, for a page that keeps the typed name as unsaved work. */
+		oninput?: (value: string) => void;
 		oncancel: () => void;
 	}
 
@@ -30,6 +33,7 @@
 		maxlength = 80,
 		doneLabel,
 		ondone,
+		oninput,
 		oncancel
 	}: Props = $props();
 
@@ -39,6 +43,18 @@
 	let draft = $state(value);
 	let error = $state('');
 	let input = $state<HTMLInputElement>();
+	// While the page saves nothing can be typed: what is typed then would not be saved.
+	const busy = useBusy();
+	// A title changed from outside while open (the page discarded its changes) is shown here too.
+	$effect(() => {
+		const next = value;
+		untrack(() => {
+			if (next !== draft) {
+				draft = next;
+				error = '';
+			}
+		});
+	});
 
 	onMount(() => {
 		input?.focus();
@@ -69,11 +85,15 @@
 			id="{uid}-title"
 			bind:this={input}
 			bind:value={draft}
+			disabled={busy()}
 			{maxlength}
 			aria-required="true"
 			aria-invalid={error ? 'true' : undefined}
 			aria-describedby={error || hint ? `${uid}-note` : undefined}
-			oninput={() => (error = '')}
+			oninput={() => {
+				error = '';
+				oninput?.(draft);
+			}}
 			onkeydown={(event) => {
 				if (event.key === 'Escape') {
 					event.preventDefault();

@@ -1902,6 +1902,7 @@ components:
         - icon_value
         - icon_color
         - background_color
+        - tile_background_color
         - grid_width
         - sort_order
         - enabled
@@ -1925,6 +1926,9 @@ components:
         icon_value: { type: string }
         icon_color: { type: string }
         background_color: { type: string }
+        tile_background_color:
+          type: [string, 'null']
+          description: The whole tile's background; null keeps the theme's card colour.
         grid_width: { type: integer, minimum: 1, maximum: 8 }
         sort_order: { type: integer, minimum: 0 }
         enabled: { type: boolean }
