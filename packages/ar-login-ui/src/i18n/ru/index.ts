@@ -29,7 +29,7 @@ const ru = createTranslation({
 	login_guestNoExpiry: 'Автоматическое удаление новых гостевых аккаунтов не запланировано.',
 
 	...completion,
-	app_subtitle: 'Идентификация и доступ повсюду.',
+	app_subtitle: 'Ваша учётная запись под надёжной защитой.',
 	dialog_cancel: 'Отмена',
 	dialog_close: 'Закрыть',
 	language_switch: 'Сменить язык',

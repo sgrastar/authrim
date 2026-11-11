@@ -28,7 +28,7 @@ const translation = {
 	login_guestNoExpiry: 'Nie zaplanowano automatycznego usuwania nowych kont gości.',
 
 	app_title: 'Authrim',
-	app_subtitle: 'Tożsamość i dostęp na brzegu sieci — wszędzie.',
+	app_subtitle: 'Twoje konto, bezpieczne.',
 	button_openDialog: 'Otwórz okno dialogowe',
 	dialog_title: 'Okno dialogowe Melt UI',
 	dialog_description:

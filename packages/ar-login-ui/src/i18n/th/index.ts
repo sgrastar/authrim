@@ -27,7 +27,7 @@ const th = createTranslation({
 	login_guestNoExpiry: 'ไม่มีการกำหนดให้ลบบัญชีผู้เยี่ยมชมใหม่โดยอัตโนมัติ',
 
 	app_title: 'Authrim',
-	app_subtitle: 'อัตลักษณ์และการเข้าถึงได้จากทุกที่',
+	app_subtitle: 'บัญชีของคุณ ปลอดภัยเสมอ',
 	button_openDialog: 'เปิดกล่องโต้ตอบ',
 	dialog_title: 'กล่องโต้ตอบ Melt UI',
 	dialog_description:

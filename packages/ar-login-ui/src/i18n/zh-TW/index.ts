@@ -25,7 +25,7 @@ const zhTW = createTranslation({
 	login_guestNoExpiry: '新訪客帳戶未設定自動刪除。',
 
 	...completion,
-	app_subtitle: '身分與存取，無所不在',
+	app_subtitle: '安全守護您的帳戶。',
 	dialog_cancel: '取消',
 	dialog_close: '關閉',
 	language_switch: '切換語言',

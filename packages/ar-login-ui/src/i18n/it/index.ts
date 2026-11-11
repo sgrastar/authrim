@@ -27,7 +27,7 @@ const it = createTranslation({
 	login_guestNoExpiry: 'Non è prevista alcuna eliminazione automatica per i nuovi account ospite.',
 
 	app_title: 'Authrim',
-	app_subtitle: 'Identità e accesso ovunque.',
+	app_subtitle: 'Il tuo account, al sicuro.',
 	button_openDialog: 'Apri finestra di dialogo',
 	dialog_title: 'Finestra di dialogo Melt UI',
 	dialog_description:

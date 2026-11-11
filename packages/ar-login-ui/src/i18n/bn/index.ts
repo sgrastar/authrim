@@ -26,7 +26,7 @@ const translation = {
 	login_guestNoExpiry: 'নতুন অতিথি অ্যাকাউন্টের স্বয়ংক্রিয় মুছে ফেলার সময় নির্ধারিত নেই।',
 
 	app_title: 'Authrim',
-	app_subtitle: 'পরিচয় ও অ্যাক্সেস সর্বত্র প্রান্তে।',
+	app_subtitle: 'আপনার অ্যাকাউন্ট, সুরক্ষিত।',
 	button_openDialog: 'ডায়ালগ খুলুন',
 	dialog_title: 'Melt UI ডায়ালগ',
 	dialog_description:
