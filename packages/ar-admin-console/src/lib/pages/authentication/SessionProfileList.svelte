@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { ApiError } from '#lib/api/api-error.js';
 	import type { SessionProfile, SessionProfilesClient } from '#lib/api/session-profiles.js';
+	import { keepsCopy } from '#lib/api/profile-layer.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import CellText from '#lib/ui/patterns/CellText.svelte';
@@ -13,6 +14,7 @@
 	import ActionMenu, { type MenuAction } from '#lib/ui/primitives/ActionMenu.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
+	import ProfileLayerBadges from './ProfileLayerBadges.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { formatSetting } from '#lib/settings/setting-format.js';
@@ -28,6 +30,8 @@
 	let profiles = $state<SessionProfile[]>([]);
 	let phase = $state<'loading' | 'ready' | 'forbidden' | 'failed'>('loading');
 	let deleting = $state<SessionProfile | null>(null);
+	/** A platform profile whose copy the admin is about to remove. */
+	let reverting = $state<SessionProfile | null>(null);
 	let busy = $state(false);
 
 	async function load() {
@@ -59,7 +63,42 @@
 		}
 	}
 
+	async function revert() {
+		const profile = reverting;
+		if (!profile) return;
+		busy = true;
+		try {
+			const updated = await client.revert(profile.id);
+			profiles = profiles.map((item) => (item.id === updated.id ? updated : item));
+			reverting = null;
+			toast.success(t('pl.revertSuccess'));
+		} catch {
+			toast.error(t('pl.revertFailed'));
+		} finally {
+			busy = false;
+		}
+	}
+
 	function actionsOf(profile: SessionProfile): MenuAction[] {
+		const open: MenuAction = {
+			label: t('sp.list.open', { name: profile.name }),
+			icon: 'pencil',
+			onselect: () => onopen(profile.id)
+		};
+		// A platform profile is not the tenant's to delete: only its copy can go.
+		if (profile.layer?.scope === 'platform') {
+			return keepsCopy(profile.layer)
+				? [
+						open,
+						{
+							label: t('pl.revert'),
+							icon: 'reset',
+							disabled: busy,
+							onselect: () => (reverting = profile)
+						}
+					]
+				: [open];
+		}
 		return [
 			{
 				label: t('sp.list.open', { name: profile.name }),
@@ -137,7 +176,11 @@
 				rowOpenLabel={(profile) => t('sp.list.open', { name: profile.name })}
 			>
 				{#snippet cell(profile, column)}
-					{#if column.key === 'name'}<CellText title={profile.name} />
+					{#if column.key === 'name'}
+						<span class="profile-name">
+							<CellText title={profile.name} />
+							<ProfileLayerBadges layer={profile.layer} />
+						</span>
 					{:else if column.key === 'summary'}{summary(profile)}
 					{:else if column.key === 'created'}
 						{#if profile.created_at}<DateTime value={profile.created_at} stacked />{:else}—{/if}
@@ -167,3 +210,22 @@
 	onconfirm={remove}
 	oncancel={() => (deleting = null)}
 />
+
+<ConfirmDialog
+	open={reverting !== null}
+	title={t('pl.revertTitle', { name: reverting?.name ?? '' })}
+	body={t('pl.revertBody')}
+	confirmLabel={t('pl.revert')}
+	{busy}
+	onconfirm={revert}
+	oncancel={() => (reverting = null)}
+/>
+
+<style>
+	.profile-name {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 4px;
+	}
+</style>
