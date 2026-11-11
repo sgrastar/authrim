@@ -217,6 +217,8 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.i.modes': 'وضع الصور',
 	'th.i.effectsBothModes': 'تنطبق الصورة وشفافيتها وتأثيراتها على الوضعين.',
 	'th.i.darkDim': 'التعتيم في الوضع الداكن',
+	'th.i.darkPicturesNote':
+		'اضبط الصور وشفافيتها وتأثيراتها في تبويب الوضع الفاتح. في الوضع الداكن يمكن ضبط درجة تعتيم كل صورة فقط.',
 	'th.i.favicon': 'Favicon image',
 	'th.i.bgImage': 'Background image',
 	'th.i.bgOpacity': 'Background image opacity',

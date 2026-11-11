@@ -341,6 +341,13 @@ interface UIConfig {
     brandPanelImageDarkDim: number;
     backgroundImageGrayscale: boolean;
     backgroundImageFilters: LoginUIImageFilter[];
+    /**
+     * Filters on the form-area and brand panel pictures, in order. An older grayscale switch
+     * (pageTemplate.loginPanelBackgroundGrayscale, brandPanelImageGrayscale) is served as a full
+     * grayscale filter first, unless a grayscale filter is set.
+     */
+    loginPanelBackgroundImageFilters: LoginUIImageFilter[];
+    brandPanelImageFilters: LoginUIImageFilter[];
     loginPanelBackgroundImageUrl: string | null;
     brandPanelImageUrl: string | null;
     brandPanelImageOpacity: number;
@@ -563,6 +570,8 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     brandPanelImageDarkDim: 0,
     backgroundImageGrayscale: false,
     backgroundImageFilters: [],
+    loginPanelBackgroundImageFilters: [],
+    brandPanelImageFilters: [],
     loginPanelBackgroundImageUrl: null,
     brandPanelImageUrl: null,
     brandPanelImageOpacity: 100,
@@ -665,6 +674,8 @@ interface LoginUIKVSettings {
   'login-ui.brand_panel_image_dark_dim'?: number | string;
   'login-ui.background_image_grayscale'?: boolean | string;
   'login-ui.background_image_filters'?: string;
+  'login-ui.login_panel_background_filters'?: string;
+  'login-ui.brand_panel_image_filters'?: string;
   'login-ui.login_panel_background_image_url'?: string;
   'login-ui.brand_panel_image_url'?: string;
   'login-ui.brand_panel_image_opacity'?: number | string;
@@ -816,6 +827,8 @@ interface LoginUIResolved {
   brandPanelImageDarkDim: number;
   backgroundImageGrayscale: boolean;
   backgroundImageFilters: LoginUIImageFilter[];
+  loginPanelBackgroundFilters: LoginUIImageFilter[];
+  brandPanelImageFilters: LoginUIImageFilter[];
   loginPanelBackgroundImageUrl: string | null;
   brandPanelImageUrl: string | null;
   brandPanelImageOpacity: number;
@@ -1252,6 +1265,19 @@ function readAccentColor(value: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * A picture's filters with its older grayscale switch folded in: a full grayscale filter first
+ * (the switch was applied before any filter), unless the filters have a grayscale of their own.
+ */
+function withLegacyGrayscale(
+  filters: readonly LoginUIImageFilter[],
+  grayscale: boolean
+): LoginUIImageFilter[] {
+  return grayscale && !filters.some((filter) => filter.name === 'grayscale')
+    ? [{ name: 'grayscale', value: 100 }, ...filters]
+    : [...filters];
+}
+
 function readBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
   // Number('') and Number('  ') are 0, which would read an empty stored value as the minimum.
   const parsed =
@@ -1554,6 +1580,14 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.background_image_filters'] === undefined
         ? defaults.backgroundImageFilters
         : parseLoginUIImageFilters(kvSettings['login-ui.background_image_filters']),
+    loginPanelBackgroundFilters:
+      kvSettings['login-ui.login_panel_background_filters'] === undefined
+        ? defaults.loginPanelBackgroundFilters
+        : parseLoginUIImageFilters(kvSettings['login-ui.login_panel_background_filters']),
+    brandPanelImageFilters:
+      kvSettings['login-ui.brand_panel_image_filters'] === undefined
+        ? defaults.brandPanelImageFilters
+        : parseLoginUIImageFilters(kvSettings['login-ui.brand_panel_image_filters']),
     loginPanelBackgroundImageUrl: isValidLoginUIImageUrl(
       kvSettings['login-ui.login_panel_background_image_url']
     )
@@ -1782,6 +1816,8 @@ async function getLoginUISettings(
     brandPanelImageDarkDim: DEFAULT_UI_CONFIG.appearance.brandPanelImageDarkDim,
     backgroundImageGrayscale: DEFAULT_UI_CONFIG.appearance.backgroundImageGrayscale,
     backgroundImageFilters: [...DEFAULT_UI_CONFIG.appearance.backgroundImageFilters],
+    loginPanelBackgroundFilters: [...DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageFilters],
+    brandPanelImageFilters: [...DEFAULT_UI_CONFIG.appearance.brandPanelImageFilters],
     loginPanelBackgroundImageUrl: DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageUrl,
     brandPanelImageUrl: DEFAULT_UI_CONFIG.appearance.brandPanelImageUrl,
     brandPanelImageOpacity: DEFAULT_UI_CONFIG.appearance.brandPanelImageOpacity,
@@ -2787,6 +2823,14 @@ function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mod
       brandPanelImageDarkDim: loginUI.brandPanelImageDarkDim,
       backgroundImageGrayscale: loginUI.backgroundImageGrayscale,
       backgroundImageFilters: loginUI.backgroundImageFilters,
+      loginPanelBackgroundImageFilters: withLegacyGrayscale(
+        loginUI.loginPanelBackgroundFilters,
+        loginUI.loginPanelBackgroundGrayscale
+      ),
+      brandPanelImageFilters: withLegacyGrayscale(
+        loginUI.brandPanelImageFilters,
+        loginUI.brandPanelImageGrayscale
+      ),
       loginPanelBackgroundImageUrl: loginUI.loginPanelBackgroundImageUrl,
       brandPanelImageUrl: loginUI.brandPanelImageUrl,
       brandPanelImageOpacity: loginUI.brandPanelImageOpacity,

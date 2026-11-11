@@ -125,6 +125,7 @@ export interface LoginUISettings {
   'login-ui.brand_panel_image_url': string;
   'login-ui.brand_panel_image_opacity': number;
   'login-ui.brand_panel_image_grayscale': boolean;
+  'login-ui.brand_panel_image_filters': string;
   'login-ui.custom_css': string;
   'login-ui.header_enabled': boolean;
   'login-ui.subtitle_enabled': boolean;
@@ -148,6 +149,7 @@ export interface LoginUISettings {
   'login-ui.login_panel_background_gradient_color': string;
   'login-ui.login_panel_background_opacity': number;
   'login-ui.login_panel_background_grayscale': boolean;
+  'login-ui.login_panel_background_filters': string;
   'login-ui.brand_content_mode': string;
   'login-ui.brand_position': string;
   'login-ui.brand_align': string;
@@ -702,6 +704,26 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
       'Filters on the page background image, in order: name:value pairs joined by ";" (for example "hue-rotate:200;blur:4")',
     visibility: 'public',
   },
+  'login-ui.login_panel_background_filters': {
+    key: 'login-ui.login_panel_background_filters',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_LOGIN_PANEL_BACKGROUND_FILTERS',
+    label: 'Form Area Image Filters',
+    description:
+      'Filters on the form-area picture, in order, as login-ui.background_image_filters (for example "grayscale:100;blur:2")',
+    visibility: 'public',
+  },
+  'login-ui.brand_panel_image_filters': {
+    key: 'login-ui.brand_panel_image_filters',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_BRAND_PANEL_IMAGE_FILTERS',
+    label: 'Brand Panel Image Filters',
+    description:
+      'Filters on the split template brand panel picture, in order, as login-ui.background_image_filters',
+    visibility: 'public',
+  },
   'login-ui.brand_panel_image_url': {
     key: 'login-ui.brand_panel_image_url',
     type: 'string',
@@ -1246,6 +1268,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.brand_panel_image_url': '',
   'login-ui.brand_panel_image_opacity': 100,
   'login-ui.brand_panel_image_grayscale': false,
+  'login-ui.brand_panel_image_filters': '',
   'login-ui.custom_css': '',
   'login-ui.header_enabled': true,
   'login-ui.subtitle_enabled': true,
@@ -1269,6 +1292,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.login_panel_background_gradient_color': '',
   'login-ui.login_panel_background_opacity': 70,
   'login-ui.login_panel_background_grayscale': false,
+  'login-ui.login_panel_background_filters': '',
   'login-ui.brand_content_mode': 'logo_copy',
   'login-ui.brand_position': 'center',
   'login-ui.brand_align': 'left',
@@ -1337,9 +1361,11 @@ export const LOGIN_UI_THEME_KEYS = [
   'login-ui.login_panel_background_image_url',
   'login-ui.login_panel_background_opacity',
   'login-ui.login_panel_background_grayscale',
+  'login-ui.login_panel_background_filters',
   'login-ui.brand_panel_image_url',
   'login-ui.brand_panel_image_opacity',
   'login-ui.brand_panel_image_grayscale',
+  'login-ui.brand_panel_image_filters',
   'login-ui.custom_css',
   'login-ui.header_enabled',
   'login-ui.subtitle_enabled',

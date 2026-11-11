@@ -118,6 +118,31 @@ describe('theme values', () => {
 		});
 	});
 
+	it('saves the form-area and brand panel filters, and opens an older grayscale switch as one', () => {
+		const draft: ThemeDraft = {
+			...newThemeDraft(),
+			cardImageFilters: [
+				{ name: 'invert', value: 100 },
+				{ name: 'blur', value: 3 }
+			],
+			panelImageFilters: [{ name: 'sepia', value: 60 }]
+		};
+		const values = draftToValues(draft);
+		expect(values['login-ui.login_panel_background_filters']).toBe('invert:100;blur:3');
+		expect(values['login-ui.brand_panel_image_filters']).toBe('sepia:60');
+		// The older switches are written off: grayscale is one of the filters now.
+		expect(values['login-ui.login_panel_background_grayscale']).toBe(false);
+		expect(values['login-ui.brand_panel_image_grayscale']).toBe(false);
+		expect(valuesToDraft(values)).toEqual(draft);
+		const older = valuesToDraft({
+			'login-ui.login_panel_background_grayscale': true,
+			'login-ui.brand_panel_image_grayscale': true,
+			'login-ui.brand_panel_image_filters': 'grayscale:30'
+		});
+		expect(older.cardImageFilters).toEqual([{ name: 'grayscale', value: 100 }]);
+		expect(older.panelImageFilters).toEqual([{ name: 'grayscale', value: 30 }]);
+	});
+
 	it('saves the background image filters in order and opens them again', () => {
 		const draft: ThemeDraft = {
 			...newThemeDraft(),

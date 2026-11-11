@@ -1167,7 +1167,7 @@ tr.expired {
 	inset: 0;
 	z-index: -2;
 	pointer-events: none;
-	background-image: var(--login-panel-image-dim, none), var(--login-panel-background-layer, none);
+	background-image: var(--login-panel-background-layer, none);
 	background-position: center;
 	background-size: cover;
 	background-repeat: no-repeat;
@@ -1410,7 +1410,7 @@ tr.expired {
 	z-index: 0;
 	display: none;
 	pointer-events: none;
-	background-image: var(--login-panel-image-dim, none), var(--login-panel-background-layer, none);
+	background-image: var(--login-panel-background-layer, none);
 	background-position: center;
 	background-size: cover;
 	background-repeat: no-repeat;
@@ -2740,7 +2740,7 @@ tr.expired {
 		inset: 0;
 		z-index: 0;
 		pointer-events: none;
-		background-image: var(--login-panel-image-dim, none), var(--login-panel-background-layer, none);
+		background-image: var(--login-panel-background-layer, none);
 		background-position: center;
 		background-size: cover;
 		background-repeat: no-repeat;
@@ -2976,8 +2976,7 @@ tr.expired {
 	inset: 0;
 	z-index: -1;
 	pointer-events: none;
-	/* --login-brand-panel-image-dim: its dark-mode veil (login-ui.brand_panel_image_dark_dim). */
-	background-image: var(--login-brand-panel-image-dim, none), var(--login-brand-panel-image-layer);
+	background-image: var(--login-brand-panel-image-layer);
 	background-position: center;
 	background-size: cover;
 	opacity: var(--login-brand-panel-image-opacity, 1);

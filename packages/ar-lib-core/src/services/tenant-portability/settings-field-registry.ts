@@ -632,6 +632,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.rollback_snapshot
     login-ui.custom_css
     login-ui.background_image_filters
+    login-ui.login_panel_background_filters
+    login-ui.brand_panel_image_filters
     login-ui.dark_colors
     login-ui.dark_images
     login-ui.text_localizations

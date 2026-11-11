@@ -206,13 +206,35 @@
 	// once filtered (a filter does not filter it), under the picture's opacity.
 	const veilOf = (dim: number) => (scheme === 'dark' && dim > 0 ? `rgb(0 0 0 / ${dim}%)` : null);
 	const backgroundVeil = $derived(veilOf(draft.backgroundDarkDim));
-	const cardVeil = $derived(veilOf(draft.cardImageDarkDim));
-	const panelVeil = $derived(veilOf(draft.panelImageDarkDim));
+	// The form-area picture is drawn on its own: its filters, then its darkening as a brightness
+	// (as the Login UI does), so a transparent part of it stays clear.
+	const cardFilter = $derived(
+		[
+			loginUIImageFilterCss(draft.cardImageFilters),
+			scheme === 'dark' && draft.cardImageDarkDim > 0
+				? `brightness(${100 - draft.cardImageDarkDim}%)`
+				: ''
+		]
+			.filter(Boolean)
+			.join(' ')
+	);
 
 	// The brand side's picture is its own; the background image runs behind the whole screen.
 	const brandLayer = $derived(
 		panelUrl
-			? { url: panelUrl, opacity: draft.panelImageOpacity, gray: draft.panelImageGrayscale }
+			? {
+					url: panelUrl,
+					opacity: draft.panelImageOpacity,
+					// Its filters, then its dark-mode darkening as a brightness, as the Login UI does.
+					filter: [
+						loginUIImageFilterCss(draft.panelImageFilters),
+						scheme === 'dark' && draft.panelImageDarkDim > 0
+							? `brightness(${100 - draft.panelImageDarkDim}%)`
+							: ''
+					]
+						.filter(Boolean)
+						.join(' ')
+				}
 			: null
 	);
 </script>
@@ -413,9 +435,9 @@
 							{#if brandLayer}
 								<span
 									class="outline__image"
-									style:background-image={`${panelVeil ? `linear-gradient(${panelVeil}, ${panelVeil}), ` : ''}url("${brandLayer.url}")`}
+									style:background-image={`url("${brandLayer.url}")`}
 									style:opacity={brandLayer.opacity / 100}
-									style:filter={brandLayer.gray ? 'grayscale(1)' : undefined}
+									style:filter={brandLayer.filter || undefined}
 								></span>
 							{/if}
 							{#if draft.brandLogoDisplay !== 'none'}
@@ -441,10 +463,8 @@
 											<span
 												class="outline__picture"
 												style:background-image={`url("${cardUrl}")`}
-												style:filter={draft.cardImageGrayscale ? 'grayscale(1)' : undefined}
+												style:filter={cardFilter || undefined}
 											></span>
-											{#if cardVeil}<span class="outline__dim" style:background={cardVeil}
-												></span>{/if}
 										</span>
 									{/if}
 									{#if showTools && topbar === 'in_card'}{@render tools()}{/if}

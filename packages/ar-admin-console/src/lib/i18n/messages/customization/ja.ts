@@ -213,6 +213,8 @@ export const jaCustomization = {
 	'th.i.modes': '画像の表示モード',
 	'th.i.effectsBothModes': '画像・透明度・効果はライト・ダーク共通です。',
 	'th.i.darkDim': 'ダーク時の暗さ',
+	'th.i.darkPicturesNote':
+		'画像・不透明度・効果はライトのタブで設定します。ダークでは、画像ごとの暗さだけを調整できます。',
 	'th.i.favicon': 'ファビコンの画像',
 	'th.i.bgImage': '背景の画像',
 	'th.i.bgOpacity': '背景画像の透明度',

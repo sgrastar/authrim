@@ -218,6 +218,8 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.i.modes': 'Bildmodus',
 	'th.i.effectsBothModes': 'Bild, Deckkraft und Effekte gelten für beide Modi.',
 	'th.i.darkDim': 'Abdunkeln im dunklen Modus',
+	'th.i.darkPicturesNote':
+		'Bilder, Deckkraft und Effekte werden im hellen Tab festgelegt. Im dunklen Modus lässt sich nur die Helligkeit jedes Bildes anpassen.',
 	'th.i.favicon': 'Favicon image',
 	'th.i.bgImage': 'Background image',
 	'th.i.bgOpacity': 'Background image opacity',

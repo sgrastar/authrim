@@ -1654,6 +1654,62 @@ components:
                         description: >-
                           blur 0-20 px; brightness and contrast 0-200 %; saturate 0-300 %;
                           hue-rotate 0-360 deg; grayscale, sepia and invert 0-100 %.
+                loginPanelBackgroundImageFilters:
+                  type: array
+                  default: []
+                  description: >-
+                    Filters on the form-area picture, in the order they apply, as backgroundImageFilters. An
+                    older grayscale switch is served as a full grayscale filter first.
+                  items:
+                    type: object
+                    required: [name, value]
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          [
+                            grayscale,
+                            blur,
+                            brightness,
+                            contrast,
+                            saturate,
+                            hue-rotate,
+                            sepia,
+                            invert,
+                          ]
+                      value:
+                        type: integer
+                        description: >-
+                          blur 0-20 px; brightness and contrast 0-200 %; saturate 0-300 %;
+                          hue-rotate 0-360 deg; grayscale, sepia and invert 0-100 %.
+                brandPanelImageFilters:
+                  type: array
+                  default: []
+                  description: >-
+                    Filters on the split template's brand panel picture, in the order they apply, as backgroundImageFilters. An
+                    older grayscale switch is served as a full grayscale filter first.
+                  items:
+                    type: object
+                    required: [name, value]
+                    properties:
+                      name:
+                        type: string
+                        enum:
+                          [
+                            grayscale,
+                            blur,
+                            brightness,
+                            contrast,
+                            saturate,
+                            hue-rotate,
+                            sepia,
+                            invert,
+                          ]
+                      value:
+                        type: integer
+                        description: >-
+                          blur 0-20 px; brightness and contrast 0-200 %; saturate 0-300 %;
+                          hue-rotate 0-360 deg; grayscale, sepia and invert 0-100 %.
                 brandPanelImageUrl:
                   type:
                     - string

@@ -95,8 +95,8 @@ const FIELD_KEYS: readonly (readonly [keyof ThemeDraft, readonly string[]])[] = 
 	['cardImageOpacity', ['login_panel_background_opacity']],
 	// Grayscale is one of the filters: the older switch is written off with them.
 	['backgroundFilters', ['background_image_filters', 'background_image_grayscale']],
-	['panelImageGrayscale', ['brand_panel_image_grayscale']],
-	['cardImageGrayscale', ['login_panel_background_grayscale']],
+	['panelImageFilters', ['brand_panel_image_filters', 'brand_panel_image_grayscale']],
+	['cardImageFilters', ['login_panel_background_filters', 'login_panel_background_grayscale']],
 	['customCss', ['custom_css']],
 	...THEME_COLOURS.map((colour) => [colour.field, [`${colour.name}_color`]] as const),
 	['darkColours', ['dark_colors']],
@@ -145,8 +145,10 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 		[KEY('login_panel_background_opacity')]: draft.cardImageOpacity,
 		[KEY('background_image_grayscale')]: false,
 		[KEY('background_image_filters')]: formatLoginUIImageFilters(draft.backgroundFilters),
-		[KEY('brand_panel_image_grayscale')]: draft.panelImageGrayscale,
-		[KEY('login_panel_background_grayscale')]: draft.cardImageGrayscale,
+		[KEY('brand_panel_image_grayscale')]: false,
+		[KEY('brand_panel_image_filters')]: formatLoginUIImageFilters(draft.panelImageFilters),
+		[KEY('login_panel_background_grayscale')]: false,
+		[KEY('login_panel_background_filters')]: formatLoginUIImageFilters(draft.cardImageFilters),
 		[KEY('custom_css')]: draft.customCss
 	};
 	// The brand panel shows nothing of the brand, or its logo display apart from the header's.
@@ -395,19 +397,20 @@ export function valuesToDraft(values: ThemeValues): ThemeDraft {
 	draft.cardImageDarkDim = percentOf(v('login_panel_background_dark_dim'), draft.cardImageDarkDim);
 	draft.panelImageOpacity = percentOf(v('brand_panel_image_opacity'), draft.panelImageOpacity);
 	draft.cardImageOpacity = percentOf(v('login_panel_background_opacity'), draft.cardImageOpacity);
-	draft.backgroundFilters = parseLoginUIImageFilters(v('background_image_filters'));
-	// A theme saved with the older grayscale switch shows it as a full grayscale filter, first (the
-	// switch's tone is laid before any filter), unless it has a grayscale filter of its own.
-	if (
-		flagOf(v('background_image_grayscale'), false) &&
-		!draft.backgroundFilters.some((filter) => filter.name === 'grayscale')
-	) {
-		draft.backgroundFilters.unshift({ name: 'grayscale', value: 100 });
-	}
-	draft.panelImageGrayscale = flagOf(v('brand_panel_image_grayscale'), draft.panelImageGrayscale);
-	draft.cardImageGrayscale = flagOf(
-		v('login_panel_background_grayscale'),
-		draft.cardImageGrayscale
+	// A theme saved with an older grayscale switch shows it as a full grayscale filter, first (the
+	// switch was applied before any filter), unless it has a grayscale filter of its own.
+	const filtersOf = (filtersKey: string, grayscaleKey: string) => {
+		const filters = parseLoginUIImageFilters(v(filtersKey));
+		if (flagOf(v(grayscaleKey), false) && !filters.some((filter) => filter.name === 'grayscale')) {
+			filters.unshift({ name: 'grayscale', value: 100 });
+		}
+		return filters;
+	};
+	draft.backgroundFilters = filtersOf('background_image_filters', 'background_image_grayscale');
+	draft.panelImageFilters = filtersOf('brand_panel_image_filters', 'brand_panel_image_grayscale');
+	draft.cardImageFilters = filtersOf(
+		'login_panel_background_filters',
+		'login_panel_background_grayscale'
 	);
 	draft.customCss = textOf(v('custom_css'), '');
 	for (const image of THEME_IMAGES) {

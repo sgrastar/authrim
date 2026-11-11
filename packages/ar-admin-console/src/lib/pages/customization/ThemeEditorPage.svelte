@@ -229,7 +229,9 @@
 			...draft,
 			darkImages: $state.snapshot(draft.darkImages),
 			texts: $state.snapshot(draft.texts),
-			backgroundFilters: $state.snapshot(draft.backgroundFilters)
+			backgroundFilters: $state.snapshot(draft.backgroundFilters),
+			cardImageFilters: $state.snapshot(draft.cardImageFilters),
+			panelImageFilters: $state.snapshot(draft.panelImageFilters)
 		};
 		try {
 			let uploaded: ThemeDraft;

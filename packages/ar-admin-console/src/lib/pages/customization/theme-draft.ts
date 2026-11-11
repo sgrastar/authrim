@@ -144,13 +144,15 @@ export interface ThemeDraft {
 	panelImageOpacity: number;
 	/** 0–100: how much the brand panel picture is darkened in dark mode. */
 	panelImageDarkDim: number;
-	panelImageGrayscale: boolean;
+	/** Filters on the brand panel picture, in the order they apply (each at most once). */
+	panelImageFilters: LoginUIImageFilter[];
 	/** The picture inside the form area (the box with the form), for Standard and Split. */
 	cardImage: string | File | null;
 	cardImageOpacity: number;
 	/** 0–100: how much the form-area picture is darkened in dark mode. */
 	cardImageDarkDim: number;
-	cardImageGrayscale: boolean;
+	/** Filters on the form-area picture, in the order they apply (each at most once). */
+	cardImageFilters: LoginUIImageFilter[];
 	customCss: string;
 }
 
@@ -262,11 +264,11 @@ export function newThemeDraft(): ThemeDraft {
 		panelImage: null,
 		panelImageOpacity: 100,
 		panelImageDarkDim: 0,
-		panelImageGrayscale: false,
+		panelImageFilters: [],
 		cardImage: null,
 		cardImageOpacity: 100,
 		cardImageDarkDim: 0,
-		cardImageGrayscale: false,
+		cardImageFilters: [],
 		customCss: ''
 	};
 }

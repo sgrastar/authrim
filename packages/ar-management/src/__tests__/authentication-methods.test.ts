@@ -371,6 +371,29 @@ describe('Authentication Methods API', () => {
       expect(body.ui.appearance.backgroundImageUrl).toBe('https://example.com/light-bg.png');
     });
 
+    it('serves the form-area and brand panel filters, with an older grayscale switch folded in', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.login_panel_background_filters': 'blur:2;invert:100',
+          'login-ui.login_panel_background_grayscale': true,
+          'login-ui.brand_panel_image_filters': 'grayscale:40;nope:1',
+          'login-ui.brand_panel_image_grayscale': true,
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = await res.json<{
+        ui: { appearance: Record<string, unknown> };
+      }>();
+      // The switch is a full grayscale first; a grayscale of its own wins; unknown entries drop.
+      expect(body.ui.appearance.loginPanelBackgroundImageFilters).toEqual([
+        { name: 'grayscale', value: 100 },
+        { name: 'blur', value: 2 },
+        { name: 'invert', value: 100 },
+      ]);
+      expect(body.ui.appearance.brandPanelImageFilters).toEqual([{ name: 'grayscale', value: 40 }]);
+    });
+
     it('takes no unsafe dark logo, and bounds the dimming', async () => {
       const settingsKV = createMockKV({
         'settings:tenant:default:login-ui': JSON.stringify({

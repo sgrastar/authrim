@@ -397,6 +397,9 @@ export function createLoginUIPageStore() {
 	let backgroundImageDarkDim = $state(0);
 	let loginPanelBackgroundDarkDim = $state(0);
 	let brandPanelImageDarkDim = $state(0);
+	/** The CSS filters of the form-area and brand panel pictures (their own, in order). */
+	let loginPanelBackgroundFilterCss = $state('');
+	let brandPanelImageFilterCss = $state('');
 	let loginPanelBackgroundColor = $state('');
 	let loginPanelBackgroundGradientColor = $state('');
 	let loginPanelBackgroundOpacity = $state(70);
@@ -443,6 +446,16 @@ export function createLoginUIPageStore() {
 			: null;
 	const brandPanelImage = () =>
 		brandPanelImageUrl && isValidImageUrl(brandPanelImageUrl) ? brandPanelImageUrl : null;
+	/**
+	 * The `filter` of a picture drawn on its own element (the form area's, the brand panel's): its
+	 * filters, then its dark-mode darkening as a brightness last, so no filter changes the
+	 * darkening (an inverted veil would turn white). '' with no picture or nothing to apply.
+	 */
+	const pictureFilter = (image: string | null, filters: string, dim: number) => {
+		if (!image) return '';
+		const darkening = colourMode === 'dark' && dim > 0 ? `brightness(${100 - dim}%)` : '';
+		return [filters, darkening].filter(Boolean).join(' ');
+	};
 	const pageBackgroundGray = () => backgroundImageGrayscale && !!effectiveBackgroundImageUrl();
 	const loginPanelBackgroundGray = () =>
 		loginPanelBackgroundGrayscale && !!effectiveLoginPanelBackgroundImageUrl();
@@ -530,12 +543,12 @@ export function createLoginUIPageStore() {
 			darkImageDimLayer(pageImage, backgroundImageDarkDim)
 		);
 		setOptionalStyleProperty(
-			'--login-panel-image-dim',
-			darkImageDimLayer(panelImage, loginPanelBackgroundDarkDim)
+			'--login-panel-background-filter',
+			pictureFilter(panelImage, loginPanelBackgroundFilterCss, loginPanelBackgroundDarkDim) || null
 		);
 		setOptionalStyleProperty(
-			'--login-brand-panel-image-dim',
-			darkImageDimLayer(brandPanelImage(), brandPanelImageDarkDim)
+			'--login-brand-panel-image-filter',
+			pictureFilter(brandPanelImage(), brandPanelImageFilterCss, brandPanelImageDarkDim) || null
 		);
 	}
 
@@ -639,6 +652,18 @@ export function createLoginUIPageStore() {
 				: null;
 		brandPanelImageOpacity = readPercentage(appearance?.brandPanelImageOpacity, 100);
 		brandPanelImageGrayscale = readBoolean(appearance?.brandPanelImageGrayscale, false);
+		// Each list built from the known filters only; a server that serves none yet sends the
+		// older grayscale switch alone.
+		const pictureFilterCss = (filters: unknown, grayscale: boolean) =>
+			Array.isArray(filters)
+				? loginUIImageFilterCss(filters as LoginUIImageFilter[])
+				: grayscale
+					? 'grayscale(100%)'
+					: '';
+		brandPanelImageFilterCss = pictureFilterCss(
+			appearance?.brandPanelImageFilters,
+			brandPanelImageGrayscale
+		);
 		fontFamily = readFontFamily(page?.fontFamily);
 		fontScale = readFontScale(page?.fontScale);
 		backgroundColor = READ_COLOUR.background(page?.backgroundColor);
@@ -663,6 +688,11 @@ export function createLoginUIPageStore() {
 			sanitizeColor(page?.loginPanelBackgroundGradientColor) || '';
 		loginPanelBackgroundOpacity = readPercentage(page?.loginPanelBackgroundOpacity, 70);
 		loginPanelBackgroundGrayscale = readBoolean(page?.loginPanelBackgroundGrayscale, false);
+		loginPanelBackgroundFilterCss = Array.isArray(appearance?.loginPanelBackgroundImageFilters)
+			? loginUIImageFilterCss(appearance.loginPanelBackgroundImageFilters as LoginUIImageFilter[])
+			: loginPanelBackgroundGrayscale
+				? 'grayscale(100%)'
+				: '';
 		headerEnabled = readBoolean(page?.headerEnabled, true);
 		subtitleEnabled = readBoolean(page?.subtitleEnabled, true);
 		footerEnabled = readBoolean(page?.footerEnabled, true);
@@ -817,14 +847,17 @@ export function createLoginUIPageStore() {
 		get backgroundImageDimLayer() {
 			return darkImageDimLayer(effectiveBackgroundImageUrl(), backgroundImageDarkDim);
 		},
-		get loginPanelBackgroundDimLayer() {
-			return darkImageDimLayer(
+		/** The form-area picture's `filter` (its filters, then dark-mode darkening), or ''. */
+		get loginPanelBackgroundFilter() {
+			return pictureFilter(
 				effectiveLoginPanelBackgroundImageUrl(),
+				loginPanelBackgroundFilterCss,
 				loginPanelBackgroundDarkDim
 			);
 		},
-		get brandPanelImageDimLayer() {
-			return darkImageDimLayer(brandPanelImage(), brandPanelImageDarkDim);
+		/** The brand panel picture's `filter` (its filters, then dark-mode darkening), or ''. */
+		get brandPanelImageFilter() {
+			return pictureFilter(brandPanelImage(), brandPanelImageFilterCss, brandPanelImageDarkDim);
 		},
 		get brandPanelImageLayer() {
 			return brandPanelImageUrl ? cssUrl(brandPanelImageUrl) : null;

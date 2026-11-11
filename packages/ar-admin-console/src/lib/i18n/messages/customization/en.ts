@@ -213,6 +213,8 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.i.modes': 'Image mode',
 	'th.i.effectsBothModes': 'The picture, its opacity and its effects apply to both modes.',
 	'th.i.darkDim': 'Darkening in dark mode',
+	'th.i.darkPicturesNote':
+		'Set the pictures, their opacity and their effects in the light tab. Dark mode only adjusts how dark each picture is.',
 	'th.i.favicon': 'Favicon image',
 	'th.i.bgImage': 'Background image',
 	'th.i.bgOpacity': 'Background image opacity',

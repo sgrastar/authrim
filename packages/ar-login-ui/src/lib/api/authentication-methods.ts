@@ -250,6 +250,9 @@ export interface LoginUIConfig {
 		backgroundImageGrayscale?: boolean;
 		/** Filters on the page picture, in the order they apply (each at most once). */
 		backgroundImageFilters?: { name: string; value: number }[];
+		/** Filters on the form-area and brand panel pictures, in order (older servers send none). */
+		loginPanelBackgroundImageFilters?: { name: string; value: number }[];
+		brandPanelImageFilters?: { name: string; value: number }[];
 		loginPanelBackgroundImageUrl?: string | null;
 		brandPanelImageUrl?: string | null;
 		/** Percentage, 0-100. */

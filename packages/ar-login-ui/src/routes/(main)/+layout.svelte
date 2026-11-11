@@ -160,7 +160,6 @@
 	style:--login-page-background-layer={loginUIPageStore.backgroundImageLayer ?? undefined}
 	style:--login-panel-background-layer={loginUIPageStore.loginPanelBackgroundLayer ?? undefined}
 	style:--login-page-image-dim={loginUIPageStore.backgroundImageDimLayer ?? undefined}
-	style:--login-panel-image-dim={loginUIPageStore.loginPanelBackgroundDimLayer ?? undefined}
 	style:--login-panel-background-fill={loginUIPageStore.loginPanelBackgroundColor
 		? loginUIPageStore.loginPanelBackgroundGradientColor
 			? `linear-gradient(135deg, ${loginUIPageStore.loginPanelBackgroundColor}, ${loginUIPageStore.loginPanelBackgroundGradientColor})`
@@ -180,7 +179,8 @@
 	style:--login-language-select-text-color={loginUIPageStore.languageSelectTextColor || undefined}
 	style:--login-page-background-opacity={String(loginUIPageStore.backgroundImageOpacity / 100)}
 	style:--login-brand-panel-image-layer={loginUIPageStore.brandPanelImageLayer ?? undefined}
-	style:--login-brand-panel-image-dim={loginUIPageStore.brandPanelImageDimLayer ?? undefined}
+	style:--login-panel-background-filter={loginUIPageStore.loginPanelBackgroundFilter || undefined}
+	style:--login-brand-panel-image-filter={loginUIPageStore.brandPanelImageFilter || undefined}
 	style:--login-brand-panel-image-opacity={String(loginUIPageStore.brandPanelImageOpacity / 100)}
 >
 	{#if loginUIPageStore.customCss}

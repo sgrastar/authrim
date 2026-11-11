@@ -342,14 +342,16 @@
 		const layer = () =>
 			canvasElement.querySelector<HTMLElement>('.outline > .outline__image > .outline__picture');
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
+		// Each picture has its own effects menu: the background's is the first.
+		const menu = () => canvas.getAllByRole('button', { name: t('th.f.add') })[0];
 		// No picture, nothing to filter: the menu waits for one.
-		await expect(canvas.getByRole('button', { name: t('th.f.add') })).toBeDisabled();
+		await expect(menu()).toBeDisabled();
 		// Favicon, logo, background: the third.
 		const [, , background] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
 		await userEvent.upload(background, new File(['x'], 'bg.png', { type: 'image/png' }));
 		await waitFor(() => expect(layer()).not.toBeNull());
 		const add = async (name: string) => {
-			await userEvent.click(canvas.getByRole('button', { name: t('th.f.add') }));
+			await userEvent.click(menu());
 			await userEvent.click(await body.findByRole('menuitem', { name }));
 		};
 		await add(t('th.f.hue-rotate'));
@@ -359,7 +361,7 @@
 		await add(t('th.f.blur'));
 		await waitFor(() => expect(layer()?.style.filter).toBe('hue-rotate(200deg) blur(4px)'));
 		// A filter already added is not offered again.
-		await userEvent.click(canvas.getByRole('button', { name: t('th.f.add') }));
+		await userEvent.click(menu());
 		await expect(await body.findByRole('menuitem', { name: t('th.f.blur') })).toBeDisabled();
 		await userEvent.keyboard('{Escape}');
 		await userEvent.click(
@@ -443,7 +445,11 @@
 		await waitFor(() => expect(veiled(image())).toBe(true));
 		await expect(veiled(formImage())).toBe(false);
 		await fireEvent.input(formDim, { target: { value: '20' } });
-		await waitFor(() => expect(veiled(formImage())).toBe(true));
+		await waitFor(() =>
+			expect(formImage()?.querySelector<HTMLElement>('.outline__picture')?.style.filter).toBe(
+				'brightness(80%)'
+			)
+		);
 		// The light tab has no darkening.
 		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.light') }));
 		await expect(canvas.queryAllByRole('slider', { name: t('th.i.darkDim') })).toHaveLength(0);
@@ -1231,12 +1237,20 @@
 		fireEvent.input(panel, { target: { value: '70' } });
 		await waitFor(() => expect(layers[0].style.opacity).toBe('0.4'));
 		await waitFor(() => expect(layers[1].style.opacity).toBe('0.7'));
-		// The brand panel's own darkening, shown in dark mode only.
+		// The brand panel has its own effects, set in the light tab.
+		const body = within(canvasElement.ownerDocument.body);
+		const panelImage = () =>
+			canvasElement.querySelector<HTMLElement>('.outline__panel .outline__image');
+		await userEvent.click(canvas.getAllByRole('button', { name: t('th.f.add') }).at(-1)!);
+		await userEvent.click(await body.findByRole('menuitem', { name: t('th.f.invert') }));
+		await waitFor(() => expect(panelImage()?.style.filter).toBe('invert(100%)'));
+		// The dark tab only darkens it, after its effects (so the darkening is not inverted).
+		await expect(canvas.queryAllByRole('slider', { name: t('th.i.darkDim') })).toHaveLength(0);
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
+		await expect(canvas.queryAllByRole('button', { name: t('th.f.add') })).toHaveLength(0);
 		const panelDim = canvas.getAllByRole('slider', { name: t('th.i.darkDim') }).at(-1)!;
 		fireEvent.input(panelDim, { target: { value: '50' } });
-		await expect(layers[1].style.backgroundImage).not.toContain('linear-gradient');
-		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
-		await waitFor(() => expect(layers[1].style.backgroundImage).toContain('linear-gradient'));
+		await waitFor(() => expect(panelImage()?.style.filter).toBe('invert(100%) brightness(50%)'));
 	}}
 >
 	{#snippet template()}

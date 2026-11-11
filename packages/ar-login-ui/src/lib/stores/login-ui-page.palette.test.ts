@@ -232,6 +232,11 @@ describe('loginUIPageStore templates and palettes', () => {
 						backgroundImageDarkDim: 40,
 						loginPanelBackgroundDarkDim: 20,
 						brandPanelImageDarkDim: 30,
+						loginPanelBackgroundImageFilters: [{ name: 'invert', value: 100 }],
+						brandPanelImageFilters: [
+							{ name: 'grayscale', value: 100 },
+							{ name: 'blur', value: 2 }
+						],
 						customCss: null,
 						headerText: null,
 						footerText: null,
@@ -244,20 +249,29 @@ describe('loginUIPageStore templates and palettes', () => {
 		const veil = (dim: number) => `linear-gradient(rgb(0 0 0 / ${dim}%), rgb(0 0 0 / ${dim}%))`;
 		expect(store.backgroundImageDimLayer).toBeNull();
 		expect(html().style.getPropertyValue('--login-page-image-dim')).toBe('');
+		// In light mode, the form-area and brand panel pictures take their own filters.
+		expect(store.loginPanelBackgroundFilter).toBe('invert(100%)');
+		expect(store.brandPanelImageFilter).toBe('grayscale(100%) blur(2px)');
+		expect(html().style.getPropertyValue('--login-panel-background-filter')).toBe('invert(100%)');
 		store.setColourMode('dark');
 		expect(store.backgroundImageUrl).toBe('https://example.com/light-bg.jpg');
 		expect(store.loginPanelBackgroundImageUrl).toBe('https://example.com/light-form.jpg');
 		// Each picture by its own dimming.
 		expect(store.backgroundImageDimLayer).toBe(veil(40));
-		expect(store.loginPanelBackgroundDimLayer).toBe(veil(20));
-		expect(store.brandPanelImageDimLayer).toBe(veil(30));
+		// The pictures on their own elements are darkened after their filters (an inverted picture
+		// is darkened, the darkening not inverted).
+		expect(store.loginPanelBackgroundFilter).toBe('invert(100%) brightness(80%)');
+		expect(store.brandPanelImageFilter).toBe('grayscale(100%) blur(2px) brightness(70%)');
 		expect(html().style.getPropertyValue('--login-page-image-dim')).toBe(veil(40));
-		expect(html().style.getPropertyValue('--login-panel-image-dim')).toBe(veil(20));
-		expect(html().style.getPropertyValue('--login-brand-panel-image-dim')).toBe(veil(30));
+		expect(html().style.getPropertyValue('--login-panel-background-filter')).toBe(
+			'invert(100%) brightness(80%)'
+		);
+		expect(html().style.getPropertyValue('--login-brand-panel-image-filter')).toBe(
+			'grayscale(100%) blur(2px) brightness(70%)'
+		);
 		store.setColourMode('light');
 		expect(html().style.getPropertyValue('--login-page-image-dim')).toBe('');
-		expect(html().style.getPropertyValue('--login-panel-image-dim')).toBe('');
-		expect(html().style.getPropertyValue('--login-brand-panel-image-dim')).toBe('');
+		expect(store.loginPanelBackgroundFilter).toBe('invert(100%)');
 	});
 
 	it('darkens nothing with no dimming, nor where there is no picture', () => {
@@ -299,8 +313,32 @@ describe('loginUIPageStore templates and palettes', () => {
 			)
 		);
 		expect(store.backgroundImageDimLayer).toBeNull();
-		expect(store.loginPanelBackgroundDimLayer).toBeNull();
-		expect(store.brandPanelImageDimLayer).toBeNull();
+		expect(store.loginPanelBackgroundFilter).toBe('');
+		expect(store.brandPanelImageFilter).toBe('');
+	});
+
+	it('takes an older server’s grayscale switches as the pictures’ filters', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(
+			config(
+				{ loginPanelBackgroundGrayscale: true },
+				{
+					appearance: {
+						backgroundImageUrl: null,
+						loginPanelBackgroundImageUrl: 'https://example.com/form.jpg',
+						brandPanelImageUrl: 'https://example.com/panel.jpg',
+						brandPanelImageGrayscale: true,
+						customCss: null,
+						headerText: null,
+						footerText: null,
+						footerLinks: [],
+						customBlocks: []
+					}
+				}
+			)
+		);
+		expect(store.loginPanelBackgroundFilter).toBe('grayscale(100%)');
+		expect(store.brandPanelImageFilter).toBe('grayscale(100%)');
 	});
 
 	it('shows the dark logo in dark mode, and the light logo where none is set', () => {
