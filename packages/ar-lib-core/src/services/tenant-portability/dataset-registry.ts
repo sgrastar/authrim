@@ -200,9 +200,12 @@ const TABLE_GROUPS: Partial<
     `,
     // platform_settings_documents holds platform-wide settings and settings_legacy_import_state
     // the environment's one-time settings import (no tenant identity): the target environment
-    // keeps its own, so a tenant backup neither exports nor replaces them.
+    // keeps its own, so a tenant backup neither exports nor replaces them. The platform's
+    // profiles are the environment's too: a tenant's change to one (a row with base_profile_id)
+    // is the tenant's, and depends on the target environment having that platform profile.
     external: `
       admin_database_connections admin_storage_destinations platform_settings_documents
+      platform_authentication_method_profiles platform_session_profiles
       settings_legacy_import_state
       admin_machine_credential_permissions admin_machine_credential_tenant_scopes admin_machine_credentials
       admin_machine_principal_permissions admin_machine_principal_tenant_scopes admin_machine_principals

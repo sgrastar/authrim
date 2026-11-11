@@ -13,7 +13,9 @@ import {
   adminAuthMiddleware,
   createAuthContextFromHono,
   createErrorResponse,
+  flowsNameProfile,
   getLogger,
+  isPlatformProfileId,
   getRateLimitProfileAsync,
   getTenantIdFromContext,
   rateLimitMiddleware,
@@ -27,6 +29,14 @@ import {
 } from '../settings-v2/settings-authorization';
 import { applyTenantSettingsChange } from '../settings-v2/tenant-settings-apply';
 import { getSettingsManager } from '../settings-v2/settings-support';
+import {
+  creationNotAllowed,
+  deleteTenantOverride,
+  getPlatformEntry,
+  listPlatformEntries,
+  saveTenantOverride,
+  tenantMayCreateProfile,
+} from './tenant-platform-profiles';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 type Router = Hono<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -90,22 +100,16 @@ const failure = (c: AdminContext, action: string, error: unknown) => {
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 };
 
-/** Whether a Flow of the tenant names the profile: its draft, or the version it runs. */
+/**
+ * Whether a Flow of the tenant names the profile: its draft, the version it publishes, or a
+ * version an interaction still running started with.
+ */
 async function profileInUse(c: AdminContext, tenantId: string, id: string): Promise<boolean> {
   const db = createAuthContextFromHono(
     c as unknown as Context<{ Bindings: Env }>,
     tenantId
   ).coreAdapter;
-  const needle = `%"session_profile_ref":${JSON.stringify(id)}%`;
-  const row = await db.queryOne<{ id: string }>(
-    `SELECT f.id AS id FROM flows f
-       LEFT JOIN flow_versions v ON v.id = f.published_version_id AND v.tenant_id = f.tenant_id
-      WHERE f.tenant_id = ? AND f.deleted_at IS NULL
-        AND (f.draft_editor_json LIKE ? OR v.runtime_snapshot_json LIKE ?)
-      LIMIT 1`,
-    [tenantId, needle, needle]
-  );
-  return row !== null && row !== undefined;
+  return flowsNameProfile(db, tenantId, id, Math.floor(Date.now() / 1000));
 }
 
 async function bodyObject(c: AdminContext): Promise<Record<string, unknown> | null> {
@@ -209,12 +213,18 @@ async function defaultProfile(c: AdminContext, readOnly: boolean) {
 sessionProfilesRouter.get('/', async (c) => {
   c.header('Cache-Control', 'no-store');
   try {
-    const [builtIn, saved] = await Promise.all([
+    const tenantId = getTenantIdFromContext(c);
+    const [builtIn, saved, platform] = await Promise.all([
       defaultProfile(c, true),
-      repo(c).list(getTenantIdFromContext(c)),
+      repo(c).list(tenantId),
+      listPlatformEntries(c, 'session', tenantId),
     ]);
     return c.json({
-      profiles: [builtIn, ...saved.map((profile) => ({ ...profile, is_system: false }))],
+      profiles: [
+        builtIn,
+        ...saved.map((profile) => ({ ...profile, is_system: false, scope: 'tenant' })),
+        ...platform,
+      ],
     });
   } catch (error) {
     return failure(c, 'list', error);
@@ -232,6 +242,7 @@ sessionProfilesRouter.post('/', async (c) => {
   const input = parsed.input;
   if (input.name.toLowerCase() === 'default') return invalid(c, 'name', 'Default is reserved');
   try {
+    if (!(await tenantMayCreateProfile(c, 'session'))) return creationNotAllowed(c);
     const result = await repo(c).create(getTenantIdFromContext(c), input, auth.userId);
     if (result.status === 'name_taken') return c.json({ error: 'profile_name_taken' }, 409);
     if (result.status === 'limit_reached') return c.json({ error: 'profile_limit_reached' }, 409);
@@ -242,7 +253,7 @@ sessionProfilesRouter.post('/', async (c) => {
       result: 'success',
       metadata: { name: result.profile.name },
     });
-    return c.json({ profile: { ...result.profile, is_system: false } }, 201);
+    return c.json({ profile: { ...result.profile, is_system: false, scope: 'tenant' } }, 201);
   } catch (error) {
     return failure(c, 'create', error);
   }
@@ -251,9 +262,16 @@ sessionProfilesRouter.post('/', async (c) => {
 sessionProfilesRouter.get('/:id', async (c) => {
   c.header('Cache-Control', 'no-store');
   try {
-    if (c.req.param('id') === 'default') return c.json({ profile: await defaultProfile(c, true) });
-    const profile = await repo(c).find(getTenantIdFromContext(c), c.req.param('id'));
-    return profile ? c.json({ profile: { ...profile, is_system: false } }) : missing(c);
+    const id = c.req.param('id');
+    if (id === 'default') return c.json({ profile: await defaultProfile(c, true) });
+    if (isPlatformProfileId('session', id)) {
+      const entry = await getPlatformEntry(c, 'session', getTenantIdFromContext(c), id);
+      return entry ? c.json({ profile: entry }) : missing(c);
+    }
+    const profile = await repo(c).find(getTenantIdFromContext(c), id);
+    return profile
+      ? c.json({ profile: { ...profile, is_system: false, scope: 'tenant' } })
+      : missing(c);
   } catch (error) {
     return failure(c, 'get', error);
   }
@@ -265,10 +283,18 @@ sessionProfilesRouter.put('/:id', async (c) => {
   if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   const body = await bodyObject(c);
   if (!body) return invalid(c, 'body', 'The body must be a JSON object');
+  const id = c.req.param('id');
+  // A platform profile: the tenant's copy of it (its name is the platform's).
+  if (isPlatformProfileId('session', id)) {
+    try {
+      return await saveTenantOverride(c, 'session', getTenantIdFromContext(c), id, body);
+    } catch (error) {
+      return failure(c, 'override', error);
+    }
+  }
   const parsed = inputFrom(c, body);
   if (parsed.error) return parsed.error;
   const input = parsed.input;
-  const id = c.req.param('id');
   if (id === 'default') {
     if (input.name !== 'Default')
       return invalid(c, 'name', 'The Default profile cannot be renamed');
@@ -393,7 +419,7 @@ sessionProfilesRouter.put('/:id', async (c) => {
       result: 'success',
       metadata: { name: result.profile.name, version: result.profile.version },
     });
-    return c.json({ profile: { ...result.profile, is_system: false } });
+    return c.json({ profile: { ...result.profile, is_system: false, scope: 'tenant' } });
   } catch (error) {
     return failure(c, 'update', error);
   }
@@ -405,6 +431,10 @@ sessionProfilesRouter.delete('/:id', async (c) => {
     return invalid(c, 'id', 'The Default profile cannot be deleted');
   try {
     const id = c.req.param('id');
+    // A platform profile: removes the tenant's copy (the platform's values hold again).
+    if (isPlatformProfileId('session', id)) {
+      return await deleteTenantOverride(c, 'session', getTenantIdFromContext(c), id);
+    }
     const profile = await repo(c).find(getTenantIdFromContext(c), id);
     if (!profile) return missing(c);
     // A Flow that names it (its draft, or the version it runs) could make no session once it is

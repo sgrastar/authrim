@@ -7,8 +7,7 @@
  * the admin database (ar-management `session-profiles`).
  */
 import type { Env } from '../types/env';
-import { SessionProfileRepository } from '../repositories/admin/authentication-method-profile';
-import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
+import { resolveNamedProfile } from './platform-profiles';
 import { createLogger } from '../utils/logger';
 import { readSettingsFlag } from '../utils/tenant-settings';
 import {
@@ -51,12 +50,11 @@ export async function readSessionProfile(
 ): Promise<SessionProfileRead> {
   if (!ref || ref === 'default') return { kind: 'default' };
   try {
-    const profile = await new SessionProfileRepository(
-      requireDedicatedAdminDatabaseAdapter(env, 'session-profile')
-    ).find(tenantId, ref);
-    return profile
-      ? { kind: 'profile', id: ref, values: profile.values }
-      : { kind: 'missing', id: ref };
+    // The tenant's own profile, or the platform's (its copy where that applies).
+    const profile = await resolveNamedProfile(env, tenantId, 'session', ref);
+    return profile.kind === 'missing'
+      ? { kind: 'missing', id: ref }
+      : { kind: 'profile', id: ref, values: profile.values };
   } catch (error) {
     log.error(
       'Failed to read a session profile',

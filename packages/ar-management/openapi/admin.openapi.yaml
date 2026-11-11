@@ -34588,9 +34588,13 @@ paths:
       operationId: getApiAdminAuthenticationMethodProfiles
       summary: List authentication method profiles
       description: >-
-        Lists the live Default profile and saved profiles for the selected tenant. Default reflects
-        the tenant's authentication-methods settings; saved profiles do not affect the runtime until
-        a service flow references one. Requires settings read permission.
+        Lists the live Default profile, the tenant's saved profiles (scope tenant) and the
+        platform's profiles (scope platform, ids starting pmp_). Default reflects the tenant's
+        authentication-methods settings; saved profiles do not affect the runtime until a service
+        flow references one. Saving a platform profile here (PUT) makes or changes the tenant's
+        copy, where the platform lets tenants change its profiles and the profile is not locked
+        (403 profile_not_editable otherwise); deleting it removes the copy. Creating needs the
+        platform's leave (403 profile_creation_not_allowed). Requires settings read permission.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':
@@ -34679,15 +34683,19 @@ paths:
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '#/components/schemas/AuthenticationMethodProfileInput'
-                - type: object
-                  required: [version]
-                  properties:
-                    version:
-                      oneOf:
-                        - type: integer
-                        - type: string
+              # Either shape is taken (the id decides which applies), so the branches may overlap.
+              anyOf:
+                - description: A profile of the tenant's own, or default.
+                  allOf:
+                    - $ref: '#/components/schemas/AuthenticationMethodProfileInput'
+                    - type: object
+                      required: [version]
+                      properties:
+                        version:
+                          oneOf:
+                            - type: integer
+                            - type: string
+                - $ref: '#/components/schemas/PlatformProfileCopyInput'
       responses:
         '200':
           description: Updated profile.
@@ -34713,6 +34721,19 @@ paths:
       responses:
         '204':
           description: Profile deleted.
+        '200':
+          description: >-
+            For a platform profile (pmp_/psp_ id): the tenant's copy is removed and the profile is
+            returned as it now holds for the tenant (the platform's values).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    type: object
+                    additionalProperties: true
         default:
           $ref: '#/components/responses/Error'
       security:
@@ -34724,10 +34745,14 @@ paths:
       operationId: getApiAdminSessionProfiles
       summary: List session profiles
       description: >-
-        Lists the live Default profile and saved profiles for the selected tenant. Default reflects
-        the tenant's session settings and oauth.sso_enabled; a saved profile applies to the
-        sessions a service flow makes once the flow references it. Requires settings read
-        permission and session settings access.
+        Lists the live Default profile, the tenant's saved profiles (scope tenant) and the
+        platform's profiles (scope platform, ids starting psp_). Default reflects the tenant's
+        session settings and oauth.sso_enabled; a saved profile applies to the sessions a service
+        flow makes once the flow references it. Saving a platform profile here (PUT) makes or
+        changes the tenant's copy, where the platform lets tenants change its profiles and the
+        profile is not locked (403 profile_not_editable otherwise); deleting it removes the copy.
+        Creating needs the platform's leave (403 profile_creation_not_allowed). Requires settings
+        read permission and session settings access.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':
@@ -34820,15 +34845,19 @@ paths:
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '#/components/schemas/SessionProfileInput'
-                - type: object
-                  required: [version]
-                  properties:
-                    version:
-                      oneOf:
-                        - type: integer
-                        - type: string
+              # Either shape is taken (the id decides which applies), so the branches may overlap.
+              anyOf:
+                - description: A profile of the tenant's own, or default.
+                  allOf:
+                    - $ref: '#/components/schemas/SessionProfileInput'
+                    - type: object
+                      required: [version]
+                      properties:
+                        version:
+                          oneOf:
+                            - type: integer
+                            - type: string
+                - $ref: '#/components/schemas/PlatformProfileCopyInput'
       responses:
         '200':
           description: Updated profile.
@@ -34855,6 +34884,389 @@ paths:
       responses:
         '204':
           description: Profile deleted.
+        '200':
+          description: >-
+            For a platform profile (pmp_/psp_ id): the tenant's copy is removed and the profile is
+            returned as it now holds for the tenant (the platform's values).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    type: object
+                    additionalProperties: true
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/platform/authentication-method-profiles:
+    get:
+      tags:
+        - Authentication Method Profiles
+      operationId: getApiAdminPlatformAuthenticationMethodProfiles
+      summary: List the platform's authentication method profiles
+      description: >-
+        Profiles every tenant may use (ids start with pmp_), with how many tenants have
+        changed each one (overriding_tenants). Requires a global platform administrator.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Platform profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profiles]
+                properties:
+                  profiles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PlatformProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Authentication Method Profiles
+      operationId: postApiAdminPlatformAuthenticationMethodProfiles
+      summary: Create a platform authentication method profile
+      description: >-
+        A platform profile holds only settings that mean the same in every tenant: a setting that
+        names something of one tenant (an external provider, Human Verification) is refused.
+        Requires a global platform administrator who may edit platform settings.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformProfileInput'
+      responses:
+        '201':
+          description: Created profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlatformProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/platform/authentication-method-profiles/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The platform profile ID (pmp_…).
+    get:
+      tags:
+        - Authentication Method Profiles
+      operationId: getApiAdminPlatformAuthenticationMethodProfile
+      summary: Get a platform authentication method profile
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Profile details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlatformProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Authentication Method Profiles
+      operationId: putApiAdminPlatformAuthenticationMethodProfile
+      summary: Change a platform authentication method profile
+      description: >-
+        Requires the version it was read with (409 conflict otherwise). A tenant that has its own
+        copy keeps it; the tenant is shown that the platform changed it.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/PlatformProfileInput'
+                - type: object
+                  required: [version]
+                  properties:
+                    version:
+                      type: integer
+      responses:
+        '200':
+          description: Updated profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlatformProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Authentication Method Profiles
+      operationId: deleteApiAdminPlatformAuthenticationMethodProfile
+      summary: Delete a platform authentication method profile
+      description: >-
+        The profile is marked as being deleted (no Flow takes a new reference to it), then every
+        tenant's Flows are searched (drafts, published versions, and versions an interaction
+        still runs). It is deleted only when none names it and every tenant could be read;
+        otherwise it is kept and the answer is 409 profile_in_use (with the tenants) or
+        reference_check_incomplete.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '204':
+          description: Profile deleted.
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/platform/authentication-method-profiles/{id}/lock:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags:
+        - Authentication Method Profiles
+      operationId: putApiAdminPlatformAuthenticationMethodProfileLock
+      summary: Lock or unlock a platform authentication method profile
+      description: >-
+        A locked profile can be used but not changed by tenants; a copy a tenant made before is
+        set aside (kept, and applies again once unlocked).
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locked, version]
+              properties:
+                locked:
+                  type: boolean
+                version:
+                  type: integer
+      responses:
+        '200':
+          description: The profile as locked or unlocked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlatformProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/platform/session-profiles:
+    get:
+      tags:
+        - Session Profiles
+      operationId: getApiAdminPlatformSessionProfiles
+      summary: List the platform's session profiles
+      description: >-
+        Profiles every tenant may use (ids start with psp_), with how many tenants have
+        changed each one (overriding_tenants). Requires a global platform administrator.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Platform profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profiles]
+                properties:
+                  profiles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PlatformProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Session Profiles
+      operationId: postApiAdminPlatformSessionProfiles
+      summary: Create a platform session profile
+      description: >-
+        A platform profile holds only settings that mean the same in every tenant: a setting that
+        names something of one tenant (an external provider, Human Verification) is refused.
+        Requires a global platform administrator who may edit platform settings.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformProfileInput'
+      responses:
+        '201':
+          description: Created profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlatformProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/platform/session-profiles/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The platform profile ID (psp_…).
+    get:
+      tags:
+        - Session Profiles
+      operationId: getApiAdminPlatformSessionProfile
+      summary: Get a platform session profile
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Profile details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlatformProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Session Profiles
+      operationId: putApiAdminPlatformSessionProfile
+      summary: Change a platform session profile
+      description: >-
+        Requires the version it was read with (409 conflict otherwise). A tenant that has its own
+        copy keeps it; the tenant is shown that the platform changed it.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/PlatformProfileInput'
+                - type: object
+                  required: [version]
+                  properties:
+                    version:
+                      type: integer
+      responses:
+        '200':
+          description: Updated profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlatformProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Session Profiles
+      operationId: deleteApiAdminPlatformSessionProfile
+      summary: Delete a platform session profile
+      description: >-
+        The profile is marked as being deleted (no Flow takes a new reference to it), then every
+        tenant's Flows are searched (drafts, published versions, and versions an interaction
+        still runs). It is deleted only when none names it and every tenant could be read;
+        otherwise it is kept and the answer is 409 profile_in_use (with the tenants) or
+        reference_check_incomplete.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '204':
+          description: Profile deleted.
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/platform/session-profiles/{id}/lock:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags:
+        - Session Profiles
+      operationId: putApiAdminPlatformSessionProfileLock
+      summary: Lock or unlock a platform session profile
+      description: >-
+        A locked profile can be used but not changed by tenants; a copy a tenant made before is
+        set aside (kept, and applies again once unlocked).
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locked, version]
+              properties:
+                locked:
+                  type: boolean
+                version:
+                  type: integer
+      responses:
+        '200':
+          description: The profile as locked or unlocked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlatformProfile'
         default:
           $ref: '#/components/responses/Error'
       security:
@@ -80684,6 +81096,87 @@ components:
           type: integer
         updated_at:
           type: integer
+    PlatformProfileCopyInput:
+      type: object
+      description: >-
+        A tenant's copy of a platform profile (PUT on a pmp_/psp_ id): the full values it holds,
+        and the copy's version (null to make it). Refused with 403 profile_not_editable when the
+        profile is locked, the platform does not let tenants change its profiles, or it is being
+        deleted.
+      required: [values, version]
+      properties:
+        values:
+          type: object
+          additionalProperties: true
+        version:
+          type: [integer, 'null']
+    PlatformProfileInput:
+      type: object
+      required: [name, values]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        values:
+          type: object
+          description: Settings keyed by full setting key, as the tenant profiles of the kind take them, less those that name something of one tenant.
+          additionalProperties: true
+    PlatformProfile:
+      allOf:
+        - $ref: '#/components/schemas/PlatformProfileInput'
+        - type: object
+          required: [id, version, locked, state, created_at, updated_at]
+          properties:
+            id:
+              type: string
+            version:
+              type: integer
+            locked:
+              type: boolean
+            state:
+              type: string
+              enum: [active, deleting]
+            overriding_tenants:
+              type: integer
+              description: How many tenants have their own copy of it.
+            created_by:
+              type: [string, 'null']
+            created_at:
+              type: integer
+            updated_at:
+              type: integer
+    TenantViewOfPlatformProfile:
+      type: object
+      description: >-
+        Fields of a platform profile in a tenant's list (scope platform). values is what holds for
+        the tenant now (its copy where that applies, else the platform's); version is the copy's
+        (send it back to change the copy, null to make one).
+      properties:
+        scope:
+          type: string
+          enum: [tenant, platform]
+        platform_values:
+          type: object
+          additionalProperties: true
+        platform_version:
+          type: integer
+        locked:
+          type: boolean
+        overridden:
+          type: boolean
+          description: The tenant's copy applies.
+        override_inactive:
+          type: boolean
+          description: The tenant has a copy that is set aside (locked, or tenants may not change platform profiles).
+        override_inactive_reason:
+          type: [string, 'null']
+          enum: [locked, changes_not_allowed, null]
+        editable:
+          type: boolean
+        platform_updated:
+          type: boolean
+          description: The platform changed it since the tenant's copy was made.
     AuthenticationMethodProfileInput:
       type: object
       required: [name, values]
@@ -80699,6 +81192,7 @@ components:
     AuthenticationMethodProfile:
       allOf:
         - $ref: '#/components/schemas/AuthenticationMethodProfileInput'
+        - $ref: '#/components/schemas/TenantViewOfPlatformProfile'
         - type: object
           required: [id, is_system, version, created_at, updated_at]
           properties:
@@ -80710,6 +81204,7 @@ components:
               oneOf:
                 - type: integer
                 - type: string
+                - type: 'null'
             created_by:
               type: [string, 'null']
             created_at:
@@ -80731,6 +81226,7 @@ components:
     SessionProfile:
       allOf:
         - $ref: '#/components/schemas/SessionProfileInput'
+        - $ref: '#/components/schemas/TenantViewOfPlatformProfile'
         - type: object
           required: [id, is_system, version, created_at, updated_at]
           properties:
@@ -80742,6 +81238,7 @@ components:
               oneOf:
                 - type: integer
                 - type: string
+                - type: 'null'
             created_by:
               type: [string, 'null']
             created_at:

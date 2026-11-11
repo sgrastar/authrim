@@ -94,6 +94,7 @@ function freshDatabase(family: Family) {
           '012_admin_groups.sql',
           '013_authentication_method_profiles.sql',
           '014_session_profiles.sql',
+          '015_platform_profiles.sql',
         ]
       : []),
     ...(family === 'core' ? ['007_account_registration_pending.sql'] : []),

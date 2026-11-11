@@ -5,11 +5,11 @@
  * offered at that step. `default` names no profile: the tenant's methods as they are.
  *
  * Profiles are kept in the admin database (ar-management `authentication-method-profiles`), with
- * the same keys as the tenant's `authentication-methods` settings.
+ * the same keys as the tenant's `authentication-methods` settings: the tenant's own, or the
+ * platform's (services/platform-profiles.ts).
  */
 import type { Env } from '../../types/env';
-import { AuthenticationMethodProfileRepository } from '../../repositories/admin/authentication-method-profile';
-import { requireDedicatedAdminDatabaseAdapter } from '../admin-database-adapter';
+import { resolveNamedProfile } from '../platform-profiles';
 import { createLogger } from '../../utils/logger';
 
 const log = createLogger().module('AUTH-METHOD-PROFILE');
@@ -27,10 +27,11 @@ export async function readAuthenticationProfile(
 ): Promise<AuthenticationProfileRead> {
   if (!ref || ref === 'default') return { kind: 'default' };
   try {
-    const profile = await new AuthenticationMethodProfileRepository(
-      requireDedicatedAdminDatabaseAdapter(env, 'auth-method-profile')
-    ).find(tenantId, ref);
-    return profile ? { kind: 'profile', values: profile.values } : { kind: 'missing' };
+    // The tenant's own profile, or the platform's (its copy where that applies).
+    const profile = await resolveNamedProfile(env, tenantId, 'method', ref);
+    return profile.kind === 'missing'
+      ? { kind: 'missing' }
+      : { kind: 'profile', values: profile.values };
   } catch (error) {
     log.error(
       'Failed to read an authentication method profile',

@@ -604,6 +604,38 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'application launchers'
   ),
   ...byMethod(
+    '/api/admin/platform/authentication-method-profiles',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform authentication method profiles',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/platform/authentication-method-profiles/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform authentication method profile',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/platform/session-profiles',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform session profiles',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/platform/session-profiles/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform session profile',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
     '/api/admin/platform/settings/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,

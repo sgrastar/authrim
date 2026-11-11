@@ -17,6 +17,10 @@ import type {
   SqliteDatasetInspectionPolicy,
 } from './sqlite-dataset-inspector.js';
 import { portableWebhookSecret } from './portable-webhook-secret.js';
+import {
+  isPlatformProfileId,
+  type PlatformProfileKind,
+} from '../../repositories/admin/platform-profile';
 
 const previousIds = new Set(
   PHASE4_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map(({ dataset }) => dataset.id)
@@ -191,16 +195,32 @@ function flowReferences(
         : [];
   const screenIds = new Set<string>();
   const authenticationProfileIds = new Set<string>();
+  const sessionProfileIds = new Set<string>();
   for (const column of columns) {
     const value = parseJsonObject(row, column);
     if (!value) continue;
     collectNamedString(value, 'screen_ref', screenIds);
-    // Authentication profiles are an installed Flow runtime contract, not rows in the shared
-    // storage/audit/residency profile_registry table. Still parse and bound every reference.
     collectNamedString(value, 'authentication_profile_ref', authenticationProfileIds);
+    collectNamedString(value, 'session_profile_ref', sessionProfileIds);
   }
+  // A profile of the tenant's own travels with it: a Flow's draft needs it in the bundle. Past
+  // versions are not held to it (one may name a profile deleted once nothing ran it any more).
+  // `default` is the tenant's settings (no row), and a platform profile (`pmp_…`, `psp_…`) is the
+  // target environment's, checked there as an outside dependency, not in the bundle.
+  // A Flow deleted (its row kept) is held to nothing either: a profile it named may be deleted
+  // since, as the delete checks only Flows still there.
+  const deletedAt = datasetId === 'core.flows' ? row.deleted_at : undefined;
+  const flowDeleted = deletedAt !== undefined && deletedAt[1] !== null;
+  const ownProfiles = (ids: Set<string>, kind: PlatformProfileKind, table: string) =>
+    datasetId !== 'core.flows' || flowDeleted
+      ? []
+      : [...ids]
+          .filter((profileId) => profileId !== 'default' && !isPlatformProfileId(kind, profileId))
+          .map((profileId) => reference(identity, id('admin', table), [['text', profileId]]));
   return [
     ...[...screenIds].map((screenId) => reference(identity, 'core.screens', [['text', screenId]])),
+    ...ownProfiles(authenticationProfileIds, 'method', 'authentication_method_profiles'),
+    ...ownProfiles(sessionProfileIds, 'session', 'session_profiles'),
   ];
 }
 
