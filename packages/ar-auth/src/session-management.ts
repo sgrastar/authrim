@@ -17,6 +17,8 @@ import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   generateCheckSessionIframeHtml,
   getSessionStoreBySessionId,
+  readTenantSessionSettingsStrict,
+  sessionExtensionPolicyFromSettings,
   sessionExtensionPolicyOfData,
   getSessionClientMetadata,
   isShardedSessionId,
@@ -33,7 +35,7 @@ import {
   BROWSER_STATE_COOKIE_NAME,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
-import { resolveSessionExtensionPolicy, resolveSessionTtl } from './session-ttl';
+import { resolveSessionTtl } from './session-ttl';
 
 function normalizeSessionOrigin(value: string | undefined | null): string | null {
   if (!value) {
@@ -524,9 +526,32 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
         404
       );
     }
-    const extension =
-      sessionExtensionPolicyOfData(current.data) ??
-      (await resolveSessionExtensionPolicy(c.env, tenantId));
+    // A session made under a named profile keeps that profile's rules; one made under Default
+    // (or before profiles) follows the tenant's rules as they are now, so turning extension off
+    // for the tenant still stops it.
+    const kept =
+      typeof current.data?.session_profile_id === 'string'
+        ? sessionExtensionPolicyOfData(current.data)
+        : null;
+    let extension = kept;
+    if (!extension) {
+      // Read strictly: settings that cannot be read do not fall back to the defaults (which
+      // allow extension) for a tenant that may have turned it off.
+      try {
+        extension = sessionExtensionPolicyFromSettings(
+          c.env,
+          await readTenantSessionSettingsStrict(c.env, tenantId)
+        );
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Session settings are unavailable.',
+          },
+          503
+        );
+      }
+    }
     if (!extension.enabled) {
       return c.json(
         {

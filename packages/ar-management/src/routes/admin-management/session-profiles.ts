@@ -180,8 +180,12 @@ async function defaultProfile(c: AdminContext, readOnly: boolean) {
     manager.getAll('session', scope),
     manager.getAll('oauth', scope),
   ]);
+  // Single sign-on is an oauth setting: shown only to an admin who may see that category.
+  const auth = c.get('adminAuth');
+  const seesOauth = auth ? hasTenantSettingsPermission(auth, 'oauth', 'view', tenantId) : false;
   const values: Record<string, unknown> = {};
   for (const key of SESSION_PROFILE_KEYS) {
+    if (categoryOfKey(key) === 'oauth' && !seesOauth) continue;
     const value: unknown = (categoryOfKey(key) === 'oauth' ? oauth : session).values[key];
     if (value !== undefined) values[key] = value;
   }
@@ -190,7 +194,12 @@ async function defaultProfile(c: AdminContext, readOnly: boolean) {
     name: 'Default',
     is_system: true,
     values,
-    version: defaultVersion({ session: String(session.version), oauth: String(oauth.version) }),
+    // The oauth document's version stays hidden too from an admin who may not see it: it could
+    // tell its one value apart.
+    version: defaultVersion({
+      session: String(session.version),
+      oauth: seesOauth ? String(oauth.version) : 'hidden',
+    }),
     created_by: null,
     created_at: null,
     updated_at: null,
@@ -281,6 +290,14 @@ sessionProfilesRouter.put('/:id', async (c) => {
       const changed = Object.entries(input.values).filter(
         ([key, value]) => JSON.stringify(current.values[key]) !== JSON.stringify(value)
       );
+      // A setting the admin may not see is not changed through Default: its save could only
+      // answer with what the admin may not see (its document's version).
+      if (
+        !hasTenantSettingsPermission(auth, 'oauth', 'view', getTenantIdFromContext(c)) &&
+        changed.some(([key]) => categoryOfKey(key) === 'oauth')
+      ) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+      }
       const categories = (['session', 'oauth'] as const).filter((category) =>
         changed.some(([key]) => categoryOfKey(key) === category)
       );
@@ -314,9 +331,38 @@ sessionProfilesRouter.put('/:id', async (c) => {
           );
         }
       }
+      // The documents are saved one after the other: one that fails after another was saved is
+      // answered with what was applied, and recorded, so nothing is left half-done unseen.
+      const applied: Array<'session' | 'oauth'> = [];
       for (const category of categories) {
-        const response = await change(category, false);
-        if (!response.ok) return response;
+        let response: Response;
+        try {
+          response = await change(category, false);
+        } catch (error) {
+          if (applied.length === 0) throw error;
+          response = new Response(null, { status: 500 });
+        }
+        if (!response.ok) {
+          if (applied.length === 0) return response;
+          await writeAdminAuditLog(c, {
+            action: 'session.profile.partially_updated',
+            resourceType: 'session_profile',
+            resourceId: 'default',
+            result: 'failure',
+            metadata: { name: 'Default', applied, failed: category, status: response.status },
+          });
+          return c.json(
+            {
+              error: 'partially_applied',
+              error_description:
+                'Some of the Default profile was saved and the rest was not; reload and try again',
+              applied,
+              failed: category,
+            },
+            409
+          );
+        }
+        applied.push(category);
       }
       await writeAdminAuditLog(c, {
         action: 'session.profile.updated',

@@ -468,6 +468,43 @@ describe('managed Direct Auth browser session finish', () => {
     expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
   }, 15000);
 
+  it('asks the Flow about an artifact whose method is not known, rather than skipping it', async () => {
+    const codeVerifier = 'verifier-for-unknown-method';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      // An external sign-in that names no provider.
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'external_idp',
+        runtime_interaction_id: 'interaction_1',
+      },
+    });
+    flowProfiles.allows.mockResolvedValueOnce(false);
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_unknown_method',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(flowProfiles.allows).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant_test',
+      'interaction_1',
+      null,
+      'login'
+    );
+    expect(response.status).toBe(403);
+    expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  }, 15000);
+
   it('makes no session when the Flow’s session profile cannot be read', async () => {
     const codeVerifier = 'verifier-for-unreadable-profile';
     const codeChallenge = await s256Challenge(codeVerifier);

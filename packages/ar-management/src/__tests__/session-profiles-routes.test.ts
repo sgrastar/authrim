@@ -24,8 +24,17 @@ const mocks = vi.hoisted(() => {
     audit: ReturnType<typeof vi.fn>;
     /** The Flow (core database) that names a profile, when one does. */
     flowUsing: string | null;
+    /** A category whose real save fails (after its dry run passed). */
+    failSave: string | null;
+    /** A category whose real save throws. */
+    throwSave: string | null;
+    /** The admin may not see oauth settings. */
+    noOauth: boolean;
   } = {
     flowUsing: null,
+    failSave: null,
+    throwSave: null,
+    noOauth: false,
     tenantId: 'tenant-a',
     auth: {},
     settings: {},
@@ -43,6 +52,17 @@ vi.mock('../routes/settings-v2/settings-support', () => ({
     }),
   }),
 }));
+vi.mock('../routes/settings-v2/settings-authorization', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../routes/settings-v2/settings-authorization')>();
+  return {
+    ...actual,
+    hasTenantSettingsPermission: (
+      ...args: Parameters<typeof actual.hasTenantSettingsPermission>
+    ) =>
+      mocks.noOauth && args[1] === 'oauth' ? false : actual.hasTenantSettingsPermission(...args),
+  };
+});
 vi.mock('../routes/settings-v2/tenant-settings-apply', () => ({
   applyTenantSettingsChange: async (input: {
     category: string;
@@ -53,6 +73,10 @@ vi.mock('../routes/settings-v2/tenant-settings-apply', () => ({
     const doc = mocks.settings[input.category];
     if (body.ifMatch !== `${input.category}-${doc.version}`) {
       return Response.json({ error: 'conflict' }, { status: 409 });
+    }
+    if (!input.dryRun && mocks.throwSave === input.category) throw new Error('db down');
+    if (!input.dryRun && mocks.failSave === input.category) {
+      return Response.json({ error: 'server_error' }, { status: 500 });
     }
     if (!input.dryRun) {
       Object.assign(doc.values, body.set);
@@ -135,6 +159,9 @@ beforeEach(() => {
     oauth: { version: 1, values: { 'oauth.sso_enabled': true } },
   };
   mocks.audit.mockClear();
+  mocks.failSave = null;
+  mocks.throwSave = null;
+  mocks.noOauth = false;
 });
 
 const DEFAULT_VERSION = JSON.stringify({ session: 'session-1', oauth: 'oauth-1' });
@@ -229,5 +256,68 @@ describe('session profiles', () => {
     expect(sessionOnly.status).toBe(200);
     expect(mocks.settings.session.version).toBe(3);
     expect(mocks.settings.oauth.version).toBe(2);
+  });
+
+  it('answers a Default save that stopped halfway with what was applied, and records it', async () => {
+    mocks.failSave = 'oauth';
+    const response = await call('PUT', '/default', {
+      name: 'Default',
+      version: DEFAULT_VERSION,
+      values: { 'session.default_ttl': 7_200_000, 'oauth.sso_enabled': false },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: 'partially_applied',
+      applied: ['session'],
+      failed: 'oauth',
+    });
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'session.profile.partially_updated', result: 'failure' })
+    );
+  });
+
+  it('shows single sign-on in Default only to an admin who may see oauth settings', async () => {
+    mocks.noOauth = true;
+    const { profile } = await (
+      await call('GET', '/default')
+    ).json<{
+      profile: { values: Record<string, unknown>; version: string };
+    }>();
+    expect(profile.values).not.toHaveProperty('oauth.sso_enabled');
+    expect(profile.values).toHaveProperty('session.default_ttl');
+    // Nor its document's version, which could tell its value apart.
+    expect(profile.version).not.toContain('oauth-1');
+    // Saving session lengths still works, and leaves single sign-on as it was.
+    const saved = await call('PUT', '/default', {
+      name: 'Default',
+      version: profile.version,
+      values: { 'session.default_ttl': 3_600_000 },
+    });
+    expect(saved.status).toBe(200);
+    expect(mocks.settings.oauth.values['oauth.sso_enabled']).toBe(true);
+    // Single sign-on itself is not changed through Default by such an admin.
+    const sso = await call('PUT', '/default', {
+      name: 'Default',
+      version: (await saved.json<{ profile: { version: string } }>()).profile.version,
+      values: { 'oauth.sso_enabled': false },
+    });
+    expect(sso.status).toBe(403);
+    expect(await sso.text()).not.toContain('oauth-');
+    expect(mocks.settings.oauth.values['oauth.sso_enabled']).toBe(true);
+  });
+
+  it('answers a second save that throws as halfway too', async () => {
+    mocks.throwSave = 'oauth';
+    const response = await call('PUT', '/default', {
+      name: 'Default',
+      version: DEFAULT_VERSION,
+      values: { 'session.default_ttl': 7_200_000, 'oauth.sso_enabled': false },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: 'partially_applied',
+      applied: ['session'],
+    });
   });
 });
