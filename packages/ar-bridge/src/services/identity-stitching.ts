@@ -42,7 +42,11 @@ import {
   resolveEffectiveSettings,
   updateProfileOnLogin,
   checkEmailRegistration,
+  emailDomainAllowed,
+  profileAllowsHandle,
+  readAuthenticationProfile,
 } from '@authrim/ar-lib-core';
+import { externalEmailCheckNeeded, providerHandle } from './external-email-check';
 import {
   ExternalIdPError,
   ExternalIdPErrorCode,
@@ -171,6 +175,61 @@ export async function getJITConfig(env: Env, tenantId: string): Promise<JITProvi
     // Not applied by the bridge.
     auto_create_org_on_domain_match: false,
   };
+}
+
+/**
+ * An account made from an external identity, held to the sign-up policy of its registration Flow
+ * (the one the start named, else the tenant's own): who may sign up (an invitation, the address's
+ * domain), whether the Flow's authentication method profile signs people up with this provider,
+ * and its `external_email_check`. The email check runs in the Login UI runtime (a session with an
+ * email code bound to the interaction), which this callback cannot hold, so a sign-up that needs
+ * it is refused and the person signs up by email code instead.
+ */
+async function assertExternalSignUpAllowed(
+  env: Env,
+  tenantId: string,
+  params: HandleIdentityParams,
+  provider: HandleIdentityParams['provider']
+): Promise<void> {
+  const loaded = params.loadSignUpPolicy ? await params.loadSignUpPolicy() : null;
+  if (!loaded) return;
+  const { policy, profileRef } = loaded;
+  const email = typeof params.userInfo.email === 'string' ? params.userInfo.email : null;
+  const refused =
+    (policy.eligibility === 'invite' && !params.invitation) ||
+    (policy.eligibility === 'domain' &&
+      (!email || !emailDomainAllowed(email, policy.allowed_domains)));
+  if (refused) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED,
+      'This sign-up is not open to this account.',
+      { providerName: provider.name }
+    );
+  }
+  if (profileRef !== 'default') {
+    const profile = await readAuthenticationProfile(env, tenantId, profileRef);
+    // The profile may list the provider by its slug or by its stable id: refused by either.
+    const handles = [...new Set([providerHandle(provider), providerHandle({ id: provider.id })])];
+    if (!handles.every((handle) => profileAllowsHandle(profile, handle, 'signup'))) {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED,
+        'This provider does not sign people up here.',
+        { providerName: provider.name }
+      );
+    }
+  }
+  const needed = externalEmailCheckNeeded(policy.external_email_check, {
+    email,
+    emailVerified: params.userInfo.email_verified,
+    trustEmail: provider.trustEmail,
+  });
+  if (needed) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
+      'The email address needs to be verified by email code before this sign-up can finish.',
+      { providerName: provider.name, emailCheck: needed }
+    );
+  }
 }
 
 /**
@@ -369,6 +428,7 @@ export async function handleIdentity(
         { providerName: provider.name }
       );
     }
+    await assertExternalSignUpAllowed(env, tenantId, params, provider);
     await assertExternalProviderUsageAllowed(env, tenantId, provider, 'signup');
     const completed = await completeTenantD1ExternalIdpJIT(env, {
       tenantId,
@@ -517,6 +577,7 @@ export async function handleIdentity(
         { providerName: provider.name }
       );
     }
+    await assertExternalSignUpAllowed(env, tenantId, params, provider);
     // Creating an account is a sign-up: only a provider the tenant lets sign people up does it,
     // decided before anything is written. The login screen merely hides the others.
     await assertExternalProviderUsageAllowed(env, tenantId, provider, 'signup');

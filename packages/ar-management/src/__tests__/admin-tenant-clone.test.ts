@@ -529,6 +529,26 @@ describe('admin tenant clone', () => {
       'login-entry.app_login_redirect_uri': '',
     });
 
+    // SAML service providers are not copied: a sign-in to one goes back to the account page.
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'login-entry',
+          JSON.stringify({
+            'login-entry.post_login_behavior': 'saml_login',
+            'login-entry.saml_login_sp_entity_id': 'https://sp.source.example/metadata',
+            'login-entry.saml_login_relay_state': '/dashboard',
+          }),
+          false,
+          { ...context, includeClients: true }
+        ) ?? '{}'
+      )
+    ).toMatchObject({
+      'login-entry.post_login_behavior': 'account',
+      'login-entry.saml_login_sp_entity_id': '',
+      'login-entry.saml_login_relay_state': '',
+    });
+
     expect(
       JSON.parse(
         sanitizeCopiedSettingsValue(

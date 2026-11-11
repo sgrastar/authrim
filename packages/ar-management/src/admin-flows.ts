@@ -34,6 +34,11 @@ import {
   sanitizeImportedFlowContract,
   validateFlowEditorState,
   validateFlowRuntimeContractPackage,
+  AuthenticationMethodProfileRepository,
+  buildRegistrationFlowEditor,
+  defaultRegistrationFlowSpec,
+  readRegistrationPolicy,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -282,7 +287,7 @@ function defaultEditorState(kind: FlowKind): FlowEditorState {
   };
 }
 
-function buildRuntimeFromEditor(
+export function buildRuntimeFromEditor(
   flowId: string,
   kind: FlowKind,
   editor: FlowEditorState
@@ -390,10 +395,26 @@ function consentReferenceIssueLevel(
   return 'warning';
 }
 
+/** Whether the tenant has an authentication method profile (in the admin database). */
+function profileExistsIn(c: AdminContext, tenantId: string) {
+  return async (id: string): Promise<boolean> => {
+    try {
+      const profile = await new AuthenticationMethodProfileRepository(
+        requireDedicatedAdminDatabaseAdapter(c.env, 'admin-flows')
+      ).find(tenantId, id);
+      return profile !== null;
+    } catch {
+      return false;
+    }
+  };
+}
+
 async function validateDraftReferences(
   db: DatabaseAdapter,
   tenantId: string,
-  editor: FlowEditorState
+  editor: FlowEditorState,
+  /** Whether the tenant has the authentication method profile (not `default`, always there). */
+  profileExists: (id: string) => Promise<boolean> = async () => false
 ): Promise<FlowValidationIssue[]> {
   const issues: FlowValidationIssue[] = [];
   const completionProtocols = editorCompletionProtocols(editor);
@@ -402,7 +423,7 @@ async function validateDraftReferences(
     const path = `$.editor.nodes[${index}].config`;
     if (node.type === 'registration' || node.type === 'authentication') {
       const profileRef = readConfigString(node.config, 'authentication_profile_ref');
-      if (profileRef && profileRef !== 'default') {
+      if (profileRef && profileRef !== 'default' && !(await profileExists(profileRef))) {
         issues.push({
           level: 'error',
           code: 'unsupported_authentication_profile',
@@ -411,6 +432,23 @@ async function validateDraftReferences(
           node_id: node.id,
           ref: { type: 'reference', id: profileRef, key: 'authentication_profile_ref' },
         });
+      }
+    }
+    // A registration step's policy (who may sign up, an address in use…), checked as it is
+    // saved: the runtime reads it field by field and would quietly fall back on a bad one.
+    if (node.type === 'registration' && isRecord(node.config)) {
+      const policy = node.config.registration_policy;
+      if (policy !== undefined) {
+        const read = readRegistrationPolicy(policy, true);
+        if (!read.ok) {
+          issues.push({
+            level: 'error',
+            code: 'invalid_registration_policy',
+            message: `Registration policy ${read.field}: ${read.reason}.`,
+            path: `${path}.registration_policy.${read.field}`,
+            node_id: node.id,
+          });
+        }
       }
     }
 
@@ -1112,7 +1150,7 @@ export async function adminFlowValidateHandler(c: AdminContext) {
     return c.json(
       splitIssues([
         ...validateDraft(editor, true),
-        ...(await validateDraftReferences(db, tenantId, editor)),
+        ...(await validateDraftReferences(db, tenantId, editor, profileExistsIn(c, tenantId))),
       ])
     );
   } catch (error) {
@@ -1151,7 +1189,7 @@ async function adminFlowPublishUnguarded(c: AdminContext) {
     const validation = splitIssues([
       ...validateDraft(editor, true),
       ...validateRuntimePackage(runtime, editor),
-      ...(await validateDraftReferences(db, tenantId, editor)),
+      ...(await validateDraftReferences(db, tenantId, editor, profileExistsIn(c, tenantId))),
     ]);
     if (!validation.valid) {
       return c.json(
@@ -1730,4 +1768,98 @@ export async function adminFlowAssignmentUpsertHandler(c: AdminContext) {
     },
     write: () => adminFlowAssignmentUpsertUnguarded(c),
   });
+}
+
+/**
+ * A new tenant's sign-up: the default registration Flow (`defaultRegistrationFlowSpec`, its
+ * built-in screen, its own methods, the safer policy), published and assigned to the tenant, so
+ * people can sign up as soon as it exists. Nothing is done when the tenant already has a
+ * registration Flow assigned.
+ */
+export async function seedDefaultRegistrationFlow(
+  db: DatabaseAdapter,
+  tenantId: string,
+  now: number = nowSeconds()
+): Promise<{ flowId: string } | null> {
+  const assigned = await db.queryOne<{ flow_id: string }>(
+    `SELECT flow_id FROM flow_assignments
+      WHERE tenant_id = ? AND target_type = ? AND target_id IS NULL AND flow_kind = ?`,
+    [tenantId, 'tenant', 'registration']
+  );
+  if (assigned) return null;
+  const flowId = generateId();
+  const versionId = generateId();
+  const editor = buildRegistrationFlowEditor(defaultRegistrationFlowSpec());
+  const runtime = buildRuntimeFromEditor(flowId, 'registration', editor);
+  const issues = validateDraft(editor, true);
+  const validation = splitIssues([...issues, ...validateRuntimePackage(runtime, editor)]);
+  if (!validation.valid) throw new Error('default_registration_flow_invalid');
+  const name = 'Standard sign-up';
+  // The same statements as a draft made and published through the API.
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      `INSERT INTO flows (
+        id, tenant_id, client_id, profile_id, name, description, graph_definition,
+        compiled_plan, version, is_active, is_builtin, created_by, created_at, updated_by,
+        updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json,
+        template_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        flowId,
+        tenantId,
+        null,
+        'human-basic',
+        name,
+        null,
+        JSON.stringify(editor),
+        JSON.stringify(runtime),
+        '1.0.0',
+        1,
+        0,
+        'system',
+        now,
+        'system',
+        now,
+        'standard-sign-up',
+        name,
+        'registration',
+        'draft',
+        JSON.stringify(editor),
+        JSON.stringify(runtime),
+        null,
+      ]
+    );
+    await tx.execute(
+      `INSERT INTO flow_versions (
+        id, tenant_id, flow_id, version_number, schema_version, runtime_snapshot_json,
+        editor_snapshot_json, validation_result_json, published_by, published_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        versionId,
+        tenantId,
+        flowId,
+        1,
+        FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
+        JSON.stringify(runtime),
+        JSON.stringify(editor),
+        JSON.stringify(validation),
+        'system',
+        now,
+        now,
+      ]
+    );
+    await tx.execute(
+      `UPDATE flows
+       SET status = ?, is_active = 1, published_version_id = ?, updated_by = ?, updated_at = ?
+       WHERE tenant_id = ? AND id = ?`,
+      ['published', versionId, 'system', now, tenantId, flowId]
+    );
+    await tx.execute(
+      `INSERT INTO flow_assignments (
+        id, tenant_id, target_type, target_id, flow_kind, flow_id, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [generateId(), tenantId, 'tenant', null, 'registration', flowId, 1, now, now]
+    );
+  });
+  return { flowId };
 }

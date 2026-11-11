@@ -198,3 +198,49 @@ This email was sent by ${appName}
 © ${new Date().getFullYear()} ${appName}. All rights reserved.
   `.trim();
 }
+
+export interface AccountExistsTemplateData {
+  email: string;
+  appName: string;
+}
+
+/**
+ * A sign-up for an address that already has an account (a registration Flow that answers as for
+ * a new address, `duplicate: mail`): its owner is told, and how to go on. It carries no code or
+ * link: whoever entered the address learns nothing from it.
+ */
+export function getAccountExistsHtml(data: AccountExistsTemplateData): string {
+  const htmlEmail = escapeHtml(data.email);
+  const htmlAppName = escapeHtml(data.appName);
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>You already have an account with ${htmlAppName}</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0;">
+  <div style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; padding: 32px;">
+    <h1 style="font-size: 20px; margin: 0 0 16px;">You already have an account</h1>
+    <p>Someone tried to sign up to ${htmlAppName} with your email address (${htmlEmail}). It already has an account, so no new one was made.</p>
+    <p>If it was you, sign in instead. If you have forgotten how you sign in, use the account recovery on the sign-in page.</p>
+    <p>If it was not you, you can ignore this email: nothing was changed.</p>
+  </div>
+</body>
+</html>
+  `.trim();
+}
+
+export function getAccountExistsText(data: AccountExistsTemplateData): string {
+  return `
+Someone tried to sign up to ${data.appName} with your email address (${data.email}). It already has an account, so no new one was made.
+
+If it was you, sign in instead. If you have forgotten how you sign in, use the account recovery on the sign-in page.
+
+If it was not you, you can ignore this email: nothing was changed.
+
+---
+This email was sent by ${data.appName}
+  `.trim();
+}

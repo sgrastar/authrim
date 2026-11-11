@@ -41,7 +41,13 @@ const text = {
 function page(
 	fields: unknown[],
 	pow: unknown = null,
-	extra: { codeEntry?: unknown; form?: unknown; passkey?: unknown; available?: unknown } = {}
+	extra: {
+		codeEntry?: unknown;
+		form?: unknown;
+		passkey?: unknown;
+		available?: unknown;
+		backScreens?: string[];
+	} = {}
 ) {
 	return render(LoginPage, {
 		props: {
@@ -58,6 +64,7 @@ function page(
 				passkey: extra.passkey ?? null,
 				available: extra.available ?? { mailOtp: true, totp: true, passkey: true },
 				purpose: 'login',
+				backScreens: extra.backScreens ?? [],
 				pow,
 				text
 			} as never,
@@ -84,6 +91,9 @@ const field = (overrides: Record<string, unknown>) => ({
 	helpText: null,
 	placeholder: null,
 	href: null,
+	linkAction: null,
+	linkExit: null,
+	linkButton: false,
 	showLabel: true,
 	...overrides
 });
@@ -111,6 +121,73 @@ describe('the lite sign-in page as drawn', () => {
 		expect(body).toContain('<a href="/help">Help</a>');
 		expect(body).toContain('Plain');
 		expect(body).not.toContain('href="javascript');
+	});
+
+	it('draws a back link as a back button, usable only where there is a screen before', () => {
+		const back = (backScreens: string[], linkButton = false) =>
+			page(
+				[
+					field({}),
+					field({
+						blockType: 'link',
+						field: 'l1',
+						label: 'Back to step one',
+						required: false,
+						linkAction: 'back',
+						linkButton
+					})
+				],
+				null,
+				{ backScreens }
+			).body;
+		const usable = back(['step_one', 'step_zero']);
+		// Posted to `back` with the screen before's key, without the step's fields checked.
+		expect(usable).toMatch(
+			/<button[^>]*class="link"[^>]*formaction="\?challenge_id=ch-1&amp;\/back"[^>]*formnovalidate[^>]*name="back-screen"[^>]*value="step_one"[^>]*>Back to step one<\/button>/u
+		);
+		expect(usable).not.toMatch(/value="step_one"[^>]*disabled/u);
+		expect(back([])).toMatch(/name="back-screen"[^>]*value=""[^>]*disabled/u);
+		expect(back(['step_one'], true)).toMatch(/<button[^>]*class="secondary"[^>]*value="step_one"/u);
+	});
+
+	it('draws an exit link as a button posting its exit, without the fields checked', () => {
+		const { body } = page([
+			field({}),
+			field({
+				blockType: 'link',
+				field: 'l1',
+				label: 'Use a social account',
+				required: false,
+				linkAction: 'exit',
+				linkExit: 'social'
+			}),
+			field({
+				blockType: 'link',
+				field: 'l2',
+				label: 'Later',
+				required: false,
+				linkAction: 'skip',
+				linkExit: 'skipped'
+			})
+		]);
+		expect(body).toMatch(
+			/<button[^>]*formaction="\?challenge_id=ch-1&amp;\/step_exit"[^>]*formnovalidate[^>]*name="exit-handle"[^>]*value="social"[^>]*>Use a social account<\/button>/u
+		);
+		expect(body).toMatch(/name="exit-handle"[^>]*value="skipped"[^>]*>Later<\/button>/u);
+	});
+
+	it('draws a link to a URL as a button when its part says so', () => {
+		const { body } = page([
+			field({
+				blockType: 'link',
+				field: 'l1',
+				label: 'Help',
+				href: '/help',
+				required: false,
+				linkButton: true
+			})
+		]);
+		expect(body).toContain('<a href="/help" class="button">Help</a>');
 	});
 
 	it('embeds the challenge escaped in an attribute, and exactly the solver script', () => {

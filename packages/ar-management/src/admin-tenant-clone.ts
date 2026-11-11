@@ -481,7 +481,12 @@ export function sanitizeCopiedSettingsValue(
       behavior === 'custom_url' &&
       typeof redirectUrl === 'string' &&
       /^https:\/\//i.test(redirectUrl.trim());
-    if (sourceBoundCustomRedirect || (behavior === 'app_login' && !context.includeClients)) {
+    // SAML service providers are not copied: a sign-in to one has nowhere to go in the copy.
+    if (
+      sourceBoundCustomRedirect ||
+      (behavior === 'app_login' && !context.includeClients) ||
+      behavior === 'saml_login'
+    ) {
       record['login-entry.post_login_behavior'] = 'account';
       record['login-entry.post_login_redirect_url'] = '/';
     }
@@ -490,6 +495,8 @@ export function sanitizeCopiedSettingsValue(
       record['login-entry.app_login_redirect_uri'] = '';
       record['login-entry.app_login_final_return_to'] = '';
     }
+    record['login-entry.saml_login_sp_entity_id'] = '';
+    record['login-entry.saml_login_relay_state'] = '';
   }
 
   if (category === 'diagnostic-logging' && !context.includeClients) {

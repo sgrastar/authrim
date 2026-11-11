@@ -124,6 +124,11 @@ export async function waitForLogArchiveReadiness(
       // Control reports why the probe failed in a header (a fixed, secret-free code). Without it a
       // 503 cannot be told apart from a missing binding, a Catalog failure or a Management error.
       const reason = response.headers?.get?.('x-authrim-error-code') ?? '';
+      if (response.status === 503 && reason === 'runtime_smoke_log_archive_probe_failed') {
+        input.onProgress?.('Log archive probe was interrupted; retrying the pending attempt...');
+        await wait(Math.min(5000, Math.max(0, deadline - now())));
+        continue;
+      }
       if (SAFE_CONTROL_ERROR_CODE.test(reason))
         input.onProgress?.(`Control rejected the log probe (HTTP ${response.status}): ${reason}`);
       throw new Error(`log_archive_readiness_http_${response.status}`);

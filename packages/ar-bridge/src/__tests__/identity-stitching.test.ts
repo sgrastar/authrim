@@ -173,6 +173,9 @@ const registrationCheck = vi.hoisted(() => ({
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
+    emailDomainAllowed: actual.emailDomainAllowed,
+    profileAllowsHandle: actual.profileAllowsHandle,
+    readAuthenticationProfile: actual.readAuthenticationProfile,
     checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
       registrationCheck.override ?? actual.checkEmailRegistration(...args),
     D1Adapter: MockD1Adapter,
@@ -1016,6 +1019,88 @@ describe('Identity Stitching Service', () => {
           })
         ).rejects.toThrow('Automatic account creation is not available for this sign-in.');
         expect(linkedIdentityStore.createLinkedIdentity).not.toHaveBeenCalled();
+      });
+
+      describe('the sign-up Flow check of an external address', () => {
+        const create = (
+          overrides: {
+            provider?: Partial<typeof mockProvider>;
+            userInfo?: Partial<UserInfo>;
+            checks?: readonly ('no_email' | 'unverified' | 'low_trust')[] | null;
+          },
+          withLoader = true
+        ) => {
+          const env = createMockEnv();
+          vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+          mockPiiQueryOne.mockResolvedValueOnce(null);
+          const loader = vi.fn().mockResolvedValue(
+            overrides.checks === null || overrides.checks === undefined
+              ? null
+              : {
+                  policy: {
+                    eligibility: 'open',
+                    allowed_domains: [],
+                    external_email_check: overrides.checks,
+                  },
+                  profileRef: 'default',
+                }
+          );
+          const result = handleIdentity(env as never, {
+            provider: { ...mockProvider, requireEmailVerified: false, ...overrides.provider },
+            userInfo: { ...mockUserInfo, ...overrides.userInfo },
+            tokens: mockTokens,
+            tenantId: 'default',
+            ...(withLoader ? { loadSignUpPolicy: loader } : {}),
+          });
+          return { result, loader };
+        };
+
+        it.each([
+          ['no_email', { email: undefined, email_verified: false }, {}],
+          ['unverified', { email_verified: false }, {}],
+          ['low_trust', {}, { trustEmail: false }],
+        ] as const)('creates no account when %s matches', async (check, userInfo, provider) => {
+          const { result } = create({ userInfo, provider, checks: [check] });
+          await expect(result).rejects.toThrow('verified by email code');
+          expect(linkedIdentityStore.createLinkedIdentity).not.toHaveBeenCalled();
+        });
+
+        it.each([
+          [{ eligibility: 'invite', allowed_domains: [] }],
+          [{ eligibility: 'domain', allowed_domains: ['corp.example'] }],
+        ])('creates no account the sign-up policy does not take (%j)', async (limits) => {
+          const env = createMockEnv();
+          vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+          mockPiiQueryOne.mockResolvedValueOnce(null);
+          const result = handleIdentity(env as never, {
+            provider: { ...mockProvider, requireEmailVerified: false, trustEmail: true },
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+            loadSignUpPolicy: vi.fn().mockResolvedValue({
+              policy: { ...limits, external_email_check: [] },
+              profileRef: 'default',
+            }),
+          });
+          await expect(result).rejects.toThrow('not open to this account');
+          expect(linkedIdentityStore.createLinkedIdentity).not.toHaveBeenCalled();
+        });
+
+        it('creates the account when the provider is trusted and the address verified', async () => {
+          const { result } = create({
+            provider: { trustEmail: true },
+            checks: ['no_email', 'unverified', 'low_trust'],
+          });
+          await expect(result).resolves.toMatchObject({ isNewUser: true });
+        });
+
+        it('is unchanged without a Flow policy (no loader, or a null policy)', async () => {
+          const none = create({ provider: { trustEmail: false } }, false);
+          await expect(none.result).resolves.toMatchObject({ isNewUser: true });
+          const nullPolicy = create({ checks: null });
+          await expect(nullPolicy.result).resolves.toMatchObject({ isNewUser: true });
+          expect(nullPolicy.loader).toHaveBeenCalledTimes(1);
+        });
       });
 
       it('should throw error if JIT disabled and no existing account', async () => {

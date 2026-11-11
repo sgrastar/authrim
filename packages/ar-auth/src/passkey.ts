@@ -1,3 +1,9 @@
+import {
+  eligibilityRefusal,
+  profileAllowsSignUp,
+  registrationRefusalResponse,
+  signUpPolicyFor,
+} from './registration-policy-gate';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 /**
  * WebAuthn/Passkey Handler
@@ -352,6 +358,24 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     // signup-screen-check.ts), a resumed provisioning's too: its attributes are sent again.
     const screenCheck = await checkSignUpScreen(c, tenantId, { customFields: custom_fields });
     if (!screenCheck.ok) return signUpScreenRefusalResponse(c, screenCheck);
+    // Who may sign up, by the registration Flow's policy (registration-policy-gate.ts). This route
+    // takes no invitation: a Flow that signs up the invited only is refused here.
+    const signUpPolicy = await signUpPolicyFor(c, tenantId);
+    const refusal = eligibilityRefusal(signUpPolicy.policy, {
+      email: normalizedEmail,
+      hasInvitation: false,
+    });
+    if (refusal) return registrationRefusalResponse(c, signUpPolicy.policy, refusal);
+    if (!(await profileAllowsSignUp(c, tenantId, signUpPolicy, 'passkey'))) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
+    // This route cannot hold a sign-up until its address is checked (`email_check: before`):
+    // such a sign-up goes through Direct Auth, which can.
+    if (signUpPolicy.fromFlow && signUpPolicy.policy.email_check === 'before' && normalizedEmail) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+        extensions: { reason: 'signup_email_check_required' },
+      });
+    }
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,

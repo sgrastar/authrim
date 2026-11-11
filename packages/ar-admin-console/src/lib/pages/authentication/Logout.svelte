@@ -1,12 +1,12 @@
 <script lang="ts">
 	import type { AdminAccess } from '#lib/access/access.js';
 	import type { SettingsClient } from '#lib/api/settings.js';
-	import { APP_DEFAULTS } from '#lib/settings/placement.js';
+	import { LOGOUT } from '#lib/settings/placement.js';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 
 	/**
-	 * Applications → App defaults. A settings page: what it shows is its placement
-	 * (`APP_DEFAULTS`); loading, access, saving and notices are SettingsPage's.
+	 * Authentication → Logout. A settings page: what it shows and how deep is its placement
+	 * (`LOGOUT`); loading, access and saving are SettingsPage's.
 	 */
 	interface Props {
 		client: SettingsClient;
@@ -18,4 +18,4 @@
 	let { client, tenantId, access }: Props = $props();
 </script>
 
-<SettingsPage page={APP_DEFAULTS} {client} target={{ level: 'tenant', tenantId }} {access} />
+<SettingsPage page={LOGOUT} {client} target={{ level: 'tenant', tenantId }} {access} />

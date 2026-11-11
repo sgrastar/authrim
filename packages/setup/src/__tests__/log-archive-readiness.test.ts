@@ -219,4 +219,32 @@ describe('post-deploy archive readiness authority', () => {
     ).rejects.toThrow('log_archive_readiness_http_503');
     expect(messages).toEqual([]);
   });
+  it('retries an interrupted runtime probe using the same signed attempt', async () => {
+    const f = await fixture();
+    let clock = 0;
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 503,
+          headers: { 'X-Authrim-Error-Code': 'runtime_smoke_log_archive_probe_failed' },
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({ ...f.result, state: 'pending', snapshotId: null }, { status: 202 })
+      )
+      .mockResolvedValueOnce(Response.json(f.result));
+    expect(
+      await waitForLogArchiveReadiness({
+        ...f.input,
+        fetch: request,
+        now: () => clock,
+        wait: async (ms) => {
+          clock += ms;
+        },
+      })
+    ).toEqual(f.result);
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(clock).toBe(10000);
+  });
 });

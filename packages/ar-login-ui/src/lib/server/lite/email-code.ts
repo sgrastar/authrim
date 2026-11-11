@@ -202,7 +202,9 @@ export async function submitLiteStep(
 	step: FlowRuntimeStep,
 	handle: string,
 	/** What the step's submit carries (a consent's decisions); nothing, by default. */
-	input: Record<string, unknown> = {}
+	input: Record<string, unknown> = {},
+	/** The visit of the step the page was drawn on: one submitted on an earlier visit is refused. */
+	visitId: string | null = null
 ): Promise<
 	| {
 			ok: true;
@@ -221,7 +223,8 @@ export async function submitLiteStep(
 				selected_handle: handle,
 				contract_hash: state.contractHash,
 				signature: state.signature,
-				input
+				input,
+				...(visitId ? { visit_id: visitId } : {})
 			}
 		}
 	);

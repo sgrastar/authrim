@@ -29,6 +29,22 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       })),
     })),
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
+    // The tenant's authentication method profiles (admin database): only `members` exists.
+    requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({
+      queryOne: vi.fn(async (_sql: string, params: unknown[]) =>
+        params[1] === 'members'
+          ? {
+              id: 'members',
+              name: 'Members',
+              values_json: '{}',
+              version: 1,
+              created_by: null,
+              created_at: 0,
+              updated_at: 0,
+            }
+          : null
+      ),
+    })),
   };
 });
 
@@ -42,6 +58,7 @@ import {
   adminFlowPublishHandler,
   adminFlowUpdateHandler,
   adminFlowValidateHandler,
+  seedDefaultRegistrationFlow,
 } from '../admin-flows';
 
 interface TestFlowRow {
@@ -729,6 +746,78 @@ describe('admin Flow management handlers', () => {
     expect(Array.isArray(body.issues)).toBe(true);
     const issueCodes = (body.issues as Array<{ code: string }>).map((issue) => issue.code);
     expect(issueCodes).not.toContain('invalid_output_handle');
+  });
+
+  it('checks a registration step’s profile and policy before it can be published', async () => {
+    const editorWith = (config: Record<string, unknown>) => ({
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        {
+          id: 'registration',
+          type: 'registration',
+          config: { outputs: [{ id: 'passkey', label: 'Passkey' }], ...config },
+        },
+        { id: 'complete', type: 'complete' },
+      ],
+      edges: [
+        { id: 'a', source: 'entry', source_handle: 'next', target: 'registration' },
+        { id: 'b', source: 'registration', source_handle: 'passkey', target: 'complete' },
+      ],
+    });
+    const codes = async (config: Record<string, unknown>) => {
+      const response = await adminFlowValidateHandler(
+        createContext({ body: { editor: editorWith(config) } })
+      );
+      const body = await readJson(response);
+      return (body.errors as Array<{ code: string }>).map((issue) => issue.code);
+    };
+
+    expect(await codes({ authentication_profile_ref: 'members' })).toEqual([]);
+    expect(await codes({ authentication_profile_ref: 'gone' })).toContain(
+      'unsupported_authentication_profile'
+    );
+    expect(
+      await codes({
+        authentication_profile_ref: 'default',
+        registration_policy: { eligibility: 'domain', allowed_domains: [] },
+      })
+    ).toContain('invalid_registration_policy');
+    expect(
+      await codes({
+        authentication_profile_ref: 'default',
+        registration_policy: { eligibility: 'domain', allowed_domains: ['example.com'] },
+      })
+    ).toEqual([]);
+  });
+
+  it('gives a new tenant its sign-up: the default registration Flow, published and assigned', async () => {
+    const seeded = await seedDefaultRegistrationFlow(mocks.db as never, 'tenant-1', 1000);
+    expect(seeded).not.toBeNull();
+    const flow = flows.find((row) => row.id === seeded?.flowId);
+    expect(flow).toMatchObject({ kind: 'registration', status: 'published' });
+    expect(flow?.published_version_id).toBeTruthy();
+    const runtime = parseRuntimeJson(
+      versions.find((version) => version.id === flow?.published_version_id)
+        ?.runtime_snapshot_json as string
+    );
+    expect(runtime.ui.steps.map((step) => step.source_node_id)).toEqual([
+      'request',
+      'registration',
+      'email-check',
+      'account-create',
+      'output',
+    ]);
+    expect(assignments).toContainEqual(
+      expect.objectContaining({
+        tenant_id: 'tenant-1',
+        target_type: 'tenant',
+        target_id: null,
+        flow_kind: 'registration',
+        flow_id: seeded?.flowId,
+      })
+    );
+    // Once is enough: a tenant with a sign-up keeps it.
+    expect(await seedDefaultRegistrationFlow(mocks.db as never, 'tenant-1', 1001)).toBeNull();
   });
 
   it('increments publish version numbers returned as strings by adapters', async () => {

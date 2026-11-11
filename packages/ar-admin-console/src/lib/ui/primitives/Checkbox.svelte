@@ -66,6 +66,7 @@
 {#snippet box()}<label
 		class="checkbox"
 		class:checkbox--sm={size === 'sm'}
+		class:checkbox--label-hidden={hideLabel}
 		class:is-disabled={off}
 		class:is-changed={isChanged}
 		class:mark-option={changeMark === 'option' && !hideLabel}
@@ -122,6 +123,10 @@
 	.checkbox--sm {
 		--box: 16px;
 		gap: 7px;
+	}
+
+	.checkbox--label-hidden {
+		gap: 0;
 	}
 
 	.checkbox.is-disabled {

@@ -7,6 +7,7 @@ import {
   AUTHENTICATION_METHODS_SETTINGS_META,
   AuthenticationMethodProfileRepository,
   adminAuthMiddleware,
+  createAuthContextFromHono,
   createErrorResponse,
   getLogger,
   getRateLimitProfileAsync,
@@ -98,6 +99,24 @@ const failure = (c: AdminContext, action: string, error: unknown) => {
     });
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 };
+
+/** Whether a Flow of the tenant names the profile: its draft, or the version it runs. */
+async function profileInUse(c: AdminContext, tenantId: string, id: string): Promise<boolean> {
+  const db = createAuthContextFromHono(
+    c as unknown as Context<{ Bindings: Env }>,
+    tenantId
+  ).coreAdapter;
+  const needle = `%"authentication_profile_ref":${JSON.stringify(id)}%`;
+  const row = await db.queryOne<{ id: string }>(
+    `SELECT f.id AS id FROM flows f
+       LEFT JOIN flow_versions v ON v.id = f.published_version_id AND v.tenant_id = f.tenant_id
+      WHERE f.tenant_id = ? AND f.deleted_at IS NULL
+        AND (f.draft_editor_json LIKE ? OR v.runtime_snapshot_json LIKE ?)
+      LIMIT 1`,
+    [tenantId, needle, needle]
+  );
+  return row !== null && row !== undefined;
+}
 
 async function bodyObject(c: AdminContext): Promise<Record<string, unknown> | null> {
   const body: unknown = await c.req.json().catch(() => null);
@@ -316,7 +335,19 @@ authenticationMethodProfilesRouter.delete('/:id', async (c) => {
   try {
     const id = c.req.param('id');
     const profile = await repo(c).find(getTenantIdFromContext(c), id);
-    if (!profile || !(await repo(c).delete(getTenantIdFromContext(c), id))) return missing(c);
+    if (!profile) return missing(c);
+    // A Flow that names it (its draft, or the version it runs) would offer no method once it is
+    // gone: it is taken off the Flow first.
+    if (await profileInUse(c, getTenantIdFromContext(c), id)) {
+      return c.json(
+        {
+          error: 'conflict',
+          error_description: 'A service flow uses this profile; choose another profile there first',
+        },
+        409
+      );
+    }
+    if (!(await repo(c).delete(getTenantIdFromContext(c), id))) return missing(c);
     await writeAdminAuditLog(c, {
       action: 'authentication_method.profile.deleted',
       resourceType: 'authentication_method_profile',

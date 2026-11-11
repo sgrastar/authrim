@@ -53,6 +53,8 @@ import {
 	litePagePurpose,
 	liteResendCodeAction,
 	liteRestartAction,
+	liteBackAction,
+	liteStepExitAction,
 	liteSendCodeAction,
 	liteTenantMethods,
 	liteVerifyCodeAction,
@@ -350,6 +352,9 @@ export async function liteStepPage(event: RequestEvent) {
 					placeholder: null,
 					valueType: null,
 					href: null,
+					linkAction: null,
+					linkExit: null,
+					linkButton: false,
 					showLabel: true,
 					options: []
 				}
@@ -434,7 +439,7 @@ export async function liteStepPage(event: RequestEvent) {
 		op: newOperationNonce(),
 		purpose,
 		// The step the page is drawn on (a Continue's post names it).
-		stepKey: step ? liteStepKey(interactionId, step.id) : null,
+		stepKey: liteStepKey(flow.view),
 		decision: decision satisfies LiteStepDecision,
 		codeEntry:
 			decision.kind !== 'screen'
@@ -470,6 +475,8 @@ export async function liteStepPage(event: RequestEvent) {
 					challenge: passkey.challengeId
 				}
 			: null,
+		// The screens a link on this screen can go back to; a link to another is drawn but disabled.
+		backScreens: decision.kind === 'screen' ? flow.view.backScreens : [],
 		/** The action a Continue form posts to (an expired start's check, else `continue`). */
 		continueAction: lapsed?.action ?? ('continue' as const),
 		continueChallenge: lapsed?.challenge ?? null,
@@ -569,6 +576,7 @@ export async function liteStepPage(event: RequestEvent) {
 export const liteStepActions = {
 	continue: liteContinueAction,
 	step_continue: liteStepContinueAction,
+	step_exit: liteStepExitAction,
 	send_code: liteSendCodeAction,
 	resend: liteResendCodeAction,
 	verify_code: liteVerifyCodeAction,
@@ -580,5 +588,6 @@ export const liteStepActions = {
 	social_start: liteSocialStartAction,
 	invite_proof_verify: liteInviteProofVerifyAction,
 	provisioning_continue: liteProvisioningContinueAction,
+	back: liteBackAction,
 	restart: liteRestartAction
 };

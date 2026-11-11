@@ -57,6 +57,8 @@
 		rowOpenLabel?: (row: Row) => string;
 		/** Rows with less space above and below, for long lists read at a glance. */
 		dense?: boolean;
+		/** Keep wide columns readable and let the table wrapper scroll on narrow screens. */
+		minWidth?: string;
 	}
 
 	let {
@@ -75,7 +77,8 @@
 		rowChanged,
 		onrowopen,
 		rowOpenLabel,
-		dense = false
+		dense = false,
+		minWidth
 	}: Props = $props();
 
 	const keys = $derived(rows.map(rowKey));
@@ -135,7 +138,12 @@
 {/if}
 
 <div class="table-wrap">
-	<table class="data" class:data--many={columns.length >= 6} class:data--dense={dense}>
+	<table
+		class="data"
+		class:data--many={columns.length >= 6}
+		class:data--dense={dense}
+		style:min-width={minWidth}
+	>
 		<caption class="sr-only">{caption}</caption>
 		<colgroup>
 			{#if selectable}<col class="data__select-col" />{/if}

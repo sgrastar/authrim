@@ -52,6 +52,7 @@ import {
   resolveSessionTtl,
 } from '@authrim/ar-lib-core';
 import { externalSignInMayCreateAccount, isLiteExternalFlow } from '../services/lite-start';
+import { loadExternalSignUpPolicy } from '../services/external-email-check';
 import {
   consumeAuthState,
   getAuthStateCookieName,
@@ -1838,6 +1839,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       authState.tenantId,
       authState.flowId
     );
+    // The sign-up policy an account made here is held to (the registration Flow the start named,
+    // else the tenant's own), read only where an account would be made. A link (an account already
+    // signed in) makes none.
+    const attemptInteractionId = authState.attemptInteractionId;
+    const loadSignUpPolicy = authState.userId
+      ? undefined
+      : () => loadExternalSignUpPolicy(c.env, authState.tenantId, attemptInteractionId);
     const result = await handleIdentity(c.env, {
       provider,
       userInfo,
@@ -1846,6 +1854,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       tenantId: authState.tenantId,
       ...(invitation ? { invitation } : {}),
       ...(accountCreationAllowed ? {} : { accountCreationAllowed: false }),
+      ...(loadSignUpPolicy ? { loadSignUpPolicy } : {}),
       // A re-authentication has its own switch (checked at the start).
       ...(authState.reauthRequestedAt === undefined ? {} : { reauthentication: true }),
     });

@@ -38,5 +38,6 @@
 		listHref={BASE}
 		oncreated={created}
 		onopen={(screenId) => goto(hrefOf(screenId))}
+		ondeleted={() => void goto(BASE)}
 	/>
 {/key}

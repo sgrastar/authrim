@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import AccountFlowDetail from './AccountFlowDetail.svelte';
-	import { emptyFlowState, sampleState, type FlowId } from './account-flow-model';
+	import { initialState, sampleState, type FlowId } from './account-flow-model';
 
 	/**
 	 * An account flow on its own page, holding what is set in it, for a story to open part-way:
@@ -18,7 +18,7 @@
 	let { flow, filled = 'none' }: Props = $props();
 
 	const initial = () =>
-		filled === 'none' ? emptyFlowState() : sampleState(flow, filled === 'all');
+		filled === 'none' ? initialState(flow) : sampleState(flow, filled === 'all');
 
 	let form = $state(untrack(initial));
 	$effect.pre(() => {

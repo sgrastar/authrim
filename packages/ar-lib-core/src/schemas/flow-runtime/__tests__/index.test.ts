@@ -247,6 +247,25 @@ describe('flow runtime schema helpers', () => {
     expect(issues.filter((issue) => issue.code === 'invalid_output_handle')).toEqual([]);
   });
 
+  it('lets a screen leave by the exits its link parts may name, and no others', () => {
+    const issuesFor = (handle: string) =>
+      validateFlowEditorState({
+        nodes: [
+          { id: 'entry', type: 'entry' },
+          { id: 'page', type: 'screen' },
+          { id: 'complete', type: 'complete' },
+        ],
+        edges: [
+          { id: 'entry->page', source: 'entry', source_handle: 'next', target: 'page' },
+          { id: 'page->complete', source: 'page', source_handle: handle, target: 'complete' },
+        ],
+      }).filter((issue) => issue.code === 'invalid_output_handle');
+    expect(issuesFor('submitted')).toEqual([]);
+    expect(issuesFor('social')).toEqual([]);
+    expect(issuesFor('Not An Exit')).toHaveLength(1);
+    expect(issuesFor('next')).toHaveLength(1);
+  });
+
   it('rejects edges that directly connect incompatible completion blocks', () => {
     const issues = validateFlowEditorState(
       {

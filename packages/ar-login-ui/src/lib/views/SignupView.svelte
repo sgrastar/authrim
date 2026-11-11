@@ -133,6 +133,10 @@
 		onDismissRuntimeFlowError?: () => void;
 		onRuntimeFieldValueChange?: (field: string, value: string | boolean) => void;
 		onRuntimeAuthAction?: (method: RuntimeAuthMethod, action?: RuntimeAuthAction) => void;
+		/** A link part that goes back to a screen of the Flow was chosen (its key). */
+		onRuntimeBack?: (screenKey: string) => void;
+		/** A link part that leaves the screen by an exit was chosen (the handle it submits with). */
+		onRuntimeExit?: (handle: string) => void;
 		onConsentDecisionChange?: (statementId: string, checked: boolean) => void;
 		onDestinationFieldDecisionChange?: (fieldKey: string, checked: boolean) => void;
 		onConsentSelectedValueChange?: (statementId: string, value: string) => void;
@@ -203,6 +207,8 @@
 		onDismissRuntimeFlowError,
 		onRuntimeFieldValueChange,
 		onRuntimeAuthAction,
+		onRuntimeBack,
+		onRuntimeExit,
 		onConsentDecisionChange,
 		onDestinationFieldDecisionChange,
 		onConsentSelectedValueChange,
@@ -366,6 +372,12 @@
 							emailVerificationProtocolEnabled={emailVerification.enabled}
 							onFieldValueChange={onRuntimeFieldValueChange}
 							onAuthAction={onRuntimeAuthAction}
+							backScreens={runtime.backScreens ?? []}
+							onBack={onRuntimeBack}
+							onNext={runtimeStep.isAuthStep || !runtime.consentReady
+								? undefined
+								: () => onRuntimeContinue?.()}
+							onExit={onRuntimeExit}
 							onExternalProviderAction={onExternalProvider}
 							{onConsentDecisionChange}
 							{onDestinationFieldDecisionChange}

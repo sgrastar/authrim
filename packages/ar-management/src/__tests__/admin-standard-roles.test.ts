@@ -134,6 +134,9 @@ const MATRIX: readonly Row[] = [
   // Platform-wide: only the super admin
   ['GET', '/api/admin/platform/control-plane/status', [T, F, F, F]],
   ['GET', '/api/admin/platform/read-replication', [T, F, F, F]],
+  ['GET', '/api/admin/platform/service-site', [T, F, F, F]],
+  ['PUT', '/api/admin/platform/service-site', [T, F, F, F]],
+  ['DELETE', '/api/admin/platform/service-site', [T, F, F, F]],
   ['GET', '/api/admin/platform/tenant-domain-mappings', [T, F, F, F]],
   ['GET', '/api/admin/jobs/schedules', [T, F, F, F]],
   ['GET', '/api/admin/tenant-backups', [T, F, F, F]],

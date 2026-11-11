@@ -1,3 +1,11 @@
+import {
+  eligibilityRefusal,
+  notifyExistingAccountSignUp,
+  profileAllowsSignUp,
+  registrationCompletionRedirect,
+  registrationRefusalResponse,
+  signUpPolicyFor,
+} from './registration-policy-gate';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
@@ -9,6 +17,7 @@ import {
 } from './sign-in-attempt-recording';
 import {
   AR_ERROR_CODES,
+  SIGN_IN_ATTEMPT_INTERACTION_HEADER,
   AUTH_EVENTS,
   BROWSER_STATE_COOKIE_NAME,
   CanonicalRuntimeUserStore,
@@ -424,6 +433,24 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
     // signup-screen-check.ts).
     const screenCheck = await checkSignUpScreen(c, tenantId, { customFields });
     if (!screenCheck.ok) return signUpScreenRefusalResponse(c, screenCheck);
+    // The registration Flow's policy (registration-policy-gate.ts): who may sign up, asked before
+    // anything is looked up about the address.
+    const signUpPolicy = await signUpPolicyFor(c, tenantId);
+    const refusal = eligibilityRefusal(signUpPolicy.policy, {
+      email,
+      hasInvitation: typeof body.invite_token === 'string' && body.invite_token.length > 0,
+    });
+    if (refusal) return registrationRefusalResponse(c, signUpPolicy.policy, refusal);
+    if (!(await profileAllowsSignUp(c, tenantId, signUpPolicy, 'totp'))) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
+    // An authenticator-app sign-up cannot be held until its address is checked: under a Flow that
+    // checks it first (`email_check: before`), people sign up by email code or by passkey.
+    if (signUpPolicy.fromFlow && signUpPolicy.policy.email_check === 'before') {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+        extensions: { reason: 'signup_email_check_required' },
+      });
+    }
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,
@@ -468,6 +495,23 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
     const existingUser = await runtimeUsers?.findByEmail(email, { includeInactive: true });
     if (existingUser || blocked) {
+      // Under a registration Flow, what an address in use gets is its policy's (as a passkey
+      // sign-up: the owner told by email and the same refusal as any other, or its answer).
+      if (signUpPolicy.fromFlow) {
+        if (signUpPolicy.policy.duplicate === 'mail' && existingUser && !blocked) {
+          await notifyExistingAccountSignUp(c, {
+            tenantId,
+            userId: existingUser.id,
+            email,
+          });
+          return registrationRefusalResponse(
+            c,
+            { ...signUpPolicy.policy, denied_response: 'generic' },
+            'account_exists'
+          );
+        }
+        return registrationRefusalResponse(c, signUpPolicy.policy, 'account_exists');
+      }
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
@@ -932,9 +976,15 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
     );
 
     activationStage = 'response_build';
+    // An application's continuation first; else the registration Flow's own destination (the
+    // live interaction this sign-up names); else the tenant's.
     const postLoginRedirect = authorizationContinuation
       ? authorizationContinuation.redirectUrl
-      : (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl;
+      : ((await registrationCompletionRedirect(
+          c,
+          tenantId,
+          c.req.header(SIGN_IN_ATTEMPT_INTERACTION_HEADER) ?? null
+        )) ?? (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl);
 
     return c.json({
       ok: true,

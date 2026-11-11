@@ -717,7 +717,8 @@ type OperationKind =
 	| 'social'
 	| 'continue'
 	| 'invite'
-	| 'provisioning';
+	| 'provisioning'
+	| 'back';
 
 /**
  * Starts the post's operation. `started`: carry it out, then `finishOperation`. Otherwise the
@@ -934,10 +935,15 @@ export async function submitOrNull(
 	const decided = await stepConsentInput(post, step);
 	// Terms not accepted as they are now (changed since): never a decision taken for others.
 	if (!decided) return null;
-	const submitted = await submitLiteStep(post.backend, post.flow.state, step, handle, {
-		...decided.input,
-		...extra
-	}).catch(() => null);
+	const submitted = await submitLiteStep(
+		post.backend,
+		post.flow.state,
+		step,
+		handle,
+		{ ...decided.input, ...extra },
+		// The page's own step: submitted only on the visit it was drawn on.
+		step.id === post.flow.step?.id ? post.flow.visitId : null
+	).catch(() => null);
 	if (submitted && !submitted.ok && options.redrawOnConflict !== false) {
 		redrawOnStepConflict(post, submitted.error);
 	}
@@ -1902,12 +1908,24 @@ const FORM_OWN_NAMES: ReadonlySet<string> = new Set([
 	'consent-key',
 	'step-key',
 	'verification',
-	'provisioning'
+	'provisioning',
+	// Hyphenated, as no answer key can be (answer keys are letters, digits and _).
+	'back-screen',
+	'exit-handle'
 ]);
 
-/** The step a page was drawn on, by its interaction: a Continue posts it (`step_continue`). */
-export function liteStepKey(interactionId: string, stepId: string): string {
-	return `${interactionId}:${stepId}`;
+/**
+ * The step a page was drawn on, by its interaction and the visit of the step (a step shown again,
+ * after going back and on, is another visit): a Continue and a link back post it.
+ */
+export function liteStepKey(flow: {
+	state: { interactionId: string };
+	step: { id: string } | null;
+	visitId: string | null;
+}): string | null {
+	if (!flow.step) return null;
+	const key = `${flow.state.interactionId}:${flow.step.id}`;
+	return flow.visitId ? `${key}:${flow.visitId}` : key;
 }
 
 function isReservedFormName(name: string): boolean {
@@ -1982,7 +2000,7 @@ export const liteStepContinueAction = guarded(async (event) => {
 	}
 	// The form of the step it was drawn on, in this interaction: one posted again after its step
 	// went on (a retry, another tab) is never taken for the step the Flow is on now.
-	if (post.fields.get('step-key') !== liteStepKey(post.flow.state.interactionId, step.id)) {
+	if (post.fields.get('step-key') !== liteStepKey(post.flow)) {
 		// What it holds was made on another step: nothing of it is given back.
 		CONSENT_USED.add(event);
 		backToPage(event);
@@ -1996,7 +2014,49 @@ export const liteStepContinueAction = guarded(async (event) => {
 	const begun = await beginOperation(post, 'continue');
 	if ('failure' in begun) return begun.failure;
 	const submitted = await submitOrNull(post, step, consentContinueHandle(step), answers ?? {});
-	const finished = await finishOperation(post, post.txn, begun.operation, {
+	return goOnAfterSubmit(event, post, begun.operation, submitted);
+});
+
+/**
+ * `step_exit`: a screen's link part that leaves it by an exit (`exit`: `skipped` for a skip, or
+ * an exit of its own name; posted as `exit-handle`). Its answers are not taken; where the exit leads is the Flow's. Only an
+ * exit a part of the screen drawn offers, from the screen it was drawn on.
+ */
+export const liteStepExitAction = guarded(async (event) => {
+	const opened = await openPost(event);
+	if ('failure' in opened) return opened.failure;
+	const post = opened.post;
+	const step = post.flow.step;
+	const decision = liteLoginStepDecision(
+		step,
+		await liteTenantMethods(event),
+		post.locale,
+		post.purpose
+	);
+	if (!step || decision.kind !== 'screen') return fail(409, { restart: true });
+	const exit = post.fields.get('exit-handle');
+	if (
+		post.fields.get('step-key') !== liteStepKey(post.flow) ||
+		!exit ||
+		!decision.fields.some((field) => field.blockType === 'link' && field.linkExit === exit)
+	) {
+		CONSENT_USED.add(event);
+		backToPage(event);
+	}
+	const begun = await beginOperation(post, 'continue');
+	if ('failure' in begun) return begun.failure;
+	const submitted = await submitOrNull(post, step, exit, {});
+	return goOnAfterSubmit(event, post, begun.operation, submitted);
+});
+
+/** After a screen's submit (its Continue, or an exit): where the Flow went, drawn or relayed. */
+async function goOnAfterSubmit(
+	event: RequestEvent,
+	post: LitePost,
+	operation: { operationId: string; attempt: number },
+	submitted: Awaited<ReturnType<typeof submitOrNull>>
+) {
+	const finished = await finishOperation(post, post.txn, operation, {
 		submitted: submitted !== null
 	});
 	if (finished) post.txn = finished;
@@ -2012,6 +2072,55 @@ export const liteStepContinueAction = guarded(async (event) => {
 		consentInput: consentInputOf(post)
 	}).catch(() => null);
 	if (advanced?.kind === 'completed') return relayCompletion(post, post.txn, advanced.output);
+	forwardSetCookies(event, post.backend.setCookies());
+	backToPage(event);
+}
+
+/**
+ * `back`: a screen's link part that goes back to the screen before (its key, `back-screen`, the
+ * first the page was given). The backend decides whether it may (only back, and only across screens:
+ * `/back`); refused or not, the page is drawn where the interaction is. The answers typed on this
+ * screen are not taken: going back is not a submit.
+ */
+export const liteBackAction = guarded(async (event) => {
+	const opened = await openPost(event);
+	if ('failure' in opened) return opened.failure;
+	const post = opened.post;
+	const step = post.flow.step;
+	const target = post.fields.get('back-screen');
+	if (
+		!step ||
+		step.component !== 'screen' ||
+		!target ||
+		// From the screen it was drawn on, in this interaction (not a form of an older page).
+		post.fields.get('step-key') !== liteStepKey(post.flow) ||
+		!post.flow.backScreens.includes(target)
+	) {
+		backToPage(event);
+	}
+	// One per form: the same form posted twice goes back to the page, which draws where it went.
+	const begun = await beginOperation(post, 'back');
+	if ('failure' in begun) return begun.failure;
+	const answer = await post.backend
+		.request(
+			`/api/v1/login/interactions/${encodeURIComponent(post.flow.state.interactionId)}/back`,
+			{
+				json: {
+					step_id: step.id,
+					node_id: step.source_node_id,
+					contract_hash: post.flow.state.contractHash,
+					signature: post.flow.state.signature,
+					target_screen: target,
+					...(post.flow.visitId ? { visit_id: post.flow.visitId } : {})
+				}
+			}
+		)
+		.catch(() => null);
+	const finished = await finishOperation(post, post.txn, begun.operation, {
+		back: answer?.status === 200
+	});
+	if (finished) post.txn = finished;
+	if (!answer) return retryLater();
 	forwardSetCookies(event, post.backend.setCookies());
 	backToPage(event);
 });

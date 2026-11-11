@@ -68,6 +68,7 @@ tags:
   - name: ReBAC Administration
   - name: Roles
   - name: Security
+  - name: Service Site
   - name: Settings - Audit
   - name: Settings - Error Handling
   - name: Settings - General
@@ -15310,6 +15311,43 @@ paths:
                         type:
                           - string
                           - 'null'
+                        description: >-
+                          A link part whose link_action is url (the default): an in-page anchor
+                          (#id), a path on this site, or an https URL. Other actions have no href.
+                      link_action:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - url
+                          - next
+                          - back
+                          - skip
+                          - exit
+                          - null
+                        description: >-
+                          A link part: what it does. url opens href; next submits the screen (the
+                          screen node's submitted handle), skip leaves it without its answers
+                          (skipped), exit leaves it by the exit named in link_exit, and back
+                          returns to the screen shown before it. Where an exit leads is decided by
+                          the Flow's edges, not by the screen. Account screens allow url only.
+                      link_exit:
+                        type:
+                          - string
+                          - 'null'
+                        pattern: '^[a-z][a-z0-9_]{0,39}$'
+                        description: >-
+                          A link part whose link_action is exit: the exit's name, the handle the
+                          Flow connects. Not submitted, skipped or next.
+                      link_style:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - text
+                          - button
+                          - null
+                        description: A link part drawn as a text link (the default) or a button.
                       human_verification_timing:
                         type:
                           - string
@@ -15656,6 +15694,43 @@ paths:
                         type:
                           - string
                           - 'null'
+                        description: >-
+                          A link part whose link_action is url (the default): an in-page anchor
+                          (#id), a path on this site, or an https URL. Other actions have no href.
+                      link_action:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - url
+                          - next
+                          - back
+                          - skip
+                          - exit
+                          - null
+                        description: >-
+                          A link part: what it does. url opens href; next submits the screen (the
+                          screen node's submitted handle), skip leaves it without its answers
+                          (skipped), exit leaves it by the exit named in link_exit, and back
+                          returns to the screen shown before it. Where an exit leads is decided by
+                          the Flow's edges, not by the screen. Account screens allow url only.
+                      link_exit:
+                        type:
+                          - string
+                          - 'null'
+                        pattern: '^[a-z][a-z0-9_]{0,39}$'
+                        description: >-
+                          A link part whose link_action is exit: the exit's name, the handle the
+                          Flow connects. Not submitted, skipped or next.
+                      link_style:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - text
+                          - button
+                          - null
+                        description: A link part drawn as a text link (the default) or a button.
                       human_verification_timing:
                         type:
                           - string
@@ -18035,6 +18110,147 @@ paths:
                     $ref: '#/components/schemas/AdminReadReplicationStatus'
                   auditId:
                     type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/service-site:
+    get:
+      tags:
+        - Service Site
+      operationId: getApiAdminPlatformServiceSite
+      summary: Get the service site attached to the router.
+      description: >-
+        Returns the Worker the router's service site binding points at and the state of the last
+        attach or detach request, read from the control plane. fallback_enabled is the
+        service-site.fallback_enabled setting of the caller's tenant; the router routes non-Authrim
+        paths to the attached Worker only while it is on. The router is shared by every tenant of
+        the environment, so this platform-wide operation is restricted to system administrators.
+      responses:
+        '200':
+          description: Current service site attachment.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [service_site]
+                properties:
+                  service_site:
+                    $ref: '#/components/schemas/AdminServiceSite'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Service Site
+      operationId: putApiAdminPlatformServiceSite
+      summary: Attach a service site Worker to the router.
+      description: >-
+        Asks the control plane to bind the named Worker to the router as a service binding (named by
+        the router's SERVICE_SITE_BINDING variable, SERVICE_SITE by default). The control plane
+        patches the router's Worker settings, keeps every other binding unchanged, verifies the
+        reflected settings and rolls the change back when they differ. The change is asynchronous:
+        poll GET until state is succeeded. Authrim's own Workers cannot be attached, and the Worker
+        must already exist in the Cloudflare account. Turning the routing on is a separate step: the
+        service-site.fallback_enabled setting.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [worker_name]
+              properties:
+                worker_name:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$'
+                  description: Cloudflare Worker script name of the service site.
+      responses:
+        '200':
+          description: The router already has this attachment; nothing was changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminServiceSiteChange'
+        '202':
+          description: Attach accepted, or an idempotent request returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminServiceSiteChange'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Service Site
+      operationId: deleteApiAdminPlatformServiceSite
+      summary: Detach the service site Worker from the router.
+      description: >-
+        Asks the control plane to remove the service site binding from the router's Worker settings,
+        leaving every other binding unchanged. The change is asynchronous: poll GET until state is
+        succeeded. Turn service-site.fallback_enabled off first; while it is on and no Worker is
+        attached the router answers non-Authrim paths with a not-found response.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      responses:
+        '200':
+          description: The router already has no service site binding; nothing was changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminServiceSiteChange'
+        '202':
+          description: Detach accepted, or an idempotent request returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminServiceSiteChange'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -69309,6 +69525,65 @@ components:
         updatedAt:
           type: integer
           format: int64
+    AdminServiceSite:
+      type: object
+      additionalProperties: false
+      required:
+        - attached
+        - worker_name
+        - state
+        - desired_state
+        - desired_worker_name
+        - binding_name
+        - last_error
+        - operation_id
+        - updated_at
+        - fallback_enabled
+      properties:
+        attached:
+          type: boolean
+          description: >-
+            Whether the router binding points at a Worker, as last verified. Still true while a
+            detach is running.
+        worker_name:
+          type: [string, 'null']
+          description: The Worker the router binding was last verified to point at.
+        state:
+          type: string
+          description: >-
+            State of the last request. none means no request was ever made; pending and
+            settings_patched are in progress; rollback_required is being undone; succeeded is
+            settled; rolled_back and blocked need a new request.
+          enum:
+            [none, pending, settings_patched, rollback_required, succeeded, rolled_back, blocked]
+        desired_state:
+          type: string
+          enum: [attached, detached]
+        desired_worker_name:
+          type: [string, 'null']
+        binding_name:
+          type: [string, 'null']
+          description: The router binding name; null until the first request is applied.
+        last_error:
+          type: [string, 'null']
+          description: Machine-readable code of the last failure.
+        operation_id:
+          type: [string, 'null']
+        updated_at:
+          type: [integer, 'null']
+          format: int64
+        fallback_enabled:
+          type: boolean
+          description: The service-site.fallback_enabled setting of the caller's tenant.
+    AdminServiceSiteChange:
+      type: object
+      additionalProperties: false
+      required: [service_site, audit_id]
+      properties:
+        service_site:
+          $ref: '#/components/schemas/AdminServiceSite'
+        audit_id:
+          type: string
     AdminWorkerInventoryDriftFinding:
       type: object
       additionalProperties: false

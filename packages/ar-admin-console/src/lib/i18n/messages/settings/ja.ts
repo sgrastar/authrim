@@ -27,9 +27,12 @@ export const jaSettings = {
 	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
 		'最終手段の復旧で管理者の第 2 要素を取り消した後、パスキーだけで最初の第 2 要素を登録し直せる期間です。',
 	'settings.json.object': 'JSON のオブジェクト（{ } で囲んだ形）を入力してください。',
-	'set.page.stayingSignedIn': 'ログイン状態の維持',
-	'set.page.stayingSignedIn.desc':
-		'一度ログインした利用者と、そのアプリが、どれくらいの間ログインしたままでいられるかを決めます。',
+	'set.page.sessionProfiles': 'セッションプロフィール',
+	'set.page.sessionProfiles.desc':
+		'一度ログインした利用者が、どれくらいの間ログインしたままでいられるかと、シングルサインオンを決めます。',
+	'set.page.logout.desc':
+		'利用者がログアウトしたことを、アプリにどう知らせるかを決めます。アプリごとのログアウト先はアプリの設定です。',
+	'set.page.logout': 'ログアウト',
 	'set.page.signingKeys': '署名鍵',
 	'set.page.signingKeys.desc': 'このテナントがトークンに署名する方法。',
 	'set.section.idTokenSigning': 'ID トークンの署名',
@@ -85,9 +88,9 @@ export const jaSettings = {
 	'set.k.security.fapi_enabled': 'FAPI 2.0 を適用',
 	'set.k.security.fapi_enabled.desc':
 		'テナントのすべてのアプリに FAPI 2.0 セキュリティプロファイルを適用します。',
-	'set.page.appDefaults': 'アプリの既定',
-	'set.page.appDefaults.desc':
-		'テナント内の全アプリに適用し、アプリ別設定でセキュリティ要件を緩めることはできません。',
+	'set.page.tokens': 'トークンとプロトコル',
+	'set.page.tokens.desc':
+		'アプリに出すトークンの有効期限と、すべてのアプリに求める要件・プロトコルの既定です。アプリごとに上書きできます（要件は緩められません）。',
 	'set.section.authRequests': '認可リクエスト',
 	'set.section.authRequests.desc': 'アプリがログインを求めるときのリクエストに求めることです。',
 	'set.section.authRequests.advanced': 'request object の署名と暗号化',

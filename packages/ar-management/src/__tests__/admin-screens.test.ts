@@ -32,6 +32,7 @@ import {
   adminScreenUpdateHandler,
   adminScreensListHandler,
 } from '../admin-screens';
+import { EDITABLE_DEFAULT_SCREEN_KEYS } from '@authrim/ar-lib-core/types/screens';
 
 type ScreenRow = Record<string, unknown> & {
   id: string;
@@ -135,7 +136,7 @@ beforeEach(() => {
   mocks.db.execute.mockReset();
 
   mocks.db.queryOne.mockImplementation(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('FROM screens') && sql.includes('screen_key')) {
+    if (sql.includes('FROM screens') && sql.includes('screen_key = ?')) {
       const tenantId = String(params[0]);
       const screenKey = String(params[1]);
       return rows.find((row) => row.tenant_id === tenantId && row.screen_key === screenKey) ?? null;
@@ -173,6 +174,11 @@ beforeEach(() => {
         const id = String(params[3]);
         const row = rows.find((item) => item.tenant_id === tenantId && item.id === id);
         if (row) row.screen_kind = screenKind;
+      } else if (sql.includes('SET is_system')) {
+        const tenantId = String(params[1]);
+        const id = String(params[2]);
+        const row = rows.find((item) => item.tenant_id === tenantId && item.id === id);
+        if (row) row.is_system = 0;
       } else if (sql.includes('SET fields_json')) {
         const fieldsJson = String(params[0]);
         const tenantId = String(params[2]);
@@ -200,6 +206,79 @@ beforeEach(() => {
 });
 
 describe('admin screens', () => {
+  describe('a link part', () => {
+    const linkScreen = (link: Record<string, unknown>, kind = 'custom') =>
+      adminScreenCreateHandler(
+        createMutationContext({
+          screen_key: 'step_two',
+          display_name: 'Step two',
+          screen_kind: kind,
+          fields: [
+            { field: 'heading.step_two', label: 'More about you', block_type: 'heading' },
+            { field: 'link.back', label: 'Back', block_type: 'link', ...link },
+          ],
+        })
+      );
+    const savedLink = () => {
+      const saved = rows.find((row) => row.screen_key === 'step_two');
+      return (JSON.parse(String(saved?.fields_json)) as Array<Record<string, unknown>>)[1];
+    };
+    it.each([
+      [{ link_action: 'next' }, { link_action: 'next' }],
+      [
+        { link_action: 'back', link_style: 'button' },
+        { link_action: 'back', link_style: 'button' },
+      ],
+      [{ link_action: 'skip' }, { link_action: 'skip' }],
+      [
+        { link_action: 'exit', link_exit: ' social ' },
+        { link_action: 'exit', link_exit: 'social' },
+      ],
+    ])('leaves the screen by an exit %j, with no URL of its own', async (link, saved) => {
+      const response = await linkScreen(link);
+      expect(response.status).toBe(201);
+      expect(savedLink()).toMatchObject(saved);
+      expect(savedLink()).not.toHaveProperty('href');
+    });
+
+    it('keeps a text link to a URL as before, with no action or style saved', async () => {
+      const response = await linkScreen({ href: 'https://example.com/help', link_style: 'text' });
+      expect(response.status).toBe(201);
+      expect(savedLink()).toMatchObject({ href: 'https://example.com/help' });
+      expect(savedLink()).not.toHaveProperty('link_style');
+      expect(savedLink()).not.toHaveProperty('link_action');
+    });
+
+    it.each([
+      [{ link_action: 'teleport' }, 'link_action must be'],
+      [{ link_action: 'next', href: '/help' }, 'has no URL'],
+      [{ link_action: 'exit' }, 'link_exit must be'],
+      [{ link_action: 'exit', link_exit: 'Social Login' }, 'link_exit must be'],
+      [{ link_action: 'exit', link_exit: 'submitted' }, "the screen's own"],
+      [{}, 'a link needs'],
+      [{ href: '/help', link_style: 'banner' }, 'link_style must be'],
+      [{ href: 'javascript:alert(1)' }, 'a link needs'],
+    ])('refuses %j', async (link, reason) => {
+      const response = await linkScreen(link);
+      expect(response.status).toBe(400);
+      expect(String((await readJson(response)).error_description)).toContain(reason);
+      expect(rows.some((row) => row.screen_key === 'step_two')).toBe(false);
+    });
+
+    it('leaves the account page by no exit: it is not a flow', async () => {
+      const response = await adminScreenCreateHandler(
+        createMutationContext({
+          screen_key: 'step_two',
+          display_name: 'Account links',
+          screen_kind: 'account',
+          fields: [{ field: 'link.back', label: 'Back', block_type: 'link', link_action: 'back' }],
+        })
+      );
+      expect(response.status).toBe(400);
+      expect(String((await readJson(response)).error_description)).toContain('can only open a URL');
+    });
+  });
+
   it('rejects unsupported blocks in Account screens', async () => {
     const response = await adminScreenCreateHandler(
       createMutationContext({
@@ -267,9 +346,9 @@ describe('admin screens', () => {
     rows.push({
       id: 'screen-system',
       tenant_id: 'tenant-1',
-      screen_key: 'account_profile',
+      screen_key: 'profile_completion',
       display_name: 'Profile',
-      screen_kind: 'account',
+      screen_kind: 'profile_completion',
       fields_json: '[]',
       settings_json: '{}',
       is_system: 1,
@@ -294,13 +373,24 @@ describe('admin screens', () => {
     expect(consent).toMatchObject({
       screen_kind: 'consent',
       display_name: 'Consent',
-      is_system: 1,
+      is_system: 0,
     });
     expect(consent?.settings).toEqual({ canvas_layout: 'narrow' });
     expect(screensByKey.get('code_input')).toMatchObject({
       screen_kind: 'code_input',
       display_name: 'Code input',
+      is_system: 0,
+    });
+    for (const key of ['registration', 'login', 'consent', 'code_input']) {
+      expect(screensByKey.get(key)).toMatchObject({ is_system: 0 });
+      expect(screensByKey.get(`${key}_template`)).toMatchObject({ is_system: 1 });
+    }
+    const accountScreens = screens.filter((screen) => screen.screen_kind === 'account');
+    expect(accountScreens.filter((screen) => !screen.is_system)).toHaveLength(11);
+    expect(accountScreens.filter((screen) => screen.is_system)).toHaveLength(11);
+    expect(screensByKey.get('account_overview_template')).toMatchObject({
       is_system: 1,
+      display_name: 'Account overview',
     });
     const overviewFields = screensByKey.get('account_overview')?.fields as Array<
       Record<string, unknown>
@@ -405,24 +495,13 @@ describe('admin screens', () => {
     expect(codeInputZhCn?.['auth.code_input-1']?.text).toBe(
       '请输入电子邮件或身份验证器应用中的验证码。'
     );
-    expect(rows.map((row) => row.screen_key).sort()).toEqual([
-      'account_activity',
-      'account_consents',
-      'account_custom',
-      'account_devices',
-      'account_launchers',
-      'account_overview',
-      'account_passkeys',
-      'account_profile',
-      'account_sessions',
-      'account_social_accounts',
-      'account_totp',
-      'code_input',
-      'consent',
-      'login',
-      'profile_completion',
-      'registration',
-    ]);
+    expect(rows.map((row) => row.screen_key).sort()).toEqual(
+      [
+        ...EDITABLE_DEFAULT_SCREEN_KEYS,
+        ...EDITABLE_DEFAULT_SCREEN_KEYS.map((key) => `${key}_template`),
+        'profile_completion',
+      ].sort()
+    );
   });
 
   it('removes the retired account overview description and security link from existing defaults', async () => {
@@ -484,6 +563,7 @@ describe('admin screens', () => {
     expect(fields[0]).not.toHaveProperty('text');
     expect(jaFields['heading.account_overview-0']).toEqual({ label: 'アカウントを管理' });
     expect(jaFields).not.toHaveProperty('link.account_security-1');
+    expect(overview?.is_system).toBe(0);
   });
 
   it('preserves email and name fields added to the registration system screen', async () => {
