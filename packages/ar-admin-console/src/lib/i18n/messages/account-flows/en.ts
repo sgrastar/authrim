@@ -43,7 +43,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.group.identity': 'Sign-in methods',
 	'af.group.regConsent': 'Consent at sign-up',
 	'af.group.authenticate': 'Authenticating the person',
-	'af.group.stepUp': 'Additional authentication',
 	'af.group.finish': 'Finishing sign-in',
 
 	'af.part.reg-general': 'Accepting sign-ups',
@@ -52,9 +51,8 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.part.reg-statements': 'Consent statements',
 	'af.part.reg-policy': 'Consent policy',
 	'af.part.reg-result': 'After completion',
-	'af.part.login-methods': 'Methods and sources',
+	'af.part.login-methods': 'Sign-in method profile',
 	'af.part.login-validation': 'Validation rules',
-	'af.part.login-conditions': 'When to ask',
 	'af.part.login-session': 'Establishing the session',
 	'af.part.login-return': 'Returning the result',
 
@@ -65,9 +63,8 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'Choose the statements, such as terms of use, to agree to when signing up.',
 	'af.lead.reg-policy': 'Decide when, and how, consent is asked for at sign-up.',
 	'af.lead.reg-result': 'Decide where the person goes once sign-up is done.',
-	'af.lead.login-methods': 'Choose the sign-in methods this flow uses.',
+	'af.lead.login-methods': 'Choose the sign-in method profile this sign-in uses.',
 	'af.lead.login-validation': 'Decide when a person counts as authenticated.',
-	'af.lead.login-conditions': 'Runs when more than the basic sign-in has to be checked.',
 	'af.lead.login-session':
 		'Once the required authentication is complete, Authrim creates the session.',
 	'af.lead.login-return': 'The result of the sign-in goes back to the caller.',
@@ -79,9 +76,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.note.login-return':
 		'Issuing tokens to an app and agreeing to share attributes are set in each connection’s flow.',
 
-	'af.field.methods': 'Methods people can use',
-	'af.field.provider': 'External provider to use',
-	'af.hint.provider': 'Choose from the connections already in service flows.',
 	'af.field.reg.methodProfile': 'Profile to use',
 	'af.profile.create': 'Create a sign-in method profile',
 	'af.profile.newTitle': 'New sign-in method profile',
@@ -183,9 +177,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.field.login.unregistered': 'When someone who has not signed up arrives',
 	'af.hint.login.unregistered':
 		'To avoid telling others whether an account exists, you can only say the sign-in failed.',
-	'af.field.login.stepUpWhen': 'When to ask for more',
-	'af.field.login.stepUpFactor': 'Method to ask for',
-	'af.field.login.stepUpUnavailable': 'When the extra method cannot be used',
 	'af.field.login.lifetime': 'How long a session lasts',
 	'af.field.login.reauth': 'When to ask to sign in again',
 	'af.field.login.failure': 'If sign-in fails or is interrupted',
@@ -330,9 +321,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.syncGroup.sales': 'Sales',
 	'af.syncGroup.support': 'Support',
 
-	'af.provider.acme': 'Acme Directory',
-	'af.provider.corporate': 'Corporate sign-in',
-
 	'af.method.passkey': 'Passkey',
 	'af.method.password': 'Password',
 	'af.method.otp': 'One-time code',
@@ -361,11 +349,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.failures.none': 'No limit',
 	'af.unregistered.guide': 'Point them to sign-up',
 	'af.unregistered.generic': 'Only say that sign-in failed',
-	'af.stepUpWhen.always': 'Every time',
-	'af.stepUpWhen.risk': 'When the risk is high',
-	'af.stepUpWhen.sensitive': 'For sensitive actions',
-	'af.stepUpUnavailable.deny': 'Do not let them sign in',
-	'af.stepUpUnavailable.enroll': 'Let them register a method on the spot',
 	'af.lifetime.8h': '8 hours',
 	'af.lifetime.24h': '24 hours',
 	'af.lifetime.7d': '7 days',

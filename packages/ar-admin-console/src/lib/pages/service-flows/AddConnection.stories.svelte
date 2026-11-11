@@ -566,7 +566,7 @@
 			'Partner portal sign-in'
 		);
 		await expect(
-			inFlow(canvasElement, /^Methods and sources.*Required.*Not set yet/)
+			inFlow(canvasElement, /^Establishing the session.*Required.*Not set yet/)
 		).toBeInTheDocument();
 	}}
 >

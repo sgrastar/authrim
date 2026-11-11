@@ -47,7 +47,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.group.identity': 'Anmeldeverfahren',
 	'af.group.regConsent': 'Einwilligung bei der Registrierung',
 	'af.group.authenticate': 'Person authentifizieren',
-	'af.group.stepUp': 'Zusätzliche Authentifizierung',
 	'af.group.finish': 'Anmeldung abschließen',
 
 	'af.part.reg-general': 'Annahme von Registrierungen',
@@ -56,9 +55,8 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.part.reg-statements': 'Einwilligungserklärungen',
 	'af.part.reg-policy': 'Einwilligungsrichtlinie',
 	'af.part.reg-result': 'Nach dem Abschluss',
-	'af.part.login-methods': 'Verfahren und Quellen',
+	'af.part.login-methods': 'Anmeldeverfahren-Profil',
 	'af.part.login-validation': 'Prüfregeln',
-	'af.part.login-conditions': 'Wann nachgefragt wird',
 	'af.part.login-session': 'Sitzung einrichten',
 	'af.part.login-return': 'Ergebnis zurückgeben',
 
@@ -71,10 +69,8 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.reg-policy':
 		'Legen Sie fest, wann und wie bei der Registrierung um Einwilligung gebeten wird.',
 	'af.lead.reg-result': 'Legen Sie fest, wohin die Person nach der Registrierung geht.',
-	'af.lead.login-methods': 'Wählen Sie die Anmeldeverfahren, die dieser Ablauf verwendet.',
+	'af.lead.login-methods': 'Wählen Sie das Anmeldeverfahren-Profil für diese Anmeldung.',
 	'af.lead.login-validation': 'Legen Sie fest, wann eine Person als authentifiziert gilt.',
-	'af.lead.login-conditions':
-		'Wird ausgeführt, wenn mehr als die einfache Anmeldung geprüft werden muss.',
 	'af.lead.login-session':
 		'Sobald die erforderliche Authentifizierung abgeschlossen ist, erstellt Authrim die Sitzung.',
 	'af.lead.login-return': 'Das Ergebnis der Anmeldung geht an den Aufrufer zurück.',
@@ -87,9 +83,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.note.login-return':
 		'Die Ausstellung von Tokens an eine App und die Zustimmung zur Weitergabe von Attributen werden im Ablauf der jeweiligen Verbindung festgelegt.',
 
-	'af.field.methods': 'Verfahren, die Personen nutzen können',
-	'af.field.provider': 'Zu verwendender externer Anbieter',
-	'af.hint.provider': 'Wählen Sie aus den Verbindungen, die bereits in den Serviceabläufen sind.',
 	'af.field.reg.methodProfile': 'Zu verwendendes Profil',
 	'af.profile.create': 'Neues Profil für Anmeldeverfahren erstellen',
 	'af.profile.newTitle': 'Neues Profil für Anmeldeverfahren',
@@ -195,9 +188,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.field.login.unregistered': 'Wenn jemand kommt, der nicht registriert ist',
 	'af.hint.login.unregistered':
 		'Damit Dritte nicht erfahren, ob ein Konto existiert, können Sie nur melden, dass die Anmeldung fehlgeschlagen ist.',
-	'af.field.login.stepUpWhen': 'Wann mehr verlangt wird',
-	'af.field.login.stepUpFactor': 'Geforderte Methode',
-	'af.field.login.stepUpUnavailable': 'Wenn die zusätzliche Methode nicht genutzt werden kann',
 	'af.field.login.lifetime': 'Wie lange eine Sitzung dauert',
 	'af.field.login.reauth': 'Wann erneut zur Anmeldung aufgefordert wird',
 	'af.field.login.failure': 'Wenn die Anmeldung fehlschlägt oder abgebrochen wird',
@@ -350,9 +340,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.syncGroup.sales': 'Vertrieb',
 	'af.syncGroup.support': 'Support',
 
-	'af.provider.acme': 'Acme Directory',
-	'af.provider.corporate': 'Unternehmensanmeldung',
-
 	'af.method.passkey': 'Passkey',
 	'af.method.password': 'Passwort',
 	'af.method.otp': 'Einmalcode',
@@ -381,11 +368,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.failures.none': 'Keine Begrenzung',
 	'af.unregistered.guide': 'Auf die Registrierung verweisen',
 	'af.unregistered.generic': 'Nur melden, dass die Anmeldung fehlgeschlagen ist',
-	'af.stepUpWhen.always': 'Jedes Mal',
-	'af.stepUpWhen.risk': 'Bei hohem Risiko',
-	'af.stepUpWhen.sensitive': 'Bei sensiblen Aktionen',
-	'af.stepUpUnavailable.deny': 'Anmeldung nicht zulassen',
-	'af.stepUpUnavailable.enroll': 'Eine Methode direkt vor Ort registrieren lassen',
 	'af.lifetime.8h': '8 Stunden',
 	'af.lifetime.24h': '24 Stunden',
 	'af.lifetime.7d': '7 Tage',

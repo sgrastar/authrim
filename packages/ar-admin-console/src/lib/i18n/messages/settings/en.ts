@@ -26,9 +26,12 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
 		"After the last-resort recovery revoked an administrator's second factors, how long they may register a first one again with a passkey alone.",
 	'settings.json.object': 'Enter a JSON object (in braces { }).',
-	'set.page.stayingSignedIn': 'Staying signed in',
-	'set.page.stayingSignedIn.desc':
-		'How long people stay signed in once they have signed in, and how long their apps keep that sign-in.',
+	'set.page.sessionProfiles': 'Session profiles',
+	'set.page.sessionProfiles.desc':
+		'How long a person stays signed in once they sign in, and single sign-on.',
+	'set.page.logout.desc':
+		'How apps are told that a person signed out. Each app’s own logout addresses are the app’s.',
+	'set.page.logout': 'Logout',
 	'set.page.signingKeys': 'Signing keys',
 	'set.page.signingKeys.desc': 'How this tenant signs its tokens.',
 	'set.section.idTokenSigning': 'ID token signing',
@@ -84,9 +87,9 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.fapi_enabled': 'Apply FAPI 2.0',
 	'set.k.security.fapi_enabled.desc':
 		'Apply the FAPI 2.0 Security Profile to every app of the tenant.',
-	'set.page.appDefaults': 'App defaults',
-	'set.page.appDefaults.desc':
-		'These rules apply to every app in this tenant; app settings cannot relax security requirements.',
+	'set.page.tokens': 'Tokens and protocols',
+	'set.page.tokens.desc':
+		'How long the tokens apps get last, and what every app must meet and the protocol defaults. Each app can override them (a requirement cannot be waived).',
 	'set.section.authRequests': 'Authorization requests',
 	'set.section.authRequests.desc': 'What an app’s sign-in request must carry.',
 	'set.section.authRequests.advanced': 'Signed and encrypted request objects',

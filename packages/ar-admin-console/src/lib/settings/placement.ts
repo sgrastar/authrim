@@ -126,12 +126,15 @@ export function partsOf(page: SettingsPageDef): SettingsPart[] {
 // ---------------------------------------------------------------------------------------------
 // Pages
 
-/** Authentication → Staying signed in: how long a sign-in lasts, for people and for apps. */
-export const STAYING_SIGNED_IN: SettingsPageDef = {
-	id: 'staying-signed-in',
-	nav: 'authentication/staying-signed-in',
-	title: 'set.page.stayingSignedIn',
-	description: 'set.page.stayingSignedIn.desc',
+/**
+ * Authentication → Session profiles: how long a person's sign-in lasts, and single sign-on. (The
+ * tokens apps get are on Tokens and protocols; the logout notices on Logout.)
+ */
+export const SESSION_PROFILES: SettingsPageDef = {
+	id: 'session-profiles',
+	nav: 'authentication/session-profiles',
+	title: 'set.page.sessionProfiles',
+	description: 'set.page.sessionProfiles.desc',
 	sections: [
 		{
 			id: 'sign-in',
@@ -151,28 +154,20 @@ export const STAYING_SIGNED_IN: SettingsPageDef = {
 				{ key: 'session.ttl.passkey_registration', depth: 'advanced' },
 				{ key: 'session.max_ttl', depth: 'advanced' }
 			]
-		},
-		{
-			id: 'app-tokens',
-			title: 'set.section.appTokens',
-			description: 'set.section.appTokens.desc',
-			advanced: 'set.section.appTokens.advanced',
-			settings: [
-				{ key: 'oauth.access_token_expiry', depth: 'primary' },
-				{ key: 'oauth.refresh_token_expiry', depth: 'primary' },
-				{ key: 'oauth.id_token_expiry', depth: 'advanced' },
-				{ key: 'oauth.refresh_token_rotation', depth: 'advanced' },
-				{ key: 'oauth.refresh_token_sliding_window_enabled', depth: 'advanced' },
-				{ key: 'oauth.refresh_token_absolute_expiry_enabled', depth: 'advanced' },
-				{
-					key: 'oauth.refresh_token_absolute_expiry',
-					depth: 'advanced',
-					when: { key: 'oauth.refresh_token_absolute_expiry_enabled', is: true }
-				},
-				{ key: 'oauth.offline_access_required', depth: 'advanced' },
-				{ key: 'oauth.refresh_id_token_reissue', depth: 'advanced' }
-			]
-		},
+		}
+	]
+};
+
+/**
+ * Authentication → Logout: how the tenant tells apps a person signed out (back-channel logout
+ * delivery). Each app's own logout addresses are the app's.
+ */
+export const LOGOUT: SettingsPageDef = {
+	id: 'logout',
+	nav: 'authentication/logout',
+	title: 'set.page.logout',
+	description: 'set.page.logout.desc',
+	sections: [
 		{
 			id: 'logout',
 			title: 'set.section.logout',
@@ -211,16 +206,38 @@ export const SIGNING_KEYS: SettingsPageDef = {
 };
 
 /**
- * Applications → App defaults: what every app of the tenant must meet (the tenant's security
+ * Authentication → Tokens and protocols: the tokens apps get (their lifetimes), what every app
+ * of the tenant must meet (the tenant's security
  * floor: an app's own settings can add a requirement but not waive one) and the tenant-wide
  * protocol rules. More of the draft in `inventory.ts` moves here as it is built.
  */
-export const APP_DEFAULTS: SettingsPageDef = {
-	id: 'app-defaults',
-	nav: 'applications/defaults',
-	title: 'set.page.appDefaults',
-	description: 'set.page.appDefaults.desc',
+export const TOKENS: SettingsPageDef = {
+	id: 'tokens',
+	nav: 'authentication/tokens',
+	title: 'set.page.tokens',
+	description: 'set.page.tokens.desc',
 	sections: [
+		{
+			id: 'app-tokens',
+			title: 'set.section.appTokens',
+			description: 'set.section.appTokens.desc',
+			advanced: 'set.section.appTokens.advanced',
+			settings: [
+				{ key: 'oauth.access_token_expiry', depth: 'primary' },
+				{ key: 'oauth.refresh_token_expiry', depth: 'primary' },
+				{ key: 'oauth.id_token_expiry', depth: 'advanced' },
+				{ key: 'oauth.refresh_token_rotation', depth: 'advanced' },
+				{ key: 'oauth.refresh_token_sliding_window_enabled', depth: 'advanced' },
+				{ key: 'oauth.refresh_token_absolute_expiry_enabled', depth: 'advanced' },
+				{
+					key: 'oauth.refresh_token_absolute_expiry',
+					depth: 'advanced',
+					when: { key: 'oauth.refresh_token_absolute_expiry_enabled', is: true }
+				},
+				{ key: 'oauth.offline_access_required', depth: 'advanced' },
+				{ key: 'oauth.refresh_id_token_reissue', depth: 'advanced' }
+			]
+		},
 		{
 			id: 'authorization-requests',
 			title: 'set.section.authRequests',
@@ -416,10 +433,11 @@ export const TEAM: SettingsPageDef = {
 };
 
 export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
-	STAYING_SIGNED_IN,
+	SESSION_PROFILES,
+	LOGOUT,
 	PROTECTION,
 	ENTERPRISE_SAML,
 	SIGNING_KEYS,
-	APP_DEFAULTS,
+	TOKENS,
 	TEAM
 ];

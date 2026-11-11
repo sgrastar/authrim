@@ -18,7 +18,7 @@ export const deAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.list.deleteBody': 'Dieses Profil kann nicht wiederhergestellt werden.',
 	'am.list.deleteSuccess': 'Profil gelöscht.',
 	'am.page.new': 'Neues Profil',
-	'am.page.back': 'Anmeldeverfahren',
+	'am.page.back': 'Anmeldeverfahren-Profile',
 	'am.page.name': 'Profilname',
 	'am.page.nameHint': 'Ein Name zur Unterscheidung in Listen (bis zu 80 Zeichen).',
 	'am.page.nameRequired': 'Geben Sie einen Profilnamen ein.',

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
 import type { SettingsTarget } from '#lib/api/settings.js';
-import { STAYING_SIGNED_IN, type SettingsSection } from './placement';
+import {
+	LOGOUT,
+	SESSION_PROFILES as SESSION_PAGE,
+	TOKENS,
+	type SettingsPageDef,
+	type SettingsSection
+} from './placement';
 import {
 	changedBetween,
 	changes,
@@ -14,6 +20,18 @@ import {
 } from './settings-model';
 
 const tenant: SettingsTarget = { level: 'tenant', tenantId: 'acme' };
+/**
+ * A page holding the session, app-token and logout sections (as the session page once did): the
+ * session and oauth categories side by side, which these tests work on.
+ */
+const SESSION_PROFILES: SettingsPageDef = {
+	...SESSION_PAGE,
+	sections: [
+		...SESSION_PAGE.sections,
+		...TOKENS.sections.filter((s) => s.id === 'app-tokens'),
+		...LOGOUT.sections
+	]
+};
 const levels = { session: 'edit', oauth: 'edit' } as const;
 
 async function load(options: Parameters<typeof createFakeSettings>[0] = {}): Promise<Loaded> {
@@ -25,7 +43,7 @@ async function load(options: Parameters<typeof createFakeSettings>[0] = {}): Pro
 }
 
 const section = (id: string): SettingsSection =>
-	STAYING_SIGNED_IN.sections.find((s) => s.id === id)!;
+	SESSION_PROFILES.sections.find((s) => s.id === id)!;
 
 describe('the badge of a setting that is only read', () => {
 	it('says a setting in development has no effect yet, before anything else', () => {
@@ -44,7 +62,7 @@ describe('a settings page’s values', () => {
 			stored: { 'tenant:acme': { 'session.default_ttl': 3600000 } },
 			env: { 'oauth.access_token_expiry': 900 }
 		});
-		const values = valuesFrom(STAYING_SIGNED_IN, loaded);
+		const values = valuesFrom(SESSION_PROFILES, loaded);
 		expect(values[fieldOf('session.default_ttl')]).toEqual({ v: 3600000, here: true });
 		expect(values[fieldOf('oauth.access_token_expiry')]).toEqual({ v: 900, here: false });
 		expect(fallbackOf('oauth.access_token_expiry', loaded)).toEqual({ value: 900, source: 'env' });
@@ -55,7 +73,7 @@ describe('a settings page’s values', () => {
 	});
 
 	it('shows primary settings, keeps the rest in Advanced, and search ones only when set here', async () => {
-		const plain = valuesFrom(STAYING_SIGNED_IN, await load());
+		const plain = valuesFrom(SESSION_PROFILES, await load());
 		const view = sectionView(section('sign-in'), plain, levels);
 		expect(view.primary.map((s) => s.key)).toEqual([
 			'session.default_ttl',
@@ -67,7 +85,7 @@ describe('a settings page’s values', () => {
 		expect(logout.advanced.map((s) => s.key)).not.toContain('session.backchannel_logout_token_exp');
 
 		const tuned = valuesFrom(
-			STAYING_SIGNED_IN,
+			SESSION_PROFILES,
 			await load({
 				stored: {
 					'tenant:acme': {
@@ -83,7 +101,7 @@ describe('a settings page’s values', () => {
 	});
 
 	it('shows a dependent setting only while what it depends on is on the screen', async () => {
-		const values = valuesFrom(STAYING_SIGNED_IN, await load());
+		const values = valuesFrom(SESSION_PROFILES, await load());
 		const limit = 'oauth.refresh_token_absolute_expiry';
 		values[fieldOf('oauth.refresh_token_absolute_expiry_enabled')] = { v: false, here: true };
 		expect(
@@ -97,7 +115,7 @@ describe('a settings page’s values', () => {
 
 	it('marks settings the scope above has fixed, and never sends them', async () => {
 		const saved = valuesFrom(
-			STAYING_SIGNED_IN,
+			SESSION_PROFILES,
 			await load({ locked: ['oauth.access_token_expiry'] })
 		);
 		expect(saved[fieldOf('oauth.access_token_expiry')]).toEqual({
@@ -106,11 +124,11 @@ describe('a settings page’s values', () => {
 			locked: true
 		});
 		expect(saved[fieldOf('oauth.id_token_expiry')].locked).toBeUndefined();
-		expect(changes(STAYING_SIGNED_IN, saved, structuredClone(saved)).size).toBe(0);
+		expect(changes(SESSION_PROFILES, saved, structuredClone(saved)).size).toBe(0);
 	});
 
 	it('leaves out settings of categories the admin cannot see', async () => {
-		const values = valuesFrom(STAYING_SIGNED_IN, await load());
+		const values = valuesFrom(SESSION_PROFILES, await load());
 		const view = sectionView(section('sign-in'), values, { session: 'view', oauth: 'none' });
 		expect(view.primary.map((s) => s.key)).toEqual([
 			'session.default_ttl',
@@ -120,22 +138,22 @@ describe('a settings page’s values', () => {
 
 	it('sends changed values and clears released ones, per category', async () => {
 		const saved = valuesFrom(
-			STAYING_SIGNED_IN,
+			SESSION_PROFILES,
 			await load({ stored: { 'tenant:acme': { 'oauth.access_token_expiry': 900 } } })
 		);
 		const current = structuredClone(saved);
 		current[fieldOf('session.default_ttl')] = { v: 7200000, here: true };
 		current[fieldOf('oauth.access_token_expiry')] = { v: 3600, here: false };
-		const out = changes(STAYING_SIGNED_IN, saved, current);
+		const out = changes(SESSION_PROFILES, saved, current);
 		expect(out.get('session')).toEqual({ set: { 'session.default_ttl': 7200000 } });
 		expect(out.get('oauth')).toEqual({ clear: ['oauth.access_token_expiry'] });
-		expect(changes(STAYING_SIGNED_IN, saved, saved).size).toBe(0);
+		expect(changes(SESSION_PROFILES, saved, saved).size).toBe(0);
 	});
 
 	it('names what someone else changed between two loads', async () => {
-		const before = valuesFrom(STAYING_SIGNED_IN, await load());
+		const before = valuesFrom(SESSION_PROFILES, await load());
 		const after = valuesFrom(
-			STAYING_SIGNED_IN,
+			SESSION_PROFILES,
 			await load({ stored: { 'tenant:acme': { 'oauth.sso_enabled': true } } })
 		);
 		expect(changedBetween(before, after)).toEqual(['oauth.sso_enabled']);

@@ -6,7 +6,6 @@ import {
 	choices,
 	emptyFlowState,
 	FLOW_PREFIX,
-	includes,
 	isSyncFlow,
 	type AccountField,
 	type AccountFlowDef,
@@ -46,12 +45,6 @@ export type {
 } from './flow-spec';
 export { emptyFlowState, isSyncFlow } from './flow-spec';
 export { SYNC_FLOW_IDS } from './sync-flow-spec';
-
-/** The connections the tenant already has, for "sign in through …" (dummy). */
-const PROVIDERS = () => [
-	{ value: 'acme', label: t('af.provider.acme') },
-	{ value: 'corporate', label: t('af.provider.corporate') }
-];
 
 const ACCOUNT_PARTS: Record<string, AccountPart> = {
 	'reg-about': {
@@ -330,20 +323,13 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		lead: 'af.lead.login-methods',
 		fields: [
 			{
-				key: 'login.methods',
-				kind: 'checks',
-				label: 'af.field.methods',
-				options: choices('method', ['passkey', 'password', 'otp', 'external']),
-				required: true
-			},
-			{
-				key: 'login.provider',
-				kind: 'select',
-				label: 'af.field.provider',
-				hint: 'af.hint.provider',
-				options: PROVIDERS,
+				key: 'login.methodProfile',
+				kind: 'profile',
+				label: 'af.field.reg.methodProfile',
+				options: () => [],
 				required: true,
-				showWhen: includes('login.methods', 'external')
+				// Every tenant has its default profile.
+				initial: 'default'
 			}
 		]
 	},
@@ -367,33 +353,6 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 				hint: 'af.hint.login.unregistered',
 				options: choices('unregistered', ['guide', 'generic']),
 				required: true
-			}
-		]
-	},
-	'login-conditions': {
-		id: 'login-conditions',
-		label: 'af.part.login-conditions',
-		lead: 'af.lead.login-conditions',
-		fields: [
-			{
-				key: 'login.stepUpWhen',
-				kind: 'select',
-				label: 'af.field.login.stepUpWhen',
-				options: choices('stepUpWhen', ['always', 'risk', 'sensitive']),
-				required: true
-			},
-			{
-				key: 'login.stepUpFactor',
-				kind: 'select',
-				label: 'af.field.login.stepUpFactor',
-				options: choices('method', ['passkey', 'otp']),
-				required: true
-			},
-			{
-				key: 'login.stepUpUnavailable',
-				kind: 'select',
-				label: 'af.field.login.stepUpUnavailable',
-				options: choices('stepUpUnavailable', ['deny', 'enroll'])
 			}
 		]
 	},
@@ -474,18 +433,10 @@ export const FLOWS: Record<FlowId, AccountFlowDef> = {
 		summary: 'af.flow.login.summary',
 		start: { title: 'af.flow.login.start', detail: 'af.flow.ui' },
 		end: { title: 'af.flow.login.end', detail: 'af.flow.login.endDetail' },
+		// How a sign-in is checked applies to the whole flow: in a frame of its own, not a step.
+		general: ['login-validation'],
 		groups: [
-			{
-				id: 'authenticate',
-				label: 'af.group.authenticate',
-				parts: ['login-methods', 'login-validation']
-			},
-			{
-				id: 'stepup',
-				label: 'af.group.stepUp',
-				parts: ['login-conditions'],
-				optional: true
-			},
+			{ id: 'authenticate', label: 'af.group.authenticate', parts: ['login-methods'] },
 			{ id: 'finish', label: 'af.group.finish', parts: ['login-session', 'login-return'] }
 		]
 	},

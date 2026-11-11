@@ -16,7 +16,7 @@ export const jaAuthMethods = {
 	'am.list.deleteBody': 'このプロフィールは復元できません。',
 	'am.list.deleteSuccess': 'プロフィールを削除しました。',
 	'am.page.new': '新しいプロフィール',
-	'am.page.back': '認証方式の一覧',
+	'am.page.back': '認証方式プロフィールの一覧',
 	'am.page.name': 'プロフィール名',
 	'am.page.nameHint': '一覧で見分けるための名前です（80 文字まで）。',
 	'am.page.nameRequired': 'プロフィール名を入力してください。',

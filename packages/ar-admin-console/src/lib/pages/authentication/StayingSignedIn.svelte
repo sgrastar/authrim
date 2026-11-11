@@ -1,12 +1,12 @@
 <script lang="ts">
 	import type { AdminAccess } from '#lib/access/access.js';
 	import type { SettingsClient } from '#lib/api/settings.js';
-	import { STAYING_SIGNED_IN } from '#lib/settings/placement.js';
+	import { SESSION_PROFILES } from '#lib/settings/placement.js';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 
 	/**
 	 * Authentication → Staying signed in. A settings page: what it shows and how deep is its
-	 * placement (`STAYING_SIGNED_IN`); loading, access and saving are SettingsPage's.
+	 * placement (`SESSION_PROFILES`); loading, access and saving are SettingsPage's.
 	 */
 	interface Props {
 		client: SettingsClient;
@@ -18,4 +18,4 @@
 	let { client, tenantId, access }: Props = $props();
 </script>
 
-<SettingsPage page={STAYING_SIGNED_IN} {client} target={{ level: 'tenant', tenantId }} {access} />
+<SettingsPage page={SESSION_PROFILES} {client} target={{ level: 'tenant', tenantId }} {access} />

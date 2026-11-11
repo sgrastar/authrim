@@ -91,7 +91,8 @@ describe('account flows', () => {
 			'reg.domains',
 			'reg.denied'
 		]);
-		expect(generalParts('login')).toEqual([]);
+		// How a sign-in is checked applies to the whole sign-in flow.
+		expect(generalParts('login')).toEqual(['login-validation']);
 		// Unset, they hold the flow back like any required setting, and are listed after the name.
 		const open = stillToDo('registration', emptyFlowState()).map((part) => part.id);
 		expect(open.slice(0, 3)).toEqual(['reg-about', 'reg-general', 'reg-verification']);
@@ -124,7 +125,8 @@ describe('account flows', () => {
 		expect(aboutState('registration', 'Sign-up', 'default-ui').values['reg.methodProfile']).toBe(
 			'default'
 		);
-		expect(initialState('login').values).toEqual({});
+		// A sign-in starts with the tenant's default sign-in method profile.
+		expect(initialState('login').values).toEqual({ 'login.methodProfile': 'default' });
 	});
 
 	it('start a sign-up ready to use, with nothing but a name and a place given', () => {
@@ -233,25 +235,21 @@ describe('account flows', () => {
 		expect(isReady('registration', ready)).toBe(true);
 	});
 
-	it('ask for a provider only when an external one is chosen as a method', () => {
-		const state = emptyFlowState();
-		state.values['login.methods'] = ['passkey'];
+	it('sign in with a method profile, the default one from the start, and no step-up step', () => {
+		const state = initialState('login');
 		expect(shownFields('login-methods', state).map((field) => field.key)).toEqual([
-			'login.methods'
+			'login.methodProfile'
 		]);
 		expect(partState('login-methods', 'login', state)).toBe('done');
-		state.values['login.methods'] = ['passkey', 'external'];
-		expect(partState('login-methods', 'login', state)).toBe('required');
-		state.values['login.provider'] = 'acme';
-		expect(partState('login-methods', 'login', state)).toBe('done');
+		expect(FLOWS.login.groups.map((group) => group.id)).toEqual(['authenticate', 'finish']);
 	});
 
 	it('leave a field unset in a sample when it is not shown, so choosing it later starts empty', () => {
-		const state = sampleState('login');
-		expect(state.values['login.methods']).toEqual(['passkey']);
-		expect(state.values['login.provider']).toBeUndefined();
-		state.values['login.methods'] = ['passkey', 'external'];
-		expect(partState('login-methods', 'login', state)).toBe('required');
+		const state = sampleState('registration');
+		expect(state.values['reg.after']).toBe('account');
+		expect(state.values['reg.redirectUrl']).toBeUndefined();
+		state.values['reg.after'] = 'custom_url';
+		expect(partState('reg-result', 'registration', state)).toBe('required');
 	});
 
 	it('ask how long a check stays valid only when an address is checked', () => {
@@ -268,10 +266,10 @@ describe('account flows', () => {
 
 	it('summarise a choice by its text, and say so when a field has no value', () => {
 		const state = emptyFlowState();
-		state.values['login.methods'] = ['passkey', 'otp'];
+		state.values['login.failures'] = 'delay';
 		const rows = summaryRows('login', state);
-		expect(rows.find((row) => row.label === en['af.field.methods'])?.value).toBe(
-			`${en['af.method.passkey']}, ${en['af.method.otp']}`
+		expect(rows.find((row) => row.label === en['af.field.login.failures'])?.value).toBe(
+			en['af.failures.delay']
 		);
 		expect(rows.find((row) => row.label === en['af.field.login.lifetime'])?.value).toBe(
 			en['sf.value.notSet']
