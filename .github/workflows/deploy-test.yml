@@ -6,6 +6,15 @@ name: Deploy Test Environments
 # once a run deploys and validates the environment reliably.
 on:
   workflow_dispatch:
+    inputs:
+      deploy_scope:
+        description: Deployment scope
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - admin-ui
 
 # Restrict GITHUB_TOKEN permissions (OpenSSF Scorecard)
 permissions:
@@ -131,6 +140,7 @@ jobs:
         run: node scripts/ci-restore-generated-env.mjs
 
       - name: Deploy environment
+        if: inputs.deploy_scope != 'admin-ui'
         run: |
           pnpm run setup update \
             --env "$AUTHRIM_ENV_NAME" \
@@ -138,25 +148,35 @@ jobs:
             --all \
             --yes
 
+      - name: Deploy Admin UI
+        if: inputs.deploy_scope == 'admin-ui'
+        run: pnpm run deploy:ui --env="$AUTHRIM_ENV_NAME" --package=ar-admin-ui
+
       - name: Validate generated environment
+        if: inputs.deploy_scope != 'admin-ui'
         run: |
           pnpm exec tsx test/generated-environment/validate-generated-env.ts \
             --env "$AUTHRIM_ENV_NAME" \
             --keys-base-dir "$GITHUB_WORKSPACE"
 
       - name: Run public API smoke
+        if: inputs.deploy_scope != 'admin-ui'
         run: pnpm exec tsx test/generated-environment/smoke-generated-api.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Run Admin API smoke
+        if: inputs.deploy_scope != 'admin-ui'
         run: pnpm exec tsx test/generated-environment/smoke-generated-admin-api.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Run auth flow smoke
+        if: inputs.deploy_scope != 'admin-ui'
         run: pnpm exec tsx test/generated-environment/smoke-generated-auth-flow.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Run approval and protected-resource smoke
+        if: inputs.deploy_scope != 'admin-ui'
         run: pnpm exec tsx test/generated-environment/smoke-generated-approvals.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Run server-surface smoke
+        if: inputs.deploy_scope != 'admin-ui'
         run: pnpm exec tsx test/generated-environment/smoke-generated-server-surfaces.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Deployment summary
@@ -165,7 +185,7 @@ jobs:
           GIT_REF: ${{ github.ref_name }}
           GIT_SHA: ${{ github.sha }}
         run: |
-          echo "✅ Successfully deployed and validated $AUTHRIM_HOSTNAME"
+          echo "✅ Successfully deployed $AUTHRIM_HOSTNAME (${{ inputs.deploy_scope }})"
           echo "Environment: $AUTHRIM_ENV_NAME"
           echo "Branch: $GIT_REF"
           echo "Commit: $GIT_SHA"
