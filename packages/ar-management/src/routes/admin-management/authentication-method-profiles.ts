@@ -1,9 +1,10 @@
 /** Named authentication method configurations, plus the live tenant-wide Default profile. */
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { AdminAuthContext, Env, SettingScope } from '@authrim/ar-lib-core';
+import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   AR_ERROR_CODES,
+  AUTHENTICATION_METHODS_DEFAULT_LAYER_KEYS,
   AUTHENTICATION_METHODS_SETTINGS_META,
   AuthenticationMethodProfileRepository,
   adminAuthMiddleware,
@@ -25,6 +26,14 @@ import {
 } from '../settings-v2/settings-authorization';
 import { applyTenantSettingsChange } from '../settings-v2/tenant-settings-apply';
 import { getSettingsManager } from '../settings-v2/settings-support';
+import {
+  DEFAULT_BASE_VERSION_KEY,
+  defaultLayerStatus,
+  platformValuesOf,
+  readDefaultCategory,
+  storedBaseVersion,
+} from './default-profile-status';
+import { defaultNotEditable } from './tenant-platform-profiles';
 import {
   creationNotAllowed,
   deleteTenantOverride,
@@ -173,16 +182,18 @@ function inputFrom(
   return { input: { name, values } };
 }
 
-async function defaultProfile(c: AdminContext, readOnly: boolean) {
+async function readDefault(c: AdminContext, readOnly: boolean) {
   const tenantId = getTenantIdFromContext(c);
   const manager = getSettingsManager(c.env, c, true, false, undefined, { readOnly });
-  const settings = await manager.getAll('authentication-methods', {
-    type: 'tenant',
-    id: tenantId,
-  } satisfies SettingScope);
+  return readDefaultCategory(manager, 'authentication-methods', tenantId);
+}
+
+/** The Default profile: the tenant's methods over the platform's Default methods. */
+async function defaultProfile(c: AdminContext, readOnly: boolean) {
+  const read = await readDefault(c, readOnly);
   const values: Record<string, unknown> = {};
   for (const key of AUTHENTICATION_METHOD_PROFILE_KEYS) {
-    const value: unknown = settings.values[key];
+    const value: unknown = read.effective.values[key];
     if (value !== undefined) values[key] = value;
   }
   return {
@@ -190,7 +201,13 @@ async function defaultProfile(c: AdminContext, readOnly: boolean) {
     name: 'Default',
     is_system: true,
     values,
-    version: settings.version,
+    version: read.tenant.version,
+    ...defaultLayerStatus(
+      [read],
+      platformValuesOf(read),
+      read.platform.version,
+      storedBaseVersion(read.tenant, DEFAULT_BASE_VERSION_KEY.method)
+    ),
     created_by: null,
     created_at: null,
     updated_at: null,
@@ -288,12 +305,38 @@ authenticationMethodProfilesRouter.put('/:id', async (c) => {
     if (typeof body.version !== 'string' || !body.version)
       return invalid(c, 'version', 'version is required');
     try {
-      const current = await defaultProfile(c, false);
-      const set = Object.fromEntries(
+      const read = await readDefault(c, false);
+      const current = read.effective.values;
+      const differs = ([key, value]: [string, unknown]) =>
+        JSON.stringify(current[key]) !== JSON.stringify(value);
+      const layerKeys: readonly string[] = AUTHENTICATION_METHODS_DEFAULT_LAYER_KEYS;
+      const changedLayer = Object.entries(input.values).filter(
+        (entry) => layerKeys.includes(entry[0]) && differs(entry)
+      );
+      if (read.layer.tenantSetAside && changedLayer.length) {
+        return defaultNotEditable(c, read.layer.tenantSetAside);
+      }
+      // The other settings: only the ones that change.
+      const set: Record<string, unknown> = Object.fromEntries(
         Object.entries(input.values).filter(
-          ([key, value]) => JSON.stringify(current.values[key]) !== JSON.stringify(value)
+          (entry) => !layerKeys.includes(entry[0]) && differs(entry)
         )
       );
+      // Where the tenant may change them, the Default's settings are saved whole: the tenant's
+      // copy, made from what holds now, with the platform version it was made from. A setting is
+      // written where it changes or the tenant's document does not hold it yet.
+      if (!read.layer.tenantSetAside) {
+        let copied = false;
+        for (const key of layerKeys) {
+          const value = key in input.values ? input.values[key] : current[key];
+          if (value === undefined) continue;
+          if (!read.storedKeys.includes(key) || differs([key, value])) {
+            set[key] = value;
+            copied = true;
+          }
+        }
+        if (copied) set[DEFAULT_BASE_VERSION_KEY.method] = read.platform.version;
+      }
       const change = async (dryRun: boolean) =>
         applyTenantSettingsChange({
           c,
@@ -356,8 +399,41 @@ authenticationMethodProfilesRouter.put('/:id', async (c) => {
 
 authenticationMethodProfilesRouter.delete('/:id', async (c) => {
   c.header('Cache-Control', 'no-store');
-  if (c.req.param('id') === 'default')
-    return invalid(c, 'id', 'The Default profile cannot be deleted');
+  // The Default: removes the tenant's own values of its settings (the platform's Default holds
+  // again). Always allowed, whatever the platform's switches.
+  if (c.req.param('id') === 'default') {
+    const auth = c.get('adminAuth');
+    if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    try {
+      const read = await readDefault(c, false);
+      const clear = [
+        ...read.storedKeys,
+        ...(storedBaseVersion(read.tenant, DEFAULT_BASE_VERSION_KEY.method)
+          ? [DEFAULT_BASE_VERSION_KEY.method]
+          : []),
+      ];
+      if (clear.length) {
+        const response = await applyTenantSettingsChange({
+          c,
+          adminAuth: auth,
+          tenantId: getTenantIdFromContext(c),
+          category: 'authentication-methods',
+          readBody: async () => ({ ifMatch: read.tenant.version, set: {}, clear }),
+        });
+        if (!response.ok) return response;
+        await writeAdminAuditLog(c, {
+          action: 'authentication_method.profile.default_reverted',
+          resourceType: 'authentication_method_profile',
+          resourceId: 'default',
+          result: 'success',
+          metadata: { name: 'Default', cleared: clear },
+        });
+      }
+      return c.json({ profile: await defaultProfile(c, false) });
+    } catch (error) {
+      return failure(c, 'revert_default', error);
+    }
+  }
   try {
     const id = c.req.param('id');
     // A platform profile: removes the tenant's copy (the platform's values hold again).

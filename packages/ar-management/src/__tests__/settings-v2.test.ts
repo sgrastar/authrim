@@ -1179,6 +1179,75 @@ describe('Settings API v2', () => {
         expect(after.values['authentication-methods.did.login_enabled']).toBe(true);
       });
 
+      it('refuses a Default method change while the platform locks its Default, but lets it be cleared', async () => {
+        const mockKV = createMockKV({
+          'settings:tenant:tenant_123:authentication-methods': JSON.stringify({
+            'authentication-methods.passkey.login_enabled': true,
+          }),
+          'settings:platform:authentication-methods': JSON.stringify({
+            'authentication-methods.passkey.login_enabled': false,
+          }),
+          'settings:platform:profiles': JSON.stringify({ 'profiles.method.default_locked': true }),
+        });
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const url = '/api/admin/tenants/tenant_123/settings/authentication-methods';
+        const current = await (
+          await app.request(url, { method: 'GET' }, mockEnv)
+        ).json<
+          SettingsGetResult & {
+            default_profile: {
+              tenant_set_aside: string | null;
+              effective: Record<string, { value: unknown; source: string }>;
+            };
+          }
+        >();
+        // Stored, but set aside: what holds is the platform's.
+        expect(current.values['authentication-methods.passkey.login_enabled']).toBe(true);
+        expect(current.default_profile.tenant_set_aside).toBe('locked');
+        expect(
+          current.default_profile.effective['authentication-methods.passkey.login_enabled']
+        ).toEqual({ value: false, source: 'platform' });
+
+        const patch = (body: Record<string, unknown>) =>
+          app.request(
+            url,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ifMatch: current.version, ...body }),
+            },
+            mockEnv
+          );
+        const refused = await patch({
+          set: { 'authentication-methods.passkey.login_enabled': false },
+        });
+        expect(refused.status).toBe(403);
+        expect((await refused.json<ApiResponse>()).error).toBe('default_profile_not_editable');
+        // A method's older single switch is never set (it would decide the uses unchecked).
+        const legacy = await patch({ set: { 'authentication-methods.email_otp.enabled': true } });
+        expect(legacy.status).toBe(400);
+        expect((await legacy.json<ApiResponse>()).error).toBe('legacy_setting_read_only');
+        // A setting outside the Default still saves.
+        const other = await patch({ set: { 'authentication-methods.signup.flow_required': true } });
+        expect(other.status).toBe(200);
+        const latest = await (
+          await app.request(url, { method: 'GET' }, mockEnv)
+        ).json<SettingsGetResult>();
+        const cleared = await app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: latest.version,
+              clear: ['authentication-methods.passkey.login_enabled'],
+            }),
+          },
+          mockEnv
+        );
+        expect(cleared.status).toBe(200);
+      });
+
       it('refuses a DID login switch that is not a boolean', async () => {
         const { app, mockEnv } = createTestApp();
         const url = '/api/admin/tenants/tenant_123/settings/authentication-methods';

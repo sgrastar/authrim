@@ -33,6 +33,9 @@ export const AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES = new Set<CategoryNa
   'self-service',
   // federation.saml_enabled decides whether SAML sign-in is offered.
   'federation',
+  // The platform's switches decide whether a tenant's own Default methods apply (a platform
+  // change bumps every tenant's revision).
+  'profiles',
 ]);
 export const AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES = new Set<CategoryName>(['login-ui']);
 export const DEFAULT_HUMAN_VERIFICATION_PROVIDER = 'human-verification-cloudflare-turnstile';

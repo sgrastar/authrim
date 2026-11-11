@@ -45,6 +45,7 @@ import type {
   LoginUITextLocalizations,
 } from '@authrim/ar-lib-core';
 import {
+  layerTenantSettingsDocument,
   isLoginUiPresetAssetPath,
   HUMAN_VERIFICATION_FLOWS,
   humanVerificationConfigValid,
@@ -2262,6 +2263,8 @@ interface HumanVerificationPluginConfig extends Record<string, unknown> {
 }
 
 interface BuiltInMethodsResolved {
+  /** The settings (the tenant's, or the platform's layer) could not be read: defaults stand in. */
+  unreadable?: boolean;
   passkeyLoginEnabled: boolean;
   passkeySignupEnabled: boolean;
   passkeyReauthEnabled: boolean;
@@ -2285,11 +2288,23 @@ export async function resolveBuiltInAuthenticationMethods(
 ): Promise<BuiltInMethodsResolved> {
   try {
     const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-    return builtInAuthenticationMethodsFromSettings(
-      kvJson ? (JSON.parse(kvJson) as AuthenticationMethodKVSettings) : null
+    const stored: unknown = kvJson ? JSON.parse(kvJson) : {};
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+      return { ...builtInAuthenticationMethodsFromSettings(null), unreadable: true };
+    }
+    // The platform's Default methods under the tenant's (default-profile-layer.ts).
+    // Read afresh: this answer is cached under the current revision (up to a day), so it must not
+    // be made from a platform document an isolate read before the change that bumped it.
+    const layered = await layerTenantSettingsDocument(
+      env,
+      'authentication-methods',
+      stored as Record<string, unknown>,
+      { fresh: true }
     );
+    return builtInAuthenticationMethodsFromSettings(layered);
   } catch {
-    return builtInAuthenticationMethodsFromSettings(null);
+    // Read as the defaults, and marked: an answer made from them is not cached.
+    return { ...builtInAuthenticationMethodsFromSettings(null), unreadable: true };
   }
 }
 
@@ -3174,7 +3189,9 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     };
     // An answer that could not read the lite policy is not kept: it would serve 503, or a mode the
     // store did not say, until it expires.
-    const uncacheable = samlAvailability.unreadable || !liteRead.authoritative;
+    // Nor is one made from method defaults that stood in for settings that could not be read.
+    const uncacheable =
+      samlAvailability.unreadable || !liteRead.authoritative || builtInMethods.unreadable === true;
 
     const response: AuthenticationMethodsResponse = {
       methods,

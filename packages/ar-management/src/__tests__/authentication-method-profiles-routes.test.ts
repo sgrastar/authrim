@@ -23,8 +23,11 @@ const mocks = vi.hoisted(() => {
     audit: ReturnType<typeof vi.fn>;
     /** The Flow (core database) that names a profile, when one does. */
     flowUsing: string | null;
+    /** The platform's documents (its Default methods, and the profiles switches). */
+    platform: Record<string, Record<string, unknown>>;
   } = {
     flowUsing: null,
+    platform: {},
     tenantId: 'tenant-a',
     auth: {},
     settings: {
@@ -42,16 +45,26 @@ const mocks = vi.hoisted(() => {
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.audit }));
 vi.mock('../routes/settings-v2/settings-support', () => ({
   getSettingsManager: () => ({
-    getAll: async () => ({
-      version: `rev-${mocks.settings.version}`,
-      values: { ...mocks.settings.values },
-    }),
+    getAll: async (category: string, scope: { type: string }) => {
+      const values =
+        scope.type === 'platform'
+          ? { ...(mocks.platform[category] ?? {}) }
+          : { ...mocks.settings.values };
+      return {
+        version:
+          scope.type === 'platform'
+            ? `platform-${JSON.stringify(values)}`
+            : `rev-${mocks.settings.version}`,
+        values,
+        sources: Object.fromEntries(Object.keys(values).map((key) => [key, 'kv'])),
+      };
+    },
   }),
 }));
 vi.mock('../routes/settings-v2/tenant-settings-apply', () => ({
   applyTenantSettingsChange: async (input: {
     dryRun?: boolean;
-    readBody: () => Promise<{ ifMatch: string; set: Record<string, unknown> }>;
+    readBody: () => Promise<{ ifMatch: string; set: Record<string, unknown>; clear?: string[] }>;
   }) => {
     const body = await input.readBody();
     if (body.ifMatch !== `rev-${mocks.settings.version}`) {
@@ -62,6 +75,7 @@ vi.mock('../routes/settings-v2/tenant-settings-apply', () => ({
     }
     if (!input.dryRun) {
       Object.assign(mocks.settings.values, body.set);
+      for (const key of body.clear ?? []) delete mocks.settings.values[key];
       mocks.settings.version++;
     }
     return Response.json({ version: `rev-${mocks.settings.version}`, rejected: {} });
@@ -153,6 +167,7 @@ beforeEach(() => {
     'authentication-methods.email_otp.login_enabled': true,
   };
   mocks.audit.mockClear();
+  mocks.platform = {};
 });
 
 describe('authentication method profiles', () => {
@@ -217,7 +232,6 @@ describe('authentication method profiles', () => {
     expect(
       (await call('POST', '/', { name: 'Bad', values: { 'security.enabled': true } })).status
     ).toBe(400);
-    expect((await call('DELETE', '/default')).status).toBe(400);
     const saved = await call('PUT', '/default', {
       name: 'Default',
       version: 'rev-1',
@@ -228,5 +242,97 @@ describe('authentication method profiles', () => {
     expect(
       (await call('PUT', '/default', { name: 'Default', version: 'rev-1', values: {} })).status
     ).toBe(409);
+  });
+});
+
+describe('the Default methods over the platform’s', () => {
+  type DefaultView = {
+    values: Record<string, unknown>;
+    version: string;
+    overridden: boolean;
+    override_inactive_reason: string | null;
+    editable: boolean;
+    platform_updated: boolean;
+  };
+  const read = async () =>
+    (await (await call('GET', '/default')).json<{ profile: DefaultView }>()).profile;
+  const PASSKEY = 'authentication-methods.passkey.login_enabled';
+  const TOTP = 'authentication-methods.totp.login_enabled';
+
+  it('saves a whole copy, tells when the platform moved on, and reverts', async () => {
+    mocks.settings.values = {};
+    mocks.platform['authentication-methods'] = { [TOTP]: true };
+    const before = await read();
+    expect(before.values[TOTP]).toBe(true);
+    expect(before.overridden).toBe(false);
+    const saved = await call('PUT', '/default', {
+      name: 'Default',
+      version: before.version,
+      values: { [PASSKEY]: false },
+    });
+    expect(saved.status).toBe(200);
+    expect(mocks.settings.values[PASSKEY]).toBe(false);
+    // The platform's value held when the copy was made, and the copy keeps it.
+    expect(mocks.settings.values[TOTP]).toBe(true);
+    expect(mocks.settings.values['authentication-methods.default_profile.base_version']).toContain(
+      'platform-'
+    );
+    mocks.platform['authentication-methods'] = { [TOTP]: false };
+    const behind = await read();
+    expect(behind.values[TOTP]).toBe(true);
+    expect(behind.platform_updated).toBe(true);
+    const reverted = await call('DELETE', '/default');
+    expect(reverted.status).toBe(200);
+    expect(mocks.settings.values).toEqual({});
+    expect((await reverted.json<{ profile: DefaultView }>()).profile.values[TOTP]).toBe(false);
+  });
+
+  it('sets the tenant’s methods aside while the Default is locked, and refuses a change', async () => {
+    mocks.settings.values = {
+      [PASSKEY]: true,
+      'authentication-methods.human_verification.login_enabled': false,
+    };
+    mocks.platform['authentication-methods'] = { [PASSKEY]: false };
+    mocks.platform.profiles = { 'profiles.method.default_locked': true };
+    const profile = await read();
+    expect(profile.values[PASSKEY]).toBe(false);
+    expect(profile.override_inactive_reason).toBe('locked');
+    const refused = await call('PUT', '/default', {
+      name: 'Default',
+      version: profile.version,
+      values: { [PASSKEY]: true },
+    });
+    expect(refused.status).toBe(403);
+    // A setting of one tenant (not the Default's) still changes.
+    const own = await call('PUT', '/default', {
+      name: 'Default',
+      version: profile.version,
+      values: { 'authentication-methods.human_verification.login_enabled': true },
+    });
+    expect(own.status).toBe(200);
+    expect(mocks.settings.values[PASSKEY]).toBe(true);
+    expect(mocks.settings.values['authentication-methods.human_verification.login_enabled']).toBe(
+      true
+    );
+  });
+
+  it('keeps a method the older single switch turns off, and removes that switch on revert', async () => {
+    mocks.settings.values = { 'authentication-methods.passkey.enabled': false };
+    mocks.platform['authentication-methods'] = { [PASSKEY]: true };
+    const profile = await read();
+    // As sign-in reads it: the tenant's older switch, not the platform's value.
+    expect(profile.values[PASSKEY]).toBe(false);
+    expect(profile.overridden).toBe(true);
+    const saved = await call('PUT', '/default', {
+      name: 'Default',
+      version: profile.version,
+      values: { 'authentication-methods.totp.preset': 'strong' },
+    });
+    expect(saved.status).toBe(200);
+    expect(mocks.settings.values[PASSKEY]).toBe(false);
+    expect(mocks.settings.values['authentication-methods.passkey.signup_enabled']).toBe(false);
+    expect((await call('DELETE', '/default')).status).toBe(200);
+    expect(mocks.settings.values).not.toHaveProperty('authentication-methods.passkey.enabled');
+    expect(mocks.settings.values).not.toHaveProperty(PASSKEY);
   });
 });

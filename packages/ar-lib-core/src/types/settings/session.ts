@@ -42,6 +42,7 @@ export interface SessionSettings {
   'session.logout_webhook_enabled': boolean;
   'session.logout_webhook_include_sub': boolean;
   'session.logout_webhook_include_sid': boolean;
+  'session.default_profile.base_version': string;
 }
 
 /**
@@ -51,8 +52,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   // Session TTL
   'session.default_ttl': {
     key: 'session.default_ttl',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'DEFAULT_SESSION_TTL',
@@ -66,8 +67,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.max_ttl': {
     key: 'session.max_ttl',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'duration',
     default: 2592000000,
     envKey: 'MAX_SESSION_TTL_MS',
@@ -81,8 +82,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.email_code': {
     key: 'session.ttl.email_code',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_EMAIL_CODE_MS',
@@ -95,8 +96,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.directory_password': {
     key: 'session.ttl.directory_password',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_DIRECTORY_PASSWORD_MS',
@@ -110,8 +111,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.direct_auth': {
     key: 'session.ttl.direct_auth',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_DIRECT_AUTH_MS',
@@ -124,8 +125,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.passkey': {
     key: 'session.ttl.passkey',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'duration',
     default: 604800000,
     envKey: 'SESSION_TTL_PASSKEY_MS',
@@ -138,8 +139,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.passkey_registration': {
     key: 'session.ttl.passkey_registration',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'duration',
     default: 2592000000,
     envKey: 'SESSION_TTL_PASSKEY_REGISTRATION_MS',
@@ -166,8 +167,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.guest': {
     key: 'session.ttl.guest',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_ANONYMOUS_MS',
@@ -180,8 +181,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.did': {
     key: 'session.ttl.did',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_DID_MS',
@@ -194,8 +195,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.refresh_default': {
     key: 'session.refresh_default',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant'],
+    // The platform's Default session rules may set it for every tenant (default-profile-layer.ts).
+    scopes: ['platform', 'tenant'],
     type: 'boolean',
     default: true,
     envKey: 'SESSION_REFRESH_DEFAULT',
@@ -371,6 +372,16 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     visibility: 'admin',
     default: true,
   },
+  'session.default_profile.base_version': {
+    key: 'session.default_profile.base_version',
+    scopes: ['tenant'],
+    type: 'string',
+    label: 'Default session rules: platform version copied',
+    description:
+      "The version of the platform's Default session rules when this tenant saved its own copy of them (written by the session profile screen; empty: no copy)",
+    visibility: 'internal',
+    default: '',
+  },
 };
 
 /**
@@ -414,4 +425,5 @@ export const SESSION_DEFAULTS: SessionSettings = {
   'session.logout_webhook_enabled': false,
   'session.logout_webhook_include_sub': true,
   'session.logout_webhook_include_sid': true,
+  'session.default_profile.base_version': '',
 };

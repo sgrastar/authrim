@@ -78,6 +78,22 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'session',
+      'string',
+      'value',
+      `
+    session.default_profile.base_version
+  `,
+    ],
+    [
+      'authentication-methods',
+      'string',
+      'value',
+      `
+    authentication-methods.default_profile.base_version
+  `,
+    ],
+    [
       'oauth',
       'string',
       'url_or_asset',
@@ -529,6 +545,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     profiles.method.tenant_create_allowed
     profiles.session.tenant_change_allowed
     profiles.session.tenant_create_allowed
+    profiles.method.default_locked
+    profiles.session.default_locked
   `,
     ],
     [
@@ -724,6 +742,9 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     authentication-methods.human_verification.reauth_enabled
     authentication-methods.directory_password.enabled
     authentication-methods.signup.flow_required
+    authentication-methods.passkey.enabled
+    authentication-methods.email_otp.enabled
+    authentication-methods.totp.enabled
   `,
     ],
     [

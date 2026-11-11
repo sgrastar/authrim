@@ -743,10 +743,12 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         // 3. If neither set it, try tenant-level setting
         if (!clientSet && profileSet === null && ssoEnabled === (provider.enableSso !== false)) {
           try {
-            const tenantSsoSetting = await settingsManager.get('oauth.sso_enabled', {
-              type: 'tenant',
-              id: tenantIdResolved,
-            });
+            // The tenant's Default session rules over the platform's (default-profile-layer.ts).
+            const { resolveEffectiveSettings } =
+              await import('@authrim/ar-lib-core/services/effective-settings');
+            const tenantSsoSetting = (
+              await resolveEffectiveSettings(c.env, 'oauth', { tenantId: tenantIdResolved })
+            )['oauth.sso_enabled'];
             if (typeof tenantSsoSetting === 'boolean') {
               ssoEnabled = tenantSsoSetting;
               log.debug('SSO setting from tenant config', {
@@ -755,8 +757,10 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
               });
             }
           } catch (error) {
-            // Tenant setting not found - use provider default
-            log.debug('Tenant SSO setting not found, using provider default', {
+            // Settings that cannot be read turn single sign-on off (as authorize does), rather
+            // than leaving the provider's default where the platform may have locked it off.
+            ssoEnabled = false;
+            log.warn('Tenant SSO setting unreadable, single sign-on off', {
               tenantId: tenantIdResolved,
               error: error instanceof Error ? error.message : String(error),
             });

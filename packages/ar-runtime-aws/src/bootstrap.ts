@@ -4,6 +4,7 @@ import {
   getTenantSettingsDocument,
   getUIConfig,
   humanVerificationSelectionFromSettings,
+  layerTenantSettingsDocument,
   readSettingsFlag,
   resolveSamlEnabled,
   type Env,
@@ -146,7 +147,12 @@ async function assertRuntimeSettingsReady(
     return;
   }
   const raw = await input.settings.get(`settings:tenant:${input.tenantId}:authentication-methods`);
-  const methods = parseSettingsDocument(raw);
+  // The platform's Default methods under the tenant's, from the same snapshot.
+  const methods = await layerTenantSettingsDocument(
+    { SETTINGS: input.settings as unknown as KVNamespace },
+    'authentication-methods',
+    parseSettingsDocument(raw)
+  );
   const passkeyEnabled = enabled(methods, 'authentication-methods.passkey.enabled', true);
   if (
     !enabled(methods, 'authentication-methods.passkey.login_enabled', passkeyEnabled) ||

@@ -49,6 +49,7 @@ import {
   BUILTIN_PROFILE_CLAIM_KEYS,
   chunkForBoundParameters,
   sqlPlaceholders,
+  layerTenantSettingsDocument,
 } from '@authrim/ar-lib-core';
 import { CUSTOM_CLAIM_PRESETS, type CustomClaimPresetField } from './custom-claim-presets';
 import { ASSURANCE_IMPORT_COLUMNS } from './admin-shared';
@@ -550,8 +551,14 @@ async function resolveAuthenticationMethodsSettings(
 
   try {
     const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-    if (!raw) return defaults;
-    const settings = JSON.parse(raw) as Record<string, unknown>;
+    const stored: unknown = raw ? JSON.parse(raw) : {};
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return defaults;
+    // The platform's Default methods under the tenant's (default-profile-layer.ts).
+    const settings = await layerTenantSettingsDocument(
+      env,
+      'authentication-methods',
+      stored as Record<string, unknown>
+    );
     const legacyPasskeyEnabled = settings['authentication-methods.passkey.enabled'];
     const legacyEmailOtpEnabled = settings['authentication-methods.email_otp.enabled'];
     return {

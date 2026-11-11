@@ -8,6 +8,7 @@ import {
   bridgeExternalProvidersListed,
   externalJitSignupPolicy,
   externalSignupProviderIds,
+  layerTenantSettingsDocument,
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveEffectiveSettings,
   type Env,
@@ -50,16 +51,21 @@ export async function readAuthenticationMethodSettings(
   options: { strict?: boolean } = {}
 ): Promise<AuthenticationMethodKVSettings> {
   const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-  // Only a missing document means "nothing set". An empty or blank one is damaged: it goes
-  // through the parse below, which rejects it (strict) or reads it as nothing set (otherwise).
-  if (raw === null || raw === undefined) return {};
   try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as AuthenticationMethodKVSettings;
+    // Only a missing document means "nothing set". An empty or blank one is damaged: it goes
+    // through the parse below, which rejects it (strict) or reads it as nothing set (otherwise).
+    let stored: Record<string, unknown> = {};
+    if (raw !== null && raw !== undefined) {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        if (options.strict) throw new Error('authentication_methods_settings_invalid');
+        return {};
+      }
+      stored = parsed as Record<string, unknown>;
     }
-    if (options.strict) throw new Error('authentication_methods_settings_invalid');
-    return {};
+    // The platform's Default methods under the tenant's; unreadable, it is treated as the
+    // tenant's document is (thrown when strict, nothing set otherwise).
+    return await layerTenantSettingsDocument(env, 'authentication-methods', stored);
   } catch (error) {
     if (options.strict) throw error;
     return {};

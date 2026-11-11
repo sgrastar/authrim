@@ -39,7 +39,7 @@ const mocks = vi.hoisted(
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.audit }));
 vi.mock('../routes/settings-v2/settings-support', () => ({
   getSettingsManager: () => ({
-    getAll: async (category: string) => ({ version: `${category}-1`, values: {} }),
+    getAll: async (category: string) => ({ version: `${category}-1`, values: {}, sources: {} }),
   }),
 }));
 vi.mock('../tenant-backup-writer', () => ({
