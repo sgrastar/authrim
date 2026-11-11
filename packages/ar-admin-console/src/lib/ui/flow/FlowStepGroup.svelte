@@ -24,6 +24,11 @@
 	 */
 	interface Props {
 		name: string;
+		/**
+		 * The step's name for screen readers when its visible name is shared with other steps (each
+		 * screen step is "Screen"): it tells them apart. The visible name by default.
+		 */
+		label?: string;
 		state?: 'done' | 'partial' | 'todo' | 'required';
 		items: readonly FlowSubStep[];
 		/** The part being edited, if it is one of these. */
@@ -37,6 +42,7 @@
 
 	let {
 		name,
+		label,
 		state = 'todo',
 		items,
 		current,
@@ -56,7 +62,8 @@
 			class="group group--{state}"
 			class:is-current={isCurrent}
 			class:is-exiting={exiting}
-			aria-labelledby="{uid}-name"
+			aria-labelledby={label ? undefined : `${uid}-name`}
+			aria-label={label}
 		>
 			<div class="group__heading">
 				<strong id="{uid}-name">{name}</strong>

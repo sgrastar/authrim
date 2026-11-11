@@ -17,9 +17,20 @@
 		/** Null when connector readiness could not be checked. */
 		directoryStatus?: DirectoryPasswordStatus | null;
 		onchange: (key: string, checked: boolean) => void;
+		/** Heading level of the boxes: 3 inside a panel that has its own heading. */
+		level?: 2 | 3;
+		/** The methods box's description; off where the page around it already says what it is. */
+		describe?: boolean;
 	}
 
-	let { values, canWrite, directoryStatus = null, onchange }: Props = $props();
+	let {
+		values,
+		canWrite,
+		directoryStatus = null,
+		onchange,
+		level = 2,
+		describe = true
+	}: Props = $props();
 	const checked = (key: string) => values[key] === true;
 	const guests = [
 		{ key: 'authentication-methods.guest.login_enabled', label: 'am.guest.login' },
@@ -35,7 +46,12 @@
 </script>
 
 <div class="method-fields">
-	<Card title={t('am.methods.title')} description={t('am.methods.description')} flush>
+	<Card
+		title={t('am.methods.title')}
+		description={describe ? t('am.methods.description') : undefined}
+		{level}
+		flush
+	>
 		<div class="method-grid" role="group" aria-label={t('am.methods.title')}>
 			<div class="method-grid__header" aria-hidden="true">
 				<span>{t('am.methods.method')}</span>
@@ -88,7 +104,7 @@
 			{/each}
 		</div>
 	</Card>
-	<Card title={t('am.guest.title')}>
+	<Card title={t('am.guest.title')} {level}>
 		<div class="guest-options">
 			{#each guests as guest (guest.key)}
 				<Checkbox

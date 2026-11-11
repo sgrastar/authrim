@@ -82,6 +82,10 @@ export interface ScreenField {
 	store_to_profile?: boolean;
 	answer_targets?: string[];
 	options?: { value: string; label: string }[];
+	/** A link that leaves the screen by an exit (not a URL), and a link drawn as a button. */
+	link_action?: 'url' | 'next' | 'back' | 'skip' | 'exit' | null;
+	link_exit?: string | null;
+	link_style?: 'text' | 'button' | null;
 }
 
 /** Block types only the new admin console edits. */
@@ -89,7 +93,8 @@ const NEW_CONSOLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['select', 'radio',
 
 /**
  * Whether a screen uses what only the new admin console edits: a choice or checkbox part, a hidden
- * label, an answer kept off the profile, its own options, or a row of three columns. This editor
+ * label, an answer kept off the profile, its own options, a row of three columns, or a link that
+ * leaves the screen by an exit or is drawn as a button. This editor
  * would lose them on save (it knows none of them), so it shows such a screen without editing it.
  */
 export function screenNeedsNewConsole(fields: readonly ScreenField[]): boolean {
@@ -100,7 +105,9 @@ export function screenNeedsNewConsole(fields: readonly ScreenField[]): boolean {
 			field.store_to_profile === false ||
 			(field.answer_targets?.length ?? 0) > 0 ||
 			(field.options?.length ?? 0) > 0 ||
-			(field.block_type === 'layout_row' && (field.layout_columns ?? 1) > 2)
+			(field.block_type === 'layout_row' && (field.layout_columns ?? 1) > 2) ||
+			(Boolean(field.link_action) && field.link_action !== 'url') ||
+			field.link_style === 'button'
 	);
 }
 

@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   parseTrustedRedirectOrigins,
   resolvePostLoginRedirectUrl,
+  resolveRegistrationCompletionRedirectUrl,
+  validatePostLoginRedirectUrl,
+  validateServiceSitePath,
   validateAccountPagePath,
+  validateLoginEntryPostLoginSettings,
   validateTrustedRedirectOrigins,
 } from '../utils/post-login-routing';
 
@@ -135,5 +139,131 @@ describe('post-login routing helpers', () => {
       redirectUrl: '/',
       behavior: 'home',
     });
+  });
+
+  it('signs in to a SAML service provider through the IdP-initiated entry', async () => {
+    const kv = createSettingsKV({
+      'settings:tenant:tenant_123:login-entry': {
+        'login-entry.post_login_behavior': 'saml_login',
+        'login-entry.saml_login_sp_entity_id': 'https://sp.example.com/metadata',
+        'login-entry.saml_login_relay_state': '/dashboard',
+      },
+    });
+
+    await expect(resolvePostLoginRedirectUrl({ SETTINGS: kv }, 'tenant_123')).resolves.toEqual({
+      redirectUrl:
+        '/saml/idp/init?sp=https%3A%2F%2Fsp.example.com%2Fmetadata&relay_state=%2Fdashboard',
+      behavior: 'saml_login',
+    });
+  });
+
+  it('leaves out a RelayState it cannot send, and goes home without a provider', async () => {
+    const tooLong = createSettingsKV({
+      'settings:tenant:tenant_123:login-entry': {
+        'login-entry.post_login_behavior': 'saml_login',
+        'login-entry.saml_login_sp_entity_id': 'urn:sp',
+        'login-entry.saml_login_relay_state': 'x'.repeat(81),
+      },
+    });
+    await expect(resolvePostLoginRedirectUrl({ SETTINGS: tooLong }, 'tenant_123')).resolves.toEqual(
+      { redirectUrl: '/saml/idp/init?sp=urn%3Asp', behavior: 'saml_login' }
+    );
+
+    const missing = createSettingsKV({
+      'settings:tenant:tenant_123:login-entry': { 'login-entry.post_login_behavior': 'saml_login' },
+    });
+    await expect(resolvePostLoginRedirectUrl({ SETTINGS: missing }, 'tenant_123')).resolves.toEqual(
+      { redirectUrl: '/', behavior: 'home' }
+    );
+  });
+});
+
+describe('validateLoginEntryPostLoginSettings', () => {
+  it('takes saml_login, and refuses a RelayState over 80 bytes or a broken entity ID', () => {
+    expect(
+      validateLoginEntryPostLoginSettings({
+        'login-entry.post_login_behavior': 'saml_login',
+        'login-entry.saml_login_sp_entity_id': 'urn:sp',
+        'login-entry.saml_login_relay_state': '',
+      })
+    ).toEqual({});
+    expect(
+      Object.keys(
+        validateLoginEntryPostLoginSettings({
+          'login-entry.post_login_behavior': 'teleport',
+          'login-entry.saml_login_sp_entity_id': 'urn:\nsp',
+          'login-entry.saml_login_relay_state': 'é'.repeat(41),
+        })
+      ).sort()
+    ).toEqual([
+      'login-entry.post_login_behavior',
+      'login-entry.saml_login_relay_state',
+      'login-entry.saml_login_sp_entity_id',
+    ]);
+  });
+});
+
+describe('a registration Flow’s own completion', () => {
+  it('goes where the Flow says, checked as the tenant’s destination is', async () => {
+    const kv = createSettingsKV({
+      'settings:tenant:tenant_123:self-service': {
+        'self-service.account_page_enabled': true,
+        'self-service.account_page_path': '/my',
+      },
+      'settings:tenant:tenant_123:security': {
+        'security.trusted_redirect_origins': '["https://app.example.com"]',
+      },
+    });
+    const go = (completion: Parameters<typeof resolveRegistrationCompletionRedirectUrl>[2]) =>
+      resolveRegistrationCompletionRedirectUrl({ SETTINGS: kv }, 'tenant_123', completion);
+    await expect(go({ behavior: 'account' })).resolves.toEqual({
+      redirectUrl: '/my',
+      behavior: 'account',
+    });
+    await expect(
+      go({ behavior: 'custom_url', redirect_url: 'https://app.example.com/welcome' })
+    ).resolves.toMatchObject({ redirectUrl: 'https://app.example.com/welcome' });
+    // An origin the tenant does not trust: home.
+    await expect(
+      go({ behavior: 'custom_url', redirect_url: 'https://evil.example/' })
+    ).resolves.toEqual({ redirectUrl: '/', behavior: 'home' });
+    // App Login: a return place the tenant does not trust is left out of the state.
+    const appLogin = await go({
+      behavior: 'app_login',
+      app_login_client_id: 'service_app',
+      app_login_redirect_uri: 'https://app.example.com/callback',
+      app_login_final_return_to: 'https://evil.example/landing',
+    });
+    expect(appLogin.behavior).toBe('app_login');
+    const state = new URL(appLogin.redirectUrl, 'https://id.example').searchParams.get('state');
+    expect(
+      atob((state ?? '').slice('ar_app_login.'.length).replace(/-/g, '+').replace(/_/g, '/'))
+    ).not.toContain('evil.example');
+    await expect(
+      go({ behavior: 'saml_login', saml_login_sp_entity_id: 'urn:sp' })
+    ).resolves.toEqual({ redirectUrl: '/saml/idp/init?sp=urn%3Asp', behavior: 'saml_login' });
+  });
+
+  it('goes to a service Worker path only while the router passes such paths to it', async () => {
+    const on = createSettingsKV({
+      'settings:tenant:tenant_123:service-site': { 'service-site.fallback_enabled': true },
+    });
+    const off = createSettingsKV({});
+    const completion = { behavior: 'service_site' as const, service_site_path: '/app/start' };
+    await expect(
+      resolveRegistrationCompletionRedirectUrl({ SETTINGS: on }, 'tenant_123', completion)
+    ).resolves.toEqual({ redirectUrl: '/app/start', behavior: 'service_site' });
+    await expect(
+      resolveRegistrationCompletionRedirectUrl({ SETTINGS: off }, 'tenant_123', completion)
+    ).resolves.toEqual({ redirectUrl: '/', behavior: 'home' });
+    expect(validateServiceSitePath('/api/x')).toBe(false);
+    expect(validateServiceSitePath('/\\evil.example/landing')).toBe(false);
+    // The tenant's own post-sign-in place is held to the same.
+    expect(validatePostLoginRedirectUrl('/\\evil.example/landing', [])).toBe(false);
+    expect(validatePostLoginRedirectUrl('/welcome\tx', [])).toBe(false);
+    expect(validatePostLoginRedirectUrl('/welcome', [])).toBe(true);
+    expect(validateServiceSitePath('/app\nx')).toBe(false);
+    expect(validateServiceSitePath('//evil.example')).toBe(false);
+    expect(validateServiceSitePath('https://app.example.com')).toBe(false);
   });
 });

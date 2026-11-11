@@ -1652,6 +1652,14 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'platform D1 read replication',
     PLATFORM_ADMIN_ROLES
   ),
+  ...byMethod(
+    '/api/admin/platform/service-site',
+    ADMIN_PERMISSIONS.CONTROL_PLANE_READ,
+    ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION,
+    ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION,
+    'platform service site attachment',
+    PLATFORM_ADMIN_ROLES
+  ),
   rule({
     pattern: '/api/admin/platform/control-plane/capacity/preview',
     methods: ['POST'],

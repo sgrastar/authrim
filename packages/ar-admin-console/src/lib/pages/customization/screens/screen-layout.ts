@@ -18,11 +18,13 @@ import {
 	CONDITION_KINDS,
 	INPUT_KINDS,
 	LABEL_KINDS,
+	LINK_ACTIONS,
 	METHODS,
 	defaultCondition,
 	defaultSettings,
 	type AnswerTarget,
 	type DisplayCondition,
+	type LinkAction,
 	type Method,
 	type PartSettings
 } from './screen-model';
@@ -128,6 +130,11 @@ function readSettings(field: Field, kind: string): PartSettings {
 		// A divider's words are edited as its label (see fieldsToBuilder).
 		text: kind === 'divider' ? '' : text(field.text),
 		href: text(field.href),
+		linkAction: LINK_ACTIONS.includes(field.link_action as LinkAction)
+			? (field.link_action as LinkAction)
+			: 'url',
+		linkExit: text(field.link_exit),
+		linkStyle: field.link_style === 'button' ? 'button' : 'text',
 		timing: field.human_verification_timing === 'submit' ? 'submit' : 'initial'
 	});
 }
@@ -213,7 +220,13 @@ function writeSettings(
 		placeholder: PLACEHOLDER_KINDS.has(kind) ? settings.placeholder || null : undefined,
 		help_text: input ? settings.helpText || null : undefined,
 		text: TEXT_KINDS.has(kind) ? settings.text || null : undefined,
-		href: kind === 'link' ? settings.href || null : undefined,
+		href: kind === 'link' && settings.linkAction === 'url' ? settings.href || null : undefined,
+		link_action: kind === 'link' && settings.linkAction !== 'url' ? settings.linkAction : undefined,
+		link_exit:
+			kind === 'link' && settings.linkAction === 'exit'
+				? settings.linkExit.trim() || null
+				: undefined,
+		link_style: kind === 'link' && settings.linkStyle === 'button' ? 'button' : undefined,
 		auth_method: kind === 'auth_widget' ? settings.method : undefined,
 		external_idp_show_action_text: kind === 'auth_widget' ? settings.actionText : undefined,
 		code_input_mode: kind === 'code_input_widget' ? settings.codeMode : undefined,
@@ -230,6 +243,15 @@ function writeSettings(
 
 /** What a part no longer has: the answer's targets and options of one stored to the profile. */
 function removed(kind: string, settings: PartSettings): string[] {
+	// A link opens a URL or leaves by a way out, never both; only an exit has a name, and a text
+	// link saves no style.
+	if (kind === 'link') {
+		return [
+			...(settings.linkAction === 'url' ? ['link_action'] : ['href']),
+			...(settings.linkAction === 'exit' ? [] : ['link_exit']),
+			...(settings.linkStyle === 'button' ? [] : ['link_style'])
+		];
+	}
 	if (!INPUT_KINDS.has(kind)) return [];
 	if (settings.linked) return ['answer_targets', 'options'];
 	return CHOICE_KINDS.has(kind) ? [] : ['options'];

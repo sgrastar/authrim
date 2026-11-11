@@ -27,12 +27,14 @@ export interface LoginEntrySettings {
   'login-entry.require_common_discovery_before_login': boolean;
   'login-entry.skip_discovery_if_only_one_tenant': boolean;
   'login-entry.redirect_tenant_discover_to_common_entry': boolean;
-  'login-entry.post_login_behavior': 'home' | 'account' | 'custom_url' | 'app_login';
+  'login-entry.post_login_behavior': 'home' | 'account' | 'custom_url' | 'app_login' | 'saml_login';
   'login-entry.post_login_redirect_url': string;
   'login-entry.app_login_client_id': string;
   'login-entry.app_login_redirect_uri': string;
   'login-entry.app_login_final_return_to': string;
   'login-entry.app_login_scope': string;
+  'login-entry.saml_login_sp_entity_id': string;
+  'login-entry.saml_login_relay_state': string;
 }
 
 /**
@@ -143,7 +145,7 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     label: 'Post Login Behavior',
     description:
       'Controls where users go after signing in directly from Login UI. OIDC and SAML initiated logins keep their protocol return destinations.',
-    enum: ['home', 'account', 'custom_url', 'app_login'],
+    enum: ['home', 'account', 'custom_url', 'app_login', 'saml_login'],
     visibility: 'admin',
   },
   'login-entry.post_login_redirect_url': {
@@ -189,6 +191,24 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     description: 'OIDC scope used when Login UI starts the App Login client.',
     visibility: 'admin',
   },
+  'login-entry.saml_login_sp_entity_id': {
+    key: 'login-entry.saml_login_sp_entity_id',
+    type: 'string',
+    default: '',
+    label: 'SAML Login SP Entity ID',
+    description:
+      'SAML service provider signed in to (IdP-initiated SSO) after direct Login UI sign-in when post-login behavior is saml_login.',
+    visibility: 'admin',
+  },
+  'login-entry.saml_login_relay_state': {
+    key: 'login-entry.saml_login_relay_state',
+    type: 'string',
+    default: '',
+    label: 'SAML Login RelayState',
+    description:
+      'Optional RelayState (at most 80 bytes) sent to the SAML service provider, such as the page it opens after sign-in.',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -222,4 +242,6 @@ export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
   'login-entry.app_login_redirect_uri': '',
   'login-entry.app_login_final_return_to': '',
   'login-entry.app_login_scope': 'openid profile email',
+  'login-entry.saml_login_sp_entity_id': '',
+  'login-entry.saml_login_relay_state': '',
 };

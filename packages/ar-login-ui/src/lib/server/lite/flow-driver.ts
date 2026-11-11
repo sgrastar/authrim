@@ -29,6 +29,10 @@ import {
 	isDisplayConditionMet,
 	type RuntimeScreenAuthMethod
 } from '#lib/runtime-screen-methods.js';
+import { linkActionOf, safeLinkHref, type ScreenLinkAction } from '#lib/screen-link.js';
+
+// A link's destination, checked before it is drawn (shared with the SPA's screens).
+export { safeLinkHref };
 
 /** The tenant's sign-in methods, as the authentication methods answer gives them. */
 export interface LiteTenantMethods {
@@ -158,6 +162,13 @@ export interface LiteFlowView {
 	 * `runtimeFlowHasCodeInputStep`): an authenticator code is then entered there, after its choice.
 	 */
 	codeInputElsewhere: boolean;
+	/** The screens a link on this screen can go back to (`back_screens`); none otherwise. */
+	backScreens: string[];
+	/**
+	 * The visit of the current step (`current_visit_id`): the same step shown again (after going
+	 * back and on) is another visit, so a form drawn for the earlier one is not taken for it.
+	 */
+	visitId: string | null;
 }
 
 export type LiteFlowFailure = { ok: false; error: string; status: number };
@@ -210,10 +221,20 @@ export function readFlowStartAnswer(json: unknown): LiteFlowView | null {
 		state: { interactionId, contractHash, signature },
 		step,
 		interactionState: readString(json.interaction.state) ?? 'active',
+		backScreens: readBackScreens(json.back_screens),
+		visitId: readString(json.interaction.current_visit_id),
 		codeInputElsewhere: steps.some(
 			(candidate) => isRecord(candidate) && candidate.id !== currentStepId && asksForCode(candidate)
 		)
 	};
+}
+
+/** The screen keys an answer says a link can go back to; anything else is dropped. */
+export function readBackScreens(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter(
+		(key): key is string => typeof key === 'string' && /^[a-z0-9_-]{1,96}$/u.test(key)
+	);
 }
 
 function failure(answer: { status: number; json: unknown }): LiteFlowFailure {
@@ -304,6 +325,14 @@ export interface LiteScreenField {
 	valueType: string | null;
 	/** A link block's destination, checked (safeLinkHref); null for any other block. */
 	href: string | null;
+	/**
+	 * What a link block does: `url` goes to `href`; the others leave the screen (`linkExit` is the
+	 * handle a skip or an exit submits with). Null for any other block, or a link that cannot work.
+	 */
+	linkAction: ScreenLinkAction | null;
+	linkExit: string | null;
+	/** A link block drawn as a button rather than as a text link. */
+	linkButton: boolean;
 	/** Whether the label is shown; `show_label: false` keeps it for screen readers only. */
 	showLabel: boolean;
 	/** A select's or a radio part's choices (none for any other block). */
@@ -325,26 +354,6 @@ function readChoices(value: unknown): Array<{ value: string; label: string }> | 
 		choices.push({ value: raw.value, label: readString(raw.label) ?? raw.value });
 	}
 	return choices;
-}
-
-/**
- * A link's destination as the backend stores it (ar-management `readSafeLinkHref`), checked
- * again before it is drawn: an in-page anchor, a local path, or an https URL; nothing else.
- */
-export function safeLinkHref(value: unknown): string | null {
-	if (typeof value !== 'string') return null;
-	const href = value.trim();
-	if (!href || href.length > 2048) return null;
-	// eslint-disable-next-line no-control-regex -- a control character is what it refuses
-	if (/[\\\u0000-\u001f\u007f]/u.test(href)) return null;
-	if (href.startsWith('#')) return /^#[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(href) ? href : null;
-	if (href.startsWith('/')) return href.startsWith('//') ? null : href;
-	try {
-		const url = new URL(href);
-		return url.protocol === 'https:' && !url.username && !url.password ? url.toString() : null;
-	} catch {
-		return null;
-	}
 }
 
 /** What a page does with the step its Flow is on. */
@@ -436,6 +445,7 @@ export function decideLiteStep(
 			continue;
 		}
 		const options = blockType === 'select' || blockType === 'radio' ? readChoices(raw.options) : [];
+		const link = blockType === 'link' ? linkActionOf(raw) : null;
 		if (!options) {
 			reasons.push(`choices:${readString(raw.field) ?? ''}`);
 			continue;
@@ -450,7 +460,10 @@ export function decideLiteStep(
 			helpText: readString(raw.help_text),
 			placeholder: readString(raw.placeholder),
 			valueType: blockType === 'identity_field' ? readString(raw.value_type) : null,
-			href: blockType === 'link' ? safeLinkHref(raw.href) : null,
+			href: link?.action === 'url' ? safeLinkHref(raw.href) : null,
+			linkAction: link?.action ?? null,
+			linkExit: link?.exit ?? null,
+			linkButton: blockType === 'link' && raw.link_style === 'button',
 			showLabel: raw.show_label !== false,
 			options
 		});
@@ -481,6 +494,9 @@ export function decideLiteStep(
 			placeholder: null,
 			valueType: null,
 			href: null,
+			linkAction: null,
+			linkExit: null,
+			linkButton: false,
 			showLabel: true,
 			options: []
 		});

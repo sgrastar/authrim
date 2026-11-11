@@ -170,6 +170,27 @@ export const arScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.set.body': 'النص',
 	'sc.set.href': 'وجهة الرابط',
 	'sc.set.hrefHint': '#مرساة أو /مسار نسبي أو عنوان https://',
+	'sc.set.linkAction': 'ما يفعله الرابط',
+	'sc.set.linkAction.url': 'يفتح عنوان URL',
+	'sc.set.linkAction.next': 'يتابع (يرسل)',
+	'sc.set.linkAction.back': 'يعود إلى الشاشة السابقة',
+	'sc.set.linkAction.skip': 'يتخطى الشاشة',
+	'sc.set.linkAction.exit': 'يخرج من مخرج مسمّى',
+	'sc.set.linkActionHint.url': 'يفتح عنوان URL المحدد.',
+	'sc.set.linkActionHint.next':
+		'يرسل هذه الشاشة بعد التحقق من إجاباتها. يحدد تدفق الخدمة إلى أين يؤدي.',
+	'sc.set.linkActionHint.back':
+		'يعود إلى الشاشة التي قبلها مباشرة. إذا جاء بينهما شيء غير الشاشات، أو لم تكن هناك شاشة قبلها، يظهر ولكن لا يمكن استخدامه.',
+	'sc.set.linkActionHint.skip':
+		'يغادر هذه الشاشة دون إجاباتها. يحدد تدفق الخدمة إلى أين يؤدي (وحتى ذلك الحين إلى حيث تؤدي المتابعة).',
+	'sc.set.linkActionHint.exit':
+		'يغادر هذه الشاشة من مخرج مسمّى دون إجاباتها. يحدد تدفق الخدمة إلى أين يؤدي (وحتى ذلك الحين إلى حيث تؤدي المتابعة).',
+	'sc.set.linkExit': 'اسم المخرج',
+	'sc.set.linkExitHint':
+		'أحرف إنجليزية صغيرة وأرقام و _ ، يبدأ بحرف (حتى 40). يحدد تدفق الخدمة وجهة المخرج بهذا الاسم. ليس submitted أو skipped أو next.',
+	'sc.set.linkStyle': 'طريقة العرض',
+	'sc.set.linkStyleText': 'رابط نصي',
+	'sc.set.linkStyleButton': 'زر',
 	'sc.set.captcha': 'متى يظهر CAPTCHA',
 	'sc.set.captchaInitial': 'من البداية',
 	'sc.set.captchaSubmit': 'عند الإرسال',
@@ -224,6 +245,9 @@ export const arScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.editor.labelRequired': 'جزء بلا تسمية ({name})',
 	'sc.editor.answerKeyRequired': 'جزء بلا مفتاح إجابة ({name})',
 	'sc.editor.identityRequired': 'اختر سمة من مخطط الهوية لهذا الجزء ({name})',
+	'sc.editor.linkUrlOnly': '"{name}": الرابط في صفحة الحساب يفتح عنوان URL فقط',
+	'sc.editor.linkExitInvalid':
+		'"{name}": اسم المخرج أحرف إنجليزية صغيرة وأرقام و _ ، يبدأ بحرف (ليس submitted أو skipped أو next)',
 	'sc.editor.partNotForKind': 'لا يمكن لهذا النوع من الشاشات أن يحتوي على جزء ({name})',
 	'sc.editor.oneAccountWidget': 'تحتوي صفحة الحساب على مكوّن واحد على الأكثر',
 	'sc.editor.targetsRequired': 'جزء ليس لإجابته وجهة ({name})',

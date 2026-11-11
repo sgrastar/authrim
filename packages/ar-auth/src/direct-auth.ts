@@ -27,6 +27,16 @@ import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { newAccountRegistrationPendingMark } from '@authrim/ar-lib-core';
 import { settleRegistrationPending } from './registration-pending';
+import {
+  NO_POLICY,
+  eligibilityRefusal,
+  notifyExistingAccountSignUp,
+  profileAllowsSignUp,
+  registrationCompletionRedirect,
+  registrationRefusalResponse,
+  signUpCodeTtlSeconds,
+  signUpPolicyFor,
+} from './registration-policy-gate';
 import type { StoreCodeRequest } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   accountAuthenticationDenialReason,
@@ -87,6 +97,7 @@ import {
   BROWSER_STATE_COOKIE_NAME,
   getBrowserStateCookieSameSite,
   produceNotificationDelivery,
+  SIGN_IN_ATTEMPT_INTERACTION_HEADER,
   resolvePostLoginRedirectUrl,
   CanonicalRuntimeUserStore,
   ensureDatabaseAdapter,
@@ -2346,6 +2357,24 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         : null
       : createCanonicalRuntimeUserStore(c, tenantId);
 
+    // The registration Flow's policy (see registration-policy-gate.ts): who may sign up is asked
+    // before anything is looked up about the address, so a refusal tells nothing of it. A resumed
+    // provisioning passed it when it started.
+    const signUpPolicy = await signUpPolicyFor(c, tenantId);
+    if (!resumedUserId) {
+      const refusal = eligibilityRefusal(signUpPolicy.policy, {
+        email: normalizedEmail,
+        hasInvitation: typeof invite_token === 'string' && invite_token.length > 0,
+      });
+      if (refusal) return registrationRefusalResponse(c, signUpPolicy.policy, refusal);
+    }
+    // The Flow's authentication method profile may not sign people up by passkey.
+    if (!(await profileAllowsSignUp(c, tenantId, signUpPolicy, 'passkey'))) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+        extensions: { authentication_method: 'passkey', usage: 'signup' },
+      });
+    }
+
     if (normalizedEmail) {
       const existingUser = await runtimeUsers?.findByEmail(normalizedEmail);
       // The account a resumed provisioning made (the user its server-issued token names, never one
@@ -2365,6 +2394,23 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
           ).repositories.passkey.findByUserId(existingUser.id)
         ).length === 0;
       if ((existingUser && !resumedAccount) || blocked) {
+        // Under a registration Flow, what an address in use gets is its policy's: the owner told
+        // by email and the same refusal as any other (`mail`), or the refusal its answer gives.
+        if (signUpPolicy.fromFlow) {
+          if (signUpPolicy.policy.duplicate === 'mail' && existingUser && !blocked) {
+            await notifyExistingAccountSignUp(c, {
+              tenantId,
+              userId: existingUser.id,
+              email: normalizedEmail,
+            });
+            return registrationRefusalResponse(
+              c,
+              { ...signUpPolicy.policy, denied_response: 'generic' },
+              'account_exists'
+            );
+          }
+          return registrationRefusalResponse(c, signUpPolicy.policy, 'account_exists');
+        }
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
       }
       if (existingUser && resumedAccount) {
@@ -2598,6 +2644,19 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
           ? { custom_fields: customFieldValidation.values }
           : {}),
         ...(signupInvitation ? signupInvitation.reservation : {}),
+        // The registration interaction it belongs to (a live one of the tenant, checked when the
+        // policy was read): the session it ends in goes to that Flow's own destination.
+        ...(signUpPolicy.source === 'interaction'
+          ? { runtime_interaction_id: c.req.header(SIGN_IN_ATTEMPT_INTERACTION_HEADER) }
+          : {}),
+        // An address not proven yet, under a Flow that checks it before the sign-up is final:
+        // the passkey alone does not settle the sign-up (its email check does).
+        ...(signUpPolicy.fromFlow &&
+        signUpPolicy.policy.email_check === 'before' &&
+        normalizedEmail &&
+        !emailVerifiedByInvitation
+          ? { settle_after_email_check: true }
+          : {}),
       },
     });
 
@@ -2738,6 +2797,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         authorization_challenge_id?: string;
         invite_id?: string;
         invite_reservation_id?: string;
+        settle_after_email_check?: boolean;
+        runtime_interaction_id?: string;
       };
     };
 
@@ -2835,8 +2896,20 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       credentialId: credentialIDBase64URL,
       rpId: rpID,
     });
-    // Its passkey registered: no longer an unfinished sign-up's account.
-    await settleRegistrationPending(authCtx.coreAdapter, tenantId, userId);
+    // Its passkey registered: no longer an unfinished sign-up's account, unless its Flow checks
+    // the address first (then its verified email code settles it, and the clean-up removes an
+    // account whose address is never proven).
+    if (challengeData.metadata?.settle_after_email_check !== true) {
+      await settleRegistrationPending(authCtx.coreAdapter, tenantId, userId);
+    } else {
+      // Its mark now waits for the address: the clean-up takes nothing but a verified address
+      // (not this passkey, nor the sign-in it makes) as its proof.
+      await authCtx.coreAdapter.execute(
+        `UPDATE account_registration_pending SET flow = 'email_code'
+          WHERE tenant_id = ? AND user_id = ?`,
+        [tenantId, userId]
+      );
+    }
 
     const now = Date.now();
     failureStage = 'runtime_user_lookup';
@@ -2889,6 +2962,9 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         passkey_id: passkeyId,
         is_new_user: isNewUser,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
+        ...(typeof challengeData.metadata?.runtime_interaction_id === 'string'
+          ? { runtime_interaction_id: challengeData.metadata.runtime_interaction_id }
+          : {}),
       },
       assurance.settings
     );
@@ -3535,7 +3611,32 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       tenantId,
       authorization_challenge_id
     );
-    const emailCodeTtl = emailCodeLifetime.ttlSeconds;
+    // A send within a registration Flow is held to its policy (registration-policy-gate.ts). Its
+    // code lifetime is the Flow's for every send of it, a new address or not: the answer states
+    // it, and must not tell the two apart.
+    // A send held to a sign-up policy (registration-policy-gate.ts): the registration interaction
+    // it names, else the tenant's own registration Flow. Not a re-authentication's.
+    const signUpPolicy =
+      challengeType === 'reauth'
+        ? NO_POLICY
+        : await signUpPolicyFor(c, tenantId, boundRuntimeInteractionId ?? null);
+    // This endpoint signs in as well. Only a registration interaction's send is a sign-up
+    // whatever the address; one that names none is a sign-up for a new address only.
+    const inRegistration = signUpPolicy.source === 'interaction' && signUpPolicy.fromFlow;
+    // One lifetime for every send under a sign-up policy, an address with an account or not: the
+    // answer states it, and must not tell the two apart.
+    const emailCodeTtl = signUpPolicy.fromFlow
+      ? signUpCodeTtlSeconds(signUpPolicy.policy, emailCodeLifetime.ttlSeconds)
+      : emailCodeLifetime.ttlSeconds;
+    // Who may sign up: one not taken gets nothing, answered as any send (a refusal would tell a
+    // new address from one with an account, where a sign-in goes on).
+    const signUpRefused =
+      signUpPolicy.fromFlow && (inRegistration || !user)
+        ? eligibilityRefusal(signUpPolicy.policy, {
+            email: normalizedEmail,
+            hasInvitation: invitedTokenId !== null,
+          })
+        : null;
     // Answered like any other send, so the address's owner is not revealed; nothing else about the
     // address is looked at (no human verification either, whose requirements depend on it).
     if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
@@ -3593,6 +3694,22 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const emailCodeUsage: HumanVerificationAction =
       resumedSend?.usage ??
       (!user || signupResend ? 'signup' : challengeType === 'reauth' ? 'reauth' : 'login');
+    // An address with an account, sent for within a registration Flow: what it gets is the
+    // Flow's. `login`: the sign-in code it gets today. `reject`: refused, saying so. `mail`: the
+    // usual answer and no code; its owner is told by email instead.
+    // An account whose address is not proven yet (a sign-up still checking it, a passkey sign-up
+    // under `email_check: before`) is not an address in use: its code is the one it waits for.
+    const addressInUse = inRegistration && user !== null && existingEmailVerified;
+    if (addressInUse && emailCodeUsage === 'login') {
+      if (signUpPolicy.policy.duplicate === 'reject') {
+        return registrationRefusalResponse(c, signUpPolicy.policy, 'account_exists');
+      }
+    }
+    const noticeExistingAccount =
+      addressInUse &&
+      user !== null &&
+      emailCodeUsage === 'login' &&
+      signUpPolicy.policy.duplicate === 'mail';
     // The token is checked against the screen it came from (a re-authentication only ever takes
     // its own screen's token). A client that does not say keeps the earlier inference. Whatever the
     // screen, the setting for what the code does (signing up a new address) asks for a token too.
@@ -3616,6 +3733,18 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       'email_otp',
       emailCodeUsage
     );
+    // A sign-up's code, where the Flow's profile does not sign people up by email code.
+    if (
+      emailOtpEnabled &&
+      emailCodeUsage === 'signup' &&
+      !(await profileAllowsSignUp(c, tenantId, signUpPolicy, 'mail_otp'))
+    ) {
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send because the Flow profile does not offer it', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'profile_method_disabled',
+      });
+    }
     if (!emailOtpEnabled) {
       suppressEmailCodeSend = true;
       log.info('Suppressing email-code send because email OTP usage is disabled', {
@@ -3641,6 +3770,28 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         action: 'direct_email_code_send_suppressed',
         reason: 'human_verification',
         usage: turnstileAction,
+      });
+    }
+    if (signUpRefused && !suppressEmailCodeSend) {
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send because the registration policy refuses it', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'signup_policy',
+        refusal: signUpRefused,
+      });
+    }
+    // The owner of an address with an account, told of a sign-up for it (`duplicate: mail`) once
+    // the request passed human verification, like any send: no code, the usual answer.
+    if (noticeExistingAccount && user && !suppressEmailCodeSend) {
+      suppressEmailCodeSend = true;
+      await notifyExistingAccountSignUp(c, {
+        tenantId,
+        userId: user.id,
+        email: normalizedEmail,
+      });
+      log.info('Suppressing email-code send for an address that has an account', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'signup_account_exists',
       });
     }
 
@@ -4504,9 +4655,17 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       maxAge: sessionTtl.seconds,
     });
 
+    // An application's continuation first; else a registration Flow's own destination, for a
+    // session made within it; else the tenant's.
     const postLoginRedirect = authorizationContinuation
       ? authorizationContinuation.redirectUrl
-      : (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl;
+      : ((await registrationCompletionRedirect(
+          c,
+          tenantId,
+          typeof metadata.runtime_interaction_id === 'string'
+            ? metadata.runtime_interaction_id
+            : null
+        )) ?? (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl);
 
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');

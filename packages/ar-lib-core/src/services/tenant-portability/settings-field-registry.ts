@@ -907,6 +907,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     login-entry.app_login_client_id
     login-entry.app_login_scope
+    login-entry.saml_login_sp_entity_id
+    login-entry.saml_login_relay_state
   `,
     ],
     [

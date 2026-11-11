@@ -6,6 +6,8 @@
  * third-party validator dependency so ar-lib-core can stay lightweight.
  */
 
+import { SCREEN_LINK_EXIT_PATTERN, SCREEN_RESERVED_EXITS } from '../../types/screens';
+
 export const FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION = 'authrim.login_ui.contract.v1' as const;
 export const FLOW_RUNTIME_INTERACTION_TTL_SECONDS = 600 as const;
 
@@ -90,6 +92,11 @@ export interface FlowNodeDefinition {
   default_render: boolean;
   output_handles: readonly string[] | 'dynamic';
   required_config_keys?: readonly string[];
+}
+
+/** An exit a screen's link part may name (see `SCREEN_LINK_EXIT_PATTERN`). */
+function isScreenExitName(handle: string): boolean {
+  return SCREEN_LINK_EXIT_PATTERN.test(handle) && !SCREEN_RESERVED_EXITS.includes(handle);
 }
 
 export const FLOW_NODE_DEFINITIONS: readonly FlowNodeDefinition[] = [
@@ -908,7 +915,9 @@ export function validateFlowEditorState(
         definition &&
         sourceHandle &&
         definition.output_handles !== 'dynamic' &&
-        !definition.output_handles.includes(sourceHandle)
+        !definition.output_handles.includes(sourceHandle) &&
+        // A screen also leaves by the exits its link parts name (checked at runtime).
+        !(sourceType === 'screen' && isScreenExitName(sourceHandle))
       ) {
         issues.push({
           level: 'error',

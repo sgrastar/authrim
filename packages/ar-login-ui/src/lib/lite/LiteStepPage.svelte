@@ -357,9 +357,50 @@
 							)}
 						{/if}
 					{:else if field.blockType === 'link'}
-						<p>
-							{#if field.href}<a href={field.href}>{field.label}</a>{:else}{field.label}{/if}
-						</p>
+						{@const linkClass = field.linkButton ? 'secondary' : 'link'}
+						{#if field.linkAction === 'back'}
+							<!-- Back to the screen before: posts this form to `back` (not a submit, so its
+							     fields are not checked); disabled where there is none to go back to. -->
+							{@const backTo = 'backScreens' in data ? (data.backScreens[0] ?? null) : null}
+							<p>
+								<button
+									type="submit"
+									class={linkClass}
+									formaction={actionOf(data.search, 'back')}
+									formnovalidate
+									name="back-screen"
+									value={backTo ?? ''}
+									disabled={!backTo}>{field.label}</button
+								>
+							</p>
+						{:else if field.linkAction === 'next'}
+							<!-- The screen's own Continue, drawn where the part is. -->
+							<p>
+								<button
+									type="submit"
+									class={linkClass}
+									formaction={actionOf(data.search, 'step_continue')}
+									disabled={!data.stepContinue}>{field.label}</button
+								>
+							</p>
+						{:else if field.linkExit}
+							<!-- Leaves the screen by an exit (a skip, or one of its own name): its answers
+							     are not taken, and the Flow decides where the exit leads. -->
+							<p>
+								<button
+									type="submit"
+									class={linkClass}
+									formaction={actionOf(data.search, 'step_exit')}
+									formnovalidate
+									name="exit-handle"
+									value={field.linkExit}>{field.label}</button
+								>
+							</p>
+						{:else if field.href}
+							<p><a href={field.href} class:button={field.linkButton}>{field.label}</a></p>
+						{:else}
+							<p>{field.label}</p>
+						{/if}
 					{:else if field.blockType === 'checkbox' || (field.blockType === 'identity_field' && field.valueType === 'boolean')}
 						<!-- The legacy yes/no keeps its own words on the box (its placeholder) under the
 						     label, as the SPA does; otherwise the label is the box's text. -->

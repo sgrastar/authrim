@@ -68,6 +68,8 @@
 	import {
 		ACCOUNT_KINDS,
 		INPUT_KINDS,
+		LINK_EXIT_PATTERN,
+		RESERVED_LINK_EXITS,
 		defaultCondition,
 		fieldFits,
 		type ChoiceSource,
@@ -262,6 +264,18 @@
 			const settings = from.settings[part.id];
 			if (INPUT_KINDS.has(part.kind) && (!settings?.linked || !settings.field.trim()))
 				return t('sc.editor.identityRequired', { name: part.label || partName(part.kind) });
+			if (part.kind === 'link' && settings) {
+				if (from.kind === 'account' && settings.linkAction !== 'url') {
+					return t('sc.editor.linkUrlOnly', { name: part.label });
+				}
+				const exit = settings.linkExit.trim();
+				if (
+					settings.linkAction === 'exit' &&
+					(!LINK_EXIT_PATTERN.test(exit) || RESERVED_LINK_EXITS.has(exit))
+				) {
+					return t('sc.editor.linkExitInvalid', { name: part.label });
+				}
+			}
 		}
 		return null;
 	}
@@ -693,6 +707,7 @@
 										{choices}
 										{schemaHref}
 										legacyYesNo={isLegacyYesNo(origins[chosen.id])}
+										exitsAllowed={value.kind !== 'account'}
 									/>
 								{:else if rowIndex >= 0}
 									{@const row = value.rows[rowIndex]}

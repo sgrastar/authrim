@@ -1398,6 +1398,14 @@ paths:
                     type: integer
                   resumed:
                     type: boolean
+                  back_screens:
+                    type: array
+                    items:
+                      type: string
+                    description: >-
+                      The screen keys the current screen can go back to with `/back`, nearest first;
+                      a link part whose `link_action` is `back` goes to the first, and is shown
+                      but cannot be used while the list is empty.
         '400':
           $ref: '#/components/responses/Error'
         '403':
@@ -1547,10 +1555,23 @@ paths:
                   type: string
                 selected_handle:
                   type: string
+                  description: >-
+                    The way out of the current step. On a `screen` step: `submitted` (its answers
+                    are read; also when this is omitted), `skipped` (when a shown skip link offers it, or the screen asks for a
+                    code), or an exit a shown link part names (`link_exit`). An exit the Flow has no
+                    edge for goes where `submitted` goes; a skip or exit no shown part offers is
+                    refused with AR_FLOW_INVALID_SELECTED_HANDLE.
                 contract_hash:
                   type: string
                 signature:
                   type: string
+                visit_id:
+                  type: string
+                  description: >-
+                    The visit of the step the request was made on (`interaction.current_visit_id`
+                    of the start or resume answer). A request made on an earlier visit of the same
+                    step (before going back and on) is refused with 409 `step_conflict`, checked
+                    before anything is recorded.
                 input:
                   type: object
                   additionalProperties: true
@@ -1632,6 +1653,14 @@ paths:
                         type: object
                         additionalProperties: true
                         description: Protocol-specific continuation metadata for OIDC, SAML, or direct flows.
+                  back_screens:
+                    type: array
+                    items:
+                      type: string
+                    description: >-
+                      The screen keys the current screen can go back to with `/back`, nearest first;
+                      a link part whose `link_action` is `back` goes to the first, and is shown
+                      but cannot be used while the list is empty.
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -1677,6 +1706,122 @@ paths:
                     type: string
                   interaction_id:
                     type: string
+        '500':
+          $ref: '#/components/responses/Error'
+  /api/v1/login/interactions/{interaction_id}/back:
+    options:
+      operationId: optionsLoginInteractionBack
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation.
+      parameters:
+        - name: interaction_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+        - Login Runtime
+      operationId: postApiV1LoginInteractionsInteractionIdBack
+      summary: Go back to a screen of the LoginUI runtime Flow.
+      description: >
+        From the current `screen` step, goes back to the screen `target_screen` (one of the screen
+        keys `back_screens` lists; a link part whose `link_action` is `back` sends the first), checked like a submit (interaction state, expiry,
+        contract hash, HMAC signature, current step identity) and held like one, so it and a submit
+        of the same step cannot both land. Only back, and only across screens: the screen must have
+        been passed in this interaction with nothing but `screen` steps since; a step that signed
+        the person in or up, checked an address or asked consent is never passed again this way.
+        The screens passed since are shown again as the person submits their way forward. Refused
+        otherwise with 409 `back_not_allowed` (`AR_FLOW_BACK_NOT_ALLOWED`), changing nothing.
+      parameters:
+        - name: interaction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - step_id
+                - contract_hash
+                - signature
+                - target_screen
+              properties:
+                step_id:
+                  type: string
+                node_id:
+                  type: string
+                contract_hash:
+                  type: string
+                signature:
+                  type: string
+                target_screen:
+                  type: string
+                  pattern: '^[a-z0-9_-]{1,96}$'
+                visit_id:
+                  type: string
+                  description: >-
+                    The visit of the step the request was made on (`interaction.current_visit_id`
+                    of the start or resume answer). A request made on an earlier visit of the same
+                    step (before going back and on) is refused with 409 `step_conflict`, checked
+                    before anything is recorded.
+      responses:
+        '200':
+          description: The interaction at the screen gone back to.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - schema_version
+                  - interaction
+                  - step
+                  - completed
+                  - output
+                  - back_screens
+                properties:
+                  schema_version:
+                    type: string
+                  interaction:
+                    type: object
+                    additionalProperties: true
+                  step:
+                    type: object
+                    additionalProperties: true
+                  completed:
+                    type: boolean
+                    const: false
+                  output:
+                    type: 'null'
+                  back_screens:
+                    type: array
+                    items:
+                      type: string
+                    description: >-
+                      The screen keys the current screen can go back to with `/back`, nearest first;
+                      a link part whose `link_action` is `back` goes to the first, and is shown
+                      but cannot be used while the list is empty.
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
   /api/v1/auth/direct/email-code/send:

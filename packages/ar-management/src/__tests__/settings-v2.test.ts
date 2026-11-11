@@ -173,6 +173,31 @@ function createMockDB(): D1Database {
   } as unknown as D1Database;
 }
 
+/** A database with the tenant's SAML service providers (`identity_providers`, `saml_sp`). */
+function createSamlProviderDB(
+  providers: Array<{ tenant_id: string; entityId: string; enabled: boolean }>
+): D1Database {
+  return {
+    prepare: vi.fn().mockImplementation((sql: string) => ({
+      bind: vi.fn().mockImplementation((...params: string[]) => ({
+        run: vi.fn().mockResolvedValue({ success: true }),
+        all: vi.fn().mockImplementation(async () => {
+          if (!sql.includes('FROM identity_providers')) return { results: [] };
+          return {
+            results: providers
+              .filter((provider) => provider.tenant_id === params[0])
+              .map((provider) => ({
+                config_json: JSON.stringify({ entityId: provider.entityId }),
+                enabled: provider.enabled ? 1 : 0,
+              })),
+          };
+        }),
+        first: vi.fn().mockResolvedValue(null),
+      })),
+    })),
+  } as unknown as D1Database;
+}
+
 function createClientLookupDB(
   clients: Record<
     string,
@@ -1963,6 +1988,55 @@ describe('Settings API v2', () => {
         expect(body.message as string).toContain('App Login target client');
       });
 
+      it.each([
+        ['https://sp.example.com/metadata', 200, null],
+        ['https://missing.example.com', 404, 'was not found'],
+        ['https://off.example.com', 400, 'is disabled'],
+      ])(
+        "signs in to the SAML service provider %s after Login UI sign-in only when it is one of the tenant's, enabled",
+        async (entityId, status, reason) => {
+          const { app, mockEnv } = createTestApp({
+            kv: createMockKV({}),
+            db: createSamlProviderDB([
+              {
+                tenant_id: 'tenant_123',
+                entityId: 'https://sp.example.com/metadata',
+                enabled: true,
+              },
+              { tenant_id: 'tenant_123', entityId: 'https://off.example.com', enabled: false },
+            ]),
+          });
+          const getRes = await app.request(
+            '/api/admin/tenants/tenant_123/settings/login-entry',
+            { method: 'GET' },
+            mockEnv
+          );
+          const getData: SettingsGetResult = await getRes.json();
+
+          const res = await app.request(
+            '/api/admin/tenants/tenant_123/settings/login-entry',
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ifMatch: getData.version,
+                set: {
+                  'login-entry.post_login_behavior': 'saml_login',
+                  'login-entry.saml_login_sp_entity_id': entityId,
+                  'login-entry.saml_login_relay_state': '/dashboard',
+                },
+              }),
+            },
+            mockEnv
+          );
+
+          expect(res.status).toBe(status);
+          const body: ApiResponse & SettingsPatchResult = await res.json();
+          if (reason) expect(body.message as string).toContain(reason);
+          else expect(body.applied).toContain('login-entry.saml_login_sp_entity_id');
+        }
+      );
+
       it('should patch tenant-discovery-ui settings for tenant scope', async () => {
         const mockKV = createMockKV();
         const { app, mockEnv } = createTestApp({ kv: mockKV });
@@ -3061,8 +3135,10 @@ describe('Settings API v2', () => {
         };
 
         expect(body.category).toBe('login-entry');
-        expect(Object.keys(body.settings)).toHaveLength(17);
+        expect(Object.keys(body.settings)).toHaveLength(19);
         expect(body.settings).toHaveProperty('login-entry.app_login_client_id');
+        expect(body.settings).toHaveProperty('login-entry.saml_login_sp_entity_id');
+        expect(body.settings).toHaveProperty('login-entry.saml_login_relay_state');
         expect(body.settings).toHaveProperty('login-entry.app_login_redirect_uri');
       });
 

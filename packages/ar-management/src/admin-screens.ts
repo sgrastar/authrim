@@ -15,6 +15,10 @@ import {
   SCREEN_ANSWER_TARGETS,
   SCREEN_CHOICE_BLOCK_TYPES,
   SCREEN_INPUT_BLOCK_TYPES,
+  SCREEN_LINK_ACTIONS,
+  SCREEN_LINK_EXIT_PATTERN,
+  SCREEN_LINK_STYLES,
+  SCREEN_RESERVED_EXITS,
 } from '@authrim/ar-lib-core';
 import type {
   Env,
@@ -23,6 +27,8 @@ import type {
   ScreenField,
   ScreenFieldOption,
   ScreenKind,
+  ScreenLinkAction,
+  ScreenLinkStyle,
   ScreenLocalization,
   ScreenResponse,
   ScreenSettings,
@@ -1935,6 +1941,54 @@ function readSafeLinkHref(value: unknown): string | null | undefined {
   }
 }
 
+/** What a `link` part does, and how it is drawn. A string is why it cannot be saved. */
+function readLinkTarget(
+  record: Row,
+  blockType: NonNullable<ScreenField['block_type']>,
+  field: string,
+  strict: boolean
+): Pick<ScreenField, 'href' | 'link_action' | 'link_exit' | 'link_style'> | string {
+  const href = readSafeLinkHref(record.href);
+  if (blockType !== 'link') return { href };
+  const where = `Field "${field}"`;
+  const rawAction = record.link_action;
+  const action =
+    rawAction === undefined || rawAction === null || rawAction === ''
+      ? 'url'
+      : (SCREEN_LINK_ACTIONS as readonly unknown[]).includes(rawAction)
+        ? (rawAction as ScreenLinkAction)
+        : undefined;
+  if (!action) {
+    if (strict) return `${where}: link_action must be one of ${SCREEN_LINK_ACTIONS.join(', ')}`;
+    return { href };
+  }
+  const rawStyle = record.link_style;
+  const style = (SCREEN_LINK_STYLES as readonly unknown[]).includes(rawStyle)
+    ? (rawStyle as ScreenLinkStyle)
+    : undefined;
+  if (strict && rawStyle !== undefined && rawStyle !== null && !style) {
+    return `${where}: link_style must be text or button`;
+  }
+  const drawn = style === 'button' ? { link_style: style } : {};
+  if (action === 'url') {
+    if (!href) return `${where}: a link needs an https URL or a path on this site`;
+    return { href, ...drawn };
+  }
+  // An exit of the screen: where it leads is the Flow's, so it has no URL of its own.
+  if (strict && record.href !== undefined && record.href !== null && record.href !== '') {
+    return `${where}: a link that leaves the screen by an exit has no URL`;
+  }
+  if (action !== 'exit') return { link_action: action, ...drawn };
+  const exit = typeof record.link_exit === 'string' ? record.link_exit.trim() : '';
+  if (!SCREEN_LINK_EXIT_PATTERN.test(exit)) {
+    return `${where}: link_exit must be a lower-case name (letters, digits, _), up to 40 characters`;
+  }
+  if (SCREEN_RESERVED_EXITS.includes(exit)) {
+    return `${where}: the exit "${exit}" is the screen's own; give another name`;
+  }
+  return { link_action: action, link_exit: exit, ...drawn };
+}
+
 function parseJson<T>(value: unknown, fallback: T): T {
   if (value === null || value === undefined || value === '') return fallback;
   if (typeof value === 'object') return value as T;
@@ -2081,13 +2135,8 @@ function normalizeFieldsDetailed(value: unknown, strict = true): FieldsResult {
     if (!field || !label) return { ok: false, error: 'Each field needs a field and a label' };
     const blockType = readBlockType(record.block_type, strict);
     if (!blockType) return { ok: false, error: `Field "${field}": unknown block_type` };
-    const href = readSafeLinkHref(record.href);
-    if (blockType === 'link' && !href) {
-      return {
-        ok: false,
-        error: `Field "${field}": a link needs an https URL or a path on this site`,
-      };
-    }
+    const link = readLinkTarget(record, blockType, field, strict);
+    if (typeof link === 'string') return { ok: false, error: link };
     const answer = readInputAnswer(record, blockType, field, strict);
     if (typeof answer === 'string') return { ok: false, error: answer };
     // An answer of its own must not share a key with another answer, nor with an attribute the
@@ -2139,7 +2188,7 @@ function normalizeFieldsDetailed(value: unknown, strict = true): FieldsResult {
       text: readTrimmed(record.text)?.slice(0, 4000),
       help_text: readTrimmed(record.help_text)?.slice(0, 1000),
       placeholder: readTrimmed(record.placeholder)?.slice(0, 500),
-      href,
+      ...link,
       human_verification_timing: readHumanVerificationTiming(record.human_verification_timing),
       display_condition: readDisplayCondition(record.display_condition),
       layout_columns: readPositiveInteger(record.layout_columns, 4),
@@ -2238,6 +2287,10 @@ function normalizeFields(value: unknown): ScreenField[] | null {
 function validateAccountScreenFields(fields: ScreenField[]): string | null {
   if (fields.some((field) => !ACCOUNT_SCREEN_BLOCK_TYPES.has(field.block_type ?? ''))) {
     return 'Account screens may only contain Account Widgets and supported content blocks';
+  }
+  // The account page is not a flow: a link there opens a URL, it leaves by no exit.
+  if (fields.some((field) => field.block_type === 'link' && field.link_action)) {
+    return 'A link on an account screen can only open a URL';
   }
   const primaryWidgets = fields.filter((field) =>
     ACCOUNT_WIDGET_BLOCK_TYPES.has(field.block_type ?? '')
@@ -2786,7 +2839,15 @@ function toResponse(row: Row): ScreenResponse {
 }
 
 export async function ensureDefaultScreens(c: AdminContext, tenantId: string): Promise<void> {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  await ensureDefaultScreensIn(createAuthContextFromHono(c, tenantId).coreAdapter, tenantId);
+}
+
+/** The tenant's built-in screens, in its core store (`ensureDefaultScreens`, or a new tenant's). */
+export async function ensureDefaultScreensIn(
+  coreAdapter: ReturnType<typeof createAuthContextFromHono>['coreAdapter'],
+  tenantId: string
+): Promise<void> {
+  const authCtx = { coreAdapter };
   for (const { screen, source, template } of DEFAULT_SCREEN_SEEDS) {
     const existing = await authCtx.coreAdapter.queryOne<Row>(
       `SELECT id, screen_kind, fields_json, localizations_json, is_system

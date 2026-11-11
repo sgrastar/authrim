@@ -23,11 +23,13 @@
 		CHOICE_KINDS,
 		INPUT_KINDS,
 		LABEL_KINDS,
+		LINK_ACTIONS,
 		METHODS,
 		SCHEMA_TYPES_FOR,
 		fieldFits,
 		type ChoiceSource,
 		type DisplayCondition,
+		type LinkAction,
 		type PartSettings,
 		type SchemaField
 	} from './screen-model';
@@ -62,6 +64,11 @@
 		 * its placeholder the text beside the box, as the Login UI shows them.
 		 */
 		legacyYesNo?: boolean;
+		/**
+		 * A link can leave the screen by a way out (next, back, skip, an exit): any screen of a flow.
+		 * Not on the account page, which is not a flow: a link there opens a URL only.
+		 */
+		exitsAllowed?: boolean;
 	}
 
 	let {
@@ -77,7 +84,8 @@
 		choices = () => [],
 		schemaHref,
 		readonly = false,
-		legacyYesNo = false
+		legacyYesNo = false,
+		exitsAllowed = true
 	}: Props = $props();
 
 	// A new part has no saved settings: compare its fields with themselves, so none is marked.
@@ -283,13 +291,55 @@
 			{:else if part.kind === 'text'}
 				<TextArea field="{path}.text" label={setting('body')} rows={4} bind:value={settings.text} />
 			{:else if part.kind === 'link'}
-				<TextField
-					field="{path}.href"
-					label={setting('href')}
-					hint={setting('hrefHint')}
-					type="url"
-					placeholder="https://"
-					bind:value={settings.href}
+				<Select
+					field="{path}.linkAction"
+					label={setting('linkAction')}
+					hint={setting(`linkActionHint.${settings.linkAction}`)}
+					bind:value={
+						() => settings?.linkAction ?? 'url',
+						(value) =>
+							settings &&
+							(settings.linkAction = LINK_ACTIONS.includes(value as LinkAction)
+								? (value as LinkAction)
+								: 'url')
+					}
+					options={(exitsAllowed ? LINK_ACTIONS : (['url'] as const)).map((action) => ({
+						value: action,
+						label: setting(`linkAction.${action}`)
+					}))}
+				/>
+				{#if settings.linkAction === 'url'}
+					<TextField
+						field="{path}.href"
+						label={setting('href')}
+						hint={setting('hrefHint')}
+						type="url"
+						placeholder="https://"
+						bind:value={settings.href}
+					/>
+				{:else if settings.linkAction === 'exit'}
+					<TextField
+						field="{path}.linkExit"
+						label={setting('linkExit')}
+						hint={setting('linkExitHint')}
+						required
+						placeholder="social"
+						bind:value={settings.linkExit}
+					/>
+				{/if}
+				<SegmentedControl
+					label={setting('linkStyle')}
+					hideLabel={false}
+					size="sm"
+					field="{path}.linkStyle"
+					bind:value={
+						() => settings?.linkStyle ?? 'text',
+						(value) => settings && (settings.linkStyle = value === 'button' ? 'button' : 'text')
+					}
+					options={[
+						{ value: 'text', label: setting('linkStyleText') },
+						{ value: 'button', label: setting('linkStyleButton') }
+					]}
 				/>
 			{:else if part.kind === 'security_verification'}
 				<TextField field="{path}.text" label={setting('body')} bind:value={settings.text} />

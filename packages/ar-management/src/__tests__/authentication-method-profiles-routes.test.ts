@@ -21,7 +21,10 @@ const mocks = vi.hoisted(() => {
     auth: Record<string, unknown>;
     settings: { version: number; values: Record<string, unknown> };
     audit: ReturnType<typeof vi.fn>;
+    /** The Flow (core database) that names a profile, when one does. */
+    flowUsing: string | null;
   } = {
+    flowUsing: null,
     tenantId: 'tenant-a',
     auth: {},
     settings: {
@@ -69,6 +72,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
+    createAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: {
+        queryOne: vi.fn(async (_sql: string, params: unknown[]) =>
+          mocks.flowUsing && String(params[1]).includes(mocks.flowUsing) ? { id: 'flow-1' } : null
+        ),
+      },
+    })),
     getRateLimitProfileAsync: vi.fn(async () => ({ profile: 'lenient' })),
     rateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
     getTenantIdFromContext: vi.fn(() => mocks.tenantId),
@@ -180,6 +190,14 @@ describe('authentication method profiles', () => {
     expect(
       (await call('PUT', `/${profile.id}`, { name: 'Old', version: 1, values: {} })).status
     ).toBe(409);
+    // A service flow that names it keeps it.
+    mocks.flowUsing = profile.id;
+    try {
+      expect((await call('DELETE', `/${profile.id}`)).status).toBe(409);
+      expect((await call('GET', `/${profile.id}`)).status).toBe(200);
+    } finally {
+      mocks.flowUsing = null;
+    }
     expect((await call('DELETE', `/${profile.id}`)).status).toBe(204);
     expect((await call('GET', `/${profile.id}`)).status).toBe(404);
   });

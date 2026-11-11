@@ -992,6 +992,14 @@ function tenantProvisioningDependencies(
         JSON.stringify(buildDefaultTenantContract(operation.tenantId))
       );
       await seedTenantDefaultSettings(env, operation.tenantId);
+      // Its built-in screens and its sign-up, so people can sign up as soon as it exists (loaded
+      // here only: the screen and Flow modules are large).
+      const [{ ensureDefaultScreensIn }, { seedDefaultRegistrationFlow }] = await Promise.all([
+        import('./admin-screens'),
+        import('./admin-flows'),
+      ]);
+      await ensureDefaultScreensIn(tenantAdapter, operation.tenantId);
+      await seedDefaultRegistrationFlow(tenantAdapter, operation.tenantId, now);
       await initTenantKeyManager(env.KEY_MANAGER, operation.tenantId);
     },
     publishRegistry(operation, route) {

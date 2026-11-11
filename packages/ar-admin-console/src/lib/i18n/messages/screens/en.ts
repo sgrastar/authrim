@@ -179,6 +179,27 @@ export const enScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.set.body': 'Text',
 	'sc.set.href': 'Link destination',
 	'sc.set.hrefHint': 'An #anchor, a /relative path or an https:// address',
+	'sc.set.linkAction': 'What the link does',
+	'sc.set.linkAction.url': 'Opens a URL',
+	'sc.set.linkAction.next': 'Goes on (submits)',
+	'sc.set.linkAction.back': 'Goes back to the previous screen',
+	'sc.set.linkAction.skip': 'Skips the screen',
+	'sc.set.linkAction.exit': 'Leaves by a named exit',
+	'sc.set.linkActionHint.url': 'Opens the URL given.',
+	'sc.set.linkActionHint.next':
+		'Submits this screen, its answers checked. Where it leads is set in the service flow.',
+	'sc.set.linkActionHint.back':
+		'Goes back to the screen just before. When something other than screens came in between, or there is no screen before, it is shown but cannot be used.',
+	'sc.set.linkActionHint.skip':
+		'Leaves this screen without its answers. Where it leads is set in the service flow (until it is, the same place as going on).',
+	'sc.set.linkActionHint.exit':
+		'Leaves this screen by a named exit, without its answers. Where it leads is set in the service flow (until it is, the same place as going on).',
+	'sc.set.linkExit': 'Exit name',
+	'sc.set.linkExitHint':
+		'Lower-case letters, digits and _, starting with a letter (up to 40). The service flow sets where the exit leads by this name. Not submitted, skipped or next.',
+	'sc.set.linkStyle': 'Shown as',
+	'sc.set.linkStyleText': 'A text link',
+	'sc.set.linkStyleButton': 'A button',
 	'sc.set.captcha': 'When the CAPTCHA shows',
 	'sc.set.captchaInitial': 'From the start',
 	'sc.set.captchaSubmit': 'On submit',
@@ -235,6 +256,9 @@ export const enScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.editor.labelRequired': 'A part has no label ({name})',
 	'sc.editor.answerKeyRequired': 'A part has no answer key ({name})',
 	'sc.editor.identityRequired': 'Choose an Identity Schema attribute for this part ({name})',
+	'sc.editor.linkUrlOnly': '“{name}”: a link on the account page can only open a URL',
+	'sc.editor.linkExitInvalid':
+		'“{name}”: an exit name is lower-case letters, digits and _, starting with a letter (not submitted, skipped or next)',
 	'sc.editor.partNotForKind': 'This kind of screen cannot hold a part ({name})',
 	'sc.editor.oneAccountWidget': 'An account page holds one widget at most',
 	'sc.editor.targetsRequired': 'A part has nowhere for its answer to go ({name})',

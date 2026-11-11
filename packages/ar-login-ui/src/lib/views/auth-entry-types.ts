@@ -65,6 +65,8 @@ export type RuntimeScreenState = {
 	consentReady: boolean;
 	/** The runtime step is being submitted. */
 	loading: boolean;
+	/** The screens a link part on the current screen can go back to (`back_screens`). */
+	backScreens?: readonly string[];
 };
 
 /** The email-verification protocol challenge for the current step, when the tenant uses it. */

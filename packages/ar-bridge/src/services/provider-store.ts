@@ -160,7 +160,7 @@ export async function createProvider(
       provider.requireEmailVerified ? 1 : 0,
       provider.alwaysFetchUserinfo ? 1 : 0,
       provider.enableSso !== false ? 1 : 0,
-      JSON.stringify(provider.providerQuirks || {}),
+      serializeProviderQuirks(provider.providerQuirks, provider.trustEmail),
       provider.iconUrl || null,
       provider.iconName || null,
       provider.buttonColor || null,
@@ -231,7 +231,7 @@ export async function updateProvider(
       updated.requireEmailVerified ? 1 : 0,
       updated.alwaysFetchUserinfo ? 1 : 0,
       updated.enableSso !== false ? 1 : 0,
-      JSON.stringify(updated.providerQuirks || {}),
+      serializeProviderQuirks(updated.providerQuirks, updated.trustEmail),
       updated.iconUrl || null,
       updated.iconName || null,
       updated.buttonColor || null,
@@ -325,7 +325,24 @@ function parseStoredProfileUpdateFields(value: string | null | undefined): strin
   }
 }
 
+/** Quirks key that carries the provider's `trustEmail` (no column of its own). */
+const TRUST_EMAIL_QUIRK = 'trustEmail';
+
+/** The quirks as stored: `trustEmail` is kept only when on, whatever a caller put in them. */
+function serializeProviderQuirks(
+  quirks: Record<string, unknown> | undefined,
+  trustEmail: boolean | undefined
+): string {
+  const stored: Record<string, unknown> = { ...(quirks || {}) };
+  delete stored[TRUST_EMAIL_QUIRK];
+  if (trustEmail === true) stored[TRUST_EMAIL_QUIRK] = true;
+  return JSON.stringify(stored);
+}
+
 function mapDbToProvider(db: DbUpstreamProvider): UpstreamProvider {
+  const providerQuirks = JSON.parse(db.provider_quirks || '{}') as Record<string, unknown>;
+  const trustEmail = providerQuirks[TRUST_EMAIL_QUIRK] === true;
+  delete providerQuirks[TRUST_EMAIL_QUIRK];
   return {
     id: db.id,
     tenantId: db.tenant_id,
@@ -348,9 +365,10 @@ function mapDbToProvider(db: DbUpstreamProvider): UpstreamProvider {
     autoLinkEmail: db.auto_link_email === 1,
     jitProvisioning: db.jit_provisioning === 1,
     requireEmailVerified: db.require_email_verified === 1,
+    trustEmail,
     alwaysFetchUserinfo: db.always_fetch_userinfo === 1,
     enableSso: db.enable_sso === 1,
-    providerQuirks: JSON.parse(db.provider_quirks || '{}'),
+    providerQuirks,
     iconUrl: db.icon_url || undefined,
     iconName: db.icon_name || undefined,
     buttonColor: db.button_color || undefined,

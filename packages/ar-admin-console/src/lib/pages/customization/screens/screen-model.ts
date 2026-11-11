@@ -4,6 +4,10 @@
  * `screen-layout.ts` turns a saved screen (`ScreenField[]`) into this and back.
  */
 import type { IconName } from '#lib/ui/icons/icons.js';
+import {
+	SCREEN_LINK_EXIT_PATTERN,
+	SCREEN_RESERVED_EXITS
+} from '@authrim/ar-lib-core/types/screens';
 
 export type PartGroup = 'content' | 'input' | 'signin' | 'account' | 'security';
 
@@ -122,9 +126,25 @@ export interface PartSettings {
 	/** heading (supporting text), text (body), code input and consent (description) */
 	text: string;
 	href: string;
+	/**
+	 * link_action: what a link does. `url` opens `href`; the others leave the screen by a way out,
+	 * which the service flow connects (the screen does not say where it leads).
+	 */
+	linkAction: LinkAction;
+	/** link_exit: the name of the exit a link leaves by (`linkAction` exit) */
+	linkExit: string;
+	/** link_style */
+	linkStyle: 'text' | 'button';
 	/** human_verification_timing */
 	timing: 'initial' | 'submit';
 }
+
+/** What a link part does (link_action). */
+export type LinkAction = 'url' | 'next' | 'back' | 'skip' | 'exit';
+export const LINK_ACTIONS: readonly LinkAction[] = ['url', 'next', 'back', 'skip', 'exit'];
+/** An exit's name as the API takes it, and the names a screen node has of its own. */
+export const LINK_EXIT_PATTERN = SCREEN_LINK_EXIT_PATTERN;
+export const RESERVED_LINK_EXITS: ReadonlySet<string> = new Set(SCREEN_RESERVED_EXITS);
 
 export const defaultCondition = (): DisplayCondition => ({ mode: 'always', feature: 'passkey' });
 
@@ -143,6 +163,9 @@ export const defaultSettings = (overrides: Partial<PartSettings> = {}): PartSett
 	codeMode: 'auto',
 	text: '',
 	href: '',
+	linkAction: 'url',
+	linkExit: '',
+	linkStyle: 'text',
 	timing: 'initial',
 	...overrides
 });

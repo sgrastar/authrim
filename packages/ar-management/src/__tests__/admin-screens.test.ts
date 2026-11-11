@@ -206,6 +206,79 @@ beforeEach(() => {
 });
 
 describe('admin screens', () => {
+  describe('a link part', () => {
+    const linkScreen = (link: Record<string, unknown>, kind = 'custom') =>
+      adminScreenCreateHandler(
+        createMutationContext({
+          screen_key: 'step_two',
+          display_name: 'Step two',
+          screen_kind: kind,
+          fields: [
+            { field: 'heading.step_two', label: 'More about you', block_type: 'heading' },
+            { field: 'link.back', label: 'Back', block_type: 'link', ...link },
+          ],
+        })
+      );
+    const savedLink = () => {
+      const saved = rows.find((row) => row.screen_key === 'step_two');
+      return (JSON.parse(String(saved?.fields_json)) as Array<Record<string, unknown>>)[1];
+    };
+    it.each([
+      [{ link_action: 'next' }, { link_action: 'next' }],
+      [
+        { link_action: 'back', link_style: 'button' },
+        { link_action: 'back', link_style: 'button' },
+      ],
+      [{ link_action: 'skip' }, { link_action: 'skip' }],
+      [
+        { link_action: 'exit', link_exit: ' social ' },
+        { link_action: 'exit', link_exit: 'social' },
+      ],
+    ])('leaves the screen by an exit %j, with no URL of its own', async (link, saved) => {
+      const response = await linkScreen(link);
+      expect(response.status).toBe(201);
+      expect(savedLink()).toMatchObject(saved);
+      expect(savedLink()).not.toHaveProperty('href');
+    });
+
+    it('keeps a text link to a URL as before, with no action or style saved', async () => {
+      const response = await linkScreen({ href: 'https://example.com/help', link_style: 'text' });
+      expect(response.status).toBe(201);
+      expect(savedLink()).toMatchObject({ href: 'https://example.com/help' });
+      expect(savedLink()).not.toHaveProperty('link_style');
+      expect(savedLink()).not.toHaveProperty('link_action');
+    });
+
+    it.each([
+      [{ link_action: 'teleport' }, 'link_action must be'],
+      [{ link_action: 'next', href: '/help' }, 'has no URL'],
+      [{ link_action: 'exit' }, 'link_exit must be'],
+      [{ link_action: 'exit', link_exit: 'Social Login' }, 'link_exit must be'],
+      [{ link_action: 'exit', link_exit: 'submitted' }, "the screen's own"],
+      [{}, 'a link needs'],
+      [{ href: '/help', link_style: 'banner' }, 'link_style must be'],
+      [{ href: 'javascript:alert(1)' }, 'a link needs'],
+    ])('refuses %j', async (link, reason) => {
+      const response = await linkScreen(link);
+      expect(response.status).toBe(400);
+      expect(String((await readJson(response)).error_description)).toContain(reason);
+      expect(rows.some((row) => row.screen_key === 'step_two')).toBe(false);
+    });
+
+    it('leaves the account page by no exit: it is not a flow', async () => {
+      const response = await adminScreenCreateHandler(
+        createMutationContext({
+          screen_key: 'step_two',
+          display_name: 'Account links',
+          screen_kind: 'account',
+          fields: [{ field: 'link.back', label: 'Back', block_type: 'link', link_action: 'back' }],
+        })
+      );
+      expect(response.status).toBe(400);
+      expect(String((await readJson(response)).error_description)).toContain('can only open a URL');
+    });
+  });
+
   it('rejects unsupported blocks in Account screens', async () => {
     const response = await adminScreenCreateHandler(
       createMutationContext({

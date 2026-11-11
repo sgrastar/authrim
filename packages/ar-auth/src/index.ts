@@ -112,6 +112,7 @@ import {
   loginRuntimeEmailVerificationChallengeHandler,
   loginRuntimeInteractionStartHandler,
   loginRuntimeInteractionSubmitHandler,
+  loginRuntimeInteractionBackHandler,
 } from './login-runtime-flow';
 import { AUTH_REQUEST_DIAGNOSTIC_CONTEXT_KEY } from './request-diagnostics';
 
@@ -794,6 +795,7 @@ app.post(
   loginRuntimeEmailVerificationChallengeHandler
 );
 app.post('/api/v1/login/interactions/:interaction_id/submit', loginRuntimeInteractionSubmitHandler);
+app.post('/api/v1/login/interactions/:interaction_id/back', loginRuntimeInteractionBackHandler);
 
 // Passkey Login endpoints
 app.post('/api/v1/auth/direct/passkey/login/start', directPasskeyLoginStartHandler);

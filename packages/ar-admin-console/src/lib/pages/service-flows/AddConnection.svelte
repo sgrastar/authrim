@@ -14,6 +14,7 @@
 		accountWizardSteps,
 		canProceedAccount,
 		emptyFlowState,
+		initialState,
 		FLOWS,
 		ACCOUNT_FLOW_IDS,
 		isSyncFlow,
@@ -156,6 +157,18 @@
 		else asking = true;
 	}
 	const stepId = $derived(steps[Math.min(current, steps.length - 1)].id);
+
+	// A kind of flow chosen: the settings that start with a value get it, where nothing is entered
+	// yet (what was typed before a kind was chosen again is kept).
+	$effect.pre(() => {
+		const flow = account.flow;
+		if (!flow) return;
+		untrack(() => {
+			for (const [key, value] of Object.entries(initialState(flow).values)) {
+				if (!(key in account.form.values)) account.form.values[key] = value;
+			}
+		});
+	});
 
 	/** A kind that does not go with the new first answer is dropped. */
 	function chooseWhere(value: string) {

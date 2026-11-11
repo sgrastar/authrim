@@ -477,7 +477,7 @@ describe('the clean-up of unfinished sign-ups', () => {
 
   it('keeps an account proven since, and drops only its mark', async () => {
     account('user-login', { metadata: { last_login_at: 1_700_000_000 } });
-    mark('user-login');
+    mark('user-login', NOW_SECONDS - 2, 'passkey');
     account('user-passkey');
     mark('user-passkey', NOW_SECONDS - 1, 'passkey');
     core.db
@@ -496,6 +496,22 @@ describe('the clean-up of unfinished sign-ups', () => {
     await expect(run()).resolves.toMatchObject({ completed: 3, deleted: 0 });
     expect(mocks.deleteAccount).not.toHaveBeenCalled();
     expect(marks()).toEqual([]);
+  });
+
+  it('does not take a passkey or its sign-in as proof of a sign-up waiting for its address', async () => {
+    // A passkey sign-up whose Flow checks the address first: its mark waits for the address.
+    account('user-waiting', { metadata: { last_login_at: 1_700_000_000 } });
+    mark('user-waiting', NOW_SECONDS - 1, 'email_code');
+    core.db
+      .prepare(
+        `INSERT INTO passkeys (id, tenant_id, user_id, credential_id, rp_id, public_key, counter,
+           created_at)
+         VALUES ('pk-2', ?, 'user-waiting', 'cred-2', 'login.example.com', 'key', 0, 1)`
+      )
+      .run(TENANT);
+
+    await expect(run()).resolves.toMatchObject({ completed: 0, deleted: 1 });
+    expect(mocks.deleteAccount).toHaveBeenCalledTimes(1);
   });
 
   it('postpones a held, unpublished or failed account, counted by reason', async () => {

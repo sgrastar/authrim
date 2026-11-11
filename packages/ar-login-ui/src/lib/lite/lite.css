@@ -122,6 +122,32 @@ button.secondary {
 	color: var(--accent);
 	border: 1px solid var(--line);
 }
+button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+/* A screen's link part that goes back to a screen: a button that reads as a text link. */
+button.link {
+	display: inline;
+	width: auto;
+	margin: 0;
+	padding: 0;
+	font-weight: inherit;
+	background: none;
+	color: var(--accent);
+	text-decoration: underline;
+}
+/* A screen's link part drawn as a button. */
+a.button {
+	display: block;
+	margin: 0.75rem 0;
+	padding: 0.65rem;
+	font-weight: 600;
+	text-align: center;
+	text-decoration: none;
+	border: 1px solid var(--line);
+	border-radius: 0.4rem;
+}
 nav.lang {
 	margin: 2rem 0 1rem;
 	font-size: 0.9rem;
