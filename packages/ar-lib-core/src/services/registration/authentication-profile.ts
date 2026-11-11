@@ -49,14 +49,20 @@ const METHOD_OF_HANDLE: Record<string, string> = {
   totp: 'totp',
 };
 
-function normalizeHandle(value: string): string {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, '_')
-      .replace(/^_+|_+$/g, '') || 'method'
-  );
+/**
+ * A method or provider name as a Flow step's handle: lower case, runs of other characters as one
+ * `_`, none at either end. Linear in the length (no backtracking regular expression on it).
+ */
+export function normalizeMethodHandle(value: string): string {
+  const joined = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_');
+  let start = 0;
+  let end = joined.length;
+  while (start < end && joined[start] === '_') start++;
+  while (end > start && joined[end - 1] === '_') end--;
+  return joined.slice(start, end) || 'method';
 }
 
 function providerUsageOf(value: unknown): Array<Record<string, unknown>> {
@@ -103,7 +109,7 @@ export function profileAllowsHandle(
         : typeof provider.providerId === 'string'
           ? provider.providerId
           : '';
-    return id && normalizeHandle(id) === handle;
+    return id && normalizeMethodHandle(id) === handle;
   });
   if (!listed) return true;
   const enabled = listed.enabled !== false;

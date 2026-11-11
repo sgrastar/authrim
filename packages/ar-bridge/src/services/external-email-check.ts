@@ -1,5 +1,6 @@
 import {
   loadInteractionRegistrationPolicy,
+  normalizeMethodHandle,
   loadTenantRegistrationPolicy,
   resolveAuthCorePersistenceAdapterFromEnv,
   type Env,
@@ -51,12 +52,5 @@ export async function loadExternalSignUpPolicy(
 
 /** The handle an external provider has in a Flow step (as the runtime names it). */
 export function providerHandle(provider: { slug?: string | null; id: string }): string {
-  const value = provider.slug || provider.id;
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, '_')
-      .replace(/^_+|_+$/g, '') || 'method'
-  );
+  return normalizeMethodHandle(provider.slug || provider.id);
 }

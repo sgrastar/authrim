@@ -9,7 +9,9 @@ const mocks = vi.hoisted(() => ({
   loadPolicy: vi.fn(),
   loadTenantPolicy: vi.fn(),
 }));
-vi.mock('@authrim/ar-lib-core', () => ({
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
+  normalizeMethodHandle: (await importOriginal<typeof import('@authrim/ar-lib-core')>())
+    .normalizeMethodHandle,
   resolveAuthCorePersistenceAdapterFromEnv: mocks.resolve,
   loadInteractionRegistrationPolicy: mocks.loadPolicy,
   loadTenantRegistrationPolicy: mocks.loadTenantPolicy,
@@ -94,5 +96,6 @@ describe('loadExternalSignUpPolicy', () => {
   it('names a provider as the runtime does', () => {
     expect(providerHandle({ slug: 'Google', id: 'p1' })).toBe('google');
     expect(providerHandle({ id: 'Okta Corp' })).toBe('okta_corp');
+    expect(providerHandle({ id: `__a${'_'.repeat(50_000)}` })).toBe('a');
   });
 });
