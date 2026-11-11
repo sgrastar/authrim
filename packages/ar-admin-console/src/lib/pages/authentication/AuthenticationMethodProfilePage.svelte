@@ -20,6 +20,7 @@
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
 	import SaveBar from '#lib/ui/patterns/SaveBar.svelte';
+	import TitleEditor from '#lib/ui/patterns/TitleEditor.svelte';
 	import BackLink from '#lib/ui/primitives/BackLink.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
@@ -67,8 +68,14 @@
 	let nameError = $state('');
 	let editingName = $state(false);
 	let nameBeforeEdit = '';
-	let nameInput = $state<HTMLInputElement>();
 	let editNameButton = $state<HTMLButtonElement>();
+	let nameEditor = $state<ReturnType<typeof TitleEditor>>();
+	/** Opens the name editor if needed and takes the admin to its field. */
+	async function focusNameEditor() {
+		editingName = true;
+		await tick();
+		nameEditor?.focus();
+	}
 	let gone = false;
 	let loads = 0;
 	let directoryLoads = 0;
@@ -113,10 +120,10 @@
 				version = 0;
 				isSystem = false;
 				layer = null;
+				// A new profile opens with its name being entered (the editor focuses itself).
 				editingName = canWrite;
 				saved = snapshot();
 				phase = 'ready';
-				if (editingName) void tick().then(() => nameInput?.focus());
 			} else setProfile(profile);
 		} catch (error) {
 			if (gone || turn !== loads || target !== id) return;
@@ -161,27 +168,8 @@
 		nameBeforeEdit = name;
 		nameError = '';
 		editingName = true;
-		void tick().then(() => {
-			nameInput?.focus();
-			nameInput?.select();
-		});
 	}
-	function finishNameEdit(): boolean {
-		const trimmed = name.trim();
-		if (!trimmed) {
-			nameError = t('am.page.nameRequired');
-			nameInput?.focus();
-			return false;
-		}
-		name = trimmed;
-		nameError = '';
-		editingName = false;
-		void tick().then(() => editNameButton?.focus());
-		return true;
-	}
-	function cancelNameEdit() {
-		name = nameBeforeEdit;
-		nameError = '';
+	function closeNameEditor() {
 		editingName = false;
 		void tick().then(() => editNameButton?.focus());
 	}
@@ -193,7 +181,8 @@
 		values = structuredClone(original.values);
 		nameError = '';
 		editingName = isNew && canWrite;
-		void tick().then(() => (editingName ? nameInput : editNameButton)?.focus());
+		if (editingName) void focusNameEditor();
+		else void tick().then(() => editNameButton?.focus());
 	}
 
 	function changeValue(key: string, checked: boolean) {
@@ -203,13 +192,18 @@
 	async function save() {
 		if (busy || !editable || phase !== 'ready') return;
 		if (!name.trim()) {
+			// The editor opens (or stays open) and takes the admin to the field.
 			nameError = t('am.page.nameRequired');
-			editingName = true;
-			await tick();
-			nameInput?.focus();
+			await focusNameEditor();
 			return;
 		}
-		if (editingName && !finishNameEdit()) return;
+		// The name is there: an earlier problem with it (taken) is checked again by this save.
+		nameError = '';
+		// A name being typed is saved as it stands: the editor closes on it.
+		if (editingName) {
+			name = name.trim();
+			closeNameEditor();
+		}
 		const target = id;
 		const turn = loads;
 		const input = { name: name.trim(), values: structuredClone($state.snapshot(values)) };
@@ -236,9 +230,9 @@
 			if (gone || turn !== loads || id !== target) return;
 			if (error instanceof ApiError && error.body.error === 'profile_name_taken') {
 				nameError = t('am.page.nameTaken');
-				editingName = true;
-				await tick();
-				nameInput?.focus();
+				// The form takes input again first: a field that is still disabled takes no focus.
+				busy = false;
+				await focusNameEditor();
 				return;
 			}
 			if (error instanceof ApiError && error.code === 'profile_creation_not_allowed') {
@@ -297,39 +291,31 @@
 {/snippet}
 
 {#snippet nameForm()}
-	<form
-		class="name-editor"
-		onsubmit={(event) => {
-			event.preventDefault();
-			finishNameEdit();
+	<TitleEditor
+		bind:this={nameEditor}
+		value={name}
+		label={t('am.page.name')}
+		hint={t('am.page.nameHint')}
+		requiredMessage={t('am.page.nameRequired')}
+		error={nameError}
+		onrequired={() => (nameError = t('am.page.nameRequired'))}
+		maxlength={80}
+		doneLabel={t('am.page.nameDone')}
+		oninput={(typed) => {
+			name = typed;
+			nameError = '';
 		}}
-	>
-		<div class="name-editor__row">
-			<label class="sr-only" for="auth-method-profile-name">{t('am.page.name')}</label>
-			<input
-				id="auth-method-profile-name"
-				bind:this={nameInput}
-				bind:value={name}
-				maxlength="80"
-				aria-required="true"
-				aria-invalid={nameError ? 'true' : undefined}
-				aria-describedby={nameError ? 'auth-method-name-error' : 'auth-method-name-hint'}
-				oninput={() => (nameError = '')}
-				onkeydown={(event) => {
-					if (event.key === 'Escape') {
-						event.preventDefault();
-						cancelNameEdit();
-					}
-				}}
-			/>
-			<Button type="submit" variant="primary" size="sm">{t('am.page.nameDone')}</Button>
-			<Button variant="ghost" size="sm" onclick={cancelNameEdit}>{t('common.cancel')}</Button>
-		</div>
-		{#if nameError}<p id="auth-method-name-error" class="name-editor__error" role="alert">
-				{nameError}
-			</p>
-		{:else}<p id="auth-method-name-hint" class="name-editor__hint">{t('am.page.nameHint')}</p>{/if}
-	</form>
+		ondone={(typed) => {
+			name = typed;
+			nameError = '';
+			closeNameEditor();
+		}}
+		oncancel={() => {
+			name = nameBeforeEdit;
+			nameError = '';
+			closeNameEditor();
+		}}
+	/>
 {/snippet}
 
 <Page>
@@ -386,37 +372,3 @@
 	onconfirm={revert}
 	oncancel={() => (revertTarget = null)}
 />
-
-<style>
-	.name-editor {
-		width: min(100%, 520px);
-	}
-	.name-editor__row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 6px;
-	}
-	.name-editor input {
-		flex: 1 1 210px;
-		min-width: 0;
-		height: calc(var(--fs-page-title) * 1.6);
-		padding: 0 10px;
-		border: 1px solid var(--border-strong);
-		border-radius: var(--radius-control);
-		background: var(--bg-input);
-		color: var(--text-primary);
-		font: inherit;
-	}
-	.name-editor__hint,
-	.name-editor__error {
-		margin: 5px 0 0;
-		font-size: var(--fs-small);
-	}
-	.name-editor__hint {
-		color: var(--text-muted);
-	}
-	.name-editor__error {
-		color: var(--danger);
-	}
-</style>
