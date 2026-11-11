@@ -88,11 +88,13 @@ export async function interactionAllowsSignInMethod(
   c: AuthContext,
   tenantId: string,
   interactionId: string | null | undefined,
-  method: string,
+  method: string | null,
   usage: 'login' | 'signup' = 'login'
 ): Promise<boolean> {
   const refs = await interactionProfileRefs(c, tenantId, interactionId);
   if (refs.methodProfileRef === 'default') return true;
+  // A Flow that narrows its methods takes no sign-in whose method is not known.
+  if (!method) return false;
   const profile = await readAuthenticationProfile(c.env, tenantId, refs.methodProfileRef);
   return profileAllowsHandle(profile, HANDLE_OF_METHOD[method] ?? method, usage);
 }

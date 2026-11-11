@@ -34810,7 +34810,10 @@ paths:
       description: >-
         Requires the profile version in the body (for default, the opaque version string it was
         read with). Updating default changes the tenant's live session settings and
-        oauth.sso_enabled; a saved profile stays independent.
+        oauth.sso_enabled, saved one after the other: when the second save fails after the first
+        was applied, the answer is 409 partially_applied naming the applied categories. Default
+        shows oauth.sso_enabled only to an admin who may view oauth settings. A saved profile
+        stays independent.
       x-authrim-route-coverage: inferred-from-source
       requestBody:
         required: true

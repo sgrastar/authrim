@@ -4605,7 +4605,6 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     let profiled: Awaited<ReturnType<typeof sessionTtlForInteraction>>;
     try {
       if (
-        signInMethod &&
         !(await interactionAllowsSignInMethod(
           c,
           tenantId,
@@ -4615,7 +4614,10 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         ))
       ) {
         return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
-          extensions: { authentication_method: signInMethod, usage: signedUp ? 'signup' : 'login' },
+          extensions: {
+            authentication_method: signInMethod ?? 'unknown',
+            usage: signedUp ? 'signup' : 'login',
+          },
         });
       }
       // A sign-up with no Flow interaction follows the tenant's registration Flow, as its

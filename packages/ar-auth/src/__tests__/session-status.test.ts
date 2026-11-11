@@ -660,6 +660,45 @@ describe('ITP session token lifecycle', () => {
     expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
   });
 
+  it('extends a Default session as the tenant says now, so its switch still stops it', async () => {
+    const { refreshSessionHandler } = await import('../session-management');
+    const context = createContext();
+    context.req.json = vi.fn(async () => ({ extend_seconds: 120 }));
+    (context as { env: unknown }).env = {
+      SETTINGS: { get: vi.fn(async () => JSON.stringify({ 'session.refresh_default': false })) },
+    };
+    // Made under Default while extension was on: the tenant has turned it off since.
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003600000,
+      data: { session_extension: { enabled: true, max_lifetime_ms: 86400 * 1000 } },
+    });
+    mocks.sessionStore.extendSessionRpc.mockClear();
+    expect((await refreshSessionHandler(context as never)).status).toBe(403);
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('does not extend a Default session when the tenant settings cannot be read', async () => {
+    const { refreshSessionHandler } = await import('../session-management');
+    const context = createContext();
+    context.req.json = vi.fn(async () => ({ extend_seconds: 120 }));
+    (context as { env: unknown }).env = {
+      SETTINGS: { get: vi.fn(async () => '{not json') },
+    };
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: 1700003600000,
+      data: {},
+    });
+    mocks.sessionStore.extendSessionRpc.mockClear();
+    expect((await refreshSessionHandler(context as never)).status).toBe(503);
+    expect(mocks.sessionStore.extendSessionRpc).not.toHaveBeenCalled();
+  });
+
   it('answers a refresh of a session that is gone as not found', async () => {
     const { refreshSessionHandler } = await import('../session-management');
     const context = createContext();
