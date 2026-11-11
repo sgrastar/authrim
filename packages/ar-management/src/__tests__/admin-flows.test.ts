@@ -804,6 +804,48 @@ describe('admin Flow management handlers', () => {
     expect(body.valid).toBe(true);
   });
 
+  it('holds the runtime that is published to the profiles the tenant may name', async () => {
+    const { validateRuntimeProfileRefs } = await import('../admin-flows');
+    const exists = async (id: string) => id === 'short' || id === 'members';
+    const runtime = (config: Record<string, unknown>) =>
+      ({
+        flow_kind: 'login',
+        ui: { steps: [{ id: 's', component: 'authentication_method_selector', config }] },
+      }) as never;
+    expect(
+      await validateRuntimeProfileRefs(
+        runtime({ authentication_profile_ref: 'members', session_profile_ref: 'default' }),
+        exists
+      )
+    ).toEqual([]);
+    // A runtime naming what the editor never showed (another's, deleted, being deleted) is refused.
+    const issues = await validateRuntimeProfileRefs(
+      runtime({ authentication_profile_ref: 'gone', session_profile_ref: 'psp_deleting' }),
+      exists
+    );
+    expect(issues.map((issue) => issue.code)).toEqual([
+      'unsupported_authentication_profile',
+      'unsupported_session_profile',
+    ]);
+    // Repeats take no room: a bad reference after many good ones is still found.
+    const padded = {
+      flow_kind: 'login',
+      extra: Array.from({ length: 300 }, () => ({ authentication_profile_ref: 'members' })),
+      ui: { steps: [{ id: 's', config: { session_profile_ref: 'gone' } }] },
+    } as never;
+    expect((await validateRuntimeProfileRefs(padded, exists)).map((i) => i.code)).toEqual([
+      'unsupported_session_profile',
+    ]);
+    // One that names too many to check is refused, not passed.
+    const many = {
+      flow_kind: 'login',
+      extra: Array.from({ length: 300 }, (_, i) => ({ authentication_profile_ref: `p${i}` })),
+    } as never;
+    expect((await validateRuntimeProfileRefs(many, async () => true)).map((i) => i.code)).toEqual([
+      'runtime_profile_refs_unchecked',
+    ]);
+  });
+
   it('checks a sign-in step’s session profile and destination before it can be published', async () => {
     const editorWith = (config: Record<string, unknown>) => ({
       nodes: [

@@ -48,6 +48,12 @@ function fromRow(row: Record<string, unknown>): AuthenticationMethodProfile {
 /**
  * Named profiles of a tenant kept as one JSON document each (authentication method profiles,
  * session profiles): the same columns and limits, in a table of their own.
+ *
+ * The same table holds the tenant's changes to the platform's profiles (a row with
+ * `base_profile_id`, admin migration 015). Those are never profiles of the tenant: `list`,
+ * `find`, `update`, `delete` and the limit only ever see the tenant's own rows (no base), and an
+ * override is reached through its platform profile's id alone (`findOverride` …), so its own id
+ * cannot be named to get round the platform's switches or lock.
  */
 export class NamedProfileRepository {
   constructor(
@@ -57,7 +63,7 @@ export class NamedProfileRepository {
 
   async list(tenantId: string): Promise<AuthenticationMethodProfile[]> {
     const rows = await this.adapter.query<Record<string, unknown>>(
-      `SELECT * FROM ${this.table} WHERE tenant_id = ?
+      `SELECT * FROM ${this.table} WHERE tenant_id = ? AND base_profile_id IS NULL
        ORDER BY updated_at DESC, id ASC LIMIT ?`,
       [tenantId, AUTHENTICATION_METHOD_PROFILE_LIMIT]
     );
@@ -66,7 +72,7 @@ export class NamedProfileRepository {
 
   async find(tenantId: string, id: string): Promise<AuthenticationMethodProfile | null> {
     const row = await this.adapter.queryOne<Record<string, unknown>>(
-      `SELECT * FROM ${this.table} WHERE tenant_id = ? AND id = ?`,
+      `SELECT * FROM ${this.table} WHERE tenant_id = ? AND id = ? AND base_profile_id IS NULL`,
       [tenantId, id]
     );
     return row ? fromRow(row) : null;
@@ -84,7 +90,8 @@ export class NamedProfileRepository {
         `INSERT INTO ${this.table}
            (id, tenant_id, name, name_key, values_json, version, created_by, created_at, updated_at)
          SELECT ?, ?, ?, ?, ?, 1, ?, ?, ?
-          WHERE (SELECT COUNT(*) FROM ${this.table} WHERE tenant_id = ?) < ?`,
+          WHERE (SELECT COUNT(*) FROM ${this.table}
+                  WHERE tenant_id = ? AND base_profile_id IS NULL) < ?`,
         [
           id,
           tenantId,
@@ -119,7 +126,7 @@ export class NamedProfileRepository {
       const result = await this.adapter.execute(
         `UPDATE ${this.table}
             SET name = ?, name_key = ?, values_json = ?, version = version + 1, updated_at = ?
-          WHERE tenant_id = ? AND id = ? AND version = ?`,
+          WHERE tenant_id = ? AND id = ? AND version = ? AND base_profile_id IS NULL`,
         [
           input.name,
           nameKey(input.name),
@@ -156,11 +163,142 @@ export class NamedProfileRepository {
 
   async delete(tenantId: string, id: string): Promise<boolean> {
     const result = await this.adapter.execute(
-      `DELETE FROM ${this.table} WHERE tenant_id = ? AND id = ?`,
+      `DELETE FROM ${this.table} WHERE tenant_id = ? AND id = ? AND base_profile_id IS NULL`,
       [tenantId, id]
     );
     return result.rowsAffected > 0;
   }
+
+  /** The tenant's change to a platform profile (a full copy made then), or null. */
+  async findOverride(tenantId: string, baseId: string): Promise<ProfileOverride | null> {
+    const row = await this.adapter.queryOne<Record<string, unknown>>(
+      `SELECT * FROM ${this.table} WHERE tenant_id = ? AND base_profile_id = ?`,
+      [tenantId, baseId]
+    );
+    return row ? overrideFromRow(row) : null;
+  }
+
+  /** The platform profiles a tenant has changed, by platform id. */
+  async listOverrides(tenantId: string): Promise<ProfileOverride[]> {
+    const rows = await this.adapter.query<Record<string, unknown>>(
+      `SELECT * FROM ${this.table} WHERE tenant_id = ? AND base_profile_id IS NOT NULL
+       ORDER BY updated_at DESC, id ASC`,
+      [tenantId]
+    );
+    return rows.map(overrideFromRow);
+  }
+
+  /**
+   * Makes or changes the tenant's copy of a platform profile. `expectedVersion` is the copy's
+   * version (null: there is none yet); a copy made or changed meanwhile is a conflict. The name is
+   * the platform profile's (overrides are not named apart, and do not count toward the limit).
+   */
+  async saveOverride(
+    tenantId: string,
+    base: { id: string; name: string; version: number },
+    values: Record<string, unknown>,
+    expectedVersion: number | null,
+    actor: string | null,
+    now: number = getCurrentTimestamp()
+  ): Promise<OverrideSaveResult> {
+    if (expectedVersion === null) {
+      try {
+        await this.adapter.execute(
+          `INSERT INTO ${this.table}
+             (id, tenant_id, name, name_key, values_json, version, created_by, created_at,
+              updated_at, base_profile_id, base_version)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+          [
+            generateId(),
+            tenantId,
+            base.name,
+            nameKey(base.name),
+            JSON.stringify(values),
+            actor,
+            now,
+            now,
+            base.id,
+            base.version,
+          ]
+        );
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const current = await this.findOverride(tenantId, base.id);
+          return { status: 'conflict', currentVersion: current?.version ?? null };
+        }
+        throw error;
+      }
+    } else {
+      const result = await this.adapter.execute(
+        `UPDATE ${this.table}
+            SET values_json = ?, name = ?, name_key = ?, version = version + 1, updated_at = ?
+          WHERE tenant_id = ? AND base_profile_id = ? AND version = ?`,
+        [
+          JSON.stringify(values),
+          base.name,
+          nameKey(base.name),
+          now,
+          tenantId,
+          base.id,
+          expectedVersion,
+        ]
+      );
+      if (result.rowsAffected === 0) {
+        const current = await this.findOverride(tenantId, base.id);
+        return { status: 'conflict', currentVersion: current?.version ?? null };
+      }
+    }
+    const saved = await this.findOverride(tenantId, base.id);
+    if (!saved) throw new Error(`${this.table}_override_missing_after_save`);
+    return { status: 'saved', override: saved };
+  }
+
+  /** Removes the tenant's copy (the platform profile applies again). False when there was none. */
+  async deleteOverride(tenantId: string, baseId: string): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `DELETE FROM ${this.table} WHERE tenant_id = ? AND base_profile_id = ?`,
+      [tenantId, baseId]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /** How many tenants have changed a platform profile (for what turning a switch off affects). */
+  async countOverridingTenants(baseId: string): Promise<number> {
+    const row = await this.adapter.queryOne<{ count: number }>(
+      `SELECT COUNT(DISTINCT tenant_id) AS count FROM ${this.table} WHERE base_profile_id = ?`,
+      [baseId]
+    );
+    return Number(row?.count ?? 0);
+  }
+}
+
+/** A tenant's change to a platform profile: a full copy of its values, made from `baseVersion`. */
+export interface ProfileOverride {
+  id: string;
+  baseProfileId: string;
+  baseVersion: number;
+  values: Record<string, unknown>;
+  version: number;
+  created_by: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export type OverrideSaveResult =
+  | { status: 'saved'; override: ProfileOverride }
+  | { status: 'conflict'; currentVersion: number | null };
+
+function overrideFromRow(row: Record<string, unknown>): ProfileOverride {
+  return {
+    id: String(row.id),
+    baseProfileId: String(row.base_profile_id),
+    baseVersion: Number(row.base_version ?? 0),
+    values: JSON.parse(String(row.values_json)) as Record<string, unknown>,
+    version: Number(row.version),
+    created_by: typeof row.created_by === 'string' ? row.created_by : null,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  };
 }
 
 export class AuthenticationMethodProfileRepository extends NamedProfileRepository {

@@ -114,6 +114,10 @@
             {
               "path": "014_session_profiles.sql",
               "checksum": "b30b9d46d5c0023b37e04905e3cd3934c303ce123c1d59c95d563465f1e4f534"
+            },
+            {
+              "path": "015_platform_profiles.sql",
+              "checksum": "6db3e2e46b1a11c61a6007fba3af4119b682315d73e35a9a9db7ae583b5d5390"
             }
           ]
         },
@@ -309,6 +313,10 @@
         {
           "path": "014_session_profiles.sql",
           "checksum": "b30b9d46d5c0023b37e04905e3cd3934c303ce123c1d59c95d563465f1e4f534"
+        },
+        {
+          "path": "015_platform_profiles.sql",
+          "checksum": "6db3e2e46b1a11c61a6007fba3af4119b682315d73e35a9a9db7ae583b5d5390"
         }
       ]
     },

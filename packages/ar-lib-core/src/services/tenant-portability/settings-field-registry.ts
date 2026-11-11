@@ -521,6 +521,17 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'profiles',
+      'boolean',
+      'value',
+      `
+    profiles.method.tenant_change_allowed
+    profiles.method.tenant_create_allowed
+    profiles.session.tenant_change_allowed
+    profiles.session.tenant_create_allowed
+  `,
+    ],
+    [
       'dcr',
       'boolean',
       'value',
