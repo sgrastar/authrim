@@ -219,7 +219,7 @@ describe('loginUIPageStore templates and palettes', () => {
 		expect(html().getAttribute('data-has-brand-panel-image')).toBe('true');
 	});
 
-	it('changes the page and form images with the mode without falling back from an empty dark slot', () => {
+	it('shows the same pictures in both modes, each darkened in dark mode by its own dimming', () => {
 		const store = createLoginUIPageStore();
 		store.setFromUIConfig(
 			config(
@@ -228,11 +228,10 @@ describe('loginUIPageStore templates and palettes', () => {
 					appearance: {
 						backgroundImageUrl: 'https://example.com/light-bg.jpg',
 						loginPanelBackgroundImageUrl: 'https://example.com/light-form.jpg',
-						darkImages: {
-							logoUrl: null,
-							backgroundImageUrl: 'https://example.com/dark-bg.jpg',
-							loginPanelBackgroundImageUrl: null
-						},
+						brandPanelImageUrl: 'https://example.com/panel.jpg',
+						backgroundImageDarkDim: 40,
+						loginPanelBackgroundDarkDim: 20,
+						brandPanelImageDarkDim: 30,
 						customCss: null,
 						headerText: null,
 						footerText: null,
@@ -242,21 +241,26 @@ describe('loginUIPageStore templates and palettes', () => {
 				}
 			)
 		);
+		const veil = (dim: number) => `linear-gradient(rgb(0 0 0 / ${dim}%), rgb(0 0 0 / ${dim}%))`;
+		expect(store.backgroundImageDimLayer).toBeNull();
+		expect(html().style.getPropertyValue('--login-page-image-dim')).toBe('');
+		store.setColourMode('dark');
 		expect(store.backgroundImageUrl).toBe('https://example.com/light-bg.jpg');
 		expect(store.loginPanelBackgroundImageUrl).toBe('https://example.com/light-form.jpg');
-		store.setColourMode('dark');
-		expect(store.backgroundImageUrl).toBe('https://example.com/dark-bg.jpg');
-		expect(store.loginPanelBackgroundImageUrl).toBeNull();
-		expect(html().getAttribute('data-has-login-panel-background-image')).toBe('false');
-		expect(html().style.getPropertyValue('--login-page-background-layer')).toBe(
-			'url("https://example.com/dark-bg.jpg")'
-		);
-		expect(html().style.getPropertyValue('--login-panel-background-layer')).toBe('');
+		// Each picture by its own dimming.
+		expect(store.backgroundImageDimLayer).toBe(veil(40));
+		expect(store.loginPanelBackgroundDimLayer).toBe(veil(20));
+		expect(store.brandPanelImageDimLayer).toBe(veil(30));
+		expect(html().style.getPropertyValue('--login-page-image-dim')).toBe(veil(40));
+		expect(html().style.getPropertyValue('--login-panel-image-dim')).toBe(veil(20));
+		expect(html().style.getPropertyValue('--login-brand-panel-image-dim')).toBe(veil(30));
 		store.setColourMode('light');
-		expect(html().getAttribute('data-has-login-panel-background-image')).toBe('true');
+		expect(html().style.getPropertyValue('--login-page-image-dim')).toBe('');
+		expect(html().style.getPropertyValue('--login-panel-image-dim')).toBe('');
+		expect(html().style.getPropertyValue('--login-brand-panel-image-dim')).toBe('');
 	});
 
-	it('keeps legacy light images in dark mode until a dark image set is provided', () => {
+	it('darkens nothing with no dimming, nor where there is no picture', () => {
 		const store = createLoginUIPageStore();
 		store.setFromUIConfig(
 			config(
@@ -264,6 +268,7 @@ describe('loginUIPageStore templates and palettes', () => {
 				{
 					appearance: {
 						backgroundImageUrl: 'https://example.com/light-bg.jpg',
+						backgroundImageDarkDim: 0,
 						customCss: null,
 						headerText: null,
 						footerText: null,
@@ -274,16 +279,37 @@ describe('loginUIPageStore templates and palettes', () => {
 			)
 		);
 		store.setColourMode('dark');
-		expect(store.backgroundImageUrl).toBe('https://example.com/light-bg.jpg');
+		expect(store.backgroundImageDimLayer).toBeNull();
+		store.setFromUIConfig(
+			config(
+				{},
+				{
+					appearance: {
+						backgroundImageUrl: null,
+						backgroundImageDarkDim: 60,
+						loginPanelBackgroundDarkDim: 60,
+						brandPanelImageDarkDim: 60,
+						customCss: null,
+						headerText: null,
+						footerText: null,
+						footerLinks: [],
+						customBlocks: []
+					}
+				}
+			)
+		);
+		expect(store.backgroundImageDimLayer).toBeNull();
+		expect(store.loginPanelBackgroundDimLayer).toBeNull();
+		expect(store.brandPanelImageDimLayer).toBeNull();
 	});
 
-	it('selects the logo for each mode and treats an empty dark logo as intentional', () => {
+	it('shows the dark logo in dark mode, and the light logo where none is set', () => {
 		const branding = createBrandingStore();
-		branding.set('Example', 'https://example.com/light-logo.png', null, true);
+		branding.set('Example', 'https://example.com/light-logo.png', 'https://example.com/dark.png');
 		expect(branding.logoUrl).toBe('https://example.com/light-logo.png');
 		branding.setColourMode('dark');
-		expect(branding.logoUrl).toBeNull();
-		branding.set('Example', 'https://example.com/light-logo.png');
+		expect(branding.logoUrl).toBe('https://example.com/dark.png');
+		branding.set('Example', 'https://example.com/light-logo.png', null);
 		expect(branding.logoUrl).toBe('https://example.com/light-logo.png');
 	});
 

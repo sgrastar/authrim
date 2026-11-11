@@ -234,9 +234,10 @@
 		expect(outline?.querySelector<HTMLElement>(':scope > .outline__image')?.style.opacity).toBe(
 			'0.37'
 		);
-		expect(outline?.querySelector<HTMLElement>(':scope > .outline__image')?.style.filter).toBe(
-			'blur(4px) brightness(80%)'
-		);
+		expect(
+			outline?.querySelector<HTMLElement>(':scope > .outline__image > .outline__picture')?.style
+				.filter
+		).toBe('blur(4px) brightness(80%)');
 		expect(
 			outline?.querySelector<HTMLElement>('.outline__panel > .outline__image')?.style.opacity
 		).toBe('0.58');

@@ -393,9 +393,10 @@ export function createLoginUIPageStore() {
 	let footerAlign = $state<BarAlign>('center');
 	let backgroundImageUrl = $state<string | null>(null);
 	let loginPanelBackgroundImageUrl = $state<string | null>(null);
-	let darkBackgroundImageUrl = $state<string | null>(null);
-	let darkLoginPanelBackgroundImageUrl = $state<string | null>(null);
-	let darkImagesSet = $state(false);
+	/** 0–100: how much each picture is darkened in dark mode (page, form area, brand panel). */
+	let backgroundImageDarkDim = $state(0);
+	let loginPanelBackgroundDarkDim = $state(0);
+	let brandPanelImageDarkDim = $state(0);
 	let loginPanelBackgroundColor = $state('');
 	let loginPanelBackgroundGradientColor = $state('');
 	let loginPanelBackgroundOpacity = $state(70);
@@ -432,12 +433,16 @@ export function createLoginUIPageStore() {
 	/** `inherit` follows the logo display of the form side. */
 	// Grayscale counts only while there is a picture to turn gray (the glass palette's own light,
 	// shown when there is no page picture, keeps its colour).
-	const effectiveBackgroundImageUrl = () =>
-		colourMode === 'dark' && darkImagesSet ? darkBackgroundImageUrl : backgroundImageUrl;
-	const effectiveLoginPanelBackgroundImageUrl = () =>
-		colourMode === 'dark' && darkImagesSet
-			? darkLoginPanelBackgroundImageUrl
-			: loginPanelBackgroundImageUrl;
+	// The pictures are the same in both modes; dark mode darkens each by its own dimming.
+	const effectiveBackgroundImageUrl = () => backgroundImageUrl;
+	const effectiveLoginPanelBackgroundImageUrl = () => loginPanelBackgroundImageUrl;
+	/** A black veil at the dark-mode dimming, over a picture shown in dark mode; else null. */
+	const darkImageDimLayer = (image: string | null, dim: number) =>
+		image && colourMode === 'dark' && dim > 0
+			? `linear-gradient(rgb(0 0 0 / ${dim}%), rgb(0 0 0 / ${dim}%))`
+			: null;
+	const brandPanelImage = () =>
+		brandPanelImageUrl && isValidImageUrl(brandPanelImageUrl) ? brandPanelImageUrl : null;
 	const pageBackgroundGray = () => backgroundImageGrayscale && !!effectiveBackgroundImageUrl();
 	const loginPanelBackgroundGray = () =>
 		loginPanelBackgroundGrayscale && !!effectiveLoginPanelBackgroundImageUrl();
@@ -519,6 +524,18 @@ export function createLoginUIPageStore() {
 		setOptionalStyleProperty(
 			'--login-panel-background-layer',
 			panelImage ? cssUrl(panelImage) : null
+		);
+		setOptionalStyleProperty(
+			'--login-page-image-dim',
+			darkImageDimLayer(pageImage, backgroundImageDarkDim)
+		);
+		setOptionalStyleProperty(
+			'--login-panel-image-dim',
+			darkImageDimLayer(panelImage, loginPanelBackgroundDarkDim)
+		);
+		setOptionalStyleProperty(
+			'--login-brand-panel-image-dim',
+			darkImageDimLayer(brandPanelImage(), brandPanelImageDarkDim)
 		);
 	}
 
@@ -638,17 +655,9 @@ export function createLoginUIPageStore() {
 			isValidImageUrl(appearance.loginPanelBackgroundImageUrl)
 				? appearance.loginPanelBackgroundImageUrl
 				: null;
-		darkImagesSet = !!appearance?.darkImages;
-		darkBackgroundImageUrl =
-			appearance?.darkImages?.backgroundImageUrl &&
-			isValidImageUrl(appearance.darkImages.backgroundImageUrl)
-				? appearance.darkImages.backgroundImageUrl
-				: null;
-		darkLoginPanelBackgroundImageUrl =
-			appearance?.darkImages?.loginPanelBackgroundImageUrl &&
-			isValidImageUrl(appearance.darkImages.loginPanelBackgroundImageUrl)
-				? appearance.darkImages.loginPanelBackgroundImageUrl
-				: null;
+		backgroundImageDarkDim = readPercentage(appearance?.backgroundImageDarkDim, 0);
+		loginPanelBackgroundDarkDim = readPercentage(appearance?.loginPanelBackgroundDarkDim, 0);
+		brandPanelImageDarkDim = readPercentage(appearance?.brandPanelImageDarkDim, 0);
 		loginPanelBackgroundColor = sanitizeColor(page?.loginPanelBackgroundColor) || '';
 		loginPanelBackgroundGradientColor =
 			sanitizeColor(page?.loginPanelBackgroundGradientColor) || '';
@@ -803,6 +812,19 @@ export function createLoginUIPageStore() {
 		get loginPanelBackgroundLayer() {
 			const url = effectiveLoginPanelBackgroundImageUrl();
 			return url ? cssUrl(url) : null;
+		},
+		/** The dark-mode veil over the page picture, or null (the same value the stylesheet reads). */
+		get backgroundImageDimLayer() {
+			return darkImageDimLayer(effectiveBackgroundImageUrl(), backgroundImageDarkDim);
+		},
+		get loginPanelBackgroundDimLayer() {
+			return darkImageDimLayer(
+				effectiveLoginPanelBackgroundImageUrl(),
+				loginPanelBackgroundDarkDim
+			);
+		},
+		get brandPanelImageDimLayer() {
+			return darkImageDimLayer(brandPanelImage(), brandPanelImageDarkDim);
 		},
 		get brandPanelImageLayer() {
 			return brandPanelImageUrl ? cssUrl(brandPanelImageUrl) : null;

@@ -338,7 +338,9 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const body = within(canvasElement.ownerDocument.body);
-		const layer = () => canvasElement.querySelector<HTMLElement>('.outline > .outline__image');
+		// The picture itself (its filters), inside the layer that sets its opacity.
+		const layer = () =>
+			canvasElement.querySelector<HTMLElement>('.outline > .outline__image > .outline__picture');
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
 		// No picture, nothing to filter: the menu waits for one.
 		await expect(canvas.getByRole('button', { name: t('th.f.add') })).toBeDisabled();
@@ -401,7 +403,7 @@
 </Story>
 
 <Story
-	name="Images are independent in light and dark modes"
+	name="Dark mode sets its own logo and darkens the pictures"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const image = () => canvasElement.querySelector('.outline > .outline__image');
@@ -423,20 +425,36 @@
 		await waitFor(() => expect(image()).not.toBeNull());
 		await expect(formImage()).not.toBeNull();
 		await expect(logo()).not.toBeNull();
+		// Which logo shows, read from the picture itself (a chosen file's URL changes on each draw).
+		const logoShows = async (colour: string) => {
+			const src = logo()?.getAttribute('src');
+			return !!src && (await (await fetch(src)).text()).includes(colour);
+		};
 		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
-		await waitFor(() => expect(image()).toBeNull());
-		await expect(formImage()).toBeNull();
-		await expect(logo()).toBeNull();
-		// A dark image can be chosen without filling the other two dark slots.
-		const darkBackground =
-			canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]')[2];
-		await userEvent.upload(darkBackground, svg('dark-background.svg', '#193c45', '#0d1f34'));
-		await waitFor(() => expect(image()).not.toBeNull());
-		await expect(formImage()).toBeNull();
-		await expect(logo()).toBeNull();
+		// The pictures are the same in dark mode; with no dark logo the light one shows.
+		await waitFor(async () => expect(await logoShows('#f1c27d')).toBe(true));
+		await expect(image()).not.toBeNull();
+		await expect(formImage()).not.toBeNull();
+		const veiled = (layer: Element | null) => !!layer?.querySelector('.outline__dim');
+		await expect(veiled(image())).toBe(false);
+		// The dark tab darkens each for dark mode, under its own opacity: the background first.
+		const [backgroundDim, formDim] = canvas.getAllByRole('slider', { name: t('th.i.darkDim') });
+		await fireEvent.input(backgroundDim, { target: { value: '40' } });
+		await waitFor(() => expect(veiled(image())).toBe(true));
+		await expect(veiled(formImage())).toBe(false);
+		await fireEvent.input(formDim, { target: { value: '20' } });
+		await waitFor(() => expect(veiled(formImage())).toBe(true));
+		// The light tab has no darkening.
 		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.light') }));
-		await waitFor(() => expect(formImage()).not.toBeNull());
-		await expect(logo()).not.toBeNull();
+		await expect(canvas.queryAllByRole('slider', { name: t('th.i.darkDim') })).toHaveLength(0);
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
+		// A dark logo is set apart for dark mode only.
+		const darkLogo = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]')[1];
+		await userEvent.upload(darkLogo, svg('dark-logo.svg', '#193c45', '#0d1f34'));
+		await waitFor(async () => expect(await logoShows('#193c45')).toBe(true));
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.light') }));
+		await waitFor(async () => expect(await logoShows('#f1c27d')).toBe(true));
+		await expect(veiled(image())).toBe(false);
 	}}
 >
 	{#snippet template()}
@@ -1213,6 +1231,12 @@
 		fireEvent.input(panel, { target: { value: '70' } });
 		await waitFor(() => expect(layers[0].style.opacity).toBe('0.4'));
 		await waitFor(() => expect(layers[1].style.opacity).toBe('0.7'));
+		// The brand panel's own darkening, shown in dark mode only.
+		const panelDim = canvas.getAllByRole('slider', { name: t('th.i.darkDim') }).at(-1)!;
+		fireEvent.input(panelDim, { target: { value: '50' } });
+		await expect(layers[1].style.backgroundImage).not.toContain('linear-gradient');
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.mode.dark') }));
+		await waitFor(() => expect(layers[1].style.backgroundImage).toContain('linear-gradient'));
 	}}
 >
 	{#snippet template()}

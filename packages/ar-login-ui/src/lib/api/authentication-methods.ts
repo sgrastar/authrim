@@ -239,14 +239,14 @@ export interface LoginUIConfig {
 	};
 	appearance?: {
 		backgroundImageUrl: string | null;
-		/** Null means an older theme uses the light images in both modes. An empty URL is intentional. */
-		darkImages?: {
-			logoUrl: string | null;
-			backgroundImageUrl: string | null;
-			loginPanelBackgroundImageUrl: string | null;
-		} | null;
+		/** The dark-mode logo; null (or a null logo) uses the light logo in dark mode too. */
+		darkImages?: { logoUrl: string | null } | null;
 		/** Percentage, 0-100. */
 		backgroundImageOpacity?: number;
+		/** Percentages, 0-100: how much each picture darkens in dark mode. */
+		backgroundImageDarkDim?: number;
+		loginPanelBackgroundDarkDim?: number;
+		brandPanelImageDarkDim?: number;
 		backgroundImageGrayscale?: boolean;
 		/** Filters on the page picture, in the order they apply (each at most once). */
 		backgroundImageFilters?: { name: string; value: number }[];

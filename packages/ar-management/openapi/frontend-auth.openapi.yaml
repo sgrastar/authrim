@@ -1586,15 +1586,11 @@ components:
                     - object
                     - 'null'
                   description: >-
-                    Dark-mode logo, page background, and form-area images. Null means the theme
-                    predates per-mode images and uses its light images in both modes. Null URLs
-                    within an object mean that image is intentionally absent in dark mode.
+                    The image set apart for dark mode: the logo. Null, or a null logoUrl, means
+                    the light logo is used in dark mode too. The page background and form-area
+                    pictures are the same in both modes (see backgroundImageDarkDim and the others).
                   properties:
                     logoUrl:
-                      type: [string, 'null']
-                    backgroundImageUrl:
-                      type: [string, 'null']
-                    loginPanelBackgroundImageUrl:
                       type: [string, 'null']
                 backgroundImageOpacity:
                   type: number
@@ -1602,6 +1598,30 @@ components:
                   maximum: 100
                   default: 100
                   description: Opacity of the page background image, as a percentage.
+                backgroundImageDarkDim:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  default: 0
+                  description: >-
+                    How much the page background picture is darkened in dark mode, as a percentage (0 leaves it as it
+                    is; 100 is black).
+                loginPanelBackgroundDarkDim:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  default: 0
+                  description: >-
+                    How much the form-area picture is darkened in dark mode, as a percentage (0 leaves it as it
+                    is; 100 is black).
+                brandPanelImageDarkDim:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  default: 0
+                  description: >-
+                    How much the split template's brand panel picture is darkened in dark mode, as a percentage (0 leaves it as it
+                    is; 100 is black).
                 backgroundImageGrayscale:
                   type: boolean
                   default: false

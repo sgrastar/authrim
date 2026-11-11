@@ -79,45 +79,42 @@ describe('theme values', () => {
 		expect(valuesToDraft(draftToValues(newThemeDraft()))).toEqual(newThemeDraft());
 	});
 
-	it('keeps each dark image explicitly unset when the light mode has an image', () => {
+	it('keeps the dark logo apart, and one picture for both modes, each darkened in dark mode', () => {
 		const draft = {
 			...newThemeDraft(),
 			logo: 'https://cdn.example.test/light-logo.png',
-			backgroundImage: 'https://cdn.example.test/light-bg.png',
-			cardImage: 'https://cdn.example.test/light-form.png',
-			darkImages: {
-				logo: null,
-				backgroundImage: 'https://cdn.example.test/dark-bg.png',
-				cardImage: null
-			}
+			backgroundImage: 'https://cdn.example.test/bg.png',
+			cardImage: 'https://cdn.example.test/form.png',
+			darkImages: { logo: 'https://cdn.example.test/dark-logo.png' },
+			backgroundDarkDim: 35,
+			cardImageDarkDim: 20,
+			panelImageDarkDim: 50
 		};
 		const values = draftToValues(draft);
 		expect(JSON.parse(values['login-ui.dark_images'] as string)).toEqual({
-			logo: '',
-			background: 'https://cdn.example.test/dark-bg.png',
-			form_area: ''
+			logo: 'https://cdn.example.test/dark-logo.png'
 		});
+		expect(values['login-ui.background_image_dark_dim']).toBe(35);
+		expect(values['login-ui.login_panel_background_dark_dim']).toBe(20);
+		expect(values['login-ui.brand_panel_image_dark_dim']).toBe(50);
 		expect(valuesToDraft(values)).toEqual(draft);
 	});
 
-	it('opens older themes with their light images in both modes and writes that choice on save', () => {
+	it('opens older themes with no dark logo (the light one shows) and their dark pictures dropped', () => {
 		const old = {
 			'login-ui.logo_url': 'https://cdn.example.test/logo.png',
 			'login-ui.background_image_url': 'https://cdn.example.test/bg.png',
-			'login-ui.login_panel_background_image_url': 'https://cdn.example.test/form.png'
+			'login-ui.dark_images':
+				'{"logo":"","background":"https://cdn.example.test/dark-bg.png","form_area":""}'
 		};
-		const opened = openStored(old);
-		expect(opened.opened.darkImages).toEqual({
-			logo: old['login-ui.logo_url'],
-			backgroundImage: old['login-ui.background_image_url'],
-			cardImage: old['login-ui.login_panel_background_image_url']
-		});
-		expect(
-			JSON.parse(draftToValues(opened.opened, opened)['login-ui.dark_images'] as string)
-		).toEqual({
-			logo: old['login-ui.logo_url'],
-			background: old['login-ui.background_image_url'],
-			form_area: old['login-ui.login_panel_background_image_url']
+		const opened = openStored(old).opened;
+		expect(opened.darkImages).toEqual({ logo: null });
+		expect(opened.backgroundImage).toBe(old['login-ui.background_image_url']);
+		expect([opened.backgroundDarkDim, opened.cardImageDarkDim, opened.panelImageDarkDim]).toEqual([
+			0, 0, 0
+		]);
+		expect(valuesToDraft({ 'login-ui.logo_url': old['login-ui.logo_url'] }).darkImages).toEqual({
+			logo: null
 		});
 	});
 
@@ -412,7 +409,7 @@ describe('theme values', () => {
 			'login-ui.header_style': 'bar',
 			'login-ui.footer_style': 'bar',
 			'login-ui.dark_colors': '',
-			'login-ui.dark_images': '{"logo":"","background":"","form_area":""}'
+			'login-ui.dark_images': '{"logo":""}'
 		});
 	});
 
@@ -427,21 +424,21 @@ describe('theme values', () => {
 
 	it('uploads chosen files and keeps stored URLs', async () => {
 		const file = new File(['x'], 'bg.png', { type: 'image/png' });
-		const darkFile = new File(['y'], 'dark-form.png', { type: 'image/png' });
+		const darkFile = new File(['y'], 'dark-logo.png', { type: 'image/png' });
 		const upload = vi.fn(async (kind: string) => `/api/assets/acme/login-ui/${kind}/x.png`);
 		const draft = await uploadThemeImages(
 			{
 				...newThemeDraft(),
 				backgroundImage: file,
 				logo: 'https://cdn.example.test/logo.png',
-				darkImages: { logo: null, backgroundImage: null, cardImage: darkFile }
+				darkImages: { logo: darkFile }
 			},
 			upload
 		);
 		expect(upload).toHaveBeenNthCalledWith(1, 'background', file);
-		expect(upload).toHaveBeenNthCalledWith(2, 'panel-background', darkFile);
+		expect(upload).toHaveBeenNthCalledWith(2, 'logo', darkFile);
 		expect(draft.backgroundImage).toBe('/api/assets/acme/login-ui/background/x.png');
-		expect(draft.darkImages.cardImage).toBe('/api/assets/acme/login-ui/panel-background/x.png');
+		expect(draft.darkImages.logo).toBe('/api/assets/acme/login-ui/logo/x.png');
 		expect(draft.logo).toBe('https://cdn.example.test/logo.png');
 	});
 });

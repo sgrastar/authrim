@@ -152,14 +152,13 @@
 	}
 
 	$effect(() =>
-		imageUrl(scheme === 'dark' ? draft.darkImages.logo : draft.logo, (url) => (logoUrl = url))
-	);
-	$effect(() =>
 		imageUrl(
-			scheme === 'dark' ? draft.darkImages.backgroundImage : draft.backgroundImage,
-			(url) => (backgroundUrl = url)
+			// The dark logo where one is set; else the light logo in both modes.
+			scheme === 'dark' ? (draft.darkImages.logo ?? draft.logo) : draft.logo,
+			(url) => (logoUrl = url)
 		)
 	);
+	$effect(() => imageUrl(draft.backgroundImage, (url) => (backgroundUrl = url)));
 	/**
 	 * A set colour that text is laid on, as the Login UI takes it: hex (3, 6 or 8 digits) or rgb(),
 	 * with the black or white label that reads better on it (its alpha left aside). Anything else
@@ -201,12 +200,14 @@
 		2 * (draft.backgroundFilters.find((filter) => filter.name === 'blur')?.value ?? 0)
 	);
 	$effect(() => imageUrl(draft.panelImage, (url) => (panelUrl = url)));
-	$effect(() =>
-		imageUrl(
-			scheme === 'dark' ? draft.darkImages.cardImage : draft.cardImage,
-			(url) => (cardUrl = url)
-		)
-	);
+	$effect(() => imageUrl(draft.cardImage, (url) => (cardUrl = url)));
+
+	// Dark mode darkens each picture by its own black veil, as the Login UI does: over the picture
+	// once filtered (a filter does not filter it), under the picture's opacity.
+	const veilOf = (dim: number) => (scheme === 'dark' && dim > 0 ? `rgb(0 0 0 / ${dim}%)` : null);
+	const backgroundVeil = $derived(veilOf(draft.backgroundDarkDim));
+	const cardVeil = $derived(veilOf(draft.cardImageDarkDim));
+	const panelVeil = $derived(veilOf(draft.panelImageDarkDim));
 
 	// The brand side's picture is its own; the background image runs behind the whole screen.
 	const brandLayer = $derived(
@@ -366,13 +367,16 @@
 				style:font-family={FONT_STACKS[draft.font]}
 			>
 				{#if backgroundUrl}
-					<span
-						class="outline__image"
-						style:background-image={`url("${backgroundUrl}")`}
-						style:opacity={draft.backgroundOpacity / 100}
-						style:filter={backgroundFilter || undefined}
-						style:inset={backgroundBleed ? `-${backgroundBleed}px` : undefined}
-					></span>
+					<span class="outline__image" style:opacity={draft.backgroundOpacity / 100}>
+						<span
+							class="outline__picture"
+							style:background-image={`url("${backgroundUrl}")`}
+							style:filter={backgroundFilter || undefined}
+							style:inset={backgroundBleed ? `-${backgroundBleed}px` : undefined}
+						></span>
+						{#if backgroundVeil}<span class="outline__dim" style:background={backgroundVeil}
+							></span>{/if}
+					</span>
 				{/if}
 				<!-- The header runs along the top of the whole screen, over the brand panel too, as the footer
 				     runs along the bottom. The brand panel has no header of its own. -->
@@ -409,7 +413,7 @@
 							{#if brandLayer}
 								<span
 									class="outline__image"
-									style:background-image={`url("${brandLayer.url}")`}
+									style:background-image={`${panelVeil ? `linear-gradient(${panelVeil}, ${panelVeil}), ` : ''}url("${brandLayer.url}")`}
 									style:opacity={brandLayer.opacity / 100}
 									style:filter={brandLayer.gray ? 'grayscale(1)' : undefined}
 								></span>
@@ -433,12 +437,15 @@
 								<div class="outline__card">
 									<!-- The login area's own picture, under what the box holds (not drawn in Minimal). -->
 									{#if cardUrl && draft.template !== 'minimal'}
-										<span
-											class="outline__image"
-											style:background-image={`url("${cardUrl}")`}
-											style:opacity={draft.cardImageOpacity / 100}
-											style:filter={draft.cardImageGrayscale ? 'grayscale(1)' : undefined}
-										></span>
+										<span class="outline__image" style:opacity={draft.cardImageOpacity / 100}>
+											<span
+												class="outline__picture"
+												style:background-image={`url("${cardUrl}")`}
+												style:filter={draft.cardImageGrayscale ? 'grayscale(1)' : undefined}
+											></span>
+											{#if cardVeil}<span class="outline__dim" style:background={cardVeil}
+												></span>{/if}
+										</span>
 									{/if}
 									{#if showTools && topbar === 'in_card'}{@render tools()}{/if}
 									{#if !draft.header && !split && !contentOnly}{@render brand()}{/if}
@@ -652,7 +659,9 @@
 	}
 
 	/* A picture laid behind its box with its own opacity (the box's colour stays as it is). */
-	.outline__image {
+	.outline__image,
+	.outline__picture,
+	.outline__dim {
 		position: absolute;
 		inset: 0;
 		background-position: center;

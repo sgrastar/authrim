@@ -83,11 +83,10 @@ interface ServedLoginUi {
   appearance: {
     backgroundImageUrl: string | null;
     loginPanelBackgroundImageUrl: string | null;
-    darkImages: {
-      logoUrl: string | null;
-      backgroundImageUrl: string | null;
-      loginPanelBackgroundImageUrl: string | null;
-    } | null;
+    darkImages: { logoUrl: string | null } | null;
+    backgroundImageDarkDim: number;
+    loginPanelBackgroundDarkDim: number;
+    brandPanelImageDarkDim: number;
     backgroundImageGrayscale: boolean;
     brandPanelImageGrayscale: boolean;
     backgroundImageOpacity: number;
@@ -343,27 +342,50 @@ describe('Authentication Methods API', () => {
       expect(body.ui.appearance.customBlocks).toEqual([]);
     });
 
-    it('serves mode-specific images and preserves intentionally empty dark image slots', async () => {
+    it('serves the dark logo alone, and each shared picture’s dark-mode dimming', async () => {
       const settingsKV = createMockKV({
         'settings:tenant:default:login-ui': JSON.stringify({
           'login-ui.logo_url': 'https://example.com/light-logo.png',
           'login-ui.background_image_url': 'https://example.com/light-bg.png',
           'login-ui.login_panel_background_image_url': 'https://example.com/light-form.png',
+          // An older theme's dark page and form-area pictures are no longer apart.
           'login-ui.dark_images': JSON.stringify({
-            logo: '',
+            logo: 'https://example.com/dark-logo.png',
             background: 'https://example.com/dark-bg.png',
-            form_area: 'http://example.com/unsafe-form.png',
+            form_area: 'https://example.com/dark-form.png',
           }),
+          'login-ui.background_image_dark_dim': 45,
+          'login-ui.login_panel_background_dark_dim': 20,
+          'login-ui.brand_panel_image_dark_dim': '60',
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = await res.json<{ ui: ServedLoginUi }>();
       expect(body.ui.appearance.darkImages).toEqual({
-        logoUrl: null,
-        backgroundImageUrl: 'https://example.com/dark-bg.png',
-        loginPanelBackgroundImageUrl: null,
+        logoUrl: 'https://example.com/dark-logo.png',
       });
+      expect(body.ui.appearance.backgroundImageDarkDim).toBe(45);
+      expect(body.ui.appearance.loginPanelBackgroundDarkDim).toBe(20);
+      expect(body.ui.appearance.brandPanelImageDarkDim).toBe(60);
+      expect(body.ui.appearance.backgroundImageUrl).toBe('https://example.com/light-bg.png');
+    });
+
+    it('takes no unsafe dark logo, and bounds the dimming', async () => {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.dark_images': JSON.stringify({ logo: 'http://example.com/unsafe.png' }),
+          'login-ui.background_image_dark_dim': 250,
+          'login-ui.login_panel_background_dark_dim': 'lots',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = await res.json<{ ui: ServedLoginUi }>();
+      expect(body.ui.appearance.darkImages).toEqual({ logoUrl: null });
+      expect(body.ui.appearance.backgroundImageDarkDim).toBe(100);
+      expect(body.ui.appearance.loginPanelBackgroundDarkDim).toBe(0);
+      expect(body.ui.appearance.brandPanelImageDarkDim).toBe(0);
     });
 
     it('should include meta with cacheTTL and revision', async () => {

@@ -581,6 +581,9 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.published_version
     login-ui.login_panel_background_opacity
     login-ui.background_image_opacity
+    login-ui.background_image_dark_dim
+    login-ui.login_panel_background_dark_dim
+    login-ui.brand_panel_image_dark_dim
     login-ui.brand_panel_image_opacity
     login-ui.account_page_published_version
     login-ui.active_theme_version
