@@ -1,6 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
+	import { ApiError } from '#lib/api/api-error.js';
 	import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentication-method-profiles-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AuthenticationMethodProfilePage from './AuthenticationMethodProfilePage.svelte';
@@ -21,6 +22,15 @@
 	});
 	const oncreated = fn();
 	const directoryStatusClient = { get: async () => 'unconfigured' as const };
+	/** A tenant that already has a profile of every name: creating one is refused. */
+	const nameTaken = () => ({
+		...createFakeAuthenticationMethodProfiles(),
+		async create() {
+			throw new ApiError(409, 'profile_name_taken', 'Profile name already exists', {
+				error: 'profile_name_taken'
+			});
+		}
+	});
 </script>
 
 <Story
@@ -75,6 +85,72 @@
 			{directoryStatusClient}
 			tenantId="acme"
 			id="default"
+			canWrite
+			listHref="/admin/authentication/methods"
+			{oncreated}
+		/>
+	{/snippet}
+</Story>
+
+<!-- Save with no name: the editor says so under the field and takes the admin there. -->
+<Story
+	name="Saving without a name"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const name = await canvas.findByRole('textbox', { name: t('am.page.name') });
+		await userEvent.click(canvas.getByRole('checkbox', { name: /DID/ }));
+		await userEvent.click(await canvas.findByRole('button', { name: t('common.save') }));
+		await expect(await canvas.findByText(t('am.page.nameRequired'))).toBeInTheDocument();
+		await expect(name).toHaveAttribute('aria-invalid', 'true');
+		await waitFor(() => expect(name).toHaveFocus());
+		// Saving again without a name takes the admin back to the field.
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await waitFor(() => expect(name).toHaveFocus());
+		// Done with nothing in the field is the same problem, and the save bar knows it.
+		await userEvent.click(canvas.getByRole('button', { name: t('am.page.nameDone') }));
+		await expect(await canvas.findByText(t('common.fixErrors'))).toBeInTheDocument();
+		// Discarding clears it and leaves the admin in the field.
+		await userEvent.click(canvas.getByRole('button', { name: t('common.discard') }));
+		await waitFor(() => expect(canvas.queryByText(t('am.page.nameRequired'))).toBeNull());
+		await waitFor(() =>
+			expect(canvas.getByRole('textbox', { name: t('am.page.name') })).toHaveFocus()
+		);
+	}}
+>
+	{#snippet template()}
+		<AuthenticationMethodProfilePage
+			client={createFakeAuthenticationMethodProfiles()}
+			{directoryStatusClient}
+			tenantId="acme"
+			id="new"
+			canWrite
+			listHref="/admin/authentication/methods"
+			{oncreated}
+		/>
+	{/snippet}
+</Story>
+
+<!-- A name another profile has: the editor opens again with the API's reason, cleared by typing. -->
+<Story
+	name="Name already taken"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const name = await canvas.findByRole('textbox', { name: t('am.page.name') });
+		await userEvent.type(name, 'Default{Enter}');
+		await userEvent.click(await canvas.findByRole('button', { name: t('common.save') }));
+		const field = await canvas.findByRole('textbox', { name: t('am.page.name') });
+		await expect(await canvas.findByText(t('am.page.nameTaken'))).toBeInTheDocument();
+		await waitFor(() => expect(field).toHaveFocus());
+		await userEvent.type(field, ' 2');
+		await expect(canvas.queryByText(t('am.page.nameTaken'))).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<AuthenticationMethodProfilePage
+			client={nameTaken()}
+			{directoryStatusClient}
+			tenantId="acme"
+			id="new"
 			canWrite
 			listHref="/admin/authentication/methods"
 			{oncreated}
