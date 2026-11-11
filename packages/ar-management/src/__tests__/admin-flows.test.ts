@@ -29,13 +29,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       })),
     })),
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
-    // The tenant's authentication method profiles (admin database): only `members` exists.
+    // The tenant's profiles (admin database): only `members` (authentication methods) and
+    // `short` (session) exist.
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({
-      queryOne: vi.fn(async (_sql: string, params: unknown[]) =>
-        params[1] === 'members'
+      queryOne: vi.fn(async (sql: string, params: unknown[]) =>
+        params[1] === (sql.includes('session_profiles') ? 'short' : 'members')
           ? {
-              id: 'members',
-              name: 'Members',
+              id: params[1],
+              name: 'Profile',
               values_json: '{}',
               version: 1,
               created_by: null,
@@ -48,6 +49,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
+import { buildLoginFlowEditor } from '@authrim/ar-lib-core';
 import {
   adminFlowAssignmentDeleteHandler,
   adminFlowAssignmentUpsertHandler,
@@ -788,6 +790,56 @@ describe('admin Flow management handlers', () => {
         registration_policy: { eligibility: 'domain', allowed_domains: ['example.com'] },
       })
     ).toEqual([]);
+  });
+
+  it('takes the sign-in Flow the console gives a tenant without one', async () => {
+    const editor = buildLoginFlowEditor({
+      profileRef: 'members',
+      sessionProfileRef: 'short',
+      completion: { behavior: 'service_site', service_site_path: '/portal' },
+    });
+    const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
+    const body = await readJson(response);
+    expect(body.errors).toEqual([]);
+    expect(body.valid).toBe(true);
+  });
+
+  it('checks a sign-in step’s session profile and destination before it can be published', async () => {
+    const editorWith = (config: Record<string, unknown>) => ({
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        { id: 'authentication', type: 'authentication', config },
+        { id: 'complete', type: 'complete' },
+      ],
+      edges: [{ id: 'a', source: 'entry', source_handle: 'next', target: 'authentication' }],
+    });
+    const codes = async (config: Record<string, unknown>) => {
+      const response = await adminFlowValidateHandler(
+        createContext({ body: { editor: editorWith(config) } })
+      );
+      const body = await readJson(response);
+      return (body.errors as Array<{ code: string }>).map((issue) => issue.code);
+    };
+    const base = { authentication_profile_ref: 'default' };
+
+    expect(await codes({ ...base, session_profile_ref: 'short' })).not.toContain(
+      'unsupported_session_profile'
+    );
+    expect(await codes({ ...base, session_profile_ref: 'gone' })).toContain(
+      'unsupported_session_profile'
+    );
+    expect(await codes({ ...base, session_profile_ref: 'members' })).toContain(
+      'unsupported_session_profile'
+    );
+    expect(
+      await codes({ ...base, completion: { behavior: 'custom_url', redirect_url: '/welcome' } })
+    ).not.toContain('invalid_login_completion');
+    expect(await codes({ ...base, completion: { behavior: 'custom_url' } })).toContain(
+      'invalid_login_completion'
+    );
+    expect(await codes({ ...base, completion: { behavior: 'elsewhere' } })).toContain(
+      'invalid_login_completion'
+    );
   });
 
   it('gives a new tenant its sign-up: the default registration Flow, published and assigned', async () => {

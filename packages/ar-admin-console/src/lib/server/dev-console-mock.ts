@@ -10,6 +10,9 @@ import type { SettingsPatchRequest } from '@authrim/ar-lib-core/utils/settings-m
 import { persona, type PersonaId } from '#lib/access/personas.js';
 import { ApiError } from '#lib/api/api-error.js';
 import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentication-method-profiles-fake.js';
+import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
+import type { AuthenticationMethodProfilesClient } from '#lib/api/authentication-method-profiles.js';
+import type { SessionProfilesClient } from '#lib/api/session-profiles.js';
 import { MOCK_CLIENTS } from '#lib/api/fake/clients-fake.js';
 import { MOCK_SAML_SERVICE_PROVIDERS } from '#lib/api/fake/saml-providers-fake.js';
 import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
@@ -131,40 +134,57 @@ async function handleSettings(
 	return null;
 }
 
-/** In-memory sign-in method profiles; reset when the dev server restarts. */
+/** In-memory sign-in method and session profiles; reset when the dev server restarts. */
 const methodProfiles = createFakeAuthenticationMethodProfiles();
+const sessionProfiles = createFakeSessionProfiles();
 
-async function handleMethodProfiles(
+async function handleProfiles(
 	event: RequestEvent,
 	rest: string[],
-	method: string
+	method: string,
+	profiles: AuthenticationMethodProfilesClient | SessionProfilesClient
 ): Promise<Response | null> {
 	const [id] = rest;
 	if (rest.length === 0 && method === 'GET') {
-		return json({ profiles: await methodProfiles.list() });
+		return json({ profiles: await profiles.list() });
 	}
 	if (rest.length === 0 && method === 'POST') {
 		const body = await readJson(event);
 		const name = typeof body.name === 'string' ? body.name.trim() : '';
 		if (!name) return json({ error: 'invalid_request' }, 400);
-		const taken = (await methodProfiles.list()).some((profile) => profile.name === name);
+		const taken = (await profiles.list()).some((profile) => profile.name === name);
 		if (taken) return json({ error: 'profile_name_taken' }, 409);
 		const values =
 			body.values && typeof body.values === 'object'
 				? (body.values as Record<string, unknown>)
 				: {};
-		return json({ profile: await methodProfiles.create({ name, values }) }, 201);
+		return json({ profile: await profiles.create({ name, values }) }, 201);
 	}
 	if (rest.length !== 1) return null;
 	if (method === 'GET') {
 		try {
-			return json({ profile: await methodProfiles.get(id) });
+			return json({ profile: await profiles.get(id) });
 		} catch {
 			return json({ error: 'not_found' }, 404);
 		}
 	}
+	if (method === 'PUT') {
+		const body = await readJson(event);
+		const name = typeof body.name === 'string' ? body.name.trim() : '';
+		const values =
+			body.values && typeof body.values === 'object'
+				? (body.values as Record<string, unknown>)
+				: {};
+		const version =
+			typeof body.version === 'number' || typeof body.version === 'string' ? body.version : 0;
+		try {
+			return json({ profile: await profiles.update(id, version, { name, values }) });
+		} catch {
+			return json({ error: 'conflict' }, 409);
+		}
+	}
 	if (method === 'DELETE') {
-		await methodProfiles.remove(id);
+		await profiles.remove(id);
 		return new Response(null, { status: 204 });
 	}
 	return null;
@@ -403,7 +423,11 @@ export async function handleDevAdminMock(
 		});
 	}
 	if (segments[0] === 'authentication-method-profiles') {
-		const response = await handleMethodProfiles(event, segments.slice(1), method);
+		const response = await handleProfiles(event, segments.slice(1), method, methodProfiles);
+		if (response) return response;
+	}
+	if (segments[0] === 'session-profiles') {
+		const response = await handleProfiles(event, segments.slice(1), method, sessionProfiles);
 		if (response) return response;
 	}
 	if (segments[0] === 'logout' && method === 'POST') return json({ success: true });

@@ -8,16 +8,25 @@ const mocks = vi.hoisted(() => ({
   resolve: vi.fn(),
   loadPolicy: vi.fn(),
   loadTenantPolicy: vi.fn(),
+  flowRefs: vi.fn(),
+  methodProfile: vi.fn(),
+  sessionTtl: vi.fn(),
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   normalizeMethodHandle: (await importOriginal<typeof import('@authrim/ar-lib-core')>())
     .normalizeMethodHandle,
+  profileAllowsHandle: (await importOriginal<typeof import('@authrim/ar-lib-core')>())
+    .profileAllowsHandle,
+  loadInteractionFlowProfileRefs: mocks.flowRefs,
+  readAuthenticationProfile: mocks.methodProfile,
+  resolveProfiledSessionTtl: mocks.sessionTtl,
   resolveAuthCorePersistenceAdapterFromEnv: mocks.resolve,
   loadInteractionRegistrationPolicy: mocks.loadPolicy,
   loadTenantRegistrationPolicy: mocks.loadTenantPolicy,
 }));
 
 import {
+  externalSessionProfile,
   externalEmailCheckNeeded,
   loadExternalSignUpPolicy,
   providerHandle,
@@ -97,5 +106,99 @@ describe('loadExternalSignUpPolicy', () => {
     expect(providerHandle({ slug: 'Google', id: 'p1' })).toBe('google');
     expect(providerHandle({ id: 'Okta Corp' })).toBe('okta_corp');
     expect(providerHandle({ id: `__a${'_'.repeat(50_000)}` })).toBe('a');
+  });
+});
+
+describe('externalSessionProfile', () => {
+  const env = {} as never;
+  const refs = (overrides: Record<string, unknown> = {}) => ({
+    methodProfileRef: 'default',
+    sessionProfileRef: 'short',
+    flowKind: 'login',
+    completion: null,
+    live: true,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    mocks.resolve.mockReset().mockResolvedValue({});
+    mocks.flowRefs.mockReset();
+    mocks.methodProfile.mockReset();
+    mocks.loadPolicy.mockReset().mockResolvedValue(null);
+    mocks.loadTenantPolicy.mockReset().mockResolvedValue(null);
+    mocks.sessionTtl
+      .mockReset()
+      .mockImplementation(
+        async (_env: unknown, _tenant: string, _context: string, ref: string) => ({
+          ttl: { seconds: ref === 'short' ? 60 : 3600 },
+          snapshot: {},
+        })
+      );
+  });
+
+  it('makes a sign-in’s session by its Flow’s session profile', async () => {
+    mocks.flowRefs.mockResolvedValue(refs());
+    const result = await externalSessionProfile(env, {
+      tenantId: 't',
+      interactionId: 'i-1',
+      provider: { id: 'google' },
+      isNewUser: false,
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.profiled.ttl.seconds).toBe(60);
+  });
+
+  it('refuses a provider the Flow’s method profile does not take', async () => {
+    mocks.flowRefs.mockResolvedValue(refs({ methodProfileRef: 'members' }));
+    mocks.methodProfile.mockResolvedValue({
+      kind: 'profile',
+      values: {
+        'authentication-methods.external_provider_usage': [
+          { id: 'google', enabled: true, loginEnabled: false },
+        ],
+      },
+    });
+    const result = await externalSessionProfile(env, {
+      tenantId: 't',
+      interactionId: 'i-1',
+      provider: { id: 'google' },
+      isNewUser: false,
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  it('uses no stale Flow’s profiles once its interaction is gone or no longer live', async () => {
+    const input = {
+      tenantId: 't',
+      interactionId: 'i-1',
+      provider: { id: 'google' },
+      isNewUser: false,
+    };
+    mocks.flowRefs.mockResolvedValue(refs({ live: false, methodProfileRef: 'members' }));
+    const stale = await externalSessionProfile(env, input);
+    expect(stale.allowed).toBe(true);
+    expect(stale.profiled.ttl.seconds).toBe(3600);
+    expect(mocks.methodProfile).not.toHaveBeenCalled();
+    mocks.flowRefs.mockResolvedValue(null);
+    expect((await externalSessionProfile(env, input)).profiled.ttl.seconds).toBe(3600);
+    // One that cannot be read refuses the sign-in.
+    mocks.flowRefs.mockRejectedValue(new Error('d1 down'));
+    await expect(externalSessionProfile(env, input)).rejects.toThrow('d1 down');
+  });
+
+  it('makes a sign-up’s session by the registration Flow it was held to', async () => {
+    mocks.loadTenantPolicy.mockResolvedValue({
+      policy: {},
+      profileRef: 'default',
+      sessionProfileRef: 'short',
+    });
+    const result = await externalSessionProfile(env, {
+      tenantId: 't',
+      interactionId: undefined,
+      provider: { id: 'google' },
+      isNewUser: true,
+    });
+    expect(result.profiled.ttl.seconds).toBe(60);
+    expect(mocks.flowRefs).not.toHaveBeenCalled();
   });
 });

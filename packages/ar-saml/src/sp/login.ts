@@ -265,19 +265,30 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     }
     // The Flow interaction this sign-in belongs to, once checked a live interaction of the tenant:
     // the ACS records the sign-in's failures with it.
-    // Best effort: a check that cannot be made leaves the sign-in unrecorded, never refused.
     const requestedInteractionId = lite
       ? (lite.start.interactionId ?? undefined)
       : query('runtime_interaction_id');
-    const attemptInteractionId = requestedInteractionId
-      ? await (async () =>
-          resolveSignInAttemptInteraction(
-            await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', {
-              tenantId,
-            }),
-            { tenantId, interactionId: requestedInteractionId }
-          ))().catch(() => null)
-      : null;
+    // Its Flow's profiles also hold the sign-in (methods, session): a check that cannot be made
+    // refuses the start; one that is not a live interaction of the tenant is left out.
+    let attemptInteractionId: string | null = null;
+    if (requestedInteractionId) {
+      try {
+        attemptInteractionId = await resolveSignInAttemptInteraction(
+          await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', {
+            tenantId,
+          }),
+          { tenantId, interactionId: requestedInteractionId }
+        );
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The sign-in flow is unavailable.',
+          },
+          503
+        );
+      }
+    }
     const requestContext: SAMLRequestContext | undefined =
       reauthentication || invitation || attemptInteractionId || lite
         ? {

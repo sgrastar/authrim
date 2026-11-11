@@ -91,6 +91,8 @@ export {
 export {
   AUTHENTICATION_METHOD_PROFILE_LIMIT,
   AuthenticationMethodProfileRepository,
+  NamedProfileRepository,
+  SessionProfileRepository,
   type AuthenticationMethodProfile,
   type AuthenticationMethodProfileInput,
   type AuthenticationMethodProfileCreateResult,

@@ -58,6 +58,7 @@ export function freshDatabase(family: Family) {
           '009_login_ui_themes.sql',
           '012_admin_groups.sql',
           '013_authentication_method_profiles.sql',
+          '014_session_profiles.sql',
         ]
       : []),
     ...(family === 'core' ? ['007_account_registration_pending.sql'] : []),

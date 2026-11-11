@@ -54,7 +54,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.part.login-methods': 'Sign-in method profile',
 	'af.part.login-validation': 'Validation rules',
 	'af.part.login-session': 'Establishing the session',
-	'af.part.login-return': 'Returning the result',
 
 	'af.lead.reg-methods': 'Choose the sign-in method profile this sign-up uses.',
 	'af.lead.reg-verification':
@@ -64,17 +63,14 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.reg-policy': 'Decide when, and how, consent is asked for at sign-up.',
 	'af.lead.reg-result': 'Decide where the person goes once sign-up is done.',
 	'af.lead.login-methods': 'Choose the sign-in method profile this sign-in uses.',
-	'af.lead.login-validation': 'Decide when a person counts as authenticated.',
+	'af.lead.login-validation':
+		'Repeated failures and the reply to someone not registered follow the tenant’s security settings.',
 	'af.lead.login-session':
 		'Once the required authentication is complete, Authrim creates the session.',
-	'af.lead.login-return': 'The result of the sign-in goes back to the caller.',
 
 	'af.note.reg-statements':
 		'Separate from agreeing to share information with an app. That is set in each connection’s flow.',
 	'af.note.reg-policy': 'If the person does not agree, the account is not created.',
-	'af.note.login-validation': 'Authentication does not succeed until any additional step is done.',
-	'af.note.login-return':
-		'Issuing tokens to an app and agreeing to share attributes are set in each connection’s flow.',
 
 	'af.field.reg.methodProfile': 'Profile to use',
 	'af.profile.create': 'Create a sign-in method profile',
@@ -173,13 +169,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.field.reg.statements': 'Statements to agree to at sign-up',
 	'af.field.reg.consentWhen': 'When to ask for consent',
 	'af.field.reg.after': 'After completion',
-	'af.field.login.failures': 'After repeated failures',
-	'af.field.login.unregistered': 'When someone who has not signed up arrives',
-	'af.hint.login.unregistered':
-		'To avoid telling others whether an account exists, you can only say the sign-in failed.',
-	'af.field.login.lifetime': 'How long a session lasts',
-	'af.field.login.reauth': 'When to ask to sign in again',
-	'af.field.login.failure': 'If sign-in fails or is interrupted',
 
 	'af.field.reg.extraWhen': 'Also verify by email, when signing up through another provider',
 	'af.extraWhen.no-email': 'The provider did not give an email address',
@@ -344,16 +333,13 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.expiry.15m': '15 minutes',
 	'af.consentWhen.signup': 'At sign-up only',
 	'af.consentWhen.version': 'At sign-up, and when a statement changes',
-	'af.failures.delay': 'Make them wait a little longer each time',
-	'af.failures.lock': 'Lock for a while',
-	'af.failures.none': 'No limit',
-	'af.unregistered.guide': 'Point them to sign-up',
-	'af.unregistered.generic': 'Only say that sign-in failed',
-	'af.lifetime.8h': '8 hours',
-	'af.lifetime.24h': '24 hours',
-	'af.lifetime.7d': '7 days',
-	'af.reauth.idle': 'After a period of no activity',
-	'af.reauth.none': 'Never',
-	'af.failure.error': 'Return an error to the caller',
-	'af.failure.stay': 'Stay on the sign-in screen'
+	'af.after.tenant': 'Follow the tenant’s setting',
+	'af.part.login-result': 'After sign-in',
+	'af.lead.login-result': 'Choose where people go once they have signed in.',
+	'af.note.login-result':
+		'A sign-in started by an app or by SAML returns to where it came from. This sets where a sign-in made directly on the sign-in screen goes.',
+	'af.hint.login.appClient':
+		'Once signed in, the person is signed in to the chosen service (client) straight away. The client must have First Party App and App Login turned on.',
+	'af.hint.login.samlSp':
+		'Once signed in, the person is signed in to the chosen SAML service (SP) straight away by IdP-initiated SSO. The SP must accept IdP-initiated SAML responses.'
 };

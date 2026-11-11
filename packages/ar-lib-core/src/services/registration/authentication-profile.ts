@@ -100,6 +100,8 @@ export function profileAllowsHandle(
   if (handle === 'directory_password')
     return !off('authentication-methods.directory_password.enabled');
   if (handle === 'guest') return !off('authentication-methods.guest.login_enabled');
+  if (handle === 'did')
+    return usage !== 'signup' && !off('authentication-methods.did.login_enabled');
   // An external provider: as the profile's own provider list has it, when it lists the provider.
   const providers = providerUsageOf(values['authentication-methods.external_provider_usage']);
   const listed = providers.find((provider) => {

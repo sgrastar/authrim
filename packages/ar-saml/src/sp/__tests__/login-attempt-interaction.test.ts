@@ -102,18 +102,23 @@ describe('SP login records the interaction it belongs to', () => {
     expect(storeBodies[0]?.context).toEqual({ attemptInteractionId: 'int-1' });
   });
 
-  it.each([
-    ['one that is not live', null],
-    ['a check that fails', new Error('database unavailable')],
-  ])('stores no interaction for %s', async (_label, outcome) => {
-    if (outcome instanceof Error) mockResolveInteraction.mockRejectedValue(outcome);
-    else mockResolveInteraction.mockResolvedValue(outcome);
+  it('stores no interaction for one that is not live', async () => {
+    mockResolveInteraction.mockResolvedValue(null);
 
     const res = await handleSPLogin(loginContext({ runtime_interaction_id: 'int-raw' }));
 
     expect(res.status).toBe(200);
     expect(storeBodies).toHaveLength(1);
     expect(storeBodies[0]).not.toHaveProperty('context');
+  });
+
+  it('refuses the start when the check itself fails: its Flow holds the sign-in', async () => {
+    mockResolveInteraction.mockRejectedValue(new Error('database unavailable'));
+
+    const res = await handleSPLogin(loginContext({ runtime_interaction_id: 'int-raw' }));
+
+    expect(res.status).toBe(503);
+    expect(storeBodies).toHaveLength(0);
   });
 
   it('stores no context for a sign-in with no interaction at all', async () => {

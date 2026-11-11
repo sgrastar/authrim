@@ -11,6 +11,8 @@ import {
   createAuditLog,
   createAuthContextFromHono,
   createDirectoryAuthMigrationTransaction,
+  loadAssignedLoginFlowProfileRefs,
+  signInAttemptInteractionFromMetadata,
   createErrorResponse,
   createTenantPlacementWriteFenceResponse,
   createPIIContextFromHono,
@@ -76,7 +78,8 @@ import {
 } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
 import { getRequestIssuer } from './issuer';
-import { resolveSessionTtl } from './session-ttl';
+import { sessionForChallenge, sessionTtlForProfile } from './flow-session-profile';
+import { flowCompletionRedirect } from './registration-policy-gate';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import {
   isDeletedDestinationRouteError,
@@ -498,10 +501,24 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT);
     }
 
+    let attemptInteraction: Record<string, string>;
+    try {
+      attemptInteraction = await signInAttemptInteractionMetadata(c, tenantId, undefined, {
+        strict: true,
+      });
+    } catch {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'The sign-in flow is unavailable.',
+        },
+        503
+      );
+    }
     const record = signInAttemptFailureRecorder(
       c,
       tenantId,
-      await signInAttemptInteractionMetadata(c, tenantId),
+      attemptInteraction,
       'directory_password'
     );
     let recorded = false;
@@ -859,7 +876,38 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
 
     const now = passwordVerifiedAtMs;
     const authTime = Math.floor(now / 1000);
-    const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'directory_password');
+    // The Flow the sign-in runs takes a directory password, and its session profile sets the
+    // session.
+    let flowSession: Awaited<ReturnType<typeof sessionForChallenge>>;
+    try {
+      flowSession = await sessionForChallenge(
+        c,
+        tenantId,
+        'directory_password',
+        attemptInteraction,
+        'directory_password'
+      );
+    } catch {
+      return failed(
+        c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Session settings are unavailable.',
+          },
+          503
+        ),
+        'service_unavailable'
+      );
+    }
+    if (!flowSession.allowed) {
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+          extensions: { authentication_method: 'directory_password', usage: 'login' },
+        }),
+        'method_disabled'
+      );
+    }
+    const sessionTtl = flowSession.profiled.ttl;
     const migrationDecision = await resolveDirectoryAuthMigrationDecision(metadataCore, {
       tenantId,
       userId: runtimeUser.id,
@@ -957,6 +1005,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         proven_at: now,
         directory_connector_id: connector.connectorId,
         wordwarden_connector_id: connector.wordwardenConnectorId,
+        ...flowSession.profiled.snapshot,
       },
       tenantId
     );
@@ -1037,9 +1086,15 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       maxAge: sessionTtl.seconds,
     });
 
+    // An application's continuation first; else the sign-in Flow's own destination; else the
+    // tenant's.
     const postLoginRedirect = authorizationContinuation
       ? authorizationContinuation.redirectUrl
-      : (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl;
+      : ((await flowCompletionRedirect(
+          c,
+          tenantId,
+          signInAttemptInteractionFromMetadata(attemptInteraction)
+        )) ?? (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl);
 
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
@@ -2062,7 +2117,29 @@ async function createDirectorySessionSuccessResponse(
     }
     return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
   }
-  const sessionTtl = await resolveSessionTtl(c.env, input.tenantId, 'directory_password');
+  // A migration or recovery finishes outside the sign-in's interaction: the session follows the
+  // session profile of the tenant's own sign-in Flow.
+  let profiled: Awaited<ReturnType<typeof sessionTtlForProfile>>;
+  try {
+    const tenantFlow = await loadAssignedLoginFlowProfileRefs(
+      createAuthContextFromHono(c, input.tenantId).coreAdapter,
+      input.tenantId,
+      {}
+    );
+    profiled = await sessionTtlForProfile(
+      c,
+      input.tenantId,
+      'directory_password',
+      tenantFlow?.sessionProfileRef ?? 'default'
+    );
+  } catch {
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'Session settings are unavailable.' },
+      503,
+      { 'Retry-After': '1' }
+    );
+  }
+  const sessionTtl = profiled.ttl;
   const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
     c.env,
     input.tenantId
@@ -2088,6 +2165,7 @@ async function createDirectorySessionSuccessResponse(
       authTime: input.authTime,
       directory_connector_id: input.connectorId,
       wordwarden_connector_id: input.wordwardenConnectorId,
+      ...profiled.snapshot,
     },
     input.tenantId
   );

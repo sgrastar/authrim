@@ -47,6 +47,9 @@ import {
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
   createAuthContextFromHono,
+  loadAssignedLoginFlowProfileRefs,
+  readSessionProfile,
+  sessionProfileSso,
   createAccountAuthContextFromHono,
   createPIIContextFromHono,
   getTenantMetadataContextFromHono,
@@ -3312,14 +3315,39 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // Priority: Client setting > Tenant setting > Default (false)
-    ssoEnabled = clientSsoSetting ?? tenantSsoSetting ?? false;
+    // The session profile of the sign-in Flow the app uses (its own, else the tenant's), where
+    // the app sets nothing itself. A profile that cannot be read turns single sign-on off.
+    let profileSsoSetting: boolean | null = null;
+    if (clientSsoSetting === null) {
+      try {
+        const refs = await loadAssignedLoginFlowProfileRefs(
+          createAuthContextFromHono(c, tenantId).coreAdapter,
+          tenantId,
+          { clientId: validClientId }
+        );
+        if (refs && refs.sessionProfileRef !== 'default') {
+          profileSsoSetting = sessionProfileSso(
+            await readSessionProfile(c.env, tenantId, refs.sessionProfileRef)
+          );
+        }
+      } catch (error) {
+        log.warn('Failed to read the sign-in Flow session profile; SSO disabled', {
+          action: 'sso_profile_error',
+          errorType: error instanceof Error ? error.name : 'Unknown',
+        });
+        profileSsoSetting = false;
+      }
+    }
+
+    // Priority: Client setting > the sign-in Flow's session profile > Tenant setting > false
+    ssoEnabled = clientSsoSetting ?? profileSsoSetting ?? tenantSsoSetting ?? false;
 
     log.info('SSO configuration', {
       action: 'sso_config',
       clientId: validClientId,
       tenantSsoSetting,
       clientSsoSetting,
+      profileSsoSetting,
       ssoEnabled,
     });
   } catch (error) {

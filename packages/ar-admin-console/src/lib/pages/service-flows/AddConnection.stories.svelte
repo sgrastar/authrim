@@ -561,13 +561,11 @@
 		await expect(
 			await canvas.findByRole('heading', { name: 'Partner portal sign-in', level: 1 })
 		).toBeInTheDocument();
-		// What the wizard asked is done; the rest is required and marked so.
+		// What the wizard asked is done; the rest starts from the tenant's own.
 		await expect(canvas.getByRole('textbox', { name: /Service flow name/ })).toHaveValue(
 			'Partner portal sign-in'
 		);
-		await expect(
-			inFlow(canvasElement, /^Establishing the session.*Required.*Not set yet/)
-		).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^Establishing the session Configured/)).toBeInTheDocument();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

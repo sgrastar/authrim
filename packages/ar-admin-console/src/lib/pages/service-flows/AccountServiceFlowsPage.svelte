@@ -32,6 +32,13 @@
 		registrationSpecOf,
 		registrationStateOf
 	} from './registration-flow-mapping';
+	import {
+		applyLoginFlowSpec,
+		buildLoginFlowEditor,
+		loginSpecOf,
+		loginStateOf,
+		readLoginFlowEditor
+	} from './login-flow-mapping';
 
 	/** The first live service-flow page: the two account flows from the Storybook mock. */
 	const columns = $derived([
@@ -61,62 +68,113 @@
 			...dates[id]
 		}))
 	);
-	// The sign-up flow lives in the tenant's Flows where the page has them (the live console):
-	// read from the one the tenant runs, saved back to it and published. Elsewhere (the mock
+	// The account flows live in the tenant's Flows where the page has them (the live console):
+	// each read from the one the tenant runs, saved back to it and published. Elsewhere (the mock
 	// pages, Storybook) both flows are kept in the page only.
 	const { flows } = useFlowResources();
-	let signUp = $state<{ id: string | null; editable: boolean }>({ id: null, editable: true });
+	interface SavedFlow {
+		/** Read from the tenant's Flows (or there are none to read: the mock pages). Until then
+		 * the flow is neither opened nor saved, so a failed read never makes a new Flow over the
+		 * tenant's. */
+		loaded: boolean;
+		/** The tenant's Flow; null when it has none yet (saving makes one). */
+		id: string | null;
+		editable: boolean;
+		/** The graph as read: a sign-in is saved back into it, keeping what the console does not set. */
+		editor: unknown;
+	}
+	const saved = $state<Record<AccountFlowId, SavedFlow>>({
+		registration: { loaded: !flows, id: null, editable: true, editor: null },
+		login: { loaded: !flows, id: null, editable: true, editor: null }
+	});
 	let phase = $state<'loading' | 'ready' | 'failed'>(flows ? 'loading' : 'ready');
-	const toIso = (seconds: number | null) =>
-		seconds === null ? dates.registration.created : new Date(seconds * 1000).toISOString();
+	const toIso = (flow: AccountFlowId, seconds: number | null) =>
+		seconds === null ? dates[flow].created : new Date(seconds * 1000).toISOString();
 
-	async function loadSignUp() {
+	/**
+	 * Which read is the current one: a read started before a retry (still pending when the retry
+	 * came back) is dropped when it answers, so an older Flow never replaces a newer one.
+	 */
+	let generation = 0;
+
+	async function loadFlow(flow: AccountFlowId, turn: number) {
 		if (!flows) return;
+		const record = await flows.tenantFlow(flow);
+		if (turn !== generation) return;
+		if (!record) {
+			// None assigned: saving makes the tenant's first.
+			saved[flow] = { loaded: true, id: null, editable: true, editor: null };
+			return;
+		}
+		const about = { name: record.displayName, scope: 'default-ui' };
+		let state: AccountFlowState | null = null;
+		if (flow === 'registration') {
+			const spec = isConsoleShaped(record.editor)
+				? readRegistrationFlowEditor(record.editor)
+				: null;
+			state = spec ? registrationStateOf(spec, about) : null;
+		} else {
+			const spec = readLoginFlowEditor(record.editor);
+			state = spec ? loginStateOf(spec, about) : null;
+		}
+		flowStates[flow] = state ?? aboutState(flow, about.name, about.scope);
+		saved[flow] = {
+			loaded: true,
+			id: record.id,
+			editable: state !== null,
+			editor: record.editor
+		};
+		dates[flow] = {
+			created: toIso(flow, record.createdAt),
+			modified: toIso(flow, record.updatedAt)
+		};
+	}
+
+	async function loadFlows() {
+		if (!flows) return;
+		const turn = ++generation;
 		phase = 'loading';
+		for (const flow of ACCOUNT_FLOW_IDS) saved[flow] = { ...saved[flow], loaded: false };
 		try {
-			const record = await flows.tenantFlow('registration');
-			if (record) {
-				const spec = isConsoleShaped(record.editor)
-					? readRegistrationFlowEditor(record.editor)
-					: null;
-				const about = { name: record.displayName, scope: 'default-ui' };
-				flowStates.registration = spec
-					? registrationStateOf(spec, about)
-					: aboutState('registration', about.name, about.scope);
-				signUp = { id: record.id, editable: spec !== null };
-				dates.registration = {
-					created: toIso(record.createdAt),
-					modified: toIso(record.updatedAt)
-				};
-			}
-			phase = 'ready';
+			await Promise.all(ACCOUNT_FLOW_IDS.map((flow) => loadFlow(flow, turn)));
+			if (turn === generation) phase = 'ready';
 		} catch {
-			phase = 'failed';
+			if (turn === generation) phase = 'failed';
 		}
 	}
-	onMount(() => void loadSignUp());
+	onMount(() => void loadFlows());
 
-	/** Saves the sign-up flow as its Flow, publishes it, and makes it the tenant's. */
-	async function saveSignUp(state: AccountFlowState) {
+	/** Saves an account flow as its Flow, publishes it, and makes it the tenant's. */
+	async function saveFlow(flow: AccountFlowId, state: AccountFlowState) {
 		if (!flows) return;
-		if (!signUp.editable) throw new Error(t('af.live.notConsole'));
+		if (!saved[flow].loaded) throw new Error(t('af.live.loadFailed'));
+		if (!saved[flow].editable) throw new Error(t('af.live.notConsole'));
 		// Consent at sign-up is not saved with the Flow yet: saving without it would publish a
 		// sign-up that asks for none.
-		if (state.added.includes('consent')) throw new Error(t('af.live.consentNotWired'));
-		const editor = buildRegistrationFlowEditor(registrationSpecOf(state));
-		const displayName =
-			typeof state.values['reg.name'] === 'string' && state.values['reg.name'].trim()
-				? state.values['reg.name'].trim()
-				: t(FLOWS.registration.title);
-		const record = signUp.id
-			? await flows.update(signUp.id, { displayName, editor })
-			: await flows.create({ kind: 'registration', displayName, editor });
-		signUp = { id: record.id, editable: true };
-		await flows.publish(record.id);
-		if (state.values['reg.scope'] !== 'other-ui') {
-			await flows.assignToTenant(record.id, 'registration');
+		if (flow === 'registration' && state.added.includes('consent')) {
+			throw new Error(t('af.live.consentNotWired'));
 		}
-		dates.registration = { ...dates.registration, modified: new Date().toISOString() };
+		const editor =
+			flow === 'registration'
+				? buildRegistrationFlowEditor(registrationSpecOf(state))
+				: saved[flow].id
+					? applyLoginFlowSpec(saved[flow].editor, loginSpecOf(state))
+					: buildLoginFlowEditor(loginSpecOf(state));
+		if (!editor) throw new Error(t('af.live.notConsole'));
+		const prefix = flow === 'registration' ? 'reg' : 'login';
+		const name = state.values[`${prefix}.name`];
+		const displayName =
+			typeof name === 'string' && name.trim() ? name.trim() : t(FLOWS[flow].title);
+		const current = saved[flow].id;
+		const record = current
+			? await flows.update(current, { displayName, editor })
+			: await flows.create({ kind: flow, displayName, editor });
+		saved[flow] = { loaded: true, id: record.id, editable: true, editor };
+		await flows.publish(record.id);
+		if (state.values[`${prefix}.scope`] !== 'other-ui') {
+			await flows.assignToTenant(record.id, flow);
+		}
+		dates[flow] = { ...dates[flow], modified: new Date().toISOString() };
 	}
 
 	let opened = $state<AccountFlowId | null>(null);
@@ -132,7 +190,8 @@
 
 <Page withFlow={opened !== null}>
 	{#if opened}
-		{#if opened === 'registration' && !signUp.editable}
+		{@const current = opened}
+		{#if !saved[current].editable}
 			<Callout tone="warning">{t('af.live.notConsole')}</Callout>
 		{/if}
 		<AccountFlowDetail
@@ -140,7 +199,7 @@
 			bind:form={flowStates[opened]}
 			onback={() => (opened = null)}
 			focusTitle
-			onsave={opened === 'registration' && flows ? saveSignUp : undefined}
+			onsave={flows ? (state) => saveFlow(current, state) : undefined}
 		/>
 	{:else if adding}
 		<AddConnection accountOnly bind:dirty oncancel={leaveWizard} ondone={leaveWizard} />
@@ -155,30 +214,34 @@
 		{:else if phase === 'failed'}
 			<Callout tone="warning">
 				{t('af.live.loadFailed')}
-				<Button size="sm" onclick={loadSignUp}>{t('common.retry')}</Button>
+				<Button size="sm" onclick={loadFlows}>{t('common.retry')}</Button>
 			</Callout>
+		{:else}
+			<Card title={t('sf.mock.connections')} flush>
+				<DataTable
+					{columns}
+					{rows}
+					rowKey={(row) => row.id}
+					caption={t('sf.mock.connections')}
+					onrowopen={(row) => {
+						// A flow is opened only once it was read: a failed read is not a flow to replace.
+						if (saved[row.id].loaded) opened = row.id;
+					}}
+					rowOpenLabel={(row) => t('sf.mock.open', { name: row.name })}
+				>
+					{#snippet cell(row, column)}
+						{#if column.key === 'status'}
+							<AccountFlowStatus ready={row.ready} />
+						{:else if column.key === 'created' || column.key === 'modified'}
+							<DateTime value={row[column.key]} stacked />
+						{:else if column.key === 'name'}
+							<strong>{row.name}</strong>
+						{:else}
+							{row[column.key as 'protocol' | 'kind']}
+						{/if}
+					{/snippet}
+				</DataTable>
+			</Card>
 		{/if}
-		<Card title={t('sf.mock.connections')} flush>
-			<DataTable
-				{columns}
-				{rows}
-				rowKey={(row) => row.id}
-				caption={t('sf.mock.connections')}
-				onrowopen={(row) => (opened = row.id)}
-				rowOpenLabel={(row) => t('sf.mock.open', { name: row.name })}
-			>
-				{#snippet cell(row, column)}
-					{#if column.key === 'status'}
-						<AccountFlowStatus ready={row.ready} />
-					{:else if column.key === 'created' || column.key === 'modified'}
-						<DateTime value={row[column.key]} stacked />
-					{:else if column.key === 'name'}
-						<strong>{row.name}</strong>
-					{:else}
-						{row[column.key as 'protocol' | 'kind']}
-					{/if}
-				{/snippet}
-			</DataTable>
-		</Card>
 	{/if}
 </Page>

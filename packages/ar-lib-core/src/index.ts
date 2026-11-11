@@ -22,6 +22,7 @@ export * from './types/registration-policy';
 export * from './services/registration/interaction-policy';
 export * from './services/registration/authentication-profile';
 export * from './types/registration-flow-graph';
+export * from './types/login-flow-graph';
 export * from './types/login-ui-languages';
 export * from './types/login-ui-lite';
 export * from './types/login-ui-lite-txn';
@@ -471,6 +472,8 @@ export * from './services/profile-registry-writer';
 export * from './services/audit-settings-documents';
 export * from './services/session-client-store';
 export * from './services/session-ttl';
+export * from './services/session-profile';
+export * from './services/flow-profile-refs';
 export * from './services/external-provider-session-store';
 export {
   advancePasskeyAuthenticationState,

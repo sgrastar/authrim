@@ -277,11 +277,11 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(canvas.getByRole('heading', { name: 'Sign-in', level: 1 })).toBeInTheDocument();
-		// The method profile starts on Default; how the session is set up is still to choose.
+		// The method profile starts on Default.
 		await expect(inFlow(canvasElement, /^Sign-in method profile Configured/)).toBeInTheDocument();
-		await expect(
-			inFlow(canvasElement, /^Establishing the session.*Required.*Not set yet/)
-		).toBeInTheDocument();
+		// The session profile starts on Default, and where to go afterwards on the tenant's own.
+		await expect(inFlow(canvasElement, /^Establishing the session Configured/)).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^After sign-in Configured/)).toBeInTheDocument();
 	}}
 ></Story>
 
@@ -357,6 +357,27 @@
 		await expect(canvas.queryByText(/SMS/)).toBeNull();
 	}}
 />
+
+<!-- Sign-in makes its session by a session profile (shown as it is, changed on its own page), and goes on where the tenant sends people unless the flow says otherwise. -->
+<Story
+	name="Sign-in chooses a session profile and where to go"
+	args={{ flow: 'login', filled: 'none' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(inFlow(canvasElement, /^Establishing the session/));
+		const profile = await canvas.findByRole('combobox', { name: /Session profile/ });
+		await waitFor(() => expect(profile).toHaveValue('default'));
+		await expect(canvas.getByRole('link', { name: 'All session profiles' })).toHaveAttribute(
+			'href',
+			'/admin/authentication/session-profiles'
+		);
+		await userEvent.click(inFlow(canvasElement, /^After sign-in/));
+		const after = await canvas.findByRole('combobox', { name: /After completion/ });
+		await expect(after).toHaveValue('tenant');
+		await userEvent.selectOptions(after, 'custom_url');
+		await expect(await canvas.findByRole('textbox', { name: /URL to go to/ })).toBeInTheDocument();
+	}}
+></Story>
 
 <!-- The flows follow the console's language: here Japanese. -->
 <Story

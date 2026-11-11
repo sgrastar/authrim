@@ -6016,6 +6016,87 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     }
   );
 
+  /** The Direct Auth artifact last stored (its challenge record). */
+  const storedArtifact = (): Record<string, unknown> | undefined =>
+    (mocks.challengeStore.storeChallengeRpc.mock.calls as Array<[Record<string, unknown>]>)
+      .map(([record]) => record)
+      .filter((record) => record.type === 'direct_auth_code')
+      .at(-1);
+
+  it('carries the checked interaction and the code’s use into the email-code artifact', async () => {
+    const codeVerifier = 'email-code-verifier-interaction';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    const challengeData = {
+      challenge: 'hashed-email-code',
+      userId: 'user_existing',
+      email: 'user@example.com',
+      metadata: {
+        code_challenge: codeChallenge,
+        client_id: 'web-client',
+        channel: 'browser',
+        usage: 'login',
+        transaction_id: 'attempt_2',
+        issued_at: Date.now() - 10_000,
+        // Named by the header only, and checked when the code was sent.
+        attempt_interaction_id: 'int-1',
+      },
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
+    const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeVerifyHandler(
+      enableEmailOtp(
+        createContext({
+          attempt_id: 'attempt_2',
+          code: '123456',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        })
+      ) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(storedArtifact()).toMatchObject({
+      metadata: { attempt_interaction_id: 'int-1', usage: 'login' },
+    });
+  });
+
+  it('carries the checked interaction into the passkey artifact', async () => {
+    const codeVerifier = 'passkey-login-code-verifier-interaction';
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+        attempt_interaction_id: 'int-1',
+      },
+    });
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginFinishHandler(
+      createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(storedArtifact()).toMatchObject({
+      metadata: { method: 'passkey', attempt_interaction_id: 'int-1' },
+    });
+  });
+
   it('verifies an email code and returns a direct-auth artifact bound to PKCE', async () => {
     const codeVerifier = 'email-code-verifier';
     const codeChallenge = await s256Challenge(codeVerifier);

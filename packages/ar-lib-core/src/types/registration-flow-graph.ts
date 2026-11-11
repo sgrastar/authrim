@@ -41,6 +41,8 @@ export interface RegistrationFlowScreen {
 export interface RegistrationFlowSpec {
   /** The authentication method profile (`default`: the tenant's methods). */
   profileRef: string;
+  /** The session profile the new account's session is made with (`default`: the tenant's). */
+  sessionProfileRef: string;
   /** The first screen: the one the method is chosen on. */
   screenKey: string;
   screenTitle?: string;
@@ -52,6 +54,7 @@ export interface RegistrationFlowSpec {
 export function defaultRegistrationFlowSpec(): RegistrationFlowSpec {
   return {
     profileRef: 'default',
+    sessionProfileRef: 'default',
     screenKey: 'registration',
     screens: [],
     policy: structuredClone(DEFAULT_REGISTRATION_POLICY),
@@ -94,6 +97,7 @@ export function buildRegistrationFlowEditor(spec: RegistrationFlowSpec): FlowEdi
     config: {
       ui_kind: 'registration',
       authentication_profile_ref: spec.profileRef || 'default',
+      session_profile_ref: spec.sessionProfileRef || 'default',
       screen_ref: spec.screenKey,
       // A plain JSON copy: the graph is stored as JSON.
       registration_policy: JSON.parse(JSON.stringify(spec.policy)) as FlowRuntimeJsonObject,
@@ -238,6 +242,10 @@ export function readRegistrationFlowEditor(editor: unknown): RegistrationFlowSpe
     profileRef:
       typeof config.authentication_profile_ref === 'string' && config.authentication_profile_ref
         ? config.authentication_profile_ref
+        : 'default',
+    sessionProfileRef:
+      typeof config.session_profile_ref === 'string' && config.session_profile_ref.trim()
+        ? config.session_profile_ref.trim()
         : 'default',
     screenKey,
     ...(typeof registration.title === 'string' && registration.title !== 'Registration Method'

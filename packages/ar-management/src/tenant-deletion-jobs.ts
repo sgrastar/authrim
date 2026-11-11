@@ -69,6 +69,7 @@ const TENANT_ADMIN_TABLES_TO_DELETE = [
   'tenant_discovery_indexes',
   'login_ui_themes',
   'authentication_method_profiles',
+  'session_profiles',
 ] as const;
 
 function buildTenantDatabaseLifecycleMetadata(

@@ -76,8 +76,12 @@ describe('account flows', () => {
 			'complete'
 		]);
 		// After completion: where to go, and the details of the choice.
-		expect(PARTS['reg-result'].fields[0]).toMatchObject({ key: 'reg.after', initial: 'account' });
-		expect(PARTS['reg-result'].fields[0].options().map((option) => option.value)).toEqual([
+		expect(PARTS['reg-result'].fields[0]).toMatchObject({
+			key: 'reg.sessionProfile',
+			initial: 'default'
+		});
+		expect(PARTS['reg-result'].fields[1]).toMatchObject({ key: 'reg.after', initial: 'account' });
+		expect(PARTS['reg-result'].fields[1].options().map((option) => option.value)).toEqual([
 			'account',
 			'home',
 			'custom_url',
@@ -111,6 +115,7 @@ describe('account flows', () => {
 			'reg.after': 'account',
 			'reg.appScope': 'openid profile email',
 			'reg.methodProfile': 'default',
+			'reg.sessionProfile': 'default',
 			'reg.screen': 'registration'
 		});
 		for (const part of generalParts('registration'))
@@ -126,7 +131,12 @@ describe('account flows', () => {
 			'default'
 		);
 		// A sign-in starts with the tenant's default sign-in method profile.
-		expect(initialState('login').values).toEqual({ 'login.methodProfile': 'default' });
+		expect(initialState('login').values).toEqual({
+			'login.methodProfile': 'default',
+			'login.sessionProfile': 'default',
+			'login.after': 'tenant',
+			'login.appScope': 'openid profile email'
+		});
 	});
 
 	it('start a sign-up ready to use, with nothing but a name and a place given', () => {
@@ -176,7 +186,10 @@ describe('account flows', () => {
 
 	it('ask for the details of where to go after completion, by the choice', () => {
 		const state = initialState('registration');
-		const keys = () => shownFields('reg-result', state).map((field) => field.key);
+		const keys = () =>
+			shownFields('reg-result', state)
+				.map((field) => field.key)
+				.filter((key) => key !== 'reg.sessionProfile');
 		expect(keys()).toEqual(['reg.after']);
 		state.values['reg.after'] = 'home';
 		expect(keys()).toEqual(['reg.after']);
@@ -264,14 +277,27 @@ describe('account flows', () => {
 		);
 	});
 
+	it('sign in with a session profile, and leave where to go to the tenant unless set', () => {
+		const state = initialState('login');
+		expect(state.values['login.sessionProfile']).toBe('default');
+		expect(state.values['login.after']).toBe('tenant');
+		expect(partState('login-session', 'login', state)).toBe('done');
+		expect(partState('login-result', 'login', state)).toBe('done');
+		expect(FLOWS.login.groups.find((group) => group.id === 'finish')?.parts).toEqual([
+			'login-session',
+			'login-result'
+		]);
+		expect(PARTS['login-validation'].fields).toEqual([]);
+	});
+
 	it('summarise a choice by its text, and say so when a field has no value', () => {
 		const state = emptyFlowState();
-		state.values['login.failures'] = 'delay';
+		state.values['login.after'] = 'custom_url';
 		const rows = summaryRows('login', state);
-		expect(rows.find((row) => row.label === en['af.field.login.failures'])?.value).toBe(
-			en['af.failures.delay']
+		expect(rows.find((row) => row.label === en['af.field.reg.after'])?.value).toBe(
+			en['af.after.custom_url']
 		);
-		expect(rows.find((row) => row.label === en['af.field.login.lifetime'])?.value).toBe(
+		expect(rows.find((row) => row.label === en['af.field.reg.redirectUrl'])?.value).toBe(
 			en['sf.value.notSet']
 		);
 	});

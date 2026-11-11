@@ -38,7 +38,11 @@ export interface DraftEntry {
 
 export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'authentication/methods', scope: 'tenant', note: 'A method × use matrix (dedicated UI).' },
-	{ id: 'authentication/session-profiles', scope: 'tenant' },
+	{
+		id: 'authentication/session-profiles',
+		scope: 'tenant',
+		note: 'A profile list (dedicated UI): Default is these settings of the tenant.'
+	},
 	{
 		id: 'authentication/logout',
 		scope: 'tenant',
@@ -138,6 +142,19 @@ function place(
 // ---------------------------------------------------------------------------------------------
 // Authentication
 
+place('authentication/session-profiles', 'Session profile', {
+	primary: ['session.default_ttl', 'session.refresh_default', 'oauth.sso_enabled'],
+	advanced: [
+		'session.ttl.passkey',
+		'session.ttl.email_code',
+		'session.ttl.directory_password',
+		'session.ttl.direct_auth',
+		'session.ttl.did',
+		'session.ttl.guest',
+		'session.ttl.passkey_registration',
+		'session.max_ttl'
+	]
+});
 place('authentication/methods', 'Sign-in methods', {
 	primary: [
 		'authentication-methods.passkey.login_enabled',

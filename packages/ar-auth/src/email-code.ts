@@ -82,7 +82,7 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import { checkSignUpScreen } from './signup-screen-check';
-import { resolveSessionTtl } from './session-ttl';
+import { sessionTtlForProfile } from './flow-session-profile';
 import { provisionTenantD1EmailAccount, usesRoutedAccountStorage } from './account-provisioning';
 import { isAuthenticationMethodUsageEnabled } from './authentication-method-settings';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
@@ -253,6 +253,9 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       // may sign up, and one code lifetime for every send of it, an address with an account or
       // not (the reply's cookie states it).
       const signUpPolicy = await signUpPolicyFor(c, tenantId);
+      // Whether this send signs a new address up (its session then follows the registration
+      // Flow's session profile).
+      let signedUpHere = false;
       const codeTtlSeconds = signUpCodeTtlSeconds(
         signUpPolicy.policy,
         await resolveEmailCodeTtlSeconds(c.env, tenantId)
@@ -501,6 +504,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
             return suppressedSendResponse(c, tenantId, codeTtlSeconds);
           }
 
+          signedUpHere = true;
           user ??= {
             id: userId,
             email: normalizedEmail,
@@ -540,6 +544,9 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
             otp_session_id: otpSessionId,
             issued_at: issuedAt,
             purpose: 'login',
+            ...(signedUpHere && signUpPolicy.sessionProfileRef !== 'default'
+              ? { session_profile_ref: signUpPolicy.sessionProfileRef }
+              : {}),
             ...(Object.keys(customFieldValues).length > 0
               ? { custom_fields: customFieldValues }
               : {}),
@@ -707,6 +714,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           issued_at: number;
           purpose: string;
           custom_fields?: Record<string, unknown>;
+          session_profile_ref?: string;
         };
       };
 
@@ -775,9 +783,12 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         });
         return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
       }
+      // A sign-up's session follows its registration Flow's session profile (kept with the code).
       const sessionTtlPromise = timeAuthRequestDiagnosticOperation(c, 'auth_otp_session_ttl', () =>
-        resolveSessionTtl(c.env, tenantId, 'email_code')
+        sessionTtlForProfile(c, tenantId, 'email_code', challengeData.metadata?.session_profile_ref)
       );
+      // Read once below; a failure is answered there, not left unhandled meanwhile.
+      sessionTtlPromise.catch(() => undefined);
       let runtimeUsers: CanonicalRuntimeUserStore | null = null;
       let userLookupPromise: Promise<
         | { kind: 'tenant_d1'; context: OtpAccountCoreDataContext }
@@ -953,7 +964,19 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         });
       }
 
-      const sessionTtl = await sessionTtlPromise;
+      let profiled: Awaited<typeof sessionTtlPromise>;
+      try {
+        profiled = await sessionTtlPromise;
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Session settings are unavailable.',
+          },
+          503
+        );
+      }
+      const sessionTtl = profiled.ttl;
       let sessionId: string;
       try {
         const { stub: sessionStore, sessionId: newSessionId } =
@@ -976,6 +999,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
               authTime,
               // When the code was verified (milliseconds), for assurance step-ups.
               proven_at: now,
+              ...profiled.snapshot,
             },
             tenantId
           )

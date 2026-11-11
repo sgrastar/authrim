@@ -34717,6 +34717,145 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/session-profiles:
+    get:
+      tags:
+        - Session Profiles
+      operationId: getApiAdminSessionProfiles
+      summary: List session profiles
+      description: >-
+        Lists the live Default profile and saved profiles for the selected tenant. Default reflects
+        the tenant's session settings and oauth.sso_enabled; a saved profile applies to the
+        sessions a service flow makes once the flow references it. Requires settings read
+        permission and session settings access.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Authentication method profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profiles]
+                properties:
+                  profiles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SessionProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Session Profiles
+      operationId: postApiAdminSessionProfiles
+      summary: Create an session profile
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionProfileInput'
+      responses:
+        '201':
+          description: Created profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/SessionProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/session-profiles/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The profile ID, or default for the tenant-wide settings.
+    get:
+      tags:
+        - Session Profiles
+      operationId: getApiAdminSessionProfile
+      summary: Get an session profile
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Profile details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/SessionProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Session Profiles
+      operationId: putApiAdminSessionProfile
+      summary: Update an session profile
+      description: >-
+        Requires the profile version in the body (for default, the opaque version string it was
+        read with). Updating default changes the tenant's live session settings and
+        oauth.sso_enabled; a saved profile stays independent.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/SessionProfileInput'
+                - type: object
+                  required: [version]
+                  properties:
+                    version:
+                      oneOf:
+                        - type: integer
+                        - type: string
+      responses:
+        '200':
+          description: Updated profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/SessionProfile'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Session Profiles
+      operationId: deleteApiAdminSessionProfile
+      summary: Delete a saved session profile
+      description: >-
+        The Default profile cannot be deleted, nor a profile a service flow references (409).
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '204':
+          description: Profile deleted.
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/login-ui/themes:
     get:
       tags:
@@ -80557,6 +80696,38 @@ components:
     AuthenticationMethodProfile:
       allOf:
         - $ref: '#/components/schemas/AuthenticationMethodProfileInput'
+        - type: object
+          required: [id, is_system, version, created_at, updated_at]
+          properties:
+            id:
+              type: string
+            is_system:
+              type: boolean
+            version:
+              oneOf:
+                - type: integer
+                - type: string
+            created_by:
+              type: [string, 'null']
+            created_at:
+              type: [integer, 'null']
+            updated_at:
+              type: [integer, 'null']
+    SessionProfileInput:
+      type: object
+      required: [name, values]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        values:
+          type: object
+          description: Session settings (session.*) and oauth.sso_enabled keyed by full setting key; a key left out follows the Default profile.
+          additionalProperties: true
+    SessionProfile:
+      allOf:
+        - $ref: '#/components/schemas/SessionProfileInput'
         - type: object
           required: [id, is_system, version, created_at, updated_at]
           properties:

@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
 import type { SettingsTarget } from '#lib/api/settings.js';
-import {
-	LOGOUT,
-	SESSION_PROFILES as SESSION_PAGE,
-	TOKENS,
-	type SettingsPageDef,
-	type SettingsSection
-} from './placement';
+import { LOGOUT, TOKENS, type SettingsPageDef, type SettingsSection } from './placement';
 import {
 	changedBetween,
 	changes,
@@ -20,17 +14,28 @@ import {
 } from './settings-model';
 
 const tenant: SettingsTarget = { level: 'tenant', tenantId: 'acme' };
+/** The session settings a sign-in keeps (on the session profiles now, a page of their own). */
+const SIGN_IN: SettingsSection = {
+	id: 'sign-in',
+	title: 'set.section.signIn',
+	settings: [
+		{ key: 'session.default_ttl', depth: 'primary' },
+		{ key: 'session.refresh_default', depth: 'primary' },
+		{ key: 'oauth.sso_enabled', depth: 'primary' },
+		{ key: 'session.ttl.passkey', depth: 'advanced' },
+		{ key: 'session.max_ttl', depth: 'advanced' }
+	]
+};
 /**
  * A page holding the session, app-token and logout sections (as the session page once did): the
  * session and oauth categories side by side, which these tests work on.
  */
 const SESSION_PROFILES: SettingsPageDef = {
-	...SESSION_PAGE,
-	sections: [
-		...SESSION_PAGE.sections,
-		...TOKENS.sections.filter((s) => s.id === 'app-tokens'),
-		...LOGOUT.sections
-	]
+	id: 'session-test',
+	nav: 'authentication/session-profiles',
+	title: 'set.page.sessionProfiles',
+	description: 'set.page.sessionProfiles.desc',
+	sections: [SIGN_IN, ...TOKENS.sections.filter((s) => s.id === 'app-tokens'), ...LOGOUT.sections]
 };
 const levels = { session: 'edit', oauth: 'edit' } as const;
 

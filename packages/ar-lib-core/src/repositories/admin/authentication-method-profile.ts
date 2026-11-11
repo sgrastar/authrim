@@ -45,12 +45,19 @@ function fromRow(row: Record<string, unknown>): AuthenticationMethodProfile {
   };
 }
 
-export class AuthenticationMethodProfileRepository {
-  constructor(private readonly adapter: DatabaseAdapter) {}
+/**
+ * Named profiles of a tenant kept as one JSON document each (authentication method profiles,
+ * session profiles): the same columns and limits, in a table of their own.
+ */
+export class NamedProfileRepository {
+  constructor(
+    private readonly adapter: DatabaseAdapter,
+    private readonly table: 'authentication_method_profiles' | 'session_profiles'
+  ) {}
 
   async list(tenantId: string): Promise<AuthenticationMethodProfile[]> {
     const rows = await this.adapter.query<Record<string, unknown>>(
-      `SELECT * FROM authentication_method_profiles WHERE tenant_id = ?
+      `SELECT * FROM ${this.table} WHERE tenant_id = ?
        ORDER BY updated_at DESC, id ASC LIMIT ?`,
       [tenantId, AUTHENTICATION_METHOD_PROFILE_LIMIT]
     );
@@ -59,7 +66,7 @@ export class AuthenticationMethodProfileRepository {
 
   async find(tenantId: string, id: string): Promise<AuthenticationMethodProfile | null> {
     const row = await this.adapter.queryOne<Record<string, unknown>>(
-      'SELECT * FROM authentication_method_profiles WHERE tenant_id = ? AND id = ?',
+      `SELECT * FROM ${this.table} WHERE tenant_id = ? AND id = ?`,
       [tenantId, id]
     );
     return row ? fromRow(row) : null;
@@ -74,10 +81,10 @@ export class AuthenticationMethodProfileRepository {
     const id = generateId();
     try {
       const result = await this.adapter.execute(
-        `INSERT INTO authentication_method_profiles
+        `INSERT INTO ${this.table}
            (id, tenant_id, name, name_key, values_json, version, created_by, created_at, updated_at)
          SELECT ?, ?, ?, ?, ?, 1, ?, ?, ?
-          WHERE (SELECT COUNT(*) FROM authentication_method_profiles WHERE tenant_id = ?) < ?`,
+          WHERE (SELECT COUNT(*) FROM ${this.table} WHERE tenant_id = ?) < ?`,
         [
           id,
           tenantId,
@@ -97,7 +104,7 @@ export class AuthenticationMethodProfileRepository {
       throw error;
     }
     const profile = await this.find(tenantId, id);
-    if (!profile) throw new Error('authentication_method_profile_missing_after_insert');
+    if (!profile) throw new Error(`${this.table}_row_missing_after_insert`);
     return { status: 'created', profile };
   }
 
@@ -110,7 +117,7 @@ export class AuthenticationMethodProfileRepository {
   ): Promise<AuthenticationMethodProfileUpdateResult> {
     try {
       const result = await this.adapter.execute(
-        `UPDATE authentication_method_profiles
+        `UPDATE ${this.table}
             SET name = ?, name_key = ?, values_json = ?, version = version + 1, updated_at = ?
           WHERE tenant_id = ? AND id = ? AND version = ?`,
         [
@@ -149,9 +156,22 @@ export class AuthenticationMethodProfileRepository {
 
   async delete(tenantId: string, id: string): Promise<boolean> {
     const result = await this.adapter.execute(
-      'DELETE FROM authentication_method_profiles WHERE tenant_id = ? AND id = ?',
+      `DELETE FROM ${this.table} WHERE tenant_id = ? AND id = ?`,
       [tenantId, id]
     );
     return result.rowsAffected > 0;
+  }
+}
+
+export class AuthenticationMethodProfileRepository extends NamedProfileRepository {
+  constructor(adapter: DatabaseAdapter) {
+    super(adapter, 'authentication_method_profiles');
+  }
+}
+
+/** Session profiles: how long a session lasts and whether single sign-on is on, by name. */
+export class SessionProfileRepository extends NamedProfileRepository {
+  constructor(adapter: DatabaseAdapter) {
+    super(adapter, 'session_profiles');
   }
 }

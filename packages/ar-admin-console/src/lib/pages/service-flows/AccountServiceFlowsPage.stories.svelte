@@ -2,7 +2,11 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import AccountServiceFlowsHarness from './AccountServiceFlowsHarness.svelte';
 	import AccountServiceFlowsPage from './AccountServiceFlowsPage.svelte';
+
+	const saves: { kind: string; editor: unknown }[] = [];
+	const control: { release?: () => void } = {};
 
 	const { Story } = defineMeta({
 		title: 'Pages/Service flows/Account service flows',
@@ -56,3 +60,54 @@
 		await expect(canvas.getByRole('textbox', { name: /Service flow name/ })).toBeRequired();
 	}}
 ></Story>
+
+<!-- The tenant's Flows cannot be read: nothing is listed to open, so no new Flow is made over the tenant's. -->
+<Story
+	name="Load failed: nothing to open or save"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(t('af.live.loadFailed'));
+		await expect(canvas.getByRole('button', { name: t('common.retry') })).toBeInTheDocument();
+		await expect(canvas.queryByRole('table', { name: t('sf.mock.connections') })).toBeNull();
+	}}
+>
+	{#snippet template()}<AccountServiceFlowsHarness answer="failed" />{/snippet}
+</Story>
+
+<!-- The standard sign-in every tenant is given is set here: saving changes only its sign-in step, its branches kept. -->
+<Story
+	name="The standard sign-in is set and saved in place"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('button', {
+				name: t('sf.mock.open', { name: 'Authentication-only Login' })
+			})
+		);
+		await waitFor(() =>
+			expect(
+				canvas.getByRole('heading', { name: 'Authentication-only Login', level: 1 })
+			).toBeVisible()
+		);
+		await expect(canvas.queryByText(t('af.live.notConsole'))).toBeNull();
+	}}
+>
+	{#snippet template()}<AccountServiceFlowsHarness answer="seeded" {saves} />{/snippet}
+</Story>
+
+<!-- A read still on its way when a retry came back is dropped when it answers: the older sign-in never replaces the current one. -->
+<Story
+	name="A late answer from before a retry is dropped"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('common.retry') }));
+		const list = await canvas.findByRole('table', { name: t('sf.mock.connections') });
+		await within(list).findByText('Authentication-only Login');
+		control.release?.();
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		await expect(within(list).getByText('Authentication-only Login')).toBeInTheDocument();
+		await expect(within(list).queryByText('Old sign-in')).toBeNull();
+	}}
+>
+	{#snippet template()}<AccountServiceFlowsHarness answer="race" {control} />{/snippet}
+</Story>

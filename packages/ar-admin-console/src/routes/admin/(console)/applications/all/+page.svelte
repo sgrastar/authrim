@@ -2,6 +2,7 @@
 	import { hasPermission } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { httpAuthenticationMethodProfiles } from '#lib/api/authentication-method-profiles.js';
+	import { httpSessionProfiles } from '#lib/api/session-profiles.js';
 	import { readAppliedThemeValues } from '#lib/api/login-ui-themes.js';
 	import { httpScreens } from '#lib/api/screens.js';
 	import { httpClients } from '#lib/api/clients.js';
@@ -15,6 +16,7 @@
 	// The flows choose from the tenant's screens and sign-in method profiles, and can add profiles.
 	provideFlowResources({
 		methodProfiles: httpAuthenticationMethodProfiles,
+		sessionProfiles: httpSessionProfiles,
 		screens: httpScreens,
 		clients: httpClients,
 		flows: httpFlows,

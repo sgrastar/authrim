@@ -6,6 +6,7 @@
 	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 	import ClientField from './ClientField.svelte';
 	import MethodProfileField from './MethodProfileField.svelte';
+	import SessionProfileField from './SessionProfileField.svelte';
 	import ScreenField from './ScreenField.svelte';
 	import {
 		partDef,
@@ -79,6 +80,14 @@
 		/>
 	{:else if field.kind === 'profile'}
 		<MethodProfileField
+			label={t(field.label)}
+			required={field.required}
+			hint={field.hint ? t(field.hint) : undefined}
+			value={typeof form.values[field.key] === 'string' ? (form.values[field.key] as string) : ''}
+			onchange={(value) => (form.values[field.key] = value)}
+		/>
+	{:else if field.kind === 'session-profile'}
+		<SessionProfileField
 			label={t(field.label)}
 			required={field.required}
 			hint={field.hint ? t(field.hint) : undefined}

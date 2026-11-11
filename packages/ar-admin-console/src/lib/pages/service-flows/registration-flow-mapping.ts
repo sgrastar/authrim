@@ -12,11 +12,11 @@ import {
 } from '@authrim/ar-lib-core/types/registration-flow-graph';
 import {
 	DEFAULT_REGISTRATION_POLICY,
-	type RegistrationCompletion,
 	type RegistrationExternalEmailCheck,
 	type RegistrationPolicy
 } from '@authrim/ar-lib-core/types/registration-policy';
 import { initialState, titleKey } from './account-flow-model';
+import { completionOf, setCompletion } from './completion-mapping';
 import { exitKey } from './screen-exits';
 import type { AccountFlowState, AccountValue } from './flow-spec';
 
@@ -54,38 +54,6 @@ export function domainsOf(value: AccountValue | undefined): string[] {
 		.filter(Boolean);
 }
 
-function completionOf(values: AccountFlowState['values']): RegistrationCompletion {
-	const behavior = text(values['reg.after']);
-	switch (behavior) {
-		case 'home':
-			return { behavior: 'home' };
-		case 'custom_url':
-			return { behavior, redirect_url: text(values['reg.redirectUrl']) };
-		case 'app_login':
-			return {
-				behavior,
-				app_login_client_id: text(values['reg.appClient']),
-				app_login_redirect_uri: text(values['reg.appRedirectUri']),
-				app_login_scope: text(values['reg.appScope']) || 'openid profile email',
-				...(text(values['reg.appReturnTo'])
-					? { app_login_final_return_to: text(values['reg.appReturnTo']) }
-					: {})
-			};
-		case 'saml_login':
-			return {
-				behavior,
-				saml_login_sp_entity_id: text(values['reg.samlSp']),
-				...(text(values['reg.samlRelayState'])
-					? { saml_login_relay_state: text(values['reg.samlRelayState']) }
-					: {})
-			};
-		case 'service_site':
-			return { behavior, service_site_path: text(values['reg.servicePath']) };
-		default:
-			return { behavior: 'account' };
-	}
-}
-
 /** The spec a sign-up flow is saved as. */
 export function registrationSpecOf(state: AccountFlowState): RegistrationFlowSpec {
 	const values = state.values;
@@ -117,7 +85,7 @@ export function registrationSpecOf(state: AccountFlowState): RegistrationFlowSpe
 			EXTERNAL[check] ? [EXTERNAL[check]] : []
 		),
 		code_ttl_seconds: TTL[text(values['reg.expiry'])] ?? fallback.code_ttl_seconds,
-		completion: completionOf(values)
+		completion: completionOf(values, 'reg') ?? { behavior: 'account' }
 	};
 	const screens: RegistrationFlowScreen[] = state.added.flatMap((id) => {
 		const match = EXTRA.exec(id);
@@ -138,6 +106,7 @@ export function registrationSpecOf(state: AccountFlowState): RegistrationFlowSpe
 	const screenTitle = text(values[titleKey('reg-screen')]);
 	return {
 		profileRef: text(values['reg.methodProfile']) || 'default',
+		sessionProfileRef: text(values['reg.sessionProfile']) || 'default',
 		screenKey: text(values['reg.screen']),
 		...(screenTitle ? { screenTitle } : {}),
 		screens,
@@ -155,6 +124,7 @@ export function registrationStateOf(
 	values['reg.name'] = about.name;
 	values['reg.scope'] = about.scope;
 	values['reg.methodProfile'] = spec.profileRef;
+	values['reg.sessionProfile'] = spec.sessionProfileRef;
 	values['reg.screen'] = spec.screenKey;
 	if (spec.screenTitle) values[titleKey('reg-screen')] = spec.screenTitle;
 	const policy = spec.policy;
@@ -167,19 +137,7 @@ export function registrationStateOf(
 	if (policy.code_ttl_seconds !== null && TTL_BACK[policy.code_ttl_seconds]) {
 		values['reg.expiry'] = TTL_BACK[policy.code_ttl_seconds];
 	}
-	const completion = policy.completion ?? { behavior: 'account' };
-	values['reg.after'] = completion.behavior;
-	const set = (key: string, value: string | undefined) => {
-		if (value) values[key] = value;
-	};
-	set('reg.redirectUrl', completion.redirect_url);
-	set('reg.appClient', completion.app_login_client_id);
-	set('reg.appRedirectUri', completion.app_login_redirect_uri);
-	set('reg.appScope', completion.app_login_scope);
-	set('reg.appReturnTo', completion.app_login_final_return_to);
-	set('reg.samlSp', completion.saml_login_sp_entity_id);
-	set('reg.samlRelayState', completion.saml_login_relay_state);
-	set('reg.servicePath', completion.service_site_path);
+	setCompletion(values, policy.completion ?? { behavior: 'account' }, 'reg');
 	for (const screen of spec.screens) {
 		const id = `extra-screen:${screen.n}`;
 		state.added.push(id);

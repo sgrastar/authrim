@@ -127,38 +127,6 @@ export function partsOf(page: SettingsPageDef): SettingsPart[] {
 // Pages
 
 /**
- * Authentication → Session profiles: how long a person's sign-in lasts, and single sign-on. (The
- * tokens apps get are on Tokens and protocols; the logout notices on Logout.)
- */
-export const SESSION_PROFILES: SettingsPageDef = {
-	id: 'session-profiles',
-	nav: 'authentication/session-profiles',
-	title: 'set.page.sessionProfiles',
-	description: 'set.page.sessionProfiles.desc',
-	sections: [
-		{
-			id: 'sign-in',
-			title: 'set.section.signIn',
-			description: 'set.section.signIn.desc',
-			advanced: 'set.section.signIn.advanced',
-			settings: [
-				{ key: 'session.default_ttl', depth: 'primary' },
-				{ key: 'session.refresh_default', depth: 'primary' },
-				{ key: 'oauth.sso_enabled', depth: 'primary' },
-				{ key: 'session.ttl.passkey', depth: 'advanced' },
-				{ key: 'session.ttl.email_code', depth: 'advanced' },
-				{ key: 'session.ttl.directory_password', depth: 'advanced' },
-				{ key: 'session.ttl.direct_auth', depth: 'advanced' },
-				{ key: 'session.ttl.did', depth: 'advanced' },
-				{ key: 'session.ttl.guest', depth: 'advanced' },
-				{ key: 'session.ttl.passkey_registration', depth: 'advanced' },
-				{ key: 'session.max_ttl', depth: 'advanced' }
-			]
-		}
-	]
-};
-
-/**
  * Authentication → Logout: how the tenant tells apps a person signed out (back-channel logout
  * delivery). Each app's own logout addresses are the app's.
  */
@@ -433,7 +401,6 @@ export const TEAM: SettingsPageDef = {
 };
 
 export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
-	SESSION_PROFILES,
 	LOGOUT,
 	PROTECTION,
 	ENTERPRISE_SAML,
