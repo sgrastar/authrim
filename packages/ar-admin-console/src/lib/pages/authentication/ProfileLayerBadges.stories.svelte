@@ -59,7 +59,7 @@
 		<div style="display: grid; gap: 20px; max-width: 720px;">
 			{#each states as [title, layer] (title)}
 				<section style="display: grid; gap: 8px;">
-					<p style="margin: 0; font-weight: 600;">
+					<p style="margin: 0; font-weight: var(--fw-semibold);">
 						{title}
 						<ProfileLayerBadges {layer} size="md" />
 					</p>
