@@ -37,6 +37,11 @@ export function carrySAMLRequestContext(
   return {
     ...(context?.reauthentication ? { reauthentication: context.reauthentication } : {}),
     ...(context?.assuranceStepUp ? { assuranceStepUp: context.assuranceStepUp } : {}),
+    // When the person was first sent to sign in for it: a send again keeps it, so a session made
+    // after the first send is not taken for single sign-on once the person is sent once more.
+    ...(typeof context?.sentToSignInAt === 'number' && Number.isSafeInteger(context.sentToSignInAt)
+      ? { sentToSignInAt: context.sentToSignInAt }
+      : {}),
   };
 }
 
@@ -185,7 +190,9 @@ export async function redirectToSAMLLogin(
     tenantId,
     authnRequest,
     input.relayState,
-    input.context,
+    // When the person was first sent: a session made since answers the request only if its
+    // sign-in ran for it (sso.ts, sessionAnswersSAMLRequest).
+    { ...input.context, sentToSignInAt: input.context?.sentToSignInAt ?? Date.now() },
     requestTtlSeconds
   );
 

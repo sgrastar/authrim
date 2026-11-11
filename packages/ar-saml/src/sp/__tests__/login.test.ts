@@ -614,7 +614,8 @@ describe('SP login answering a re-authentication', () => {
     const res = await handleSPLogin(context);
 
     expect(authnRequestXml(await res.text())).not.toContain('ForceAuthn');
-    expect(storeBodies[0]?.context).toBeUndefined();
+    // No re-authentication; only the request it answers, for the ACS to hold the sign-in to.
+    expect(storeBodies[0]?.context).toEqual({ flowChallengeId: 'login_1' });
   });
 
   it.each([

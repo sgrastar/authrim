@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   findByClientId: vi.fn(),
   challengeKind: vi.fn(),
   resolveInteraction: vi.fn(),
+  answersChallenge: vi.fn(),
   reauthPolicy: vi.fn(),
   usageGate: vi.fn(),
 }));
@@ -43,6 +44,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     readAuthorizationChallengeKind: mocks.challengeKind,
     readExternalProviderReauthPolicy: mocks.reauthPolicy,
     resolveSignInAttemptInteraction: mocks.resolveInteraction,
+    assertInteractionAnswersChallenge: mocks.answersChallenge,
     getTenantIdFromContext: vi.fn(() => 'default'),
     getUIConfig: vi.fn().mockResolvedValue({ baseUrl: 'https://auth.example.com' }),
     createDiagnosticLoggerFromContext: vi.fn().mockResolvedValue(null),
@@ -198,6 +200,7 @@ beforeEach(() => {
   mocks.resolveInteraction.mockImplementation(
     async (_db: unknown, input: { interactionId: string }) => input.interactionId
   );
+  mocks.answersChallenge.mockResolvedValue(undefined);
 });
 
 describe('external start for a tenant in lite mode', () => {
@@ -297,7 +300,16 @@ describe('external start for a tenant in lite mode', () => {
       providerId: 'provider-a',
       redirectUri: `${ORIGIN}/callback?lite_txn=txn-1&lite_grant=grant-1`,
       attemptInteractionId: 'interaction-1',
+      // The request it answers, for the callback to hold the sign-in to.
+      flowChallengeId: 'challenge-1',
     });
+    // The interaction was started for that request.
+    expect(mocks.answersChallenge).toHaveBeenCalledWith(
+      expect.anything(),
+      'default',
+      'interaction-1',
+      'challenge-1'
+    );
     expect(stored.userId).toBeUndefined();
     expect(stored.sessionId).toBeUndefined();
     expect(stored.prompt).toBeUndefined();
@@ -311,6 +323,15 @@ describe('external start for a tenant in lite mode', () => {
     expect(stored.flowId).not.toBe(`${LITE_EXTERNAL_FLOW_PREFIX}forged`);
     const authorization = mocks.createAuthorizationUrl.mock.calls[0][0] as Record<string, unknown>;
     expect(authorization).toMatchObject({ prompt: undefined, loginHint: undefined });
+  });
+
+  it('refuses an interaction that was started for another request', async () => {
+    const { InteractionChallengeMismatchError } = await import('@authrim/ar-lib-core');
+    mocks.answersChallenge.mockRejectedValueOnce(new InteractionChallengeMismatchError());
+    const response = await start('provider-a', 'lite_txn=txn-1&lite_grant=grant-1');
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: 'authorization_challenge_mismatch' });
+    expect(mocks.storeAuthState).not.toHaveBeenCalled();
   });
 
   it("reserves the invitation its grant carries (the sign-up's), never the query's", async () => {

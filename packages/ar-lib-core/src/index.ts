@@ -474,6 +474,7 @@ export * from './services/session-client-store';
 export * from './services/session-ttl';
 export * from './services/session-profile';
 export * from './services/flow-profile-refs';
+export * from './services/sign-in-flow-binding';
 export * from './services/external-provider-session-store';
 export {
   advancePasskeyAuthenticationState,

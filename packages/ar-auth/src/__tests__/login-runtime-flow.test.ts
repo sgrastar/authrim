@@ -2919,6 +2919,124 @@ describe('LoginUI runtime Flow handlers', () => {
     }
   });
 
+  it.each([
+    ['the tenant with an OIDC client', { target_type: 'tenant', client_id: 'client_1' }],
+    ['the tenant with a SAML SP', { target_type: 'tenant', saml_sp_id: 'https://sp.example' }],
+    [
+      'one client with another',
+      { target_type: 'oidc_client', target_id: 'client_a', client_id: 'client_b' },
+    ],
+    [
+      'one SP with another',
+      { target_type: 'saml_sp', target_id: 'https://a.example', saml_sp_id: 'https://b.example' },
+    ],
+    ['both an OIDC client and a SAML SP', { client_id: 'client_1', saml_sp_id: 'https://sp' }],
+  ])('refuses a Flow target naming %s', async (_name, target) => {
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({ body: { flow_kind: 'login', ...target } })
+    );
+    const data = await readJson(response);
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_target');
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+  });
+
+  describe('a session made while the interaction runs', () => {
+    /** The branching Flow, whose sign-in step names its own session profile. */
+    const profiledRuntime: FlowRuntimeContract = {
+      ...branchingRuntime,
+      ui: {
+        steps: branchingRuntime.ui.steps.map((step) =>
+          step.id === 'auth:step' ? { ...step, config: { session_profile_ref: 'short' } } : step
+        ),
+      },
+    };
+
+    async function submitWithSession(
+      runtimeSnapshot: FlowRuntimeContract,
+      session: { createdOffsetMs: number; data: Record<string, unknown> }
+    ) {
+      const startedAt = Date.UTC(2026, 10, 11);
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(startedAt);
+      try {
+        const { data: startData } = await startInteraction();
+        clock.mockReturnValue(startedAt + 5000);
+        resetAdapter();
+        mockSubmitQueries({
+          expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+          contractHash: String(startData.contract_hash),
+          signature: String(startData.signature),
+          currentNodeId: 'auth',
+          currentStepId: 'auth:step',
+          stepState: 'waiting_input',
+          runtimeSnapshot,
+          editorSnapshot: branchingEditor,
+          context: { protocol: 'direct', target_type: 'tenant', started_at_ms: startedAt },
+        });
+        mocks.sessionStore.getSessionRpc.mockResolvedValue({
+          userId: 'user_1',
+          expiresAt: startedAt + 60_000,
+          createdAt: startedAt + session.createdOffsetMs,
+          data: { authTime: Math.floor(startedAt / 1000), ...session.data },
+        });
+        const response = await loginRuntimeInteractionSubmitHandler(
+          createContext({
+            params: { interaction_id: 'interaction_1' },
+            headers: { Cookie: 'authrim_session=sess_runtime_1' },
+            body: {
+              step_id: 'auth:step',
+              node_id: 'auth',
+              selected_handle: 'passkey',
+              contract_hash: startData.contract_hash,
+              signature: startData.signature,
+            },
+          })
+        );
+        return { response, data: await readJson(response) };
+      } finally {
+        clock.mockRestore();
+      }
+    }
+
+    it('completes the Flow when it was made in this interaction', async () => {
+      const { response, data } = await submitWithSession(profiledRuntime, {
+        createdOffsetMs: 2000,
+        data: { runtime_interaction_id: 'interaction_1' },
+      });
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+    });
+
+    it.each([
+      ['in another interaction', { runtime_interaction_id: 'interaction_other' }],
+      ['by a route that records no interaction', {}],
+    ])('does not complete the Flow with one made %s', async (_label, sessionData) => {
+      const { data } = await submitWithSession(profiledRuntime, {
+        createdOffsetMs: 2000,
+        data: sessionData,
+      });
+      expect(data.completed).not.toBe(true);
+    });
+
+    it('takes one made before the interaction (single sign-on)', async () => {
+      const { response, data } = await submitWithSession(profiledRuntime, {
+        createdOffsetMs: -1000,
+        data: { runtime_interaction_id: 'interaction_other' },
+      });
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+    });
+
+    it('takes one from a route that records no interaction while the Flow sets nothing', async () => {
+      const { response, data } = await submitWithSession(branchingRuntime, {
+        createdOffsetMs: 2000,
+        data: {},
+      });
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+    });
+  });
+
   it('skips implicit account action nodes instead of returning a Continue step', async () => {
     const { data: startData } = await startInteraction(
       { flow_kind: 'registration', client_id: 'client_1' },
@@ -6647,19 +6765,9 @@ describe('the re-authentication challenge of a SAML request', () => {
         samlChallenge(),
       ],
       [
-        'a Flow assigned to another SP than the one it is bound to',
-        samlStartBody({ target_id: 'https://other.example.test/entity' }),
-        samlChallenge(),
-      ],
-      [
         'another tenant than its own binding says',
         samlStartBody(),
         samlChallenge({ metadata: { tenant_id: 'tenant_other' } }),
-      ],
-      [
-        'a target that also names an OIDC client',
-        samlStartBody({ client_id: 'client_1' }),
-        samlChallenge(),
       ],
       [
         'a challenge that is not a re-authentication',
@@ -6677,6 +6785,20 @@ describe('the re-authentication challenge of a SAML request', () => {
       expect(response.status).toBe(403);
       expect(data.error).toBe('authorization_challenge_mismatch');
       expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'a Flow assigned to another SP than the one it is bound to',
+        samlStartBody({ target_id: 'https://other.example.test/entity' }),
+      ],
+      ['a target that also names an OIDC client', samlStartBody({ client_id: 'client_1' })],
+    ])('is refused for %s, as a target that names two apps', async (_name, body) => {
+      const { response, data } = await startWith(body, samlChallenge());
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('invalid_target');
       expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
     });
 

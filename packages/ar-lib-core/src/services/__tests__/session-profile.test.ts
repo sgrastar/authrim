@@ -198,6 +198,10 @@ describe('the profiles a Flow names', () => {
       flowKind: 'login',
       completion: { behavior: 'service_site', service_site_path: '/portal' },
       live: true,
+      authorizationChallengeId: null,
+      samlRequestId: null,
+      clientId: null,
+      samlSpId: null,
     });
     // A completion that does not read as one is the tenant's destination.
     expect(

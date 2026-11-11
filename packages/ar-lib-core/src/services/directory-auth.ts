@@ -115,6 +115,8 @@ export interface DirectoryAuthMigrationTransactionRow {
   state: DirectoryAuthMigrationTransactionState;
   request_id: string | null;
   authorization_challenge_id: string | null;
+  /** The Flow interaction the directory sign-in ran in (core migration 008; null before it). */
+  attempt_interaction_id?: string | null;
   created_at: number;
   updated_at: number;
   expires_at: number;
@@ -249,6 +251,8 @@ export interface DirectoryAuthCreateTransactionInput {
   directorySubject?: string | null;
   requestId?: string | null;
   authorizationChallengeId?: string | null;
+  /** The Flow interaction the directory sign-in ran in, for the session the transaction ends in. */
+  attemptInteractionId?: string | null;
   now?: number;
 }
 
@@ -1012,18 +1016,22 @@ export async function createDirectoryAuthMigrationTransaction(
     state: 'active',
     request_id: input.requestId ?? null,
     authorization_challenge_id: input.authorizationChallengeId ?? null,
+    attempt_interaction_id: input.attemptInteractionId ?? null,
     created_at: now,
     updated_at: now,
     expires_at: now + ttlSeconds * 1000,
     completed_at: null,
     blocked_reason: null,
   };
+  // The interaction column (core migration 008) is written only when there is one, so a
+  // transaction without it is stored as before the column existed.
+  const interactionColumn = row.attempt_interaction_id ? ', attempt_interaction_id' : '';
   await adapter.execute(
     `INSERT INTO directory_auth_migration_transactions (
        id, tenant_id, campaign_id, user_id, connector_id, directory_subject,
-       token_hash, scope, state, request_id, authorization_challenge_id,
+       token_hash, scope, state, request_id, authorization_challenge_id${interactionColumn},
        created_at, updated_at, expires_at, completed_at, blocked_reason
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${interactionColumn ? ', ?' : ''}, ?, ?, ?, ?, ?)`,
     [
       row.id,
       row.tenant_id,
@@ -1036,6 +1044,7 @@ export async function createDirectoryAuthMigrationTransaction(
       row.state,
       row.request_id,
       row.authorization_challenge_id,
+      ...(interactionColumn ? [row.attempt_interaction_id] : []),
       row.created_at,
       row.updated_at,
       row.expires_at,

@@ -82,6 +82,13 @@ export async function loadInteractionFlowProfileRefs(
       completion: RegistrationCompletion | null;
       /** The interaction is live (created or active, not expired). */
       live: boolean;
+      /** The authorization request (challenge) the interaction was started for, if any. */
+      authorizationChallengeId: string | null;
+      /** The SAML request (stored AuthnRequest id) the interaction was started for, if any. */
+      samlRequestId: string | null;
+      /** The app the interaction was started for: an OIDC client, or a SAML SP (entity id). */
+      clientId: string | null;
+      samlSpId: string | null;
     })
   | null
 > {
@@ -90,9 +97,13 @@ export async function loadInteractionFlowProfileRefs(
     kind: string | null;
     state: string | null;
     expires_at: number | null;
+    context_json: string | null;
+    client_id: string | null;
+    saml_sp_id: string | null;
   }>(
     `SELECT v.runtime_snapshot_json AS runtime_snapshot_json, f.kind AS kind,
-            i.state AS state, i.expires_at AS expires_at
+            i.state AS state, i.expires_at AS expires_at, i.context_json AS context_json,
+            i.client_id AS client_id, i.saml_sp_id AS saml_sp_id
        FROM flow_interactions i
        JOIN flow_versions v ON v.id = i.flow_version_id AND v.tenant_id = i.tenant_id
        JOIN flows f ON f.id = v.flow_id AND f.tenant_id = v.tenant_id
@@ -108,7 +119,29 @@ export async function loadInteractionFlowProfileRefs(
     completion: row.kind === 'login' ? loginCompletionOfRuntime(runtime) : null,
     live:
       (row.state === 'created' || row.state === 'active') && Number(row.expires_at) > nowSeconds,
+    authorizationChallengeId: interactionContextString(
+      row.context_json,
+      'authorization_challenge_id'
+    ),
+    samlRequestId: interactionContextString(row.context_json, 'saml_request_id'),
+    clientId: row.client_id ?? null,
+    samlSpId: row.saml_sp_id ?? null,
   };
+}
+
+/** A request an interaction's stored request context names (`key`), else null. */
+function interactionContextString(
+  contextJson: string | null | undefined,
+  key: 'authorization_challenge_id' | 'saml_request_id'
+): string | null {
+  if (!contextJson) return null;
+  try {
+    const context: unknown = JSON.parse(contextJson);
+    const id = isRecord(context) ? context[key] : undefined;
+    return typeof id === 'string' && id ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

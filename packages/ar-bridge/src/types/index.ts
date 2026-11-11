@@ -182,6 +182,12 @@ export interface ExternalIdpAuthState {
    * interaction of the tenant: the callback records the sign-in's failures with it.
    */
   attemptInteractionId?: string;
+  /**
+   * The authorization request (challenge id) the sign-in answers: the callback holds it to that
+   * request's app (the interaction must have been started for it; with none, the app's own
+   * sign-in Flow holds).
+   */
+  flowChallengeId?: string;
   expiresAt: number;
   createdAt: number;
 }

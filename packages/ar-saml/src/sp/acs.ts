@@ -43,7 +43,7 @@ import {
   updateProfileOnLogin,
   readExternalProviderReauthPolicy,
   readExternalProviderUsagePolicy,
-  loadInteractionFlowProfileRefs,
+  resolveSignInFlowProfileRefs,
   normalizeMethodHandle,
   profileAllowsHandle,
   readAuthenticationProfile,
@@ -183,6 +183,8 @@ async function handleSPACSFor(
   // The Flow interaction the sign-in's start checked (known once the request is consumed), and the
   // account once found: a failed sign-in is recorded with them after the response.
   let attemptInteractionId: string | null = null;
+  // The authorization request the SP-initiated sign-in answers, as its start kept it.
+  let flowChallengeId: string | null = null;
   let attemptRequestId: string | null = null;
   let attemptUserId: string | null = null;
   const recordFailure = <T>(response: T, reasonCode: SignInAttemptReasonCode): T => {
@@ -283,6 +285,7 @@ async function handleSPACSFor(
       }
       unsettledInvitation = validatedRequest.context?.invitation ?? null;
       attemptInteractionId = validatedRequest.context?.attemptInteractionId ?? null;
+      flowChallengeId = validatedRequest.context?.flowChallengeId ?? null;
       lite.returnUrl = validatedRequest.context?.liteReturn ?? null;
       attemptRequestId = validatedRequest.requestId;
     } else if (
@@ -337,16 +340,24 @@ async function handleSPACSFor(
     // switches above, for sign-in or, for a start of ours, sign-up), and its session profile sets
     // the session made below. One no longer there or live is as a sign-in that names none (its
     // stale settings are not used); one that cannot be read refuses the sign-in.
-    let flowRefs: Awaited<ReturnType<typeof loadInteractionFlowProfileRefs>> = null;
-    if (attemptInteractionId && !reauthentication) {
+    // A start that answers an authorization request with no usable interaction takes the
+    // sign-in Flow of that request's app (the start checked an interaction it named answers it).
+    let flowRefs: { methodProfileRef: string; sessionProfileRef: string } | null = null;
+    // The live interaction whose Flow holds the sign-in: the session is recorded as made in it.
+    let flowInteractionId: string | null = null;
+    // A re-authentication keeps its own policy for which IdP may prove it (checked above), but its
+    // session still follows the Flow it ran in, and is recorded as made in it.
+    if (attemptInteractionId || flowChallengeId) {
       try {
-        const read = await loadInteractionFlowProfileRefs(
+        const resolved = await resolveSignInFlowProfileRefs(
+          env,
           await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-flow-profiles', { tenantId }),
           tenantId,
-          attemptInteractionId
+          { interactionId: attemptInteractionId, challengeId: flowChallengeId }
         );
-        flowRefs = read && read.live ? read : null;
-        if (flowRefs && flowRefs.methodProfileRef !== 'default' && usageKey) {
+        flowRefs = resolved.refs;
+        flowInteractionId = resolved.interactionId;
+        if (!reauthentication && flowRefs.methodProfileRef !== 'default' && usageKey) {
           const profile = await readAuthenticationProfile(env, tenantId, flowRefs.methodProfileRef);
           const handle = normalizeMethodHandle(`saml:${usageKey.providerId}`);
           // Each use as the Flow takes it, on top of the tenant's switches: what the sign-in then
@@ -489,7 +500,11 @@ async function handleSPACSFor(
       sessionTtl.seconds,
       authnContextClassRef,
       reauthProvenAt,
-      { ...profiled.snapshot }
+      {
+        // The Flow interaction it was made in (see ar-auth login-runtime-flow).
+        ...(flowInteractionId ? { runtime_interaction_id: flowInteractionId } : {}),
+        ...profiled.snapshot,
+      }
     );
 
     // Publish SAML authentication success event (non-blocking)

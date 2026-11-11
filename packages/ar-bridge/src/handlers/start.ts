@@ -34,6 +34,8 @@ import {
   readExternalProviderReauthPolicy,
   verifyHumanVerificationWithRunner,
   resolveSignInAttemptInteraction,
+  assertInteractionAnswersChallenge,
+  isInteractionChallengeMismatchError,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { clientSsoOverride, signInFlowProfileSso } from '../services/silent-sso';
@@ -569,6 +571,35 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         );
       }
     }
+    // A sign-in that answers an authorization request may only name an interaction started for
+    // it (another request's Flow would lend it its methods and session).
+    if (attemptInteractionId && authorizationChallengeId) {
+      try {
+        await assertInteractionAnswersChallenge(
+          createAuthContextFromHono(c, tenantIdResolved).coreAdapter,
+          tenantIdResolved,
+          attemptInteractionId,
+          authorizationChallengeId
+        );
+      } catch (error) {
+        if (isInteractionChallengeMismatchError(error)) {
+          return c.json(
+            {
+              error: 'authorization_challenge_mismatch',
+              error_description: 'The sign-in was not started for this authorization request.',
+            },
+            403
+          );
+        }
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The sign-in flow is unavailable.',
+          },
+          503
+        );
+      }
+    }
 
     // 8. Store state in D1 (including code_challenge for client-side PKCE)
     await storeAuthState(c.env, {
@@ -592,6 +623,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         : {}),
       ...(signupInvitation ?? {}),
       ...(attemptInteractionId ? { attemptInteractionId } : {}),
+      ...(authorizationChallengeId ? { flowChallengeId: authorizationChallengeId } : {}),
       expiresAt: getStateExpiresAt(),
     });
 

@@ -53,6 +53,8 @@ import {
   resolveAuthMaxFailedAttempts,
   resolveEmailCodeTtlSeconds,
   resolveEmailSendLimit,
+  isInteractionChallengeMismatchError,
+  resolveSignInFlowProfileRefs,
 } from '@authrim/ar-lib-core';
 import {
   accountAuthenticationDenialReason,
@@ -78,7 +80,13 @@ import {
 } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
 import { getRequestIssuer } from './issuer';
-import { sessionForChallenge, sessionTtlForProfile } from './flow-session-profile';
+import {
+  interactionChallengeMismatchResponse,
+  namedInteractionChallengeRefusal,
+  profileTakesMethod,
+  sessionForChallenge,
+  sessionTtlForProfile,
+} from './flow-session-profile';
 import { flowCompletionRedirect } from './registration-policy-gate';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import {
@@ -515,6 +523,16 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         503
       );
     }
+    // The interaction must have been started for the request it answers: checked before the
+    // directory is asked, so neither the sign-in nor a recovery or migration it leads to (kept in a
+    // transaction with both) carries another request's Flow.
+    const interactionRefusal = await namedInteractionChallengeRefusal(
+      c,
+      tenantId,
+      signInAttemptInteractionFromMetadata(attemptInteraction),
+      authorizationChallengeId || null
+    );
+    if (interactionRefusal) return interactionRefusal;
     const record = signInAttemptFailureRecorder(
       c,
       tenantId,
@@ -657,6 +675,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
             connector,
             username,
             authorizationChallengeId: authorizationChallengeId || null,
+            attemptInteractionId: signInAttemptInteractionFromMetadata(attemptInteraction),
             requestId: error.details.requestId,
             now: Date.now(),
           });
@@ -885,9 +904,13 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         tenantId,
         'directory_password',
         attemptInteraction,
-        'directory_password'
+        'directory_password',
+        authorizationChallengeId || null
       );
-    } catch {
+    } catch (error) {
+      if (isInteractionChallengeMismatchError(error)) {
+        return failed(interactionChallengeMismatchResponse(c), 'challenge_mismatch');
+      }
       return failed(
         c.json(
           {
@@ -944,6 +967,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           verdict,
           decision: migrationDecision,
           authorizationChallengeId: authorizationChallengeId || null,
+          attemptInteractionId: signInAttemptInteractionFromMetadata(attemptInteraction),
           inviteToken: inviteToken || null,
           now,
         });
@@ -1005,6 +1029,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         proven_at: now,
         directory_connector_id: connector.connectorId,
         wordwarden_connector_id: connector.wordwardenConnectorId,
+        // The Flow interaction it was made in (see login-runtime-flow sessionMadeInInteraction).
+        ...(flowSession.interactionId ? { runtime_interaction_id: flowSession.interactionId } : {}),
         ...flowSession.profiled.snapshot,
       },
       tenantId
@@ -1290,6 +1316,10 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
     if (!transaction?.user_id) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
+    // The Flow the session follows, read before anything is used up or completed (a read that
+    // fails leaves the transaction to be tried again), while the request it answers is there.
+    const flowProfile = await migrationFlowProfile(c, tenantId, transaction);
+    if (flowProfile instanceof Response) return flowProfile;
 
     const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
     let challengeData: {
@@ -1430,6 +1460,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       provenAt: transaction.created_at,
       method: 'directory_password_passkey_migration',
       authorizationChallengeId: transaction.authorization_challenge_id ?? undefined,
+      flowProfile,
       authorizationContinuation,
     });
   } catch (error) {
@@ -1653,6 +1684,38 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
     if (!transaction?.user_id) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
+    // The Flow the session follows, read before anything is used up or completed (a read that
+    // fails leaves the transaction to be tried again), while the request it answers is there.
+    const flowProfile = await migrationFlowProfile(c, tenantId, transaction);
+    if (flowProfile instanceof Response) return flowProfile;
+    // A recovery signs the person in by the emailed code alone (the directory could not be asked):
+    // the Flow must take an emailed code for sign-in.
+    if (transaction.scope === 'recovery') {
+      let allowed: boolean;
+      try {
+        allowed = await profileTakesMethod(
+          c,
+          tenantId,
+          flowProfile.methodProfileRef,
+          'email_code',
+          'login'
+        );
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Session settings are unavailable.',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      }
+      if (!allowed) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+          extensions: { authentication_method: 'email_code', usage: 'login' },
+        });
+      }
+    }
 
     const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
     let challengeData: {
@@ -1768,6 +1831,7 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
           ? 'directory_unavailable_email_code_recovery'
           : 'directory_password_email_code_fallback',
       authorizationChallengeId: transaction.authorization_challenge_id ?? undefined,
+      flowProfile,
       authorizationContinuation,
     });
   } catch (error) {
@@ -1795,6 +1859,8 @@ async function createMigrationRequiredResponse(
     verdict: DirectoryPasswordSuccess;
     decision: Extract<DirectoryAuthMigrationDecision, { action: 'require_passkey' }>;
     authorizationChallengeId?: string | null;
+    /** The Flow interaction the sign-in ran in, for the session the migration ends in. */
+    attemptInteractionId?: string | null;
     inviteToken?: string | null;
     now: number;
   }
@@ -1808,6 +1874,7 @@ async function createMigrationRequiredResponse(
     directorySubject: input.verdict.subject.directory_id,
     requestId: input.verdict.request_id,
     authorizationChallengeId: input.authorizationChallengeId ?? null,
+    attemptInteractionId: input.attemptInteractionId ?? null,
     scope: 'passkey_enrollment',
     ttlSeconds: input.decision.campaign.transaction_ttl_seconds,
     tokenHash: await hashMigrationTransactionToken(input.tenantId, token),
@@ -1857,6 +1924,8 @@ async function createDirectoryUnavailableRecoveryResponse(
     connector: ResolvedDirectoryConnector;
     username: string;
     authorizationChallengeId?: string | null;
+    /** The Flow interaction the sign-in ran in, for the session the recovery ends in. */
+    attemptInteractionId?: string | null;
     requestId?: string;
     now: number;
   }
@@ -1927,6 +1996,7 @@ async function createDirectoryUnavailableRecoveryResponse(
       ? `${DIRECTORY_UNAVAILABLE_RECOVERY_REQUEST_PREFIX}${input.requestId}`
       : DIRECTORY_UNAVAILABLE_RECOVERY_REQUEST_PREFIX.slice(0, -1),
     authorizationChallengeId: input.authorizationChallengeId ?? null,
+    attemptInteractionId: input.attemptInteractionId ?? null,
     scope: 'recovery',
     ttlSeconds: campaign.transaction_ttl_seconds,
     tokenHash: await hashMigrationTransactionToken(input.tenantId, token),
@@ -2014,6 +2084,8 @@ async function createEmailFallbackMigrationResponse(
     verdict: DirectoryPasswordSuccess;
     decision: Extract<DirectoryAuthMigrationDecision, { action: 'require_passkey' }>;
     authorizationChallengeId?: string | null;
+    /** The Flow interaction the sign-in ran in, for the session the migration ends in. */
+    attemptInteractionId?: string | null;
     inviteToken?: string | null;
     now: number;
   },
@@ -2058,6 +2130,7 @@ async function createEmailFallbackMigrationResponse(
     directorySubject: input.verdict.subject.directory_id,
     requestId: input.verdict.request_id,
     authorizationChallengeId: input.authorizationChallengeId ?? null,
+    attemptInteractionId: input.attemptInteractionId ?? null,
     scope: 'email_code_fallback',
     ttlSeconds: input.decision.campaign.transaction_ttl_seconds,
     tokenHash: await hashMigrationTransactionToken(input.tenantId, token),
@@ -2073,6 +2146,48 @@ async function createEmailFallbackMigrationResponse(
       masked_email: maskEmail(input.runtimeUser.email),
     },
   };
+}
+
+interface MigrationFlowProfile {
+  methodProfileRef: string;
+  sessionProfileRef: string;
+  /** The live interaction the sign-in ran in, recorded with the session. */
+  interactionId: string | null;
+}
+
+/**
+ * The Flow a migration's or recovery's session follows: the interaction the sign-in ran in (kept
+ * with the transaction, held to its request when the sign-in started) while it is live, else the
+ * sign-in Flow of the app whose request it answers, else the tenant's. Read before the request is
+ * answered (it names the app only until then). A Response when it cannot be read.
+ */
+async function migrationFlowProfile(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  transaction: { attempt_interaction_id?: string | null; authorization_challenge_id: string | null }
+): Promise<MigrationFlowProfile | Response> {
+  try {
+    const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const resolved = await resolveSignInFlowProfileRefs(c.env, db, tenantId, {
+      interactionId: transaction.attempt_interaction_id ?? null,
+      challengeId: transaction.authorization_challenge_id,
+    });
+    if (resolved.interactionId || transaction.authorization_challenge_id) {
+      return { ...resolved.refs, interactionId: resolved.interactionId };
+    }
+    const tenantFlow = await loadAssignedLoginFlowProfileRefs(db, tenantId, {});
+    return {
+      methodProfileRef: tenantFlow?.methodProfileRef ?? 'default',
+      sessionProfileRef: tenantFlow?.sessionProfileRef ?? 'default',
+      interactionId: null,
+    };
+  } catch {
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'Session settings are unavailable.' },
+      503,
+      { 'Retry-After': '1' }
+    );
+  }
 }
 
 async function createDirectorySessionSuccessResponse(
@@ -2098,6 +2213,8 @@ async function createDirectorySessionSuccessResponse(
       | 'directory_password_email_code_fallback'
       | 'directory_unavailable_email_code_recovery';
     authorizationChallengeId?: string;
+    /** The Flow the session follows (`migrationFlowProfile`) and the interaction it ran in. */
+    flowProfile: MigrationFlowProfile;
     authorizationContinuation?: AuthorizationChallengeContinuation;
   }
 ): Promise<Response> {
@@ -2117,20 +2234,15 @@ async function createDirectorySessionSuccessResponse(
     }
     return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
   }
-  // A migration or recovery finishes outside the sign-in's interaction: the session follows the
-  // session profile of the tenant's own sign-in Flow.
+  // The Flow the migration or recovery ran under, resolved before its request was answered.
   let profiled: Awaited<ReturnType<typeof sessionTtlForProfile>>;
+  const madeInInteractionId = input.flowProfile.interactionId;
   try {
-    const tenantFlow = await loadAssignedLoginFlowProfileRefs(
-      createAuthContextFromHono(c, input.tenantId).coreAdapter,
-      input.tenantId,
-      {}
-    );
     profiled = await sessionTtlForProfile(
       c,
       input.tenantId,
       'directory_password',
-      tenantFlow?.sessionProfileRef ?? 'default'
+      input.flowProfile.sessionProfileRef
     );
   } catch {
     return c.json(
@@ -2156,6 +2268,8 @@ async function createDirectorySessionSuccessResponse(
       ...directorySessionUnverifiedAmr(input.method),
       // When the authentication was proven (milliseconds), for assurance step-ups.
       proven_at: input.provenAt,
+      // The Flow interaction it was made in (see login-runtime-flow sessionMadeInInteraction).
+      ...(madeInInteractionId ? { runtime_interaction_id: madeInInteractionId } : {}),
       // The method a re-authentication takes and when it was proven, where it differs from the
       // oldest proof (a fallback's email code).
       ...(input.reauthProof

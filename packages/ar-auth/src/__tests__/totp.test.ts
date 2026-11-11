@@ -123,6 +123,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    // The request a sign-in answers is not read here (sign-in-flow-binding tests cover it):
+    // the interaction alone decides, as before the binding.
+    resolveSignInFlowProfileRefs: (
+      ...[env, db, tenantId, binding]: Parameters<typeof actual.resolveSignInFlowProfileRefs>
+    ) => actual.resolveSignInFlowProfileRefs(env, db, tenantId, { ...binding, challengeId: null }),
     checkEmailRegistration: async (...args: unknown[]) =>
       registrationCheck.override ??
       actual.checkEmailRegistration(

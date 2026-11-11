@@ -78,6 +78,7 @@ import {
   screenAnswersOf,
   publishEvent,
   isSAMLAuthorizationChallenge,
+  flowProfileRefsOfRuntime,
 } from '@authrim/ar-lib-core';
 import { resolveRuntimeScreenRow } from '@authrim/ar-lib-core/services/runtime-screen-resolution';
 import { applyRuntimeScreenOptions, runtimeAttributeKey } from './runtime-screen-options';
@@ -1026,28 +1027,36 @@ function resolveTarget(body: StartRequest): ResolvedTarget | null {
   const explicitTargetType = body.target_type;
   const explicitTargetId = readString(body.target_id, 200);
 
+  // The app a Flow is chosen for is the app the interaction is recorded and checked for: a target
+  // that names one app (or the tenant) while the request names another is refused, or the Flow of
+  // one would run for another's authorization request (sign-in-flow-binding).
   if (explicitTargetType) {
     if (explicitTargetType === 'tenant') {
-      return { targetType: 'tenant', targetId: null, clientId, samlSpId };
+      if (clientId || samlSpId) return null;
+      return { targetType: 'tenant', targetId: null, clientId: null, samlSpId: null };
     }
     if (explicitTargetType === 'oidc_client' && explicitTargetId) {
+      if (samlSpId || (clientId && clientId !== explicitTargetId)) return null;
       return {
         targetType: 'oidc_client',
         targetId: explicitTargetId,
-        clientId: clientId ?? explicitTargetId,
-        samlSpId,
+        clientId: explicitTargetId,
+        samlSpId: null,
       };
     }
     if (explicitTargetType === 'saml_sp' && explicitTargetId) {
+      if (clientId || (samlSpId && samlSpId !== explicitTargetId)) return null;
       return {
         targetType: 'saml_sp',
         targetId: explicitTargetId,
-        clientId,
-        samlSpId: samlSpId ?? explicitTargetId,
+        clientId: null,
+        samlSpId: explicitTargetId,
       };
     }
     return null;
   }
+  // Both an OIDC client and a SAML SP: which app it is for cannot be told.
+  if (clientId && samlSpId) return null;
 
   if (clientId) {
     return { targetType: 'oidc_client', targetId: clientId, clientId, samlSpId };
@@ -3004,7 +3013,7 @@ async function resolveSessionCheckSelectedHandle(
   c: AuthContext,
   tenantId: string,
   requestContext: FlowRequestContext,
-  options: { createdAfterMs?: number } = {}
+  options: RuntimeSessionOptions = {}
 ): Promise<{
   selectedHandle: 'continue' | 'authenticate' | null;
   userId: string | null;
@@ -3237,13 +3246,49 @@ function interactionStartedAtMs(interaction: FlowInteractionRow): number {
     : (interaction.expires_at - FLOW_RUNTIME_INTERACTION_TTL_SECONDS + 1) * 1000;
 }
 
+/**
+ * Which sessions an interaction takes, beyond what its authorization request asks
+ * (`resolveSessionForChallenge`).
+ *
+ * - A registration: only a sign-in made since it began (`createdAfterMs`).
+ * - Any Flow: a session made since it began must have been made in it (`madeIn`). Its sign-in ran
+ *   under this Flow's profiles only then; one made in another interaction (another request's Flow,
+ *   with wider methods or a longer session) or in none would carry this Flow's request on settings
+ *   it does not allow. A session from before the interaction is single sign-on, which the request
+ *   judges. A sign-in route that does not record its interaction in the session is taken only
+ *   while this Flow sets nothing of its own (both profiles Default).
+ */
+interface RuntimeSessionOptions {
+  createdAfterMs?: number;
+  madeIn?: { interactionId: string; startedAtMs: number; profilesAreDefault: boolean };
+}
+
 function sessionOptionsForRuntime(
   runtime: FlowRuntimeContract,
   interaction: FlowInteractionRow
-): { createdAfterMs?: number } {
-  return runtime.flow_kind === 'registration'
-    ? { createdAfterMs: interactionStartedAtMs(interaction) }
-    : {};
+): RuntimeSessionOptions {
+  const startedAtMs = interactionStartedAtMs(interaction);
+  const refs = flowProfileRefsOfRuntime(runtime);
+  return {
+    ...(runtime.flow_kind === 'registration' ? { createdAfterMs: startedAtMs } : {}),
+    madeIn: {
+      interactionId: interaction.id,
+      startedAtMs,
+      profilesAreDefault:
+        refs.methodProfileRef === 'default' && refs.sessionProfileRef === 'default',
+    },
+  };
+}
+
+/** Whether a session may stand for the interaction (see `RuntimeSessionOptions.madeIn`). */
+function sessionMadeInInteraction(
+  session: Session,
+  madeIn: RuntimeSessionOptions['madeIn']
+): boolean {
+  if (!madeIn || session.createdAt < madeIn.startedAtMs) return true;
+  const recorded = session.data?.runtime_interaction_id;
+  if (typeof recorded === 'string' && recorded) return recorded === madeIn.interactionId;
+  return madeIn.profilesAreDefault;
 }
 
 /**
@@ -3263,8 +3308,7 @@ async function resolveSessionForChallenge(
   c: AuthContext,
   tenantId: string,
   authorizationChallengeId: string | undefined | null,
-  options: {
-    createdAfterMs?: number;
+  options: RuntimeSessionOptions & {
     /**
      * Judge the authorization request (is it gone) even with no session to judge: a request that
      * is gone is found out at once, not when the user has signed in to no purpose.
@@ -3274,10 +3318,13 @@ async function resolveSessionForChallenge(
 ): Promise<SessionForChallenge> {
   const current = await getCurrentSession(c, tenantId);
   // A registration is answered only by a sign-in made since it began: a session from before
-  // (another account's, or the same one's) is no proof of this registration.
+  // (another account's, or the same one's) is no proof of this registration. A session made
+  // since the interaction began in another (or none) is no proof of it either: the person signs
+  // in again, under this Flow.
   const session =
     current?.userId &&
-    (options.createdAfterMs === undefined || current.createdAt >= options.createdAfterMs)
+    (options.createdAfterMs === undefined || current.createdAt >= options.createdAfterMs) &&
+    sessionMadeInInteraction(current, options.madeIn)
       ? current
       : null;
   if (!authorizationChallengeId || (!session && !options.judgeChallengeWithoutSession)) {

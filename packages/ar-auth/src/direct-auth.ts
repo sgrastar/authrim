@@ -30,6 +30,7 @@ import {
   normalizeMethodHandle,
   SIGN_IN_ATTEMPT_INTERACTION_METADATA_KEY,
   signInAttemptInteractionFromMetadata,
+  isInteractionChallengeMismatchError,
 } from '@authrim/ar-lib-core';
 import { settleRegistrationPending } from './registration-pending';
 import {
@@ -172,6 +173,8 @@ import {
 import { readLiteMode } from './lite-mode';
 import {
   interactionAllowsSignInMethod,
+  interactionChallengeMismatchResponse,
+  namedInteractionChallengeRefusal,
   sessionTtlForInteraction,
   sessionTtlForProfile,
 } from './flow-session-profile';
@@ -1781,6 +1784,14 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       authorization_challenge_id
     );
     if (typeof turnstileAction !== 'string') return turnstileAction.error;
+    // The Flow interaction it names must have been started for the request it answers.
+    const interactionRefusal = await namedInteractionChallengeRefusal(
+      c,
+      tenantId,
+      undefined,
+      authorization_challenge_id
+    );
+    if (interactionRefusal) return interactionRefusal;
     const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
       c,
       tenantId,
@@ -2324,6 +2335,13 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         variables: { field: 'authorization_challenge_id' },
       });
     }
+    const signupInteractionRefusal = await namedInteractionChallengeRefusal(
+      c,
+      tenantId,
+      undefined,
+      authorization_challenge_id
+    );
+    if (signupInteractionRefusal) return signupInteractionRefusal;
     const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
       c,
       tenantId,
@@ -3643,6 +3661,13 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       );
       if (typeof resolvedAction !== 'string') return resolvedAction.error;
       challengeType = resolvedAction;
+      const interactionRefusal = await namedInteractionChallengeRefusal(
+        c,
+        tenantId,
+        boundRuntimeInteractionId,
+        authorization_challenge_id
+      );
+      if (interactionRefusal) return interactionRefusal;
     }
     const reauthUserId =
       challengeType === 'reauth'
@@ -4602,13 +4627,28 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     // What the proof was for, as its challenge recorded it (not how new the account is).
     const signedUp = metadata.method === 'passkey_signup' || metadata.usage === 'signup';
     const signInMethod = directSessionMethodHandle(metadata);
+    // The authorization request the session answers (the artifact's, or the one named here, as
+    // continued below): the interaction must have been started for it, and with none the app's
+    // own sign-in Flow holds (a sign-up's is its registration Flow).
+    const artifactChallengeForFlow =
+      typeof metadata.authorization_challenge_id === 'string'
+        ? metadata.authorization_challenge_id
+        : null;
+    const flowSource = {
+      interactionId: runtimeInteractionId,
+      challengeId:
+        metadata.browser_session_only === true
+          ? artifactChallengeForFlow
+          : authorization_challenge_id || artifactChallengeForFlow,
+      assignedFallback: !signedUp,
+    };
     let profiled: Awaited<ReturnType<typeof sessionTtlForInteraction>>;
     try {
       if (
         !(await interactionAllowsSignInMethod(
           c,
           tenantId,
-          runtimeInteractionId,
+          flowSource,
           signInMethod,
           signedUp ? 'signup' : 'login'
         ))
@@ -4630,8 +4670,11 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
               'direct_auth',
               (await signUpPolicyFor(c, tenantId, null)).sessionProfileRef
             )
-          : await sessionTtlForInteraction(c, tenantId, 'direct_auth', runtimeInteractionId);
+          : await sessionTtlForInteraction(c, tenantId, 'direct_auth', flowSource);
     } catch (error) {
+      if (isInteractionChallengeMismatchError(error)) {
+        return interactionChallengeMismatchResponse(c);
+      }
       log.error('Direct Auth session profile unavailable', {
         action: 'direct_auth_session_profile',
         errorType: error instanceof Error ? error.name : 'Unknown',

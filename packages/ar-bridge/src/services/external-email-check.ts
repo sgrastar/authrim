@@ -1,6 +1,6 @@
 import {
-  loadInteractionFlowProfileRefs,
   loadInteractionRegistrationPolicy,
+  resolveSignInFlowProfileRefs,
   profileAllowsHandle,
   readAuthenticationProfile,
   resolveProfiledSessionTtl,
@@ -78,14 +78,18 @@ export async function externalSessionProfile(
   input: {
     tenantId: string;
     interactionId: string | undefined;
+    /** The authorization request the sign-in answers (kept from the start). */
+    challengeId?: string | undefined;
     provider: { slug?: string | null; id: string };
     isNewUser: boolean;
   }
-): Promise<{ allowed: boolean; profiled: ProfiledSessionTtl }> {
+): Promise<{ allowed: boolean; profiled: ProfiledSessionTtl; interactionId: string | null }> {
   if (input.isNewUser) {
     const signUp = await loadExternalSignUpPolicy(env, input.tenantId, input.interactionId);
     return {
       allowed: true,
+      // The interaction it ran in, as the start checked it (live then).
+      interactionId: input.interactionId ?? null,
       profiled: await resolveProfiledSessionTtl(
         env,
         input.tenantId,
@@ -97,13 +101,14 @@ export async function externalSessionProfile(
   const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'bridge-external-sign-in', {
     tenantId: input.tenantId,
   });
-  const read = input.interactionId
-    ? await loadInteractionFlowProfileRefs(core, input.tenantId, input.interactionId)
-    : null;
-  // One gone or no longer live since the start: as a sign-in that names none (its stale
-  // settings are not used).
-  const refs = read && read.live ? read : null;
-  const methodRef = refs?.methodProfileRef ?? 'default';
+  // The live interaction's Flow (checked at the start to answer the same request); one gone or
+  // no longer live since is as none named (its stale settings are not used). With none, a
+  // sign-in that answers a request runs under its app's sign-in Flow, else the Default profiles.
+  const { refs, interactionId } = await resolveSignInFlowProfileRefs(env, core, input.tenantId, {
+    interactionId: input.interactionId,
+    challengeId: input.challengeId,
+  });
+  const methodRef = refs.methodProfileRef;
   const allowed =
     methodRef === 'default' ||
     profileAllowsHandle(
@@ -113,11 +118,12 @@ export async function externalSessionProfile(
     );
   return {
     allowed,
+    interactionId,
     profiled: await resolveProfiledSessionTtl(
       env,
       input.tenantId,
       'default',
-      refs?.sessionProfileRef ?? 'default'
+      refs.sessionProfileRef
     ),
   };
 }

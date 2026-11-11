@@ -4,43 +4,52 @@
  *
  * The interaction is the one bound to the sign-in on the server (in a challenge or an artifact),
  * never one a request merely names: a client cannot pick another Flow's longer session or wider
- * methods. With no interaction, the tenant's own settings hold (the Default profiles).
+ * methods. A sign-in that answers an authorization request is held to it (`sign-in-flow-binding`):
+ * its interaction must have been started for that request, and with none the app's own sign-in
+ * Flow holds. Otherwise, with no interaction, the tenant's own settings hold (the Default
+ * profiles).
  */
 import type { Context } from 'hono';
 import {
+  assertInteractionAnswersChallenge,
   createAuthContextFromHono,
-  loadInteractionFlowProfileRefs,
+  isInteractionChallengeMismatchError,
+  SIGN_IN_ATTEMPT_INTERACTION_HEADER,
   profileAllowsHandle,
   readAuthenticationProfile,
   resolveProfiledSessionTtl,
+  resolveSignInFlowProfileRefs,
   signInAttemptInteractionFromMetadata,
   type Env,
   type FlowProfileRefs,
   type ProfiledSessionTtl,
   type SessionTtlContext,
+  type SignInFlowBinding,
 } from '@authrim/ar-lib-core';
 
 type AuthContext = Context<{ Bindings: Env }>;
 
-const INTERACTION_ID = /^[A-Za-z0-9_.:-]{1,128}$/u;
-const DEFAULT_REFS: FlowProfileRefs = { methodProfileRef: 'default', sessionProfileRef: 'default' };
+/** The interaction alone (a sign-in that answers no request), or the full binding. */
+export type SignInFlowSource = string | null | undefined | SignInFlowBinding;
+
+function bindingOf(source: SignInFlowSource): SignInFlowBinding {
+  return source !== null && typeof source === 'object' ? source : { interactionId: source };
+}
 
 /**
- * The profiles of the Flow a bound interaction runs; the Default ones with no interaction, or one
- * that is not there or no longer live (as a sign-in that names none: a stale Flow's settings are
- * not used). A failed read is thrown: the sign-in is not taken under settings the Flow may not
- * allow.
+ * The profiles a sign-in runs under (`resolveSignInFlowProfileRefs`): a live interaction's, the
+ * assigned sign-in Flow's for a request with no usable interaction, else the Default ones. Throws
+ * `InteractionChallengeMismatchError` for an interaction of another request, and a failed read:
+ * the sign-in is not taken under settings the Flow may not allow.
  */
 export async function interactionProfileRefs(
   c: AuthContext,
   tenantId: string,
-  interactionId: string | null | undefined
+  source: SignInFlowSource
 ): Promise<FlowProfileRefs> {
-  if (!interactionId || !INTERACTION_ID.test(interactionId)) return { ...DEFAULT_REFS };
   const db = createAuthContextFromHono(c, tenantId).coreAdapter;
-  const refs = await loadInteractionFlowProfileRefs(db, tenantId, interactionId);
-  if (!refs || !refs.live) return { ...DEFAULT_REFS };
-  return { methodProfileRef: refs.methodProfileRef, sessionProfileRef: refs.sessionProfileRef };
+  const resolved = await resolveSignInFlowProfileRefs(c.env, db, tenantId, bindingOf(source));
+  return resolved.refs;
 }
 
 /**
@@ -57,14 +66,14 @@ export async function sessionTtlForProfile(
   return resolveProfiledSessionTtl(c.env, tenantId, context, sessionProfileRef);
 }
 
-/** As `sessionTtlForProfile`, for the Flow a bound interaction runs. */
+/** As `sessionTtlForProfile`, for the Flow the sign-in runs under. */
 export async function sessionTtlForInteraction(
   c: AuthContext,
   tenantId: string,
   context: SessionTtlContext,
-  interactionId: string | null | undefined
+  source: SignInFlowSource
 ): Promise<ProfiledSessionTtl> {
-  const refs = await interactionProfileRefs(c, tenantId, interactionId);
+  const refs = await interactionProfileRefs(c, tenantId, source);
   return sessionTtlForProfile(c, tenantId, context, refs.sessionProfileRef);
 }
 
@@ -79,40 +88,116 @@ const HANDLE_OF_METHOD: Record<string, string> = {
   guest: 'guest',
 };
 
-/**
- * Whether the Flow a bound interaction runs takes the sign-in method (`passkey`, `email_code`…,
- * or an external provider's handle). With no interaction, the tenant's settings decide (they are
- * checked where the method starts), so this allows it.
- */
-export async function interactionAllowsSignInMethod(
+/** Whether a method profile takes the sign-in method (`passkey`, `email_code`…, or a handle). */
+export async function profileTakesMethod(
   c: AuthContext,
   tenantId: string,
-  interactionId: string | null | undefined,
+  methodProfileRef: string,
   method: string | null,
-  usage: 'login' | 'signup' = 'login'
+  usage: 'login' | 'signup'
 ): Promise<boolean> {
-  const refs = await interactionProfileRefs(c, tenantId, interactionId);
-  if (refs.methodProfileRef === 'default') return true;
+  if (methodProfileRef === 'default') return true;
   // A Flow that narrows its methods takes no sign-in whose method is not known.
   if (!method) return false;
-  const profile = await readAuthenticationProfile(c.env, tenantId, refs.methodProfileRef);
+  const profile = await readAuthenticationProfile(c.env, tenantId, methodProfileRef);
   return profileAllowsHandle(profile, HANDLE_OF_METHOD[method] ?? method, usage);
 }
 
 /**
- * A sign-in that names its Flow through a challenge (the interaction it was started with):
- * whether the Flow takes the method, and the new session's lifetime by its session profile.
- * Throws when a profile cannot be read.
+ * Whether the Flow the sign-in runs under takes the sign-in method (`passkey`, `email_code`…,
+ * or an external provider's handle). Under the Default profile, the tenant's settings decide
+ * (they are checked where the method starts), so this allows it.
+ */
+export async function interactionAllowsSignInMethod(
+  c: AuthContext,
+  tenantId: string,
+  source: SignInFlowSource,
+  method: string | null,
+  usage: 'login' | 'signup' = 'login'
+): Promise<boolean> {
+  const refs = await interactionProfileRefs(c, tenantId, source);
+  return profileTakesMethod(c, tenantId, refs.methodProfileRef, method, usage);
+}
+
+/**
+ * A sign-in that names its Flow through a challenge (the interaction it was started with), and
+ * answers `authorizationChallengeId` when it answers a request: whether the Flow takes the
+ * method, and the new session's lifetime by its session profile. Throws when a profile cannot be
+ * read, and `InteractionChallengeMismatchError` for an interaction of another request.
  */
 export async function sessionForChallenge(
   c: AuthContext,
   tenantId: string,
   context: SessionTtlContext,
   metadata: Record<string, unknown> | null | undefined,
-  method: string
-): Promise<{ allowed: boolean; profiled: ProfiledSessionTtl }> {
-  const interactionId = signInAttemptInteractionFromMetadata(metadata);
-  const allowed = await interactionAllowsSignInMethod(c, tenantId, interactionId, method);
-  const profiled = await sessionTtlForInteraction(c, tenantId, context, interactionId);
-  return { allowed, profiled };
+  method: string,
+  authorizationChallengeId?: string | null
+): Promise<{ allowed: boolean; profiled: ProfiledSessionTtl; interactionId: string | null }> {
+  const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+  const resolved = await resolveSignInFlowProfileRefs(c.env, db, tenantId, {
+    interactionId: signInAttemptInteractionFromMetadata(metadata),
+    challengeId: authorizationChallengeId,
+  });
+  const allowed = await profileTakesMethod(
+    c,
+    tenantId,
+    resolved.refs.methodProfileRef,
+    method,
+    'login'
+  );
+  const profiled = await sessionTtlForProfile(
+    c,
+    tenantId,
+    context,
+    resolved.refs.sessionProfileRef
+  );
+  return { allowed, profiled, interactionId: resolved.interactionId };
+}
+
+/**
+ * The answer to a sign-in whose interaction was started for another authorization request (or
+ * for none) than the one it answers.
+ */
+export function interactionChallengeMismatchResponse(c: AuthContext): Response {
+  return c.json(
+    {
+      error: 'authorization_challenge_mismatch',
+      error_description: 'The sign-in was not started for this authorization request.',
+    },
+    403
+  );
+}
+
+/**
+ * At the start of a sign-in or sign-up that answers an authorization request: refused (403) when
+ * the interaction it names (`interactionId`, else the interaction header) was started for another
+ * request, or for none; 503 when that cannot be read. Null when it may go on.
+ */
+export async function namedInteractionChallengeRefusal(
+  c: AuthContext,
+  tenantId: string,
+  interactionId: string | null | undefined,
+  challengeId: string | null | undefined
+): Promise<Response | null> {
+  if (!challengeId) return null;
+  const named = interactionId ?? c.req.header(SIGN_IN_ATTEMPT_INTERACTION_HEADER) ?? null;
+  if (!named) return null;
+  try {
+    await assertInteractionAnswersChallenge(
+      createAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantId,
+      named,
+      challengeId
+    );
+    return null;
+  } catch (error) {
+    if (isInteractionChallengeMismatchError(error)) return interactionChallengeMismatchResponse(c);
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'The sign-in flow is unavailable.',
+      },
+      503
+    );
+  }
 }
