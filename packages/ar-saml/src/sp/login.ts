@@ -26,6 +26,8 @@ import {
   readExternalProviderUsagePolicy,
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveSignInAttemptInteraction,
+  assertInteractionAnswersChallenge,
+  isInteractionChallengeMismatchError,
   resolveSamlRequestTtlSeconds,
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
@@ -289,12 +291,44 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
         );
       }
     }
+    // A sign-in that answers an authorization request may only name an interaction started for
+    // it (another request's Flow would lend it its methods and session).
+    if (attemptInteractionId && authorizationChallengeId) {
+      try {
+        await assertInteractionAnswersChallenge(
+          await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', {
+            tenantId,
+          }),
+          tenantId,
+          attemptInteractionId,
+          authorizationChallengeId
+        );
+      } catch (error) {
+        if (isInteractionChallengeMismatchError(error)) {
+          return c.json(
+            {
+              error: 'authorization_challenge_mismatch',
+              error_description: 'The sign-in was not started for this authorization request.',
+            },
+            403
+          );
+        }
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The sign-in flow is unavailable.',
+          },
+          503
+        );
+      }
+    }
     const requestContext: SAMLRequestContext | undefined =
-      reauthentication || invitation || attemptInteractionId || lite
+      reauthentication || invitation || attemptInteractionId || authorizationChallengeId || lite
         ? {
             ...(reauthentication ? { spReauthentication: reauthentication } : {}),
             ...(invitation ? { invitation } : {}),
             ...(attemptInteractionId ? { attemptInteractionId } : {}),
+            ...(authorizationChallengeId ? { flowChallengeId: authorizationChallengeId } : {}),
             ...(lite ? { liteReturn: lite.returnUrl, liteClientId: lite.start.clientId } : {}),
           }
         : undefined;

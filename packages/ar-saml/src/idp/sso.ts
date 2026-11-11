@@ -22,6 +22,7 @@ import {
   getLogger,
   getLocalization,
   resolveAuthCorePersistenceAdapterFromEnv,
+  sessionAnswersSAMLRequest,
   requireAdminDatabaseAdapter,
   filterSamlAttributesByDestinationConsentWithStatus,
   filterSamlAttributesByDestinationConsentDescriptorWithStatus,
@@ -306,7 +307,40 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     }
 
     // Check user authentication
-    const authenticatedSession = await checkUserAuthentication(c, env);
+    let authenticatedSession = await checkUserAuthentication(c, env);
+    // A session made since the person was sent to sign in for this request answers it only if it
+    // was made for it: otherwise the person signs in again, under the SP's Flow.
+    // A re-authentication or step-up is proven on its own screen, which runs no Flow (its
+    // challenge and the proof time hold it to this request instead).
+    if (
+      authenticatedSession &&
+      parsedInput.storedRequestValidated &&
+      !readSAMLReauthentication(parsedInput.requestContext) &&
+      !readSAMLAssuranceStepUp(parsedInput.requestContext)
+    ) {
+      try {
+        const answers = await sessionAnswersSAMLRequest(
+          await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-idp-sign-in-flow', {
+            tenantId,
+          }),
+          tenantId,
+          {
+            sessionCreatedAt: authenticatedSession.createdAt,
+            sessionData: authenticatedSession.data,
+            sentToSignInAt: parsedInput.requestContext?.sentToSignInAt,
+            requestId: authnRequest.id,
+            spEntityId: authnRequest.issuer,
+          }
+        );
+        if (!answers) authenticatedSession = null;
+      } catch (error) {
+        // The stored request is used up by now: answering with an error would leave the person
+        // nothing to retry. The session is not taken; the person is sent to sign in again, which
+        // stores the request anew.
+        log.warn('SAML sign-in Flow could not be read for the session', {}, error as Error);
+        authenticatedSession = null;
+      }
+    }
     const authnInteraction = resolveSAMLAuthnInteraction(authnRequest, authenticatedSession, {
       reauthentication: readSAMLReauthentication(parsedInput.requestContext),
       returnedFromSignIn: Boolean(

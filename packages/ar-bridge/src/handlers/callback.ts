@@ -463,6 +463,7 @@ async function completeExternalAuthentication(
     const flowSession = await externalSessionProfile(c.env, {
       tenantId,
       interactionId: authState.attemptInteractionId,
+      challengeId: authState.flowChallengeId,
       provider,
       isNewUser: result.isNewUser === true,
     });
@@ -500,6 +501,8 @@ async function completeExternalAuthentication(
         ...(input.reauthProvenAt !== undefined
           ? { reauth_proven_amr: ['external_idp'], reauth_proven_at: input.reauthProvenAt }
           : {}),
+        // The Flow interaction it was made in (see ar-auth login-runtime-flow).
+        ...(flowSession.interactionId ? { runtime_interaction_id: flowSession.interactionId } : {}),
         ...flowSession.profiled.snapshot,
       },
       tenantId
@@ -576,6 +579,12 @@ async function completeExternalAuthentication(
     client_id: clientId,
     is_new_user: result.isNewUser,
     stitched_from_existing: result.stitchedFromExisting,
+    // The Flow interaction the sign-in ran in (checked at the start to answer the same request):
+    // the session follows its profiles and is recorded as made in it. A new account is a sign-up.
+    ...(authState.attemptInteractionId
+      ? { attempt_interaction_id: authState.attemptInteractionId }
+      : {}),
+    ...(result.isNewUser ? { usage: 'signup' } : {}),
     // The session made from this code keeps the upstream acr, as the SSO path does.
     ...(input.upstreamAcr ? { upstream_acr: input.upstreamAcr } : {}),
     ...(input.reauthProvenAt !== undefined

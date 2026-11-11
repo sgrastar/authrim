@@ -139,7 +139,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveRuntimeIdentityMappingBinding: vi.fn().mockResolvedValue(mappingBinding()),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({})),
     // The start's Flow: the tenant's own profiles, live.
-    loadInteractionFlowProfileRefs: mockFlowRefs,
+    resolveSignInFlowProfileRefs: mockFlowRefs,
     readAuthenticationProfile: mockMethodProfile,
   };
 });
@@ -228,11 +228,8 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
     mockUsageKey.mockResolvedValue(null);
     mockUsagePolicy.mockResolvedValue({ loginEnabled: true, signupEnabled: true });
     mockFlowRefs.mockResolvedValue({
-      methodProfileRef: 'default',
-      sessionProfileRef: 'default',
-      flowKind: 'login',
-      completion: null,
-      live: true,
+      refs: { methodProfileRef: 'default', sessionProfileRef: 'default' },
+      interactionId: 'int-1',
     });
     mockAccountLookup.mockImplementation(async () => {
       const adapter = (linkedIdentity: boolean) => ({
@@ -361,11 +358,8 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
   it('refuses an IdP the sign-in Flow’s method profile does not take', async () => {
     mockUsageKey.mockResolvedValue({ providerId: 'idp-1', ids: ['saml:idp-1', 'idp-1'] });
     mockFlowRefs.mockResolvedValue({
-      methodProfileRef: 'members',
-      sessionProfileRef: 'default',
-      flowKind: 'login',
-      completion: null,
-      live: true,
+      refs: { methodProfileRef: 'members', sessionProfileRef: 'default' },
+      interactionId: 'int-1',
     });
     mockMethodProfile.mockResolvedValue({
       kind: 'profile',
@@ -386,14 +380,11 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
     });
   });
 
-  it('uses no stale Flow’s method profile once its interaction is no longer live', async () => {
+  it('takes no method profile when the sign-in resolves to the Default profiles', async () => {
     mockUsageKey.mockResolvedValue({ providerId: 'idp-1', ids: ['saml:idp-1', 'idp-1'] });
     mockFlowRefs.mockResolvedValue({
-      methodProfileRef: 'members',
-      sessionProfileRef: 'default',
-      flowKind: 'login',
-      completion: null,
-      live: false,
+      refs: { methodProfileRef: 'default', sessionProfileRef: 'default' },
+      interactionId: null,
     });
 
     const res = await callACS();
@@ -483,11 +474,8 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
   it('holds the account it would create to the Flow’s sign-up switch for the IdP', async () => {
     mockUsageKey.mockResolvedValue({ providerId: 'idp-1', ids: ['saml:idp-1', 'idp-1'] });
     mockFlowRefs.mockResolvedValue({
-      methodProfileRef: 'members',
-      sessionProfileRef: 'default',
-      flowKind: 'login',
-      completion: null,
-      live: true,
+      refs: { methodProfileRef: 'members', sessionProfileRef: 'default' },
+      interactionId: 'int-1',
     });
     // The tenant takes sign-ups through the IdP; the Flow takes only sign-ins.
     mockMethodProfile.mockResolvedValue({

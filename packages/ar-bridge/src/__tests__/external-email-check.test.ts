@@ -17,7 +17,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
     .normalizeMethodHandle,
   profileAllowsHandle: (await importOriginal<typeof import('@authrim/ar-lib-core')>())
     .profileAllowsHandle,
-  loadInteractionFlowProfileRefs: mocks.flowRefs,
+  resolveSignInFlowProfileRefs: mocks.flowRefs,
   readAuthenticationProfile: mocks.methodProfile,
   resolveProfiledSessionTtl: mocks.sessionTtl,
   resolveAuthCorePersistenceAdapterFromEnv: mocks.resolve,
@@ -111,13 +111,10 @@ describe('loadExternalSignUpPolicy', () => {
 
 describe('externalSessionProfile', () => {
   const env = {} as never;
-  const refs = (overrides: Record<string, unknown> = {}) => ({
-    methodProfileRef: 'default',
-    sessionProfileRef: 'short',
-    flowKind: 'login',
-    completion: null,
-    live: true,
-    ...overrides,
+  /** The profiles the sign-in resolves to (sign-in-flow-binding decides them). */
+  const refs = (methodProfileRef = 'default', sessionProfileRef = 'short') => ({
+    refs: { methodProfileRef, sessionProfileRef },
+    interactionId: 'i-1',
   });
 
   beforeEach(() => {
@@ -141,15 +138,22 @@ describe('externalSessionProfile', () => {
     const result = await externalSessionProfile(env, {
       tenantId: 't',
       interactionId: 'i-1',
+      challengeId: 'ch-1',
       provider: { id: 'google' },
       isNewUser: false,
     });
     expect(result.allowed).toBe(true);
     expect(result.profiled.ttl.seconds).toBe(60);
+    expect(result.interactionId).toBe('i-1');
+    // Held to the request the start kept: its interaction, else the app's own sign-in Flow.
+    expect(mocks.flowRefs).toHaveBeenCalledWith(env, {}, 't', {
+      interactionId: 'i-1',
+      challengeId: 'ch-1',
+    });
   });
 
   it('refuses a provider the Flow’s method profile does not take', async () => {
-    mocks.flowRefs.mockResolvedValue(refs({ methodProfileRef: 'members' }));
+    mocks.flowRefs.mockResolvedValue(refs('members'));
     mocks.methodProfile.mockResolvedValue({
       kind: 'profile',
       values: {
@@ -167,21 +171,22 @@ describe('externalSessionProfile', () => {
     expect(result.allowed).toBe(false);
   });
 
-  it('uses no stale Flow’s profiles once its interaction is gone or no longer live', async () => {
+  it('takes the Default profiles as resolved, and refuses when they cannot be read', async () => {
     const input = {
       tenantId: 't',
       interactionId: 'i-1',
       provider: { id: 'google' },
       isNewUser: false,
     };
-    mocks.flowRefs.mockResolvedValue(refs({ live: false, methodProfileRef: 'members' }));
-    const stale = await externalSessionProfile(env, input);
-    expect(stale.allowed).toBe(true);
-    expect(stale.profiled.ttl.seconds).toBe(3600);
+    mocks.flowRefs.mockResolvedValue({
+      refs: { methodProfileRef: 'default', sessionProfileRef: 'default' },
+      interactionId: null,
+    });
+    const none = await externalSessionProfile(env, input);
+    expect(none.allowed).toBe(true);
+    expect(none.profiled.ttl.seconds).toBe(3600);
+    expect(none.interactionId).toBeNull();
     expect(mocks.methodProfile).not.toHaveBeenCalled();
-    mocks.flowRefs.mockResolvedValue(null);
-    expect((await externalSessionProfile(env, input)).profiled.ttl.seconds).toBe(3600);
-    // One that cannot be read refuses the sign-in.
     mocks.flowRefs.mockRejectedValue(new Error('d1 down'));
     await expect(externalSessionProfile(env, input)).rejects.toThrow('d1 down');
   });

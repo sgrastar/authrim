@@ -36,6 +36,10 @@
             {
               "path": "007_account_registration_pending.sql",
               "checksum": "8603b8e6d123432eabf36bb1ca8f2bf668f08c74c84cef3341f77e10a11ff7e2"
+            },
+            {
+              "path": "008_sign_in_flow_challenge_binding.sql",
+              "checksum": "956b1c03834c84376fc3f5f960894a8d185a2b6e9f5ed77d41807fa925723fee"
             }
           ]
         },
@@ -219,6 +223,10 @@
         {
           "path": "007_account_registration_pending.sql",
           "checksum": "8603b8e6d123432eabf36bb1ca8f2bf668f08c74c84cef3341f77e10a11ff7e2"
+        },
+        {
+          "path": "008_sign_in_flow_challenge_binding.sql",
+          "checksum": "956b1c03834c84376fc3f5f960894a8d185a2b6e9f5ed77d41807fa925723fee"
         }
       ]
     },
