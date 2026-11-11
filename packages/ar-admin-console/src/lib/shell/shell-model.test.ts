@@ -28,7 +28,7 @@ describe('shell model', () => {
 		const at = resolveNavPath('/admin/authentication/methods')!;
 		const hrefs = (id: Parameters<typeof persona>[0]) =>
 			subNavRows(at, t, persona(id).access).map((row) => (row.type === 'item' ? row.href : ''));
-		const page = '/admin/authentication/staying-signed-in';
+		const page = '/admin/authentication/session-profiles';
 		expect(hrefs('tenant')).toContain(page);
 		expect(hrefs('viewer')).toContain(page);
 		expect(hrefs('support')).not.toContain(page);

@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import { hasMessage } from '#lib/i18n/i18n.svelte.js';
 import { PLATFORM_AREAS, TENANT_AREAS } from '#lib/shell/nav-data.js';
+import type { NavItem } from '#lib/shell/nav-types.js';
 import { API_GROUPS, API_PAGES, groupOf } from './api-inventory';
 import { API_OPERATIONS } from './api-operations';
 import { NOT_APPLIED } from './effect';
@@ -34,6 +35,25 @@ const MAPPING_SCAN_KEYS = [
 ] as const;
 
 describe('where settings live', () => {
+	it('lists a page in the navigation for every category it shows', () => {
+		const items = new Map<string, NavItem>(
+			[...TENANT_AREAS, ...PLATFORM_AREAS].flatMap((area) =>
+				area.children.map((item) => [`${area.id}/${item.id}`, item] as const)
+			)
+		);
+		for (const page of SETTINGS_PAGES) {
+			const required = items.get(page.nav)?.requires?.settings;
+			if (!required) continue;
+			const shown = new Set(
+				page.sections.flatMap((section) => section.settings.map((s) => categoryOf(s.key)))
+			);
+			expect(
+				[...shown].filter((c) => !required.includes(c)),
+				page.id
+			).toEqual([]);
+		}
+	});
+
 	it('places only settings the API has', () => {
 		for (const key of [...placed, ...drafted]) {
 			const category = ALL_CATEGORY_META[categoryOf(key)];
@@ -113,7 +133,7 @@ describe('where settings live', () => {
 	});
 
 	it('puts the prompt=create switch on the app defaults page', () => {
-		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'app-defaults');
+		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'tokens');
 		const setting = page?.sections
 			.flatMap((section) => section.settings)
 			.find((candidate) => candidate.key === 'oauth.prompt_create_enabled');

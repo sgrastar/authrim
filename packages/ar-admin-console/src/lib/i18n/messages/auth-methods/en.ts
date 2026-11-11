@@ -18,7 +18,7 @@ export const enAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.list.deleteBody': 'This profile cannot be restored.',
 	'am.list.deleteSuccess': 'Profile deleted.',
 	'am.page.new': 'New profile',
-	'am.page.back': 'Sign-in methods',
+	'am.page.back': 'Sign-in method profiles',
 	'am.page.name': 'Profile name',
 	'am.page.nameHint': 'A name to identify this profile in lists (up to 80 characters).',
 	'am.page.nameRequired': 'Enter a profile name.',

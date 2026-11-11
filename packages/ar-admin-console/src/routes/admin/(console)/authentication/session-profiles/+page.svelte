@@ -6,7 +6,7 @@
 </script>
 
 <svelte:head>
-	<title>{t('set.page.stayingSignedIn')} — {t('app.brand')}</title>
+	<title>{t('set.page.sessionProfiles')} — {t('app.brand')}</title>
 </svelte:head>
 
 {#if tenantScope.tenantId}

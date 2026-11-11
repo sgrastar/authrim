@@ -45,7 +45,6 @@ export const jaAccountFlows = {
 	'af.group.identity': '認証方式',
 	'af.group.regConsent': '登録時の同意',
 	'af.group.authenticate': '利用者の認証',
-	'af.group.stepUp': '追加認証',
 	'af.group.finish': 'ログインの完了',
 
 	'af.part.reg-general': '登録の受付',
@@ -54,9 +53,8 @@ export const jaAccountFlows = {
 	'af.part.reg-statements': '同意文',
 	'af.part.reg-policy': '同意ポリシー',
 	'af.part.reg-result': '完了後の動作',
-	'af.part.login-methods': '認証手段・認証元',
+	'af.part.login-methods': '認証方式プロフィール',
 	'af.part.login-validation': '認証の検証条件',
-	'af.part.login-conditions': '追加認証の条件',
 	'af.part.login-session': 'セッション確立',
 	'af.part.login-return': '認証結果の返却',
 
@@ -65,9 +63,8 @@ export const jaAccountFlows = {
 	'af.lead.reg-statements': '利用規約など、登録のときに同意してもらう文面を選びます。',
 	'af.lead.reg-policy': '登録のときの同意を、いつ、どう求めるかを決めます。',
 	'af.lead.reg-result': '登録が終わったあと、どこへ移動するかを決めます。',
-	'af.lead.login-methods': 'このフローで使う認証手段を選びます。',
+	'af.lead.login-methods': 'ログインで使う認証方式を、認証方式プロフィールから選びます。',
 	'af.lead.login-validation': '利用者の認証が成立したと判断する条件を決めます。',
-	'af.lead.login-conditions': '基本の認証に加えて、確認が必要なときに実行します。',
 	'af.lead.login-session': '必要な認証が済んだあとに、Authrim のセッションを作ります。',
 	'af.lead.login-return': 'ログインの結果を、呼び出し元に返します。',
 
@@ -78,9 +75,6 @@ export const jaAccountFlows = {
 	'af.note.login-return':
 		'アプリへのトークンの発行と属性の提供の同意は、各接続のフローで設定します。',
 
-	'af.field.methods': '使える認証手段',
-	'af.field.provider': '使う外部プロバイダー',
-	'af.hint.provider': 'サービスフローに登録してある接続から選びます。',
 	'af.field.reg.methodProfile': '使うプロフィール',
 	'af.profile.create': '新しく認証方式プロフィールを作成',
 	'af.profile.newTitle': '新しい認証方式プロフィール',
@@ -184,9 +178,6 @@ export const jaAccountFlows = {
 	'af.field.login.unregistered': '登録されていない人が来たとき',
 	'af.hint.login.unregistered':
 		'登録済みかどうかを知らせないために、失敗したとだけ伝えることもできます。',
-	'af.field.login.stepUpWhen': '追加認証を求める条件',
-	'af.field.login.stepUpFactor': '追加で求める認証手段',
-	'af.field.login.stepUpUnavailable': '追加認証を使えないとき',
 	'af.field.login.lifetime': 'セッションの有効期間',
 	'af.field.login.reauth': '再認証を求めるとき',
 	'af.field.login.failure': '失敗・中断したとき',
@@ -329,9 +320,6 @@ export const jaAccountFlows = {
 	'af.syncGroup.sales': '営業',
 	'af.syncGroup.support': 'サポート',
 
-	'af.provider.acme': 'Acme Directory',
-	'af.provider.corporate': 'Corporate sign-in',
-
 	'af.method.passkey': 'パスキー',
 	'af.method.password': 'パスワード',
 	'af.method.otp': 'ワンタイムコード',
@@ -360,11 +348,6 @@ export const jaAccountFlows = {
 	'af.failures.none': '制限しない',
 	'af.unregistered.guide': '新規登録へ案内する',
 	'af.unregistered.generic': 'ログインに失敗したとだけ伝える',
-	'af.stepUpWhen.always': '毎回',
-	'af.stepUpWhen.risk': 'リスクが高いとき',
-	'af.stepUpWhen.sensitive': '重要な操作のとき',
-	'af.stepUpUnavailable.deny': 'ログインさせない',
-	'af.stepUpUnavailable.enroll': 'その場で認証手段を登録してもらう',
 	'af.lifetime.8h': '8 時間',
 	'af.lifetime.24h': '24 時間',
 	'af.lifetime.7d': '7 日',

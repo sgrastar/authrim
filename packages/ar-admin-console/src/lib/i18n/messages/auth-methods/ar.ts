@@ -18,7 +18,7 @@ export const arAuthMethods: { [K in keyof typeof jaAuthMethods]: string } = {
 	'am.list.deleteBody': 'لا يمكن استعادة ملف التعريف هذا.',
 	'am.list.deleteSuccess': 'تم حذف ملف التعريف.',
 	'am.page.new': 'ملف تعريف جديد',
-	'am.page.back': 'طرق تسجيل الدخول',
+	'am.page.back': 'ملفات تعريف طرق تسجيل الدخول',
 	'am.page.name': 'اسم الملف',
 	'am.page.nameHint': 'اسم لتمييز الملف في القوائم (حتى 80 حرفًا).',
 	'am.page.nameRequired': 'أدخل اسم ملف التعريف.',

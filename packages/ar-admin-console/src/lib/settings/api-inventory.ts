@@ -349,7 +349,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'tenant-policy',
 		name: 'Tenant policy profile',
 		kind: 'settings',
-		page: 'applications/defaults',
+		page: 'authentication/tokens',
 		paths: [`${A}/tenant-policy`],
 		note: 'Token lifetime caps and PKCE/PAR requirements; overlaps the security.* and oauth.* defaults to be built.'
 	},
@@ -357,21 +357,21 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'certification-profiles',
 		name: 'Certification profiles',
 		kind: 'actions',
-		page: 'applications/defaults',
+		page: 'authentication/tokens',
 		paths: [`${A}/certification-profiles`]
 	},
 	{
 		id: 'native-sso',
 		name: 'Native SSO',
 		kind: 'settings',
-		page: 'applications/defaults',
+		page: 'authentication/tokens',
 		paths: [`${A}/settings/native-sso`]
 	},
 	{
 		id: 'logout-failures',
 		name: 'Failed logout notifications',
 		kind: 'monitoring',
-		page: 'authentication/staying-signed-in',
+		page: 'authentication/session-profiles',
 		paths: [`${A}/logout-failures`]
 	},
 

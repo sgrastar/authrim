@@ -4,11 +4,11 @@
 	import { persona } from '#lib/access/personas.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { settingText } from '#lib/settings/setting-text.js';
-	import { DEMO_TENANT, demoSettings } from './staying-signed-in.fixtures';
+	import { DEMO_TENANT, demoSettings } from './session-profiles.fixtures';
 	import StayingSignedIn from './StayingSignedIn.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Pages/Authentication/Staying signed in',
+		title: 'Pages/Authentication/Session profiles',
 		component: StayingSignedIn,
 		// api-pending: while a value is set here, the API does not say what the deployment would
 		// give instead, so "Default: …" shows Authrim's built-in default (see settings-model.ts).
@@ -18,7 +18,7 @@
 			docs: {
 				description: {
 					component:
-						'Authentication → Staying signed in: how long people and their apps stay signed in. Built from Settings API `session` and `oauth` settings by its placement (`STAYING_SIGNED_IN` in `settings/placement.ts`): the few settings most tenants look at on view, the rest under each section’s Advanced (whose closed heading counts what is set for this tenant). Every value says whether it is set for this tenant or taken from the deployment / Authrim’s default, with the way to switch.\n\nUse the **Admin** toolbar to see it as each kind of admin: a tenant admin edits, a viewer reads, support does not see it (nor its navigation item).'
+						'Authentication → Session profiles: how long people stay signed in and whether single sign-on is on. Built from Settings API `session` and `oauth` settings by its placement (`SESSION_PROFILES` in `settings/placement.ts`): the few settings most tenants look at on view, the rest under each section’s Advanced (whose closed heading counts what is set for this tenant). Every value says whether it is set for this tenant or taken from the deployment / Authrim’s default, with the way to switch.\n\nUse the **Admin** toolbar to see it as each kind of admin: a tenant admin edits, a viewer reads, support does not see it (nor its navigation item).'
 				}
 			}
 		}
@@ -104,9 +104,9 @@
 		});
 		await userEvent.selectOptions(sso, 'false');
 		await userEvent.click(await body.findByRole('button', { name: t('common.save') }));
-		// Someone else changed the access token lifetime meanwhile: the admin is asked.
+		// Someone else changed single sign-on meanwhile: the admin is asked.
 		const dialog = within(await body.findByRole('dialog', { name: t('settings.conflict.title') }));
-		await waitFor(() => expect(dialog.getByText(label('oauth.access_token_expiry'))).toBeVisible());
+		await waitFor(() => expect(dialog.getByText(label('oauth.sso_enabled'))).toBeVisible());
 		await userEvent.click(dialog.getByRole('button', { name: t('settings.conflict.overwrite') }));
 		// Saved on top of their change: nothing left unsaved, their value kept.
 		await waitFor(() => expect(sso).toHaveValue('false'));
@@ -121,7 +121,7 @@
 			client={demoSettings({
 				access: () => admin,
 				latency: 0,
-				othersSaveFirst: { 'oauth.access_token_expiry': 600 }
+				othersSaveFirst: { 'oauth.sso_enabled': false }
 			})}
 			tenantId={DEMO_TENANT}
 			access={admin}
@@ -139,14 +139,14 @@
 			expect(canvas.getAllByText(t('settings.locked.platform')).length).toBeGreaterThan(0)
 		);
 		expect(
-			canvas.queryByRole('checkbox', { name: new RegExp(label('oauth.access_token_expiry')) })
+			canvas.queryByRole('checkbox', { name: new RegExp(label('session.default_ttl')) })
 		).toBeNull();
 	}}
 >
 	{#snippet template()}
 		<StayingSignedIn
 			client={demoSettings({
-				locked: ['oauth.access_token_expiry', 'oauth.refresh_token_rotation']
+				locked: ['session.default_ttl', 'oauth.sso_enabled']
 			})}
 			tenantId={DEMO_TENANT}
 		/>

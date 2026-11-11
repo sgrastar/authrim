@@ -277,9 +277,8 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(canvas.getByRole('heading', { name: 'Sign-in', level: 1 })).toBeInTheDocument();
-		await expect(
-			inFlow(canvasElement, /^Methods and sources.*Required.*Not set yet/)
-		).toBeInTheDocument();
+		// The method profile starts on Default; how the session is set up is still to choose.
+		await expect(inFlow(canvasElement, /^Sign-in method profile Configured/)).toBeInTheDocument();
 		await expect(
 			inFlow(canvasElement, /^Establishing the session.*Required.*Not set yet/)
 		).toBeInTheDocument();
@@ -359,23 +358,6 @@
 	}}
 />
 
-<!-- A provider is asked for only when "an external provider" is one of the methods. -->
-<Story
-	name="An external method asks for the provider"
-	args={{ flow: 'login', filled: 'none' }}
-	play={async ({ canvasElement }) => {
-		const canvas = within(canvasElement);
-		await userEvent.click(inFlow(canvasElement, /^Methods and sources/));
-		await expect(canvas.queryByRole('combobox', { name: 'External provider to use' })).toBeNull();
-		await userEvent.click(canvas.getByRole('checkbox', { name: 'An external provider' }));
-		await expect(
-			await canvas.findByRole('combobox', { name: 'External provider to use' })
-		).toBeInTheDocument();
-		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'Overview' }));
-		await expect(canvas.getByText(/An external provider/)).toBeInTheDocument();
-	}}
-></Story>
-
 <!-- The flows follow the console's language: here Japanese. -->
 <Story
 	name="In Japanese"
@@ -390,33 +372,6 @@
 		await expect(canvas.getByRole('combobox', { name: /登録できる人/ })).toBeInTheDocument();
 	}}
 ></Story>
-
-<!-- Not set yet: the list of what is left leads to the name, which is on the overview. -->
-<Story
-	name="The name is asked for on the overview"
-	args={{ flow: 'login', filled: 'none' }}
-	play={async ({ canvasElement }) => {
-		const canvas = within(canvasElement);
-		const todo = within(canvas.getByRole('heading', { name: 'Still to do' }).parentElement!);
-		await userEvent.click(todo.getByRole('button', { name: 'Name and where it is used' }));
-		await waitFor(() =>
-			expect(canvas.getByRole('textbox', { name: /Service flow name/ })).toHaveFocus()
-		);
-		await userEvent.type(
-			canvas.getByRole('textbox', { name: /Service flow name/ }),
-			'Partner portal'
-		);
-		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: /Where it is used/ }),
-			'other-ui'
-		);
-		// The heading follows the name, and the item leaves the list.
-		await expect(
-			canvas.getByRole('heading', { name: 'Partner portal', level: 1 })
-		).toBeInTheDocument();
-		await expect(todo.queryByRole('button', { name: 'Name and where it is used' })).toBeNull();
-	}}
-/>
 
 <!-- SCIM received cannot do without a mapping, and starts from the other system, so it is not run from here. -->
 <Story
