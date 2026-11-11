@@ -1,5 +1,6 @@
 import type { Env } from '../types/env';
 import { readSettingsFlag } from '../utils/tenant-settings';
+import { layerTenantSettingsDocument } from './effective-settings';
 
 export type SessionTtlContext =
   | 'email_code'
@@ -209,12 +210,16 @@ export async function readTenantSessionSettingsStrict(
 ): Promise<Record<string, unknown>> {
   const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:session`);
   // Only a missing document is no settings; a stored empty string is unreadable data.
-  if (raw === null || raw === undefined) return {};
-  const parsed: unknown = JSON.parse(raw);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('session_settings_invalid');
+  let stored: Record<string, unknown> = {};
+  if (raw !== null && raw !== undefined) {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('session_settings_invalid');
+    }
+    stored = parsed as Record<string, unknown>;
   }
-  return parsed as Record<string, unknown>;
+  // The platform's Default session rules under the tenant's (default-profile-layer.ts).
+  return layerTenantSettingsDocument(env, 'session', stored);
 }
 
 /** The tenant's session settings as login reads them (the projected v2 document). */
@@ -224,15 +229,19 @@ export async function readTenantSessionSettings(
 ): Promise<Record<string, unknown>> {
   try {
     const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:session`);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+    let stored: Record<string, unknown> = {};
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      // A document that is not an object reads as no settings, as before.
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+      stored = parsed as Record<string, unknown>;
     }
+    // The platform's Default session rules under the tenant's. Unreadable, it is treated as the
+    // tenant's document is: no settings (the environment and defaults).
+    return await layerTenantSettingsDocument(env, 'session', stored);
   } catch {
     return {};
   }
-  return {};
 }
 
 function parsePositiveInteger(value: unknown): number | null {

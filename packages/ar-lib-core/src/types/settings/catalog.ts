@@ -254,7 +254,8 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['tenant', 'client'],
   },
   'authentication-methods': {
-    allowedScopes: ['tenant'],
+    // The platform holds the Default methods (the keys that allow it); the rest is tenant-only.
+    allowedScopes: ['platform', 'tenant'],
   },
   'account-lifecycle': {
     allowedScopes: ['tenant'],

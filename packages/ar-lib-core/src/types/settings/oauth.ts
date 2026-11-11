@@ -264,8 +264,9 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
   // SSO Settings
   'oauth.sso_enabled': {
     key: 'oauth.sso_enabled',
-    // Per tenant (or app) only, as before the category had platform values.
-    scopes: ['tenant', 'client'],
+    // The platform's Default session rules may set it for every tenant
+    // (services/default-profile-layer.ts); a tenant or an app may set its own.
+    scopes: ['platform', 'tenant', 'client'],
     type: 'boolean',
     default: false,
     envKey: 'OAUTH_SSO_ENABLED',

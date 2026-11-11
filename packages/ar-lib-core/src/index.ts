@@ -476,6 +476,7 @@ export * from './services/session-profile';
 export * from './services/flow-profile-refs';
 export * from './services/sign-in-flow-binding';
 export * from './services/platform-profiles';
+export * from './services/default-profile-layer';
 export * from './services/platform-profile-references';
 export * from './services/external-provider-session-store';
 export {

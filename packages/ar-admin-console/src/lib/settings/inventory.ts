@@ -732,7 +732,9 @@ place('authentication/methods', 'Platform profiles', {
 		'profiles.method.tenant_change_allowed',
 		'profiles.method.tenant_create_allowed',
 		'profiles.session.tenant_change_allowed',
-		'profiles.session.tenant_create_allowed'
+		'profiles.session.tenant_create_allowed',
+		'profiles.method.default_locked',
+		'profiles.session.default_locked'
 	]
 });
 place(
@@ -879,6 +881,16 @@ place(
 
 place('hidden', 'Deploy-time or internal', {
 	hidden: ['tenant.user_id_format']
+});
+place('hidden', 'Kept by the profile screens', {
+	hidden: [
+		'authentication-methods.default_profile.base_version',
+		'session.default_profile.base_version',
+		// The older single switch of each method: removed by "back to the platform's".
+		'authentication-methods.passkey.enabled',
+		'authentication-methods.email_otp.enabled',
+		'authentication-methods.totp.enabled'
+	]
 });
 place('hidden', 'Kept by the theme and account page editors', {
 	hidden: [

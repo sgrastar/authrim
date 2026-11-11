@@ -20,6 +20,7 @@ import {
   isAccountAuthenticationDeniedError,
   isAccountReauthFresh,
   isAuthenticationMethodUsageAvailable,
+  layerTenantSettingsDocument,
   isLoginMethodRemovalSafe,
   LoginMethodRemovalInProgressError,
   PasskeyRepository,
@@ -123,10 +124,16 @@ async function resolveTotpProfile(env: Env, tenantId: string) {
     const raw = await env.SETTINGS?.get(
       `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
     );
-    if (!raw) {
+    const stored: unknown = raw ? JSON.parse(raw) : {};
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
       return profileForTotpPreset('compatible');
     }
-    const settings = JSON.parse(raw) as Record<string, unknown>;
+    // The platform's Default methods under the tenant's (default-profile-layer.ts).
+    const settings = await layerTenantSettingsDocument(
+      env,
+      AUTHENTICATION_METHODS_CATEGORY,
+      stored as Record<string, unknown>
+    );
     return profileForTotpPreset(settings['authentication-methods.totp.preset']);
   } catch {
     return profileForTotpPreset('compatible');

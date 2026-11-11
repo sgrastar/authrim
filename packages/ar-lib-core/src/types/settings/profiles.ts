@@ -18,6 +18,10 @@ export interface ProfilesSettings {
   'profiles.session.tenant_change_allowed': boolean;
   /** Tenants may create session profiles of their own. */
   'profiles.session.tenant_create_allowed': boolean;
+  /** The platform's Default methods hold for every tenant (tenants' own values are set aside). */
+  'profiles.method.default_locked': boolean;
+  /** The platform's Default session rules hold for every tenant. */
+  'profiles.session.default_locked': boolean;
 }
 
 export const PROFILES_SETTINGS_META: Record<keyof ProfilesSettings, SettingMeta> = {
@@ -61,6 +65,26 @@ export const PROFILES_SETTINGS_META: Record<keyof ProfilesSettings, SettingMeta>
       'Off: tenants cannot add session profiles of their own; the ones they have stay usable and editable',
     visibility: 'admin',
   },
+  'profiles.method.default_locked': {
+    key: 'profiles.method.default_locked',
+    type: 'boolean',
+    default: false,
+    envKey: 'PROFILES_METHOD_DEFAULT_LOCKED',
+    label: 'Lock the platform Default methods',
+    description:
+      "On: every tenant uses the platform's Default authentication methods; a tenant's own values are kept but do not apply, and tenants cannot change them",
+    visibility: 'admin',
+  },
+  'profiles.session.default_locked': {
+    key: 'profiles.session.default_locked',
+    type: 'boolean',
+    default: false,
+    envKey: 'PROFILES_SESSION_DEFAULT_LOCKED',
+    label: 'Lock the platform Default session rules',
+    description:
+      "On: every tenant uses the platform's Default session lifetimes and single sign-on; a tenant's own values are kept but do not apply, and tenants cannot change them",
+    visibility: 'admin',
+  },
 };
 
 export const PROFILES_CATEGORY_META: CategoryMeta = {
@@ -75,4 +99,6 @@ export const PROFILES_DEFAULTS: ProfilesSettings = {
   'profiles.method.tenant_create_allowed': true,
   'profiles.session.tenant_change_allowed': true,
   'profiles.session.tenant_create_allowed': true,
+  'profiles.method.default_locked': false,
+  'profiles.session.default_locked': false,
 };

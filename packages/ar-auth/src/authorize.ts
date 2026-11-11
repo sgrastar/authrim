@@ -13,6 +13,8 @@ import {
   isRedirectUriRegistered,
   redirectUriMatchOptionsFor,
   resolveEffectiveSettings,
+  readDefaultProfileLayer,
+  layerResolvedSettings,
   falRequiresDpop,
   falRequiresSignedPushedRequest,
   evaluateSessionAssurance,
@@ -3098,11 +3100,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             tenantId,
           })
           .catch(() => null),
-        settingsManager
-          .getAll('oauth', {
+        Promise.all([
+          settingsManager.getAll('oauth', {
             type: 'tenant',
             id: tenantId,
-          })
+          }),
+          // The platform's Default session rules (default-profile-layer.ts). Unreadable, the
+          // tenant's single sign-on setting is not used: SSO is off rather than unlocked.
+          readDefaultProfileLayer(c.env, 'oauth').catch(() => null),
+        ])
+          .then(([resolved, layer]) =>
+            layer
+              ? layerResolvedSettings(resolved, layer, 'tenant')
+              : {
+                  ...resolved,
+                  sources: { ...resolved.sources, 'oauth.sso_enabled': 'default' as const },
+                }
+          )
           .catch(() => null),
       ])
   );

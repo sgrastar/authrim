@@ -3,6 +3,8 @@ import { createSettingsManager } from '../utils/settings-manager';
 import { ACCOUNT_LIFECYCLE_CATEGORY_META } from '../types/settings/account-lifecycle';
 import { AUTHENTICATION_METHODS_CATEGORY_META } from '../types/settings/authentication-methods';
 import { validateGuestLifecyclePolicy, type GuestLifecyclePolicy } from './guest-lifecycle';
+import { layerResolvedSettings } from './default-profile-layer';
+import { readDefaultProfileLayer } from './effective-settings';
 
 export interface GuestSettings {
   loginEnabled: boolean;
@@ -25,10 +27,13 @@ export async function resolveGuestSettings(
   manager.registerCategory(ACCOUNT_LIFECYCLE_CATEGORY_META);
   manager.registerCategory(AUTHENTICATION_METHODS_CATEGORY_META);
   const scope = { type: 'tenant' as const, id: tenantId };
-  const [lifecycle, methods] = await Promise.all([
+  const [lifecycle, tenantMethods, layer] = await Promise.all([
     manager.getAll('account-lifecycle', scope),
     manager.getAll('authentication-methods', scope),
+    // The platform's Default methods, read afresh as well (default-profile-layer.ts).
+    readDefaultProfileLayer(env, 'authentication-methods', { fresh: true }),
   ]);
+  const methods = layerResolvedSettings(tenantMethods, layer, 'tenant');
   const values = lifecycle.values;
   const days = values['account-lifecycle.guest.deletion_after_days'];
   const minutes = values['account-lifecycle.guest.upgrade_hold_minutes'];
