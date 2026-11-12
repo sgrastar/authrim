@@ -628,10 +628,9 @@ async function closeCancelledChallenge(
   return 'closed';
 }
 
-function cancelTargetOf(ctx: FlowRequestContext, env: Env): CancelTarget {
+function cancelTargetOf(ctx: FlowRequestContext): CancelTarget {
   return {
     samlLoginNonceHash: ctx.saml_login_nonce_hash ?? null,
-    samlRequestPorts: Boolean(env.SAML_RUNTIME_PORTS),
     protocol: ctx.protocol,
     authorizationChallengeId: ctx.authorization_challenge_id,
     samlRequestId: ctx.saml_request_id,
@@ -641,13 +640,8 @@ function cancelTargetOf(ctx: FlowRequestContext, env: Env): CancelTarget {
 }
 
 /** Whether `POST .../cancel` would accept the interaction (told to the UI as `cancel_available`). */
-function cancelAvailableOf(
-  runtime: unknown,
-  state: string,
-  ctx: FlowRequestContext,
-  env: Env
-): boolean {
-  return runtimeCancelAvailable({ runtime, state, target: cancelTargetOf(ctx, env) });
+function cancelAvailableOf(runtime: unknown, state: string, ctx: FlowRequestContext): boolean {
+  return runtimeCancelAvailable({ runtime, state, target: cancelTargetOf(ctx) });
 }
 
 function readString(value: unknown, maxLength = 256): string | null {
@@ -5727,7 +5721,7 @@ async function resumeInteractionOnce(
       current_step_id: interaction.current_step_id,
       current_visit_id: currentVisit?.id ?? null,
       expires_at: interaction.expires_at,
-      cancel_available: cancelAvailableOf(runtime, interaction.state, requestContext, c.env),
+      cancel_available: cancelAvailableOf(runtime, interaction.state, requestContext),
     },
     contract,
     contract_hash: contractHash,
@@ -6152,7 +6146,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       current_step_id: initialCurrentStep.id,
       current_visit_id: currentVisitId,
       expires_at: expiresAt,
-      cancel_available: cancelAvailableOf(runtime, 'active', requestContext, c.env),
+      cancel_available: cancelAvailableOf(runtime, 'active', requestContext),
     },
     assignment: {
       target_type: assignment.target_type,
@@ -7012,7 +7006,7 @@ export async function loginRuntimeInteractionBackHandler(c: AuthContext) {
         current_node_id: targetStep.source_node_id,
         current_step_id: targetStep.id,
         expires_at: interaction.expires_at,
-        cancel_available: cancelAvailableOf(runtime, interaction.state, flow.requestContext, c.env),
+        cancel_available: cancelAvailableOf(runtime, interaction.state, flow.requestContext),
       },
       step: runtimeStepResponse(targetStep),
       completed: false,
@@ -7109,7 +7103,7 @@ export async function loginRuntimeInteractionCancelHandler(c: AuthContext) {
       interactionId
     );
   }
-  const target = cancelTargetOf(flow.requestContext, c.env);
+  const target = cancelTargetOf(flow.requestContext);
   const appKind = cancelAppKind(target);
   if (
     !appKind ||
@@ -8044,7 +8038,7 @@ async function submitClaimedRuntimeStep(input: {
       current_node_id: nextStep?.source_node_id ?? null,
       current_step_id: nextStep?.id ?? null,
       expires_at: interaction.expires_at,
-      cancel_available: cancelAvailableOf(runtime, nextState, requestContext, c.env),
+      cancel_available: cancelAvailableOf(runtime, nextState, requestContext),
     },
     step: runtimeStepResponse(nextStep),
     completed,

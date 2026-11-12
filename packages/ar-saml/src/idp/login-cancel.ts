@@ -53,8 +53,6 @@ export async function handleIdPLoginCancel(c: Context<{ Bindings: Env }>): Promi
     const db = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-idp-login-cancel', {
       tenantId,
     });
-    // Not for an imported runtime's request port: it cannot consume conditionally.
-    if (env.SAML_RUNTIME_PORTS) return noGrant(c);
     const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
     const claimed = await claimSAMLLoginCancel(
       db,

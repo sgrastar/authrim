@@ -182,14 +182,20 @@ describe('answering the SP for a sign-in the person cancelled', () => {
     expect(mocks.consume).not.toHaveBeenCalled();
   });
 
-  it('answers nothing where the request port cannot consume conditionally', async () => {
+  it('answers the SP on a runtime with request ports too, consuming on the nonce hash', async () => {
     const response = await app().request(
       `/saml/idp/login-cancel?interaction_id=interaction_1&token=${token}`,
       undefined,
       { SAML_RUNTIME_PORTS: {} }
     );
-    expect(response.status).toBe(400);
-    expect(mocks.consume).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mocks.consume).toHaveBeenCalledWith(
+      expect.objectContaining({ SAML_RUNTIME_PORTS: {} }),
+      'tenant-a',
+      'req_1',
+      'https://sp.example.test/entity',
+      { loginNonceHash: 'nonce-hash' }
+    );
   });
 
   it('answers nothing for a bare request id or an unknown interaction', async () => {

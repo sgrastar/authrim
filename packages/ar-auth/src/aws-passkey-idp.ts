@@ -2,7 +2,8 @@ import type { Env } from '@authrim/ar-lib-core';
 import app from './index';
 
 /**
- * Public ar-auth routes required by the AWS SAML IdP passkey login profile.
+ * Public ar-auth routes required by the AWS SAML IdP passkey login profile: its Flow steps
+ * (`/submit`) and "Back to the app" (`/cancel`).
  *
  * The existing Hono app still owns request context, CSRF, origin checks, rate
  * limits, Flow policy, WebAuthn verification, and managed session creation.
@@ -18,7 +19,7 @@ const EXACT_ROUTES = new Set([
   'POST /api/v1/login/interactions/start',
 ]);
 
-const FLOW_SUBMIT_ROUTE = /^\/api\/v1\/login\/interactions\/[^/]+\/submit$/u;
+const FLOW_SUBMIT_ROUTE = /^\/api\/v1\/login\/interactions\/[^/]+\/(?:submit|cancel)$/u;
 
 export function isAwsPasskeyIdpAuthRoute(method: string, pathname: string): boolean {
   if (method.toUpperCase() === 'OPTIONS') {

@@ -9,6 +9,7 @@ describe('AWS passkey browser preflight surface', () => {
     '/api/v1/auth/direct/passkey/login/start',
     '/api/v1/login/interactions/start',
     '/api/v1/login/interactions/opaque-id/submit',
+    '/api/v1/login/interactions/opaque-id/cancel',
     '/api/sessions/status',
   ])('delegates OPTIONS %s to the existing auth CORS policy', async (path) => {
     const request = new Request(`https://idp.example.test${path}`, {
@@ -26,7 +27,17 @@ describe('AWS passkey browser preflight surface', () => {
     '/oauth/token',
     '/api/v1/auth/direct/passkey/register/start',
     '/api/v1/login/interactions/a/submit/extra',
+    '/api/v1/login/interactions/a/cancel/extra',
+    '/api/v1/login/interactions/a/back',
   ])('keeps unexposed OPTIONS %s unavailable', (path) => {
     expect(isAwsPasskeyIdpAuthRoute('OPTIONS', path)).toBe(false);
+  });
+  it('exposes the Flow cancel as a POST only', () => {
+    expect(isAwsPasskeyIdpAuthRoute('POST', '/api/v1/login/interactions/opaque-id/cancel')).toBe(
+      true
+    );
+    expect(isAwsPasskeyIdpAuthRoute('GET', '/api/v1/login/interactions/opaque-id/cancel')).toBe(
+      false
+    );
   });
 });

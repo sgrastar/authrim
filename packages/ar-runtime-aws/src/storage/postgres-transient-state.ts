@@ -282,15 +282,21 @@ export class PostgresTransientStateStore {
     if (input.challenge !== undefined) {
       assertIdentifier(input.challenge, 'challenge value', 4096);
     }
+    if (input.operationId !== undefined) {
+      assertIdentifier(input.operationId, 'challenge operation ID', 256);
+    }
+    // The operation id is kept on the consumed record in the same UPDATE (see getConsumedChallenge).
     const result = await this.db.query<StoredRow>(
       `/* aws-transient:consume-challenge */
-       UPDATE ${TABLE} SET consumed_at_ms = ${DB_NOW_MS}
+       UPDATE ${TABLE} SET consumed_at_ms = ${DB_NOW_MS},
+         payload = CASE WHEN $5::text IS NULL THEN payload
+                        ELSE jsonb_set(payload, '{consumedBy}', to_jsonb($5::text)) END
        WHERE tenant_id = $1 AND kind = 'challenge' AND id = $2
          AND payload->>'type' = $3
          AND ($4::text IS NULL OR payload->>'challenge' = $4)
          AND consumed_at_ms IS NULL AND expires_at_ms > ${DB_NOW_MS}
        RETURNING payload, created_at_ms, expires_at_ms`,
-      [input.tenantId, input.id, input.type, input.challenge ?? null]
+      [input.tenantId, input.id, input.type, input.challenge ?? null, input.operationId ?? null]
     );
     const row = result.rows[0];
     if (!row) return null;
@@ -311,6 +317,31 @@ export class PostgresTransientStateStore {
     const payload = asObject(result.rows[0].payload);
     if (typeof payload.type !== 'string') throw new Error('Challenge storage binding invalid');
     return this.readChallenge(result.rows[0], input.tenantId, input.id, payload.type);
+  }
+
+  async getConsumedChallenge(input: {
+    tenantId: string;
+    id: string;
+  }): Promise<TransientChallenge | null> {
+    assertTenantId(input.tenantId);
+    assertIdentifier(input.id, 'challenge ID');
+    const result = await this.db.query<StoredRow>(
+      `/* aws-transient:get-consumed-challenge */
+       SELECT payload, created_at_ms, expires_at_ms FROM ${TABLE}
+       WHERE tenant_id = $1 AND kind = 'challenge' AND id = $2
+         AND consumed_at_ms IS NOT NULL AND expires_at_ms > ${DB_NOW_MS}
+         AND payload->>'consumedBy' IS NOT NULL`,
+      [input.tenantId, input.id]
+    );
+    if (!result.rows[0]) return null;
+    const payload = asObject(result.rows[0].payload);
+    if (typeof payload.type !== 'string' || typeof payload.consumedBy !== 'string') {
+      throw new Error('Challenge storage binding invalid');
+    }
+    return {
+      ...this.readChallenge(result.rows[0], input.tenantId, input.id, payload.type),
+      consumedBy: payload.consumedBy,
+    };
   }
 
   /** Check a short lease without consuming it. */
@@ -422,15 +453,21 @@ export class PostgresTransientStateStore {
     assertTenantId(input.tenantId);
     assertIdentifier(input.spEntityId, 'SP entity ID', 4096);
     assertIdentifier(input.requestId, 'SAML request ID');
+    if (input.loginNonceHash !== undefined) {
+      assertIdentifier(input.loginNonceHash, 'SAML login nonce hash', 256);
+    }
+    // With a login nonce hash, only a request stored with that hash is consumed (a cancel).
     const result = await this.db.query<StoredRow>(
       `/* aws-transient:consume-saml-request */
        UPDATE ${TABLE} SET consumed_at_ms = ${DB_NOW_MS}
        WHERE tenant_id = $1 AND kind = 'saml_request' AND id = $2
          AND payload->>'spEntityId' = $3
          AND immutable_payload->>'issuer' = $3
+         AND ($4::text IS NULL
+              OR payload->'request'->'context'->>'loginNonceHash' = $4)
          AND consumed_at_ms IS NULL AND expires_at_ms > ${DB_NOW_MS}
        RETURNING payload, created_at_ms, expires_at_ms`,
-      [input.tenantId, input.requestId, input.spEntityId]
+      [input.tenantId, input.requestId, input.spEntityId, input.loginNonceHash ?? null]
     );
     return result.rows[0] ? readSamlRequest(result.rows[0], input) : null;
   }

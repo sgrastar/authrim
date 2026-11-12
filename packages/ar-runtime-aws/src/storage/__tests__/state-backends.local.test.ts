@@ -225,6 +225,29 @@ for (const backend of ['postgresql', 'dynamodb'] as const) {
         })
       ).toBe(true);
     });
+    it('keeps the consuming operation and reads back only a consume that named one', async () => {
+      const input = {
+        tenantId: tenant,
+        id: randomUUID(),
+        type: 'login',
+        userId: 'operation-user',
+        challenge: 'operation-secret',
+        ttlMs: 60000,
+      };
+      const plain = { ...input, id: randomUUID() };
+      expect(await stores.state.storeChallenge(input)).toBe(true);
+      expect(await stores.state.storeChallenge(plain)).toBe(true);
+      expect(await stores.state.getConsumedChallenge(input)).toBeNull();
+      expect(await stores.state.consumeChallenge({ ...input, operationId: 'op-1' })).not.toBeNull();
+      expect(await stores.state.consumeChallenge(plain)).not.toBeNull();
+      expect(await stores.state.getConsumedChallenge(input)).toMatchObject({
+        id: input.id,
+        consumedBy: 'op-1',
+      });
+      expect(await stores.state.getConsumedChallenge({ ...input, tenantId: 'other' })).toBeNull();
+      expect(await stores.state.getConsumedChallenge(plain)).toBeNull();
+      expect(await stores.state.getChallenge(input)).toBeNull();
+    });
     it('enforces expiry without cleanup and clips challenges to the parent deadline', async () => {
       const input = {
         tenantId: tenant,
@@ -288,6 +311,41 @@ for (const backend of ['postgresql', 'dynamodb'] as const) {
         } as unknown as SAMLRequestData,
       });
       expect((await stores.state.consumeSamlRequest(consume))?.expiresAt).toBe(request.expiresAt);
+    });
+    it('consumes a SAML request on a login nonce hash only when it holds that hash', async () => {
+      const request = {
+        requestId: randomUUID(),
+        issuer: 'https://sp.example.test',
+        destination: 'https://idp.example.test/saml',
+        acsUrl: 'https://sp.example.test/acs',
+        binding: 'HTTP-Redirect',
+        type: 'authn_request',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 30000,
+        used: false,
+        data: { a: 1 },
+        context: { loginNonceHash: 'held-hash' },
+      } as unknown as SAMLRequestData;
+      await stores.state.storeSamlRequest({
+        tenantId: tenant,
+        spEntityId: request.issuer,
+        request,
+      });
+      const consume = {
+        tenantId: tenant,
+        spEntityId: request.issuer,
+        requestId: request.requestId,
+      };
+      expect(
+        await stores.state.consumeSamlRequest({ ...consume, loginNonceHash: 'other' })
+      ).toBeNull();
+      const once = await Promise.all(
+        Array.from({ length: 6 }, () =>
+          stores.state.consumeSamlRequest({ ...consume, loginNonceHash: 'held-hash' })
+        )
+      );
+      expect(once.filter(Boolean)).toHaveLength(1);
+      expect(await stores.state.consumeSamlRequest(consume)).toBeNull();
     });
     it('keeps KV tenant scoped, supports overwrite and rejects expired keys', async () => {
       const input = { tenantId: tenant, key: randomUUID(), value: 'one', ttlMs: 60000 };

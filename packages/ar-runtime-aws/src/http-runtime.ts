@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { handle, type LambdaEvent, type LambdaContext } from 'hono/aws-lambda';
 import { isIP } from 'node:net';
 import type { Env } from '@authrim/ar-lib-core';
+import { SAML_LOGIN_CANCEL_PATH } from '@authrim/ar-lib-core/services/saml-login-cancel';
 import { createSAMLIdPApp } from '@authrim/ar-saml/idp-app';
 import { fetchAwsPasskeyIdpAuth, isAwsPasskeyIdpAuthRoute } from '@authrim/ar-auth/aws-passkey-idp';
 import { normalizeAwsRuntimeUiConfig, type AwsRuntimeUiConfig } from './ui/runtime-ui-config';
@@ -28,6 +29,8 @@ const PROTOCOL_PATHS = new Set([
   '/saml/idp/metadata',
   '/saml/idp/sso',
   '/saml/idp/attribute-release-consent',
+  // Answers the SP for a sign-in the person cancelled (handed over by the Flow cancel).
+  SAML_LOGIN_CANCEL_PATH,
   '/idp/profile/SAML2/Redirect/SSO',
   '/idp/profile/SAML2/POST/SSO',
 ]);

@@ -32,8 +32,6 @@ export interface CancelTarget {
   samlSpId: string | null;
   /** The hash of the login nonce the interaction was started with (SAML). */
   samlLoginNonceHash?: string | null;
-  /** The runtime imports SAML requests through ports, which cannot cancel (see saml login-cancel). */
-  samlRequestPorts?: boolean;
 }
 
 /** What kind of app request a cancel would answer; null when the interaction has none. */
@@ -44,8 +42,7 @@ export function cancelAppKind(target: CancelTarget): 'saml' | 'oidc' | null {
     target.samlSpId &&
     // Only the browser the IdP sent to sign in can cancel the request: the interaction was
     // started with the login nonce (an interaction started from a request id alone has none).
-    target.samlLoginNonceHash &&
-    !target.samlRequestPorts
+    target.samlLoginNonceHash
   ) {
     return 'saml';
   }

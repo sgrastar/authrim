@@ -180,6 +180,80 @@ describe('DynamoDB state boundary', () => {
     );
     expect(await f.state.storeChallenge(challenge)).toBe(false);
   });
+  it('keeps the consuming operation in the consume write', async () => {
+    const f = fixture(async () => {
+      throw failure('ConditionalCheckFailedException');
+    });
+    expect(await f.state.consumeChallenge({ ...challenge, operationId: 'op-1' })).toBeNull();
+    const command = f.send.mock.calls[0][0] as UpdateItemCommand;
+    expect(command.input.UpdateExpression).toBe('SET consumedAtMs = :now, consumedBy = :operation');
+    expect(command.input.ExpressionAttributeValues?.[':operation']).toEqual({ S: 'op-1' });
+    await f.state.consumeChallenge(challenge);
+    const plain = f.send.mock.calls[1][0] as UpdateItemCommand;
+    expect(plain.input.UpdateExpression).toBe('SET consumedAtMs = :now');
+    expect(plain.input.ExpressionAttributeValues).not.toHaveProperty(':operation');
+  });
+  it('reads a consumed challenge back only with its operation and before it expires', async () => {
+    const writer = fixture();
+    await writer.state.storeChallenge(challenge);
+    const stored = (writer.send.mock.calls[0][0] as PutItemCommand).input.Item ?? {};
+    const read = (item: Record<string, unknown> | undefined) =>
+      fixture(async () => ({ Item: item })).state.getConsumedChallenge({
+        tenantId: challenge.tenantId,
+        id: challenge.id,
+      });
+    expect(
+      await read({ ...stored, consumedAtMs: { N: '1000' }, consumedBy: { S: 'op-1' } })
+    ).toMatchObject({ id: challenge.id, userId: 'user-a', consumedBy: 'op-1' });
+    expect(await read({ ...stored, consumedAtMs: { N: '1000' } })).toBeNull();
+    expect(await read({ ...stored, consumedBy: { S: 'op-1' } })).toBeNull();
+    expect(
+      await read({
+        ...stored,
+        consumedAtMs: { N: '1000' },
+        consumedBy: { S: 'op-1' },
+        expiresAtMs: { N: '1000' },
+      })
+    ).toBeNull();
+    expect(await read(undefined)).toBeNull();
+  });
+  it('consumes a SAML request on a login nonce hash only when it holds that hash', async () => {
+    const item = (loginNonceHash?: string) => ({
+      expiresAtMs: { N: '5000' },
+      payloadJson: {
+        S: JSON.stringify({
+          spEntityId: 'https://sp.example.test',
+          request: {
+            requestId: 'req-1',
+            issuer: 'https://sp.example.test',
+            type: 'authn_request',
+            ...(loginNonceHash ? { context: { loginNonceHash } } : {}),
+          },
+        }),
+      },
+    });
+    const input = {
+      tenantId: 'tenant-a',
+      spEntityId: 'https://sp.example.test',
+      requestId: 'req-1',
+      loginNonceHash: 'held-hash',
+    };
+    for (const held of [undefined, 'other-hash']) {
+      const f = fixture(async () => ({ Item: item(held) }));
+      expect(await f.state.consumeSamlRequest(input)).toBeNull();
+      expect(f.send).toHaveBeenCalledTimes(1);
+    }
+    const f = fixture(async (command) => {
+      if (command instanceof GetItemCommand) return { Item: item('held-hash') };
+      throw failure('ConditionalCheckFailedException');
+    });
+    expect(await f.state.consumeSamlRequest(input)).toBeNull();
+    const update = f.send.mock.calls[1][0] as UpdateItemCommand;
+    expect(update.input.ConditionExpression).toContain('AND payloadJson = :exact');
+    expect(update.input.ExpressionAttributeValues?.[':exact']).toEqual(
+      item('held-hash').payloadJson
+    );
+  });
   it('fails closed on unavailable storage and a consume without a receipt', async () => {
     const down = fixture(async () => {
       throw failure('AccessDeniedException');

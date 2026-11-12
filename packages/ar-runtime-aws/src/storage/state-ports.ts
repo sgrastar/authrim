@@ -44,6 +44,11 @@ export interface ConsumeChallengeInput {
   type: string;
   /** Omit only when `id` itself is a high-entropy bearer secret. */
   challenge?: string;
+  /**
+   * Names the operation consuming it, kept on the consumed record in the same write, so the
+   * operation can recognise its own consume after a lost answer (`getConsumedChallenge`).
+   */
+  operationId?: string;
 }
 
 export interface TransientChallenge {
@@ -57,6 +62,8 @@ export interface TransientChallenge {
   email?: string;
   redirectUri?: string;
   metadata?: Record<string, unknown>;
+  /** The operation that consumed it (only on what `getConsumedChallenge` returns). */
+  consumedBy?: string;
 }
 
 export interface StoreSamlRequestInput {
@@ -69,6 +76,11 @@ export interface ConsumeSamlRequestInput {
   tenantId: string;
   spEntityId: string;
   requestId: string;
+  /**
+   * Consume only a request stored with this login nonce hash (`context.loginNonceHash`, a login
+   * cancel); any other is left as it is, not consumed.
+   */
+  loginNonceHash?: string;
 }
 
 export interface PutTransientKeyInput {
@@ -86,6 +98,11 @@ export interface TransientStateStore {
   claimChallenge(input: StoreChallengeInput): Promise<boolean>;
   consumeChallenge(input: ConsumeChallengeInput): Promise<TransientChallenge | null>;
   getChallenge(input: { tenantId: string; id: string }): Promise<TransientChallenge | null>;
+  /**
+   * A challenge that was consumed with an operation id and has not expired, with `consumedBy`;
+   * null for any other (live, expired, absent, or consumed without one).
+   */
+  getConsumedChallenge(input: { tenantId: string; id: string }): Promise<TransientChallenge | null>;
   isChallengeClaimHeld(input: {
     tenantId: string;
     id: string;

@@ -139,6 +139,17 @@ class FakePostgres implements PostgresQueryClient {
           (values[3] === null || record.payload.challenge === values[3])
         ) {
           record.consumedAt = this.nowMs;
+          if (values[4] !== null) record.payload = { ...record.payload, consumedBy: values[4] };
+          rows = [this.returned(record)];
+        }
+        break;
+      case 'get-consumed-challenge':
+        if (
+          record &&
+          record.consumedAt !== null &&
+          record.expiresAt > this.nowMs &&
+          typeof record.payload.consumedBy === 'string'
+        ) {
           rows = [this.returned(record)];
         }
         break;
@@ -192,7 +203,12 @@ class FakePostgres implements PostgresQueryClient {
           record.consumedAt === null &&
           record.expiresAt > this.nowMs &&
           record.payload.spEntityId === values[2] &&
-          record.immutable.issuer === values[2]
+          record.immutable.issuer === values[2] &&
+          (values[3] === null ||
+            (
+              (record.payload.request as { context?: { loginNonceHash?: unknown } } | undefined)
+                ?.context ?? {}
+            ).loginNonceHash === values[3])
         ) {
           record.consumedAt = this.nowMs;
           rows = [this.returned(record)];
@@ -590,5 +606,76 @@ describe('PostgresTransientStateStore', () => {
     expect(await store.getKey({ tenantId: 'tenant-b', key: 'relay' })).toBe('value-b');
     expect(await store.deleteKey({ tenantId: 'tenant-b', key: 'relay' })).toBe(true);
     expect(await store.getKey({ tenantId: 'tenant-b', key: 'relay' })).toBeNull();
+  });
+  it('keeps the consuming operation on a challenge and reads it back only for that', async () => {
+    const db = new FakePostgres();
+    const store = new PostgresTransientStateStore(db);
+    const base = {
+      tenantId: 'tenant-a',
+      type: 'login',
+      userId: 'user-a',
+      challenge: 'secret',
+      ttlMs: 60_000,
+    };
+    await store.storeChallenge({ ...base, id: 'with-operation' });
+    await store.storeChallenge({ ...base, id: 'without-operation' });
+    expect(
+      await store.getConsumedChallenge({ tenantId: 'tenant-a', id: 'with-operation' })
+    ).toBeNull();
+    expect(
+      await store.consumeChallenge({ ...base, id: 'with-operation', operationId: 'op-1' })
+    ).not.toBeNull();
+    expect(await store.consumeChallenge({ ...base, id: 'without-operation' })).not.toBeNull();
+
+    expect(
+      await store.getConsumedChallenge({ tenantId: 'tenant-a', id: 'with-operation' })
+    ).toMatchObject({ id: 'with-operation', type: 'login', consumedBy: 'op-1' });
+    // Consumed without an operation, another tenant's, or live: not read back.
+    expect(
+      await store.getConsumedChallenge({ tenantId: 'tenant-a', id: 'without-operation' })
+    ).toBeNull();
+    expect(
+      await store.getConsumedChallenge({ tenantId: 'tenant-b', id: 'with-operation' })
+    ).toBeNull();
+    expect(await store.getChallenge({ tenantId: 'tenant-a', id: 'with-operation' })).toBeNull();
+    // Nor once it has expired.
+    db.nowMs += 61_000;
+    expect(
+      await store.getConsumedChallenge({ tenantId: 'tenant-a', id: 'with-operation' })
+    ).toBeNull();
+    const consume = db.statements.find((sql) => sql.includes(':consume-challenge'));
+    expect(consume).toMatch(/jsonb_set\(payload, '\{consumedBy\}'/);
+  });
+
+  it('consumes a SAML request on a login nonce hash only when it holds that hash', async () => {
+    const db = new FakePostgres();
+    const store = new PostgresTransientStateStore(db);
+    const spEntityId = 'https://sp.example.test/metadata';
+    await store.storeSamlRequest({
+      tenantId: 'tenant-a',
+      spEntityId,
+      request: request(db.nowMs, { context: { loginNonceHash: 'held-hash' } }),
+    });
+    const consume = { tenantId: 'tenant-a', spEntityId, requestId: '_authn-1' };
+    expect(await store.consumeSamlRequest({ ...consume, loginNonceHash: 'other' })).toBeNull();
+    expect(
+      await store.consumeSamlRequest({ ...consume, loginNonceHash: 'held-hash' })
+    ).toMatchObject({ requestId: '_authn-1', used: true });
+    expect(await store.consumeSamlRequest(consume)).toBeNull();
+
+    // A request stored without a hash is never consumed on one.
+    await store.storeSamlRequest({
+      tenantId: 'tenant-a',
+      spEntityId,
+      request: request(db.nowMs, { requestId: '_authn-2' }),
+    });
+    expect(
+      await store.consumeSamlRequest({
+        ...consume,
+        requestId: '_authn-2',
+        loginNonceHash: 'held-hash',
+      })
+    ).toBeNull();
+    expect(await store.consumeSamlRequest({ ...consume, requestId: '_authn-2' })).not.toBeNull();
   });
 });
