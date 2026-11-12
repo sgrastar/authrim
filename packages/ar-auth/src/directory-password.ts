@@ -1,3 +1,5 @@
+import { validateExternalUrl } from '@authrim/ar-lib-core';
+
 const HMAC_ALGORITHM = 'AUTHRIM-HMAC-SHA256';
 const DEFAULT_TIMEOUT_MS = 3000;
 
@@ -8,6 +10,8 @@ export interface DirectoryPasswordConnectorConfig {
   keyId: string;
   secret: string;
   timeoutMs?: number;
+  /** Accept http://localhost (development only). Internal addresses are otherwise always refused. */
+  allowLocalhost?: boolean;
 }
 
 export interface DirectoryPasswordVerifyInput {
@@ -103,7 +107,10 @@ export class DirectoryPasswordClient {
     const requestId = input.requestId || crypto.randomUUID();
     const nonce = input.nonce || crypto.randomUUID();
     const timestamp = input.timestamp || new Date();
-    const endpoint = parseDirectoryPasswordEndpoint(this.config.endpoint);
+    const endpoint = parseDirectoryPasswordEndpoint(
+      this.config.endpoint,
+      this.config.allowLocalhost === true
+    );
     if (!endpoint) {
       throw new DirectoryPasswordError({
         requestId,
@@ -167,6 +174,8 @@ export class DirectoryPasswordClient {
         method: 'POST',
         headers,
         body,
+        // Never follow redirects: the target was validated, a redirect target was not.
+        redirect: 'manual',
         signal: controller.signal,
       });
     } catch (error) {
@@ -305,20 +314,10 @@ function canonicalQuery(params: URLSearchParams): string {
   return parts.join('&');
 }
 
-function parseDirectoryPasswordEndpoint(endpoint: string): URL | null {
-  let url: URL;
-  try {
-    url = new URL(endpoint);
-  } catch {
-    return null;
-  }
-  if (url.protocol === 'https:') return url;
-  if (url.protocol === 'http:' && isLoopbackHost(url.hostname)) return url;
-  return null;
-}
-
-function isLoopbackHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+function parseDirectoryPasswordEndpoint(endpoint: string, allowLocalhost: boolean): URL | null {
+  // Checked at send time as well as at save time: stored config may predate the SSRF guard.
+  if (validateExternalUrl(endpoint, { requireHttps: true, allowLocalhost })) return null;
+  return new URL(endpoint);
 }
 
 async function safeParseWordwardenError(response: Response): Promise<WordwardenErrorResponse> {

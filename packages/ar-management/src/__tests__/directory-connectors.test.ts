@@ -657,7 +657,8 @@ describe('directory connectors admin API', () => {
           ],
         },
       },
-      'campus'
+      'campus',
+      { ENVIRONMENT: 'development' }
     ) as never;
 
     const response = await checkDirectoryConnectorHealthHandler(context);
@@ -669,9 +670,67 @@ describe('directory connectors admin API', () => {
       'http://localhost:8080/healthz',
       expect.objectContaining({
         allowLocalhost: true,
-        requireHttps: false,
+        requireHttps: true,
       })
     );
+  });
+
+  it('refuses http://localhost health checks outside development', async () => {
+    mocks.safeFetch.mockClear();
+    const context = createContext(
+      'tenant-a',
+      undefined,
+      {
+        'settings:tenant:tenant-a:directory-connectors': {
+          connectors: [{ ...validConfig.connectors[0], endpoint_url: 'http://localhost:8080' }],
+        },
+      },
+      'campus',
+      { ENVIRONMENT: 'production' }
+    ) as never;
+
+    const response = await checkDirectoryConnectorHealthHandler(context);
+    expect(response.status).toBe(400);
+    expect(mocks.safeFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'https://10.0.0.5',
+    'https://172.16.0.1',
+    'https://192.168.1.10',
+    'https://127.0.0.1',
+    'https://localhost',
+    'https://[::1]',
+    'https://[fd00::1]',
+    'https://[fe80::1]',
+    'https://169.254.169.254',
+    'http://localhost:8080',
+    'https://metadata.google.internal',
+  ])('rejects internal connector endpoint %s on save', async (endpoint) => {
+    const context = createContext('tenant-a', {
+      ...validConfig,
+      connectors: [{ ...validConfig.connectors[0], endpoint_url: endpoint }],
+    }) as never;
+
+    const response = await updateDirectoryConnectorsHandler(context);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_directory_connector_config' });
+  });
+
+  it('accepts http://localhost on save only in development', async () => {
+    const config = {
+      ...validConfig,
+      connectors: [{ ...validConfig.connectors[0], endpoint_url: 'http://localhost:8080' }],
+    };
+    const dev = await updateDirectoryConnectorsHandler(
+      createContext('tenant-a', config, {}, undefined, { ENVIRONMENT: 'development' }) as never
+    );
+    expect(dev.status).toBe(200);
+    const prod = await updateDirectoryConnectorsHandler(
+      createContext('tenant-a', config, {}, undefined, { ENVIRONMENT: 'production' }) as never
+    );
+    expect(prod.status).toBe(400);
   });
 
   it('lists directory pending users with parsed directory facts', async () => {
