@@ -49,6 +49,7 @@ import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   adminAuthMiddleware,
+  adminWriteRateLimitMiddleware,
   requestContextMiddleware,
   pluginContextMiddleware,
   diagnosticLoggingMiddleware,
@@ -233,6 +234,9 @@ app.get('/saml/sp/slo', handleSPSLO);
 // ============================================================================
 
 app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
+// The same Admin API write limit (rate_limit.admin_write, per authenticated principal and tenant)
+// ar-management applies: ar-router sends these routes here directly. Same class, same counter.
+app.use('/api/admin/*', adminWriteRateLimitMiddleware());
 
 app.get('/api/admin/saml-settings', handleGetSAMLSettings);
 app.put('/api/admin/saml-settings', handleUpdateSAMLSettings);

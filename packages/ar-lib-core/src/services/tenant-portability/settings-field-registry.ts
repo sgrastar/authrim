@@ -1192,6 +1192,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     rate_limit.login_start
     rate_limit.send_challenge
     rate_limit.loadtest
+    rate_limit.admin_write
     rate_limit.strict_window_seconds
     rate_limit.moderate_window_seconds
     rate_limit.lenient_window_seconds
@@ -1199,6 +1200,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     rate_limit.login_start_window_seconds
     rate_limit.send_challenge_window_seconds
     rate_limit.loadtest_window_seconds
+    rate_limit.admin_write_window_seconds
   `,
     ],
     [

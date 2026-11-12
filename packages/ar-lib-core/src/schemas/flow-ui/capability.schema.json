@@ -62,12 +62,7 @@
           "description": "Core capabilities (always available)"
         },
         {
-          "enum": [
-            "choose_organization",
-            "choose_role",
-            "delegate_access",
-            "view_permissions"
-          ],
+          "enum": ["choose_organization", "choose_role", "delegate_access", "view_permissions"],
           "description": "Policy capabilities (RBAC/ReBAC)"
         },
         {

@@ -185,11 +185,17 @@ paths:
       tags:
         - ReBAC
       summary: Invalidate ReBAC cache entries.
+      description: >-
+        Requires an administrator with the policy ReBAC write permission. Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
       requestBody:
         $ref: '#/components/requestBodies/RebacInvalidate'
       responses:
         '200':
           $ref: '#/components/responses/Success'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/TemporarilyUnavailable'
       security:
         - bearerAuth: []
   /api/check/health:
@@ -269,10 +275,15 @@ paths:
         - ReBAC
       operationId: deleteApiRebacTuples
       summary: Delete a ReBAC relationship tuple.
-      description: Deletes the specified relationship tuple and invalidates related authorization cache entries.
+      description: >-
+        Deletes the specified relationship tuple and invalidates related authorization cache entries. Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
       responses:
         '200':
           $ref: '#/components/responses/RebacDelete'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/TemporarilyUnavailable'
       requestBody:
         $ref: '#/components/requestBodies/RebacTuple'
       security:
@@ -283,12 +294,16 @@ paths:
         - ReBAC
       operationId: postApiRebacWrite
       summary: Write a ReBAC relationship tuple.
-      description:
+      description: >-
         Creates or updates a relationship tuple used by relationship-based authorization checks
-        and invalidates related cache entries.
+        and invalidates related cache entries. Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
       responses:
         '200':
           $ref: '#/components/responses/RebacWrite'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/TemporarilyUnavailable'
       requestBody:
         $ref: '#/components/requestBodies/RebacTuple'
       security:
@@ -466,6 +481,41 @@ components:
             subject_type: user
             subject_id: user_123
   responses:
+    RateLimited:
+      description: Too many requests (Admin API write limit).
+      headers:
+        Retry-After:
+          description: Seconds until the budget is available again.
+          schema:
+            type: integer
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+          example:
+            error: rate_limit_exceeded
+            error_description: Too many requests. Please try again later.
+            retry_after: 30
+    TemporarilyUnavailable:
+      description: The rate limit counter is unavailable; nothing was changed.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+          example:
+            error: temporarily_unavailable
+            error_description: The service is temporarily unavailable. Please try again later.
     Ok:
       description: Successful JSON response.
       content:

@@ -34,6 +34,7 @@ import type { MessageBatch } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   rateLimitMiddleware,
+  adminWriteRateLimitMiddleware,
   RateLimitProfiles,
   getRateLimitProfileAsync,
   initialAccessTokenMiddleware,
@@ -1615,6 +1616,10 @@ app.use(
 // Admin API endpoints
 registerDeclaredAdminRouteAccessMiddleware(app);
 registerAdminResourcePermissionMiddleware(app);
+// One bound on Admin API writes per authenticated principal and tenant (rate_limit.admin_write).
+// After authentication and the declared route gate, so refused requests are not counted; the
+// per-route (IP-keyed) limiters below still apply.
+app.use('/api/admin/*', adminWriteRateLimitMiddleware());
 
 app.get('/api/admin/stats', adminStatsHandler);
 app.post('/api/admin/assets/login-ui', adminPublicAssetUploadHandler);
@@ -2221,6 +2226,16 @@ app.route('/api/admin/diagnostic-logging', diagnosticLoggingRouter);
 
 // Public API routes:
 // - POST /api/v1/diagnostic-logs/ingest - Ingest logs from SDK (public API with client auth)
+// Anonymous: a public client_id is enough, and each request writes up to 100 KB to R2. Per IP and
+// tenant, on its own counter.
+app.use('/api/v1/diagnostic-logs/ingest', async (c: Context<{ Bindings: Env }>, next: Next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/v1/diagnostic-logs/ingest'],
+    endpointClass: 'diagnostic_log_ingest',
+  })(c, next);
+});
 app.route('/api/v1/diagnostic-logs/ingest', diagnosticLogIngestRouter);
 
 // Certification profiles (OpenID certification test plans): predefined protocol settings
@@ -4121,6 +4136,8 @@ app.post(
   }),
   requireInternalVersionManagerAuthority(ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION),
   enforceDeclaredAdminRouteAccess(),
+  // The same Admin API write limit, in the tenant-less scope of the principal.
+  adminWriteRateLimitMiddleware(),
   async (c) => {
     const workerName = c.req.param('workerName')!;
 

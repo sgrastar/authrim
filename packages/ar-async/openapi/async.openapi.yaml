@@ -187,7 +187,10 @@ paths:
         backchannel_user_code_parameter_supported as false. With it on, the user_code is accepted,
         stored and shown to the person approving the request; it is not verified. The request
         keeps the tenant's ciba.slow_down_increment and ciba.max_poll_count as they were when it
-        was made; the token endpoint applies them while the client polls.
+        was made; the token endpoint applies them while the client polls. Requests are limited
+        per client IP address and tenant (the moderate profile, 60 per minute by default, on a
+        counter of its own): over the limit the answer is 429 rate_limit_exceeded with Retry-After
+        and X-RateLimit-* headers, and 503 when the counter is unavailable.
       requestBody:
         $ref: '#/components/requestBodies/CibaAuthorization'
       responses:
@@ -196,6 +199,8 @@ paths:
         '400':
           $ref: '#/components/responses/Error'
         '503':
+          $ref: '#/components/responses/Error'
+        '429':
           $ref: '#/components/responses/Error'
   /api/ciba/pending:
     get:

@@ -76,6 +76,23 @@ describe('Bridge /api/external/* rate limit', () => {
     expect([...counters.keys()].every((key) => key.includes(':bridge_external:'))).toBe(true);
   });
 
+  it('leaves the /auth/external/* and /handoff/* sign-in paths unlimited (shared campus addresses)', async () => {
+    const { env, counters } = createEnv(true);
+
+    for (const path of ['/auth/external/providers', '/handoff/verify']) {
+      await worker.fetch(
+        new Request(`https://op.example.com${path}`, {
+          method: path.startsWith('/handoff') ? 'POST' : 'GET',
+          headers: { 'CF-Connecting-IP': '192.0.2.20' },
+        }),
+        env,
+        executionContext
+      );
+    }
+
+    expect([...counters.keys()]).toEqual([]);
+  });
+
   it('answers 503 (fail closed) when the Worker has no rate-limit backend at all', async () => {
     const { env } = createEnv(false);
 
