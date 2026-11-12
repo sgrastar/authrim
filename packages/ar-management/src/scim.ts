@@ -33,6 +33,7 @@ import {
   isDatabaseSource,
   resolveAccountDataContext,
   resolveAccountDataContextFromHono,
+  hasMalformedPercentEscape,
 } from '@authrim/ar-lib-core';
 import {
   chunkForBoundParameters,
@@ -1206,6 +1207,23 @@ app.use('*', async (c, next) => {
   }
 });
 
+// A malformed percent escape is refused, not repaired: Hono would decode the rest of the path and
+// route on the repaired text (see hasMalformedPercentEscape), and the switches below judge that.
+app.use('*', async (c, next) => {
+  if (hasMalformedPercentEscape(c.req.url)) {
+    return c.json(
+      {
+        schemas: [SCIM_SCHEMAS.ERROR],
+        status: '400',
+        scimType: 'invalidSyntax',
+        detail: 'The request path is malformed',
+      },
+      400
+    );
+  }
+  return next();
+});
+
 // Fail closed if a multi-tenant SCIM request reaches this router without a
 // tenant context. In single-tenant mode we materialize the deployment default
 // tenant instead of relying on an implicit string fallback in route handlers.
@@ -1220,7 +1238,7 @@ app.use('*', async (c, next) => {
 
 // Apply SCIM authentication to all routes EXCEPT discovery endpoints
 app.use('*', async (c, next) => {
-  const path = new URL(c.req.url).pathname;
+  const path = c.req.path;
   // Skip auth only for anchored GET discovery routes. Reserved-looking resource
   // IDs such as /Users/Schemas must still pass through SCIM authentication.
   if (isScimDiscoveryRequest(c.req.method, path)) {
@@ -1230,7 +1248,7 @@ app.use('*', async (c, next) => {
 });
 
 app.use('*', async (c, next) => {
-  const path = new URL(c.req.url).pathname;
+  const path = c.req.path;
   if (isScimDiscoveryRequest(c.req.method, path)) return next();
   const settings = await getScimInboundSettings(c.env, getTenantIdFromContext(c));
   if (!settings.enabled) return scimError(c, 403, 'SCIM inbound provisioning is disabled');

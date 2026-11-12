@@ -1453,7 +1453,25 @@ async function storeClient(
  *
  * POST /register
  */
-export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+export function registerHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  return handleRegistration(c, false);
+}
+
+/**
+ * Restricted public-client registration for interactive Admin Agent connections
+ * (POST /oauth/admin-agent/register). The mode is fixed by the route that mounts this handler,
+ * never inferred from the request path: a spelling the router accepts for this route (an escaped
+ * `/oauth/admin-agent/%72egister`) is still this mode, and ordinary registration (which sits
+ * behind the Initial Access Token check on `/register` only) cannot be reached through it.
+ */
+export function adminAgentRegisterHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  return handleRegistration(c, true);
+}
+
+async function handleRegistration(
+  c: Context<{ Bindings: Env }>,
+  restrictedAgentRegistration: boolean
+): Promise<Response> {
   try {
     // ==========================================================================
     // DCR Master Switch Check
@@ -1470,8 +1488,6 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
     }
 
-    const restrictedAgentRegistration =
-      new URL(c.req.url).pathname === '/oauth/admin-agent/register';
     let restrictedAgentRegistrationSlot: number | undefined;
     let agentAccessEnabled = false;
     if (restrictedAgentRegistration) {

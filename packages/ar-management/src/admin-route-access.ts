@@ -4,6 +4,7 @@ import {
   ADMIN_PERMISSIONS,
   getLogger,
   hasAdminPermission,
+  hasMalformedPercentEscape,
   hasGlobalAdminRole,
   ADMIN_ROLE_GROUPS,
   type AdminAuthContext,
@@ -2359,7 +2360,7 @@ function insufficientPermissionsResponse(
     .module('ADMIN-ROUTE-ACCESS')
     .warn('Declared Admin route access denied', {
       method: c.req.method,
-      path: new URL(c.req.url).pathname,
+      path: c.req.path,
       authMethod: authContext?.authMethod,
       requiredPermissions: accessRule?.permissions ?? accessRule?.anyPermissions ?? [],
       actualPermissions: authContext?.permissions ?? [],
@@ -2373,6 +2374,18 @@ function insufficientPermissionsResponse(
   );
 }
 
+/**
+ * The gate decides on the path the router dispatches on: Hono's own `c.req.path` (escapes of
+ * ordinary characters decoded; an escaped reserved character such as %2F stays escaped and stays
+ * inside its segment; `%25` stays `%25`). Matching the raw URL pathname instead let an escaped
+ * static segment (`/users/x/%6cegal-holds`) miss the specific rule of its route and fall to a
+ * weaker catch-all while the router still reached the specific handler.
+ *
+ * A raw path with a malformed escape is refused first (see `hasMalformedPercentEscape` for why a
+ * decision on `c.req.path` alone could be fooled by Hono repairing it). Double-encoded text such
+ * as `report%2520final` is allowed: it is one segment for the gate and the router, the handler's
+ * param is the once-decoded `report%20final`, and `%2564cr` never becomes the name `dcr`.
+ */
 export function enforceDeclaredAdminRouteAccess() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authContext = (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
@@ -2389,7 +2402,13 @@ export function enforceDeclaredAdminRouteAccess() {
       );
     }
 
-    const pathname = new URL(c.req.url).pathname;
+    if (hasMalformedPercentEscape(c.req.url)) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'The request path is malformed.' },
+        400
+      );
+    }
+    const pathname = c.req.path;
     const accessRule = findAdminRouteAccessRule(c.req.method, pathname);
     if (!accessRule) {
       return insufficientPermissionsResponse(c);

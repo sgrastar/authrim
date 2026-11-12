@@ -318,7 +318,7 @@ function managementRequestDiagnosticCheckpoint(name: string) {
 }
 
 // Import handlers
-import { registerHandler } from './register';
+import { adminAgentRegisterHandler, registerHandler } from './register';
 import {
   clientConfigGetHandler,
   clientConfigUpdateHandler,
@@ -1468,7 +1468,7 @@ app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 
 // Dynamic Client Registration endpoint - RFC 7591
 app.post('/register', registerHandler);
-app.post('/oauth/admin-agent/register', registerHandler);
+app.post('/oauth/admin-agent/register', adminAgentRegisterHandler);
 
 // Client Configuration Endpoint - RFC 7592
 // Rate limit: moderate (sensitive but not auth-critical)
