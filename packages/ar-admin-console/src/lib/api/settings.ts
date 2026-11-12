@@ -23,11 +23,11 @@ import { stepUpHeaders, withStepUp } from './admin-step-up';
 export type { CategoryName, SettingSource, SettingsPatchRequest, SettingsPatchResult };
 
 /**
- * A category as read. `locked`: settings the scope above has fixed, which this scope may not
- * override (shown, but not offered for change).
- * TODO(api): the Settings API has no locks yet; only the in-memory API sends them.
+ * A category as read. `locked`: settings the platform has fixed. Read at a tenant or an app, they
+ * show the platform's value (a value stored here is ignored) and cannot be set there; read at the
+ * platform it is the list the platform edits.
  */
-export type SettingsGetResult = CoreSettingsGetResult & { locked?: string[] };
+export type SettingsGetResult = CoreSettingsGetResult;
 
 /** Where settings are read and written. */
 export type SettingsTarget =

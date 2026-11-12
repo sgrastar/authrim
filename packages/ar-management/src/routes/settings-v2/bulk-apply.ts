@@ -173,10 +173,13 @@ function reject(entry: PlannedEntry, reason: string): void {
 }
 
 function currentOf(state: SettingsGetResult, key: string): CurrentView {
-  const overridden = state.sources[key] === 'kv';
+  // A locked key's stored value is set aside (the platform's applies): the tenant still holds it,
+  // and a clear removes it, so it counts as the tenant's own although `sources` says otherwise.
+  const applied = state.sources[key] === 'kv';
+  const overridden = applied || state.setAside.includes(key);
   return {
     overridden,
-    own: overridden ? state.values[key] : null,
+    own: applied ? state.values[key] : null,
     effective: state.values[key],
     source: state.sources[key] ?? 'default',
   };

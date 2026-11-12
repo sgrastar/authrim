@@ -146,6 +146,34 @@ describe('runLegacySettingsImport', () => {
     await expect(count('platform_settings_documents')).resolves.toBe(0);
   });
 
+  it('refuses to import a value for a setting the platform has locked, in a preview and a run', async () => {
+    const locked = 'oauth.https_request_uri_enabled';
+    const open = 'oauth.https_request_uri_timeout_ms';
+    const source = {
+      'settings:platform:oauth': { [locked]: false, __locked__: [locked] },
+      'settings:tenant:acme:certification-profile': {
+        oidc: { httpsRequestUri: { enabled: true, timeoutMs: 8000 } },
+      },
+    };
+    const { env, settings } = environment(source);
+
+    const report = await preview(env);
+    const oauth = documentOf(report, 'acme', 'oauth');
+    expect(oauth?.rejected[locked]).toMatch(/^locked_by_platform/);
+    // An unlocked setting of the same document is still imported.
+    expect(oauth?.applied).toContain(open);
+    expect(oauth?.applied).not.toContain(locked);
+
+    const run = documentOf(await runStep(env), 'acme', 'oauth');
+    expect(run?.rejected[locked]).toMatch(/^locked_by_platform/);
+    const stored = JSON.parse(settings.get('settings:tenant:acme:oauth') ?? '{}') as Record<
+      string,
+      unknown
+    >;
+    expect(stored[locked]).toBeUndefined();
+    expect(stored[open]).toBe(8000);
+  });
+
   it('refuses an older value no setting carries as runtime read it, instead of changing it', async () => {
     const { env, settings } = environment({
       system_settings: {

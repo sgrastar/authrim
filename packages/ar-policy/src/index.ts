@@ -231,7 +231,10 @@ policyRoutes.get('/flags', async (c) => {
   }
 
   const tenantId = getAuthenticatedTenantId(c);
-  let resolved: Awaited<ReturnType<typeof resolvePlatformSettingsWithSources>>;
+  let resolved: Pick<
+    Awaited<ReturnType<typeof resolvePlatformSettingsWithSources>>,
+    'values' | 'sources'
+  >;
   try {
     resolved = tenantId
       ? await resolveEffectiveSettingsWithSources(c.env, 'feature-flags', {

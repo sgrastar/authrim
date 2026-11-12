@@ -103,6 +103,8 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     min: 1,
     max: 10,
     integer: true,
+    // Read only through resolveEmailSendLimit (resolved settings), which honours the platform lock.
+    lockable: true,
     visibility: 'admin',
   },
   'rate_limit.email_window': {
@@ -116,6 +118,8 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     max: 3600,
     unit: 'seconds',
     integer: true,
+    // Read only through resolveEmailSendLimit (resolved settings), which honours the platform lock.
+    lockable: true,
     visibility: 'admin',
   },
   'rate_limit.totp_max_requests': {

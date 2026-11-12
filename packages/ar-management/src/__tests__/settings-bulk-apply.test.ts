@@ -685,6 +685,52 @@ describe('a preview', () => {
     });
   });
 
+  it('clears a tenant value that a platform lock has set aside, so it does not return on unlock', async () => {
+    const MAX = 'rate_limit.email_max_requests';
+    interface View {
+      values: Record<string, unknown>;
+      sources: Record<string, string>;
+      setAside: string[];
+      version: string;
+    }
+    const t = await setup();
+    const changeOf = (json: unknown) =>
+      (resultFor(json as Record<string, unknown>, 'tenant-b') as { changes: unknown[] }).changes[0];
+    const view = async (tenantId: string): Promise<View> =>
+      (await t.doc(tenantId, 'rate-limit')) as View;
+    const platformView = async (): Promise<View> =>
+      (await t.call(t.admin, 'GET', url)).json as View;
+    const url = '/api/admin/platform/settings/rate-limit';
+    await t.seed('tenant-b', 'rate-limit', { [MAX]: 9 });
+    const locked = await t.call(t.admin, 'PATCH', url, {
+      ifMatch: (await platformView()).version,
+      set: { [MAX]: 5 },
+      lock: [MAX],
+    });
+    expect(locked.status).toBe(200);
+    const before = await view('tenant-b');
+    expect(before.values[MAX]).toBe(5);
+    expect(before.sources[MAX]).toBe('platform');
+    expect(before.setAside).toEqual([MAX]);
+
+    const clear = request({
+      tenant_ids: ['tenant-b'],
+      changes: [{ category: 'rate-limit', clear: [MAX] }],
+      on_existing_override: 'overwrite',
+    });
+    const preview = await t.bulk(t.admin, { ...clear, mode: 'preview' });
+    expect(changeOf(preview.json)).toMatchObject({ action: 'would_clear' });
+    const applied = await t.bulk(t.admin, clear);
+    expect(changeOf(applied.json)).toMatchObject({ status: 'cleared' });
+    expect((await view('tenant-b')).setAside).toEqual([]);
+
+    // Unlocked, the old tenant value does not come back.
+    await t.call(t.admin, 'PATCH', url, { ifMatch: (await platformView()).version, unlock: [MAX] });
+    const after = await view('tenant-b');
+    expect(after.values[MAX]).toBe(5);
+    expect(after.sources[MAX]).toBe('platform');
+  });
+
   it('runs the checks an apply runs, the Admin database reference check included', async () => {
     const t = await setup();
     const change = { category: 'identity-mapping', set: { [MAPPING_KEY]: 'set-b1' } };

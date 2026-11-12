@@ -150,7 +150,10 @@ export async function applyCertificationProfileHandler(c: AdminContext) {
           const current = await manager.getAll(category, scope, context);
           read.set(category, current.version);
           // Managed settings the profile leaves out: inherited again.
-          const clear = managed.filter((key) => !(key in set) && current.sources[key] === 'kv');
+          const clear = managed.filter(
+            (key) =>
+              !(key in set) && (current.sources[key] === 'kv' || current.setAside.includes(key))
+          );
           const problem =
             validateCategoryPatch(category, { ifMatch: '', set }) ??
             (manager.validate(category, set).valid ? null : 'invalid value');

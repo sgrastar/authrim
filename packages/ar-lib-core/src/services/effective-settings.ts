@@ -149,9 +149,17 @@ export async function resolvePlatformSettingsWithSources(
   env: EffectiveSettingsEnv,
   category: CategoryName,
   options: Pick<EffectiveSettingsTarget, 'fresh'> = {}
-): Promise<{ values: Record<string, unknown>; sources: Record<string, SettingSource> }> {
-  const { values, sources } = await managerFor(env, options.fresh === true).getAll(category, {
-    type: 'platform',
-  });
-  return { values, sources };
+): Promise<{
+  values: Record<string, unknown>;
+  sources: Record<string, SettingSource>;
+  /** The settings the platform has locked in the category (enforced: lockable and listed). */
+  locked: string[];
+}> {
+  const { values, sources, locked } = await managerFor(env, options.fresh === true).getAll(
+    category,
+    {
+      type: 'platform',
+    }
+  );
+  return { values, sources, locked };
 }

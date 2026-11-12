@@ -20,6 +20,13 @@ import { createHash } from 'node:crypto';
 import { createLogger } from './logger';
 import { sanitizeObject } from './security';
 import {
+  SETTING_LOCKS_FIELD,
+  LOCKED_BY_PLATFORM,
+  readSettingLocks,
+  withoutSettingLocks,
+  isLockedByPlatformReason,
+} from './setting-locks';
+import {
   identityMappingLevelHistoryChoicesEqual,
   normalizeIdentityMappingLevelHistoryChoice,
   type IdentityMappingLevelHistoryInput,
@@ -100,6 +107,24 @@ function inheritedLayers(
  */
 export const DISABLED_MARKER = '__DISABLED__';
 
+export {
+  SETTING_LOCKS_FIELD,
+  LOCKED_BY_PLATFORM,
+  readSettingLocks,
+  withoutSettingLocks,
+  isLockedByPlatformReason,
+};
+
+/** The listed keys that are lockable settings of the category: the locks that are enforced. */
+function enforcedLocks(
+  meta: CategoryMeta,
+  document: Record<string, unknown> | undefined
+): string[] {
+  return readSettingLocks(document).filter(
+    (key) => meta.settings[key]?.lockable === true && settableAt(meta.settings[key], 'tenant')
+  );
+}
+
 /**
  * Setting metadata for validation and UI
  */
@@ -118,6 +143,12 @@ export interface SettingMeta {
    * scopes are ignored, and setting them is refused.
    */
   scopes?: Array<'platform' | 'tenant' | 'client'>;
+  /**
+   * True when the platform may lock this setting (`lock` in a platform PATCH), so that tenants and
+   * clients cannot change it and a value they stored is ignored. Mark a setting only when every
+   * runtime read of it honours the lock; a lock on any other setting is refused.
+   */
+  lockable?: boolean;
   /**
    * How a boolean environment variable reads. 'true-or-1' (default): only `true` or `1` is true.
    * 'unless-false': anything but `false` or `0` is true, as the older oauth-config read it.
@@ -215,6 +246,18 @@ export interface SettingsGetResult {
     values: Record<string, unknown>;
     sources: Record<string, InheritedSettingSource>;
   };
+  /**
+   * The settings the platform has locked (sorted). At a tenant or client scope their values come
+   * from the platform onward; at the platform scope this is the list the platform edits.
+   */
+  locked: string[];
+  /**
+   * The locked settings (a subset of `locked`) for which this scope still stores a value of its
+   * own, sorted. The value is set aside, not used: `sources` says where the applied value comes
+   * from, so this is how to tell that a stored value exists (a `clear` removes it). Always empty
+   * at the platform scope.
+   */
+  setAside: string[];
 }
 
 /**
@@ -229,6 +272,10 @@ export interface SettingsPatchRequest {
   clear?: string[];
   /** Keys to disable */
   disable?: string[];
+  /** Platform scope only: lockable keys to lock, so tenants and clients cannot change them. */
+  lock?: string[];
+  /** Platform scope only: keys to unlock. */
+  unlock?: string[];
 }
 
 /**
@@ -245,6 +292,10 @@ export interface SettingsPatchResult {
   disabled: string[];
   /** Rejected keys with reasons */
   rejected: Record<string, string>;
+  /** Keys newly locked (only when the request asked to lock or unlock). */
+  locked?: string[];
+  /** Keys newly unlocked (only when the request asked to lock or unlock). */
+  unlocked?: string[];
   /**
    * 'pending' when the change is saved but not yet copied to the KV that runtime workers read.
    * Until a scheduled retry copies it (within about a minute), runtime keeps the previous values.
@@ -667,20 +718,32 @@ export class SettingsManager {
     const parents = options.parents ?? [];
     const [kvData, ...parentData] = await Promise.all([
       this.loadKVData(category, scope),
-      ...parents.map((parent) => this.loadKVData(category, parent)),
+      ...parents.map((parent) => this.loadParent(meta, category, scope, parent)),
     ]);
     const layers = inheritedLayers(parents, parentData);
+    // A locked setting resolves from the platform onward: the tenant's and the client's own
+    // values are set aside (kept in their documents, applying again when unlocked).
+    const { locked, lockLayers } = await this.locksFor(meta, category, scope, kvData, layers);
 
     // Resolve values with priority: this scope > parents (nearest first) > env > default
     const values: Record<string, unknown> = {};
     const sources: Record<string, SettingSource> = {};
     const inherited: SettingsGetResult['inherited'] = { values: {}, sources: {} };
+    const setAside: string[] = [];
 
     for (const [key, settingMeta] of Object.entries(meta.settings)) {
-      const fallback = this.resolveInherited(key, settingMeta, layers);
+      const isLocked = scope.type !== 'platform' && locked.has(key);
+      const fallback = this.resolveInherited(
+        key,
+        settingMeta,
+        layers,
+        isLocked ? lockLayers : undefined
+      );
       inherited.values[key] = fallback.value;
       inherited.sources[key] = fallback.source;
-      const own = settableAt(settingMeta, scope.type) ? readLayer(kvData, key) : undefined;
+      const stored = settableAt(settingMeta, scope.type) ? readLayer(kvData, key) : undefined;
+      if (isLocked && stored) setAside.push(key);
+      const own = isLocked ? undefined : stored;
       values[key] = own ? own.value : fallback.value;
       sources[key] = own ? 'kv' : fallback.source;
     }
@@ -692,6 +755,8 @@ export class SettingsManager {
       values,
       sources,
       inherited,
+      locked: [...locked].sort(),
+      setAside: setAside.sort(),
     };
   }
 
@@ -731,9 +796,10 @@ export class SettingsManager {
     // Dependencies are checked against effective values, which may come from a parent scope.
     const parents = options.parents ?? [];
     const parentData = await Promise.all(
-      parents.map((parent) => this.loadKVData(category, parent))
+      parents.map((parent) => this.loadParent(meta, category, scope, parent, true))
     );
     const layers = inheritedLayers(parents, parentData);
+    const { locked, lockLayers } = await this.locksFor(meta, category, scope, kvData, layers, true);
 
     // Check optimistic lock
     if (request.ifMatch !== currentVersion) {
@@ -747,6 +813,8 @@ export class SettingsManager {
     const disabled: string[] = [];
     const rejected: Record<string, string> = {};
     const diff: Record<string, { before: unknown; after: unknown }> = {};
+    const lockedNow: string[] = [];
+    const unlockedNow: string[] = [];
 
     // Build the document as it would be after this request: sets, then clears, then disables.
     // Dependencies are checked against that document, so a value set, cleared or disabled in
@@ -769,7 +837,20 @@ export class SettingsManager {
       if (keyMeta && !settableAt(keyMeta, scope.type) && !(key in rejected)) {
         rejected[key] = `Not settable at ${scope.type} scope`;
       }
+      // The platform's lock: a tenant or client cannot set or disable a locked setting (it may
+      // still clear a value of its own, which is set aside anyway).
+      if (
+        scope.type !== 'platform' &&
+        locked.has(key) &&
+        !(key in rejected) &&
+        (Object.prototype.hasOwnProperty.call(request.set ?? {}, key) ||
+          (request.disable ?? []).includes(key))
+      ) {
+        rejected[key] = `${LOCKED_BY_PLATFORM}: This setting is locked by the platform`;
+      }
     }
+
+    this.decideLocks(meta, scope, request, kvData, rejected, lockedNow, unlockedNow);
 
     if (request.set) {
       for (const [key, value] of Object.entries(request.set)) {
@@ -836,7 +917,9 @@ export class SettingsManager {
           meta,
           kvData,
           layers,
-          scope.type
+          scope.type,
+          locked,
+          lockLayers
         );
         if (depCheck.valid) continue;
         rejected[key] = depCheck.reason;
@@ -855,14 +938,34 @@ export class SettingsManager {
       // After clearing, the scope takes what it inherits (a parent, env or the default).
       diff[key] = {
         before: original[key],
-        after: this.resolveInherited(key, meta.settings[key], layers).value,
+        after: this.resolveInherited(
+          key,
+          meta.settings[key],
+          layers,
+          scope.type !== 'platform' && locked.has(key) ? lockLayers : undefined
+        ).value,
       };
     }
     for (const key of disabled) {
       diff[key] = { before: original[key], after: DISABLED_MARKER };
     }
+    for (const key of lockedNow) diff[`${LOCK_DIFF_PREFIX}${key}`] = { before: false, after: true };
+    for (const key of unlockedNow)
+      diff[`${LOCK_DIFF_PREFIX}${key}`] = { before: true, after: false };
 
-    return { meta, kvData, original, currentVersion, applied, cleared, disabled, rejected, diff };
+    return {
+      meta,
+      kvData,
+      original,
+      currentVersion,
+      applied,
+      cleared,
+      disabled,
+      rejected,
+      diff,
+      lockedNow,
+      unlockedNow,
+    };
   }
 
   /**
@@ -881,8 +984,19 @@ export class SettingsManager {
     actor: string,
     options: SettingsPatchOptions = {}
   ): Promise<SettingsPatchResult> {
-    const { kvData, original, currentVersion, applied, cleared, disabled, rejected, diff } =
-      await this.decide(category, scope, request, options);
+    const {
+      kvData,
+      original,
+      currentVersion,
+      applied,
+      cleared,
+      disabled,
+      rejected,
+      diff,
+      lockedNow,
+      unlockedNow,
+    } = await this.decide(category, scope, request, options);
+    const lockFields = lockResultFields(request, lockedNow, unlockedNow);
 
     if (options.dryRun) {
       return {
@@ -891,12 +1005,18 @@ export class SettingsManager {
         cleared,
         disabled,
         rejected,
+        ...lockFields,
         candidate: { before: original, after: { ...kvData } },
       };
     }
 
     // Save if anything changed
-    const hasChanges = applied.length > 0 || cleared.length > 0 || disabled.length > 0;
+    const hasChanges =
+      applied.length > 0 ||
+      cleared.length > 0 ||
+      disabled.length > 0 ||
+      lockedNow.length > 0 ||
+      unlockedNow.length > 0;
     let projection: 'applied' | 'pending' = 'applied';
     if (hasChanges) {
       const key = 'identity_mapping.oidc_default_set_id';
@@ -943,6 +1063,7 @@ export class SettingsManager {
       cleared,
       disabled,
       rejected,
+      ...lockFields,
       ...(projection === 'pending' ? { projection } : {}),
     };
   }
@@ -977,7 +1098,12 @@ export class SettingsManager {
         ...(await this.decide(change.category, scope, change.request, change.options ?? {})),
       });
     const changed = decided.filter(
-      (item) => item.applied.length > 0 || item.cleared.length > 0 || item.disabled.length > 0
+      (item) =>
+        item.applied.length > 0 ||
+        item.cleared.length > 0 ||
+        item.disabled.length > 0 ||
+        item.lockedNow.length > 0 ||
+        item.unlockedNow.length > 0
     );
     if (changed.length > 0) {
       const saved = await store.compareAndSetMany(
@@ -1021,12 +1147,13 @@ export class SettingsManager {
         });
       }
     }
-    return decided.map((item) => ({
+    return decided.map((item, index) => ({
       version: generateVersion(item.kvData),
       applied: item.applied,
       cleared: item.cleared,
       disabled: item.disabled,
       rejected: item.rejected,
+      ...lockResultFields(changes[index].request, item.lockedNow, item.unlockedNow),
       ...(projections.get(item.category) === 'pending' ? { projection: 'pending' as const } : {}),
     }));
   }
@@ -1089,7 +1216,12 @@ export class SettingsManager {
   private async loadKVData(
     category: string,
     scope: SettingScope,
-    skipCache = false
+    skipCache = false,
+    /**
+     * The document decides a platform lock: a failure to read it throws, whatever `strictReads`
+     * says, because an unreadable document read as empty would lift the lock.
+     */
+    failClosed = false
   ): Promise<Record<string, unknown>> {
     if (!this.kv && !this.canonicalStore) {
       return {};
@@ -1131,6 +1263,9 @@ export class SettingsManager {
 
       // Parse and validate KV data
       let data: Record<string, unknown> = {};
+      // A tolerated unreadable document reads as empty for this call only: it is never cached
+      // (a fail-closed read of the same key must not be served `{}`) nor made canonical.
+      let degraded = false;
       // Only a missing key is an empty document: a stored empty string is unreadable data.
       if (json !== null) {
         const parsed: unknown = JSON.parse(json) as unknown;
@@ -1139,12 +1274,14 @@ export class SettingsManager {
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
           data = sanitizeObject(parsed);
         } else {
-          if (this.strictReads) throw new Error('settings_data_invalid');
+          if (this.strictReads || failClosed) throw new Error('settings_data_invalid');
           log.warn(
             `Invalid KV data format for ${key}: expected object, got ${Array.isArray(parsed) ? 'array' : typeof parsed}`
           );
+          degraded = true;
         }
       }
+      if (degraded) return data;
 
       // A read-only manager (previews) never creates the canonical document from KV.
       if (this.canonicalStore && !this.readOnly) {
@@ -1169,7 +1306,9 @@ export class SettingsManager {
       return data;
     } catch {
       log.warn('Failed to load settings from KV');
-      if (this.strictReads || this.canonicalStore) throw new Error('settings_read_failed');
+      if (this.strictReads || this.canonicalStore || failClosed) {
+        throw new Error('settings_read_failed');
+      }
       return {};
     }
   }
@@ -1241,9 +1380,11 @@ export class SettingsManager {
   private resolveInherited(
     key: string,
     meta: SettingMeta,
-    layers: InheritedLayer[]
+    layers: InheritedLayer[],
+    /** A locked setting: only the platform layer is consulted (not a tenant under a client). */
+    lockLayers?: InheritedLayer[]
   ): { value: unknown; source: InheritedSettingSource } {
-    for (const layer of layers) {
+    for (const layer of lockLayers ?? layers) {
       // A parent is consulted only where that scope may set the setting.
       if (!settableAt(meta, layer.source === 'tenant' ? 'tenant' : 'platform')) continue;
       const found = readLayer(layer.data, key);
@@ -1289,7 +1430,9 @@ export class SettingsManager {
     categoryMeta: CategoryMeta,
     candidate: Record<string, unknown>,
     layers: InheritedLayer[],
-    scopeType: SettingScope['type']
+    scopeType: SettingScope['type'],
+    locked: ReadonlySet<string> = new Set(),
+    lockLayers: InheritedLayer[] = []
   ): { valid: boolean; reason: string } {
     if (!meta.dependsOn || meta.dependsOn.length === 0) {
       return { valid: true, reason: '' };
@@ -1297,11 +1440,18 @@ export class SettingsManager {
 
     for (const dep of meta.dependsOn) {
       const depMeta = categoryMeta.settings[dep.key];
+      // A locked dependency is the platform's, not the stored value of this scope.
+      const dependencyLocked = scopeType !== 'platform' && locked.has(dep.key);
       const raw =
-        dep.key in candidate && (!depMeta || settableAt(depMeta, scopeType))
+        dep.key in candidate && !dependencyLocked && (!depMeta || settableAt(depMeta, scopeType))
           ? candidate[dep.key]
           : depMeta
-            ? this.effectiveInheritedRaw(dep.key, depMeta, layers)
+            ? this.effectiveInheritedRaw(
+                dep.key,
+                depMeta,
+                layers,
+                dependencyLocked ? lockLayers : undefined
+              )
             : undefined;
 
       if (isDisabled(raw)) {
@@ -1323,13 +1473,132 @@ export class SettingsManager {
   }
 
   /** The inherited value of a key, keeping a parent's disabled marker so it can be reported. */
-  private effectiveInheritedRaw(key: string, meta: SettingMeta, layers: InheritedLayer[]): unknown {
-    for (const layer of layers) {
+  private effectiveInheritedRaw(
+    key: string,
+    meta: SettingMeta,
+    layers: InheritedLayer[],
+    lockLayers?: InheritedLayer[]
+  ): unknown {
+    for (const layer of lockLayers ?? layers) {
       if (!settableAt(meta, layer.source === 'tenant' ? 'tenant' : 'platform')) continue;
       if (layer.data[key] !== undefined) return layer.data[key];
     }
     return this.resolveInherited(key, meta, []).value;
   }
+
+  /**
+   * A parent's document. At a tenant or client scope, the platform document of a category with a
+   * lockable setting carries the locks, so it is read fail-closed (see `loadKVData`).
+   */
+  private loadParent(
+    meta: CategoryMeta,
+    category: string,
+    scope: SettingScope,
+    parent: SettingScope,
+    /** A write: the lock-bearing document is read as fresh as the one being patched. */
+    fresh = false
+  ): Promise<Record<string, unknown>> {
+    const carriesLocks =
+      scope.type !== 'platform' &&
+      parent.type === 'platform' &&
+      Object.values(meta.settings).some((setting) => setting.lockable === true);
+    return this.loadKVData(category, parent, fresh && carriesLocks, carriesLocks);
+  }
+
+  /**
+   * The enforced locks for a read or write at a scope, from the platform document (the scope's
+   * own at the platform scope). Independent of the `parents` the caller passed: at a tenant or
+   * client scope, a category with a lockable setting loads the platform document itself when the
+   * caller did not pass it (categories without one pay no extra read). `lockLayers` is the layer
+   * a locked setting resolves from.
+   */
+  private async locksFor(
+    meta: CategoryMeta,
+    category: string,
+    scope: SettingScope,
+    own: Record<string, unknown>,
+    layers: InheritedLayer[],
+    fresh = false
+  ): Promise<{ locked: Set<string>; lockLayers: InheritedLayer[] }> {
+    if (scope.type === 'platform') {
+      return { locked: new Set(enforcedLocks(meta, own)), lockLayers: [] };
+    }
+    let layer = layers.find((candidate) => candidate.source === 'platform');
+    if (!layer && Object.values(meta.settings).some((setting) => setting.lockable === true)) {
+      layer = {
+        source: 'platform',
+        data: await this.loadKVData(category, { type: 'platform' }, fresh, true),
+      };
+    }
+    return {
+      locked: new Set(enforcedLocks(meta, layer?.data)),
+      lockLayers: layer ? [layer] : [],
+    };
+  }
+
+  /** Apply `lock` and `unlock` of a platform PATCH to the candidate document. */
+  private decideLocks(
+    meta: CategoryMeta,
+    scope: SettingScope,
+    request: SettingsPatchRequest,
+    kvData: Record<string, unknown>,
+    rejected: Record<string, string>,
+    lockedNow: string[],
+    unlockedNow: string[]
+  ): void {
+    const toLock = [...new Set(request.lock ?? [])];
+    const toUnlock = [...new Set(request.unlock ?? [])];
+    if (toLock.length === 0 && toUnlock.length === 0) return;
+    if (scope.type !== 'platform') {
+      for (const key of [...toLock, ...toUnlock])
+        rejected[key] = 'Locks can only be changed at platform scope';
+      return;
+    }
+    const current = new Set(readSettingLocks(kvData));
+    const next = new Set(current);
+    for (const key of toLock) {
+      if (key in rejected) continue;
+      if (toUnlock.includes(key)) {
+        rejected[key] = 'Conflicting operations for the same key';
+        continue;
+      }
+      const keyMeta = meta.settings[key];
+      if (!keyMeta) {
+        rejected[key] = 'Unknown setting key';
+      } else if (keyMeta.lockable !== true || !settableAt(keyMeta, 'tenant')) {
+        rejected[key] = 'Setting cannot be locked';
+      } else if (!current.has(key)) {
+        next.add(key);
+        lockedNow.push(key);
+      }
+    }
+    for (const key of toUnlock) {
+      if (key in rejected) continue;
+      // An entry for a setting that no longer exists or is no longer lockable can still be removed.
+      if (current.has(key)) {
+        next.delete(key);
+        unlockedNow.push(key);
+      } else if (!meta.settings[key]) {
+        rejected[key] = 'Unknown setting key';
+      }
+    }
+    if (lockedNow.length === 0 && unlockedNow.length === 0) return;
+    if (next.size > 0) kvData[SETTING_LOCKS_FIELD] = [...next].sort();
+    else delete kvData[SETTING_LOCKS_FIELD];
+  }
+}
+
+const LOCK_DIFF_PREFIX = 'locked:';
+
+/** `locked` / `unlocked` of a PATCH result, present only when the request asked for locks. */
+function lockResultFields(
+  request: SettingsPatchRequest,
+  lockedNow: string[],
+  unlockedNow: string[]
+): { locked?: string[]; unlocked?: string[] } {
+  return (request.lock?.length ?? 0) + (request.unlock?.length ?? 0) > 0
+    ? { locked: lockedNow, unlocked: unlockedNow }
+    : {};
 }
 
 /**
