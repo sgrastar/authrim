@@ -73,6 +73,7 @@ export const arTeam: Record<keyof typeof jaTeam, string> = {
 	'tm.inv.status.revoked': 'Revoked',
 	'tm.inv.delivery.pending': 'Sending',
 	'tm.inv.delivery.sent': 'Sent',
+	'tm.inv.delivery.handed': 'Code handed over',
 	'tm.inv.delivery.failed': 'Not sent',
 	'tm.inv.scope.global': 'Every tenant',
 	'tm.inv.action.resend': 'Send the invitation again',

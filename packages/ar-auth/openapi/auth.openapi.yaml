@@ -2827,6 +2827,9 @@ paths:
       description: >-
         Verifies possession of the Passkey registered in the same enrollment and atomically creates
         the Admin user, Passkey, role assignment, and Admin session while consuming the invitation.
+        The Admin's e-mail address is marked verified only when the code was e-mailed to it; for an
+        invitation whose code was handed over through the Admin API (`code_delivery` response) the
+        Admin is created with the address unverified.
       requestBody:
         required: true
         content:

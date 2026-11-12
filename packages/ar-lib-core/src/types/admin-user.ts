@@ -517,6 +517,11 @@ export const ADMIN_PERMISSIONS = {
   ADMIN_USERS_DELETE: 'admin:admin_users:delete',
   ADMIN_USERS_ALL: 'admin:admin_users:*',
 
+  // Hands an admin invitation's enrollment code back in the API response instead of e-mailing it.
+  // Held by exact name only (no wildcard carries it), by a global machine principal only, and in
+  // no built-in role. It also needs the platform switch `admin-invitations.code_handoff_enabled`.
+  ADMIN_INVITATION_CODE_HANDOFF: 'admin:admin_invitations:code_handoff',
+
   // End user management
   USERS_READ: 'admin:users:read',
   // An account's status alone (lifecycle, lock, credential kinds, session counts), read from Core
@@ -842,12 +847,14 @@ export type AdminPermission = (typeof ADMIN_PERMISSIONS)[keyof typeof ADMIN_PERM
 /**
  * Permissions under these prefixes are never granted by a wildcard, only by their exact name:
  * break-glass access, a machine principal's exemption from an operation's admin step-up, and the
- * last-resort second-factor recovery (listed by its full name).
+ * last-resort second-factor recovery (listed by its full name), and the admin invitation code
+ * handoff.
  */
 const EXACT_MATCH_ONLY_PERMISSION_PREFIXES: readonly string[] = [
   'admin:support_ops:break_glass:',
   'admin:step_up_exempt:',
   'admin:last_resort_recovery',
+  'admin:admin_invitations:code_handoff',
 ];
 
 /**

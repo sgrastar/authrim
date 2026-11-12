@@ -99,6 +99,8 @@ interface InvitationRow {
   allowed_ip_ranges_json: string;
   expires_at: number;
   created_by: string;
+  /** How the code reached the person invited ('email' when the row has no such column yet). */
+  code_delivery?: 'email' | 'response';
 }
 
 interface RegistrationEnrollmentState {
@@ -665,11 +667,14 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
         role_id: invitation.admin_role_id,
         scope_type: invitation.scope_type,
         ip_restriction_enabled: Boolean(invitation.ip_restriction_enabled),
+        code_delivery: invitation.code_delivery ?? 'email',
         ...(groupOutcomes.length > 0 ? { admin_groups: groupOutcomes } : {}),
       }),
     },
   });
   try {
+    // The admin's e-mail is verified only when the code was e-mailed to it: a code handed over
+    // through the API (code_delivery = 'response') shows nothing about the address, so it stays 0.
     await checked.adapter.batch([
       {
         sql: `INSERT INTO admin_users (
@@ -678,7 +683,8 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
                 last_login_at, last_login_ip, failed_login_count, locked_until,
                 created_by, created_at, updated_at, passkey_setup_completed
               )
-              SELECT admin_user_id, tenant_id, email, 1, name, NULL,
+              SELECT admin_user_id, tenant_id, email,
+                     CASE WHEN i.code_delivery = 'response' THEN 0 ELSE 1 END, name, NULL,
                      1, 'active', 1, 'passkey', NULL,
                      ?, ?, 0, NULL, created_by, ?, ?, 1
                 FROM admin_invitations i

@@ -896,6 +896,11 @@ place(
 place('hidden', 'Deploy-time or internal', {
 	hidden: ['tenant.user_id_format']
 });
+place('hidden', 'Turned on through the Admin API with a human step-up', {
+	// Handing an admin invitation's code over in the API response. Turning it on needs an L2
+	// step-up of a signed-in human, which this settings screen has no flow for; no screen yet.
+	hidden: ['admin_invitations.code_handoff_enabled']
+});
 place('hidden', 'Kept by the profile screens', {
 	hidden: [
 		'authentication-methods.default_profile.base_version',

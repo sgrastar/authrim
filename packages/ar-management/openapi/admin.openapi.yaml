@@ -33,6 +33,14 @@ info:
     followed by two hex digits) is refused with HTTP 400 `invalid_request`, before any check but
     authentication.
 
+    The platform setting category `admin-invitations` (platform scope only) holds
+    `admin_invitations.code_handoff_enabled`, default off: it lets a global machine principal with
+    the `admin:admin_invitations:code_handoff` permission receive an admin invitation's enrollment
+    code in the API response (see `POST /api/admin/admin-invitations`). Turning it on, through any
+    settings write path, needs a signed-in human with an L2 step-up
+    (`admin_invitation.code_handoff.enable`); a machine can never turn it on. Turning it off needs
+    none.
+
     The platform can turn a named capability off for tenants (platform setting category
     `tenant-capabilities`: `webhooks`, `dynamic_client_registration`, `external_plugins`,
     `bulk_jobs`; every capability is on by default). While one is off, the management operations
@@ -4270,7 +4278,41 @@ paths:
       summary: Invite an Admin to enroll a Passkey.
       description: >-
         Creates a pending invitation and emails a one-time enrollment code. The code is not returned
-        by this API and cannot create an Admin session. IP restrictions are disabled by default.
+        by this API (except in the code handoff below) and cannot create an Admin session. IP
+        restrictions are disabled by default.
+
+        **Code handoff** (`code_delivery: response`). A global machine principal (a provisioning
+        portal) can receive the code in the response instead of an e-mail; nothing is e-mailed.
+        It is available to no one else, and every condition is checked before anything is written,
+        each with its own error:
+
+        - the caller is a machine access token with a global tenant scope holding the permission
+          `admin:admin_invitations:code_handoff`, which no wildcard (`*`, `admin:*`) carries and
+          no built-in role has, and which is handed out only through the machine access grant
+          step-up (`machine.permission.grant`). A human can never use it, whatever the role: 403
+          `code_handoff_not_permitted`;
+        - the platform setting `admin_invitations.code_handoff_enabled` (category
+          `admin-invitations`, default off, env `ADMIN_INVITATIONS_CODE_HANDOFF_ENABLED`) is on.
+          Read without the cache, and an unreadable value counts as off: 403
+          `code_handoff_disabled`. Turning it on needs a signed-in human with an L2 step-up
+          (`admin_invitation.code_handoff.enable`, never exempt for a machine) through every
+          settings write path; turning it off does not;
+        - the invitation is tenant-scoped for the request tenant (`scope_type: global` or another
+          `scope_id`: 400 `invalid_scope`), names no admin groups (400
+          `code_handoff_groups_not_supported`), and its role is not `ar_super_admin`, not a
+          platform role, carries no wildcard permission, and ranks from 0 up to but not including
+          the super admin level (403 `code_handoff_role_not_allowed`);
+        - the code lives 15 minutes by default, `expires_in_minutes` (integer 1-60) sets it, and
+          `expires_in_hours` is refused (400 `invalid_expiry`).
+
+        In this mode the permission is the authorization for the role: the hierarchy comparison
+        and the `admin.role.grant` step-up that apply to every other caller and mode do not. The
+        write permission pair is still required. The response carries `Cache-Control: no-store`;
+        the code is never logged, audited or stored (only its hash is), and the audit entry
+        records `code_delivery: response` and the machine actor. The invited address is not
+        verified by this path: accepting the invitation creates the admin with `email_verified`
+        off. `join_url` is the join page without the code; hand the code over in the URL fragment
+        (`join_url#code=...&email=...`), which never reaches a server.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
       requestBody:
@@ -4281,7 +4323,15 @@ paths:
               $ref: '#/components/schemas/AdminInvitationCreate'
       responses:
         '201':
-          description: Invitation created and email sent.
+          description: >-
+            Invitation created. By e-mail: `email_sent` true and no code. With the code handoff:
+            `email_sent` false, `code_delivery` response, the one-time `code`, and `Cache-Control:
+            no-store`.
+          headers:
+            Cache-Control:
+              description: '`no-store` when the response carries the code.'
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -4298,6 +4348,20 @@ paths:
                     format: int64
                   email_sent:
                     type: boolean
+                  code_delivery:
+                    type: string
+                    enum: [response]
+                    description: Present with the code handoff only.
+                  code:
+                    type: string
+                    description: >-
+                      The formatted one-time enrollment code (`XXXX-XXXX-XXXX-XXXX`). Present with
+                      the code handoff only, returned once.
+                  join_url:
+                    type: [string, 'null']
+                    description: >-
+                      The Admin join page without the code, or null when ADMIN_UI_URL is not a
+                      safe origin. Present with the code handoff only.
         '400':
           $ref: '#/components/responses/Error'
         '403':
@@ -4336,12 +4400,37 @@ paths:
         ar_super_admin invitation needs the wildcard from a global assignment), and to give the
         roles of the admin groups it names. 403 `insufficient_permissions` otherwise; 404
         `role_not_found` when the role is gone.
+
+        An invitation keeps the way its code is delivered. A resend by e-mail of an invitation
+        whose code was handed over (`code_delivery` response), and a handoff re-issue of an
+        e-mailed one, are refused with 409 `code_delivery_mismatch`. A handoff invitation can be
+        re-issued by sending `code_delivery: response` (and optionally `expires_in_minutes`) under
+        the same conditions as creating it; the new code is returned as there, with `Cache-Control:
+        no-store`, and no e-mail is sent.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code_delivery:
+                  type: string
+                  enum: [email, response]
+                  default: email
+                expires_in_minutes:
+                  type: integer
+                  minimum: 1
+                  maximum: 60
+                  description: With `code_delivery` response only (default 15).
       responses:
         '200':
-          description: Invitation code replaced and email sent.
+          description: >-
+            Invitation code replaced; by e-mail, or with the code handoff the response also
+            carries `email_sent` false, `code_delivery` response and the new `code`.
           content:
             application/json:
               schema:
@@ -4354,6 +4443,13 @@ paths:
                   expires_at:
                     type: integer
                     format: int64
+                  email_sent:
+                    type: boolean
+                  code_delivery:
+                    type: string
+                    enum: [response]
+                  code:
+                    type: string
         '403':
           $ref: '#/components/responses/Error'
         '404':
@@ -4379,6 +4475,10 @@ paths:
         not measured by rank. When the role cannot be read (deleted under an expired invitation),
         only the wildcard with the roles' write permission from a global assignment revokes it.
         403 `insufficient_permissions` otherwise.
+
+        A global machine holding `admin:admin_invitations:code_handoff` may also revoke a
+        tenant-scoped invitation whose code was handed over (`code_delivery` response), and only
+        those, on that permission alone (whether or not the platform switch is still on).
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
@@ -53895,6 +53995,21 @@ components:
           exclusiveMinimum: 0
           maximum: 168
           default: 24
+          description: E-mailed codes only; refused with the code handoff.
+        code_delivery:
+          type: string
+          enum: [email, response]
+          default: email
+          description: >-
+            `response` is the code handoff (see the operation): global machine principal with
+            `admin:admin_invitations:code_handoff` only, the platform switch on, a tenant-scoped
+            role below the super admin, no groups. Anything else is 400.
+        expires_in_minutes:
+          type: integer
+          minimum: 1
+          maximum: 60
+          default: 15
+          description: With `code_delivery` response only.
         ip_restriction_enabled:
           type: boolean
           default: false
@@ -53965,6 +54080,13 @@ components:
         last_delivery_status:
           type: string
           enum: [pending, sent, failed]
+          description: A handed-over code counts as `sent`; see `code_delivery`.
+        code_delivery:
+          type: string
+          enum: [email, response]
+          description: >-
+            How the enrollment code reached the person invited: e-mailed, or handed to a
+            provisioning service in the create response.
         accepted_at:
           type: [integer, 'null']
           format: int64

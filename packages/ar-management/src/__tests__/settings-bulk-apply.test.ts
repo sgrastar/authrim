@@ -1580,6 +1580,11 @@ describe('an apply', () => {
       ['a platform-only category', 'infrastructure', 'category_not_at_tenant_scope'],
       ['an app-only category', 'client', 'category_not_at_tenant_scope'],
       ['the limits of this very feature', 'bulk-apply', 'category_not_at_tenant_scope'],
+      [
+        'the admin invitation code handoff switch',
+        'admin-invitations',
+        'category_not_at_tenant_scope',
+      ],
     ])('rejects %s', async (_name, category, reason) => {
       const t = await setup();
       const response = await t.bulk(
