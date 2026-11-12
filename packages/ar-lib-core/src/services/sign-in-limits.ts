@@ -98,7 +98,9 @@ async function resolveRequestLimit(
     return limitFrom(await resolveEffectiveSettings(env, 'rate-limit', { tenantId }));
   } catch {
     // The tenant's layer could not be read. A setting the platform has locked still holds (its
-    // value does not come from the tenant); everything else keeps its default, as before.
+    // value does not come from the tenant); everything else keeps its default, as before. Each
+    // key is decided on its own (one locked and one not gives a mixed pair): taking the platform
+    // pair only when both are locked would loosen a locked count back to the default.
     try {
       const platform = await resolvePlatformSettingsWithSources(env, 'rate-limit');
       return limitFrom(platform.values, new Set(platform.locked));

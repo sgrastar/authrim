@@ -796,10 +796,10 @@ export class SettingsManager {
     // Dependencies are checked against effective values, which may come from a parent scope.
     const parents = options.parents ?? [];
     const parentData = await Promise.all(
-      parents.map((parent) => this.loadParent(meta, category, scope, parent))
+      parents.map((parent) => this.loadParent(meta, category, scope, parent, true))
     );
     const layers = inheritedLayers(parents, parentData);
-    const { locked, lockLayers } = await this.locksFor(meta, category, scope, kvData, layers);
+    const { locked, lockLayers } = await this.locksFor(meta, category, scope, kvData, layers, true);
 
     // Check optimistic lock
     if (request.ifMatch !== currentVersion) {
@@ -1263,6 +1263,9 @@ export class SettingsManager {
 
       // Parse and validate KV data
       let data: Record<string, unknown> = {};
+      // A tolerated unreadable document reads as empty for this call only: it is never cached
+      // (a fail-closed read of the same key must not be served `{}`) nor made canonical.
+      let degraded = false;
       // Only a missing key is an empty document: a stored empty string is unreadable data.
       if (json !== null) {
         const parsed: unknown = JSON.parse(json) as unknown;
@@ -1275,8 +1278,10 @@ export class SettingsManager {
           log.warn(
             `Invalid KV data format for ${key}: expected object, got ${Array.isArray(parsed) ? 'array' : typeof parsed}`
           );
+          degraded = true;
         }
       }
+      if (degraded) return data;
 
       // A read-only manager (previews) never creates the canonical document from KV.
       if (this.canonicalStore && !this.readOnly) {
@@ -1489,13 +1494,15 @@ export class SettingsManager {
     meta: CategoryMeta,
     category: string,
     scope: SettingScope,
-    parent: SettingScope
+    parent: SettingScope,
+    /** A write: the lock-bearing document is read as fresh as the one being patched. */
+    fresh = false
   ): Promise<Record<string, unknown>> {
     const carriesLocks =
       scope.type !== 'platform' &&
       parent.type === 'platform' &&
       Object.values(meta.settings).some((setting) => setting.lockable === true);
-    return this.loadKVData(category, parent, false, carriesLocks);
+    return this.loadKVData(category, parent, fresh && carriesLocks, carriesLocks);
   }
 
   /**
@@ -1510,7 +1517,8 @@ export class SettingsManager {
     category: string,
     scope: SettingScope,
     own: Record<string, unknown>,
-    layers: InheritedLayer[]
+    layers: InheritedLayer[],
+    fresh = false
   ): Promise<{ locked: Set<string>; lockLayers: InheritedLayer[] }> {
     if (scope.type === 'platform') {
       return { locked: new Set(enforcedLocks(meta, own)), lockLayers: [] };
@@ -1519,7 +1527,7 @@ export class SettingsManager {
     if (!layer && Object.values(meta.settings).some((setting) => setting.lockable === true)) {
       layer = {
         source: 'platform',
-        data: await this.loadKVData(category, { type: 'platform' }, false, true),
+        data: await this.loadKVData(category, { type: 'platform' }, fresh, true),
       };
     }
     return {

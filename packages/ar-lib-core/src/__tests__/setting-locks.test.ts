@@ -384,6 +384,89 @@ describe('an unreadable platform document', () => {
   });
 });
 
+describe('the cache and the platform document', () => {
+  const PLATFORM_KEY = 'settings:platform:rate-limit';
+  const docs = { 'settings:tenant:acme:rate-limit': { [MAX]: 9 } };
+
+  /** A non-strict manager with a long cache; the platform document can be broken and mended. */
+  function cached() {
+    const { kv, store } = memoryKv(docs);
+    const state = { fail: false };
+    const inner = kv.get.bind(kv) as (key: string) => Promise<string | null>;
+    const get = vi.fn(async (key: string) => {
+      if (state.fail && key === PLATFORM_KEY) throw new Error('kv unavailable');
+      return inner(key);
+    });
+    (kv as unknown as { get: unknown }).get = get;
+    const m = new SettingsManager({ env: {}, kv, cacheTTL: 60_000 });
+    for (const meta of Object.values(ALL_CATEGORY_META)) m.registerCategory(meta);
+    return { m, store, state, get };
+  }
+
+  const platformGets = (get: ReturnType<typeof vi.fn>) =>
+    get.mock.calls.filter(([key]) => key === PLATFORM_KEY).length;
+
+  it.each(['throws', 'malformed', 'not-an-object'] as const)(
+    'is not served from a tolerated failed read of the platform scope (%s)',
+    async (how) => {
+      const { m, store, state } = cached();
+      if (how === 'throws') state.fail = true;
+      else store.set(PLATFORM_KEY, how === 'malformed' ? 'not json' : '[]');
+      // The platform scope keeps its tolerance: an unreadable document reads as empty.
+      await expect(m.getAll('rate-limit', PLATFORM)).resolves.toMatchObject({ locked: [] });
+      // The same manager, within the cache lifetime, must not take that as "no locks".
+      await expect(m.getAll('rate-limit', TENANT)).rejects.toThrow();
+      await expect(
+        m.patch(
+          'rate-limit',
+          TENANT,
+          { ifMatch: generateVersion({ [MAX]: 9 }), set: { [MAX]: 4 } },
+          't'
+        )
+      ).rejects.toThrow();
+
+      // Mended: the lock is enforced again.
+      state.fail = false;
+      store.set(PLATFORM_KEY, JSON.stringify({ [MAX]: 5, [LOCK]: [MAX] }));
+      const view = await m.getAll('rate-limit', TENANT);
+      expect(view.values[MAX]).toBe(5);
+      expect(view.locked).toEqual([MAX]);
+    }
+  );
+
+  it('still caches a successful platform read, and reuses it', async () => {
+    const { m, store, get } = cached();
+    store.set(PLATFORM_KEY, JSON.stringify({ [MAX]: 5, [LOCK]: [MAX] }));
+    await m.getAll('rate-limit', PLATFORM);
+    await m.getAll('rate-limit', TENANT);
+    await m.getAll('rate-limit', TENANT);
+    expect(platformGets(get)).toBe(1);
+  });
+
+  it.each([
+    ['with parents', true],
+    ['without parents', false],
+  ])(
+    'checks a write against the current lock list, not a cached one (%s)',
+    async (_name, withParents) => {
+      const { m, store } = cached();
+      const options = withParents ? { parents: settingsParentScopes('rate-limit', TENANT) } : {};
+      // The manager caches a platform document without locks (a read the same way) ...
+      expect((await m.getAll('rate-limit', TENANT, options)).values[MAX]).toBe(9);
+      // ... then the platform locks the key behind its back: its cache is stale.
+      store.set(PLATFORM_KEY, JSON.stringify({ [MAX]: 5, [LOCK]: [MAX] }));
+      const refused = await m.patch(
+        'rate-limit',
+        TENANT,
+        { ifMatch: generateVersion({ [MAX]: 9 }), set: { [MAX]: 4 } },
+        't',
+        options
+      );
+      expect(isLockedByPlatformReason(refused.rejected[MAX])).toBe(true);
+    }
+  );
+});
+
 describe('lock and unlock', () => {
   it('locks and unlocks lockable keys, covered by the version and audited', async () => {
     const audit = vi.fn(async (_e: SettingsAuditEvent) => {});
