@@ -29,7 +29,7 @@ const pt = createTranslation({
 	login_guestNoExpiry: 'Não há exclusão automática programada para novas contas de convidado.',
 
 	...completion,
-	app_subtitle: 'Identidade e acesso em todos os lugares.',
+	app_subtitle: 'Sua conta, sempre segura.',
 	dialog_cancel: 'Cancelar',
 	dialog_close: 'Fechar',
 	language_switch: 'Alterar idioma',

@@ -26,7 +26,7 @@ const vi = createTranslation({
 	login_guestNoExpiry: 'Chưa lên lịch tự động xóa cho tài khoản khách mới.',
 
 	app_title: 'Authrim',
-	app_subtitle: 'Danh tính và quyền truy cập ở mọi nơi.',
+	app_subtitle: 'Tài khoản của bạn, luôn an toàn.',
 	button_openDialog: 'Mở hộp thoại',
 	dialog_title: 'Hộp thoại Melt UI',
 	dialog_description:

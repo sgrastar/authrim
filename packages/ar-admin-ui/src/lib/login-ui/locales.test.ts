@@ -47,7 +47,7 @@ describe('Login UI locale settings', () => {
 			expect(DEFAULT_LOGIN_UI_PAGE_TITLES[locale].registrationTitle).not.toBe('');
 			expect(DEFAULT_LOGIN_UI_PAGE_TITLES[locale].accountTitle).not.toBe('');
 		}
-		expect(DEFAULT_LOGIN_UI_TAGLINES.en).toBe('Identity & Access at the edge of everywhere.');
+		expect(DEFAULT_LOGIN_UI_TAGLINES.en).toBe('Your account, kept safe.');
 		expect(DEFAULT_LOGIN_UI_FOOTER_TEXTS.en).toBe(
 			'Powered by <a href="https://authrim.com/">Authrim</a>'
 		);

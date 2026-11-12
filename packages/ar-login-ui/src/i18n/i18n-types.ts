@@ -124,7 +124,7 @@ type RootTranslation = {
 	 */
 	app_title: string;
 	/**
-	 * I​d​e​n​t​i​t​y​ ​&​ ​A​c​c​e​s​s​ ​a​t​ ​t​h​e​ ​e​d​g​e​ ​o​f​ ​e​v​e​r​y​w​h​e​r​e​.
+	 * Y​o​u​r​ ​a​c​c​o​u​n​t​,​ ​k​e​p​t​ ​s​a​f​e​.
 	 */
 	app_subtitle: string;
 	/**
@@ -1967,7 +1967,7 @@ export type TranslationFunctions = {
 	 */
 	app_title: () => LocalizedString;
 	/**
-	 * Identity & Access at the edge of everywhere.
+	 * Your account, kept safe.
 	 */
 	app_subtitle: () => LocalizedString;
 	/**

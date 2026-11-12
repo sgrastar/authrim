@@ -29,7 +29,7 @@ const de = createTranslation({
 	login_guestNoExpiry: 'Für neue Gastkonten ist keine automatische Löschung geplant.',
 
 	...completion,
-	app_subtitle: 'Identität und Zugriff überall.',
+	app_subtitle: 'Ihr Konto, sicher geschützt.',
 	dialog_cancel: 'Abbrechen',
 	dialog_close: 'Schließen',
 	language_switch: 'Sprache wechseln',

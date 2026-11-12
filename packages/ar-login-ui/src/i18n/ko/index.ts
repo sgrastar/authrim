@@ -27,7 +27,7 @@ const ko = createTranslation({
 	login_guestNoExpiry: '새 게스트 계정의 자동 삭제가 설정되지 않았습니다.',
 
 	...completion,
-	app_subtitle: '어디서나 가능한 아이덴티티 및 액세스',
+	app_subtitle: '당신의 계정을 안전하게.',
 	dialog_cancel: '취소',
 	dialog_close: '닫기',
 	language_switch: '언어 변경',

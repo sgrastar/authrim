@@ -29,7 +29,7 @@ const id = createTranslation({
 	login_guestNoExpiry: 'Penghapusan otomatis tidak dijadwalkan untuk akun tamu baru.',
 
 	...completion,
-	app_subtitle: 'Identitas dan akses di mana saja.',
+	app_subtitle: 'Akun Anda, tetap aman.',
 	dialog_cancel: 'Batal',
 	dialog_close: 'Tutup',
 	language_switch: 'Ganti bahasa',

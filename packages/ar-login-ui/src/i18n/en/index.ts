@@ -27,7 +27,7 @@ const en = {
 	login_guestNoExpiry: 'No automatic deletion is scheduled for new guest accounts.',
 
 	app_title: 'Authrim',
-	app_subtitle: 'Identity & Access at the edge of everywhere.',
+	app_subtitle: 'Your account, kept safe.',
 	button_openDialog: 'Open Dialog',
 	dialog_title: 'Melt UI Dialog',
 	dialog_description:
