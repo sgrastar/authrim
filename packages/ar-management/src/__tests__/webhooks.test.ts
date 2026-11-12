@@ -2105,6 +2105,7 @@ describe('Webhook Security - HMAC Signature', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -2125,9 +2126,9 @@ describe('Webhook Security - HMAC Signature', () => {
     );
     mockDecryptValue.mockResolvedValue({ decrypted: 'same-secret' });
 
-    // Mock consistent timestamp
-    const fixedTimestamp = '2024-01-01T00:00:00.000Z';
-    vi.spyOn(Date.prototype, 'toISOString').mockReturnValue(fixedTimestamp);
+    // Freeze the clock: the signature covers the current time in whole seconds, so two calls
+    // that straddle a second boundary would otherwise sign different timestamps.
+    vi.useFakeTimers({ now: new Date('2024-01-01T00:00:00.000Z'), toFake: ['Date'] });
 
     await testWebhook(c1);
     await testWebhook(c2);
