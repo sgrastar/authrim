@@ -127,6 +127,33 @@ function toProjection(row: StoredRow): PendingSettingsProjection {
   };
 }
 
+/**
+ * The batch was refused by a constraint of the table on its only try (SQLite / D1 message,
+ * PostgreSQL SQLSTATE class 23): the database rolled it back, nothing of it was saved. A refusal
+ * on a later try of a retried batch proves nothing: an earlier try may have committed before its
+ * answer was lost.
+ */
+function refusedOnItsOnlyTry(error: unknown): boolean {
+  const chain: unknown[] = [];
+  for (let current: unknown = error; current && chain.length < 5; ) {
+    chain.push(current);
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  const field = (value: unknown, key: string): unknown =>
+    value && typeof value === 'object' && key in value
+      ? (value as Record<string, unknown>)[key]
+      : undefined;
+  if (chain.some((item) => Number(field(item, 'attempts')) > 1)) return false;
+  return chain.some((item) => {
+    const code = field(item, 'code');
+    if (typeof code === 'string' && /^23\d{3}$/.test(code)) return true;
+    const message = item instanceof Error ? item.message : '';
+    return /constraint failed|SQLITE_CONSTRAINT|violates not-null constraint|null value in column/i.test(
+      message
+    );
+  });
+}
+
 export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
   constructor(
     private readonly database: Database,
@@ -437,24 +464,18 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
     try {
       await this.database.batch([...updates, check]);
     } catch (error) {
-      // Read as one snapshot: every document at this save's version, or one moved on by another.
-      const movedOn = items
-        .map(
-          (item) =>
-            `NOT EXISTS (SELECT 1 FROM ${item.key.table} WHERE ${item.key.where} AND version IN (?,?))`
-        )
-        .join(' OR ');
-      const state = await this.database.queryOne<{ state: string }>(
-        `SELECT CASE WHEN ${saved} THEN 'saved' WHEN ${movedOn} THEN 'moved_on' ELSE 'unknown' END AS state`,
-        [
-          ...savedParams,
-          ...items.flatMap((item) => [...item.key.params, item.expected, item.saved.version]),
-        ],
+      // What the documents hold decides first: every one at this save's version is saved,
+      // however the batch failed (an answer lost after it committed).
+      const state = await this.database.queryOne<{ saved: number }>(
+        `SELECT CASE WHEN ${saved} THEN 1 ELSE 0 END AS saved`,
+        savedParams,
         { consistencyClass: 'primary_required' }
       );
-      if (state?.state === 'saved') return true;
-      // Another save moved a document on: the check refused the batch, and nothing was saved.
-      if (state?.state === 'moved_on') return false;
+      if (Number(state?.saved) === 1) return true;
+      // Not all of them: refused (nothing saved) only when a table constraint refused the batch
+      // on its only try. Anything else cannot be told apart from a commit that another save has
+      // changed since, so the failure is passed on, not read as nothing saved.
+      if (refusedOnItsOnlyTry(error)) return false;
       throw error;
     }
     // The check passed inside the batch: every document holds this save's version.

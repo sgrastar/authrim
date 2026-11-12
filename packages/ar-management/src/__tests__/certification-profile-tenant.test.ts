@@ -6,6 +6,7 @@ import {
   projectLatestSettingsDocument,
   requireDedicatedAdminDatabaseAdapter,
   resolveProtocolSettings,
+  SettingsManager,
   type AdminAuthContext,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -184,27 +185,62 @@ describe('certification profiles API', () => {
   describe('without a transaction across categories', () => {
     afterEach(() => vi.restoreAllMocks());
 
-    it('names what was applied when a later category cannot be saved', async () => {
+    it('saves the categories together, and does not claim nothing changed when it cannot tell', async () => {
       const { env } = environment({});
-      // Reading creates a missing document; saving compares and sets it.
-      for (const method of ['compareAndSet'] as const) {
-        const original = DatabaseSettingsCanonicalStore.prototype[method];
-        vi.spyOn(DatabaseSettingsCanonicalStore.prototype, method).mockImplementation(function (
-          this: DatabaseSettingsCanonicalStore,
-          ...args: unknown[]
-        ) {
-          if (args[0] === 'oauth') return Promise.reject(new Error('d1 unavailable'));
-          return (original as (...a: unknown[]) => Promise<unknown>).apply(this, args);
-        } as never);
-      }
+      // The batch failing in a way the store cannot confirm (it may have committed).
+      vi.spyOn(DatabaseSettingsCanonicalStore.prototype, 'compareAndSetMany').mockRejectedValue(
+        new Error('d1 unavailable')
+      );
+      const write = vi.spyOn(DatabaseSettingsCanonicalStore.prototype, 'compareAndSet');
 
       const response = await apply(env, 'fapi-2');
 
       expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toMatchObject({
-        error: 'temporarily_unavailable',
-        partially_applied: ['security'],
-      });
+      const body = await response.json<Record<string, unknown>>();
+      expect(body).toMatchObject({ error: 'temporarily_unavailable' });
+      expect(body).not.toHaveProperty('partially_applied');
+      expect(String(body.error_description)).not.toContain('nothing was changed');
+      expect(String(body.error_description)).toContain('apply the profile again');
+      // No category was saved on its own.
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it('saves nothing when another save changed a category in between', async () => {
+      const { env } = environment({});
+      // The batch is refused as a whole (a document is no longer at the version read).
+      vi.spyOn(DatabaseSettingsCanonicalStore.prototype, 'compareAndSetMany').mockResolvedValue(
+        false
+      );
+
+      const response = await apply(env, 'fapi-2');
+
+      expect(response.status).toBe(409);
+      const body = await response.json<Record<string, unknown>>();
+      expect(body).toMatchObject({ error: 'conflict' });
+      expect(String(body.error_description)).toContain('nothing was changed');
+    });
+
+    it('saves nothing when a value of the profile is refused', async () => {
+      const { env } = environment({});
+      const many = vi.spyOn(DatabaseSettingsCanonicalStore.prototype, 'compareAndSetMany');
+      vi.spyOn(SettingsManager.prototype, 'patch').mockImplementation(async function (
+        this: SettingsManager,
+        category: string
+      ) {
+        return {
+          version: 'v',
+          applied: [],
+          cleared: [],
+          disabled: [],
+          rejected: category === 'oauth' ? { 'oauth.x': 'refused' } : {},
+        };
+      } as never);
+
+      const response = await apply(env, 'fapi-2');
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).not.toHaveProperty('partially_applied');
+      expect(many).not.toHaveBeenCalled();
     });
 
     it('does not report success when another apply lands in between', async () => {

@@ -15,6 +15,74 @@ const config = {
 };
 
 describe('DirectoryPasswordClient', () => {
+  describe('endpoint SSRF guard', () => {
+    const input = { username: 'alice', password: 'pw', requestId: 'req_1', nonce: 'n1' };
+    const okResponse = () =>
+      Response.json({
+        request_id: 'req_1',
+        tenant_id: config.tenantId,
+        connector_id: config.connectorId,
+        result: 'failure',
+        reason: 'invalid_credentials',
+        directory_status: 'ok',
+      });
+
+    it.each([
+      'https://10.1.2.3',
+      'https://172.20.0.1',
+      'https://192.168.0.10',
+      'https://127.0.0.1',
+      'https://localhost',
+      'https://[::1]',
+      'https://[fd12::1]',
+      'https://[fe80::1]',
+      'https://169.254.169.254',
+      'http://169.254.169.254',
+      'http://localhost:8080',
+    ])('refuses %s without calling fetch', async (endpoint) => {
+      const fetcher = vi.fn(async () => okResponse());
+      const client = new DirectoryPasswordClient({ ...config, endpoint }, fetcher);
+      await expect(client.verifyPassword(input)).rejects.toMatchObject({
+        details: { code: 'invalid_connector_endpoint' },
+      });
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it('allows http://localhost only when allowLocalhost is set', async () => {
+      const fetcher = vi.fn(async () => okResponse());
+      const endpoint = 'http://localhost:8080';
+      await expect(
+        new DirectoryPasswordClient({ ...config, endpoint }, fetcher).verifyPassword(input)
+      ).rejects.toMatchObject({ details: { code: 'invalid_connector_endpoint' } });
+      const result = await new DirectoryPasswordClient(
+        { ...config, endpoint, allowLocalhost: true },
+        fetcher
+      ).verifyPassword(input);
+      expect(result.result).toBe('failure');
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    });
+
+    it('still reaches a public https host and does not follow redirects', async () => {
+      const fetcher = vi.fn(async () => okResponse());
+      await new DirectoryPasswordClient(config, fetcher).verifyPassword(input);
+      expect(fetcher).toHaveBeenCalledWith(
+        'https://wordwarden.example.com/v1/auth/verify-password',
+        expect.objectContaining({ redirect: 'manual' })
+      );
+    });
+
+    it('treats a redirect response as an error instead of following it', async () => {
+      const fetcher = vi.fn(
+        async () =>
+          new Response(null, { status: 302, headers: { Location: 'http://169.254.169.254/' } })
+      );
+      await expect(
+        new DirectoryPasswordClient(config, fetcher).verifyPassword(input)
+      ).rejects.toMatchObject({ details: { status: 302 } });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('signs and sends verify-password requests', async () => {
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const headers = init?.headers as Headers;

@@ -16,6 +16,7 @@ import {
   readResponseTextWithLimit,
   reactivateDirectoryConnectorInstance,
   safeFetch,
+  validateExternalUrl,
   getLogger,
   bumpAuthenticationMethodsCacheRevision,
   directoryIdentityLookupSubject,
@@ -397,32 +398,29 @@ function validateUniqueConnectorIds(connectors: DirectoryConnectorConfig[]): str
   return null;
 }
 
-function isLocalhostHostname(hostname: string): boolean {
-  return hostname === 'localhost';
-}
-
-function allowsLocalhostHTTP(rawURL: string): boolean {
-  try {
-    const parsed = new URL(rawURL);
-    return parsed.protocol === 'http:' && isLocalhostHostname(parsed.hostname);
-  } catch {
-    return false;
+/**
+ * Validate a direct-connector endpoint. Same convention as webhooks: https only, internal /
+ * private / loopback / link-local / metadata destinations are rejected, and http://localhost is
+ * accepted only when ENVIRONMENT=development.
+ */
+function validateEndpointURL(rawURL: string, allowLocalhost: boolean): string | null {
+  const error = validateExternalUrl(rawURL, {
+    requireHttps: true,
+    allowLocalhost,
+    fieldName: 'endpoint_url',
+  });
+  if (!error) return null;
+  // Keep the pre-existing protocol message (API contract); internal targets get the SSRF message.
+  if (error.error_description.endsWith('must use HTTPS')) {
+    return 'endpoint_url must use https:// except http://localhost for local development';
   }
+  return error.error_description;
 }
 
-function validateEndpointURL(rawURL: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawURL);
-  } catch {
-    return 'endpoint_url must be a valid URL';
-  }
-  if (parsed.protocol === 'https:') return null;
-  if (parsed.protocol === 'http:' && isLocalhostHostname(parsed.hostname)) return null;
-  return 'endpoint_url must use https:// except http://localhost for local development';
-}
-
-function validateConnectors(config: DirectoryConnectorsConfig): string | null {
+function validateConnectors(
+  config: DirectoryConnectorsConfig,
+  allowLocalhost: boolean
+): string | null {
   const duplicateId = validateUniqueConnectorIds(config.connectors);
   if (duplicateId) {
     return `duplicate connector id: ${duplicateId}`;
@@ -436,7 +434,7 @@ function validateConnectors(config: DirectoryConnectorsConfig): string | null {
   }
   for (const connector of config.connectors) {
     if (connector.transport === 'direct') {
-      const endpointError = validateEndpointURL(connector.endpoint_url);
+      const endpointError = validateEndpointURL(connector.endpoint_url, allowLocalhost);
       if (endpointError) {
         return `${connector.id}: ${endpointError}`;
       }
@@ -606,7 +604,7 @@ async function updateDirectoryConnectorsUnguarded(c: Context<{ Bindings: Env }>)
   }
 
   const config = normalizeConfig(parsed.data);
-  const configError = validateConnectors(config);
+  const configError = validateConnectors(config, c.env.ENVIRONMENT === 'development');
   if (configError) {
     return c.json(
       {
@@ -1285,7 +1283,8 @@ export async function checkDirectoryConnectorHealthHandler(c: Context<{ Bindings
     }
   }
 
-  const endpointError = validateEndpointURL(connector.endpoint_url);
+  const allowLocalhost = c.env.ENVIRONMENT === 'development';
+  const endpointError = validateEndpointURL(connector.endpoint_url, allowLocalhost);
   if (endpointError) {
     return c.json(
       {
@@ -1302,8 +1301,8 @@ export async function checkDirectoryConnectorHealthHandler(c: Context<{ Bindings
     const healthURL = new URL('/healthz', connector.endpoint_url).toString();
     const response = await safeFetch(healthURL, {
       method: 'GET',
-      requireHttps: !allowsLocalhostHTTP(healthURL),
-      allowLocalhost: allowsLocalhostHTTP(healthURL),
+      requireHttps: true,
+      allowLocalhost,
       timeoutMs: connector.timeouts.request_ms,
       maxResponseSize: 16 * 1024,
       headers: {
