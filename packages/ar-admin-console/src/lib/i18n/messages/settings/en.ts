@@ -294,6 +294,23 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.bulk_apply.max_keys_per_request.desc':
 		'The most settings (keys set or cleared, over all categories) one bulk apply request may carry. Held between 1 and 100. Platform setting; 20 by default.',
 
+	'set.k.tenant_capabilities.webhooks': 'Tenants may use webhooks',
+	'set.k.tenant_capabilities.webhooks.desc':
+		'Off: tenants cannot manage webhooks through the Admin API, and no webhook is delivered for a tenant. Events that occur while it is off are discarded and not delivered later. Due account webhook events waiting in the queue are discarded as they are processed and recorded in the audit log (webhook.outbox.dropped); events still waiting at the moment it is turned back on are delivered. Platform administrators are exempt at the Admin API. A change takes effect within about a minute. On by default.',
+
+	'set.k.tenant_capabilities.dynamic_client_registration':
+		'Tenants may use dynamic client registration',
+	'set.k.tenant_capabilities.dynamic_client_registration.desc':
+		'Off: public registration (POST /register), the client configuration endpoints and initial access tokens are refused, and discovery stops advertising the registration endpoint. Tenants also cannot change their dynamic client registration settings. On by default.',
+
+	'set.k.tenant_capabilities.external_plugins': 'Tenants may use external plugins',
+	'set.k.tenant_capabilities.external_plugins.desc':
+		'Off: nothing executes from external plugins for tenants, and no one can enable one (platform administrators included). Tenants cannot change their credentials or plugin settings; platform administrators can still manage credentials and settings, but nothing runs for tenants. Built-in plugins (e-mail notifiers, CAPTCHA, TOTP) are not affected. Stopping execution is carried out tenant by tenant by a periodic job, so it can take several minutes or more with many tenants. A tenant backup restore does not restore external plugin installations. On by default.',
+
+	'set.k.tenant_capabilities.bulk_jobs': 'Tenants may run bulk jobs',
+	'set.k.tenant_capabilities.bulk_jobs.desc':
+		'Off: neither tenants nor platform administrators can create bulk jobs (user import, bulk update, report generation, bulk organization members). Queued jobs do not start: they end as blocked and must be created again once it is back on. Existing jobs and their results stay readable. On by default.',
+
 	'set.k.identity_mapping.reference_scan_tenant_limit': 'Mapping Set usage search: tenants',
 	'set.k.identity_mapping.reference_scan_tenant_limit.desc':
 		'The most tenants whose apps are read when looking for the places that use a Mapping Set the platform owns. Each tenant is a database read; when there are more tenants than this, the rest are reported as not looked at, and deleting or switching off the set is refused. Held between 1 and 1000. Platform setting; 200 by default.',

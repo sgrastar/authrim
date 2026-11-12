@@ -37,6 +37,7 @@ import {
   ADMIN_ROLE_GROUPS,
   chunkForBoundParameters,
   sqlPlaceholders,
+  getTenantCapabilityState,
 } from '@authrim/ar-lib-core';
 import {
   loadCatalogObjectArtifact,
@@ -1539,10 +1540,32 @@ function getAdminAuth(c: Context<{ Bindings: Env }>): { adminId?: string } | nul
 }
 
 /**
+ * Creating a bulk job is refused for everyone, a caller with global platform authority included,
+ * while the platform has `bulk_jobs` off: the job would not run (execution for a tenant stays
+ * closed), so it is not accepted to be failed later. Callers without global authority are
+ * already refused by the route gate; this is the one that also stops the exempt ones. An
+ * unreadable switch accepts the job, as the runtime would run it.
+ */
+async function refuseWhileBulkJobsOff(c: Context<{ Bindings: Env }>): Promise<Response | null> {
+  if ((await getTenantCapabilityState(c.env, 'bulk_jobs')) !== 'off') return null;
+  return c.json(
+    {
+      error: 'capability_disabled',
+      error_description:
+        'Bulk jobs are turned off for tenants by the platform, so this job would not run. It was not created.',
+      capability: 'bulk_jobs',
+    },
+    403
+  );
+}
+
+/**
  * POST /api/admin/jobs/users/import/upload-url
  * Get a presigned URL for uploading import file to R2
  */
 export async function adminJobsImportUploadUrlHandler(c: Context<{ Bindings: Env }>) {
+  const bulkJobsOff = await refuseWhileBulkJobsOff(c);
+  if (bulkJobsOff) return bulkJobsOff;
   const tenantId = getTenantIdFromContext(c);
 
   try {
@@ -1606,6 +1629,8 @@ export async function adminJobsImportUploadUrlHandler(c: Context<{ Bindings: Env
  * Upload CSV payload to the dedicated import artifact bucket.
  */
 export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>) {
+  const bulkJobsOff = await refuseWhileBulkJobsOff(c);
+  if (bulkJobsOff) return bulkJobsOff;
   const tenantId = getTenantIdFromContext(c);
   const uploadId = c.req.param('upload_id')!;
   const filename = c.req.query('filename');
@@ -1693,6 +1718,8 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
  * Create a user import job
  */
 export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>) {
+  const bulkJobsOff = await refuseWhileBulkJobsOff(c);
+  if (bulkJobsOff) return bulkJobsOff;
   const tenantId = getTenantIdFromContext(c);
 
   try {
@@ -1884,6 +1911,8 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
  * Create a bulk user update job
  */
 export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env }>) {
+  const bulkJobsOff = await refuseWhileBulkJobsOff(c);
+  if (bulkJobsOff) return bulkJobsOff;
   const tenantId = getTenantIdFromContext(c);
 
   if (!isAdminJobTypeCreatableFromAdminApi('users/bulk-update')) {
@@ -1984,6 +2013,8 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
  * Create a report generation job
  */
 export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env }>) {
+  const bulkJobsOff = await refuseWhileBulkJobsOff(c);
+  if (bulkJobsOff) return bulkJobsOff;
   const tenantId = getTenantIdFromContext(c);
 
   if (!isAdminJobTypeCreatableFromAdminApi('reports/generate')) {
@@ -2097,6 +2128,8 @@ const BulkMembersOptionsSchema = z.object({
  * Create a bulk member add/remove job for an organization
  */
 export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env }>) {
+  const bulkJobsOff = await refuseWhileBulkJobsOff(c);
+  if (bulkJobsOff) return bulkJobsOff;
   const tenantId = getTenantIdFromContext(c);
   const organizationId = c.req.param('id')!;
 

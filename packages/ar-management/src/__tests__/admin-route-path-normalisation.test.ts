@@ -51,7 +51,7 @@ function callerWith(permissions: string[]): AdminAuthContext {
 }
 
 /** The gate in front of stub handlers on the real route patterns. */
-function mirror(auth: AdminAuthContext | null) {
+function mirror(auth: AdminAuthContext | null, env: Record<string, unknown> = {}) {
   const app = new Hono<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>();
   app.use('*', async (c, next) => {
     if (auth) c.set('adminAuth', auth);
@@ -70,7 +70,7 @@ function mirror(auth: AdminAuthContext | null) {
     });
   }
   return async (method: string, path: string) => {
-    const res = await app.request(path, { method }, {});
+    const res = await app.request(path, { method }, env);
     let handler: string | null = null;
     let body: Record<string, unknown> = {};
     if (res.status === 200) {
@@ -412,5 +412,74 @@ describe('a double-encoded static name is not the name', () => {
     }
     expect(checked).toBeGreaterThan(1000);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('the capability switches and escaped or malformed paths', () => {
+  const SETTINGS = '/api/admin/tenants/tenant-a/settings/';
+  const switchesOff = (capability: string) => ({
+    SETTINGS: {
+      get: async (key: string) =>
+        key === 'settings:platform:tenant-capabilities'
+          ? JSON.stringify({ [`tenant_capabilities.${capability}`]: false })
+          : null,
+      put: async () => undefined,
+      delete: async () => undefined,
+      list: async () => ({ keys: [] }),
+      getWithMetadata: async () => ({ value: null, metadata: null }),
+    },
+  });
+  const writer = () => callerWith([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
+
+  it.each([
+    ['dynamic_client_registration', ['dcr', '%64cr', '%64%63r', '%44cr'.replace('%44', '%64')]],
+    ['external_plugins', ['plugin', '%70lugin', '%70%6cugin']],
+  ])(
+    'refuses %s settings writes in every spelling of the category while it is off',
+    async (capability, spellings) => {
+      const call = mirror(writer(), switchesOff(capability));
+      for (const spelling of spellings) {
+        const res = await call('PATCH', SETTINGS + spelling);
+        expect(res.status, spelling).toBe(403);
+      }
+      // Static segments of the path escaped as well.
+      expect(
+        (await call('PATCH', '/api/admin/tenants/tenant-a/%73ettings/' + spellings[0])).status
+      ).toBe(403);
+    }
+  );
+
+  it('leaves other categories alone while a capability is off', async () => {
+    const call = mirror(writer(), switchesOff('dynamic_client_registration'));
+    expect((await call('PATCH', SETTINGS + 'diagnostic-logging')).status).toBe(200);
+    expect((await call('PATCH', SETTINGS + '%64iagnostic-logging')).status).toBe(200);
+  });
+
+  it('answers 400 to a malformed path before the capability is looked at', async () => {
+    const call = mirror(writer(), switchesOff('dynamic_client_registration'));
+    for (const spelling of ['%6%34cr', '%2%35', '%zz']) {
+      expect((await call('PATCH', SETTINGS + spelling)).status, spelling).toBe(400);
+    }
+    const anonymous = await mirror(null, switchesOff('dynamic_client_registration'))(
+      'PATCH',
+      SETTINGS + '%6%34cr'
+    );
+    expect(anonymous.status).toBe(401);
+  });
+
+  it('answers 403 capability_disabled with the capability, and 503 when the switch cannot be read', async () => {
+    const off = await mirror(writer(), switchesOff('external_plugins'))(
+      'PATCH',
+      SETTINGS + '%70lugin'
+    );
+    expect(off.status).toBe(403);
+    const unreadable = await mirror(writer(), {
+      SETTINGS: {
+        get: async () => {
+          throw new Error('kv down');
+        },
+      },
+    })('PATCH', SETTINGS + '%70lugin');
+    expect(unreadable.status).toBe(503);
   });
 });

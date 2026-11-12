@@ -54,6 +54,8 @@ export interface SessionStatus {
 	permissions?: string[];
 	admin_scope: 'platform' | 'tenant';
 	is_platform_admin: boolean;
+	/** Capabilities the platform has turned off for tenants (empty for a platform admin). */
+	disabled_capabilities?: string[];
 	expires_at: number;
 	created_at: number;
 	last_login_at?: number | null;

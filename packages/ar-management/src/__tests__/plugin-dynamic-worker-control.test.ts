@@ -24,8 +24,10 @@ const versionDigest = 'b'.repeat(64);
 function canonicalDatabase(
   document: Record<string, unknown> | (() => Record<string, unknown>)
 ): D1Database {
-  const statement = () => ({
+  const statement = (...bound: unknown[]) => ({
     first: async () => {
+      // The platform's capability switches have no saved document here: they read as on.
+      if (bound.includes('tenant-capabilities')) return null;
       const data = typeof document === 'function' ? document() : document;
       return {
         tenant_id: 'tenant-a',
@@ -651,6 +653,45 @@ describe('configureDynamicPluginWithControl', () => {
       await expect(enable(env)).rejects.toBeInstanceOf(ExternalPluginExecutionNotAllowedError);
       // The gate is put where the saved setting says (closed); it is never opened.
       expect(setGate.mock.calls.map(([input]) => input.allowed)).toEqual([false]);
+      expect(configure).not.toHaveBeenCalled();
+    });
+
+    it('refuses the enable, and never opens the gate, while the platform has external_plugins off', async () => {
+      // The tenant's own plugin.enabled is on everywhere, but the platform switch is off.
+      const { env, configure, setGate } = fixture({
+        PLUGIN_ENABLED: 'true',
+        SETTINGS: {
+          get: async (key: string) =>
+            key === 'settings:tenant:tenant-a:plugin'
+              ? JSON.stringify({ 'plugin.enabled': true })
+              : key === 'settings:platform:tenant-capabilities'
+                ? JSON.stringify({ 'tenant_capabilities.external_plugins': false })
+                : null,
+        } as unknown as KVNamespace,
+        DB_ADMIN: canonicalDatabase({ 'plugin.enabled': true }),
+      });
+
+      await expect(enable(env)).rejects.toBeInstanceOf(ExternalPluginExecutionNotAllowedError);
+      expect(setGate).not.toHaveBeenCalled();
+      expect(configure).not.toHaveBeenCalled();
+    });
+
+    it('refuses with "unavailable" (never "on") when the platform switch cannot be read', async () => {
+      const { env, configure, setGate } = fixture({
+        PLUGIN_ENABLED: 'true',
+        SETTINGS: {
+          get: async (key: string) => {
+            if (key === 'settings:platform:tenant-capabilities') throw new Error('kv down');
+            return key === 'settings:tenant:tenant-a:plugin'
+              ? JSON.stringify({ 'plugin.enabled': true })
+              : null;
+          },
+        } as unknown as KVNamespace,
+        DB_ADMIN: canonicalDatabase({ 'plugin.enabled': true }),
+      });
+
+      await expect(enable(env)).rejects.toBeInstanceOf(ExternalPluginGateUnavailableError);
+      expect(setGate).not.toHaveBeenCalled();
       expect(configure).not.toHaveBeenCalled();
     });
 

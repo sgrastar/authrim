@@ -298,6 +298,23 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.bulk_apply.max_keys_per_request.desc':
 		'Die höchste Zahl an Einstellungen (gesetzte oder gelöschte Schlüssel, über alle Kategorien), die eine Sammelanwendung enthalten darf. Wird auf 1 bis 100 begrenzt. Plattformeinstellung; Standard 20.',
 
+	'set.k.tenant_capabilities.webhooks': 'Tenants dürfen Webhooks nutzen',
+	'set.k.tenant_capabilities.webhooks.desc':
+		'Aus: Tenants können Webhooks nicht über die Admin-API verwalten, und für Tenants wird kein Webhook zugestellt. Ereignisse, die in dieser Zeit auftreten, werden verworfen und nicht nachgeliefert. Fällige Konto-Webhook-Ereignisse in der Warteschlange werden bei der Verarbeitung verworfen und im Audit-Log festgehalten (webhook.outbox.dropped); Ereignisse, die beim Wiedereinschalten noch warten, werden zugestellt. Plattformadministratoren sind an der Admin-API ausgenommen. Eine Änderung wirkt nach etwa einer Minute. Standardmäßig an.',
+
+	'set.k.tenant_capabilities.dynamic_client_registration':
+		'Tenants dürfen die dynamische Client-Registrierung nutzen',
+	'set.k.tenant_capabilities.dynamic_client_registration.desc':
+		'Aus: Die öffentliche Registrierung (POST /register), die Client-Konfigurationsendpunkte und Initial Access Tokens werden abgelehnt, und die Discovery veröffentlicht den Registrierungsendpunkt nicht mehr. Tenants können auch ihre Einstellungen zur dynamischen Client-Registrierung nicht ändern. Standardmäßig an.',
+
+	'set.k.tenant_capabilities.external_plugins': 'Tenants dürfen externe Plugins nutzen',
+	'set.k.tenant_capabilities.external_plugins.desc':
+		'Aus: Für Tenants wird nichts aus externen Plugins ausgeführt, und niemand kann ein externes Plugin aktivieren (auch Plattformadministratoren nicht). Tenants können Zugangsdaten und Plugin-Einstellungen nicht ändern; Plattformadministratoren können Zugangsdaten und Einstellungen weiter verwalten, aber für Tenants läuft nichts. Eingebaute Plugins (E-Mail-Benachrichtiger, CAPTCHA, TOTP) sind nicht betroffen. Das Stoppen übernimmt ein periodischer Job Tenant für Tenant und kann bei vielen Tenants mehrere Minuten oder länger dauern. Eine Wiederherstellung aus einem Tenant-Backup stellt externe Plugin-Installationen nicht wieder her. Standardmäßig an.',
+
+	'set.k.tenant_capabilities.bulk_jobs': 'Tenants dürfen Massenjobs ausführen',
+	'set.k.tenant_capabilities.bulk_jobs.desc':
+		'Aus: Weder Tenants noch Plattformadministratoren können Massenjobs anlegen (Benutzerimport, Massenänderung, Berichtserstellung, Massenmitglieder einer Organisation). Wartende Jobs starten nicht, sondern enden als blockiert und müssen nach dem Wiedereinschalten neu angelegt werden. Vorhandene Jobs und ihre Ergebnisse bleiben lesbar. Standardmäßig an.',
+
 	'set.k.identity_mapping.reference_scan_tenant_limit': 'Nutzungssuche des Mapping-Sets: Tenants',
 	'set.k.identity_mapping.reference_scan_tenant_limit.desc':
 		'Die höchste Zahl von Tenants, deren Apps gelesen werden, wenn die Stellen gesucht werden, die ein Mapping-Set der Plattform verwenden. Jeder Tenant ist ein Datenbankzugriff; bei mehr Tenants gilt der Rest als nicht geprüft, und Löschen oder Deaktivieren des Sets wird abgelehnt. Zwischen 1 und 1000. Plattformeinstellung; standardmäßig 200.',

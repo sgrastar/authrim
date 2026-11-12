@@ -1286,6 +1286,17 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     bulk_apply.max_keys_per_request
   `,
     ],
+    [
+      'tenant-capabilities',
+      'boolean',
+      'value',
+      `
+    tenant_capabilities.webhooks
+    tenant_capabilities.dynamic_client_registration
+    tenant_capabilities.external_plugins
+    tenant_capabilities.bulk_jobs
+  `,
+    ],
   ];
 
 export const TENANT_SETTING_FIELD_POLICIES: readonly TenantSettingFieldPolicy[] =

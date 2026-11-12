@@ -35,7 +35,9 @@ import {
   ADMIN_ROLES,
   chunkForBoundParameters,
   sqlPlaceholders,
+  isTenantCapabilityEnabledAtRuntime,
 } from '@authrim/ar-lib-core';
+import { isBulkJobType } from './admin-job-types';
 import {
   initializeFromAccount,
   isLifecycleTransitionRefused,
@@ -239,6 +241,20 @@ export async function readAdminJobTenantLifecycleState(
   } catch {
     return 'route_unavailable';
   }
+}
+
+/** What a job that was held by the `bulk_jobs` capability is left with (see isBulkJobBlocked). */
+export const BULK_JOBS_CAPABILITY_BLOCKED_ERROR = 'tenant_capability_disabled:bulk_jobs';
+export const BULK_JOBS_CAPABILITY_BLOCKED_STAGE = 'blocked_by_tenant_capability';
+
+/**
+ * Whether a job must not start (or go on) because the platform turned bulk jobs off for tenants.
+ * Only the bulk job types are held; system job types never are. A switch that cannot be read does
+ * not hold anything (the earlier behaviour), and a warning is logged.
+ */
+export async function isBulkJobBlocked(env: Env, jobType: string): Promise<boolean> {
+  if (!isBulkJobType(jobType)) return false;
+  return !(await isTenantCapabilityEnabledAtRuntime(env, 'bulk_jobs'));
 }
 
 export function isAdminJobAllowedForTenantLifecycle(
@@ -2540,6 +2556,27 @@ async function processGenericAdminJob(
       [
         JSON.stringify({ stage: 'blocked_by_tenant_lifecycle', processed: 0, failed: 1 }),
         `tenant_lifecycle_blocked:${job.tenant_lifecycle_state}`,
+        blockedAt,
+        blockedAt,
+        job.id,
+        job.tenant_id,
+      ]
+    );
+    return;
+  }
+
+  // The platform turned bulk jobs off for tenants: the job ends here as blocked (the same terminal
+  // state a lifecycle block leaves), is not retried, and the tenant starts a new one once the
+  // capability is back.
+  if (await isBulkJobBlocked(env, job.job_type)) {
+    const blockedAt = Math.floor(Date.now() / 1000);
+    await adapter.execute(
+      `UPDATE admin_jobs
+          SET status = 'partial_failure', progress = ?, error_message = ?, completed_at = ?, updated_at = ?
+        WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
+      [
+        JSON.stringify({ stage: BULK_JOBS_CAPABILITY_BLOCKED_STAGE, processed: 0, failed: 1 }),
+        BULK_JOBS_CAPABILITY_BLOCKED_ERROR,
         blockedAt,
         blockedAt,
         job.id,

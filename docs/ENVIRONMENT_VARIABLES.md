@@ -177,6 +177,79 @@ time, so the limits keep one request inside what a Worker invocation can do; a l
 in several requests. See the OpenAPI description of the endpoint for what the bulk apply gives and
 refuses.
 
+### Tenant Capabilities
+
+| Variable                                          | Type    | Default | Description                                      |
+| ------------------------------------------------- | ------- | ------- | ------------------------------------------------ |
+| `TENANT_CAPABILITIES_WEBHOOKS`                    | boolean | `true`  | Tenants may use webhooks                         |
+| `TENANT_CAPABILITIES_DYNAMIC_CLIENT_REGISTRATION` | boolean | `true`  | Tenants may use dynamic client registration      |
+| `TENANT_CAPABILITIES_EXTERNAL_PLUGINS`            | boolean | `true`  | Tenants may use external plugins                 |
+| `TENANT_CAPABILITIES_BULK_JOBS`                   | boolean | `true`  | Tenants may create bulk jobs and run queued ones |
+
+These are the deployment defaults of the platform settings `tenant_capabilities.webhooks`,
+`tenant_capabilities.dynamic_client_registration`, `tenant_capabilities.external_plugins` and
+`tenant_capabilities.bulk_jobs` (Settings API, `tenant-capabilities` category, platform scope only:
+a tenant can neither see nor change them, and they never travel in a tenant backup). A value saved
+through the Settings API overrides the variable; setting a variable to `false` turns the capability
+off for every tenant of the deployment from the start. Every capability is on by default, so a
+deployment that never turns one off behaves as before.
+
+What a capability that is off stops, for tenants:
+
+| Capability                    | Admin API (403 `capability_disabled` for callers without global platform authority)                                                                                                                                                                             | Runtime (closed for every caller)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `webhooks`                    | Everything under `/api/admin/webhooks` (register, update, delete, test, deliveries, replay)                                                                                                                                                                     | No webhook is delivered (event dispatcher; inline deliveries are skipped and nothing is queued for later). Account webhook outbox rows that become due are discarded as they are processed (deleted without delivery, up to 90 per shard per run) and are not replayed: events during an "off" period are discarded, not delivered later. Rows still pending at the moment the capability is turned back on (beyond that batch, or kept because their audit record could not be written) are delivered then. Every drop is recorded in the audit log first (action `webhook.outbox.dropped`, one entry per tenant per run: counts per event type and the oldest and newest event time, no personal data); if the record cannot be written the rows are kept and retried. Inline deliveries skipped while it is off are logged (at most once a minute per Worker instance, with the count). Back-channel logout is a different feature, not affected |
+| `dynamic_client_registration` | Writes of the tenant `dcr` settings (the PATCH route and the bulk apply alike)                                                                                                                                                                                  | `POST /register`, the RFC 7592 client configuration endpoints and the initial access token check answer 403 `access_denied`; discovery leaves out `registration_endpoint`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `external_plugins`            | Writes of the tenant `plugin` settings; credentials of an external plugin; enabling one is refused for everyone, platform administrators included (403 `capability_disabled`). Disabling, uninstalling and reading stay open. Built-in plugins are not affected | The external plugin execution gate reports "not allowed" and the plugin runner's per-tenant gate is closed. An enable that was requested before the capability was turned off is held as it is (not enabled, not cancelled, not counted as failed) and completes after the capability is back on                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `bulk_jobs`                   | Every create under `/api/admin/jobs` (user import with its upload, bulk update, report generation, bulk organization members); reading jobs and results stays open                                                                                              | Creating one is refused for everyone, platform administrators included, because the job would not run. A queued or running job of those four types ends as `partial_failure` with `error_message` `tenant_capability_disabled:bulk_jobs` and is not retried; system job types are never held                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+
+Platform administrators and tenant administrators, while a capability is off:
+
+| Capability                    | Tenant administrator                      | Platform administrator (global `ar_super_admin`, or a global token with `admin:*`)                                          |
+| ----------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `webhooks`                    | cannot manage; nothing executes           | can manage (register, update, delete); nothing is delivered, and a test or replay sends nothing (403 `capability_disabled`) |
+| `dynamic_client_registration` | cannot change the `dcr` settings          | can change the settings; `/register` and the client configuration endpoints refuse and discovery omits the endpoint         |
+| `external_plugins`            | cannot enable or configure external ones  | can configure credentials; cannot enable (nothing can execute for tenants); disable and uninstall stay open                 |
+| `bulk_jobs`                   | cannot create; queued ones end as blocked | cannot create either (the job would not run); can read jobs and results                                                     |
+
+The rule, precisely: management operations of a disabled capability are refused for tenant-scoped
+callers (403 `capability_disabled`) and allowed for callers with global platform authority;
+tenant-scoped machine tokens and agents are not exempt. Operations that would make something run
+for a tenant are refused for everyone while the capability is off: webhook test and replay,
+enabling an external plugin, creating a bulk job, and restoring external plugin installations from
+a tenant backup. An external plugin enable requested before the capability was turned off is left
+as it is while it is off (nothing is enabled, cancelled or counted as a failed attempt; the runner
+gate stays closed) and completes after the capability is turned back on. The capability is judged
+before the permission, so a caller learns the real reason. The signed-in administrator's list is
+in `disabled_capabilities` of `GET /api/admin/me/session` (empty for callers with global platform
+authority), and the console leaves out what needs a disabled capability.
+
+The route gate decides on the path the router dispatches on (percent-escapes of ordinary
+characters decoded; an escaped `%2F` stays inside its segment for both, and `%25` stays `%25`, so an
+identifier that itself contains escaped text is allowed). A path with a malformed escape (a `%` not
+followed by two hex digits) is refused with 400 `invalid_request`.
+
+A tenant backup restore follows the same line. While `dynamic_client_registration` or
+`external_plugins` is off (or its switch cannot be read), a restore requested by someone without
+global platform authority is refused for the `dcr` or `plugin` settings rows of the bundle, and a
+restore never restores external plugin installations (credentials and enabled state), whoever asks;
+built-in plugin configuration is restored as usual. Tenant clone is a platform-administrator
+operation and is not affected.
+
+When the switch cannot be read (the settings store is unavailable), the Admin API answers 503
+`temporarily_unavailable` for the routes of a capability to callers who would otherwise be allowed;
+it never treats "unknown" as enabled. The runtime entry points keep their earlier behaviour (the
+capability counts as on) and log a warning, so that sign-in, webhook delivery and the other running
+parts of a deployment that never turned anything off do not depend on the settings read. The
+external plugin gate is the exception that fails closed, as before.
+
+A change reaches a running Worker within about a minute (the per-isolate settings cache), and
+discovery within its own cache time. Closing the plugin runner's per-tenant gates after
+`external_plugins` is turned off is done by the periodic gate sweep (every two minutes, 50 tenants
+per run, starting with the open gates), so with many tenants it takes up to
+ceil(open gates / 50) x 2 minutes; the early check in the management Worker already refuses
+enabling and reports "not allowed" within the minute.
+
 ### Introspection Settings
 
 | Variable                                 | Type    | Default | Description                         |

@@ -118,3 +118,20 @@ export function isAdminJobTypeCreatableFromAdminApi(jobType: string): boolean {
 export function listAdminJobTypeDefinitions(): AdminJobTypeDefinition[] {
   return Object.values(ADMIN_JOB_TYPE_REGISTRY);
 }
+
+/**
+ * The tenant-initiated bulk work the platform can turn off for tenants (the `bulk_jobs`
+ * capability): what the Admin API creates under /api/admin/jobs. Every other job type (tenant
+ * deletion and lifecycle, tenant database export and restore checks, downstream logout, Support
+ * Ops, reconciliation and reindexing) is system work and is never held by the capability.
+ */
+export const BULK_JOB_TYPES = [
+  'users/import',
+  'users/bulk-update',
+  'reports/generate',
+  'organizations/bulk-members',
+] as const;
+
+export function isBulkJobType(jobType: string): boolean {
+  return (BULK_JOB_TYPES as readonly string[]).includes(jobType);
+}

@@ -21,6 +21,23 @@ info:
     for the id `report%20final`, is allowed). A path with a malformed percent escape (a `%` not
     followed by two hex digits) is refused with HTTP 400 `invalid_request`, before any check but
     authentication.
+
+    The platform can turn a named capability off for tenants (platform setting category
+    `tenant-capabilities`: `webhooks`, `dynamic_client_registration`, `external_plugins`,
+    `bulk_jobs`; every capability is on by default). While one is off, the management operations
+    of the capability (the webhooks API, the creating operations under `/api/admin/jobs`, the
+    writes of the `dcr` and `plugin` tenant settings categories, external plugin credentials)
+    answer HTTP 403 `capability_disabled` (see the `CapabilityDisabled` response) to tenant-scoped
+    callers and stay allowed for callers with global platform authority. Reading jobs, settings and
+    plugins stays available; the webhooks API is closed to tenant-scoped callers for reads as well.
+    Operations that would make something run for a tenant are refused for everyone while the
+    capability is off, global callers included: sending a webhook test or replay, enabling an
+    external plugin, creating a bulk job, and restoring external plugin installations from a
+    tenant backup. An external plugin enable requested before the capability was turned off
+    completes after it is turned back on. When the switch cannot be read, the gated operations
+    answer HTTP 503 `temporarily_unavailable` (see `CapabilityUnavailable`) to callers who would
+    otherwise be allowed. The signed-in administrator's disabled capabilities are listed in
+    `disabled_capabilities` of `GET /api/admin/me/session`.
   x-authrim-coverage: initial security-testing contract
 servers:
   - url: 'https://{tenant_domain}'
@@ -2019,6 +2036,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/webhooks:
     get:
+      x-authrim-capability: webhooks
       tags:
         - Webhooks
       summary: List webhook configurations.
@@ -2080,6 +2098,7 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
     post:
+      x-authrim-capability: webhooks
       tags:
         - Webhooks
       summary: Create a webhook configuration.
@@ -2107,6 +2126,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/webhooks/{id}':
     get:
+      x-authrim-capability: webhooks
       tags:
         - Webhooks
       summary: Get a webhook configuration.
@@ -2134,6 +2154,7 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
     put:
+      x-authrim-capability: webhooks
       tags:
         - Webhooks
       summary: Update a webhook configuration.
@@ -2162,6 +2183,7 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
     delete:
+      x-authrim-capability: webhooks
       tags:
         - Webhooks
       summary: Delete a webhook configuration.
@@ -2181,6 +2203,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/webhooks/{id}/test':
     post:
+      x-authrim-capability: webhooks
       tags:
         - Webhooks
       summary: Send a test webhook delivery.
@@ -2203,6 +2226,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/webhooks/{id}/deliveries':
     get:
+      x-authrim-capability: webhooks
       tags:
         - Webhooks
       summary: List webhook delivery logs.
@@ -2237,6 +2261,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/webhooks/{id}/replay':
     post:
+      x-authrim-capability: webhooks
       tags:
         - Webhooks
       summary: Replay a failed webhook delivery.
@@ -17010,6 +17035,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/jobs/organizations/{id}/bulk-members':
     post:
+      x-authrim-capability: bulk_jobs
       tags:
         - Jobs
       operationId: postApiAdminJobsOrganizationsByIdBulkMembers
@@ -17046,6 +17072,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/jobs/reports/generate:
     post:
+      x-authrim-capability: bulk_jobs
       tags:
         - Jobs
       operationId: postApiAdminJobsReportsGenerate
@@ -17235,6 +17262,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/jobs/users/bulk-update:
     post:
+      x-authrim-capability: bulk_jobs
       tags:
         - Jobs
       operationId: postApiAdminJobsUsersBulkUpdate
@@ -17265,6 +17293,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/jobs/users/import:
     post:
+      x-authrim-capability: bulk_jobs
       tags:
         - Jobs
       operationId: postApiAdminJobsUsersImport
@@ -17331,6 +17360,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/jobs/users/import/upload-url:
     post:
+      x-authrim-capability: bulk_jobs
       tags:
         - Jobs
       operationId: postApiAdminJobsUsersImportUploadUrl
@@ -17355,6 +17385,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/jobs/users/import/upload/{upload_id}':
     put:
+      x-authrim-capability: bulk_jobs
       tags:
         - Jobs
       operationId: putApiAdminJobsUsersImportUploadByUploadId
@@ -27876,6 +27907,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/webhooks/{id}/deliveries/{deliveryId}':
     get:
+      x-authrim-capability: webhooks
       tags:
         - Webhooks
       operationId: getApiAdminWebhooksByIdDeliveriesByDeliveryId
@@ -44847,6 +44879,61 @@ components:
             priority: 20
             is_active: true
   responses:
+    CapabilityDisabled:
+      description: >-
+        The platform turned this capability off for tenants (platform setting
+        `tenant_capabilities.<capability>`). Judged before the caller's permissions. Management
+        operations are refused for tenant-scoped callers and allowed for callers with global
+        platform authority; operations that would make something run for a tenant (webhook test
+        and replay, enabling an external plugin, creating a bulk job) are refused for everyone.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+              - error
+              - error_description
+              - capability
+            properties:
+              error:
+                type: string
+                enum: [capability_disabled]
+              error_description:
+                type: string
+              capability:
+                type: string
+                enum: [webhooks, dynamic_client_registration, external_plugins, bulk_jobs]
+          example:
+            error: capability_disabled
+            error_description: This capability has been turned off for tenants by the platform.
+            capability: webhooks
+    CapabilityUnavailable:
+      description: >-
+        Whether the capability is available could not be determined (the platform setting cannot
+        be read). The request is not treated as allowed; retry later.
+      headers:
+        Retry-After:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+              - error
+              - error_description
+              - capability
+            properties:
+              error:
+                type: string
+                enum: [temporarily_unavailable]
+              error_description:
+                type: string
+              capability:
+                type: string
+                enum: [webhooks, dynamic_client_registration, external_plugins, bulk_jobs]
     AdminStepUpRequired:
       description: >-
         The operation needs admin step-up (unless the platform turned
@@ -54893,6 +54980,14 @@ components:
             - tenant
         is_platform_admin:
           type: boolean
+        disabled_capabilities:
+          type: array
+          description: >-
+            The capabilities the platform turned off for tenants. Empty for a caller with global
+            platform authority (exempt), and empty when the switches cannot be read.
+          items:
+            type: string
+            enum: [webhooks, dynamic_client_registration, external_plugins, bulk_jobs]
         expires_at:
           type: integer
           format: int64
