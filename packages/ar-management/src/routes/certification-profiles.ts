@@ -219,6 +219,11 @@ export async function applyCertificationProfileHandler(c: AdminContext) {
 
       const results: Record<string, SettingsPatchResult> = {};
       const pending: string[] = [];
+      /**
+       * Whether the settings are saved: `no` until the save is tried (nothing was changed),
+       * `unknown` while it runs (a failure then may have saved all of it), `yes` once it answered.
+       */
+      let saved: 'no' | 'unknown' | 'yes' = 'no';
       const partial = (status: 409 | 503, description: string) =>
         c.json(
           {
@@ -229,31 +234,67 @@ export async function applyCertificationProfileHandler(c: AdminContext) {
           status
         );
       try {
+        // Every value is checked first: one the settings refuse stops the apply before anything is
+        // saved (the profile is one configuration, not a set of independent changes).
+        const patchOf = (change: Change) => ({
+          ifMatch: change.version,
+          set: change.set,
+          clear: change.clear,
+        });
+        // A profile is a whole configuration: its values do not depend on the old ones.
+        const optionsOf = (change: Change) => ({ ...change.context, skipDependencyCheck: true });
         for (const change of changes) {
-          const result = await manager.patch(
-            change.category,
-            scope,
-            { ifMatch: change.version, set: change.set, clear: change.clear },
-            actor,
-            {
-              ...change.context,
-              // A profile is a whole configuration: its values do not depend on the old ones.
-              skipDependencyCheck: true,
-            }
-          );
-          results[change.category] = result;
-          if (Object.keys(result.rejected).length > 0) {
+          const decided = await manager.patch(change.category, scope, patchOf(change), actor, {
+            ...optionsOf(change),
+            dryRun: true,
+          });
+          if (Object.keys(decided.rejected).length > 0) {
             log.error('Certification profile values were refused', {
               tenantId,
               category: change.category,
-              rejected: Object.keys(result.rejected),
+              rejected: Object.keys(decided.rejected),
             });
-            return partial(503, 'Some profile values were refused');
+            return c.json(
+              {
+                error: 'temporarily_unavailable',
+                error_description: 'Some profile values were refused; nothing was changed',
+              },
+              503
+            );
           }
+        }
+        // Then all of it is saved together, or none of it (a document changed since it was read
+        // stops the whole save: ConflictError, below).
+        saved = 'unknown';
+        const answers = await manager.patchMany(
+          scope,
+          changes.map((change) => ({
+            category: change.category,
+            request: patchOf(change),
+            options: optionsOf(change),
+          })),
+          actor
+        );
+        changes.forEach((change, index) => {
+          const result = answers[index];
+          results[change.category] = result;
           expected.set(change.category, result.version);
           // Copied by the save itself; written again at once, KV would refuse it (one write a
           // second per key), so a pending copy is left to applying the profile again.
           if (result.projection === 'pending') pending.push(change.category);
+        });
+        saved = 'yes';
+        // Decided as the dry run decided; a value refused now (it cannot be, with the same input)
+        // is not passed over as saved.
+        const refusedNow = changes.filter(
+          (_, index) => Object.keys(answers[index].rejected).length > 0
+        );
+        if (refusedNow.length > 0) {
+          log.error('Certification profile values were refused while saved', {
+            tenantId,
+            categories: refusedNow.map((change) => change.category),
+          });
+          return partial(503, 'Some profile values were refused');
         }
         // A document left as it was may still wait for the copy of an earlier save (a clear an
         // earlier apply could not copy): copied now.
@@ -379,10 +420,41 @@ export async function applyCertificationProfileHandler(c: AdminContext) {
           return partial(503, `Saved, but not yet in effect for ${notCopied.join(', ')}`);
         }
       } catch (error) {
+        // A conflict from the save itself is a refusal of the whole batch: nothing was saved.
+        if (error instanceof ConflictError && saved !== 'yes') {
+          return c.json(
+            {
+              error: 'conflict',
+              error_description:
+                'Settings changed while the profile was applied; nothing was changed',
+            },
+            409
+          );
+        }
         if (error instanceof ConflictError) {
           return partial(409, 'Settings changed while the profile was applied');
         }
         log.error('Certification profile could not be applied', { tenantId }, error as Error);
+        if (saved === 'no') {
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Settings cannot be saved; nothing was changed',
+            },
+            503
+          );
+        }
+        // The save may have gone through before it failed (an answer lost after it committed).
+        if (saved === 'unknown') {
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description:
+                'It could not be confirmed whether the profile was saved; apply the profile again (applying it is repeatable)',
+            },
+            503
+          );
+        }
         return partial(503, 'Settings cannot be saved');
       }
 
