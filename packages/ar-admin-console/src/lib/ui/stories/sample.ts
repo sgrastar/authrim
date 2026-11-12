@@ -259,6 +259,12 @@ const SAMPLES = {
 		'أنشئ العنصر الأول للبدء.'
 	],
 	loading: ['読み込み中', 'Loading', 'Wird geladen', 'جارٍ التحميل'],
+	loadingDetail: [
+		'ユーザーの一覧を読み込んでいます。少し時間がかかることがあります。',
+		'Loading the user list. This can take a moment.',
+		'Die Benutzerliste wird geladen. Das kann einen Moment dauern.',
+		'جارٍ تحميل قائمة المستخدمين. قد يستغرق ذلك لحظة.'
+	],
 	createTenant: ['テナントを作成', 'Create tenant', 'Mandanten erstellen', 'إنشاء مستأجر'],
 
 	closeNodeTitle: [
