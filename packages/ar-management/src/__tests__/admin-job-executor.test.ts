@@ -436,7 +436,11 @@ describe('generic admin job executor', () => {
         },
       ]);
       mockAdapter.queryOne
-        .mockResolvedValueOnce({ id: 'tenant-a', lifecycle_state: 'restore_validating' })
+        .mockResolvedValueOnce({
+          id: 'tenant-a',
+          lifecycle_state: 'restore_validating',
+          updated_at: 1,
+        })
         .mockResolvedValueOnce({ ok: 1 })
         .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-restore', tenant_id: 'tenant-a' })
         .mockResolvedValueOnce({ count: 1 })
@@ -501,7 +505,7 @@ describe('generic admin job executor', () => {
       },
     ]);
     mockAdapter.queryOne
-      .mockResolvedValueOnce({ id: 'tenant-a', lifecycle_state: 'frozen' })
+      .mockResolvedValueOnce({ id: 'tenant-a', lifecycle_state: 'frozen', updated_at: 1 })
       .mockResolvedValueOnce({ ok: 1 })
       .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-failure', tenant_id: 'tenant-a' });
 

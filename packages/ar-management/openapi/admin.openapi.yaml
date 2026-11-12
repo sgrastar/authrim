@@ -3364,6 +3364,12 @@ paths:
         Create a tenant as a platform-level administrator. The server assigns lifecycle state,
         default status, and timestamps; callers provide only the tenant identifier and display
         metadata. This endpoint does not use X-Tenant-Id because the target tenant is being created.
+        Machine callers need `admin:*` or `admin:tenants:provision` on a global tenant scope (a
+        scope alone is not sufficient, and a token limited to some tenants is refused); the
+        permission opens only this route, the provisioning status, retry and cleanup routes, and
+        never a human, who still needs the global `ar_super_admin` role. Provisioning automation
+        should pass `isolation_policy` explicitly: it defaults to `tenant_exclusive`, which
+        allocates owned database capacity.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -3410,11 +3416,33 @@ paths:
       responses:
         '403':
           $ref: '#/components/responses/AdminStepUpRequired'
+        '409':
+          description: >-
+            `tenant_state_changed`: the tenant became the default, left an operator-mutable state,
+            or already has a deletion queued or running, so nothing was started and no second job
+            is queued. Retrying helps only after the tenant is a non-default tenant in an active,
+            suspended, frozen or migration-read-only state again with no deletion job pending (for
+            example once an earlier job has failed). `default_tenant_protected` is the deployment
+            default tenant, which is never deletable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '202':
           $ref: '#/components/responses/TenantDeleteAccepted'
       description: >-
         Queue asynchronous tenant deletion. The tenant is moved out of the active lifecycle
-        immediately and the background deletion job removes tenant data later.
+        immediately and the background deletion job removes tenant data later. Machine callers
+        need `admin:*` or `admin:tenants:delete` on a global tenant scope (a scope alone is not
+        sufficient), and, like every caller, pass the admin step-up gate for `tenant.delete`: while
+        admin step-up is enforced (the default), a machine needs the exact-name permission
+        `admin:step_up_exempt:tenant.delete`, which no wildcard carries. Where the platform has
+        turned admin step-up off (`security.admin_step_up_enforced` false), the gate lets a machine
+        through and the deletion permission alone is enough, so a platform that relies on the
+        exemption as a second barrier must keep step-up enforced. A human still needs the global
+        `ar_super_admin` role. The deletion job
+        and the audit entry record the caller (the Admin user id, or the machine principal id and
+        the actor type).
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -3425,7 +3453,9 @@ paths:
       description: >-
         Returns the Management-owned tenant creation saga and redacted Control Worker capacity
         operation steps. Reading this endpoint also nudges runnable work, while the scheduled
-        processor remains the durable execution path.
+        processor remains the durable execution path. Machine callers need `admin:*` or
+        `admin:tenants:provision` on a global tenant scope; a human needs the global
+        `ar_super_admin` role.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
@@ -3589,7 +3619,25 @@ paths:
         '400':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          description: >-
+            `tenant_deletion_in_progress`: the tenant has a deletion queued or running (a pending
+            deletion job, or a processing one touched in the last 6 hours), so it cannot be
+            reactivated now. Retrying helps only after the deletion job has failed or completed, or
+            its stale window has passed. Also `lifecycle_conflict` (the tenant's state or version
+            changed; read it again and resend with the new `expected_updated_at`) and
+            `invalid_lifecycle_transition`. A validation job accepted earlier yields to a
+            deletion and activates nothing, ending as `partial_failure` in one of two ways: if the
+            tenant is already `deleting` when the job starts, the common lifecycle gate ends it
+            (stage `blocked_by_tenant_lifecycle`, error `tenant_lifecycle_blocked:deleting`); if the
+            a deletion was accepted after the command (even if it has failed since and left the
+            tenant in the job's source state, or is still pending or running), or the tenant's
+            state changed, the reactivating statement matches nothing and the job ends with stage
+            `tenant_lifecycle_validation_superseded`. Send a new command if the tenant should
+            still be reactivated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -3627,7 +3675,25 @@ paths:
         '400':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          description: >-
+            `tenant_deletion_in_progress`: the tenant has a deletion queued or running (a pending
+            deletion job, or a processing one touched in the last 6 hours), so it cannot be
+            reactivated now. Retrying helps only after the deletion job has failed or completed, or
+            its stale window has passed. Also `lifecycle_conflict` (the tenant's state or version
+            changed; read it again and resend with the new `expected_updated_at`) and
+            `invalid_lifecycle_transition`. A validation job accepted earlier yields to a
+            deletion and activates nothing, ending as `partial_failure` in one of two ways: if the
+            tenant is already `deleting` when the job starts, the common lifecycle gate ends it
+            (stage `blocked_by_tenant_lifecycle`, error `tenant_lifecycle_blocked:deleting`); if the
+            a deletion was accepted after the command (even if it has failed since and left the
+            tenant in the job's source state, or is still pending or running), or the tenant's
+            state changed, the reactivating statement matches nothing and the job ends with stage
+            `tenant_lifecycle_validation_superseded`. Send a new command if the tenant should
+            still be reactivated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -3646,7 +3712,25 @@ paths:
         '400':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          description: >-
+            `tenant_deletion_in_progress`: the tenant has a deletion queued or running (a pending
+            deletion job, or a processing one touched in the last 6 hours), so it cannot be
+            reactivated now. Retrying helps only after the deletion job has failed or completed, or
+            its stale window has passed. Also `lifecycle_conflict` (the tenant's state or version
+            changed; read it again and resend with the new `expected_updated_at`) and
+            `invalid_lifecycle_transition`. A validation job accepted earlier yields to a
+            deletion and activates nothing, ending as `partial_failure` in one of two ways: if the
+            tenant is already `deleting` when the job starts, the common lifecycle gate ends it
+            (stage `blocked_by_tenant_lifecycle`, error `tenant_lifecycle_blocked:deleting`); if the
+            a deletion was accepted after the command (even if it has failed since and left the
+            tenant in the job's source state, or is still pending or running), or the tenant's
+            state changed, the reactivating statement matches nothing and the job ends with stage
+            `tenant_lifecycle_validation_superseded`. Send a new command if the tenant should
+            still be reactivated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -3704,6 +3788,16 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Tenant'
+        '409':
+          description: >-
+            `tenant_deletion_in_progress`: the tenant has a deletion queued or running; retrying
+            helps only once that job has failed or completed. `tenant_state_changed`: the tenant
+            stopped being active between the check and the change, so the default was not changed;
+            read the tenant and decide again. Nothing is changed in either case.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       description: >-
         Set the path tenant as the default tenant. The path parameter identifies the target tenant,
         so X-Tenant-Id is not required.
@@ -24567,7 +24661,9 @@ paths:
       description: >-
         Cancels a pre-activation Control provisioning operation, removes the failed tenant draft,
         and releases any uncommitted route allocation. Cleanup is rejected after Lookup activation
-        may have become externally visible.
+        may have become externally visible. Machine callers need `admin:*` or
+        `admin:tenants:provision` on a global tenant scope; a human needs the global
+        `ar_super_admin` role.
       responses:
         '200':
           $ref: '#/components/responses/TenantProvisioningCleanup'
@@ -24580,7 +24676,17 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          description: >-
+            `tenant_provisioning_cleanup_conflict`: the operation is running or already completed,
+            Lookup activation may be externally visible (the operation is at `lookup_activate` or
+            `tenant_active`), or the operation moved while the cleanup was starting (a worker
+            picked it up or activation began). Nothing was removed. Retrying cleanup does not help
+            once activation has begun; retry provisioning to complete it instead. If the operation
+            only moved on, read the provisioning status and decide again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       parameters:
         - name: id
           in: path
@@ -24598,7 +24704,9 @@ paths:
       summary: Retry failed tenant provisioning
       description: >-
         Requeues a blocked Control provisioning operation. The operation retains its idempotency,
-        release pins, completed steps, and retry history.
+        release pins, completed steps, and retry history. Machine callers need `admin:*` or
+        `admin:tenants:provision` on a global tenant scope; a human needs the global
+        `ar_super_admin` role.
       responses:
         '202':
           $ref: '#/components/responses/TenantProvisioningRetry'

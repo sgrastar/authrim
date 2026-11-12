@@ -35,7 +35,7 @@ import {
 
 function context(body: unknown, id = 'mapping-1') {
   return {
-    get: vi.fn(() => ({ adminId: 'admin-1' })),
+    get: vi.fn(() => ({ actorId: 'admin-1' })),
     req: {
       path: '/api/admin/platform/tenant-domain-mappings',
       header: vi.fn(() => undefined),

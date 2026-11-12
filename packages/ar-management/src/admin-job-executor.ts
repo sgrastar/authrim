@@ -1,3 +1,7 @@
+import {
+  activeTenantDeleteJobGuard,
+  tenantDeleteAcceptedSinceGuard,
+} from './tenant-deletion-job-predicate';
 import { prepareLogIcebergRowWrite } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 import {
   adminAuditReceiptStatement,
@@ -297,6 +301,8 @@ interface TenantLifecycleValidationConfig {
   target_state: 'active';
   reason: string;
   idempotency_key: string;
+  /** Wall-clock seconds at acceptance (absent on jobs accepted before it was recorded). */
+  accepted_at?: number;
   actor_id?: string | null;
 }
 
@@ -373,6 +379,29 @@ export async function writeTenantLifecycleJobAudit(
   // The scanner owns transport recovery after the pointer/row commit. A queue
   // outage must not retry an already completed tenant lifecycle transition.
   await prepared.dispatch().catch(() => {});
+}
+
+/**
+ * The end of a validation job whose reactivation was superseded (the tenant's state changed, or a
+ * deletion was accepted after the command, even one that failed since): terminal, nothing activated, no cache
+ * enabled. A retry could never succeed (the version it was accepted at is gone), so it is not
+ * retried; the operator sends a new command if the tenant should still be reactivated.
+ */
+function supersededLifecycleValidation(reason: string): AdminJobProcessorResult {
+  return {
+    status: 'partial_failure',
+    progress: {
+      stage: 'tenant_lifecycle_validation_superseded',
+      processed: 0,
+      failed: 1,
+      reason,
+    },
+    result: {
+      summary: { total: 1, succeeded: 0, failed: 1 },
+      error: 'tenant_lifecycle_validation_superseded',
+      reason,
+    },
+  };
 }
 
 async function processTenantLifecycleValidationJob(
@@ -509,11 +538,41 @@ async function processTenantLifecycleValidationJob(
     Math.floor(Date.now() / 1000),
     Number(currentVersion?.updated_at ?? 0) + 1
   );
+  // The reactivating statement: only from the accepted state, never while the tenant has an
+  // active deletion job, and never after a deletion was accepted at or after this command (even
+  // one that failed since: a failed deletion leaves the tenant suspended, which an old resume
+  // would match again). An active deletion wins; reactivation yields. When it matches no row
+  // nothing is activated, no cache is enabled, and the job ends superseded.
+  const activeDeletion = activeTenantDeleteJobGuard(job.tenant_id);
+  // Both sides are wall-clock acceptance seconds. `job.created_at` is the tenant's version
+  // (`max(clock, version + 1)`), which can run ahead of the clock, so it is not used. A job
+  // accepted before `accepted_at` was recorded falls back to `created_at - 1`: weaker (the version
+  // may have run further ahead), but `0` would supersede such a job for any tenant that ever had
+  // an older failed deletion.
+  const acceptedAt =
+    typeof config.accepted_at === 'number' &&
+    Number.isInteger(config.accepted_at) &&
+    config.accepted_at > 0
+      ? config.accepted_at
+      : Number(job.created_at) - 1;
+  const deletedSince = tenantDeleteAcceptedSinceGuard(job.tenant_id, acceptedAt);
   const update = await adapter.execute(
-    'UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ?',
-    [config.target_state, nowTs, job.tenant_id, allowedState]
+    `UPDATE tenants SET lifecycle_state = ?, updated_at = ?
+      WHERE id = ? AND lifecycle_state = ?
+        AND NOT EXISTS (${activeDeletion.sql})
+        AND NOT EXISTS (${deletedSince.sql})`,
+    [
+      config.target_state,
+      nowTs,
+      job.tenant_id,
+      allowedState,
+      ...activeDeletion.params,
+      ...deletedSince.params,
+    ]
   );
-  if (update.rowsAffected === 0) throw new Error('tenant_lifecycle_validation_activation_conflict');
+  if (update.rowsAffected === 0) {
+    return supersededLifecycleValidation('tenant_changed_or_deletion_accepted');
+  }
   if (config.target_state === 'active') {
     await putTenantExistsCache(env.AUTHRIM_CONFIG, job.tenant_id);
   } else {

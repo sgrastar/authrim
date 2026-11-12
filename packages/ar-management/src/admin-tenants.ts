@@ -54,6 +54,8 @@ import {
 } from '@authrim/ar-lib-core';
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import { requireAdminStepUp } from './admin-step-up-gate';
+import { activeTenantDeleteJobGuard } from './tenant-deletion-job-predicate';
+import { getAdminActorAuditMetadata } from './admin-shared';
 import { createOpaqueTenantKey } from './logging-tenant-key';
 import { materializeDisabledTenantEmailProviderOrder } from './notification-provider-projection';
 import {
@@ -105,6 +107,7 @@ import {
   getTenantInventoryScope,
   hasPlatformTenantManagementAuthority,
   requirePlatformTenantManagementAuthority,
+  requireTenantProvisioningAuthority,
 } from './admin-tenant-access';
 
 // =============================================================================
@@ -338,13 +341,18 @@ function formatTenant(row: TenantRow) {
   };
 }
 
+/**
+ * The caller recorded as the actor of a tenant operation: the Admin user's id, or the machine
+ * principal's id (`actorId`, as the other Admin handlers record it); the actor type goes in the
+ * audit metadata (`getAdminActorAuditMetadata`).
+ */
 function getAdminActorId(c: Context<{ Bindings: Env }>): string {
-  const adminContext = c as unknown as Context<{
-    Bindings: Env;
-    Variables: { adminAuth?: { adminId?: string } | null };
-  }>;
-  const adminAuth = adminContext.get('adminAuth');
-  return adminAuth?.adminId ?? 'admin-ui';
+  const adminAuth = getAdminAuth(c);
+  return adminAuth?.actorId ?? adminAuth?.userId ?? 'unknown';
+}
+
+function adminActorAuditMetadata(c: Context<{ Bindings: Env }>): Record<string, unknown> {
+  return getAdminActorAuditMetadata(getAdminAuth(c));
 }
 
 function requiredPathParam(c: Context<{ Bindings: Env }>, name: string): string {
@@ -1210,7 +1218,7 @@ export async function beginTenantProvisioning(
       [input.id]
     );
     if (!tenant) {
-      await upsertTenantRow(platformAdapter, {
+      await insertTenantDraftIfAbsent(platformAdapter, {
         id: existingOperation.tenantId,
         tenantCode: existingOperation.tenantCode,
         name: existingOperation.tenantName,
@@ -1225,6 +1233,9 @@ export async function beginTenantProvisioning(
       );
     }
     if (!tenant) throw new Error('tenant_provisioning_draft_missing');
+    // No comparison of the mutable `tenant_code` here: the operation is keyed by tenant id and
+    // environment and its request hash matched, so the row with this id belongs to it, and an
+    // administrator may since have changed the code (a replay must still return the tenant).
     if (
       existingOperation.status === 'queued' ||
       existingOperation.status === 'running' ||
@@ -1301,7 +1312,7 @@ export async function beginTenantProvisioning(
     }
     operation = concurrent;
   }
-  await upsertTenantRow(platformAdapter, {
+  await insertTenantDraftIfAbsent(platformAdapter, {
     id: operation.tenantId,
     tenantCode: operation.tenantCode,
     name: operation.tenantName,
@@ -1315,6 +1326,9 @@ export async function beginTenantProvisioning(
     [input.id]
   );
   if (!tenant) throw new Error('tenant_provisioning_draft_missing');
+  if (tenant.tenant_code !== operation.tenantCode) {
+    return tenantDraftConflict(c);
+  }
   c.executionCtx?.waitUntil(
     runTenantBackupCoveredEffect(c.env, { tenantId: input.id }, () =>
       processNextTenantProvisioning(c.env)
@@ -1352,6 +1366,56 @@ async function upsertTenantRow(
       input.id,
       input.tenantCode,
       tenantKey,
+      input.name,
+      input.description,
+      input.isolationPolicy,
+      input.lifecycleState,
+      getDefaultTenantGuard(false),
+      input.nowTs,
+      input.nowTs,
+    ]
+  );
+}
+
+/**
+ * Inserts the draft tenant row when there is none, and never touches an existing one: a row that
+ * already exists belongs to the saga (it may have become `active`, or the default, since this
+ * request read the operation), so its lifecycle is left alone. The caller then reads the row and
+ * checks it is this request's (`tenant_code`), see `tenantDraftConflict`, where a row of this id
+ * was written by someone else between the existence check and this insert.
+ */
+function tenantDraftConflict(c: Context<{ Bindings: Env }>): Promise<Response> {
+  return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+    variables: {
+      field: 'id',
+      reason: 'Tenant provisioning request conflicts with existing operation',
+    },
+  });
+}
+
+async function insertTenantDraftIfAbsent(
+  adapter: DatabaseAdapter,
+  input: {
+    id: string;
+    tenantCode: string;
+    name: string;
+    description: string | null;
+    isolationPolicy: 'shared_pool' | 'tenant_exclusive';
+    lifecycleState: TenantLifecycleState;
+    nowTs: number;
+  }
+): Promise<void> {
+  await adapter.execute(
+    `INSERT INTO tenants (
+       id, tenant_code, tenant_key, name, description, isolation_policy, lifecycle_state, is_default,
+       default_tenant_guard, created_at, updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+    [
+      input.id,
+      input.tenantCode,
+      createOpaqueTenantKey(),
       input.name,
       input.description,
       input.isolationPolicy,
@@ -1444,7 +1508,10 @@ export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
  * Create a new tenant
  */
 export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
-  const platformError = await requirePlatformTenantManagementAuthority(c);
+  const platformError = await requireTenantProvisioningAuthority(
+    c,
+    ADMIN_PERMISSIONS.TENANT_PROVISION
+  );
   if (platformError) {
     return platformError;
   }
@@ -1480,6 +1547,7 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       operation_id: started.operation.operationId,
       tenant_code: tenantCode,
       isolation_policy,
+      ...adminActorAuditMetadata(c),
     });
     return c.json(
       {
@@ -1500,7 +1568,10 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
 
 /** GET /api/admin/tenants/:id/provisioning */
 export async function adminTenantProvisioningStatusHandler(c: Context<{ Bindings: Env }>) {
-  const platformError = await requirePlatformTenantManagementAuthority(c);
+  const platformError = await requireTenantProvisioningAuthority(
+    c,
+    ADMIN_PERMISSIONS.TENANT_PROVISION
+  );
   if (platformError) return platformError;
   const tenantId = requiredPathParam(c, 'id');
   const environmentId = c.env.AUTHRIM_ENVIRONMENT_NAME;
@@ -1810,7 +1881,10 @@ async function executeTenantLifecycleCommand(
     );
   }
 
-  const nowTs = Math.max(Math.floor(Date.now() / 1000), tenant.updated_at + 1);
+  const wallClockSeconds = Math.floor(Date.now() / 1000);
+  // `nowTs` is the tenant's version (it can run ahead of the clock); `accepted_at` is the pure wall
+  // clock, comparable with the acceptance time of a deletion job.
+  const nowTs = Math.max(wallClockSeconds, tenant.updated_at + 1);
   const jobId = crypto.randomUUID();
   const validationKind = command === 'restore-validate' ? 'restore' : command;
   const config = {
@@ -1822,6 +1896,7 @@ async function executeTenantLifecycleCommand(
     break_glass: parsed.data.break_glass,
     idempotency_key: idempotencyKey,
     expected_updated_at: parsed.data.expected_updated_at,
+    accepted_at: wallClockSeconds,
     actor_id: adminAuth?.actorId ?? adminAuth?.userId ?? null,
   };
   const nextState =
@@ -1838,11 +1913,41 @@ async function executeTenantLifecycleCommand(
   // The tenant moves first, then its job is kept in DB_ADMIN (another database: no transaction
   // spans both). A job not kept moves the tenant back, so the same request can be sent again;
   // the validation never runs for a move that did not happen, as its job is kept only after it.
+  // The commands that bring a tenant back (or toward service) refuse, in the statement itself,
+  // while the tenant has an active deletion job: that job is working it out of service.
+  const reactivates =
+    command === 'resume' || command === 'unfreeze' || command === 'restore-validate';
+  const activeDeletion = activeTenantDeleteJobGuard(id, nowTs);
   const update = await adapter.execute(
-    'UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ? AND updated_at = ?',
-    [nextState, nowTs, id, tenant.lifecycle_state, tenant.updated_at]
+    `UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ? AND updated_at = ?${
+      reactivates ? ` AND NOT EXISTS (${activeDeletion.sql})` : ''
+    }`,
+    [
+      nextState,
+      nowTs,
+      id,
+      tenant.lifecycle_state,
+      tenant.updated_at,
+      ...(reactivates ? activeDeletion.params : []),
+    ]
   );
   if (update.rowsAffected === 0) {
+    if (reactivates) {
+      const deleting = await adapter.queryOne(
+        `SELECT 1 AS found WHERE EXISTS (${activeDeletion.sql})`,
+        activeDeletion.params
+      );
+      if (deleting) {
+        return c.json(
+          {
+            error: 'tenant_deletion_in_progress',
+            error_description:
+              'The tenant has a deletion in progress; wait for it to finish or fail before reactivating it',
+          },
+          409
+        );
+      }
+    }
     return c.json(
       { error: 'lifecycle_conflict', error_description: 'Tenant lifecycle changed concurrently' },
       409
@@ -2089,7 +2194,10 @@ export async function adminTenantLifecycleJobRetryHandler(c: Context<{ Bindings:
  * Retry a blocked Control Plane tenant provisioning operation.
  */
 export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings: Env }>) {
-  const platformError = await requirePlatformTenantManagementAuthority(c);
+  const platformError = await requireTenantProvisioningAuthority(
+    c,
+    ADMIN_PERMISSIONS.TENANT_PROVISION
+  );
   if (platformError) {
     return platformError;
   }
@@ -2131,6 +2239,7 @@ export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings:
       );
       await createAuditLogFromContext(c, 'tenant.provisioning_retry.requested', 'tenant', id, {
         operation_id: retried.operationId,
+        ...adminActorAuditMetadata(c),
       });
       return c.json(formatTenantProvisioningOperation(retried), 202);
     }
@@ -2153,7 +2262,10 @@ export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings:
  * Remove a failed tenant draft and release any uncommitted Control allocation.
  */
 export async function adminTenantProvisioningCleanupHandler(c: Context<{ Bindings: Env }>) {
-  const platformError = await requirePlatformTenantManagementAuthority(c);
+  const platformError = await requireTenantProvisioningAuthority(
+    c,
+    ADMIN_PERMISSIONS.TENANT_PROVISION
+  );
   if (platformError) {
     return platformError;
   }
@@ -2196,12 +2308,27 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
         );
       }
       if (controlOperation.status !== 'canceled') {
+        // One conditional statement: still pre-activation at the step read above, and not held
+        // by a worker. When it does not apply (a worker moved the operation, or activation began
+        // since the read), nothing below runs: every destructive step relies on this cancel.
         const canceled = await controlRepository.cancel(
           controlOperation.operationId,
           environmentId,
-          Math.floor(Date.now() / 1000)
+          Math.floor(Date.now() / 1000),
+          controlOperation.currentStep
         );
-        if (!canceled) throw new Error('tenant_provisioning_cleanup_conflict');
+        if (!canceled) {
+          const current = await controlRepository.getByTenant(id, environmentId);
+          return c.json(
+            {
+              error: 'tenant_provisioning_cleanup_conflict',
+              message:
+                'Tenant provisioning changed while cleanup was starting; nothing was removed. Retry provisioning or check its status.',
+              ...(current ? { provisioning: formatTenantProvisioningOperation(current) } : {}),
+            },
+            409
+          );
+        }
         controlOperation = canceled;
       }
 
@@ -2255,6 +2382,7 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
       }
       await createAuditLogFromContext(c, 'tenant.provisioning_cleanup.succeeded', 'tenant', id, {
         operation_id: controlOperation.operationId,
+        ...adminActorAuditMetadata(c),
       });
       return c.json({
         status: 'cleaned',
@@ -2284,7 +2412,10 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
  * The primary tenant cannot be deleted.
  */
 export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
-  const platformError = await requirePlatformTenantManagementAuthority(c);
+  const platformError = await requireTenantProvisioningAuthority(
+    c,
+    ADMIN_PERMISSIONS.TENANT_DELETE
+  );
   if (platformError) {
     return platformError;
   }
@@ -2356,29 +2487,40 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
     });
     if (stepUpRefused) return stepUpRefused;
 
-    // Get admin identity for job attribution
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    const adminAuth = (c as any).get('adminAuth') as { adminId?: string } | null;
-    const createdBy = adminAuth?.adminId ?? 'unknown';
+    // The job records who asked for the deletion (an Admin user or a machine principal).
+    const createdBy = getAdminActorId(c);
 
     const nowTs = Math.floor(Date.now() / 1000);
     const jobId = crypto.randomUUID();
     // Estimate completion: max 1 hour (next hourly cron tick)
     const estimatedCompletion = nowTs + 3600;
 
-    await adapter.transaction(async (tx) => {
-      // Immediately move the tenant out of the runtime-active lifecycle to block new requests.
-      await tx.execute(
-        "UPDATE tenants SET lifecycle_state = 'deleting', updated_at = ? WHERE id = ?",
-        [nowTs, id]
-      );
-
-      await tx.execute(
-        `INSERT INTO admin_jobs (
-          id, tenant_id, job_type, status, progress, config,
-          created_by, created_at, updated_at, estimated_completion
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+    // One atomic batch (D1 runs `batch` as a single transaction; the PostgreSQL adapter runs it
+    // between BEGIN and COMMIT, in order, so the second statement sees the first one's effect):
+    //  1. the guarded UPDATE is the one place the decision is made: it applies only to a tenant
+    //     that is still not the default, still in an operator-mutable state, and has no pending or
+    //     running deletion job, so a `set-default` or another deletion that ran since the read
+    //     above wins and nothing is changed;
+    //  2. the job row is inserted only for a tenant now `deleting` without such a job, which
+    //     statement 1 having matched guarantees. Either both happen or neither: no compensation.
+    const activeJob = activeTenantDeleteJobGuard(id, nowTs);
+    const [started, queued] = await adapter.batch([
+      {
+        sql: `UPDATE tenants SET lifecycle_state = 'deleting', updated_at = ?
+               WHERE id = ? AND is_default = 0 AND default_tenant_guard IS NULL
+                 AND lifecycle_state IN (${TENANT_OPERATOR_MUTABLE_LIFECYCLE_STATES.map((state) => `'${state}'`).join(', ')})
+                 AND NOT EXISTS (${activeJob.sql})`,
+        params: [nowTs, id, ...activeJob.params],
+      },
+      {
+        sql: `INSERT INTO admin_jobs (
+                id, tenant_id, job_type, status, progress, config,
+                created_by, created_at, updated_at, estimated_completion
+              )
+              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+               WHERE EXISTS (SELECT 1 FROM tenants WHERE id = ? AND lifecycle_state = 'deleting')
+                 AND NOT EXISTS (${activeJob.sql})`,
+        params: [
           jobId,
           getTenantIdFromContext(c),
           'tenants/delete',
@@ -2389,9 +2531,25 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
           nowTs,
           nowTs,
           estimatedCompletion,
-        ]
+          id,
+          ...activeJob.params,
+        ],
+      },
+    ]);
+    if (started?.rowsAffected !== 1) {
+      return c.json(
+        {
+          error: 'tenant_state_changed',
+          error_description:
+            'The tenant became the default, changed state, or already has a deletion queued; deletion was not started',
+        },
+        409
       );
-    });
+    }
+    if (queued?.rowsAffected !== 1) {
+      // Unreachable while the batch is atomic (statement 1 matching implies statement 2 does).
+      throw new Error('tenant_deletion_job_not_queued');
+    }
 
     // Invalidate cache so subsequent requests to this tenant return 404 immediately.
     await syncTenantExistsCache(c.env.AUTHRIM_CONFIG, id, 'deleting');
@@ -2399,6 +2557,7 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
     await createAuditLogFromContext(c, 'tenant.delete_queued', 'tenant', id, {
       tenant_id: id,
       job_id: jobId,
+      ...adminActorAuditMetadata(c),
     });
 
     return c.json(
@@ -2458,16 +2617,46 @@ export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>
 
     const nowTs = Math.floor(Date.now() / 1000);
 
-    await adapter.transaction(async (tx) => {
-      await tx.execute(
-        'UPDATE tenants SET is_default = 0, default_tenant_guard = NULL, updated_at = ? WHERE is_default = 1',
-        [nowTs]
+    // One all-or-nothing batch whose statements both depend on the target still being active, so a
+    // deletion (or lifecycle change) that ran since the read above wins: nothing changes and the
+    // old default stays. A deletion that starts after this batch sees `is_default = 1` and refuses.
+    // Neither while the tenant has an active deletion job: that job must not find it the default.
+    const activeJob = activeTenantDeleteJobGuard(id, nowTs);
+    const results = await adapter.batch([
+      {
+        sql: `UPDATE tenants SET is_default = 0, default_tenant_guard = NULL, updated_at = ?
+               WHERE is_default = 1
+                 AND EXISTS (SELECT 1 FROM tenants WHERE id = ? AND lifecycle_state = 'active')
+                 AND NOT EXISTS (${activeJob.sql})`,
+        params: [nowTs, id, ...activeJob.params],
+      },
+      {
+        sql: `UPDATE tenants SET is_default = 1, default_tenant_guard = ?, updated_at = ?
+               WHERE id = ? AND lifecycle_state = 'active'
+                 AND NOT EXISTS (${activeJob.sql})`,
+        params: [getDefaultTenantGuard(true), nowTs, id, ...activeJob.params],
+      },
+    ]);
+    if (results[1]?.rowsAffected !== 1) {
+      const deleting = await adapter.queryOne(
+        `SELECT 1 AS found WHERE EXISTS (${activeJob.sql})`,
+        activeJob.params
       );
-      await tx.execute(
-        'UPDATE tenants SET is_default = 1, default_tenant_guard = ?, updated_at = ? WHERE id = ?',
-        [getDefaultTenantGuard(true), nowTs, id]
+      return c.json(
+        deleting
+          ? {
+              error: 'tenant_deletion_in_progress',
+              error_description:
+                'The tenant has a deletion in progress; it cannot become the default',
+            }
+          : {
+              error: 'tenant_state_changed',
+              error_description:
+                'The tenant is no longer active; the default tenant was not changed',
+            },
+        409
       );
-    });
+    }
 
     const updated = await adapter.queryOne<TenantRow>(
       'SELECT id, tenant_code, name, description, isolation_policy, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',

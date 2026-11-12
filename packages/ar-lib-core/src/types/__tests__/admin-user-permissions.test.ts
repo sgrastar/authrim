@@ -120,3 +120,29 @@ describe('break-glass permissions', () => {
     expect(hasAdminPermission(['*'], ADMIN_PERMISSIONS.SUPPORT_OPS_ACTIONS_APPROVE)).toBe(true);
   });
 });
+
+describe('tenant provisioning and deletion permissions', () => {
+  const provision = ADMIN_PERMISSIONS.TENANT_PROVISION;
+  const remove = ADMIN_PERMISSIONS.TENANT_DELETE;
+
+  it('are named in the tenants namespace and distinct from the lifecycle permissions', () => {
+    expect(provision).toBe('admin:tenants:provision');
+    expect(remove).toBe('admin:tenants:delete');
+  });
+
+  it.each(['*', 'admin:*', 'admin:tenants:*'])('are carried by the wildcard %s', (wildcard) => {
+    expect(hasAdminPermission([wildcard], provision)).toBe(true);
+    expect(hasAdminPermission([wildcard], remove)).toBe(true);
+  });
+
+  it('are held by their own name, and neither implies the other nor the lifecycle permissions', () => {
+    expect(hasAdminPermission([provision], provision)).toBe(true);
+    expect(hasAdminPermission([provision], remove)).toBe(false);
+    expect(hasAdminPermission([remove], provision)).toBe(false);
+    expect(
+      hasAdminPermission([provision, remove], ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD)
+    ).toBe(false);
+    expect(hasAdminPermission([ADMIN_PERMISSIONS.SETTINGS_WRITE], provision)).toBe(false);
+    expect(hasAdminPermission([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD], remove)).toBe(false);
+  });
+});
