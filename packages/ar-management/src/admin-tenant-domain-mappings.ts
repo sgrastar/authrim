@@ -127,6 +127,43 @@ function getCoreAdapter(c: Context<{ Bindings: Env }>) {
   return adapter;
 }
 
+/**
+ * The submitted domain must be the one the mapping was created for: it is validated, normalised,
+ * and hashed with the row's own hash version, and the hash has to equal the stored one. Without
+ * this, a mapping could be verified (or have a challenge issued) for any domain the caller controls.
+ * Returns the normalised domain, or the error response to return.
+ */
+async function requireDomainOfMapping(
+  c: Context<{ Bindings: Env }>,
+  existing: TenantDomainMappingRow,
+  submitted: unknown
+): Promise<{ domain: string } | { response: Response }> {
+  const raw = typeof submitted === 'string' ? submitted : '';
+  const validation = validateDomain(raw);
+  if (!validation.valid) {
+    return {
+      response: await createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'domain', reason: validation.error! },
+      }),
+    };
+  }
+  const domain = raw.toLowerCase().trim();
+  const hashConfig = await getEmailDomainHashConfig(c.env);
+  const { hash } = await generateEmailDomainHashWithVersion(
+    `user@${domain}`,
+    hashConfig,
+    existing.hash_version
+  );
+  if (hash !== existing.domain_hash) {
+    return {
+      response: await createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'domain', reason: 'The domain does not match this mapping' },
+      }),
+    };
+  }
+  return { domain };
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -237,8 +274,11 @@ export async function createTenantDomainMappingHandler(c: Context<{ Bindings: En
       });
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-    const createdBy = (c as any).get('adminAuth')?.adminId as string | undefined;
+    // The caller: the Admin user id, or the machine principal id.
+    const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth') as
+      | { actorId?: string; userId?: string }
+      | undefined;
+    const createdBy = adminAuth?.actorId ?? adminAuth?.userId;
     const nowTs = Math.floor(Date.now() / 1000);
     const id = crypto.randomUUID();
 
@@ -480,6 +520,10 @@ export async function initiateTenantDomainVerificationHandler(c: Context<{ Bindi
       });
     }
 
+    const checked = await requireDomainOfMapping(c, existing, body.domain);
+    if ('response' in checked) return checked.response;
+    const { domain } = checked;
+
     const token = await generateVerificationToken();
     const expiresAt = calculateVerificationExpiry();
     const nowTs = Math.floor(Date.now() / 1000);
@@ -489,7 +533,13 @@ export async function initiateTenantDomainVerificationHandler(c: Context<{ Bindi
       [token, expiresAt, nowTs, body.id]
     );
 
-    const domain = body.domain.toLowerCase().trim();
+    await createAuditLogFromContext(
+      c,
+      'tenant_domain_mapping.verification_initiated',
+      'tenant_domain_mapping',
+      body.id,
+      { domain }
+    );
 
     return c.json({
       id: body.id,
@@ -547,7 +597,10 @@ export async function confirmTenantDomainVerificationHandler(c: Context<{ Bindin
       });
     }
 
-    const domain = body.domain.toLowerCase().trim();
+    // Before any DNS lookup or state change: the domain has to be the mapping's own.
+    const checked = await requireDomainOfMapping(c, existing, body.domain);
+    if ('response' in checked) return checked.response;
+    const { domain } = checked;
     const verified = await verifyDomainDnsTxt(domain, existing.verification_token);
 
     if (!verified) {
@@ -560,10 +613,19 @@ export async function confirmTenantDomainVerificationHandler(c: Context<{ Bindin
     }
 
     const nowTs = Math.floor(Date.now() / 1000);
-    await adapter.execute(
-      'UPDATE tenant_domain_mappings SET verified = 1, verification_token = NULL, verification_expires_at = NULL, updated_at = ? WHERE id = ?',
-      [nowTs, body.id]
+    // Only the challenge that was just checked: a re-initiated one (new token) is left alone.
+    const marked = await adapter.execute(
+      'UPDATE tenant_domain_mappings SET verified = 1, verification_token = NULL, verification_expires_at = NULL, updated_at = ? WHERE id = ? AND verification_token = ?',
+      [nowTs, body.id, existing.verification_token]
     );
+    if (marked.rowsAffected !== 1) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'id',
+          reason: 'Verification was re-initiated meanwhile. Confirm the new challenge.',
+        },
+      });
+    }
 
     const updated = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',

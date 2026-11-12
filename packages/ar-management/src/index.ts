@@ -39,6 +39,7 @@ import {
   getRateLimitProfileAsync,
   initialAccessTokenMiddleware,
   adminAuthMiddleware,
+  hasGlobalMachinePermission,
   requestContextMiddleware,
   pluginContextMiddleware,
   createPluginLoader,
@@ -97,7 +98,7 @@ import {
   isTenantRuntimeRegistryRefreshCron,
   refreshTenantRuntimeRegistrySnapshots,
 } from './tenant-runtime-registry-snapshot-jobs';
-import { isTenantScopedAdminPath } from './admin-tenant-access';
+import { getAdminAuth, isTenantScopedAdminPath } from './admin-tenant-access';
 import { authenticateAgentDownscopeBearer } from './agent-downscope-auth';
 import {
   isAgentElevationRecoveryCron,
@@ -466,6 +467,7 @@ import { registerAdminResourcePermissionMiddleware } from './admin-resource-perm
 import {
   enforceDeclaredAdminRouteAccess,
   registerDeclaredAdminRouteAccessMiddleware,
+  tenantProvisioningRoutePermission,
 } from './admin-route-access';
 import { requireInternalVersionManagerAuthority } from './internal-version-access';
 import {
@@ -1789,14 +1791,25 @@ app.delete(
 // - POST   /api/admin/tenants/:id/clone       - Clone tenant settings
 // Note: /set-default and /clone must be registered BEFORE :id routes to avoid conflicts
 const tenantManagementSystemAdminGuard = requireSystemAdmin();
-app.use('/api/admin/tenants', tenantManagementSystemAdminGuard);
+// The five provisioning and deletion routes also admit a machine token with a global scope that
+// holds the route's own permission (`admin:tenants:provision` / `admin:tenants:delete`). Humans and
+// every other route under /api/admin/tenants keep the system-admin guard. The route is told by the
+// router's own path (`c.req.path`) against the declared rule table, never by the raw URL.
+const tenantManagementGuard = async (c: Context<{ Bindings: Env }>, next: Next) => {
+  const permission = tenantProvisioningRoutePermission(c.req.method, c.req.path);
+  if (permission && hasGlobalMachinePermission(getAdminAuth(c), permission)) {
+    return next();
+  }
+  return tenantManagementSystemAdminGuard(c, next);
+};
+app.use('/api/admin/tenants', tenantManagementGuard);
 app.use('/api/admin/tenants/*', async (c, next) => {
   const pathname = new URL(c.req.url).pathname;
   if (isTenantScopedAdminPath(pathname)) {
     await next();
     return;
   }
-  return tenantManagementSystemAdminGuard(c, next);
+  return tenantManagementGuard(c, next);
 });
 app.use('/api/admin/tenants/:id', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:id/*', requireSupportedTenantParam('id'));
@@ -2048,37 +2061,37 @@ app.get(
 // Note: /verify and /verify/confirm must be before /:id to avoid route conflicts
 app.get(
   '/api/admin/platform/tenant-domain-mappings',
-  requireSystemAdmin,
+  requireSystemAdmin(),
   listTenantDomainMappingsHandler
 );
 app.post(
   '/api/admin/platform/tenant-domain-mappings',
-  requireSystemAdmin,
+  requireSystemAdmin(),
   createTenantDomainMappingHandler
 );
 app.post(
   '/api/admin/platform/tenant-domain-mappings/verify',
-  requireSystemAdmin,
+  requireSystemAdmin(),
   initiateTenantDomainVerificationHandler
 );
 app.post(
   '/api/admin/platform/tenant-domain-mappings/verify/confirm',
-  requireSystemAdmin,
+  requireSystemAdmin(),
   confirmTenantDomainVerificationHandler
 );
 app.get(
   '/api/admin/platform/tenant-domain-mappings/:id',
-  requireSystemAdmin,
+  requireSystemAdmin(),
   getTenantDomainMappingHandler
 );
 app.put(
   '/api/admin/platform/tenant-domain-mappings/:id',
-  requireSystemAdmin,
+  requireSystemAdmin(),
   updateTenantDomainMappingHandler
 );
 app.delete(
   '/api/admin/platform/tenant-domain-mappings/:id',
-  requireSystemAdmin,
+  requireSystemAdmin(),
   deleteTenantDomainMappingHandler
 );
 

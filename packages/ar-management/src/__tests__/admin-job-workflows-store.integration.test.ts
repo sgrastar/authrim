@@ -292,7 +292,7 @@ describe('tenant lifecycle validation', () => {
         `INSERT INTO admin_jobs (id, tenant_id, job_type, status, config, error_code, created_by,
            created_at, updated_at)
          VALUES ('legacy-1', 'tenant-a', 'tenants/lifecycle-validation', 'failed', ?, 'admin_job_store_moved',
-           'admin-1', 5, 5)`
+           'admin-1', 10, 10)`
       )
       .run(
         JSON.stringify({
