@@ -163,8 +163,77 @@ export function backScreensOf(answer: unknown): string[] {
 		: [];
 }
 
+/** Going back to the application (`/cancel`): the request, and an answer shaped like a consent denial's. */
+export interface FlowRuntimeCancelRequest {
+	contract_hash: string;
+	signature: string;
+	/** The step the person is on, when there is one (a failed start has none). */
+	step_id?: string;
+	node_id?: string;
+}
+export interface FlowRuntimeCancelResponse {
+	redirect_url?: string;
+	/** An authorization response in `form_post` mode, asked for with `X-Authrim-Relay`. */
+	form_post?: { action: string; fields: Array<[string, string]> };
+}
+
+/** Whether a start answer says the sign-in can be left for the application (`cancel_available`). */
+export function cancelAvailableOf(answer: unknown): boolean {
+	const interaction =
+		answer && typeof answer === 'object' ? (answer as Record<string, unknown>).interaction : null;
+	return (
+		!!interaction &&
+		typeof interaction === 'object' &&
+		(interaction as Record<string, unknown>).cancel_available === true
+	);
+}
+
+/** A POST on an interaction (`/back`, `/cancel`): its answer, or the error it gave. */
+async function postInteractionAction<T>(
+	interactionId: string,
+	action: 'back' | 'cancel',
+	input: object,
+	failedCode: string,
+	failedMessage: string,
+	extraHeaders: Record<string, string> = {}
+): Promise<FlowRuntimeApiResult<T>> {
+	try {
+		const response = await flowRuntimeHttpClient.fetch<
+			T & {
+				error?: string;
+				error_description?: string;
+				error_details?: { category?: string; action?: string; interaction_id?: string };
+			}
+		>(
+			`${resolveApiBaseUrl()}/api/v1/login/interactions/${encodeURIComponent(interactionId)}/${action}`,
+			{
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					...Object.fromEntries(buildDiagnosticHeaders().entries()),
+					...extraHeaders
+				},
+				body: JSON.stringify(input)
+			}
+		);
+		if (response.ok) return { data: response.data };
+		const body = response.data;
+		return {
+			error: {
+				error: body?.error ?? failedCode,
+				error_description: body?.error_description ?? failedMessage,
+				category: body?.error_details?.category,
+				action: body?.error_details?.action,
+				interaction_id: body?.error_details?.interaction_id
+			}
+		};
+	} catch {
+		return { error: { error: 'network_error', error_description: 'Network error occurred' } };
+	}
+}
+
 export const flowRuntimeAPI = {
-	start(input: FlowRuntimeStartRequest) {
+	start(input: FlowRuntimeStartRequest & { saml_login_nonce?: string }) {
 		return withFlowRuntimeResult(() =>
 			createFlowRuntimeClient().start(input, {
 				headers: Object.fromEntries(buildDiagnosticHeaders().entries())
@@ -181,42 +250,36 @@ export const flowRuntimeAPI = {
 	},
 
 	/** From the current screen back to one passed before (the backend decides whether it may). */
-	async back(
+	back(
 		interactionId: string,
 		input: FlowRuntimeBackRequest
 	): Promise<FlowRuntimeApiResult<FlowRuntimeBackResponse>> {
-		try {
-			const response = await flowRuntimeHttpClient.fetch<
-				FlowRuntimeBackResponse & {
-					error?: string;
-					error_description?: string;
-					error_details?: { category?: string; action?: string; interaction_id?: string };
-				}
-			>(
-				`${resolveApiBaseUrl()}/api/v1/login/interactions/${encodeURIComponent(interactionId)}/back`,
-				{
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						...Object.fromEntries(buildDiagnosticHeaders().entries())
-					},
-					body: JSON.stringify(input)
-				}
-			);
-			if (response.ok) return { data: response.data };
-			const body = response.data;
-			return {
-				error: {
-					error: body?.error ?? 'back_failed',
-					error_description: body?.error_description ?? 'Could not go back',
-					category: body?.error_details?.category,
-					action: body?.error_details?.action,
-					interaction_id: body?.error_details?.interaction_id
-				}
-			};
-		} catch {
-			return { error: { error: 'network_error', error_description: 'Network error occurred' } };
-		}
+		return postInteractionAction<FlowRuntimeBackResponse>(
+			interactionId,
+			'back',
+			input,
+			'back_failed',
+			'Could not go back'
+		);
+	},
+
+	/**
+	 * Out of the sign-in and back to the application (`/cancel`, only for a Flow that says
+	 * `cancel_available`). The answer is the consent denial's: where to send the browser.
+	 */
+	cancel(
+		interactionId: string,
+		input: FlowRuntimeCancelRequest
+	): Promise<FlowRuntimeApiResult<FlowRuntimeCancelResponse>> {
+		return postInteractionAction<FlowRuntimeCancelResponse>(
+			interactionId,
+			'cancel',
+			input,
+			'cancel_failed',
+			'Could not go back to the app',
+			// A form post as data (response_mode=form_post) instead of an HTML page the SPA cannot use.
+			{ 'X-Authrim-Relay': 'structured' }
+		);
 	},
 
 	createEmailVerificationChallenge(

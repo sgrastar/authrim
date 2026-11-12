@@ -169,6 +169,8 @@ export interface LiteFlowView {
 	 * back and on) is another visit, so a form drawn for the earlier one is not taken for it.
 	 */
 	visitId: string | null;
+	/** Whether the sign-in can be left for the application (`cancel_available`; absent is false). */
+	cancelAvailable: boolean;
 }
 
 export type LiteFlowFailure = { ok: false; error: string; status: number };
@@ -178,6 +180,8 @@ export interface LiteLoginTarget {
 	clientId: string | null;
 	authorizationChallengeId: string | null;
 	samlRequestId: string | null;
+	/** The browser-held nonce the SAML IdP adds next to `saml_request_id`. */
+	samlLoginNonce?: string | null;
 	samlSpEntityId: string | null;
 	returnTo: string | null;
 }
@@ -223,6 +227,7 @@ export function readFlowStartAnswer(json: unknown): LiteFlowView | null {
 		interactionState: readString(json.interaction.state) ?? 'active',
 		backScreens: readBackScreens(json.back_screens),
 		visitId: readString(json.interaction.current_visit_id),
+		cancelAvailable: json.interaction.cancel_available === true,
 		codeInputElsewhere: steps.some(
 			(candidate) => isRecord(candidate) && candidate.id !== currentStepId && asksForCode(candidate)
 		)
@@ -270,6 +275,7 @@ export async function startLiteLoginFlow(
 			locale,
 			authorization_challenge_id: target.authorizationChallengeId ?? undefined,
 			saml_request_id: target.samlRequestId ?? undefined,
+			saml_login_nonce: (target.samlRequestId && target.samlLoginNonce) || undefined,
 			saml_sp_entity_id: target.samlSpEntityId ?? undefined,
 			return_to: target.returnTo ?? undefined,
 			...runtimeTarget(target)

@@ -15,7 +15,11 @@ import {
   type SAMLAssuranceSession,
   type SAMLAuthnAssuranceCheck,
 } from './authn-assurance';
-import { carrySAMLRequestContext, redirectToSAMLLogin } from './sso-stored-request';
+import {
+  carrySAMLRequestContext,
+  redirectToSAMLLogin,
+  type ResumedSAMLLogin,
+} from './sso-stored-request';
 
 interface GateLog {
   info(message: string, context?: Record<string, unknown>): void;
@@ -37,6 +41,8 @@ export async function gateSAMLAuthnAssurance(
     session: SAMLAssuranceSession;
     relayState?: string;
     requestContext?: SAMLRequestContext;
+    /** The login nonce of the resumed request (kept when the person is sent to sign in again). */
+    resumedLogin?: ResumedSAMLLogin;
     log: GateLog;
     /** Answer the SP with an error response (Responder status; the second-level code, if any). */
     refuse(answer: {
@@ -91,6 +97,7 @@ export async function gateSAMLAuthnAssurance(
           forceReauthentication: true,
           requiredAal: check.requiredAal,
           signInAgain: { subjectUserId: input.session.userId, issuedAt: stepUpIssuedAt },
+          resumedLogin: input.resumedLogin,
           context: {
             ...carrySAMLRequestContext(input.requestContext),
             assuranceStepUp: {

@@ -170,6 +170,12 @@ export const jaSettings = {
 	'set.k.rate_limit.email_window': '回数を数える期間',
 	'set.k.rate_limit.email_window.desc':
 		'上の回数を数える期間です（5 分から 60 分）。この期間が過ぎると、また送れます。',
+	'set.section.failedSignIns': '認証の失敗が続いたとき',
+	'set.section.failedSignIns.desc':
+		'パスワードの誤りが続いたアカウントを、しばらくロックします。パスワードを総当たりで当てられるのを防ぎます。',
+	'set.k.rate_limit.auth_max_failed_attempts': 'ロックするまでの失敗回数',
+	'set.k.rate_limit.auth_max_failed_attempts.desc':
+		'15 分の間にパスワード（ディレクトリでのログイン）を誤った回数がこの回数に達すると、その 15 分が終わるまでアカウントをロックします（3 回から 20 回）。',
 	'set.section.totpAttempts': '認証アプリの試行回数',
 	'set.section.totpAttempts.desc':
 		'認証アプリでのログインを始められる回数を制限します。何度も試してコードを当てられるのを防ぎます。',

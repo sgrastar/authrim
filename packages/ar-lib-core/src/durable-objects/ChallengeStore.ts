@@ -95,6 +95,8 @@ export interface Challenge {
   createdAt: number;
   expiresAt: number;
   consumed: boolean;
+  /** The operation that consumed it, when the consume named one (see ConsumeChallengeRequest). */
+  consumedBy?: string;
 }
 
 /**
@@ -131,6 +133,12 @@ export interface ConsumeChallengeRequest {
   tenantId: string;
   type: ChallengeType;
   challenge?: string; // Optional: If provided, must match stored challenge
+  /**
+   * Optional: names the operation consuming it, kept on the consumed record (atomically with the
+   * consume), so a re-read tells who consumed it (`getChallengeRpc` → `consumedBy`) and an
+   * operation whose answer was lost can recognise its own consume.
+   */
+  operationId?: string;
 }
 
 /**
@@ -445,6 +453,7 @@ export class ChallengeStore extends DurableObject<Env> {
 
     // ATOMIC: Mark as consumed (prevents parallel replay)
     challenge.consumed = true;
+    if (request.operationId) challenge.consumedBy = request.operationId;
     this.challengeCache.set(request.id, challenge);
     await this.ctx.storage.put(this.buildChallengeKey(request.id), challenge);
 

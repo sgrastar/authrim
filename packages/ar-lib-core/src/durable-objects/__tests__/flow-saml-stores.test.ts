@@ -209,6 +209,34 @@ describe('SAMLRequestStore replay protection', () => {
     await expect(store.consumeRequest('lite')).resolves.toBeNull();
   });
 
+  it('consumes for a login cancel only the request sent to sign in with that nonce', async () => {
+    const store = new SAMLRequestStore(durableState(), {} as never);
+    const base = {
+      requestType: 'AuthnRequest',
+      issuer: 'https://sp.example',
+      destination: 'https://idp.example/sso',
+      relayState: 'relay',
+      createdAt: 0,
+      expiresAt: 0,
+      used: false,
+    };
+    await store.storeRequest({
+      ...base,
+      requestId: 'r1',
+      context: { loginNonceHash: 'aa11' },
+    } as never);
+    await store.storeRequest({ ...base, requestId: 'r2' } as never);
+    // A different hash, or a request that holds none, is left unconsumed.
+    await expect(store.consumeRequest('r1', { loginNonceHash: 'bb22' })).resolves.toBeNull();
+    await expect(store.consumeRequest('r2', { loginNonceHash: 'aa11' })).resolves.toBeNull();
+    await expect(store.consumeRequest('r1', { loginNonceHash: 'aa11' })).resolves.toMatchObject({
+      used: true,
+    });
+    await expect(store.consumeRequest('r1', { loginNonceHash: 'aa11' })).resolves.toBeNull();
+    // Still usable by its own response.
+    await expect(store.consumeRequest('r2')).resolves.toMatchObject({ used: true });
+  });
+
   it('stores and consumes requests, artifacts, and assertion IDs only once', async () => {
     const store = new SAMLRequestStore(durableState(), {} as never);
     await store.storeRequest({

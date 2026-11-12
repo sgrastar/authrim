@@ -54,12 +54,14 @@ import {
   diagnosticLoggingMiddleware,
   createErrorResponse,
   AR_ERROR_CODES,
+  SAML_LOGIN_CANCEL_PATH,
   getLogger,
 } from '@authrim/ar-lib-core';
 
 // Import handlers (to be implemented)
 import { handleIdPMetadata } from './idp/metadata';
 import { handleIdPAttributeReleaseConsent, handleIdPSSO } from './idp/sso';
+import { handleIdPLoginCancel } from './idp/login-cancel';
 import { handleIdPInitiated } from './idp/idp-initiated';
 import { handleIdPSLO } from './idp/slo';
 import { handleSPMetadata } from './sp/metadata';
@@ -168,6 +170,12 @@ app.post(GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_POST_PATH, handleIdPSSO);
  * Handles the user decision for SAML Attribute release before responding to the SP.
  */
 app.post('/saml/idp/attribute-release-consent', handleIdPAttributeReleaseConsent);
+
+/**
+ * A sign-in the person stopped at the Login UI: answers the SP with a failure Response (once, for
+ * the interaction that was cancelled for the request; see idp/login-cancel.ts).
+ */
+app.get(SAML_LOGIN_CANCEL_PATH, handleIdPLoginCancel);
 
 /**
  * IdP-Initiated SSO

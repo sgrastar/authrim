@@ -49,7 +49,11 @@ export function runtimeContinuationString(
  */
 export function runtimeSamlContinuationPath(
 	continuation: Record<string, unknown> | undefined,
-	fallback: { samlRequestId?: string | null; samlSpEntityId?: string | null }
+	fallback: {
+		samlRequestId?: string | null;
+		samlSpEntityId?: string | null;
+		samlLoginNonce?: string | null;
+	}
 ): string | null {
 	if (runtimeContinuationString(continuation, 'protocol') !== 'saml') return null;
 	const requestId =
@@ -65,5 +69,6 @@ export function runtimeSamlContinuationPath(
 		saml_sp_entity_id: spEntityId,
 		return_to: 'saml_sso'
 	});
+	if (fallback.samlLoginNonce) params.set('saml_login_nonce', fallback.samlLoginNonce);
 	return `/saml/idp/sso?${params.toString()}`;
 }

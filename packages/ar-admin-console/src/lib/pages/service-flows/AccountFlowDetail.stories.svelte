@@ -285,6 +285,32 @@
 	}}
 ></Story>
 
+<!-- Sign-in checks: repeated failures follow the tenant (shown), the other two are the Flow's own. -->
+<Story
+	name="Sign-in checks"
+	args={{ flow: 'login', filled: 'none' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The safe answers to start with: the same reply for everyone, and staying on the page.
+		const unregistered = await canvas.findByRole('combobox', {
+			name: /When someone without an account comes/
+		});
+		await expect(unregistered).toHaveValue('generic');
+		await expect(
+			canvas.getByRole('combobox', { name: /When the sign-in is stopped or fails/ })
+		).toHaveValue('stay');
+		// Failures are the tenant's setting, shown with where it is changed.
+		await expect(canvas.getByText(/5 wrong passwords/)).toBeInTheDocument();
+		await expect(canvas.getByRole('link', { name: 'Change in Attack protection' })).toHaveAttribute(
+			'href',
+			'/admin/authentication/protection'
+		);
+		// With a sign-up to point to (the mock has one), telling them can be chosen.
+		await userEvent.selectOptions(unregistered, 'guide');
+		await expect(unregistered).toHaveValue('guide');
+	}}
+></Story>
+
 <Story
 	name="Sign-up, everything required is set"
 	args={{ flow: 'registration', filled: 'required' }}

@@ -68,7 +68,14 @@ export async function sendLiteEmailCode(
 	}
 ): Promise<
 	| { ok: true; attemptId: string; maskedEmail: string | null }
-	| { ok: false; error: string; status: number; provisioning?: LiteProvisioningAnswer }
+	| {
+			ok: false;
+			error: string;
+			status: number;
+			provisioning?: LiteProvisioningAnswer;
+			/** On `account_not_found`: whether the Flow offers a sign-up for the address. */
+			signUpAvailable?: boolean;
+	  }
 > {
 	const signup = input.signup;
 	const answer = await backend.request('/api/v1/auth/direct/email-code/send', {
@@ -99,7 +106,12 @@ export async function sendLiteEmailCode(
 	if (provisioning) return { ok: false, error: 'provisioning', status: 202, provisioning };
 	const json = record(answer.json);
 	if (answer.status !== 200 || typeof json.attempt_id !== 'string') {
-		return { ok: false, error: errorOf(answer), status: answer.status };
+		return {
+			ok: false,
+			error: errorOf(answer),
+			status: answer.status,
+			...(json.sign_up_available === true ? { signUpAvailable: true } : {})
+		};
 	}
 	return {
 		ok: true,

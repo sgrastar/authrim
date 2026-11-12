@@ -76,6 +76,41 @@ describe('ChallengeStore replay protection', () => {
     ).rejects.toThrow('already consumed');
   });
 
+  it('keeps the operation that consumed a challenge, for a re-read, without changing other consumes', async () => {
+    const { store } = createStore();
+    await store.storeChallengeRpc(challenge);
+    await store.consumeChallengeRpc({
+      id: 'challenge-1',
+      tenantId: 'tenant-a',
+      type: 'email_code',
+      operationId: 'cancel:interaction-1',
+    });
+    await expect(store.getChallengeRpc('challenge-1')).resolves.toMatchObject({
+      consumed: true,
+      consumedBy: 'cancel:interaction-1',
+    });
+    // A second consume still fails; the first one's operation stays.
+    await expect(
+      store.consumeChallengeRpc({
+        id: 'challenge-1',
+        tenantId: 'tenant-a',
+        type: 'email_code',
+        operationId: 'cancel:other',
+      })
+    ).rejects.toThrow('already consumed');
+    await expect(store.getChallengeRpc('challenge-1')).resolves.toMatchObject({
+      consumedBy: 'cancel:interaction-1',
+    });
+    // A consume that names none records none.
+    await store.storeChallengeRpc({ ...challenge, id: 'challenge-2' });
+    await store.consumeChallengeRpc({
+      id: 'challenge-2',
+      tenantId: 'tenant-a',
+      type: 'email_code',
+    });
+    expect((await store.getChallengeRpc('challenge-2'))?.consumedBy).toBeUndefined();
+  });
+
   it.each([
     [{ id: 'missing', tenantId: 'tenant-a', type: 'email_code' }, 'not found'],
     [{ id: 'challenge-1', tenantId: 'tenant-a', type: 'login' }, 'type mismatch'],

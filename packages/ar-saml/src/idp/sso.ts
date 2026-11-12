@@ -29,7 +29,10 @@ import {
   resolveSamlAssertionTtlSeconds,
   resolveSamlRequestTtlSeconds,
   RuntimeIdentityMappingReleaseSafetyError,
+  hashSAMLLoginNonce,
+  isSAMLLoginNonce,
 } from '@authrim/ar-lib-core';
+import { timingSafeEqual } from '@authrim/ar-lib-core/utils/crypto';
 import {
   parseSAMLXml,
   findDirectChildElement,
@@ -71,6 +74,7 @@ import {
   consumeStoredAuthnRequest,
   redirectToSAMLLogin,
   storeAuthnRequest,
+  type ResumedSAMLLogin,
 } from './sso-stored-request';
 import { resolveSAMLAuthnInteraction } from './authn-request-policy';
 import {
@@ -139,6 +143,8 @@ interface ParsedAuthnRequestInput {
   storedRequestValidated?: boolean;
   redirectSignature?: SAMLRedirectSignatureInput;
   requestContext?: SAMLRequestContext;
+  /** For a resumed request: what its login keeps of the nonce (redirectToSAMLLogin). */
+  resumedLogin?: ResumedSAMLLogin;
 }
 
 /**
@@ -406,6 +412,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
             ? { reauthentication: { issuedAt: sentAt } }
             : {}),
         },
+        resumedLogin: parsedInput.resumedLogin,
       });
     }
 
@@ -486,6 +493,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       session: authnInteraction.session,
       relayState,
       requestContext: parsedInput.requestContext,
+      resumedLogin: parsedInput.resumedLogin,
       log,
       refuse: async (answer) =>
         sendSAMLResponse(
@@ -1172,8 +1180,24 @@ async function parseStoredAuthnRequest(
     throw new Error('Missing saml_sp_entity_id parameter');
   }
 
+  // A resume never issues a nonce. The request keeps the hash it was sent to sign in with (only
+  // the browser that was given that nonce can cancel it), and the nonce goes on the login URL only
+  // when the one the Login UI presents matches it. A request stored before nonces stays without.
+  const presentedNonce = url.searchParams.get('saml_login_nonce') ?? '';
   const storedRequest = await consumeStoredAuthnRequest(c.env, tenantId, requestId, spEntityId);
+  const held = storedRequest.context?.loginNonceHash;
+  const keptHash = !c.env.SAML_RUNTIME_PORTS && typeof held === 'string' && held ? held : null;
+  const matched =
+    keptHash !== null &&
+    isSAMLLoginNonce(presentedNonce) &&
+    timingSafeEqual(keptHash, await hashSAMLLoginNonce(presentedNonce));
   return {
+    resumedLogin:
+      keptHash === null
+        ? 'none'
+        : matched
+          ? { nonce: presentedNonce, hash: keptHash }
+          : { hash: keptHash },
     authnRequest: storedRequest.data as SAMLAuthnRequest,
     relayState: storedRequest.relayState,
     binding: storedRequest.binding === 'post' ? 'post' : 'redirect',
@@ -1845,7 +1869,7 @@ function usesSAMLEduPersonTargetedIDTransform(
   );
 }
 
-async function generateSAMLProtocolErrorResponse(
+export async function generateSAMLProtocolErrorResponse(
   issuerUrl: string,
   idpEntityId: string,
   env: Env,
@@ -1886,7 +1910,7 @@ async function generateSAMLProtocolErrorResponse(
 /**
  * Send SAML Response to SP's ACS
  */
-function sendSAMLResponse(
+export function sendSAMLResponse(
   c: Context<{ Bindings: Env }>,
   acsUrl: string,
   responseXml: string,

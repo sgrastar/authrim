@@ -953,6 +953,22 @@ type RootTranslation = {
 	 */
 	login_createAccount: string;
 	/**
+	 * N​o​ ​a​c​c​o​u​n​t​ ​u​s​e​s​ ​t​h​i​s​ ​a​d​d​r​e​s​s
+	 */
+	login_accountNotFound: string;
+	/**
+	 * S​i​g​n​ ​u​p
+	 */
+	login_accountNotFoundSignUp: string;
+	/**
+	 * B​a​c​k​ ​t​o​ ​t​h​e​ ​a​p​p
+	 */
+	login_backToApp: string;
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​g​o​ ​b​a​c​k​ ​t​o​ ​t​h​e​ ​a​p​p​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	login_cancelFailed: string;
+	/**
 	 * E​m​a​i​l​ ​a​d​d​r​e​s​s​ ​i​s​ ​r​e​q​u​i​r​e​d
 	 */
 	login_errorEmailRequired: string;
@@ -2782,6 +2798,22 @@ export type TranslationFunctions = {
 	 * Don't have an account? Create one
 	 */
 	login_createAccount: () => LocalizedString;
+	/**
+	 * No account uses this address
+	 */
+	login_accountNotFound: () => LocalizedString;
+	/**
+	 * Sign up
+	 */
+	login_accountNotFoundSignUp: () => LocalizedString;
+	/**
+	 * Back to the app
+	 */
+	login_backToApp: () => LocalizedString;
+	/**
+	 * Could not go back to the app. Please try again.
+	 */
+	login_cancelFailed: () => LocalizedString;
 	/**
 	 * Email address is required
 	 */

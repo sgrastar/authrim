@@ -5,9 +5,11 @@
 	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
 	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 	import ClientField from './ClientField.svelte';
+	import FailedSignInsNote from './FailedSignInsNote.svelte';
 	import MethodProfileField from './MethodProfileField.svelte';
 	import SessionProfileField from './SessionProfileField.svelte';
 	import ScreenField from './ScreenField.svelte';
+	import UnregisteredField from './UnregisteredField.svelte';
 	import {
 		partDef,
 		shownFields,
@@ -66,8 +68,18 @@
 </script>
 
 {#if def.lead}<p class="lead">{t(def.lead)}</p>{/if}
+{#if def.info === 'failed-sign-ins'}<FailedSignInsNote />{/if}
 {#each fields as field (field.key)}
-	{#if field.kind === 'text'}
+	{#if field.kind === 'unregistered'}
+		<UnregisteredField
+			label={t(field.label)}
+			required={field.required}
+			hint={field.hint ? t(field.hint) : undefined}
+			value={typeof form.values[field.key] === 'string' ? (form.values[field.key] as string) : ''}
+			onchange={(value) => (form.values[field.key] = value)}
+			options={field.options()}
+		/>
+	{:else if field.kind === 'text'}
 		<TextRow
 			label={t(field.label)}
 			required={field.required}

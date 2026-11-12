@@ -158,7 +158,13 @@ describe('a page view of the lite sign-in page', () => {
 	it('makes the transaction first, then starts the Flow, and draws the screen with a proof', async () => {
 		const e = event();
 		const page = (await run(e)) as Record<string, unknown>;
-		expect(order.slice(0, 2)).toEqual(['txn:create', 'backend:/api/v1/login/interactions/start']);
+		// (A look-up of a cancel waiting comes first: it makes no transaction.)
+		const start = order.indexOf('backend:/api/v1/login/interactions/start');
+		expect(order.lastIndexOf('txn:create', start)).toBeGreaterThan(-1);
+		expect(order.slice(start - 1, start + 1)).toEqual([
+			'txn:create',
+			'backend:/api/v1/login/interactions/start'
+		]);
 		expect(txnCalls).toContain('transition:pending');
 		expect(page).toMatchObject({
 			page: 'step',

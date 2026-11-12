@@ -24,7 +24,9 @@ export function loginSpecOf(state: AccountFlowState): LoginFlowSpec {
 	return {
 		profileRef: text(values['login.methodProfile']) || 'default',
 		sessionProfileRef: text(values['login.sessionProfile']) || 'default',
-		completion: completionOf(values, 'login')
+		completion: completionOf(values, 'login'),
+		unregistered: values['login.unregistered'] === 'guide' ? 'guide' : 'generic',
+		onCancel: values['login.onCancel'] === 'error' ? 'error' : 'stay'
 	};
 }
 
@@ -39,6 +41,8 @@ export function loginStateOf(
 	values['login.scope'] = about.scope;
 	values['login.methodProfile'] = spec.profileRef;
 	values['login.sessionProfile'] = spec.sessionProfileRef;
+	values['login.unregistered'] = spec.unregistered;
+	values['login.onCancel'] = spec.onCancel;
 	setCompletion(values, spec.completion, 'login');
 	return state;
 }

@@ -695,13 +695,17 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       async (
         c: { env: { SETTINGS?: { get: (key: string) => Promise<string | null> } } },
         action: string,
-        responseToken: unknown
+        responseToken: unknown,
+        alsoRequiredFor: string[] = []
       ) => {
         const raw = await c.env.SETTINGS?.get('settings:tenant:tenant_test:authentication-methods');
         const settings = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
         const enabled =
           settings['authentication-methods.human_verification.provider'] &&
-          settings[`authentication-methods.human_verification.${action}_enabled`] === true;
+          [action, ...alsoRequiredFor].some(
+            (required) =>
+              settings[`authentication-methods.human_verification.${required}_enabled`] === true
+          );
         if (!enabled || responseToken) return null;
         return new Response(JSON.stringify({ error: 'human_verification_required' }), {
           status: 400,
@@ -3518,6 +3522,270 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       'direct_email_code:new@example.com',
       expected
     );
+  });
+
+  describe('a sign-in Flow that guides an address without an account', () => {
+    const loginRuntime = (config: Record<string, unknown>) =>
+      JSON.stringify({
+        ui: { steps: [{ id: 'signin', component: 'authentication_method_selector', config }] },
+      });
+    /** The interaction the send names (a sign-in Flow's), and the tenant's registration Flow. */
+    const serve = (options: {
+      signInConfig?: Record<string, unknown>;
+      kind?: string;
+      state?: string;
+      registrationFlow?: boolean;
+    }) => {
+      const earlier = mocks.coreAdapter.queryOne.getMockImplementation();
+      mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, params?: unknown[]) => {
+        const text = String(sql);
+        if (text.includes('FROM flow_interactions i')) {
+          return {
+            runtime_snapshot_json: loginRuntime(options.signInConfig ?? {}),
+            kind: options.kind ?? 'login',
+            state: options.state ?? 'active',
+            expires_at: Math.floor(Date.now() / 1000) + 600,
+            context_json: null,
+            client_id: 'rp-client',
+            saml_sp_id: null,
+          };
+        }
+        if (
+          text.includes('SELECT flow_id, flow_version_id, state, expires_at FROM flow_interactions')
+        ) {
+          return null;
+        }
+        if (text.includes('FROM flow_assignments')) {
+          return options.registrationFlow
+            ? {
+                runtime_snapshot_json: JSON.stringify({
+                  ui: {
+                    steps: [{ id: 'reg', component: 'registration_method_selector', config: {} }],
+                  },
+                }),
+              }
+            : null;
+        }
+        return earlier ? ((await earlier(text, params)) as unknown) : null;
+      });
+    };
+    const send = async (
+      email: string,
+      extra: Record<string, unknown> = {},
+      kv: Record<string, string> = {}
+    ) => {
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+      return directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email,
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+              runtime_interaction_id: 'interaction_1',
+              ...extra,
+            },
+            webHeaders()
+          ),
+          kv
+        ) as never
+      );
+    };
+    const sentCodes = () =>
+      mocks.challengeStore.storeChallengeRpc.mock.calls.filter(
+        ([request]) => (request as { type?: string }).type === 'direct_email_code'
+      );
+
+    it('answers account_not_found for an unknown address, creating and sending nothing', async () => {
+      serve({ signInConfig: { unregistered_signin: 'guide' } });
+      const response = await send('new@example.com');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({
+        error: 'account_not_found',
+        error_description: 'No account uses this address',
+        sign_up_available: false,
+      });
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+      expect(sentCodes()).toEqual([]);
+      expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+    });
+
+    it('counts the send limit before it answers', async () => {
+      serve({ signInConfig: { unregistered_signin: 'guide' } });
+      mocks.rateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 60 });
+      const response = await send('new@example.com');
+      expect(response.status).toBe(429);
+      expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
+        'direct_email_code:new@example.com',
+        expect.anything()
+      );
+    });
+
+    it('says a sign-up is available only with a tenant registration Flow and the switch link on', async () => {
+      serve({ signInConfig: { unregistered_signin: 'guide' }, registrationFlow: true });
+      expect(await (await send('new@example.com')).json()).toMatchObject({
+        sign_up_available: true,
+      });
+      expect(
+        await (
+          await send(
+            'new@example.com',
+            {},
+            {
+              'settings:tenant:tenant_test:login-ui': JSON.stringify({
+                'login-ui.auth_switch_link_enabled': false,
+              }),
+            }
+          )
+        ).json()
+      ).toMatchObject({ sign_up_available: false });
+    });
+
+    it('keeps the generic behaviour for the default option and for other interactions', async () => {
+      serve({ signInConfig: { unregistered_signin: 'generic' } });
+      const generic = await send('new@example.com');
+      expect(generic.status).toBe(200);
+      expect(mocks.userCore.createUser).toHaveBeenCalled();
+
+      vi.clearAllMocks();
+      serve({ signInConfig: { unregistered_signin: 'guide' }, state: 'completed' });
+      mocks.rateLimiter.incrementRpc.mockResolvedValue({ allowed: true });
+      expect((await send('other@example.com')).status).toBe(200);
+
+      vi.clearAllMocks();
+      serve({ signInConfig: { unregistered_signin: 'guide' }, kind: 'registration' });
+      mocks.rateLimiter.incrementRpc.mockResolvedValue({ allowed: true });
+      expect((await send('third@example.com')).status).toBe(200);
+    });
+
+    it('does not guide a send that fails human verification, answering as without a guide', async () => {
+      serve({ signInConfig: { unregistered_signin: 'guide' } });
+      mocks.verifyHumanVerificationForAction.mockResolvedValueOnce(
+        new Response('{}', { status: 403 })
+      );
+      const response = await send('new@example.com');
+      // The usual accepted answer: nothing made, nothing sent, no guide.
+      expect(response.status).toBe(200);
+      expect(await response.clone().text()).not.toContain('account_not_found');
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+      expect(sentCodes()).toEqual([]);
+    });
+
+    it('holds a guided send to the login human verification, whatever screen the caller declares', async () => {
+      serve({ signInConfig: { unregistered_signin: 'guide' } });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+      const sendDeclaring = (token?: string) =>
+        directEmailCodeSendHandler(
+          enableEmailOtp(
+            createContext(
+              {
+                client_id: 'web-client',
+                email: 'new@example.com',
+                code_challenge: 'email-pkce-challenge',
+                code_challenge_method: 'S256',
+                channel: 'browser',
+                runtime_interaction_id: 'interaction_1',
+                ...(token ? { human_verification_response: token } : {}),
+              },
+              { ...webHeaders(), 'X-Authrim-Human-Verification-Action': 'signup' }
+            ),
+            {},
+            {
+              'authentication-methods.human_verification.provider': 'turnstile',
+              'authentication-methods.human_verification.login_enabled': true,
+              'authentication-methods.human_verification.signup_enabled': false,
+            }
+          ) as never
+        );
+      // The sign-up screen asks for no token, but sign-in does: no guide, and no sign-up.
+      const without = await sendDeclaring();
+      expect(without.status).toBe(200);
+      expect(await without.clone().text()).not.toContain('account_not_found');
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+      expect(sentCodes()).toEqual([]);
+      // With a token the guide is given.
+      expect((await sendDeclaring('token')).status).toBe(404);
+    });
+
+    it('never signs an address up from a guided sign-in, even where only sign-up is enabled', async () => {
+      serve({ signInConfig: { unregistered_signin: 'guide' } });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+      const response = await directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email: 'new@example.com',
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+              runtime_interaction_id: 'interaction_1',
+            },
+            webHeaders()
+          ),
+          {},
+          {
+            'authentication-methods.email_otp.login_enabled': false,
+            'authentication-methods.email_otp.signup_enabled': true,
+          }
+        ) as never
+      );
+      expect(response.status).toBe(200);
+      expect(await response.clone().text()).not.toContain('account_not_found');
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+      expect(sentCodes()).toEqual([]);
+      expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+    });
+
+    it('does not guide a send when the email code is not enabled for sign-in', async () => {
+      serve({ signInConfig: { unregistered_signin: 'guide' } });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+      const response = await directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email: 'new@example.com',
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+              runtime_interaction_id: 'interaction_1',
+            },
+            webHeaders()
+          ),
+          {},
+          {
+            'authentication-methods.email_otp.login_enabled': false,
+            'authentication-methods.email_otp.signup_enabled': false,
+          }
+        ) as never
+      );
+      expect(response.status).toBe(200);
+      expect(await response.clone().text()).not.toContain('account_not_found');
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+      expect(sentCodes()).toEqual([]);
+    });
+
+    it('still sends a code to an address that has an account', async () => {
+      serve({ signInConfig: { unregistered_signin: 'guide' } });
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_existing',
+        email: 'existing@example.com',
+        name: 'Existing User',
+      });
+      const response = await send('existing@example.com');
+      expect(response.status).toBe(200);
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    });
+
+    it('does not guide an invitation sign-up', async () => {
+      serve({ signInConfig: { unregistered_signin: 'guide' } });
+      const response = await send('new@example.com', { invite_token: 'unknown-token' });
+      // Refused by the invitation check before the lookup, not guided.
+      expect(await response.clone().text()).not.toContain('account_not_found');
+    });
   });
 
   it('sends an email code for a new user and stores a hashed one-time challenge', async () => {

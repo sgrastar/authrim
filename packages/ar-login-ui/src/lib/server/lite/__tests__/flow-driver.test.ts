@@ -297,6 +297,15 @@ describe('the kept Flow', () => {
 		const view = readFlowStartAnswer(startAnswer(step({ id: 'x' })));
 		expect(view?.step?.id).toBe('x');
 	});
+
+	it('reads whether the sign-in can be left for the application (absent is no)', () => {
+		const answer = startAnswer(step({ id: 'x' })) as { interaction: Record<string, unknown> };
+		expect(readFlowStartAnswer(answer)?.cancelAvailable).toBe(false);
+		answer.interaction.cancel_available = true;
+		expect(readFlowStartAnswer(answer)?.cancelAvailable).toBe(true);
+		answer.interaction.cancel_available = 'yes';
+		expect(readFlowStartAnswer(answer)?.cancelAvailable).toBe(false);
+	});
 });
 
 describe('a page narrower than the lite UI', () => {

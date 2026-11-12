@@ -8,6 +8,7 @@ import {
   type DatabaseAdapter,
   type Env,
   type FlowRuntimeContract,
+  type FlowRuntimeJsonObject,
 } from '@authrim/ar-lib-core';
 import {
   cleanupExpiredFlowInteractions,
@@ -17,6 +18,7 @@ import {
   insertDestinationFieldConsentRecord,
   loginRuntimeInteractionSubmitHandler,
   loginRuntimeInteractionBackHandler,
+  loginRuntimeInteractionCancelHandler,
   resolveSignUpScreen,
 } from '../login-runtime-flow';
 
@@ -58,6 +60,7 @@ const mocks = vi.hoisted(() => {
   const challengeStore = {
     getChallengeRpc: vi.fn(),
     storeChallengeRpc: vi.fn(),
+    consumeChallengeRpc: vi.fn(),
   };
   const runtimeUsers = {
     findById: vi.fn(),
@@ -912,6 +915,7 @@ function resetAdapter() {
   mocks.sessionStore.getSessionRpc.mockReset();
   mocks.challengeStore.getChallengeRpc.mockReset();
   mocks.challengeStore.storeChallengeRpc.mockReset();
+  mocks.challengeStore.consumeChallengeRpc.mockReset();
   mocks.runtimeUsers.findById.mockReset();
   mocks.runtimeUsers.updateProfileFields.mockReset().mockResolvedValue(true);
   mocks.runtimeUsers.hasProfile.mockReset().mockResolvedValue(true);
@@ -1093,6 +1097,31 @@ async function startInteraction(
 describe('LoginUI runtime Flow handlers', () => {
   beforeEach(() => {
     resetAdapter();
+  });
+
+  it('keeps only the hash of a SAML login nonce, and refuses one of the wrong form', async () => {
+    const nonce = 'n'.repeat(43);
+    const { response } = await startInteraction({
+      flow_kind: 'login',
+      saml_request_id: 'req_1',
+      saml_login_nonce: nonce,
+    });
+    expect(response.status).toBe(200);
+    const written = JSON.stringify(txExecuteCalls);
+    expect(written).toContain('saml_login_nonce_hash');
+    expect(written).not.toContain(nonce);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(nonce));
+    expect(written).toContain(
+      Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+    );
+
+    resetAdapter();
+    const bad = await startInteraction({
+      flow_kind: 'login',
+      saml_request_id: 'req_1',
+      saml_login_nonce: 'short',
+    });
+    expect(bad.response.status).toBe(400);
   });
 
   it('never coerces VC server-side flow kinds into a login flow', async () => {
@@ -6953,6 +6982,538 @@ describe('the re-authentication challenge of a SAML request', () => {
 
       expect(data.completed).toBe(true);
     });
+  });
+});
+
+describe('stopping a sign-in and going back to the app', () => {
+  const SP = 'https://sp.example.test/entity';
+  const cancelRuntime = (
+    config: FlowRuntimeJsonObject,
+    flowKind = 'login'
+  ): FlowRuntimeContract => ({
+    flow_kind: flowKind as 'login',
+    ui: {
+      steps: [
+        {
+          id: 'entry:step',
+          source_node_id: 'entry',
+          component: 'interaction_context',
+          render: false,
+        },
+        {
+          id: 'auth:step',
+          source_node_id: 'auth',
+          component: 'authentication_method_selector',
+          render: true,
+          config,
+        },
+      ],
+    },
+  });
+
+  async function cancel(options: {
+    config?: FlowRuntimeJsonObject;
+    flowKind?: string;
+    state?: string;
+    context?: Record<string, unknown>;
+    clientId?: string | null;
+    samlSpId?: string | null;
+    body?: Record<string, unknown>;
+    headers?: Record<string, string>;
+    /** The authorization request the app made, as the challenge store holds it. */
+    challenge?: Record<string, unknown> | null;
+    /** The interaction's write fails (the database is down). */
+    failWrite?: boolean;
+    /** Using up the authorization request fails after the interaction ended. */
+    consumeFails?: boolean;
+    /** Another sign-in of the same request used it up between this cancel's peek and consume. */
+    consumedMeanwhile?: boolean;
+    /** Who consumed it meanwhile (an operation id); none: another sign-in. */
+    consumedBy?: string;
+    /** The record that this cancel closed the request cannot be written. */
+    flagWriteFails?: boolean;
+  }) {
+    resetAdapter();
+    const snapshot = cancelRuntime(options.config ?? { on_cancel: 'error' }, options.flowKind);
+    const { data: startData } = await startInteraction({ flow_kind: 'login' }, snapshot);
+    resetAdapter();
+    mocks.coreAdapter.queryOne.mockImplementation(async (sql: string) => {
+      const text = String(sql);
+      if (text.includes('FROM flow_interactions')) {
+        return {
+          id: 'interaction_1',
+          flow_id: 'flow_login',
+          flow_version_id: 'fv_1',
+          user_id: null,
+          client_id: options.clientId ?? null,
+          saml_sp_id: options.samlSpId ?? null,
+          state: options.state ?? 'active',
+          current_node_id: 'auth',
+          current_step_id: 'auth:step',
+          context_json: JSON.stringify(
+            options.context ?? { protocol: 'oidc', target_type: 'tenant', locale: 'en' }
+          ),
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+          expires_at: Number((startData.interaction as Record<string, unknown>).expires_at),
+        };
+      }
+      if (text.includes('FROM flow_versions')) {
+        return {
+          id: 'fv_1',
+          flow_id: 'flow_login',
+          schema_version: 'authrim.login_ui.contract.v1',
+          runtime_snapshot_json: JSON.stringify(snapshot),
+          editor_snapshot_json: null,
+          published_at: 1782770000,
+        };
+      }
+      return undefined;
+    });
+    if (options.challenge !== undefined) {
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(options.challenge);
+      if (options.challenge)
+        mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(options.challenge);
+      else mocks.challengeStore.consumeChallengeRpc.mockRejectedValue(new Error('gone'));
+    }
+    if (options.consumeFails) {
+      mocks.challengeStore.consumeChallengeRpc.mockRejectedValue(new Error('store down'));
+    }
+    if (options.consumedMeanwhile && options.challenge) {
+      mocks.challengeStore.getChallengeRpc
+        .mockReset()
+        .mockResolvedValueOnce(options.challenge)
+        .mockResolvedValue({
+          ...options.challenge,
+          consumed: true,
+          ...(options.consumedBy ? { consumedBy: options.consumedBy } : {}),
+        });
+      mocks.challengeStore.consumeChallengeRpc.mockRejectedValue(
+        new Error('Challenge already consumed')
+      );
+    }
+    if (options.flagWriteFails) {
+      mocks.coreAdapter.execute.mockImplementation(async (sql: string) => {
+        if (String(sql).includes("state = 'failed' AND context_json = ?")) {
+          throw new Error('db down');
+        }
+        return { success: true, rowsAffected: 1 };
+      });
+    }
+    if (options.failWrite) mocks.coreAdapter.batch.mockRejectedValue(new Error('db down'));
+    const context = createContext({
+      params: { interaction_id: 'interaction_1' },
+      headers: options.headers,
+      body: {
+        step_id: 'auth:step',
+        node_id: 'auth',
+        contract_hash: startData.contract_hash,
+        signature: startData.signature,
+        ...options.body,
+      },
+    }) as unknown as Record<string, unknown> & { req: Record<string, unknown> };
+    // What redirectWithError and the issuer need of a real request.
+    context.get = (key: string) => (key === 'tenantId' ? 'tenant_test' : undefined);
+    context.redirect = (url: string, status = 302) =>
+      new Response(null, { status, headers: { Location: url } });
+    context.req.raw = new Request('https://first.test.authrim.com/api/v1/login/interactions/x');
+    const response = await loginRuntimeInteractionCancelHandler(context as never);
+    return { response, data: await readJson(response), startData };
+  }
+
+  const appRequest = {
+    protocol: 'oidc',
+    target_type: 'oidc_client',
+    authorization_challenge_id: 'challenge_1',
+    locale: 'en',
+  };
+  const samlRequest = {
+    protocol: 'saml',
+    target_type: 'saml_sp',
+    saml_request_id: 'req_1',
+    saml_login_nonce_hash: 'nonce-hash',
+    saml_sp_entity_id: SP,
+    locale: 'en',
+  };
+  const loginChallenge = (extra: Record<string, unknown> = {}) => ({
+    tenantId: 'tenant_test',
+    type: 'login',
+    userId: 'anonymous',
+    consumed: false,
+    metadata: {
+      client_id: 'rp-client',
+      redirect_uri: 'https://rp.example.test/cb',
+      state: 'xyz',
+      response_type: 'code',
+      ...extra,
+    },
+  });
+  const cancelWrite = () =>
+    (mocks.coreAdapter.batch.mock.calls[0]?.[0] as Array<{ sql: string; params: unknown[] }>)?.[0];
+
+  it('sends the app access_denied with its state and issuer, ending the interaction', async () => {
+    const { response, data } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge({ cancel_uri: 'https://rp.example.test/cancelled' }),
+    });
+    expect(response.status).toBe(200);
+    const url = new URL(String(data.redirect_url));
+    // To the app's cancel_uri when it gave one, as for a denied consent.
+    expect(`${url.origin}${url.pathname}`).toBe('https://rp.example.test/cancelled');
+    expect(url.searchParams.get('error')).toBe('access_denied');
+    expect(url.searchParams.get('state')).toBe('xyz');
+    expect(url.searchParams.get('iss')).toBeTruthy();
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'challenge_1', type: 'login' })
+    );
+    expect(cancelWrite().sql).toContain("SET state = 'failed'");
+    // Under the claim, and only from the step it was read at (as a submit).
+    expect(cancelWrite().sql).toContain('AND current_step_id = ? AND submit_claim_id = ?');
+  });
+
+  it('answers a form post as data for a caller that asked for it', async () => {
+    const { response, data } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      headers: { 'X-Authrim-Relay': 'structured' },
+      challenge: loginChallenge({ response_mode: 'form_post' }),
+    });
+    expect(response.status).toBe(200);
+    expect(data.form_post).toMatchObject({ action: 'https://rp.example.test/cb' });
+    const fields = Object.fromEntries((data.form_post as { fields: [string, string][] }).fields);
+    expect(fields).toMatchObject({ error: 'access_denied', state: 'xyz' });
+    expect(fields.iss).toBeTruthy();
+  });
+
+  it('does not end the interaction when the authorization request is gone', async () => {
+    const { response, data } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: null,
+    });
+    expect(response.status).toBe(409);
+    expect(data.error).toBe('cancel_not_available');
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a request of another app', async () => {
+    const { response, data } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge({ client_id: 'another-client' }),
+    });
+    expect(response.status).toBe(409);
+    expect(data.error).toBe('cancel_not_available');
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('hands a SAML request to the IdP with a one-time token kept hashed in the interaction', async () => {
+    const { response, data } = await cancel({ samlSpId: SP, context: samlRequest });
+    expect(response.status).toBe(200);
+    const url = new URL(String(data.redirect_url), 'https://idp.test');
+    expect(url.pathname).toBe('/saml/idp/login-cancel');
+    expect(url.searchParams.get('interaction_id')).toBe('interaction_1');
+    const token = url.searchParams.get('token') ?? '';
+    expect(token.length).toBeGreaterThanOrEqual(32);
+    const write = cancelWrite();
+    expect(write.sql).toContain("SET state = 'failed'");
+    const stored = JSON.parse(String(write.params[1])) as {
+      saml_request_id?: string;
+      login_cancel: { token_hash: string };
+    };
+    expect(stored.saml_request_id).toBe('req_1');
+    expect(JSON.stringify(stored)).not.toContain(token);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+    expect(stored.login_cancel.token_hash).toBe(
+      Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+    );
+    // The authorization challenge is not touched: the IdP uses up the stored AuthnRequest.
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the Flow keeps the person on the screen', { config: {} }],
+    ['the option is stay', { config: { on_cancel: 'stay' } }],
+    ['the Flow is not a sign-in', { flowKind: 'registration' }],
+    [
+      'no app request started the sign-in',
+      { context: { protocol: 'oidc', target_type: 'tenant' } },
+    ],
+    ['the interaction is no longer live', { state: 'failed' }],
+    ['the interaction was completed', { state: 'completed' }],
+  ])('refuses with cancel_not_available when %s', async (_label, options) => {
+    const { response, data } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge(),
+      ...options,
+    });
+    expect(response.status).toBe(409);
+    expect(data.error).toBe('cancel_not_available');
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cancel of a contract it did not sign', async () => {
+    const { response } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge(),
+      body: { signature: 'tampered' },
+    });
+    expect(response.status).toBe(403);
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+  });
+
+  it('offers no SAML cancel to an interaction started without a login nonce', async () => {
+    const { response, data } = await cancel({
+      samlSpId: SP,
+      context: { ...samlRequest, saml_login_nonce_hash: undefined },
+    });
+    expect(response.status).toBe(409);
+    expect(data.error).toBe('cancel_not_available');
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+  });
+
+  it('leaves everything usable when the write fails, and the challenge is not used up', async () => {
+    resetAdapter();
+    const failing = cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge(),
+      failWrite: true,
+    });
+    await expect(failing).rejects.toThrow('db down');
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    // The claim is let go of, so the same cancel can be sent again.
+    expect(
+      mocks.coreAdapter.execute.mock.calls.some(([sql]) =>
+        String(sql).includes('SET submit_claim_id = NULL')
+      )
+    ).toBe(true);
+  });
+
+  it('stores the answer with the ended interaction, and answers retryably while the challenge cannot be used up', async () => {
+    const { response, data } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge(),
+      consumeFails: true,
+    });
+    // The interaction is ended with its answer, but the app is not answered until the
+    // authorization request is closed.
+    expect(response.status).toBe(503);
+    expect(data.error).toBe('temporarily_unavailable');
+    const stored = JSON.parse(String(cancelWrite().params[1])) as {
+      login_cancel_answer: { redirect_url: string };
+    };
+    expect(stored.login_cancel_answer.redirect_url).toContain('error=access_denied');
+  });
+
+  it('answers a repeat of the cancel with the stored answer, authorised as before', async () => {
+    const answer = { redirect_url: 'https://rp.example.test/cb?error=access_denied&state=xyz' };
+    const repeat = await cancel({
+      clientId: 'rp-client',
+      state: 'failed',
+      context: { ...appRequest, login_cancel_answer: answer },
+    });
+    expect(repeat.response.status).toBe(200);
+    expect(repeat.data).toEqual(answer);
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    // The authorization request is closed again (a no-op when it already is).
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalled();
+
+    // Not without the signature.
+    const forged = await cancel({
+      clientId: 'rp-client',
+      state: 'failed',
+      context: { ...appRequest, login_cancel_answer: answer },
+      body: { signature: 'tampered' },
+    });
+    expect(forged.response.status).toBe(403);
+    // An interaction that failed another way has no answer to repeat.
+    const other = await cancel({ clientId: 'rp-client', state: 'failed', context: appRequest });
+    expect(other.response.status).toBe(409);
+    expect(other.data.error).toBe('cancel_not_available');
+  });
+
+  it('does not claim access_denied for a request another sign-in used meanwhile', async () => {
+    const { response, data } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge(),
+      consumedMeanwhile: true,
+    });
+    // The interaction is ended (with its answer stored), but the app is not told access_denied.
+    expect(response.status).toBe(409);
+    expect(data.error).toBe('cancel_not_available');
+    expect(String(cancelWrite().sql)).toContain("SET state = 'failed'");
+  });
+
+  it('retries closing the authorization request on a repeat, and answers only once this cancel closed it', async () => {
+    const answer = { redirect_url: 'https://rp.example.test/cb?error=access_denied&state=xyz' };
+    const ended = {
+      clientId: 'rp-client',
+      state: 'failed',
+      context: { ...appRequest, login_cancel_answer: answer },
+    };
+    // Still open and the store refuses to consume it: retryable, no answer yet.
+    const stuck = await cancel({ ...ended, challenge: loginChallenge(), consumeFails: true });
+    expect(stuck.response.status).toBe(503);
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalled();
+    // Used by another sign-in, or gone (not told from used): the sign-in went on elsewhere.
+    const used = await cancel({
+      ...ended,
+      challenge: { ...loginChallenge(), consumed: true },
+      consumeFails: true,
+    });
+    expect(used.response.status).toBe(409);
+    expect(used.data.error).toBe('cancel_not_available');
+    const gone = await cancel({ ...ended, challenge: null });
+    expect(gone.response.status).toBe(409);
+    // This cancel's consume now succeeds: the stored answer, and the close is recorded.
+    const closed = await cancel({ ...ended, challenge: loginChallenge() });
+    expect(closed.response.status).toBe(200);
+    expect(closed.data).toEqual(answer);
+    const recorded = mocks.coreAdapter.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("state = 'failed' AND context_json = ?")
+    );
+    expect(JSON.parse(String((recorded?.[1] as unknown[])[0]))).toMatchObject({
+      login_cancel_challenge_closed: true,
+    });
+  });
+
+  it('names its own operation when it uses the authorization request up', async () => {
+    await cancel({ clientId: 'rp-client', context: appRequest, challenge: loginChallenge() });
+    expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'challenge_1', operationId: 'cancel:interaction_1' })
+    );
+  });
+
+  it('answers a repeat with the stored answer when its own consume landed but the record of it did not', async () => {
+    const answer = { redirect_url: 'https://rp.example.test/cb?error=access_denied&state=xyz' };
+    // The first cancel consumed the request, but could not record that.
+    const first = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge(),
+      flagWriteFails: true,
+    });
+    expect(first.response.status).toBe(200);
+    // The repeat finds the request consumed by this cancel's own operation: closed, not elsewhere.
+    const repeat = await cancel({
+      clientId: 'rp-client',
+      state: 'failed',
+      context: { ...appRequest, login_cancel_answer: answer },
+      challenge: { ...loginChallenge(), consumed: true, consumedBy: 'cancel:interaction_1' },
+      consumeFails: true,
+    });
+    expect(repeat.response.status).toBe(200);
+    expect(repeat.data).toEqual(answer);
+  });
+
+  it('answers when the consume answer was lost but the request records this cancel as its consumer', async () => {
+    const { response, data } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge(),
+      consumedMeanwhile: true,
+      consumedBy: 'cancel:interaction_1',
+    });
+    expect(response.status).toBe(200);
+    expect(String(data.redirect_url)).toContain('error=access_denied');
+  });
+
+  it('refuses when the request was consumed by another operation', async () => {
+    const { response, data } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge(),
+      consumedMeanwhile: true,
+      consumedBy: 'cancel:another-interaction',
+    });
+    expect(response.status).toBe(409);
+    expect(data.error).toBe('cancel_not_available');
+  });
+
+  it('answers a repeat directly once the cancel has recorded that it closed the request', async () => {
+    const answer = { redirect_url: 'https://rp.example.test/cb?error=access_denied&state=xyz' };
+    const repeat = await cancel({
+      clientId: 'rp-client',
+      state: 'failed',
+      context: {
+        ...appRequest,
+        login_cancel_answer: answer,
+        login_cancel_challenge_closed: true,
+      },
+    });
+    expect(repeat.response.status).toBe(200);
+    expect(repeat.data).toEqual(answer);
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it('accepts a cancel that leaves the step out', async () => {
+    const { response } = await cancel({
+      clientId: 'rp-client',
+      context: appRequest,
+      challenge: loginChallenge(),
+      body: { step_id: undefined, node_id: undefined },
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it('is answered step_conflict when a submit holds the interaction, changing nothing', async () => {
+    resetAdapter();
+    const snapshot = cancelRuntime({ on_cancel: 'error' });
+    const { data: startData } = await startInteraction({ flow_kind: 'login' }, snapshot);
+    resetAdapter();
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(loginChallenge());
+    const row = {
+      id: 'interaction_1',
+      flow_id: 'flow_login',
+      flow_version_id: 'fv_1',
+      user_id: null,
+      client_id: 'rp-client',
+      saml_sp_id: null,
+      state: 'active',
+      current_node_id: 'auth',
+      current_step_id: 'auth:step',
+      context_json: JSON.stringify(appRequest),
+      contract_hash: startData.contract_hash,
+      signature: startData.signature,
+      expires_at: Number((startData.interaction as Record<string, unknown>).expires_at),
+    };
+    mocks.coreAdapter.queryOne.mockImplementation(async (sql: string) =>
+      String(sql).includes('FROM flow_interactions')
+        ? row
+        : String(sql).includes('FROM flow_versions')
+          ? {
+              id: 'fv_1',
+              flow_id: 'flow_login',
+              schema_version: 'authrim.login_ui.contract.v1',
+              runtime_snapshot_json: JSON.stringify(snapshot),
+              editor_snapshot_json: null,
+              published_at: 1782770000,
+            }
+          : undefined
+    );
+    // The claim is refused (a submit holds it) while the interaction is still open.
+    mocks.coreAdapter.execute.mockResolvedValue({ success: true, rowsAffected: 0 });
+    const response = await loginRuntimeInteractionCancelHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        body: {
+          step_id: 'auth:step',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    expect(response.status).toBe(409);
+    expect((await readJson(response)).error).toBe('step_conflict');
+    expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
   });
 });
 

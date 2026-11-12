@@ -34,6 +34,7 @@ export function liteCompletionDestination(
 		/** The sign-in's own destination (the direct session's `redirect_url`), checked too. */
 		fallback?: string | null;
 		samlRequestId?: string | null;
+		samlLoginNonce?: string | null;
 		samlSpEntityId?: string | null;
 	}
 ): string {
@@ -46,6 +47,7 @@ export function liteCompletionDestination(
 		sameOriginUrl(
 			runtimeSamlContinuationPath(continuation, {
 				samlRequestId: bound.samlRequestId ?? null,
+				samlLoginNonce: bound.samlLoginNonce ?? null,
 				samlSpEntityId: bound.samlSpEntityId ?? null
 			}),
 			bound.publicOrigin

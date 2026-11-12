@@ -8,6 +8,7 @@
 	import { httpClients } from '#lib/api/clients.js';
 	import { httpFlows } from '#lib/api/flows.js';
 	import { httpSamlProviders } from '#lib/api/saml-providers.js';
+	import { httpSettings } from '#lib/api/settings.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AccountServiceFlowsPage from '#lib/pages/service-flows/AccountServiceFlowsPage.svelte';
@@ -22,7 +23,19 @@
 		flows: httpFlows,
 		samlProviders: httpSamlProviders,
 		canCreateProfile: () => hasPermission(adminAccess.current, 'admin:settings:write'),
-		loadTheme: (signal) => readAppliedThemeValues(tenantScope.tenantId, signal)
+		loadTheme: (signal) => readAppliedThemeValues(tenantScope.tenantId, signal),
+		failedSignInLimit: async (signal) => {
+			const tenantId = tenantScope.tenantId;
+			if (!tenantId) throw new Error('tenant_unknown');
+			const { values } = await httpSettings.get(
+				{ level: 'tenant', tenantId },
+				'rate-limit',
+				signal
+			);
+			const limit = values['rate_limit.auth_max_failed_attempts'];
+			if (typeof limit !== 'number') throw new Error('rate_limit_unreadable');
+			return limit;
+		}
 	});
 </script>
 

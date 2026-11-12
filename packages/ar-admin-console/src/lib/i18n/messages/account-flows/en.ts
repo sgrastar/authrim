@@ -64,7 +64,24 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.reg-result': 'Decide where the person goes once sign-up is done.',
 	'af.lead.login-methods': 'Choose the sign-in method profile this sign-in uses.',
 	'af.lead.login-validation':
-		'Repeated failures and the reply to someone not registered follow the tenant’s security settings.',
+		'Decide what repeated failures do, what someone without an account is told, and what stopping the sign-in does.',
+	'af.field.login.unregistered': 'When someone without an account comes',
+	'af.hint.login.unregistered':
+		'“Tell them” says that the address has no account. That lets anyone find out which addresses are registered, so choose it only when you need it.',
+	'af.hint.login.unregisteredNoSignUp':
+		'This tenant has no sign-up Flow, so “tell them and point to sign-up” cannot be chosen.',
+	'af.unregistered.generic': 'Answer as for a registered address',
+	'af.unregistered.guide': 'Say there is no account and point to sign-up',
+	'af.field.login.onCancel': 'When the sign-in is stopped or fails',
+	'af.hint.login.onCancel':
+		'“Back to the app” adds “Back to the app” to the sign-in page. The app is told the person did not sign in (OIDC access_denied, a SAML failure response).',
+	'af.onCancel.stay': 'Stay on the sign-in page',
+	'af.onCancel.error': 'Back to the app, telling it the person did not sign in',
+	'af.info.failedSignIns':
+		'Repeated failures: {count} wrong passwords (directory sign-in) within 15 minutes lock the account. This is the tenant’s setting.',
+	'af.info.failedSignInsUnknown':
+		'Repeated failures follow the tenant’s setting (it could not be read just now).',
+	'af.info.failedSignInsLink': 'Change in Attack protection',
 	'af.lead.login-session':
 		'Once the required authentication is complete, Authrim creates the session.',
 

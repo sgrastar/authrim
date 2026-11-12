@@ -75,11 +75,37 @@ paths:
         attribute gets the default scope as schacHomeOrganization or the institution's English
         name as o; nothing is added otherwise. A tenant that has set no scopes releases
         eduPersonScopedAffiliation and eduPersonPrincipalName as before.
+
+        Resume. With `saml_request_id` and `saml_sp_entity_id` (the person coming back from the
+        Login UI, including after a re-authentication or step-up sign-in) the stored AuthnRequest
+        is used up; no nonce is required. A resume never issues a login nonce: when it sends the
+        person to sign in again it keeps the hash of the nonce the request was originally sent to
+        sign in with (only the browser given that nonce can cancel the request), and puts
+        `saml_login_nonce` on the login URL only when the presented one matches it. A request
+        stored before nonces stays without one and cannot be cancelled.
+      parameters:
+        - name: saml_login_nonce
+          in: query
+          required: false
+          description: >-
+            The login nonce the IdP put on the login URL for the stored request
+            (`saml_request_id`). Optional on a resume; when it matches the request's original nonce
+            it is kept on the login URL if the person is sent to sign in again.
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{32,128}$'
       responses:
         '200':
           $ref: '#/components/responses/Html'
         '302':
           description: Redirect response.
+        '400':
+          description: The request cannot be used.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
     post:
       tags:
         - SAML IdP
@@ -713,6 +739,41 @@ paths:
           $ref: '#/components/responses/Redirect'
       requestBody:
         $ref: '#/components/requestBodies/SAMLAttributeReleaseConsentForm'
+  /saml/idp/login-cancel:
+    get:
+      tags:
+        - SAML IdP
+      operationId: getSamlIdpLoginCancel
+      summary: Answer the Service Provider for a sign-in the person cancelled.
+      description: >-
+        Where the Login UI hands the browser after the person stops signing in
+        (`POST /api/v1/login/interactions/{interaction_id}/cancel`). Acts only for an interaction
+        ended by that cancel for a SAML request, with the one-time `token` it answered, and only
+        once (the grant is used up before the stored AuthnRequest is, and lasts at most 10 minutes). The stored request is used up only if it was sent to sign in with the login nonce (`saml_login_nonce` on the login URL) the interaction was started with; otherwise nothing is consumed. Posts a `Responder` /
+        `AuthnFailed` Response to the SP's ACS in reply to the request, with its RelayState. Any
+        other call (a bare request id, a wrong or used token, an interaction not ended by a cancel)
+        answers 400 and changes nothing.
+      parameters:
+        - name: interaction_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Html'
+        '400':
+          description: Nothing to answer.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
   /saml/idp/init:
     get:
       tags:

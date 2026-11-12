@@ -2,6 +2,7 @@
 	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
 	import VerifyEmailCodeView from '#lib/views/VerifyEmailCodeView.svelte';
 	import { LL } from '$i18n/i18n-svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { accountAPI } from '#lib/api/account.js';
 	import { emailCodeAPI } from '#lib/api/client.js';
 	import {
@@ -28,6 +29,8 @@
 		peekFlowRuntimeState,
 		persistFlowRuntimeState
 	} from '#lib/authrim/flow-runtime-state.js';
+	import { cancelRuntimeInteraction } from '#lib/authrim/runtime-cancel.js';
+	import { buildAuthSwitchHref } from '#lib/authrim/auth-switch-url.js';
 	import { completionRedirect } from '#lib/authrim/completion-redirect.js';
 
 	const { brandingStore } = useLoginUIStores();
@@ -36,10 +39,14 @@
 	let inviteToken = $state('');
 	let authorizationChallengeId = $state('');
 	let samlRequestId = $state('');
+	let samlLoginNonce = $state('');
 	let samlSpEntityId = $state('');
 	let returnTo = $state('');
 	let accountReturn = $state('');
 	let runtimeInteractionId = $state('');
+	/** The Flow lets the person leave the sign-in for the application (said by the login page). */
+	let cancelAvailable = $state(false);
+	let cancelLoading = $state(false);
 	let runtimeFlowKind = $state<'login' | 'registration'>('login');
 	let error = $state('');
 	let success = $state('');
@@ -103,10 +110,12 @@
 		inviteToken = page.url.searchParams.get('invite_token') || '';
 		authorizationChallengeId = page.url.searchParams.get('challenge_id') || '';
 		samlRequestId = page.url.searchParams.get('saml_request_id') || '';
+		samlLoginNonce = page.url.searchParams.get('saml_login_nonce') || '';
 		samlSpEntityId = page.url.searchParams.get('saml_sp_entity_id') || '';
 		returnTo = page.url.searchParams.get('return_to') || '';
 		accountReturn = page.url.searchParams.get('account_return') || '';
 		runtimeInteractionId = page.url.searchParams.get('runtime_interaction_id') || '';
+		cancelAvailable = page.url.searchParams.get('cancel_available') === '1';
 		runtimeFlowKind =
 			page.url.searchParams.get('runtime_flow_kind') === 'registration' ? 'registration' : 'login';
 
@@ -125,6 +134,28 @@
 			}
 		};
 	});
+
+	/** "Back to the app": the same cancel as the login page, for the interaction this page continues. */
+	async function handleCancel() {
+		const stored = runtimeInteractionId ? peekFlowRuntimeState(runtimeInteractionId) : null;
+		if (!stored || cancelLoading) {
+			if (!stored) error = $LL.login_cancelFailed();
+			return;
+		}
+		cancelLoading = true;
+		error = '';
+		try {
+			const outcome = await cancelRuntimeInteraction({
+				interactionId: stored.interaction_id,
+				contractHash: stored.contract_hash,
+				signature: stored.signature
+			});
+			if (outcome === 'failed') error = $LL.login_cancelFailed();
+			else if (outcome === 'invalid_redirect') error = $LL.device_errorInvalidRedirect();
+		} finally {
+			cancelLoading = false;
+		}
+	}
 
 	function startCountdown() {
 		countdown = 60;
@@ -229,11 +260,12 @@
 
 	async function buildPostAuthRedirect(redirectUrl?: string): Promise<string> {
 		if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
-			const params = new URLSearchParams({
+			const params = new SvelteURLSearchParams({
 				saml_request_id: samlRequestId,
 				saml_sp_entity_id: samlSpEntityId,
 				return_to: 'saml_sso'
 			});
+			if (samlLoginNonce) params.set('saml_login_nonce', samlLoginNonce);
 			return `/saml/idp/sso?${params.toString()}`;
 		}
 
@@ -409,6 +441,9 @@
 		{error}
 		{success}
 		{resendNotice}
+		cancel={{ available: cancelAvailable && !!runtimeInteractionId, loading: cancelLoading }}
+		onCancel={handleCancel}
+		backHref={buildAuthSwitchHref('/login', page.url.searchParams)}
 		onCodeChange={(nextValue) => (code = nextValue)}
 		onVerify={() => handleVerify()}
 		onResend={handleResend}

@@ -25,6 +25,26 @@ import type {
 } from '../schemas/flow-runtime';
 import { readFlowCompletion, type RegistrationCompletion } from './registration-policy';
 
+/**
+ * What a sign-in tells someone whose address has no account: `generic`, the same answer as for
+ * one with an account (nobody can find out which addresses have one); `guide`, that there is no
+ * account (with a way to sign up where the tenant has one).
+ */
+export type SignInUnregistered = 'generic' | 'guide';
+/**
+ * What happens when the person stops the sign-in (or it fails for good): `stay`, they stay on the
+ * sign-in page; `error`, they can go back to the app, which is told they did not sign in
+ * (OIDC `access_denied`, a SAML failure Response).
+ */
+export type SignInOnCancel = 'stay' | 'error';
+
+/** A sign-in step's `unregistered_signin`; anything else is the safe `generic`. */
+export const readSignInUnregistered = (value: unknown): SignInUnregistered =>
+  value === 'guide' ? 'guide' : 'generic';
+/** A sign-in step's `on_cancel`; anything else is `stay`. */
+export const readSignInOnCancel = (value: unknown): SignInOnCancel =>
+  value === 'error' ? 'error' : 'stay';
+
 export interface LoginFlowSpec {
   /** The authentication method profile (`default`: the tenant's methods). */
   profileRef: string;
@@ -35,11 +55,21 @@ export interface LoginFlowSpec {
    * choices as a sign-up's). Null: the tenant's post-sign-in destination.
    */
   completion: RegistrationCompletion | null;
+  /** What an address without an account is told (`generic` unless set). */
+  unregistered: SignInUnregistered;
+  /** What stopping the sign-in does (`stay` unless set). */
+  onCancel: SignInOnCancel;
 }
 
 /** The sign-in a tenant starts from: its own methods and session settings. */
 export function defaultLoginFlowSpec(): LoginFlowSpec {
-  return { profileRef: 'default', sessionProfileRef: 'default', completion: null };
+  return {
+    profileRef: 'default',
+    sessionProfileRef: 'default',
+    completion: null,
+    unregistered: 'generic',
+    onCancel: 'stay',
+  };
 }
 
 const ROW = 144;
@@ -53,6 +83,9 @@ function specConfig(spec: LoginFlowSpec): FlowRuntimeJsonObject {
     ...(spec.completion
       ? { completion: JSON.parse(JSON.stringify(spec.completion)) as FlowRuntimeJsonObject }
       : {}),
+    // Written only when not the default, so a Flow saved before these existed reads the same.
+    ...(spec.unregistered === 'guide' ? { unregistered_signin: 'guide' } : {}),
+    ...(spec.onCancel === 'error' ? { on_cancel: 'error' } : {}),
   };
 }
 
@@ -198,6 +231,8 @@ export function readLoginFlowEditor(editor: unknown): LoginFlowSpec | null {
     profileRef: refOf(config.authentication_profile_ref),
     sessionProfileRef: refOf(config.session_profile_ref),
     completion: completion.ok ? completion.completion : null,
+    unregistered: readSignInUnregistered(config.unregistered_signin),
+    onCancel: readSignInOnCancel(config.on_cancel),
   };
 }
 
@@ -213,6 +248,8 @@ export function applyLoginFlowSpec(editor: unknown, spec: LoginFlowSpec): FlowEd
   if (!target) return null;
   const config: FlowRuntimeJsonObject = { ...(target.config ?? {}) };
   delete config.completion;
+  delete config.unregistered_signin;
+  delete config.on_cancel;
   target.config = { ...config, ...specConfig(spec) };
   return copy;
 }

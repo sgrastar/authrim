@@ -19,6 +19,8 @@ import {
   FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
   FLOW_RUNTIME_INTERACTION_TTL_SECONDS,
   createAuthContextFromHono,
+  hashSAMLLoginNonce,
+  isSAMLLoginNonce,
   createAccountAuthContextFromHono,
   resolveAccountDataContextFromHono,
   createPIIContextFromHono,
@@ -102,6 +104,15 @@ import {
   type RuntimeScreenAnswerProblem,
   type ScreenAnswerValue,
 } from './runtime-screen-answers';
+import {
+  cancelAppKind,
+  useUpOidcRequest,
+  oidcCancelAnswer,
+  peekOidcRequest,
+  runtimeCancelAvailable,
+  samlCancelGrant,
+  type CancelTarget,
+} from './login-runtime-cancel';
 
 type AuthContext = Context<{ Bindings: Env }>;
 type FlowRuntimeEnv = Env & {
@@ -121,6 +132,11 @@ interface StartRequest {
   requested_locale?: string;
   authorization_challenge_id?: string;
   saml_request_id?: string;
+  /**
+   * The nonce the IdP put on the login URL for this SAML request. Only its hash is kept; a SAML
+   * cancel is offered only to an interaction started with one.
+   */
+  saml_login_nonce?: string;
   saml_sp_entity_id?: string;
   return_to?: string;
   resume_interaction_id?: string;
@@ -208,6 +224,8 @@ interface FlowRequestContext {
   saml_sp_id: string | null;
   authorization_challenge_id: string | null;
   saml_request_id: string | null;
+  /** SHA-256 (hex) of the login nonce the interaction was started with; never the nonce. */
+  saml_login_nonce_hash?: string | null;
   saml_sp_entity_id: string | null;
   return_to: string | null;
   requested_scope: string[];
@@ -544,6 +562,92 @@ function stepConflictError(c: AuthContext, interactionId: string) {
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+function cancelRetryable(c: AuthContext) {
+  return c.json(
+    {
+      error: 'temporarily_unavailable',
+      error_description: 'The authorization request could not be closed; send the cancel again',
+    },
+    503
+  );
+}
+
+/** The context key a cancel keeps the app's answer under (so a repeat answers the same). */
+const CANCEL_ANSWER_CONTEXT_KEY = 'login_cancel_answer';
+/** Set once this cancel has used the authorization request up (a repeat then answers directly). */
+const CANCEL_CLOSED_CONTEXT_KEY = 'login_cancel_challenge_closed';
+
+/**
+ * Uses up the authorization request of an ended cancel and, once it has, records that with the
+ * interaction (compare-and-set on the context read). A record that cannot be written is only
+ * logged: the request is used up, and the answer is still given.
+ */
+async function closeCancelledChallenge(
+  c: AuthContext,
+  db: DatabaseAdapter,
+  tenantId: string,
+  interactionId: string,
+  contextJson: string | null,
+  types: readonly ('login' | 'reauth')[]
+): Promise<'closed' | 'elsewhere' | 'unavailable'> {
+  const challengeId = readOptionalString(
+    parseJsonObject(contextJson).authorization_challenge_id,
+    128
+  );
+  if (!challengeId) return 'unavailable';
+  const closed = await useUpOidcRequest(
+    c.env,
+    tenantId,
+    challengeId,
+    types,
+    `cancel:${interactionId}`
+  );
+  if (closed !== 'closed') return closed;
+  try {
+    await db.execute(
+      `UPDATE flow_interactions SET context_json = ?, updated_at = ?
+        WHERE tenant_id = ? AND id = ? AND state = 'failed' AND context_json = ?`,
+      [
+        JSON.stringify({ ...parseJsonObject(contextJson), [CANCEL_CLOSED_CONTEXT_KEY]: true }),
+        nowSeconds(),
+        tenantId,
+        interactionId,
+        contextJson,
+      ]
+    );
+  } catch {
+    getLogger(c)
+      .module('LOGIN-RUNTIME-FLOW')
+      .warn('Could not record that a cancel used up its authorization request', {
+        action: 'flow_cancel_closed',
+        interaction_id: interactionId,
+      });
+  }
+  return 'closed';
+}
+
+function cancelTargetOf(ctx: FlowRequestContext, env: Env): CancelTarget {
+  return {
+    samlLoginNonceHash: ctx.saml_login_nonce_hash ?? null,
+    samlRequestPorts: Boolean(env.SAML_RUNTIME_PORTS),
+    protocol: ctx.protocol,
+    authorizationChallengeId: ctx.authorization_challenge_id,
+    samlRequestId: ctx.saml_request_id,
+    clientId: ctx.client_id,
+    samlSpId: ctx.saml_sp_id,
+  };
+}
+
+/** Whether `POST .../cancel` would accept the interaction (told to the UI as `cancel_available`). */
+function cancelAvailableOf(
+  runtime: unknown,
+  state: string,
+  ctx: FlowRequestContext,
+  env: Env
+): boolean {
+  return runtimeCancelAvailable({ runtime, state, target: cancelTargetOf(ctx, env) });
 }
 
 function readString(value: unknown, maxLength = 256): string | null {
@@ -2544,6 +2648,7 @@ function getRequestContextFromInteraction(interaction: FlowInteractionRow): Flow
     saml_sp_id: interaction.saml_sp_id,
     authorization_challenge_id: readOptionalString(raw.authorization_challenge_id, 128),
     saml_request_id: readOptionalString(raw.saml_request_id, 512),
+    saml_login_nonce_hash: readOptionalString(raw.saml_login_nonce_hash, 128),
     saml_sp_entity_id:
       readOptionalString(raw.saml_sp_entity_id, 512) ??
       readOptionalString(raw.saml_sp_id, 512) ??
@@ -5622,6 +5727,7 @@ async function resumeInteractionOnce(
       current_step_id: interaction.current_step_id,
       current_visit_id: currentVisit?.id ?? null,
       expires_at: interaction.expires_at,
+      cancel_available: cancelAvailableOf(runtime, interaction.state, requestContext, c.env),
     },
     contract,
     contract_hash: contractHash,
@@ -5690,6 +5796,21 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   const requestContext = timeRuntimeStartValue(timing, 'request_context', () =>
     createRequestContext(target, body)
   );
+  // Only the hash of the login nonce is kept (in the interaction's context, never sent back).
+  if (body.saml_login_nonce !== undefined && body.saml_login_nonce !== null) {
+    if (!isSAMLLoginNonce(body.saml_login_nonce)) {
+      return jsonError(
+        c,
+        400,
+        'invalid_request',
+        'saml_login_nonce is not valid',
+        'AR_FLOW_INVALID_REQUEST'
+      );
+    }
+    if (requestContext.saml_request_id) {
+      requestContext.saml_login_nonce_hash = await hashSAMLLoginNonce(body.saml_login_nonce);
+    }
+  }
   const challengeBindingError = await timeRuntimeStartSpan(timing, 'authorization_challenge', () =>
     validateRuntimeAuthorizationChallengeBinding(c, tenantId, target, requestContext)
   );
@@ -6031,6 +6152,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
       current_step_id: initialCurrentStep.id,
       current_visit_id: currentVisitId,
       expires_at: expiresAt,
+      cancel_available: cancelAvailableOf(runtime, 'active', requestContext, c.env),
     },
     assignment: {
       target_type: assignment.target_type,
@@ -6301,7 +6423,21 @@ export async function loginRuntimeEmailVerificationChallengeHandler(c: AuthConte
  * interaction is active and not expired, the contract the browser holds is the one signed for it,
  * and the step the request names is the current one. Otherwise, the error to answer.
  */
-async function openRuntimeStepRequest(c: AuthContext): Promise<
+async function openRuntimeStepRequest(
+  c: AuthContext,
+  options: {
+    /**
+     * Also open an interaction a cancel ended (state `failed`), authorised in every other way
+     * the same: for a repeat of the cancel, which answers what the first one did.
+     */
+    allowFailed?: boolean;
+    /**
+     * The step the request was made on may be left out (a cancel): the contract hash and signature
+     * still authorise it, and a step that is named must still be the current one.
+     */
+    stepOptional?: boolean;
+  } = {}
+): Promise<
   | Response
   | {
       tenantId: string;
@@ -6347,7 +6483,7 @@ async function openRuntimeStepRequest(c: AuthContext): Promise<
   const submittedContractHash = readString(body.contract_hash, 256);
   const submittedSignature = readString(body.signature, 512);
 
-  if (!submittedStepId) {
+  if (!submittedStepId && !options.stepOptional) {
     return runtimeError(
       c,
       400,
@@ -6384,7 +6520,11 @@ async function openRuntimeStepRequest(c: AuthContext): Promise<
     );
   }
 
-  if (interaction.state !== 'created' && interaction.state !== 'active') {
+  if (
+    interaction.state !== 'created' &&
+    interaction.state !== 'active' &&
+    !(options.allowFailed && interaction.state === 'failed')
+  ) {
     return runtimeError(
       c,
       409,
@@ -6397,7 +6537,7 @@ async function openRuntimeStepRequest(c: AuthContext): Promise<
     );
   }
 
-  if (interaction.expires_at <= now) {
+  if (interaction.expires_at <= now && interaction.state !== 'failed') {
     // Expired with its screen answers removed: they served the steps that never came. Only over
     // the context read: one a concurrent submit changed since is left open, and the scheduled
     // maintenance expires it with its answers removed.
@@ -6475,7 +6615,7 @@ async function openRuntimeStepRequest(c: AuthContext): Promise<
   }
 
   if (
-    submittedStepId !== interaction.current_step_id ||
+    (submittedStepId ? submittedStepId !== interaction.current_step_id : !options.stepOptional) ||
     (submittedNodeId && submittedNodeId !== interaction.current_node_id)
   ) {
     await insertAuditEvent(c.env, tenantId, interaction, {
@@ -6872,12 +7012,235 @@ export async function loginRuntimeInteractionBackHandler(c: AuthContext) {
         current_node_id: targetStep.source_node_id,
         current_step_id: targetStep.id,
         expires_at: interaction.expires_at,
+        cancel_available: cancelAvailableOf(runtime, interaction.state, flow.requestContext, c.env),
       },
       step: runtimeStepResponse(targetStep),
       completed: false,
       output: null,
       back_screens: backScreens,
     });
+  } catch (error) {
+    if (!claim.saved && isSerializationConflict(error)) return stepConflictError(c, interactionId);
+    throw error;
+  } finally {
+    if (!claim.saved) await releaseRuntimeSubmitClaim(c, db, tenantId, interactionId, claim.id);
+  }
+}
+
+/**
+ * `POST /api/v1/login/interactions/:interaction_id/cancel`: the person stops signing in and goes
+ * back to the app. Authorised and held like a submit (interaction state, expiry, contract hash,
+ * HMAC signature, current step; the claim of `claimRuntimeSubmit`), so it and a submit of the same
+ * step cannot both land.
+ *
+ * Accepted only for a live interaction of a `login` Flow whose sign-in step says
+ * `on_cancel: error`, started for an OIDC authorization request or a SAML request; otherwise 409
+ * `cancel_not_available`, changing nothing. The interaction ends (`failed`) and cannot be
+ * continued. OIDC: the authorization request is used up and the app is sent `access_denied`
+ * (answered as a denied consent: `{ redirect_url }`). SAML: answers `{ redirect_url }`, a path of
+ * the IdP that answers the SP once (ar-lib-core `saml-login-cancel.ts`).
+ */
+export async function loginRuntimeInteractionCancelHandler(c: AuthContext) {
+  const notAvailable = (interactionId?: string) =>
+    runtimeError(
+      c,
+      409,
+      'cancel_not_available',
+      'Cancelling is not available for this sign-in',
+      'AR_FLOW_CANCEL_NOT_AVAILABLE',
+      'recoverable',
+      'retry_step',
+      interactionId
+    );
+  const opened = await openRuntimeStepRequest(c, { allowFailed: true, stepOptional: true });
+  if (opened instanceof Response) {
+    // An interaction that is not live (ended already, or cancelled before) is a cancel not offered.
+    if (opened.status === 409) {
+      const refused = await opened
+        .clone()
+        .json<{ error?: string }>()
+        .catch(() => null);
+      if (refused?.error === 'interaction_not_active') {
+        return notAvailable(readString(c.req.param('interaction_id'), 128) ?? undefined);
+      }
+    }
+    return opened;
+  }
+  const { tenantId, interactionId, interaction, db, now } = opened;
+
+  // A repeat: an interaction a cancel ended (and only one) answers what that cancel answered, so
+  // a cancel whose answer was lost can be sent again. Authorised as the first one was. A cancel of
+  // a SAML request keeps only the hash of its one-time token, so it has no answer to repeat.
+  if (interaction.state === 'failed') {
+    const stored = parseJsonObject(interaction.context_json)[CANCEL_ANSWER_CONTEXT_KEY];
+    if (interaction.expires_at > now && stored && typeof stored === 'object') {
+      // The first cancel may have ended before it used the authorization request up (recorded
+      // once it has): tried again, and only then is the stored answer given. A request found used
+      // by someone else means the sign-in went on elsewhere.
+      const ctx = parseJsonObject(interaction.context_json);
+      const challengeId = readOptionalString(ctx.authorization_challenge_id, 128);
+      if (challengeId && ctx[CANCEL_CLOSED_CONTEXT_KEY] !== true) {
+        const closed = await closeCancelledChallenge(
+          c,
+          db,
+          tenantId,
+          interactionId,
+          interaction.context_json,
+          ['login', 'reauth']
+        );
+        if (closed === 'elsewhere') return notAvailable(interactionId);
+        if (closed === 'unavailable') return cancelRetryable(c);
+      }
+      return c.json(stored);
+    }
+    return notAvailable(interactionId);
+  }
+
+  const flow = await hydratedInteractionRuntime(c, db, tenantId, interaction);
+  if (!flow) {
+    return runtimeError(
+      c,
+      409,
+      'flow_version_unavailable',
+      'Published Flow version is unavailable',
+      'AR_FLOW_VERSION_UNAVAILABLE',
+      'configuration_error',
+      'contact_administrator',
+      interactionId
+    );
+  }
+  const target = cancelTargetOf(flow.requestContext, c.env);
+  const appKind = cancelAppKind(target);
+  if (
+    !appKind ||
+    !runtimeCancelAvailable({ runtime: flow.runtime, state: interaction.state, target })
+  ) {
+    return notAvailable(interactionId);
+  }
+
+  const claimedAtMs = Date.now();
+  const claim: RuntimeSubmitClaim = {
+    id: crypto.randomUUID(),
+    saved: false,
+    actBeforeMs: claimedAtMs + FLOW_SUBMIT_CLAIM_ACT_WINDOW_MS,
+  };
+  const claimed = await claimRuntimeSubmit(
+    db,
+    tenantId,
+    interaction,
+    claim.id,
+    Math.floor(claimedAtMs / 1000)
+  );
+  if (claimed === 'not_active') return notAvailable(interactionId);
+  if (claimed === 'conflict') return stepConflictError(c, interactionId);
+  try {
+    // Nothing is changed until the answer is built and can be kept: a read that fails, a request
+    // that cannot be answered, leaves the sign-in as it was and the cancel can be sent again.
+    let appAnswer: Response;
+    let samlHandoff: Awaited<ReturnType<typeof samlCancelGrant>> | null = null;
+    let oidcRequest: Awaited<ReturnType<typeof peekOidcRequest>> | null = null;
+    let answerBody: Record<string, unknown> | null = null;
+    if (appKind === 'oidc') {
+      oidcRequest = await peekOidcRequest(
+        c.env,
+        tenantId,
+        target.authorizationChallengeId as string,
+        interaction.client_id as string
+      );
+      if (oidcRequest === 'unavailable') {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The authorization request could not be checked',
+          },
+          503
+        );
+      }
+      if (oidcRequest === 'gone') return notAvailable(interactionId);
+      appAnswer = await oidcCancelAnswer(c, tenantId, oidcRequest.metadata);
+      if (appAnswer.status >= 400) return appAnswer;
+      answerBody = await appAnswer.clone().json<Record<string, unknown>>();
+    } else {
+      samlHandoff = await samlCancelGrant(interactionId);
+      appAnswer = c.json({ redirect_url: samlHandoff.redirectPath });
+    }
+
+    if (runtimeSubmitClaimLapsed(claim)) return stepConflictError(c, interactionId);
+
+    const stored = parseJsonObject(interaction.context_json);
+    const endedContext = JSON.stringify({
+      ...withoutRuntimeScreenAnswers(stored),
+      ...(samlHandoff ? { login_cancel: samlHandoff.context } : {}),
+      ...(answerBody ? { [CANCEL_ANSWER_CONTEXT_KEY]: answerBody } : {}),
+    });
+    const heldByThisClaim = `EXISTS (
+         SELECT 1 FROM flow_interactions
+          WHERE tenant_id = ? AND id = ? AND submit_claim_id = ? AND submit_claim_expires_at IS NULL)`;
+    let saved: ExecuteResult[];
+    try {
+      saved = await writeAtomically(db, (write) => {
+        write(
+          `UPDATE flow_interactions
+              SET state = 'failed', updated_at = ?, context_json = ?,
+                  submit_claim_expires_at = NULL
+            WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')
+              AND current_step_id = ? AND submit_claim_id = ?
+              AND submit_claim_expires_at IS NOT NULL`,
+          [now, endedContext, tenantId, interactionId, interaction.current_step_id, claim.id]
+        );
+        write(
+          `UPDATE flow_interaction_steps
+              SET state = 'failed', state_json = ?, updated_at = ?
+            WHERE tenant_id = ? AND interaction_id = ? AND step_id = ?
+              AND state IN ('pending', 'waiting_input', 'processing')
+              AND ${heldByThisClaim}`,
+          [
+            JSON.stringify({ cancelled_by_user: true, cancelled_at_ms: Date.now() }),
+            now,
+            tenantId,
+            interactionId,
+            interaction.current_step_id,
+            tenantId,
+            interactionId,
+            claim.id,
+          ]
+        );
+      });
+    } catch (error) {
+      if (isSerializationConflict(error)) return stepConflictError(c, interactionId);
+      throw error;
+    }
+    if ((saved[0]?.rowsAffected ?? 0) === 0) return stepConflictError(c, interactionId);
+    claim.saved = true;
+
+    await scheduleRuntimeAuditEvents(
+      c,
+      tenantId,
+      interaction,
+      [
+        {
+          eventType: 'flow.interaction.failed',
+          result: 'cancelled',
+          nodeId: interaction.current_node_id,
+          errorCode: 'AR_FLOW_CANCELLED',
+          userId: interaction.user_id,
+          metadata: { protocol: appKind },
+        },
+      ],
+      'cancel'
+    );
+    // The interaction is ended and holds its answer. The app is answered only once THIS cancel
+    // used the authorization request up (recorded with the interaction, so a repeat can answer):
+    // a request another sign-in of it already used means the sign-in went on elsewhere, and a
+    // store that cannot be told is retryable.
+    if (oidcRequest && typeof oidcRequest === 'object') {
+      const closed = await closeCancelledChallenge(c, db, tenantId, interactionId, endedContext, [
+        oidcRequest.type,
+      ]);
+      if (closed === 'elsewhere') return notAvailable(interactionId);
+      if (closed === 'unavailable') return cancelRetryable(c);
+    }
+    return appAnswer;
   } catch (error) {
     if (!claim.saved && isSerializationConflict(error)) return stepConflictError(c, interactionId);
     throw error;
@@ -7681,6 +8044,7 @@ async function submitClaimedRuntimeStep(input: {
       current_node_id: nextStep?.source_node_id ?? null,
       current_step_id: nextStep?.id ?? null,
       expires_at: interaction.expires_at,
+      cancel_available: cancelAvailableOf(runtime, nextState, requestContext, c.env),
     },
     step: runtimeStepResponse(nextStep),
     completed,

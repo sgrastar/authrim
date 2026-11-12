@@ -284,8 +284,7 @@ export const TOKENS: SettingsPageDef = {
 
 /**
  * Authentication → Attack protection: what keeps sign-in and sign-up from being abused. More of
- * the draft in `inventory.ts` (failed sign-ins, bot protection, API rate limits) moves here as it
- * is built.
+ * the draft in `inventory.ts` (bot protection, API rate limits) moves here as it is built.
  */
 export const PROTECTION: SettingsPageDef = {
 	id: 'protection',
@@ -293,6 +292,12 @@ export const PROTECTION: SettingsPageDef = {
 	title: 'set.page.protection',
 	description: 'set.page.protection.desc',
 	sections: [
+		{
+			id: 'failed-sign-ins',
+			title: 'set.section.failedSignIns',
+			description: 'set.section.failedSignIns.desc',
+			settings: [{ key: 'rate_limit.auth_max_failed_attempts', depth: 'primary' }]
+		},
 		{
 			id: 'email-sending',
 			title: 'set.section.emailSending',

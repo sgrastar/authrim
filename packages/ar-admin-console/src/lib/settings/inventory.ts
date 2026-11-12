@@ -262,9 +262,6 @@ place('authentication/directory', 'Directory password', {
 	primary: ['authentication-methods.directory_password.enabled']
 });
 
-place('authentication/protection', 'Failed sign-ins', {
-	primary: ['rate_limit.auth_max_failed_attempts']
-});
 place('authentication/protection', 'Bot protection', {
 	primary: [
 		'authentication-methods.human_verification.login_enabled',

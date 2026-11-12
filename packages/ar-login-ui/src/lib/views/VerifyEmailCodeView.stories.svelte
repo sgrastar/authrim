@@ -1,6 +1,8 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect, fn, within } from 'storybook/test';
+	import { get } from 'svelte/store';
+	import { LL } from '$i18n/i18n-svelte';
+	import { expect, fn, userEvent, within } from 'storybook/test';
 	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
 	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import VerifyEmailCodeView from './VerifyEmailCodeView.svelte';
@@ -19,7 +21,8 @@
 			onResend: fn(),
 			onDismissError: fn(),
 			onDismissSuccess: fn(),
-			onDismissResendNotice: fn()
+			onDismissResendNotice: fn(),
+			onCancel: fn()
 		},
 		parameters: {
 			layout: 'fullscreen',
@@ -71,4 +74,36 @@
 
 <Story name="Verified" args={{ code: '482913', success: 'Verified. Signing you in…' }}>
 	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Back to the app"
+	args={{ cancel: { available: true, loading: false }, backHref: '/login?challenge_id=ch-1' }}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		// A real button next to the code entry; the way back to the sign-in keeps the request.
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).login_backToApp() }));
+		await expect(args.onCancel).toHaveBeenCalled();
+		await expect(canvas.getByRole('link', { name: get(LL).common_backToLogin() })).toHaveAttribute(
+			'href',
+			'/login?challenge_id=ch-1'
+		);
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Back to the app refused"
+	args={{ cancel: { available: true, loading: false } }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(await canvas.findByText(get(LL).login_cancelFailed())).toBeVisible();
+		await expect(canvas.getByRole('button', { name: get(LL).login_backToApp() })).toBeEnabled();
+	}}
+>
+	{#snippet template(args)}{@render page({
+			...args,
+			error: get(LL).login_cancelFailed()
+		})}{/snippet}
 </Story>

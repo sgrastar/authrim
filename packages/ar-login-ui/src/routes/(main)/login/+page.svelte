@@ -22,6 +22,7 @@
 	import { messageForApiError } from '#lib/errors/sdk-error-mapper.js';
 	import { loginUiDisplayError, messageForCaughtError } from '#lib/errors/display-error.js';
 	import { handleCodeEnterKey } from '#lib/utils/code-enter-key.js';
+	import { cancelRuntimeInteraction } from '#lib/authrim/runtime-cancel.js';
 	import { combineEntryMethods, handleEmailFieldEnterKey } from '#lib/login-email-enter.js';
 	import {
 		isValidRedirectUrl,
@@ -38,6 +39,7 @@
 	} from '#lib/api/authentication-methods.js';
 	import {
 		backScreensOf,
+		cancelAvailableOf,
 		flowRuntimeAPI,
 		type FlowRuntimeEmailVerificationChallenge,
 		type FlowRuntimeConsentPolicyContent,
@@ -222,6 +224,21 @@
 	/** The screens a link part on the current screen can go back to. */
 	let runtimeBackScreens = $state<string[]>([]);
 	let runtimeFlowStep = $state<FlowRuntimeStep | null>(null);
+	/**
+	 * Whether the Flow lets the person leave the sign-in for the application (`cancel_available` of
+	 * the last start answer; the later answers of a step or a back do not carry it).
+	 */
+	let runtimeCancelAvailable = $state(false);
+	/** The Flow a sign-in that can no longer go on was on: "Back to the app" still uses it. */
+	let runtimeCancelFlow = $state.raw<FlowRuntimeStartResponse | null>(null);
+	let cancelLoading = $state(false);
+	/** The address has no account (said by the Flow), with where its Sign up link goes. */
+	let accountNotFound = $state<{ signUpHref: string | null } | null>(null);
+	// Another address is another question: the message belongs to the one it was said about.
+	$effect(() => {
+		void email;
+		accountNotFound = null;
+	});
 	// What the person entered in a screen step's own parts (a profile completion, a survey), for
 	// the step it was entered on: another step starts empty.
 	let runtimeScreenAnswers = $state<{
@@ -341,6 +358,8 @@
 	let authorizationChallengeId = $state('');
 	let inviteToken = $state('');
 	let samlRequestId = $state('');
+	/** The browser-held nonce the SAML IdP adds to its login URL next to `saml_request_id`. */
+	let samlLoginNonce = $state('');
 	let samlSpEntityId = $state('');
 	let returnTo = $state('');
 	let accountReturn = $state('');
@@ -618,6 +637,7 @@
 		authorizationChallengeId = urlChallengeId || '';
 		inviteToken = page.url.searchParams.get('invite_token') || '';
 		samlRequestId = page.url.searchParams.get('saml_request_id') || '';
+		samlLoginNonce = page.url.searchParams.get('saml_login_nonce') || '';
 		samlSpEntityId = page.url.searchParams.get('saml_sp_entity_id') || '';
 		returnTo = page.url.searchParams.get('return_to') || '';
 		accountReturn = page.url.searchParams.get('account_return') || '';
@@ -846,6 +866,7 @@
 		message: string,
 		options: { blockAuthorizationChallenge?: boolean } = {}
 	) {
+		runtimeCancelFlow = runtimeFlow ?? runtimeCancelFlow;
 		runtimeFlow = null;
 		runtimeBackScreens = [];
 		runtimeFlowStep = null;
@@ -858,6 +879,34 @@
 		if (!runtimeAuthorizationChallengeBlocked) return true;
 		error = runtimeFlowError || $LL.error_invalid_request();
 		return false;
+	}
+
+	/** A start answer (a new Flow, a resume): what it says about leaving for the application. */
+	function noteRuntimeStart(data: FlowRuntimeStartResponse) {
+		runtimeCancelAvailable = cancelAvailableOf(data);
+		runtimeCancelFlow = null;
+	}
+
+	/** "Back to the app": the Flow is cancelled and the browser goes where the backend says. */
+	async function handleRuntimeCancel() {
+		const flow = runtimeFlow ?? runtimeCancelFlow;
+		if (!flow || !runtimeCancelAvailable || cancelLoading) return;
+		cancelLoading = true;
+		error = '';
+		try {
+			const step = runtimeFlowStep ?? getRuntimeCurrentStep(flow);
+			const outcome = await cancelRuntimeInteraction({
+				interactionId: flow.interaction.id,
+				contractHash: flow.contract_hash,
+				signature: flow.signature,
+				stepId: step?.id,
+				nodeId: step?.source_node_id
+			});
+			if (outcome === 'failed') error = $LL.login_cancelFailed();
+			else if (outcome === 'invalid_redirect') error = $LL.device_errorInvalidRedirect();
+		} finally {
+			cancelLoading = false;
+		}
 	}
 
 	async function startRuntimeFlowIfAvailable() {
@@ -888,6 +937,7 @@
 				}
 				if (!data) return;
 				runtimeFlow = data;
+				noteRuntimeStart(data);
 				runtimeBackScreens = backScreensOf(data);
 				runtimeAuthorizationChallengeBlocked = false;
 				runtimeFlowStep = getRuntimeCurrentStep(data);
@@ -913,6 +963,7 @@
 				locale: getLocale(),
 				authorization_challenge_id: authorizationChallengeId || undefined,
 				saml_request_id: samlRequestId || undefined,
+				saml_login_nonce: (samlRequestId && samlLoginNonce) || undefined,
 				saml_sp_entity_id: samlSpEntityId || undefined,
 				return_to: returnTo || undefined,
 				...getRuntimeTarget()
@@ -926,6 +977,7 @@
 			}
 			if (!data) return;
 			runtimeFlow = data;
+			noteRuntimeStart(data);
 			runtimeBackScreens = backScreensOf(data);
 			runtimeAuthorizationChallengeBlocked = false;
 			runtimeFlowStep = getRuntimeCurrentStep(data);
@@ -960,6 +1012,7 @@
 		});
 		if (!data) return;
 		runtimeFlow = data;
+		noteRuntimeStart(data);
 		runtimeBackScreens = backScreensOf(data);
 		runtimeFlowStep = getRuntimeCurrentStep(data);
 		persistFlowRuntimeState(data, { postAuthRedirect: pendingPostAuthRedirect });
@@ -985,6 +1038,7 @@
 			});
 			if (data?.step) {
 				runtimeFlow = { ...flow, interaction: data.interaction };
+				runtimeCancelAvailable = cancelAvailableOf(data);
 				runtimeBackScreens = backScreensOf(data);
 				runtimeFlowStep = data.step;
 				return;
@@ -996,6 +1050,7 @@
 			});
 			if (resumed) {
 				runtimeFlow = resumed;
+				noteRuntimeStart(resumed);
 				runtimeBackScreens = backScreensOf(resumed);
 				runtimeFlowStep = getRuntimeCurrentStep(resumed);
 			} else if (apiError) {
@@ -1040,6 +1095,7 @@
 				});
 				if (resumed) {
 					runtimeFlow = resumed;
+					noteRuntimeStart(resumed);
 					runtimeBackScreens = backScreensOf(resumed);
 					runtimeFlowStep = getRuntimeCurrentStep(resumed);
 					persistFlowRuntimeState(resumed, { postAuthRedirect: pendingPostAuthRedirect });
@@ -1062,6 +1118,8 @@
 			...flow,
 			interaction: data.interaction
 		};
+		// The latest answer says whether the sign-in can still be left for the application.
+		runtimeCancelAvailable = cancelAvailableOf(data);
 		runtimeBackScreens = backScreensOf(data);
 		runtimeFlowStep = data.step ?? getRuntimeCurrentStep(runtimeFlow);
 		if (data.completed) {
@@ -1284,6 +1342,7 @@
 				saml_sp_entity_id: samlSpEntityId,
 				return_to: 'saml_sso'
 			});
+			if (samlLoginNonce) params.set('saml_login_nonce', samlLoginNonce);
 			return `/saml/idp/sso?${params.toString()}`;
 		}
 
@@ -1322,7 +1381,11 @@
 			return output.redirect_url;
 		}
 		const continuation = output?.protocol_continuation;
-		const samlPath = runtimeSamlContinuationPath(continuation, { samlRequestId, samlSpEntityId });
+		const samlPath = runtimeSamlContinuationPath(continuation, {
+			samlRequestId,
+			samlSpEntityId,
+			samlLoginNonce
+		});
 		if (samlPath) return samlPath;
 		const protocol = runtimeContinuationString(continuation, 'protocol');
 		if (protocol === 'direct' || output?.action === 'complete') {
@@ -1451,6 +1514,7 @@
 	) {
 		if (authActionLoading) return;
 		error = '';
+		accountNotFound = null;
 		if (!ensureAuthorizationChallengeCanContinue()) return;
 
 		if (!email.trim()) {
@@ -1479,6 +1543,20 @@
 				runtimeInteractionId: runtimeFlow?.interaction.id,
 				emailVerification: options.emailVerification
 			});
+			if (apiError?.error === 'account_not_found') {
+				// The verification token was used by this send: the next one asks for a fresh one.
+				if (cfTurnstileResponse) markHumanVerificationTokenSubmitted(cfTurnstileResponse);
+				// A sign-in Flow that guides an address with no account: said on this page, the address
+				// kept, no code entry. The Sign up link follows the page's own gate.
+				accountNotFound = {
+					signUpHref:
+						apiError.error_details?.sign_up_available === true &&
+						loginUIPageStore.authSwitchLinkEnabled
+							? signupHref
+							: null
+				};
+				return;
+			}
 			if (apiError) {
 				throw loginUiDisplayError(getApiErrorMessage(apiError));
 			}
@@ -1525,6 +1603,7 @@
 			if (returnTo === 'saml_sso' && samlRequestId && samlSpEntityId) {
 				params.set('saml_request_id', samlRequestId);
 				params.set('saml_sp_entity_id', samlSpEntityId);
+				if (samlLoginNonce) params.set('saml_login_nonce', samlLoginNonce);
 				params.set('return_to', 'saml_sso');
 			}
 			if (runtimeFlow && !options.skipRuntimeStep) {
@@ -1554,6 +1633,8 @@
 				}
 				params.set('runtime_interaction_id', flowAfterSelection.interaction.id);
 				params.set('runtime_flow_kind', 'login');
+				// The code-entry page offers "Back to the app" when the Flow allows leaving.
+				if (runtimeCancelAvailable) params.set('cancel_available', '1');
 			}
 			window.location.href = `/verify-email-code?${params.toString()}`;
 		} catch (err) {
@@ -2316,6 +2397,7 @@
 			error,
 			humanVerificationUnavailable,
 			runtimeFlow: runtimeFlowError,
+			accountNotFound,
 			runtimeScreenMissing: runtimeAuthFormMissing,
 			passkeyProgress: passkeyProgressMessage,
 			emailCodeProgress: emailCodeProgressMessage
@@ -2381,6 +2463,8 @@
 		}}
 		{showTurnstileFor}
 		signupHref={loginUIPageStore.authSwitchLinkEnabled ? signupHref : null}
+		cancel={{ available: runtimeCancelAvailable, loading: cancelLoading }}
+		onCancel={handleRuntimeCancel}
 		bind:email
 		bind:directoryUsername
 		bind:directoryPassword

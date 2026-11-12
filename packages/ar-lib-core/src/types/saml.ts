@@ -902,6 +902,12 @@ export interface SAMLRequestContext {
    */
   sentToSignInAt?: number;
   /**
+   * SHA-256 (hex) of the nonce the IdP put on the login URL (`saml_login_nonce`) when it last sent
+   * the person to sign in. The Login UI start keeps the hash of the nonce it is given; the stored
+   * request is used up for a login cancel only if the two are equal (saml-login-cancel.ts).
+   */
+  loginNonceHash?: string;
+  /**
    * A sign-in begun at a lite Login UI start: the lite `/callback` of its transaction and grant
    * (made by the start, never from a request). The ACS answers with a handoff to it, sends its
    * failures there, and lets it create an account in a lite tenant.
