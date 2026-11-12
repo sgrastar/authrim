@@ -15,6 +15,17 @@ info:
     "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
     indicated delay; a failed response does not establish whether an earlier write completed.
 
+    Every write (POST, PUT, PATCH, DELETE) under `/api/admin` that passed authentication and the
+    route access check is also counted against the Admin API write limit, per authenticated
+    principal and scope (the tenant for tenant-scoped paths; one tenant-less scope for platform,
+    tenant-inventory and `/api/internal` paths). The principal is the administrator, the machine
+    principal, or the agent identity, not the client IP address: `rate_limit.admin_write` requests per
+    `rate_limit.admin_write_window_seconds` (platform settings; 600 per 60 seconds by default).
+    Over the limit the operation answers HTTP 429 `rate_limit_exceeded` with `Retry-After` and
+    `X-RateLimit-*` headers before it runs; any per-route limit of an operation (keyed by client IP
+    address) applies in addition. Reads and requests refused by authentication or the access check
+    are not counted.
+
     The access check of every operation decides on the path the router dispatches on (percent
     escapes of ordinary characters decoded; an escaped `%2F` stays inside its segment, and `%25`
     stays `%25`, so an identifier that itself contains escaped text, such as `report%2520final`
@@ -27466,7 +27477,11 @@ paths:
         refused with 503 and nothing is stored. Entries are labelled source sdk by the server,
         whatever the sender claims. Secrets are never stored in clear text, in any storage mode
         or step; identifiers such as requestId are validated; in full storage mode personal data
-        is redacted unless diagnostic-logging.filter_pii is off.
+        is redacted unless diagnostic-logging.filter_pii is off. A `tenant_id` that is not in the tenant id
+        format is refused with HTTP 400 `invalid_request`. A failure that happens before the client
+        has been validated as belonging to the `tenant_id` (including an unknown client or a
+        client of another tenant) is recorded for the tenant of the request host, never for the
+        unverified `tenant_id`.
       responses:
         '200':
           $ref: '#/components/responses/DiagnosticLogIngest'
@@ -27477,6 +27492,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '503':
+          $ref: '#/components/responses/Error'
+        '429':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DiagnosticLogIngest'
@@ -42736,7 +42753,7 @@ components:
           schema:
             $ref: '#/components/schemas/DiagnosticLogIngestRequest'
           example:
-            tenant_id: tenant_123
+            tenant_id: tenant-123
             client_id: client_123
             client_secret: client_secret
             logs:
@@ -48300,6 +48317,7 @@ components:
               - loginStart
               - sendChallenge
               - loadTest
+              - adminWrite
             note: No profile override set. Endpoints use their default profiles.
     AdminSettingsRateLimitProfileOverrideUpdate:
       description: Global rate limit profile override updated.
@@ -74813,6 +74831,7 @@ components:
             - loginStart
             - sendChallenge
             - loadTest
+            - adminWrite
         expires_in:
           type: integer
           minimum: 60
@@ -78273,6 +78292,13 @@ components:
       properties:
         tenant_id:
           type: string
+          minLength: 1
+          maxLength: 63
+          pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: >-
+            The tenant the logs are stored for, in the tenant id format (lowercase letters, digits
+            and hyphens, starting and ending with a letter or digit, at most 63 characters). A
+            malformed value is refused with HTTP 400. Required in multi-tenant deployments.
         client_id:
           type: string
         client_secret:
@@ -78282,7 +78308,7 @@ components:
           items:
             $ref: '#/components/schemas/DiagnosticLogEntry'
       example:
-        tenant_id: tenant_123
+        tenant_id: tenant-123
         client_id: client_123
         client_secret: secret
         logs:

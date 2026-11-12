@@ -4,7 +4,16 @@
   "title": "FeatureProfile",
   "description": "Feature Profile definition for Flow x UI separation. Profiles are pre-defined, tested configurations.",
   "type": "object",
-  "required": ["id", "name", "description", "policy", "targets", "authMethods", "capabilities", "intents"],
+  "required": [
+    "id",
+    "name",
+    "description",
+    "policy",
+    "targets",
+    "authMethods",
+    "capabilities",
+    "intents"
+  ],
   "properties": {
     "id": {
       "$ref": "#/definitions/ProfileId",

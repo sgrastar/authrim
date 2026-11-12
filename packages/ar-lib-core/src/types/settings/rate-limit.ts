@@ -31,6 +31,7 @@ export interface RateLimitSettings {
   'rate_limit.login_start': number;
   'rate_limit.send_challenge': number;
   'rate_limit.loadtest': number;
+  'rate_limit.admin_write': number;
   'rate_limit.strict_window_seconds': number;
   'rate_limit.moderate_window_seconds': number;
   'rate_limit.lenient_window_seconds': number;
@@ -38,6 +39,7 @@ export interface RateLimitSettings {
   'rate_limit.login_start_window_seconds': number;
   'rate_limit.send_challenge_window_seconds': number;
   'rate_limit.loadtest_window_seconds': number;
+  'rate_limit.admin_write_window_seconds': number;
 }
 
 /**
@@ -215,6 +217,19 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     visibility: 'admin',
     default: 10000,
   },
+  'rate_limit.admin_write': {
+    key: 'rate_limit.admin_write',
+    type: 'number',
+    label: 'Admin API Write Rate Limit',
+    description:
+      'Requests per window for writes (POST, PUT, PATCH, DELETE) on the Admin API, counted per tenant and authenticated administrator, machine principal or agent, for the whole platform.',
+    min: 1,
+    max: 1000000,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 600,
+  },
   'rate_limit.strict_window_seconds': {
     key: 'rate_limit.strict_window_seconds',
     type: 'number',
@@ -306,6 +321,19 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     visibility: 'admin',
     default: 60,
   },
+  'rate_limit.admin_write_window_seconds': {
+    key: 'rate_limit.admin_write_window_seconds',
+    type: 'number',
+    label: 'Admin API Write Window',
+    description: 'Window of the Admin API write limit, for the whole platform',
+    unit: 'seconds',
+    min: 1,
+    max: 86400,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+    default: 60,
+  },
 };
 
 /**
@@ -334,6 +362,7 @@ export const RATE_LIMIT_DEFAULTS: RateLimitSettings = {
   'rate_limit.login_start': 300,
   'rate_limit.send_challenge': 30,
   'rate_limit.loadtest': 10000,
+  'rate_limit.admin_write': 600,
   'rate_limit.strict_window_seconds': 60,
   'rate_limit.moderate_window_seconds': 60,
   'rate_limit.lenient_window_seconds': 60,
@@ -341,6 +370,7 @@ export const RATE_LIMIT_DEFAULTS: RateLimitSettings = {
   'rate_limit.login_start_window_seconds': 60,
   'rate_limit.send_challenge_window_seconds': 60,
   'rate_limit.loadtest_window_seconds': 60,
+  'rate_limit.admin_write_window_seconds': 60,
 };
 
 /** The rate limiter's profiles, by the name of their Settings API keys. */
@@ -352,6 +382,7 @@ export const RATE_LIMIT_PROFILE_SETTING_NAMES = {
   loginStart: 'login_start',
   sendChallenge: 'send_challenge',
   loadTest: 'loadtest',
+  adminWrite: 'admin_write',
 } as const;
 
 export type RateLimitProfileName = keyof typeof RATE_LIMIT_PROFILE_SETTING_NAMES;

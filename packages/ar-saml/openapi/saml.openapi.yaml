@@ -13,6 +13,11 @@ info:
     has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
     "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
     indicated delay; a failed response does not establish whether an earlier write completed.
+
+    Every write (POST, PUT, PATCH, DELETE) of an authenticated caller under `/api/admin` can
+    answer HTTP 429 `rate_limit_exceeded` from the Admin API write limit (`rate_limit.admin_write`
+    per `rate_limit.admin_write_window_seconds`, per authenticated principal and tenant, shared with the
+    rest of the Admin API; see the Admin API contract).
 servers:
   - url: https://{tenant_domain}
     variables:
