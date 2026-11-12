@@ -117,6 +117,7 @@ export * from './types/settings/assurance-levels';
 
 // Utils
 export * from './db';
+export * from './utils/request-path';
 export * from './utils/audit-log';
 export * from './utils/client-authentication';
 export * from './utils/client-scopes';
