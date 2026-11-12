@@ -211,7 +211,9 @@ describe('middleware factories in route registrations', () => {
     }
   });
 
-  it('passes none of them to a route uncalled', () => {
+  // Walks the syntax tree of every route file in the repository: a few seconds on CI under
+  // coverage, more than the default 5 s there.
+  it('passes none of them to a route uncalled', { timeout: 60_000 }, () => {
     expect(uncalledFactories(parsed, factories)).toEqual([]);
   });
 
