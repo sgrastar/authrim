@@ -8,17 +8,23 @@ import type { Env } from '@authrim/ar-lib-core';
 
 const fixture = vi.hoisted(() => ({
   profile: null as { claims: Array<Record<string, unknown>> } | null,
-  consentCalls: [] as Array<Record<string, unknown>>,
+  approval: ['*'] as string[],
   evidenceReads: 0,
 }));
 const mockIntrospectTokenFromContext = vi.hoisted(() => vi.fn());
 const mockGetClientCached = vi.hoisted(() => vi.fn());
 const mockResolveEffectiveSettings = vi.hoisted(() => vi.fn());
 
+// No consent withdrawal is recorded (generation 0) unless a test says otherwise.
+const mockFindConsentRevocation = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ generation: 0, revokedAt: null })
+);
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    findOAuthClientConsentRevocation: mockFindConsentRevocation,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
     introspectTokenFromContext: mockIntrospectTokenFromContext,
     getClientCached: mockGetClientCached,
     CanonicalRuntimeUserProjectionRepository: vi.fn().mockImplementation(function () {
@@ -113,20 +119,6 @@ vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () =>
   };
 });
 
-// The real consent step, observed.
-vi.mock('@authrim/ar-lib-core/services/oidc-attribute-release-consent', async () => {
-  const actual = await vi.importActual<Record<string, unknown>>(
-    '@authrim/ar-lib-core/services/oidc-attribute-release-consent'
-  );
-  return {
-    ...actual,
-    enforceOIDCAttributeReleaseConsent: (input: { claims: Record<string, unknown> }) => {
-      fixture.consentCalls.push({ ...input.claims });
-      return (actual.enforceOIDCAttributeReleaseConsent as (i: unknown) => unknown)(input);
-    },
-  };
-});
-
 import { userinfoHandler } from '../userinfo';
 
 const IAL1_URI = 'https://example.org/assurance/IAL1';
@@ -188,6 +180,7 @@ async function userinfo(options: {
   mockIntrospectTokenFromContext.mockResolvedValue({
     valid: true,
     claims: {
+      authrim_release: fixture.approval,
       sub: 'user-123',
       client_id: 'client-1',
       scope: options.scope,
@@ -222,7 +215,7 @@ async function userinfo(options: {
 describe('UserInfo eduperson_assurance through the identity mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    fixture.consentCalls = [];
+    fixture.approval = ['*'];
     fixture.evidenceReads = 0;
     fixture.profile = null;
     mockResolveEffectiveSettings.mockImplementation(async (_env: unknown, category: string) =>
@@ -240,14 +233,35 @@ describe('UserInfo eduperson_assurance through the identity mapping', () => {
 
   const subField = { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] };
 
-  it('releases it where the Destination Profile lists the field, after the consent step saw it', async () => {
+  it('releases it where the Destination Profile lists the field and the grant approves it', async () => {
     fixture.profile = { claims: [subField, { claimName: 'eduperson_assurance' }] };
 
     const { body, status } = await userinfo({ scope: 'openid eduperson_assurance' });
 
     expect(status).toBe(200);
     expect(body.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
-    expect(fixture.consentCalls[0]).toMatchObject({ eduperson_assurance: [IAL1_URI, IAL2_URI] });
+  });
+
+  it('drops it, as an optional field, when the grant does not approve it', async () => {
+    fixture.profile = { claims: [subField, { claimName: 'eduperson_assurance' }] };
+    fixture.approval = [];
+
+    const { body, status } = await userinfo({ scope: 'openid eduperson_assurance' });
+
+    expect(status).toBe(200);
+    expect(body).not.toHaveProperty('eduperson_assurance');
+  });
+
+  it('answers 403 consent_required when the profile requires it and the grant does not approve it', async () => {
+    fixture.profile = {
+      claims: [subField, { claimName: 'eduperson_assurance', required: true }],
+    };
+    fixture.approval = [];
+
+    const { body, status } = await userinfo({ scope: 'openid eduperson_assurance' });
+
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ error: 'consent_required' });
   });
 
   it('drops it where the Destination Profile does not list the field', async () => {

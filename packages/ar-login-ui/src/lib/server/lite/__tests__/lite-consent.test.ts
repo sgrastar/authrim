@@ -7,7 +7,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RequestEvent } from '@sveltejs/kit';
 import { actions, load } from '../../../../routes/__lite/consent/+page.server';
 import { isLiteTxnTransitionAllowed } from '@authrim/ar-lib-core/types/login-ui-lite-txn';
-import { liteConsentAllow, liteConsentShown, readLiteConsent } from '../consent';
+import {
+	liteConsentAllow,
+	liteConsentShown,
+	readLiteConsent,
+	readLiteConsentShown
+} from '../consent';
 
 type Handler = (body: Record<string, unknown>, init: RequestInit) => Response;
 
@@ -349,6 +354,154 @@ describe('readLiteConsent', () => {
 	it('refuses an answer it cannot draw', () => {
 		expect(readLiteConsent({ ...CONSENT, user: {} })).toBeNull();
 		expect(readLiteConsent({ ...CONSENT, consent_items: [{ statement_id: 'x' }] })).toBeNull();
+	});
+});
+
+const RELEASE = {
+	items: [
+		{ name: 'email', required: true, value: 'person@example.com' },
+		{ name: 'phone_number', required: false, previously_approved: true, value: '+81 90 0000 0000' },
+		{ name: 'birthdate', required: false, value: '1815-12-10' },
+		{ name: 'address', required: false, value: { locality: 'Tokyo', country: 'JP' } }
+	],
+	show_values: true,
+	presentation_key: 'pk-1',
+	purpose: {
+		statement_id: 'p1',
+		version: '1',
+		title: 'Account notices',
+		description: 'Used to send account notices.',
+		document_url: 'https://example.com/purpose',
+		inline_content: '<b>x</b>'
+	}
+};
+const WITH_RELEASE = { ...CONSENT, information_release: RELEASE };
+
+describe('the information release of the lite consent', () => {
+	it('is read as plain text, optional items starting checked only when approved before', () => {
+		const read = readLiteConsent(WITH_RELEASE)!;
+		expect(read.release?.presentationKey).toBe('pk-1');
+		expect(read.release?.items).toEqual([
+			{ name: 'email', required: true, defaultChecked: false, valueText: 'person@example.com' },
+			{
+				name: 'phone_number',
+				required: false,
+				defaultChecked: true,
+				valueText: '+81 90 0000 0000'
+			},
+			{ name: 'birthdate', required: false, defaultChecked: false, valueText: '1815-12-10' },
+			{
+				name: 'address',
+				required: false,
+				defaultChecked: false,
+				valueText: 'locality: Tokyo; country: JP'
+			}
+		]);
+		expect(read.release?.purpose).toEqual({
+			title: 'Account notices',
+			description: 'Used to send account notices.',
+			documentUrl: 'https://example.com/purpose',
+			inlineContent: '<b>x</b>'
+		});
+	});
+
+	it('keeps values out of the page when the app does not show them', () => {
+		const read = readLiteConsent({
+			...CONSENT,
+			information_release: { ...RELEASE, show_values: false }
+		})!;
+		expect(read.release?.items.every((item) => item.valueText === null)).toBe(true);
+	});
+
+	it('is absent when the answer has none', () => {
+		expect(readLiteConsent(CONSENT)?.release).toBeNull();
+	});
+
+	it('is not drawn at all when it cannot be drawn in full', () => {
+		const bad = (release: unknown) => readLiteConsent({ ...CONSENT, information_release: release });
+		expect(bad({ ...RELEASE, presentation_key: '' })).toBeNull();
+		expect(bad({ ...RELEASE, items: [{ name: 'email' }, { name: 'email' }] })).toBeNull();
+		expect(
+			bad({ ...RELEASE, purpose: { ...RELEASE.purpose, document_url: 'http://example.com/p' } })
+		).toBeNull();
+		// More checkboxes than the decision form can post.
+		const many = Array.from({ length: 30 }, (_, i) => ({ name: `c${i}`, required: false }));
+		expect(bad({ ...RELEASE, items: many })).toBeNull();
+	});
+
+	it('sends the optional items kept checked and the key, only for what was shown', () => {
+		const shown = liteConsentShown(readLiteConsent(WITH_RELEASE)!, 'op-1');
+		const allowed = liteConsentAllow(
+			shown,
+			new Map([
+				['item:tos', 'granted'],
+				['release:phone_number', 'granted'],
+				['release:address', 'granted'],
+				// A required item, and a claim never shown, are not taken from the form.
+				['release:email', 'granted'],
+				['release:ssn', 'granted']
+			])
+		);
+		expect(allowed.ok && allowed.body).toMatchObject({
+			release_selected: ['phone_number', 'address'],
+			release_presentation_key: 'pk-1'
+		});
+		const none = liteConsentAllow(shown, new Map([['item:tos', 'granted']]));
+		expect(none.ok && none.body.release_selected).toEqual([]);
+	});
+
+	it('sends nothing about information when none was shown', () => {
+		const shown = liteConsentShown(readLiteConsent(CONSENT)!, 'op-1');
+		const allowed = liteConsentAllow(shown, new Map([['item:tos', 'granted']]));
+		expect(allowed.ok && 'release_selected' in allowed.body).toBe(false);
+		expect(allowed.ok && 'release_presentation_key' in allowed.body).toBe(false);
+	});
+
+	it('survives the transaction, and a damaged copy is not used', () => {
+		const shown = liteConsentShown(readLiteConsent(WITH_RELEASE)!, 'op-1');
+		const kept = readLiteConsentShown({ consent: structuredClone(shown) }, 'cc-1', 'op-1');
+		expect(kept?.release).toEqual(shown.release);
+		const damaged = { ...structuredClone(shown), release: { key: 1, items: [] } };
+		expect(readLiteConsentShown({ consent: damaged }, 'cc-1', 'op-1')).toBeNull();
+	});
+
+	it('draws the page and posts the choices through to ar-auth', async () => {
+		routes['/auth/consent'] = (_body, init) =>
+			init.method === 'POST'
+				? json({ redirect_url: 'https://id.example/authorize?x=1' })
+				: json(WITH_RELEASE);
+		const page = (await view()) as {
+			consent: {
+				release: { required: Array<{ label: string }>; optional: Array<{ label: string }> };
+			};
+			text: { releaseTitle: string };
+		};
+		expect(page.text.releaseTitle).toBe('Information shared with Example App');
+		expect(page.consent.release.required.map((item) => item.label)).toEqual(['Email address']);
+		expect(page.consent.release.optional.map((item) => item.label)).toEqual([
+			'Phone number',
+			'Date of birth',
+			'Postal address'
+		]);
+		await expect(
+			post('allow', { 'item:tos': 'granted', 'release:birthdate': 'granted' }).answer
+		).resolves.toEqual({ decided: true });
+		expect(consentPosts()[0].body).toMatchObject({
+			release_selected: ['birthdate'],
+			release_presentation_key: 'pk-1'
+		});
+	});
+
+	it('draws the page again when ar-auth says what the app would be given changed', async () => {
+		routes['/auth/consent'] = (_body, init) =>
+			init.method === 'POST'
+				? json({ error: 'document_changed', error_details: { refresh_consent: true } }, 409)
+				: json(WITH_RELEASE);
+		await view();
+		await expect(post('allow', { 'item:tos': 'granted' }).answer).rejects.toMatchObject({
+			status: 303,
+			location: '/consent?challenge_id=cc-1'
+		});
 	});
 });
 

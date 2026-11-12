@@ -114,7 +114,7 @@ export const POSTGRES_RESTORE_TABLE_CONTRACTS: readonly PostgresRestoreTableCont
       'device_secret_introspection_enabled',
       'device_secret_introspection_trust_groups',
       'identity_mapping',
-      'attribute_release_consent',
+      'information_release_consent',
       'authorization_signed_response_alg',
       'authorization_encrypted_response_alg',
       'authorization_encrypted_response_enc',

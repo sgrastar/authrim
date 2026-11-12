@@ -117,6 +117,9 @@ export async function getRefreshToken(
       ...(typeof result.family.consent_generation === 'number' && {
         family_consent_generation: result.family.consent_generation,
       }),
+      ...(Array.isArray(result.family.release_approval) && {
+        family_release_approval: result.family.release_approval,
+      }),
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor((result.family.expires_at || Date.now()) / 1000),
       familyId: `${userId}:${clientId}`,

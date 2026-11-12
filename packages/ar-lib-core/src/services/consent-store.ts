@@ -1,4 +1,24 @@
-import type { DatabaseAdapter } from '../db/adapter';
+import type { DatabaseAdapter, PreparedStatement } from '../db/adapter';
+import type { InformationReleaseAsk, ReleaseApprovalBasis } from './information-release-consent';
+
+/** The information release decision written with the scope consent (claim names only). */
+export interface OAuthClientReleaseDecision {
+  presented: readonly string[];
+  approved: readonly string[];
+  declined: readonly string[];
+  mode: InformationReleaseAsk;
+  basis: ReleaseApprovalBasis;
+}
+
+/** The history entry written in the same atomic operation as the consent (`consent_history`). */
+export interface OAuthClientConsentHistoryEntry {
+  action: 'granted' | 'updated' | 'scopes_updated';
+  scopesBefore?: string[] | null;
+  scopesAfter: string[];
+  ipAddressHash?: string | null;
+  userAgent?: string | null;
+  metadata?: Record<string, unknown>;
+}
 
 export interface UpsertOAuthClientConsentInput {
   consentId: string;
@@ -18,6 +38,16 @@ export interface UpsertOAuthClientConsentInput {
    * an approval racing a withdrawal records nothing.
    */
   consentGeneration: number;
+  /**
+   * The information release decision, written in the same statement. Left out, the release
+   * columns keep what they were (an update) or stay empty (a new consent).
+   */
+  release?: OAuthClientReleaseDecision;
+  /**
+   * The history of this decision, written in the same atomic operation: only when the consent
+   * itself was written (a withdrawal racing it leaves neither).
+   */
+  history?: OAuthClientConsentHistoryEntry;
 }
 
 /** Thrown when a withdrawal moved the generation on before the consent could be recorded. */
@@ -84,6 +114,96 @@ async function findOAuthClientConsent(
   );
 }
 
+const RELEASE_UPDATE_COLUMNS = `,
+            release_presented_json = ?,
+            release_approved_json = ?,
+            release_declined_json = ?,
+            release_mode = ?,
+            release_basis = ?,
+            release_decided_at = ?`;
+
+const NO_RELEASE_PARAMS = [null, null, null, null, null, null];
+
+function sortedJson(names: readonly string[]): string {
+  return JSON.stringify([...new Set(names)].sort());
+}
+
+function releaseParams(release: OAuthClientReleaseDecision, now: number): unknown[] {
+  return [
+    sortedJson(release.presented),
+    sortedJson(release.approved),
+    sortedJson(release.declined),
+    release.mode,
+    release.basis,
+    now,
+  ];
+}
+
+/**
+ * Run the consent's statement, with its history entry when there is one. The entry is written in
+ * the same batch (all or nothing), and only if the consent row now carries this write (its
+ * consent_version and updated_at), so a write the generation condition refused leaves no history.
+ */
+async function executeWithHistory(
+  adapter: DatabaseAdapter,
+  sql: string,
+  params: unknown[],
+  input: UpsertOAuthClientConsentInput,
+  consentVersion: number
+): Promise<{ rowsAffected: number }> {
+  if (!input.history) return adapter.execute(sql, params);
+  const history = input.history;
+  const statements: PreparedStatement[] = [
+    { sql, params },
+    {
+      sql: `INSERT INTO consent_history (
+              id, tenant_id, user_id, client_id, action, scopes_before, scopes_after,
+              ip_address_hash, user_agent, created_at, metadata_json
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM oauth_client_consents
+                WHERE tenant_id = ? AND user_id = ? AND client_id = ?
+                  AND consent_version = ? AND updated_at = ? AND consent_generation = ?
+             )`,
+      params: [
+        crypto.randomUUID(),
+        input.tenantId,
+        input.userId,
+        input.clientId,
+        history.action,
+        history.scopesBefore ? JSON.stringify(history.scopesBefore) : null,
+        JSON.stringify(history.scopesAfter),
+        history.ipAddressHash ?? null,
+        history.userAgent ?? null,
+        input.now,
+        JSON.stringify({
+          ...(history.metadata ?? {}),
+          ...(input.release
+            ? {
+                release: {
+                  presented: [...input.release.presented].sort(),
+                  approved: [...input.release.approved].sort(),
+                  declined: [...input.release.declined].sort(),
+                  mode: input.release.mode,
+                  basis: input.release.basis,
+                },
+              }
+            : {}),
+        }),
+        input.tenantId,
+        input.userId,
+        input.clientId,
+        consentVersion,
+        input.now,
+        input.consentGeneration,
+      ],
+    },
+  ];
+  const [result] = await adapter.batch(statements);
+  return { rowsAffected: result?.rowsAffected ?? 0 };
+}
+
 async function updateOAuthClientConsent(
   adapter: DatabaseAdapter,
   input: UpsertOAuthClientConsentInput,
@@ -94,7 +214,8 @@ async function updateOAuthClientConsent(
   }
 ): Promise<UpsertOAuthClientConsentResult> {
   const nextConsentVersion = (existing.consent_version ?? 0) + 1;
-  const result = await adapter.execute(
+  const result = await executeWithHistory(
+    adapter,
     `UPDATE oauth_client_consents
         SET scope = ?,
             selected_scopes = ?,
@@ -104,7 +225,7 @@ async function updateOAuthClientConsent(
             tos_version = ?,
             consent_version = ?,
             consent_generation = ?,
-            updated_at = ?
+            updated_at = ?${input.release ? RELEASE_UPDATE_COLUMNS : ''}
       WHERE tenant_id = ? AND user_id = ? AND client_id = ?
         AND ${CURRENT_GENERATION_CONDITION}`,
     [
@@ -117,11 +238,14 @@ async function updateOAuthClientConsent(
       nextConsentVersion,
       input.consentGeneration,
       input.now,
+      ...(input.release ? releaseParams(input.release, input.now) : []),
       input.tenantId,
       input.userId,
       input.clientId,
       ...currentGenerationParams(input),
-    ]
+    ],
+    input,
+    nextConsentVersion
   );
   // No row: withdrawn meanwhile (the withdrawal deletes the consent and moves the generation on).
   if (result.rowsAffected === 0) throw new Error(OAUTH_CLIENT_CONSENT_GENERATION_CHANGED);
@@ -150,13 +274,15 @@ export async function upsertOAuthClientConsent(
 
   if (!existing) {
     try {
-      const result = await adapter.execute(
+      const result = await executeWithHistory(
+        adapter,
         `INSERT INTO oauth_client_consents (
            id, user_id, client_id, scope, selected_scopes, granted_at, expires_at,
            privacy_policy_version, tos_version, consent_version, created_at, updated_at, tenant_id,
-           consent_generation
+           consent_generation, release_presented_json, release_approved_json,
+           release_declined_json, release_mode, release_basis, release_decided_at
          )
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
           WHERE ${CURRENT_GENERATION_CONDITION}`,
         [
           input.consentId,
@@ -173,8 +299,11 @@ export async function upsertOAuthClientConsent(
           input.now,
           input.tenantId,
           input.consentGeneration,
+          ...(input.release ? releaseParams(input.release, input.now) : NO_RELEASE_PARAMS),
           ...currentGenerationParams(input),
-        ]
+        ],
+        input,
+        1
       );
       if (result.rowsAffected === 0) throw new Error(OAUTH_CLIENT_CONSENT_GENERATION_CHANGED);
 

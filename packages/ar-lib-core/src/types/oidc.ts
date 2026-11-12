@@ -5,7 +5,7 @@
 import type { OrganizationType, PlanType, UserType } from './rbac';
 import type { AuthorizationDetails } from './rar';
 import type { JWKS } from './jwk';
-import type { AttributeReleaseConsentPolicy } from '../services/identity-release-consent';
+import type { InformationReleaseConsentSetting } from '../services/information-release-consent';
 import type { IAL } from './settings/assurance-levels';
 
 /**
@@ -486,8 +486,8 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   allow_claims_without_scope?: boolean; // Allow claims parameter to request claims without corresponding scope (default: false)
   claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
   identity_mapping?: OIDCIdentityMappingFieldMappingSelector | null;
-  /** User-facing OIDC claim release consent policy. Same shape as SAML attribute release consent. */
-  attribute_release_consent?: AttributeReleaseConsentPolicy | null;
+  /** Information release consent: whether and when the person is asked what the app is given. */
+  information_release_consent?: InformationReleaseConsentSetting | null;
   asc_enabled?: boolean;
   asc_protected_request_required?: boolean;
   asc_sao_enabled?: boolean;
@@ -674,6 +674,8 @@ export interface RefreshTokenData {
   family_created_at?: number;
   /** The consent withdrawal generation the family was granted under; absent for older families. */
   family_consent_generation?: number;
+  /** The claim names the family's information release was approved for. */
+  family_release_approval?: string[];
 }
 
 /**

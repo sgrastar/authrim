@@ -130,6 +130,7 @@ export const INTROSPECTION_PROTOCOL_ENVELOPE_CLAIMS = new Set([
  */
 export const AUTHORIZATION_SERVER_GRANT_CLAIMS = new Set([
   'authrim_consent_generation',
+  'authrim_release',
   'authrim_consent_client_id',
   'authrim_subject_issuer',
   'authrim_subject_ref',
@@ -167,6 +168,27 @@ export const AUTHORIZATION_SERVER_ASSURANCE_CLAIMS = new Set([
   VERIFIED_CLAIMS_CLAIM,
 ]);
 
+/**
+ * Claims the authorization server computes from the tenant's own records for the token, not from
+ * the person's attributes: the RBAC claims (roles, organisations, permissions, plan) and the
+ * account lifecycle. They are not information the person is asked to release
+ * (information-release-consent.ts), so no identity mapping may produce them either: a mapped value
+ * under one of these names would reach the app without the person's approval.
+ */
+export const AUTHORIZATION_SERVER_COMPUTED_CLAIMS = new Set([
+  'authrim_roles',
+  'authrim_scoped_roles',
+  'authrim_permissions',
+  'authrim_user_type',
+  'authrim_org_id',
+  'authrim_org_name',
+  'authrim_org_type',
+  'authrim_orgs',
+  'authrim_plan',
+  'authrim_relationships_summary',
+  'authrim_account_lifecycle',
+]);
+
 export function isProtectedIdentityMappingDestinationClaim(
   namespace: string,
   path: string
@@ -174,6 +196,7 @@ export function isProtectedIdentityMappingDestinationClaim(
   if (AUTHORIZATION_SERVER_GRANT_CLAIMS.has(path)) return true;
   if (AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS.has(path)) return true;
   if (AUTHORIZATION_SERVER_ASSURANCE_CLAIMS.has(path)) return true;
+  if (AUTHORIZATION_SERVER_COMPUTED_CLAIMS.has(path)) return true;
   if (namespace === 'introspection.claim') {
     return path !== 'sub' && INTROSPECTION_PROTOCOL_ENVELOPE_CLAIMS.has(path);
   }
@@ -332,6 +355,12 @@ export async function filterOidcClaimsByDestinationConsent(input: {
   /** Filled with what was decided for each field (an explanation; never a value). */
   trace?: { release?: OidcDestinationReleaseTrace };
   /**
+   * Filled with the optional fields among those released. Every applicable field is released
+   * here; which optional ones the person approved is the grant's information release approval,
+   * applied by the caller (information-release-consent.ts).
+   */
+  optionalOut?: Set<string>;
+  /**
    * For an explanation: claims whose value is a placeholder for one the explanation did not
    * derive (a test user's persistent identifier). Their values are not checked against the
    * profile, which judges the real value.
@@ -438,31 +467,20 @@ export async function filterOidcClaimsByDestinationConsent(input: {
     'OIDC'
   );
 
-  const selected =
-    assumedSelection !== undefined
-      ? assumedSelection && { fields: assumedSelection }
-      : await loadSelectedDestinationFields({
-          coreAdapter: input.coreAdapter,
-          tenantId: input.tenantId,
-          subjectId: input.subjectId,
-          protocol: 'oidc',
-          recipientType: 'oidc_client',
-          recipientId: input.clientId,
-          profileId: descriptor.profileId,
-          profileVersionId: descriptor.profileVersionId,
-          jsonColumn: 'released_claims_json',
-        });
-  if (assumedSelection === undefined) recordTrace(selected?.fields ?? null);
-  if (!selected) {
-    for (const field of applicableFields) {
-      if (!field.required) delete filtered[field.key];
-    }
-    return filtered;
-  }
-
+  if (assumedSelection === undefined) recordTrace(null);
   for (const field of applicableFields) {
-    if (!field.required && !selected.fields.has(field.key)) {
-      delete filtered[field.key];
+    if (field.required) continue;
+    if (assumedSelection !== undefined) {
+      // An explanation: the selection it assumes decides.
+      if (!assumedSelection?.has(field.key)) delete filtered[field.key];
+      continue;
+    }
+    // Optional only when no applicable entry of the profile requires the same claim.
+    if (
+      Object.prototype.hasOwnProperty.call(filtered, field.key) &&
+      !applicableFields.some((other) => other.key === field.key && other.required)
+    ) {
+      input.optionalOut?.add(field.key);
     }
   }
   return filtered;

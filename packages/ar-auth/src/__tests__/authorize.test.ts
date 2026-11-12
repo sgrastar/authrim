@@ -12,7 +12,6 @@ import { authorizeHandler } from '../authorize';
 import { createHash } from 'node:crypto';
 import {
   buildPolicyConstrainedRegionShardConfig,
-  OIDCAttributeReleaseConsentRequiredError,
   OIDCIdentityMappingRuntimeError,
   openSubjectReference,
 } from '@authrim/ar-lib-core';
@@ -214,14 +213,10 @@ vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () =>
   };
 });
 
-// The shared ID token release steps (identity mapping, claim release consent) run inside
-// ar-lib-core, so they are mocked at their own modules; both run the real implementation unless a
-// test replaces them for one call.
+// The shared ID token release step (identity mapping) runs inside ar-lib-core, so it is mocked at
+// its own module; it runs the real implementation unless a test replaces it for one call.
 const mockApplyOIDCIdentityMapping = vi.hoisted(() =>
   vi.fn<(input: { claims: Record<string, unknown> }) => unknown>()
-);
-const mockEnforceOIDCAttributeReleaseConsent = vi.hoisted(() =>
-  vi.fn<(input: Record<string, unknown>) => unknown>()
 );
 vi.mock('@authrim/ar-lib-core/services/oidc-identity-mapping', async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
@@ -232,15 +227,16 @@ vi.mock('@authrim/ar-lib-core/services/oidc-identity-mapping', async () => {
   );
   return { ...actual, applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping };
 });
-vi.mock('@authrim/ar-lib-core/services/oidc-attribute-release-consent', async () => {
-  const actual = await vi.importActual<Record<string, unknown>>(
-    '@authrim/ar-lib-core/services/oidc-attribute-release-consent'
-  );
-  mockEnforceOIDCAttributeReleaseConsent.mockImplementation(
-    actual.enforceOIDCAttributeReleaseConsent as (...args: unknown[]) => unknown
-  );
-  return { ...actual, enforceOIDCAttributeReleaseConsent: mockEnforceOIDCAttributeReleaseConsent };
-});
+
+/** The release columns of a consent row the person decided on the consent screen (nothing asked). */
+const decidedRelease = {
+  release_presented_json: '[]',
+  release_approved_json: '[]',
+  release_declined_json: '[]',
+  release_mode: 'once',
+  release_basis: 'user',
+  release_decided_at: 1_700_000_000_000,
+};
 
 /**
  * Mock KV namespace for testing
@@ -316,7 +312,10 @@ function createMockDB() {
 
   return {
     prepare,
-    batch: vi.fn().mockResolvedValue([]),
+    // A batch reports the rows each statement changed (the consent write and its history).
+    batch: vi.fn(async (statements: unknown[]) =>
+      statements.map(() => ({ success: true, meta: { changes: 1 } }))
+    ),
     _trustPolicies: trustPolicies,
     _upstreamProviders: upstreamProviders,
   } as unknown as D1Database & {
@@ -2246,7 +2245,12 @@ describe('Authorization Handler', () => {
       // (env.DB here) has none. prompt=none must find the one already given.
       await configureClientSettings(env, { 'client.sso_enabled': true });
       seedSession(env);
-      const consentRow = { scope: 'openid', granted_at: Date.now() - 1000, expires_at: null };
+      const consentRow = {
+        scope: 'openid',
+        granted_at: Date.now() - 1000,
+        expires_at: null,
+        ...decidedRelease,
+      };
       const accountDb = createMockDB();
       const prepare = vi.mocked(accountDb.prepare);
       const basePrepare = prepare.getMockImplementation()!;
@@ -2290,6 +2294,189 @@ describe('Authorization Handler', () => {
       const redirectUrl = new URL(response.headers.get('Location')!);
       expect(redirectUrl.searchParams.get('error')).toBeNull();
       expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+    });
+
+    describe('information release consent', () => {
+      const withRelease = {
+        release_presented_json: '[]',
+        release_approved_json: '[]',
+        release_declined_json: '[]',
+        release_mode: 'once',
+        release_basis: 'user',
+        release_decided_at: 1_700_000_000_000,
+      };
+      const NO_DECISION = {
+        release_presented_json: null,
+        release_approved_json: null,
+        release_declined_json: null,
+        release_mode: null,
+        release_basis: null,
+        release_decided_at: null,
+      };
+
+      function useConsentRow(row: Record<string, unknown>) {
+        const accountDb = createMockDB();
+        const prepare = vi.mocked(accountDb.prepare);
+        const basePrepare = prepare.getMockImplementation()!;
+        prepare.mockImplementation((sql: string) => {
+          const statement = basePrepare(sql);
+          if (sql.includes('FROM oauth_client_consents')) {
+            vi.mocked(statement.first).mockResolvedValue(row);
+            vi.mocked(statement.all).mockResolvedValue({ results: [row] } as never);
+          }
+          return statement;
+        });
+        mockResolveAccountDataContextFromHono.mockImplementationOnce(async (c, userId) => {
+          const context = {
+            tenantId: 'default',
+            accountId: userId,
+            legacyUserId: userId,
+            coreDb: accountDb,
+            piiDb: accountDb,
+            coreBindingRef: 'DB_ACCOUNT',
+            piiBindingRef: 'DB_ACCOUNT',
+            coreResidencyPartition: 'default',
+            piiResidencyPartition: 'default',
+            accountRouteGeneration: 1,
+            userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+            piiCacheMode: 'disabled',
+          };
+          c.set('accountDataContext', context);
+          return context;
+        });
+      }
+
+      function authorizeAs(prompt: string, extraHeaders: Record<string, string> = {}, extra = '') {
+        return app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=release&nonce=n&code_challenge=${'R'.repeat(43)}&code_challenge_method=S256${prompt}${extra}`,
+          {
+            method: 'GET',
+            headers: {
+              Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+              ...extraHeaders,
+            },
+          },
+          env
+        );
+      }
+
+      beforeEach(async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        // Not trusted: the information release is the person's decision.
+        configureClientTrustPolicy(env, { trusted: false, skipAuthorizationConsent: false });
+        seedSession(env);
+      });
+
+      it('issues the code without the screen when the person decided earlier, and stores the approval in it', async () => {
+        useConsentRow({
+          scope: 'openid',
+          granted_at: Date.now() - 1000,
+          expires_at: null,
+          consent_generation: 0,
+          ...withRelease,
+        });
+
+        const response = await authorizeAs('&prompt=none');
+
+        const location = new URL(response.headers.get('Location')!);
+        expect(location.searchParams.get('error')).toBeNull();
+        expect(location.searchParams.get('code')).toBeTruthy();
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ releaseApproval: [] })
+        );
+      });
+
+      it('answers consent_required to prompt=none when no release decision is recorded', async () => {
+        useConsentRow({
+          scope: 'openid',
+          granted_at: Date.now() - 1000,
+          expires_at: null,
+          consent_generation: 0,
+          ...NO_DECISION,
+        });
+
+        const response = await authorizeAs('&prompt=none');
+
+        const location = new URL(response.headers.get('Location')!);
+        expect(location.searchParams.get('error')).toBe('consent_required');
+        expect(location.searchParams.get('code')).toBeNull();
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('shows the consent screen when no release decision is recorded, though the scope consent exists', async () => {
+        useConsentRow({
+          scope: 'openid',
+          granted_at: Date.now() - 1000,
+          expires_at: null,
+          consent_generation: 0,
+          ...NO_DECISION,
+        });
+
+        const response = await authorizeAs('');
+
+        expect(new URL(response.headers.get('Location')!).pathname).toBe('/consent');
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('asks again, whatever was decided, when the app asks every time', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        mockGetClient.mockResolvedValue({
+          client_id: 'test-client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          scope: 'openid profile email phone address',
+          token_endpoint_auth_method: 'none',
+          information_release_consent: { enabled: true, ask: 'every_time' },
+        });
+        useConsentRow({
+          scope: 'openid',
+          granted_at: Date.now() - 1000,
+          expires_at: null,
+          consent_generation: 0,
+          ...withRelease,
+        });
+
+        const response = await authorizeAs('&prompt=none');
+
+        expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+          'consent_required'
+        );
+      });
+
+      it("takes the approval from the consent confirmation, as the person's answer on the screen", async () => {
+        getChallengeMap(env).set('confirm_release', {
+          id: 'confirm_release',
+          tenantId: 'default',
+          type: 'consent',
+          userId: 'test-user',
+          challenge: 'confirm_release',
+          metadata: {
+            purpose: 'authorize_consent_confirmation',
+            consent_generation: 0,
+            sessionId: TEST_SESSION_ID,
+            browserBinding: 'consent-browser-binding',
+            release_approval: ['email', 'name'],
+          },
+        });
+
+        const response = await authorizeAs(
+          '&prompt=none',
+          {
+            Cookie:
+              `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+              'authrim_consent_confirmation=consent-browser-binding',
+          },
+          '&_consent_confirmation_challenge=confirm_release'
+        );
+
+        const location = new URL(response.headers.get('Location')!);
+        expect(location.searchParams.get('error')).toBeNull();
+        expect(location.searchParams.get('code')).toBeTruthy();
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ releaseApproval: ['email', 'name'] })
+        );
+      });
     });
 
     describe('after the user withdrew a consent for the client', () => {
@@ -2358,6 +2545,7 @@ describe('Authorization Handler', () => {
             granted_at: grantedAt,
             expires_at: null,
             consent_generation: 3,
+            ...decidedRelease,
           },
           withdrawal: { generation: 3, revoked_at: grantedAt - 1000 },
         });
@@ -2430,6 +2618,7 @@ describe('Authorization Handler', () => {
           granted_at: revokedAt + 1_000,
           expires_at: null,
           consent_generation: 2,
+          ...decidedRelease,
         };
         useAccountDatabase({
           consent: reconsent,
@@ -2448,7 +2637,12 @@ describe('Authorization Handler', () => {
         // The cache now holds the consent given again.
         expect(put).toHaveBeenCalledWith(
           expect.any(String),
-          JSON.stringify(reconsent),
+          JSON.stringify({
+            scope: reconsent.scope,
+            granted_at: reconsent.granted_at,
+            expires_at: reconsent.expires_at,
+            consent_generation: reconsent.consent_generation,
+          }),
           expect.anything()
         );
       });
@@ -2985,6 +3179,12 @@ describe('Authorization Handler', () => {
           client?: Record<string, unknown>;
           mapping?: (input: { claims: Record<string, unknown> }) => unknown;
           waitUntil?: (work: Promise<unknown>) => void;
+          /**
+           * An app that is not trusted, whose user decided on the consent screen earlier: what
+           * they approved and declined of the information released (the approval the ID token
+           * carries is the approved names among today's candidates).
+           */
+          release?: { approved: string[]; declined: string[] };
         } = {}
       ) {
         mockGetClient.mockResolvedValue({
@@ -2997,8 +3197,57 @@ describe('Authorization Handler', () => {
           ...options.client,
         });
         await configureClientSettings(env, { 'client.sso_enabled': true });
-        configureClientTrustPolicy(env);
+        configureClientTrustPolicy(
+          env,
+          options.release ? { trusted: false, skipAuthorizationConsent: false } : {}
+        );
         seedSession(env, 'mapped-user');
+        if (options.release) {
+          const consent = {
+            scope: options.scope ?? 'openid profile',
+            granted_at: Date.now() - 1000,
+            expires_at: null,
+            consent_generation: 0,
+            release_presented_json: JSON.stringify([
+              ...options.release.approved,
+              ...options.release.declined,
+            ]),
+            release_approved_json: JSON.stringify(options.release.approved),
+            release_declined_json: JSON.stringify(options.release.declined),
+            release_mode: 'once',
+            release_basis: 'user',
+            release_decided_at: Date.now() - 1000,
+          };
+          const accountDb = createMockDB();
+          const prepare = vi.mocked(accountDb.prepare);
+          const basePrepare = prepare.getMockImplementation()!;
+          prepare.mockImplementation((sql: string) => {
+            const statement = basePrepare(sql);
+            if (sql.includes('FROM oauth_client_consents')) {
+              vi.mocked(statement.first).mockResolvedValue(consent);
+              vi.mocked(statement.all).mockResolvedValue({ results: [consent] } as never);
+            }
+            return statement;
+          });
+          mockResolveAccountDataContextFromHono.mockImplementationOnce(async (c, userId) => {
+            const context = {
+              tenantId: 'default',
+              accountId: userId,
+              legacyUserId: userId,
+              coreDb: accountDb,
+              piiDb: accountDb,
+              coreBindingRef: 'DB_ACCOUNT',
+              piiBindingRef: 'DB_ACCOUNT',
+              coreResidencyPartition: 'default',
+              piiResidencyPartition: 'default',
+              accountRouteGeneration: 1,
+              userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+              piiCacheMode: 'disabled',
+            };
+            c.set('accountDataContext', context);
+            return context;
+          });
+        }
         if (options.rootKey !== false) {
           (env as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = ROOT_KEY;
         }
@@ -3265,27 +3514,30 @@ describe('Authorization Handler', () => {
         expect(fragment.get('id_token')).toBeNull();
       });
 
-      it("holds the ID token's claims to the app's claim release consent, by the user's id", async () => {
-        mockEnforceOIDCAttributeReleaseConsent.mockImplementationOnce(async () => {
-          throw new OIDCAttributeReleaseConsentRequiredError({
-            claimSetHash: 'sha256:changed',
-            reasonCodes: ['release.attribute_consent.attribute_set_changed'],
-            consentMode: 'until_attributes_change',
-            claimNames: ['department'],
-          });
+      it('records the information release approval in the ID token, the access token and the stored code', async () => {
+        const fragment = await authorizeFor('code id_token token', { mapping: pairwise });
+
+        expect(decodeJwt(fragment.get('id_token')!).authrim_release).toEqual(['*']);
+        expect(decodeJwt(fragment.get('access_token')!).authrim_release).toEqual(['*']);
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ releaseApproval: ['*'] })
+        );
+      });
+
+      it("carries the person's earlier approval, among today's candidates, for an app that is not trusted", async () => {
+        mappingFixture.userRow = mappedUserRow();
+        const fragment = await authorizeFor('id_token token', {
+          scope: 'openid email',
+          client: { identity_mapping: null },
+          release: { approved: ['email', 'email_verified'], declined: [] },
         });
 
-        const fragment = await authorizeFor('id_token token', { mapping: pairwise });
-
-        expect(fragment.get('error')).toBe('consent_required');
-        expect(fragment.get('id_token')).toBeNull();
-        expect(mockEnforceOIDCAttributeReleaseConsent).toHaveBeenCalledWith(
-          expect.objectContaining({
-            subjectId: 'mapped-user',
-            target: 'id_token',
-            claims: expect.objectContaining({ sub: PAIRWISE_SUB, department: 'research' }),
-          })
-        );
+        const idToken = decodeJwt(fragment.get('id_token')!);
+        expect(idToken.authrim_release).toEqual(['email', 'email_verified']);
+        expect(decodeJwt(fragment.get('access_token')!).authrim_release).toEqual([
+          'email',
+          'email_verified',
+        ]);
       });
 
       describe('with identity assurance claims', () => {
@@ -3889,7 +4141,7 @@ describe('Authorization Handler', () => {
           expect(decodeJwt(granted.get('id_token')!).email).toBe('alice@example.com');
         });
 
-        describe('before the user has agreed to release any field', () => {
+        describe('after the user approved only the fields the profile requires', () => {
           beforeEach(() => {
             mappingFixture.profileConsent = 'none';
           });
@@ -3906,11 +4158,12 @@ describe('Authorization Handler', () => {
             const fragment = await authorizeFor('id_token', {
               scope: 'openid email phone',
               client: policy,
+              release: { approved: ['email'], declined: ['phone_number'] },
             });
 
             const idToken = decodeJwt(fragment.get('id_token')!);
             expect(idToken.email).toBe('alice@example.com');
-            // An optional field waits for the user's selection (the consent step stores it).
+            // An optional field the person declined is not released.
             expect(idToken).not.toHaveProperty('phone_number');
           });
         });
@@ -3928,7 +4181,33 @@ describe('Authorization Handler', () => {
           });
 
           it('is held to the Mapping Set the tenant names as its default, so its ID token loses the scope claims the profile makes optional', async () => {
-            const fragment = await authorizeFor('id_token', { scope: allScopes, client: policy });
+            const fragment = await authorizeFor('id_token', {
+              scope: allScopes,
+              client: policy,
+              release: {
+                approved: [],
+                declined: [
+                  'name',
+                  'given_name',
+                  'family_name',
+                  'middle_name',
+                  'nickname',
+                  'preferred_username',
+                  'profile',
+                  'picture',
+                  'website',
+                  'gender',
+                  'birthdate',
+                  'zoneinfo',
+                  'locale',
+                  'updated_at',
+                  'email',
+                  'email_verified',
+                  'phone_number',
+                  'phone_number_verified',
+                ],
+              },
+            });
 
             const idToken = decodeJwt(fragment.get('id_token')!);
             expect(idToken.sub).toBe('mapped-user');
@@ -4043,6 +4322,7 @@ describe('Authorization Handler', () => {
           const types = responseType.split(' ');
           const idToken = decodeJwt(fragment.get('id_token')!);
           expect(idToken.sub).toBe('mapped-user');
+          expect(idToken.authrim_release).toEqual(['*']);
           expect(Object.keys(idToken).sort()).toEqual(
             [
               'iss',
@@ -4053,6 +4333,8 @@ describe('Authorization Handler', () => {
               'auth_time',
               'nonce',
               'authrim_consent_generation',
+              // What the grant was approved to release (a trusted app: everything).
+              'authrim_release',
               // The mark that the sub is the user's id (no mapping chose another).
               'authrim_subject_account',
               'sid',
@@ -4061,7 +4343,9 @@ describe('Authorization Handler', () => {
             ].sort()
           );
           if (types.includes('token')) {
-            expect(decodeJwt(fragment.get('access_token')!).sub).toBe('mapped-user');
+            const accessToken = decodeJwt(fragment.get('access_token')!);
+            expect(accessToken.sub).toBe('mapped-user');
+            expect(accessToken.authrim_release).toEqual(['*']);
           }
         }
       );

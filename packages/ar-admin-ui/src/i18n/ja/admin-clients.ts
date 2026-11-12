@@ -203,16 +203,22 @@ const adminClients = {
 		'このclientのIDトークン、UserInfo、同意画面で使用するactive Field Mapping Setを選択します。「テナント既定に従う」は、テナント既定のMapping Set、なければプラットフォーム既定、それもなければマッピングなしになります。activateしただけでは適用されません。',
 	admin_client_detail_identity_mapping_policy_display_hint:
 		'OIDC field mappingのclient overrideです。空の場合はテナント既定のMapping Set（なければプラットフォーム既定、なければなし）に従います。',
-	admin_client_detail_attribute_release_consent: 'Claim提供の同意',
-	admin_client_detail_attribute_release_consent_disabled: 'claim提供前に確認しない',
-	admin_client_detail_attribute_release_consent_once: '初回のみ確認して記憶する',
-	admin_client_detail_attribute_release_consent_every_time: 'OIDC提供ごとに確認する',
-	admin_client_detail_attribute_release_consent_until_attributes_change:
-		'claimが変わったら再確認する',
-	admin_client_detail_attribute_release_consent_hint:
-		'このclientへID TokenまたはUserInfo claimを提供する前に、Authrimがclaim提供同意を確認するかを制御します。',
-	admin_client_detail_attribute_release_consent_display_hint:
-		'OIDC ID TokenとUserInfoのclaim提供時にruntime enforcementされます。',
+	admin_client_detail_information_release_consent: '情報提供の同意',
+	admin_client_detail_information_release_consent_enabled:
+		'このサービスへ情報を渡す前に本人へ確認する',
+	admin_client_detail_information_release_consent_off: '確認しない',
+	admin_client_detail_information_release_consent_ask: '聞くタイミング',
+	admin_client_detail_information_release_consent_ask_once: '一度だけ',
+	admin_client_detail_information_release_consent_ask_every_time: '毎回',
+	admin_client_detail_information_release_consent_ask_when_items_change: '項目が変わったとき',
+	admin_client_detail_information_release_consent_show_values: '値を表示する',
+	admin_client_detail_information_release_consent_purpose: '利用目的の同意文ID',
+	admin_client_detail_information_release_consent_purpose_hint:
+		'任意。サービスへ情報を渡す理由を説明する同意文を、情報の一覧と一緒に表示します。',
+	admin_client_detail_information_release_consent_hint:
+		'このサービスへIDトークンまたはUserInfoのclaimを渡す前に表示する、情報提供の同意画面を制御します。必須項目は常に渡され、任意項目は本人が同意したときだけ渡されます。',
+	admin_client_detail_information_release_consent_display_hint:
+		'OIDCのIDトークン、UserInfo、アクセストークンのclaim提供に適用されます。',
 	admin_client_detail_scope_required: 'Scope required',
 	admin_client_detail_advanced_syntax_claims: 'Advanced Syntax for Claims',
 	admin_client_detail_asc: 'ASC',

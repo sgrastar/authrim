@@ -3,7 +3,7 @@
 	import { expect, fn, userEvent, within } from 'storybook/test';
 	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
 	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
-	import { consentBase, consentItems } from './consent-fixtures';
+	import { consentBase, consentItems, informationRelease } from './consent-fixtures';
 	import ConsentView from './ConsentView.svelte';
 
 	const { Story } = defineMeta({
@@ -22,7 +22,7 @@
 			docs: {
 				description: {
 					component:
-						'What an application is asking to access. Parts appear by tenant and client settings: trusted badge, delegated access warning, organisation picker, roles, and consent items (required items block Allow until given). The route (`src/routes/(main)/consent`) owns the requests.'
+						'What an application is asking to access. Parts appear by tenant and client settings: trusted badge, delegated access warning, organisation picker, roles, consent items (required items block Allow until given), and the information shared with the app (required rows cannot be unticked; optional ones are checkboxes that start checked only when approved before; values appear only when the app shows them). The route (`src/routes/(main)/consent`) owns the requests.'
 				}
 			}
 		}
@@ -108,6 +108,43 @@
 	args={{
 		consentData: { ...consentBase, consent_management_enabled: true, consent_items: consentItems },
 		consentItemDecisions: { tos: 'granted', 'terms-update': 'granted', news: 'denied' }
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Information release"
+	args={{ consentData: { ...consentBase, information_release: informationRelease } }}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Information release (values hidden)"
+	args={{
+		consentData: {
+			...consentBase,
+			information_release: { ...informationRelease, show_values: false }
+		}
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Information release (toggle optional)"
+	args={{ consentData: { ...consentBase, information_release: informationRelease } }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Language-independent: the optional items in the order given (phone, birthdate, ...).
+		const [phone, birthdate] = canvas.getAllByRole('checkbox');
+		await expect(phone).toBeChecked();
+		await expect(birthdate).not.toBeChecked();
+		await userEvent.click(phone);
+		await userEvent.click(birthdate);
+		await expect(phone).not.toBeChecked();
+		await expect(birthdate).toBeChecked();
 	}}
 >
 	{#snippet template(args)}{@render page(args)}{/snippet}

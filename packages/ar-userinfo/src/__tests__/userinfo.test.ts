@@ -55,15 +55,20 @@ const mockCreateCustomClaimSchemaResolverFromSources = vi.hoisted(() =>
   })
 );
 const mockApplyOIDCIdentityMapping = vi.hoisted(() => vi.fn());
-const mockEnforceOIDCAttributeReleaseConsent = vi.hoisted(() => vi.fn());
 const mockResolveAccountDataContextFromHono = vi.hoisted(() => vi.fn());
 const mockCreatePIIContextFromHono = vi.hoisted(() => vi.fn());
 
 // Mock the shared module
+// No consent withdrawal is recorded (generation 0) unless a test says otherwise.
+const mockFindConsentRevocation = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ generation: 0, revokedAt: null })
+);
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    findOAuthClientConsentRevocation: mockFindConsentRevocation,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
     introspectTokenFromContext: mockIntrospectTokenFromContext,
     getClient: mockGetClient,
     getClientCached: mockGetClientCached,
@@ -81,7 +86,6 @@ vi.mock('@authrim/ar-lib-core', async () => {
     resolveCustomClaimRuntimeSourcesFromHono: mockResolveCustomClaimRuntimeSourcesFromEnv,
     createCustomClaimSchemaResolverFromSources: mockCreateCustomClaimSchemaResolverFromSources,
     applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping,
-    enforceOIDCAttributeReleaseConsent: mockEnforceOIDCAttributeReleaseConsent,
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
   };
@@ -98,7 +102,6 @@ import {
   validateJWEOptions,
   getCachedUser,
   getCachedUserCore,
-  OIDCAttributeReleaseConsentRequiredError,
   OIDCIdentityMappingRuntimeError,
 } from '@authrim/ar-lib-core';
 
@@ -245,8 +248,11 @@ describe('UserInfo Endpoint', () => {
     vi.clearAllMocks();
     // Re-apply mock implementations after vi.clearAllMocks()
     // This ensures mocks work consistently across all tests
-    mockGetClientCached.mockImplementation((_c: unknown, env: unknown, clientId: string) =>
-      mockGetClient(env, clientId)
+    // A client no test set up is a known client with no settings; a test that wants an unknown
+    // client (deleted since the token was issued) makes mockGetClientCached resolve null itself.
+    mockGetClientCached.mockImplementation(
+      async (_c: unknown, env: unknown, clientId: string) =>
+        (await mockGetClient(env, clientId)) ?? { client_id: clientId }
     );
     // Default mock for getCachedUser - returns sample user
     // Tests that need different behavior can override this
@@ -272,7 +278,7 @@ describe('UserInfo Endpoint', () => {
     mockApplyOIDCIdentityMapping.mockImplementation(async (input: { claims: unknown }) => ({
       claims: input.claims,
     }));
-    mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue(undefined);
+    mockFindConsentRevocation.mockResolvedValue({ generation: 0, revokedAt: null });
     mockResolveAccountDataContextFromHono.mockResolvedValue(undefined);
     mockCreatePIIContextFromHono.mockReturnValue({
       coreAdapter: {},
@@ -397,6 +403,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'profile email',
           client_id: 'client-123',
@@ -429,6 +436,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           // Missing 'sub' claim
           scope: 'openid profile',
           client_id: 'client-123',
@@ -471,7 +479,7 @@ describe('UserInfo Endpoint', () => {
       const c = createMockContext({ headers: { Authorization: 'Bearer valid-token' } });
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid' },
+        claims: { authrim_release: ['*'], sub: 'user-123', scope: 'openid' },
       });
       await userinfoHandler(c);
 
@@ -482,7 +490,7 @@ describe('UserInfo Endpoint', () => {
       const c = createMockContext({ headers: { Authorization: 'Bearer valid-token' } });
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid' },
+        claims: { authrim_release: ['*'], sub: 'user-123', scope: 'openid' },
       });
       mockResolveAccountDataContextFromHono.mockRejectedValue(
         new Error('account_data_route_not_found')
@@ -500,7 +508,7 @@ describe('UserInfo Endpoint', () => {
       const c = createMockContext({ headers: { Authorization: 'Bearer valid-token' } });
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid' },
+        claims: { authrim_release: ['*'], sub: 'user-123', scope: 'openid' },
       });
       mockResolveAccountDataContextFromHono.mockRejectedValue(
         new Error('lookup_route_binding_generation_stale')
@@ -524,6 +532,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'nonexistent-user',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -578,6 +587,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -609,6 +619,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid',
           client_id: 'client-123',
@@ -645,6 +656,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -679,6 +691,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid email',
           client_id: 'client-123',
@@ -709,6 +722,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile email',
           client_id: 'client-123',
@@ -769,6 +783,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid email',
           client_id: 'client-123',
@@ -821,6 +836,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid email',
           client_id: 'client-123',
@@ -842,6 +858,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid phone',
           client_id: 'client-123',
@@ -870,6 +887,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid address',
           client_id: 'client-123',
@@ -902,6 +920,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile email phone address',
           client_id: 'client-123',
@@ -932,6 +951,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: '',
           client_id: 'client-123',
@@ -961,6 +981,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid',
           client_id: 'client-123',
@@ -1002,6 +1023,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid',
           client_id: 'client-123',
@@ -1041,6 +1063,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -1085,6 +1108,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -1110,6 +1134,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile email',
           client_id: 'client-123',
@@ -1196,7 +1221,6 @@ describe('UserInfo Endpoint', () => {
         expect(JSON.stringify(store.rows())).not.toMatch(
           /user-123|test@example.com|private-db-canary|private-write-canary|claims|stack/
         );
-        expect(mockEnforceOIDCAttributeReleaseConsent).not.toHaveBeenCalled();
       } finally {
         await Promise.all(pending);
         store.db.close();
@@ -1215,12 +1239,6 @@ describe('UserInfo Endpoint', () => {
         sub: 'pairwise-subject',
         department: 'security',
       });
-      expect(mockEnforceOIDCAttributeReleaseConsent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          subjectId: 'user-123',
-          claims: { sub: 'pairwise-subject', department: 'security' },
-        })
-      );
     });
 
     it("gives the mapping the user's attributes, so it derives the ID token's sub whatever scope was released", async () => {
@@ -1256,58 +1274,161 @@ describe('UserInfo Endpoint', () => {
       await userinfoHandler(c);
 
       expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: code }), status);
-      expect(mockEnforceOIDCAttributeReleaseConsent).not.toHaveBeenCalled();
     });
 
-    it.each([
-      [
-        ['release.attribute_consent.attribute_set_changed'],
-        'User consent is required because the UserInfo claim set has changed',
-      ],
-      [
-        ['release.attribute_consent.every_time'],
-        'User consent is required for this UserInfo claim release',
-      ],
-      [
-        ['release.attribute_consent.missing'],
-        'User consent is required before releasing UserInfo claims',
-      ],
-    ])('returns a stable consent_required response for reason %s', async (reasonCodes, message) => {
-      const c = prepareClientBoundRequest();
-      mockEnforceOIDCAttributeReleaseConsent.mockRejectedValue(
-        new OIDCAttributeReleaseConsentRequiredError({
-          claimSetHash: 'hash',
-          reasonCodes,
-          consentMode: 'once',
-          claimNames: ['email'],
-        })
-      );
+    describe('information release approval carried by the access token', () => {
+      // The mapping reports `email` as optional (the app's Destination Profile lists it so).
+      function mapWithOptionalEmail() {
+        mockApplyOIDCIdentityMapping.mockImplementation(
+          async (input: { claims: unknown; releaseOptionalOut?: Set<string> }) => {
+            input.releaseOptionalOut?.add('email');
+            return { claims: input.claims };
+          }
+        );
+      }
 
-      await userinfoHandler(c);
+      function requestWith(tokenClaims: Record<string, unknown>) {
+        const c = createMockContext({ headers: { Authorization: 'Bearer valid-token' } });
+        vi.mocked(introspectTokenFromContext).mockResolvedValue({
+          valid: true,
+          claims: {
+            sub: 'user-123',
+            scope: 'openid profile email',
+            client_id: 'client-123',
+            ...tokenClaims,
+          },
+        });
+        vi.mocked(getClient).mockResolvedValue({ client_id: 'client-123' } as never);
+        vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
+        return c;
+      }
 
-      expect(c.json).toHaveBeenCalledWith(
-        {
-          error: 'consent_required',
-          error_description: message,
-        },
-        403
-      );
-      expect(c.header).toHaveBeenCalledWith('Cache-Control', 'no-store');
+      it('drops an optional claim the approval does not name, and releases the approved ones', async () => {
+        mapWithOptionalEmail();
+        const c = requestWith({ authrim_release: ['email_verified'], scope: 'openid email' });
+
+        await userinfoHandler(c);
+
+        const body = vi.mocked(c.json).mock.calls[0][0] as Record<string, unknown>;
+        expect(body.sub).toBe('user-123');
+        expect(body).not.toHaveProperty('email');
+        expect(body.email_verified).toBe(true);
+      });
+
+      it('releases everything for a trusted approval (*)', async () => {
+        mapWithOptionalEmail();
+        const c = requestWith({ authrim_release: ['*'] });
+
+        await userinfoHandler(c);
+
+        const body = vi.mocked(c.json).mock.calls[0][0] as Record<string, unknown>;
+        expect(body.email).toBe('test@example.com');
+      });
+
+      it('answers 403 consent_required when a required claim is not approved', async () => {
+        // Without a Destination Profile everything is required.
+        const c = requestWith({ authrim_release: ['name'] });
+
+        await userinfoHandler(c);
+
+        expect(c.json).toHaveBeenCalledWith(
+          {
+            error: 'consent_required',
+            error_description: 'User consent is required before releasing UserInfo claims',
+          },
+          403
+        );
+        expect(c.header).toHaveBeenCalledWith('Cache-Control', 'no-store');
+      });
+
+      it('answers 403 consent_required for a token that carries no approval, since claims are asked for', async () => {
+        const c = requestWith({ authrim_release: undefined });
+
+        await userinfoHandler(c);
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'consent_required' }),
+          403
+        );
+      });
+
+      it('releases only the protocol claims, without approval, when only openid was granted', async () => {
+        const c = requestWith({ authrim_release: undefined, scope: 'openid' });
+
+        await userinfoHandler(c);
+
+        expect(c.json).toHaveBeenCalledWith({ sub: 'user-123' });
+      });
+
+      it('releases no user claim when the app has no metadata (only the protocol claims)', async () => {
+        const c = requestWith({ authrim_release: ['*'] });
+        mockGetClientCached.mockResolvedValueOnce(null);
+
+        await userinfoHandler(c);
+
+        const body = vi.mocked(c.json).mock.calls[0][0] as Record<string, unknown>;
+        expect(body).toEqual({ sub: 'user-123' });
+      });
     });
 
-    it('masks unexpected consent service failures', async () => {
-      const c = prepareClientBoundRequest();
-      mockEnforceOIDCAttributeReleaseConsent.mockRejectedValue(new Error('database unavailable'));
+    describe('consent withdrawal', () => {
+      function requestWithGeneration(generation: number) {
+        const c = createMockContext({ headers: { Authorization: 'Bearer valid-token' } });
+        vi.mocked(introspectTokenFromContext).mockResolvedValue({
+          valid: true,
+          claims: {
+            sub: 'user-123',
+            scope: 'openid profile',
+            client_id: 'client-123',
+            authrim_release: ['*'],
+            authrim_consent_generation: generation,
+          },
+        });
+        vi.mocked(getClient).mockResolvedValue({ client_id: 'client-123' } as never);
+        return c;
+      }
 
-      await userinfoHandler(c);
+      it('answers 401 invalid_token for a token of a withdrawn consent generation', async () => {
+        mockFindConsentRevocation.mockResolvedValue({
+          generation: 2,
+          revokedAt: 1_700_000_000_000,
+        });
+        const c = requestWithGeneration(1);
 
-      expect(c.json).toHaveBeenCalledWith(
-        {
-          error: 'server_error',
-          error_description: 'Failed to evaluate claim release consent',
-        },
-        500
-      );
+        await userinfoHandler(c);
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'invalid_token' }),
+          401
+        );
+        expect(c.header).toHaveBeenCalledWith('WWW-Authenticate', 'Bearer error="invalid_token"');
+      });
+
+      it('answers the token of the current generation', async () => {
+        mockFindConsentRevocation.mockResolvedValue({
+          generation: 2,
+          revokedAt: 1_700_000_000_000,
+        });
+        const c = requestWithGeneration(2);
+
+        await userinfoHandler(c);
+
+        const body = vi.mocked(c.json).mock.calls[0][0] as Record<string, unknown>;
+        expect(body.sub).toBe('user-123');
+        expect(body).not.toHaveProperty('error');
+      });
+
+      it('answers 503 when the withdrawal state cannot be read', async () => {
+        mockFindConsentRevocation.mockRejectedValue(new Error('database unavailable'));
+        const c = requestWithGeneration(1);
+
+        await userinfoHandler(c);
+
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'temporarily_unavailable' }),
+          503
+        );
+      });
     });
   });
 
@@ -1334,6 +1455,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'signed-client',
@@ -1373,7 +1495,12 @@ describe('UserInfo Endpoint', () => {
       });
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid profile', client_id: 'es-client' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'es-client',
+        },
       });
       vi.mocked(getClient).mockResolvedValue({
         client_id: 'es-client',
@@ -1399,6 +1526,7 @@ describe('UserInfo Endpoint', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -1464,6 +1592,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -1505,6 +1634,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -1548,6 +1678,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -1595,6 +1726,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid email',
           client_id: 'client-123',
@@ -1627,6 +1759,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid phone',
           client_id: 'client-123',
@@ -1654,6 +1787,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -1686,6 +1820,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid address',
           client_id: 'client-123',
@@ -1713,6 +1848,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile email',
           client_id: 'client-123',
@@ -1766,6 +1902,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'nonexistent-user',
           scope: 'openid',
           client_id: 'client-123',

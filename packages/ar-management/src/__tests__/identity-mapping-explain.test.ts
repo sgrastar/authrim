@@ -3,6 +3,7 @@ import {
   ADMIN_PERMISSIONS,
   adminAuthMiddleware,
   applyOIDCIdentityMapping,
+  applyReleaseApproval,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
   requireAdminPermissions,
@@ -653,7 +654,10 @@ describe('an explanation', () => {
         includeScopeClaims: surface === 'userinfo',
       });
       if (!evaluated.ok) throw new Error('evaluation failed');
-      const issued = await applyOIDCIdentityMapping({
+      // The issuing path releases every applicable field and holds the optional ones to the
+      // grant's approval: with no consent given, its required ones only.
+      const optional = new Set<string>();
+      const mapped = await applyOIDCIdentityMapping({
         adapter: sqliteAdapter(t.core),
         env: { DB_ADMIN: t.adapter, SETTINGS: t.settings.namespace } as never,
         tenantId: TENANT,
@@ -663,7 +667,11 @@ describe('an explanation', () => {
         grantedScopes: ['openid', 'email', 'profile'],
         claims: evaluated.claims,
         sourceAttributes: { ...PERSON, ...userData },
+        releaseOptionalOut: optional,
       });
+      const held = applyReleaseApproval(mapped.claims, optional, ['@required']);
+      if (!held.ok) throw new Error('release refused');
+      const issued = { claims: held.claims };
       const releasedByExplain = explained.claims
         .filter((line: { released: boolean }) => line.released)
         .map((line: { claim: string }) => line.claim)

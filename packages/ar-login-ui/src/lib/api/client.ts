@@ -2376,6 +2376,34 @@ interface ConsentFeatureFlags {
 	show_roles: boolean;
 }
 
+/** One piece of information (an OIDC claim) the app would be given. */
+export interface ConsentInformationReleaseItem {
+	name: string;
+	/** Always released when the user allows. Optional items can be left out. */
+	required: boolean;
+	/** Whether the user approved it last time; optional items start from this. */
+	previously_approved?: boolean;
+	/** The value released; present only when the app's setting shows values. */
+	value?: unknown;
+}
+
+/** The "information shared with the app" part of the consent screen. */
+export interface ConsentInformationRelease {
+	items: ConsentInformationReleaseItem[];
+	show_values: boolean;
+	/** Echoed back on approval: the answer is taken only for what was shown. */
+	presentation_key: string;
+	/** Why the app is given the information (shown, not agreed to). */
+	purpose?: {
+		statement_id: string;
+		version: string;
+		title: string;
+		description?: string;
+		document_url?: string | null;
+		inline_content?: string | null;
+	};
+}
+
 interface ConsentScreenData {
 	challenge_id: string;
 	client: ConsentClientInfo;
@@ -2387,6 +2415,7 @@ interface ConsentScreenData {
 	acting_as: ConsentActingAsInfo | null;
 	target_org_id: string | null;
 	features: ConsentFeatureFlags;
+	information_release?: ConsentInformationRelease;
 }
 
 export interface ConsentSubmission {
@@ -2396,6 +2425,10 @@ export interface ConsentSubmission {
 	acting_as_user_id?: string;
 	consent_item_decisions?: Record<string, 'granted' | 'denied'>;
 	consent_item_versions?: Record<string, { version_id: string; content_hash: string | null }>;
+	/** The optional information items the user kept checked (required ones go with approval). */
+	release_selected?: string[];
+	/** `information_release.presentation_key` of the screen that was shown. */
+	release_presentation_key?: string;
 }
 
 /**

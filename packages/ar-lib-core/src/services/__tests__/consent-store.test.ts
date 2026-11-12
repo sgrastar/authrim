@@ -23,7 +23,7 @@ function createConsentDatabase(
   options: { beforeFirstInsert?: (db: DatabaseSync) => void; wrapConflict?: boolean } = {}
 ) {
   const db = new DatabaseSync(':memory:');
-  for (const file of ['001_0_5_0_core_baseline.sql']) {
+  for (const file of ['001_0_5_0_core_baseline.sql', '010_information_release_consent.sql']) {
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, MIGRATIONS), 'utf8'), 'sqlite'));
   }
   const values = (params: unknown[] = []) => params as SqlValue[];
@@ -54,8 +54,19 @@ function createConsentDatabase(
     async transaction() {
       throw new Error('not used');
     },
-    async batch() {
-      return [];
+    async batch(statements: Array<{ sql: string; params?: unknown[] }>) {
+      db.exec('BEGIN');
+      try {
+        const results = [];
+        for (const statement of statements) {
+          results.push(await adapter.execute(statement.sql, statement.params));
+        }
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
     },
     async isHealthy() {
       return { healthy: true, latencyMs: 0, type: 'sqlite' };
@@ -211,6 +222,72 @@ describe('upsertOAuthClientConsent', () => {
     await upsertOAuthClientConsent(adapter, { ...input, consentGeneration: 2 });
 
     expect(consents()).toEqual([expect.objectContaining({ consent_generation: 2 })]);
+  });
+});
+
+describe('upsertOAuthClientConsent with the information release and its history', () => {
+  const release = {
+    presented: ['email', 'name'],
+    approved: ['name'],
+    declined: ['email'],
+    mode: 'once' as const,
+    basis: 'user' as const,
+  };
+  const history = { action: 'granted' as const, scopesAfter: ['openid', 'profile'] };
+  const withoutForeignKeys = () => {
+    const created = createConsentDatabase();
+    created.db.exec('PRAGMA foreign_keys = OFF');
+    return created;
+  };
+  const historyRows = (db: DatabaseSync) =>
+    db.prepare('SELECT action, metadata_json FROM consent_history').all() as Array<{
+      action: string;
+      metadata_json: string | null;
+    }>;
+
+  it('writes the decision with the consent and its history in one batch', async () => {
+    const { adapter, db } = withoutForeignKeys();
+    await upsertOAuthClientConsent(adapter, { ...input, release, history });
+    expect(
+      db
+        .prepare(
+          'SELECT release_approved_json, release_declined_json, release_basis FROM oauth_client_consents'
+        )
+        .get()
+    ).toEqual({
+      release_approved_json: '["name"]',
+      release_declined_json: '["email"]',
+      release_basis: 'user',
+    });
+    const [entry] = historyRows(db);
+    expect(entry?.action).toBe('granted');
+    const metadata = JSON.parse(entry?.metadata_json ?? '{}') as { release?: unknown };
+    expect(metadata.release).toMatchObject({
+      approved: ['name'],
+      declined: ['email'],
+    });
+  });
+
+  it('leaves neither when a withdrawal moved the generation on', async () => {
+    const { adapter, db, consents } = withoutForeignKeys();
+    db.prepare(
+      `INSERT INTO oauth_client_consent_revocations (tenant_id, user_id, client_id, generation, revoked_at)
+       VALUES ('tenant-a', 'user-1', 'client-1', 1, 10)`
+    ).run();
+    await expect(
+      upsertOAuthClientConsent(adapter, { ...input, release, history })
+    ).rejects.toThrow();
+    expect(consents()).toEqual([]);
+    expect(historyRows(db)).toEqual([]);
+  });
+
+  it('keeps the earlier decision when an update gives none', async () => {
+    const { adapter, db } = withoutForeignKeys();
+    await upsertOAuthClientConsent(adapter, { ...input, release });
+    await upsertOAuthClientConsent(adapter, { ...input, now: 200, grantedAt: 200 });
+    expect(db.prepare('SELECT release_approved_json FROM oauth_client_consents').get()).toEqual({
+      release_approved_json: '["name"]',
+    });
   });
 });
 

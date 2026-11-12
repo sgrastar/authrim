@@ -99,6 +99,12 @@ import {
   mapIDTokenClaims,
   enforceIDTokenAttributeRelease,
   idTokenGrantClaims,
+  readInformationReleaseConsentSetting,
+  resolveClientTrustPolicy,
+  findReleaseConsentRecord,
+  releaseApprovalWithoutScreen,
+  readReleaseApproval,
+  RELEASE_APPROVAL_CLAIM,
   type IDTokenGrant,
   type IDTokenReleaseContext,
   type IDTokenReleaseFailure,
@@ -1005,7 +1011,10 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
   claims: Record<string, unknown>,
   grantedScopes?: string[],
   carries?: IDTokenClaimsCarried
-): Promise<{ ok: true; claims: Record<string, unknown> } | { ok: false; response: Response }> {
+): Promise<
+  | { ok: true; claims: Record<string, unknown>; optional: Set<string> }
+  | { ok: false; response: Response }
+> {
   const mapped = await mapIDTokenClaims(
     idTokenReleaseContext(c, tenantId, clientId, clientMetadata),
     claims,
@@ -1013,26 +1022,64 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
     carries
   );
   return mapped.ok
-    ? { ok: true, claims: mapped.claims }
+    ? { ok: true, claims: mapped.claims, optional: mapped.optional }
     : { ok: false, response: idTokenReleaseFailureResponse(c, mapped.failure) };
 }
 
-/** The ID token's claim release consent is the user's (`userId`), whatever sub the token carries. */
-async function enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+/**
+ * Hold an ID token's claims to the information release approval its grant carries
+ * (information-release-consent.ts). The claims returned are the ones to sign.
+ */
+function enforceOIDCAttributeReleaseConsentForIDTokenClaims(
   c: Context<{ Bindings: Env }>,
-  tenantId: string,
   clientMetadata: ClientMetadata,
-  userId: string,
-  claims: Record<string, unknown>
-): Promise<{ ok: true } | { ok: false; response: Response }> {
-  const released = await enforceIDTokenAttributeRelease(
-    idTokenReleaseContext(c, tenantId, clientMetadata.client_id, clientMetadata),
-    userId,
-    claims
+  approval: readonly string[] | null,
+  claims: Record<string, unknown>,
+  optional: ReadonlySet<string>
+): { ok: true; claims: Record<string, unknown> } | { ok: false; response: Response } {
+  const released = enforceIDTokenAttributeRelease(
+    { clientId: clientMetadata.client_id, log: getLogger(c).module('TOKEN') },
+    approval,
+    claims,
+    optional
   );
   return released.ok
-    ? { ok: true }
+    ? { ok: true, claims: released.claims }
     : { ok: false, response: idTokenReleaseFailureResponse(c, released.failure) };
+}
+
+/**
+ * The information release a grant that does not go through the consent screen carries (device
+ * flow, CIBA, native SSO): the automatic approval (a trusted app, or one that does not ask), else
+ * the person's last decision on the app unless it asks every time (information-release-consent.ts).
+ * Throws when it cannot be read.
+ */
+async function releaseApprovalForGrantWithoutScreen(
+  c: Context<{ Bindings: Env }>,
+  account: DatabaseAdapter,
+  clientMetadata: ClientMetadata,
+  userId: string,
+  consentGeneration: number
+): Promise<string[] | null> {
+  const tenantId = getTenantIdFromContext(c);
+  const setting = readInformationReleaseConsentSetting(clientMetadata.information_release_consent);
+  const trust = await resolveClientTrustPolicy(
+    createAuthContextFromHono(c, tenantId).coreAdapter,
+    tenantId,
+    'oidc_client',
+    clientMetadata.client_id
+  );
+  const trusted = trust !== null && (trust.trusted || trust.skip_authorization_consent);
+  const record =
+    trusted || !setting.enabled
+      ? null
+      : await findReleaseConsentRecord(account, {
+          tenantId,
+          userId,
+          clientId: clientMetadata.client_id,
+          consentGeneration,
+        });
+  return releaseApprovalWithoutScreen(setting, record, trusted);
 }
 
 type DPoPValidationResult = Awaited<ReturnType<typeof validateDPoPProof>>;
@@ -1542,6 +1589,7 @@ interface AuthCodeStoreResponse {
   state?: string;
   createdAt?: number;
   consentGeneration?: number; // The user's consent withdrawal generation when the code was granted
+  releaseApproval?: unknown; // The claim names its information release was approved for
   claims?: string; // JSON string of claims parameter
   claimsRequestProtected?: boolean;
   authTime?: number;
@@ -2452,6 +2500,8 @@ async function handleAuthorizationCodeGrant(
       authorizationDetails: consumedData.authorizationDetails, // RFC 9396: Rich Authorization Requests
       created_at: consumedData.createdAt, // When the code was issued (ms)
       consent_generation: consumedData.consentGeneration, // Its consent withdrawal generation
+      // The claim names its information release was approved for.
+      release_approval: readReleaseApproval(consumedData.releaseApproval),
     };
   } catch (error) {
     // RPC throws error for invalid codes (not found, already consumed, PKCE mismatch, client mismatch)
@@ -2951,6 +3001,8 @@ async function handleAuthorizationCodeGrant(
       consentClientId: client_id,
       tokenClientId: client_id,
     }),
+    // The information release the authorization was approved for (UserInfo holds to it).
+    [RELEASE_APPROVAL_CLAIM]: authCodeData.release_approval ?? [],
   };
 
   // Phase 2 Policy Embedding: Add evaluated permissions
@@ -3306,17 +3358,20 @@ async function handleAuthorizationCodeGrant(
     c,
     'token_attribute_consent',
     () =>
-      enforceOIDCAttributeReleaseConsentForIDTokenClaims(
-        c,
-        tenantId,
-        clientMetadata,
-        authCodeData.sub,
-        idTokenClaims
+      Promise.resolve(
+        enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+          c,
+          clientMetadata,
+          authCodeData.release_approval,
+          idTokenClaims,
+          mappedIdTokenClaims.optional
+        )
       )
   );
   if (!idTokenConsent.ok) {
     return idTokenConsent.response;
   }
+  idTokenClaims = idTokenConsent.claims;
 
   let idToken: string;
   try {
@@ -3342,6 +3397,7 @@ async function handleAuthorizationCodeGrant(
         {
           userId: authCodeData.sub,
           consentGeneration: authCodeData.consent_generation ?? consentWithdrawal.generation,
+          releaseApproval: authCodeData.release_approval,
         }
       );
       log.debug('Created SD-JWT ID Token', { clientId: client_id, action: 'SD-JWT' });
@@ -3359,6 +3415,7 @@ async function handleAuthorizationCodeGrant(
           {
             userId: authCodeData.sub,
             consentGeneration: authCodeData.consent_generation ?? consentWithdrawal.generation,
+            releaseApproval: authCodeData.release_approval,
           }
         )
       );
@@ -3500,6 +3557,8 @@ async function handleAuthorizationCodeGrant(
                 ...(authCodeData.pushed_signed_request ? { pushed_signed_request: true } : {}),
               },
               consentGeneration: consentWithdrawal.generation,
+              // Kept by the family, so its refreshes release what the authorization approved.
+              releaseApproval: authCodeData.release_approval ?? [],
             })
           );
           refreshTokenJti = familyResult.jti;
@@ -4362,6 +4421,8 @@ async function handleRefreshTokenGrant(
         consentClientId: client_id,
         tokenClientId: client_id,
       }),
+      // The information release the family's authorization was approved for.
+      [RELEASE_APPROVAL_CLAIM]: refreshTokenData.family_release_approval ?? [],
     };
 
     // Phase 2 Policy Embedding: Add evaluated permissions
@@ -4453,16 +4514,17 @@ async function handleRefreshTokenGrant(
       }
       idTokenClaims = mappedIdTokenClaims.claims;
 
-      const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+      const idTokenConsent = enforceOIDCAttributeReleaseConsentForIDTokenClaims(
         c,
-        tenantId,
         clientMetadata,
-        refreshTokenData.sub,
-        idTokenClaims
+        refreshTokenData.family_release_approval ?? null,
+        idTokenClaims,
+        mappedIdTokenClaims.optional
       );
       if (!idTokenConsent.ok) {
         return idTokenConsent.response;
       }
+      idTokenClaims = idTokenConsent.claims;
 
       // Check if client requests SD-JWT ID Token (RFC 9901)
       // SD-JWT for a client that requests it, where the tenant enables it (feature.enable_sd_jwt).
@@ -4486,6 +4548,7 @@ async function handleRefreshTokenGrant(
             userId: refreshTokenData.sub,
             consentGeneration:
               refreshTokenData.family_consent_generation ?? familyConsentState.generation,
+            releaseApproval: refreshTokenData.family_release_approval ?? null,
           }
         );
       } else {
@@ -4499,6 +4562,7 @@ async function handleRefreshTokenGrant(
             userId: refreshTokenData.sub,
             consentGeneration:
               refreshTokenData.family_consent_generation ?? familyConsentState.generation,
+            releaseApproval: refreshTokenData.family_release_approval ?? null,
           }
         );
       }
@@ -5436,6 +5500,21 @@ async function handleDeviceCodeGrant(
     log.error('Failed to evaluate policy permissions for device flow', {}, policyError as Error);
   }
 
+  // The information release the device grant carries (it does not go through the consent screen).
+  let deviceReleaseApproval: string[] | null;
+  try {
+    deviceReleaseApproval = await releaseApprovalForGrantWithoutScreen(
+      c,
+      authCtx.coreAdapter,
+      clientMetadata,
+      metadata.sub,
+      metadata.consent_generation ?? deviceConsentWithdrawal.generation
+    );
+  } catch (error) {
+    log.error('Failed to read the information release consent', {}, error as Error);
+    return oauthError(c, 'temporarily_unavailable', 'Consent state is unavailable', 503);
+  }
+
   // Generate ID Token
   const deviceAuthTime = Math.floor(Date.now() / 1000);
   let idTokenClaims: Record<string, unknown> = {
@@ -5461,16 +5540,17 @@ async function handleDeviceCodeGrant(
   }
   idTokenClaims = mappedIdTokenClaims.claims;
 
-  const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+  const idTokenConsent = enforceOIDCAttributeReleaseConsentForIDTokenClaims(
     c,
-    getTenantIdFromContext(c),
     clientMetadata,
-    metadata.sub,
-    idTokenClaims
+    deviceReleaseApproval,
+    idTokenClaims,
+    mappedIdTokenClaims.optional
   );
   if (!idTokenConsent.ok) {
     return idTokenConsent.response;
   }
+  idTokenClaims = idTokenConsent.claims;
 
   let idToken: string;
   try {
@@ -5483,6 +5563,7 @@ async function handleDeviceCodeGrant(
       {
         userId: metadata.sub,
         consentGeneration: metadata.consent_generation ?? deviceConsentWithdrawal.generation,
+        releaseApproval: deviceReleaseApproval,
       }
     );
   } catch (error) {
@@ -5521,6 +5602,7 @@ async function handleDeviceCodeGrant(
       consentClientId: client_id,
       tokenClientId: client_id,
     }),
+    [RELEASE_APPROVAL_CLAIM]: deviceReleaseApproval ?? [],
   };
 
   // Phase 2 Policy Embedding: Add evaluated permissions
@@ -5574,6 +5656,7 @@ async function handleDeviceCodeGrant(
           // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
           authContext: { auth_time: deviceAuthTime },
           consentGeneration: deviceConsentWithdrawal.generation,
+          releaseApproval: deviceReleaseApproval ?? [],
         });
         refreshJti = familyResult.jti;
         const familyWithdrawn = familyConsentGenerationError(
@@ -5993,6 +6076,21 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     log.error('Failed to read the consent withdrawal for a CIBA request', {}, error as Error);
     return oauthError(c, 'temporarily_unavailable', 'Consent state is unavailable', 503);
   }
+
+  // The information release the CIBA grant carries (it does not go through the consent screen).
+  let cibaReleaseApproval: string[] | null;
+  try {
+    cibaReleaseApproval = await releaseApprovalForGrantWithoutScreen(
+      c,
+      authCtx.coreAdapter,
+      clientMetadata,
+      metadata.sub,
+      metadata.consent_generation ?? cibaConsentWithdrawal.generation
+    );
+  } catch (error) {
+    log.error('Failed to read the information release consent', {}, error as Error);
+    return oauthError(c, 'temporarily_unavailable', 'Consent state is unavailable', 503);
+  }
   if (
     predatesOAuthClientConsentRevocation(metadata.created_at, cibaConsentWithdrawal.revokedAt) ||
     isOAuthClientConsentGrantWithdrawn(cibaConsentWithdrawal, {
@@ -6147,6 +6245,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       consentClientId: client_id,
       tokenClientId: metadata.client_id,
     }),
+    [RELEASE_APPROVAL_CLAIM]: cibaReleaseApproval ?? [],
   };
 
   // Phase 2 Policy Embedding: Add evaluated permissions
@@ -6195,16 +6294,17 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   }
   idTokenClaims = mappedIdTokenClaims.claims;
 
-  const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+  const idTokenConsent = enforceOIDCAttributeReleaseConsentForIDTokenClaims(
     c,
-    getTenantIdFromContext(c),
     clientMetadata,
-    metadata.sub,
-    idTokenClaims
+    cibaReleaseApproval,
+    idTokenClaims,
+    mappedIdTokenClaims.optional
   );
   if (!idTokenConsent.ok) {
     return idTokenConsent.response;
   }
+  idTokenClaims = idTokenConsent.claims;
 
   let idToken: string;
   try {
@@ -6217,6 +6317,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       {
         userId: metadata.sub,
         consentGeneration: metadata.consent_generation ?? cibaConsentWithdrawal.generation,
+        releaseApproval: cibaReleaseApproval,
       }
     );
   } catch (error) {
@@ -6276,6 +6377,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         // As the first ID token had it; no pushed request (a refresh is refused at FAL3).
         ...(metadata.authenticated_acr ? { authContext: { acr: metadata.authenticated_acr } } : {}),
         consentGeneration: cibaConsentWithdrawal.generation,
+        releaseApproval: cibaReleaseApproval ?? [],
       });
       refreshTokenJti = cibaFamilyResult.jti;
       const familyWithdrawn = familyConsentGenerationError(
@@ -7334,6 +7436,12 @@ async function handleTokenExchangeGrant(
           consentClientId: subjectConsent.clientId,
           tokenClientId: client_id,
         }),
+        // The subject token's information release approval goes on only to the app it was
+        // approved for; another app is given no information about the person this way.
+        [RELEASE_APPROVAL_CLAIM]:
+          subjectConsent.clientId === client_id
+            ? (readReleaseApproval(subjectTokenPayload[RELEASE_APPROVAL_CLAIM]) ?? [])
+            : [],
         // Bound to the consented client, which the exchanged token records.
         ...(typeof subjectReference === 'string' && {
           [SUBJECT_REFERENCE_CLAIM]: subjectReference,
@@ -8139,6 +8247,28 @@ async function handleNativeSSOTokenExchange(
       { retryable: true, severity: 'warning' }
     );
   }
+  // The information release this app's tokens carry: its own approval (the device secret's app
+  // may be another, whose approval is not this one's).
+  let nativeSSOReleaseApproval: string[] | null;
+  try {
+    nativeSSOReleaseApproval = await releaseApprovalForGrantWithoutScreen(
+      c,
+      authCtx.coreAdapter,
+      clientMetadata,
+      deviceSecretOwnerId,
+      nativeSSOConsentWithdrawal.generation
+    );
+  } catch (error) {
+    log.error('Failed to read the information release consent', {}, error as Error);
+    return exchangeError(
+      'temporarily_unavailable',
+      'Consent state is unavailable',
+      'native_sso_server_error',
+      503,
+      'retry',
+      { retryable: true, severity: 'warning' }
+    );
+  }
   // 5. Parse and validate ID Token
   let idTokenPayload: Record<string, unknown>;
   let idTokenHeader;
@@ -8537,6 +8667,7 @@ async function handleNativeSSOTokenExchange(
       consentClientId: clientId,
       tokenClientId: clientId,
     }),
+    [RELEASE_APPROVAL_CLAIM]: nativeSSOReleaseApproval ?? [],
   };
 
   let accessToken: string;
@@ -8623,10 +8754,11 @@ async function handleNativeSSOTokenExchange(
   });
   Object.assign(newIdTokenClaims, mapped.claims);
 
-  const released = await enforceIDTokenAttributeRelease(
+  const released = enforceIDTokenAttributeRelease(
     releaseContext,
-    idTokenUserId,
-    newIdTokenClaims
+    nativeSSOReleaseApproval,
+    newIdTokenClaims,
+    mapped.optional
   );
   if (!released.ok) {
     return exchangeError(
@@ -8638,6 +8770,10 @@ async function handleNativeSSOTokenExchange(
       { retryable: false }
     );
   }
+  Object.keys(newIdTokenClaims).forEach((key) => {
+    delete newIdTokenClaims[key];
+  });
+  Object.assign(newIdTokenClaims, released.claims);
 
   let newIdToken: string;
   try {
@@ -8647,7 +8783,11 @@ async function handleNativeSSOTokenExchange(
       clientMetadata,
       newIdTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
       await lifetimes.idToken(),
-      { userId: deviceSecretUserId, consentGeneration: nativeSSOConsentWithdrawal.generation }
+      {
+        userId: deviceSecretUserId,
+        consentGeneration: nativeSSOConsentWithdrawal.generation,
+        releaseApproval: nativeSSOReleaseApproval,
+      }
     );
   } catch (error) {
     log.error('Failed to create ID token', { action: 'NativeSSO' }, error as Error);
@@ -8698,6 +8838,7 @@ async function handleNativeSSOTokenExchange(
             ...(typeof acr === 'string' ? { acr } : {}),
           },
           consentGeneration: nativeSSOConsentWithdrawal.generation,
+          releaseApproval: nativeSSOReleaseApproval ?? [],
         });
         refreshTokenJti = familyResult.jti;
         rtv = familyResult.family.version;

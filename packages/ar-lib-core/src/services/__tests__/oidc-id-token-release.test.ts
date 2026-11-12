@@ -4,24 +4,16 @@ import type { Env } from '../../types/env';
 import type { ClientMetadata } from '../../types/oidc';
 
 const mockApplyOIDCIdentityMapping = vi.hoisted(() => vi.fn());
-const mockEnforceOIDCAttributeReleaseConsent = vi.hoisted(() => vi.fn());
 
 vi.mock('../oidc-identity-mapping', async () => ({
   ...(await vi.importActual<typeof import('../oidc-identity-mapping')>('../oidc-identity-mapping')),
   applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping,
-}));
-vi.mock('../oidc-attribute-release-consent', async () => ({
-  ...(await vi.importActual<typeof import('../oidc-attribute-release-consent')>(
-    '../oidc-attribute-release-consent'
-  )),
-  enforceOIDCAttributeReleaseConsent: mockEnforceOIDCAttributeReleaseConsent,
 }));
 
 import {
   OIDCIdentityMappingRuntimeError,
   type ApplyOIDCIdentityMappingInput,
 } from '../oidc-identity-mapping';
-import { OIDCAttributeReleaseConsentRequiredError } from '../oidc-attribute-release-consent';
 import { openSubjectReference } from '../subject-reference';
 import * as failureRecording from '../identity-mapping-failures';
 import {
@@ -70,7 +62,6 @@ const baseClaims = {
 describe('ID token release', () => {
   beforeEach(() => {
     mockApplyOIDCIdentityMapping.mockReset();
-    mockEnforceOIDCAttributeReleaseConsent.mockReset();
   });
 
   describe('mapIDTokenClaims', () => {
@@ -126,26 +117,22 @@ describe('ID token release', () => {
           claims: { ...baseClaims, sub: 'pairwise' },
           binding: null,
         });
-        mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue({ action: 'release' });
         expect(await mapIDTokenClaims(ctx, baseClaims)).toMatchObject({ ok: true });
         expect(
           await releaseIDTokenClaims(ctx, {
             claims: baseClaims,
-            grant: { userId: 'user-1', consentGeneration: 1 },
+            grant: { userId: 'user-1', consentGeneration: 1, releaseApproval: ['*'] },
           })
         ).toMatchObject({ ok: false, failure: { kind: 'subject_reference_unavailable' } });
-        mockEnforceOIDCAttributeReleaseConsent.mockRejectedValue(
-          new OIDCAttributeReleaseConsentRequiredError({
-            claimSetHash: 'hash',
-            reasonCodes: ['release.attribute_consent.missing'],
-            consentMode: 'once',
-            claimNames: ['sub'],
-          })
-        );
+        // A required claim the grant's approval does not cover refuses the ID token.
+        mockApplyOIDCIdentityMapping.mockResolvedValue({
+          claims: { ...baseClaims, sub: 'user-1', email: 'a@example.com' },
+          binding: null,
+        });
         expect(
           await releaseIDTokenClaims(ctx, {
             claims: baseClaims,
-            grant: { userId: 'user-1', consentGeneration: 1 },
+            grant: { userId: 'user-1', consentGeneration: 1, releaseApproval: [] },
           })
         ).toMatchObject({ ok: false, failure: { kind: 'consent_required' } });
         expect(scheduled).not.toHaveBeenCalled();
@@ -162,7 +149,11 @@ describe('ID token release', () => {
 
       const result = await mapIDTokenClaims(ctx, baseClaims, ['openid']);
 
-      expect(result).toEqual({ ok: true, claims: { ...baseClaims, sub: 'pairwise' } });
+      expect(result).toEqual({
+        ok: true,
+        claims: { ...baseClaims, sub: 'pairwise' },
+        optional: new Set(),
+      });
       expect(mockApplyOIDCIdentityMapping).toHaveBeenCalledWith({
         adapter: ctx.adapter,
         env: ctx.env,
@@ -175,6 +166,7 @@ describe('ID token release', () => {
         grantedScopes: ['openid'],
         claims: baseClaims,
         sourceAttributes: expect.any(Function),
+        releaseOptionalOut: expect.any(Set) as unknown,
       });
       // The user's attributes are the mapping's source, loaded for the user, and only on demand.
       expect(loadUserAttributes).not.toHaveBeenCalled();
@@ -238,70 +230,45 @@ describe('ID token release', () => {
   });
 
   describe('enforceIDTokenAttributeRelease', () => {
-    it("checks the consent of the user, not of the ID token's sub", async () => {
-      const { ctx } = context();
-      mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue({ action: 'release' });
-      const claims = { ...baseClaims, sub: 'pairwise', email: 'a@example.com' };
+    const claims = { ...baseClaims, sub: 'pairwise', name: 'Alice', email: 'a@example.com' };
 
-      await expect(enforceIDTokenAttributeRelease(ctx, 'user-1', claims)).resolves.toEqual({
+    it('releases the claims the approval covers and leaves out unapproved optional ones', () => {
+      const { ctx } = context();
+      expect(enforceIDTokenAttributeRelease(ctx, ['name'], claims, new Set(['email']))).toEqual({
         ok: true,
-        claims,
-      });
-      expect(mockEnforceOIDCAttributeReleaseConsent).toHaveBeenCalledWith({
-        env: ctx.env,
-        tenantId: 'tenant-a',
-        subjectId: 'user-1',
-        clientMetadata: ctx.clientMetadata,
-        claims,
-        target: 'id_token',
+        claims: { ...baseClaims, sub: 'pairwise', name: 'Alice' },
       });
     });
 
-    it('asks for consent when the claim set needs it', async () => {
+    it('refuses the ID token when a required claim is not approved', () => {
       const { ctx } = context();
-      mockEnforceOIDCAttributeReleaseConsent.mockRejectedValue(
-        new OIDCAttributeReleaseConsentRequiredError({
-          claimSetHash: 'h',
-          reasonCodes: ['release.attribute_consent.every_time'],
-          consentMode: 'every_time',
-          claimNames: ['email'],
-        })
-      );
-
-      await expect(
-        enforceIDTokenAttributeRelease(ctx, 'user-1', baseClaims)
-      ).resolves.toMatchObject({
+      expect(enforceIDTokenAttributeRelease(ctx, ['name'], claims, new Set())).toMatchObject({
         ok: false,
-        failure: {
-          error: 'consent_required',
-          status: 400,
-          description: 'User consent is required for this ID token claim release',
-        },
+        failure: { error: 'consent_required', status: 400 },
       });
     });
 
-    it('reports a failed consent check as server_error', async () => {
+    it('releases only protocol claims for a grant without an approval', () => {
       const { ctx } = context();
-      mockEnforceOIDCAttributeReleaseConsent.mockRejectedValue(new Error('db down'));
-
-      await expect(
-        enforceIDTokenAttributeRelease(ctx, 'user-1', baseClaims)
-      ).resolves.toMatchObject({ ok: false, failure: { error: 'server_error', status: 500 } });
+      expect(enforceIDTokenAttributeRelease(ctx, null, claims, new Set(['name', 'email']))).toEqual(
+        { ok: true, claims: { ...baseClaims, sub: 'pairwise' } }
+      );
     });
 
-    it('releases without a consent check when no user is named', async () => {
+    it('takes everything for a trusted grant and the required ones for one not asked', () => {
       const { ctx } = context();
-
-      await expect(enforceIDTokenAttributeRelease(ctx, '', baseClaims)).resolves.toEqual({
+      expect(enforceIDTokenAttributeRelease(ctx, ['*'], claims, new Set(['email']))).toEqual({
         ok: true,
-        claims: baseClaims,
+        claims,
       });
-      expect(mockEnforceOIDCAttributeReleaseConsent).not.toHaveBeenCalled();
+      expect(
+        enforceIDTokenAttributeRelease(ctx, ['@required'], claims, new Set(['email']))
+      ).toEqual({ ok: true, claims: { ...baseClaims, sub: 'pairwise', name: 'Alice' } });
     });
   });
 
   describe('idTokenGrantClaims', () => {
-    const grant = { userId: 'user-1', consentGeneration: 3 };
+    const grant = { userId: 'user-1', consentGeneration: 3, releaseApproval: ['name'] };
 
     it('carries the consent generation and marks the sub as the user id', async () => {
       const claims = await idTokenGrantClaims(
@@ -313,6 +280,7 @@ describe('ID token release', () => {
       );
 
       expect(claims.authrim_consent_generation).toBe(3);
+      expect(claims.authrim_release).toEqual(['name']);
       expect(claims.authrim_subject_account).toBe(true);
       expect(claims.authrim_subject_ref).toBeUndefined();
     });
@@ -375,12 +343,11 @@ describe('ID token release', () => {
         },
         binding: null,
       });
-      mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue({ action: 'release' });
 
       const result = await releaseIDTokenClaims(ctx, {
         claims: baseClaims,
         grantedScopes: ['openid'],
-        grant: { userId: 'user-1', consentGeneration: 4 },
+        grant: { userId: 'user-1', consentGeneration: 4, releaseApproval: ['*'] },
       });
 
       expect(result.ok).toBe(true);
@@ -410,11 +377,10 @@ describe('ID token release', () => {
           claims: { ...baseClaims, sub: 'user-2' },
           binding: null,
         });
-        mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue({ action: 'release' });
 
         const result = await releaseIDTokenClaims(ctx, {
           claims: baseClaims,
-          grant: { userId: 'user-1', consentGeneration: 1 },
+          grant: { userId: 'user-1', consentGeneration: 1, releaseApproval: ['*'] },
         });
 
         expect(result).toEqual({
@@ -439,11 +405,10 @@ describe('ID token release', () => {
         claims: { ...baseClaims, sub: 'user-2', authrim_subject_account: true },
         binding: null,
       });
-      mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue({ action: 'release' });
 
       const result = await releaseIDTokenClaims(ctx, {
         claims: baseClaims,
-        grant: { userId: 'user-1', consentGeneration: 1 },
+        grant: { userId: 'user-1', consentGeneration: 1, releaseApproval: ['*'] },
       });
 
       expect(result.ok).toBe(true);
@@ -459,10 +424,9 @@ describe('ID token release', () => {
       await expect(
         releaseIDTokenClaims(ctx, {
           claims: baseClaims,
-          grant: { userId: 'user-1', consentGeneration: 1 },
+          grant: { userId: 'user-1', consentGeneration: 1, releaseApproval: ['*'] },
         })
       ).resolves.toMatchObject({ ok: false });
-      expect(mockEnforceOIDCAttributeReleaseConsent).not.toHaveBeenCalled();
     });
   });
 });
