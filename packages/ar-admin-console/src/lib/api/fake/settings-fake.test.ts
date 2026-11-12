@@ -63,13 +63,41 @@ describe('the in-memory Settings API', () => {
 		await expect(support.get(tenant, 'session')).rejects.toBeInstanceOf(ApiError);
 	});
 
-	it('reads fixed settings as locked and refuses to change them', async () => {
-		const api = createFakeSettings({ locked: ['oauth.access_token_expiry'] });
-		const { version, locked } = await api.get(tenant, 'oauth');
-		expect(locked).toEqual(['oauth.access_token_expiry']);
+	it('reads locked settings with the platform value and refuses to change them', async () => {
+		const key = 'oauth.access_token_expiry';
+		const api = createFakeSettings({
+			locked: [key],
+			stored: { platform: { [key]: 900 }, 'tenant:acme': { [key]: 1800 } }
+		});
+		const read = await api.get(tenant, 'oauth');
+		expect(read.locked).toEqual([key]);
+		// The tenant's own value is ignored while the platform's applies.
+		expect(read.values[key]).toBe(900);
+		expect(read.sources[key]).toBe('platform');
+		// The tenant's stored value is set aside, not gone.
+		expect(read.setAside).toEqual([key]);
 		await expect(
-			api.patch(tenant, 'oauth', { ifMatch: version, set: { 'oauth.access_token_expiry': 600 } })
+			api.patch(tenant, 'oauth', { ifMatch: read.version, set: { [key]: 600 } })
+		).rejects.toMatchObject({ rejected: { [key]: expect.stringMatching(/^locked_by_platform/) } });
+		await expect(
+			api.patch(tenant, 'oauth', { ifMatch: read.version, disable: [key] })
 		).rejects.toBeInstanceOf(RejectedError);
+
+		// Clearing the tenant's stale value is allowed; the platform edits the value itself.
+		const cleared = await api.patch(tenant, 'oauth', { ifMatch: read.version, clear: [key] });
+		expect(cleared.cleared).toEqual([key]);
+		const platform = await api.get({ level: 'platform' }, 'oauth');
+		expect(platform.locked).toEqual([key]);
+		const set = await api.patch({ level: 'platform' }, 'oauth', {
+			ifMatch: platform.version,
+			set: { [key]: 1200 }
+		});
+		expect(set.applied).toEqual([key]);
+	});
+
+	it('lists nothing as locked by default', async () => {
+		const api = createFakeSettings();
+		expect((await api.get(tenant, 'oauth')).locked).toEqual([]);
 	});
 
 	it('lets someone else save first, to show a conflict', async () => {

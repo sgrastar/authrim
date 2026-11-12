@@ -5396,6 +5396,222 @@ describe('Settings API v2', () => {
       expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
     });
   });
+
+  describe('Platform setting locks', () => {
+    const MAX = 'rate_limit.email_max_requests';
+    const WINDOW = 'rate_limit.email_window';
+    const HTTPS_ENABLED = 'oauth.https_request_uri_enabled';
+    const json = { 'Content-Type': 'application/json' };
+
+    function api(initial: Record<string, unknown> = {}, adminAuth?: AdminAuthContext) {
+      const kv = createMockKV(
+        Object.fromEntries(Object.entries(initial).map(([key, doc]) => [key, JSON.stringify(doc)]))
+      );
+      const { app, mockEnv } = createTestApp({ kv, adminAuth });
+      const get = async (path: string, headers: Record<string, string> = {}) =>
+        (
+          await app.request(`/api/admin${path}`, { method: 'GET', headers }, mockEnv)
+        ).json<SettingsGetResult>();
+      const patch = (path: string, body: Record<string, unknown>, headers = {}) =>
+        app.request(
+          `/api/admin${path}`,
+          { method: 'PATCH', headers: { ...json, ...headers }, body: JSON.stringify(body) },
+          mockEnv
+        );
+      return { kv, get, patch };
+    }
+
+    const audits = (name: string) =>
+      vi.mocked(createAuditLogFromContext).mock.calls.filter(([, action]) => action === name);
+
+    it('locks and unlocks keys with the same version check as any platform change', async () => {
+      const { get, patch } = api();
+      const before = await get('/platform/settings/rate-limit');
+      expect(before.locked).toEqual([]);
+
+      const res = await patch('/platform/settings/rate-limit', {
+        ifMatch: before.version,
+        set: { [MAX]: 5 },
+        lock: [MAX],
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json<SettingsPatchResult>();
+      expect(body.applied).toEqual([MAX]);
+      expect(body.locked).toEqual([MAX]);
+      expect(body.unlocked).toEqual([]);
+
+      const after = await get('/platform/settings/rate-limit');
+      expect(after.locked).toEqual([MAX]);
+      expect(after.version).toBe(body.version);
+      expect(Object.keys(after.values)).not.toContain('__locked__');
+
+      // Audited with the locked key.
+      const events = audits('settings.settings.updated');
+      expect(events).toHaveLength(1);
+      expect(JSON.stringify(events[0][4])).toContain(`locked:${MAX}`);
+
+      // The old version no longer matches.
+      const stale = await patch('/platform/settings/rate-limit', {
+        ifMatch: before.version,
+        unlock: [MAX],
+      });
+      expect(stale.status).toBe(409);
+
+      const unlock = await patch('/platform/settings/rate-limit', {
+        ifMatch: after.version,
+        unlock: [MAX],
+      });
+      expect(unlock.status).toBe(200);
+      expect((await unlock.json<SettingsPatchResult>()).unlocked).toEqual([MAX]);
+      expect((await get('/platform/settings/rate-limit')).locked).toEqual([]);
+    });
+
+    it('refuses to lock a setting that is not lockable, per key, and is a 400 when nothing else changes', async () => {
+      const { get, patch } = api();
+      const current = await get('/platform/settings/rate-limit');
+      const res = await patch('/platform/settings/rate-limit', {
+        ifMatch: current.version,
+        lock: ['rate_limit.auth_max_failed_attempts', 'rate_limit.nonexistent'],
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json<SettingsPatchResult>();
+      expect(body.rejected['rate_limit.auth_max_failed_attempts']).toMatch(/cannot be locked/);
+      expect(body.rejected['rate_limit.nonexistent']).toMatch(/Unknown/);
+      expect(audits('settings.patch.failure')).toHaveLength(1);
+
+      const mixed = await patch('/platform/settings/rate-limit', {
+        ifMatch: current.version,
+        lock: [WINDOW, 'rate_limit.auth_max_failed_attempts'],
+      });
+      expect(mixed.status).toBe(200);
+      const mixedBody = await mixed.json<SettingsPatchResult>();
+      expect(mixedBody.locked).toEqual([WINDOW]);
+      expect(Object.keys(mixedBody.rejected)).toEqual(['rate_limit.auth_max_failed_attempts']);
+    });
+
+    it('refuses locks in a category tenants cannot set', async () => {
+      const { get, patch } = api();
+      const current = await get('/platform/settings/profiles');
+      const res = await patch('/platform/settings/profiles', {
+        ifMatch: current.version,
+        lock: ['profiles.session.default_locked'],
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json<{ message: string }>()).message).toMatch(/tenant scope/);
+    });
+
+    it('needs the authority to edit platform settings', async () => {
+      const { patch } = api(
+        {},
+        {
+          userId: 'tenant_admin',
+          authMethod: 'bearer',
+          roles: ['ar_tenant_admin'],
+          tenantScope: ['tenant_123'],
+        }
+      );
+      const res = await patch('/platform/settings/rate-limit', { ifMatch: 'any', lock: [MAX] });
+      expect(res.status).toBe(403);
+    });
+
+    describe('for a tenant', () => {
+      const docs = {
+        'settings:platform:rate-limit': { [MAX]: 5, __locked__: [MAX] },
+        'settings:tenant:tenant_123:rate-limit': { [MAX]: 9, [WINDOW]: 600 },
+      };
+
+      it('shows the platform value, source and locked keys, never the tenant value', async () => {
+        const { get } = api(docs);
+        const view = await get('/tenants/tenant_123/settings/rate-limit');
+        expect(view.locked).toEqual([MAX]);
+        expect(view.values[MAX]).toBe(5);
+        expect(view.sources[MAX]).toBe('platform');
+        expect(view.values[WINDOW]).toBe(600);
+        expect(view.sources[WINDOW]).toBe('kv');
+      });
+
+      it('refuses to set a locked key with a stable reason and audits the refusal', async () => {
+        const { get, patch, kv } = api(docs);
+        const view = await get('/tenants/tenant_123/settings/rate-limit');
+        const res = await patch('/tenants/tenant_123/settings/rate-limit', {
+          ifMatch: view.version,
+          set: { [MAX]: 4 },
+        });
+        expect(res.status).toBe(400);
+        const body = await res.json<SettingsPatchResult>();
+        expect(body.rejected[MAX]).toMatch(/^locked_by_platform/);
+        expect(audits('settings.patch.failure')).toHaveLength(1);
+        expect(JSON.stringify(audits('settings.patch.failure')[0][4])).toContain(
+          'locked_by_platform'
+        );
+        // Nothing was saved.
+        expect(
+          JSON.parse((await kv.get('settings:tenant:tenant_123:rate-limit')) as string)
+        ).toEqual({ [MAX]: 9, [WINDOW]: 600 });
+      });
+
+      it('applies the other keys of a request and reports the locked one; clear is allowed', async () => {
+        const { get, patch } = api(docs);
+        const view = await get('/tenants/tenant_123/settings/rate-limit');
+        const res = await patch('/tenants/tenant_123/settings/rate-limit', {
+          ifMatch: view.version,
+          set: { [MAX]: 4, [WINDOW]: 900 },
+        });
+        expect(res.status).toBe(200);
+        const body = await res.json<SettingsPatchResult>();
+        expect(body.applied).toEqual([WINDOW]);
+        expect(Object.keys(body.rejected)).toEqual([MAX]);
+
+        const next = await get('/tenants/tenant_123/settings/rate-limit');
+        const cleared = await patch('/tenants/tenant_123/settings/rate-limit', {
+          ifMatch: next.version,
+          clear: [MAX],
+        });
+        expect(cleared.status).toBe(200);
+        expect((await cleared.json<SettingsPatchResult>()).cleared).toEqual([MAX]);
+      });
+
+      it('cannot lock or unlock itself', async () => {
+        const { get, patch } = api(docs);
+        const view = await get('/tenants/tenant_123/settings/rate-limit');
+        const res = await patch('/tenants/tenant_123/settings/rate-limit', {
+          ifMatch: view.version,
+          unlock: [MAX],
+        });
+        expect(res.status).toBe(400);
+        expect((await res.json<SettingsPatchResult>()).rejected[MAX]).toMatch(/platform scope/);
+        expect((await get('/platform/settings/rate-limit')).locked).toEqual([MAX]);
+      });
+    });
+
+    describe('for a client', () => {
+      const docs = {
+        'client:test-tenant:client_abc:metadata': { tenant_id: 'test-tenant' },
+        'settings:platform:oauth': { [HTTPS_ENABLED]: false, __locked__: [HTTPS_ENABLED] },
+        'settings:tenant:test-tenant:oauth': { [HTTPS_ENABLED]: true },
+        'settings:client:test-tenant:client_abc:oauth': { [HTTPS_ENABLED]: true },
+      };
+      const headers = { 'X-Tenant-Id': 'test-tenant' };
+
+      it('shows the platform value and refuses to change a locked key', async () => {
+        const { get, patch } = api(docs);
+        const view = await get('/clients/client_abc/settings/oauth', headers);
+        expect(view.locked).toEqual([HTTPS_ENABLED]);
+        expect(view.values[HTTPS_ENABLED]).toBe(false);
+        expect(view.sources[HTTPS_ENABLED]).toBe('platform');
+
+        const res = await patch(
+          '/clients/client_abc/settings/oauth',
+          { ifMatch: view.version, set: { [HTTPS_ENABLED]: true } },
+          headers
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json<SettingsPatchResult>()).rejected[HTTPS_ENABLED]).toMatch(
+          /^locked_by_platform/
+        );
+      });
+    });
+  });
 });
 
 it('covers tenant settings and cache revision writes with one backup permit', async () => {

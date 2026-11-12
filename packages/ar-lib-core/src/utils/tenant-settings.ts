@@ -8,7 +8,9 @@
  */
 
 import { createLogger } from './logger';
+import { readSettingLocks, withoutSettingLocks } from './setting-locks';
 import {
+  ALL_CATEGORY_META,
   CATEGORY_SCOPE_CONFIG,
   isCategoryAvailableAtScope,
   type CategoryName,
@@ -182,8 +184,19 @@ export async function getTenantSettingsDocument(
     if (legacy.state === 'unreadable') return unreadable();
     if (legacy.state === 'found') own = legacy.data;
   }
-  if (platform.state !== 'found') return own;
-  return { ...platform.data, ...(own ?? {}) };
+  if (platform.state !== 'found') return own ? withoutSettingLocks(own) : own;
+  const platformValues = withoutSettingLocks(platform.data);
+  const merged = { ...platformValues, ...(own ? withoutSettingLocks(own) : {}) };
+  // A key the platform has locked takes the platform's value (else it is unset, so the reader's
+  // own env and default apply), whatever the tenant stored (the same rule as the settings manager).
+  const settings = ALL_CATEGORY_META[category as CategoryName]?.settings;
+  for (const key of readSettingLocks(platform.data)) {
+    const meta = settings?.[key];
+    if (meta?.lockable !== true || (meta.scopes && !meta.scopes.includes('tenant'))) continue;
+    if (key in platformValues) merged[key] = platformValues[key];
+    else delete merged[key];
+  }
+  return merged;
 }
 
 /**

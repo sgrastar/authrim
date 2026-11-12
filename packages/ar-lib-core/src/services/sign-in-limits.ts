@@ -8,13 +8,18 @@
  *
  * A value outside the setting's range is not used. When the settings cannot be read, the limits
  * keep their defaults, which are the values these paths always used, so an outage of the settings
- * store neither loosens a limit nor locks people out sooner.
+ * store neither loosens a limit nor locks people out sooner. A key the platform has locked keeps
+ * the platform's value when the tenant's layer cannot be read (a lock must not be loosened).
  */
 
 import { CREDENTIALS_DEFAULTS, CREDENTIALS_SETTINGS_META } from '../types/settings/credentials';
 import { RATE_LIMIT_DEFAULTS, RATE_LIMIT_SETTINGS_META } from '../types/settings/rate-limit';
 import { isWithinSettingRange as withinRange } from './setting-range';
-import { resolveEffectiveSettings, type EffectiveSettingsEnv } from './effective-settings';
+import {
+  resolveEffectiveSettings,
+  resolvePlatformSettingsWithSources,
+  type EffectiveSettingsEnv,
+} from './effective-settings';
 
 /** Failed password attempts (in the lockout window) after which an account is locked for a while. */
 export async function resolveAuthMaxFailedAttempts(
@@ -73,20 +78,33 @@ async function resolveRequestLimit(
     maxRequests: RATE_LIMIT_DEFAULTS[maxRequestsKey],
     windowSeconds: RATE_LIMIT_DEFAULTS[windowKey],
   };
-  try {
-    const values = await resolveEffectiveSettings(env, 'rate-limit', { tenantId });
+  const limitFrom = (values: Record<string, unknown>, only?: ReadonlySet<string>): RequestLimit => {
     const maxRequests = values[maxRequestsKey];
     const windowSeconds = values[windowKey];
     return {
-      maxRequests: withinRange(maxRequests, RATE_LIMIT_SETTINGS_META[maxRequestsKey])
-        ? maxRequests
-        : fallback.maxRequests,
-      windowSeconds: withinRange(windowSeconds, RATE_LIMIT_SETTINGS_META[windowKey])
-        ? windowSeconds
-        : fallback.windowSeconds,
+      maxRequests:
+        (!only || only.has(maxRequestsKey)) &&
+        withinRange(maxRequests, RATE_LIMIT_SETTINGS_META[maxRequestsKey])
+          ? maxRequests
+          : fallback.maxRequests,
+      windowSeconds:
+        (!only || only.has(windowKey)) &&
+        withinRange(windowSeconds, RATE_LIMIT_SETTINGS_META[windowKey])
+          ? windowSeconds
+          : fallback.windowSeconds,
     };
+  };
+  try {
+    return limitFrom(await resolveEffectiveSettings(env, 'rate-limit', { tenantId }));
   } catch {
-    return fallback;
+    // The tenant's layer could not be read. A setting the platform has locked still holds (its
+    // value does not come from the tenant); everything else keeps its default, as before.
+    try {
+      const platform = await resolvePlatformSettingsWithSources(env, 'rate-limit');
+      return limitFrom(platform.values, new Set(platform.locked));
+    } catch {
+      return fallback;
+    }
   }
 }
 
