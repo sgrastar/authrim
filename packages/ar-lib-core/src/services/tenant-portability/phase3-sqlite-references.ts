@@ -67,13 +67,6 @@ const tenantReferences = PHASE3_SQLITE_DATASET_REGISTRATIONS.filter(
  */
 export const PHASE3_SQLITE_REFERENCE_RULES: readonly Phase3SqliteReferenceRule[] = [
   ...tenantReferences,
-  relation('core', 'client_consent_overrides', ['tenant_id', 'client_id'], 'core', 'oauth_clients'),
-  relation('core', 'client_consent_overrides', ['statement_id'], 'core', 'consent_statements'),
-  relation('core', 'consent_policy_items', ['policy_id'], 'core', 'consent_policies'),
-  relation('core', 'consent_policy_items', ['statement_id'], 'core', 'consent_statements'),
-  relation('core', 'consent_policy_items', ['version_id'], 'core', 'consent_statement_versions', {
-    nullable: true,
-  }),
   relation(
     'core',
     'consent_statement_localizations',
@@ -86,7 +79,6 @@ export const PHASE3_SQLITE_REFERENCE_RULES: readonly Phase3SqliteReferenceRule[]
     nullable: true,
   }),
   relation('core', 'roles', ['parent_role_id'], 'core', 'roles', { nullable: true }),
-  relation('core', 'tenant_consent_requirements', ['statement_id'], 'core', 'consent_statements'),
   relation('core', 'web_origin_registry', ['tenant_id', 'client_id'], 'core', 'oauth_clients'),
   relation('core', 'org_domain_mappings', ['org_id'], 'core', 'organizations'),
   relation('core', 'org_domain_mappings', ['auto_assign_role_id'], 'core', 'roles', {

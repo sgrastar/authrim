@@ -35,7 +35,6 @@ const sharedConfigKeys = new Set<string>([
   'consent:granular_scopes',
   'consent:expiration_enabled',
   'consent:default_expiration_days',
-  'consent:versioning_enabled',
   'consent:data_export_enabled',
   'consent:data_export_sync_threshold_kb',
   'v1:cache-mode:platform',

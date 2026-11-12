@@ -2,8 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   trust: null as Record<string, unknown> | null,
-  requirements: [] as Array<{ is_required: boolean }>,
-  requirementsError: false,
   existing: null as Record<string, unknown> | null,
   latest: null as Record<string, unknown> | null,
   decision: { action: 'release', reasonCodes: ['release.granted'] } as Record<string, unknown>,
@@ -18,10 +16,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({})),
     resolveClientTrustPolicy: vi.fn(async () => mocks.trust),
-    resolveConsentRequirements: vi.fn(async () => {
-      if (mocks.requirementsError) throw new Error('policy unavailable');
-      return mocks.requirements;
-    }),
     evaluateReleaseConsentGate: vi.fn(() => mocks.decision),
     AttributeReleaseConsentRepository: class {
       findGrantedConsent = mocks.findGranted;
@@ -40,8 +34,6 @@ describe('SAML attribute release consent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.trust = null;
-    mocks.requirements = [];
-    mocks.requirementsError = false;
     mocks.existing = null;
     mocks.latest = null;
     mocks.decision = { action: 'release', reasonCodes: ['release.granted'] };
@@ -206,14 +198,12 @@ describe('SAML attribute release consent', () => {
     await expect(
       enforceSAMLAttributeReleaseConsent(input({ attributeReleaseConsent: undefined }))
     ).resolves.toMatchObject({ action: 'release', attributeSetHash: null });
-    mocks.requirementsError = true;
     await expect(
       enforceSAMLAttributeReleaseConsent(input({ attributeReleaseConsent: undefined }))
     ).resolves.toMatchObject({ action: 'release', attributeSetHash: null });
   });
 
   it('fails closed for an AWS SP when the imported trust policy cannot be read', async () => {
-    mocks.requirementsError = true;
     await expect(
       enforceSAMLAttributeReleaseConsent(
         input({
@@ -235,20 +225,21 @@ describe('SAML attribute release consent', () => {
     ).rejects.toThrow('saml_idp_runtime_consent_policy_unsupported');
   });
 
-  it('enables one-time consent when a protocol-neutral policy requires it', async () => {
-    mocks.requirements = [{ is_required: false }, { is_required: true }];
-    await enforceSAMLAttributeReleaseConsent(input({ attributeReleaseConsent: undefined }));
-    expect(mocks.findLatest).toHaveBeenCalled();
+  it('releases without asking when the SP has no attribute release consent enabled', async () => {
+    // Tenant consent requirements are gone: only the SP's own setting turns consent on.
+    await expect(
+      enforceSAMLAttributeReleaseConsent(input({ attributeReleaseConsent: undefined }))
+    ).resolves.toMatchObject({ action: 'release', reasonCodes: [] });
+    expect(mocks.findLatest).not.toHaveBeenCalled();
+    expect(mocks.findGranted).not.toHaveBeenCalled();
   });
 
-  it('accepts transaction confirmation after a protocol-neutral policy enables consent', async () => {
+  it('accepts transaction confirmation when the SP enables attribute release consent', async () => {
     const attributes = standardAttributes();
     const attributeSetHash = await buildSAMLAttributeSetHash(attributes);
-    mocks.requirements = [{ is_required: true }];
     await expect(
       enforceSAMLAttributeReleaseConsent(
         input({
-          attributeReleaseConsent: undefined,
           attributes,
           confirmedRelease: {
             subjectId: 'user-1',

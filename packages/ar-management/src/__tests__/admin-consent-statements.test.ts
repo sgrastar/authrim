@@ -37,12 +37,6 @@ import {
   adminConsentLocalizationDeleteHandler,
   adminConsentLocalizationsListHandler,
   adminConsentLocalizationUpsertHandler,
-  adminConsentOverrideDeleteHandler,
-  adminConsentOverridesListHandler,
-  adminConsentOverrideUpsertHandler,
-  adminConsentRequirementDeleteHandler,
-  adminConsentRequirementsListHandler,
-  adminConsentRequirementUpsertHandler,
   adminConsentVersionActivateHandler,
   adminConsentVersionCreateHandler,
   adminConsentVersionDeleteHandler,
@@ -345,6 +339,7 @@ describe('admin consent statement lifecycle', () => {
   it.each([
     [new Error('version not found'), 400],
     [new Error('localization required'), 400],
+    [new Error('version_older_than_required_consent_version'), 400],
     [new Error('D1 unavailable'), 500],
   ])('maps activation failure %#', async (error, status) => {
     mocks.activateVersion.mockRejectedValueOnce(error);
@@ -354,8 +349,43 @@ describe('admin consent statement lifecycle', () => {
   it('activates through the shared version service and returns the activated row', async () => {
     mocks.adapter.query.mockResolvedValueOnce([{ id: 'version-1', status: 'active' }]);
     expect((await adminConsentVersionActivateHandler(context())).status).toBe(200);
-    expect(mocks.activateVersion).toHaveBeenCalledWith(mocks.adapter, 'tenant-a', 'sid', 'vid');
+    // People who agreed to an earlier version are asked again by default.
+    expect(mocks.activateVersion).toHaveBeenCalledWith(mocks.adapter, 'tenant-a', 'sid', 'vid', {
+      reconsent: true,
+    });
   });
+
+  it.each([
+    [{ reconsent: true }, true],
+    [{ reconsent: false }, false],
+    [{}, true],
+  ])('passes the reconsent choice %j to activation', async (body, reconsent) => {
+    mocks.adapter.query.mockResolvedValueOnce([{ id: 'version-1', status: 'active' }]);
+    expect((await adminConsentVersionActivateHandler(context({ body }))).status).toBe(200);
+    expect(mocks.activateVersion).toHaveBeenCalledWith(mocks.adapter, 'tenant-a', 'sid', 'vid', {
+      reconsent,
+    });
+  });
+
+  it('asks again when the body is missing or unreadable', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([{ id: 'version-1', status: 'active' }]);
+    expect((await adminConsentVersionActivateHandler(context({ bodyError: true }))).status).toBe(
+      200
+    );
+    expect(mocks.activateVersion).toHaveBeenCalledWith(mocks.adapter, 'tenant-a', 'sid', 'vid', {
+      reconsent: true,
+    });
+  });
+
+  it.each([['no'], [0], [null], [{}]])(
+    'rejects a non-boolean reconsent %j before activating',
+    async (reconsent) => {
+      const response = await adminConsentVersionActivateHandler(context({ body: { reconsent } }));
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: 'invalid_request' });
+      expect(mocks.activateVersion).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([
     [[], 404],
@@ -530,102 +560,12 @@ describe('admin consent statement lifecycle', () => {
     ).toBe(500);
   });
 
-  it('lists and deletes tenant requirements', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([{ statement_id: 'statement-1' }]);
-    await expect((await adminConsentRequirementsListHandler(context())).json()).resolves.toEqual({
-      requirements: [{ statement_id: 'statement-1' }],
-    });
-    expect((await adminConsentRequirementDeleteHandler(context())).status).toBe(200);
-  });
-
-  it.each([
-    [{ is_required: true, min_version: 'bad' }],
-    [{ is_required: true, deletion_url: 'javascript:alert(1)' }],
-  ])('rejects invalid requirement input %#', async (body) => {
-    mocks.validateVersion.mockReturnValue(false);
-    expect((await adminConsentRequirementUpsertHandler(context({ body }))).status).toBe(400);
-  });
-
-  it.each([false, true])('upserts existing=%s tenant requirement', async (existing) => {
-    mocks.adapter.query
-      .mockResolvedValueOnce(existing ? [{ id: 'requirement-1' }] : [])
-      .mockResolvedValueOnce([{ id: 'requirement-1' }]);
-    const response = await adminConsentRequirementUpsertHandler(
-      context({
-        body: {
-          is_required: existing,
-          min_version: '20260101',
-          enforcement: 'warn',
-          show_deletion_link: true,
-          deletion_url: 'https://example.com/delete',
-          conditional_rules: [{ country: 'JP' }],
-          display_order: 0,
-        },
-      })
-    );
-    expect(response.status).toBe(200);
-    expect(mocks.adapter.execute.mock.calls[0][0]).toContain(existing ? 'UPDATE' : 'INSERT');
-  });
-
-  it('uses requirement defaults and handles storage failure', async () => {
-    mocks.adapter.execute.mockRejectedValueOnce(new Error('failure'));
-    expect(
-      (
-        await adminConsentRequirementUpsertHandler(
-          context({ body: { is_required: false, deletion_url: '' } })
-        )
-      ).status
-    ).toBe(500);
-  });
-
-  it('lists and deletes client-specific consent overrides', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([{ statement_id: 'statement-1' }]);
-    await expect((await adminConsentOverridesListHandler(context())).json()).resolves.toEqual({
-      overrides: [{ statement_id: 'statement-1' }],
-    });
-    expect((await adminConsentOverrideDeleteHandler(context())).status).toBe(200);
-  });
-
-  it('rejects an invalid override minimum version', async () => {
-    mocks.validateVersion.mockReturnValueOnce(false);
-    expect(
-      (
-        await adminConsentOverrideUpsertHandler(
-          context({ body: { requirement: 'required', min_version: 'bad' } })
-        )
-      ).status
-    ).toBe(400);
-  });
-
-  it.each([false, true])('upserts existing=%s client override', async (existing) => {
-    mocks.adapter.query
-      .mockResolvedValueOnce(existing ? [{ id: 'override-1' }] : [])
-      .mockResolvedValueOnce([{ id: 'override-1' }]);
-    const response = await adminConsentOverrideUpsertHandler(
-      context({
-        body: {
-          requirement: existing ? 'optional' : undefined,
-          min_version: '20260101',
-          enforcement: existing ? 'warn' : undefined,
-          conditional_rules: existing ? [{ group: 'staff' }] : undefined,
-          display_order: existing ? 0 : undefined,
-        },
-      })
-    );
-    expect(response.status).toBe(200);
-    expect(mocks.adapter.execute.mock.calls[0][0]).toContain(existing ? 'UPDATE' : 'INSERT');
-  });
-
-  it.each([
-    [adminConsentLocalizationsListHandler],
-    [adminConsentLocalizationDeleteHandler],
-    [adminConsentRequirementsListHandler],
-    [adminConsentRequirementDeleteHandler],
-    [adminConsentOverridesListHandler],
-    [adminConsentOverrideDeleteHandler],
-  ])('returns server_error when auxiliary consent operation fails %#', async (handler) => {
-    mocks.adapter.query.mockRejectedValueOnce(new Error('failure'));
-    mocks.adapter.execute.mockRejectedValueOnce(new Error('failure'));
-    expect((await handler(context())).status).toBe(500);
-  });
+  it.each([[adminConsentLocalizationsListHandler], [adminConsentLocalizationDeleteHandler]])(
+    'returns server_error when auxiliary consent operation fails %#',
+    async (handler) => {
+      mocks.adapter.query.mockRejectedValueOnce(new Error('failure'));
+      mocks.adapter.execute.mockRejectedValueOnce(new Error('failure'));
+      expect((await handler(context())).status).toBe(500);
+    }
+  );
 });

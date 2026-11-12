@@ -58,6 +58,7 @@
 	let assignmentEnabled = $state(true);
 	let deleteModalOpen = $state(false);
 	let actionError = $state('');
+	let publishWarnings = $state<string[]>([]);
 	let copiedContractJson = $state<'saved' | 'template' | ''>('');
 	const assignmentTargetIdMissing = $derived(
 		assignmentTargetType !== 'tenant' && assignmentTargetId.trim().length === 0
@@ -135,8 +136,11 @@
 		if (!savedFlow) return;
 		publishing = true;
 		actionError = '';
+		publishWarnings = [];
 		try {
-			await adminFlowsAPI.publish(savedFlow.id);
+			const published = await adminFlowsAPI.publish(savedFlow.id);
+			// Published, with the warnings the publisher should know about.
+			publishWarnings = (published.validation?.warnings ?? []).map((issue) => issue.message);
 			await loadSavedFlow();
 		} catch (error) {
 			actionError = error instanceof Error ? error.message : $LL.admin_flows_publish_failed();
@@ -291,6 +295,15 @@
 
 		{#if actionError}
 			<div class="page-alert" role="alert">{actionError}</div>
+		{/if}
+		{#if publishWarnings.length > 0}
+			<div class="page-alert" role="status">
+				<ul>
+					{#each publishWarnings as warning (warning)}
+						<li>{warning}</li>
+					{/each}
+				</ul>
+			</div>
 		{/if}
 
 		<AdminSection
@@ -481,10 +494,6 @@
 					<strong>{flowText.mappingSet}</strong>
 				</div>
 				<div class="detail-item">
-					<span>{$LL.admin_flows_detail_consent_policy()}</span>
-					<strong>{flowText.consentPolicy}</strong>
-				</div>
-				<div class="detail-item">
 					<span>{$LL.admin_flows_detail_consent_statement()}</span>
 					<strong>{flowText.consentStatement}</strong>
 				</div>
@@ -512,13 +521,6 @@
 					<div>
 						<strong>{$LL.admin_flows_link_consent_statement_title()}</strong>
 						<span>{$LL.admin_flows_link_consent_statement_description()}</span>
-					</div>
-				</a>
-				<a href="/admin/consent-policies" class="link-card">
-					<i class="i-ph-clipboard-text" aria-hidden="true"></i>
-					<div>
-						<strong>{$LL.admin_flows_link_consent_policy_title()}</strong>
-						<span>{$LL.admin_flows_link_consent_policy_description()}</span>
 					</div>
 				</a>
 			</div>

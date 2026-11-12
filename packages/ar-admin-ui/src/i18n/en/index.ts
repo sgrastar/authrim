@@ -2,6 +2,7 @@ import type { BaseTranslation } from '../i18n-types';
 import core from './core';
 import auth from './auth';
 import adminShell from './admin-shell';
+import adminSigninConfirmation from './admin-signin-confirmation';
 import adminDashboard from './admin-dashboard';
 import adminAccount from './admin-account';
 import adminUsers from './admin-users';
@@ -52,7 +53,6 @@ import adminExternalTokenRefresh from './admin-external-token-refresh';
 import adminIatTokens from './admin-iat-tokens';
 import adminPlugins from './admin-plugins';
 import adminIdentityMapping from './admin-identity-mapping';
-import adminConsentPolicies from './admin-consent-policies';
 import adminFlows from './admin-flows';
 import adminScreens from './admin-screens';
 import adminOther from './admin-other';
@@ -61,6 +61,7 @@ import adminControlPlane from './admin-control-plane';
 const en: BaseTranslation = {
 	...core,
 	...auth,
+	...adminSigninConfirmation,
 	...adminShell,
 	...adminDashboard,
 	...adminAccount,
@@ -112,7 +113,6 @@ const en: BaseTranslation = {
 	...adminIatTokens,
 	...adminPlugins,
 	...adminIdentityMapping,
-	...adminConsentPolicies,
 	...adminFlows,
 	...adminScreens,
 	...adminControlPlane,

@@ -40,6 +40,10 @@
             {
               "path": "008_sign_in_flow_challenge_binding.sql",
               "checksum": "956b1c03834c84376fc3f5f960894a8d185a2b6e9f5ed77d41807fa925723fee"
+            },
+            {
+              "path": "009_consent_policies_removed.sql",
+              "checksum": "2345ea67a3577e00bf916891eeccd9acd9d684b14b7bff5776ce4e8550442c8f"
             }
           ]
         },
@@ -168,6 +172,10 @@
             {
               "path": "007_account_registration_pending.sql",
               "checksum": "63d2e00eb3f4aefb1d3bfdbc74b6a6eb187c80df7458fd123d34d74403f4d2e2"
+            },
+            {
+              "path": "009_consent_policies_removed.sql",
+              "checksum": "c6b12b016ca9b12d243ea19374c7c456c240f59e0f48d55a7a702cb61df7c958"
             }
           ]
         },
@@ -231,6 +239,10 @@
         {
           "path": "008_sign_in_flow_challenge_binding.sql",
           "checksum": "956b1c03834c84376fc3f5f960894a8d185a2b6e9f5ed77d41807fa925723fee"
+        },
+        {
+          "path": "009_consent_policies_removed.sql",
+          "checksum": "2345ea67a3577e00bf916891eeccd9acd9d684b14b7bff5776ce4e8550442c8f"
         }
       ]
     },
@@ -385,6 +397,10 @@
         {
           "path": "007_account_registration_pending.sql",
           "checksum": "63d2e00eb3f4aefb1d3bfdbc74b6a6eb187c80df7458fd123d34d74403f4d2e2"
+        },
+        {
+          "path": "009_consent_policies_removed.sql",
+          "checksum": "c6b12b016ca9b12d243ea19374c7c456c240f59e0f48d55a7a702cb61df7c958"
         }
       ]
     },

@@ -48,17 +48,17 @@ import {
   getConsentDefaultExpirationDays,
   getConsentExpirationEnabled,
   getConsentGranularScopes,
-  getConsentVersioningEnabled,
   // Event System
   publishEvent,
   CONSENT_EVENTS,
   type ConsentEventData,
   // Consent Versioning
-  getCurrentPolicyVersions,
-  checkRequiresReconsent,
   recordConsentHistory,
   // Consent Management
   getConsentItemsForScreen,
+  checkUserConsentSatisfaction,
+  resolveStatementRequirements,
+  ssoConsentStatementsForTarget,
   StatementConsentAccountReadError,
   type StatementConsentStores,
   processConsentItemDecisions,
@@ -222,24 +222,6 @@ function parseScopesToInfo(scope: string): ConsentScopeInfo[] {
       required: scopeName === 'openid',
     };
   });
-}
-
-function splitScopes(scope: string | undefined | null): string[] {
-  return (scope ?? '')
-    .split(/\s+/)
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
-}
-
-function collectRequestedClaimNames(claims: unknown): string[] {
-  const parsed = parseClaimsRequest(typeof claims === 'string' ? claims : undefined);
-  if (!parsed.ok || !parsed.request) return [];
-  return Array.from(
-    new Set([
-      ...Object.keys(parsed.request.userinfo ?? {}),
-      ...Object.keys(parsed.request.id_token ?? {}),
-    ])
-  );
 }
 
 /**
@@ -462,58 +444,7 @@ async function handleJsonConsentGet(
 
   // Get consent settings
 
-  // Check versioning and re-consent requirements
-  const versioningEnabled = await getConsentVersioningEnabled(c.env);
   const granularScopesEnabled = await getConsentGranularScopes(c.env);
-
-  let versioningInfo:
-    | {
-        requiresReconsent: boolean;
-        changedPolicies: string[];
-        currentVersions: {
-          privacyPolicy?: { version: string; policyUri?: string };
-          termsOfService?: { version: string; policyUri?: string };
-        };
-      }
-    | undefined;
-
-  if (versioningEnabled) {
-    // Policy versions are tenant metadata; the user's existing consent (read below) is account data.
-    const currentVersions = await getCurrentPolicyVersions(
-      createAuthContextFromHono(c, tenantId).coreAdapter,
-      tenantId
-    );
-
-    // Check if re-consent is needed due to policy changes
-    const reconsentCheck = await checkRequiresReconsent(
-      authCtx.coreAdapter,
-      userId,
-      clientRow.client_id,
-      tenantId,
-      currentVersions
-    );
-
-    versioningInfo = {
-      requiresReconsent: reconsentCheck.requiresReconsent,
-      changedPolicies: reconsentCheck.changedPolicies,
-      currentVersions: currentVersions
-        ? {
-            privacyPolicy: currentVersions.privacyPolicy
-              ? {
-                  version: currentVersions.privacyPolicy.version,
-                  policyUri: currentVersions.privacyPolicy.policyUri,
-                }
-              : undefined,
-            termsOfService: currentVersions.termsOfService
-              ? {
-                  version: currentVersions.termsOfService.version,
-                  policyUri: currentVersions.termsOfService.policyUri,
-                }
-              : undefined,
-          }
-        : {},
-    };
-  }
 
   // Check consent management items
   let consentItems: ExtendedConsentScreenData['consent_items'];
@@ -521,26 +452,6 @@ async function handleJsonConsentGet(
   let consentLanguage = 'en';
 
   try {
-    // Check if consent management is enabled
-    let mgmtEnabled = false;
-    if (c.env.KV) {
-      try {
-        const kvVal = await c.env.KV.get('consent:consent_management_enabled');
-        if (kvVal !== null) {
-          mgmtEnabled = kvVal === 'true' || kvVal === '1';
-        } else {
-          const envVal = (c.env as unknown as Record<string, string>).ENABLE_CONSENT_MANAGEMENT;
-          mgmtEnabled = envVal === 'true' || envVal === '1';
-        }
-      } catch {
-        const envVal = (c.env as unknown as Record<string, string>).ENABLE_CONSENT_MANAGEMENT;
-        mgmtEnabled = envVal === 'true' || envVal === '1';
-      }
-    } else {
-      const envVal = (c.env as unknown as Record<string, string>).ENABLE_CONSENT_MANAGEMENT;
-      mgmtEnabled = envVal === 'true' || envVal === '1';
-    }
-
     // Determine language from ui_locales or Accept-Language
     const uiLocales = metadata.ui_locales;
     const acceptLang = c.req.header('Accept-Language');
@@ -557,22 +468,14 @@ async function handleJsonConsentGet(
       }
     }
 
-    consentItems = await getConsentItemsForScreen(
-      statementConsentStores(c, tenantId),
+    consentItems = await loadConsentScreenItems(c, {
       tenantId,
-      clientRow.client_id,
+      clientId: clientRow.client_id,
       userId,
-      consentLanguage,
-      defaultLang,
-      {
-        target_type: 'oidc_client',
-        target_id: clientRow.client_id,
-        requested_scopes: splitScopes(metadata.scope),
-        requested_claims: collectRequestedClaimNames(metadata.claims),
-      },
-      piiCtx.defaultPiiAdapter
-    );
-    consentManagementEnabled = mgmtEnabled || (consentItems?.length ?? 0) > 0;
+      language: consentLanguage,
+      defaultLanguage: defaultLang,
+    });
+    consentManagementEnabled = (consentItems?.length ?? 0) > 0;
   } catch (err) {
     // The account's records are the only evidence of what was agreed to: when they cannot be
     // read the screen neither asks again nor skips a required item.
@@ -596,7 +499,6 @@ async function handleJsonConsentGet(
     features,
     // Extended consent features
     granular_scopes_enabled: granularScopesEnabled,
-    versioning: versioningInfo,
     // Consent management
     consent_items: consentItems,
     consent_management_enabled: consentManagementEnabled,
@@ -636,32 +538,46 @@ function consentRecordsUnavailable(
   );
 }
 
+/**
+ * The statements the consent screen asks for: those the app's sign-in Flow requires at single
+ * sign-on (flow-sso-consent.ts), with the user's current answers.
+ */
 async function loadConsentScreenItems(
   c: Context<{ Bindings: Env }>,
   params: {
     tenantId: string;
     clientId: string;
     userId: string;
-    metadata: ConsentChallengeMetadata;
     language?: string;
     defaultLanguage?: string;
   }
 ): Promise<ConsentScreenItem[]> {
-  const piiCtx = createPIIContextFromHono(c, params.tenantId);
-  return getConsentItemsForScreen(
-    statementConsentStores(c, params.tenantId),
+  const stores = statementConsentStores(c, params.tenantId);
+  const requirements = await resolveStatementRequirements(
+    stores.metadata,
     params.tenantId,
-    params.clientId,
+    await ssoConsentStatementsForTarget(stores.metadata, params.tenantId, {
+      type: 'oidc_client',
+      id: params.clientId,
+    })
+  );
+  // Only what the user has not yet agreed to (as the Flow leaves out what is answered): a statement
+  // agreed to from the version it is required from is neither asked nor recorded again.
+  const { unsatisfied } = await checkUserConsentSatisfaction(
+    stores.account,
+    params.tenantId,
+    params.userId,
+    requirements
+  ).catch((error: unknown) => {
+    throw new StatementConsentAccountReadError(error);
+  });
+  return getConsentItemsForScreen(
+    stores,
+    params.tenantId,
+    requirements.filter((requirement) => unsatisfied.includes(requirement.statement_id)),
     params.userId,
     params.language ?? 'en',
-    params.defaultLanguage ?? 'en',
-    {
-      target_type: 'oidc_client',
-      target_id: params.clientId,
-      requested_scopes: splitScopes(params.metadata.scope),
-      requested_claims: collectRequestedClaimNames(params.metadata.claims),
-    },
-    piiCtx.defaultPiiAdapter
+    params.defaultLanguage ?? 'en'
   );
 }
 
@@ -738,7 +654,7 @@ async function changedConsentDocument(
  * POST /auth/consent
  *
  * JSON body only: { challenge_id, approved, selected_org_id, acting_as_user_id, selected_scopes,
- * acknowledged_policy_versions, consent_item_decisions }. Responds with { redirect_url }.
+ * consent_item_decisions }. Responds with { redirect_url }.
  */
 export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
   // The lite Login UI's server sends a form post itself (its relay page): it asks for the data.
@@ -763,7 +679,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       selected_org_id?: string;
       acting_as_user_id?: string;
       selected_scopes?: string[];
-      acknowledged_policy_versions?: { privacy_policy?: string; terms_of_service?: string };
       consent_item_decisions?: Record<string, 'granted' | 'denied'>;
       consent_item_versions?: DisplayedStatementVersions;
     }>();
@@ -772,7 +687,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const selected_org_id = jsonBody.selected_org_id;
     const acting_as_user_id = jsonBody.acting_as_user_id;
     const selected_scopes = jsonBody.selected_scopes;
-    const acknowledged_policy_versions = jsonBody.acknowledged_policy_versions;
     const consent_item_decisions = jsonBody.consent_item_decisions;
 
     if (!challenge_id) {
@@ -855,7 +769,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         tenantId: getTenantIdFromContext(c),
         clientId: pendingChallenge.metadata.client_id,
         userId: pendingChallenge.userId,
-        metadata: pendingChallenge.metadata,
         language: 'en',
         defaultLanguage: 'en',
       });
@@ -1091,7 +1004,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       tenantId,
       clientId: client_id,
       userId,
-      metadata,
       language: 'en',
       defaultLanguage: 'en',
     });
@@ -1143,10 +1055,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     if (expirationEnabled && defaultExpirationDays > 0) {
       expiresAt = now + defaultExpirationDays * 24 * 60 * 60 * 1000;
     }
-
-    // Get policy versions if versioning is enabled
-    const privacyPolicyVersion = acknowledged_policy_versions?.privacy_policy || null;
-    const tosVersion = acknowledged_policy_versions?.terms_of_service || null;
 
     // Process consent item decisions (consent management)
     if (consentItems.length > 0) {
@@ -1236,8 +1144,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         selectedScopesJson,
         grantedAt: now,
         expiresAt,
-        privacyPolicyVersion,
-        tosVersion,
+        privacyPolicyVersion: null,
+        tosVersion: null,
         now,
         consentGeneration,
       });
@@ -1259,30 +1167,19 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     // Invalidate consent cache so next check reflects updated consent
     await invalidateConsentCache(c.env, userId, tenantId, client_id);
 
-    // Check if versioning is enabled for history recording
-    const versioningEnabled = await getConsentVersioningEnabled(c.env);
-
-    // Determine if this is a new consent or update
-    // (We check by looking at consent_history or by the presence of policy versions)
-    const isVersionUpgrade = versioningEnabled && (privacyPolicyVersion || tosVersion);
-
     // Record consent history for audit trail (GDPR compliance)
-    if (versioningEnabled) {
-      try {
-        await recordConsentHistory(authCtx.coreAdapter, {
-          tenantId,
-          userId,
-          clientId: client_id,
-          action: isVersionUpgrade ? 'version_upgraded' : 'granted',
-          scopesAfter: effectiveScope.split(' '),
-          privacyPolicyVersion: privacyPolicyVersion ?? undefined,
-          tosVersion: tosVersion ?? undefined,
-          userAgent: c.req.header('User-Agent'),
-        });
-      } catch (historyError) {
-        log.warn('Failed to record consent history', { action: 'record_history' });
-        // Non-blocking - don't fail the consent flow
-      }
+    try {
+      await recordConsentHistory(authCtx.coreAdapter, {
+        tenantId,
+        userId,
+        clientId: client_id,
+        action: 'granted',
+        scopesAfter: effectiveScope.split(' '),
+        userAgent: c.req.header('User-Agent'),
+      });
+    } catch {
+      log.warn('Failed to record consent history', { action: 'record_history' });
+      // Non-blocking - don't fail the consent flow
     }
 
     // Publish consent.granted event (non-blocking)
@@ -1297,23 +1194,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     }).catch((err) => {
       log.warn('Failed to publish consent.granted event', { action: 'event_publish' });
     });
-
-    // Publish VERSION_UPGRADED event if policy versions were acknowledged
-    if (isVersionUpgrade) {
-      publishEvent(c, {
-        type: CONSENT_EVENTS.VERSION_UPGRADED,
-        tenantId,
-        data: {
-          userId,
-          clientId: client_id,
-          scopes: effectiveScope.split(' '),
-          newPrivacyPolicyVersion: privacyPolicyVersion ?? undefined,
-          newTosVersion: tosVersion ?? undefined,
-        } satisfies ExtendedConsentEventData,
-      }).catch((err) => {
-        log.warn('Failed to publish consent.version_upgraded event', { action: 'event_publish' });
-      });
-    }
 
     // PII Protection: Don't log userId (can be used for user tracking)
     log.info('Consent granted', { action: 'grant', scope: effectiveScope });

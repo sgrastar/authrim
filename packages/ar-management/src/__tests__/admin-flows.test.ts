@@ -487,63 +487,130 @@ describe('admin Flow management handlers', () => {
     expect(assignments).toHaveLength(0);
   });
 
-  it('keeps single-protocol missing consent policy references publish-blocking', async () => {
-    const editor = {
-      nodes: [
-        { id: 'entry', type: 'entry' },
-        {
-          id: 'oidc-consent',
-          type: 'consent',
-          config: {
-            consent_policy_ref: 'missing-oidc-policy',
-            completion_block: {
-              id: 'oidc-authorization-completion',
-              protocol: 'oidc',
-              purpose: 'authorization',
-              role: 'consent',
-            },
+  const oidcConsentEditor = (config: Record<string, unknown>) => ({
+    nodes: [
+      { id: 'entry', type: 'entry' },
+      {
+        id: 'oidc-consent',
+        type: 'consent',
+        config: {
+          ...config,
+          completion_block: {
+            id: 'oidc-authorization-completion',
+            protocol: 'oidc',
+            purpose: 'authorization',
+            role: 'consent',
           },
         },
-        {
-          id: 'oidc-complete',
-          type: 'complete',
-          config: {
-            completion_block: {
-              id: 'oidc-authorization-completion',
-              protocol: 'oidc',
-              purpose: 'authorization',
-              role: 'output',
-            },
+      },
+      {
+        id: 'oidc-complete',
+        type: 'complete',
+        config: {
+          completion_block: {
+            id: 'oidc-authorization-completion',
+            protocol: 'oidc',
+            purpose: 'authorization',
+            role: 'output',
           },
         },
-      ],
-      edges: [
-        {
-          id: 'entry:next->oidc-consent',
-          source: 'entry',
-          source_handle: 'next',
-          target: 'oidc-consent',
-        },
-        {
-          id: 'oidc-consent:accepted->oidc-complete',
-          source: 'oidc-consent',
-          source_handle: 'accepted',
-          target: 'oidc-complete',
-        },
-      ],
-    };
+      },
+    ],
+    edges: [
+      {
+        id: 'entry:next->oidc-consent',
+        source: 'entry',
+        source_handle: 'next',
+        target: 'oidc-consent',
+      },
+      {
+        id: 'oidc-consent:accepted->oidc-complete',
+        source: 'oidc-consent',
+        source_handle: 'accepted',
+        target: 'oidc-complete',
+      },
+    ],
+  });
 
-    const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
-    const body = await readJson(response);
+  const validateEditor = async (editor: unknown) =>
+    readJson(await adminFlowValidateHandler(createContext({ body: { editor } })));
+
+  it('refuses a consent node that still names a removed consent policy', async () => {
+    const body = await validateEditor(
+      oidcConsentEditor({
+        consent_policy_ref: 'old-policy',
+        statements: [{ statement_id: 'terms', required: true }],
+      })
+    );
+
+    expect(body.valid).toBe(false);
+    expect(body.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: 'error',
+          code: 'consent_policy_removed',
+          node_id: 'oidc-consent',
+        }),
+      ])
+    );
+  });
+
+  it.each([
+    ['a non-list', 'terms'],
+    ['an entry without an id', [{ required: true }]],
+    ['a repeated statement', [{ statement_id: 'terms' }, { statement_id: 'terms' }]],
+    ['a non-boolean required', [{ statement_id: 'terms', required: 'yes' }]],
+  ])('refuses malformed statements: %s', async (_name, statements) => {
+    const body = await validateEditor(oidcConsentEditor({ statements }));
+
+    expect(body.valid).toBe(false);
+    expect(body.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'invalid_consent_statements', node_id: 'oidc-consent' }),
+      ])
+    );
+  });
+
+  it('keeps single-protocol missing or inactive consent statements publish-blocking', async () => {
+    mocks.db.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      is_active: 0,
+      current_version_id: 'version-1',
+    });
+    const body = await validateEditor(
+      oidcConsentEditor({
+        statements: [
+          { statement_id: 'missing', required: true },
+          { statement_id: 'off', required: false },
+        ],
+      })
+    );
 
     expect(body.valid).toBe(false);
     expect(body.errors).toMatchObject([
-      {
-        level: 'error',
-        code: 'missing_consent_policy',
-        node_id: 'oidc-consent',
-      },
+      { level: 'error', code: 'inactive_consent_statement', node_id: 'oidc-consent' },
+      { level: 'error', code: 'inactive_consent_statement', node_id: 'oidc-consent' },
     ]);
+  });
+
+  it('refuses an active consent statement that has no published version', async () => {
+    mocks.db.queryOne.mockResolvedValueOnce({ is_active: 1, current_version_id: null });
+    const body = await validateEditor(
+      oidcConsentEditor({ statements: [{ statement_id: 'draft-only', required: true }] })
+    );
+
+    expect(body.valid).toBe(false);
+    expect(body.errors).toMatchObject([
+      { code: 'missing_current_consent_statement_version', node_id: 'oidc-consent' },
+    ]);
+  });
+
+  it('accepts an active consent statement with a published version', async () => {
+    mocks.db.queryOne.mockResolvedValueOnce({ is_active: '1', current_version_id: 'version-1' });
+    const body = await validateEditor(
+      oidcConsentEditor({ statements: [{ statement_id: 'terms', required: true }] })
+    );
+
+    expect(body.errors).toEqual([]);
   });
 
   it('rejects a custom consent screen that has no consent widget', async () => {
@@ -595,7 +662,7 @@ describe('admin Flow management handlers', () => {
     );
   });
 
-  it('treats missing consent policy references in multi-protocol completion branches as warnings', async () => {
+  it('treats missing consent statements in multi-protocol completion branches as warnings', async () => {
     const editor = {
       nodes: [
         { id: 'entry', type: 'entry' },
@@ -603,7 +670,7 @@ describe('admin Flow management handlers', () => {
           id: 'saml-consent',
           type: 'consent',
           config: {
-            consent_policy_ref: 'missing-saml-policy',
+            statements: [{ statement_id: 'missing-saml', required: true }],
             completion_block: {
               id: 'saml-attribute-release-completion',
               protocol: 'saml',
@@ -628,7 +695,7 @@ describe('admin Flow management handlers', () => {
           id: 'oidc-consent',
           type: 'consent',
           config: {
-            consent_policy_ref: 'missing-oidc-policy',
+            statements: [{ statement_id: 'missing-oidc', required: true }],
             completion_block: {
               id: 'oidc-authorization-completion',
               protocol: 'oidc',
@@ -686,12 +753,12 @@ describe('admin Flow management handlers', () => {
     expect(body.warnings).toMatchObject([
       {
         level: 'warning',
-        code: 'missing_consent_policy',
+        code: 'inactive_consent_statement',
         node_id: 'saml-consent',
       },
       {
         level: 'warning',
-        code: 'missing_consent_policy',
+        code: 'inactive_consent_statement',
         node_id: 'oidc-consent',
       },
     ]);
@@ -920,6 +987,36 @@ describe('admin Flow management handlers', () => {
     );
     // Once is enough: a tenant with a sign-up keeps it.
     expect(await seedDefaultRegistrationFlow(mocks.db as never, 'tenant-1', 1001)).toBeNull();
+  });
+
+  it('checks the statements of runtime steps as published, not only the editor nodes', async () => {
+    seedFlow({
+      draft_runtime_base_json: JSON.stringify({
+        flow_kind: 'login',
+        flow_id: 'flow-1',
+        ui: {
+          steps: [
+            { id: 'entry:step', source_node_id: 'entry', component: 'interaction_context' },
+            {
+              id: 'consent:step',
+              source_node_id: 'runtime-consent',
+              component: 'consent_policy',
+              render: true,
+              config: { statements: [{ statement_id: 'missing-terms', required: true }] },
+            },
+          ],
+        },
+      }),
+    });
+
+    const response = await adminFlowPublishHandler(createContext({ params: { id: 'flow-1' } }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(400);
+    const errors = (body.validation as { errors: Array<Record<string, unknown>> }).errors;
+    const runtimeError = errors.find((issue) => issue.node_id === 'runtime-consent');
+    expect(runtimeError?.code).toBe('inactive_consent_statement');
+    expect(String(runtimeError?.path)).toContain('$.runtime.ui.steps[1]');
   });
 
   it('increments publish version numbers returned as strings by adapters', async () => {

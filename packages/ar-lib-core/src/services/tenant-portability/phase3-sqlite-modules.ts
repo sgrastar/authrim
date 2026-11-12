@@ -67,16 +67,7 @@ export const PHASE3_SQLITE_TABLE_GROUPS: readonly Phase3TableGroup[] = [
   {
     family: 'core',
     module: 'consent',
-    tables: [
-      'client_consent_overrides',
-      'consent_policies',
-      'consent_policy_items',
-      'consent_policy_versions',
-      'consent_statement_localizations',
-      'consent_statement_versions',
-      'consent_statements',
-      'tenant_consent_requirements',
-    ],
+    tables: ['consent_statement_localizations', 'consent_statement_versions', 'consent_statements'],
   },
   {
     family: 'admin',

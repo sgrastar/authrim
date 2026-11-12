@@ -6,8 +6,7 @@
 		adminConsentStatementsAPI,
 		type ConsentStatement,
 		type ConsentStatementLocalization,
-		type ConsentStatementVersion,
-		type TenantConsentRequirement
+		type ConsentStatementVersion
 	} from '#lib/api/admin-consent-statements.js';
 	import {
 		adminIdentityMappingAPI,
@@ -28,7 +27,6 @@
 		| 'saml-attribute-release'
 		| 'saml-attribute-release-confirmation'
 		| 'custom';
-	type CollectionMode = 'required' | 'optional' | 'display' | 'hidden';
 	type BindingType =
 		| 'subject'
 		| 'identity_schema'
@@ -99,54 +97,45 @@
 	const templates: Array<{
 		id: TemplateId;
 		icon: string;
-		defaultCollectionMode: CollectionMode;
 		defaultBindingType: BindingType;
 	}> = [
 		{
 			id: 'terms-of-service',
 			icon: 'i-ph-file-text',
-			defaultCollectionMode: 'required',
 			defaultBindingType: 'subject'
 		},
 		{
 			id: 'privacy-policy',
 			icon: 'i-ph-shield-check',
-			defaultCollectionMode: 'required',
 			defaultBindingType: 'subject'
 		},
 		{
 			id: 'user-data-release-consent',
 			icon: 'i-ph-identification-card',
-			defaultCollectionMode: 'required',
 			defaultBindingType: 'destination_field_mapping_set'
 		},
 		{
 			id: 'saml-attribute-release',
 			icon: 'i-ph-share-network',
-			defaultCollectionMode: 'required',
 			defaultBindingType: 'destination_field_mapping_set'
 		},
 		{
 			id: 'saml-attribute-release-confirmation',
 			icon: 'i-ph-list-checks',
-			defaultCollectionMode: 'display',
 			defaultBindingType: 'user_decision'
 		},
 		{
 			id: 'custom',
 			icon: 'i-ph-pencil-simple-line',
-			defaultCollectionMode: 'required',
 			defaultBindingType: 'subject'
 		}
 	];
 
-	const modeOptions: CollectionMode[] = ['required', 'optional', 'display', 'hidden'];
 	const contentModeOptions: ContentMode[] = ['display_only', 'checkbox', 'radio'];
 	const initialContentLinks: ContentLink[] = [];
 	const initialContentOptions: ContentOption[] = [];
 
 	let selectedTemplateId = $state<TemplateId | ''>('');
-	let collectionMode = $state<CollectionMode>('display');
 	let bindingType = $state<BindingType>('user_decision');
 	let selectedFieldMappingSetId = $state('');
 	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
@@ -236,7 +225,6 @@
 	function selectTemplate(templateId: TemplateId) {
 		const template = templates.find((candidate) => candidate.id === templateId);
 		selectedTemplateId = templateId;
-		collectionMode = template?.defaultCollectionMode ?? 'required';
 		bindingType = template?.defaultBindingType ?? 'subject';
 		internalTitle = templateTitle(templateId);
 		contentMode = defaultContentMode(templateId);
@@ -255,10 +243,9 @@
 		loadingStatement = true;
 		saveError = '';
 		try {
-			const [{ statement }, { versions }, { requirements }] = await Promise.all([
+			const [{ statement }, { versions }] = await Promise.all([
 				adminConsentStatementsAPI.getStatement(statementId),
-				adminConsentStatementsAPI.listVersions(statementId),
-				adminConsentStatementsAPI.listRequirements()
+				adminConsentStatementsAPI.listVersions(statementId)
 			]);
 			const currentVersion =
 				versions.find((version) => version.is_current) ??
@@ -266,12 +253,7 @@
 			const localizationResult = currentVersion
 				? await adminConsentStatementsAPI.listLocalizations(statementId, currentVersion.id)
 				: { localizations: [] };
-			applyStatementForEdit(
-				statement,
-				currentVersion,
-				localizationResult.localizations || [],
-				requirements.find((requirement) => requirement.statement_id === statementId)
-			);
+			applyStatementForEdit(statement, currentVersion, localizationResult.localizations || []);
 		} catch (err) {
 			saveError = err instanceof Error ? err.message : localText('loadFailed');
 		} finally {
@@ -282,8 +264,7 @@
 	function applyStatementForEdit(
 		statement: ConsentStatement,
 		version: ConsentStatementVersion | undefined,
-		localizations: ConsentStatementLocalization[],
-		requirement: TenantConsentRequirement | undefined
+		localizations: ConsentStatementLocalization[]
 	) {
 		const templateId = templateIdFromStatement(statement);
 		selectTemplate(templateId);
@@ -297,24 +278,6 @@
 			localizations.find((localization) => localization.language === 'en')?.title ||
 			localizations[0]?.title ||
 			templateTitle(templateId);
-		collectionMode = collectionModeFromRequirement(statement, requirement);
-		const requirementRules = parseRequirementRules(requirement);
-		if (isBindingType(requirementRules.binding_type)) {
-			bindingType = requirementRules.binding_type;
-		}
-		if (
-			bindingType === 'destination_field_mapping_set' &&
-			typeof requirementRules.binding_value === 'string'
-		) {
-			selectedFieldMappingSetId = requirementRules.binding_value;
-		}
-		if (isContentMode(requirementRules.content_mode)) {
-			contentMode = requirementRules.content_mode;
-		}
-		if (isAttributeValueDisplay(requirementRules.attribute_value_display)) {
-			attributeValueDisplay = requirementRules.attribute_value_display;
-		}
-
 		const knownLanguages = localizations
 			.map((localization) => localization.language)
 			.filter((language): language is ContentLanguageCode => isContentLanguageCode(language));
@@ -338,7 +301,7 @@
 			}
 		}
 		contentDrafts = drafts;
-		contentOptions = normalizeContentOptions(requirementRules.content_options, options);
+		contentOptions = options;
 		nextContentOptionId = contentOptions.length + 1;
 	}
 
@@ -387,7 +350,6 @@
 			}
 			loadedVersionName = versionName;
 
-			await saveRequirement(statementId, versionName);
 			await saveLocalizations(statementId, versionId);
 			if (loadedVersionStatus === 'draft') {
 				const result = await adminConsentStatementsAPI.activateVersion(statementId, versionId);
@@ -497,41 +459,8 @@
 			record_retention_days: null,
 			withdrawal_allowed: selectedTemplateId !== 'terms-of-service',
 			withdrawal_impact: null,
-			reconsent_on_version_change: true,
 			reconsent_interval_days: null
 		};
-	}
-
-	async function saveRequirement(statementId: string, versionName: string) {
-		if (collectionMode === 'hidden') {
-			if (editingStatementId || loadedStatementId) {
-				await adminConsentStatementsAPI.deleteRequirement(statementId).catch(() => undefined);
-			}
-			return;
-		}
-		await adminConsentStatementsAPI.upsertRequirement(statementId, {
-			is_required: collectionMode === 'required',
-			min_version: versionName,
-			enforcement: collectionMode === 'required' ? 'block' : 'allow_continue',
-			show_deletion_link: false,
-			deletion_url: undefined,
-			conditional_rules_json: JSON.stringify({
-				mode: collectionMode,
-				binding_type: bindingType,
-				binding_value:
-					bindingType === 'destination_field_mapping_set' ? selectedFieldMappingSetId : null,
-				content_mode: contentMode,
-				content_options: contentOptions.map((option) => ({
-					id: option.id,
-					value_mode: option.valueMode,
-					value: option.value,
-					labels: option.labels,
-					descriptions: option.descriptions
-				})),
-				attribute_value_display: attributeValueDisplay
-			}),
-			display_order: 0
-		});
 	}
 
 	async function saveLocalizations(statementId: string, versionId: string) {
@@ -608,89 +537,6 @@
 		const day = Number(value.slice(6, 8));
 		const date = new Date(year, month - 1, day);
 		return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
-	}
-
-	function parseRequirementRules(
-		requirement: TenantConsentRequirement | undefined
-	): Record<string, unknown> {
-		if (!requirement?.conditional_rules_json) return {};
-		try {
-			const parsed = JSON.parse(requirement.conditional_rules_json) as unknown;
-
-			return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-				? (parsed as Record<string, unknown>)
-				: {};
-		} catch {
-			return {};
-		}
-	}
-
-	function isContentMode(value: unknown): value is ContentMode {
-		return value === 'display_only' || value === 'checkbox' || value === 'radio';
-	}
-
-	function isBindingType(value: unknown): value is BindingType {
-		return (
-			value === 'subject' ||
-			value === 'identity_schema' ||
-			value === 'destination_field_mapping_set' ||
-			value === 'user_decision'
-		);
-	}
-
-	function isAttributeValueDisplay(value: unknown): value is AttributeValueDisplay {
-		return value === 'names' || value === 'masked_values' || value === 'full_values';
-	}
-
-	function normalizeContentOptions(value: unknown, fallback: ContentOption[]): ContentOption[] {
-		if (!Array.isArray(value)) return fallback;
-		const options = value
-			.map((raw, index) => {
-				if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-				const record = raw as Record<string, unknown>;
-				const id =
-					typeof record.id === 'string' && record.id.trim()
-						? record.id.trim()
-						: `option-${index + 1}`;
-				const value = typeof record.value === 'string' ? record.value : '';
-
-				const labels =
-					record.labels && typeof record.labels === 'object' && !Array.isArray(record.labels)
-						? (record.labels as Partial<Record<ContentLanguageCode, string>>)
-						: {};
-
-				const descriptions =
-					record.descriptions &&
-					typeof record.descriptions === 'object' &&
-					!Array.isArray(record.descriptions)
-						? (record.descriptions as Partial<Record<ContentLanguageCode, string>>)
-						: {};
-				return createContentOption(
-					id,
-					value,
-					{ ...createEmptyLanguageMap(), ...labels },
-					{ ...createEmptyLanguageMap(), ...descriptions }
-				);
-			})
-			.filter((option): option is ContentOption => Boolean(option));
-		return options.length > 0 ? options : fallback;
-	}
-
-	function collectionModeFromRequirement(
-		statement: ConsentStatement,
-		requirement: TenantConsentRequirement | undefined
-	): CollectionMode {
-		if (!requirement) {
-			const templateId = templateIdFromStatement(statement);
-
-			return (
-				templates.find((template) => template.id === templateId)?.defaultCollectionMode ??
-				'required'
-			);
-		}
-		if (requirement.is_required) return 'required';
-		if (statement.category === 'saml_attribute_release_confirmation') return 'display';
-		return 'optional';
 	}
 
 	function isContentLanguageCode(value: string): value is ContentLanguageCode {
@@ -810,45 +656,6 @@
 				return $LL.admin_consent_templates_saml_confirmation_description();
 			case 'custom':
 				return $LL.admin_consent_templates_custom_description();
-		}
-	}
-
-	function modeLabel(mode: CollectionMode): string {
-		switch (mode) {
-			case 'required':
-				return $LL.admin_consent_templates_mode_required();
-			case 'optional':
-				return $LL.admin_consent_templates_mode_optional();
-			case 'display':
-				return $LL.admin_consent_templates_mode_display();
-			case 'hidden':
-				return $LL.admin_consent_templates_mode_hidden();
-		}
-	}
-
-	function modeDescription(mode: CollectionMode): string {
-		switch (mode) {
-			case 'required':
-				return $LL.admin_consent_templates_mode_required_description();
-			case 'optional':
-				return $LL.admin_consent_templates_mode_optional_description();
-			case 'display':
-				return $LL.admin_consent_templates_mode_display_description();
-			case 'hidden':
-				return $LL.admin_consent_templates_mode_hidden_description();
-		}
-	}
-
-	function modeIcon(mode: CollectionMode): string {
-		switch (mode) {
-			case 'required':
-				return 'i-ph-lock-key';
-			case 'optional':
-				return 'i-ph-toggle-left';
-			case 'display':
-				return 'i-ph-eye';
-			case 'hidden':
-				return 'i-ph-eye-slash';
 		}
 	}
 
@@ -2015,36 +1822,6 @@
 			</section>
 
 			{#if selectedTemplate}
-				<section
-					class="collection-panel"
-					aria-label={$LL.admin_consent_templates_collection_aria()}
-				>
-					<div class="collection-panel__header">
-						<div>
-							<p class="template-kicker">{$LL.admin_consent_templates_collection_kicker()}</p>
-							<h2>{templateTitle(selectedTemplate.id)}</h2>
-						</div>
-					</div>
-					<div
-						class="mode-list"
-						role="radiogroup"
-						aria-label={$LL.admin_consent_templates_collection_aria()}
-					>
-						{#each modeOptions as option (option)}
-							<label class="mode-card" class:selected={collectionMode === option}>
-								<input type="radio" bind:group={collectionMode} value={option} />
-								<span class="template-card__icon mode-card__icon">
-									<i class={modeIcon(option)} aria-hidden="true"></i>
-								</span>
-								<span class="template-card__body">
-									<span class="template-card__title">{modeLabel(option)}</span>
-									<span class="template-card__description">{modeDescription(option)}</span>
-								</span>
-							</label>
-						{/each}
-					</div>
-				</section>
-
 				<section class="binding-panel" aria-label={$LL.admin_consent_templates_binding_aria()}>
 					<div class="collection-panel__header">
 						<div>
@@ -2572,8 +2349,7 @@
 		margin-bottom: 24px;
 	}
 
-	.template-header h1,
-	.collection-panel h2 {
+	.template-header h1 {
 		margin: 0;
 		color: var(--color-text-primary);
 		line-height: 1.25;
@@ -2673,13 +2449,6 @@
 		color: var(--color-text-muted);
 		font-size: 0.85rem;
 		line-height: 1.55;
-	}
-
-	.collection-panel {
-		padding: 20px;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		background: var(--color-surface);
 	}
 
 	.binding-panel,
@@ -3249,51 +3018,6 @@
 		margin-bottom: 14px;
 	}
 
-	.mode-list {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 10px;
-	}
-
-	.mode-card {
-		position: relative;
-		display: flex;
-		align-items: flex-start;
-		gap: 12px;
-		min-height: 84px;
-		padding: 12px 16px;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		background: var(--color-surface);
-		color: inherit;
-		cursor: pointer;
-	}
-
-	.mode-card:hover,
-	.mode-card:focus-within {
-		border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
-	}
-
-	.mode-card.selected {
-		border-color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface));
-		box-shadow:
-			inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 36%, transparent),
-			0 0 0 1px color-mix(in srgb, var(--color-primary) 12%, transparent);
-	}
-
-	.mode-card input {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		opacity: 0;
-		pointer-events: none;
-	}
-
-	.mode-card__icon {
-		flex: 0 0 auto;
-	}
-
 	.template-actions {
 		display: flex;
 		flex-wrap: wrap;
@@ -3312,7 +3036,6 @@
 		}
 
 		.template-grid,
-		.mode-list,
 		.content-mode-panel {
 			grid-template-columns: 1fr;
 		}

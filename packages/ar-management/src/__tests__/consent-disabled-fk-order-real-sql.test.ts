@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import { singleDatabaseStatementConsent } from '@authrim/ar-lib-core';
+import { resolveStatementRequirements, singleDatabaseStatementConsent } from '@authrim/ar-lib-core';
 import {
   getConsentItemsForScreen,
   processConsentItemDecisions,
@@ -87,7 +87,9 @@ describe('disabled consent split: preserve the existing delayed-grant safeguard'
     const page = await getConsentItemsForScreen(
       singleDatabaseStatementConsent(adapter),
       TENANT,
-      null,
+      await resolveStatementRequirements(adapter, TENANT, [
+        { statement_id: STATEMENT, required: true },
+      ]),
       DELAYED_USER,
       'en'
     );

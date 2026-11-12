@@ -6,8 +6,7 @@
 		adminConsentStatementsAPI,
 		type ConsentStatement,
 		type ConsentStatementLocalization,
-		type ConsentStatementVersion,
-		type TenantConsentRequirement
+		type ConsentStatementVersion
 	} from '#lib/api/admin-consent-statements.js';
 	import {
 		AdminDataTable,
@@ -26,13 +25,6 @@
 		| 'user-data-release-consent'
 		| 'saml-attribute-release'
 		| 'saml-attribute-release-confirmation';
-	type CollectionMode = 'required' | 'optional' | 'display' | 'hidden';
-	type BindingType =
-		| 'subject'
-		| 'identity_schema'
-		| 'destination_field_mapping_set'
-		| 'user_decision';
-
 	let { mode, statementId = '' }: { mode: Mode; statementId?: string } = $props();
 
 	let loading = $state(true);
@@ -42,17 +34,13 @@
 	let statement = $state<ConsentStatement | null>(null);
 	let versions = $state<ConsentStatementVersion[]>([]);
 	let localizations = $state<ConsentStatementLocalization[]>([]);
-	let requirement = $state<TenantConsentRequirement | null>(null);
 	let selectedVersionId = $state<string | null>(null);
 	let showActivateConfirm = $state(false);
 	let activatingVersionId = $state<string | null>(null);
+	let activateReconsent = $state(true);
 	let editingLanguage = $state<string | null>(null);
 	let recordRetentionMode = $state<'indefinite' | 'specified'>('indefinite');
 	let reconsentIntervalEnabled = $state(false);
-	let collectionMode = $state<CollectionMode>('required');
-	let bindingDraft = $state<{ binding_type: BindingType; binding_value?: string }>({
-		binding_type: 'subject'
-	});
 	const samlAttributeReleaseConfirmationCategory = 'saml_attribute_release_confirmation';
 
 	let statementFormData = $state({
@@ -65,7 +53,6 @@
 		record_retention_days: null as number | null,
 		withdrawal_allowed: true,
 		withdrawal_impact: '',
-		reconsent_on_version_change: true,
 		reconsent_interval_days: null as number | null
 	});
 
@@ -75,16 +62,6 @@
 		effective_at: currentDateTimeInputValue(),
 		effective_until: '',
 		effective_until_open_ended: true
-	});
-
-	let requirementFormData = $state({
-		is_required: 1,
-		min_version: '',
-		enforcement: 'block',
-		show_deletion_link: 0,
-		deletion_url: '',
-		conditional_rules_json: '',
-		display_order: 0
 	});
 
 	let localizationFormData = $state({
@@ -134,19 +111,13 @@
 			if (!currentStatementId) {
 				throw new Error($LL.admin_consent_statements_error_load());
 			}
-			const [statementResult, versionResult, requirementResult] = await Promise.all([
+			const [statementResult, versionResult] = await Promise.all([
 				adminConsentStatementsAPI.getStatement(currentStatementId),
-				adminConsentStatementsAPI.listVersions(currentStatementId),
-				adminConsentStatementsAPI.listRequirements()
+				adminConsentStatementsAPI.listVersions(currentStatementId)
 			]);
 			statement = statementResult.statement;
 			versions = (versionResult.versions || []).sort((a, b) => b.created_at - a.created_at);
-			requirement =
-				(requirementResult.requirements || []).find(
-					(req) => req.statement_id === currentStatementId
-				) || null;
 			populateStatementForm(statement);
-			populateRequirementForm(requirement);
 			const initialVersion = versions.find((version) => version.is_current) || versions[0] || null;
 			if (initialVersion) {
 				await selectVersion(initialVersion.id);
@@ -169,8 +140,6 @@
 			record_retention_days: value.record_retention_days ?? null,
 			withdrawal_allowed: value.withdrawal_allowed !== 0 && value.withdrawal_allowed !== false,
 			withdrawal_impact: value.withdrawal_impact || '',
-			reconsent_on_version_change:
-				value.reconsent_on_version_change !== 0 && value.reconsent_on_version_change !== false,
 			reconsent_interval_days: value.reconsent_interval_days ?? null
 		};
 		recordRetentionMode =
@@ -196,30 +165,6 @@
 					effective_at: currentDateTimeInputValue(),
 					effective_until: '',
 					effective_until_open_ended: true
-				};
-	}
-
-	function populateRequirementForm(value: TenantConsentRequirement | null) {
-		collectionMode = value ? (value.is_required ? 'required' : 'optional') : 'hidden';
-
-		requirementFormData = value
-			? {
-					is_required: value.is_required,
-					min_version: value.min_version || '',
-					enforcement: value.enforcement,
-					show_deletion_link: value.show_deletion_link,
-					deletion_url: value.deletion_url || '',
-					conditional_rules_json: value.conditional_rules_json || '',
-					display_order: value.display_order
-				}
-			: {
-					is_required: 1,
-					min_version: '',
-					enforcement: 'block',
-					show_deletion_link: 0,
-					deletion_url: '',
-					conditional_rules_json: '',
-					display_order: statementFormData.display_order
 				};
 	}
 
@@ -273,7 +218,6 @@
 					record_retention_days: recordRetentionDays,
 					withdrawal_allowed: statementFormData.withdrawal_allowed,
 					withdrawal_impact: statementFormData.withdrawal_impact,
-					reconsent_on_version_change: statementFormData.reconsent_on_version_change,
 					reconsent_interval_days: reconsentIntervalDays
 				});
 				statement = created.statement;
@@ -293,14 +237,12 @@
 					record_retention_days: recordRetentionDays,
 					withdrawal_allowed: statementFormData.withdrawal_allowed,
 					withdrawal_impact: statementFormData.withdrawal_impact,
-					reconsent_on_version_change: statementFormData.reconsent_on_version_change,
 					reconsent_interval_days: reconsentIntervalDays
 				});
 				statement = updated.statement;
 			}
 
 			await saveVersionSettings(savedStatementId);
-			await saveRequirementSettings(savedStatementId);
 			if (mode === 'new' && shouldSaveInitialLocalization()) {
 				await saveInitialLocalization(savedStatementId);
 			}
@@ -369,21 +311,6 @@
 				inline_content: localizationFormData.inline_content || undefined
 			}
 		);
-	}
-
-	async function saveRequirementSettings(currentStatementId: string) {
-		if (collectionMode === 'hidden') {
-			return;
-		}
-		await adminConsentStatementsAPI.upsertRequirement(currentStatementId, {
-			is_required: requirementFormData.is_required,
-			min_version: requirementFormData.min_version || undefined,
-			enforcement: requirementFormData.enforcement,
-			show_deletion_link: requirementFormData.show_deletion_link,
-			deletion_url: requirementFormData.deletion_url || undefined,
-			conditional_rules_json: requirementFormData.conditional_rules_json || undefined,
-			display_order: requirementFormData.display_order
-		});
 	}
 
 	async function saveLocalization() {
@@ -476,13 +403,16 @@
 			return;
 		}
 		activatingVersionId = versionId;
+		activateReconsent = true;
 		showActivateConfirm = true;
 	}
 
 	async function activateVersion() {
 		if (!currentStatementId || !activatingVersionId) return;
 		try {
-			await adminConsentStatementsAPI.activateVersion(currentStatementId, activatingVersionId);
+			await adminConsentStatementsAPI.activateVersion(currentStatementId, activatingVersionId, {
+				reconsent: activateReconsent
+			});
 			showActivateConfirm = false;
 			activatingVersionId = null;
 			successMessage = $LL.admin_consent_versions_activated_success();
@@ -560,19 +490,7 @@
 		const template = page.url.searchParams.get('template');
 		if (isStatementTemplateId(template)) {
 			applyStatementTemplate(template);
-			applyCollectionMode(
-				normalizeCollectionMode(page.url.searchParams.get('collection'), template)
-			);
-			applyBindingFromQuery(template);
 		}
-	}
-
-	function applyBindingFromQuery(template: StatementTemplateId) {
-		const bindingType = normalizeBindingType(page.url.searchParams.get('binding_type'), template);
-		bindingDraft = {
-			binding_type: bindingType,
-			binding_value: page.url.searchParams.get('binding_value') ?? undefined
-		};
 	}
 
 	function applyStatementTemplate(template: StatementTemplateId) {
@@ -589,7 +507,6 @@
 			record_retention_days: null,
 			withdrawal_allowed: templateDefaults.withdrawalAllowed,
 			withdrawal_impact: '',
-			reconsent_on_version_change: true,
 			reconsent_interval_days: null
 		};
 		recordRetentionMode = 'indefinite';
@@ -597,10 +514,6 @@
 		versionFormData = {
 			...versionFormData,
 			content_type: 'inline'
-		};
-		requirementFormData = {
-			...requirementFormData,
-			display_order: 0
 		};
 		localizationFormData = {
 			language: ja ? 'ja' : 'en',
@@ -621,60 +534,6 @@
 			value === 'saml-attribute-release' ||
 			value === 'saml-attribute-release-confirmation'
 		);
-	}
-
-	function normalizeCollectionMode(
-		value: string | null,
-		template: StatementTemplateId
-	): CollectionMode {
-		if (value === 'required' || value === 'optional' || value === 'display' || value === 'hidden') {
-			return value;
-		}
-		return template === 'saml-attribute-release-confirmation' ? 'display' : 'required';
-	}
-
-	function applyCollectionMode(mode: CollectionMode) {
-		collectionMode = mode;
-		switch (mode) {
-			case 'required':
-				requirementFormData = {
-					...requirementFormData,
-					is_required: 1,
-					enforcement: 'block'
-				};
-				return;
-			case 'optional':
-			case 'display':
-			case 'hidden':
-				requirementFormData = {
-					...requirementFormData,
-					is_required: 0,
-					enforcement: 'allow_continue'
-				};
-				return;
-		}
-	}
-
-	function normalizeBindingType(value: string | null, template: StatementTemplateId): BindingType {
-		if (
-			value === 'subject' ||
-			value === 'identity_schema' ||
-			value === 'destination_field_mapping_set' ||
-			value === 'user_decision'
-		) {
-			return value;
-		}
-		switch (template) {
-			case 'user-data-release-consent':
-			case 'saml-attribute-release':
-				return 'destination_field_mapping_set';
-			case 'saml-attribute-release-confirmation':
-				return 'user_decision';
-			case 'terms-of-service':
-			case 'privacy-policy':
-			default:
-				return 'subject';
-		}
 	}
 
 	function getStatementTemplateDefaults(template: StatementTemplateId, ja: boolean) {
@@ -814,16 +673,7 @@
 	function localText(key: string): string {
 		const ja = getLocale() === 'ja';
 		const labels: Record<string, { ja: string; en: string }> = {
-			samlCategory: { ja: 'SAML属性送信確認', en: 'SAML attribute release confirmation' },
-			displayOnly: { ja: '表示のみ', en: 'Display only' },
-			hidden: { ja: '表示なし', en: 'Hidden' },
-			bindingTitle: { ja: '紐づけ対象', en: 'Binding target' },
-			bindingDescription: {
-				ja: 'この同意文をどの対象に紐付けるかの初期指定です。',
-				en: 'Initial binding target for this consent statement.'
-			},
-			bindingType: { ja: '対象種別', en: 'Target type' },
-			bindingSubject: { ja: '本人', en: 'Subject' }
+			samlCategory: { ja: 'SAML属性送信確認', en: 'SAML attribute release confirmation' }
 		};
 		return ja ? labels[key]?.ja || key : labels[key]?.en || key;
 	}
@@ -955,81 +805,8 @@
 							{/each}
 						</div>
 					</div>
-					<div class="statement-consent-collection">
-						<div class="field-label">{$LL.admin_consent_requirements_collection_mode()}</div>
-						<div
-							class="radio-group"
-							role="radiogroup"
-							aria-label={$LL.admin_consent_requirements_collection_mode()}
-						>
-							<label class="radio-card">
-								<input
-									type="radio"
-									name="requirement-required"
-									value="required"
-									checked={collectionMode === 'required'}
-									onchange={() => applyCollectionMode('required')}
-								/>
-								<span>{$LL.admin_consent_requirements_collection_required()}</span>
-							</label>
-							<label class="radio-card">
-								<input
-									type="radio"
-									name="requirement-required"
-									value="optional"
-									checked={collectionMode === 'optional'}
-									onchange={() => applyCollectionMode('optional')}
-								/>
-								<span>{$LL.admin_consent_requirements_collection_optional()}</span>
-							</label>
-							<label class="radio-card">
-								<input
-									type="radio"
-									name="requirement-required"
-									value="display"
-									checked={collectionMode === 'display'}
-									onchange={() => applyCollectionMode('display')}
-								/>
-								<span>{localText('displayOnly')}</span>
-							</label>
-							<label class="radio-card">
-								<input
-									type="radio"
-									name="requirement-required"
-									value="hidden"
-									checked={collectionMode === 'hidden'}
-									onchange={() => applyCollectionMode('hidden')}
-								/>
-								<span>{localText('hidden')}</span>
-							</label>
-						</div>
-					</div>
 				</div>
 			</AdminSection>
-
-			{#if mode === 'new' && page.url.searchParams.has('template')}
-				<AdminSection>
-					<div class="section-header">
-						<div>
-							<h2>{localText('bindingTitle')}</h2>
-							<p>{localText('bindingDescription')}</p>
-						</div>
-					</div>
-					<div class="binding-editor">
-						<div class="form-group">
-							<label for="binding-type">{localText('bindingType')}</label>
-							<select id="binding-type" class="input" bind:value={bindingDraft.binding_type}>
-								<option value="subject">{localText('bindingSubject')}</option>
-								<option value="identity_schema">Identity Schema</option>
-								<option value="destination_field_mapping_set">
-									Destination Field Mapping Sets
-								</option>
-								<option value="user_decision">User Decision</option>
-							</select>
-						</div>
-					</div>
-				</AdminSection>
-			{/if}
 
 			<AdminSection>
 				<div class="section-header">
@@ -1043,6 +820,17 @@
 						</button>
 					{/if}
 				</div>
+
+				{#if mode === 'edit'}
+					<p class="required-version">
+						{$LL.admin_consent_statements_required_version()}:
+						{#if statement?.required_consent_version}
+							<code class="admin-code">{statement.required_consent_version}</code>
+						{:else}
+							<span class="admin-muted">-</span>
+						{/if}
+					</p>
+				{/if}
 
 				<AdminDataTable width="wide">
 					<thead>
@@ -1294,81 +1082,9 @@
 						{/if}
 					</div>
 					<label class="check-row">
-						<input type="checkbox" bind:checked={statementFormData.reconsent_on_version_change} />
-						<span>{$LL.admin_consent_statements_reconsent_on_version_change()}</span>
-					</label>
-					<label class="check-row">
 						<input type="checkbox" bind:checked={statementFormData.withdrawal_allowed} />
 						<span>{$LL.admin_consent_statements_withdrawal_allowed()}</span>
 					</label>
-				</div>
-
-				<div class="plain-subsection">
-					<h3>{$LL.admin_consent_requirements_advanced_title()}</h3>
-					<div class="form-grid">
-						<div class="form-group">
-							<label for="req-enforcement">{$LL.admin_consent_requirements_enforcement()}</label>
-							<select
-								id="req-enforcement"
-								class="input"
-								bind:value={requirementFormData.enforcement}
-							>
-								<option value="block">
-									{$LL.admin_consent_requirements_enforcement_block()}
-								</option>
-								<option value="allow_continue">
-									{$LL.admin_consent_requirements_enforcement_allow_continue()}
-								</option>
-							</select>
-						</div>
-						<div class="form-group">
-							<label for="req-min-version">
-								{$LL.admin_consent_requirements_min_version_yyyymmdd()}
-							</label>
-							<input
-								id="req-min-version"
-								type="text"
-								class="input"
-								bind:value={requirementFormData.min_version}
-								placeholder="YYYYMMDD"
-								maxlength="8"
-							/>
-						</div>
-						<div class="form-group full">
-							<ToggleSwitch
-								checked={requirementFormData.show_deletion_link === 1}
-								label={$LL.admin_consent_requirements_deletion_link()}
-								description={$LL.admin_consent_requirements_deletion_link_description()}
-								onchange={(checked) => {
-									requirementFormData.show_deletion_link = checked ? 1 : 0;
-								}}
-							/>
-						</div>
-						{#if requirementFormData.show_deletion_link}
-							<div class="form-group">
-								<label for="req-deletion-url">
-									{$LL.admin_consent_requirements_deletion_url()}
-								</label>
-								<input
-									id="req-deletion-url"
-									type="url"
-									class="input"
-									bind:value={requirementFormData.deletion_url}
-									placeholder="https://example.com/delete-account"
-								/>
-							</div>
-						{/if}
-						<div class="form-group full">
-							<label for="req-rules">{$LL.admin_consent_requirements_rules()}</label>
-							<textarea
-								id="req-rules"
-								class="input"
-								bind:value={requirementFormData.conditional_rules_json}
-								rows="3"
-								placeholder={'[{"claim": "address.country", "op": "in", "value": ["DE"], "result": "required"}]'}
-							></textarea>
-						</div>
-					</div>
 				</div>
 
 				<div class="form-actions">
@@ -1582,6 +1298,10 @@
 			<div class="modal" role="dialog" aria-modal="true">
 				<h3>{$LL.admin_consent_versions_dialog_title()}</h3>
 				<p>{$LL.admin_consent_versions_activate_confirm()}</p>
+				<label class="check-row">
+					<input type="checkbox" bind:checked={activateReconsent} />
+					<span>{$LL.admin_consent_versions_activate_reconsent()}</span>
+				</label>
 				<div class="form-actions">
 					<button class="btn btn-secondary" onclick={() => (showActivateConfirm = false)}
 						>{$LL.admin_consent_statements_cancel()}</button
@@ -1611,8 +1331,7 @@
 		font-weight: 600;
 	}
 
-	.statement-category,
-	.statement-consent-collection {
+	.statement-category {
 		margin-top: 18px;
 		display: grid;
 		gap: 8px;
@@ -1647,10 +1366,10 @@
 		gap: 14px;
 	}
 
-	.binding-editor {
-		display: grid;
-		grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
-		gap: 14px;
+	.required-version {
+		margin: 0 0 12px;
+		color: var(--color-text-muted);
+		font-size: 0.9rem;
 	}
 
 	.form-group {
@@ -1784,17 +1503,6 @@
 		background: var(--color-surface-muted);
 	}
 
-	.plain-subsection {
-		margin-top: 20px;
-	}
-
-	.plain-subsection h3 {
-		margin: 0 0 12px;
-		color: var(--color-text);
-		font-size: 0.95rem;
-		font-weight: 700;
-	}
-
 	.form-card h3 {
 		margin-bottom: 12px;
 	}
@@ -1913,10 +1621,6 @@
 		}
 
 		.form-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.binding-editor {
 			grid-template-columns: 1fr;
 		}
 

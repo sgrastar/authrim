@@ -348,12 +348,6 @@ import {
   adminConsentLocalizationsListHandler,
   adminConsentLocalizationUpsertHandler,
   adminConsentLocalizationDeleteHandler,
-  adminConsentRequirementsListHandler,
-  adminConsentRequirementUpsertHandler,
-  adminConsentRequirementDeleteHandler,
-  adminConsentOverridesListHandler,
-  adminConsentOverrideUpsertHandler,
-  adminConsentOverrideDeleteHandler,
   adminUserConsentRecordsListHandler,
   adminUserConsentHistoryHandler,
   adminUserConsentWithdrawHandler,
@@ -361,12 +355,6 @@ import {
 import {
   adminClientTrustPoliciesListHandler,
   adminClientTrustPolicyUpsertHandler,
-  adminConsentPoliciesListHandler,
-  adminConsentPolicyCreateHandler,
-  adminConsentPolicyDeleteHandler,
-  adminConsentPolicyGetHandler,
-  adminConsentPolicyItemsReplaceHandler,
-  adminConsentPolicyUpdateHandler,
   adminSignInConfirmationPoliciesListHandler,
   adminSignInConfirmationPolicyUpsertHandler,
 } from './admin-consent-policies';
@@ -3957,23 +3945,11 @@ app.use('/api/admin/consent-statements/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
 });
-app.use('/api/admin/consent-policies/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware(profile)(c, next);
-});
 app.use('/api/admin/client-trust-policies/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
 });
 app.use('/api/admin/sign-in-confirmation-policies/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware(profile)(c, next);
-});
-app.use('/api/admin/consent-requirements/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware(profile)(c, next);
-});
-app.use('/api/admin/clients/:clientId/consent-overrides/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
 });
@@ -4001,13 +3977,7 @@ app.post(
 );
 app.delete('/api/admin/consent-statements/:sid/versions/:vid', adminConsentVersionDeleteHandler);
 
-// Consent policies, client/SP trust, and sign-in confirmation
-app.get('/api/admin/consent-policies', adminConsentPoliciesListHandler);
-app.post('/api/admin/consent-policies', adminConsentPolicyCreateHandler);
-app.get('/api/admin/consent-policies/:id', adminConsentPolicyGetHandler);
-app.put('/api/admin/consent-policies/:id', adminConsentPolicyUpdateHandler);
-app.delete('/api/admin/consent-policies/:id', adminConsentPolicyDeleteHandler);
-app.put('/api/admin/consent-policies/:id/items', adminConsentPolicyItemsReplaceHandler);
+// Client/SP trust and sign-in confirmation
 app.get('/api/admin/client-trust-policies', adminClientTrustPoliciesListHandler);
 app.put('/api/admin/client-trust-policies', adminClientTrustPolicyUpsertHandler);
 app.get('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPoliciesListHandler);
@@ -4025,22 +3995,6 @@ app.put(
 app.delete(
   '/api/admin/consent-statements/:sid/versions/:vid/localizations/:lang',
   adminConsentLocalizationDeleteHandler
-);
-
-// Tenant requirements
-app.get('/api/admin/consent-requirements', adminConsentRequirementsListHandler);
-app.put('/api/admin/consent-requirements/:statementId', adminConsentRequirementUpsertHandler);
-app.delete('/api/admin/consent-requirements/:statementId', adminConsentRequirementDeleteHandler);
-
-// Client overrides
-app.get('/api/admin/clients/:clientId/consent-overrides', adminConsentOverridesListHandler);
-app.put(
-  '/api/admin/clients/:clientId/consent-overrides/:statementId',
-  adminConsentOverrideUpsertHandler
-);
-app.delete(
-  '/api/admin/clients/:clientId/consent-overrides/:statementId',
-  adminConsentOverrideDeleteHandler
 );
 
 // User consent records (admin view)

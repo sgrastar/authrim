@@ -1010,7 +1010,7 @@ interface DevConsentStatement {
 	record_retention_days?: number | null;
 	withdrawal_allowed?: number;
 	withdrawal_impact?: string | null;
-	reconsent_on_version_change?: number;
+	required_consent_version?: string | null;
 	reconsent_interval_days?: number | null;
 	display_order: number;
 	is_active: number;
@@ -1044,52 +1044,6 @@ interface DevConsentStatementLocalization {
 	withdrawal_impact?: string | null;
 	document_url?: string;
 	inline_content?: string;
-	created_at: number;
-	updated_at: number;
-}
-
-interface DevTenantConsentRequirement {
-	id: string;
-	tenant_id: string;
-	statement_id: string;
-	is_required: number;
-	min_version?: string;
-	enforcement: string;
-	show_deletion_link: number;
-	deletion_url?: string;
-	conditional_rules_json?: string;
-	display_order: number;
-	created_at: number;
-	updated_at: number;
-}
-
-interface DevConsentPolicy {
-	id: string;
-	tenant_id: string;
-	name: string;
-	display_name: string;
-	description?: string | null;
-	is_active: number;
-	created_at: number;
-	updated_at: number;
-}
-
-interface DevConsentPolicyItem {
-	id: string;
-	tenant_id: string;
-	policy_id: string;
-	statement_id: string;
-	requirement: 'required' | 'optional' | 'hidden';
-	version_mode: 'current' | 'fixed' | 'minimum';
-	version_id?: string | null;
-	min_version?: string | null;
-	checkbox_mode: 'none' | 'required' | 'optional';
-	checkbox_default_checked: number;
-	binding_type?: 'subject' | 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set' | null;
-	binding_value?: string | null;
-	evidence_profile?: string | null;
-	language_fallback?: string | null;
-	display_order: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -3121,7 +3075,7 @@ function devFlowEditor(
 					type: 'consent',
 					title: 'Registration consent',
 					position: { x: 360, y: 432 },
-					config: { ui_kind: 'consent', consent_policy_ref: 'registration_consent_policy' }
+					config: { ui_kind: 'consent', statements: [] }
 				},
 				{
 					id: 'account-create',
@@ -3351,7 +3305,7 @@ function devFlowEditor(
 				type: 'consent',
 				title: 'Consent',
 				position: { x: 360, y: 432 },
-				config: { ui_kind: 'consent', consent_policy_ref: 'oidc_authorization_consent_policy' }
+				config: { ui_kind: 'consent', statements: [] }
 			},
 			{
 				id: 'complete',
@@ -4252,7 +4206,7 @@ const consentStatements = new Map<string, DevConsentStatement>([
 			record_retention_days: 2555,
 			withdrawal_allowed: 1,
 			withdrawal_impact: 'Withdrawing may restrict access to services that require profile data.',
-			reconsent_on_version_change: 1,
+			required_consent_version: null,
 			reconsent_interval_days: 365,
 			display_order: 10,
 			is_active: 1,
@@ -4272,7 +4226,7 @@ const consentStatements = new Map<string, DevConsentStatement>([
 			record_retention_days: 730,
 			withdrawal_allowed: 1,
 			withdrawal_impact: 'Future research attribute releases will stop after withdrawal.',
-			reconsent_on_version_change: 1,
+			required_consent_version: null,
 			reconsent_interval_days: null,
 			display_order: 20,
 			is_active: 1,
@@ -4292,7 +4246,7 @@ const consentStatements = new Map<string, DevConsentStatement>([
 			record_retention_days: 365,
 			withdrawal_allowed: 1,
 			withdrawal_impact: null,
-			reconsent_on_version_change: 0,
+			required_consent_version: null,
 			reconsent_interval_days: null,
 			display_order: 30,
 			is_active: 0,
@@ -4402,117 +4356,6 @@ const consentStatementLocalizations = new Map<string, DevConsentStatementLocaliz
 				withdrawal_impact: 'Draft withdrawal impact text.',
 				inline_content: 'Draft privacy policy text for Admin UI development.',
 				created_at: NOW - 86400 * 1000,
-				updated_at: NOW - 86400 * 1000
-			}
-		]
-	]
-]);
-
-const consentRequirements = new Map<string, DevTenantConsentRequirement>([
-	[
-		'consent-privacy-policy',
-		{
-			id: 'requirement-privacy-policy',
-			tenant_id: TENANT_ID,
-			statement_id: 'consent-privacy-policy',
-			is_required: 1,
-			min_version: '20260601',
-			enforcement: 'block',
-			show_deletion_link: 1,
-			deletion_url: 'https://example.com/account/delete',
-			display_order: 10,
-			created_at: NOW - 86400 * 1000 * 5,
-			updated_at: NOW - 86400 * 1000 * 3
-		}
-	],
-	[
-		'consent-research-data-sharing',
-		{
-			id: 'requirement-research-data-sharing',
-			tenant_id: TENANT_ID,
-			statement_id: 'consent-research-data-sharing',
-			is_required: 0,
-			min_version: '20260515',
-			enforcement: 'allow_continue',
-			show_deletion_link: 0,
-			conditional_rules_json: '[{"claim":"affiliation","op":"eq","value":"researcher"}]',
-			display_order: 20,
-			created_at: NOW - 86400 * 1000 * 10,
-			updated_at: NOW - 86400 * 1000
-		}
-	]
-]);
-
-const consentPolicies = new Map<string, DevConsentPolicy>([
-	[
-		'policy-default-account',
-		{
-			id: 'policy-default-account',
-			tenant_id: TENANT_ID,
-			name: 'default-account-consent',
-			display_name: 'Default account consent',
-			description: 'Account-level ToS and privacy consent evaluated during registration and login.',
-			is_active: 1,
-			created_at: NOW - 86400 * 1000 * 7,
-			updated_at: NOW - 86400 * 1000
-		}
-	],
-	[
-		'policy-research-release',
-		{
-			id: 'policy-research-release',
-			tenant_id: TENANT_ID,
-			name: 'research-attribute-release',
-			display_name: 'Research attribute release',
-			description: 'OIDC/SAML release consent for research applications.',
-			is_active: 1,
-			created_at: NOW - 86400 * 1000 * 6,
-			updated_at: NOW - 86400 * 1000
-		}
-	]
-]);
-
-const consentPolicyItems = new Map<string, DevConsentPolicyItem[]>([
-	[
-		'policy-default-account',
-		[
-			{
-				id: 'policy-item-default-privacy',
-				tenant_id: TENANT_ID,
-				policy_id: 'policy-default-account',
-				statement_id: 'consent-privacy-policy',
-				requirement: 'required',
-				version_mode: 'current',
-				checkbox_mode: 'required',
-				checkbox_default_checked: 0,
-				binding_type: null,
-				binding_value: null,
-				evidence_profile: 'account_terms',
-				language_fallback: 'tenant_default',
-				display_order: 10,
-				created_at: NOW - 86400 * 1000 * 7,
-				updated_at: NOW - 86400 * 1000
-			}
-		]
-	],
-	[
-		'policy-research-release',
-		[
-			{
-				id: 'policy-item-research-release',
-				tenant_id: TENANT_ID,
-				policy_id: 'policy-research-release',
-				statement_id: 'consent-research-data-sharing',
-				requirement: 'required',
-				version_mode: 'current',
-				checkbox_mode: 'required',
-				checkbox_default_checked: 0,
-				binding_type: 'scope',
-				binding_value: 'profile email',
-				evidence_profile: 'attribute_release',
-				language_fallback: 'tenant_default',
-				display_order: 10,
-				created_at: NOW - 86400 * 1000 * 6,
 				updated_at: NOW - 86400 * 1000
 			}
 		]
@@ -8106,7 +7949,6 @@ async function handleClients(event: RequestEvent, segments: string[]): Promise<R
 		return json(mergeClient(client, { updated_at: Date.now() }));
 	}
 	if (segments[2] === 'cache-mode') return json(devClientCacheModeResponse(clientId));
-	if (segments[2] === 'consent-overrides') return json({ overrides: [] });
 	return null;
 }
 
@@ -12230,26 +12072,11 @@ function consentLocalizationsFor(versionId: string): DevConsentStatementLocaliza
 	return consentStatementLocalizations.get(versionId) ?? [];
 }
 
-function consentPolicyItemsFor(
-	policyId: string
-): Array<DevConsentPolicyItem & Record<string, unknown>> {
-	return (consentPolicyItems.get(policyId) ?? [])
-		.map((item) => {
-			const statement = consentStatements.get(item.statement_id);
-			return {
-				...item,
-				statement_slug: statement?.slug,
-				statement_category: statement?.category
-			};
-		})
-		.sort((a, b) => a.display_order - b.display_order);
-}
-
 function normalizedPolicyTarget(type: string, targetId: unknown): string {
 	return type === 'tenant_default' ? '' : typeof targetId === 'string' ? targetId.trim() : '';
 }
 
-async function handleConsentPolicies(
+async function handleConsentTrustPolicies(
 	event: RequestEvent,
 	segments: string[]
 ): Promise<Response | null> {
@@ -12333,105 +12160,6 @@ async function handleConsentPolicies(
 		return null;
 	}
 
-	if (segments[0] !== 'consent-policies') return null;
-	const policyId = segments[1];
-	const policy = policyId ? consentPolicies.get(policyId) : undefined;
-
-	if (!policyId && method === 'GET') {
-		return json({
-			policies: [...consentPolicies.values()].map((item) => ({
-				...item,
-				item_count: consentPolicyItems.get(item.id)?.length ?? 0
-			}))
-		});
-	}
-
-	if (!policyId && method === 'POST') {
-		const input = await readJson(event.request);
-		const name =
-			typeof input.name === 'string' && input.name.trim() ? input.name.trim() : `policy-${now}`;
-		const id = `policy-${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
-		const policy: DevConsentPolicy = {
-			id,
-			tenant_id: TENANT_ID,
-			name,
-			display_name:
-				typeof input.display_name === 'string' && input.display_name.trim()
-					? input.display_name.trim()
-					: name,
-			description: typeof input.description === 'string' ? input.description : null,
-			is_active: input.is_active === false ? 0 : 1,
-			created_at: now,
-			updated_at: now
-		};
-		consentPolicies.set(id, policy);
-		consentPolicyItems.set(id, []);
-		return json({ policy }, 201);
-	}
-
-	if (!policyId || !policy) {
-		return json({ error: 'not_found', error_description: 'Consent policy not found' }, 404);
-	}
-
-	if (segments.length === 2 && method === 'GET') {
-		return json({ policy, items: consentPolicyItemsFor(policyId) });
-	}
-
-	if (segments.length === 2 && method === 'PUT') {
-		const input = await readJson(event.request);
-		const updated: DevConsentPolicy = {
-			...policy,
-			name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : policy.name,
-			display_name:
-				typeof input.display_name === 'string' && input.display_name.trim()
-					? input.display_name.trim()
-					: policy.display_name,
-			description: typeof input.description === 'string' ? input.description : policy.description,
-			is_active: input.is_active === false ? 0 : input.is_active === true ? 1 : policy.is_active,
-			updated_at: now
-		};
-		consentPolicies.set(policyId, updated);
-		return json({ policy: updated, items: consentPolicyItemsFor(policyId) });
-	}
-
-	if (segments.length === 2 && method === 'DELETE') {
-		consentPolicies.delete(policyId);
-		consentPolicyItems.delete(policyId);
-		return json({ success: true });
-	}
-
-	if (segments[2] === 'items' && method === 'PUT') {
-		const input = await readJson(event.request);
-		const items = Array.isArray(input.items) ? input.items : [];
-		consentPolicyItems.set(
-			policyId,
-			items.map((item, index) => ({
-				id: `policy-item-${policyId}-${item.statement_id ?? index}`,
-				tenant_id: TENANT_ID,
-				policy_id: policyId,
-				statement_id: String(item.statement_id ?? ''),
-				requirement: (item.requirement || 'required') as DevConsentPolicyItem['requirement'],
-				version_mode: (item.version_mode || 'current') as DevConsentPolicyItem['version_mode'],
-				version_id: typeof item.version_id === 'string' ? item.version_id : null,
-				min_version: typeof item.min_version === 'string' ? item.min_version : null,
-				checkbox_mode: (item.checkbox_mode || 'required') as DevConsentPolicyItem['checkbox_mode'],
-				checkbox_default_checked: item.checkbox_default_checked ? 1 : 0,
-				binding_type:
-					typeof item.binding_type === 'string' && item.binding_type
-						? (item.binding_type as DevConsentPolicyItem['binding_type'])
-						: null,
-				binding_value: typeof item.binding_value === 'string' ? item.binding_value : null,
-				evidence_profile: typeof item.evidence_profile === 'string' ? item.evidence_profile : null,
-				language_fallback:
-					typeof item.language_fallback === 'string' ? item.language_fallback : null,
-				display_order: typeof item.display_order === 'number' ? item.display_order : index,
-				created_at: now,
-				updated_at: now
-			}))
-		);
-		return json({ items: consentPolicyItemsFor(policyId) });
-	}
-
 	return null;
 }
 
@@ -12441,61 +12169,6 @@ async function handleConsentStatements(
 ): Promise<Response | null> {
 	const method = event.request.method;
 	const now = Date.now();
-
-	if (segments[0] === 'consent-requirements') {
-		const statementId = segments[1];
-		if (!statementId && method === 'GET') {
-			return json({ requirements: [...consentRequirements.values()] });
-		}
-		if (!statementId) return null;
-
-		if (method === 'PUT') {
-			const input = await readJson(event.request);
-			const existing = consentRequirements.get(statementId);
-			const requirement: DevTenantConsentRequirement = {
-				id: existing?.id ?? `requirement-${statementId}`,
-				tenant_id: TENANT_ID,
-				statement_id: statementId,
-				is_required:
-					typeof input.is_required === 'number' ? input.is_required : (existing?.is_required ?? 1),
-				min_version:
-					typeof input.min_version === 'string' && input.min_version.trim()
-						? input.min_version.trim()
-						: existing?.min_version,
-				enforcement:
-					typeof input.enforcement === 'string' && input.enforcement.trim()
-						? input.enforcement.trim()
-						: (existing?.enforcement ?? 'block'),
-				show_deletion_link:
-					typeof input.show_deletion_link === 'number'
-						? input.show_deletion_link
-						: (existing?.show_deletion_link ?? 0),
-				deletion_url:
-					typeof input.deletion_url === 'string' && input.deletion_url.trim()
-						? input.deletion_url.trim()
-						: existing?.deletion_url,
-				conditional_rules_json:
-					typeof input.conditional_rules_json === 'string' && input.conditional_rules_json.trim()
-						? input.conditional_rules_json.trim()
-						: existing?.conditional_rules_json,
-				display_order:
-					typeof input.display_order === 'number'
-						? input.display_order
-						: (existing?.display_order ?? 0),
-				created_at: existing?.created_at ?? now,
-				updated_at: now
-			};
-			consentRequirements.set(statementId, requirement);
-			return json({ requirement });
-		}
-
-		if (method === 'DELETE') {
-			consentRequirements.delete(statementId);
-			return new Response(null, { status: 204 });
-		}
-
-		return null;
-	}
 
 	if (segments[0] !== 'consent-statements') return null;
 	const statementId = segments[1];
@@ -12529,7 +12202,6 @@ async function handleConsentStatements(
 			withdrawal_allowed: input.withdrawal_allowed === false ? 0 : 1,
 			withdrawal_impact:
 				typeof input.withdrawal_impact === 'string' ? input.withdrawal_impact : null,
-			reconsent_on_version_change: input.reconsent_on_version_change === false ? 0 : 1,
 			reconsent_interval_days:
 				typeof input.reconsent_interval_days === 'number' ? input.reconsent_interval_days : null,
 			display_order: typeof input.display_order === 'number' ? input.display_order : 0,
@@ -12581,12 +12253,6 @@ async function handleConsentStatements(
 				input.withdrawal_impact === null || typeof input.withdrawal_impact === 'string'
 					? input.withdrawal_impact
 					: statement.withdrawal_impact,
-			reconsent_on_version_change:
-				typeof input.reconsent_on_version_change === 'boolean'
-					? input.reconsent_on_version_change
-						? 1
-						: 0
-					: statement.reconsent_on_version_change,
 			reconsent_interval_days:
 				input.reconsent_interval_days === null || typeof input.reconsent_interval_days === 'number'
 					? input.reconsent_interval_days
@@ -12603,7 +12269,6 @@ async function handleConsentStatements(
 	if (segments.length === 2 && method === 'DELETE') {
 		consentStatements.delete(statementId);
 		consentStatementVersions.delete(statementId);
-		consentRequirements.delete(statementId);
 		return new Response(null, { status: 204 });
 	}
 
@@ -12686,7 +12351,16 @@ async function handleConsentStatements(
 			updated_at: item.id === versionId ? now : item.updated_at
 		}));
 		consentStatementVersions.set(statementId, updatedVersions);
-		return json({ version: updatedVersions.find((item) => item.id === versionId) ?? version });
+		const activated = updatedVersions.find((item) => item.id === versionId) ?? version;
+		const activateInput = await readJson(event.request);
+		if (statement && activated && activateInput.reconsent !== false) {
+			consentStatements.set(statementId, {
+				...statement,
+				required_consent_version: activated.version,
+				updated_at: now
+			});
+		}
+		return json({ version: activated });
 	}
 
 	if (segments.length === 4 && method === 'DELETE') {
@@ -13708,8 +13382,8 @@ export async function handleDevAdminMock(
 			policies: { total_policies: 7, active_policies: 5 }
 		});
 	}
-	const consentPoliciesResponse = await handleConsentPolicies(event, segments);
-	if (consentPoliciesResponse) return consentPoliciesResponse;
+	const consentTrustPoliciesResponse = await handleConsentTrustPolicies(event, segments);
+	if (consentTrustPoliciesResponse) return consentTrustPoliciesResponse;
 	const consentStatementsResponse = await handleConsentStatements(event, segments);
 	if (consentStatementsResponse) return consentStatementsResponse;
 	const adminLoggingResponse = await handleAdminLogging(event, segments);

@@ -186,14 +186,14 @@
 			},
 
 			{
-				path: '/admin/consent-policies',
-				label: $LL.admin_consent_policies_nav(),
-				icon: 'i-ph-clipboard-text'
-			},
-			{
 				path: '/admin/consent-statements',
 				label: $LL.admin_nav_consent_statements(),
 				icon: 'i-ph-list-checks'
+			},
+			{
+				path: '/admin/sign-in-confirmation',
+				label: $LL.admin_signin_confirmation_nav(),
+				icon: 'i-ph-shield-check'
 			}
 		],
 		federationDirectory: [

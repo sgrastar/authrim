@@ -32,6 +32,13 @@ import {
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   hashIpAddress,
+  processConsentItemDecisions,
+  readFlowConsentStatements,
+  readStatementConsentDefinition,
+  readStatementConsentRecord,
+  resolveStatementRequirements,
+  statementConsentSatisfied,
+  type FlowConsentStatement,
   isOidcFieldApplicableToScopes,
   canReleaseClaim,
   parseClaimsRequest,
@@ -324,27 +331,6 @@ interface RuntimeScreenLocalization {
   description?: string;
   fields?: Record<string, RuntimeScreenFieldLocalization>;
 }
-
-type RuntimeConsentRecordBindingType =
-  | 'subject'
-  | 'identity_schema'
-  | 'destination_field_mapping_set'
-  | 'user_decision';
-
-type RuntimeConsentRecordKind =
-  | 'terms'
-  | 'privacy'
-  | 'attribute_release'
-  | 'scope_claim_release'
-  | 'form_confirmation'
-  | 'custom';
-
-type RuntimeConsentRecordResourceType =
-  | 'userinfo'
-  | 'id_token'
-  | 'saml_attributes'
-  | 'document'
-  | 'custom';
 
 type RuntimeConsentRecordDecision = 'accepted' | 'rejected' | 'once' | 'always' | 'selected';
 
@@ -1409,90 +1395,6 @@ function parseJsonRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function readLocalizedRuntimeString(
-  value: unknown,
-  language: string,
-  defaultLanguage = 'en'
-): string {
-  if (typeof value === 'string') return value;
-  const record = parseJsonRecord(value);
-  const preferred = record[language] ?? record[defaultLanguage] ?? record.en;
-  return typeof preferred === 'string' ? preferred : '';
-}
-
-function normalizeRuntimeConsentContentMode(
-  value: unknown,
-  category: string,
-  checkboxMode: string
-): RuntimeConsentPolicyItem['content_mode'] {
-  if (value === 'display_only' || value === 'checkbox' || value === 'radio') return value;
-  if (category === 'saml_attribute_release_confirmation') return 'radio';
-  return checkboxMode === 'required' || checkboxMode === 'optional' ? 'checkbox' : 'display_only';
-}
-
-function normalizeRuntimeAttributeValueDisplay(
-  value: unknown,
-  category: string
-): RuntimeConsentPolicyItem['attribute_value_display'] {
-  if (value === 'names' || value === 'masked_values' || value === 'full_values') return value;
-  return category === 'saml_attribute_release_confirmation' ? 'masked_values' : null;
-}
-
-function defaultRuntimeConsentOptions(
-  category: string,
-  language: string
-): RuntimeConsentPolicyOption[] {
-  if (category !== 'saml_attribute_release_confirmation') return [];
-  const ja = language === 'ja';
-  return [
-    {
-      id: 'option-1',
-      value: 'once',
-      label: ja ? '今回のみ同意' : 'Allow this time only',
-      description: ja
-        ? '今回のログインに限って属性送信を許可します。'
-        : 'Allow this attribute release only for the current sign-in.',
-    },
-    {
-      id: 'option-2',
-      value: 'always',
-      label: ja ? '今後も同意' : 'Always allow for this service',
-      description: ja
-        ? 'このサービスへの今後のログインでも、この選択を利用します。'
-        : 'Remember this choice for future sign-ins to this service.',
-    },
-  ];
-}
-
-function normalizeRuntimeConsentOptions(
-  value: unknown,
-  category: string,
-  language: string,
-  defaultLanguage: string
-): RuntimeConsentPolicyOption[] {
-  if (!Array.isArray(value)) return defaultRuntimeConsentOptions(category, language);
-  const options = value
-    .map((raw, index) => {
-      const record = parseJsonRecord(raw);
-      const selectedValue = readString(record.value, 128) ?? `option-${index + 1}`;
-      const label =
-        readLocalizedRuntimeString(record.labels, language, defaultLanguage) ||
-        readLocalizedRuntimeString(record.label, language, defaultLanguage) ||
-        selectedValue;
-      const description =
-        readLocalizedRuntimeString(record.descriptions, language, defaultLanguage) ||
-        readLocalizedRuntimeString(record.description, language, defaultLanguage);
-      return {
-        id: readString(record.id, 128) ?? `option-${index + 1}`,
-        value: selectedValue,
-        label,
-        description,
-      };
-    })
-    .filter((option) => option.value);
-  return options.length > 0 ? options : defaultRuntimeConsentOptions(category, language);
-}
-
 function readBooleanSetting(
   settings: Record<string, unknown>,
   key: string,
@@ -1790,50 +1692,6 @@ function requestedLanguage(requestContext: FlowRequestContext): string {
   return requestContext.locale || 'en';
 }
 
-function consentBindingMatchesRequestContext(
-  bindingType: string | null,
-  bindingValue: string | null,
-  requestContext: FlowRequestContext
-): boolean {
-  if (!bindingType || !bindingValue) return true;
-  const values = bindingValue
-    .split(/[\s,]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (values.length === 0) return true;
-  const valueSet = new Set(values);
-  if (bindingType === 'scope') {
-    return requestContext.requested_scope.some((scope) => valueSet.has(scope));
-  }
-  if (bindingType === 'subject') return true;
-  if (bindingType === 'destination_field_set') return true;
-  return true;
-}
-
-async function getConsentVersionForPolicyItem(
-  db: DatabaseAdapter,
-  tenantId: string,
-  statementId: string,
-  versionMode: string,
-  versionId: string | null
-): Promise<{ id: string; version: string } | null> {
-  if (versionMode === 'fixed' && versionId) {
-    return db.queryOne<{ id: string; version: string }>(
-      `SELECT id, version
-         FROM consent_statement_versions
-        WHERE tenant_id = ? AND statement_id = ? AND id = ? AND status = 'active'`,
-      [tenantId, statementId, versionId]
-    );
-  }
-  return db.queryOne<{ id: string; version: string }>(
-    `SELECT id, version
-       FROM consent_statement_versions
-      WHERE tenant_id = ? AND statement_id = ? AND is_current = 1 AND status = 'active'
-      LIMIT 1`,
-    [tenantId, statementId]
-  );
-}
-
 async function getConsentLocalizationForRuntime(
   db: DatabaseAdapter,
   tenantId: string,
@@ -1869,118 +1727,54 @@ async function getConsentLocalizationForRuntime(
   );
 }
 
-async function resolveRuntimeConsentPolicyContent(
+/**
+ * What a step asks for (its `statements`): each active statement with a current version, in the
+ * order listed, in the request's language. The current version is always the one asked.
+ */
+async function resolveRuntimeConsentStatementsContent(
   db: DatabaseAdapter,
   tenantId: string,
-  policyId: string,
+  stepId: string,
+  statements: readonly FlowConsentStatement[],
   requestContext: FlowRequestContext
-): Promise<RuntimeConsentPolicyContent | null> {
-  const policy = await db.queryOne<{
-    id: string;
-    display_name: string;
-    description: string | null;
-    is_active: number;
-  }>(
-    `SELECT id, display_name, description, is_active
-       FROM consent_policies
-      WHERE tenant_id = ? AND id = ?`,
-    [tenantId, policyId]
-  );
-  if (!policy || policy.is_active !== 1) return null;
-
-  const itemRows = await db.query<{
-    statement_id: string;
-    requirement: string;
-    version_mode: string;
-    version_id: string | null;
-    checkbox_mode: string;
-    checkbox_default_checked: number;
-    binding_type: string | null;
-    binding_value: string | null;
-    evidence_profile: string | null;
-    language_fallback: string | null;
-    display_order: number;
-    slug: string;
-    category: string;
-    conditional_rules_json: string | null;
-  }>(
-    `SELECT i.statement_id, i.requirement, i.version_mode, i.version_id,
-            i.checkbox_mode, i.checkbox_default_checked, i.binding_type, i.binding_value,
-            i.evidence_profile, i.language_fallback, i.display_order,
-            s.slug, s.category, r.conditional_rules_json
-       FROM consent_policy_items i
-       JOIN consent_statements s ON s.id = i.statement_id AND s.tenant_id = i.tenant_id
-       LEFT JOIN tenant_consent_requirements r
-         ON r.statement_id = i.statement_id AND r.tenant_id = i.tenant_id
-      WHERE i.tenant_id = ? AND i.policy_id = ? AND s.is_active = 1
-      ORDER BY i.display_order ASC, i.created_at ASC`,
-    [tenantId, policyId]
-  );
+): Promise<RuntimeConsentPolicyContent> {
   const language = requestedLanguage(requestContext);
+  const requirements = await resolveStatementRequirements(db, tenantId, statements);
   const items: RuntimeConsentPolicyItem[] = [];
-
-  for (const row of itemRows) {
-    if (row.requirement === 'hidden') continue;
-    if (!consentBindingMatchesRequestContext(row.binding_type, row.binding_value, requestContext)) {
-      continue;
-    }
-    const version = await getConsentVersionForPolicyItem(
+  for (const requirement of requirements) {
+    const localization = await getConsentLocalizationForRuntime(
       db,
       tenantId,
-      row.statement_id,
-      row.version_mode,
-      row.version_id
-    );
-    if (!version) continue;
-    const localization = await getConsentLocalizationForRuntime(db, tenantId, version.id, language);
-    const statementRules = parseJsonRecord(row.conditional_rules_json);
-    const contentMode = normalizeRuntimeConsentContentMode(
-      statementRules.content_mode,
-      row.category,
-      row.checkbox_mode
+      requirement.current_version.id,
+      language
     );
     items.push({
-      statement_id: row.statement_id,
-      slug: row.slug,
-      category: row.category,
-      title: localization?.title || row.slug,
+      statement_id: requirement.statement_id,
+      slug: requirement.statement.slug,
+      category: requirement.statement.category,
+      title: localization?.title || requirement.statement.slug,
       description: localization?.description || '',
       document_url: localization?.document_url ?? null,
       inline_content: localization?.inline_content ?? null,
-      version: version.version,
-      version_id: version.id,
-      is_required: row.requirement === 'required',
-      content_mode: contentMode,
-      options:
-        contentMode === 'radio' || contentMode === 'checkbox'
-          ? normalizeRuntimeConsentOptions(
-              statementRules.content_options,
-              row.category,
-              language,
-              'en'
-            )
-          : [],
-      attribute_value_display: normalizeRuntimeAttributeValueDisplay(
-        statementRules.attribute_value_display,
-        row.category
-      ),
-      checkbox_mode:
-        row.checkbox_mode === 'required' || row.checkbox_mode === 'optional'
-          ? row.checkbox_mode
-          : 'none',
-      checkbox_default_checked: row.checkbox_default_checked === 1,
-      binding_type: row.binding_type,
-      binding_value: row.binding_value,
-      evidence_profile: row.evidence_profile,
-      language_fallback: row.language_fallback,
-      display_order: row.display_order,
+      version: requirement.current_version.version,
+      version_id: requirement.current_version.id,
+      is_required: requirement.is_required,
+      content_mode: 'checkbox',
+      options: [],
+      attribute_value_display: null,
+      checkbox_mode: requirement.is_required ? 'required' : 'optional',
+      checkbox_default_checked: false,
+      binding_type: null,
+      binding_value: null,
+      evidence_profile: null,
+      language_fallback: null,
+      display_order: requirement.display_order,
     });
   }
-
   return {
-    id: policy.id,
-    display_name: policy.display_name,
-    description: policy.description,
+    id: stepId,
+    display_name: '',
+    description: null,
     language,
     default_language: 'en',
     items,
@@ -2436,12 +2230,16 @@ async function hydrateRuntimeContract(
         nextConfig.screen = screen;
       }
 
-      const policyId = readString(config.consent_policy_ref, 200);
-      if (policyId) {
-        const policy = policyId
-          ? await resolveRuntimeConsentPolicyContent(db, tenantId, policyId, requestContext)
-          : null;
-        nextContent.consent_policy = policy;
+      const consentStatements = readFlowConsentStatements(config);
+      // Also for an empty list: what is shown and what a submit is judged by are built alike.
+      if (consentStatements) {
+        nextContent.consent_policy = await resolveRuntimeConsentStatementsContent(
+          db,
+          tenantId,
+          step.id,
+          consentStatements,
+          requestContext
+        );
       }
       if (step.component === 'consent_policy' && destinationFieldConsent) {
         nextContent.destination_field_consent = destinationFieldConsent;
@@ -3571,6 +3369,11 @@ function eventTypeForCompletedStep(step: FlowRuntimeStep): string {
 interface HeldRuntimeConsent {
   policy: RuntimeConsentPolicyContent;
   decisions: Record<string, RuntimeConsentItemDecision>;
+  /**
+   * When it was given (ms), for consent held until someone signs in: recorded later, it does not
+   * override an answer to the same statement given after it (in a later step of the Flow).
+   */
+  given_at_ms?: number;
   destination?: {
     consent: RuntimeDestinationFieldConsentContent;
     selected_fields: string[];
@@ -3831,71 +3634,6 @@ function consentItemInputSatisfied(
   return decision.decision !== 'rejected';
 }
 
-function normalizeConsentRecordKind(category: string): RuntimeConsentRecordKind {
-  const normalized = category.trim().toLowerCase();
-  if (
-    normalized === 'terms' ||
-    normalized === 'terms_of_service' ||
-    normalized === 'service_terms'
-  ) {
-    return 'terms';
-  }
-  if (normalized === 'privacy' || normalized === 'privacy_policy') return 'privacy';
-  if (
-    normalized === 'attribute_release' ||
-    normalized === 'saml_attribute_release' ||
-    normalized === 'saml_attribute_release_confirmation'
-  ) {
-    return 'attribute_release';
-  }
-  if (
-    normalized === 'scope_claim_release' ||
-    normalized === 'oidc_scope_claim_release' ||
-    normalized === 'data_release'
-  ) {
-    return 'scope_claim_release';
-  }
-  if (normalized === 'form_confirmation' || normalized === 'screen') {
-    return 'form_confirmation';
-  }
-  return 'custom';
-}
-
-function normalizeConsentRecordBindingType(
-  bindingType: string | null,
-  requestContext: FlowRequestContext
-): RuntimeConsentRecordBindingType {
-  const normalized = bindingType?.trim().toLowerCase() ?? '';
-  if (
-    normalized === 'identity_schema' ||
-    normalized === 'claim' ||
-    normalized === 'saml_attribute'
-  ) {
-    return 'identity_schema';
-  }
-  if (
-    normalized === 'destination_field_mapping_set' ||
-    normalized === 'destination_field_set' ||
-    normalized === 'field_mapping_set'
-  ) {
-    return 'destination_field_mapping_set';
-  }
-  if (normalized === 'user_decision' || normalized === 'scope') return 'user_decision';
-  if (requestContext.protocol === 'saml') return 'user_decision';
-  return 'subject';
-}
-
-function consentRecordResourceType(
-  item: RuntimeConsentPolicyItem,
-  requestContext: FlowRequestContext
-): RuntimeConsentRecordResourceType {
-  const kind = normalizeConsentRecordKind(item.category);
-  if (kind === 'terms' || kind === 'privacy') return 'document';
-  if (requestContext.protocol === 'saml') return 'saml_attributes';
-  if (kind === 'scope_claim_release') return 'userinfo';
-  return 'custom';
-}
-
 function consentRecordRecipient(input: {
   interaction: FlowInteractionRow;
   requestContext: FlowRequestContext;
@@ -3911,58 +3649,42 @@ function consentRecordRecipient(input: {
   return { recipientType, recipientId };
 }
 
-async function hasActiveAcceptedConsentRecord(input: {
+/**
+ * Whether the subject has already answered a statement the step asks for, so it is not asked
+ * again: agreed to it, to a version from the one agreement is required from, and not expired; or,
+ * for an optional statement, declined (or withdrew) it since that version. Records are the
+ * subject's statement consents, kept with the account (user_consent_records): one per statement,
+ * whatever app or Flow it was given in.
+ */
+async function statementAlreadyAnswered(input: {
+  c: AuthContext;
   db: DatabaseAdapter;
   tenantId: string;
-  interaction: FlowInteractionRow;
-  requestContext: FlowRequestContext;
   userId: string;
-  policyId: string;
   item: RuntimeConsentPolicyItem;
 }): Promise<boolean> {
-  const { recipientType, recipientId } = consentRecordRecipient(input);
-  const bindingType = normalizeConsentRecordBindingType(
-    input.item.binding_type,
-    input.requestContext
+  const definition = await readStatementConsentDefinition(
+    input.db,
+    input.tenantId,
+    input.item.statement_id
   );
-  const protocol =
-    input.requestContext.protocol === 'direct' ? 'custom' : input.requestContext.protocol;
-  const now = nowSeconds();
-  const row = await input.db.queryOne<{ id: string }>(
-    `SELECT id
-       FROM consent_records
-      WHERE tenant_id = ?
-        AND subject_user_id = ?
-        AND protocol = ?
-        AND recipient_type = ?
-        AND ((recipient_id = ?) OR (recipient_id IS NULL AND ? IS NULL))
-        AND binding_type = ?
-        AND ((binding_key = ?) OR (binding_key IS NULL AND ? IS NULL))
-        AND statement_id = ?
-        AND statement_version = ?
-        AND policy_id = ?
-        AND decision IN ('accepted', 'always', 'selected')
-        AND status = 'active'
-        AND (expires_at IS NULL OR expires_at > ?)
-      ORDER BY created_at DESC, id DESC
-      LIMIT 1`,
-    [
-      input.tenantId,
-      input.userId,
-      protocol,
-      recipientType,
-      recipientId,
-      recipientId,
-      bindingType,
-      input.item.binding_value,
-      input.item.binding_value,
-      input.item.statement_id,
-      input.item.version,
-      input.policyId,
-      now,
-    ]
+  if (!definition) return false;
+  await resolveAccountDataContextFromHono(input.c, input.userId);
+  const account = createAccountAuthContextFromHono(input.c, input.tenantId).coreAdapter;
+  const record = await readStatementConsentRecord(
+    account,
+    input.tenantId,
+    input.userId,
+    input.item.statement_id
   );
-  return Boolean(row);
+  if (statementConsentSatisfied(record, definition)) return true;
+  const from = definition.required_consent_version ?? definition.version;
+  return (
+    !input.item.is_required &&
+    record !== null &&
+    (record.status === 'denied' || record.status === 'withdrawn') &&
+    record.version >= from
+  );
 }
 
 async function hasActiveDestinationFieldConsentRecord(input: {
@@ -4037,7 +3759,33 @@ async function hasActiveDestinationFieldConsentRecord(input: {
   );
 }
 
+/** The statements of a step's consent the subject has not answered yet (what is shown). */
+async function withoutAnsweredStatements(input: {
+  c: AuthContext;
+  db: DatabaseAdapter;
+  tenantId: string;
+  userId: string;
+  policy: RuntimeConsentPolicyContent;
+}): Promise<RuntimeConsentPolicyContent> {
+  const items: RuntimeConsentPolicyItem[] = [];
+  for (const item of input.policy.items) {
+    if (
+      !(await statementAlreadyAnswered({
+        c: input.c,
+        db: input.db,
+        tenantId: input.tenantId,
+        userId: input.userId,
+        item,
+      }))
+    ) {
+      items.push(item);
+    }
+  }
+  return { ...input.policy, items };
+}
+
 async function removeAcceptedConsentItems(input: {
+  c: AuthContext;
   db: DatabaseAdapter;
   tenantId: string;
   interaction: FlowInteractionRow;
@@ -4045,28 +3793,19 @@ async function removeAcceptedConsentItems(input: {
   userId: string | null;
   step: FlowRuntimeStep;
 }): Promise<FlowRuntimeStep> {
-  if (input.step.component !== 'consent_policy' || !input.userId) return input.step;
+  if (!input.userId) return input.step;
   const policy = readRuntimeConsentPolicyContent(input.step);
   if (!policy) return input.step;
-  const remainingItems: RuntimeConsentPolicyItem[] = [];
-  for (const item of policy.items) {
-    const alreadyAccepted = await hasActiveAcceptedConsentRecord({
+  let step = withRuntimeConsentPolicyContent(
+    input.step,
+    await withoutAnsweredStatements({
+      c: input.c,
       db: input.db,
       tenantId: input.tenantId,
-      interaction: input.interaction,
-      requestContext: input.requestContext,
       userId: input.userId,
-      policyId: policy.id,
-      item,
-    });
-    if (!alreadyAccepted) {
-      remainingItems.push(item);
-    }
-  }
-  let step = withRuntimeConsentPolicyContent(input.step, {
-    ...policy,
-    items: remainingItems,
-  });
+      policy,
+    })
+  );
   const destinationFieldConsent = readRuntimeDestinationFieldConsent(step);
   if (
     destinationFieldConsent &&
@@ -4199,6 +3938,7 @@ async function resolveNextDisplayStep(input: {
 
     if (step.component === 'consent_policy') {
       const filteredStep = await removeAcceptedConsentItems({
+        c: input.c,
         db: input.db,
         tenantId: input.tenantId,
         interaction: input.interaction,
@@ -4247,7 +3987,21 @@ async function resolveNextDisplayStep(input: {
       continue;
     }
 
-    return { step, terminalStep: null, userId, autoAdvancedSteps };
+    // A step that asks for consent with its choice (a method selector) leaves out, as a consent
+    // step does, what the signed-in person has answered already.
+    const shown =
+      userId && readRuntimeConsentPolicyContent(step)
+        ? await removeAcceptedConsentItems({
+            c: input.c,
+            db: input.db,
+            tenantId: input.tenantId,
+            interaction: input.interaction,
+            requestContext: input.requestContext,
+            userId,
+            step,
+          })
+        : step;
+    return { step: shown, terminalStep: null, userId, autoAdvancedSteps };
   }
 
   return { step: null, terminalStep: null, userId, autoAdvancedSteps };
@@ -4369,111 +4123,76 @@ function createInitialAutoAdvanceAuditEvents(input: {
 }
 
 /** Exported for the tests of how records are written. */
-export async function insertFlowConsentRecords(input: {
+/**
+ * Records the subject's answers to the statements a step asked for, with the subject's account
+ * (user_consent_records, through the statement consent transitions: one record per statement,
+ * the latest answer standing, history kept). An agreement is recorded to the version that was
+ * shown; if that is no longer the current version, nothing is recorded (`document_changed`).
+ * A declined statement the subject had agreed to is a withdrawal, which a statement that cannot
+ * be withdrawn does not take.
+ */
+export async function recordFlowStatementConsents(input: {
+  c: AuthContext;
   db: DatabaseAdapter;
   tenantId: string;
   interaction: FlowInteractionRow;
-  step: FlowRuntimeStep;
   policy: RuntimeConsentPolicyContent;
-  requestContext: FlowRequestContext;
   userId: string;
   decisions: Record<string, RuntimeConsentItemDecision>;
+  /** When the answers were given, if earlier than now (consent held until someone signed in). */
+  givenAtMs?: number;
+  /** Given before anyone had signed in: who was answering was not known then. */
+  heldBeforeSignIn?: boolean;
+  ipAddress?: string;
   ipHash?: string;
   userAgent?: string;
 }): Promise<void> {
-  const now = nowSeconds();
-  const { recipientType, recipientId } = consentRecordRecipient(input);
-  const releasedScopes =
-    input.requestContext.protocol === 'oidc' && input.requestContext.requested_scope.length > 0
-      ? JSON.stringify(input.requestContext.requested_scope)
-      : null;
-
+  if (input.policy.items.length === 0) return;
+  await resolveAccountDataContextFromHono(input.c, input.userId);
+  const account = createAccountAuthContextFromHono(input.c, input.tenantId).coreAdapter;
+  const decisions: Record<string, 'granted' | 'denied'> = {};
+  const targets: Record<string, { version_id: string; version: string }> = {};
   for (const item of input.policy.items) {
-    const itemDecision = input.decisions[item.statement_id] ?? {
-      decision: 'rejected',
-      selectedValue: null,
-    };
-    const bindingType = normalizeConsentRecordBindingType(item.binding_type, input.requestContext);
-    const resourceType = consentRecordResourceType(item, input.requestContext);
-    await input.db.execute(
-      // One record per interaction, step, statement and version: a retry of the same decision
-      // changes nothing, and a retry with another decision replaces it (the last one stands).
-      `INSERT INTO consent_records (
-        id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
-        client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
-        resource_type, resource_id, purpose_key, statement_id, statement_version, policy_id,
-        flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
-        released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
-        revoked_at, evidence_json, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        decision = excluded.decision,
-        selected_value = excluded.selected_value,
-        selected_options_json = excluded.selected_options_json,
-        released_scopes_json = excluded.released_scopes_json,
-        evidence_json = excluded.evidence_json,
-        updated_at = excluded.updated_at`,
-      [
-        await deterministicRecordId(
-          'consent',
-          input.interaction.id,
-          input.step.id,
-          item.statement_id,
-          item.version
-        ),
+    const decision = input.decisions[item.statement_id]?.decision;
+    if (input.givenAtMs !== undefined) {
+      const current = await readStatementConsentRecord(
+        account,
         input.tenantId,
         input.userId,
-        input.userId,
-        input.requestContext.protocol === 'direct' ? 'custom' : input.requestContext.protocol,
-        normalizeConsentRecordKind(item.category),
-        input.interaction.client_id,
-        input.interaction.saml_sp_id,
-        recipientType,
-        recipientId,
-        bindingType,
-        item.binding_value,
-        resourceType,
-        item.binding_value,
-        item.category,
-        item.statement_id,
-        item.version,
-        input.policy.id,
-        input.interaction.flow_id,
-        input.interaction.flow_version_id,
-        input.step.source_node_id,
-        itemDecision.decision,
-        itemDecision.selectedValue,
-        itemDecision.selectedValue ? JSON.stringify([itemDecision.selectedValue]) : null,
-        releasedScopes,
-        null,
-        null,
-        'active',
-        null,
-        null,
-        JSON.stringify({
-          source: 'flow_runtime',
-          interaction_id: input.interaction.id,
-          step_id: input.step.id,
-          node_id: input.step.source_node_id,
-          statement_slug: item.slug,
-          statement_version_id: item.version_id,
-          content_mode: item.content_mode,
-          checkbox_mode: item.checkbox_mode,
-          is_required: item.is_required,
-          selected_value: itemDecision.selectedValue,
-          attribute_value_display: item.attribute_value_display,
-          requested_scope: input.requestContext.requested_scope,
-          authorization_challenge_id: input.requestContext.authorization_challenge_id,
-          saml_request_id: input.requestContext.saml_request_id,
-          saml_sp_entity_id: input.requestContext.saml_sp_entity_id,
-          user_agent: input.userAgent,
-          ip_address_hash: input.ipHash,
-        }),
-        now,
-        now,
-      ]
-    );
+        item.statement_id
+      );
+      // Answered again since (a later step): the later answer stands.
+      if (current && current.updated_at > input.givenAtMs) continue;
+      // Answered before anyone knew who was answering, a box left unticked did not show the
+      // person's own agreement: it does not withdraw it.
+      if (input.heldBeforeSignIn && decision !== 'accepted' && current?.status === 'granted') {
+        continue;
+      }
+    }
+    decisions[item.statement_id] = decision === 'accepted' ? 'granted' : 'denied';
+    targets[item.statement_id] = { version_id: item.version_id, version: item.version };
   }
+  if (Object.keys(decisions).length === 0) return;
+  await processConsentItemDecisions(
+    {
+      metadata: input.db,
+      account,
+    },
+    input.tenantId,
+    input.userId,
+    decisions,
+    {
+      ip_address: input.ipAddress || undefined,
+      user_agent: input.userAgent,
+      client_id: input.interaction.client_id ?? input.interaction.saml_sp_id ?? undefined,
+    },
+    input.ipHash,
+    targets,
+    {
+      env: input.c.env,
+      ...(input.givenAtMs !== undefined ? { givenAtMs: input.givenAtMs } : {}),
+    }
+  );
 }
 
 /** Exported for the tests of how records are written. */
@@ -4937,8 +4656,8 @@ async function persistRuntimeConsentStep(input: {
   const requestContext = getRequestContextFromInteraction(input.interaction);
   const destinationFieldConsent = readRuntimeDestinationFieldConsent(input.step);
   const config = parseJsonRecord(input.step.config);
-  const policyId = readString(config.consent_policy_ref, 200);
-  if (!policyId) {
+  const consentStatements = readFlowConsentStatements(config);
+  if (!consentStatements?.length && !destinationFieldConsent) {
     if (input.step.component !== 'consent_policy') return { ok: true };
     return {
       ok: false,
@@ -4946,7 +4665,7 @@ async function persistRuntimeConsentStep(input: {
         input.c,
         409,
         'invalid_consent_policy',
-        'Consent policy is not configured for this Flow step',
+        'No consent statements are configured for this Flow step',
         'AR_FLOW_CONSENT_POLICY_MISSING',
         'configuration_error',
         'contact_administrator',
@@ -4968,28 +4687,24 @@ async function persistRuntimeConsentStep(input: {
     };
   }
 
-  const policy = await resolveRuntimeConsentPolicyContent(
+  const configured = await resolveRuntimeConsentStatementsContent(
     input.db,
     input.tenantId,
-    policyId,
+    input.step.id,
+    consentStatements ?? [],
     requestContext
   );
-  if (!policy) {
-    return {
-      ok: false,
-      response: runtimeError(
-        input.c,
-        409,
-        'invalid_consent_policy',
-        'Consent policy is unavailable',
-        'AR_FLOW_CONSENT_POLICY_UNAVAILABLE',
-        'configuration_error',
-        'contact_administrator',
-        input.interaction.id
-      ),
-    };
-  }
-
+  // What is asked of someone signed in leaves out what they have answered already (as when it is
+  // shown): those are neither required again nor recorded again.
+  const policy = input.session?.userId
+    ? await withoutAnsweredStatements({
+        c: input.c,
+        db: input.db,
+        tenantId: input.tenantId,
+        userId: input.session.userId,
+        policy: configured,
+      })
+    : configured;
   // What is accepted is what was shown: if the terms are not those the contract of this
   // interaction was prepared with (changed since, or the contract came from a cache that is behind),
   // nothing is accepted, and the browser is asked to resume with a contract prepared anew.
@@ -4998,7 +4713,9 @@ async function persistRuntimeConsentStep(input: {
   )[input.step.id];
   if (
     typeof presented === 'string' &&
-    presented !== consentStepKey(policy, destinationFieldConsent)
+    // Kept from the contract, which lists every statement the step asks for: judged against all of
+    // them (what was answered already is left out only of what is required and recorded).
+    presented !== consentStepKey(configured, destinationFieldConsent)
   ) {
     return {
       ok: false,
@@ -5090,6 +4807,7 @@ async function persistRuntimeConsentStep(input: {
   const given: HeldRuntimeConsent = {
     policy,
     decisions,
+    given_at_ms: Date.now(),
     ...(destinationFieldConsent
       ? {
           destination: {
@@ -5117,6 +4835,7 @@ async function persistRuntimeConsentStep(input: {
     requestContext,
     consent: given,
     userId,
+    claimId: input.claimId,
   });
   return recorded.ok ? { ok: true, userId } : recorded;
 }
@@ -5188,6 +4907,10 @@ async function recordRuntimeConsent(input: {
   requestContext: FlowRequestContext;
   consent: HeldRuntimeConsent;
   userId: string;
+  /** The submit's claim on the interaction (claimRuntimeSubmit). */
+  claimId: string;
+  /** Consent held from before sign-in, recorded now (see recordFlowStatementConsents). */
+  heldBeforeSignIn?: boolean;
 }): Promise<{ ok: true } | { ok: false; response: Response }> {
   if (!(await claimInteractionUser(input.db, input.tenantId, input.interaction, input.userId))) {
     return {
@@ -5203,18 +4926,43 @@ async function recordRuntimeConsent(input: {
     ? await hashIpAddress(ipAddress, input.tenantId, input.c.env.KV ?? null, input.c.env)
     : undefined;
   const userAgent = getRequestHeader(input.c, 'User-Agent');
-  await insertFlowConsentRecords({
-    db: input.db,
-    tenantId: input.tenantId,
-    interaction: input.interaction,
-    step: input.step,
-    policy: input.consent.policy,
-    requestContext: input.requestContext,
-    userId: input.userId,
-    decisions: input.consent.decisions,
-    ipHash,
-    userAgent,
-  });
+  try {
+    await recordFlowStatementConsents({
+      c: input.c,
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      policy: input.consent.policy,
+      ...(typeof input.consent.given_at_ms === 'number'
+        ? { givenAtMs: input.consent.given_at_ms }
+        : {}),
+      userId: input.userId,
+      decisions: input.consent.decisions,
+      ...(input.heldBeforeSignIn ? { heldBeforeSignIn: true } : {}),
+      ipAddress,
+      ipHash,
+      userAgent,
+    });
+  } catch (error) {
+    // A statement was published anew (or retired) after it was shown: nothing of it is recorded,
+    // and it is asked for again.
+    if (
+      error instanceof Error &&
+      ['document_changed', 'statement_consent_transition_rejected'].includes(error.message)
+    ) {
+      return {
+        ok: false,
+        response: await consentChangedResponse(
+          input.c,
+          input.db,
+          input.tenantId,
+          input.interaction,
+          input.claimId
+        ),
+      };
+    }
+    throw error;
+  }
   if (input.consent.destination) {
     // The version that applies now: this record may be in an older one.
     const applicable = await resolveRuntimeDestinationFieldConsent(
@@ -5326,26 +5074,51 @@ async function recordHeldRuntimeConsent(input: {
         AND state_json LIKE '%"held_consent"%'`,
     [input.tenantId, input.interaction.id]
   );
-  for (const row of rows ?? []) {
+  // The latest held answer first: an earlier one for the same statement then finds it recorded
+  // after it was given and leaves it (the last answer stands).
+  const heldAt = (row: { state_json: string | null }) => {
+    const held = parseJsonRecord(row.state_json).held_consent as HeldRuntimeConsent | undefined;
+    return typeof held?.given_at_ms === 'number' ? held.given_at_ms : 0;
+  };
+  const ordered = [...(rows ?? [])].sort((left, right) => heldAt(right) - heldAt(left));
+  // For each statement, only its latest held answer is recorded: an earlier one is left out here,
+  // whatever the latest one changes in the record (it may change nothing).
+  const latestFor = new Map<string, string>();
+  for (const row of ordered) {
+    const held = parseJsonRecord(row.state_json).held_consent as HeldRuntimeConsent | undefined;
+    for (const statementId of Object.keys(held?.decisions ?? {})) {
+      if (!latestFor.has(statementId)) latestFor.set(statementId, row.id);
+    }
+  }
+  for (const row of ordered) {
     const state = parseJsonRecord(row.state_json);
     const held = state.held_consent as HeldRuntimeConsent | undefined;
     const step = input.runtime.ui.steps.find((candidate) => candidate.id === row.step_id);
     if (!held?.policy || !held.decisions || !step) continue;
 
-    const current = await resolveRuntimeConsentPolicyContent(
-      input.db,
-      input.tenantId,
-      held.policy.id,
-      input.requestContext
-    );
+    const heldStatements = readFlowConsentStatements(step.config);
+    const current = heldStatements?.length
+      ? await resolveRuntimeConsentStatementsContent(
+          input.db,
+          input.tenantId,
+          step.id,
+          heldStatements,
+          input.requestContext
+        )
+      : null;
     const currentDestination = readRuntimeDestinationFieldConsent(step);
+    // A statement answered again in a later held answer is judged (and recorded) by that one only.
+    const ownItem = (item: { statement_id: string }) =>
+      latestFor.get(item.statement_id) === row.id || !(item.statement_id in held.decisions);
+    const currentOwn = current ? { ...current, items: current.items.filter(ownItem) } : null;
+    const heldOwn = { ...held.policy, items: held.policy.items.filter(ownItem) };
     // What was accepted must still be what is asked: the same statements in the same versions and
     // terms (required or not, how they are agreed to), and, judged by what is asked now, nothing
     // required that was not given.
     if (
-      !current ||
-      consentPresentationKey(current) !== consentPresentationKey(held.policy) ||
-      current.items.some((item) => {
+      !currentOwn ||
+      consentPresentationKey(currentOwn) !== consentPresentationKey(heldOwn) ||
+      currentOwn.items.some((item) => {
         const decision = held.decisions[item.statement_id];
         return (
           !decision ||
@@ -5424,8 +5197,10 @@ async function recordHeldRuntimeConsent(input: {
       interaction: input.interaction,
       step,
       requestContext: input.requestContext,
-      consent: held,
+      consent: { ...held, policy: heldOwn },
       userId: input.session.userId,
+      claimId: input.claimId,
+      heldBeforeSignIn: true,
     });
     if (!recorded.ok) return { response: recorded.response };
     // Over the state read, only under the submit's claim (nothing else writes the row then).

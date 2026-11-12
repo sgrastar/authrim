@@ -16,7 +16,7 @@ export function openCoreStore(tenantId = 'tenant-a'): {
   adapter: DatabaseAdapter;
 } {
   const db = new DatabaseSync(':memory:');
-  for (const file of ['001_0_5_0_core_baseline.sql']) {
+  for (const file of ['001_0_5_0_core_baseline.sql', '009_consent_policies_removed.sql']) {
     db.exec(
       renderPortableMigrationSql(readFileSync(new URL(file, CORE_MIGRATIONS), 'utf8'), 'sqlite')
     );
