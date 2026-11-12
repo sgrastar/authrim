@@ -432,6 +432,10 @@ describe('User Consents API', () => {
           privacy_policy_version: 'v1.0.0',
           tos_version: 'v1.5.0',
           consent_version: 2,
+          release_approved_json: JSON.stringify(['email']),
+          release_declined_json: JSON.stringify([]),
+          release_basis: 'user',
+          release_decided_at: 1700000000000,
         },
       ]);
       mockTenantMetadataAdapter.query.mockResolvedValue([
@@ -464,6 +468,12 @@ describe('User Consents API', () => {
           privacyPolicyVersion: 'v1.0.0',
           tosVersion: 'v1.5.0',
           consentVersion: 2,
+        },
+        informationRelease: {
+          basis: 'user',
+          approved: ['email'],
+          declined: [],
+          decidedAt: 1700000000000,
         },
       });
     });

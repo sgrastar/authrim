@@ -4,6 +4,7 @@
  * (lib/components/account/widgets/*). Only what a widget shows is kept: no ID the page does not
  * post back, nothing of another person.
  */
+import { accountReleaseRows } from '#lib/consent-release.js';
 import { formatTimestamp } from '#lib/utils/date.js';
 import type { liteMessages } from './messages';
 import { record } from './totp-passkey';
@@ -164,6 +165,7 @@ export function liteAccountConsents(
 					subtitle: clientId,
 					rows: [
 						{ label: LL.account_consentScopes(), value: scopes.join(', ') || '-' },
+						...accountReleaseRows(LL, row.informationRelease),
 						{ label: LL.account_consentGrantedAt(), value: when(row.grantedAt) },
 						{ label: LL.account_consentExpiresAt(), value: expires(row.expiresAt) },
 						{ label: LL.account_consentPolicyVersions(), value: parts.join(' / ') || '-' }

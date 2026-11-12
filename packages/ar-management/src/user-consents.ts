@@ -12,6 +12,7 @@
 import { Context } from 'hono';
 import type { Env, UserConsentRecord, ConsentRevokeResult } from '@authrim/ar-lib-core';
 import {
+  accountInformationRelease,
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
   getTenantIdFromContext,
@@ -128,6 +129,7 @@ export async function userConsentsListHandler(c: Context<{ Bindings: Env }>) {
               consentVersion: row.consent_version ?? 1,
             }
           : undefined,
+      informationRelease: accountInformationRelease(row),
     }));
 
     return c.json({

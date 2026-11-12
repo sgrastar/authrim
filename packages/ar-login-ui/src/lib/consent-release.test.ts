@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { i18nObject } from '$i18n/i18n-util';
 import { loadAllLocales } from '$i18n/i18n-util.sync';
 import {
+	accountReleaseRows,
 	formatReleaseValue,
 	releaseClaimLabel,
 	releaseDefaultChecked,
@@ -71,5 +72,53 @@ describe('optional items', () => {
 		expect(releaseSelectedNames(release, {})).toEqual(['email']);
 		expect(releaseSelectedNames(release, { email: false, birthdate: true })).toEqual(['birthdate']);
 		expect(releaseSelectedNames(release, { sub: false })).toEqual(['email']);
+	});
+});
+
+describe('accountReleaseRows', () => {
+	const LL = i18nObject('en');
+
+	it('lists what the user approved and declined, by label', () => {
+		expect(
+			accountReleaseRows(LL, {
+				basis: 'user',
+				approved: ['email', 'custom_claim'],
+				declined: ['picture'],
+				decidedAt: 1
+			})
+		).toEqual([
+			{ label: 'Information provided', value: 'Email address, custom_claim' },
+			{ label: 'Not provided', value: LL.consent_claim_picture() }
+		]);
+	});
+
+	it('says "none" when the user approved nothing, and leaves out an empty declined row', () => {
+		expect(
+			accountReleaseRows(LL, { basis: 'user', approved: [], declined: [], decidedAt: 1 })
+		).toEqual([{ label: 'Information provided', value: 'None' }]);
+	});
+
+	it('says how it was decided for the user, and when nothing was decided', () => {
+		expect(accountReleaseRows(LL, { basis: 'trust' })[0].value).toBe(
+			LL.account_consentInformationTrusted()
+		);
+		expect(accountReleaseRows(LL, { basis: 'not_asked' })[0].value).toBe(
+			LL.account_consentInformationRequiredOnly()
+		);
+		// Made by a policy that no longer decides: still shown, with the next sign-in asking.
+		expect(accountReleaseRows(LL, { basis: 'trust', superseded: true })[0].value).toBe(
+			`${LL.account_consentInformationTrusted()} ${LL.account_consentInformationSuperseded()}`
+		);
+		for (const value of [undefined, null, 'user', { basis: 'other' }]) {
+			expect(accountReleaseRows(LL, value)).toEqual([
+				{ label: 'Information provided', value: LL.account_consentInformationNotRecorded() }
+			]);
+		}
+	});
+
+	it('ignores names that are not strings', () => {
+		expect(
+			accountReleaseRows(LL, { basis: 'user', approved: ['email', 3, null, ''], declined: 'x' })
+		).toEqual([{ label: 'Information provided', value: 'Email address' }]);
 	});
 });
