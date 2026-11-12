@@ -5,7 +5,7 @@ import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import {
   checkUserConsentSatisfaction,
   processConsentItemDecisions,
-  resolveConsentRequirements,
+  resolveStatementRequirements,
 } from '../../utils/consent-statements';
 import { listUserStatementConsentRecords } from '../statement-consent-records';
 import { singleDatabaseStatementConsent } from '../statement-consent-stores';
@@ -39,7 +39,7 @@ function core(): Fixture {
   return fixture;
 }
 
-/** One statement with a current version, required by the tenant, retained for 30 days. */
+/** One statement with a current version, retained for 30 days. */
 async function seedDefinitions(adapter: DatabaseAdapter): Promise<void> {
   await adapter.execute(
     `INSERT INTO consent_statements(id,tenant_id,slug,is_active,record_retention_days,created_at,updated_at)
@@ -51,13 +51,9 @@ async function seedDefinitions(adapter: DatabaseAdapter): Promise<void> {
      VALUES(?,?,?,?,?,?,?,?,?)`,
     [VERSION_ID, TENANT, STATEMENT, VERSION, 1, 'active', 1, 1, 1]
   );
-  await adapter.execute(
-    `INSERT INTO tenant_consent_requirements(id,tenant_id,statement_id,is_required,enforcement,display_order,created_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?)`,
-    ['req-1', TENANT, STATEMENT, 1, 'block', 0, 1, 1]
-  );
 }
 
+const REQUIRED = [{ statement_id: STATEMENT, required: true }];
 const evidence = { client_id: 'client-a', user_agent: 'ua' };
 const target = { [STATEMENT]: { version_id: VERSION_ID, version: VERSION } };
 
@@ -81,7 +77,7 @@ describe('statement consent across metadata and account databases (current behav
       const stores = singleDatabaseStatementConsent(metadata.adapter);
       expect(stores.metadata).toBe(stores.account);
 
-      const requirements = await resolveConsentRequirements(stores.metadata, TENANT, null, {});
+      const requirements = await resolveStatementRequirements(stores.metadata, TENANT, REQUIRED);
       expect(requirements.map((r) => r.statement_id)).toEqual([STATEMENT]);
       expect(requirements[0].is_required).toBe(true);
 
@@ -147,7 +143,7 @@ describe('statement consent across metadata and account databases (current behav
       );
       account.db.exec('PRAGMA foreign_keys=ON');
 
-      const requirements = await resolveConsentRequirements(metadata.adapter, TENANT, null, {});
+      const requirements = await resolveStatementRequirements(metadata.adapter, TENANT, REQUIRED);
       const result = await checkUserConsentSatisfaction(
         account.adapter,
         TENANT,
@@ -162,8 +158,8 @@ describe('statement consent across metadata and account databases (current behav
     it('resolves requirements only from the adapter it is given: the account database holds none', async () => {
       // Callers must hand it the metadata database. Handed the account database (an empty copy of
       // the definition tables), a required statement is silently not asked.
-      const fromMetadata = await resolveConsentRequirements(metadata.adapter, TENANT, null, {});
-      const fromAccount = await resolveConsentRequirements(account.adapter, TENANT, null, {});
+      const fromMetadata = await resolveStatementRequirements(metadata.adapter, TENANT, REQUIRED);
+      const fromAccount = await resolveStatementRequirements(account.adapter, TENANT, REQUIRED);
       expect(fromMetadata).toHaveLength(1);
       expect(fromAccount).toEqual([]);
     });

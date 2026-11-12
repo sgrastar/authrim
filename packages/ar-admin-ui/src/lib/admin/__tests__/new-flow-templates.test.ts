@@ -86,8 +86,7 @@ describe('new flow templates', () => {
 				flow_id: 'preview:default-login',
 				flow_kind: 'login',
 				runtime_bindings: {
-					authentication_method_profile: 'default',
-					consent_policy_ref: 'Login and authorization consent policy'
+					authentication_method_profile: 'default'
 				},
 				protocol_context: {
 					protocol: 'oidc'
@@ -390,7 +389,7 @@ describe('new flow templates', () => {
 		expect(
 			contract.editor.nodes.find((node) => node.id === 'saml-attribute-release-consent')?.config
 		).toMatchObject({
-			consent_policy_ref: 'saml_attribute_release_policy',
+			statements: [],
 			completion_block: {
 				id: 'saml-attribute-release-completion',
 				protocol: 'saml',

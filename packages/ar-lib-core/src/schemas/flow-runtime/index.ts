@@ -171,7 +171,7 @@ export const FLOW_NODE_DEFINITIONS: readonly FlowNodeDefinition[] = [
     emits_output: true,
     default_render: true,
     output_handles: ['accepted', 'declined'],
-    required_config_keys: ['consent_policy_ref'],
+    required_config_keys: ['statements'],
   },
   {
     type: 'account_action',

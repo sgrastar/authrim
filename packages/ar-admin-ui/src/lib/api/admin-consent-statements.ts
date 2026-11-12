@@ -3,7 +3,7 @@ import { adminFetch } from '#lib/api/admin-request.js';
  * Admin Consent Statements API Client
  *
  * Provides methods for managing consent statements, versions,
- * localizations, requirements, and overrides through the Admin API.
+ * and localizations through the Admin API.
  */
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -24,7 +24,8 @@ export interface ConsentStatement {
 	record_retention_days?: number | null;
 	withdrawal_allowed?: number | boolean;
 	withdrawal_impact?: string | null;
-	reconsent_on_version_change?: number | boolean;
+	/** Version from which agreement is required (read-only). */
+	required_consent_version?: string | null;
 	reconsent_interval_days?: number | null;
 	created_at: number;
 	updated_at: number;
@@ -56,35 +57,6 @@ export interface ConsentStatementLocalization {
 	withdrawal_impact?: string | null;
 	document_url?: string;
 	inline_content?: string;
-	created_at: number;
-	updated_at: number;
-}
-
-export interface TenantConsentRequirement {
-	id: string;
-	tenant_id: string;
-	statement_id: string;
-	is_required: number;
-	min_version?: string;
-	enforcement: string;
-	show_deletion_link: number;
-	deletion_url?: string;
-	conditional_rules_json?: string;
-	display_order: number;
-	created_at: number;
-	updated_at: number;
-}
-
-export interface ClientConsentOverride {
-	id: string;
-	tenant_id: string;
-	client_id: string;
-	statement_id: string;
-	requirement: string;
-	min_version?: string;
-	enforcement?: string;
-	conditional_rules_json?: string;
-	display_order?: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -168,7 +140,6 @@ export const adminConsentStatementsAPI = {
 		record_retention_days?: number | null;
 		withdrawal_allowed?: boolean;
 		withdrawal_impact?: string | null;
-		reconsent_on_version_change?: boolean;
 		reconsent_interval_days?: number | null;
 	}): Promise<{ statement: ConsentStatement }> {
 		const response = await apiRequest<ConsentStatement | { statement: ConsentStatement }>(
@@ -200,7 +171,6 @@ export const adminConsentStatementsAPI = {
 			record_retention_days?: number | null;
 			withdrawal_allowed?: boolean;
 			withdrawal_impact?: string | null;
-			reconsent_on_version_change?: boolean;
 			reconsent_interval_days?: number | null;
 		}
 	): Promise<{ statement: ConsentStatement }> {
@@ -280,13 +250,14 @@ export const adminConsentStatementsAPI = {
 
 	async activateVersion(
 		statementId: string,
-		versionId: string
+		versionId: string,
+		options: { reconsent?: boolean } = {}
 	): Promise<{ version: ConsentStatementVersion }> {
 		const response = await apiRequest<
 			ConsentStatementVersion | { version: ConsentStatementVersion }
 		>(
 			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions/${encodeURIComponent(versionId)}/activate`,
-			{ method: 'POST' }
+			{ method: 'POST', body: JSON.stringify({ reconsent: options.reconsent ?? true }) }
 		);
 		return { version: unwrapResource<ConsentStatementVersion>(response, 'version') };
 	},
@@ -341,88 +312,6 @@ export const adminConsentStatementsAPI = {
 	): Promise<void> {
 		await apiRequest(
 			`/api/admin/consent-statements/${encodeURIComponent(statementId)}/versions/${encodeURIComponent(versionId)}/localizations/${encodeURIComponent(language)}`,
-			{ method: 'DELETE' }
-		);
-	},
-
-	// === Tenant Requirements ===
-
-	async listRequirements(): Promise<{ requirements: TenantConsentRequirement[] }> {
-		return apiRequest('/api/admin/consent-requirements');
-	},
-
-	async upsertRequirement(
-		statementId: string,
-		data: {
-			is_required?: number | boolean;
-			min_version?: string;
-			enforcement?: string;
-			show_deletion_link?: number | boolean;
-			deletion_url?: string;
-			conditional_rules?: unknown;
-			conditional_rules_json?: string;
-			display_order?: number;
-		}
-	): Promise<{ requirement: TenantConsentRequirement }> {
-		const requestBody: Record<string, unknown> = {
-			...data,
-			is_required: data.is_required === undefined ? undefined : Boolean(data.is_required),
-			show_deletion_link:
-				data.show_deletion_link === undefined ? undefined : Boolean(data.show_deletion_link)
-		};
-		if (data.conditional_rules_json && data.conditional_rules === undefined) {
-			try {
-				requestBody.conditional_rules = JSON.parse(data.conditional_rules_json);
-			} catch {
-				requestBody.conditional_rules = undefined;
-			}
-		}
-		delete requestBody.conditional_rules_json;
-		const response = await apiRequest<
-			TenantConsentRequirement | { requirement: TenantConsentRequirement }
-		>(`/api/admin/consent-requirements/${encodeURIComponent(statementId)}`, {
-			method: 'PUT',
-			body: JSON.stringify(requestBody)
-		});
-		return { requirement: unwrapResource<TenantConsentRequirement>(response, 'requirement') };
-	},
-
-	async deleteRequirement(statementId: string): Promise<void> {
-		await apiRequest(`/api/admin/consent-requirements/${encodeURIComponent(statementId)}`, {
-			method: 'DELETE'
-		});
-	},
-
-	// === Client Overrides ===
-
-	async listClientOverrides(clientId: string): Promise<{ overrides: ClientConsentOverride[] }> {
-		return apiRequest(`/api/admin/clients/${encodeURIComponent(clientId)}/consent-overrides`);
-	},
-
-	async upsertClientOverride(
-		clientId: string,
-		statementId: string,
-		data: {
-			requirement?: string;
-			min_version?: string;
-			enforcement?: string;
-			conditional_rules_json?: string;
-			display_order?: number;
-		}
-	): Promise<{ override: ClientConsentOverride }> {
-		const response = await apiRequest<ClientConsentOverride | { override: ClientConsentOverride }>(
-			`/api/admin/clients/${encodeURIComponent(clientId)}/consent-overrides/${encodeURIComponent(statementId)}`,
-			{
-				method: 'PUT',
-				body: JSON.stringify(data)
-			}
-		);
-		return { override: unwrapResource<ClientConsentOverride>(response, 'override') };
-	},
-
-	async deleteClientOverride(clientId: string, statementId: string): Promise<void> {
-		await apiRequest(
-			`/api/admin/clients/${encodeURIComponent(clientId)}/consent-overrides/${encodeURIComponent(statementId)}`,
 			{ method: 'DELETE' }
 		);
 	},

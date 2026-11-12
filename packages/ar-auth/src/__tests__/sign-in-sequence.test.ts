@@ -33,7 +33,7 @@ import { Hono } from 'hono';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   insertDestinationFieldConsentRecord,
-  insertFlowConsentRecords,
+  recordFlowStatementConsents,
 } from '../login-runtime-flow';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import { freshInstallMigrationFiles } from './helpers/real-sql';
@@ -135,6 +135,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     createAuthContextFromHono: vi.fn(authContext),
     createAccountAuthContextFromHono: vi.fn(authContext),
+    // The account's data is this one database: there is no routing to resolve.
+    resolveAccountDataContextFromHono: vi.fn(async () => undefined),
     createPIIContextFromHono: vi.fn(() => ({ piiRepositories: { userPII: {} } })),
     hasPIIDatabase: vi.fn(() => true),
     getFeatureFlag: vi.fn(
@@ -282,7 +284,8 @@ function createCoreDatabase(): DatabaseAdapter {
       }
     },
     isHealthy: async () => true,
-    getType: () => 'sqlite',
+    // D1 is the backend whose atomic statement-consent writes (a batch) this database serves.
+    getType: () => 'd1',
     close: async () => undefined,
   };
   return adapter as unknown as DatabaseAdapter;
@@ -555,15 +558,10 @@ async function installFlow(clientId: string, spec: FlowSpec) {
   );
 }
 
-/** A consent policy with one required statement, to put on a method selection. */
-async function installLoginConsentPolicy(options: { requirement?: 'required' | 'optional' } = {}) {
+/** A consent statement with a current version and a localization, to put on a method selection. */
+async function installLoginConsentStatement() {
   const db = world.db as DatabaseAdapter;
   const now = Math.floor(Date.now() / 1000);
-  await db.execute(
-    `INSERT INTO consent_policies (id, tenant_id, name, display_name, is_active, created_at, updated_at)
-     VALUES ('policy_login', ?, 'login', 'Login consent', 1, ?, ?)`,
-    [TENANT, now, now]
-  );
   await db.execute(
     `INSERT INTO consent_statements (id, tenant_id, slug, category, created_at, updated_at)
      VALUES ('statement_terms', ?, 'terms_of_service', 'terms_of_service', ?, ?)`,
@@ -581,14 +579,10 @@ async function installLoginConsentPolicy(options: { requirement?: 'required' | '
      VALUES ('loc_terms_en', ?, 'version_terms_1', 'en', 'Terms', '', 'https://example.com/tos', ?, ?)`,
     [TENANT, now, now]
   );
-  await db.execute(
-    `INSERT INTO consent_policy_items (id, tenant_id, policy_id, statement_id, requirement,
-                                       version_mode, checkbox_mode, binding_type, created_at, updated_at)
-     VALUES ('item_terms', ?, 'policy_login', 'statement_terms', ?, 'current', ?,
-             'subject', ?, ?)`,
-    [TENANT, options.requirement ?? 'required', options.requirement ?? 'required', now, now]
-  );
 }
+
+/** What a step that asks for the terms lists in its config. */
+const TERMS_REQUIRED = { statements: [{ statement_id: 'statement_terms', required: true }] };
 
 const TWO_STEP_FLOW: FlowSpec = {
   id: 'flow-two-step',
@@ -616,7 +610,7 @@ const CONSENT_FLOW: FlowSpec = {
   steps: [
     {
       ...AUTH_STEP,
-      config: { consent_policy_ref: 'policy_login' },
+      config: TERMS_REQUIRED,
     },
     OIDC_COMPLETION,
   ],
@@ -907,7 +901,7 @@ describe('sign-in sequences through the real handlers', () => {
     const oidcClientId = flowClient ?? CLIENT_ID;
     beforeEach(async () => {
       if (flowSpec) {
-        if (flowSpec === CONSENT_FLOW) await installLoginConsentPolicy();
+        if (flowSpec === CONSENT_FLOW) await installLoginConsentStatement();
         await installFlow(oidcClientId, flowSpec);
       }
     });
@@ -1471,11 +1465,11 @@ describe('sign-in sequences through the real handlers', () => {
   describe('consent given at the method selection', () => {
     const consentRows = async () =>
       (await (world.db as DatabaseAdapter).query(
-        'SELECT subject_user_id, statement_id, decision FROM consent_records'
+        'SELECT user_id AS subject_user_id, statement_id, status AS decision FROM user_consent_records'
       )) as Array<{ subject_user_id: string; statement_id: string; decision: string }>;
 
     beforeEach(async () => {
-      await installLoginConsentPolicy();
+      await installLoginConsentStatement();
       await installFlow('consent-client', CONSENT_FLOW);
     });
 
@@ -1514,7 +1508,7 @@ describe('sign-in sequences through the real handlers', () => {
 
       expect(done.final?.status).toBe(200);
       expect(await consentRows()).toEqual([
-        { subject_user_id: 'user_existing', statement_id: 'statement_terms', decision: 'accepted' },
+        { subject_user_id: 'user_existing', statement_id: 'statement_terms', decision: 'granted' },
       ]);
     });
   });
@@ -1524,7 +1518,7 @@ describe('sign-in sequences through the real handlers', () => {
       id: 'flow-consent-screen',
       kind: 'login',
       steps: [
-        { ...AUTH_STEP, config: { consent_policy_ref: 'policy_login' } },
+        { ...AUTH_STEP, config: TERMS_REQUIRED },
         {
           id: 'welcome:step',
           source_node_id: 'welcome',
@@ -1542,12 +1536,12 @@ describe('sign-in sequences through the real handlers', () => {
     const given = { consent_item_decisions: { statement_terms: 'granted' } };
     const consentRows = async () =>
       (await (world.db as DatabaseAdapter).query(
-        'SELECT subject_user_id, statement_id, statement_version, decision FROM consent_records'
+        'SELECT user_id AS subject_user_id, statement_id, version AS statement_version, status AS decision FROM user_consent_records'
       )) as Array<{ subject_user_id: string; statement_version: string }>;
     const signedIn = (userId = 'user_existing') => existingSession(-50, 'email_code', userId);
 
     beforeEach(async () => {
-      await installLoginConsentPolicy();
+      await installLoginConsentStatement();
       await installFlow('consent-client', CONSENT_FLOW);
       await installFlow('consent-screen-client', CONSENT_SCREEN_FLOW);
     });
@@ -1758,76 +1752,6 @@ describe('sign-in sequences through the real handlers', () => {
       await expectCompletedFor(interactionId, 'user_existing');
     });
 
-    it('is refused when the same statement in the same version has become required meanwhile', async () => {
-      // An optional statement, left ungiven; the tenant then makes the very same version required.
-      const db = world.db as DatabaseAdapter;
-      await db.execute(
-        "UPDATE consent_policy_items SET requirement = 'optional', checkbox_mode = 'optional'"
-      );
-      const challengeId = await storeAuthorizationChallenge({
-        kind: 'login',
-        freshAfter: Date.now(),
-        clientId: 'consent-client',
-      });
-      const browser = browserWith();
-      const { start, interaction } = await startFlow(browser, {
-        oidcClientId: 'consent-client',
-        challengeId,
-      });
-      const selection = await selectMethod(browser, start, 'mail_otp', {
-        consent_item_decisions: {},
-      });
-      expect(selection.status).toBe(200);
-      await db.execute(
-        "UPDATE consent_policy_items SET requirement = 'required', checkbox_mode = 'required'"
-      );
-      browser.cookies.set('authrim_session', signedIn());
-
-      const done = await resumeAndComplete(browser, start, interaction.id);
-
-      expect(done.final?.status).toBe(400);
-      expect(done.final?.json.error).toBe('consent_changed');
-      expect(await consentRows()).toEqual([]);
-      expect(await challengeIsUsedUp(challengeId)).toBe(false);
-    });
-
-    it('does not record a choice that is no longer offered, and asks again', async () => {
-      const db = world.db as DatabaseAdapter;
-      const now = Math.floor(Date.now() / 1000);
-      const setOptions = (values: string[]) =>
-        db.execute(
-          `INSERT INTO tenant_consent_requirements (id, tenant_id, statement_id, conditional_rules_json,
-                                                    created_at, updated_at)
-           VALUES ('req_terms', ?, 'statement_terms', ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET conditional_rules_json = excluded.conditional_rules_json`,
-          [
-            TENANT,
-            JSON.stringify({
-              content_mode: 'radio',
-              content_options: values.map((value) => ({ value })),
-            }),
-            now,
-            now,
-          ]
-        );
-      await setOptions(['once', 'always']);
-      const browser = browserWith();
-      const { start, interaction } = await startFlow(browser, { oidcClientId: 'consent-client' });
-      const selection = await selectMethod(browser, start, 'mail_otp', {
-        consent_item_selected_values: { statement_terms: 'always' },
-      });
-      expect(selection.status).toBe(200);
-      // While the sign-in is under way the lasting choice is withdrawn.
-      await setOptions(['once']);
-      browser.cookies.set('authrim_session', signedIn());
-
-      const done = await resumeAndComplete(browser, start, interaction.id);
-
-      expect(done.final?.status).toBe(400);
-      expect(done.final?.json.error).toBe('consent_changed');
-      expect(await consentRows()).toEqual([]);
-    });
-
     it('goes back to the consent when the terms changed, so that it is asked for again', async () => {
       const browser = browserWith();
       const { start, interaction } = await startFlow(browser, { oidcClientId: 'consent-client' });
@@ -1887,7 +1811,7 @@ describe('sign-in sequences through the real handlers', () => {
       const db = world.db as DatabaseAdapter;
 
       // The completion stops once it recorded the consent; meanwhile another submit took the step.
-      const held = holdAfter(/INSERT INTO consent_records/);
+      const held = holdAfter(/INSERT INTO statement_consent_key_states/);
       const refusedDone = resumeAndComplete(browser, start, interaction.id);
       const release = await held;
       await db.execute(
@@ -2013,7 +1937,7 @@ describe('sign-in sequences through the real handlers', () => {
         id: 'flow-consent-steps',
         kind: 'login',
         steps: [
-          { ...AUTH_STEP, config: { consent_policy_ref: 'policy_login' } },
+          { ...AUTH_STEP, config: TERMS_REQUIRED },
           { id: 'a:step', source_node_id: 'a', component: 'screen', render: true, config: {} },
           { id: 'b:step', source_node_id: 'b', component: 'screen', render: true, config: {} },
           OIDC_COMPLETION,
@@ -2202,7 +2126,7 @@ describe('sign-in sequences through the real handlers', () => {
           description: '',
           document_url: null,
           inline_content: null,
-          version: '1',
+          version: '20260101',
           version_id: 'v1',
           is_required: false,
           content_mode: 'checkbox',
@@ -2222,32 +2146,50 @@ describe('sign-in sequences through the real handlers', () => {
       (await (world.db as DatabaseAdapter).query(sql)) as Array<Record<string, unknown>>;
 
     it('replaces a decision that is sent again with another: the last one stands', async () => {
+      const db = world.db as DatabaseAdapter;
+      const now = Math.floor(Date.now() / 1000);
+      await db.execute(
+        `INSERT INTO consent_statements (id, tenant_id, slug, category, created_at, updated_at)
+         VALUES ('statement_email', ?, 'email', 'custom', ?, ?)`,
+        [TENANT, now, now]
+      );
+      await db.execute(
+        `INSERT INTO consent_statement_versions (id, tenant_id, statement_id, version, effective_at,
+                                                 is_current, status, created_at, updated_at)
+         VALUES ('v1', ?, 'statement_email', '20260101', ?, 1, 'active', ?, ?)`,
+        [TENANT, now, now, now]
+      );
       const common = {
-        db: world.db as DatabaseAdapter,
+        c: { env: createEnv() } as never,
+        db,
         tenantId: TENANT,
         interaction: interaction('interaction_1'),
-        step,
         policy,
-        requestContext,
         userId: 'user_1',
       };
 
-      await insertFlowConsentRecords({
+      await recordFlowStatementConsents({
         ...common,
         decisions: { statement_email: { decision: 'accepted', selectedValue: null } },
       });
-      await insertFlowConsentRecords({
+      await recordFlowStatementConsents({
         ...common,
         decisions: { statement_email: { decision: 'rejected', selectedValue: null } },
       });
-      await insertFlowConsentRecords({
+      await recordFlowStatementConsents({
         ...common,
         decisions: { statement_email: { decision: 'rejected', selectedValue: null } },
       });
 
-      expect(await rows('SELECT decision FROM consent_records')).toEqual([
-        { decision: 'rejected' },
+      // One record per statement, the last decision standing, and its history: the agreement, its
+      // withdrawal (an agreement declined), then the decline recorded over the withdrawal; the
+      // decline sent again is not written again.
+      expect(await rows('SELECT user_id, version, status FROM user_consent_records')).toEqual([
+        { user_id: 'user_1', version: '20260101', status: 'denied' },
       ]);
+      expect(await rows('SELECT action FROM consent_item_history ORDER BY created_at, id')).toEqual(
+        [{ action: 'granted' }, { action: 'withdrawn' }, { action: 'denied' }]
+      );
     });
 
     describe('a release of destination fields, one user, one recipient, one profile', () => {

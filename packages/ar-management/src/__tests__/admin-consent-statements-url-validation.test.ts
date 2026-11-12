@@ -16,15 +16,11 @@ vi.mock('@authrim/ar-lib-core', async () => {
   };
 });
 
-import {
-  adminConsentLocalizationUpsertHandler,
-  adminConsentRequirementUpsertHandler,
-} from '../admin-consent-statements';
+import { adminConsentLocalizationUpsertHandler } from '../admin-consent-statements';
 
 function createMockAdapter(
   options: {
     localizationExists?: boolean;
-    requirementExists?: boolean;
   } = {}
 ): DatabaseAdapter {
   const query = vi.fn(async <T>(sql: string): Promise<T[]> => {
@@ -36,12 +32,6 @@ function createMockAdapter(
     }
     if (sql.includes('SELECT * FROM consent_statement_localizations')) {
       return [{ id: 'loc-1', document_url: 'https://example.com/privacy' }] as T[];
-    }
-    if (sql.includes('SELECT id FROM tenant_consent_requirements')) {
-      return (options.requirementExists ? [{ id: 'req-1' }] : []) as T[];
-    }
-    if (sql.includes('SELECT * FROM tenant_consent_requirements')) {
-      return [{ id: 'req-1', deletion_url: 'https://example.com/delete' }] as T[];
     }
     return [];
   });
@@ -183,60 +173,6 @@ describe('admin consent statement URL validation', () => {
       'ver-1',
       'en',
       'default',
-    ]);
-  });
-
-  it('rejects unsafe consent requirement deletion_url before writing to storage', async () => {
-    const coreAdapter = createMockAdapter({ requirementExists: true });
-    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
-
-    const response = await adminConsentRequirementUpsertHandler(
-      createMockContext({
-        params: { statementId: 'stmt-1' },
-        body: {
-          is_required: true,
-          show_deletion_link: true,
-          deletion_url: 'data:text/html,<script>alert(1)</script>',
-        },
-      })
-    );
-    const body = await responseJson<{ error: string; error_description: string }>(response);
-
-    expect(response.status).toBe(400);
-    expect(body.error).toBe('invalid_request');
-    expect(body.error_description).toBe('deletion_url must be an http(s) URL');
-    expect(coreAdapter.execute).not.toHaveBeenCalled();
-  });
-
-  it('stores normalized http(s) consent requirement deletion_url values', async () => {
-    const coreAdapter = createMockAdapter({ requirementExists: true });
-    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
-
-    const response = await adminConsentRequirementUpsertHandler(
-      createMockContext({
-        params: { statementId: 'stmt-1' },
-        body: {
-          is_required: true,
-          enforcement: 'block',
-          show_deletion_link: true,
-          deletion_url: ' https://example.com/delete ',
-        },
-      })
-    );
-
-    expect(response.status).toBe(200);
-    expect(coreAdapter.execute).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(coreAdapter.execute).mock.calls[0]?.[1]).toEqual([
-      1,
-      null,
-      'block',
-      1,
-      'https://example.com/delete',
-      null,
-      0,
-      expect.any(Number),
-      'default',
-      'stmt-1',
     ]);
   });
 });

@@ -97,7 +97,9 @@ function freshDatabase(family: Family) {
           '015_platform_profiles.sql',
         ]
       : []),
-    ...(family === 'core' ? ['007_account_registration_pending.sql'] : []),
+    ...(family === 'core'
+      ? ['007_account_registration_pending.sql', '009_consent_policies_removed.sql']
+      : []),
     ...(family === 'pii'
       ? ['003_screen_responses.sql', '004_account_pii_erasure_markers.sql']
       : []),

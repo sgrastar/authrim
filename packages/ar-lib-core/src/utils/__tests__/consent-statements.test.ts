@@ -4,26 +4,19 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DatabaseAdapter } from '../../db';
 import {
   validateVersionFormat,
-  resolveClaimValue,
-  evaluateConditionalRules,
   getActiveConsentStatements,
   getLocalization,
-  resolveConsentRequirements,
+  resolveStatementRequirements,
   checkUserConsentSatisfaction,
   getConsentItemsForScreen,
   processConsentItemDecisions,
-  getUserClaimsForRules,
   resolveClientTrustPolicy,
   resolveSignInConfirmationPolicy,
   activateVersion,
   computeContentHash,
   hashIpAddress,
 } from '../consent-statements';
-import type {
-  ConditionalConsentRule,
-  ConsentEvidence,
-  ResolvedConsentRequirement,
-} from '../../types/consent-statements';
+import type { ConsentEvidence, ResolvedConsentRequirement } from '../../types/consent-statements';
 
 /**
  * Consent Statement Management Tests
@@ -321,119 +314,6 @@ describe('Consent Statements Utility', () => {
     });
   });
 
-  describe('resolveClaimValue', () => {
-    it('should resolve top-level claims', () => {
-      const claims = { email: 'user@example.com', email_verified: true };
-      expect(resolveClaimValue(claims, 'email')).toBe('user@example.com');
-      expect(resolveClaimValue(claims, 'email_verified')).toBe(true);
-    });
-
-    it('should resolve nested claims with dot notation', () => {
-      const claims = {
-        address: {
-          country: 'US',
-          region: 'CA',
-        },
-      };
-      expect(resolveClaimValue(claims, 'address.country')).toBe('US');
-      expect(resolveClaimValue(claims, 'address.region')).toBe('CA');
-    });
-
-    it('should return undefined for missing claims', () => {
-      const claims = { email: 'user@example.com' };
-      expect(resolveClaimValue(claims, 'phone_number')).toBeUndefined();
-      expect(resolveClaimValue(claims, 'address.country')).toBeUndefined();
-    });
-
-    it('should calculate age from birthdate', () => {
-      const now = new Date();
-      const year20YearsAgo = now.getFullYear() - 20;
-      const birthdate = `${year20YearsAgo}-01-15`;
-      const claims = { birthdate };
-
-      const age = resolveClaimValue(claims, 'birthdate_age');
-      expect(age).toBeGreaterThanOrEqual(19);
-      expect(age).toBeLessThanOrEqual(21);
-    });
-
-    it('should return undefined for invalid birthdate', () => {
-      const claims = { birthdate: 'invalid-date' };
-      expect(resolveClaimValue(claims, 'birthdate_age')).toBeUndefined();
-    });
-
-    it('should handle metadata claims', () => {
-      const claims = {
-        metadata: {
-          segment: 'enterprise',
-          plan: 'premium',
-        },
-      };
-      expect(resolveClaimValue(claims, 'metadata.segment')).toBe('enterprise');
-      expect(resolveClaimValue(claims, 'metadata.plan')).toBe('premium');
-    });
-  });
-
-  describe('evaluateConditionalRules', () => {
-    it('should evaluate eq operator', () => {
-      const rules: ConditionalConsentRule[] = [
-        { claim: 'country', op: 'eq', value: 'US', result: 'required' },
-      ];
-      const claims = { country: 'US' };
-
-      expect(evaluateConditionalRules(rules, claims)).toBe('required');
-    });
-
-    it('should evaluate in operator', () => {
-      const rules: ConditionalConsentRule[] = [
-        { claim: 'address.country', op: 'in', value: ['DE', 'FR', 'IT'], result: 'required' },
-      ];
-      const claims = { address: { country: 'DE' } };
-
-      expect(evaluateConditionalRules(rules, claims)).toBe('required');
-    });
-
-    it('should evaluate lt operator for age', () => {
-      const rules: ConditionalConsentRule[] = [
-        { claim: 'birthdate_age', op: 'lt', value: 18, result: 'required' },
-      ];
-      const year15YearsAgo = new Date().getFullYear() - 15;
-      const claims = { birthdate: `${year15YearsAgo}-01-01` };
-
-      expect(evaluateConditionalRules(rules, claims)).toBe('required');
-    });
-
-    it('should return false for missing claims (D4)', () => {
-      const rules: ConditionalConsentRule[] = [
-        { claim: 'address.country', op: 'in', value: ['DE'], result: 'required' },
-      ];
-      const claims = {}; // No address claim
-
-      // Claim missing → comparison returns false → no rule matches
-      expect(evaluateConditionalRules(rules, claims)).toBeNull();
-    });
-
-    it('should handle exists operator', () => {
-      const rules: ConditionalConsentRule[] = [
-        { claim: 'metadata.segment', op: 'exists', value: undefined, result: 'required' },
-      ];
-      const claimsWithSegment = { metadata: { segment: 'enterprise' } };
-      const claimsWithoutSegment = {};
-
-      expect(evaluateConditionalRules(rules, claimsWithSegment)).toBe('required');
-      expect(evaluateConditionalRules(rules, claimsWithoutSegment)).toBeNull();
-    });
-
-    it('should evaluate rules in order and return first match', () => {
-      const rules: ConditionalConsentRule[] = [
-        { claim: 'plan', op: 'eq', value: 'free', result: 'hidden' },
-        { claim: 'plan', op: 'eq', value: 'premium', result: 'optional' },
-      ];
-      const claims = { plan: 'free' };
-
-      expect(evaluateConditionalRules(rules, claims)).toBe('hidden');
-    });
-  });
-
   describe('getActiveConsentStatements', () => {
     it('should retrieve active statements for tenant', async () => {
       const mockStatements = [
@@ -568,349 +448,6 @@ describe('Consent Statements Utility', () => {
 
       expect(result?.language).toBe('ja');
       expect(result?.title).toBe('利用規約');
-    });
-  });
-
-  describe('resolveConsentRequirements', () => {
-    it('should resolve legacy tenant requirements without reading direct consent policy assignments', async () => {
-      const now = Date.now();
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          [
-            'active_statements',
-            [
-              {
-                id: 'stmt-1',
-                tenant_id: 'default',
-                slug: 'privacy',
-                category: 'privacy_policy',
-                legal_basis: 'consent',
-                processing_purpose: null,
-                display_order: 10,
-                is_active: 1,
-                record_retention_days: 365,
-                withdrawal_allowed: 1,
-                withdrawal_impact: null,
-                reconsent_on_version_change: 1,
-                reconsent_interval_days: 180,
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-          [
-            'tenant_requirements',
-            [
-              {
-                id: 'req-1',
-                tenant_id: 'default',
-                statement_id: 'stmt-1',
-                requirement: 'required',
-                min_version: null,
-                conditional_rules_json: null,
-                display_order: 5,
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-          [
-            'consent_statement_settings',
-            [
-              {
-                record_retention_days: 365,
-                withdrawal_allowed: 1,
-                reconsent_interval_days: 180,
-              },
-            ],
-          ],
-          [
-            'client_overrides',
-            [
-              {
-                id: 'override-1',
-                client_id: 'client-1',
-                statement_id: 'stmt-1',
-                requirement: 'required',
-                min_version: '20260601',
-                enforcement: 'block',
-                checkbox_mode: 'required',
-                checkbox_default_checked: 0,
-                binding_type: 'scope',
-                binding_value: 'profile email',
-                evidence_profile: 'attribute_release',
-                language_fallback: 'tenant_default',
-                display_order: 5,
-                conditional_rules_json: null,
-              },
-            ],
-          ],
-          [
-            'current_version',
-            [
-              {
-                id: 'ver-1',
-                tenant_id: 'default',
-                statement_id: 'stmt-1',
-                version: '20260601',
-                content_type: 'url',
-                effective_at: now,
-                content_hash: null,
-                is_current: 1,
-                status: 'active',
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-        ]),
-      });
-
-      const result = await resolveConsentRequirements(
-        adapter,
-        'default',
-        'client-1',
-        {},
-        {
-          requested_scopes: ['openid', 'email'],
-        }
-      );
-
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({
-        statement_id: 'stmt-1',
-        is_required: true,
-        min_version: '20260601',
-        reconsent_interval_days: 180,
-        checkbox_mode: 'required',
-        checkbox_default_checked: false,
-        binding_type: 'scope',
-        binding_value: 'profile email',
-      });
-      const directPolicyAssignmentQuery = vi
-        .mocked(adapter.query)
-        .mock.calls.find(([sql]) => String(sql).includes('consent_policy_assignments'));
-      expect(directPolicyAssignmentQuery).toBeUndefined();
-    });
-
-    it('should not include unbound tenant-wide or SAML statements in an OIDC consent context', async () => {
-      const now = Date.now();
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          [
-            'active_statements',
-            [
-              {
-                id: 'stmt-terms',
-                tenant_id: 'default',
-                slug: 'terms_of_service',
-                category: 'terms_of_service',
-                legal_basis: 'consent',
-                processing_purpose: null,
-                display_order: 1,
-                is_active: 1,
-                record_retention_days: 365,
-                withdrawal_allowed: 1,
-                withdrawal_impact: null,
-                reconsent_on_version_change: 1,
-                reconsent_interval_days: null,
-                created_at: now,
-                updated_at: now,
-              },
-              {
-                id: 'stmt-saml',
-                tenant_id: 'default',
-                slug: 'saml_attribute_release_confirmation',
-                category: 'saml_attribute_release_confirmation',
-                legal_basis: 'consent',
-                processing_purpose: null,
-                display_order: 2,
-                is_active: 1,
-                record_retention_days: 365,
-                withdrawal_allowed: 1,
-                withdrawal_impact: null,
-                reconsent_on_version_change: 1,
-                reconsent_interval_days: null,
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-          [
-            'tenant_requirements',
-            [
-              {
-                id: 'req-terms',
-                tenant_id: 'default',
-                statement_id: 'stmt-terms',
-                is_required: 1,
-                min_version: null,
-                enforcement: 'block',
-                show_deletion_link: 0,
-                deletion_url: null,
-                conditional_rules_json: null,
-                display_order: 1,
-                created_at: now,
-                updated_at: now,
-              },
-              {
-                id: 'req-saml',
-                tenant_id: 'default',
-                statement_id: 'stmt-saml',
-                is_required: 1,
-                min_version: null,
-                enforcement: 'block',
-                show_deletion_link: 0,
-                deletion_url: null,
-                conditional_rules_json: null,
-                display_order: 2,
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-          [
-            'current_version',
-            [
-              {
-                id: 'ver-current',
-                tenant_id: 'default',
-                statement_id: 'stmt-terms',
-                version: '20260601',
-                content_type: 'url',
-                effective_at: now,
-                effective_until: null,
-                content_hash: null,
-                is_current: 1,
-                status: 'active',
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-        ]),
-      });
-
-      const result = await resolveConsentRequirements(
-        adapter,
-        'default',
-        'client-1',
-        {},
-        {
-          target_type: 'oidc_client',
-          target_id: 'client-1',
-          requested_scopes: ['openid'],
-        }
-      );
-
-      expect(result).toHaveLength(0);
-    });
-
-    it('should include scope-bound client overrides only when the scope is requested', async () => {
-      const now = Date.now();
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          [
-            'active_statements',
-            [
-              {
-                id: 'stmt-email',
-                tenant_id: 'default',
-                slug: 'email_release',
-                category: 'data_sharing',
-                legal_basis: 'consent',
-                processing_purpose: null,
-                display_order: 1,
-                is_active: 1,
-                record_retention_days: 365,
-                withdrawal_allowed: 1,
-                withdrawal_impact: null,
-                reconsent_on_version_change: 1,
-                reconsent_interval_days: null,
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-          ['tenant_requirements', []],
-          [
-            'client_overrides',
-            [
-              {
-                id: 'override-email',
-                tenant_id: 'default',
-                client_id: 'client-1',
-                statement_id: 'stmt-email',
-                requirement: 'required',
-                min_version: null,
-                enforcement: 'block',
-                conditional_rules_json: null,
-                checkbox_mode: 'required',
-                checkbox_default_checked: 0,
-                binding_type: 'scope',
-                binding_value: 'email profile',
-                evidence_profile: 'attribute_release',
-                language_fallback: 'tenant_default',
-                display_order: 1,
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-          [
-            'current_version',
-            [
-              {
-                id: 'ver-email',
-                tenant_id: 'default',
-                statement_id: 'stmt-email',
-                version: '20260601',
-                content_type: 'url',
-                effective_at: now,
-                effective_until: null,
-                content_hash: null,
-                is_current: 1,
-                status: 'active',
-                created_at: now,
-                updated_at: now,
-              },
-            ],
-          ],
-        ]),
-      });
-
-      const noMatch = await resolveConsentRequirements(
-        adapter,
-        'default',
-        'client-1',
-        {},
-        {
-          target_type: 'oidc_client',
-          target_id: 'client-1',
-          requested_scopes: ['openid'],
-        }
-      );
-      expect(noMatch).toHaveLength(0);
-
-      const match = await resolveConsentRequirements(
-        adapter,
-        'default',
-        'client-1',
-        {},
-        {
-          target_type: 'oidc_client',
-          target_id: 'client-1',
-          requested_scopes: ['openid', 'email'],
-        }
-      );
-      expect(match).toHaveLength(1);
-      expect(match[0]).toMatchObject({
-        statement_id: 'stmt-email',
-        is_required: true,
-        checkbox_default_checked: false,
-        binding_type: 'scope',
-        binding_value: 'email profile',
-      });
     });
   });
 
@@ -1274,14 +811,167 @@ describe('Consent Statements Utility', () => {
       await expect(activateVersion(adapter, 'default', 'stmt-1', 'ver-1')).resolves.not.toThrow();
       expect(adapter.batch).toHaveBeenCalledTimes(1);
       const statements = vi.mocked(adapter.batch).mock.calls[0][0];
-      expect(statements).toHaveLength(5);
-      expect(statements[2].sql).toContain('definition_generation=definition_generation+1');
-      expect(statements[3].sql).toContain('statement_consent_projection_jobs');
+      expect(statements).toHaveLength(6);
+      // The statement row is locked first, serializing publishes of its versions.
+      expect(statements[0].sql).toContain('UPDATE consent_statements SET updated_at=updated_at');
+      expect(statements[3].sql).toContain('definition_generation=definition_generation+1');
+      expect(statements[4].sql).toContain('statement_consent_projection_jobs');
       expect(mockQuery).toHaveBeenCalledWith(
         expect.stringContaining('WHERE tenant_id = ? AND version_id = ?'),
         ['default', 'ver-1']
       );
-      expect(statements[4].params).toEqual(expect.arrayContaining(['ver-1', 'stmt-1', 'default']));
+      expect(statements[5].params).toEqual(expect.arrayContaining(['ver-1', 'stmt-1', 'default']));
+    });
+  });
+
+  describe('resolveStatementRequirements (real SQLite)', () => {
+    let fixture: ReturnType<typeof sqliteAdapter>;
+    const addStatement = async (
+      id: string,
+      options: {
+        order: number;
+        active?: boolean;
+        version?: { status: string; current: boolean; version: string } | null;
+        requiredVersion?: string | null;
+      }
+    ) => {
+      await fixture.adapter.execute(
+        'INSERT INTO consent_statements(id,tenant_id,slug,is_active,display_order,required_consent_version,created_at,updated_at) VALUES(?,?,?,?,?,?,1,1)',
+        [
+          id,
+          'default',
+          id,
+          options.active === false ? 0 : 1,
+          options.order,
+          options.requiredVersion ?? null,
+        ]
+      );
+      const version =
+        options.version === undefined
+          ? { status: 'active', current: true, version: '20260101' }
+          : options.version;
+      if (version) {
+        await fixture.adapter.execute(
+          'INSERT INTO consent_statement_versions(id,tenant_id,statement_id,version,effective_at,status,is_current,created_at,updated_at) VALUES(?,?,?,?,1,?,?,1,1)',
+          [`${id}-v`, 'default', id, version.version, version.status, version.current ? 1 : 0]
+        );
+      }
+    };
+    beforeEach(() => {
+      fixture = sqliteAdapter('core');
+    });
+    afterEach(() => fixture.db.close());
+
+    it('returns the statements in the order the Flow lists them, not the tenant display order', async () => {
+      await addStatement('a', { order: 0 });
+      await addStatement('b', { order: 1 });
+      const result = await resolveStatementRequirements(fixture.adapter, 'default', [
+        { statement_id: 'b', required: true },
+        { statement_id: 'a', required: false },
+      ]);
+      expect(result.map((r) => [r.statement_id, r.is_required, r.display_order])).toEqual([
+        ['b', true, 0],
+        ['a', false, 1],
+      ]);
+      expect(result[0]).toMatchObject({ enforcement: 'block', checkbox_mode: 'required' });
+      expect(result[1].checkbox_mode).toBe('optional');
+    });
+
+    it('skips unknown, inactive and version-less statements', async () => {
+      await addStatement('ok', { order: 0 });
+      await addStatement('off', { order: 1, active: false });
+      await addStatement('none', { order: 2, version: null });
+      await addStatement('draft', {
+        order: 3,
+        version: { status: 'draft', current: true, version: '20260101' },
+      });
+      const result = await resolveStatementRequirements(
+        fixture.adapter,
+        'default',
+        ['ok', 'off', 'none', 'draft', 'missing'].map((statement_id) => ({
+          statement_id,
+          required: true,
+        }))
+      );
+      expect(result.map((r) => r.statement_id)).toEqual(['ok']);
+    });
+
+    it('requires agreement from required_consent_version, or the current version when unset', async () => {
+      await addStatement('pinned', { order: 0, requiredVersion: '20250101' });
+      await addStatement('unset', { order: 1 });
+      const result = await resolveStatementRequirements(fixture.adapter, 'default', [
+        { statement_id: 'pinned', required: true },
+        { statement_id: 'unset', required: true },
+      ]);
+      expect(result.map((r) => r.min_version)).toEqual(['20250101', '20260101']);
+    });
+
+    it('returns nothing for an empty list', async () => {
+      expect(await resolveStatementRequirements(fixture.adapter, 'default', [])).toEqual([]);
+    });
+  });
+
+  describe('activateVersion required_consent_version (real SQLite)', () => {
+    let fixture: ReturnType<typeof sqliteAdapter>;
+    const requiredVersion = async () =>
+      (
+        await fixture.adapter.queryOne<{ required_consent_version: string | null }>(
+          "SELECT required_consent_version FROM consent_statements WHERE id='stmt-1'"
+        )
+      )?.required_consent_version;
+    const addVersion = async (id: string, version: string) => {
+      await fixture.adapter.execute(
+        "INSERT INTO consent_statement_versions(id,tenant_id,statement_id,version,effective_at,status,is_current,created_at,updated_at) VALUES(?,'default','stmt-1',?,1,'draft',0,1,1)",
+        [id, version]
+      );
+      await fixture.adapter.execute(
+        "INSERT INTO consent_statement_localizations(id,tenant_id,version_id,language,title,description,document_url,created_at,updated_at) VALUES(?,'default',?,'en','Terms','','https://example.com/tos',1,1)",
+        [`${id}-loc`, id]
+      );
+    };
+    beforeEach(async () => {
+      fixture = sqliteAdapter('core');
+      await fixture.adapter.execute(
+        "INSERT INTO consent_statements(id,tenant_id,slug,created_at,updated_at) VALUES('stmt-1','default','terms',1,1)"
+      );
+      await addVersion('v1', '20260101');
+      await addVersion('v2', '20260201');
+      await addVersion('v3', '20260301');
+    });
+    afterEach(() => fixture.db.close());
+
+    it('sets the first version published as the required one, even without re-consent', async () => {
+      await activateVersion(fixture.adapter, 'default', 'stmt-1', 'v1', { reconsent: false });
+      expect(await requiredVersion()).toBe('20260101');
+    });
+
+    it('moves the required version to the activated one when re-consent is asked (the default)', async () => {
+      await activateVersion(fixture.adapter, 'default', 'stmt-1', 'v1');
+      await activateVersion(fixture.adapter, 'default', 'stmt-1', 'v2');
+      expect(await requiredVersion()).toBe('20260201');
+      await activateVersion(fixture.adapter, 'default', 'stmt-1', 'v3', { reconsent: true });
+      expect(await requiredVersion()).toBe('20260301');
+    });
+
+    it('leaves the required version where it was when re-consent is not asked', async () => {
+      await activateVersion(fixture.adapter, 'default', 'stmt-1', 'v1');
+      await activateVersion(fixture.adapter, 'default', 'stmt-1', 'v2', { reconsent: false });
+      expect(await requiredVersion()).toBe('20260101');
+      const current = await fixture.adapter.queryOne<{ version: string }>(
+        "SELECT version FROM consent_statement_versions WHERE statement_id='stmt-1' AND is_current=1"
+      );
+      expect(current?.version).toBe('20260201');
+    });
+
+    it('refuses, without re-consent, a version older than the required one', async () => {
+      await activateVersion(fixture.adapter, 'default', 'stmt-1', 'v2');
+      await expect(
+        activateVersion(fixture.adapter, 'default', 'stmt-1', 'v1', { reconsent: false })
+      ).rejects.toThrow('version_older_than_required_consent_version');
+      expect(await requiredVersion()).toBe('20260201');
+      // Asking again moves the required version back with it.
+      await activateVersion(fixture.adapter, 'default', 'stmt-1', 'v1', { reconsent: true });
+      expect(await requiredVersion()).toBe('20260101');
     });
   });
 
@@ -1457,6 +1147,61 @@ describe('Consent Statements Utility', () => {
       await decide('denied');
       expect(await row()).toMatchObject({ status: 'granted' });
     });
+    const publishNewerVersion = async () => {
+      await fixture.adapter.execute('UPDATE consent_statement_versions SET is_current=0');
+      await fixture.adapter.execute(
+        "INSERT INTO consent_statement_versions(id,tenant_id,statement_id,version,effective_at,status,is_current,content_hash,created_at,updated_at) VALUES('ver-2','default','stmt-1','20250301',1,'active',1,?,1,1)",
+        ['d'.repeat(64)]
+      );
+    };
+    it('gives an expired agreement of the same version again, with a new expiry', async () => {
+      // Legacy evidence predates guard creation, so it is inserted rather than updated.
+      await fixture.adapter.execute(
+        `INSERT INTO user_consent_records
+          (id,tenant_id,user_id,statement_id,version_id,version,status,granted_at,expires_at,client_id,
+           created_at,updated_at,retain_until,consent_settings_snapshot_at,
+           record_retention_days_snapshot,reconsent_interval_days_snapshot,content_hash)
+         VALUES('legacy-record','default','user-1','stmt-1','ver-1','20250206','granted',1,2,'client-1',1,1,?,1,365,180,?)`,
+        [1 + 365 * 24 * 60 * 60 * 1000, 'b'.repeat(64)]
+      );
+      await decide('granted');
+      const current = await row();
+      expect(current).toMatchObject({ status: 'granted', version_id: 'ver-1' });
+      expect(Number(current?.granted_at)).toBeGreaterThan(1);
+      expect(Number(current?.expires_at)).toBeGreaterThan(Date.now());
+    });
+    it('records the refusal of a newer version over a refusal of an earlier one', async () => {
+      await decide('denied');
+      await publishNewerVersion();
+      await decide('denied');
+      expect(await row()).toMatchObject({
+        status: 'denied',
+        version_id: 'ver-2',
+        version: '20250301',
+        content_hash: 'd'.repeat(64),
+      });
+    });
+    it('does not record a refusal of the same version twice', async () => {
+      await decide('denied');
+      await decide('denied');
+      expect(await fixture.adapter.query('SELECT id FROM consent_item_history')).toHaveLength(1);
+    });
+    it('ends an agreement to an earlier version with a withdrawal recorded at the newer version', async () => {
+      await decide('granted');
+      await publishNewerVersion();
+      await decide('denied');
+      expect(await row()).toMatchObject({
+        status: 'withdrawn',
+        version_id: 'ver-2',
+        version: '20250301',
+        content_hash: 'd'.repeat(64),
+      });
+    });
+    it('keeps the version agreed to when the withdrawal is of that same version', async () => {
+      await decide('granted');
+      await decide('denied');
+      expect(await row()).toMatchObject({ status: 'withdrawn', version_id: 'ver-1' });
+    });
     it('extends prior history retention atomically on withdrawal', async () => {
       // Legacy evidence predates guard creation. An enforced guard must never allow
       // a direct history UPDATE just to prepare this fixture.
@@ -1491,95 +1236,6 @@ describe('Consent Statements Utility', () => {
       await expect(
         fixture.adapter.execute('UPDATE consent_item_history SET retain_until=1')
       ).rejects.toThrow('statement_consent_consent_item_history_update_guard');
-    });
-  });
-
-  describe('getUserClaimsForRules', () => {
-    it('should load email and locale from users_pii using id and tenant_id', async () => {
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          ['users_core', [{ email_verified: 1 }]],
-          [
-            'users_pii',
-            [
-              {
-                email: 'claims@example.com',
-                locale: 'ja',
-                given_name: 'Yuta',
-                family_name: 'Sato',
-                phone_number: '+819012345678',
-                birthdate: '1990-01-01',
-                address_country: 'JP',
-                address_region: 'Tokyo',
-                zoneinfo: 'Asia/Tokyo',
-                metadata: '{"segment":"enterprise"}',
-              },
-            ],
-          ],
-        ]),
-      });
-
-      const claims = await getUserClaimsForRules(adapter, 'tenant-claims', 'user-claims');
-
-      expect(claims).toMatchObject({
-        email: 'claims@example.com',
-        email_verified: true,
-        locale: 'ja',
-        given_name: 'Yuta',
-        family_name: 'Sato',
-        phone_number: '+819012345678',
-        birthdate: '1990-01-01',
-        zoneinfo: 'Asia/Tokyo',
-        metadata: { segment: 'enterprise' },
-        address: {
-          country: 'JP',
-          region: 'Tokyo',
-        },
-      });
-
-      const queryCalls = (adapter.query as any).mock.calls as Array<[string, unknown[]]>;
-      expect(queryCalls.some(([sql]) => sql.includes('FROM profile_attribute_values'))).toBe(true);
-      expect(queryCalls.some(([sql]) => sql.includes('FROM contact_points'))).toBe(true);
-    });
-
-    it('keeps sensitive claim reads on the dedicated PII adapter', async () => {
-      const userData = new Map([
-        ['users_core', [{ email_verified: 1 }]],
-        [
-          'users_pii',
-          [
-            {
-              email: 'separated@example.com',
-              locale: 'ja',
-              given_name: 'Separated',
-            },
-          ],
-        ],
-      ]);
-      const coreAdapter = createMockAdapter({ queryResults: userData });
-      const piiAdapter = createMockAdapter({ queryResults: userData });
-
-      const claims = await getUserClaimsForRules(
-        coreAdapter,
-        'tenant-claims',
-        'user-claims',
-        piiAdapter
-      );
-
-      expect(claims).toMatchObject({
-        email: 'separated@example.com',
-        given_name: 'Separated',
-      });
-      expect(
-        (coreAdapter.queryOne as ReturnType<typeof vi.fn>).mock.calls.some(([sql]) =>
-          String(sql).includes('FROM identity_sensitive_values')
-        )
-      ).toBe(false);
-      expect(
-        (piiAdapter.queryOne as ReturnType<typeof vi.fn>).mock.calls.some(([sql]) =>
-          String(sql).includes('FROM identity_sensitive_values')
-        )
-      ).toBe(true);
     });
   });
 });

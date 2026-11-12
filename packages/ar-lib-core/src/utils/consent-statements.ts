@@ -1,9 +1,9 @@
 /**
  * Consent Statement Management Utility
  *
- * Core logic for SAP CDC-like consent management:
+ * Core logic for consent to statements (documents):
  * - Statement/version/localization retrieval
- * - Requirement resolution (tenant + client + conditional)
+ * - Requirements for the statements a Flow asks for (flow-consent-statements.ts)
  * - User consent satisfaction checking
  * - Consent decision processing with audit history
  * - Version activation with integrity checks
@@ -18,14 +18,11 @@ import type {
   ConsentStatement,
   ConsentStatementVersion,
   ConsentStatementLocalization,
-  TenantConsentRequirement,
-  ClientConsentOverride,
-  ConditionalConsentRule,
   ConsentScreenItem,
   ConsentEvidence,
   ResolvedConsentRequirement,
-  ConsentEnforcement,
 } from '../types/consent-statements';
+import type { FlowConsentStatement } from '../services/flow-consent-statements';
 import { listUserStatementConsentRecords } from '../services/statement-consent-records';
 import type { StatementConsentStores } from '../services/statement-consent-stores';
 import {
@@ -35,7 +32,6 @@ import {
   type StatementConsentWriteOptions,
 } from '../services/statement-consent-writes';
 import { enqueueStatementConsentProjection } from '../services/statement-consent-generations';
-import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
 
 export interface ResolvedClientTrustPolicy {
   target_type: 'oidc_client' | 'saml_sp';
@@ -50,16 +46,6 @@ export interface ResolvedSignInConfirmationPolicy {
   remember_duration_days: number;
   show_application_context: boolean;
   show_tenant_context: boolean;
-}
-
-export interface ConsentRequirementResolutionContext {
-  target_type?: 'oidc_client' | 'saml_sp';
-  target_id?: string | null;
-  subject_id?: string | null;
-  requested_scopes?: string[];
-  requested_claims?: string[];
-  requested_saml_attributes?: string[];
-  requested_destination_field_sets?: string[];
 }
 
 export interface ConsentDecisionTarget {
@@ -86,111 +72,6 @@ export function validateVersionFormat(version: string): boolean {
   if (month < 1 || month > 12) return false;
   const daysInMonth = new Date(year, month, 0).getDate();
   return day >= 1 && day <= daysInMonth;
-}
-
-// =============================================================================
-// Claim Resolution (D12)
-// =============================================================================
-
-/**
- * Resolve a claim value from a claims object using dot-notation path.
- * Returns undefined if the claim does not exist.
- *
- * Special claims:
- * - 'birthdate_age': Dynamically calculates age from 'birthdate'
- *
- * @param claims - User claims object
- * @param path - Dot-notation path (e.g., 'address.country', 'metadata.segment')
- */
-export function resolveClaimValue(
-  claims: Record<string, unknown>,
-  path: string
-): unknown | undefined {
-  // Special: birthdate_age
-  if (path === 'birthdate_age') {
-    const birthdate = claims.birthdate;
-    if (typeof birthdate !== 'string') return undefined;
-    const parsed = new Date(birthdate);
-    if (isNaN(parsed.getTime())) return undefined;
-    const now = new Date();
-    let age = now.getFullYear() - parsed.getFullYear();
-    const monthDiff = now.getMonth() - parsed.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < parsed.getDate())) {
-      age--;
-    }
-    return age;
-  }
-
-  // Dot-notation path resolution
-  const parts = path.split('.');
-  let current: unknown = claims;
-  for (const part of parts) {
-    if (current === null || current === undefined || typeof current !== 'object') {
-      return undefined;
-    }
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current === undefined ? undefined : current;
-}
-
-// =============================================================================
-// Conditional Rule Evaluation (D4)
-// =============================================================================
-
-/**
- * Evaluate a single conditional rule against user claims.
- * When a claim is missing, comparison operators return false (D4).
- */
-function evaluateSingleRule(
-  rule: ConditionalConsentRule,
-  claims: Record<string, unknown>
-): boolean {
-  const value = resolveClaimValue(claims, rule.claim);
-
-  if (rule.op === 'exists') {
-    return value !== undefined;
-  }
-
-  // Missing claim → false for all comparison operators (D4)
-  if (value === undefined) return false;
-
-  switch (rule.op) {
-    case 'eq':
-      return value === rule.value;
-    case 'neq':
-      return value !== rule.value;
-    case 'in':
-      return Array.isArray(rule.value) && rule.value.includes(value);
-    case 'not_in':
-      return Array.isArray(rule.value) && !rule.value.includes(value);
-    case 'gt':
-      return typeof value === 'number' && typeof rule.value === 'number' && value > rule.value;
-    case 'gte':
-      return typeof value === 'number' && typeof rule.value === 'number' && value >= rule.value;
-    case 'lt':
-      return typeof value === 'number' && typeof rule.value === 'number' && value < rule.value;
-    case 'lte':
-      return typeof value === 'number' && typeof rule.value === 'number' && value <= rule.value;
-    default:
-      return false;
-  }
-}
-
-/**
- * Evaluate conditional rules and return the first matching result.
- * Rules are evaluated in order; first match wins.
- * Returns null if no rule matches.
- */
-export function evaluateConditionalRules(
-  rules: ConditionalConsentRule[],
-  userClaims: Record<string, unknown>
-): 'required' | 'optional' | 'hidden' | null {
-  for (const rule of rules) {
-    if (evaluateSingleRule(rule, userClaims)) {
-      return rule.result;
-    }
-  }
-  return null;
 }
 
 // =============================================================================
@@ -223,14 +104,14 @@ export async function getActiveConsentStatements(
     record_retention_days: number | null;
     withdrawal_allowed: number | null;
     withdrawal_impact: string | null;
-    reconsent_on_version_change: number | null;
     reconsent_interval_days: number | null;
+    required_consent_version: string | null;
     created_at: number;
     updated_at: number;
   }>(
     `SELECT id, tenant_id, slug, category, legal_basis, processing_purpose,
             display_order, is_active, record_retention_days, withdrawal_allowed,
-            withdrawal_impact, reconsent_on_version_change, reconsent_interval_days,
+            withdrawal_impact, reconsent_interval_days, required_consent_version,
             created_at, updated_at
      FROM consent_statements
      WHERE tenant_id = ? AND is_active = 1
@@ -247,8 +128,7 @@ export async function getActiveConsentStatements(
       r.record_retention_days == null ? undefined : Number(r.record_retention_days),
     withdrawal_allowed: r.withdrawal_allowed == null ? true : isOn(r.withdrawal_allowed),
     withdrawal_impact: r.withdrawal_impact ?? undefined,
-    reconsent_on_version_change:
-      r.reconsent_on_version_change == null ? true : isOn(r.reconsent_on_version_change),
+    required_consent_version: r.required_consent_version || null,
     reconsent_interval_days:
       r.reconsent_interval_days == null ? undefined : Number(r.reconsent_interval_days),
     created_at: Number(r.created_at),
@@ -379,194 +259,6 @@ export async function getLocalization(
 // Requirement Resolution
 // =============================================================================
 
-/**
- * Get tenant consent requirements
- */
-async function getTenantRequirements(
-  adapter: DatabaseAdapter,
-  tenantId: string
-): Promise<TenantConsentRequirement[]> {
-  const rows = await adapter.query<{
-    id: string;
-    tenant_id: string;
-    statement_id: string;
-    is_required: number;
-    min_version: string | null;
-    enforcement: string;
-    show_deletion_link: number;
-    deletion_url: string | null;
-    conditional_rules_json: string | null;
-    display_order: number;
-    created_at: number;
-    updated_at: number;
-  }>(`SELECT * FROM tenant_consent_requirements WHERE tenant_id = ? ORDER BY display_order ASC`, [
-    tenantId,
-  ]);
-
-  return rows.map((r) => ({
-    id: r.id,
-    tenant_id: r.tenant_id,
-    statement_id: r.statement_id,
-    is_required: isOn(r.is_required),
-    min_version: r.min_version ?? undefined,
-    enforcement: r.enforcement as ConsentEnforcement,
-    show_deletion_link: isOn(r.show_deletion_link),
-    deletion_url: r.deletion_url ?? undefined,
-    conditional_rules: r.conditional_rules_json
-      ? (JSON.parse(r.conditional_rules_json) as ConditionalConsentRule[])
-      : [],
-    display_order: Number(r.display_order),
-    created_at: Number(r.created_at),
-    updated_at: Number(r.updated_at),
-  }));
-}
-
-/**
- * Get client consent overrides
- */
-async function getClientOverrides(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  clientId: string
-): Promise<ClientConsentOverride[]> {
-  const rows = await adapter.query<{
-    id: string;
-    tenant_id: string;
-    client_id: string;
-    statement_id: string;
-    requirement: string;
-    min_version: string | null;
-    enforcement: string | null;
-    conditional_rules_json: string | null;
-    checkbox_mode?: string | null;
-    checkbox_default_checked?: number | null;
-    binding_type?: string | null;
-    binding_value?: string | null;
-    evidence_profile?: string | null;
-    language_fallback?: string | null;
-    display_order: number | null;
-    created_at: number;
-    updated_at: number;
-  }>(`SELECT * FROM client_consent_overrides WHERE tenant_id = ? AND client_id = ?`, [
-    tenantId,
-    clientId,
-  ]);
-
-  return rows.map((r) => ({
-    id: r.id,
-    tenant_id: r.tenant_id,
-    client_id: r.client_id,
-    statement_id: r.statement_id,
-    requirement: r.requirement as ClientConsentOverride['requirement'],
-    min_version: r.min_version ?? undefined,
-    enforcement: r.enforcement ? (r.enforcement as ConsentEnforcement) : undefined,
-    conditional_rules: r.conditional_rules_json
-      ? (JSON.parse(r.conditional_rules_json) as ConditionalConsentRule[])
-      : undefined,
-    checkbox_mode:
-      r.checkbox_mode === 'none' || r.checkbox_mode === 'required' || r.checkbox_mode === 'optional'
-        ? r.checkbox_mode
-        : undefined,
-    checkbox_default_checked:
-      r.checkbox_default_checked === null || r.checkbox_default_checked === undefined
-        ? undefined
-        : isOn(r.checkbox_default_checked),
-    binding_type:
-      r.binding_type === 'subject' ||
-      r.binding_type === 'scope' ||
-      r.binding_type === 'claim' ||
-      r.binding_type === 'saml_attribute' ||
-      r.binding_type === 'destination_field_set'
-        ? r.binding_type
-        : undefined,
-    binding_value: r.binding_value ?? undefined,
-    evidence_profile: r.evidence_profile ?? undefined,
-    language_fallback: r.language_fallback ?? undefined,
-    display_order: r.display_order == null ? undefined : Number(r.display_order),
-    created_at: Number(r.created_at),
-    updated_at: Number(r.updated_at),
-  }));
-}
-
-type ConsentBindingType = NonNullable<ResolvedConsentRequirement['binding_type']>;
-
-interface RequirementContextBinding {
-  binding_type?: ConsentBindingType;
-  binding_value?: string;
-  evidence_profile?: string;
-}
-
-function splitBindingValues(value?: string | null): string[] {
-  return (value ?? '')
-    .split(/[\s,]+/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
-function intersectsRequiredValues(requiredValues: string[], requestedValues?: string[]): boolean {
-  if (requiredValues.length === 0) return true;
-  const requested = new Set((requestedValues ?? []).map((item) => item.trim()).filter(Boolean));
-  if (requested.size === 0) return false;
-  return requiredValues.some((value) => requested.has(value));
-}
-
-function isSamlSpecificStatement(
-  statement: ConsentStatement,
-  binding?: RequirementContextBinding
-): boolean {
-  const category = statement.category.toLowerCase();
-  const slug = statement.slug.toLowerCase();
-  const evidenceProfile = binding?.evidence_profile?.toLowerCase() ?? '';
-  return (
-    binding?.binding_type === 'saml_attribute' ||
-    category === 'saml_attribute_release_confirmation' ||
-    category.startsWith('saml_') ||
-    slug.startsWith('saml_') ||
-    evidenceProfile.includes('saml')
-  );
-}
-
-function requirementAppliesToContext(
-  statement: ConsentStatement,
-  binding: RequirementContextBinding,
-  context: ConsentRequirementResolutionContext
-): boolean {
-  const values = splitBindingValues(binding.binding_value);
-
-  switch (binding.binding_type) {
-    case 'scope':
-      if (context.target_type && context.target_type !== 'oidc_client') return false;
-      if (!context.target_type && context.requested_scopes === undefined) return true;
-      return intersectsRequiredValues(values, context.requested_scopes);
-    case 'claim':
-      if (context.target_type && context.target_type !== 'oidc_client') return false;
-      if (!context.target_type && context.requested_claims === undefined) return true;
-      return intersectsRequiredValues(values, context.requested_claims);
-    case 'saml_attribute':
-      if (context.target_type && context.target_type !== 'saml_sp') return false;
-      if (!context.target_type && context.requested_saml_attributes === undefined) return true;
-      return intersectsRequiredValues(values, context.requested_saml_attributes);
-    case 'destination_field_set':
-      if (context.target_type && context.requested_destination_field_sets === undefined) {
-        return false;
-      }
-      if (!context.target_type && context.requested_destination_field_sets === undefined) {
-        return true;
-      }
-      return intersectsRequiredValues(values, context.requested_destination_field_sets);
-    case 'subject':
-      return !context.target_type;
-    default:
-      if (context.target_type === 'oidc_client' && isSamlSpecificStatement(statement, binding)) {
-        return false;
-      }
-      if (context.target_type === 'oidc_client') {
-        return false;
-      }
-      return true;
-  }
-}
-
 export async function resolveClientTrustPolicy(
   adapter: DatabaseAdapter,
   tenantId: string,
@@ -638,125 +330,40 @@ export async function resolveSignInConfirmationPolicy(
 }
 
 /**
- * Resolve consent requirements from explicit target policy assignments, client overrides,
- * and conditional rules evaluated against user claims.
+ * The requirements for statements a Flow asks for (`statements` of a consent step, or the
+ * statements a sign-in Flow requires at single sign-on): each active statement with a current
+ * version, in the order given. Agreement is required from the statement's
+ * `required_consent_version` (the current version for a statement published before it was kept).
+ * An inactive statement, or one with no current version, is not asked for.
  */
-export async function resolveConsentRequirements(
+export async function resolveStatementRequirements(
   adapter: DatabaseAdapter,
   tenantId: string,
-  clientId: string | null,
-  userClaims: Record<string, unknown>,
-  context: ConsentRequirementResolutionContext = {}
+  statements: readonly FlowConsentStatement[]
 ): Promise<ResolvedConsentRequirement[]> {
-  const statements = await getActiveConsentStatements(adapter, tenantId);
   if (statements.length === 0) return [];
-
-  const tenantReqs = await getTenantRequirements(adapter, tenantId);
-  const clientOverrides = clientId ? await getClientOverrides(adapter, tenantId, clientId) : [];
-
-  const results: ResolvedConsentRequirement[] = [];
-
-  for (const stmt of statements) {
-    const currentVersion = await getCurrentVersion(adapter, tenantId, stmt.id);
-    if (!currentVersion) continue; // Skip statements without active version
-
-    const tenantReq = tenantReqs.find((r) => r.statement_id === stmt.id);
-    const clientOverride = clientOverrides.find((o) => o.statement_id === stmt.id);
-
-    // Client override: hidden → skip entirely
-    if (clientOverride?.requirement === 'hidden') continue;
-
-    // Determine base requirement (tenant level)
-    let isRequired = tenantReq?.is_required ?? false;
-    let minVersion = tenantReq?.min_version;
-    let enforcement = tenantReq?.enforcement ?? ('block' as ConsentEnforcement);
-    let showDeletionLink = tenantReq?.show_deletion_link ?? false;
-    let deletionUrl = tenantReq?.deletion_url;
-    let displayOrder = tenantReq?.display_order ?? stmt.display_order;
-    let checkboxMode: ResolvedConsentRequirement['checkbox_mode'];
-    let checkboxDefaultChecked: boolean | undefined;
-    let bindingType = clientOverride?.binding_type;
-    let bindingValue = clientOverride?.binding_value;
-    let evidenceProfile = clientOverride?.evidence_profile;
-    let languageFallback = clientOverride?.language_fallback;
-    if (!minVersion && stmt.reconsent_on_version_change !== false) {
-      minVersion = currentVersion.version;
-    }
-
-    // Apply conditional rules (tenant level)
-    if (tenantReq?.conditional_rules && tenantReq.conditional_rules.length > 0) {
-      const ruleResult = evaluateConditionalRules(tenantReq.conditional_rules, userClaims);
-      if (ruleResult === 'required') isRequired = true;
-      else if (ruleResult === 'optional') isRequired = false;
-      else if (ruleResult === 'hidden') continue; // Skip this item
-    }
-
-    // Apply client override
-    if (clientOverride) {
-      if (clientOverride.requirement === 'required') isRequired = true;
-      else if (clientOverride.requirement === 'optional') isRequired = false;
-      // 'inherit' = use tenant value (no change)
-
-      if (clientOverride.min_version) minVersion = clientOverride.min_version;
-      if (clientOverride.enforcement) enforcement = clientOverride.enforcement;
-      if (clientOverride.display_order !== undefined) displayOrder = clientOverride.display_order;
-      if (clientOverride.checkbox_mode !== undefined) checkboxMode = clientOverride.checkbox_mode;
-      if (clientOverride.checkbox_default_checked !== undefined) {
-        checkboxDefaultChecked = clientOverride.checkbox_default_checked;
-      }
-      if (clientOverride.binding_type !== undefined) bindingType = clientOverride.binding_type;
-      if (clientOverride.binding_value !== undefined) bindingValue = clientOverride.binding_value;
-      if (clientOverride.evidence_profile !== undefined) {
-        evidenceProfile = clientOverride.evidence_profile;
-      }
-      if (clientOverride.language_fallback !== undefined) {
-        languageFallback = clientOverride.language_fallback;
-      }
-
-      // Apply client-level conditional rules if present
-      if (clientOverride.conditional_rules && clientOverride.conditional_rules.length > 0) {
-        const ruleResult = evaluateConditionalRules(clientOverride.conditional_rules, userClaims);
-        if (ruleResult === 'required') isRequired = true;
-        else if (ruleResult === 'optional') isRequired = false;
-        else if (ruleResult === 'hidden') continue;
-      }
-    }
-
-    if (
-      !requirementAppliesToContext(
-        stmt,
-        {
-          binding_type: bindingType,
-          binding_value: bindingValue,
-          evidence_profile: evidenceProfile,
-        },
-        context
-      )
-    ) {
-      continue;
-    }
-
-    results.push({
-      statement_id: stmt.id,
-      statement: stmt,
+  const active = await getActiveConsentStatements(adapter, tenantId);
+  const resolved: ResolvedConsentRequirement[] = [];
+  for (const [order, entry] of statements.entries()) {
+    const statement = active.find((candidate) => candidate.id === entry.statement_id);
+    if (!statement) continue;
+    const currentVersion = await getCurrentVersion(adapter, tenantId, statement.id);
+    if (!currentVersion || currentVersion.status !== 'active') continue;
+    resolved.push({
+      statement_id: statement.id,
+      statement,
       current_version: currentVersion,
-      is_required: isRequired,
-      min_version: minVersion,
-      reconsent_interval_days: stmt.reconsent_interval_days,
-      enforcement,
-      show_deletion_link: showDeletionLink,
-      deletion_url: deletionUrl,
-      checkbox_mode: checkboxMode ?? (isRequired ? 'required' : 'optional'),
-      checkbox_default_checked: checkboxDefaultChecked ?? isRequired,
-      binding_type: bindingType,
-      binding_value: bindingValue,
-      evidence_profile: evidenceProfile,
-      language_fallback: languageFallback,
-      display_order: displayOrder,
+      is_required: entry.required,
+      min_version: statement.required_consent_version ?? currentVersion.version,
+      reconsent_interval_days: statement.reconsent_interval_days,
+      enforcement: 'block',
+      show_deletion_link: false,
+      checkbox_mode: entry.required ? 'required' : 'optional',
+      checkbox_default_checked: false,
+      display_order: order,
     });
   }
-
-  return results.sort((a, b) => a.display_order - b.display_order);
+  return resolved;
 }
 
 // =============================================================================
@@ -845,24 +452,11 @@ export class StatementConsentAccountReadError extends Error {
 export async function getConsentItemsForScreen(
   stores: StatementConsentStores,
   tenantId: string,
-  clientId: string | null,
+  requirements: readonly ResolvedConsentRequirement[],
   userId: string,
   language: string,
-  tenantDefaultLanguage: string = 'en',
-  context: ConsentRequirementResolutionContext = {},
-  piiAdapter: DatabaseAdapter = stores.account
+  tenantDefaultLanguage: string = 'en'
 ): Promise<ConsentScreenItem[]> {
-  // Get user claims for conditional rule evaluation
-  const userClaims = await getUserClaimsForRules(stores.account, tenantId, userId, piiAdapter);
-
-  // Resolve requirements
-  const requirements = await resolveConsentRequirements(
-    stores.metadata,
-    tenantId,
-    clientId,
-    userClaims,
-    context
-  );
   if (requirements.length === 0) return [];
 
   // Get user's existing consent records
@@ -936,57 +530,6 @@ export async function getConsentItemsForScreen(
 }
 
 // =============================================================================
-// User Claims for Rules (D12)
-// =============================================================================
-
-/**
- * Get user claims for conditional rule evaluation.
- * Reads canonical runtime-user projection when the caller supplies a combined adapter.
- */
-export async function getUserClaimsForRules(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string,
-  piiAdapter: DatabaseAdapter = adapter
-): Promise<Record<string, unknown>> {
-  const claims: Record<string, unknown> = {};
-
-  try {
-    const user = await new CanonicalRuntimeUserStore({
-      coreAdapter: adapter,
-      piiAdapter,
-      tenantId,
-    }).findById(userId, { includeInactive: true });
-
-    if (user) {
-      claims.email_verified = user.email_verified === 1;
-      if (user.email) claims.email = user.email;
-      if (user.locale) claims.locale = user.locale;
-      if (user.given_name) claims.given_name = user.given_name;
-      if (user.family_name) claims.family_name = user.family_name;
-      if (user.birthdate) claims.birthdate = user.birthdate;
-      if (user.phone_number) claims.phone_number = user.phone_number;
-      if (user.zoneinfo) claims.zoneinfo = user.zoneinfo;
-      if (user.custom_attributes_json) {
-        const custom = JSON.parse(user.custom_attributes_json) as Record<string, unknown>;
-        Object.assign(claims, custom);
-      }
-      if (user.address_json) {
-        const address = JSON.parse(user.address_json) as Record<string, unknown>;
-        claims.address = {
-          country: typeof address.country === 'string' ? address.country : undefined,
-          region: typeof address.region === 'string' ? address.region : undefined,
-        };
-      }
-    }
-  } catch {
-    // PII DB may be separate from the supplied adapter — non-fatal.
-  }
-
-  return claims;
-}
-
-// =============================================================================
 // Consent Decision Processing (D3, D9, D10)
 // =============================================================================
 
@@ -999,7 +542,14 @@ export async function processConsentItemDecisions(
   evidence: ConsentEvidence,
   ipHash?: string,
   targets: Record<string, ConsentDecisionTarget> = {},
-  options: StatementConsentWriteOptions = {}
+  options: StatementConsentWriteOptions & {
+    /**
+     * The answers were given at this time (ms), earlier than now: a statement answered since is
+     * left as it is. The record read here is the one the atomic write compares, so an answer
+     * recorded after it is not overwritten either.
+     */
+    givenAtMs?: number;
+  } = {}
 ): Promise<void> {
   for (const [statementId, decision] of Object.entries(decisions)) {
     const target = targets[statementId];
@@ -1025,6 +575,8 @@ export async function processConsentItemDecisions(
     )
       throw new Error('document_changed');
     const before = await readStatementConsentRecord(stores.account, tenantId, userId, statementId);
+    if (options.givenAtMs !== undefined && before && before.updated_at > options.givenAtMs)
+      continue;
     await writeStatementConsentDecision(
       stores,
       tenantId,
@@ -1053,8 +605,15 @@ export async function activateVersion(
   adapter: DatabaseAdapter,
   tenantId: string,
   statementId: string,
-  versionId: string
+  versionId: string,
+  /**
+   * `reconsent` (the default): people who agreed to an earlier version are asked again (agreement
+   * is required from this version on). Otherwise they are not (a change that does not alter what
+   * they agreed to); the first version published always becomes where agreement starts.
+   */
+  options: { reconsent?: boolean } = {}
 ): Promise<void> {
+  const reconsent = options.reconsent !== false;
   // Validate: version exists and belongs to this statement
   const versionRows = await adapter.query<{
     id: string;
@@ -1081,6 +640,24 @@ export async function activateVersion(
     throw new Error('Cannot activate version without at least one localization');
   }
 
+  // Without asking again, the version published must not be older than the one agreement is
+  // required from: agreement to it would never satisfy the statement.
+  if (!reconsent) {
+    const bounds = await adapter.queryOne<{
+      version: string;
+      required_consent_version: string | null;
+    }>(
+      `SELECT v.version, d.required_consent_version
+         FROM consent_statement_versions v
+         JOIN consent_statements d ON d.tenant_id = v.tenant_id AND d.id = v.statement_id
+        WHERE v.tenant_id = ? AND v.statement_id = ? AND v.id = ?`,
+      [tenantId, statementId, versionId]
+    );
+    if (bounds?.required_consent_version && bounds.version < bounds.required_consent_version) {
+      throw new Error('version_older_than_required_consent_version');
+    }
+  }
+
   // Compute content hash (D11)
   const contentHash = await computeContentHash(adapter, versionId, tenantId);
 
@@ -1097,8 +674,27 @@ export async function activateVersion(
   // transient token is visible only inside this batch and also serializes PostgreSQL writers.
   const result = await adapter.batch([
     {
-      sql: `UPDATE consent_statement_versions SET current_statement_guard=? WHERE tenant_id=? AND statement_id=? AND id=? AND updated_at=? AND status=?`,
-      params: [token, tenantId, statementId, versionId, revision, versionRows[0].status],
+      // The statement row first: publishes of one statement's versions are serialized on it, so
+      // what is judged below (its required version) is not moved by another publish meanwhile.
+      sql: `UPDATE consent_statements SET updated_at=updated_at WHERE tenant_id=? AND id=?`,
+      params: [tenantId, statementId],
+    },
+    {
+      // Without asking again, only a version not older than the one agreement is required from
+      // (judged in the same write, so a concurrent publish that moved it is not overtaken).
+      sql: `UPDATE consent_statement_versions SET current_statement_guard=? WHERE tenant_id=? AND statement_id=? AND id=? AND updated_at=? AND status=?
+        AND (?=1 OR NOT EXISTS (SELECT 1 FROM consent_statements d WHERE d.tenant_id=consent_statement_versions.tenant_id
+          AND d.id=consent_statement_versions.statement_id
+          AND d.required_consent_version IS NOT NULL AND d.required_consent_version > consent_statement_versions.version))`,
+      params: [
+        token,
+        tenantId,
+        statementId,
+        versionId,
+        revision,
+        versionRows[0].status,
+        reconsent ? 1 : 0,
+      ],
     },
     {
       sql: `UPDATE consent_statement_versions SET is_current=0,current_statement_guard=NULL,status='archived',updated_at=?
@@ -1106,9 +702,22 @@ export async function activateVersion(
       params: [now, statementId, tenantId, versionId, ...proof],
     },
     {
-      sql: `UPDATE consent_statements SET definition_generation=definition_generation+1,updated_at=?
+      sql: `UPDATE consent_statements SET definition_generation=definition_generation+1,updated_at=?,
+        required_consent_version=CASE WHEN ?=1 OR required_consent_version IS NULL
+          THEN (SELECT v.version FROM consent_statement_versions v
+                 WHERE v.tenant_id=? AND v.statement_id=? AND v.id=?)
+          ELSE required_consent_version END
       WHERE tenant_id=? AND id=? AND ${reserved}`,
-      params: [now, tenantId, statementId, ...proof],
+      params: [
+        now,
+        reconsent ? 1 : 0,
+        tenantId,
+        statementId,
+        versionId,
+        tenantId,
+        statementId,
+        ...proof,
+      ],
     },
     enqueueStatementConsentProjection(tenantId, statementId, now, { versionId, token }),
     {
@@ -1117,9 +726,9 @@ export async function activateVersion(
       params: [contentHash, now, ...proof],
     },
   ]);
-  if (result.length !== 5 || result.some((entry) => !entry.success))
+  if (result.length !== 6 || result.some((entry) => !entry.success))
     throw new Error('statement_consent_activation_result_unknown');
-  if (result[0].rowsAffected !== 1 || result[4].rowsAffected !== 1)
+  if (result[1].rowsAffected !== 1 || result[5].rowsAffected !== 1)
     throw new Error('document_changed');
 }
 

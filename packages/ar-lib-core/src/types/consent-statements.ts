@@ -96,8 +96,9 @@ export interface ConsentStatement {
   record_retention_days?: number;
   withdrawal_allowed?: boolean;
   withdrawal_impact?: string;
-  reconsent_on_version_change?: boolean;
   reconsent_interval_days?: number;
+  /** The version agreement is required from (YYYYMMDD); null: the current version. */
+  required_consent_version?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -160,72 +161,9 @@ export interface ConsentStatementUserRecord {
   updated_at: number;
 }
 
-/** Tenant-level consent requirement */
-export interface TenantConsentRequirement {
-  id: string;
-  tenant_id: string;
-  statement_id: string;
-  is_required: boolean;
-  min_version?: string; // YYYYMMDD
-  enforcement: ConsentEnforcement;
-  show_deletion_link: boolean;
-  deletion_url?: string;
-  conditional_rules: ConditionalConsentRule[];
-  display_order: number;
-  created_at: number;
-  updated_at: number;
-}
-
-/** Client-level consent override */
-export interface ClientConsentOverride {
-  id: string;
-  tenant_id: string;
-  client_id: string;
-  statement_id: string;
-  requirement: ClientConsentRequirement;
-  min_version?: string;
-  enforcement?: ConsentEnforcement;
-  conditional_rules?: ConditionalConsentRule[];
-  checkbox_mode?: 'none' | 'required' | 'optional';
-  checkbox_default_checked?: boolean;
-  binding_type?: 'subject' | 'scope' | 'claim' | 'saml_attribute' | 'destination_field_set';
-  binding_value?: string;
-  evidence_profile?: string;
-  language_fallback?: string;
-  display_order?: number;
-  created_at: number;
-  updated_at: number;
-}
-
 // =============================================================================
 // Conditional Rules
 // =============================================================================
-
-export const ConditionalRuleOperator = {
-  EQ: 'eq',
-  NEQ: 'neq',
-  IN: 'in',
-  NOT_IN: 'not_in',
-  GT: 'gt',
-  GTE: 'gte',
-  LT: 'lt',
-  LTE: 'lte',
-  EXISTS: 'exists',
-} as const;
-export type ConditionalRuleOperator =
-  (typeof ConditionalRuleOperator)[keyof typeof ConditionalRuleOperator];
-
-/** Conditional consent rule based on user claims */
-export interface ConditionalConsentRule {
-  /** Claim path (e.g., 'address.country', 'birthdate_age', 'metadata.segment') */
-  claim: string;
-  /** Comparison operator */
-  op: ConditionalRuleOperator;
-  /** Value to compare against (not used for 'exists') */
-  value?: unknown;
-  /** Result when rule matches: 'required' | 'optional' | 'hidden' */
-  result: 'required' | 'optional' | 'hidden';
-}
 
 // =============================================================================
 // Consent Screen Types
@@ -374,7 +312,6 @@ export interface CreateConsentStatementInput {
   record_retention_days?: number | null;
   withdrawal_allowed?: boolean;
   withdrawal_impact?: string | null;
-  reconsent_on_version_change?: boolean;
   reconsent_interval_days?: number | null;
   display_order?: number;
 }
@@ -387,7 +324,6 @@ export interface UpdateConsentStatementInput {
   record_retention_days?: number | null;
   withdrawal_allowed?: boolean;
   withdrawal_impact?: string | null;
-  reconsent_on_version_change?: boolean;
   reconsent_interval_days?: number | null;
   display_order?: number;
   is_active?: boolean;
@@ -409,24 +345,6 @@ export interface UpsertLocalizationInput {
   description: string;
   document_url?: string;
   inline_content?: string;
-}
-
-export interface SetTenantRequirementInput {
-  is_required: boolean;
-  min_version?: string;
-  enforcement?: ConsentEnforcement;
-  show_deletion_link?: boolean;
-  deletion_url?: string;
-  conditional_rules?: ConditionalConsentRule[];
-  display_order?: number;
-}
-
-export interface SetClientOverrideInput {
-  requirement: ClientConsentRequirement;
-  min_version?: string;
-  enforcement?: ConsentEnforcement;
-  conditional_rules?: ConditionalConsentRule[];
-  display_order?: number;
 }
 
 // =============================================================================

@@ -10,7 +10,6 @@ import {
   AttributeReleaseConsentRepository,
   evaluateReleaseConsentGate,
   resolveClientTrustPolicy,
-  resolveConsentRequirements,
   resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 
@@ -92,7 +91,7 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
     return { action: 'release', attributeSetHash: null, reasonCodes: [] };
   }
 
-  let policy = normalizeAttributeReleaseConsentPolicy(input.spConfig.attributeReleaseConsent);
+  const policy = normalizeAttributeReleaseConsentPolicy(input.spConfig.attributeReleaseConsent);
   const attributeSetHash = await buildSAMLAttributeSetHash(input.attributes);
   if (
     policy?.enabled &&
@@ -127,32 +126,11 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
     !trustPolicy?.skip_authorization_consent
   ) {
     // This runtime only admits imported trusted SPs. A missing or unreadable trust row must
-    // not fall through to the legacy consent-requirements error fallback.
+    // not fall through to releasing without the SP's consent setting.
     throw new Error('saml_idp_runtime_consent_policy_unavailable');
   }
   if (trustPolicy?.trusted || trustPolicy?.skip_authorization_consent) {
     return { action: 'release', attributeSetHash: null, reasonCodes: ['release.trusted_saml_sp'] };
-  }
-
-  if (!policy?.enabled) {
-    try {
-      const policyRequirements = await resolveConsentRequirements(
-        adapter,
-        input.tenantId,
-        input.spConfig.entityId,
-        {},
-        {
-          target_type: 'saml_sp',
-          target_id: input.spConfig.entityId,
-          requested_saml_attributes: input.attributes.map((attribute) => attribute.name),
-        }
-      );
-      if (policyRequirements.some((requirement) => requirement.is_required)) {
-        policy = { enabled: true, mode: 'once' };
-      }
-    } catch {
-      policy = null;
-    }
   }
 
   if (!policy?.enabled) {

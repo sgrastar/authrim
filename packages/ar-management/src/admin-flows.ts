@@ -43,6 +43,8 @@ import {
   readFlowCompletion,
   readRegistrationPolicy,
   requireDedicatedAdminDatabaseAdapter,
+  readFlowConsentStatements,
+  MAX_FLOW_CONSENT_STATEMENTS,
 } from '@authrim/ar-lib-core';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -581,20 +583,14 @@ async function validateDraftReferences(
       }
     }
 
-    const policyRef = readConfigString(node.config, 'consent_policy_ref');
-    if (policyRef) {
+    if (
+      node.type === 'consent' ||
+      (isRecord(node.config) &&
+        (node.config.statements !== undefined || node.config.consent_policy_ref !== undefined))
+    ) {
       const issueLevel =
         node.type === 'consent' ? consentReferenceIssueLevel(completionProtocols, node) : 'error';
-      issues.push(
-        ...(await validateConsentPolicyReference(
-          db,
-          tenantId,
-          node.id,
-          path,
-          policyRef,
-          issueLevel
-        ))
-      );
+      issues.push(...(await validateConsentStatements(db, tenantId, node, path, issueLevel)));
     }
 
     if (node.type === 'consent') {
@@ -679,117 +675,106 @@ async function validateConsentScreenReference(
   return [];
 }
 
-async function validateConsentPolicyReference(
+/**
+ * A step's `statements` (the consent statements it asks for): a well-formed list of statements
+ * that exist, are active and have a current version. Consent policies are gone: a node that still
+ * names one (`consent_policy_ref`) is refused, so it is not published asking for nothing.
+ */
+async function validateConsentStatements(
   db: DatabaseAdapter,
   tenantId: string,
-  nodeId: string,
+  node: FlowEditorState['nodes'][number],
   path: string,
-  policyId: string,
   blockingLevel: FlowValidationIssue['level']
 ): Promise<FlowValidationIssue[]> {
-  const policy = await db.queryOne<{ id: string; is_active: number }>(
-    'SELECT id, is_active FROM consent_policies WHERE tenant_id = ? AND id = ?',
-    [tenantId, policyId]
-  );
-  if (!policy) {
-    return [
-      {
-        level: blockingLevel,
-        code: 'missing_consent_policy',
-        message: `Consent policy does not exist: ${policyId}.`,
-        path: `${path}.consent_policy_ref`,
-        node_id: nodeId,
-        ref: { type: 'reference', id: policyId, key: 'consent_policy_ref' },
-      },
-    ];
-  }
-
+  const config = isRecord(node.config) ? node.config : {};
   const issues: FlowValidationIssue[] = [];
-  if (policy.is_active !== 1) {
+  if (config.consent_policy_ref !== undefined) {
     issues.push({
-      level: 'warning',
-      code: 'inactive_consent_policy',
-      message: `Consent policy is inactive: ${policyId}.`,
+      level: 'error',
+      code: 'consent_policy_removed',
+      message: 'Consent policies were removed; list the consent statements in statements.',
       path: `${path}.consent_policy_ref`,
-      node_id: nodeId,
-      ref: { type: 'reference', id: policyId, key: 'consent_policy_ref' },
+      node_id: node.id,
+      ref: { type: 'config', key: 'consent_policy_ref' },
     });
   }
-
-  const items = await db.query<{
-    id: string;
-    statement_id: string;
-    requirement: string;
-    version_mode: string;
-    version_id: string | null;
-    statement_active: number | null;
-    current_version_id: string | null;
-    fixed_version_id: string | null;
-  }>(
-    `SELECT i.id, i.statement_id, i.requirement, i.version_mode, i.version_id,
-            s.is_active AS statement_active,
-            current_v.id AS current_version_id,
-            fixed_v.id AS fixed_version_id
-       FROM consent_policy_items i
-       LEFT JOIN consent_statements s
-         ON s.tenant_id = i.tenant_id AND s.id = i.statement_id
-       LEFT JOIN consent_statement_versions current_v
-         ON current_v.tenant_id = i.tenant_id
-        AND current_v.statement_id = i.statement_id
-        AND current_v.is_current = 1
-       LEFT JOIN consent_statement_versions fixed_v
-         ON fixed_v.tenant_id = i.tenant_id
-        AND fixed_v.id = i.version_id
-      WHERE i.tenant_id = ? AND i.policy_id = ?
-      ORDER BY i.display_order, i.id`,
-    [tenantId, policyId]
-  );
-  const visibleItems = items.filter((item) => item.requirement !== 'hidden');
-  if (visibleItems.length === 0) {
+  if (config.statements === undefined) return issues;
+  const statements = readFlowConsentStatements(config);
+  if (!statements) {
     issues.push({
-      level: blockingLevel,
-      code: 'empty_consent_policy',
-      message: `Consent policy has no visible consent statements: ${policyId}.`,
-      path: `${path}.consent_policy_ref`,
-      node_id: nodeId,
-      ref: { type: 'reference', id: policyId, key: 'consent_policy_ref' },
+      level: 'error',
+      code: 'invalid_consent_statements',
+      message: `statements must be a list of up to ${MAX_FLOW_CONSENT_STATEMENTS} distinct { statement_id, required } entries.`,
+      path: `${path}.statements`,
+      node_id: node.id,
+      ref: { type: 'config', key: 'statements' },
     });
+    return issues;
   }
-
-  for (const item of visibleItems) {
-    if (item.statement_active !== 1) {
+  for (const [index, entry] of statements.entries()) {
+    const row = await db.queryOne<{
+      is_active: number | string;
+      current_version_id: string | null;
+    }>(
+      `SELECT s.is_active, v.id AS current_version_id
+         FROM consent_statements s
+         LEFT JOIN consent_statement_versions v
+           ON v.tenant_id = s.tenant_id AND v.statement_id = s.id
+          AND v.is_current = 1 AND v.status = 'active'
+        WHERE s.tenant_id = ? AND s.id = ? AND s.retired_at IS NULL`,
+      [tenantId, entry.statement_id]
+    );
+    if (!row || Number(row.is_active) !== 1) {
       issues.push({
         level: blockingLevel,
         code: 'inactive_consent_statement',
-        message: `Consent policy references an inactive or missing statement: ${item.statement_id}.`,
-        path: `${path}.consent_policy_ref`,
-        node_id: nodeId,
-        ref: { type: 'reference', id: item.statement_id, key: 'statement_id' },
+        message: `Consent statement is inactive or missing: ${entry.statement_id}.`,
+        path: `${path}.statements[${index}]`,
+        node_id: node.id,
+        ref: { type: 'reference', id: entry.statement_id, key: 'statement_id' },
       });
-    }
-    if (item.version_mode === 'fixed') {
-      if (!item.version_id || !item.fixed_version_id) {
-        issues.push({
-          level: blockingLevel,
-          code: 'missing_fixed_consent_statement_version',
-          message: `Consent policy item references a missing fixed version: ${item.id}.`,
-          path: `${path}.consent_policy_ref`,
-          node_id: nodeId,
-          ref: { type: 'reference', id: item.id, key: 'version_id' },
-        });
-      }
-    } else if (!item.current_version_id) {
+    } else if (!row.current_version_id) {
       issues.push({
         level: blockingLevel,
         code: 'missing_current_consent_statement_version',
-        message: `Consent statement has no current version: ${item.statement_id}.`,
-        path: `${path}.consent_policy_ref`,
-        node_id: nodeId,
-        ref: { type: 'reference', id: item.statement_id, key: 'current_version' },
+        message: `Consent statement has no published version: ${entry.statement_id}.`,
+        path: `${path}.statements[${index}]`,
+        node_id: node.id,
+        ref: { type: 'reference', id: entry.statement_id, key: 'current_version' },
       });
     }
   }
+  return issues;
+}
 
+/**
+ * The statements of every runtime step, as published (also for a Flow imported without an editor
+ * that lists them): checked as the editor's nodes are, always as publish-blocking errors.
+ */
+async function validateRuntimeConsentStatements(
+  db: DatabaseAdapter,
+  tenantId: string,
+  runtime: FlowRuntimeContract
+): Promise<FlowValidationIssue[]> {
+  const issues: FlowValidationIssue[] = [];
+  for (const [index, step] of runtime.ui.steps.entries()) {
+    const config = isRecord(step.config) ? step.config : undefined;
+    if (!config || (config.statements === undefined && config.consent_policy_ref === undefined)) {
+      continue;
+    }
+    // Always, and blocking: the editor's checks may only warn (a Flow for several protocols), but
+    // what is published must not require a statement that cannot be asked for.
+    issues.push(
+      ...(await validateConsentStatements(
+        db,
+        tenantId,
+        { id: step.source_node_id, type: 'consent', config },
+        `$.runtime.ui.steps[${index}].config`,
+        'error'
+      ))
+    );
+  }
   return issues;
 }
 
@@ -1320,6 +1305,7 @@ async function adminFlowPublishUnguarded(c: AdminContext) {
       ...validateRuntimePackage(runtime, editor),
       ...(await validateDraftReferences(db, tenantId, editor, profileExistsIn(c, tenantId))),
       ...(await validateRuntimeProfileRefs(runtime, profileExistsIn(c, tenantId))),
+      ...(await validateRuntimeConsentStatements(db, tenantId, runtime)),
     ]);
     if (!validation.valid) {
       return c.json(

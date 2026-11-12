@@ -74,10 +74,36 @@ const mockResolveAccountDataContextFromHono = vi.hoisted(() =>
     return context;
   })
 );
+// The statements the client's sign-in Flow requires at single sign-on, and what the user has
+// answered. Unset, the Flow requires none. Which statements a Flow requires and how an answer
+// satisfies a requirement are tested in ar-lib-core.
+const ssoStatementFixture = vi.hoisted(() => ({
+  required: [] as string[],
+  /** The statements the user has not agreed to. */
+  unsatisfied: [] as string[],
+  asked: [] as unknown[][],
+}));
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    ssoConsentStatementsForTarget: vi.fn(async (...args: unknown[]) => {
+      ssoStatementFixture.asked.push(args.slice(1));
+      return ssoStatementFixture.required.map((statement_id) => ({ statement_id, required: true }));
+    }),
+    resolveStatementRequirements: vi.fn(
+      async (_db: unknown, _tenant: string, entries: Array<{ statement_id: string }>) =>
+        entries.map((entry, order) => ({
+          statement_id: entry.statement_id,
+          is_required: true,
+          enforcement: 'block',
+          display_order: order,
+        }))
+    ),
+    checkUserConsentSatisfaction: vi.fn(async () => ({
+      satisfied: ssoStatementFixture.unsatisfied.length === 0,
+      unsatisfied: [...ssoStatementFixture.unsatisfied],
+    })),
     getClient: mockGetClient,
     // getClientCached wraps getClient, so we need to mock it too
     getClientCached: vi
@@ -2126,6 +2152,94 @@ describe('Authorization Handler', () => {
         });
       }
     );
+
+    describe('the statements the sign-in Flow requires at single sign-on', () => {
+      beforeEach(() => {
+        ssoStatementFixture.required = [];
+        ssoStatementFixture.unsatisfied = [];
+        ssoStatementFixture.asked = [];
+      });
+      afterEach(() => {
+        ssoStatementFixture.required = [];
+        ssoStatementFixture.unsatisfied = [];
+      });
+
+      async function authorizeWithSession(state: string, extra = '') {
+        env.UI_URL = 'https://login.example.com';
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        // A trusted app: the consent to the app itself is not in question here.
+        configureClientTrustPolicy(env);
+        seedSession(env);
+        return app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=${state}${extra}`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+      }
+
+      it('sends a person who has not agreed to the consent screen, naming the statements', async () => {
+        ssoStatementFixture.required = ['statement_terms'];
+        ssoStatementFixture.unsatisfied = ['statement_terms'];
+
+        const response = await authorizeWithSession('sso-terms-unanswered');
+
+        expect(response.status).toBe(302);
+        const location = new URL(response.headers.get('Location')!);
+        expect(location.origin + location.pathname).toBe('https://login.example.com/consent');
+        expect(getChallengeMap(env).get(location.searchParams.get('challenge_id')!)).toMatchObject({
+          type: 'consent',
+          userId: 'test-user',
+          metadata: {
+            client_id: 'test-client',
+            consent_items_required: ['statement_terms'],
+            consent_items_enforcement: 'block',
+          },
+        });
+        // The statements are those of the client's own sign-in Flow.
+        expect(ssoStatementFixture.asked).toEqual([
+          ['default', { type: 'oidc_client', id: 'test-client' }],
+        ]);
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('answers consent_required without a screen when the request cannot show one', async () => {
+        ssoStatementFixture.required = ['statement_terms'];
+        ssoStatementFixture.unsatisfied = ['statement_terms'];
+
+        const response = await authorizeWithSession('sso-terms-none', '&prompt=none');
+
+        expect(response.status).toBe(302);
+        const location = new URL(response.headers.get('Location')!);
+        expect(location.origin + location.pathname).toBe('https://example.com/callback');
+        expect(location.searchParams.get('error')).toBe('consent_required');
+        expect(location.searchParams.get('state')).toBe('sso-terms-none');
+        expect(location.searchParams.get('code')).toBeNull();
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('does not ask again a person who has agreed to every required statement', async () => {
+        ssoStatementFixture.required = ['statement_terms'];
+        ssoStatementFixture.unsatisfied = [];
+
+        const response = await authorizeWithSession('sso-terms-answered', '&prompt=none');
+
+        expect(response.status).toBe(302);
+        const location = new URL(response.headers.get('Location')!);
+        expect(location.searchParams.get('error')).not.toBe('consent_required');
+        expect(location.pathname).not.toBe('/consent');
+      });
+
+      it('asks for no statement when the Flow requires none', async () => {
+        const response = await authorizeWithSession('sso-none-required', '&prompt=none');
+
+        const location = new URL(response.headers.get('Location')!);
+        expect(location.pathname).not.toBe('/consent');
+        expect(location.searchParams.get('consent_items_required')).toBeNull();
+      });
+    });
 
     it('finds the consent the user gave in the account database', async () => {
       // The consent screen records consents with the user's account; the tenant metadata database

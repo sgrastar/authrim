@@ -40,8 +40,8 @@ const TABLE_GROUPS: Partial<
   core: {
     delivery_state: 'internal_notification_delivery_attempts internal_notification_events',
     settings: `
-      application_launchers branding_settings check_api_keys client_consent_overrides
-      client_trust_policies consent_policies consent_policy_items consent_policy_versions
+      application_launchers branding_settings check_api_keys
+      client_trust_policies
       consent_statement_localizations consent_statement_versions consent_statements credential_configurations
       custom_claim_schemas directory_auth_retention_policies directory_auth_tenant_policies directory_connector_instances
       field_usage_bindings flow_assignments flow_versions flows
@@ -50,7 +50,7 @@ const TABLE_GROUPS: Partial<
       organizations policy_rules presentation_definitions provisioning_assignment_rules
       relation_definitions resource_permissions role_assignment_rules roles
       saml_attribute_presets scope_mappings screens sign_in_confirmation_policies
-      status_lists tenant_consent_requirements tenant_domain_mappings tenant_vanity_domains
+      status_lists tenant_domain_mappings tenant_vanity_domains
       tenants token_claim_rules trusted_issuers upstream_providers
       web_origin_registry webhook_configs
     `,

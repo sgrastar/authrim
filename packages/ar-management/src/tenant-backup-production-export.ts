@@ -91,8 +91,7 @@ export async function isEnvironmentLocalSystemClientRow(
     return ENVIRONMENT_LOCAL_SYSTEM_CLIENT_DESCRIPTIONS.has(
       portableOptionalText(rowJson, 'description') ?? ''
     );
-  if (!['core.client_consent_overrides', 'core.web_origin_registry'].includes(datasetId))
-    return false;
+  if (datasetId !== 'core.web_origin_registry') return false;
   const row = await database.queryOne<{ description: string }>(
     'SELECT description FROM oauth_clients WHERE tenant_id=? AND client_id=?',
     [portableText(rowJson, 'tenant_id'), portableText(rowJson, 'client_id')]

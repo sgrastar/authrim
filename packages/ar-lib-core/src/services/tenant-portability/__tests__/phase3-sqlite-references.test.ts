@@ -476,9 +476,8 @@ describe('Phase 3 installed SQL reference graph', () => {
   });
 
   it('orders storage parents before children without creating profile activation cycles', () => {
-    expect(phase3SqliteRestoreDependencies('core.client_consent_overrides')).toEqual([
+    expect(phase3SqliteRestoreDependencies('core.consent_statement_versions')).toEqual([
       'core.consent_statements',
-      'core.oauth_clients',
       'core.tenants',
     ]);
     expect(phase3SqliteRestoreDependencies('admin.destination_profile_versions')).toContain(

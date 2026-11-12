@@ -3,8 +3,7 @@
 	import { onMount } from 'svelte';
 	import {
 		adminConsentStatementsAPI,
-		type ConsentStatement,
-		type TenantConsentRequirement
+		type ConsentStatement
 	} from '#lib/api/admin-consent-statements.js';
 	import {
 		AdminDataTable,
@@ -15,7 +14,6 @@
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let statements = $state<ConsentStatement[]>([]);
-	let requirements = $state<TenantConsentRequirement[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 	const samlAttributeReleaseConfirmationCategory = 'saml_attribute_release_confirmation';
@@ -28,12 +26,8 @@
 		loading = true;
 		error = '';
 		try {
-			const [statementResult, requirementResult] = await Promise.all([
-				adminConsentStatementsAPI.listStatements(),
-				adminConsentStatementsAPI.listRequirements()
-			]);
+			const statementResult = await adminConsentStatementsAPI.listStatements();
 			statements = statementResult.statements || [];
-			requirements = requirementResult.requirements || [];
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_consent_statements_error_load();
 		} finally {
@@ -43,10 +37,6 @@
 
 	function openStatement(statementId: string) {
 		goto(`/admin/consent-statements/${encodeURIComponent(statementId)}`);
-	}
-
-	function getRequirementForStatement(statementId: string): TenantConsentRequirement | undefined {
-		return requirements.find((req) => req.statement_id === statementId);
 	}
 
 	function formatDate(ts: number): string {
@@ -117,7 +107,7 @@
 						<tr>
 							<th>{$LL.admin_consent_statements_slug()}</th>
 							<th>{$LL.admin_consent_statements_category()}</th>
-							<th>{$LL.admin_consent_requirements_title()}</th>
+							<th>{$LL.admin_consent_statements_required_version()}</th>
 							<th>{$LL.admin_consent_statements_active()}</th>
 							<th class="optional-column">{$LL.admin_consent_statements_created()}</th>
 						</tr>
@@ -141,16 +131,10 @@
 									<span class="status-badge">{getCategoryLabel(statement.category)}</span>
 								</td>
 								<td>
-									{#if getRequirementForStatement(statement.id)}
-										<span class="status-badge" data-state="active">
-											{getRequirementForStatement(statement.id)?.is_required
-												? $LL.admin_consent_requirements_required()
-												: $LL.admin_consent_requirements_optional()}
-										</span>
+									{#if statement.required_consent_version}
+										<code class="admin-code">{statement.required_consent_version}</code>
 									{:else}
-										<span class="admin-muted">
-											{$LL.admin_consent_requirements_not_configured()}
-										</span>
+										<span class="admin-muted">-</span>
 									{/if}
 								</td>
 								<td>
@@ -169,7 +153,7 @@
 							</tr>
 						{:else}
 							<tr>
-								<td colspan="5">
+								<td colspan="4">
 									<div class="empty-state">
 										<p class="empty-state-description">{$LL.admin_consent_statements_empty()}</p>
 										<div class="empty-state-actions">

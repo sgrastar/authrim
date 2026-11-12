@@ -72,9 +72,8 @@ export async function assertSAMLIdPProviderReadiness(input: {
     const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-idp-readiness', {
       tenantId,
     });
-    // The current PostgreSQL Core subset has no tenant_consent_requirements table.
-    // Requiring source trust explicitly prevents a missing policy table from being read as
-    // absence of a consent requirement by the unchanged protocol handler.
+    // This runtime cannot ask for attribute release consent, so an SP must be trusted (or skip
+    // the consent) explicitly: a missing trust row is not read as "nothing to ask".
     const trust = await core.queryOne<{
       trusted: number;
       skip_authorization_consent: number;

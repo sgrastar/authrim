@@ -5,7 +5,7 @@ import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import {
   checkUserConsentSatisfaction,
   getConsentItemsForScreen,
-  resolveConsentRequirements,
+  resolveStatementRequirements,
   StatementConsentAccountReadError,
 } from '../../utils/consent-statements';
 import { lookupStatementDefinitions } from '../statement-consent-definitions';
@@ -59,11 +59,6 @@ async function seedDefinitions(adapter: DatabaseAdapter): Promise<void> {
      VALUES(?,?,?,?,?,?,?,?)`,
     ['loc-ja', TENANT, NEW_VERSION_ID, 'ja', '利用規約', '', 1, 1]
   );
-  await adapter.execute(
-    `INSERT INTO tenant_consent_requirements(id,tenant_id,statement_id,is_required,enforcement,display_order,created_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?)`,
-    ['req-1', TENANT, STATEMENT, 1, 'block', 0, 1, 1]
-  );
 }
 
 /** A record in the account database for an older version; its definitions are not there. */
@@ -78,6 +73,12 @@ async function seedOldRecord(account: Fixture): Promise<void> {
 }
 
 /** Returns integers as strings, as node-postgres does for BIGINT columns. */
+const REQUIRED = [{ statement_id: STATEMENT, required: true }];
+
+/** The requirements the Flow's consent step resolves from the metadata database. */
+const requirementsOf = (adapter: DatabaseAdapter) =>
+  resolveStatementRequirements(adapter, TENANT, REQUIRED);
+
 const asPostgres = (adapter: DatabaseAdapter): DatabaseAdapter =>
   ({
     ...adapter,
@@ -113,7 +114,13 @@ describe('statement consent reads across metadata and account databases', () => 
     it('shows the metadata definition with the status of the record in the account database', async () => {
       await seedOldRecord(account);
 
-      const items = await getConsentItemsForScreen(stores, TENANT, null, USER, 'ja');
+      const items = await getConsentItemsForScreen(
+        stores,
+        TENANT,
+        await requirementsOf(metadata.adapter),
+        USER,
+        'ja'
+      );
 
       expect(items).toHaveLength(1);
       expect(items[0]).toMatchObject({
@@ -129,7 +136,13 @@ describe('statement consent reads across metadata and account databases', () => 
     });
 
     it('asks for a statement the account has no record of yet', async () => {
-      const items = await getConsentItemsForScreen(stores, TENANT, null, USER, 'en');
+      const items = await getConsentItemsForScreen(
+        stores,
+        TENANT,
+        await requirementsOf(metadata.adapter),
+        USER,
+        'en'
+      );
 
       expect(items).toHaveLength(1);
       expect(items[0].current_status).toBeUndefined();
@@ -149,7 +162,7 @@ describe('statement consent reads across metadata and account databases', () => 
         getConsentItemsForScreen(
           { metadata: metadata.adapter, account: unavailable },
           TENANT,
-          null,
+          await requirementsOf(metadata.adapter),
           USER,
           'en'
         )
@@ -158,19 +171,11 @@ describe('statement consent reads across metadata and account databases', () => 
 
     it('still requires a statement when integers come back as strings, as node-postgres returns BIGINT', async () => {
       await seedOldRecord(account);
-      // D1 keeps a foreign key to the client table here; the PostgreSQL schema has none.
-      metadata.db.exec('PRAGMA foreign_keys=OFF');
-      await metadata.adapter.execute(
-        `INSERT INTO client_consent_overrides(id,tenant_id,client_id,statement_id,requirement,display_order,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?,?)`,
-        ['override-1', TENANT, 'client-1', STATEMENT, 'inherit', 10, 1, 1]
-      );
-      metadata.db.exec('PRAGMA foreign_keys=ON');
 
       const items = await getConsentItemsForScreen(
         { metadata: asPostgres(metadata.adapter), account: asPostgres(account.adapter) },
         TENANT,
-        'client-1',
+        await requirementsOf(asPostgres(metadata.adapter)),
         USER,
         'ja'
       );
@@ -178,7 +183,7 @@ describe('statement consent reads across metadata and account databases', () => 
       expect(items).toHaveLength(1);
       expect(items[0]).toMatchObject({
         statement_id: STATEMENT,
-        display_order: 10,
+        display_order: 0,
         is_required: true,
         current_status: 'granted',
         needs_version_upgrade: true,
@@ -206,12 +211,7 @@ describe('statement consent reads across metadata and account databases', () => 
       );
       account.db.exec('PRAGMA foreign_keys=ON');
 
-      const requirements = await resolveConsentRequirements(
-        asPostgres(metadata.adapter),
-        TENANT,
-        null,
-        {}
-      );
+      const requirements = await requirementsOf(asPostgres(metadata.adapter));
       const result = await checkUserConsentSatisfaction(
         asPostgres(account.adapter),
         TENANT,
@@ -223,7 +223,6 @@ describe('statement consent reads across metadata and account databases', () => 
     });
 
     it('does not touch the account records when nothing is required', async () => {
-      await metadata.adapter.execute(`UPDATE consent_statements SET is_active = 0`);
       const neverRead = {
         ...account.adapter,
         query: async (sql: string) => {
@@ -236,7 +235,7 @@ describe('statement consent reads across metadata and account databases', () => 
         getConsentItemsForScreen(
           { metadata: metadata.adapter, account: neverRead },
           TENANT,
-          null,
+          [],
           USER,
           'en'
         )

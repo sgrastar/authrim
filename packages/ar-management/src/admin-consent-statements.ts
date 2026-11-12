@@ -291,7 +291,6 @@ export async function adminConsentStatementCreateHandler(c: Context<{ Bindings: 
       record_retention_days?: number | null;
       withdrawal_allowed?: boolean;
       withdrawal_impact?: string | null;
-      reconsent_on_version_change?: boolean;
       reconsent_interval_days?: number | null;
     }>();
 
@@ -332,8 +331,8 @@ export async function adminConsentStatementCreateHandler(c: Context<{ Bindings: 
       `INSERT INTO consent_statements
        (id, tenant_id, slug, category, legal_basis, processing_purpose, display_order, is_active,
         record_retention_days, withdrawal_allowed, withdrawal_impact,
-        reconsent_on_version_change, reconsent_interval_days, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+        reconsent_interval_days, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         tenantId,
@@ -347,7 +346,6 @@ export async function adminConsentStatementCreateHandler(c: Context<{ Bindings: 
         typeof body.withdrawal_impact === 'string' && body.withdrawal_impact.trim()
           ? body.withdrawal_impact.trim()
           : null,
-        body.reconsent_on_version_change === false ? 0 : 1,
         reconsentIntervalDays ?? null,
         now,
         now,
@@ -408,7 +406,6 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
       record_retention_days?: number | null;
       withdrawal_allowed?: boolean;
       withdrawal_impact?: string | null;
-      reconsent_on_version_change?: boolean;
       reconsent_interval_days?: number | null;
     }>();
 
@@ -475,10 +472,6 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
           ? body.withdrawal_impact.trim()
           : null
       );
-    }
-    if (body.reconsent_on_version_change !== undefined) {
-      sets.push('reconsent_on_version_change = ?');
-      params.push(body.reconsent_on_version_change ? 1 : 0);
     }
     if (body.reconsent_interval_days !== undefined) {
       const value = optionalNonNegativeInteger(body.reconsent_interval_days);
@@ -578,14 +571,6 @@ export async function adminConsentStatementDeleteHandler(c: Context<{ Bindings: 
             AND is_active=0 AND definition_generation=0 AND retired_at IS NULL AND ${proof}`,
             params: [tenantId, id, tenantId, id],
           },
-          ...[
-            'client_consent_overrides',
-            'tenant_consent_requirements',
-            'consent_policy_items',
-          ].map((table) => ({
-            sql: `DELETE FROM ${table} WHERE tenant_id=? AND statement_id=? AND ${proof}`,
-            params: [tenantId, id, tenantId, id],
-          })),
           {
             sql: `DELETE FROM consent_statement_localizations WHERE tenant_id=? AND version_id IN
               (SELECT id FROM consent_statement_versions WHERE tenant_id=? AND statement_id=?) AND ${proof}`,
@@ -600,9 +585,9 @@ export async function adminConsentStatementDeleteHandler(c: Context<{ Bindings: 
             params: [tenantId, id, tenantId, id],
           },
         ]);
-        if (result.length !== 7 || result.some((entry) => !entry.success))
+        if (result.length !== 4 || result.some((entry) => !entry.success))
           throw new Error('statement_consent_deletion_result_unknown');
-        if (result[6].rowsAffected === 1) return c.json({ success: true, disposition: 'deleted' });
+        if (result[3].rowsAffected === 1) return c.json({ success: true, disposition: 'deleted' });
       }
     }
 
@@ -867,8 +852,20 @@ export async function adminConsentVersionActivateHandler(c: Context<{ Bindings: 
     const authCtx = createAuthContextFromHono(c, tenantId);
     const sid = c.req.param('sid')!;
     const vid = c.req.param('vid')!;
+    // Ask people who agreed to an earlier version again unless told not to (the safer default).
+    const body: { reconsent?: unknown } = await c.req
+      .json<{ reconsent?: unknown }>()
+      .catch(() => ({}));
+    if (body.reconsent !== undefined && typeof body.reconsent !== 'boolean') {
+      return c.json(
+        { error: 'invalid_request', error_description: 'reconsent must be a boolean' },
+        400
+      );
+    }
 
-    await activateVersion(authCtx.coreAdapter, tenantId, sid, vid);
+    await activateVersion(authCtx.coreAdapter, tenantId, sid, vid, {
+      reconsent: body.reconsent !== false,
+    });
 
     const activated = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_statement_versions WHERE id = ?`,
@@ -891,6 +888,16 @@ export async function adminConsentVersionActivateHandler(c: Context<{ Bindings: 
         },
         409
       );
+    if (errMsg === 'version_older_than_required_consent_version') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            'This version is older than the one agreement is required from; publish it asking people again (reconsent: true)',
+        },
+        400
+      );
+    }
     if (errMsg.includes('not found') || errMsg.includes('localization')) {
       return c.json({ error: 'invalid_request', error_description: errMsg }, 400);
     }
@@ -1096,278 +1103,6 @@ export async function adminConsentLocalizationDeleteHandler(c: Context<{ Binding
       { error: 'server_error', error_description: 'Failed to delete localization' },
       500
     );
-  }
-}
-
-// =============================================================================
-// Tenant Requirements
-// =============================================================================
-
-/** GET /api/admin/consent-requirements */
-export async function adminConsentRequirementsListHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('ADMIN_CONSENT');
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-
-    const rows = await authCtx.coreAdapter.query(
-      `SELECT * FROM tenant_consent_requirements WHERE tenant_id = ? ORDER BY display_order ASC`,
-      [tenantId]
-    );
-
-    return c.json({ requirements: rows });
-  } catch (error) {
-    log.error('Failed to list requirements', { action: 'list_requirements' }, error as Error);
-    return c.json({ error: 'server_error', error_description: 'Failed to list requirements' }, 500);
-  }
-}
-
-/** PUT /api/admin/consent-requirements/:statementId */
-export async function adminConsentRequirementUpsertHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('ADMIN_CONSENT');
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const statementId = c.req.param('statementId')!;
-    const body = await c.req.json<{
-      is_required: boolean;
-      min_version?: string;
-      enforcement?: string;
-      show_deletion_link?: boolean;
-      deletion_url?: string;
-      conditional_rules?: unknown[];
-      display_order?: number;
-    }>();
-
-    // Validate min_version format if provided
-    if (body.min_version && !validateVersionFormat(body.min_version)) {
-      return c.json(
-        { error: 'invalid_request', error_description: 'min_version must be YYYYMMDD format' },
-        400
-      );
-    }
-
-    const deletionUrl = normalizeOptionalPublicLinkUrl(body.deletion_url, 'deletion_url');
-    if (!deletionUrl.valid) {
-      return invalidPublicLinkUrlResponse(c, deletionUrl.fieldName);
-    }
-
-    const now = Date.now();
-    const existing = await authCtx.coreAdapter.query(
-      `SELECT id FROM tenant_consent_requirements WHERE tenant_id = ? AND statement_id = ?`,
-      [tenantId, statementId]
-    );
-
-    if (existing.length > 0) {
-      await authCtx.coreAdapter.execute(
-        `UPDATE tenant_consent_requirements
-         SET is_required = ?, min_version = ?, enforcement = ?,
-             show_deletion_link = ?, deletion_url = ?,
-             conditional_rules_json = ?, display_order = ?, updated_at = ?
-         WHERE tenant_id = ? AND statement_id = ?`,
-        [
-          body.is_required ? 1 : 0,
-          body.min_version ?? null,
-          body.enforcement ?? 'block',
-          body.show_deletion_link ? 1 : 0,
-          deletionUrl.value,
-          body.conditional_rules ? JSON.stringify(body.conditional_rules) : null,
-          body.display_order ?? 0,
-          now,
-          tenantId,
-          statementId,
-        ]
-      );
-    } else {
-      const id = crypto.randomUUID();
-      await authCtx.coreAdapter.execute(
-        `INSERT INTO tenant_consent_requirements
-         (id, tenant_id, statement_id, is_required, min_version, enforcement,
-          show_deletion_link, deletion_url, conditional_rules_json, display_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          tenantId,
-          statementId,
-          body.is_required ? 1 : 0,
-          body.min_version ?? null,
-          body.enforcement ?? 'block',
-          body.show_deletion_link ? 1 : 0,
-          deletionUrl.value,
-          body.conditional_rules ? JSON.stringify(body.conditional_rules) : null,
-          body.display_order ?? 0,
-          now,
-          now,
-        ]
-      );
-    }
-
-    const result = await authCtx.coreAdapter.query(
-      `SELECT * FROM tenant_consent_requirements WHERE tenant_id = ? AND statement_id = ?`,
-      [tenantId, statementId]
-    );
-
-    log.info('Upserted requirement', { action: 'upsert_requirement', statementId });
-    return c.json(result[0]);
-  } catch (error) {
-    log.error('Failed to upsert requirement', { action: 'upsert_requirement' }, error as Error);
-    return c.json(
-      { error: 'server_error', error_description: 'Failed to upsert requirement' },
-      500
-    );
-  }
-}
-
-/** DELETE /api/admin/consent-requirements/:statementId */
-export async function adminConsentRequirementDeleteHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('ADMIN_CONSENT');
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const statementId = c.req.param('statementId')!;
-
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM tenant_consent_requirements WHERE tenant_id = ? AND statement_id = ?`,
-      [tenantId, statementId]
-    );
-
-    log.info('Deleted requirement', { action: 'delete_requirement', statementId });
-    return c.json({ success: true });
-  } catch (error) {
-    log.error('Failed to delete requirement', { action: 'delete_requirement' }, error as Error);
-    return c.json(
-      { error: 'server_error', error_description: 'Failed to delete requirement' },
-      500
-    );
-  }
-}
-
-// =============================================================================
-// Client Overrides
-// =============================================================================
-
-/** GET /api/admin/clients/:clientId/consent-overrides */
-export async function adminConsentOverridesListHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('ADMIN_CONSENT');
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const clientId = c.req.param('clientId')!;
-
-    const rows = await authCtx.coreAdapter.query(
-      `SELECT * FROM client_consent_overrides WHERE tenant_id = ? AND client_id = ?`,
-      [tenantId, clientId]
-    );
-
-    return c.json({ overrides: rows });
-  } catch (error) {
-    log.error('Failed to list overrides', { action: 'list_overrides' }, error as Error);
-    return c.json({ error: 'server_error', error_description: 'Failed to list overrides' }, 500);
-  }
-}
-
-/** PUT /api/admin/clients/:clientId/consent-overrides/:statementId */
-export async function adminConsentOverrideUpsertHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('ADMIN_CONSENT');
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const clientId = c.req.param('clientId')!;
-    const statementId = c.req.param('statementId')!;
-    const body = await c.req.json<{
-      requirement: string;
-      min_version?: string;
-      enforcement?: string;
-      conditional_rules?: unknown[];
-      display_order?: number;
-    }>();
-
-    if (body.min_version && !validateVersionFormat(body.min_version)) {
-      return c.json(
-        { error: 'invalid_request', error_description: 'min_version must be YYYYMMDD format' },
-        400
-      );
-    }
-
-    const now = Date.now();
-    const existing = await authCtx.coreAdapter.query(
-      `SELECT id FROM client_consent_overrides WHERE tenant_id = ? AND client_id = ? AND statement_id = ?`,
-      [tenantId, clientId, statementId]
-    );
-
-    if (existing.length > 0) {
-      await authCtx.coreAdapter.execute(
-        `UPDATE client_consent_overrides
-         SET requirement = ?, min_version = ?, enforcement = ?,
-             conditional_rules_json = ?, display_order = ?, updated_at = ?
-         WHERE tenant_id = ? AND client_id = ? AND statement_id = ?`,
-        [
-          body.requirement ?? 'inherit',
-          body.min_version ?? null,
-          body.enforcement ?? null,
-          body.conditional_rules ? JSON.stringify(body.conditional_rules) : null,
-          body.display_order ?? null,
-          now,
-          tenantId,
-          clientId,
-          statementId,
-        ]
-      );
-    } else {
-      const id = crypto.randomUUID();
-      await authCtx.coreAdapter.execute(
-        `INSERT INTO client_consent_overrides
-         (id, tenant_id, client_id, statement_id, requirement, min_version, enforcement,
-          conditional_rules_json, display_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          tenantId,
-          clientId,
-          statementId,
-          body.requirement ?? 'inherit',
-          body.min_version ?? null,
-          body.enforcement ?? null,
-          body.conditional_rules ? JSON.stringify(body.conditional_rules) : null,
-          body.display_order ?? null,
-          now,
-          now,
-        ]
-      );
-    }
-
-    const result = await authCtx.coreAdapter.query(
-      `SELECT * FROM client_consent_overrides WHERE tenant_id = ? AND client_id = ? AND statement_id = ?`,
-      [tenantId, clientId, statementId]
-    );
-
-    log.info('Upserted override', { action: 'upsert_override', clientId, statementId });
-    return c.json(result[0]);
-  } catch (error) {
-    log.error('Failed to upsert override', { action: 'upsert_override' }, error as Error);
-    return c.json({ error: 'server_error', error_description: 'Failed to upsert override' }, 500);
-  }
-}
-
-/** DELETE /api/admin/clients/:clientId/consent-overrides/:statementId */
-export async function adminConsentOverrideDeleteHandler(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('ADMIN_CONSENT');
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const clientId = c.req.param('clientId')!;
-    const statementId = c.req.param('statementId')!;
-
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM client_consent_overrides WHERE tenant_id = ? AND client_id = ? AND statement_id = ?`,
-      [tenantId, clientId, statementId]
-    );
-
-    log.info('Deleted override', { action: 'delete_override', clientId, statementId });
-    return c.json({ success: true });
-  } catch (error) {
-    log.error('Failed to delete override', { action: 'delete_override' }, error as Error);
-    return c.json({ error: 'server_error', error_description: 'Failed to delete override' }, 500);
   }
 }
 
