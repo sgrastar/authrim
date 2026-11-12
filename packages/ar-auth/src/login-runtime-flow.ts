@@ -4141,6 +4141,8 @@ export async function recordFlowStatementConsents(input: {
   decisions: Record<string, RuntimeConsentItemDecision>;
   /** When the answers were given, if earlier than now (consent held until someone signed in). */
   givenAtMs?: number;
+  /** Given before anyone had signed in: who was answering was not known then. */
+  heldBeforeSignIn?: boolean;
   ipAddress?: string;
   ipHash?: string;
   userAgent?: string;
@@ -4151,17 +4153,22 @@ export async function recordFlowStatementConsents(input: {
   const decisions: Record<string, 'granted' | 'denied'> = {};
   const targets: Record<string, { version_id: string; version: string }> = {};
   for (const item of input.policy.items) {
+    const decision = input.decisions[item.statement_id]?.decision;
     if (input.givenAtMs !== undefined) {
-      // Answered again since (a later step): the later answer stands.
       const current = await readStatementConsentRecord(
         account,
         input.tenantId,
         input.userId,
         item.statement_id
       );
+      // Answered again since (a later step): the later answer stands.
       if (current && current.updated_at > input.givenAtMs) continue;
+      // Answered before anyone knew who was answering, a box left unticked did not show the
+      // person's own agreement: it does not withdraw it.
+      if (input.heldBeforeSignIn && decision !== 'accepted' && current?.status === 'granted') {
+        continue;
+      }
     }
-    const decision = input.decisions[item.statement_id]?.decision;
     decisions[item.statement_id] = decision === 'accepted' ? 'granted' : 'denied';
     targets[item.statement_id] = { version_id: item.version_id, version: item.version };
   }
@@ -4902,6 +4909,8 @@ async function recordRuntimeConsent(input: {
   userId: string;
   /** The submit's claim on the interaction (claimRuntimeSubmit). */
   claimId: string;
+  /** Consent held from before sign-in, recorded now (see recordFlowStatementConsents). */
+  heldBeforeSignIn?: boolean;
 }): Promise<{ ok: true } | { ok: false; response: Response }> {
   if (!(await claimInteractionUser(input.db, input.tenantId, input.interaction, input.userId))) {
     return {
@@ -4929,6 +4938,7 @@ async function recordRuntimeConsent(input: {
         : {}),
       userId: input.userId,
       decisions: input.consent.decisions,
+      ...(input.heldBeforeSignIn ? { heldBeforeSignIn: true } : {}),
       ipAddress,
       ipHash,
       userAgent,
@@ -5190,6 +5200,7 @@ async function recordHeldRuntimeConsent(input: {
       consent: { ...held, policy: heldOwn },
       userId: input.session.userId,
       claimId: input.claimId,
+      heldBeforeSignIn: true,
     });
     if (!recorded.ok) return { response: recorded.response };
     // Over the state read, only under the submit's claim (nothing else writes the row then).

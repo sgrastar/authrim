@@ -7798,4 +7798,42 @@ describe('consent held from before sign-in, recorded later', () => {
     });
     expect(mocks.statementFake.record('user_1', 'statement_news')?.status).toBe('granted');
   });
+
+  it('does not withdraw an agreement for a box left unticked before sign-in', async () => {
+    mocks.statementFake.answer('user_1', 'statement_news', {
+      status: 'granted',
+      updated_at: Date.now() - 120_000,
+    });
+    await recordFlowStatementConsents({
+      c: createContext({}) as never,
+      db: mocks.coreAdapter,
+      tenantId: 'default',
+      interaction: interaction as never,
+      policy,
+      userId: 'user_1',
+      decisions: { statement_news: { decision: 'rejected', selectedValue: null } },
+      givenAtMs: Date.now() - 60_000,
+      heldBeforeSignIn: true,
+    });
+    expect(mocks.statementFake.writes).toEqual([]);
+    expect(mocks.statementFake.record('user_1', 'statement_news')?.status).toBe('granted');
+  });
+
+  it('records a refusal by someone signed in as a withdrawal', async () => {
+    mocks.statementFake.answer('user_1', 'statement_news', {
+      status: 'granted',
+      updated_at: Date.now() - 120_000,
+    });
+    await recordFlowStatementConsents({
+      c: createContext({}) as never,
+      db: mocks.coreAdapter,
+      tenantId: 'default',
+      interaction: interaction as never,
+      policy,
+      userId: 'user_1',
+      decisions: { statement_news: { decision: 'rejected', selectedValue: null } },
+      givenAtMs: Date.now() - 60_000,
+    });
+    expect(mocks.statementFake.record('user_1', 'statement_news')?.status).not.toBe('granted');
+  });
 });
