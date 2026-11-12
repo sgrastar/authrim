@@ -88,7 +88,7 @@ describe('split page shell', () => {
 
 	it('keeps the language controls inside the shared main shell', () => {
 		const shell = source('lib/components/AuthPageShell.svelte');
-		const mainStart = shell.indexOf('<div class="auth-main">');
+		const mainStart = shell.indexOf('<main class="auth-main">');
 		const externalTopbar = shell.indexOf(
 			"loginUIPageStore.topbarPosition !== 'in_card'",
 			mainStart
@@ -134,7 +134,7 @@ describe('split page shell', () => {
 		expect(logoutComplete).not.toContain('<LanguageSwitcher');
 
 		expect(shell).toContain('class:auth-page--has-footer={loginUIPageStore.footerEnabled}');
-		expect(shell).toContain('<div class="auth-main">');
+		expect(shell).toContain('<main class="auth-main">');
 		expect(shell).toContain('<aside class="auth-brand-panel"');
 		expect(shell).toContain("loginUIPageStore.topbarPosition !== 'in_card'");
 		expect(shell).toContain("loginUIPageStore.topbarPosition === 'in_card'");
