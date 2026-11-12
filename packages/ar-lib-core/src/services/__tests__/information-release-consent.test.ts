@@ -208,6 +208,29 @@ describe('the decision as the account page shows it', () => {
     ).toEqual({ basis: 'not_asked', approved: [], declined: [], decidedAt: 5 });
   });
 
+  it("shows the service's current policy over the record, with PostgreSQL's string times", () => {
+    expect(
+      accountInformationRelease(
+        row({ release_current_basis: 'trust', release_decided_at: '1777200000000' })
+      )
+    ).toEqual({ basis: 'trust', approved: [], declined: [], decidedAt: 1777200000000 });
+    expect(
+      accountInformationRelease(
+        row({ release_current_basis: 'not_asked', release_decided_at: null, granted_at: '42' })
+      )
+    ).toEqual({ basis: 'not_asked', approved: [], declined: [], decidedAt: 42 });
+    expect(accountInformationRelease(row({ release_decided_at: '5' }))?.decidedAt).toBe(5);
+  });
+
+  it("drops a policy's earlier decision once the policy no longer decides", () => {
+    const trustRecord = row({ release_basis: 'trust', release_approved_json: '["*"]' });
+    expect(
+      accountInformationRelease({ ...trustRecord, release_current_basis: null })
+    ).toBeUndefined();
+    // The person's own decision still counts.
+    expect(accountInformationRelease(row({ release_current_basis: null }))?.basis).toBe('user');
+  });
+
   it('is absent when nothing was decided or the record cannot be read', () => {
     expect(accountInformationRelease(row({ release_decided_at: null }))).toBeUndefined();
     expect(accountInformationRelease(row({ release_basis: 'other' }))).toBeUndefined();

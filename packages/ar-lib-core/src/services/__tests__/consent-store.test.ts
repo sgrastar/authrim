@@ -345,7 +345,13 @@ describe('listOAuthClientConsentsWithClients', () => {
         params: ['tenant-a', 'user-1'],
       },
     ]);
-    expect(tenantMetadata.calls).toHaveLength(2);
+    // Per chunk: the clients and their trust policies; once: the tenant's sign-in confirmation.
+    const callsTo = (table: string) =>
+      tenantMetadata.calls.filter((call) => call.sql.includes(`FROM ${table}`));
+    expect(callsTo('oauth_clients')).toHaveLength(2);
+    expect(callsTo('client_trust_policies')).toHaveLength(2);
+    expect(callsTo('sign_in_confirmation_policies')).toHaveLength(1);
+    expect(tenantMetadata.calls).toHaveLength(5);
     expect(tenantMetadata.calls.every((call) => call.params.length <= 91)).toBe(true);
     expect(tenantMetadata.calls.some((call) => call.sql.includes('oauth_client_consents'))).toBe(
       false
@@ -353,5 +359,7 @@ describe('listOAuthClientConsentsWithClients', () => {
     expect(rows).toHaveLength(95);
     expect(rows[0]).toMatchObject({ id: 'consent-0', client_name: 'Name client-0' });
     expect(rows[94]).toMatchObject({ id: 'consent-94', client_name: null, logo_uri: null });
+    // No trust policy, the default setting (asks): the person's decision counts.
+    expect(rows[0].release_current_basis).toBeNull();
   });
 });

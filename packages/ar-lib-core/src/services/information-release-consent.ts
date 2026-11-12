@@ -215,7 +215,7 @@ export function readReleaseConsentRecord(row: {
   release_declined_json?: string | null;
   release_mode?: string | null;
   release_basis?: string | null;
-  release_decided_at?: number | null;
+  release_decided_at?: number | string | null;
 }): ReleaseConsentRecord | null {
   if (row.release_decided_at === null || row.release_decided_at === undefined) return null;
   const mode = ASK_VALUES.includes(row.release_mode as InformationReleaseAsk)
@@ -245,8 +245,28 @@ export function accountInformationRelease(row: {
   release_approved_json?: string | null;
   release_declined_json?: string | null;
   release_basis?: string | null;
-  release_decided_at?: number | null;
+  release_decided_at?: number | string | null;
+  /**
+   * How the service is approved today without asking, which then wins over the record; null: it
+   * is not (the person's own decision counts); undefined: not known to the caller.
+   */
+  release_current_basis?: Exclude<ReleaseApprovalBasis, 'user'> | null;
+  /** When the consent was granted: the time shown for a decision made by the service's policy. */
+  granted_at?: number | string | null;
 }): AccountInformationRelease | undefined {
+  // Times come back as numbers from D1 and as strings from PostgreSQL (BIGINT).
+  const time = (value: number | string | null | undefined): number | null => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  };
+  // The page says what a new authorization gets: a trusted service, or one that does not ask, is
+  // approved by its policy now, whatever the person chose before.
+  if (row.release_current_basis) {
+    const decidedAt = time(row.release_decided_at) ?? time(row.granted_at);
+    if (decidedAt === null) return undefined;
+    return { basis: row.release_current_basis, approved: [], declined: [], decidedAt };
+  }
   const record = readReleaseConsentRecord(row);
   if (!record || !record.basis || !Number.isSafeInteger(record.decidedAt)) return undefined;
   const isMarker = (name: string) =>
@@ -265,6 +285,9 @@ export function accountInformationRelease(row: {
     }
   };
   if (record.basis !== 'user') {
+    // A decision the service's policy made no longer holds once the policy stopped deciding: the
+    // next authorization asks the person.
+    if (row.release_current_basis === null) return undefined;
     return {
       basis: record.basis,
       approved: [],

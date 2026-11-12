@@ -1,5 +1,10 @@
 import type { DatabaseAdapter, PreparedStatement } from '../db/adapter';
 import type { InformationReleaseAsk, ReleaseApprovalBasis } from './information-release-consent';
+import {
+  automaticReleaseApproval,
+  readInformationReleaseConsentSetting,
+} from './information-release-consent';
+import { resolveSignInConfirmationPolicy } from '../utils/consent-statements';
 
 /** The information release decision written with the scope consent (claim names only). */
 export interface OAuthClientReleaseDecision {
@@ -341,6 +346,11 @@ export interface OAuthClientConsentListRow {
   release_declined_json: string | null;
   release_basis: string | null;
   release_decided_at: number | null;
+  /**
+   * How a new authorization of this client is approved today without asking (trusted, or a
+   * setting that does not ask), whatever the record says; null when the person's decision counts.
+   */
+  release_current_basis: Exclude<ReleaseApprovalBasis, 'user'> | null;
   client_name: string | null;
   logo_uri: string | null;
 }
@@ -361,7 +371,7 @@ export async function listOAuthClientConsentsWithClients(input: {
   userId: string;
 }): Promise<OAuthClientConsentListRow[]> {
   const consents = await input.accountCore.query<
-    Omit<OAuthClientConsentListRow, 'client_name' | 'logo_uri'>
+    Omit<OAuthClientConsentListRow, 'client_name' | 'logo_uri' | 'release_current_basis'>
   >(
     `SELECT id, client_id, scope, selected_scopes, granted_at, expires_at,
             privacy_policy_version, tos_version, consent_version,
@@ -372,26 +382,57 @@ export async function listOAuthClientConsentsWithClients(input: {
     [input.tenantId, input.userId]
   );
   const clientIds = [...new Set(consents.map((row) => row.client_id))];
-  const clients = new Map<string, { client_name: string | null; logo_uri: string | null }>();
+  const clients = new Map<
+    string,
+    { client_name: string | null; logo_uri: string | null; information_release_consent: unknown }
+  >();
+  const trusted = new Set<string>();
   for (let offset = 0; offset < clientIds.length; offset += CLIENT_LOOKUP_CHUNK_SIZE) {
     const chunk = clientIds.slice(offset, offset + CLIENT_LOOKUP_CHUNK_SIZE);
-    const rows = await input.tenantMetadata.query<{
-      client_id: string;
-      client_name: string | null;
-      logo_uri: string | null;
-    }>(
-      `SELECT client_id, client_name, logo_uri
-         FROM oauth_clients
-        WHERE tenant_id = ? AND client_id IN (${chunk.map(() => '?').join(', ')})`,
-      [input.tenantId, ...chunk]
-    );
-    for (const row of rows) {
-      clients.set(row.client_id, { client_name: row.client_name, logo_uri: row.logo_uri });
-    }
+    const placeholders = chunk.map(() => '?').join(', ');
+    const [rows, trustRows] = await Promise.all([
+      input.tenantMetadata.query<{
+        client_id: string;
+        client_name: string | null;
+        logo_uri: string | null;
+        information_release_consent: unknown;
+      }>(
+        `SELECT client_id, client_name, logo_uri, information_release_consent
+           FROM oauth_clients
+          WHERE tenant_id = ? AND client_id IN (${placeholders})`,
+        [input.tenantId, ...chunk]
+      ),
+      // The same trust /authorize applies (an active policy that skips the consent screen).
+      input.tenantMetadata.query<{ target_id: string }>(
+        `SELECT target_id
+           FROM client_trust_policies
+          WHERE tenant_id = ? AND is_active = 1 AND target_type = 'oidc_client'
+            AND (trusted = 1 OR skip_authorization_consent = 1)
+            AND target_id IN (${placeholders})`,
+        [input.tenantId, ...chunk]
+      ),
+    ]);
+    for (const row of rows) clients.set(row.client_id, row);
+    for (const row of trustRows) trusted.add(row.target_id);
   }
-  return consents.map((row) => ({
-    ...row,
-    client_name: clients.get(row.client_id)?.client_name ?? null,
-    logo_uri: clients.get(row.client_id)?.logo_uri ?? null,
-  }));
+  // A sign-in confirmation asked every time puts every client through the consent screen.
+  const confirmEveryTime =
+    clientIds.length > 0 &&
+    (await resolveSignInConfirmationPolicy(input.tenantMetadata, input.tenantId))?.mode ===
+      'every_time';
+  return consents.map((row) => {
+    const client = clients.get(row.client_id);
+    const automatic = client
+      ? automaticReleaseApproval(
+          readInformationReleaseConsentSetting(client.information_release_consent),
+          trusted.has(row.client_id) && !confirmEveryTime
+        )
+      : null;
+    return {
+      ...row,
+      release_current_basis: automatic?.basis ?? null,
+      client_name: client?.client_name ?? null,
+      logo_uri: client?.logo_uri ?? null,
+    };
+  });
 }
