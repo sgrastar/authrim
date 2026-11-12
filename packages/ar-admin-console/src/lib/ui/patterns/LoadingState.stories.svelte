@@ -11,7 +11,7 @@
 			docs: {
 				description: {
 					component:
-						'Placeholder while data loads. The label is announced; the spinner is decorative.'
+						'Placeholder while data loads. The label is announced; the spinner is decorative. `text` adds a visible line above (`textPosition="top"`) or below (default) the spinner, and is announced as well.'
 				}
 			}
 		}
@@ -20,4 +20,16 @@
 
 <Story name="Default">
 	{#snippet template()}<LoadingState label={sample('loading')} />{/snippet}
+</Story>
+
+<Story name="With text below">
+	{#snippet template()}
+		<LoadingState label={sample('loading')} text={sample('loadingDetail')} />
+	{/snippet}
+</Story>
+
+<Story name="With text above">
+	{#snippet template()}
+		<LoadingState label={sample('loading')} text={sample('loadingDetail')} textPosition="top" />
+	{/snippet}
 </Story>
