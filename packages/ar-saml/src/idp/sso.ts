@@ -1186,7 +1186,7 @@ async function parseStoredAuthnRequest(
   const presentedNonce = url.searchParams.get('saml_login_nonce') ?? '';
   const storedRequest = await consumeStoredAuthnRequest(c.env, tenantId, requestId, spEntityId);
   const held = storedRequest.context?.loginNonceHash;
-  const keptHash = !c.env.SAML_RUNTIME_PORTS && typeof held === 'string' && held ? held : null;
+  const keptHash = typeof held === 'string' && held ? held : null;
   const matched =
     keptHash !== null &&
     isSAMLLoginNonce(presentedNonce) &&

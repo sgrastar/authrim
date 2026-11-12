@@ -127,6 +127,18 @@ describe('AWS trusted runtime ingress', () => {
     expect(configured.assertReady).not.toHaveBeenCalled();
   });
 
+  it('lets the SAML sign-in cancel through to the IdP, past the readiness check', async () => {
+    const configured = tenant();
+    const { app } = createAwsSamlRuntime({ tenants: [configured] });
+    const response = await app.request(
+      'https://a.example.test/saml/idp/login-cancel?interaction_id=i&token=t'
+    );
+    // Past the route gate (outside API Gateway it stops at the ingress check, not a 404).
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'untrusted_ingress' });
+    expect(configured.assertReady).toHaveBeenCalled();
+  });
+
   it('ignores forwarded host headers for tenant selection', async () => {
     const { app } = createAwsSamlRuntime({ tenants: [tenant()] });
     expect(

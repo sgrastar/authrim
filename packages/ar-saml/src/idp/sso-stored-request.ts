@@ -77,19 +77,17 @@ export async function consumeStoredAuthnRequest(
   spEntityId: string,
   /**
    * Use the request up only if it holds this login nonce hash (a login cancel); any other is left
-   * as it is, not consumed. Not supported by an imported runtime's request port, which refuses.
+   * as it is, not consumed.
    */
   options: { loginNonceHash?: string } = {}
 ): Promise<SAMLRequestData> {
   let storedRequest: SAMLRequestData | null;
-  if (options.loginNonceHash !== undefined && env.SAML_RUNTIME_PORTS) {
-    throw new Error('Conditional consume of a stored SAML request is not supported here');
-  }
   if (env.SAML_RUNTIME_PORTS) {
     storedRequest = await env.SAML_RUNTIME_PORTS.requests.consume({
       tenantId,
       spEntityId,
       requestId,
+      ...(options.loginNonceHash !== undefined ? { loginNonceHash: options.loginNonceHash } : {}),
     });
   } else {
     const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(

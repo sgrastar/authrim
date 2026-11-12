@@ -88,6 +88,7 @@ function challengeRecord(row: TransientChallenge): Challenge {
     ...(row.email !== undefined ? { email: row.email } : {}),
     ...(row.redirectUri !== undefined ? { redirectUri: row.redirectUri } : {}),
     ...(row.metadata !== undefined ? { metadata: row.metadata } : {}),
+    ...(row.consumedBy !== undefined ? { consumedBy: row.consumedBy } : {}),
   };
 }
 
@@ -190,7 +191,12 @@ export function createAuthRuntimePorts(input: CreateAuthRuntimePortsInput): Auth
           },
           async getChallengeRpc(id) {
             const row = await input.state.getChallenge({ tenantId, id });
-            return row ? challengeRecord(row) : null;
+            if (row) return challengeRecord(row);
+            // A consumed challenge is read back only when it was consumed with an operation id,
+            // so that operation can recognise its own consume (a login cancel whose answer was
+            // lost). Any other consumed challenge stays unreadable, as before.
+            const consumed = await input.state.getConsumedChallenge({ tenantId, id });
+            return consumed ? { ...challengeRecord(consumed), consumed: true } : null;
           },
         };
       },

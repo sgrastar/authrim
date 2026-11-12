@@ -60,13 +60,6 @@ describe('when cancelling a sign-in is offered', () => {
         target: { ...saml, samlLoginNonceHash: null },
       })
     ).toBe(false);
-    expect(
-      runtimeCancelAvailable({
-        runtime,
-        state: 'active',
-        target: { ...saml, samlRequestPorts: true },
-      })
-    ).toBe(false);
     // An OIDC request needs no nonce.
     expect(runtimeCancelAvailable({ runtime, state: 'active', target: oidc })).toBe(true);
   });

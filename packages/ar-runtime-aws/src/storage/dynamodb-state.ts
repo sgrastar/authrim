@@ -313,7 +313,9 @@ export class DynamoStateTable {
     key: Item,
     extraCondition = '',
     extra: Item = {},
-    requireLive = true
+    requireLive = true,
+    /** More `name = :value` assignments made in the same write (their values go in `extra`). */
+    extraSet = ''
   ): Promise<Item | null> {
     const now = this.now();
     try {
@@ -321,7 +323,7 @@ export class DynamoStateTable {
         new UpdateItemCommand({
           TableName: this.tableName,
           Key: key,
-          UpdateExpression: 'SET consumedAtMs = :now',
+          UpdateExpression: `SET consumedAtMs = :now${extraSet}`,
           ConditionExpression: `attribute_exists(pk) AND attribute_not_exists(consumedAtMs)${requireLive ? ' AND expiresAtMs > :now' : ''}${extraCondition}`,
           ExpressionAttributeValues: { ':now': N(now), ...extra },
           ReturnValues: 'ALL_OLD',
@@ -629,19 +631,39 @@ export class DynamoTransientStateStore implements TransientStateStore {
   async consumeChallenge(input: ConsumeChallengeInput): Promise<TransientChallenge | null> {
     identifier(input.type, 'challenge type', 128);
     if (input.challenge !== undefined) identifier(input.challenge, 'challenge value', 4096);
+    if (input.operationId !== undefined)
+      identifier(input.operationId, 'challenge operation ID', 256);
+    // The operation id is kept on the consumed item in the same write (see getConsumedChallenge).
     const item = await this.table.consume(
       this.key(input.tenantId, 'CHALLENGE', input.id),
       ` AND challengeType = :type${input.challenge === undefined ? '' : ' AND challengeHash = :hash'}`,
       {
         ':type': S(input.type),
         ...(input.challenge === undefined ? {} : { ':hash': S(hash(input.challenge)) }),
-      }
+        ...(input.operationId === undefined ? {} : { ':operation': S(input.operationId) }),
+      },
+      true,
+      input.operationId === undefined ? '' : ', consumedBy = :operation'
     );
     return item ? this.challenge(item, input.tenantId, input.id) : null;
   }
   async getChallenge(input: { tenantId: string; id: string }): Promise<TransientChallenge | null> {
     const item = await this.table.get(this.key(input.tenantId, 'CHALLENGE', input.id));
     return this.table.live(item) ? this.challenge(item, input.tenantId, input.id) : null;
+  }
+  async getConsumedChallenge(input: {
+    tenantId: string;
+    id: string;
+  }): Promise<TransientChallenge | null> {
+    const item = await this.table.get(this.key(input.tenantId, 'CHALLENGE', input.id));
+    if (
+      !item?.consumedAtMs ||
+      number(item, 'expiresAtMs') <= this.table.now() ||
+      typeof item.consumedBy?.S !== 'string' ||
+      !item.consumedBy.S
+    )
+      return null;
+    return { ...this.challenge(item, input.tenantId, input.id), consumedBy: item.consumedBy.S };
   }
   async isChallengeClaimHeld(input: {
     tenantId: string;
@@ -722,10 +744,26 @@ export class DynamoTransientStateStore implements TransientStateStore {
   }
   async consumeSamlRequest(input: ConsumeSamlRequestInput): Promise<SAMLRequestData | null> {
     identifier(input.spEntityId, 'SP entity ID', 4096);
+    const key = this.key(input.tenantId, 'SAML', input.requestId);
+    let exact: Item = {};
+    if (input.loginNonceHash !== undefined) {
+      identifier(input.loginNonceHash, 'SAML login nonce hash', 256);
+      // Only a request stored with this login nonce hash (a cancel). The hash is inside the
+      // stored JSON, so the item is read and consumed only if it is still exactly what was read.
+      const current = await this.table.get(key);
+      if (!this.table.live(current)) return null;
+      const context = object(payload(current).request).context;
+      const held =
+        context && typeof context === 'object' && !Array.isArray(context)
+          ? (context as Record<string, unknown>).loginNonceHash
+          : undefined;
+      if (typeof held !== 'string' || held !== input.loginNonceHash) return null;
+      exact = { ':exact': S(text(current, 'payloadJson')) };
+    }
     const item = await this.table.consume(
-      this.key(input.tenantId, 'SAML', input.requestId),
-      ' AND spHash = :sp',
-      { ':sp': S(hash(input.spEntityId)) }
+      key,
+      ` AND spHash = :sp${input.loginNonceHash === undefined ? '' : ' AND payloadJson = :exact'}`,
+      { ':sp': S(hash(input.spEntityId)), ...exact }
     );
     if (!item) return null;
     const p = payload(item);

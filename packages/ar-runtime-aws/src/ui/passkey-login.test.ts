@@ -101,6 +101,16 @@ describe('AWS SAML passkey Flow admission', () => {
     expect(() => assertPasskeyOnlySamlRuntimeProfile(consent)).toThrow(
       'aws_login_flow_profile_unsupported'
     );
+    for (const onCancel of ['stay', 'error']) {
+      const cancellable = structuredClone(runtime) as { ui: { steps: Record<string, unknown>[] } };
+      cancellable.ui.steps[1].config = { output_handles: ['passkey'], on_cancel: onCancel };
+      expect(() => assertPasskeyOnlySamlRuntimeProfile(cancellable)).not.toThrow();
+    }
+    const badCancel = structuredClone(runtime) as { ui: { steps: Record<string, unknown>[] } };
+    badCancel.ui.steps[1].config = { output_handles: ['passkey'], on_cancel: 'redirect' };
+    expect(() => assertPasskeyOnlySamlRuntimeProfile(badCancel)).toThrow(
+      'aws_login_flow_profile_unsupported'
+    );
     const customScreen = structuredClone(runtime) as { ui: { steps: Record<string, unknown>[] } };
     customScreen.ui.steps[1].config = { output_handles: ['passkey'], screen_ref: 'custom' };
     expect(() => assertPasskeyOnlySamlRuntimeProfile(customScreen)).toThrow(
@@ -246,6 +256,11 @@ describe('AWS same-origin SAML sign-in page', () => {
       },
     };
     const status = { textContent: '' };
+    const cancel = {
+      hidden: true,
+      disabled: false,
+      addEventListener: vi.fn(),
+    };
     const assertion = {
       id: 'credential-1',
       rawId: Uint8Array.from([1, 2, 3]).buffer,
@@ -310,7 +325,8 @@ describe('AWS same-origin SAML sign-in page', () => {
     ];
     runInNewContext(script, {
       document: {
-        getElementById: (id: string) => (id === 'sign-in' ? button : status),
+        getElementById: (id: string) =>
+          id === 'sign-in' ? button : id === 'cancel' ? cancel : status,
         documentElement: { dataset: { clientId: 'login-ui' } },
       },
       location: {
@@ -337,6 +353,8 @@ describe('AWS same-origin SAML sign-in page', () => {
       }),
     });
     await vi.waitFor(() => expect(button.disabled).toBe(false));
+    // Not offered: the interaction does not say a cancel would be accepted.
+    expect(cancel.hidden).toBe(true);
     await button.onClick?.();
     expect(requests.map((request) => request.path)).toEqual([
       '/api/v1/login/interactions/start',
@@ -357,6 +375,114 @@ describe('AWS same-origin SAML sign-in page', () => {
     });
     expect(redirects).toEqual([
       'https://login.example.test/saml/idp/sso?saml_request_id=request-1&saml_sp_entity_id=https%3A%2F%2Fsp.example.test&return_to=saml_sso',
+    ]);
+  });
+  it('rejects a login nonce that does not have the nonce form', () => {
+    expect(renderAwsPasskeyLoginPage(new Request(`${valid}&saml_login_nonce=short`)).status).toBe(
+      400
+    );
+    expect(
+      renderAwsPasskeyLoginPage(new Request(`${valid}&saml_login_nonce=${'n'.repeat(43)}`)).status
+    ).toBe(200);
+  });
+
+  it('starts with the login nonce, offers a cancel when available, and follows only the IdP cancel path', async () => {
+    const nonce = 'n'.repeat(43);
+    const withNonce = `${valid}&saml_login_nonce=${nonce}`;
+    const html = await renderAwsPasskeyLoginPage(new Request(withNonce)).text();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
+    if (!script) throw new Error('script_missing');
+    expect(html).toContain('id="cancel"');
+    const element = () => ({
+      hidden: true,
+      disabled: true,
+      onClick: null as null | (() => Promise<void>),
+      addEventListener(_event: string, handler: () => Promise<void>) {
+        this.onClick = handler;
+      },
+    });
+    const button = element();
+    const cancel = element();
+    const status = { textContent: '' };
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const redirects: string[] = [];
+    const started = {
+      interaction: {
+        id: 'interaction-1',
+        state: 'active',
+        current_step_id: 'auth:step',
+        cancel_available: true,
+      },
+      contract: {
+        flow_kind: 'login',
+        ui: {
+          steps: [
+            {
+              id: 'auth:step',
+              source_node_id: 'auth',
+              component: 'authentication_method_selector',
+              render: true,
+              config: { output_handles: ['passkey'], on_cancel: 'error' },
+            },
+            { id: 'complete:step', source_node_id: 'complete', component: 'completion' },
+          ],
+        },
+      },
+      contract_hash: 'hash-1',
+      signature: 'signature-1',
+    };
+    const responses: unknown[] = [
+      started,
+      // Another origin or another path is not followed.
+      { redirect_url: 'https://elsewhere.example.test/saml/idp/login-cancel?token=t' },
+      { redirect_url: '/saml/idp/login-cancel?interaction_id=interaction-1&token=t' },
+    ];
+    runInNewContext(script, {
+      document: {
+        getElementById: (id: string) =>
+          id === 'sign-in' ? button : id === 'cancel' ? cancel : status,
+        documentElement: { dataset: { clientId: 'login-ui' } },
+      },
+      location: {
+        search: new URL(withNonce).search,
+        pathname: '/login',
+        origin: 'https://login.example.test',
+        assign: (destination: string) => redirects.push(destination),
+      },
+      navigator: { credentials: { get: vi.fn() } },
+      crypto: webcrypto,
+      TextEncoder,
+      URL,
+      URLSearchParams,
+      Uint8Array,
+      btoa,
+      atob,
+      fetch: vi.fn(async (path: string, init: RequestInit) => {
+        requests.push({ path, body: JSON.parse(init.body as string) as Record<string, unknown> });
+        return Response.json(responses.shift());
+      }),
+    });
+    await vi.waitFor(() => expect(button.disabled).toBe(false));
+    expect(requests[0].body.saml_login_nonce).toBe(nonce);
+    expect(cancel.hidden).toBe(false);
+
+    await cancel.onClick?.();
+    expect(redirects).toEqual([]);
+    expect(cancel.hidden).toBe(false);
+    expect(button.disabled).toBe(false);
+
+    await cancel.onClick?.();
+    expect(requests[2]).toEqual({
+      path: '/api/v1/login/interactions/interaction-1/cancel',
+      body: {
+        contract_hash: 'hash-1',
+        signature: 'signature-1',
+        step_id: 'auth:step',
+        node_id: 'auth',
+      },
+    });
+    expect(redirects).toEqual([
+      'https://login.example.test/saml/idp/login-cancel?interaction_id=interaction-1&token=t',
     ]);
   });
 });

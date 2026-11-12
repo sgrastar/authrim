@@ -16,6 +16,7 @@ function stores() {
     claimChallenge: vi.fn().mockResolvedValue(true),
     consumeChallenge: vi.fn(),
     getChallenge: vi.fn(),
+    getConsumedChallenge: vi.fn().mockResolvedValue(null),
     deleteChallenge: vi.fn().mockResolvedValue(true),
     isChallengeClaimHeld: vi.fn().mockResolvedValue(true),
     createSession: vi.fn(),
@@ -132,6 +133,45 @@ describe('AWS authentication runtime ports', () => {
     await expect(rpc.consumeChallengeRpc(request)).rejects.toThrow(
       'Challenge not found or already consumed'
     );
+  });
+
+  it('passes the operation id on a consume and reads back only its own consume', async () => {
+    const { state, ports } = stores();
+    const rpc = ports.challenges.forIdentity({
+      tenantId: 'tenant-a',
+      kind: 'challenge',
+      key: 'challenge-a',
+    });
+    state.consumeChallenge.mockResolvedValueOnce(challenge());
+    await rpc.consumeChallengeRpc({
+      id: 'login-a',
+      tenantId: 'tenant-a',
+      type: 'login',
+      challenge: 'login-a',
+      operationId: 'op-1',
+    });
+    expect(state.consumeChallenge).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: 'op-1' })
+    );
+
+    // Live: as before.
+    state.getChallenge.mockResolvedValueOnce(challenge());
+    await expect(rpc.getChallengeRpc('login-a')).resolves.toMatchObject({ consumed: false });
+    expect(state.getConsumedChallenge).not.toHaveBeenCalled();
+    // Consumed with an operation id: read back as consumed, with who consumed it.
+    state.getChallenge.mockResolvedValueOnce(null);
+    state.getConsumedChallenge.mockResolvedValueOnce({ ...challenge(), consumedBy: 'op-1' });
+    await expect(rpc.getChallengeRpc('login-a')).resolves.toMatchObject({
+      consumed: true,
+      consumedBy: 'op-1',
+    });
+    expect(state.getConsumedChallenge).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      id: 'login-a',
+    });
+    // Anything else consumed or gone: null, as before.
+    state.getChallenge.mockResolvedValueOnce(null);
+    await expect(rpc.getChallengeRpc('login-a')).resolves.toBeNull();
   });
 
   it('fails closed if a live challenge ID was already stored', async () => {

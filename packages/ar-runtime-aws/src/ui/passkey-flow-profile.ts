@@ -88,7 +88,11 @@ export function assertPasskeyOnlySamlRuntimeProfile(value: unknown): void {
   const handles = authConfig?.output_handles;
   if (
     !authConfig ||
-    Object.keys(authConfig).some((key) => key !== 'output_handles') ||
+    Object.keys(authConfig).some((key) => key !== 'output_handles' && key !== 'on_cancel') ||
+    // "Back to the app" (the embedded page offers it when the interaction says it is available).
+    (authConfig.on_cancel !== undefined &&
+      authConfig.on_cancel !== 'stay' &&
+      authConfig.on_cancel !== 'error') ||
     !Array.isArray(handles) ||
     handles.length !== 1 ||
     handles[0] !== 'passkey'

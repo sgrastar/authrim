@@ -10,17 +10,27 @@ const LOGIN_SCRIPT = String.raw`
 (() => {
   'use strict';
   const button = document.getElementById('sign-in');
+  const cancel = document.getElementById('cancel');
   const status = document.getElementById('status');
   const search = new URLSearchParams(location.search);
   const requestId = search.get('saml_request_id');
   const spEntityId = search.get('saml_sp_entity_id');
   const challengeId = search.get('challenge_id');
+  // The nonce the IdP sent this browser to sign in with: only this browser can cancel the request.
+  const loginNonce = search.get('saml_login_nonce');
   let flow;
   let busy = false;
 
   function fail(message) {
     status.textContent = message;
     button.disabled = true;
+    cancel.hidden = true;
+  }
+
+  // "Back to the app", offered only when the interaction says a cancel would be accepted.
+  function showCancel() {
+    cancel.hidden = !(flow && flow.interaction && flow.interaction.cancel_available === true);
+    cancel.disabled = busy;
   }
 
   function base64url(bytes) {
@@ -69,7 +79,7 @@ const LOGIN_SCRIPT = String.raw`
     if (auth.component !== 'authentication_method_selector' || auth.render !== true ||
       !auth.config || !Array.isArray(auth.config.output_handles) ||
       auth.config.output_handles.length !== 1 || auth.config.output_handles[0] !== 'passkey' ||
-      Object.keys(auth.config).some((key) => key !== 'output_handles') ||
+      Object.keys(auth.config).some((key) => key !== 'output_handles' && key !== 'on_cancel') ||
       (auth.content && (Object.keys(auth.content).length !== 1 || !profile ||
         Object.keys(profile).some((key) => key !== 'id' && key !== 'output_handles') ||
         typeof profile.id !== 'string' || !Array.isArray(profile.output_handles) ||
@@ -149,19 +159,51 @@ const LOGIN_SCRIPT = String.raw`
         saml_sp_entity_id: spEntityId,
         return_to: 'saml_sso',
         authorization_challenge_id: challengeId || undefined,
+        saml_login_nonce: loginNonce || undefined,
       });
       validateFlow(flow);
       button.disabled = false;
+      showCancel();
       status.textContent = 'Use a passkey to sign in.';
     } catch {
       fail('Sign-in is temporarily unavailable. Return to your application and try again.');
     }
   }
 
+  cancel.addEventListener('click', async () => {
+    if (busy || !flow) return;
+    busy = true;
+    button.disabled = true;
+    cancel.disabled = true;
+    status.textContent = 'Returning to your application…';
+    try {
+      const authStep = validateFlow(flow);
+      const result = await post('/api/v1/login/interactions/' + encodeURIComponent(flow.interaction.id) + '/cancel', {
+        contract_hash: flow.contract_hash,
+        signature: flow.signature,
+        step_id: authStep.id,
+        node_id: authStep.source_node_id,
+      });
+      // A SAML request is answered by this IdP itself: only its own cancel path is followed.
+      const target = result && typeof result.redirect_url === 'string'
+        ? new URL(result.redirect_url, location.origin) : null;
+      if (!target || target.origin !== location.origin || target.pathname !== '/saml/idp/login-cancel') {
+        throw new Error('invalid_cancel_response');
+      }
+      location.assign(target.toString());
+    } catch {
+      status.textContent = 'This sign-in could not be cancelled. Try again, or return to your application.';
+      button.disabled = false;
+      busy = false;
+      showCancel();
+    }
+  });
+
   button.addEventListener('click', async () => {
     if (busy || !flow) return;
     busy = true;
     button.disabled = true;
+    cancel.disabled = true;
     status.textContent = 'Waiting for your passkey…';
     try {
       const authStep = validateFlow(flow);
@@ -207,12 +249,15 @@ const LOGIN_SCRIPT = String.raw`
       resume.searchParams.set('saml_request_id', requestId);
       resume.searchParams.set('saml_sp_entity_id', spEntityId);
       resume.searchParams.set('return_to', 'saml_sso');
+      // Kept so that a request sent to sign in again still carries this browser's nonce.
+      if (loginNonce) resume.searchParams.set('saml_login_nonce', loginNonce);
       location.assign(resume.toString());
     } catch {
       status.textContent = 'Sign-in failed. Return to your application and try again.';
       button.disabled = false;
     } finally {
       busy = false;
+      if (flow) showCancel();
     }
   });
 
@@ -243,7 +288,9 @@ export function renderAwsPasskeyLoginPage(request: Request): Response {
   const requestId = url.searchParams.get('saml_request_id');
   const spEntityId = url.searchParams.get('saml_sp_entity_id');
   const challengeId = url.searchParams.get('challenge_id');
+  const loginNonce = url.searchParams.get('saml_login_nonce');
   if (
+    (loginNonce !== null && !/^[A-Za-z0-9_-]{32,128}$/u.test(loginNonce)) ||
     !requestId ||
     requestId.length > 512 ||
     !spEntityId ||
@@ -261,9 +308,9 @@ export function renderAwsPasskeyLoginPage(request: Request): Response {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Authrim</title>
-<style>body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#162133;margin:0;min-height:100vh;display:grid;place-items:center}main{background:#fff;border:1px solid #dce2e9;border-radius:16px;padding:2.5rem;max-width:28rem;width:calc(100% - 3rem);box-shadow:0 12px 36px #14213d12}h1{font-size:1.5rem;margin:0 0 .75rem}p{line-height:1.5;color:#526174}button{background:#174783;color:#fff;border:0;border-radius:8px;padding:.9rem 1.2rem;font:inherit;font-weight:600;width:100%;cursor:pointer}button:disabled{opacity:.55;cursor:wait}button:focus-visible{outline:3px solid #ffb84c;outline-offset:3px}</style>
+<style>body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#162133;margin:0;min-height:100vh;display:grid;place-items:center}main{background:#fff;border:1px solid #dce2e9;border-radius:16px;padding:2.5rem;max-width:28rem;width:calc(100% - 3rem);box-shadow:0 12px 36px #14213d12}h1{font-size:1.5rem;margin:0 0 .75rem}p{line-height:1.5;color:#526174}button{background:#174783;color:#fff;border:0;border-radius:8px;padding:.9rem 1.2rem;font:inherit;font-weight:600;width:100%;cursor:pointer}button:disabled{opacity:.55;cursor:wait}button:focus-visible{outline:3px solid #ffb84c;outline-offset:3px}#cancel{background:transparent;color:#174783;border:1px solid #c6d0dc;margin-top:.75rem}[hidden]{display:none}</style>
 </head>
-<body><main><h1>Sign in</h1><p id="status" role="status" aria-live="polite">Preparing sign-in…</p><button id="sign-in" type="button" disabled>Sign in with passkey</button></main>
+<body><main><h1>Sign in</h1><p id="status" role="status" aria-live="polite">Preparing sign-in…</p><button id="sign-in" type="button" disabled>Sign in with passkey</button><button id="cancel" type="button" hidden>Back to the application</button></main>
 <script>${LOGIN_SCRIPT}</script></body></html>`;
   return new Response(html, {
     headers: {

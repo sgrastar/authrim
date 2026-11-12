@@ -38,6 +38,11 @@ export interface SAMLRuntimePorts {
       tenantId: string;
       spEntityId: string;
       requestId: string;
+      /**
+       * Consume only a request stored with this login nonce hash (`context.loginNonceHash`, a
+       * login cancel); any other is left as it is, not consumed, and null is returned.
+       */
+      loginNonceHash?: string;
     }): Promise<SAMLRequestData | null>;
   };
   sessions: {

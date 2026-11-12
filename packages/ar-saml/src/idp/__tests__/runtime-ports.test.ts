@@ -48,6 +48,30 @@ describe('alternate SAML IdP runtime ports', () => {
     ).rejects.toThrow('not found or already used');
   });
 
+  it('passes the login nonce hash to the request port for a conditional consume', async () => {
+    const consume = vi.fn(async () => null);
+    const env = { SAML_RUNTIME_PORTS: { requests: { consume } } } as unknown as Env;
+    await expect(
+      consumeStoredAuthnRequest(env, 'tenant-a', '_request-1', 'https://sp.example', {
+        loginNonceHash: 'a'.repeat(64),
+      })
+    ).rejects.toThrow('not found or already used');
+    expect(consume).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      spEntityId: 'https://sp.example',
+      requestId: '_request-1',
+      loginNonceHash: 'a'.repeat(64),
+    });
+    await expect(
+      consumeStoredAuthnRequest(env, 'tenant-a', '_request-1', 'https://sp.example')
+    ).rejects.toThrow('not found or already used');
+    expect(consume).toHaveBeenLastCalledWith({
+      tenantId: 'tenant-a',
+      spEntityId: 'https://sp.example',
+      requestId: '_request-1',
+    });
+  });
+
   it('uses imported signing material and pairwise secret without a KeyManager binding', async () => {
     const getKey = vi.fn(async () => ({
       kid: 'imported-key',
