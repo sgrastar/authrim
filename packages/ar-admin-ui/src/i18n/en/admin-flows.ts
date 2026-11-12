@@ -4,7 +4,6 @@ const adminFlows = {
 	admin_flows_title: 'Flows',
 	admin_flows_description:
 		'Review the path from login, attribute release, consent, and output in one place.',
-	admin_flows_consent_policies: 'Consent Policies',
 	admin_flows_field_mapping: 'Field Mapping',
 	admin_flows_list_title: 'Flow list',
 	admin_flows_list_description:
@@ -87,7 +86,6 @@ const adminFlows = {
 	admin_flows_detail_entry: 'Entry',
 	admin_flows_detail_destination: 'Destination',
 	admin_flows_detail_mapping: 'Mapping',
-	admin_flows_detail_consent_policy: 'Consent policy',
 	admin_flows_detail_consent_statement: 'Consent statement',
 	admin_flows_detail_output: 'Output',
 	admin_flows_detail_slug: 'Slug',
@@ -101,8 +99,6 @@ const adminFlows = {
 		'Define groups of attributes and claims to release.',
 	admin_flows_link_consent_statement_title: 'Consent Statement',
 	admin_flows_link_consent_statement_description: 'Define the text and options shown to users.',
-	admin_flows_link_consent_policy_title: 'Consent Policy',
-	admin_flows_link_consent_policy_description: 'Define when each consent statement is required.',
 	admin_flows_runtime_contract_title: 'Runtime contract',
 	admin_flows_runtime_contract_description:
 		'LoginUI receives this contract and renders only the required actions. The same structure can be passed to SDKs.',
@@ -144,7 +140,6 @@ const adminFlows = {
 	admin_flows_node_description_label: 'Description',
 	admin_flows_auth_profile_label: 'Authentication method profile',
 	admin_flows_screen_label: 'Profile screen',
-	admin_flows_consent_policy_label: 'Consent policy',
 	admin_flows_condition_type_label: 'Condition',
 	admin_flows_condition_value_label: 'Value',
 	admin_flows_condition_value_placeholder: 'Value or whitespace-separated values',
@@ -185,7 +180,6 @@ const adminFlows = {
 	admin_flows_template_saml_attribute_release_primary_output: 'SAML Response / Assertion',
 	admin_flows_template_saml_attribute_release_mapping_set:
 		'GakuNin application standard Field Mapping Set',
-	admin_flows_template_saml_attribute_release_consent_policy: 'SAML attribute release policy',
 	admin_flows_template_saml_attribute_release_consent_statement: 'saml_attribute_release_uapprove',
 	admin_flows_template_saml_attribute_release_user_action:
 		'Review released attributes and choose allow once or always allow',
@@ -200,8 +194,6 @@ const adminFlows = {
 	admin_flows_template_oidc_authorization_consent_primary_output:
 		'Authorization Response / UserInfo grant',
 	admin_flows_template_oidc_authorization_consent_mapping_set: 'OIDC standard claims',
-	admin_flows_template_oidc_authorization_consent_consent_policy:
-		'OIDC authorization consent policy',
 	admin_flows_template_oidc_authorization_consent_consent_statement: 'oidc_authorization_consent',
 	admin_flows_template_oidc_authorization_consent_user_action:
 		'Review and approve the scopes and claims to share',
@@ -215,7 +207,6 @@ const adminFlows = {
 	admin_flows_template_oidc_registration_primary_output:
 		'Application continuation / New account session',
 	admin_flows_template_oidc_registration_mapping_set: 'OIDC registration profile fields',
-	admin_flows_template_oidc_registration_consent_policy: 'Registration consent policy',
 	admin_flows_template_oidc_registration_consent_statement: 'terms_of_service / privacy_policy',
 	admin_flows_template_oidc_registration_user_action:
 		'Choose a registration method, enter a profile, and agree to the Terms of Service and Privacy Policy',
@@ -229,7 +220,6 @@ const adminFlows = {
 	admin_flows_template_oidc_login_primary_output:
 		'Application continuation / Existing account session',
 	admin_flows_template_oidc_login_mapping_set: 'OIDC login/session claims',
-	admin_flows_template_oidc_login_consent_policy: 'Login and authorization consent policy',
 	admin_flows_template_oidc_login_consent_statement: 'oidc_authorization_consent',
 	admin_flows_template_oidc_login_user_action:
 		'Sign in with an existing account and review scope/claim sharing when needed',
@@ -257,7 +247,6 @@ const adminFlows = {
 	admin_flows_template_academic_saml_login_primary_output: 'SAML Response / Assertion',
 	admin_flows_template_academic_saml_login_mapping_set:
 		'GakuNin application standard Field Mapping Set',
-	admin_flows_template_academic_saml_login_consent_policy: 'SAML attribute release policy',
 	admin_flows_template_academic_saml_login_consent_statement: 'saml_attribute_release_uapprove',
 	admin_flows_template_academic_saml_login_user_action:
 		'Sign in with an existing account, review the attributes released to the SP, and allow the release',
@@ -352,7 +341,6 @@ const adminFlows = {
 	admin_flows_setting_destination_field_mapping_set: 'Destination Field Mapping Set',
 	admin_flows_setting_release_fields: 'Release fields',
 	admin_flows_setting_attribute_name_mapping: 'Attribute name mapping',
-	admin_flows_setting_consent_policy: 'Consent Policy',
 	admin_flows_setting_consent_statement: 'Consent Statement',
 	admin_flows_setting_user_decision: 'User Decision',
 	admin_flows_setting_localized_content: 'localized_content',
@@ -443,11 +431,19 @@ const adminFlows = {
 	admin_flows_screen_basic: 'Basic profile',
 	admin_flows_screen_email_name: 'Email + name',
 	admin_flows_screen_academic: 'Academic profile',
-	admin_flows_consent_policy_registration: 'Registration consent policy',
-	admin_flows_consent_policy_oidc_authorization: 'OIDC authorization consent policy',
-	admin_flows_consent_policy_saml_attribute_release: 'SAML attribute release policy',
-	admin_flows_consent_policy_inactive: 'inactive',
-	admin_flows_consent_policy_none_available: 'No consent policies are available',
+	admin_flows_option_inactive: 'inactive',
+	admin_flows_statements_none: 'No consent statements selected',
+	admin_flows_statements_label: 'Consent statements',
+	admin_flows_statements_empty: 'No consent statements have been added to this node.',
+	admin_flows_statements_required: 'Required',
+	admin_flows_statements_move_up: 'Move up',
+	admin_flows_statements_move_down: 'Move down',
+	admin_flows_statements_remove: 'Remove',
+	admin_flows_statements_add_select: 'Consent statement to add',
+	admin_flows_statements_add_placeholder: 'Select a consent statement',
+	admin_flows_statements_add: 'Add',
+	admin_flows_statements_hint:
+		'Statements are shown in this order. The current version of each statement is always asked.',
 	admin_flows_output_next: 'Next',
 	admin_flows_output_start_registration: 'Start registration',
 	admin_flows_output_profile_completed: 'Profile completed',

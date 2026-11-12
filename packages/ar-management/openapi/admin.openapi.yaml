@@ -8463,110 +8463,6 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/clients/{clientId}/consent-overrides':
-    get:
-      tags:
-        - Clients
-      operationId: getApiAdminClientsByClientIdConsentOverrides
-      summary: List client consent requirement overrides.
-      description: >-
-        Lists consent requirement overrides configured for a client. Overrides are returned as
-        stored tenant rows keyed by statement id.
-      responses:
-        '200':
-          $ref: '#/components/responses/ClientConsentOverrideList'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: clientId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Client identifier.
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/clients/{clientId}/consent-overrides/{statementId}':
-    delete:
-      tags:
-        - Clients
-      operationId: deleteApiAdminClientsByClientIdConsentOverridesByStatementId
-      summary: Delete a client consent requirement override.
-      description: >-
-        Removes a client-specific consent requirement override so the client inherits the
-        tenant-level requirement again.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminActionResult'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: clientId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Client identifier.
-        - name: statementId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Consent statement identifier.
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    put:
-      tags:
-        - Clients
-      operationId: putApiAdminClientsByClientIdConsentOverridesByStatementId
-      summary: Upsert a client consent requirement override.
-      description: >-
-        Creates or replaces a consent requirement override for one client and consent statement. The
-        override may change requirement, minimum version, enforcement, conditional rules, and
-        display order.
-      responses:
-        '200':
-          $ref: '#/components/responses/ClientConsentOverride'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: clientId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Client identifier.
-        - name: statementId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Consent statement identifier.
-      requestBody:
-        $ref: '#/components/requestBodies/ClientConsentOverrideUpsert'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
   '/api/admin/clients/{clientId}/profile/validate':
     get:
       tags:
@@ -9235,92 +9131,6 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/consent-requirements:
-    get:
-      tags:
-        - Consent
-      operationId: getApiAdminConsentRequirements
-      summary: List tenant consent requirements.
-      description: >-
-        Lists tenant-level consent requirements for consent statements, including
-        required/enforcement flags, optional minimum version, deletion link settings, and display
-        order.
-      responses:
-        '200':
-          $ref: '#/components/responses/ConsentRequirementList'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/consent-requirements/{statementId}':
-    delete:
-      tags:
-        - Consent
-      operationId: deleteApiAdminConsentRequirementsByStatementId
-      summary: Delete a tenant consent requirement.
-      description: >-
-        Deletes the tenant-level consent requirement row for a statement. Client overrides are not
-        modified by this endpoint.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminActionResult'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: statementId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Consent statement identifier.
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    put:
-      tags:
-        - Consent
-      operationId: putApiAdminConsentRequirementsByStatementId
-      summary: Upsert a tenant consent requirement.
-      description: >-
-        Creates or replaces the tenant-level consent requirement for a statement. The request
-        controls required/enforcement behavior, minimum version, deletion link behavior, conditional
-        rules, and ordering.
-      responses:
-        '200':
-          $ref: '#/components/responses/ConsentRequirement'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: statementId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Consent statement identifier.
-      requestBody:
-        $ref: '#/components/requestBodies/ConsentRequirementUpsert'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
   /api/admin/consent-statements:
     get:
       tags:
@@ -9699,7 +9509,24 @@ paths:
       summary: Activate a consent statement version.
       description: >-
         Activates a draft consent statement version after validation, including required
-        localization checks. The activated version is returned.
+        localization checks. The activated version is returned. With `reconsent` (the default),
+        people who agreed to an earlier version are asked again: agreement is required from this
+        version on (`required_consent_version`). With `reconsent: false` (a change that does not
+        alter what people agreed to) they are not; the first version activated always becomes
+        where agreement starts. A version older than the one agreement is required from can be activated
+        only with `reconsent: true` (400 otherwise).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reconsent:
+                  type: boolean
+                  default: true
+                  description: Ask people who agreed to an earlier version again.
       responses:
         '200':
           $ref: '#/components/responses/ConsentVersion'
@@ -9854,318 +9681,6 @@ paths:
           description: Localization language code.
       requestBody:
         $ref: '#/components/requestBodies/ConsentLocalizationUpsert'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/consent-policies:
-    get:
-      tags:
-        - Consent
-      operationId: getApiAdminConsentPolicies
-      summary: List consent policies.
-      description: Lists reusable tenant consent policy sets with item counts.
-      responses:
-        '200':
-          description: Consent policies.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - policies
-                properties:
-                  policies:
-                    type: array
-                    items:
-                      type: object
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    post:
-      tags:
-        - Consent
-      operationId: postApiAdminConsentPolicies
-      summary: Create a consent policy.
-      description: Creates a reusable consent policy set for the tenant.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - display_name
-              properties:
-                display_name:
-                  type: string
-                description:
-                  type: string
-                is_active:
-                  type: boolean
-      responses:
-        '201':
-          description: Created consent policy.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - policy
-                properties:
-                  policy:
-                    type: object
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/consent-policies/{id}':
-    get:
-      tags:
-        - Consent
-      operationId: getApiAdminConsentPoliciesById
-      summary: Get a consent policy.
-      description: Returns a consent policy and its ordered consent statement items.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Consent policy identifier.
-      responses:
-        '200':
-          description: Consent policy detail.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - policy
-                  - items
-                properties:
-                  policy:
-                    type: object
-                  items:
-                    type: array
-                    items:
-                      type: object
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    put:
-      tags:
-        - Consent
-      operationId: putApiAdminConsentPoliciesById
-      summary: Update a consent policy.
-      description: Updates consent policy metadata and activation state.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Consent policy identifier.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                display_name:
-                  type: string
-                description:
-                  type: string
-                is_active:
-                  type: boolean
-      responses:
-        '200':
-          description: Updated consent policy detail.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - policy
-                  - items
-                properties:
-                  policy:
-                    type: object
-                  items:
-                    type: array
-                    items:
-                      type: object
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    delete:
-      tags:
-        - Consent
-      operationId: deleteApiAdminConsentPoliciesById
-      summary: Deactivate a consent policy.
-      description: Soft-deactivates a consent policy.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Consent policy identifier.
-      responses:
-        '200':
-          description: Deactivation result.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - success
-                properties:
-                  success:
-                    type: boolean
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/consent-policies/{id}/items':
-    put:
-      tags:
-        - Consent
-      operationId: putApiAdminConsentPoliciesByIdItems
-      summary: Replace consent policy items.
-      description: Replaces the consent statements that belong to a consent policy.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Consent policy identifier.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - items
-              properties:
-                items:
-                  type: array
-                  items:
-                    type: object
-                    required:
-                      - statement_id
-                      - requirement
-                      - version_mode
-                      - checkbox_mode
-                    properties:
-                      statement_id:
-                        type: string
-                      requirement:
-                        type: string
-                        enum:
-                          - required
-                          - optional
-                          - hidden
-                      version_mode:
-                        type: string
-                        enum:
-                          - current
-                          - fixed
-                          - minimum
-                      version_id:
-                        type: string
-                      min_version:
-                        type: string
-                      checkbox_mode:
-                        type: string
-                        enum:
-                          - none
-                          - required
-                          - optional
-                      checkbox_default_checked:
-                        type: boolean
-                      binding_type:
-                        type: string
-                        enum:
-                          - subject
-                          - scope
-                          - claim
-                          - saml_attribute
-                          - destination_field_set
-                      binding_value:
-                        type: string
-                      evidence_profile:
-                        type: string
-                      language_fallback:
-                        type: string
-                      display_order:
-                        type: integer
-      responses:
-        '200':
-          description: Replaced consent policy items.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - items
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -41615,17 +41130,6 @@ components:
             $ref: '#/components/schemas/ClientCacheModeUpdateRequest'
           example:
             mode: fixed
-    ClientConsentOverrideUpsert:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ClientConsentOverrideUpsertRequest'
-          example:
-            requirement: required
-            min_version: '20260619'
-            enforcement: block
-            display_order: 10
     ComplianceAccessReviewCreate:
       required: true
       content:
@@ -41638,19 +41142,6 @@ components:
             scope: role
             scope_value: admin
             due_date: '2026-07-31'
-    ConsentRequirementUpsert:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ConsentRequirementUpsertRequest'
-          example:
-            is_required: true
-            min_version: '20260619'
-            enforcement: block
-            show_deletion_link: true
-            deletion_url: 'https://example.com/account/delete'
-            display_order: 10
     TenantUpdate:
       required: true
       content:
@@ -46086,18 +45577,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ClientCacheModeUpdateResponse'
-    ClientConsentOverrideList:
-      description: Client consent override list response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ClientConsentOverrideListResponse'
-    ClientConsentOverride:
-      description: Client consent override response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ClientConsentOverride'
     ClientProfileValidation:
       description: Client profile validation response.
       content:
@@ -46128,18 +45607,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ComplianceStatusResponse'
-    ConsentRequirementList:
-      description: Tenant consent requirement list response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ConsentRequirementListResponse'
-    ConsentRequirement:
-      description: Tenant consent requirement response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ConsentRequirement'
     SettingsMetaCategoryList:
       description: Settings metadata category list.
       content:
@@ -59498,7 +58965,6 @@ components:
                 - client_contracts
                 - client_web_origins
                 - client_trust_policies
-                - client_consent_overrides_skipped
                 - client_flow_assignments_skipped
                 - roles
                 - role_assignment_rules
@@ -59519,7 +58985,6 @@ components:
                 client_contracts: { type: integer, minimum: 0 }
                 client_web_origins: { type: integer, minimum: 0 }
                 client_trust_policies: { type: integer, minimum: 0 }
-                client_consent_overrides_skipped: { type: integer, minimum: 0 }
                 client_flow_assignments_skipped: { type: integer, minimum: 0 }
                 roles: { type: integer, minimum: 0 }
                 role_assignment_rules: { type: integer, minimum: 0 }
@@ -61254,83 +60719,6 @@ components:
               type: boolean
             message:
               type: string
-    ClientConsentOverride:
-      type: object
-      additionalProperties: true
-      required:
-        - id
-        - tenant_id
-        - client_id
-        - statement_id
-        - requirement
-        - created_at
-        - updated_at
-      properties:
-        id:
-          type: string
-        tenant_id:
-          type: string
-        client_id:
-          type: string
-        statement_id:
-          type: string
-        requirement:
-          type: string
-        min_version:
-          type:
-            - string
-            - 'null'
-        enforcement:
-          type:
-            - string
-            - 'null'
-        conditional_rules_json:
-          type:
-            - string
-            - 'null'
-        display_order:
-          type:
-            - integer
-            - 'null'
-        created_at:
-          type: integer
-          format: int64
-        updated_at:
-          type: integer
-          format: int64
-    ClientConsentOverrideListResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - overrides
-      properties:
-        overrides:
-          type: array
-          items:
-            $ref: '#/components/schemas/ClientConsentOverride'
-    ClientConsentOverrideUpsertRequest:
-      type: object
-      additionalProperties: false
-      properties:
-        requirement:
-          type: string
-          enum:
-            - inherit
-            - required
-            - optional
-            - disabled
-        min_version:
-          type: string
-          pattern: '^[0-9]{8}$'
-        enforcement:
-          type: string
-        conditional_rules:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        display_order:
-          type: integer
     ClientProfileValidationResponse:
       type: object
       additionalProperties: false
@@ -61870,91 +61258,6 @@ components:
         - warning
         - non_compliant
         - not_applicable
-    ConsentRequirement:
-      type: object
-      additionalProperties: true
-      required:
-        - id
-        - tenant_id
-        - statement_id
-        - is_required
-        - enforcement
-        - created_at
-        - updated_at
-      properties:
-        id:
-          type: string
-        tenant_id:
-          type: string
-        statement_id:
-          type: string
-        is_required:
-          type: integer
-          enum:
-            - 0
-            - 1
-        min_version:
-          type:
-            - string
-            - 'null'
-        enforcement:
-          type: string
-        show_deletion_link:
-          type: integer
-          enum:
-            - 0
-            - 1
-        deletion_url:
-          type:
-            - string
-            - 'null'
-        conditional_rules_json:
-          type:
-            - string
-            - 'null'
-        display_order:
-          type: integer
-        created_at:
-          type: integer
-          format: int64
-        updated_at:
-          type: integer
-          format: int64
-    ConsentRequirementListResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - requirements
-      properties:
-        requirements:
-          type: array
-          items:
-            $ref: '#/components/schemas/ConsentRequirement'
-    ConsentRequirementUpsertRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - is_required
-      properties:
-        is_required:
-          type: boolean
-        min_version:
-          type: string
-          pattern: '^[0-9]{8}$'
-        enforcement:
-          type: string
-        show_deletion_link:
-          type: boolean
-        deletion_url:
-          type: string
-          format: uri
-        conditional_rules:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        display_order:
-          type: integer
     DiagnosticLogExportResponse:
       type: object
       additionalProperties: false
@@ -62739,11 +62042,15 @@ components:
           type:
             - string
             - 'null'
-        reconsent_on_version_change:
-          type: integer
-          enum:
-            - 0
-            - 1
+        required_consent_version:
+          type:
+            - string
+            - 'null'
+          description: >-
+            The version (YYYYMMDD) from which agreement is required. Activating a version with
+            `reconsent: true` moves it to that version; with `reconsent: false` it stays. Null
+            for a statement whose versions were published before it was kept: the current version
+            is required.
         reconsent_interval_days:
           type:
             - integer
@@ -62778,7 +62085,7 @@ components:
         record_retention_days: 2555
         withdrawal_allowed: 1
         withdrawal_impact: Account access may be limited if withdrawn.
-        reconsent_on_version_change: 1
+        required_consent_version: '20260101'
         reconsent_interval_days: 365
         display_order: 10
         is_active: 1
@@ -62822,9 +62129,6 @@ components:
           type:
             - string
             - 'null'
-        reconsent_on_version_change:
-          type: boolean
-          default: true
         reconsent_interval_days:
           type:
             - integer
@@ -62857,8 +62161,6 @@ components:
           type:
             - string
             - 'null'
-        reconsent_on_version_change:
-          type: boolean
         reconsent_interval_days:
           type:
             - integer

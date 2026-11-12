@@ -13,6 +13,19 @@ const MIGRATIONS = {
   admin: new URL('../../../../../migrations/admin/d1/', import.meta.url),
 };
 
+/**
+ * Migrations added after the 0.5.0 baseline and its delta. listMigrationSourceFiles lists the
+ * consolidated history first and these after it, so they start where the numbering drops.
+ */
+function migrationsAfterBaseline(migrations: URL): string[] {
+  const files = listMigrationSourceFiles(migrations);
+  const number = (name: string) => Number(name.split('_')[0]);
+  const start = files.findIndex(
+    (name, index) => index > 0 && number(name) < number(files[index - 1])
+  );
+  return start < 0 ? [] : files.slice(start).filter((name) => number(name) > 2);
+}
+
 type SqlValue = string | number | null;
 const values = (params: unknown[] = []) =>
   params.map((value): SqlValue => (value === undefined ? null : (value as SqlValue)));
@@ -29,7 +42,10 @@ export function sqliteAdapter(
   const migrations = MIGRATIONS[plane];
   const files = Number.isFinite(through)
     ? listMigrationSourceFiles(migrations).filter((name) => Number(name.split('_')[0]) <= through)
-    : [`001_0_5_0_${plane}_baseline.sql`];
+    : [
+        `001_0_5_0_${plane}_baseline.sql`,
+        ...(plane === 'core' ? migrationsAfterBaseline(migrations) : []),
+      ];
   for (const file of files) {
     db.exec(renderPortableMigrationSql(readMigrationSource(migrations, file), 'sqlite'));
   }

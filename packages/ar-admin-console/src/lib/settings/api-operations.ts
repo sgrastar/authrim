@@ -664,24 +664,6 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	['POST', '/api/admin/clients/{clientId}/apply-preset', 'Apply a client profile preset.', 'admin'],
 	['GET', '/api/admin/clients/{clientId}/cache-mode', 'Get client cache mode.', 'admin'],
 	['POST', '/api/admin/clients/{clientId}/cache-mode', 'Set client cache mode.', 'admin'],
-	[
-		'GET',
-		'/api/admin/clients/{clientId}/consent-overrides',
-		'List client consent requirement overrides.',
-		'admin'
-	],
-	[
-		'PUT',
-		'/api/admin/clients/{clientId}/consent-overrides/{statementId}',
-		'Upsert a client consent requirement override.',
-		'admin'
-	],
-	[
-		'DELETE',
-		'/api/admin/clients/{clientId}/consent-overrides/{statementId}',
-		'Delete a client consent requirement override.',
-		'admin'
-	],
 	['GET', '/api/admin/clients/{clientId}/profile', "Get a client's policy profile.", 'admin'],
 	['PUT', '/api/admin/clients/{clientId}/profile', "Update a client's policy profile.", 'admin'],
 	[
@@ -741,25 +723,6 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	['GET', '/api/admin/compliance/reports/{id}', 'Get a compliance report.', 'admin'],
 	['GET', '/api/admin/compliance/reports/{id}/download', 'Download a compliance report.', 'admin'],
 	['GET', '/api/admin/compliance/status', 'Get tenant compliance status.', 'admin'],
-	['GET', '/api/admin/consent-policies', 'List consent policies.', 'admin'],
-	['POST', '/api/admin/consent-policies', 'Create a consent policy.', 'admin'],
-	['GET', '/api/admin/consent-policies/{id}', 'Get a consent policy.', 'admin'],
-	['PUT', '/api/admin/consent-policies/{id}', 'Update a consent policy.', 'admin'],
-	['DELETE', '/api/admin/consent-policies/{id}', 'Deactivate a consent policy.', 'admin'],
-	['PUT', '/api/admin/consent-policies/{id}/items', 'Replace consent policy items.', 'admin'],
-	['GET', '/api/admin/consent-requirements', 'List tenant consent requirements.', 'admin'],
-	[
-		'PUT',
-		'/api/admin/consent-requirements/{statementId}',
-		'Upsert a tenant consent requirement.',
-		'admin'
-	],
-	[
-		'DELETE',
-		'/api/admin/consent-requirements/{statementId}',
-		'Delete a tenant consent requirement.',
-		'admin'
-	],
 	['GET', '/api/admin/consent-statements', 'List consent statements.', 'admin'],
 	['POST', '/api/admin/consent-statements', 'Create a consent statement.', 'admin'],
 	['GET', '/api/admin/consent-statements/{id}', 'Get a consent statement.', 'admin'],

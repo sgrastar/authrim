@@ -73,11 +73,6 @@ export function getConsentDefaultExpirationDays(env: ConsentEnv): Promise<number
   );
 }
 
-/** Whether consent records policy versions. */
-export function getConsentVersioningEnabled(env: ConsentEnv): Promise<boolean> {
-  return readBoolean(env, 'consent:versioning_enabled', 'CONSENT_VERSIONING_ENABLED', false);
-}
-
 /** Whether users can export their consent data (default: enabled). */
 export function getConsentDataExportEnabled(env: ConsentEnv): Promise<boolean> {
   return readBoolean(env, 'consent:data_export_enabled', 'CONSENT_DATA_EXPORT_ENABLED', true);

@@ -2252,20 +2252,6 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'consent statements'
   ),
   ...byMethod(
-    '/api/admin/consent-policies',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'consent policies'
-  ),
-  ...byMethod(
-    '/api/admin/consent-policies/*',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'consent policies'
-  ),
-  ...byMethod(
     '/api/admin/client-trust-policies',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
@@ -2278,20 +2264,6 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'sign-in confirmation policies'
-  ),
-  ...byMethod(
-    '/api/admin/consent-requirements',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'consent requirements'
-  ),
-  ...byMethod(
-    '/api/admin/consent-requirements/*',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'consent requirements'
   ),
   ...byMethod(
     '/api/admin/plugins',

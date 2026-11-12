@@ -3,7 +3,6 @@ const adminFlows = {
 	admin_flows_page_title: 'Flows - Authrim管理画面',
 	admin_flows_title: 'Flows',
 	admin_flows_description: 'ログイン、属性送信、同意、出力までの流れを一覧から確認します。',
-	admin_flows_consent_policies: '同意ポリシー',
 	admin_flows_field_mapping: 'Field Mapping',
 	admin_flows_list_title: 'Flow list',
 	admin_flows_list_description: '詳細で設定要素を確認し、Flow画面で全体像を見ます。',
@@ -83,7 +82,6 @@ const adminFlows = {
 	admin_flows_detail_entry: 'Entry',
 	admin_flows_detail_destination: 'Destination',
 	admin_flows_detail_mapping: 'Mapping',
-	admin_flows_detail_consent_policy: 'Consent policy',
 	admin_flows_detail_consent_statement: 'Consent statement',
 	admin_flows_detail_output: 'Output',
 	admin_flows_detail_slug: 'スラッグ',
@@ -96,8 +94,6 @@ const adminFlows = {
 	admin_flows_link_field_mapping_set_description: '送信する属性やclaimのまとまりを定義します。',
 	admin_flows_link_consent_statement_title: 'Consent Statement',
 	admin_flows_link_consent_statement_description: 'ユーザーに表示する文言と選択肢を定義します。',
-	admin_flows_link_consent_policy_title: 'Consent Policy',
-	admin_flows_link_consent_policy_description: 'どの場面でどの同意文を要求するかを定義します。',
 	admin_flows_runtime_contract_title: 'Runtime contract',
 	admin_flows_runtime_contract_description:
 		'LoginUIはこの契約を受け取り、必要な操作だけを描画します。SDKにも同じ構造を渡せます。',
@@ -140,7 +136,6 @@ const adminFlows = {
 	admin_flows_node_description_label: '説明',
 	admin_flows_auth_profile_label: '認証方式プロフィール',
 	admin_flows_screen_label: 'プロフィールスクリーン',
-	admin_flows_consent_policy_label: '同意ポリシー',
 	admin_flows_condition_type_label: '条件',
 	admin_flows_condition_value_label: '値',
 	admin_flows_condition_value_placeholder: '値、またはスペース区切りの値',
@@ -180,7 +175,6 @@ const adminFlows = {
 	admin_flows_template_saml_attribute_release_primary_output: 'SAML Response / Assertion',
 	admin_flows_template_saml_attribute_release_mapping_set:
 		'GakuNin application standard Field Mapping Set',
-	admin_flows_template_saml_attribute_release_consent_policy: 'SAML attribute release policy',
 	admin_flows_template_saml_attribute_release_consent_statement: 'saml_attribute_release_uapprove',
 	admin_flows_template_saml_attribute_release_user_action:
 		'送信属性を確認し、今回のみ許可または今後も許可を選択',
@@ -194,8 +188,6 @@ const adminFlows = {
 	admin_flows_template_oidc_authorization_consent_primary_output:
 		'Authorization Response / UserInfo grant',
 	admin_flows_template_oidc_authorization_consent_mapping_set: 'OIDC standard claims',
-	admin_flows_template_oidc_authorization_consent_consent_policy:
-		'OIDC authorization consent policy',
 	admin_flows_template_oidc_authorization_consent_consent_statement: 'oidc_authorization_consent',
 	admin_flows_template_oidc_authorization_consent_user_action:
 		'scopeとclaimの提供内容を確認して許可',
@@ -209,7 +201,6 @@ const adminFlows = {
 	admin_flows_template_oidc_registration_primary_output:
 		'Application continuation / New Account Session',
 	admin_flows_template_oidc_registration_mapping_set: 'OIDC registration profile fields',
-	admin_flows_template_oidc_registration_consent_policy: 'Registration consent policy',
 	admin_flows_template_oidc_registration_consent_statement: 'terms_of_service / privacy_policy',
 	admin_flows_template_oidc_registration_user_action:
 		'登録方法を選び、プロフィールを入力し、利用規約とプライバシーポリシーに同意',
@@ -223,7 +214,6 @@ const adminFlows = {
 	admin_flows_template_oidc_login_primary_output:
 		'Application continuation / Existing Account Session',
 	admin_flows_template_oidc_login_mapping_set: 'OIDC login/session claims',
-	admin_flows_template_oidc_login_consent_policy: 'Login and authorization consent policy',
 	admin_flows_template_oidc_login_consent_statement: 'oidc_authorization_consent',
 	admin_flows_template_oidc_login_user_action:
 		'既存アカウントでログインし、必要に応じてscope/claim提供を確認',
@@ -251,7 +241,6 @@ const adminFlows = {
 	admin_flows_template_academic_saml_login_primary_output: 'SAML Response / Assertion',
 	admin_flows_template_academic_saml_login_mapping_set:
 		'GakuNin application standard Field Mapping Set',
-	admin_flows_template_academic_saml_login_consent_policy: 'SAML attribute release policy',
 	admin_flows_template_academic_saml_login_consent_statement: 'saml_attribute_release_uapprove',
 	admin_flows_template_academic_saml_login_user_action:
 		'既存アカウントでログインし、SPへ送信する属性を確認して許可',
@@ -344,7 +333,6 @@ const adminFlows = {
 	admin_flows_setting_destination_field_mapping_set: 'Destination Field Mapping Set',
 	admin_flows_setting_release_fields: '送信対象フィールド',
 	admin_flows_setting_attribute_name_mapping: '属性名変換',
-	admin_flows_setting_consent_policy: 'Consent Policy',
 	admin_flows_setting_consent_statement: 'Consent Statement',
 	admin_flows_setting_user_decision: 'User Decision',
 	admin_flows_setting_localized_content: 'localized_content',
@@ -430,11 +418,19 @@ const adminFlows = {
 	admin_flows_screen_basic: 'Basic profile',
 	admin_flows_screen_email_name: 'Email + name',
 	admin_flows_screen_academic: 'Academic profile',
-	admin_flows_consent_policy_registration: 'Registration consent policy',
-	admin_flows_consent_policy_oidc_authorization: 'OIDC authorization consent policy',
-	admin_flows_consent_policy_saml_attribute_release: 'SAML attribute release policy',
-	admin_flows_consent_policy_inactive: '無効',
-	admin_flows_consent_policy_none_available: '利用できる同意ポリシーがありません',
+	admin_flows_option_inactive: '無効',
+	admin_flows_statements_none: '同意文が選択されていません',
+	admin_flows_statements_label: '同意文',
+	admin_flows_statements_empty: 'このノードには同意文が追加されていません。',
+	admin_flows_statements_required: '必須',
+	admin_flows_statements_move_up: '上へ移動',
+	admin_flows_statements_move_down: '下へ移動',
+	admin_flows_statements_remove: '削除',
+	admin_flows_statements_add_select: '追加する同意文',
+	admin_flows_statements_add_placeholder: '同意文を選択',
+	admin_flows_statements_add: '追加',
+	admin_flows_statements_hint:
+		'同意文はこの順序で表示されます。常に各同意文の最新バージョンが対象になります。',
 	admin_flows_output_next: 'Next',
 	admin_flows_output_start_registration: 'Start registration',
 	admin_flows_output_profile_completed: 'Profile completed',

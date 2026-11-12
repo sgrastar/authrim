@@ -247,17 +247,12 @@ export * from './utils/rar-validation';
 export * from './utils/native-sso-config';
 export * from './utils/native-sso-installation';
 
-// Consent Versioning (GDPR Article 7 - Informed Consent)
-export * from './utils/consent-versioning';
-
 // Consent Statements (SAP CDC-like Consent Management)
 export type {
   ConsentStatement,
   ConsentStatementVersion,
   ConsentStatementLocalization,
   ConsentStatementUserRecord,
-  TenantConsentRequirement,
-  ClientConsentOverride,
   ConsentScreenItem,
   ConsentItemDecision,
   ConsentEvidence,
@@ -268,9 +263,6 @@ export type {
   CreateConsentVersionInput,
   UpdateConsentVersionInput,
   UpsertLocalizationInput,
-  SetTenantRequirementInput,
-  SetClientOverrideInput,
-  ConditionalConsentRule,
   ConsentItemEventData,
   ConsentItemVersionUpgradedEventData,
 } from './types/consent-statements';
@@ -283,23 +275,17 @@ export {
   ConsentVersionStatus,
   ConsentRecordStatus,
   ConsentItemAction,
-  ConditionalRuleOperator,
 } from './types/consent-statements';
 export type {
-  ConsentPolicy,
-  ConsentPolicyItem,
-  ConsentPolicyAssignment,
-  ConsentPolicyAssignmentType,
-  ConsentPolicyCheckboxMode,
-  ConsentPolicyItemBindingType,
-  ConsentPolicyRequirement,
-  ConsentPolicyVersionMode,
   ClientTrustPolicy,
   ClientTrustPolicyTargetType,
   SignInConfirmationMode,
   SignInConfirmationPolicy,
 } from './types/consent-policies';
 export * from './utils/consent-statements';
+export * from './utils/consent-history';
+export * from './services/flow-consent-statements';
+export * from './services/flow-sso-consent';
 
 // Initial Setup (Admin Account Setup)
 export * from './utils/setup-token';

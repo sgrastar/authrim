@@ -163,10 +163,6 @@
 <AdminPageShell>
 	<AdminPageHeader title={$LL.admin_flows_title()} description={$LL.admin_flows_description()}>
 		{#snippet actions()}
-			<a href="/admin/consent-policies" class="btn btn-secondary">
-				<i class="i-ph-clipboard-text" aria-hidden="true"></i>
-				{$LL.admin_flows_consent_policies()}
-			</a>
 			<a href="/admin/field-mapping/field-mapping-sets" class="btn btn-secondary">
 				<i class="i-ph-graph" aria-hidden="true"></i>
 				{$LL.admin_flows_field_mapping()}

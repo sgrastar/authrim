@@ -339,7 +339,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'consent',
 				label: 'nav.custom.consent',
 				icon: 'check',
-				legacyRoutes: ['/admin/consent-policies', '/admin/consent-policies/[id]']
+				legacyRoutes: []
 			},
 			{
 				id: 'statements',
