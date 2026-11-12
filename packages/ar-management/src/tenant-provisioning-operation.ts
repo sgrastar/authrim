@@ -460,10 +460,17 @@ export class TenantProvisioningOperationRepository {
     return result ? this.get(operationId, environmentId) : null;
   }
 
+  /**
+   * Cancels a pre-activation operation in one conditional statement: it must still be queued,
+   * waiting or blocked (no worker holds it), still at `expectedStep` (the step the caller read),
+   * and not at or past Lookup activation, which may already be externally visible. Returns null
+   * when nothing was cancelled; the caller must then change nothing.
+   */
   async cancel(
     operationId: string,
     environmentId: string,
-    now: number
+    now: number,
+    expectedStep: TenantProvisioningStep
   ): Promise<TenantProvisioningOperationView | null> {
     const updated = await this.db.execute(
       `UPDATE tenant_provisioning_operations
@@ -471,8 +478,10 @@ export class TenantProvisioningOperationRepository {
               lease_owner = NULL, lease_expires_at = NULL,
               completed_at = ?, updated_at = ?
         WHERE operation_id = ? AND environment_id = ?
-          AND status IN ('queued', 'waiting_retry', 'blocked')`,
-      [now, now, operationId, environmentId]
+          AND status IN ('queued', 'waiting_retry', 'blocked')
+          AND current_step = ?
+          AND current_step NOT IN ('lookup_activate', 'tenant_active')`,
+      [now, now, operationId, environmentId, expectedStep]
     );
     return updated.rowsAffected === 1 ? this.get(operationId, environmentId) : null;
   }

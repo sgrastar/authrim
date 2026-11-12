@@ -44,6 +44,7 @@ const TENANT_DELETION_DEFAULT_MAX_ATTEMPTS = 3;
 const TENANT_DELETION_RETRY_SECONDS = [15, 60] as const;
 const NON_RETRYABLE_DELETION_ERRORS = new Set([
   'tenant_deletion_job_config_invalid',
+  'tenant_deletion_target_is_default',
   'tenant_deletion_backup_job_invalid',
   'tenant_deletion_backup_job_failed',
   'tenant_deletion_control_environment_invalid',
@@ -537,13 +538,32 @@ export async function deleteTenantAdminJobs(
 async function suspendTenantAfterDeletionFailure(
   adapter: Pick<DatabaseAdapter, 'execute'>,
   targetTenantId: string | null
-): Promise<void> {
-  if (!targetTenantId) return;
+): Promise<number> {
+  if (!targetTenantId) return 0;
 
-  await adapter.execute(
-    "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted'",
+  const result = await adapter.execute(
+    // Never the default tenant, whatever failed: a stale job must not take it offline.
+    "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted' AND is_default = 0 AND default_tenant_guard IS NULL",
     [Math.floor(Date.now() / 1000), targetTenantId]
   );
+  return result.rowsAffected;
+}
+
+/**
+ * Stops the job (as a non-retryable failure, touching nothing) when the tenant is the default.
+ * Called before each step that changes the tenant's state or routes.
+ */
+async function assertDeletionTargetNotDefault(
+  adapter: Pick<DatabaseAdapter, 'queryOne'>,
+  targetTenantId: string
+): Promise<void> {
+  const row = await adapter.queryOne<{ is_default: number | boolean }>(
+    'SELECT is_default FROM tenants WHERE id = ?',
+    [targetTenantId]
+  );
+  if (row && (row.is_default === 1 || row.is_default === true)) {
+    throw new Error('tenant_deletion_target_is_default');
+  }
 }
 
 async function processPendingTenantDeletionJobsInStore(
@@ -581,6 +601,11 @@ async function processPendingTenantDeletionJobsInStore(
       targetTenantId = config.tenant_id;
       const deletionTargetTenantId = config.tenant_id;
 
+      // Nothing is changed for a default tenant: the check comes first and is repeated before each
+      // step that changes the tenant's state or routes (and `set-default` and the reactivating
+      // lifecycle commands refuse while this job is active, so the tenant cannot become one).
+      await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
+
       const backup = await ensureDeletionBackupCompleted(coreAdapter, adminAdapter, job, config);
       if (!backup.completed) {
         log.info('Tenant deletion job waiting for pre-purge backup', {
@@ -596,6 +621,7 @@ async function processPendingTenantDeletionJobsInStore(
       const inventory = await getTenantDeletionInventory(env, deletionTargetTenantId, job.id);
 
       if (inventory.state === 'finalized') {
+        await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
         await publishTenantRuntimeRegistryRouteState(env, {
           tenantId: deletionTargetTenantId,
           routeStatus: 'disabled',
@@ -613,7 +639,14 @@ async function processPendingTenantDeletionJobsInStore(
           'deleted'
         );
       } else {
-        await suspendTenantAfterDeletionFailure(coreAdapter, deletionTargetTenantId);
+        const suspended = await suspendTenantAfterDeletionFailure(
+          coreAdapter,
+          deletionTargetTenantId
+        );
+        // The transition did not apply: stop, touching nothing, when the tenant is the default
+        // (a tenant that is already deleted simply has nothing left to suspend).
+        if (suspended === 0)
+          await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
         const quarantining = config.quarantine_started_at
           ? {
               publishedAt: new Date(config.quarantine_started_at * 1000).toISOString(),
@@ -638,6 +671,7 @@ async function processPendingTenantDeletionJobsInStore(
           });
           continue;
         }
+        await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
         await publishTenantRuntimeRegistryRouteState(env, {
           tenantId: deletionTargetTenantId,
           routeStatus: 'quarantined',
@@ -645,6 +679,7 @@ async function processPendingTenantDeletionJobsInStore(
           actorId: job.id,
         });
 
+        await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
         await disableTenantLookupDirectory(env, inventory.lookupShards, deletionTargetTenantId);
         await coreAdapter.execute(
           'UPDATE admin_jobs SET progress = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
@@ -656,6 +691,7 @@ async function processPendingTenantDeletionJobsInStore(
           ]
         );
 
+        await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
         await purgeTenantAuthoritativeShards(
           env,
           inventory.tenantShards,

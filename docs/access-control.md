@@ -10,6 +10,7 @@ tags:
   - rbac
   - access-control
 ---
+
 # Access Control Architecture
 
 Comprehensive documentation for Authrim's access control system, covering RBAC, ABAC, and ReBAC models.
@@ -37,11 +38,11 @@ Comprehensive documentation for Authrim's access control system, covering RBAC, 
 
 Authrim implements a **three-tier unified access control system** that combines:
 
-| Model | Primary Use Case | Complexity | Performance |
-|-------|-----------------|------------|-------------|
-| **RBAC** | Team structures, administrative hierarchies | Low | O(1) role lookup |
-| **ABAC** | Compliance rules, attribute-based policies | Medium | O(n) attribute scan |
-| **ReBAC** | Resource hierarchies, sharing models | High | O(d) depth traversal |
+| Model     | Primary Use Case                            | Complexity | Performance          |
+| --------- | ------------------------------------------- | ---------- | -------------------- |
+| **RBAC**  | Team structures, administrative hierarchies | Low        | O(1) role lookup     |
+| **ABAC**  | Compliance rules, attribute-based policies  | Medium     | O(n) attribute scan  |
+| **ReBAC** | Resource hierarchies, sharing models        | High       | O(d) depth traversal |
 
 All three models are evaluated through a **Unified Check Service** in priority order:
 
@@ -83,16 +84,16 @@ ID-Level → RBAC → ReBAC → ABAC/Computed
 
 ### Key Files
 
-| Component | Location |
-|-----------|----------|
-| Policy Types | `packages/ar-lib-policy/src/types.ts` |
-| Policy Engine | `packages/ar-lib-policy/src/engine.ts` |
-| Role Checker | `packages/ar-lib-policy/src/role-checker.ts` |
-| Feature Flags | `packages/ar-lib-policy/src/feature-flags.ts` |
-| ReBAC Types | `packages/ar-lib-core/src/rebac/types.ts` |
-| ReBAC Service | `packages/ar-lib-core/src/rebac/rebac-service.ts` |
+| Component     | Location                                                     |
+| ------------- | ------------------------------------------------------------ |
+| Policy Types  | `packages/ar-lib-policy/src/types.ts`                        |
+| Policy Engine | `packages/ar-lib-policy/src/engine.ts`                       |
+| Role Checker  | `packages/ar-lib-policy/src/role-checker.ts`                 |
+| Feature Flags | `packages/ar-lib-policy/src/feature-flags.ts`                |
+| ReBAC Types   | `packages/ar-lib-core/src/rebac/types.ts`                    |
+| ReBAC Service | `packages/ar-lib-core/src/rebac/rebac-service.ts`            |
 | Unified Check | `packages/ar-lib-core/src/services/unified-check-service.ts` |
-| Check API | `packages/ar-policy/src/routes/check.ts` |
+| Check API     | `packages/ar-policy/src/routes/check.ts`                     |
 
 ---
 
@@ -109,12 +110,12 @@ unrelated to the roles of the service's own users below. They are defined once, 
 `packages/ar-lib-core/src/constants/admin-roles.ts`, and the names start with the reserved prefix
 `ar_`: a custom Admin role cannot be created with a name that starts with it.
 
-| Role | Level | Held through | What it is |
-|------|-------|--------------|------------|
-| `ar_super_admin` | 100 | a global assignment only | Every tenant and the platform. The only role that skips role checks. |
-| `ar_tenant_admin` | 80 | a tenant (or a global) assignment | One tenant: settings, apps, users, support operations, ReBAC, IP allow lists, and the admins and roles of that tenant. |
-| `ar_support` | 40 | a tenant assignment | Looks up users, unlocks accounts, ends sessions, asks for support operations (cannot approve or run them). |
-| `ar_viewer` | 20 | a tenant assignment | Reads; sees no secrets (client secrets, webhook payloads, full email recipients). |
+| Role              | Level | Held through                      | What it is                                                                                                             |
+| ----------------- | ----- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ar_super_admin`  | 100   | a global assignment only          | Every tenant and the platform. The only role that skips role checks.                                                   |
+| `ar_tenant_admin` | 80    | a tenant (or a global) assignment | One tenant: settings, apps, users, support operations, ReBAC, IP allow lists, and the admins and roles of that tenant. |
+| `ar_support`      | 40    | a tenant assignment               | Looks up users, unlocks accounts, ends sessions, asks for support operations (cannot approve or run them).             |
+| `ar_viewer`       | 20    | a tenant assignment               | Reads; sees no secrets (client secrets, webhook payloads, full email recipients).                                      |
 
 - `ar_tenant_admin` is never given `admin:*`: it holds the tenant's namespaces one by one, and none
   of the platform-wide ones (control plane, database connections and routing, tenants and their
@@ -126,15 +127,69 @@ unrelated to the roles of the service's own users below. They are defined once, 
 - The seed in the role migration (source `054_admin_roles_ar_prefix.sql`, shipped in the 0.5.0
   Admin D1 release delta) is kept equal to the definition by a test.
 
+#### Provisioning automation (a machine principal without `admin:*`)
+
+Creating and deleting tenants takes the global `ar_super_admin` role, or, for a machine principal,
+`admin:*`. A dedicated automation principal can instead hold two narrower permissions. They are
+ordinary permissions: `*`, `admin:*` and `admin:tenants:*` carry them, no built-in role lists them,
+and a super admin can hand them to a principal through the machine access API (which asks for the
+`machine.permission.grant` step-up).
+
+| Permission                | Opens (exactly these method and path pairs)                                                                                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admin:tenants:provision` | `POST /api/admin/tenants`, `GET /api/admin/tenants/{id}/provisioning`, `POST /api/admin/tenants/{id}/provisioning/retry`, `POST /api/admin/tenants/{id}/provisioning/cleanup` |
+| `admin:tenants:delete`    | `DELETE /api/admin/tenants/{id}`                                                                                                                                              |
+
+What they do not allow: every other route under `/api/admin/tenants` (list, read, update,
+set-default, clone, lifecycle commands, jobs, placement migrations, runtime registry purge), and
+every other system-admin route (platform settings, plugins, initial access tokens, rate-limit
+overrides). A **human** is not helped by either permission: a human still needs the global
+`ar_super_admin` role for these routes, however the permission was obtained (for example through a
+custom global role).
+
+- The principal needs a **global tenant scope** (scope mode `all`); a token limited to some tenants
+  holds nothing for the platform and is refused, permission or not. Mint the token on the host it
+  is used on, and send `X-Tenant-Id` for in-tenant calls (the tenant routes above do not need it).
+- **Deleting keeps its step-up.** While admin step-up is enforced (the default), the principal
+  also needs the exact-name `admin:step_up_exempt:tenant.delete`; without it the step-up gate
+  refuses a machine (`403 step_up_human_required`). Where the platform has turned admin step-up off
+  (`security.admin_step_up_enforced` false), the shared gate lets a machine through before it looks
+  at the exemption, and the deletion permission alone is enough: a platform that relies on the
+  exemption as a second barrier must keep step-up enforced. Exact-name permissions are not implied by `*`, `admin:*` or any
+  wildcard, and an actor can hand out only what its own permissions hold, so a human super admin
+  cannot grant that exemption through the Admin API today: it is provisioned by the setup tooling.
+- **Refusals an automation should expect (all 409, nothing changed):**
+  - `tenant_state_changed` on delete or set-default: the tenant became the default, left an
+    allowed state, or already has a deletion queued. Read the tenant and decide again; do not
+    blindly resend.
+  - `tenant_deletion_in_progress` on set-default and on resume, unfreeze and restore-validate:
+    the tenant has a deletion queued or running. Wait for that job to fail or complete (a
+    `processing` job untouched for 6 hours stops counting), then decide again.
+  - `tenant_provisioning_cleanup_conflict` on cleanup: the operation is running, finished, or at
+    Lookup activation, or moved while cleanup started. Once activation has begun, retry
+    provisioning instead of cleaning up.
+  - A reactivation accepted before a deletion started yields to it and activates nothing, ending
+    as `partial_failure` in one of two ways: if the tenant is already `deleting` when the job
+    starts, the common lifecycle gate ends it (stage `blocked_by_tenant_lifecycle`, error
+    `tenant_lifecycle_blocked:deleting`); if a deletion was accepted after the command (even
+    if it has failed since and left the tenant in the job's source state, or is still pending or
+    running), or the state changed, the reactivating statement matches nothing (stage
+    `tenant_lifecycle_validation_superseded`). Send a new command if the tenant should still come
+    back.
+- **Create defaults to `tenant_exclusive`**, which allocates owned database capacity. Automation
+  should pass `isolation_policy` explicitly.
+- The created tenant, the deletion job and their audit entries record the caller: the Admin user
+  id for a human, the machine principal id and `admin_actor_type: machine` for a machine.
+
 #### Preset roles of the service's users
 
 Only two roles are preset. Business roles (billing, support, per-department roles) are created by
 whoever runs Authrim, in the Admin API or the Admin console.
 
-| Role | Description |
-|------|-------------|
-| `admin` | Administrators of the service's own users. Full access in the default policy. |
-| `end_user` | Standard user role. |
+| Role       | Description                                                                   |
+| ---------- | ----------------------------------------------------------------------------- |
+| `admin`    | Administrators of the service's own users. Full access in the default policy. |
+| `end_user` | Standard user role.                                                           |
 
 Names that start with `ar_` are reserved for the Admin roles above, and the preset names cannot be
 used for a new role. Organization and group features do not depend on a preset: a role created by
@@ -191,29 +246,30 @@ interface SubjectRole {
 
 Roles support three scope levels:
 
-| Scope | Description | Example |
-|-------|-------------|---------|
-| `global` | Applies everywhere | System administrator |
-| `org` | Limited to specific organization | `scopeTarget: "org:org_123"` |
-| `resource` | Limited to specific resource | `scopeTarget: "resource:doc_456"` |
+| Scope      | Description                      | Example                           |
+| ---------- | -------------------------------- | --------------------------------- |
+| `global`   | Applies everywhere               | System administrator              |
+| `org`      | Limited to specific organization | `scopeTarget: "org:org_123"`      |
+| `resource` | Limited to specific resource     | `scopeTarget: "resource:doc_456"` |
 
 **Scope Resolution:**
+
 - Global scope matches all scope requirements
 - Org scope only matches within the same organization
 - Resource scope only matches the specific resource
 
 ### RBAC Condition Types
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `has_role` | Subject has specific role | `{ role, scope?, scopeTarget? }` |
-| `has_any_role` | Subject has any of roles (OR) | `{ roles[], scope?, scopeTarget? }` |
-| `has_all_roles` | Subject has all roles (AND) | `{ roles[], scope?, scopeTarget? }` |
-| `is_resource_owner` | Subject owns the resource | `{}` |
-| `same_organization` | Subject and resource in same org | `{}` |
-| `has_relationship` | Subject has relationship with owner | `{ types[] }` |
-| `user_type_is` | Subject's user type matches | `{ types[] }` |
-| `plan_allows` | Organization plan allows action | `{ plans[] }` |
+| Condition           | Description                         | Parameters                          |
+| ------------------- | ----------------------------------- | ----------------------------------- |
+| `has_role`          | Subject has specific role           | `{ role, scope?, scopeTarget? }`    |
+| `has_any_role`      | Subject has any of roles (OR)       | `{ roles[], scope?, scopeTarget? }` |
+| `has_all_roles`     | Subject has all roles (AND)         | `{ roles[], scope?, scopeTarget? }` |
+| `is_resource_owner` | Subject owns the resource           | `{}`                                |
+| `same_organization` | Subject and resource in same org    | `{}`                                |
+| `has_relationship`  | Subject has relationship with owner | `{ types[] }`                       |
+| `user_type_is`      | Subject's user type matches         | `{ types[] }`                       |
+| `plan_allows`       | Organization plan allows action     | `{ plans[] }`                       |
 
 ### Role Checker Utilities
 
@@ -228,7 +284,7 @@ import {
   isSystemAdmin,
   isOrgAdmin,
   getActiveRoles,
-  subjectFromClaims
+  subjectFromClaims,
 } from '@authrim/ar-lib-policy';
 
 // Check single role
@@ -247,7 +303,9 @@ if (hasAllRoles(subject, ['viewer', 'commenter'])) {
 }
 
 // Quick admin check (the preset `admin` role)
-if (isAdmin(subject)) { /* ... */ }
+if (isAdmin(subject)) {
+  /* ... */
+}
 
 // Get active roles
 const activeRoles = getActiveRoles(subject, { scope: 'org', scopeTarget: 'org:123' });
@@ -257,7 +315,7 @@ const subject = subjectFromClaims({
   sub: 'user_123',
   authrim_roles: ['end_user', 'billing_manager'],
   authrim_org_id: 'org_456',
-  authrim_plan: 'professional'
+  authrim_plan: 'professional',
 });
 ```
 
@@ -272,22 +330,22 @@ const defaultRules = [
     name: 'Admin Full Access',
     priority: 1000,
     effect: 'allow',
-    conditions: [{ type: 'has_role', params: { role: 'admin' } }]
+    conditions: [{ type: 'has_role', params: { role: 'admin' } }],
   },
   {
     id: 'owner_full_access',
     name: 'Resource Owner Access',
     priority: 700,
     effect: 'allow',
-    conditions: [{ type: 'is_resource_owner', params: {} }]
+    conditions: [{ type: 'is_resource_owner', params: {} }],
   },
   {
     id: 'guardian_access',
     name: 'Guardian Access',
     priority: 600,
     effect: 'allow',
-    conditions: [{ type: 'has_relationship', params: { types: ['parent_of', 'guardian_of'] } }]
-  }
+    conditions: [{ type: 'has_relationship', params: { types: ['parent_of', 'guardian_of'] } }],
+  },
 ];
 ```
 
@@ -333,47 +391,47 @@ interface PolicySubjectWithAttributes extends PolicySubject {
 
 ### Attribute Sources
 
-| Source | Description | Use Case |
-|--------|-------------|----------|
-| `manual` | Manually assigned by admin | Internal policies |
-| `vc` | Verifiable Credential | External identity verification |
-| `jwt_sd` | SD-JWT (Selective Disclosure) | Privacy-preserving claims |
-| `kyc_provider` | KYC service verification | Age/identity verification |
+| Source         | Description                   | Use Case                       |
+| -------------- | ----------------------------- | ------------------------------ |
+| `manual`       | Manually assigned by admin    | Internal policies              |
+| `vc`           | Verifiable Credential         | External identity verification |
+| `jwt_sd`       | SD-JWT (Selective Disclosure) | Privacy-preserving claims      |
+| `kyc_provider` | KYC service verification      | Age/identity verification      |
 
 ### ABAC Condition Types
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `attribute_equals` | Attribute matches specific value | `{ name, value, checkExpiry? }` |
-| `attribute_exists` | Attribute exists (any value) | `{ name, checkExpiry? }` |
-| `attribute_in` | Attribute value in allowed list | `{ name, values[], checkExpiry? }` |
+| Condition          | Description                      | Parameters                         |
+| ------------------ | -------------------------------- | ---------------------------------- |
+| `attribute_equals` | Attribute matches specific value | `{ name, value, checkExpiry? }`    |
+| `attribute_exists` | Attribute exists (any value)     | `{ name, checkExpiry? }`           |
+| `attribute_in`     | Attribute value in allowed list  | `{ name, values[], checkExpiry? }` |
 
 ### Time-Based Conditions (Phase 4+)
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `time_in_range` | Check if current time is within hours | `{ startHour, endHour, timezone? }` |
-| `day_of_week` | Check if current day matches allowed days | `{ allowedDays: number[], timezone? }` |
-| `valid_during` | Check if current time is within period | `{ from?: unixSeconds, to?: unixSeconds }` |
+| Condition       | Description                               | Parameters                                 |
+| --------------- | ----------------------------------------- | ------------------------------------------ |
+| `time_in_range` | Check if current time is within hours     | `{ startHour, endHour, timezone? }`        |
+| `day_of_week`   | Check if current day matches allowed days | `{ allowedDays: number[], timezone? }`     |
+| `valid_during`  | Check if current time is within period    | `{ from?: unixSeconds, to?: unixSeconds }` |
 
 ### Numeric Conditions (Phase 4+)
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `numeric_gt` | Attribute value > threshold | `{ name, value }` |
-| `numeric_gte` | Attribute value >= threshold | `{ name, value }` |
-| `numeric_lt` | Attribute value < threshold | `{ name, value }` |
-| `numeric_lte` | Attribute value <= threshold | `{ name, value }` |
-| `numeric_eq` | Attribute value == threshold | `{ name, value }` |
+| Condition         | Description                  | Parameters           |
+| ----------------- | ---------------------------- | -------------------- |
+| `numeric_gt`      | Attribute value > threshold  | `{ name, value }`    |
+| `numeric_gte`     | Attribute value >= threshold | `{ name, value }`    |
+| `numeric_lt`      | Attribute value < threshold  | `{ name, value }`    |
+| `numeric_lte`     | Attribute value <= threshold | `{ name, value }`    |
+| `numeric_eq`      | Attribute value == threshold | `{ name, value }`    |
 | `numeric_between` | Attribute value within range | `{ name, min, max }` |
 
 ### Geographic Conditions (Phase 4+)
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `country_in` | Request from allowed countries | `{ countries: string[] }` |
+| Condition        | Description                        | Parameters                |
+| ---------------- | ---------------------------------- | ------------------------- |
+| `country_in`     | Request from allowed countries     | `{ countries: string[] }` |
 | `country_not_in` | Request not from blocked countries | `{ countries: string[] }` |
-| `ip_in_range` | Client IP in CIDR ranges | `{ ranges: string[] }` |
+| `ip_in_range`    | Client IP in CIDR ranges           | `{ ranges: string[] }`    |
 
 ### ABAC Condition Examples
 
@@ -480,9 +538,9 @@ const premiumFeatureRule: PolicyRule = {
   conditions: [
     {
       type: 'attribute_equals',
-      params: { name: 'subscription_tier', value: 'premium' }
-    }
-  ]
+      params: { name: 'subscription_tier', value: 'premium' },
+    },
+  ],
 };
 ```
 
@@ -577,11 +635,13 @@ interface CheckResponse {
 Contextual tuples allow passing temporary relationships in a check request. These are evaluated **before** cache lookup and provide request-specific permission grants without persisting to the database.
 
 **Use Cases:**
+
 - Preview mode: "What if user X had access to resource Y?"
 - Temporary grants: Short-lived permissions for specific operations
 - Testing: Simulating relationships in development/testing
 
 **Example:**
+
 ```typescript
 const checkRequest: CheckRequest = {
   tenant_id: 'tenant_1',
@@ -594,13 +654,14 @@ const checkRequest: CheckRequest = {
         user_id: 'user_123',
         relation: 'viewer',
         object: 'document:doc_456',
-      }
-    ]
-  }
+      },
+    ],
+  },
 };
 ```
 
 **Behavior:**
+
 1. Contextual tuples are checked **first** (before cache/DB)
 2. If a match is found, `resolved_via: 'context'` is returned
 3. Contextual tuples are NOT cached (request-scoped only)
@@ -617,11 +678,12 @@ Matches a specific relation tuple directly.
 ```typescript
 interface DirectRelation {
   type: 'direct';
-  relation: string;  // e.g., "viewer"
+  relation: string; // e.g., "viewer"
 }
 ```
 
 **Example:**
+
 ```json
 { "type": "direct", "relation": "viewer" }
 ```
@@ -638,6 +700,7 @@ interface UnionRelation {
 ```
 
 **Example:**
+
 ```json
 {
   "type": "union",
@@ -657,10 +720,10 @@ Inherit permissions from related objects (transitive).
 interface TupleToUsersetRelation {
   type: 'tuple_to_userset';
   tupleset: {
-    relation: string;  // Relation to traverse (e.g., "parent")
+    relation: string; // Relation to traverse (e.g., "parent")
   };
   computed_userset: {
-    relation: string;  // Relation to check on related object (e.g., "viewer")
+    relation: string; // Relation to check on related object (e.g., "viewer")
   };
 }
 ```
@@ -755,12 +818,12 @@ interface ReBACConfig {
 
 ### Safety Features
 
-| Feature | Implementation |
-|---------|----------------|
-| Cycle detection | `visited` Set tracking |
-| Depth limiting | `DEFAULT_MAX_DEPTH = 5` |
-| Cache invalidation | TTL-based + manual invalidation |
-| Multi-tenant isolation | `tenant_id` on all queries |
+| Feature                | Implementation                  |
+| ---------------------- | ------------------------------- |
+| Cycle detection        | `visited` Set tracking          |
+| Depth limiting         | `DEFAULT_MAX_DEPTH = 5`         |
+| Cache invalidation     | TTL-based + manual invalidation |
+| Multi-tenant isolation | `tenant_id` on all queries      |
 
 ### List Operations
 
@@ -800,12 +863,12 @@ object#relation@user
 
 ```typescript
 interface RelationshipTuple {
-  object_type: string;     // "document"
-  object_id: string;       // "doc_123"
-  relation: string;        // "viewer"
-  subject_type: string;    // "user"
-  subject_id: string;      // "user_456"
-  subject_relation?: string;  // For userset subjects
+  object_type: string; // "document"
+  object_id: string; // "doc_123"
+  relation: string; // "viewer"
+  subject_type: string; // "user"
+  subject_id: string; // "user_456"
+  subject_relation?: string; // For userset subjects
 }
 ```
 
@@ -817,12 +880,12 @@ interface RelationshipTuple {
 
 The Unified Check Service evaluates permissions in this order (first match wins):
 
-| Priority | Check Type | Description |
-|----------|------------|-------------|
-| 1 | ID-Level | `resource:id:action` format (most specific) |
-| 2 | RBAC | Role-based conditions |
-| 3 | ReBAC | Relationship evaluation |
-| 4 | ABAC/Computed | Attribute-based conditions |
+| Priority | Check Type    | Description                                 |
+| -------- | ------------- | ------------------------------------------- |
+| 1        | ID-Level      | `resource:id:action` format (most specific) |
+| 2        | RBAC          | Role-based conditions                       |
+| 3        | ReBAC         | Relationship evaluation                     |
+| 4        | ABAC/Computed | Attribute-based conditions                  |
 
 ### Permission Formats
 
@@ -904,7 +967,7 @@ interface CheckApiResponse {
 // Request
 interface BatchCheckRequest {
   checks: CheckApiRequest[];
-  stop_on_deny?: boolean;  // Stop processing on first deny
+  stop_on_deny?: boolean; // Stop processing on first deny
 }
 
 // Response
@@ -925,15 +988,15 @@ interface BatchCheckResponse {
 
 ### Available Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `ENABLE_ABAC` | `false` | Enable Attribute-Based Access Control |
-| `ENABLE_REBAC` | `false` | Enable Relationship-Based Access Control |
-| `ENABLE_POLICY_LOGGING` | `false` | Enable detailed policy evaluation logging |
-| `ENABLE_VERIFIED_ATTRIBUTES` | `false` | Enable verified attributes checking |
-| `ENABLE_CUSTOM_RULES` | `true` | Enable custom policy rules |
-| `ENABLE_SD_JWT` | `false` | Enable SD-JWT for ID Token issuance |
-| `ENABLE_POLICY_EMBEDDING` | `false` | Enable permission embedding in tokens |
+| Flag                         | Default | Description                               |
+| ---------------------------- | ------- | ----------------------------------------- |
+| `ENABLE_ABAC`                | `false` | Enable Attribute-Based Access Control     |
+| `ENABLE_REBAC`               | `false` | Enable Relationship-Based Access Control  |
+| `ENABLE_POLICY_LOGGING`      | `false` | Enable detailed policy evaluation logging |
+| `ENABLE_VERIFIED_ATTRIBUTES` | `false` | Enable verified attributes checking       |
+| `ENABLE_CUSTOM_RULES`        | `true`  | Enable custom policy rules                |
+| `ENABLE_SD_JWT`              | `false` | Enable SD-JWT for ID Token issuance       |
+| `ENABLE_POLICY_EMBEDDING`    | `false` | Enable permission embedding in tokens     |
 
 ### Resolution Priority
 
@@ -973,6 +1036,7 @@ await flagsManager.clearFlag('ENABLE_ABAC');
 Single permission check.
 
 **Request:**
+
 ```json
 {
   "subject_id": "user_123",
@@ -982,6 +1046,7 @@ Single permission check.
 ```
 
 **Response:**
+
 ```json
 {
   "allowed": true,
@@ -996,6 +1061,7 @@ Single permission check.
 Batch permission checks.
 
 **Request:**
+
 ```json
 {
   "checks": [
@@ -1007,11 +1073,17 @@ Batch permission checks.
 ```
 
 **Response:**
+
 ```json
 {
   "results": [
     { "allowed": true, "resolved_via": ["role"], "final_decision": "allow" },
-    { "allowed": false, "resolved_via": [], "final_decision": "deny", "reason": "no_matching_permission" }
+    {
+      "allowed": false,
+      "resolved_via": [],
+      "final_decision": "deny",
+      "reason": "no_matching_permission"
+    }
   ],
   "summary": {
     "total": 2,
@@ -1024,23 +1096,24 @@ Batch permission checks.
 
 ### Authentication
 
-| Method | Header Format |
-|--------|---------------|
-| API Key | `Authorization: Bearer chk_xxx` |
+| Method       | Header Format                     |
+| ------------ | --------------------------------- |
+| API Key      | `Authorization: Bearer chk_xxx`   |
 | Access Token | `Authorization: Bearer eyJhbG...` |
 
 ### Rate Limiting
 
 Response headers:
+
 - `X-RateLimit-Limit`: Maximum requests per window
 - `X-RateLimit-Remaining`: Remaining requests
 - `X-RateLimit-Reset`: Window reset timestamp
 
 ### Batch Size Limits
 
-| Setting | Default | Max |
-|---------|---------|-----|
-| `CHECK_API_BATCH_SIZE_LIMIT` | 100 | 1000 |
+| Setting                      | Default | Max  |
+| ---------------------------- | ------- | ---- |
+| `CHECK_API_BATCH_SIZE_LIMIT` | 100     | 1000 |
 
 ---
 
@@ -1144,8 +1217,8 @@ engine.addRule({
   effect: 'allow',
   conditions: [
     { type: 'has_role', params: { role: 'project_manager' } },
-    { type: 'same_organization', params: {} }
-  ]
+    { type: 'same_organization', params: {} },
+  ],
 });
 
 // Evaluate
@@ -1153,15 +1226,15 @@ const context: PolicyContext = {
   subject: {
     id: 'user_123',
     roles: [{ name: 'project_manager', scope: 'global' }],
-    orgId: 'org_456'
+    orgId: 'org_456',
   },
   resource: {
     type: 'project',
     id: 'proj_789',
-    orgId: 'org_456'
+    orgId: 'org_456',
   },
   action: { name: 'edit' },
-  timestamp: Date.now()
+  timestamp: Date.now(),
 };
 
 const decision = engine.evaluate(context);
@@ -1182,22 +1255,20 @@ engine.addRule({
   conditions: [
     {
       type: 'attribute_equals',
-      params: { name: 'subscription_tier', value: 'premium' }
-    }
-  ]
+      params: { name: 'subscription_tier', value: 'premium' },
+    },
+  ],
 });
 
 const context: PolicyContext = {
   subject: {
     id: 'user_123',
     roles: [],
-    verifiedAttributes: [
-      { name: 'subscription_tier', value: 'premium', source: 'manual' }
-    ]
+    verifiedAttributes: [{ name: 'subscription_tier', value: 'premium', source: 'manual' }],
   } as PolicySubjectWithAttributes,
   resource: { type: 'feature', id: 'advanced_analytics' },
   action: { name: 'access' },
-  timestamp: Date.now()
+  timestamp: Date.now(),
 };
 
 const decision = engine.evaluate(context);
@@ -1212,7 +1283,7 @@ const rebacService = createReBACService({
   db: D1_DATABASE,
   cache_namespace: KV_NAMESPACE,
   cache_ttl: 60,
-  max_depth: 5
+  max_depth: 5,
 });
 
 // Check if user can view document
@@ -1220,7 +1291,7 @@ const result = await rebacService.check({
   tenant_id: 'tenant_123',
   user_id: 'user_456',
   relation: 'viewer',
-  object: 'document:doc_789'
+  object: 'document:doc_789',
 });
 
 if (result.allowed) {
@@ -1239,7 +1310,7 @@ const checkService = createUnifiedCheckService({
   cache: KV_NAMESPACE,
   rebacService: rebacService,
   cacheTTL: 60,
-  debugMode: true
+  debugMode: true,
 });
 
 // Single check
@@ -1249,12 +1320,12 @@ const result = await checkService.check({
   tenant_id: 'tenant_abc',
   rebac: {
     relation: 'viewer',
-    object: 'document:doc_456'
+    object: 'document:doc_456',
   },
   resource_context: {
     owner_id: 'user_789',
-    org_id: 'org_abc'
-  }
+    org_id: 'org_abc',
+  },
 });
 
 // Batch check
@@ -1262,9 +1333,9 @@ const batchResult = await checkService.batchCheck({
   checks: [
     { subject_id: 'user_123', permission: 'documents:read' },
     { subject_id: 'user_123', permission: 'documents:write' },
-    { subject_id: 'user_123', permission: 'documents:delete' }
+    { subject_id: 'user_123', permission: 'documents:delete' },
   ],
-  stop_on_deny: true
+  stop_on_deny: true,
 });
 ```
 
@@ -1274,14 +1345,14 @@ const batchResult = await checkService.batchCheck({
 
 ### 1. Choose the Right Model
 
-| Scenario | Recommended Model |
-|----------|-------------------|
-| Fixed organizational hierarchy | RBAC |
-| Compliance/regulatory requirements | ABAC |
-| Resource sharing/collaboration | ReBAC |
-| Simple admin vs user distinction | RBAC |
-| Age-gated content | ABAC |
-| File/folder inheritance | ReBAC |
+| Scenario                           | Recommended Model |
+| ---------------------------------- | ----------------- |
+| Fixed organizational hierarchy     | RBAC              |
+| Compliance/regulatory requirements | ABAC              |
+| Resource sharing/collaboration     | ReBAC             |
+| Simple admin vs user distinction   | RBAC              |
+| Age-gated content                  | ABAC              |
+| File/folder inheritance            | ReBAC             |
 
 ### 2. Performance Optimization
 
@@ -1315,43 +1386,44 @@ const batchResult = await checkService.batchCheck({
 
 ### Feature Support
 
-| Feature | RBAC | ABAC | ReBAC |
-|---------|:----:|:----:|:-----:|
-| Role hierarchy | ✅ | ❌ | ❌ |
-| Scoped roles | ✅ | ❌ | ❌ |
-| Role expiration | ✅ | ❌ | ❌ |
-| Attribute matching | ❌ | ✅ | ❌ |
-| Attribute expiration | ❌ | ✅ | ❌ |
-| VC integration | ❌ | ✅ | ❌ |
-| Direct relationships | ❌ | ❌ | ✅ |
-| Transitive relationships | ❌ | ❌ | ✅ |
-| Union (OR) expressions | ❌ | ❌ | ✅ |
-| Intersection (AND) | ❌ | ❌ | ⏳ |
-| Exclusion (NOT) | ❌ | ❌ | ⏳ |
+| Feature                  | RBAC | ABAC | ReBAC |
+| ------------------------ | :--: | :--: | :---: |
+| Role hierarchy           |  ✅  |  ❌  |  ❌   |
+| Scoped roles             |  ✅  |  ❌  |  ❌   |
+| Role expiration          |  ✅  |  ❌  |  ❌   |
+| Attribute matching       |  ❌  |  ✅  |  ❌   |
+| Attribute expiration     |  ❌  |  ✅  |  ❌   |
+| VC integration           |  ❌  |  ✅  |  ❌   |
+| Direct relationships     |  ❌  |  ❌  |  ✅   |
+| Transitive relationships |  ❌  |  ❌  |  ✅   |
+| Union (OR) expressions   |  ❌  |  ❌  |  ✅   |
+| Intersection (AND)       |  ❌  |  ❌  |  ⏳   |
+| Exclusion (NOT)          |  ❌  |  ❌  |  ⏳   |
 
 ### Condition Types
 
-| RBAC (7) | ABAC (3) | ReBAC DSL |
-|----------|----------|-----------|
-| `has_role` | `attribute_equals` | `direct` |
-| `has_any_role` | `attribute_exists` | `union` |
-| `has_all_roles` | `attribute_in` | `tuple_to_userset` |
-| `is_resource_owner` | | `intersection` ⏳ |
-| `same_organization` | | `exclusion` ⏳ |
-| `has_relationship` | | |
-| `user_type_is` | | |
-| `plan_allows` | | |
+| RBAC (7)            | ABAC (3)           | ReBAC DSL          |
+| ------------------- | ------------------ | ------------------ |
+| `has_role`          | `attribute_equals` | `direct`           |
+| `has_any_role`      | `attribute_exists` | `union`            |
+| `has_all_roles`     | `attribute_in`     | `tuple_to_userset` |
+| `is_resource_owner` |                    | `intersection` ⏳  |
+| `same_organization` |                    | `exclusion` ⏳     |
+| `has_relationship`  |                    |                    |
+| `user_type_is`      |                    |                    |
+| `plan_allows`       |                    |                    |
 
 ### Performance Characteristics
 
-| Metric | RBAC | ABAC | ReBAC |
-|--------|------|------|-------|
-| Time Complexity | O(1) | O(n) | O(d) |
-| Space Complexity | O(r) | O(a) | O(e) |
-| Cache Strategy | Token embedding | Attribute cache | KV + closure |
-| Batch Efficiency | High | Medium | Low |
+| Metric           | RBAC            | ABAC            | ReBAC        |
+| ---------------- | --------------- | --------------- | ------------ |
+| Time Complexity  | O(1)            | O(n)            | O(d)         |
+| Space Complexity | O(r)            | O(a)            | O(e)         |
+| Cache Strategy   | Token embedding | Attribute cache | KV + closure |
+| Batch Efficiency | High            | Medium          | Low          |
 
 Where:
+
 - `r` = number of roles
 - `a` = number of attributes
 - `n` = attributes to evaluate
@@ -1364,19 +1436,19 @@ Where:
 
 ### Current Status (as of 2026-01-16)
 
-| Feature | Model | Status | Test Coverage |
-|---------|-------|--------|---------------|
-| RBAC Core | RBAC | ✅ Complete | 53 tests |
-| Scoped Roles | RBAC | ✅ Complete | Included |
-| Role Hierarchy | RBAC | ✅ Complete | Included |
-| ABAC Core | ABAC | ✅ Complete | 44 tests |
-| Verified Attributes | ABAC | ✅ Complete | Included |
-| Attribute Expiration | ABAC | ✅ Complete | Included |
-| Time-based conditions | Phase 4 | ✅ Complete | 13 tests |
-| Numeric comparisons | Phase 4 | ✅ Complete | 18 tests |
-| Geographic conditions | Phase 4 | ✅ Complete | 17 tests |
-| Unified Check Service | Integration | ✅ Complete | 38 tests |
-| Feature Flags | Configuration | ✅ Complete | 25 tests |
+| Feature               | Model         | Status      | Test Coverage |
+| --------------------- | ------------- | ----------- | ------------- |
+| RBAC Core             | RBAC          | ✅ Complete | 53 tests      |
+| Scoped Roles          | RBAC          | ✅ Complete | Included      |
+| Role Hierarchy        | RBAC          | ✅ Complete | Included      |
+| ABAC Core             | ABAC          | ✅ Complete | 44 tests      |
+| Verified Attributes   | ABAC          | ✅ Complete | Included      |
+| Attribute Expiration  | ABAC          | ✅ Complete | Included      |
+| Time-based conditions | Phase 4       | ✅ Complete | 13 tests      |
+| Numeric comparisons   | Phase 4       | ✅ Complete | 18 tests      |
+| Geographic conditions | Phase 4       | ✅ Complete | 17 tests      |
+| Unified Check Service | Integration   | ✅ Complete | 38 tests      |
+| Feature Flags         | Configuration | ✅ Complete | 25 tests      |
 
 **Total Test Count:** 186+ tests across ar-lib-policy
 
@@ -1386,13 +1458,13 @@ Where:
 
 ### Phase 5+ Planned Features
 
-| Feature | Model | Status |
-|---------|-------|--------|
-| Intersection relations | ReBAC | Planned |
-| Exclusion relations | ReBAC | Planned |
-| Contextual tuples | ReBAC | Planned |
-| IPv6 support | Geographic | Planned |
-| Rate-based conditions | Advanced | Under consideration |
+| Feature                | Model      | Status              |
+| ---------------------- | ---------- | ------------------- |
+| Intersection relations | ReBAC      | Planned             |
+| Exclusion relations    | ReBAC      | Planned             |
+| Contextual tuples      | ReBAC      | Planned             |
+| IPv6 support           | Geographic | Planned             |
+| Rate-based conditions  | Advanced   | Under consideration |
 
 ---
 

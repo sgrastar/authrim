@@ -272,7 +272,7 @@ describe('tenant deletion jobs', () => {
       'target-tenant'
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
-      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted'",
+      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted' AND is_default = 0 AND default_tenant_guard IS NULL",
       [expect.any(Number), 'target-tenant']
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
@@ -460,6 +460,29 @@ describe('tenant deletion jobs', () => {
     expect(mockAdapter.query).not.toHaveBeenCalled();
   });
 
+  it('refuses to purge a tenant that is the default, and fails the job without retrying', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-d',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'second' }),
+      },
+    ]);
+    mockAdapter.queryOne.mockImplementation(async (sql: string) =>
+      sql.includes('SELECT is_default FROM tenants') ? { is_default: 1 } : null
+    );
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'failed', error_message = ?, attempt_count = ?"),
+      expect.arrayContaining(['tenant_deletion_target_is_default', 'job-d'])
+    );
+    expect(mockGetTenantDeletionInventory).not.toHaveBeenCalled();
+    expect(mockPurgeTenantAuthoritativeShards).not.toHaveBeenCalled();
+    expect(mockPublishTenantRuntimeRegistryRouteState).not.toHaveBeenCalled();
+  });
+
   it('marks the scoped job failed when the config is invalid', async () => {
     mockAdapter.query.mockResolvedValue([
       {
@@ -596,7 +619,7 @@ describe('tenant deletion jobs', () => {
     await processPendingTenantDeletionJobs(controlEnvironment(), logger);
 
     expect(mockAdapter.execute).toHaveBeenCalledWith(
-      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted'",
+      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted' AND is_default = 0 AND default_tenant_guard IS NULL",
       [expect.any(Number), 'target-tenant']
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
@@ -637,7 +660,7 @@ describe('tenant deletion jobs', () => {
     await processPendingTenantDeletionJobs(controlEnvironment(), logger);
 
     expect(mockAdapter.execute).toHaveBeenCalledWith(
-      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted'",
+      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted' AND is_default = 0 AND default_tenant_guard IS NULL",
       [expect.any(Number), 'target-tenant']
     );
     expect(mockAdapter.transaction).not.toHaveBeenCalled();
@@ -672,7 +695,7 @@ describe('tenant deletion jobs', () => {
 
     expect(mockPurgeTenantAuthoritativeShards).toHaveBeenCalled();
     expect(mockAdapter.execute).toHaveBeenCalledWith(
-      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted'",
+      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted' AND is_default = 0 AND default_tenant_guard IS NULL",
       [expect.any(Number), 'target-tenant']
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
@@ -756,7 +779,7 @@ describe('tenant deletion jobs', () => {
       [backupJobId, 'target-tenant']
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
-      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted'",
+      "UPDATE tenants SET lifecycle_state = 'suspended', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted' AND is_default = 0 AND default_tenant_guard IS NULL",
       [expect.any(Number), 'target-tenant']
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(

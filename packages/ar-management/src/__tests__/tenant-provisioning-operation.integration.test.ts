@@ -225,14 +225,40 @@ describe('tenant provisioning operation repository', () => {
   it('does not cancel a running operation but cancels a queued operation', async () => {
     await create();
     const lease = await repository.claimNext('test', 'worker-a', 101);
-    await expect(repository.cancel('tenant-create-a', 'test', 102)).resolves.toBeNull();
+    await expect(
+      repository.cancel('tenant-create-a', 'test', 102, 'request_accepted')
+    ).resolves.toBeNull();
     database
       .prepare(
         'UPDATE tenant_provisioning_operations SET status = ?, lease_owner = NULL WHERE operation_id = ?'
       )
       .run('waiting_retry', 'tenant-create-a');
-    const canceled = await repository.cancel('tenant-create-a', 'test', 103);
+    const canceled = await repository.cancel('tenant-create-a', 'test', 103, 'request_accepted');
     expect(canceled).toMatchObject({ status: 'canceled', completedAt: 103 });
     expect(lease?.fencingToken).toBe(1);
+  });
+
+  it('does not cancel an operation that reached Lookup activation or moved since it was read', async () => {
+    await create();
+    await repository.claimNext('test', 'worker-a', 101);
+    const adapter = new SqliteAdapter(database);
+    for (const step of ['lookup_activate', 'tenant_active']) {
+      await adapter.execute(
+        'UPDATE tenant_provisioning_operations SET status = ?, current_step = ?, lease_owner = NULL WHERE operation_id = ?',
+        ['waiting_retry', step, 'tenant-create-a']
+      );
+      // Even when the caller's read already named this step.
+      await expect(
+        repository.cancel('tenant-create-a', 'test', 104, step as 'tenant_active')
+      ).resolves.toBeNull();
+      await expect(
+        repository.cancel('tenant-create-a', 'test', 104, 'request_accepted')
+      ).resolves.toBeNull();
+    }
+    await expect(
+      adapter.queryOne('SELECT status FROM tenant_provisioning_operations WHERE operation_id = ?', [
+        'tenant-create-a',
+      ])
+    ).resolves.toMatchObject({ status: 'waiting_retry' });
   });
 });

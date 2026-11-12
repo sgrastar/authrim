@@ -122,6 +122,72 @@ function writeOnly(pattern: string, permission: string, description: string): Ad
   });
 }
 
+/**
+ * The five tenant routes an automation machine principal may run on its own permission, without
+ * `admin:*`: create, follow and clean up a provisioning, and delete. Each is admitted by what it
+ * accepted before (the settings permission, or the platform role) or by its own permission; no
+ * other method or path under `/api/admin/tenants` is touched. They sit ahead of the tenant
+ * catch-alls (first match wins), and the Worker's system-admin guard asks the same table which
+ * permission a request is on (`tenantProvisioningRoutePermission`), so the two cannot drift.
+ */
+const TENANT_PROVISIONING_PERMISSION = new Map<AdminRouteAccessRule, string>();
+
+function tenantProvisioningRule(
+  pattern: string,
+  method: AdminRouteMethod,
+  existingPermission: string,
+  ownPermission: string,
+  description: string
+): AdminRouteAccessRule {
+  const accessRule = rule({
+    pattern,
+    methods: [method],
+    anyPermissions: [existingPermission, ownPermission],
+    roles: PLATFORM_ADMIN_ROLES,
+    description,
+  });
+  TENANT_PROVISIONING_PERMISSION.set(accessRule, ownPermission);
+  return accessRule;
+}
+
+const TENANT_PROVISIONING_RULES: AdminRouteAccessRule[] = [
+  tenantProvisioningRule(
+    '/api/admin/tenants',
+    'POST',
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.TENANT_PROVISION,
+    'tenant administration create'
+  ),
+  tenantProvisioningRule(
+    '/api/admin/tenants/:tenantId/provisioning',
+    'GET',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.TENANT_PROVISION,
+    'tenant provisioning status'
+  ),
+  tenantProvisioningRule(
+    '/api/admin/tenants/:tenantId/provisioning/retry',
+    'POST',
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.TENANT_PROVISION,
+    'tenant provisioning retry'
+  ),
+  tenantProvisioningRule(
+    '/api/admin/tenants/:tenantId/provisioning/cleanup',
+    'POST',
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.TENANT_PROVISION,
+    'tenant provisioning cleanup'
+  ),
+  tenantProvisioningRule(
+    '/api/admin/tenants/:tenantId',
+    'DELETE',
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.TENANT_DELETE,
+    'tenant deletion'
+  ),
+];
+
 export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   rule({
     pattern: '/api/internal/versions/:workerName',
@@ -962,6 +1028,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'tenant audit settings'
   ),
+  ...TENANT_PROVISIONING_RULES,
   ...byMethod(
     '/api/admin/tenants',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -2363,6 +2430,17 @@ export function findAdminRouteAccessRule(
         accessRule.methods.includes(normalizedMethod as AdminRouteMethod) && regex.test(pathname)
     )?.accessRule ?? null
   );
+}
+
+/**
+ * The permission a request runs on when it is one of the five tenant provisioning and deletion
+ * routes, otherwise null. `pathname` is the router's own path (`c.req.path`), matched by the same
+ * compiled patterns as the declared gate: an escaped, longer or trailing-slash spelling, or
+ * another method, is not one of them.
+ */
+export function tenantProvisioningRoutePermission(method: string, pathname: string): string | null {
+  const matched = findAdminRouteAccessRule(method, pathname);
+  return (matched && TENANT_PROVISIONING_PERMISSION.get(matched)) || null;
 }
 
 function hasAnyPermission(permissions: string[], required: string[]): boolean {
