@@ -187,6 +187,7 @@ import {
   extractDPoPProof,
   validateDPoPProof,
   isDPoPRequiredForRequest,
+  hasMalformedPercentEscape,
   type DPoPMode,
 } from '@authrim/ar-lib-core';
 import { parseDeviceCodeId, getDeviceCodeStoreById } from '@authrim/ar-lib-core';
@@ -1150,7 +1151,16 @@ async function dpopValidationErrorResponse(
   return response;
 }
 
-async function isDPoPRequiredForTokenRequest(
+/**
+ * The path DPoP `critical_only` is judged on: the one the router dispatched on, so an escaped
+ * spelling (`/%74oken`) cannot look uncritical. A malformed percent escape is not repaired into a
+ * path (see hasMalformedPercentEscape): it is judged as the token endpoint, the strictest case.
+ */
+function dpopRequestPath(c: Context<{ Bindings: Env }>): string {
+  return hasMalformedPercentEscape(c.req.url) ? '/token' : c.req.path;
+}
+
+export async function isDPoPRequiredForTokenRequest(
   c: Context<{ Bindings: Env }>,
   clientMetadata: ClientMetadata
 ): Promise<boolean> {
@@ -1178,7 +1188,7 @@ async function isDPoPRequiredForTokenRequest(
     throw new SecurityProfileSettingsUnavailableError();
   }
 
-  const requestPath = new URL(c.req.url).pathname;
+  const requestPath = dpopRequestPath(c);
   const clientRequiresDpop = isDPoPRequiredForRequest(
     (clientMetadata.dpop_mode as DPoPMode) || 'disabled',
     requestPath,
@@ -2073,7 +2083,7 @@ async function handleAuthorizationCodeGrant(
   // Client-level DPoP mode (disabled | critical_only | all)
   const clientDpopMode = (clientMetadata.dpop_mode as DPoPMode) || 'disabled';
   const clientDpopBoundTokens = Boolean(clientMetadata.dpop_bound_access_tokens);
-  const requestPath = new URL(c.req.url).pathname;
+  const requestPath = dpopRequestPath(c);
 
   // Determine if DPoP is required for this specific request
   const clientRequiresDpop = isDPoPRequiredForRequest(
