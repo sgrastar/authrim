@@ -21,6 +21,9 @@ export async function findSnapshotFile(options: {
   resolver: ReturnType<typeof safeReadResolver>;
   position: ManifestScanPosition;
   filter?: ArchiveParquetFilter;
+  /** Skip data manifests added by a snapshot committed before this time (ms). Manifests whose
+   * snapshot is no longer in the metadata are still read, since their age is unknown. */
+  dataManifestsAddedFrom?: number;
   mayMatch: (entry: ArchiveManifestEntry) => boolean;
 }): Promise<{
   data?: { entry: ArchiveManifestEntry; position: ManifestScanPosition };
@@ -35,6 +38,16 @@ export async function findSnapshotFile(options: {
     (item) => item['schema-id'] === (snapshot['schema-id'] ?? options.metadata['current-schema-id'])
   );
   if (!schema) throw new Error('Archive snapshot schema unavailable');
+  const addedFrom = options.dataManifestsAddedFrom;
+  const committedAt = new Map<string, number>();
+  if (addedFrom !== undefined)
+    for (const item of options.metadata.snapshots ?? [])
+      committedAt.set(String(item['snapshot-id']), item['timestamp-ms']);
+  const committedBefore = (manifest: Manifest): boolean => {
+    if (addedFrom === undefined || manifest.added_snapshot_id == null) return false;
+    const at = committedAt.get(String(manifest.added_snapshot_id));
+    return at !== undefined && at < addedFrom;
+  };
   let manifestIndex = -1;
   let result: { entry: ArchiveManifestEntry; position: ManifestScanPosition } | undefined;
   const deletes: ArchiveManifestEntry[] = [];
@@ -53,6 +66,7 @@ export async function findSnapshotFile(options: {
         throw new Error('Invalid archive manifest list record');
       if (options.filter && !manifestMightMatch(options.filter, manifest, schema, options.metadata))
         continue;
+      if (manifest.content === 0 && committedBefore(manifest)) continue;
       if (
         manifest.content === 0 &&
         (result || continuation || manifestIndex < options.position.manifest)

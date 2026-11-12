@@ -118,6 +118,40 @@ describe('real non-PII post-deploy archive probe', () => {
     });
     expect(f.db.prepare('SELECT COUNT(*) AS n FROM log_iceberg_records').get()?.n).toBe(0);
   });
+  it('skips Pipeline manifests from provider ingest days before the attempt', async () => {
+    const f = await fixture('pipeline');
+    await f.probe();
+    await consumeLogIcebergMessage(f.queueMessages[0], f.env, f.now);
+    const archive = new ScheduledIcebergWriter({
+      catalog: f.catalog,
+      store: f.store,
+      journal: new MemoryJournal(),
+      storageGeneration: f.config.generation,
+      tableLocation: LOCATION,
+    });
+    const manifests = () => [...f.store.objects.keys()].filter((key) => key.endsWith('-m0.avro'));
+    const threeDays = 3 * 24 * 60 * 60 * 1000;
+    await archive.appendBatch({
+      batchId: 'older-provider-day',
+      fence: 'fence-1',
+      records: f.streamRecords.map((record) => ({
+        ...record,
+        ingested_at: record.ingested_at - threeDays,
+      })),
+    });
+    const older = manifests();
+    expect(older).toHaveLength(1);
+    await archive.appendBatch({
+      batchId: 'provider-probe',
+      fence: 'fence-1',
+      records: f.streamRecords,
+    });
+    const read = vi.spyOn(f.store, 'read');
+    expect(await f.probe()).toMatchObject({ state: 'ready', attemptId: f.attempt.attemptId });
+    const paths = read.mock.calls.map(([path]) => path);
+    expect(paths.some((path) => manifests().includes(path) && !older.includes(path))).toBe(true);
+    expect(paths.filter((path) => older.includes(path))).toEqual([]);
+  });
   it('requires a fresh attempt after deployment rather than accepting an older visible probe', async () => {
     const f = await fixture('pipeline');
     await f.probe();
