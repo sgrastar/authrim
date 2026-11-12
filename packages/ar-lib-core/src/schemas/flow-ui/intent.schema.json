@@ -20,12 +20,7 @@
           "description": "Core intents (always available)"
         },
         {
-          "enum": [
-            "select_organization",
-            "select_role",
-            "delegate_identity",
-            "review_permissions"
-          ],
+          "enum": ["select_organization", "select_role", "delegate_identity", "review_permissions"],
           "description": "Policy intents (RBAC/ReBAC)"
         },
         {
@@ -95,12 +90,7 @@
     },
     "PolicyIntent": {
       "type": "string",
-      "enum": [
-        "select_organization",
-        "select_role",
-        "delegate_identity",
-        "review_permissions"
-      ],
+      "enum": ["select_organization", "select_role", "delegate_identity", "review_permissions"],
       "description": "Policy intents for RBAC/ReBAC features"
     },
     "TargetIntent": {

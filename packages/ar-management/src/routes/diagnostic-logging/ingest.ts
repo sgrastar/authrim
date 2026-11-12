@@ -18,6 +18,12 @@ import {
   applyPrivacyModeToEntry,
   identifierOrFingerprint,
   getDefaultTenantId,
+  getTenantIdFromContext,
+  isValidTenantIdentifier,
+  getClientIP,
+  getCloudProvider,
+  getRateLimitProfileAsync,
+  checkRateLimit,
   isMultiTenantEnabled,
   emitRuntimeLogRecords,
   readRequestTextWithLimit,
@@ -107,12 +113,71 @@ async function validateClient(
   }
 }
 
-function resolveIngestTenantId(env: Env, tenantId?: string): string | null {
-  const normalized = tenantId?.trim();
+/** A tenant id the rest of the platform accepts: lowercase DNS-label format, at most 63 characters. */
+function isWellFormedTenantId(value: string): boolean {
+  return value.length <= 63 && isValidTenantIdentifier(value);
+}
+
+function resolveIngestTenantId(env: Env, tenantId?: unknown): string | null {
+  const normalized = typeof tenantId === 'string' ? tenantId.trim() : undefined;
   if (normalized) {
     return normalized;
   }
   return isMultiTenantEnabled(env) ? null : getDefaultTenantId(env);
+}
+
+/**
+ * The ingest limit follows the DESTINATION tenant. The route limiter (index.ts) counts per tenant
+ * of the request host before the body is read; the body names the tenant the logs are stored for,
+ * which a shared API host may legitimately make different from the host's. Without this, rotating
+ * request hosts with one destination would get a fresh budget on each. When the two tenants
+ * differ, the request is also counted against the destination (same class, same profile, same
+ * 429 answer as the route limiter). Returns the refusal to send, or null.
+ */
+async function spendDestinationBudget(
+  c: Context<{ Bindings: Env }>,
+  destinationTenantId: string
+): Promise<Response | null> {
+  if (destinationTenantId === getTenantIdFromContext(c)) return null;
+  // With no counter backend at all the route limiter has already refused the request (it fails
+  // closed), so this is only reached when the handler is mounted without it.
+  if (!c.env.RATE_LIMITER && !c.env.STATE_STORE && !c.env.AUTH_RUNTIME_PORTS) return null;
+  try {
+    const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+    const clientIP = getClientIP(c, await getCloudProvider(c.env));
+    const result = await checkRateLimit(
+      c.env,
+      clientIP,
+      { ...profile, endpointClass: 'diagnostic_log_ingest' },
+      destinationTenantId
+    );
+    c.header('X-RateLimit-Limit', profile.maxRequests.toString());
+    c.header('X-RateLimit-Remaining', result.remaining.toString());
+    c.header('X-RateLimit-Reset', result.resetAt.toString());
+    if (result.allowed) return null;
+    const retryAfter = result.resetAt - Math.floor(Date.now() / 1000);
+    c.header('Retry-After', retryAfter.toString());
+    return c.json(
+      {
+        error: 'rate_limit_exceeded',
+        error_description: 'Too many requests. Please try again later.',
+        retry_after: retryAfter,
+      },
+      429
+    );
+  } catch (error) {
+    log.error('Diagnostic ingest destination rate limit error', {}, error as Error);
+    // Fail closed, like the route limiter.
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'The service is temporarily unavailable. Please try again later.',
+      },
+      503
+    );
+  }
 }
 
 /**
@@ -155,7 +220,10 @@ async function recordDiagnosticIngestFailure(
     metadata?: Record<string, unknown>;
   }
 ): Promise<void> {
-  const tenantId = input.tenantId || getDefaultTenantId(c.env);
+  // `input.tenantId` is only ever a tenant the client has been validated for. Until then the event
+  // belongs to the tenant of the request host, which the route limiter bounds: an unverified body
+  // tenant must never receive writes.
+  const tenantId = input.tenantId || getTenantIdFromContext(c) || getDefaultTenantId(c.env);
   // The client id is what the sender wrote before anything was checked: it reaches the archive
   // only as a plain identifier or a fingerprint (an email-shaped client_id is not stored).
   const clientId =
@@ -257,7 +325,6 @@ app.post('/', async (c) => {
     await recordDiagnosticIngestFailure(c, {
       reason: 'too_many_logs',
       clientId: body.client_id,
-      tenantId: body.tenant_id ?? null,
       httpStatus: 400,
       metadata: { log_count: body.logs.length, max_logs: MAX_LOGS_PER_REQUEST },
     });
@@ -270,8 +337,11 @@ app.post('/', async (c) => {
     );
   }
 
-  const tenantId = resolveIngestTenantId(c.env, body.tenant_id);
-  if (!tenantId) {
+  const tenantId =
+    body.tenant_id !== undefined && body.tenant_id !== null && typeof body.tenant_id !== 'string'
+      ? ''
+      : resolveIngestTenantId(c.env, body.tenant_id);
+  if (tenantId === null) {
     await recordDiagnosticIngestFailure(c, {
       reason: 'tenant_id_required',
       clientId: body.client_id,
@@ -286,6 +356,21 @@ app.post('/', async (c) => {
     );
   }
 
+  if (!isWellFormedTenantId(tenantId)) {
+    await recordDiagnosticIngestFailure(c, {
+      reason: 'tenant_id_invalid',
+      clientId: body.client_id,
+      httpStatus: 400,
+    });
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'tenant_id has an invalid format',
+      },
+      400
+    );
+  }
+
   // Validate client credentials
   const validation = await validateClient(c.env, tenantId, body.client_id, body.client_secret);
   if (!validation.valid) {
@@ -295,9 +380,9 @@ app.post('/', async (c) => {
     });
     await recordDiagnosticIngestFailure(c, {
       reason: validation.error || 'client_validation_failed',
-      tenantId,
       clientId: body.client_id,
       httpStatus: 401,
+      metadata: { claimed_tenant_id: tenantId },
     });
 
     return c.json(
@@ -313,10 +398,9 @@ app.post('/', async (c) => {
   if (validatedTenantId !== tenantId) {
     await recordDiagnosticIngestFailure(c, {
       reason: 'client_tenant_mismatch',
-      tenantId,
       clientId: body.client_id,
       httpStatus: 401,
-      metadata: { validated_tenant_present: !!validatedTenantId },
+      metadata: { validated_tenant_present: !!validatedTenantId, claimed_tenant_id: tenantId },
     });
     return c.json(
       {
@@ -326,6 +410,13 @@ app.post('/', async (c) => {
       401
     );
   }
+  // The client is now verified as belonging to the destination tenant: the first moment a counter
+  // or a write for that tenant is justified. Spend its budget before any write for it (a failure
+  // event for a disabled ingest included); an invalid request never gets here and is bounded by
+  // the route limiter alone.
+  const destinationRefusal = await spendDestinationBudget(c, tenantId);
+  if (destinationRefusal) return destinationRefusal;
+
   // The tenant's settings decide whether anything is stored at all (sdk_ingest_enabled), so
   // when they cannot be read nothing is stored: a settings outage must not switch ingest on.
   let diagnosticSettings: DiagnosticLoggingSettings;

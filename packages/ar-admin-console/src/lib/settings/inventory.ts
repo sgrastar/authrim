@@ -305,7 +305,8 @@ place('authentication/protection', 'API rate limits', {
 		'rate_limit.lenient',
 		'rate_limit.public_read',
 		'rate_limit.login_start',
-		'rate_limit.send_challenge'
+		'rate_limit.send_challenge',
+		'rate_limit.admin_write'
 	],
 	search: [
 		'rate_limit.strict_window_seconds',
@@ -315,7 +316,8 @@ place('authentication/protection', 'API rate limits', {
 		'rate_limit.login_start_window_seconds',
 		'rate_limit.send_challenge_window_seconds',
 		'rate_limit.loadtest',
-		'rate_limit.loadtest_window_seconds'
+		'rate_limit.loadtest_window_seconds',
+		'rate_limit.admin_write_window_seconds'
 	]
 });
 

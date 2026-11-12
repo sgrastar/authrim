@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { icebergManifests, splitManifestEntries } from 'icebird/src/manifest.js';
 import {
   inspectLogArchiveTable,
@@ -7,7 +7,7 @@ import {
   assertLogArchiveTableLocations,
 } from '../physical-schema.js';
 import { ScheduledIcebergWriter } from '../writer.js';
-import { readSnapshotRecords } from '../reader.js';
+import { readSnapshotPage, readSnapshotRecords } from '../reader.js';
 import { IcebergLifecycle } from '../lifecycle.js';
 import {
   LOCATION,
@@ -43,6 +43,71 @@ function fixture(first: boolean) {
 }
 
 describe('new Pipeline physical profile', () => {
+  afterEach(() => vi.useRealTimers());
+  it('skips data manifests committed before the requested bound on the same provider day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const f = fixture(true);
+    vi.setSystemTime(1793000010000);
+    await f.writer.appendBatch({
+      batchId: 'earlier-commit',
+      fence: 'fence-1',
+      records: [record({ event_id: 'earlier' })],
+    });
+    const manifests = () => [...f.store.objects.keys()].filter((key) => key.endsWith('-m0.avro'));
+    const earlier = manifests();
+    expect(earlier).toHaveLength(1);
+    vi.setSystemTime(1793000020000);
+    await f.writer.appendBatch({
+      batchId: 'later-commit',
+      fence: 'fence-1',
+      records: [record({ event_id: 'later' })],
+    });
+    const scan = async (dataManifestsAddedFrom?: number) => {
+      const read = vi.spyOn(f.store, 'read');
+      const found = await readSnapshotRecords({
+        table: await f.catalog.loadTable(),
+        store: f.store,
+        tenantKey: 'tenant-test',
+        sourceDatasets: ['core.event_log'],
+        nowMs: 1793000005000,
+        ...(dataManifestsAddedFrom === undefined ? {} : { dataManifestsAddedFrom }),
+      });
+      const paths = read.mock.calls.map(([path]) => path);
+      read.mockRestore();
+      return { ids: found.records.map((row) => row.event_id).sort(), paths };
+    };
+    const all = await scan();
+    expect(all.ids).toEqual(['earlier', 'later']);
+    expect(all.paths.some((path) => earlier.includes(path))).toBe(true);
+    const bounded = await scan(1793000015000);
+    expect(bounded.ids).toEqual(['later']);
+    expect(bounded.paths.filter((path) => earlier.includes(path))).toEqual([]);
+  });
+  it('refuses to resume a public page cursor under the manifest commit bound', async () => {
+    const f = fixture(true);
+    await f.writer.appendBatch({ batchId: 'one', fence: 'fence-1', records: [record()] });
+    const table = await f.catalog.loadTable();
+    const options = {
+      table,
+      store: f.store,
+      tenantKey: 'tenant-test',
+      sourceDatasets: ['core.event_log'],
+      nowMs: 1793000005000,
+      dataManifestsAddedFrom: 0,
+    };
+    const first = await readSnapshotPage({ ...options, pageSize: 1 });
+    const cursor = first.nextCursor ?? {
+      version: 1 as const,
+      tableUuid: String(table.metadata['table-uuid']),
+      snapshotId: String(first.snapshotId),
+      physicalFingerprint: 'unused',
+      scopeDigest: 'unused',
+      position: { manifest: 0, entry: 0, row: 0 },
+    };
+    await expect(readSnapshotPage({ ...options, cursor })).rejects.toThrow(
+      'Archive manifest commit bound cannot resume a page cursor'
+    );
+  });
   it('accepts only the provider timestamp/day shape and pins actual IDs in its fingerprint', async () => {
     for (const first of [false, true])
       for (const type of ['timestamp', 'timestamptz'] as const) {

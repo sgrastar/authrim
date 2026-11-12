@@ -412,6 +412,8 @@ paths:
           $ref: '#/components/responses/PasskeyRegisterOptions'
         '202':
           $ref: '#/components/responses/AccountProvisioningAccepted'
+        '429':
+          $ref: '#/components/responses/Error'
   /api/auth/passkeys/register/verify:
     post:
       tags:
@@ -469,6 +471,8 @@ paths:
           $ref: '#/components/responses/EmailCodeSend'
         '202':
           $ref: '#/components/responses/AccountProvisioningAccepted'
+        '429':
+          $ref: '#/components/responses/Error'
   /api/auth/email-codes/verify:
     post:
       tags:
@@ -528,6 +532,8 @@ paths:
         '400':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '429':
           $ref: '#/components/responses/Error'
   /api/auth/totp/signup/activate:
     post:
@@ -761,6 +767,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '503':
+          $ref: '#/components/responses/Error'
+        '429':
           $ref: '#/components/responses/Error'
   /api/auth/dids/verify:
     post:
@@ -2908,6 +2916,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '429':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/FlowInit'

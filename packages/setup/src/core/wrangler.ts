@@ -508,8 +508,11 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   ],
   // RATE_LIMITER: the Check API counts each client's requests atomically (fails closed if absent).
   'ar-policy': ['PERMISSION_CHANGE_HUB', 'RATE_LIMITER'],
+  // RATE_LIMITER: the Admin API write limit (the same counter ar-management uses) on the SAML
+  // admin routes, which ar-router sends here directly.
   'ar-saml': [
     'KEY_MANAGER',
+    'RATE_LIMITER',
     'SAML_REQUEST_STORE',
     'SAML_AGGREGATE_METADATA_STORE',
     'SESSION_STORE',
