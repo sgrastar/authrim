@@ -190,3 +190,43 @@ export function teamAccess(access: AdminAccess): TeamAccess {
 		rolesEdit: rolesRead && rolesWrite
 	};
 }
+
+/**
+ * What the admin can do on an end user's page (Users → All users → one user), as the Admin API
+ * checks it. The role requirement for suspending, locking and reactivating is the API's
+ * (`requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin)` on top of `admin:users:write`): it is mirrored
+ * here by role name, so the console asks "may this admin change the state?" and never which kind
+ * of admin they are.
+ */
+export interface UserDetailAccess {
+	/** Open the page (`admin:users:read`). */
+	read: boolean;
+	/** Edit the profile (`admin:users:write`). */
+	edit: boolean;
+	/** Suspend, lock and reactivate: `admin:users:write` and a tenant administrator's role. */
+	lifecycle: boolean;
+	/** Delete the user (`admin:users:delete`). */
+	delete: boolean;
+	/** List the user's active sessions (`admin:sessions:read`). */
+	sessions: boolean;
+	/** Sign the user out everywhere (`admin:sessions:revoke`, with the list to show the result). */
+	revokeSessions: boolean;
+}
+
+export function userDetailAccess(access: AdminAccess): UserDetailAccess {
+	const read = hasPermission(access, 'admin:users:read');
+	const write = read && hasPermission(access, 'admin:users:write');
+	const sessions = read && hasPermission(access, 'admin:sessions:read');
+	return {
+		read,
+		edit: write,
+		lifecycle:
+			write &&
+			access.roles.some((role) =>
+				(ADMIN_ROLE_GROUPS.tenantAdmin as readonly string[]).includes(role)
+			),
+		delete: read && hasPermission(access, 'admin:users:delete'),
+		sessions,
+		revokeSessions: sessions && hasPermission(access, 'admin:sessions:revoke')
+	};
+}

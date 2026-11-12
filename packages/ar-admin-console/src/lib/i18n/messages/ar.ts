@@ -13,12 +13,14 @@ import { arCustomization } from './customization/ar';
 import { arScreens } from './screens/ar';
 import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
+import { arUserAudit } from './user-audit/ar';
 import { arTeam } from './team/ar';
 import { arAuthMethods } from './auth-methods/ar';
 import { arSessionProfiles } from './session-profiles/ar';
 import { arProfileLayer } from './profile-layer/ar';
 import { arPlatformProfiles } from './platform-profiles/ar';
 import { arLaunchers } from './launchers/ar';
+import { arUsers } from './users/ar';
 
 export const ar = {
 	...arSettings,
@@ -35,12 +37,14 @@ export const ar = {
 	...arScreens,
 	...arStepUp,
 	...arAdminAudit,
+	...arUserAudit,
 	...arTeam,
 	...arAuthMethods,
 	...arSessionProfiles,
 	...arProfileLayer,
 	...arPlatformProfiles,
 	...arLaunchers,
+	...arUsers,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',

@@ -2,6 +2,8 @@
 // Source: https://github.com/passkeydeveloper/passkey-authenticator-aaguids/blob/main/aaguid.json
 // Purpose: end-user passkey management display only. Do not use AAGUID metadata for trust decisions.
 
+import { FIRST_PARTY_AAGUID_AUTHENTICATORS } from './aaguid-first-party';
+
 export type AaguidAuthenticatorMetadata = {
   name: string;
   icon_dark?: string;
@@ -333,6 +335,15 @@ export type ResolvedAaguidAuthenticator = {
   known: boolean;
 };
 
+/** First-party entries win over the community table, so a regeneration cannot override them. */
+export function findAaguidMetadata(
+  normalized: string,
+  firstParty: Record<string, AaguidAuthenticatorMetadata> = FIRST_PARTY_AAGUID_AUTHENTICATORS,
+  community: Record<string, AaguidAuthenticatorMetadata> = AAGUID_AUTHENTICATOR_METADATA
+): AaguidAuthenticatorMetadata | undefined {
+  return firstParty[normalized] ?? community[normalized];
+}
+
 export function resolveAaguidAuthenticator(
   aaguid: string | null | undefined
 ): ResolvedAaguidAuthenticator | null {
@@ -341,7 +352,7 @@ export function resolveAaguidAuthenticator(
     return null;
   }
 
-  const metadata = AAGUID_AUTHENTICATOR_METADATA[normalized];
+  const metadata = findAaguidMetadata(normalized);
   if (!metadata) {
     return {
       aaguid: normalized,

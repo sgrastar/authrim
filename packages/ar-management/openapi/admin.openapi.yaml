@@ -724,6 +724,26 @@ paths:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
+        - name: user_id
+          in: query
+          required: false
+          description: Only the sessions of this user (exact user id). `userId` is accepted as an alias.
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          description: Only sessions that have not expired (`active`) or that have (`expired`).
+          schema:
+            type: string
+            enum: [active, expired]
+        - name: active
+          in: query
+          required: false
+          description: Legacy form of `status`, `true` for active sessions and `false` for expired ones.
+          schema:
+            type: string
+            enum: ['true', 'false']
       responses:
         '200':
           $ref: '#/components/responses/AdminSessionList'
@@ -732,8 +752,9 @@ paths:
         '500':
           $ref: '#/components/responses/Error'
       description: >-
-        List persisted user sessions for the current tenant, optionally filtered by user and active
-        or expired status. User contact information is read from each account's owning data store,
+        List persisted user sessions for the current tenant, optionally filtered by user (`user_id`)
+        and active or expired status (`status`). Requires `admin:sessions:read`; the newest session
+        is first. User contact information is read from each account's owning data store,
         including suspended and locked accounts. If the owner required to audit disclosed personal
         session fields cannot be verified, the request returns an error without disclosing those fields.
         Page must be a positive safe integer and limit an integer from 1 to 500; malformed values or
@@ -821,8 +842,10 @@ paths:
         - name: search
           in: query
           description: >-
-            Exact email address or account identifier for a routed account. Search resolves the
-            signed Lookup route and does not scan unrelated assignments.
+            Exact email address (it contains `@`) or account identifier for a routed account. On
+            sharded storage the match is exact, never partial, and search resolves the signed
+            Lookup route without scanning unrelated assignments. On non-sharded storage it matches
+            part of the email, name or preferred username, ignoring case.
           schema:
             type: string
         - name: cursor
@@ -831,6 +854,31 @@ paths:
           schema:
             type: string
             maxLength: 16384
+        - name: verified
+          in: query
+          description: >-
+            Only users whose email is verified (`true`) or not (`false`). On sharded storage it is
+            rejected (400 `unsupported_sharded_user_filter`) unless `search` is also given.
+          schema:
+            type: string
+            enum: ['true', 'false']
+        - name: pii_status
+          in: query
+          description: >-
+            Only users whose personal data is still held (`active`) or was deleted (`deleted`). On
+            sharded storage it is rejected (400 `unsupported_sharded_user_filter`) unless `search`
+            is also given.
+          schema:
+            type: string
+            enum: [active, deleted]
+        - name: lifecycle_state
+          in: query
+          description: >-
+            Only users in this lifecycle state. On sharded storage it is rejected (400
+            `unsupported_sharded_user_filter`) unless `search` is also given.
+          schema:
+            type: string
+            enum: [active, suspended, locked, deprovisioned]
       responses:
         '200':
           $ref: '#/components/responses/AdminUserList'
@@ -973,7 +1021,10 @@ paths:
           $ref: '#/components/responses/Error'
       description: >-
         Replace User in the Users area. The request body is JSON unless the detailed schema for this
-        operation states otherwise.
+        operation states otherwise. Requires `admin:users:write`. Fields that are not sent keep
+        their value; a body with no field to change is refused with 400 `invalid_request`, and an
+        unknown user answers 404. Email addresses are not changed here (identifier changes have
+        their own flow).
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -993,8 +1044,9 @@ paths:
           $ref: '#/components/responses/Error'
       description: >-
         Delete User in the Users area. The operation changes tenant state and should be protected by
-        the documented admin authorization and audit controls. An active account legal hold rejects
-        deletion with 409.
+        the documented admin authorization and audit controls. Requires `admin:users:delete`. An
+        active account legal hold rejects deletion with 409 `legal_hold_active`, carrying the
+        `hold_id`.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1532,6 +1584,8 @@ paths:
           $ref: '#/components/responses/AdminUserStatusChangeResult'
         '400':
           $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -1541,6 +1595,9 @@ paths:
       description: >-
         Suspend a user account with a structured reason code and optional token/session revocation
         flags.
+        Requires `admin:users:write` and the `ar_tenant_admin` (or `ar_super_admin`) role; other
+        callers are refused with 403. 409 `lifecycle_conflict` means the account's state changed
+        meanwhile: read the user and try again. Sessions are always ended with the change.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1560,6 +1617,8 @@ paths:
           $ref: '#/components/responses/AdminUserStatusChangeResult'
         '400':
           $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -1569,6 +1628,9 @@ paths:
       description: >-
         Lock a user account with a structured reason code, optional unlock time, and optional
         token/session revocation flags.
+        Requires `admin:users:write` and the `ar_tenant_admin` (or `ar_super_admin`) role; other
+        callers are refused with 403. 409 `lifecycle_conflict` means the account's state changed
+        meanwhile: read the user and try again. Sessions are always ended with the change.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1588,13 +1650,20 @@ paths:
           $ref: '#/components/responses/AdminUserStatusChangeResult'
         '400':
           $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
-      description: Restore a suspended or locked user account to the active state.
+      description: >-
+        Restore a suspended or locked user account to the active state. Requires
+        `admin:users:write` and the `ar_tenant_admin` (or `ar_super_admin`) role; other callers are
+        refused with 403. An account that is already active is refused with 400, a deleted one with
+        400, and 409 `lifecycle_conflict` means the account's state changed meanwhile: read the user
+        and try again.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1684,10 +1753,12 @@ paths:
         - name: limit
           in: query
           required: false
+          description: Entries per page, newest first. Defaults to 20; values above 100 are capped.
           schema:
             type: integer
             minimum: 1
             maximum: 100
+            default: 20
         - name: cursor
           in: query
           required: false
@@ -1718,7 +1789,8 @@ paths:
         '400':
           $ref: '#/components/responses/Error'
       description:
-        List audit activity for a single user using hot audit storage when configured. Retained
+        List audit activity for a single user using hot audit storage when configured. Requires
+        `admin:users:read`; the session cookie works as well as a bearer token. Retained
         whole-row archives are included in supported log queries. A bounded query that cannot read
         its required rows returns log_query_incomplete instead of partial statistics or an empty
         success.
@@ -2185,8 +2257,24 @@ paths:
       summary: List audit log entries.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Limit'
+        - name: page
+          in: query
+          required: false
+          description:
+            Must be 1 or omitted; any other value is refused with 400. Log lists page with
+            cursors.
+          schema:
+            type: integer
+            const: 1
+        - name: limit
+          in: query
+          required: false
+          description: Entries per page. Defaults to 20; values above 100 are capped at 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
         - name: cursor
           in: query
           required: false
@@ -2196,6 +2284,52 @@ paths:
           schema:
             type: string
             maxLength: 4096
+        - name: user_id
+          in: query
+          required: false
+          description:
+            Only events of this user (exact user id). An unknown user returns an empty list in
+            the offset-shaped form of `pagination`.
+          schema:
+            type: string
+        - name: action
+          in: query
+          required: false
+          description:
+            Only events of this type, matched exactly (`auth.login.failed`). There is no wildcard
+            or prefix match.
+          schema:
+            type: string
+        - name: resource_type
+          in: query
+          required: false
+          description: Only events about this resource type.
+          schema:
+            type: string
+        - name: resource_id
+          in: query
+          required: false
+          description: Only events about this resource id.
+          schema:
+            type: string
+        - name: start_date
+          in: query
+          required: false
+          description:
+            Start of the period, an ISO 8601 instant read at second precision. Always send a
+            bounded period (see the operation description).
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          required: false
+          description:
+            End of the period, an ISO 8601 instant read at second precision. Always send a
+            bounded period (see the operation description).
+          schema:
+            type: string
+            format: date-time
       responses:
         '200':
           headers:
@@ -2214,11 +2348,26 @@ paths:
           $ref: '#/components/responses/LogQueryIncomplete'
         '400':
           $ref: '#/components/responses/Error'
-      description:
+      description: >-
         List Audit Logs in the Admin Miscellaneous area. Use this operation to retrieve audit
         log data without mutating tenant state. Retained whole-row archives are included in
         supported log queries. A bounded query that cannot read its required rows returns
         log_query_incomplete instead of partial statistics or an empty success.
+
+
+        Requires `admin:audit:read`. There is no actor, severity, result or free-text filter.
+
+
+        Cost: the whole requested period is read and decrypted, and the filters (`user_id`,
+        `action`, `resource_*`) are applied afterwards, within a budget of 10,000 records and 4
+        MiB. A request over the budget, or a reader failure, returns 503 `log_query_incomplete`
+        with `complete: false`; narrow the period. Without `start_date` and `end_date` the whole
+        tenant history is read, so always send a bounded period.
+
+
+        `coverage` says how current the view is: `eventual` and a non-zero `pending_deliveries`
+        mean the newest events may not be visible yet; `local_hot_only` means only recent local
+        records were read and older ones may be missing.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -55834,6 +55983,13 @@ components:
         - $ref: '#/components/schemas/AdminUserResponse'
         - type: object
           properties:
+            restricted:
+              type: boolean
+              description: >-
+                Present and `true` when the account is suspended or locked and its storage is
+                sharded: the user is read through its admin-view route, so `passkeys`,
+                `totp_credentials` and `customFields` are empty because they were not read, not
+                because the user has none.
             passkeys:
               type: array
               items:
@@ -83147,20 +83303,7 @@ components:
         entries:
           type: array
           items:
-            type: object
-            additionalProperties: true
-            required:
-              - id
-              - action
-              - createdAt
-            properties:
-              id:
-                type: string
-              action:
-                type: string
-              createdAt:
-                type: string
-                format: date-time
+            $ref: '#/components/schemas/AuditEventEntry'
         pagination:
           oneOf:
             - $ref: '#/components/schemas/LogCursorPagination'
@@ -83179,6 +83322,56 @@ components:
                   type: integer
                 totalPages:
                   type: integer
+    AuditEventEntry:
+      type: object
+      additionalProperties: true
+      description:
+        One event. Besides the three always-present fields, which of the others are set depends
+        on the event and on how the tenant stores events (`result`, `clientId`, `sessionId`,
+        `requestId`, `errorCode` and `errorMessage` are absent from legacy audit rows).
+      required:
+        - id
+        - action
+        - createdAt
+      properties:
+        id:
+          type: string
+        userId:
+          type: [string, 'null']
+          description: The user the event is about; null when it has none.
+        action:
+          type: string
+          description: The event type (`auth.login.failed`, `user.suspend`).
+        resourceType:
+          type: [string, 'null']
+        resourceId:
+          type: [string, 'null']
+        ipAddress:
+          type: [string, 'null']
+        userAgent:
+          type: [string, 'null']
+        clientId:
+          type: [string, 'null']
+        sessionId:
+          type: [string, 'null']
+        requestId:
+          type: [string, 'null']
+        result:
+          type: [string, 'null']
+          description: '`success` or `failure` for events that have an outcome.'
+        severity:
+          type: [string, 'null']
+          description: debug, info, warn, error or critical.
+        errorCode:
+          type: [string, 'null']
+        errorMessage:
+          type: [string, 'null']
+        metadata:
+          type: [object, 'null']
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
     LogCursorPagination:
       type: object
       additionalProperties: false

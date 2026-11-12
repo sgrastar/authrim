@@ -13,12 +13,14 @@ import { deCustomization } from './customization/de';
 import { deScreens } from './screens/de';
 import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
+import { deUserAudit } from './user-audit/de';
 import { deTeam } from './team/de';
 import { deAuthMethods } from './auth-methods/de';
 import { deSessionProfiles } from './session-profiles/de';
 import { deProfileLayer } from './profile-layer/de';
 import { dePlatformProfiles } from './platform-profiles/de';
 import { deLaunchers } from './launchers/de';
+import { deUsers } from './users/de';
 
 export const de = {
 	...deSettings,
@@ -35,12 +37,14 @@ export const de = {
 	...deScreens,
 	...deStepUp,
 	...deAdminAudit,
+	...deUserAudit,
 	...deTeam,
 	...deAuthMethods,
 	...deSessionProfiles,
 	...deProfileLayer,
 	...dePlatformProfiles,
 	...deLaunchers,
+	...deUsers,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',

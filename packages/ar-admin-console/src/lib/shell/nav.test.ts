@@ -40,7 +40,7 @@ describe('navigation model', () => {
 			'/admin/nope',
 			'/admin/users',
 			'/admin/users/nope',
-			'/admin/users/all/extra',
+			'/admin/users/agents/extra',
 			'/admin/tenants/list',
 			'/admin/plat-tenants/list',
 			'/admin/platform/plat-tenants/list',
