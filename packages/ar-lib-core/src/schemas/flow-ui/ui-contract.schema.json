@@ -57,10 +57,7 @@
           "type": "object",
           "properties": {
             "rbac": {
-              "oneOf": [
-                { "type": "boolean" },
-                { "type": "string", "enum": ["simple", "full"] }
-              ]
+              "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["simple", "full"] }]
             },
             "abac": { "type": "boolean" },
             "rebac": { "type": "boolean" }

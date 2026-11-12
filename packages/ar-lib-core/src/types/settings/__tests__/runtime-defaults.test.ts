@@ -108,6 +108,9 @@ describe('settings that replace older stores default to runtime behaviour', () =
       RateLimitProfiles.sendChallenge.maxRequests
     );
     expect(RATE_LIMIT_DEFAULTS['rate_limit.loadtest']).toBe(RateLimitProfiles.loadTest.maxRequests);
+    expect(RATE_LIMIT_DEFAULTS['rate_limit.admin_write']).toBe(
+      RateLimitProfiles.adminWrite.maxRequests
+    );
     const windows = {
       strict: RateLimitProfiles.strict,
       moderate: RateLimitProfiles.moderate,
@@ -116,6 +119,7 @@ describe('settings that replace older stores default to runtime behaviour', () =
       login_start: RateLimitProfiles.loginStart,
       send_challenge: RateLimitProfiles.sendChallenge,
       loadtest: RateLimitProfiles.loadTest,
+      admin_write: RateLimitProfiles.adminWrite,
     };
     for (const [name, profile] of Object.entries(windows)) {
       expect(

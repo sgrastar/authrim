@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Hono } from 'hono';
 import { hashClientSecret, type Env, type OAuthClient } from '@authrim/ar-lib-core';
 
 // The client lookup goes through the persistence adapter; the tests hand it the env's mock.
@@ -430,6 +431,188 @@ describe('diagnostic logging ingest', () => {
 
       const entry = JSON.parse(stored.split('\n')[0]) as Record<string, unknown>;
       expect(entry.source).toBe('sdk');
+    });
+  });
+});
+
+describe('destination tenant rate limit', () => {
+  const IP = { 'CF-Connecting-IP': '192.0.2.10' };
+
+  /** The ingest router behind a request tenant (the tenant of the host the request arrived on). */
+  function mountedAt(requestTenant: string) {
+    const outer = new Hono<{ Bindings: Env }>();
+    outer.use('*', async (c, next) => {
+      (c as unknown as { set(k: string, v: unknown): void }).set('tenantId', requestTenant);
+      await next();
+    });
+    outer.route('/', ingestApp);
+    return outer;
+  }
+
+  function limiterEnv(client: OAuthClient | null, settings: Record<string, unknown> = {}) {
+    const counters = new Map<string, number>();
+    const env = {
+      ...createEnv(
+        client,
+        new MockR2Bucket(),
+        createKV({
+          'settings:tenant:tenant-1:diagnostic-logging': JSON.stringify(settings),
+        })
+      ),
+      RATE_LIMITER: {
+        idFromName: (name: string) => name,
+        get: (id: string) => ({
+          incrementRpc: async (
+            _k: string,
+            config: { maxRequests: number; windowSeconds: number }
+          ) => {
+            const current = (counters.get(id) ?? 0) + 1;
+            counters.set(id, current);
+            return {
+              allowed: current <= config.maxRequests,
+              current,
+              limit: config.maxRequests,
+              resetAt: Math.floor(Date.now() / 1000) + config.windowSeconds,
+              retryAfter: 0,
+            };
+          },
+        }),
+      },
+    } as unknown as Env;
+    return { env, counters };
+  }
+
+  const post = (
+    app: Hono<{ Bindings: Env }>,
+    env: Env,
+    tenantId: unknown,
+    clientId = 'diag-client'
+  ) =>
+    app.request(
+      '/',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...IP },
+        body: JSON.stringify({ tenant_id: tenantId, client_id: clientId, logs: [] }),
+      },
+      env
+    );
+
+  const destinationKey = 'tenant:tenant-1:rate-limit:diagnostic_log_ingest:192.0.2.10';
+
+  it('counts a valid ingest for another destination tenant on that tenant, once', async () => {
+    const { env, counters } = limiterEnv(createClient({ token_endpoint_auth_method: 'none' }));
+
+    const response = await post(mountedAt('host-a'), env, 'tenant-1');
+
+    expect(response.status).toBe(200);
+    expect(counters.get(destinationKey)).toBe(1);
+  });
+
+  it('does not count a request whose client is unknown, however the tenant id is spelled', async () => {
+    const { env, counters } = limiterEnv(null);
+
+    for (const tenantId of ['tenant-1', 'victim', 'another-made-up']) {
+      expect((await post(mountedAt('host-a'), env, tenantId)).status).toBe(401);
+    }
+
+    expect([...counters.keys()]).toEqual([]);
+  });
+
+  it('does not count a client that belongs to another tenant', async () => {
+    const { env, counters } = limiterEnv(
+      createClient({ token_endpoint_auth_method: 'none', tenant_id: 'other' })
+    );
+
+    expect((await post(mountedAt('host-a'), env, 'tenant-1')).status).toBe(401);
+    expect([...counters.keys()]).toEqual([]);
+  });
+
+  it('does not count a malformed tenant id (400)', async () => {
+    const { env, counters } = limiterEnv(createClient({ token_endpoint_auth_method: 'none' }));
+
+    for (const tenantId of ['Tenant_1', 'a'.repeat(64), 42, '../x']) {
+      expect((await post(mountedAt('host-a'), env, tenantId)).status).toBe(400);
+    }
+    expect([...counters.keys()]).toEqual([]);
+  });
+
+  it('counts a request for a tenant whose ingest is disabled (403) on the destination, once', async () => {
+    const { env, counters } = limiterEnv(createClient({ token_endpoint_auth_method: 'none' }), {
+      'diagnostic-logging.sdk_ingest_enabled': false,
+    });
+
+    expect((await post(mountedAt('host-a'), env, 'tenant-1')).status).toBe(403);
+    expect(counters.get(destinationKey)).toBe(1);
+  });
+
+  it('gains no budget by rotating request hosts with the same destination tenant', async () => {
+    const { env } = limiterEnv(createClient({ token_endpoint_auth_method: 'none' }));
+    const statuses: number[] = [];
+
+    for (let index = 0; index < 61; index++) {
+      statuses.push((await post(mountedAt(`host-${index}`), env, 'tenant-1')).status);
+    }
+
+    expect(statuses.slice(0, 60).every((status) => status === 200)).toBe(true);
+    expect(statuses[60]).toBe(429);
+  });
+
+  describe('failure events', () => {
+    const eventTenants = () =>
+      mocks.emitRuntimeLogRecords.mock.calls.map(
+        (call) => (call as unknown as [{ tenantId: string }])[0].tenantId
+      );
+
+    it('never write to an unverified body tenant: an unknown client is recorded on the request host tenant', async () => {
+      mocks.emitRuntimeLogRecords.mockClear();
+      const { env } = limiterEnv(null);
+
+      for (let index = 0; index < 5; index++) {
+        await post(mountedAt(`host-${index}`), env, 'victim');
+      }
+
+      expect(eventTenants()).toEqual(['host-0', 'host-1', 'host-2', 'host-3', 'host-4']);
+      expect(eventTenants()).not.toContain('victim');
+    });
+
+    it('does not write to the body tenant when the client belongs to another tenant', async () => {
+      mocks.emitRuntimeLogRecords.mockClear();
+      const { env } = limiterEnv(
+        createClient({ token_endpoint_auth_method: 'none', tenant_id: 'other' })
+      );
+
+      await post(mountedAt('host-a'), env, 'tenant-1');
+
+      expect(eventTenants()).toEqual(['host-a']);
+    });
+
+    it('stops destination writes at the limit even with ingest disabled and rotating hosts', async () => {
+      mocks.emitRuntimeLogRecords.mockClear();
+      const { env } = limiterEnv(createClient({ token_endpoint_auth_method: 'none' }), {
+        'diagnostic-logging.sdk_ingest_enabled': false,
+      });
+      const statuses: number[] = [];
+
+      for (let index = 0; index < 62; index++) {
+        statuses.push((await post(mountedAt(`host-${index}`), env, 'tenant-1')).status);
+      }
+
+      expect(statuses.slice(0, 60).every((status) => status === 403)).toBe(true);
+      expect(statuses.slice(60)).toEqual([429, 429]);
+      // Failure events: 60 for the destination, none after the budget was spent.
+      expect(eventTenants().filter((tenant) => tenant === 'tenant-1')).toHaveLength(60);
+    });
+
+    it('still records failures after validation on the validated tenant', async () => {
+      mocks.emitRuntimeLogRecords.mockClear();
+      const { env } = limiterEnv(createClient({ token_endpoint_auth_method: 'none' }), {
+        'diagnostic-logging.sdk_ingest_enabled': false,
+      });
+
+      expect((await post(mountedAt('host-a'), env, 'tenant-1')).status).toBe(403);
+
+      expect(eventTenants()).toEqual(['tenant-1']);
     });
   });
 });

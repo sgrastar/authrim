@@ -513,6 +513,60 @@ app.use('/api/auth/guest/login', async (c, next) => {
   return rateLimitMiddleware({ ...profile, endpoints: ['/api/auth/guest/login'] })(c, next);
 });
 
+// Rate limiting for the older anonymous entry points that create state before any proof, matching
+// the Direct Auth routes that do the same (/api/v1/auth/direct/*). Each has its own counter
+// (endpointClass), so none spends the budget of another route or of the class-less limiters.
+// The older passkey registration creates an unproven account; Direct Auth's passkey sign-up start
+// is moderate, and that counter is shared with all other Direct Auth traffic, so a dedicated
+// moderate counter here is no looser than what a sign-up through Direct Auth already gets.
+app.use(
+  '/api/auth/passkeys/register/options',
+  async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+    return rateLimitMiddleware({
+      ...profile,
+      endpoints: ['/api/auth/passkeys/register/options'],
+      endpointClass: 'legacy_passkey_register_options',
+    })(c, next);
+  }
+);
+// Sends an email and may create an unproven account: strict, like Direct Auth's email-code send.
+// The per-address budget in the handler stays as it is.
+app.use('/api/auth/email-codes/send', async (c: Context<{ Bindings: Env }>, next: Next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/email-codes/send'],
+    endpointClass: 'legacy_email_code_send',
+  })(c, next);
+});
+// Anonymous: resolves the DID (an outbound request for some methods) and stores a challenge.
+app.use('/api/auth/dids/challenge', async (c: Context<{ Bindings: Env }>, next: Next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/dids/challenge'],
+    endpointClass: 'did_auth_challenge',
+  })(c, next);
+});
+app.use('/api/auth/totp/signup/options', async (c: Context<{ Bindings: Env }>, next: Next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/auth/totp/signup/options'],
+    endpointClass: 'totp_signup_options',
+  })(c, next);
+});
+// Writes Durable Object state for every call.
+app.use('/api/flow/init', async (c: Context<{ Bindings: Env }>, next: Next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/flow/init'],
+    endpointClass: 'flow_init',
+  })(c, next);
+});
+
 // Rate limiting for directory password login. This endpoint reaches an external connector
 // and verifies reusable credentials, so keep it stricter than ordinary session reads.
 app.use('/api/auth/directory-password/login', async (c, next) => {

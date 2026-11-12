@@ -297,6 +297,79 @@ seconds (60-3600, default `900`). The Settings API values (`rate_limit.totp_max_
 `rate_limit.totp_window`, platform or tenant) take precedence; a value that is not a whole number
 in range keeps the default.
 
+#### Profiles (platform Settings API, category `rate-limit`)
+
+Each profile has `rate_limit.<name>` (requests per window) and `rate_limit.<name>_window_seconds`
+(seconds), set for the whole platform. Counters are kept per client IP address and tenant.
+
+| Profile         | Setting name     | Default per 60 s | Used for                                                       |
+| --------------- | ---------------- | ---------------- | -------------------------------------------------------------- |
+| `strict`        | `strict`         | 10               | Token, registration, e-mail code sends                         |
+| `moderate`      | `moderate`       | 60               | Standard API routes, anonymous routes that store state         |
+| `lenient`       | `lenient`        | 300              | Public metadata and protocol reads                             |
+| `publicRead`    | `public_read`    | 600              | Public bootstrap reads                                         |
+| `loginStart`    | `login_start`    | 300              | Starting a login interaction                                   |
+| `sendChallenge` | `send_challenge` | 30               | Challenge sending                                              |
+| `loadTest`      | `loadtest`       | 10000            | Load-test override (always expires)                            |
+| `adminWrite`    | `admin_write`    | 600              | Writes (POST, PUT, PATCH, DELETE) on the Admin API (see below) |
+
+A limiter on a route family keeps its own counter only where it names an endpoint class; limiters
+without a class share one counter per tenant and IP. The limiters listed below each have a class of
+their own.
+
+#### Admin API write limit
+
+Every write (POST, PUT, PATCH, DELETE) under `/api/admin` that passed administrator authentication
+and the route access check is counted per tenant and per authenticated principal, on the
+`adminWrite` counter, in addition to the per-route limits that already exist (those stay keyed by
+client IP address). Reads, unauthenticated requests and requests refused by the access check are not
+counted, and a request with no administrator context is never counted by IP.
+
+The principal is the administrator (`admin:<user id>`), also when the request comes through the
+Admin Console's server (the console's own transport credential is never the key); a machine
+principal (`machine:<principal id>`, the same across credential rotation); or an agent
+(`agent:<agent identity>`). Nobody can spend another administrator's budget, however many
+administrators share an IP address or proxy, and the same administrator has one budget across IP
+addresses. The principal id is hashed in full into the counter key, so long or similar ids never
+share a counter.
+
+Scope: a tenant-scoped Admin API path (`/api/admin/...`, the tenant checked and known to exist) is
+counted per tenant, so a global administrator working in several tenants has a budget in each. Every
+other path is counted in one tenant-less scope per principal: platform (`/api/admin/platform/...`),
+tenant inventory (`/api/admin/tenants...`), `/api/internal/*`, and the ReBAC write routes of the
+policy worker (`/api/rebac/write`, `DELETE /api/rebac/tuples`, `/api/rebac/invalidate`, which sit
+behind administrator authentication). The request host is not validated on those paths, so it can
+never create counters.
+
+Not covered, on purpose: calls authenticated only by a shared secret or a replication grant (no
+administrator principal; for example the policy worker's service endpoints and the replication
+machine routes), which are not counted, and routes that already have their own limits (administrator
+sign-in, setup-token and invitation enrolment).
+
+Over the limit the answer is `429 rate_limit_exceeded` with `Retry-After`. The default is 600 per
+60 seconds (`rate_limit.admin_write`, `rate_limit.admin_write_window_seconds`); a platform that
+wants a tight bound lowers it. ar-management and the SAML administration routes use the same
+counter once the SAML worker has the optional `RATE_LIMITER` binding (setup adds it for new and
+updated environments); until then the SAML worker counts in its KV fallback and the budget is not
+shared with ar-management. Administrator sign-in, setup-token and invitation enrolment routes are
+not counted (unauthenticated ceremonies with their own limits). Automation that writes faster than
+the default (a load test creating users, for example) should raise the limit for the duration, or
+use the `loadTest` profile override, which also applies to this limit.
+
+#### Anonymous routes limited by IP address and tenant
+
+Each route has a counter of its own (endpoint class):
+
+| Route                                      | Profile  | Class                             |
+| ------------------------------------------ | -------- | --------------------------------- |
+| `POST /api/auth/passkeys/register/options` | moderate | `legacy_passkey_register_options` |
+| `POST /api/auth/email-codes/send`          | strict   | `legacy_email_code_send`          |
+| `POST /api/auth/totp/signup/options`       | moderate | `totp_signup_options`             |
+| `POST /api/auth/dids/challenge`            | moderate | `did_auth_challenge`              |
+| `POST /api/flow/init`                      | moderate | `flow_init`                       |
+| `POST /bc-authorize`                       | moderate | `ciba_authorization` (atomic)     |
+| `POST /api/v1/diagnostic-logs/ingest`      | moderate | `diagnostic_log_ingest`           |
+
 ### SCIM Configuration
 
 Tenant enablement, the inbound Mapping Set, enabled resource endpoints, and Bulk limits are
@@ -583,3 +656,8 @@ Or edit `.authrim/{env}/ui.env` and redeploy:
 ```bash
 authrim-setup deploy --env {env}
 ```
+
+Not limited by these budgets, on purpose: sign-in starts and callbacks (SAML, upstream IdP
+`/auth/external/*` and `/handoff/*`, legacy passkey login options). Many users share one address
+(a campus NAT), so a per-IP cap would lock out whole classes; they are left to platform-level
+protection.

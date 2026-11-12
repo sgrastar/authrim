@@ -9,10 +9,15 @@
  */
 
 import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
-import { requestContextMiddleware, diagnosticLoggingMiddleware } from '@authrim/ar-lib-core';
+import {
+  requestContextMiddleware,
+  diagnosticLoggingMiddleware,
+  getRateLimitProfileAsync,
+  rateLimitMiddleware,
+} from '@authrim/ar-lib-core';
 import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
 import { deviceVerifyApiHandler } from './device-verify-api';
@@ -46,6 +51,20 @@ app.use(
     excludePatterns: [/^\/api\/health/, /^\/health\//],
   })
 );
+
+// Per-IP limit on CIBA backchannel authentication requests. Each accepted request writes a
+// CIBA request record (and may notify the user), and client authentication is only checked later.
+// Its own counter, so it neither spends nor is spent by the device authorization budgets.
+app.use('/bc-authorize', async (c: Context<{ Bindings: Env }>, next: Next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/bc-authorize'],
+    endpointClass: 'ciba_authorization',
+    // Fail closed rather than count in eventually consistent KV, like /device_authorization.
+    requireAtomic: true,
+  })(c, next);
+});
 
 /**
  * POST /device_authorization

@@ -61,6 +61,11 @@
       "required": true
     },
     {
+      "name": "RATE_LIMITER",
+      "kind": "durable_object_namespace",
+      "required": false
+    },
+    {
       "name": "SAML_REQUEST_STORE",
       "kind": "durable_object_namespace",
       "required": true

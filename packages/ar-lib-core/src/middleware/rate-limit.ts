@@ -21,6 +21,7 @@ import { createLogger } from '../utils/logger';
 import { resolvePlatformSettingsWithSources } from '../services/effective-settings';
 import { rateLimitProfileKeys } from '../types/settings/rate-limit';
 import { redactSecretPathSegments } from '../utils/diagnostic-redaction';
+import { classifyTenantRequestPath } from '../utils/tenant-request-policy';
 
 const log = createLogger().module('RATE-LIMIT');
 
@@ -49,6 +50,9 @@ export interface RateLimitConfig {
   // Fail closed instead of falling back to eventually consistent KV when the
   // atomic RateLimiter Durable Object is unavailable.
   requireAtomic?: boolean;
+  // Counts the request under this subject instead of the client IP address (for example the
+  // authenticated principal). Return undefined to fall back to the client IP.
+  subjectKey?: (c: Context<{ Bindings: Env }>) => string | undefined;
 }
 
 /**
@@ -799,7 +803,7 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
       getCloudProvider(c.env)
     );
     scheduleCloudProviderRefresh(c.env, getExecutionContext(c));
-    const clientIP = getClientIP(c, cloudProvider);
+    const clientIP = config.subjectKey?.(c) ?? getClientIP(c, cloudProvider);
 
     // Skip rate limiting for whitelisted IPs
     if (config.skipIPs && config.skipIPs.includes(clientIP)) {
@@ -943,6 +947,77 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
   };
 }
 
+/** The counter class of the Admin API write limit, shared by every worker that serves the Admin API. */
+export const ADMIN_WRITE_RATE_LIMIT_CLASS = 'adminWrite';
+
+const ADMIN_WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * The counter subject of an authenticated administrator: the principal, never the credential or the
+ * transport. A human is `admin:<userId>` (also when the request arrives through the Admin Console's
+ * server, whose BFF principal is only transport). A machine is `machine:<principal id>`, which stays
+ * the same when its credential is rotated (`credentialId` changes, `actorId`/`userId` do not). An
+ * agent is `agent:<actorId>` (the agent identity; `userId` is its human delegator). The id is
+ * hashed in full (SHA-256, base64url) so the key has a fixed length and two different ids, however
+ * long and however alike, never share a counter; the actor-type prefix keeps types apart, and no
+ * IP-keyed counter can look like it.
+ */
+export async function adminWritePrincipalKey(auth: {
+  userId?: string;
+  actorType?: string;
+  actorId?: string;
+}): Promise<string | undefined> {
+  const actorType = auth.actorType ?? 'human';
+  const id = actorType === 'human' ? auth.userId : (auth.actorId ?? auth.userId);
+  if (!id) return undefined;
+  const prefix = actorType === 'human' ? 'admin' : actorType;
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(id))
+  );
+  let binary = '';
+  for (const byte of digest) binary += String.fromCharCode(byte);
+  const hash = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${prefix}:${hash}`;
+}
+
+/**
+ * One limit for the writes (POST, PUT, PATCH, DELETE) of the Admin API, per authenticated principal
+ * (see `adminWritePrincipalKey`) and scope, on its own counter (`adminWrite`) so it neither spends
+ * nor is spent by any other limiter. Nobody can spend another administrator's budget. Reads are not
+ * counted. Mount it after admin authentication and the route access check so that refused requests
+ * are not counted. A request with no admin authentication context is not counted and passes
+ * through (it never falls back to the client IP).
+ *
+ * Scope: a tenant-scoped admin path (`classifyTenantRequestPath`) is counted per tenant, whose
+ * existence the request context has verified. Every other path (platform, tenant inventory, internal,
+ * service routes) is counted in one tenant-less scope per principal, so the host a request arrives
+ * on, which is not validated there, can never create counters.
+ */
+export function adminWriteRateLimitMiddleware() {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    if (!ADMIN_WRITE_METHODS.has(c.req.method)) {
+      await next();
+      return;
+    }
+    const auth = (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
+      | { userId?: string; actorType?: string; actorId?: string }
+      | undefined;
+    const subject = auth ? await adminWritePrincipalKey(auth) : undefined;
+    if (!subject) {
+      await next();
+      return;
+    }
+    const tenantScoped = classifyTenantRequestPath(c.req.path) === 'tenant_scoped_admin';
+    const profile = await getRateLimitProfileAsync(c.env, 'adminWrite', getExecutionContext(c));
+    return rateLimitMiddleware({
+      ...profile,
+      endpointClass: ADMIN_WRITE_RATE_LIMIT_CLASS,
+      subjectKey: () => subject,
+      keyScope: tenantScoped ? 'tenant' : 'global',
+    })(c, next);
+  };
+}
+
 /**
  * Pre-configured rate limit profiles (defaults)
  */
@@ -1008,6 +1083,15 @@ export const RateLimitProfiles = {
    */
   loadTest: {
     maxRequests: 10000,
+    windowSeconds: 60,
+  },
+
+  /**
+   * Writes (POST, PUT, PATCH, DELETE) on the Admin API, per principal and tenant. Generous: it bounds
+   * runaway automation, not interactive use. A platform that wants a tight bound lowers it.
+   */
+  adminWrite: {
+    maxRequests: 600,
     windowSeconds: 60,
   },
 } as const;

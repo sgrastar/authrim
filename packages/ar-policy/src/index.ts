@@ -50,6 +50,7 @@ import {
   getLogger,
   resolveOptionalCoreAdapterFromHono,
   adminAuthMiddleware,
+  adminWriteRateLimitMiddleware,
   ADMIN_PERMISSIONS,
   type ReBACService,
   type CheckRequest,
@@ -837,6 +838,8 @@ rebacRoutes.post(
   adminAuthMiddleware({
     requirePermissions: [ADMIN_PERMISSIONS.POLICY_REBAC_WRITE],
   }),
+  // The Admin API write limit (per principal, tenant-less scope), after authentication.
+  adminWriteRateLimitMiddleware(),
   async (c) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const log = getLogger(c as any).module('REBAC');
@@ -1020,6 +1023,8 @@ rebacRoutes.delete(
   adminAuthMiddleware({
     requirePermissions: [ADMIN_PERMISSIONS.POLICY_REBAC_WRITE],
   }),
+  // The Admin API write limit (per principal, tenant-less scope), after authentication.
+  adminWriteRateLimitMiddleware(),
   async (c) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const log = getLogger(c as any).module('REBAC');
@@ -1136,6 +1141,8 @@ rebacRoutes.post(
   adminAuthMiddleware({
     requirePermissions: [ADMIN_PERMISSIONS.POLICY_REBAC_WRITE],
   }),
+  // The Admin API write limit (per principal, tenant-less scope), after authentication.
+  adminWriteRateLimitMiddleware(),
   async (c) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const log = getLogger(c as any).module('REBAC');
