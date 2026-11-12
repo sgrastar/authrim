@@ -416,6 +416,14 @@ export function seedConsent(kit: SecurityMatrixEnvKit, options: SeedConsentOptio
           scope,
           granted_at: 1699000000,
           expires_at: expiresAt,
+          // The person's information release decision recorded with the scope consent: nothing
+          // about the person beyond the protocol claims is released in this matrix.
+          release_presented_json: '[]',
+          release_approved_json: '[]',
+          release_declined_json: '[]',
+          release_mode: 'once',
+          release_basis: 'user',
+          release_decided_at: 1699000000,
         },
       ];
     },
