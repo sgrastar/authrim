@@ -8,8 +8,10 @@ import type { PostgresTransientStateStore } from './storage/postgres-transient-s
 
 function fakeState() {
   return {
-    storeSamlRequest: vi.fn(async () => undefined),
-    consumeSamlRequest: vi.fn(async () => null),
+    createSamlRequest: vi.fn(async () => true),
+    readSamlRequest: vi.fn(async () => null),
+    updateSamlRequest: vi.fn(async () => null),
+    completeSamlRequest: vi.fn(async () => null),
     putKey: vi.fn(async () => undefined),
     getKey: vi.fn(async () => 'stored'),
     deleteKey: vi.fn(async () => true),

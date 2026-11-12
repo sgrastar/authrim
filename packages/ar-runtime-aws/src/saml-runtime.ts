@@ -247,8 +247,10 @@ export function createSAMLRuntimePorts(input: CreateSAMLRuntimePortsInput): SAML
         serviceProviderReleases.get(keyMapId(tenantId, entityId)) ?? null,
     },
     requests: {
-      store: (request) => input.state.storeSamlRequest(request),
-      consume: (request) => input.state.consumeSamlRequest(request),
+      create: (request) => input.state.createSamlRequest(request),
+      read: (request) => input.state.readSamlRequest(request),
+      update: (request) => input.state.updateSamlRequest(request),
+      complete: (request) => input.state.completeSamlRequest(request),
     },
     sessions: {
       async get(request) {

@@ -5,12 +5,15 @@
  *
  * Sessions live in an in-memory store that the endpoint reads (GET) and, for a step-up, combines
  * and writes (RPC, conditional on what it read); the stored AuthnRequest is an in-memory request
- * store that is consumed when the person comes back, as the real one is.
+ * store (helpers/saml-request-store-fake.ts) that is used up when the SP is answered, as the real one is.
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { SAML_NAMESPACES, STATUS_CODES } from '../../common/constants';
 import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
+import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
+
+const store = createSamlRequestStoreFake();
 
 interface StoredChallenge {
   id: string;
@@ -34,7 +37,6 @@ const mocks = vi.hoisted(() => ({
   sessionId: undefined as string | undefined,
   sessions: new Map<string, unknown>(),
   sessionWrites: [] as Array<{ id: string; updates: Record<string, unknown> }>,
-  requests: new Map<string, unknown>(),
   /** The authorization challenges stored for the Login UI (ChallengeStore), by id. */
   challenges: new Map<string, StoredChallenge>(),
   challengeError: null as Error | null,
@@ -283,20 +285,7 @@ function environment() {
     SAML_REQUEST_STORE: {
       idFromName: vi.fn((name: string) => ({ name })),
       get: vi.fn(() => ({
-        fetch: async (url: string, init?: { body?: string }) => {
-          if (url.endsWith('/store')) {
-            const stored = JSON.parse(init?.body ?? '{}') as { requestId: string };
-            mocks.requests.set(stored.requestId, stored);
-            return new Response('{}', { status: 200 });
-          }
-          // (The query of a conditional consume is ignored here.)
-          const requestId = decodeURIComponent(url.split('?')[0].split('/').pop() ?? '');
-          const stored = mocks.requests.get(requestId);
-          mocks.requests.delete(requestId);
-          return stored
-            ? new Response(JSON.stringify(stored), { status: 200 })
-            : new Response(null, { status: 404 });
-        },
+        fetch: store.fetch,
       })),
     },
   };
@@ -339,6 +328,9 @@ async function send(request: Request) {
 /** The SP sends an AuthnRequest by POST, with the cookie of `sessionId` (if any). */
 async function post(xml: string, sessionId?: string) {
   mocks.sessionId = sessionId;
+  // Each request posted here is a new one from the SP, under the same id: one answered before is
+  // forgotten (the store refuses an id it knows, as a replay, which is not what these tests ask).
+  if (!store.waiting.has('_request')) store.known.delete('_request');
   const form = new FormData();
   form.set('SAMLRequest', btoa(xml));
   return send(
@@ -378,7 +370,7 @@ interface StoredContext {
 }
 
 const storedContext = (): StoredContext | undefined =>
-  (mocks.requests.get('_request') as { context?: StoredContext } | undefined)?.context;
+  (store.waiting.get('_request') as { context?: StoredContext } | undefined)?.context;
 
 const stepUpOf = () => {
   const stepUp = storedContext()?.assuranceStepUp;
@@ -424,7 +416,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
     mocks.sessionId = undefined;
     mocks.sessions.clear();
     mocks.sessionWrites.length = 0;
-    mocks.requests.clear();
+    store.reset();
     mocks.challenges.clear();
     mocks.challengeError = null;
     mocks.user = { id: 'user-a', email: 'user@example.test' };
@@ -444,7 +436,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       expect(response.status).toBe(200);
       expect(mocks.buildResponse).toHaveBeenCalledOnce();
       expect(mocks.settingsReads).toBe(0);
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
     });
 
     it('does not apply the tenant table while assurance levels are off', async () => {
@@ -454,7 +446,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const response = await post(authnRequestXml({ classRefs: [AAL2_REF] }), 's-1');
       expect(response.status).toBe(200);
       // The existing handling cannot satisfy an unlisted reference: NoAuthnContext, no sign-in.
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
       expect(mocks.buildResponse).not.toHaveBeenCalled();
       expect(lastError()).toMatchObject({
         secondLevelStatusCode: STATUS_CODES.NO_AUTHN_CONTEXT,
@@ -472,7 +464,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const response = await post(authnRequestXml(), 's-1');
       expect(response.status).toBe(200);
       expect(mocks.buildResponse).toHaveBeenCalledOnce();
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
     });
 
     it('applies while assurance levels are off', async () => {
@@ -533,7 +525,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const response = await resume('s-2');
       expect(response.status).toBe(200);
       expect(mocks.buildResponse).not.toHaveBeenCalled();
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
       expect(lastError()).toMatchObject({
         statusCode: STATUS_CODES.RESPONDER,
         secondLevelStatusCode: STATUS_CODES.NO_AUTHN_CONTEXT,
@@ -580,7 +572,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
       const response = await post(authnRequestXml({ isPassive: true }), 's-1');
       expect(response.status).toBe(200);
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
       expect(mocks.buildResponse).not.toHaveBeenCalled();
       expect(lastError()).toMatchObject({
         statusCode: STATUS_CODES.RESPONDER,
@@ -631,7 +623,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const response = await post(authnRequestXml(), 's-1');
       expect(response.status).toBe(200);
       expect(mocks.buildResponse).not.toHaveBeenCalled();
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
       const answer = lastError();
       expect(answer?.statusCode).toBe(STATUS_CODES.RESPONDER);
       expect(answer?.secondLevelStatusCode).toBeUndefined();
@@ -643,7 +635,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
       const response = await post(authnRequestXml(), 's-1');
       expect(response.status).toBe(200);
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
       expect(lastError()).toMatchObject({ secondLevelStatusCode: STATUS_CODES.REQUEST_DENIED });
     });
   });
@@ -697,7 +689,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
         's-1'
       );
       expect(response.status).toBe(200);
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
       expect(lastError()).toMatchObject({ secondLevelStatusCode: STATUS_CODES.NO_AUTHN_CONTEXT });
     });
 
@@ -851,7 +843,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const response = await post(authnRequestXml({ classRefs: [ppt] }), 's-1');
       expect(response.status).toBe(200);
       expect(lastSuccess()?.authnContextClassRef).toBe(ppt);
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
     });
 
     it.each([
@@ -964,7 +956,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const answered = await resume('s-2');
       expect(answered.status).toBe(200);
       expect(mocks.buildResponse).toHaveBeenCalledOnce();
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
     });
 
     it('does not send the person round again when they come back with a session that is not that sign-in', async () => {
@@ -973,7 +965,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       // Back with the old session (the login page was skipped, or the session cannot be shown new).
       const response = await resume('s-1');
       expect(response.status).toBe(200);
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
       expect(mocks.buildResponse).not.toHaveBeenCalled();
       expect(lastError()).toMatchObject({
         statusCode: STATUS_CODES.RESPONDER,
@@ -988,7 +980,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       // The sign-in page was left, or the cookie was refused: they come back with no session.
       const response = await resume();
       expect(response.status).toBe(200);
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
       expect(mocks.buildResponse).not.toHaveBeenCalled();
       expect(lastError()).toMatchObject({ secondLevelStatusCode: STATUS_CODES.AUTHN_FAILED });
     });
@@ -999,7 +991,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       await post(authnRequestXml(), 's-1');
       const response = await resume();
       expect(response.status).toBe(200);
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
       expect(mocks.buildResponse).not.toHaveBeenCalled();
       expect(lastError()).toMatchObject({ secondLevelStatusCode: STATUS_CODES.AUTHN_FAILED });
     });
@@ -1020,7 +1012,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       );
       expect(nonce).toBeTruthy();
       const hashOf = () =>
-        (mocks.requests.get('_request') as { context: { loginNonceHash?: string } }).context
+        (store.waiting.get('_request') as { context: { loginNonceHash?: string } }).context
           .loginNonceHash;
       const original = hashOf();
       expect(original).toMatch(/^[0-9a-f]{64}$/u);
@@ -1130,7 +1122,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       // accepts as the new sign-in is what the SSO endpoint counts.
       expect(challenge?.metadata.reauth_issued_at).toBe(stepUpOf().issuedAt);
       // It lasts as long as the stored request, and keeps the rest of the URL as it was.
-      const stored = mocks.requests.get('_request') as { expiresAt: number };
+      const stored = store.waiting.get('_request') as { expiresAt: number };
       expect(challenge!.ttl * 1000).toBeGreaterThan(stored.expiresAt - Date.now() - 5_000);
       expect(challenge!.ttl * 1000).toBeLessThanOrEqual(stored.expiresAt - Date.now() + 5_000);
       const params = new URL(location).searchParams;
@@ -1153,7 +1145,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const reauth = await post(authnRequestXml(), 's-1');
       expect(new URL(reauth.headers.get('location') ?? '').pathname).toBe('/prove');
 
-      mocks.requests.clear();
+      store.reset();
       const signIn = await post(authnRequestXml());
       expect(new URL(signIn.headers.get('location') ?? '').pathname).toBe('/sign-in');
     });
@@ -1224,7 +1216,7 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const answered = await resume('s-1');
       expect(answered.status).toBe(200);
       expect(mocks.buildResponse).toHaveBeenCalledOnce();
-      expect(mocks.requests.size).toBe(0);
+      expect(store.waiting.size).toBe(0);
     });
 
     it('answers an AAL2 step-up completed by re-proving the same session, and keeps the password old', async () => {

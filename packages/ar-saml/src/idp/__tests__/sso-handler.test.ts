@@ -2,6 +2,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { BINDING_URIS, SAML_NAMESPACES } from '../../common/constants';
 import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
+import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
+import { completeStoredAuthnRequest } from '../sso-stored-request';
+
+const store = createSamlRequestStoreFake();
 
 const mocks = vi.hoisted(() => ({
   sp: null as Record<string, unknown> | null,
@@ -318,7 +322,9 @@ describe('IdP SSO handler policy boundaries', () => {
     mocks.sp = sp();
     mocks.ui = undefined;
     mocks.loginPolicy = 'ui_base_url';
-    mocks.storeFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+    store.reset();
+    mocks.storeFetch.mockReset();
+    mocks.storeFetch.mockImplementation(store.fetch);
     mocks.sessionId = undefined;
     mocks.shardedSession = true;
     mocks.sessionResponse = new Response(null, { status: 404 });
@@ -392,7 +398,9 @@ describe('IdP SSO handler policy boundaries', () => {
   it('handles passive authentication without starting an interactive login', async () => {
     const response = await post(authnRequest({ isPassive: true }));
     expect(response.status).toBe(200);
-    expect(mocks.storeFetch).not.toHaveBeenCalled();
+    // Answered at once (NoPassive): the request is only recorded and used up, never kept waiting.
+    expect(store.calls).toEqual(['create', 'complete']);
+    expect(store.waiting.size).toBe(0);
   });
 
   it('stores the request before the UI login and preserves force-authn intent', async () => {
@@ -403,9 +411,12 @@ describe('IdP SSO handler policy boundaries', () => {
     expect(location).toContain('https://ui.example.test/login');
     expect(location).toContain('force_authn=true');
     expect(mocks.storeFetch).toHaveBeenCalledWith(
-      'https://saml-request-store/store',
+      'https://saml-request-store/authn/create',
       expect.objectContaining({ method: 'POST' })
     );
+    // Recorded as it arrived (revision 1), then kept for the sign-in (revision 2).
+    expect(store.calls).toEqual(['create', 'update']);
+    expect(store.waiting.get('_request')).toMatchObject({ revision: 2, relayState: 'relay-state' });
     // Nobody is signed in: they have to sign in anyway, so there is no challenge to answer.
     expect(mocks.storeChallenge).not.toHaveBeenCalled();
     expect(new URL(location).searchParams.has('challenge_id')).toBe(false);
@@ -418,11 +429,8 @@ describe('IdP SSO handler policy boundaries', () => {
       'saml_login_nonce'
     );
     expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-    const stored = mocks.storeFetch.mock.calls.find(
-      ([url]) => url === 'https://saml-request-store/store'
-    );
-    const body = String(stored?.[1]?.body);
-    const context = (JSON.parse(body) as { context: { loginNonceHash?: string } }).context;
+    const context = store.waiting.get('_request')?.context as { loginNonceHash?: string };
+    const body = mocks.storeFetch.mock.calls.map(([, init]) => String(init?.body)).join('\n');
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(nonce ?? ''));
     expect(context.loginNonceHash).toBe(
       Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
@@ -566,12 +574,9 @@ describe('IdP SSO handler policy boundaries', () => {
     const response = await post(authnRequest());
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('name="challenge_id"');
-    expect(mocks.storeFetch).toHaveBeenCalledTimes(1);
-    const storeCall = mocks.storeFetch.mock.calls[0] as unknown as [string, { body?: unknown }];
-    const storedBody = storeCall[1].body;
-    expect(typeof storedBody).toBe('string');
-    if (typeof storedBody !== 'string') throw new Error('Expected serialized request state');
-    const stored = JSON.parse(storedBody) as {
+    // Recorded as it arrived, then kept for the consent page with its challenge.
+    expect(store.calls).toEqual(['create', 'update']);
+    const stored = store.waiting.get('_request') as unknown as {
       context: { attributeReleaseConsentChallenge: Record<string, unknown> };
     };
     expect(stored.context.attributeReleaseConsentChallenge).toMatchObject({
@@ -791,26 +796,24 @@ describe('resuming a stored request after the Login UI', () => {
       undefined,
       environment()
     );
+  // What the resume updated the stored request's context to (an update of a resume).
   const storedBody = () => {
     const call = mocks.storeFetch.mock.calls.find(
-      ([url]) => url === 'https://saml-request-store/store'
+      ([url]) => url === 'https://saml-request-store/authn/update'
     );
     return JSON.parse(String(call?.[1]?.body)) as {
+      expectedRevision: number;
       context: { loginNonceHash?: string };
     };
   };
   const serveStored = (context: Record<string, unknown>) => {
-    mocks.storeFetch.mockImplementation(async (url?: string) =>
-      url?.includes('/consume/')
-        ? new Response(JSON.stringify({ ...storedConsentRequest(), context }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        : new Response('{}', { status: 200 })
-    );
+    store.seed({ ...storedConsentRequest(), context } as never);
   };
   beforeEach(() => {
     vi.clearAllMocks();
+    store.reset();
+    mocks.storeFetch.mockReset();
+    mocks.storeFetch.mockImplementation(store.fetch);
     mocks.sp = sp();
     mocks.ui = { baseUrl: 'https://ui.example.test' };
     mocks.sessionId = undefined;
@@ -837,12 +840,10 @@ describe('resuming a stored request after the Login UI', () => {
   });
 
   it('refuses a resume the store will not release, sending nobody to sign in', async () => {
-    mocks.storeFetch.mockImplementation(async (url?: string) =>
-      url?.includes('/consume/') ? new Response('{}', { status: 404 }) : new Response('{}')
-    );
+    // Nothing is waiting under that id: the store answers 404 to the read.
     const response = await resume('w'.repeat(43));
     expect(response.status).toBe(400);
-    expect(mocks.storeFetch.mock.calls.some(([u]) => String(u).includes('/store'))).toBe(false);
+    expect(store.calls).toEqual(['read']);
   });
 
   it('keeps the matched nonce when it sends the person to sign in again', async () => {
@@ -871,14 +872,10 @@ describe('IdP attribute-release consent callback', () => {
     mocks.shardedSession = true;
     mocks.sessionResponse = new Response(null, { status: 404 });
     mocks.federationSettings = null;
-    mocks.storeFetch.mockImplementation(async (url?: string) =>
-      url?.includes('/consume/')
-        ? new Response(JSON.stringify(storedConsentRequest()), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        : new Response('{}', { status: 200 })
-    );
+    store.reset();
+    mocks.storeFetch.mockReset();
+    mocks.storeFetch.mockImplementation(store.fetch);
+    store.seed(storedConsentRequest() as never);
   });
 
   it('requires an authenticated session', async () => {
@@ -920,25 +917,16 @@ describe('IdP attribute-release consent callback', () => {
     ['createdAt', 0],
   ])('rejects mismatched or expired challenge field %s', async (key, value) => {
     authenticateSession();
-    mocks.storeFetch.mockImplementation(async (url?: string) =>
-      url?.includes('/consume/')
-        ? new Response(JSON.stringify(storedConsentRequest({ [key]: value })), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        : new Response('{}', { status: 200 })
-    );
+    store.seed(storedConsentRequest({ [key]: value }) as never);
     expect((await postConsent(validConsentFields())).status).toBe(400);
+    // Checked before anything is used up: the request is still waiting.
+    expect(store.waiting.has('_request')).toBe(true);
+    expect(store.calls).toEqual(['read']);
   });
 
-  it('rejects a consumed request without a consent challenge or configured SP', async () => {
+  it('rejects a stored request without a consent challenge or configured SP', async () => {
     authenticateSession();
-    mocks.storeFetch.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ...storedConsentRequest(), context: {} }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    );
+    store.seed({ ...storedConsentRequest(), context: {} } as never);
     expect((await postConsent(validConsentFields())).status).toBe(400);
 
     mocks.sp = null;
@@ -951,6 +939,13 @@ describe('IdP attribute-release consent callback', () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('SAMLResponse');
     expect(mocks.consentGrant).not.toHaveBeenCalled();
+    // The request is completed (not waiting), at the revision it was read at, before the answer.
+    expect(store.waiting.size).toBe(0);
+    expect(store.calls).toEqual(['read', 'complete']);
+    const complete = mocks.storeFetch.mock.calls.find(
+      ([url]) => url === 'https://saml-request-store/authn/complete'
+    );
+    expect(JSON.parse(String(complete?.[1]?.body))).toMatchObject({ expectedRevision: 1 });
   });
 
   it.each([
@@ -966,6 +961,12 @@ describe('IdP attribute-release consent callback', () => {
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toContain('saml_request_id=_request');
     expect(mocks.consentGrant).toHaveBeenCalledTimes(persists ? 1 : 0);
+    // An approval updates the waiting request at the revision it was read at (not complete).
+    expect(store.calls).toEqual(['read', 'update']);
+    expect(store.waiting.get('_request')).toMatchObject({ revision: 2 });
+    expect(store.waiting.get('_request')?.context).toHaveProperty(
+      'attributeReleaseConsentConfirmed'
+    );
   });
 
   it('fails closed when consumed state cannot be read', async () => {
@@ -976,14 +977,7 @@ describe('IdP attribute-release consent callback', () => {
 
   describe('challenge age against the tenant request lifetime', () => {
     function storeChallengeCreatedMinutesAgo(minutes: number) {
-      mocks.storeFetch.mockImplementation(async (url?: string) =>
-        url?.includes('/consume/')
-          ? new Response(
-              JSON.stringify(storedConsentRequest({ createdAt: Date.now() - minutes * 60_000 })),
-              { status: 200, headers: { 'Content-Type': 'application/json' } }
-            )
-          : new Response('{}', { status: 200 })
-      );
+      store.seed(storedConsentRequest({ createdAt: Date.now() - minutes * 60_000 }) as never);
     }
 
     it('accepts a challenge older than five minutes when the tenant allows ten', async () => {
@@ -1008,7 +1002,9 @@ describe('IdP SSO lifetimes from the tenant settings', () => {
     mocks.sp = sp();
     mocks.ui = { baseUrl: 'https://ui.example.test' };
     mocks.loginPolicy = 'ui_base_url';
-    mocks.storeFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+    store.reset();
+    mocks.storeFetch.mockReset();
+    mocks.storeFetch.mockImplementation(store.fetch);
     mocks.sessionId = undefined;
     mocks.user = null;
     mocks.federationSettings = null;
@@ -1017,8 +1013,7 @@ describe('IdP SSO lifetimes from the tenant settings', () => {
   const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
   async function storedLifetimeSeconds(): Promise<number> {
-    const init = (mocks.storeFetch.mock.calls.at(-1) as unknown as [string, { body: string }])[1];
-    const stored = JSON.parse(init.body) as { expiresAt: number };
+    const stored = store.waiting.get('_request') as { expiresAt: number };
     return Math.round((stored.expiresAt - Date.now()) / 1000);
   }
 
@@ -1088,6 +1083,8 @@ describe('SP minimum identity assurance (SP-initiated)', () => {
   });
 
   beforeEach(() => {
+    // Each test sends the request anew (the store refuses an id it knows, as a replay).
+    store.reset();
     vi.clearAllMocks();
     evidence.clearEvidence();
     evidence.resetReads();
@@ -1096,7 +1093,9 @@ describe('SP minimum identity assurance (SP-initiated)', () => {
     mocks.sp = sp({ minimumIal: 'IAL2' });
     mocks.ui = { baseUrl: 'https://ui.example.test' };
     mocks.loginPolicy = 'ui_base_url';
-    mocks.storeFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+    store.reset();
+    mocks.storeFetch.mockReset();
+    mocks.storeFetch.mockImplementation(store.fetch);
     mocks.shardedSession = true;
     mocks.sessionThrows = false;
     mocks.user = { id: 'user-a', email: 'user@example.test', name: 'User A' };
@@ -1159,8 +1158,9 @@ describe('SP minimum identity assurance (SP-initiated)', () => {
     expect(resolveSAMLNameIDValue).not.toHaveBeenCalled();
     expect(createSAMLSessionIndex).not.toHaveBeenCalled();
     expect(enforceSAMLAttributeReleaseConsent).not.toHaveBeenCalled();
-    // No consent challenge was stored.
-    expect(mocks.storeFetch).not.toHaveBeenCalled();
+    // No consent challenge was stored: the request was only recorded and used up by the refusal.
+    expect(store.calls).toEqual(['create', 'complete']);
+    expect(store.waiting.size).toBe(0);
     expect(mocks.consentGrant).not.toHaveBeenCalled();
   });
 
@@ -1270,14 +1270,7 @@ describe('SP minimum identity assurance (SP-initiated)', () => {
 
   it('judges the request that comes back from sign-in (stored request) too', async () => {
     evidence.addEvidence('ev-1', 'IAL1');
-    mocks.storeFetch.mockImplementation(async (url?: string) =>
-      url?.includes('/consume/')
-        ? new Response(JSON.stringify(storedConsentRequest()), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        : new Response('{}', { status: 200 })
-    );
+    store.seed(storedConsentRequest() as never);
     const response = await app().fetch(
       new Request(
         'https://tenant.example.test/sso?saml_request_id=_request&saml_sp_entity_id=https%3A%2F%2Fsp.example.test%2Fentity&return_to=saml_sso'
@@ -1319,6 +1312,8 @@ describe('assurance attributes in the SP-initiated assertion', () => {
   });
 
   beforeEach(() => {
+    // Each test sends the request anew (the store refuses an id it knows, as a replay).
+    store.reset();
     vi.clearAllMocks();
     evidence.clearEvidence();
     evidence.resetReads();
@@ -1409,5 +1404,221 @@ describe('assurance attributes in the SP-initiated assertion', () => {
     expect(response.status).toBe(200);
     expect(mocks.buildResponse).toHaveBeenCalledOnce();
     expect(subjectGivenToAttributeRelease()).not.toHaveProperty('edu_person_assurance');
+  });
+});
+
+describe('the stored AuthnRequest lifecycle', () => {
+  const SP = 'https://sp.example.test/entity';
+  const RESUME_URL = `https://tenant.example.test/sso?saml_request_id=_request&saml_sp_entity_id=${encodeURIComponent(
+    SP
+  )}&return_to=saml_sso`;
+  const sha = async (value: string) =>
+    Array.from(
+      new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))),
+      (b) => b.toString(16).padStart(2, '0')
+    ).join('');
+  const resume = (extra = '', ctx?: Record<string, unknown>) =>
+    app().request(RESUME_URL + extra, undefined, environment(), ctx as never);
+  const errorOptions = () =>
+    mocks.buildErrorResponse.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+    mocks.storeFetch.mockReset();
+    mocks.storeFetch.mockImplementation(store.fetch);
+    mocks.sp = sp();
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
+    mocks.loginPolicy = 'ui_base_url';
+    mocks.shardedSession = true;
+    mocks.sessionThrows = false;
+    mocks.sessionId = undefined;
+    mocks.sessionResponse = new Response(null, { status: 404 });
+    mocks.attributeError = null;
+    mocks.consentError = null;
+    mocks.federationSettings = null;
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    store.seed({ ...storedConsentRequest(), context: {} } as never);
+    authenticateSession();
+  });
+
+  it('never resumes a request recorded as refused on arrival, even if it was left waiting', async () => {
+    store.reset();
+    store.seed({ ...storedConsentRequest(), context: { refusedOnArrival: true } } as never);
+    const response = await resume();
+    expect(await response.text()).not.toContain('SAMLResponse');
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(store.calls).toEqual(['read']);
+  });
+
+  it('records a request answered as it arrives, so the same AuthnRequest sent again is refused', async () => {
+    store.reset();
+    const first = await post(authnRequest());
+    expect(first.status).toBe(200);
+    expect(await first.text()).toContain('SAMLResponse');
+    expect(store.calls).toEqual(['create', 'complete']);
+    expect(store.waiting.size).toBe(0);
+
+    mocks.buildResponse.mockClear();
+    vi.mocked(getSamlUserInfoById).mockClear();
+    const again = await post(authnRequest());
+    expect(await again.text()).not.toContain('SAMLResponse');
+    // Refused before anything is done for it.
+    expect(getSamlUserInfoById).not.toHaveBeenCalled();
+    expect(store.calls).toEqual(['create', 'complete', 'create']);
+  });
+
+  it('reads a resumed request without using it up, so a failure before answering leaves it waiting', async () => {
+    mocks.user = null; // the session's user is gone: the answer cannot be built
+    const response = await resume();
+    expect(response.status).toBe(400);
+    expect(store.calls).toEqual(['read']);
+    expect(store.waiting.get('_request')).toMatchObject({ revision: 1 });
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+  });
+
+  it('completes the request right before answering, and answers it only once', async () => {
+    const first = await resume();
+    expect(first.status).toBe(200);
+    expect(await first.text()).toContain('SAMLResponse');
+    expect(store.calls).toEqual(['read', 'complete']);
+    expect(store.waiting.size).toBe(0);
+    const complete = mocks.storeFetch.mock.calls.find(
+      ([url]) => url === 'https://saml-request-store/authn/complete'
+    );
+    expect(JSON.parse(String(complete?.[1]?.body))).toMatchObject({
+      spEntityId: SP,
+      requestId: '_request',
+      expectedRevision: 1,
+    });
+
+    // The same resume again finds nothing waiting: it is not found, and nothing is answered.
+    const second = await resume();
+    expect(second.status).toBe(400);
+    expect(mocks.buildResponse).toHaveBeenCalledOnce();
+    expect(store.calls).toEqual(['read', 'complete', 'read']);
+  });
+
+  it('does not answer a request another tab changed after it was read', async () => {
+    mocks.buildResponse.mockImplementationOnce(() => {
+      // Another tab updates the stored request while this one builds its answer.
+      (store.waiting.get('_request') as { revision: number }).revision = 2;
+      return '<saml-success-response/>';
+    });
+    const response = await resume();
+    // The SP is not answered (an error page, not a SAML Response).
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(await response.text()).not.toContain('SAMLResponse');
+    expect(store.calls).toEqual(['read', 'complete']);
+    // The stale completion changed nothing: the request still waits at its new revision.
+    expect(store.waiting.get('_request')).toMatchObject({ revision: 2 });
+  });
+
+  it('refuses the same AuthnRequest arriving again once it was stored', async () => {
+    store.reset();
+    mocks.sessionId = undefined;
+    mocks.sessionResponse = new Response(null, { status: 404 });
+    const first = await post(authnRequest(), 'relay-state');
+    expect(first.status).toBe(302);
+    // Recorded as it arrived, then kept for the sign-in.
+    expect(store.waiting.get('_request')).toMatchObject({ revision: 2 });
+
+    const again = await post(authnRequest(), 'relay-state');
+    expect(again.status).toBe(400);
+    expect(again.headers.get('location')).toBeNull();
+    expect(store.calls).toEqual(['create', 'update', 'create']);
+    expect(store.waiting.size).toBe(1);
+
+    // Nor does answering it make it acceptable again.
+    await completeStoredAuthnRequest(environment() as never, 'tenant-a', '_request', SP);
+    expect(store.waiting.size).toBe(0);
+    expect((await post(authnRequest(), 'relay-state')).status).toBe(400);
+    expect(store.waiting.size).toBe(0);
+  });
+
+  it('leaves the request waiting after a consent post with the wrong challenge', async () => {
+    store.reset();
+    store.seed(storedConsentRequest() as never);
+    const response = await postConsent(validConsentFields({ challenge_id: 'wrong' }));
+    expect(response.status).toBe(400);
+    expect(store.calls).toEqual(['read']);
+    expect(store.waiting.get('_request')).toMatchObject({ revision: 1 });
+    expect(mocks.buildErrorResponse).not.toHaveBeenCalled();
+  });
+
+  it('completes the request on a deny and answers RequestDenied once', async () => {
+    store.reset();
+    store.seed(storedConsentRequest() as never);
+    const first = await postConsent(validConsentFields({ decision: 'deny' }));
+    expect(first.status).toBe(200);
+    expect(await first.text()).toContain('SAMLResponse');
+    expect(mocks.buildErrorResponse).toHaveBeenCalledOnce();
+    expect(errorOptions()).toMatchObject({
+      statusCode: 'urn:oasis:names:tc:SAML:2.0:status:Responder',
+      secondLevelStatusCode: 'urn:oasis:names:tc:SAML:2.0:status:RequestDenied',
+    });
+    expect(store.waiting.size).toBe(0);
+
+    // A second post (a double click, another tab) has nothing to answer.
+    const second = await postConsent(validConsentFields({ decision: 'deny' }));
+    expect(second.status).toBe(400);
+    expect(mocks.buildErrorResponse).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the login nonce hash through the consent page, so a login cancel can still complete it', async () => {
+    store.reset();
+    // 1. Nobody is signed in: the request is stored and the person is sent to sign in.
+    mocks.sessionId = undefined;
+    mocks.sessionResponse = new Response(null, { status: 404 });
+    const sent = await post(authnRequest(), 'relay-state');
+    const nonce = new URL(sent.headers.get('location') ?? '').searchParams.get('saml_login_nonce');
+    expect(nonce).toBeTruthy();
+    const hash = await sha(nonce ?? '');
+
+    // 2. They come back signed in and the consent page is shown: the stored request is updated.
+    authenticateSession();
+    // (The sign-in Flow check of a returning session is not under test here.)
+    delete (store.waiting.get('_request')?.context as { sentToSignInAt?: number }).sentToSignInAt;
+    mocks.consentError = new SAMLAttributeReleaseConsentRequiredError({
+      attributeSetHash: 'hash',
+      reasonCodes: ['consent.required'],
+      consentMode: 'once',
+      attributes: [{ name: 'mail', values: ['user@example.test'] }],
+    });
+    const page = await resume(`&saml_login_nonce=${nonce}`, {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    });
+    expect(await page.text()).toContain('name="challenge_id"');
+    expect(store.calls).toEqual(['create', 'update', 'read', 'update']);
+    const challenged = store.waiting.get('_request');
+    expect(challenged).toMatchObject({ revision: 3, context: { loginNonceHash: hash } });
+    const challenge = challenged?.context?.attributeReleaseConsentChallenge as {
+      challengeId: string;
+    };
+
+    // 3. They approve: the request is updated again, still holding the hash.
+    const approved = await postConsent(
+      validConsentFields({ challenge_id: challenge.challengeId, attribute_set_hash: 'hash' })
+    );
+    expect(approved.status).toBe(302);
+    expect(store.waiting.get('_request')).toMatchObject({
+      revision: 4,
+      context: { loginNonceHash: hash },
+    });
+
+    // 4. A login cancel (complete on the nonce hash) still finds it, and only with that hash.
+    const env = environment() as never;
+    await expect(
+      completeStoredAuthnRequest(env, 'tenant-a', '_request', SP, {
+        loginNonceHash: await sha('another-nonce'),
+      })
+    ).rejects.toThrow('not found or already used');
+    expect(store.waiting.size).toBe(1);
+    await expect(
+      completeStoredAuthnRequest(env, 'tenant-a', '_request', SP, { loginNonceHash: hash })
+    ).resolves.toMatchObject({ requestId: '_request' });
+    expect(store.waiting.size).toBe(0);
   });
 });

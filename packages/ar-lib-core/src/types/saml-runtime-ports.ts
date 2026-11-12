@@ -1,4 +1,8 @@
-import type { SAMLIdentityMappingFieldMappingSelector, SAMLRequestData } from './saml';
+import type {
+  SAMLIdentityMappingFieldMappingSelector,
+  SAMLRequestContext,
+  SAMLRequestData,
+} from './saml';
 import type { DestinationProfileConsentDescriptor } from '../services/destination-profile-consent';
 
 /** A compiled IdP release policy and active profile from the same verified Admin snapshot. */
@@ -32,16 +36,46 @@ export interface SAMLRuntimePorts {
     isAllowed(input: { tenantId: string; entityId: string }): boolean;
     getRelease(input: { tenantId: string; entityId: string }): SAMLRuntimeImportedSPRelease | null;
   };
+  /**
+   * The IdP's stored AuthnRequests, kept while the person signs in (or answers a consent screen)
+   * and answered once. A request is created once, read without being used up, its context
+   * updated at a revision, and completed once, right before the SP is answered. Its id is kept
+   * until `retainUntil`, so it cannot be stored again while it could still be accepted.
+   */
   requests: {
-    store(input: { tenantId: string; spEntityId: string; request: SAMLRequestData }): Promise<void>;
-    consume(input: {
+    /** Store a new request at revision 1; false when the id is already known (a replay). */
+    create(input: {
+      tenantId: string;
+      spEntityId: string;
+      request: SAMLRequestData;
+    }): Promise<boolean>;
+    /** The request while it is waiting (not completed, not expired), without using it up. */
+    read(input: {
       tenantId: string;
       spEntityId: string;
       requestId: string;
-      /**
-       * Consume only a request stored with this login nonce hash (`context.loginNonceHash`, a
-       * login cancel); any other is left as it is, not consumed, and null is returned.
-       */
+    }): Promise<SAMLRequestData | null>;
+    /**
+     * Replace the context of a waiting request at `expectedRevision` (raising the revision); null
+     * when it is not waiting at that revision. The request itself, its ACS, RelayState and expiry
+     * do not change.
+     */
+    update(input: {
+      tenantId: string;
+      spEntityId: string;
+      requestId: string;
+      expectedRevision: number;
+      context: SAMLRequestContext;
+    }): Promise<SAMLRequestData | null>;
+    /**
+     * Use up a waiting request once and return it; null when it is not waiting (or not at
+     * `expectedRevision`, or not stored with `loginNonceHash`, a login cancel).
+     */
+    complete(input: {
+      tenantId: string;
+      spEntityId: string;
+      requestId: string;
+      expectedRevision?: number;
       loginNonceHash?: string;
     }): Promise<SAMLRequestData | null>;
   };
