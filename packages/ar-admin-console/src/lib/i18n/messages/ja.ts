@@ -12,12 +12,14 @@ import { jaCustomization } from './customization/ja';
 import { jaScreens } from './screens/ja';
 import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
+import { jaUserAudit } from './user-audit/ja';
 import { jaTeam } from './team/ja';
 import { jaAuthMethods } from './auth-methods/ja';
 import { jaSessionProfiles } from './session-profiles/ja';
 import { jaProfileLayer } from './profile-layer/ja';
 import { jaPlatformProfiles } from './platform-profiles/ja';
 import { jaLaunchers } from './launchers/ja';
+import { jaUsers } from './users/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -38,12 +40,14 @@ export const ja = {
 	...jaScreens,
 	...jaStepUp,
 	...jaAdminAudit,
+	...jaUserAudit,
 	...jaTeam,
 	...jaAuthMethods,
 	...jaSessionProfiles,
 	...jaProfileLayer,
 	...jaPlatformProfiles,
 	...jaLaunchers,
+	...jaUsers,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',

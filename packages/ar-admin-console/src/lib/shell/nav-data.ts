@@ -28,6 +28,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				label: 'nav.users.all',
 				icon: 'users',
 				platform: 'lookup',
+				details: true,
+				requires: { permission: 'admin:users:read' },
 				legacyRoutes: ['/admin/users', '/admin/users/[id]', '/admin/users/new']
 			},
 			{
@@ -364,6 +366,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'audit',
 				label: 'nav.mon.audit',
 				icon: 'file',
+				requires: { permission: 'admin:audit:read' },
 				legacyRoutes: ['/admin/audit-logs', '/admin/audit-logs/[id]']
 			},
 			{

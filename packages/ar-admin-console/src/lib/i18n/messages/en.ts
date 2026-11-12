@@ -13,12 +13,14 @@ import { enCustomization } from './customization/en';
 import { enScreens } from './screens/en';
 import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
+import { enUserAudit } from './user-audit/en';
 import { enTeam } from './team/en';
 import { enAuthMethods } from './auth-methods/en';
 import { enSessionProfiles } from './session-profiles/en';
 import { enProfileLayer } from './profile-layer/en';
 import { enPlatformProfiles } from './platform-profiles/en';
 import { enLaunchers } from './launchers/en';
+import { enUsers } from './users/en';
 
 export const en = {
 	...enSettings,
@@ -35,12 +37,14 @@ export const en = {
 	...enScreens,
 	...enStepUp,
 	...enAdminAudit,
+	...enUserAudit,
 	...enTeam,
 	...enAuthMethods,
 	...enSessionProfiles,
 	...enProfileLayer,
 	...enPlatformProfiles,
 	...enLaunchers,
+	...enUsers,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',

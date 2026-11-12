@@ -23,6 +23,9 @@ import type { SessionProfilesClient } from '#lib/api/session-profiles.js';
 import { MOCK_CLIENTS } from '#lib/api/fake/clients-fake.js';
 import { MOCK_SAML_SERVICE_PROVIDERS } from '#lib/api/fake/saml-providers-fake.js';
 import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
+import { answerAuditMock } from './dev-audit-mock.js';
+import { createFakeAdminUsers } from '#lib/api/fake/admin-users-fake.js';
+import { answerSessionsMock, answerUserMock } from './dev-users-mock.js';
 import { mockScreens } from '#lib/mock/fixtures/screens.js';
 import type { SettingsTarget } from '#lib/api/settings.js';
 
@@ -385,6 +388,68 @@ async function handlePasskeys(
 	return null;
 }
 
+/** The mock tenant's end users; reset when the dev server restarts. */
+const mockUsers = createFakeAdminUsers({ restricted: true });
+
+/**
+ * `/api/admin/users`, answered in the Admin API's own wire shape (sharded storage: cursor paging,
+ * exact search). `segments` are the parts after `users`; one user's endpoints are in
+ * `dev-users-mock.ts`.
+ */
+async function handleUsers(
+	event: RequestEvent,
+	segments: string[],
+	method: string
+): Promise<Response | null> {
+	try {
+		if (segments.length === 0 && method === 'GET') {
+			const query = event.url.searchParams;
+			const limit = Math.min(100, Number(query.get('limit')) || 20);
+			const cursor = query.get('cursor');
+			const page = await mockUsers.list({
+				search: query.get('search') ?? undefined,
+				limit,
+				at: cursor ? { cursor } : undefined
+			});
+			const next = page.next && 'cursor' in page.next ? page.next.cursor : null;
+			return json({
+				users: page.users,
+				pagination: {
+					mode: query.get('search') ? 'exact' : 'cursor',
+					limit,
+					nextCursor: next,
+					hasNext: next !== null
+				}
+			});
+		}
+		if (segments.length === 0 && method === 'POST') {
+			const body = await readJson(event);
+			const result = await mockUsers.create({
+				email: typeof body.email === 'string' ? body.email : '',
+				name: typeof body.name === 'string' ? body.name : undefined
+			});
+			return json({ user: result.status === 'created' ? result.user : null }, 201);
+		}
+		if (segments.length > 0) {
+			const body = method === 'PUT' || method === 'POST' ? await readJson(event) : {};
+			const answer = await answerUserMock(
+				mockUsers,
+				segments,
+				method,
+				body,
+				event.url.searchParams
+			);
+			if (answer) return json(answer.body, answer.status);
+		}
+	} catch (error) {
+		if (error instanceof ApiError) {
+			return json({ error: error.code, error_description: error.message }, error.status);
+		}
+		throw error;
+	}
+	return null;
+}
+
 function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
@@ -529,6 +594,10 @@ export async function handleDevAdminMock(
 			}))
 		});
 	}
+	if (segments[0] === 'users') {
+		const response = await handleUsers(event, segments.slice(1), method);
+		if (response) return response;
+	}
 	// The clients a flow can go on to sign in to (read only here).
 	if (segments[0] === 'clients' && segments.length === 1 && method === 'GET') {
 		return json({
@@ -547,6 +616,13 @@ export async function handleDevAdminMock(
 		const response = await handleProfiles(event, segments.slice(1), method, sessionProfiles);
 		if (response) return response;
 	}
+	if (segments[0] === 'sessions' && segments.length === 1 && method === 'GET') {
+		const answer = await answerSessionsMock(mockUsers, event.url.searchParams);
+		return json(answer.body, answer.status);
+	}
+	// The end-user event log and the admin audit log (the same fake data as Storybook).
+	const audit = await answerAuditMock(segments, method, event.url.searchParams);
+	if (audit) return json(audit.body, audit.status);
 	if (segments[0] === 'logout' && method === 'POST') return json({ success: true });
 	if (segments[0] === 'tenants' && segments[2] === 'settings' && segments.length === 4) {
 		const target: SettingsTarget = { level: 'tenant', tenantId: segments[1] };
