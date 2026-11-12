@@ -54,10 +54,17 @@ let tenantMethods: Record<string, unknown>;
 let withCodeStep: boolean;
 /** Cookies the browser sends besides the lite binding (a session made by an earlier post). */
 let browserCookies: Record<string, string>;
+/** Whether the Flow says the sign-in can be left for the application (`cancel_available`). */
+let cancelAvailable: boolean;
 
 function startAnswer() {
 	return {
-		interaction: { id: 'int-1', state: 'active', current_step_id: currentStep.id },
+		interaction: {
+			id: 'int-1',
+			state: 'active',
+			current_step_id: currentStep.id,
+			...(cancelAvailable ? { cancel_available: true } : {})
+		},
 		contract: {
 			ui: {
 				steps: [
@@ -183,7 +190,8 @@ function event(init: { action?: string; form?: Record<string, string>; query?: s
 		}),
 		cookies: {
 			get: (name: string) => cookies.get(name),
-			set: vi.fn((name: string, value: string) => cookies.set(name, value))
+			set: vi.fn((name: string, value: string) => cookies.set(name, value)),
+			delete: vi.fn((name: string) => cookies.delete(name))
 		},
 		locals: {
 			locale: 'en',
@@ -246,6 +254,7 @@ beforeEach(() => {
 	tenantMethods = { emailCode: { enabled: true }, guest: { enabled: true } };
 	withCodeStep = true;
 	browserCookies = {};
+	cancelAvailable = false;
 	routes = {
 		'/api/v1/login/interactions/start': () => json(startAnswer()),
 		'/api/auth/human-verification/pow-challenge': () =>
@@ -2010,5 +2019,387 @@ describe('a long credential ID', () => {
 			})
 		);
 		expect(credential?.id).toBe(id);
+	});
+});
+
+describe('an address with no account', () => {
+	it('says so as a form error, keeps the address, and starts no code entry', async () => {
+		routes['/api/v1/auth/direct/email-code/send'] = () =>
+			json(
+				{
+					error: 'account_not_found',
+					error_description: 'No account uses this address',
+					sign_up_available: true
+				},
+				404
+			);
+		const stepKey = ((await view()) as { stepKey: string }).stepKey;
+		const e = event({
+			action: 'send_code',
+			form: {
+				txn: 'txn-1',
+				csrf: 'csrf-1',
+				op: OP,
+				'step-key': stepKey,
+				email: 'nobody@example.com'
+			}
+		});
+		const answer = (await (
+			actions as Record<string, (e: RequestEvent) => Promise<unknown>>
+		).send_code(e)) as { status: number; data: Record<string, unknown> };
+		expect(answer.status).toBe(404);
+		expect(answer.data.error).toBe('account_not_found');
+		// Lite's own sign-up page, as the Flow offers one.
+		expect(answer.data.signUpHref).toBe('/signup');
+		// The address typed is drawn again.
+		expect(answer.data.answersEcho).toMatchObject({ answers: { email: 'nobody@example.com' } });
+		expect(store.txn.data.code).toBeUndefined();
+		expect(submits()).toEqual([]);
+		expect(store.operations.get(`send:${OP}`)).toMatchObject({ status: 'done' });
+
+		const page = (await view()) as { text: { errors: Record<string, string> } };
+		expect(page.text.errors.account_not_found).toBe('No account uses this address');
+	});
+
+	it('links to the sign-up page with the request it continues, the SAML nonce included', async () => {
+		routes['/api/v1/auth/direct/email-code/send'] = () =>
+			json({ error: 'account_not_found', sign_up_available: true }, 404);
+		const answer = (await post(
+			'send_code',
+			{ email: 'nobody@example.com' },
+			'challenge_id=ch-1&saml_request_id=req-1&saml_login_nonce=n-1&saml_sp_entity_id=sp-1&junk=x'
+		)) as { data: { signUpHref: string } };
+		const href = new URL(answer.data.signUpHref, 'https://id.example');
+		expect(href.pathname).toBe('/signup');
+		expect(Object.fromEntries(href.searchParams)).toEqual({
+			challenge_id: 'ch-1',
+			saml_request_id: 'req-1',
+			saml_login_nonce: 'n-1',
+			saml_sp_entity_id: 'sp-1'
+		});
+	});
+
+	it('offers no sign-up link when the Flow offers none', async () => {
+		routes['/api/v1/auth/direct/email-code/send'] = () =>
+			json({ error: 'account_not_found', sign_up_available: false }, 404);
+		const answer = (await post('send_code', { email: 'nobody@example.com' })) as {
+			data: { signUpHref: string | null };
+		};
+		expect(answer.data.signUpHref).toBeNull();
+	});
+
+	it('starts a SAML sign-in with the login nonce, only next to a request ID', async () => {
+		store.set({ data: {} });
+		await view('saml_request_id=req-1&saml_login_nonce=n-1&saml_sp_entity_id=sp-1');
+		const start = calls.find((call) => call.path === '/api/v1/login/interactions/start');
+		expect(start?.body).toMatchObject({ saml_request_id: 'req-1', saml_login_nonce: 'n-1' });
+		calls = [];
+		store.set({ data: {} });
+		await view('saml_login_nonce=n-1');
+		const alone = calls.find((call) => call.path === '/api/v1/login/interactions/start');
+		expect(alone?.body).not.toHaveProperty('saml_login_nonce');
+	});
+
+	it('still answers a retry for any other failed send', async () => {
+		routes['/api/v1/auth/direct/email-code/send'] = () => json({ error: 'server_error' }, 500);
+		const answer = await post('send_code', { email: 'person@example.com' });
+		expect(answer).toMatchObject({ status: 409, data: { error: 'retry' } });
+	});
+});
+
+/** The name of the cookie that keeps a request's waiting cancel (a short hash of its key). */
+async function cancelCookie(requestKey: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(requestKey));
+	const hex = [...new Uint8Array(digest)]
+		.slice(0, 8)
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
+	return `__Host-authrim_lite_cancel_${hex}`;
+}
+
+describe('going back to the app', () => {
+	beforeEach(() => {
+		cancelAvailable = true;
+	});
+
+	async function cancel(form: Record<string, string> = {}) {
+		const e = event({
+			action: 'cancel',
+			form: { txn: 'txn-1', csrf: 'csrf-1', op: OP, ...form }
+		});
+		const answer = await (actions as Record<string, (e: RequestEvent) => Promise<unknown>>).cancel(
+			e
+		);
+		return { e, answer };
+	}
+
+	it('offers the action only when the Flow says the sign-in can be left', async () => {
+		expect(((await view()) as { cancelAvailable: boolean }).cancelAvailable).toBe(true);
+		cancelAvailable = false;
+		expect(((await view()) as { cancelAvailable: boolean }).cancelAvailable).toBe(false);
+	});
+
+	it('cancels at the backend and relays the browser to where it says, ending the transaction', async () => {
+		routes['/api/v1/login/interactions/int-1/cancel'] = () =>
+			json({ redirect_url: 'https://app.example/cb?error=access_denied&state=s' });
+		const { e, answer } = await cancel();
+		expect(answer).toEqual({ cancelled: true });
+		expect(e.locals).toMatchObject({
+			liteRelay: { url: 'https://app.example/cb?error=access_denied&state=s' }
+		});
+		const call = calls.find((c) => c.path === '/api/v1/login/interactions/int-1/cancel');
+		// Authorised by the kept hash and signature; the Flow is not resumed first.
+		expect(call?.body).toEqual({ contract_hash: 'hash-1', signature: 'sig-1' });
+		expect(paths()).not.toContain('/api/v1/login/interactions/start');
+		// A form post as data is asked for (the denial with response_mode=form_post).
+		expect(call?.headers.get('X-Authrim-Relay')).toBe('structured');
+		expect(store.txn.state).toBe('completed');
+	});
+
+	it('relays a form post as data to that destination only', async () => {
+		routes['/api/v1/login/interactions/int-1/cancel'] = () =>
+			json({
+				form_post: {
+					action: 'https://app.example/cb',
+					fields: [
+						['error', 'access_denied'],
+						['state', 's']
+					]
+				}
+			});
+		const { e, answer } = await cancel();
+		expect(answer).toEqual({ cancelled: true });
+		expect(e.locals).toMatchObject({
+			liteRelayPost: {
+				action: 'https://app.example/cb',
+				fields: [
+					['error', 'access_denied'],
+					['state', 's']
+				]
+			},
+			liteCsp: { formAction: 'https://app.example' }
+		});
+		expect(e.locals.liteCsp?.scriptHashes).toHaveLength(1);
+		// The page view after the action draws the relay form.
+		const drawn = (await (load as unknown as (e: RequestEvent) => Promise<Record<string, unknown>>)(
+			e
+		)) as { page: string; relay: { method: string; action: string } };
+		expect(drawn).toMatchObject({
+			page: 'relay',
+			relay: { method: 'post', action: 'https://app.example/cb' }
+		});
+	});
+
+	it('stays on the page with an error when the backend refuses', async () => {
+		routes['/api/v1/login/interactions/int-1/cancel'] = () =>
+			json({ error: 'cancel_not_available' }, 409);
+		const { e, answer } = await cancel();
+		expect(answer).toMatchObject({ status: 409, data: { error: 'cancel_failed' } });
+		expect(e.locals).not.toHaveProperty('liteRelay');
+		expect(store.txn.state).not.toBe('completed');
+	});
+
+	it('gets the stored answer again when the first answer was lost, though the interaction has ended', async () => {
+		const stored = { redirect_url: 'https://app.example/cb?error=access_denied' };
+		routes['/api/v1/login/interactions/int-1/cancel'] = () => json(stored);
+		await cancel();
+		expect(store.txn.state).toBe('completed');
+		// The retry: the transaction is over and the interaction is gone (a resume would be refused).
+		routes['/api/v1/login/interactions/start'] = () => json({ error: 'not_found' }, 404);
+		calls = [];
+		const { e, answer } = await cancel({ op: 'p'.repeat(22) });
+		expect(answer).toEqual({ cancelled: true });
+		expect(e.locals).toMatchObject({ liteRelay: { url: stored.redirect_url } });
+		expect(paths()).toEqual(['/api/v1/login/interactions/int-1/cancel']);
+	});
+
+	it('asks again from a small page when a cancel that ended the interaction was answered 503', async () => {
+		const stored = { redirect_url: 'https://app.example/cb?error=access_denied' };
+		routes['/api/v1/login/interactions/int-1/cancel'] = () =>
+			json({ error: 'temporarily_unavailable' }, 503);
+		const first = await cancel();
+		expect(first.answer).toMatchObject({ status: 409, data: { error: 'cancel_failed' } });
+		expect(store.txn.state).not.toBe('completed');
+		expect(store.txn.data.cancelPending).toEqual({
+			interactionId: 'int-1',
+			contractHash: 'hash-1',
+			signature: 'sig-1'
+		});
+
+		// The interaction has ended: a reload resumes nothing and starts nothing.
+		routes['/api/v1/login/interactions/start'] = () => json({ error: 'not_found' }, 404);
+		calls = [];
+		const page = (await view()) as { page: string; message: string };
+		expect(page).toMatchObject({
+			page: 'cancel_retry',
+			message: 'Could not go back to the app. Please try again.'
+		});
+		expect(paths()).not.toContain('/api/v1/login/interactions/start');
+		expect(store.txn.data.flow).toMatchObject({ interactionId: 'int-1' });
+
+		// The same form posted again reaches /cancel (not turned back as a finished operation).
+		calls = [];
+		const same = await cancel();
+		expect(same.answer).toMatchObject({ status: 409 });
+		expect(paths()).toEqual(['/api/v1/login/interactions/int-1/cancel']);
+
+		// The retry gets the stored answer and relays it, ending the transaction.
+		routes['/api/v1/login/interactions/int-1/cancel'] = () => json(stored);
+		const retry = await cancel({ op: 'r'.repeat(22) });
+		expect(retry.answer).toEqual({ cancelled: true });
+		expect(retry.e.locals).toMatchObject({ liteRelay: { url: stored.redirect_url } });
+		expect(store.txn.state).toBe('completed');
+		expect(store.txn.data.cancelPending).toBeUndefined();
+	});
+
+	it('asks again from the retry page though the challenge is gone by then', async () => {
+		routes['/api/v1/login/interactions/int-1/cancel'] = () =>
+			json({ error: 'temporarily_unavailable' }, 503);
+		// As the real store keeps it: bound to the client the challenge named.
+		store.set({ bound: { ...store.txn.bound, challengeId: 'ch-1', clientId: 'client-1' } });
+		const first = await cancel();
+		// The transaction is named by a cookie, since a page load has no form to name it.
+		const name = await cancelCookie('oidc:ch-1');
+		expect(first.e.cookies.set).toHaveBeenCalledWith(
+			name,
+			'txn-1',
+			expect.objectContaining({ httpOnly: true, secure: true })
+		);
+		// The store answers a read only for the id it is asked for (as the real one), and makes
+		// nothing for a page load.
+		store.binding.get.mockImplementation((async (call: Record<string, unknown>) =>
+			call.txnId === 'txn-1'
+				? { ok: true, txn: structuredClone(store.txn) }
+				: { ok: false, reason: 'not_found' }) as never);
+		store.binding.create.mockClear();
+		// The consumed challenge was cleaned up since: its look-up is a 404.
+		routes['/auth/login-challenge'] = () => json({ error: 'not_found' }, 404);
+		routes['/api/v1/login/interactions/start'] = () => json({ error: 'not_found' }, 404);
+		browserCookies[name] = 'txn-1';
+		calls = [];
+		const page = (await view('challenge_id=ch-1')) as { page: string };
+		expect(page.page).toBe('cancel_retry');
+		expect(paths()).toEqual([]);
+		expect(store.binding.create).not.toHaveBeenCalled();
+
+		// Another request of the same browser does not get this retry page.
+		store.binding.create.mockResolvedValue({ ok: false, reason: 'unavailable' } as never);
+		const other = (await view('challenge_id=ch-other')) as { page: string };
+		expect(other.page).not.toBe('cancel_retry');
+	});
+
+	it('forgets the cookie of a cancel that is answered', async () => {
+		routes['/api/v1/login/interactions/int-1/cancel'] = () =>
+			json({ redirect_url: 'https://app.example/cb' });
+		const { e } = await cancel();
+		// A request with nothing to name it by (no challenge, no SAML request) keeps no pointer.
+		expect(e.cookies.set).not.toHaveBeenCalled();
+	});
+
+	describe('the retry page belongs to the request its cancel was sent for', () => {
+		const SAML_A = 'saml_request_id=req-A&saml_sp_entity_id=sp-A&return_to=saml_sso';
+
+		async function pendingFor(
+			request: { challengeId: string } | { requestId: string; spEntityId: string },
+			txnId = 'txn-1'
+		) {
+			routes['/api/v1/login/interactions/int-1/cancel'] = () =>
+				json({ error: 'temporarily_unavailable' }, 503);
+			const saml =
+				'requestId' in request
+					? { requestId: request.requestId, spEntityId: request.spEntityId }
+					: {};
+			store.set({
+				id: txnId,
+				bound: {
+					...store.txn.bound,
+					challengeId: 'challengeId' in request ? request.challengeId : null
+				},
+				data: { flow: store.txn.data.flow, saml }
+			});
+			const done = await cancel({ txn: txnId });
+			for (const [name, value] of (
+				done.e.cookies.set as unknown as { mock: { calls: Array<[string, string]> } }
+			).mock.calls) {
+				browserCookies[name] = value;
+			}
+			return done;
+		}
+
+		beforeEach(() => {
+			store.binding.get.mockImplementation((async (call: Record<string, unknown>) =>
+				call.txnId === store.txn.id
+					? { ok: true, txn: structuredClone(store.txn) }
+					: { ok: false, reason: 'not_found' }) as never);
+		});
+
+		it('is shown for the same SAML request, not for another one', async () => {
+			await pendingFor({ requestId: 'req-A', spEntityId: 'sp-A' });
+			expect(((await view(SAML_A)) as { page: string }).page).toBe('cancel_retry');
+			// Another request's login URL (the same browser) is a transaction of its own: never A's form.
+			store.binding.create.mockResolvedValue({
+				ok: true,
+				txn: { ...structuredClone(store.txn), id: 'txn-fresh', data: {} },
+				reused: false
+			} as never);
+			const B = 'saml_request_id=req-B&saml_sp_entity_id=sp-A&return_to=saml_sso';
+			expect(((await view(B)) as { page: string }).page).not.toBe('cancel_retry');
+			// Not even through B's own pointer naming A's transaction.
+			browserCookies[await cancelCookie('saml:["req-B","sp-A"]')] = 'txn-1';
+			expect(((await view(B)) as { page: string }).page).not.toBe('cancel_retry');
+			// Nor for the same request ID with another service provider, nor an OIDC request.
+			expect(
+				(
+					(await view('saml_request_id=req-A&saml_sp_entity_id=sp-B&return_to=saml_sso')) as {
+						page: string;
+					}
+				).page
+			).not.toBe('cancel_retry');
+			expect(((await view('challenge_id=ch-1')) as { page: string }).page).not.toBe('cancel_retry');
+		});
+
+		it('keeps one retry page per request, and finishing one leaves the other', async () => {
+			await pendingFor({ challengeId: 'ch-1' }, 'txn-1');
+			const snapshotA = structuredClone(store.txn);
+			await pendingFor({ challengeId: 'ch-2' }, 'txn-2');
+			const nameA = await cancelCookie('oidc:ch-1');
+			const nameB = await cancelCookie('oidc:ch-2');
+			expect(nameA).not.toBe(nameB);
+			expect(browserCookies[nameA]).toBe('txn-1');
+			expect(browserCookies[nameB]).toBe('txn-2');
+			expect(((await view('challenge_id=ch-2')) as { page: string }).page).toBe('cancel_retry');
+
+			// B's retry gets its answer: only B's pointer goes.
+			routes['/api/v1/login/interactions/int-1/cancel'] = () =>
+				json({ redirect_url: 'https://app.example/cb' });
+			const finished = await cancel({ txn: 'txn-2', op: 'z'.repeat(22) });
+			expect(finished.answer).toEqual({ cancelled: true });
+			expect(finished.e.cookies.delete).toHaveBeenCalledTimes(1);
+			expect(finished.e.cookies.delete).toHaveBeenCalledWith(nameB, expect.anything());
+
+			// A's retry page is still there.
+			store.set(snapshotA);
+			expect(((await view('challenge_id=ch-1')) as { page: string }).page).toBe('cancel_retry');
+		});
+	});
+
+	it('clears the mark when the backend refuses while the interaction is live (409)', async () => {
+		routes['/api/v1/login/interactions/int-1/cancel'] = () =>
+			json({ error: 'cancel_not_available' }, 409);
+		await cancel();
+		expect(store.txn.data.cancelPending).toBeUndefined();
+		expect(((await view()) as { page: string }).page).toBe('step');
+	});
+
+	it('stays on the page when the answer names no destination', async () => {
+		routes['/api/v1/login/interactions/int-1/cancel'] = () => json({});
+		const { answer } = await cancel();
+		expect(answer).toMatchObject({ status: 409, data: { error: 'cancel_failed' } });
+	});
+
+	it('refuses a form that is not the transaction’s', async () => {
+		const { answer } = await cancel({ csrf: 'wrong' });
+		expect(answer).toMatchObject({ status: 403 });
+		expect(paths()).not.toContain('/api/v1/login/interactions/int-1/cancel');
 	});
 });

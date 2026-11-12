@@ -561,6 +561,26 @@ async function validateDraftReferences(
       }
     }
 
+    // A sign-in step's options take a fixed set of values: one the runtime does not know would
+    // quietly fall back to the default (the safe one), so it is refused here instead.
+    if (node.type === 'authentication' && isRecord(node.config)) {
+      for (const [key, allowed] of [
+        ['unregistered_signin', ['generic', 'guide']],
+        ['on_cancel', ['stay', 'error']],
+      ] as const) {
+        const value = node.config[key];
+        if (value != null && !(allowed as readonly unknown[]).includes(value)) {
+          issues.push({
+            level: 'error',
+            code: 'invalid_login_option',
+            message: `Sign-in ${key} must be one of: ${allowed.join(', ')}.`,
+            path: `${path}.${key}`,
+            node_id: node.id,
+          });
+        }
+      }
+    }
+
     const policyRef = readConfigString(node.config, 'consent_policy_ref');
     if (policyRef) {
       const issueLevel =

@@ -14,7 +14,9 @@ describe('the sign-in flow saved as a Flow', () => {
 		expect(loginSpecOf(initialState('login'))).toEqual({
 			profileRef: 'default',
 			sessionProfileRef: 'default',
-			completion: null
+			completion: null,
+			unregistered: 'generic',
+			onCancel: 'stay'
 		});
 	});
 
@@ -34,7 +36,9 @@ describe('the sign-in flow saved as a Flow', () => {
 				app_login_client_id: 'client-1',
 				app_login_redirect_uri: 'https://app.example/cb',
 				app_login_scope: 'openid profile email'
-			}
+			},
+			unregistered: 'generic',
+			onCancel: 'stay'
 		});
 		const back = loginStateOf(readLoginFlowEditor(buildLoginFlowEditor(spec))!, {
 			name: 'Partner sign-in',
@@ -44,9 +48,31 @@ describe('the sign-in flow saved as a Flow', () => {
 		expect(back.values['login.name']).toBe('Partner sign-in');
 	});
 
+	it('saves the sign-in options and reads them back', () => {
+		const state = initialState('login');
+		expect(state.values['login.unregistered']).toBe('generic');
+		expect(state.values['login.onCancel']).toBe('stay');
+		state.values['login.unregistered'] = 'guide';
+		state.values['login.onCancel'] = 'error';
+		const spec = loginSpecOf(state);
+		expect(spec).toMatchObject({ unregistered: 'guide', onCancel: 'error' });
+		const back = loginStateOf(readLoginFlowEditor(buildLoginFlowEditor(spec))!, {
+			name: 'x',
+			scope: 'default-ui'
+		});
+		expect(back.values['login.unregistered']).toBe('guide');
+		expect(back.values['login.onCancel']).toBe('error');
+	});
+
 	it('keeps “the tenant’s own” destination as none', () => {
 		const back = loginStateOf(
-			{ profileRef: 'default', sessionProfileRef: 'default', completion: null },
+			{
+				profileRef: 'default',
+				sessionProfileRef: 'default',
+				completion: null,
+				unregistered: 'generic',
+				onCancel: 'stay'
+			},
 			{ name: 'x', scope: 'default-ui' }
 		);
 		expect(back.values['login.after']).toBe('tenant');

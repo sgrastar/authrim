@@ -167,6 +167,12 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.rate_limit.email_window': 'الفترة التي يُحتسب فيها الإرسال',
 	'set.k.rate_limit.email_window.desc':
 		'الفترة التي يُحتسب فيها العدد أعلاه (من 5 إلى 60 دقيقة). بعد انقضائها يُسمح بالإرسال من جديد.',
+	'set.section.failedSignIns': 'محاولات تسجيل الدخول الفاشلة',
+	'set.section.failedSignIns.desc':
+		'يقفل الحساب لبعض الوقت بعد إدخال كلمة مروره خطأً مرات كثيرة متتالية، حتى لا يمكن تخمينها.',
+	'set.k.rate_limit.auth_max_failed_attempts': 'المحاولات الفاشلة قبل القفل',
+	'set.k.rate_limit.auth_max_failed_attempts.desc':
+		'عدد كلمات المرور الخاطئة (تسجيل الدخول عبر الدليل) خلال 15 دقيقة، يُقفل بعدها الحساب لبقية تلك الدقائق الخمس عشرة (من 3 إلى 20).',
 	'set.section.totpAttempts': 'محاولات تطبيق المصادقة',
 	'set.section.totpAttempts.desc':
 		'يحدّ من عدد مرات بدء تسجيل الدخول بتطبيق المصادقة، حتى لا تُخمَّن الرموز بكثرة المحاولات.',

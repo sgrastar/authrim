@@ -58,7 +58,8 @@ export interface AccountField {
 		| 'screen'
 		| 'client'
 		| 'client-redirect'
-		| 'saml-sp';
+		| 'saml-sp'
+		| 'unregistered';
 	screenKinds?: readonly ScreenKind[];
 	/** A `client-redirect` field: the key of the `client` field whose redirect URIs it offers. */
 	clientKey?: string;
@@ -81,6 +82,11 @@ export interface AccountPart {
 	lead?: MessageKey;
 	/** A fact about how the step behaves that is not a choice. */
 	note?: MessageKey;
+	/**
+	 * A tenant setting the step follows, shown as it is set (read-only, with a link to where it is
+	 * changed): `failed-sign-ins`, the failed attempts that lock an account.
+	 */
+	info?: 'failed-sign-ins';
 	fields: readonly AccountField[];
 	/** Its title can be changed (kept as `titleKey(id)` among the flow's values). */
 	renamable?: boolean;

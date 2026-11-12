@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => ({
   sp: null as Record<string, unknown> | null,
   ui: undefined as { baseUrl: string; paths?: { login?: string } } | undefined,
   loginPolicy: 'ui_base_url' as 'ui_base_url' | 'tenant_host',
-  storeFetch: vi.fn(async (_url?: string) => new Response('{}', { status: 200 })),
+  storeFetch: vi.fn(
+    async (_url?: string, _init?: { body?: string }) => new Response('{}', { status: 200 })
+  ),
   storeChallenge: vi.fn(async (_request?: unknown) => ({ success: true })),
   audit: vi.fn(),
   sessionId: undefined as string | undefined,
@@ -409,6 +411,25 @@ describe('IdP SSO handler policy boundaries', () => {
     expect(new URL(location).searchParams.has('challenge_id')).toBe(false);
   });
 
+  it('puts a login nonce on the login URL and keeps only its hash in the stored request', async () => {
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
+    const response = await post(authnRequest(), 'relay-state');
+    const nonce = new URL(response.headers.get('location') ?? '').searchParams.get(
+      'saml_login_nonce'
+    );
+    expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    const stored = mocks.storeFetch.mock.calls.find(
+      ([url]) => url === 'https://saml-request-store/store'
+    );
+    const body = String(stored?.[1]?.body);
+    const context = (JSON.parse(body) as { context: { loginNonceHash?: string } }).context;
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(nonce ?? ''));
+    expect(context.loginNonceHash).toBe(
+      Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+    );
+    expect(body).not.toContain(nonce);
+  });
+
   it('fails safely after storing when interactive UI is not configured', async () => {
     const response = await post(authnRequest());
     expect(response.status).toBe(500);
@@ -754,6 +775,93 @@ function validConsentFields(overrides: Record<string, string> = {}) {
     ...overrides,
   } as Record<string, string>;
 }
+
+describe('resuming a stored request after the Login UI', () => {
+  const NONCE = 'r'.repeat(43);
+  const sha = async (value: string) =>
+    Array.from(
+      new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))),
+      (b) => b.toString(16).padStart(2, '0')
+    ).join('');
+  const resume = (nonce?: string) =>
+    app().request(
+      `https://tenant.example.test/sso?saml_request_id=_request&saml_sp_entity_id=${encodeURIComponent(
+        'https://sp.example.test/entity'
+      )}&return_to=saml_sso${nonce ? `&saml_login_nonce=${nonce}` : ''}`,
+      undefined,
+      environment()
+    );
+  const storedBody = () => {
+    const call = mocks.storeFetch.mock.calls.find(
+      ([url]) => url === 'https://saml-request-store/store'
+    );
+    return JSON.parse(String(call?.[1]?.body)) as {
+      context: { loginNonceHash?: string };
+    };
+  };
+  const serveStored = (context: Record<string, unknown>) => {
+    mocks.storeFetch.mockImplementation(async (url?: string) =>
+      url?.includes('/consume/')
+        ? new Response(JSON.stringify({ ...storedConsentRequest(), context }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        : new Response('{}', { status: 200 })
+    );
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.sp = sp();
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
+    mocks.sessionId = undefined;
+    mocks.federationSettings = null;
+  });
+
+  it('resumes without a nonce as ever, keeping the original hash and issuing no nonce', async () => {
+    serveStored({ loginNonceHash: await sha(NONCE) });
+    const response = await resume();
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get('location') ?? '');
+    expect(location.searchParams.has('saml_login_nonce')).toBe(false);
+    expect(storedBody().context.loginNonceHash).toBe(await sha(NONCE));
+  });
+
+  it('puts no nonce on the login URL for a wrong one either, and keeps the original hash', async () => {
+    serveStored({ loginNonceHash: await sha(NONCE) });
+    const response = await resume('w'.repeat(43));
+    expect(response.status).toBe(302);
+    expect(
+      new URL(response.headers.get('location') ?? '').searchParams.has('saml_login_nonce')
+    ).toBe(false);
+    expect(storedBody().context.loginNonceHash).toBe(await sha(NONCE));
+  });
+
+  it('refuses a resume the store will not release, sending nobody to sign in', async () => {
+    mocks.storeFetch.mockImplementation(async (url?: string) =>
+      url?.includes('/consume/') ? new Response('{}', { status: 404 }) : new Response('{}')
+    );
+    const response = await resume('w'.repeat(43));
+    expect(response.status).toBe(400);
+    expect(mocks.storeFetch.mock.calls.some(([u]) => String(u).includes('/store'))).toBe(false);
+  });
+
+  it('keeps the matched nonce when it sends the person to sign in again', async () => {
+    serveStored({ loginNonceHash: await sha(NONCE) });
+    const response = await resume(NONCE);
+    const location = new URL(response.headers.get('location') ?? '');
+    expect(location.searchParams.get('saml_login_nonce')).toBe(NONCE);
+    expect(storedBody().context.loginNonceHash).toBe(await sha(NONCE));
+  });
+
+  it('resumes a request stored before nonces as it was, and gives it none', async () => {
+    serveStored({ sentToSignInAt: 1 });
+    const response = await resume();
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get('location') ?? '');
+    expect(location.searchParams.has('saml_login_nonce')).toBe(false);
+    expect(storedBody().context.loginNonceHash).toBeUndefined();
+  });
+});
 
 describe('IdP attribute-release consent callback', () => {
   beforeEach(() => {

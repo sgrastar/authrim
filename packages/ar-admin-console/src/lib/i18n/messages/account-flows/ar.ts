@@ -68,7 +68,23 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.reg-result': 'Decide where the person goes once sign-up is done.',
 	'af.lead.login-methods': 'اختر ملف تعريف طرق تسجيل الدخول الذي يستخدمه تسجيل الدخول هذا.',
 	'af.lead.login-validation':
-		'تتبع المحاولات الفاشلة المتكررة والرد على غير المسجلين إعدادات الأمان الخاصة بالمستأجر.',
+		'حدّد ما يحدث عند تكرار الفشل، وما يُقال لمن ليس لديه حساب، وما يحدث عند إيقاف تسجيل الدخول.',
+	'af.field.login.unregistered': 'عندما يأتي شخص ليس لديه حساب',
+	'af.hint.login.unregistered':
+		'خيار «الإبلاغ» يذكر أنه لا يوجد حساب لهذا العنوان، مما يتيح لأي شخص معرفة العناوين المسجلة؛ اختره عند الحاجة فقط.',
+	'af.hint.login.unregisteredNoSignUp':
+		'لا يوجد لدى هذا المستأجر مسار تسجيل، لذا لا يمكن اختيار «الإبلاغ والتوجيه إلى التسجيل».',
+	'af.unregistered.generic': 'الرد كما في العنوان المسجَّل',
+	'af.unregistered.guide': 'الإبلاغ بعدم وجود حساب والتوجيه إلى التسجيل',
+	'af.field.login.onCancel': 'عند إيقاف تسجيل الدخول أو فشله',
+	'af.hint.login.onCancel':
+		'خيار «العودة إلى التطبيق» يضيف «العودة إلى التطبيق» إلى صفحة تسجيل الدخول، ويُبلَّغ التطبيق بأن الشخص لم يسجّل الدخول (OIDC access_denied، أو رد فشل SAML).',
+	'af.onCancel.stay': 'البقاء في صفحة تسجيل الدخول',
+	'af.onCancel.error': 'العودة إلى التطبيق مع إبلاغه بعدم تسجيل الدخول',
+	'af.info.failedSignIns':
+		'تكرار الفشل: {count} كلمات مرور خاطئة (تسجيل الدخول عبر الدليل) خلال 15 دقيقة تقفل الحساب. هذا إعداد المستأجر.',
+	'af.info.failedSignInsUnknown': 'يتبع تكرار الفشل إعداد المستأجر (تعذّرت قراءته الآن).',
+	'af.info.failedSignInsLink': 'التغيير في الحماية من الهجمات',
 	'af.lead.login-session':
 		'Once the required authentication is complete, Authrim creates the session.',
 

@@ -797,6 +797,8 @@ describe('admin Flow management handlers', () => {
       profileRef: 'members',
       sessionProfileRef: 'short',
       completion: { behavior: 'service_site', service_site_path: '/portal' },
+      unregistered: 'generic',
+      onCancel: 'stay',
     });
     const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
     const body = await readJson(response);
@@ -882,6 +884,12 @@ describe('admin Flow management handlers', () => {
     expect(await codes({ ...base, completion: { behavior: 'elsewhere' } })).toContain(
       'invalid_login_completion'
     );
+    // The sign-in options take their fixed values only.
+    expect(
+      await codes({ ...base, unregistered_signin: 'guide', on_cancel: 'error' })
+    ).not.toContain('invalid_login_option');
+    expect(await codes({ ...base, unregistered_signin: 'tell' })).toContain('invalid_login_option');
+    expect(await codes({ ...base, on_cancel: true })).toContain('invalid_login_option');
   });
 
   it('gives a new tenant its sign-up: the default registration Flow, published and assigned', async () => {

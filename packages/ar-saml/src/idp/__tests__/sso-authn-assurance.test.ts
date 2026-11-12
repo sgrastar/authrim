@@ -289,7 +289,8 @@ function environment() {
             mocks.requests.set(stored.requestId, stored);
             return new Response('{}', { status: 200 });
           }
-          const requestId = decodeURIComponent(url.split('/').pop() ?? '');
+          // (The query of a conditional consume is ignored here.)
+          const requestId = decodeURIComponent(url.split('?')[0].split('/').pop() ?? '');
           const stored = mocks.requests.get(requestId);
           mocks.requests.delete(requestId);
           return stored
@@ -350,12 +351,13 @@ async function post(xml: string, sessionId?: string) {
 }
 
 /** The person comes back from the login page, with the cookie of `sessionId`. */
-async function resume(sessionId?: string) {
+async function resume(sessionId?: string, loginNonce?: string) {
   mocks.sessionId = sessionId;
   const query = new URLSearchParams({
     saml_request_id: '_request',
     saml_sp_entity_id: SP_ENTITY,
     return_to: 'saml_sso',
+    ...(loginNonce ? { saml_login_nonce: loginNonce } : {}),
   });
   return send(
     new Request(`https://tenant.example.test/sso?${query}`, {
@@ -1009,6 +1011,35 @@ describe('SAML IdP SSO and authentication assurance', () => {
       const back = await resume('s-1');
       expect(back.status).toBe(200);
       expect(mocks.buildResponse).toHaveBeenCalledOnce();
+    });
+
+    it('keeps the original login nonce hash when a resume sends the person round again, and issues no nonce', async () => {
+      const first = await post(authnRequestXml());
+      const nonce = new URL(first.headers.get('location') ?? '').searchParams.get(
+        'saml_login_nonce'
+      );
+      expect(nonce).toBeTruthy();
+      const hashOf = () =>
+        (mocks.requests.get('_request') as { context: { loginNonceHash?: string } }).context
+          .loginNonceHash;
+      const original = hashOf();
+      expect(original).toMatch(/^[0-9a-f]{64}$/u);
+
+      // Someone who only knows the request id: resumed as ever, but given no nonce, and the
+      // request keeps the original hash (only the first browser's nonce can cancel it).
+      const stranger = await resume();
+      expect(stranger.status).toBe(302);
+      expect(
+        new URL(stranger.headers.get('location') ?? '').searchParams.has('saml_login_nonce')
+      ).toBe(false);
+      expect(hashOf()).toBe(original);
+
+      // The first browser presents its nonce: it is kept on the login URL.
+      const owner = await resume(undefined, nonce ?? '');
+      expect(
+        new URL(owner.headers.get('location') ?? '').searchParams.get('saml_login_nonce')
+      ).toBe(nonce);
+      expect(hashOf()).toBe(original);
     });
 
     it('does not answer with a session the sign-in made outside the SP’s own Flow', async () => {

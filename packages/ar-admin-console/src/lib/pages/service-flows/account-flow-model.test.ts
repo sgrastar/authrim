@@ -135,7 +135,10 @@ describe('account flows', () => {
 			'login.methodProfile': 'default',
 			'login.sessionProfile': 'default',
 			'login.after': 'tenant',
-			'login.appScope': 'openid profile email'
+			'login.appScope': 'openid profile email',
+			// The safe answers until set: the same reply for everyone, and staying on the page.
+			'login.unregistered': 'generic',
+			'login.onCancel': 'stay'
 		});
 	});
 
@@ -287,7 +290,12 @@ describe('account flows', () => {
 			'login-session',
 			'login-result'
 		]);
-		expect(PARTS['login-validation'].fields).toEqual([]);
+		// Its choices: what an unknown address is told, and what stopping does; failures are shown.
+		expect(PARTS['login-validation'].fields.map((field) => field.key)).toEqual([
+			'login.unregistered',
+			'login.onCancel'
+		]);
+		expect(PARTS['login-validation'].info).toBe('failed-sign-ins');
 	});
 
 	it('summarise a choice by its text, and say so when a field has no value', () => {

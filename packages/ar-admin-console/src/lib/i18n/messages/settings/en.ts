@@ -170,6 +170,12 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.rate_limit.email_window': 'Period the sends are counted in',
 	'set.k.rate_limit.email_window.desc':
 		'The period the number above is counted in (5 to 60 minutes). Once it passes, sending is allowed again.',
+	'set.section.failedSignIns': 'Failed sign-ins',
+	'set.section.failedSignIns.desc':
+		'Lock an account for a while after its password is entered wrongly too many times in a row, so it cannot be guessed.',
+	'set.k.rate_limit.auth_max_failed_attempts': 'Failed attempts before locking',
+	'set.k.rate_limit.auth_max_failed_attempts.desc':
+		'Wrong passwords (directory sign-in) within 15 minutes after which the account is locked for the rest of those 15 minutes (3 to 20).',
 	'set.section.totpAttempts': 'Authenticator app attempts',
 	'set.section.totpAttempts.desc':
 		'Limits how often someone can start signing in with an authenticator app, so the codes cannot be guessed by trying many times.',

@@ -46,9 +46,15 @@ import {
 import type { StoreCodeRequest } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   accountAuthenticationDenialReason,
+  scheduleSignInAttemptFailure,
   signInAttemptFailureRecorder,
   signInAttemptInteractionMetadata,
 } from './sign-in-attempt-recording';
+import {
+  accountNotFoundResponse,
+  interactionGuidesUnregistered,
+  signUpAvailableForGuide,
+} from './unregistered-signin-guide';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   isAuthenticationMethodUsageAvailable,
@@ -3790,8 +3796,22 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         ? 'reauth'
         : (declaredScreen ?? challengeType ?? (user ? 'login' : 'signup'));
     const humanVerificationUsage: HumanVerificationAction = signupResend ? 'login' : emailCodeUsage;
-    const turnstileAlsoRequiredFor: HumanVerificationAction[] =
-      humanVerificationUsage === turnstileAction ? [] : [humanVerificationUsage];
+    // A sign-in Flow that guides an address without an account (unregistered_signin: guide): such
+    // an address is never signed up from here. Only a sign-in (not a re-authentication or an
+    // invitation's sign-up) bound to such an interaction. What it is held to is the LOGIN human
+    // verification, whatever screen the caller says its token came from.
+    const guiding =
+      !user &&
+      challengeType !== 'reauth' &&
+      !invite_token &&
+      (await interactionGuidesUnregistered(c, tenantId, boundRuntimeInteractionId));
+    const turnstileAlsoRequiredFor: HumanVerificationAction[] = guiding
+      ? turnstileAction === 'login'
+        ? []
+        : ['login']
+      : humanVerificationUsage === turnstileAction
+        ? []
+        : [humanVerificationUsage];
     // The attributes the code carries: a new address's, or a resumed send's (sent again), are
     // checked below; a resend's are the ones its sign-up's record holds, as they were checked then,
     // and nothing this request sends is taken (the check below is not run for it).
@@ -3840,6 +3860,34 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         reason: 'human_verification',
         usage: turnstileAction,
       });
+    }
+    // A guided address (above) is never signed up: it is told there is no account once the send
+    // has passed what a real sign-in code goes through (the send limit and client checks above,
+    // the login human verification, the email code switch for sign-in); a send that has not is
+    // answered as any other send is, creating and sending nothing.
+    if (guiding) {
+      if (
+        turnstileError ||
+        !(await isAuthenticationMethodUsageEnabled(c.env, tenantId, 'email_otp', 'login'))
+      ) {
+        log.info('Suppressing email-code send to an address a sign-in Flow guides', {
+          action: 'direct_email_code_send_suppressed',
+          reason: turnstileError ? 'human_verification' : 'method_disabled',
+          usage: 'login',
+        });
+        return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
+      }
+      log.info('Not creating an account for an address a sign-in Flow guides', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'account_not_found',
+      });
+      scheduleSignInAttemptFailure(c, {
+        tenantId,
+        metadata: await signInAttemptInteractionMetadata(c, tenantId, boundRuntimeInteractionId),
+        method: 'email_code',
+        reasonCode: 'credential_not_found',
+      });
+      return accountNotFoundResponse(c, await signUpAvailableForGuide(c, tenantId));
     }
     if (signUpRefused && !suppressEmailCodeSend) {
       suppressEmailCodeSend = true;

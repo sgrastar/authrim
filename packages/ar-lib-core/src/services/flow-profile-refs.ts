@@ -7,6 +7,12 @@
 import type { DatabaseAdapter } from '../db/adapter';
 import { readPublishedRuntime } from './registration/interaction-policy';
 import { readFlowCompletion, type RegistrationCompletion } from '../types/registration-policy';
+import {
+  readSignInOnCancel,
+  readSignInUnregistered,
+  type SignInOnCancel,
+  type SignInUnregistered,
+} from '../types/login-flow-graph';
 
 /** The runtime components of the steps that hold the profiles. */
 const PROFILE_STEP_COMPONENTS = new Set([
@@ -66,6 +72,28 @@ export function loginCompletionOfRuntime(runtime: unknown): RegistrationCompleti
   return read.ok ? read.completion : null;
 }
 
+/** What a sign-in Flow does for an address without an account, and when it is stopped. */
+export interface SignInOptions {
+  unregistered: SignInUnregistered;
+  onCancel: SignInOnCancel;
+}
+
+/** A runtime contract's sign-in options (its sign-in step's); the safe defaults otherwise. */
+export function signInOptionsOfRuntime(runtime: unknown): SignInOptions {
+  const steps = isRecord(runtime) && isRecord(runtime.ui) ? runtime.ui.steps : undefined;
+  const step = Array.isArray(steps)
+    ? (steps.find(
+        (candidate) =>
+          isRecord(candidate) && candidate.component === 'authentication_method_selector'
+      ) as Record<string, unknown> | undefined)
+    : undefined;
+  const config = step && isRecord(step.config) ? step.config : {};
+  return {
+    unregistered: readSignInUnregistered(config.unregistered_signin),
+    onCancel: readSignInOnCancel(config.on_cancel),
+  };
+}
+
 /**
  * The profiles of the Flow version an interaction runs. Null when there is no such interaction or
  * its version has no runtime; an unreadable runtime is thrown (a broken Flow sets nothing up).
@@ -80,6 +108,8 @@ export async function loadInteractionFlowProfileRefs(
       flowKind: string;
       /** A sign-in Flow's destination once signed in (null: the tenant's). */
       completion: RegistrationCompletion | null;
+      /** A sign-in Flow's options (the defaults for any other kind). */
+      signIn: SignInOptions;
       /** The interaction is live (created or active, not expired). */
       live: boolean;
       /** The authorization request (challenge) the interaction was started for, if any. */
@@ -117,6 +147,10 @@ export async function loadInteractionFlowProfileRefs(
     ...flowProfileRefsOfRuntime(runtime),
     flowKind: row.kind ?? '',
     completion: row.kind === 'login' ? loginCompletionOfRuntime(runtime) : null,
+    signIn:
+      row.kind === 'login'
+        ? signInOptionsOfRuntime(runtime)
+        : { unregistered: 'generic', onCancel: 'stay' },
     live:
       (row.state === 'created' || row.state === 'active') && Number(row.expires_at) > nowSeconds,
     authorizationChallengeId: interactionContextString(

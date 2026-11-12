@@ -13,6 +13,7 @@
 import type { Env } from '../types/env';
 import type { SAMLRequestData, SAMLArtifactData } from '../types/saml';
 import { createLogger, type Logger } from '../utils/logger';
+import { timingSafeEqual } from '../utils/crypto';
 
 /**
  * SAMLRequestStore Durable Object State
@@ -153,7 +154,7 @@ export class SAMLRequestStore {
    */
   async consumeRequest(
     requestId: string,
-    options: { onlyLite?: boolean } = {}
+    options: { onlyLite?: boolean; loginNonceHash?: string } = {}
   ): Promise<SAMLRequestData | null> {
     await this.initializeState();
     const state = this.getState();
@@ -178,6 +179,15 @@ export class SAMLRequestStore {
 
     if (options.onlyLite && typeof request.context?.liteReturn !== 'string') {
       return null;
+    }
+
+    // Only for the login that was started with this nonce's hash (a cancel): any other is left
+    // as it is (not consumed).
+    if (options.loginNonceHash !== undefined) {
+      const held = request.context?.loginNonceHash;
+      if (typeof held !== 'string' || !held || !timingSafeEqual(held, options.loginNonceHash)) {
+        return null;
+      }
     }
 
     // Mark as used (don't delete immediately for audit)
@@ -367,6 +377,9 @@ export class SAMLRequestStore {
         const requestId = path.substring('/consume/'.length);
         const result = await this.consumeRequest(requestId, {
           onlyLite: url.searchParams.get('only') === 'lite',
+          ...(url.searchParams.has('login_nonce_hash')
+            ? { loginNonceHash: url.searchParams.get('login_nonce_hash') ?? '' }
+            : {}),
         });
 
         if (!result) {

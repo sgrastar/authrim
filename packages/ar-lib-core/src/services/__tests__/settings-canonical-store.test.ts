@@ -611,6 +611,81 @@ describe.each(['scheduled', 'pipeline'] as const)('DatabaseSettingsCanonicalStor
       expect((await store.load('oauth', tenant))?.data).toEqual(later);
     });
 
+    it('passes on a failure it cannot read as saved or refused', async () => {
+      await manager().getAll('security', tenant);
+      const first = await store.load('security', tenant);
+      const base = adapter(db);
+      const next = { 'security.enabled': false };
+      const other = { 'security.enabled': true, later: 1 };
+      // The batch commits, its answer is lost, and another save changes the document at once.
+      const lossy = new DatabaseSettingsCanonicalStore(
+        {
+          ...base,
+          async batch(statements: PreparedStatement[]) {
+            await base.batch(statements);
+            await store.compareAndSet('security', tenant, generateVersion(next), {
+              data: other,
+              version: generateVersion(other),
+            });
+            throw new Error('network');
+          },
+        },
+        () => now++
+      );
+      await expect(
+        lossy.compareAndSetMany([
+          {
+            category: 'security',
+            scope: tenant,
+            expectedVersion: first?.version ?? '',
+            document: { data: next, version: generateVersion(next) },
+          },
+        ])
+      ).rejects.toThrow('network');
+    });
+
+    it('does not read a refusal on a retry as nothing saved', async () => {
+      await manager().getAll('security', tenant);
+      const first = await store.load('security', tenant);
+      const base = adapter(db);
+      const next = { 'security.enabled': false };
+      const other = { 'security.enabled': true, later: 1 };
+      // The first try commits and its answer is lost; another save changes the document; the
+      // retry is refused by the check. The refusal says nothing about the first try.
+      const retried = new DatabaseSettingsCanonicalStore(
+        {
+          ...base,
+          async batch(statements: PreparedStatement[]) {
+            await base.batch(statements);
+            await store.compareAndSet('security', tenant, generateVersion(next), {
+              data: other,
+              version: generateVersion(other),
+            });
+            const refused = new Error(
+              'NOT NULL constraint failed: tenant_settings_documents.tenant_id'
+            );
+            throw Object.assign(
+              new Error('D1Adapter.batch failed after retries exhausted', { cause: refused }),
+              {
+                attempts: 2,
+              }
+            );
+          },
+        },
+        () => now++
+      );
+      await expect(
+        retried.compareAndSetMany([
+          {
+            category: 'security',
+            scope: tenant,
+            expectedVersion: first?.version ?? '',
+            document: { data: next, version: generateVersion(next) },
+          },
+        ])
+      ).rejects.toThrow('retries exhausted');
+    });
+
     it('saves nothing when the first document does not exist', async () => {
       const seed = { 'oauth.sso_enabled': true };
       const oauth = await store.create('oauth', tenant, {

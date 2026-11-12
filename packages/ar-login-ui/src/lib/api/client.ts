@@ -573,7 +573,7 @@ const loginUiDirectAuthHttp: HttpClient = {
 				status: response.status,
 				statusText: response.statusText,
 				headers: Object.fromEntries(response.headers.entries()),
-				data: payload,
+				data: response.ok ? payload : keepSignUpAvailable(payload),
 				ok: response.ok
 			};
 		} finally {
@@ -687,6 +687,21 @@ async function withDirectAuthResult<T>(
 	}
 }
 
+/**
+ * `sign_up_available` on an `account_not_found` answer (a sign-in Flow that guides an address with
+ * no account): the SDK keeps only an error's `error_details`, so the flag is copied there.
+ */
+function keepSignUpAvailable<T>(payload: T): T {
+	if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+	const body = payload as Record<string, unknown>;
+	if (typeof body.sign_up_available !== 'boolean') return payload;
+	const details =
+		typeof body.error_details === 'object' && body.error_details !== null
+			? (body.error_details as Record<string, unknown>)
+			: {};
+	return { ...body, error_details: { ...details, sign_up_available: body.sign_up_available } } as T;
+}
+
 function apiErrorFromDirectAuthError(error: unknown): APIError {
 	if (error instanceof AuthrimError) {
 		const originalError =
@@ -702,10 +717,17 @@ function apiErrorFromDirectAuthError(error: unknown): APIError {
 			errorDetails && typeof errorDetails === 'object'
 				? (errorDetails as { retry_after?: unknown }).retry_after
 				: undefined;
+		const signUpAvailable =
+			errorDetails && typeof errorDetails === 'object'
+				? (errorDetails as { sign_up_available?: unknown }).sign_up_available
+				: undefined;
 		return {
 			error: code,
 			error_description: error.message,
-			...(typeof retryAfter === 'number' ? { retry_after: retryAfter } : {})
+			...(typeof retryAfter === 'number' ? { retry_after: retryAfter } : {}),
+			...(typeof signUpAvailable === 'boolean'
+				? { error_details: { sign_up_available: signUpAvailable } }
+				: {})
 		};
 	}
 	return {

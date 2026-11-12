@@ -64,7 +64,24 @@ export const jaAccountFlows = {
 	'af.lead.reg-result': '登録が終わったあと、どこへ移動するかを決めます。',
 	'af.lead.login-methods': 'ログインで使う認証方式を、認証方式プロフィールから選びます。',
 	'af.lead.login-validation':
-		'繰り返し失敗したときの扱いや、登録されていない人への応答は、テナント全体のセキュリティ設定に従います。',
+		'失敗が続いたときの扱い、登録されていない人への応答、ログインを中断したときの扱いを決めます。',
+	'af.field.login.unregistered': '登録されていない人が来たとき',
+	'af.hint.login.unregistered':
+		'「案内する」と、そのアドレスにアカウントがないことを伝えます。どのアドレスが登録済みかを調べられるようになるため、必要なときだけ選んでください。',
+	'af.hint.login.unregisteredNoSignUp':
+		'このテナントには登録フローがないため、「登録へ案内する」は選べません。',
+	'af.unregistered.generic': '登録済みのときと同じ応答にする',
+	'af.unregistered.guide': 'アカウントがないことを伝え、登録へ案内する',
+	'af.field.login.onCancel': '中断・失敗したとき',
+	'af.hint.login.onCancel':
+		'「アプリに戻す」にすると、ログイン画面に「アプリに戻る」が出ます。アプリには、ログインしなかったことが伝わります（OIDC の access_denied、SAML の失敗応答）。',
+	'af.onCancel.stay': 'ログイン画面に留まる',
+	'af.onCancel.error': 'アプリに戻し、ログインしなかったことを伝える',
+	'af.info.failedSignIns':
+		'認証の失敗が続いたとき：パスワード（ディレクトリでのログイン）を 15 分の間に {count} 回誤ると、アカウントをロックします。テナント全体の設定です。',
+	'af.info.failedSignInsUnknown':
+		'認証の失敗が続いたとき：テナント全体の設定に従います（今の設定を読めませんでした）。',
+	'af.info.failedSignInsLink': '攻撃からの保護で変更',
 	'af.lead.login-session': '必要な認証が済んだあとに、Authrim のセッションを作ります。',
 
 	'af.note.reg-statements':

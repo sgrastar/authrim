@@ -26,6 +26,8 @@ const text = {
 	resend: 'Resend code',
 	resendWait: 'Resend in 42s',
 	restart: 'Use another address',
+	cancel: 'Back to the app',
+	signUp: 'Sign up',
 	errors: {
 		email_invalid: 'Not an address',
 		code_invalid: 'Wrong code',
@@ -34,7 +36,9 @@ const text = {
 		retry: 'Try again',
 		totp_invalid: 'Wrong authenticator code',
 		totp_failed: 'Authenticator did not start',
-		passkey_failed: 'Passkey did not finish'
+		passkey_failed: 'Passkey did not finish',
+		account_not_found: 'No account uses this address',
+		cancel_failed: 'Could not go back to the app'
 	}
 };
 
@@ -47,6 +51,7 @@ function page(
 		passkey?: unknown;
 		available?: unknown;
 		backScreens?: string[];
+		cancelAvailable?: boolean;
 	} = {}
 ) {
 	return render(LoginPage, {
@@ -65,6 +70,7 @@ function page(
 				available: extra.available ?? { mailOtp: true, totp: true, passkey: true },
 				purpose: 'login',
 				backScreens: extra.backScreens ?? [],
+				cancelAvailable: extra.cancelAvailable ?? false,
 				pow,
 				text
 			} as never,
@@ -470,5 +476,102 @@ describe('the backup codes of a new authenticator', () => {
 		expect(body).toContain('Backup codes');
 		expect(body).toContain('<code>ABCD-EFGH-JKLM</code>');
 		expect(body).toContain('Try again later');
+	});
+});
+
+describe('the lite sign-in page: addresses with no account, and going back to the app', () => {
+	const emailForm = [
+		field({}),
+		field({ blockType: 'auth_widget', field: 'auth.mail_otp', authMethod: 'mail_otp' })
+	];
+
+	it('says an address has no account as an alert, with no link to a sign-up the page does not have', () => {
+		const { body } = page(emailForm, null, { form: { error: 'account_not_found' } });
+		expect(body).toMatch(/<p role="alert">No account uses this address<\/p>/u);
+		expect(body).not.toContain('/signup');
+	});
+
+	it('links to the sign-up page when the failed send says the Flow offers one', () => {
+		const { body } = page(emailForm, null, {
+			form: { error: 'account_not_found', signUpHref: '/signup?challenge_id=ch-1' }
+		});
+		expect(body).toContain('href="/signup?challenge_id=ch-1"');
+		expect(body).toContain('>Sign up</a>');
+	});
+
+	it('draws a Back to the app form only when the Flow allows leaving the sign-in', () => {
+		expect(page(emailForm).body).not.toContain('/cancel');
+		const { body } = page(emailForm, null, { cancelAvailable: true });
+		expect(body).toMatch(/<form method="post" action="\?challenge_id=ch-1&amp;\/cancel">/u);
+		expect(body).toMatch(/<button type="submit"[^>]*>Back to the app<\/button>/u);
+		// A real form of the transaction: no script is needed.
+		const form = body.slice(body.indexOf('/cancel'));
+		expect(form).toContain('name="txn" value="txn-1"');
+		expect(form).toContain('name="csrf" value="csrf-1"');
+	});
+
+	it('draws it beside the way out of a page that cannot go on', () => {
+		const { body } = render(LoginPage, {
+			props: {
+				data: {
+					brandName: 'Acme',
+					logo: null,
+					page: 'step',
+					search: '',
+					txnId: 'txn-1',
+					csrfToken: 'csrf-1',
+					op: 'o'.repeat(22),
+					decision: { kind: 'unsupported', reasons: ['x'] },
+					cancelAvailable: true,
+					socialStarted: false,
+					text
+				} as never,
+				form: null as never
+			}
+		});
+		expect(body).toContain('action="?/restart"');
+		expect(body).toContain('action="?/cancel"');
+	});
+
+	it('draws it on the Continue screen in its normal state', () => {
+		const draw = (cancelAvailable: boolean) =>
+			render(LoginPage, {
+				props: {
+					data: {
+						brandName: 'Acme',
+						logo: null,
+						page: 'step',
+						search: '?challenge_id=ch-1',
+						txnId: 'txn-1',
+						csrfToken: 'csrf-1',
+						op: 'o'.repeat(22),
+						decision: { kind: 'continue' },
+						continueAction: 'continue',
+						cancelAvailable,
+						text
+					} as never,
+					form: null as never
+				}
+			}).body;
+		expect(draw(true)).toContain('action="?challenge_id=ch-1&amp;/cancel"');
+		expect(draw(true)).toContain('Back to the app');
+		expect(draw(false)).not.toContain('/cancel');
+	});
+
+	it('draws it on the passkey screen', () => {
+		const { body } = page(emailForm, null, {
+			cancelAvailable: true,
+			passkey: { options: { challenge: 'c' }, registration: null, challenge: 'ch' }
+		});
+		expect(body).toContain('data-lite-passkey=');
+		expect(body).toContain('action="?challenge_id=ch-1&amp;/cancel"');
+	});
+
+	it('says a refused way back to the app as an alert', () => {
+		const { body } = page(emailForm, null, {
+			cancelAvailable: true,
+			form: { error: 'cancel_failed' }
+		});
+		expect(body).toContain('<p role="alert">Could not go back to the app</p>');
 	});
 });

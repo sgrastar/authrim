@@ -8,10 +8,16 @@
 
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { AR_ERROR_CODES, createErrorResponse, getLogger } from '@authrim/ar-lib-core';
+import {
+  AR_ERROR_CODES,
+  SAML_LOGIN_CANCEL_PATH,
+  createErrorResponse,
+  getLogger,
+} from '@authrim/ar-lib-core';
 import { isSamlProtocolPath, samlEnabledMiddleware } from './common/saml-enabled';
 import { handleIdPMetadataWithOptions } from './idp/metadata';
 import { handleIdPAttributeReleaseConsent, handleIdPSSO } from './idp/sso';
+import { handleIdPLoginCancel } from './idp/login-cancel';
 import { handleIdPSLO } from './idp/slo';
 import {
   GAKUNIN_SHIBBOLETH_SAML2_IDP_SLO_POST_PATH,
@@ -60,6 +66,7 @@ export function createSAMLIdPApp(options: SAMLIdPAppOptions): Hono<{ Bindings: E
   app.get(GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_REDIRECT_PATH, handleIdPSSO);
   app.post(GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_POST_PATH, handleIdPSSO);
   app.post('/saml/idp/attribute-release-consent', handleIdPAttributeReleaseConsent);
+  app.get(SAML_LOGIN_CANCEL_PATH, handleIdPLoginCancel);
   if (options.sloEnabled === true) {
     app.get('/saml/idp/slo', handleIdPSLO);
     app.post('/saml/idp/slo', handleIdPSLO);

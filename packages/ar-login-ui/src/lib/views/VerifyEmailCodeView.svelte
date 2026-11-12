@@ -19,12 +19,18 @@
 		error?: string;
 		success?: string;
 		resendNotice?: string;
+		/** The "Back to the app" action: offered when the Flow allows leaving the sign-in. */
+		cancel?: { available: boolean; loading: boolean };
+		/** Where the way back to the sign-in page goes (it keeps the request). */
+		backHref?: string;
 		onCodeChange: (code: string) => void;
 		onVerify: () => void;
 		onResend: () => void;
 		onDismissError: () => void;
 		onDismissSuccess: () => void;
 		onDismissResendNotice: () => void;
+		/** "Back to the app" was chosen. */
+		onCancel?: () => void;
 	};
 
 	let {
@@ -37,12 +43,15 @@
 		error = '',
 		success = '',
 		resendNotice = '',
+		cancel = { available: false, loading: false },
+		backHref = '/login',
 		onCodeChange,
 		onVerify,
 		onResend,
 		onDismissError,
 		onDismissSuccess,
-		onDismissResendNotice
+		onDismissResendNotice,
+		onCancel
 	}: Props = $props();
 
 	const busy = $derived(loading || resendLoading || !!success);
@@ -119,10 +128,24 @@
 			{$LL.emailCode_resendTimer({ seconds: countdown })}
 		{/if}
 	</Button>
+
+	{#if cancel.available}
+		<Button
+			variant="ghost"
+			size="sm"
+			class="w-full mt-2"
+			type="button"
+			loading={cancel.loading}
+			disabled={cancel.loading || busy}
+			onclick={() => onCancel?.()}
+		>
+			{$LL.login_backToApp()}
+		</Button>
+	{/if}
 </Card>
 
 <p class="auth-bottom-link">
-	<a href="/login" class="inline-flex items-center gap-2" data-sveltekit-reload>
+	<a href={backHref} class="inline-flex items-center gap-2" data-sveltekit-reload>
 		<span class="i-ph-arrow-left h-4 w-4"></span>
 		{$LL.common_backToLogin()}
 	</a>
