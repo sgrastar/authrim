@@ -221,6 +221,7 @@ const ja = {
 	account_consentInformationTrusted: 'サービスが求めるすべての情報（信頼済みのサービス）',
 	account_consentInformationRequiredOnly: '必須の項目のみ（このサービスは確認しません）',
 	account_consentInformationNotRecorded: '未確認（次回のサインインで確認します）',
+	account_consentInformationSuperseded: '（変更済み：次回のサインインで確認します）',
 	account_consentPrivacyPolicy: 'プライバシーポリシー',
 	account_consentTerms: '利用規約',
 	account_consentVersion: '同意',

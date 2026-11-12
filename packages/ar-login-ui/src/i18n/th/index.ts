@@ -215,6 +215,8 @@ const th = createTranslation({
 	account_consentInformationRequiredOnly: 'เฉพาะรายการที่จำเป็น (บริการนี้ไม่ถามเพิ่ม)',
 	account_consentInformationNotRecorded:
 		'ยังไม่ได้ตัดสินใจ (ระบบจะถามคุณเมื่อเข้าสู่ระบบครั้งถัดไป)',
+	account_consentInformationSuperseded:
+		'(มีการเปลี่ยนแปลง: ระบบจะถามคุณเมื่อลงชื่อเข้าใช้ครั้งถัดไป)',
 	account_consentPrivacyPolicy: 'นโยบายความเป็นส่วนตัว',
 	account_consentTerms: 'ข้อกำหนด',
 	account_consentVersion: 'ความยินยอม',

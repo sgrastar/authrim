@@ -3597,6 +3597,11 @@ components:
         decidedAt:
           type: integer
           description: When it was decided (milliseconds since the epoch).
+        superseded:
+          type: boolean
+          description: >-
+            The service's policy made this decision (basis trust or not_asked) and no longer
+            decides. What was already issued keeps it; the next sign-in asks the person.
     UserConsentsResponse:
       type: object
       required:

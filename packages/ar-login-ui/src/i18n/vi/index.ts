@@ -220,6 +220,7 @@ const vi = createTranslation({
 	account_consentInformationRequiredOnly: 'Chỉ các mục bắt buộc (dịch vụ không hỏi)',
 	account_consentInformationNotRecorded:
 		'Chưa quyết định (bạn sẽ được hỏi ở lần đăng nhập tiếp theo)',
+	account_consentInformationSuperseded: '(đã thay đổi: bạn sẽ được hỏi ở lần đăng nhập tiếp theo)',
 	account_consentPrivacyPolicy: 'Chính sách quyền riêng tư',
 	account_consentTerms: 'Điều khoản',
 	account_consentVersion: 'Sự đồng ý',

@@ -207,6 +207,7 @@ const translation = {
 	account_consentInformationTrusted: 'አገልግሎቱ የሚጠይቀው ሁሉ (የታመነ አገልግሎት)',
 	account_consentInformationRequiredOnly: 'አስፈላጊ ንጥሎች ብቻ (አገልግሎቱ አይጠይቅም)',
 	account_consentInformationNotRecorded: 'ገና አልተወሰነም (በሚቀጥለው ሲገቡ ይጠየቃሉ)',
+	account_consentInformationSuperseded: '(ተቀይሯል፦ በሚቀጥለው መግቢያዎ ይጠየቃሉ)',
 	account_consentPrivacyPolicy: 'የግላዊነት ፖሊሲ',
 	account_consentTerms: 'ውሎች',
 	account_consentVersion: 'ስምምነት',

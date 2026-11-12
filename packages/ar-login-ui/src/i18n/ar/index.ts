@@ -214,6 +214,7 @@ const ar = createTranslation({
 	account_consentInformationTrusted: 'كل ما تطلبه الخدمة (خدمة موثوقة)',
 	account_consentInformationRequiredOnly: 'العناصر المطلوبة فقط (الخدمة لا تسأل)',
 	account_consentInformationNotRecorded: 'لم يُحدَّد بعد (ستُسأل عند تسجيل دخولك التالي)',
+	account_consentInformationSuperseded: '(تم التغيير: سيُطلب منك ذلك عند تسجيل دخولك التالي)',
 	account_consentPrivacyPolicy: 'سياسة الخصوصية',
 	account_consentTerms: 'الشروط',
 	account_consentVersion: 'الموافقة',

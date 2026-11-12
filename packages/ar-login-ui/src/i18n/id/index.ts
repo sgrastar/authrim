@@ -203,6 +203,7 @@ const id = createTranslation({
 	account_consentInformationRequiredOnly: 'Hanya item wajib (layanan tidak menanyakan)',
 	account_consentInformationNotRecorded:
 		'Belum ditentukan (Anda akan ditanya saat masuk berikutnya)',
+	account_consentInformationSuperseded: '(diubah: Anda akan ditanya saat masuk berikutnya)',
 	account_consentPrivacyPolicy: 'Kebijakan privasi',
 	account_consentTerms: 'Ketentuan',
 	account_consentVersion: 'Persetujuan',

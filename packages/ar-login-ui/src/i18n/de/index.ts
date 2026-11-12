@@ -212,6 +212,7 @@ const de = createTranslation({
 	account_consentInformationRequiredOnly: 'Nur erforderliche Angaben (der Dienst fragt nicht nach)',
 	account_consentInformationNotRecorded:
 		'Noch nicht entschieden (Sie werden bei der nächsten Anmeldung gefragt)',
+	account_consentInformationSuperseded: '(geändert: Sie werden bei der nächsten Anmeldung gefragt)',
 	account_consentPrivacyPolicy: 'Datenschutzrichtlinie',
 	account_consentTerms: 'Bedingungen',
 	account_consentVersion: 'Einwilligung',

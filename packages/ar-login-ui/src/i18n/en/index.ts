@@ -220,6 +220,7 @@ const en = {
 	account_consentInformationTrusted: 'Everything the service asks for (a trusted service)',
 	account_consentInformationRequiredOnly: 'Required items only (the service does not ask)',
 	account_consentInformationNotRecorded: 'Not decided yet (you will be asked at your next sign-in)',
+	account_consentInformationSuperseded: '(changed: you will be asked at your next sign-in)',
 	account_consentPrivacyPolicy: 'Privacy policy',
 	account_consentTerms: 'Terms',
 	account_consentVersion: 'Consent',

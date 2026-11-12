@@ -852,6 +852,10 @@ type RootTranslation = {
 	 */
 	account_consentInformationNotRecorded: string;
 	/**
+	 * (​c​h​a​n​g​e​d​:​ ​y​o​u​ ​w​i​l​l​ ​b​e​ ​a​s​k​e​d​ ​a​t​ ​y​o​u​r​ ​n​e​x​t​ ​s​i​g​n​-​i​n​)
+	 */
+	account_consentInformationSuperseded: string;
+	/**
 	 * P​r​i​v​a​c​y​ ​p​o​l​i​c​y
 	 */
 	account_consentPrivacyPolicy: string;
@@ -2815,6 +2819,10 @@ export type TranslationFunctions = {
 	 * Not decided yet (you will be asked at your next sign-in)
 	 */
 	account_consentInformationNotRecorded: () => LocalizedString;
+	/**
+	 * (changed: you will be asked at your next sign-in)
+	 */
+	account_consentInformationSuperseded: () => LocalizedString;
 	/**
 	 * Privacy policy
 	 */

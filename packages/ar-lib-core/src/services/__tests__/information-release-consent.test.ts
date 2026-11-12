@@ -222,11 +222,15 @@ describe('the decision as the account page shows it', () => {
     expect(accountInformationRelease(row({ release_decided_at: '5' }))?.decidedAt).toBe(5);
   });
 
-  it("drops a policy's earlier decision once the policy no longer decides", () => {
+  it("marks a policy's earlier decision superseded once the policy no longer decides", () => {
     const trustRecord = row({ release_basis: 'trust', release_approved_json: '["*"]' });
-    expect(
-      accountInformationRelease({ ...trustRecord, release_current_basis: null })
-    ).toBeUndefined();
+    expect(accountInformationRelease({ ...trustRecord, release_current_basis: null })).toEqual({
+      basis: 'trust',
+      approved: [],
+      declined: [],
+      decidedAt: 5,
+      superseded: true,
+    });
     // The person's own decision still counts.
     expect(accountInformationRelease(row({ release_current_basis: null }))?.basis).toBe('user');
   });

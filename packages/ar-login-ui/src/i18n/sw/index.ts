@@ -220,6 +220,7 @@ const translation = {
 	account_consentInformationTrusted: 'Kila kitu ambacho huduma inaomba (huduma inayoaminika)',
 	account_consentInformationRequiredOnly: 'Vipengee vya lazima pekee (huduma haiulizi)',
 	account_consentInformationNotRecorded: 'Bado haijaamuliwa (utaulizwa utakapoingia tena)',
+	account_consentInformationSuperseded: '(imebadilishwa: utaulizwa utakapoingia tena)',
 	account_consentPrivacyPolicy: 'Sera ya faragha',
 	account_consentTerms: 'Masharti',
 	account_consentVersion: 'Makubaliano',

@@ -221,6 +221,7 @@ const translation = {
 	account_consentInformationRequiredOnly: 'Tylko wymagane elementy (usługa o nic nie pyta)',
 	account_consentInformationNotRecorded:
 		'Jeszcze nie zdecydowano (zostaniesz zapytany przy następnym logowaniu)',
+	account_consentInformationSuperseded: '(zmieniono: zapytamy Cię przy następnym logowaniu)',
 	account_consentPrivacyPolicy: 'Polityka prywatności',
 	account_consentTerms: 'Warunki',
 	account_consentVersion: 'Wersja zgody',

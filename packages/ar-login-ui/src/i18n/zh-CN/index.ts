@@ -189,6 +189,7 @@ const zhCN = createTranslation({
 	account_consentInformationTrusted: '服务请求的全部信息（受信任的服务）',
 	account_consentInformationRequiredOnly: '仅必填项目（该服务不会询问）',
 	account_consentInformationNotRecorded: '尚未决定（下次登录时将询问您）',
+	account_consentInformationSuperseded: '（已更改：下次登录时将询问您）',
 	account_consentPrivacyPolicy: '隐私政策',
 	account_consentTerms: '条款',
 	account_consentVersion: '同意',

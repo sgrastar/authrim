@@ -219,6 +219,7 @@ const translation = {
 	account_consentInformationRequiredOnly: 'Yalnızca zorunlu öğeler (hizmet sormuyor)',
 	account_consentInformationNotRecorded:
 		'Henüz karar verilmedi (bir sonraki girişinizde sorulacak)',
+	account_consentInformationSuperseded: '(değişti: bir sonraki oturum açışınızda size sorulacak)',
 	account_consentPrivacyPolicy: 'Gizlilik politikası',
 	account_consentTerms: 'Şartlar',
 	account_consentVersion: 'Onay sürümü',

@@ -118,11 +118,15 @@ export function accountReleaseRows(
 	const label = LL.account_consentInformationRelease();
 	const record =
 		release && typeof release === 'object' ? (release as Record<string, unknown>) : null;
+	// A decision the service's policy made, which no longer decides: what was already issued
+	// still holds it, and the next sign-in asks.
+	const superseded = (text: string) =>
+		record?.superseded === true ? `${text} ${LL.account_consentInformationSuperseded()}` : text;
 	switch (record?.basis) {
 		case 'trust':
-			return [{ label, value: LL.account_consentInformationTrusted() }];
+			return [{ label, value: superseded(LL.account_consentInformationTrusted()) }];
 		case 'not_asked':
-			return [{ label, value: LL.account_consentInformationRequiredOnly() }];
+			return [{ label, value: superseded(LL.account_consentInformationRequiredOnly()) }];
 		case 'user': {
 			const list = (names: string[]) => names.map((name) => releaseClaimLabel(LL, name)).join(', ');
 			const approved = releaseNames(record.approved);

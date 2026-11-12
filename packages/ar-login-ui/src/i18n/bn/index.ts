@@ -222,6 +222,7 @@ const translation = {
 	account_consentInformationRequiredOnly: 'শুধু আবশ্যক আইটেম (এই সেবা জিজ্ঞেস করে না)',
 	account_consentInformationNotRecorded:
 		'এখনও সিদ্ধান্ত হয়নি (পরবর্তী সাইন-ইনে আপনাকে জিজ্ঞেস করা হবে)',
+	account_consentInformationSuperseded: '(পরিবর্তিত: পরবর্তী সাইন-ইনে আপনাকে জিজ্ঞাসা করা হবে)',
 	account_consentPrivacyPolicy: 'গোপনীয়তা নীতি',
 	account_consentTerms: 'শর্তাবলী',
 	account_consentVersion: 'সম্মতি',

@@ -219,6 +219,7 @@ const it = createTranslation({
 	account_consentInformationTrusted: 'Tutto ciò che il servizio richiede (servizio attendibile)',
 	account_consentInformationRequiredOnly: 'Solo le voci obbligatorie (il servizio non chiede)',
 	account_consentInformationNotRecorded: 'Non ancora deciso (ti verrà chiesto al prossimo accesso)',
+	account_consentInformationSuperseded: '(modificato: ti verrà chiesto al prossimo accesso)',
 	account_consentPrivacyPolicy: 'Informativa sulla privacy',
 	account_consentTerms: 'Termini',
 	account_consentVersion: 'Consenso',

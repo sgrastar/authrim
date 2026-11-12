@@ -171,6 +171,8 @@ export type AccountOAuthClientConsent = {
 		approved: string[];
 		declined: string[];
 		decidedAt: number;
+		/** Made by the service's policy, which no longer decides: the next sign-in asks. */
+		superseded?: boolean;
 	};
 };
 

@@ -209,6 +209,8 @@ const es = createTranslation({
 		'Solo los elementos obligatorios (el servicio no pregunta)',
 	account_consentInformationNotRecorded:
 		'Aún sin decidir (se te preguntará en tu próximo inicio de sesión)',
+	account_consentInformationSuperseded:
+		'(cambiado: se le preguntará en su próximo inicio de sesión)',
 	account_consentPrivacyPolicy: 'Política de privacidad',
 	account_consentTerms: 'Términos',
 	account_consentVersion: 'Consentimiento',

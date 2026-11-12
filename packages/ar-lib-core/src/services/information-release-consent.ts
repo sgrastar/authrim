@@ -285,14 +285,14 @@ export function accountInformationRelease(row: {
     }
   };
   if (record.basis !== 'user') {
-    // A decision the service's policy made no longer holds once the policy stopped deciding: the
-    // next authorization asks the person.
-    if (row.release_current_basis === null) return undefined;
+    // A decision the service's policy made stays in effect for what was already issued, but no
+    // longer answers a new authorization once the policy stopped deciding (the person is asked).
     return {
       basis: record.basis,
       approved: [],
       declined: [],
       decidedAt: record.decidedAt as number,
+      ...(row.release_current_basis === null ? { superseded: true } : {}),
     };
   }
   const approved = strictNames(row.release_approved_json);

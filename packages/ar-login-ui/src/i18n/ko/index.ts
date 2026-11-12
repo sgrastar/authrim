@@ -198,6 +198,7 @@ const ko = createTranslation({
 	account_consentInformationTrusted: '서비스가 요청하는 모든 정보(신뢰할 수 있는 서비스)',
 	account_consentInformationRequiredOnly: '필수 항목만(이 서비스는 확인하지 않음)',
 	account_consentInformationNotRecorded: '아직 결정되지 않음(다음 로그인 때 확인합니다)',
+	account_consentInformationSuperseded: '(변경됨: 다음 로그인 때 확인합니다)',
 	account_consentPrivacyPolicy: '개인정보 처리방침',
 	account_consentTerms: '약관',
 	account_consentVersion: '동의',

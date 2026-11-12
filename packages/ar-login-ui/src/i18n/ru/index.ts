@@ -204,6 +204,7 @@ const ru = createTranslation({
 	account_consentInformationTrusted: 'Всё, что запрашивает сервис (доверенный сервис)',
 	account_consentInformationRequiredOnly: 'Только обязательные пункты (сервис не запрашивает)',
 	account_consentInformationNotRecorded: 'Пока не решено (вас спросят при следующем входе)',
+	account_consentInformationSuperseded: '(изменено: вас спросят при следующем входе)',
 	account_consentPrivacyPolicy: 'Политика конфиденциальности',
 	account_consentTerms: 'Условия',
 	account_consentVersion: 'Согласие',

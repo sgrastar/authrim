@@ -379,6 +379,11 @@ export interface AccountInformationRelease {
   declined: string[];
   /** When it was decided (milliseconds since the epoch). */
   decidedAt: number;
+  /**
+   * The service's policy made this decision and no longer decides: what was already issued keeps
+   * it, and the next sign-in asks the person.
+   */
+  superseded?: boolean;
 }
 
 // =============================================================================

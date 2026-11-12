@@ -105,6 +105,10 @@ describe('accountReleaseRows', () => {
 		expect(accountReleaseRows(LL, { basis: 'not_asked' })[0].value).toBe(
 			LL.account_consentInformationRequiredOnly()
 		);
+		// Made by a policy that no longer decides: still shown, with the next sign-in asking.
+		expect(accountReleaseRows(LL, { basis: 'trust', superseded: true })[0].value).toBe(
+			`${LL.account_consentInformationTrusted()} ${LL.account_consentInformationSuperseded()}`
+		);
 		for (const value of [undefined, null, 'user', { basis: 'other' }]) {
 			expect(accountReleaseRows(LL, value)).toEqual([
 				{ label: 'Information provided', value: LL.account_consentInformationNotRecorded() }

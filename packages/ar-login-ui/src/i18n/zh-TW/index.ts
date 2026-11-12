@@ -190,6 +190,7 @@ const zhTW = createTranslation({
 	account_consentInformationTrusted: '服務要求的所有資訊（受信任的服務）',
 	account_consentInformationRequiredOnly: '僅限必填項目（該服務不會詢問）',
 	account_consentInformationNotRecorded: '尚未決定（下次登入時將詢問您）',
+	account_consentInformationSuperseded: '（已變更：下次登入時將詢問您）',
 	account_consentPrivacyPolicy: '隱私權政策',
 	account_consentTerms: '條款',
 	account_consentVersion: '同意',

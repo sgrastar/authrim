@@ -218,6 +218,7 @@ const translation = {
 	account_consentInformationTrusted: 'सेवा जो कुछ भी माँगती है (विश्वसनीय सेवा)',
 	account_consentInformationRequiredOnly: 'केवल आवश्यक आइटम (यह सेवा पूछती नहीं है)',
 	account_consentInformationNotRecorded: 'अभी तय नहीं (अगली बार साइन इन करने पर आपसे पूछा जाएगा)',
+	account_consentInformationSuperseded: '(बदला गया: अगली बार साइन इन करने पर आपसे पूछा जाएगा)',
 	account_consentPrivacyPolicy: 'गोपनीयता नीति',
 	account_consentTerms: 'शर्तें',
 	account_consentVersion: 'सहमति संस्करण',
