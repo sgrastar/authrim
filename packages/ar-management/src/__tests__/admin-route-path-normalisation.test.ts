@@ -432,7 +432,7 @@ describe('the capability switches and escaped or malformed paths', () => {
   const writer = () => callerWith([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
 
   it.each([
-    ['dynamic_client_registration', ['dcr', '%64cr', '%64%63r', '%44cr'.replace('%44', '%64')]],
+    ['dynamic_client_registration', ['dcr', '%64cr', '%64%63r']],
     ['external_plugins', ['plugin', '%70lugin', '%70%6cugin']],
   ])(
     'refuses %s settings writes in every spelling of the category while it is off',
