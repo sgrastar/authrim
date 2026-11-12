@@ -331,7 +331,13 @@ paths:
       description: >-
         Saves the profile's values as the request tenant's Settings API values and clears the
         other protocol settings profiles manage, so the tenant inherits them again. The tenant's
-        older certification profile loses its fapi and oidc sections.
+        older certification profile loses its fapi and oidc sections. The settings of every
+        category are saved together: a refused value or a document changed since it was read
+        changes nothing (503 / 409 conflict, "nothing was changed"); a save that fails without
+        telling whether it went through answers 503 asking to apply the profile again. Once they are
+        saved, a later step that fails (copying to the runtime store, updating the older profile)
+        answers 409 or 503 with `partially_applied` naming the saved categories; applying the
+        profile again is repeatable.
       parameters:
         - name: id
           in: path
