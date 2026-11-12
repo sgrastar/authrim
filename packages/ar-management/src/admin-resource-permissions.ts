@@ -38,7 +38,7 @@ function isUserAnonymizePath(path: string): boolean {
 
 function requireUserManagementPermission(): AdminPermissionMiddleware {
   return async (c, next) => {
-    const path = new URL(c.req.url).pathname;
+    const path = c.req.path;
     if (
       isUserRbacSubresource(path) ||
       isUserSessionSubresource(path) ||
@@ -74,7 +74,7 @@ function requireSessionManagementPermission(): AdminPermissionMiddleware {
 function requireSettingsManagementPermission(): AdminPermissionMiddleware {
   return async (c, next) => {
     const method = c.req.method.toUpperCase();
-    const path = new URL(c.req.url).pathname;
+    const path = c.req.path;
     const permission =
       path === '/api/admin/settings/agent'
         ? method === 'GET'
@@ -112,7 +112,7 @@ function requireSecurityCredentialPermission(): AdminPermissionMiddleware {
         .module('ADMIN-RESOURCE-PERMISSIONS')
         .warn('Security resource access denied', {
           method,
-          path: new URL(c.req.url).pathname,
+          path: c.req.path,
           authMethod: authContext?.authMethod,
           requiredPermissions: [permission],
           actualPermissions: authContext?.permissions ?? [],
@@ -149,7 +149,7 @@ function requireExternalProviderPermission(): AdminPermissionMiddleware {
 
 function requireExternalTokenRefreshPermission(): AdminPermissionMiddleware {
   return async (c, next) => {
-    const path = new URL(c.req.url).pathname;
+    const path = c.req.path;
     const method = c.req.method.toUpperCase();
     const permission =
       method === 'GET'
@@ -172,7 +172,7 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   const externalProviderPermission = requireExternalProviderPermission();
   const externalTokenRefreshPermission = requireExternalTokenRefreshPermission();
   const vcProfilePermission: AdminPermissionMiddleware = async (c, next) => {
-    const path = new URL(c.req.url).pathname;
+    const path = c.req.path;
     const permission = path.endsWith('/offers')
       ? ADMIN_PERMISSIONS.VC_CREDENTIAL_OFFERS_CREATE
       : path.endsWith('/publish')

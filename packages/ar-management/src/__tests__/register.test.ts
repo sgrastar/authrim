@@ -54,7 +54,7 @@ vi.mock('../tenant-alias-directory', () => ({
   ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
 }));
 
-import { registerHandler } from '../register';
+import { adminAgentRegisterHandler, registerHandler } from '../register';
 
 // Helper to create mock D1Database
 function createMockDB() {
@@ -182,7 +182,7 @@ describe('Dynamic Client Registration Handler', () => {
       await next();
     });
     app.post('/register', registerHandler);
-    app.post('/oauth/admin-agent/register', registerHandler);
+    app.post('/oauth/admin-agent/register', adminAgentRegisterHandler);
 
     // Setup mock KV namespaces
     mockEnv.CLIENTS_CACHE = createMockKV();
