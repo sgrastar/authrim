@@ -396,6 +396,111 @@ describe('admin jobs created through the admin API', () => {
     expect(bucket.delete).toHaveBeenCalledWith(key);
   });
 
+  describe('creating a bulk job while the platform has bulk_jobs off', () => {
+    const create = (state: boolean | 'down') => {
+      env = {
+        ...env,
+        SETTINGS: {
+          get: vi.fn(async (key: string) => {
+            if (key !== 'settings:platform:tenant-capabilities') return null;
+            if (state === 'down') throw new Error('kv down');
+            return JSON.stringify({ 'tenant_capabilities.bulk_jobs': state });
+          }),
+          put: vi.fn(),
+          delete: vi.fn(),
+          list: vi.fn(),
+          getWithMetadata: vi.fn(),
+        } as unknown as KVNamespace,
+      };
+      return app.request(
+        '/api/admin/jobs/reports/generate',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'user_activity',
+            format: 'json',
+            from_date: '2026-01-01T00:00:00.000Z',
+            to_date: '2026-01-31T00:00:00.000Z',
+          }),
+        },
+        env
+      );
+    };
+    const jobCount = () =>
+      (admin.prepare('SELECT COUNT(*) AS n FROM admin_jobs').get() as { n: number }).n;
+
+    it('refuses everyone, a platform administrator included, instead of accepting a job that would not run', async () => {
+      const before = jobCount();
+      // The test app is signed in as a global ar_super_admin (exempt at the route gate).
+      const res = await create(false);
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({
+        error: 'capability_disabled',
+        capability: 'bulk_jobs',
+      });
+      expect(jobCount()).toBe(before);
+    });
+
+    it.each([true, 'down'] as const)('accepts the job as before when %s', async (state) => {
+      const res = await create(state);
+      expect(res.status).toBe(202);
+    });
+  });
+
+  describe('the platform bulk_jobs capability for a queued user import', () => {
+    const settingsWith = (state: boolean | 'down') =>
+      ({
+        get: vi.fn(async (key: string) => {
+          if (key !== 'settings:platform:tenant-capabilities') return null;
+          if (state === 'down') throw new Error('kv down');
+          return JSON.stringify({ 'tenant_capabilities.bulk_jobs': state });
+        }),
+        put: vi.fn(),
+        delete: vi.fn(),
+        list: vi.fn(),
+        getWithMetadata: vi.fn(),
+      }) as unknown as KVNamespace;
+
+    async function queueImport(state: boolean | 'down') {
+      const key = buildUserImportUploadKey('tenant-a', 'upload-cap', 'users.csv');
+      const bucket = importBucket(key, 'email\nalice@example.com\n');
+      // Queued while the capability was on; the platform turns it off (or it cannot be read) later.
+      env = {
+        ...env,
+        IMPORT_ARTIFACTS: bucket,
+        EXPORT_ARTIFACTS: bucket,
+        SETTINGS: settingsWith(true),
+      } as unknown as Env;
+      const { job_id } = await post('/api/admin/jobs/users/import', {
+        file_key: key,
+        options: { validate_only: true },
+      });
+      env = { ...env, SETTINGS: settingsWith(state) };
+      await processPendingUserImportJobs(env, logger);
+      const row = admin
+        .prepare('SELECT status, started_at, error_message FROM admin_jobs WHERE id = ?')
+        .get(job_id) as { status: string; started_at: number | null; error_message: string | null };
+      return { row, bucket, key };
+    }
+
+    it('ends as blocked without starting, and drops the uploaded input, while off', async () => {
+      const { row, bucket, key } = await queueImport(false);
+      expect(row).toEqual({
+        status: 'partial_failure',
+        started_at: null,
+        error_message: 'tenant_capability_disabled:bulk_jobs',
+      });
+      expect(bucket.delete).toHaveBeenCalledWith(key);
+    });
+
+    it.each([true, 'down'] as const)('runs as before when %s', async (state) => {
+      const { row } = await queueImport(state);
+      expect(row.error_message).not.toBe('tenant_capability_disabled:bulk_jobs');
+      expect(row.started_at).not.toBeNull();
+    });
+  });
+
   it('reads a job its workflow keeps in the tenant Core database', async () => {
     insertJob(core, { id: 'core-delete', jobType: 'tenants/delete', createdAt: 100 });
 

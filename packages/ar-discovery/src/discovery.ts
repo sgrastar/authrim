@@ -22,6 +22,7 @@ import {
   AAL_ACR_VALUES,
   isNativeSSOEnabled,
   loadTenantProfileCached,
+  isTenantCapabilityEnabledAtRuntime,
   filterGrantTypesByProfile,
   getLogger,
   // Request-level caching for feature flags (Phase 2)
@@ -216,6 +217,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     readSettingsFlag(tenantFlags, 'feature.enable_flow_engine') ??
     (await getFeatureFlagCached(c, 'ENABLE_FLOW_ENGINE', c.env, false));
 
+  // The platform can turn dynamic client registration off for tenants: the metadata then leaves
+  // out the registration endpoint (an unreadable switch keeps it advertised, as before).
+  const dcrCapabilityEnabled = await isTenantCapabilityEnabledAtRuntime(
+    c.env,
+    'dynamic_client_registration'
+  );
+
   // Load TenantProfile for profile-based grant_types filtering (request-level cached)
   // §16: Human Auth / AI Ephemeral Auth two-layer model
   const tenantProfile: TenantProfile = await loadTenantProfileCached(
@@ -232,7 +240,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   const profileHash = `profile=${tenantProfile.type}`;
   const assuranceClaimsHash = `ea=${eduPersonAssuranceSupported}`;
   const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}:id_token_algs=${idTokenSigningAlgorithms.join(',')}`;
-  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}:cuc=${cibaUserCodeSupported}:pc=${promptCreateSupported}`;
+  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}:cuc=${cibaUserCodeSupported}:pc=${promptCreateSupported}:dcrcap=${dcrCapabilityEnabled}`;
   // A digest of everything the metadata depends on: a fixed-length key, however long the settings
   // (a KV key is at most 512 bytes).
   const settingsDigest = Array.from(
@@ -309,7 +317,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     token_endpoint: `${issuer}/token`,
     userinfo_endpoint: `${issuer}/userinfo`,
     jwks_uri: `${issuer}/.well-known/jwks.json`,
-    registration_endpoint: `${issuer}/register`,
+    ...(dcrCapabilityEnabled ? { registration_endpoint: `${issuer}/register` } : {}),
     // RFC 7662: Token Introspection endpoint
     introspection_endpoint: `${issuer}/introspect`,
     // RFC 7009: Token Revocation endpoint

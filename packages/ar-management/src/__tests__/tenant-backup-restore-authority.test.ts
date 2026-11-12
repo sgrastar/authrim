@@ -10,7 +10,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { ADMIN_PERMISSIONS, type AdminAuthContext } from '@authrim/ar-lib-core';
+import {
+  ADMIN_PERMISSIONS,
+  type AdminAuthContext,
+  type TenantCapability,
+  type TenantCapabilityState,
+} from '@authrim/ar-lib-core';
 import { TenantBackupRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
 import type { TenantBackupImportAuthority } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
@@ -216,11 +221,14 @@ async function importRequest(authority: TenantBackupImportAuthority | null, tena
   } as unknown as TenantBackupStepContext;
 }
 
-function guarded() {
+function guarded(
+  capabilityState?: (capability: TenantCapability) => Promise<TenantCapabilityState>
+) {
   const guard = createTenantBackupRestoreAuthorityGuard({
     logEnv: logFixture.env,
     database: adapter(admin),
     loadBundleRoles: async () => bundleRoles,
+    ...(capabilityState ? { capabilityState } : {}),
   });
   return new Map(
     guard
@@ -301,7 +309,7 @@ describe('what an import requester may grant', () => {
   it('records the institution settings and the global level of a platform operator', () => {
     expect(tenantBackupImportAuthority(platformOperator, 'platform-admin')).toEqual({
       actorId: 'platform-admin',
-      platformSettingsCategories: ['institution'],
+      platformSettingsCategories: ['dcr', 'institution', 'plugin'],
       globalAdmin: { permitted: true, hierarchyLevel: 100 },
     });
   });
@@ -363,6 +371,42 @@ describe('settings only the platform may change for a tenant', () => {
     await expect(
       policy.admitRow!.admit(context, JSON.stringify({ category: ['integer', '1'] }))
     ).rejects.toThrow(REFUSED);
+  });
+});
+
+describe('settings of a capability the platform turned off', () => {
+  const state = (value: TenantCapabilityState) => async () => value;
+  it.each(['dcr', 'plugin'])(
+    'refuses a tenant-only requester the %s settings while the capability is off or unreadable, at validation and restore',
+    async (category) => {
+      const context = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+      for (const value of ['off', 'unknown'] as const) {
+        const policy = guarded(state(value)).get(TENANT_SETTINGS_DOCUMENTS_DATASET)!;
+        await expect(policy.admitRow!.admit(context, settingsRow(category))).rejects.toThrow(
+          REFUSED
+        );
+        await expect(
+          policy.restoreTransform!.transform(context, settingsRow(category), 'write')
+        ).rejects.toThrow(REFUSED);
+      }
+    }
+  );
+
+  it('restores them for a platform operator while off, and for anyone while on', async () => {
+    const operator = await importRequest(
+      tenantBackupImportAuthority(platformOperator, 'platform-admin')
+    );
+    const offPolicy = guarded(state('off')).get(TENANT_SETTINGS_DOCUMENTS_DATASET)!;
+    await expect(offPolicy.admitRow!.admit(operator, settingsRow('dcr'))).resolves.toBeUndefined();
+    const tenant = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+    const onPolicy = guarded(state('on')).get(TENANT_SETTINGS_DOCUMENTS_DATASET)!;
+    await expect(onPolicy.admitRow!.admit(tenant, settingsRow('plugin'))).resolves.toBeUndefined();
+  });
+
+  it('leaves the other categories alone while a capability is off', async () => {
+    const tenant = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+    const policy = guarded(state('off')).get(TENANT_SETTINGS_DOCUMENTS_DATASET)!;
+    await expect(policy.admitRow!.admit(tenant, settingsRow('security'))).resolves.toBeUndefined();
   });
 });
 

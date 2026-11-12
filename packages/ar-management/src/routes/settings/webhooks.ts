@@ -39,6 +39,7 @@ import {
   emitRuntimeLogRecords,
   type WebhookConfigWithScope,
   type Env,
+  isTenantCapabilityEnabledAtRuntime,
 } from '@authrim/ar-lib-core';
 import {
   getObjectCatalogObjectRecordByPublicArtifactId,
@@ -898,6 +899,25 @@ export async function deleteWebhook(c: Context<{ Bindings: Env }>) {
 }
 
 /**
+ * Sending a test or a replay is execution for a tenant: it is closed for everyone, a caller with
+ * global platform authority included, while the platform has `webhooks` off. Managing webhooks
+ * (register, update, delete, read) stays possible for exempt callers. An unreadable switch keeps
+ * the earlier behaviour (the send goes ahead), as every runtime entry point does.
+ */
+async function refuseSendWhileWebhooksOff(c: Context<{ Bindings: Env }>): Promise<Response | null> {
+  if (await isTenantCapabilityEnabledAtRuntime(c.env, 'webhooks')) return null;
+  return c.json(
+    {
+      error: 'capability_disabled',
+      error_description:
+        'Webhooks are turned off for tenants by the platform, so nothing was sent.',
+      capability: 'webhooks',
+    },
+    403
+  );
+}
+
+/**
  * POST /api/admin/webhooks/:id/test
  * Send a test webhook delivery
  *
@@ -912,6 +932,9 @@ export async function testWebhook(c: Context<{ Bindings: Env }>) {
   if (!webhookId) {
     return c.json({ error: 'invalid_request', error_description: 'Webhook ID is required' }, 400);
   }
+
+  const sendRefused = await refuseSendWhileWebhooksOff(c);
+  if (sendRefused) return sendRefused;
 
   try {
     const registry = createRegistry(c);
@@ -1476,6 +1499,9 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
   if (permissionError) {
     return permissionError;
   }
+
+  const sendRefused = await refuseSendWhileWebhooksOff(c);
+  if (sendRefused) return sendRefused;
 
   // Parse request body
   let body: { delivery_id?: string };

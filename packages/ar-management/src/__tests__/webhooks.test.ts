@@ -189,6 +189,7 @@ import { encryptObjectArtifact } from '@authrim/ar-lib-core/services/object-arti
 function createMockKV(options: {
   getValues?: Record<string, string | null>;
   putCallback?: (key: string, value: string) => void;
+  failingKeys?: string[];
 }): KVNamespace {
   const storage = new Map<string, string>(
     Object.entries(options.getValues ?? {}).filter(([, v]) => v !== null) as [string, string][]
@@ -196,6 +197,7 @@ function createMockKV(options: {
 
   return {
     get: vi.fn().mockImplementation(async (key: string) => {
+      if (options.failingKeys?.includes(key)) throw new Error('kv down');
       return storage.get(key) ?? null;
     }),
     put: vi.fn().mockImplementation(async (key: string, value: string) => {
@@ -2715,5 +2717,76 @@ describe('Webhook Admin API - step-up', () => {
     await updateWebhook(c);
     expect(c.json.mock.calls[0][1]).toBe(404);
     expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+  });
+});
+
+describe('Webhook Admin API - sending while the platform has webhooks off', () => {
+  const CAPABILITIES = 'settings:platform:tenant-capabilities';
+  const settingsOff = createMockKV({
+    getValues: { [CAPABILITIES]: JSON.stringify({ 'tenant_capabilities.webhooks': false }) },
+  });
+  const settingsDown = createMockKV({ getValues: {}, failingKeys: [CAPABILITIES] });
+
+  beforeEach(() => {
+    resetMocks();
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  type Handler = (c: Parameters<typeof testWebhook>[0]) => Promise<Response | void>;
+  const run = async (
+    handler: Handler,
+    options: Parameters<typeof createMockContext>[0]
+  ): Promise<Response | void> => {
+    const context: unknown = createMockContext(options);
+    return handler(context as Parameters<Handler>[0]);
+  };
+  const answerOf = async (response: Response | void) => {
+    const result = await getResponseData(response);
+    const body: unknown = result.body;
+    const error =
+      typeof body === 'object' && body !== null && 'error' in body ? String(body.error) : undefined;
+    return { status: result.status, error };
+  };
+
+  it('sends no test, for a caller with every permission included, and says nothing was sent', async () => {
+    mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
+    const response = await run(testWebhook, {
+      method: 'POST',
+      params: { id: 'webhook-123' },
+      kv: settingsOff,
+      adminPermissions: ['*'],
+    });
+    expect(await answerOf(response)).toEqual({ status: 403, error: 'capability_disabled' });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it('sends no replay either', async () => {
+    mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
+    const response = await run(replayWebhookDelivery, {
+      method: 'POST',
+      params: { id: 'webhook-123' },
+      body: { delivery_id: 'delivery-123' },
+      kv: settingsOff,
+      adminPermissions: ['*'],
+    });
+    expect(await answerOf(response)).toEqual({ status: 403, error: 'capability_disabled' });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it('sends the test as before when the switch cannot be read', async () => {
+    mockWebhookRegistry.get.mockResolvedValue(createWebhookEntry({ id: 'webhook-123' }));
+    vi.mocked(fetch).mockResolvedValue(new Response('OK', { status: 200 }));
+    const response = await run(testWebhook, {
+      method: 'POST',
+      params: { id: 'webhook-123' },
+      kv: settingsDown,
+      adminPermissions: ['*'],
+    });
+    expect((await answerOf(response)).status).not.toBe(403);
+    expect(vi.mocked(fetch)).toHaveBeenCalled();
   });
 });

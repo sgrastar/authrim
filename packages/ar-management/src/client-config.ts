@@ -14,7 +14,7 @@
 
 import { runLiteGuardedWrite } from './lite-mode-guard';
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import { dynamicClientRegistrationRefusal, type Env } from '@authrim/ar-lib-core';
 import type { ClientRegistrationResponse, ClientMetadata } from '@authrim/ar-lib-core';
 import {
   getClientCached,
@@ -584,6 +584,9 @@ function coalesceNullable<T>(
  * Requires valid registration_access_token in Authorization header.
  */
 export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // The platform can turn dynamic client registration off for tenants.
+  const capabilityRefusal = await dynamicClientRegistrationRefusal(c.env);
+  if (capabilityRefusal) return c.json(capabilityRefusal, 403);
   try {
     const tenantId = getTenantIdFromContext(c);
     const issuerUrl = getRequestAwareIssuerUrl(c, tenantId);
@@ -1008,6 +1011,9 @@ async function clientConfigUpdateUnguarded(c: Context<{ Bindings: Env }>): Promi
  * Requires valid registration_access_token in Authorization header.
  */
 export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // The platform can turn dynamic client registration off for tenants.
+  const capabilityRefusal = await dynamicClientRegistrationRefusal(c.env);
+  if (capabilityRefusal) return c.json(capabilityRefusal, 403);
   try {
     const tenantId = getTenantIdFromContext(c);
 
@@ -1087,6 +1093,9 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
  * caller without it learns nothing about the tenant.
  */
 export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // The platform can turn dynamic client registration off for tenants.
+  const capabilityRefusal = await dynamicClientRegistrationRefusal(c.env);
+  if (capabilityRefusal) return c.json(capabilityRefusal, 403);
   const body = (await c.req.json().catch(() => null)) as { login_ui_url?: unknown } | null;
   const loginUiUrl = body?.login_ui_url;
   if (typeof loginUiUrl !== 'string' || loginUiUrl.trim() === '') {

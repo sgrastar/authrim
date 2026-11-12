@@ -25,7 +25,10 @@ import {
   hasGlobalAdminPermission,
   type AdminAuthContext,
   type CategoryName,
+  hasGlobalPlatformAuthority,
   type DatabaseAdapter,
+  type TenantCapability,
+  type TenantCapabilityState,
 } from '@authrim/ar-lib-core';
 import {
   TENANT_BACKUP_NO_IMPORT_AUTHORITY,
@@ -39,6 +42,7 @@ import {
   type SqliteDatasetInspectionPolicy,
 } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import { hasPlatformAuthorityForTenantEdit } from './routes/settings-v2/settings-authorization';
+import { SETTINGS_CATEGORY_CAPABILITY } from './capability-authorization';
 import { isRoleNameReserved } from './routes/admin-management/admin-role-authority';
 
 export const TENANT_SETTINGS_DOCUMENTS_DATASET = 'admin.tenant_settings_documents';
@@ -51,13 +55,18 @@ export function tenantBackupImportAuthority(
   auth: AdminAuthContext,
   actorId: string
 ): TenantBackupImportAuthority {
-  const platformSettingsCategories = (Object.keys(CATEGORY_SCOPE_CONFIG) as CategoryName[])
-    .filter(
-      (category) =>
-        categoryTenantEditRequiresPlatformAuthority(category) &&
-        hasPlatformAuthorityForTenantEdit(auth, category)
-    )
-    .sort();
+  const own: string[] = (Object.keys(CATEGORY_SCOPE_CONFIG) as CategoryName[]).filter(
+    (category) =>
+      categoryTenantEditRequiresPlatformAuthority(category) &&
+      hasPlatformAuthorityForTenantEdit(auth, category)
+  );
+  // A requester with global platform authority may also restore the settings of a capability the
+  // platform turned off for tenants (see admitSettings); the record is the same list, so the
+  // intent keeps its shape.
+  const capabilityCategories = hasGlobalPlatformAuthority(auth, 'admin:*')
+    ? Object.keys(SETTINGS_CATEGORY_CAPABILITY)
+    : [];
+  const platformSettingsCategories = [...new Set([...own, ...capabilityCategories])].sort();
   const permitted = hasGlobalAdminPermission(auth, '*');
   return {
     actorId,
@@ -173,6 +182,8 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
    * holds: rows of one execution batch are transformed before any of them is written.
    */
   loadBundleRoles(context: TenantBackupStepContext): Promise<readonly string[]>;
+  /** The platform's switch for a capability (default: every capability is on). */
+  capabilityState?: (capability: TenantCapability) => Promise<TenantCapabilityState>;
   now?: () => number;
 }) {
   const requests = new TenantBackupRequestStore(input.database);
@@ -352,6 +363,19 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
 
   async function admitSettings(context: TenantBackupStepContext, rowJson: string) {
     const category = text(parse(rowJson), 'category');
+    // The settings of a capability the platform turned off (or whose switch cannot be read) are
+    // restored only for a requester with global platform authority: a restored value would
+    // otherwise become effective when the capability returns. Execution stays closed meanwhile.
+    const capability = Object.hasOwn(SETTINGS_CATEGORY_CAPABILITY, category)
+      ? SETTINGS_CATEGORY_CAPABILITY[category]
+      : undefined;
+    if (
+      capability &&
+      input.capabilityState &&
+      (await input.capabilityState(capability)) !== 'on' &&
+      !(await authority(context)).platformSettingsCategories.includes(category)
+    )
+      refused();
     if (!categoryTenantEditRequiresPlatformAuthority(category as CategoryName)) return;
     if (!(await authority(context)).platformSettingsCategories.includes(category)) refused();
   }

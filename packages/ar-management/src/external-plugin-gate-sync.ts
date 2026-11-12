@@ -1,6 +1,8 @@
 /**
  * Keeps ar-plugin-runner's tenant gate for external plugin code in step with the saved
- * `plugin.enabled`.
+ * `plugin.enabled`, and with the platform's `tenant_capabilities.external_plugins` switch: while
+ * that is off the saved value is "off" for every tenant. A platform change reaches the gates by the
+ * periodic sweep (external-plugin-gate-sweep.ts), which looks at every open gate.
  *
  * The runner cannot read tenant settings and refuses to resolve any external (dynamic worker)
  * installation of a tenant whose gate is not open, so that gate, not this module and not the
@@ -25,6 +27,8 @@ import {
   createSettingsManager,
   requireDedicatedAdminDatabaseAdapter,
   settingsParentScopes,
+  TENANT_CAPABILITIES_CATEGORY,
+  tenantCapabilitySettingKey,
   type Env,
   type SettingScope,
   type TenantExternalGate,
@@ -41,7 +45,8 @@ export class ExternalPluginGateUnavailableError extends Error {
 
 /**
  * The tenant's saved `plugin.enabled` as the settings API holds it: the canonical document, else
- * the environment variable, else off. Throws ExternalPluginGateUnavailableError when it cannot be
+ * the environment variable, else off, and off whatever it says while the platform has turned the
+ * `external_plugins` capability off (the platform's saved value is read the same way). Throws ExternalPluginGateUnavailableError when it cannot be
  * read (an unreadable setting is never "on").
  */
 export async function readSavedExternalPluginSetting(env: Env, tenantId: string): Promise<boolean> {
@@ -60,6 +65,12 @@ export async function readSavedExternalPluginSetting(env: Env, tenantId: string)
       cacheTTL: 0,
     });
     manager.registerCategory(ALL_CATEGORY_META.plugin);
+    manager.registerCategory(ALL_CATEGORY_META[TENANT_CAPABILITIES_CATEGORY]);
+    const capabilities = await manager.getAll(TENANT_CAPABILITIES_CATEGORY, { type: 'platform' });
+    const capabilityOn = capabilities.values[tenantCapabilitySettingKey('external_plugins')];
+    // Anything but an explicit boolean is not read as on or off: the gate is left as it is.
+    if (typeof capabilityOn !== 'boolean') throw new Error('capability_unreadable');
+    if (!capabilityOn) return false;
     const scope: SettingScope = { type: 'tenant', id: tenantId };
     const result = await manager.getAll('plugin', scope, {
       parents: settingsParentScopes('plugin', scope),

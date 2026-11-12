@@ -227,4 +227,89 @@ describe('tenant backup plugin configuration production port', () => {
       configuration: portable,
     });
   });
+
+  describe('while the platform has external_plugins off', () => {
+    const OFF = {
+      'settings:platform:tenant-capabilities': JSON.stringify({
+        'tenant_capabilities.external_plugins': false,
+      }),
+    };
+    const portable = {
+      tenantId: 'tenant-a',
+      sourceInstallationId: 'source-installation',
+      pluginId: 'dynamic',
+      versionDigest: 'd'.repeat(64),
+      contractVersion: 1 as const,
+      enabled: true,
+      credentials: { apiKey: 'secret' },
+      resources: [],
+      mutationScopes: [],
+    };
+
+    async function capturedConfiguration(source: Env) {
+      createTenantBackupPluginConfigurationPorts(source);
+      const snapshot = mocks.createSnapshot.mock.calls.at(-1)![0] as {
+        capture(context: AdapterContext): AsyncIterable<Uint8Array>;
+      };
+      const rows: Uint8Array[] = [];
+      for await (const row of snapshot.capture(context())) rows.push(row);
+      return decodePortablePluginConfiguration(
+        new TextDecoder().decode(rows[0]).trimEnd(),
+        'tenant-a'
+      );
+    }
+
+    it('does not restore an external plugin installation, and says why', async () => {
+      const runner = {
+        listApprovedDynamicPlugins: vi.fn(async () => [
+          { pluginId: 'dynamic', activeVersionDigest: portable.versionDigest },
+        ]),
+        exportDynamicPluginBackup: vi.fn(async () => portable),
+        restoreDynamicPluginBackup: vi.fn(),
+        verifyDynamicPluginBackup: vi.fn(async () => true),
+      };
+      const env = {
+        ...environment(memoryKv(OFF), 'plugin-encryption-key-32-bytes-minimum'),
+        PLUGIN_RUNNER: runner,
+      } as unknown as Env;
+      const configuration = await capturedConfiguration(env);
+      const ports = createTenantBackupPluginConfigurationPorts(env);
+      await expect(ports.assertPluginSupported(configuration)).rejects.toThrow(
+        'backup_plugin_external_capability_disabled'
+      );
+      await expect(
+        ports.importPlugin({ signal: new AbortController().signal }, configuration)
+      ).rejects.toThrow('backup_plugin_external_capability_disabled');
+      expect(runner.restoreDynamicPluginBackup).not.toHaveBeenCalled();
+    });
+
+    it('still restores built-in plugin configuration', async () => {
+      const sourceEnv = environment(
+        memoryKv({ 'plugins:registry': registry }),
+        'source-plugin-encryption-key-32-bytes-minimum'
+      );
+      const sourceSettings = sourceEnv.SETTINGS as KVNamespace;
+      await sourceSettings.put(
+        'plugins:config:example-plugin:tenant:tenant-a',
+        JSON.stringify(
+          await encryptSecretFields(
+            { endpoint: 'https://example.test' },
+            [],
+            await getPluginEncryptionKey(sourceEnv)
+          )
+        )
+      );
+      await sourceSettings.put('plugins:enabled:example-plugin:tenant:tenant-a', 'true');
+      const configuration = await capturedConfiguration(sourceEnv);
+      const target = environment(
+        memoryKv({ 'plugins:registry': registry, ...OFF }),
+        'target-plugin-encryption-key-32-bytes-minimum'
+      );
+      const ports = createTenantBackupPluginConfigurationPorts(target);
+      await expect(ports.assertPluginSupported(configuration)).resolves.toBeUndefined();
+      await expect(
+        ports.importPlugin({ signal: new AbortController().signal }, configuration)
+      ).resolves.toBeUndefined();
+    });
+  });
 });

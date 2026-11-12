@@ -17,6 +17,10 @@ import {
 	type CategoryName
 } from '@authrim/ar-lib-core/types/settings/catalog';
 import {
+	isTenantCapability,
+	type TenantCapability
+} from '@authrim/ar-lib-core/types/settings/tenant-capabilities';
+import {
 	DEFAULT_SCOPE_PERMISSIONS,
 	type SettingScopeLevel
 } from '@authrim/ar-lib-core/types/settings/common';
@@ -30,6 +34,11 @@ export interface AdminAccess {
 	roles: readonly string[];
 	/** Permissions of all assigned roles together (`admin:<resource>:<action>`, `*`). */
 	permissions: readonly string[];
+	/**
+	 * Capabilities the platform has turned off for tenants (empty for a platform administrator,
+	 * who is exempt). Navigation leaves out what needs one of them.
+	 */
+	disabledCapabilities?: readonly TenantCapability[];
 }
 
 /** No session yet, or signed out: nothing is shown. */
@@ -40,12 +49,19 @@ export function accessFromSession(session: {
 	roles?: readonly string[];
 	permissions?: readonly string[];
 	is_platform_admin?: boolean;
+	disabled_capabilities?: readonly string[];
 }): AdminAccess {
 	return {
 		platform: session.is_platform_admin === true,
 		roles: session.roles ?? [],
-		permissions: session.permissions ?? []
+		permissions: session.permissions ?? [],
+		disabledCapabilities: (session.disabled_capabilities ?? []).filter(isTenantCapability)
 	};
+}
+
+/** The platform has turned this capability off for tenants (the Admin API refuses it). */
+export function isCapabilityDisabled(access: AdminAccess, capability: TenantCapability): boolean {
+	return access.disabledCapabilities?.includes(capability) === true;
 }
 
 /** `*` and `admin:users:*` cover the permissions under them, as on the API. */

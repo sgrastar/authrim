@@ -1,5 +1,6 @@
 import type { Context, Hono, Next } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import { capabilityRefusal } from './capability-authorization';
 import {
   ADMIN_PERMISSIONS,
   getLogger,
@@ -8,6 +9,7 @@ import {
   hasGlobalAdminRole,
   ADMIN_ROLE_GROUPS,
   type AdminAuthContext,
+  type TenantCapability,
 } from '@authrim/ar-lib-core';
 
 export type AdminRouteMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -19,6 +21,11 @@ export interface AdminRouteAccessRule {
   anyPermissions?: string[];
   roles?: string[];
   authenticated?: boolean;
+  /**
+   * The capability the platform can turn off for tenants (category `tenant-capabilities`): while it
+   * is off, a caller without global platform authority is refused (403 capability_disabled).
+   */
+  capability?: TenantCapability;
   description: string;
 }
 
@@ -38,6 +45,22 @@ function rule(input: RuleInput): AdminRouteAccessRule {
     ...input,
     methods: input.methods ?? ALL_METHODS,
   };
+}
+
+/**
+ * The rules with a capability set. `onlyMethods` limits it to the rules whose methods all lie in
+ * that list (a family whose reads stay open while its writes need the capability).
+ */
+function forCapability(
+  capability: TenantCapability,
+  rules: AdminRouteAccessRule[],
+  onlyMethods?: readonly AdminRouteMethod[]
+): AdminRouteAccessRule[] {
+  return rules.map((accessRule) =>
+    !onlyMethods || accessRule.methods.every((method) => onlyMethods.includes(method))
+      ? { ...accessRule, capability }
+      : accessRule
+  );
 }
 
 function authenticated(pattern: string, description: string): AdminRouteAccessRule {
@@ -768,6 +791,24 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     permissions: [ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE],
     description: 'saved login UI theme write, delete and apply',
   }),
+  // The settings of a capability change only while the platform has it on: the same permissions as
+  // the catch-all below (reads are not tagged and fall through to it).
+  ...forCapability('dynamic_client_registration', [
+    rule({
+      pattern: '/api/admin/tenants/:tenantId/settings/dcr',
+      methods: [...WRITE_METHODS, ...DELETE_METHODS],
+      permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+      description: 'scoped tenant settings write (dynamic client registration)',
+    }),
+  ]),
+  ...forCapability('external_plugins', [
+    rule({
+      pattern: '/api/admin/tenants/:tenantId/settings/plugin',
+      methods: [...WRITE_METHODS, ...DELETE_METHODS],
+      permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+      description: 'scoped tenant settings write (external plugins)',
+    }),
+  ]),
   ...byMethod(
     '/api/admin/tenants/:tenantId/settings/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -1848,28 +1889,37 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'diagnostic logging'
   ),
 
-  ...byMethod(
-    '/api/admin/webhooks',
-    ADMIN_PERMISSIONS.WEBHOOKS_READ,
-    ADMIN_PERMISSIONS.WEBHOOKS_WRITE,
-    ADMIN_PERMISSIONS.WEBHOOKS_DELETE,
-    'webhooks'
-  ),
-  ...byMethod(
-    '/api/admin/webhooks/*',
-    ADMIN_PERMISSIONS.WEBHOOKS_READ,
-    ADMIN_PERMISSIONS.WEBHOOKS_WRITE,
-    ADMIN_PERMISSIONS.WEBHOOKS_DELETE,
-    'webhooks'
-  ),
+  ...forCapability('webhooks', [
+    ...byMethod(
+      '/api/admin/webhooks',
+      ADMIN_PERMISSIONS.WEBHOOKS_READ,
+      ADMIN_PERMISSIONS.WEBHOOKS_WRITE,
+      ADMIN_PERMISSIONS.WEBHOOKS_DELETE,
+      'webhooks'
+    ),
+    ...byMethod(
+      '/api/admin/webhooks/*',
+      ADMIN_PERMISSIONS.WEBHOOKS_READ,
+      ADMIN_PERMISSIONS.WEBHOOKS_WRITE,
+      ADMIN_PERMISSIONS.WEBHOOKS_DELETE,
+      'webhooks'
+    ),
+  ]),
 
-  ...byMethod(
-    '/api/admin/jobs',
-    ADMIN_PERMISSIONS.JOBS_READ,
-    ADMIN_PERMISSIONS.JOBS_WRITE,
-    ADMIN_PERMISSIONS.JOBS_WRITE,
-    'admin jobs',
-    TENANT_ADMIN_ROLES
+  // Every write (POST/PUT/PATCH) under the jobs prefix creates bulk work (user import and its
+  // upload, bulk update, report generation, bulk organization members): it needs the bulk_jobs
+  // capability. Reads and DELETE stay open while it is off.
+  ...forCapability(
+    'bulk_jobs',
+    byMethod(
+      '/api/admin/jobs',
+      ADMIN_PERMISSIONS.JOBS_READ,
+      ADMIN_PERMISSIONS.JOBS_WRITE,
+      ADMIN_PERMISSIONS.JOBS_WRITE,
+      'admin jobs',
+      TENANT_ADMIN_ROLES
+    ),
+    WRITE_METHODS
   ),
   rule({
     pattern: '/api/admin/jobs/schedules',
@@ -1877,13 +1927,17 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     roles: PLATFORM_ADMIN_ROLES,
     description: 'platform R2 maintenance schedules and storage metrics',
   }),
-  ...byMethod(
-    '/api/admin/jobs/*',
-    ADMIN_PERMISSIONS.JOBS_READ,
-    ADMIN_PERMISSIONS.JOBS_WRITE,
-    ADMIN_PERMISSIONS.JOBS_WRITE,
-    'admin jobs',
-    TENANT_ADMIN_ROLES
+  ...forCapability(
+    'bulk_jobs',
+    byMethod(
+      '/api/admin/jobs/*',
+      ADMIN_PERMISSIONS.JOBS_READ,
+      ADMIN_PERMISSIONS.JOBS_WRITE,
+      ADMIN_PERMISSIONS.JOBS_WRITE,
+      'admin jobs',
+      TENANT_ADMIN_ROLES
+    ),
+    WRITE_METHODS
   ),
   ...byMethod(
     '/api/admin/support-ops',
@@ -2374,6 +2428,19 @@ function insufficientPermissionsResponse(
   );
 }
 
+function capabilityRefusedResponse(
+  c: Context<{ Bindings: Env }>,
+  refusal: NonNullable<Awaited<ReturnType<typeof capabilityRefusal>>>
+): Response {
+  getLogger(c).module('ADMIN-ROUTE-ACCESS').warn('Admin route refused by a capability switch', {
+    method: c.req.method,
+    path: c.req.path,
+    capability: refusal.body.capability,
+    reason: refusal.body.error,
+  });
+  return c.json(refusal.body, refusal.status, refusal.status === 503 ? { 'Retry-After': '5' } : {});
+}
+
 /**
  * The gate decides on the path the router dispatches on: Hono's own `c.req.path` (escapes of
  * ordinary characters decoded; an escaped reserved character such as %2F stays escaped and stays
@@ -2414,7 +2481,20 @@ export function enforceDeclaredAdminRouteAccess() {
       return insufficientPermissionsResponse(c);
     }
 
-    if (!isAllowedByRule(authContext, accessRule)) {
+    // A capability the platform has turned off is closed to everyone but a caller with global
+    // platform authority. It is judged before the permission, so the caller learns the real reason
+    // (the list of disabled capabilities is in the admin session for any signed-in caller anyway).
+    // When the switch cannot be read, a caller who would be allowed gets 503 (never "enabled");
+    // one the rule refuses anyway is refused as before.
+    const allowedByRule = isAllowedByRule(authContext, accessRule);
+    if (accessRule.capability) {
+      const refusal = await capabilityRefusal(c.env, authContext, accessRule.capability, {
+        permitted: allowedByRule,
+      });
+      if (refusal) return capabilityRefusedResponse(c, refusal);
+    }
+
+    if (!allowedByRule) {
       return insufficientPermissionsResponse(c, accessRule);
     }
 

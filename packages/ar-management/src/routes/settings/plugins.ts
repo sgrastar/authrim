@@ -45,6 +45,7 @@ import {
   EXTERNAL_PLUGIN_EXECUTION_NOT_ALLOWED,
   isExternalPluginExecutionAllowed,
   humanVerificationConfigValid,
+  getTenantCapabilityState,
 } from '@authrim/ar-lib-core';
 import {
   maskSensitiveFieldsRecursive,
@@ -81,6 +82,11 @@ import {
   humanVerificationSettingsRequiring,
 } from '../../human-verification-guards';
 import { writeAdminAuditLog } from '../../admin-shared';
+import {
+  capabilityDisabledRefusal,
+  capabilityRefusal,
+  capabilityUnavailableRefusal,
+} from '../../capability-authorization';
 import { ExternalPluginGateUnavailableError } from '../../external-plugin-gate-sync';
 import {
   listProviderReprojectionStatus,
@@ -306,6 +312,19 @@ export interface ResolvedPluginConfigState {
 /**
  * Get admin auth context from request
  */
+/**
+ * The platform's `external_plugins` capability for the Admin API: null when the caller may manage
+ * external plugins now (capability on, or the caller has global platform authority), else the
+ * refusal (403 capability_disabled, or 503 when the switch cannot be read). Built-in plugins never
+ * ask. Managing is not executing: the runtime gate stays closed for tenants while it is off.
+ */
+async function externalPluginCapabilityRefusal(
+  c: Context<{ Bindings: Env }>
+): Promise<Response | null> {
+  const refusal = await capabilityRefusal(c.env, getAdminAuth(c) ?? undefined, 'external_plugins');
+  return refusal ? c.json(refusal.body, refusal.status) : null;
+}
+
 function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (c as any).get('adminAuth') as AdminAuthContext | null;
@@ -1323,6 +1342,8 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = getRequestTenantId(c, body.tenant_id);
   const entry = registry[pluginId];
   if (entry.backendKind === 'dynamic_worker') {
+    const capabilityRefused = await externalPluginCapabilityRefusal(c);
+    if (capabilityRefused) return capabilityRefused;
     if (!tenantId || Array.isArray(body.config)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -1509,6 +1530,24 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
 
   const entry = registry[pluginId];
   if (entry.backendKind === 'dynamic_worker') {
+    // Enabling is execution for a tenant, so it is closed for everyone, a caller with global
+    // platform authority included, while the platform has external_plugins off. (Configuring
+    // credentials stays possible for such a caller.) An unreadable switch refuses with 503.
+    const capabilityState = await getTenantCapabilityState(c.env, 'external_plugins');
+    if (capabilityState === 'off') {
+      return c.json(
+        {
+          ...capabilityDisabledRefusal('external_plugins').body,
+          error_description:
+            'External plugins are turned off for tenants by the platform, so the plugin was not enabled: nothing can execute for tenants while the capability is off.',
+        },
+        403
+      );
+    }
+    if (capabilityState === 'unknown') {
+      const unavailable = capabilityUnavailableRefusal('external_plugins');
+      return c.json(unavailable.body, unavailable.status);
+    }
     if (!tenantId) return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     let installation;
     try {

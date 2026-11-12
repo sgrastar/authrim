@@ -14,6 +14,9 @@ import { getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   AdminGroupRepository,
+  hasGlobalPlatformAuthority,
+  listDisabledTenantCapabilities,
+  type AdminAuthContext,
   getTenantIdFromContext,
   parseAllowedOrigins,
   isAllowedOrigin,
@@ -260,6 +263,16 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       log.warn('Failed to read admin groups', { action: 'fetch_admin_groups' });
     }
 
+    // The capabilities the platform has turned off for tenants. A caller with global platform
+    // authority is exempt (the Admin API lets it through), so its list is empty; the list is also
+    // empty when the switches cannot be read (the Admin API gate answers 503 in that case).
+    const adminAuth = (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
+      | AdminAuthContext
+      | undefined;
+    const disabledCapabilities = hasGlobalPlatformAuthority(adminAuth, 'admin:*')
+      ? []
+      : ((await listDisabledTenantCapabilities(c.env)) ?? []);
+
     return c.json({
       active: true,
       user_id: session.admin_user_id,
@@ -271,6 +284,7 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       permissions: Array.from(permissions).sort(),
       admin_scope: isPlatformAdmin ? 'platform' : 'tenant',
       is_platform_admin: isPlatformAdmin,
+      disabled_capabilities: disabledCapabilities,
       expires_at: session.expires_at,
       created_at: session.created_at,
       last_login_at: lastLoginAt,

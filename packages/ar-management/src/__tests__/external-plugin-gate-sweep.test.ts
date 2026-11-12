@@ -121,6 +121,59 @@ describe('the reconciliation of the gates for external plugin code', () => {
     expect(service.gates['tenant-a']).toMatchObject({ allowed: false });
   });
 
+  it('closes every open gate when the platform turns external_plugins off, and reopens them when it is back on', async () => {
+    const service = runner(
+      {
+        'tenant-a': { allowed: true, generation: 3 },
+        'tenant-b': { allowed: true, generation: 1 },
+      },
+      ['tenant-a', 'tenant-b']
+    );
+    const { env, store } = environment(service, { 'tenant-a': true, 'tenant-b': true });
+    store.set(
+      'settings:platform:tenant-capabilities',
+      JSON.stringify({ 'tenant_capabilities.external_plugins': false })
+    );
+
+    await expect(sweepExternalPluginGates(env, logger())).resolves.toMatchObject({
+      examined: 2,
+      closed: 2,
+      opened: 0,
+    });
+    expect(service.gates['tenant-a']).toMatchObject({ allowed: false });
+    expect(service.gates['tenant-b']).toMatchObject({ allowed: false });
+
+    // Back on: the tenants that allow it and still have an enabled installation are opened again.
+    store.set(
+      'settings:platform:tenant-capabilities',
+      JSON.stringify({ 'tenant_capabilities.external_plugins': true })
+    );
+    await expect(sweepExternalPluginGates(env, logger())).resolves.toMatchObject({
+      examined: 2,
+      opened: 2,
+    });
+    expect(service.gates['tenant-a']).toMatchObject({ allowed: true });
+  });
+
+  it('leaves the gates as they are when the switch cannot be read (a failed read is retried next pass)', async () => {
+    const service = runner({ 'tenant-a': { allowed: true, generation: 3 } });
+    const { env, store } = environment(service, { 'tenant-a': true });
+    const settings = (
+      env as unknown as { SETTINGS: { get: (key: string) => Promise<string | null> } }
+    ).SETTINGS;
+    settings.get = async (key: string) => {
+      if (key === 'settings:platform:tenant-capabilities') throw new Error('kv down');
+      return store.get(key) ?? null;
+    };
+
+    await expect(sweepExternalPluginGates(env, logger())).resolves.toMatchObject({
+      examined: 1,
+      failed: 1,
+      closed: 0,
+    });
+    expect(service.gates['tenant-a']).toMatchObject({ allowed: true });
+  });
+
   it('keeps open the gate of a tenant that still allows it, with no runner call but the listing', async () => {
     const service = runner({ 'tenant-a': { allowed: true, generation: 1 } });
     const { env } = environment(service, { 'tenant-a': true });

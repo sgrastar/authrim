@@ -46,6 +46,7 @@ import { SELF_SERVICE_CATEGORY_META } from './self-service';
 import { SERVICE_SITE_CATEGORY_META } from './service-site';
 import { IDENTITY_MAPPING_CATEGORY_META } from './identity-mapping';
 import { BULK_APPLY_CATEGORY_META } from './bulk-apply';
+import { TENANT_CAPABILITIES_CATEGORY_META } from './tenant-capabilities';
 import { INSTITUTION_CATEGORY_META } from './institution';
 
 /**
@@ -111,6 +112,8 @@ export const ALL_CATEGORY_META = {
   'identity-mapping': IDENTITY_MAPPING_CATEGORY_META,
   // Limits of the bulk apply (platform)
   'bulk-apply': BULK_APPLY_CATEGORY_META,
+  // Capabilities the platform can turn off for tenants (platform)
+  'tenant-capabilities': TENANT_CAPABILITIES_CATEGORY_META,
   // The institution a tenant stands for: its scopes and name (the platform sets them)
   institution: INSTITUTION_CATEGORY_META,
 } as const;
@@ -283,6 +286,10 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   },
   // The bulk apply's limits: the platform's alone.
   'bulk-apply': {
+    allowedScopes: ['platform'],
+  },
+  // The capability switches: the platform's alone.
+  'tenant-capabilities': {
     allowedScopes: ['platform'],
   },
 

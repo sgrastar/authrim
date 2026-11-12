@@ -89,3 +89,45 @@ describe('initialAccessTokenMiddleware', () => {
     expect(env.INITIAL_ACCESS_TOKENS?.delete).not.toHaveBeenCalled();
   });
 });
+
+describe('initialAccessTokenMiddleware and the dynamic client registration capability', () => {
+  const capabilityEnv = (value: boolean | 'down'): Env => {
+    const settings = {
+      get: vi.fn(async (key: string) => {
+        if (value === 'down') throw new Error('kv down');
+        return key === 'settings:platform:tenant-capabilities'
+          ? JSON.stringify({ 'tenant_capabilities.dynamic_client_registration': value })
+          : null;
+      }),
+      put: vi.fn(),
+      delete: vi.fn(),
+      list: vi.fn(),
+      getWithMetadata: vi.fn(),
+    } as unknown as KVNamespace;
+    return { DCR_REQUIRE_INITIAL_ACCESS_TOKEN: 'false', SETTINGS: settings } as unknown as Env;
+  };
+
+  it('refuses with access_denied while off, before anything else', async () => {
+    const response = await createApp().request(
+      '/register',
+      { method: 'POST' },
+      capabilityEnv(false)
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'access_denied',
+      error_description: 'Dynamic Client Registration is disabled for this tenant',
+    });
+  });
+
+  it('passes while on, and when the switch cannot be read (the earlier behaviour)', async () => {
+    for (const value of [true, 'down'] as const) {
+      const response = await createApp().request(
+        '/register',
+        { method: 'POST' },
+        capabilityEnv(value)
+      );
+      expect(response.status).toBe(201);
+    }
+  });
+});

@@ -5,6 +5,8 @@ import {
   resolveTenantDatabaseSourceFromRegistry,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   getSessionRevocationStore,
+  createAuditLog,
+  getTenantCapabilityState,
   type DatabaseAdapter,
   type Env,
   type EventPublishOptions,
@@ -24,6 +26,61 @@ export interface AccountWebhookRow {
   attempts: number;
 }
 
+/**
+ * Rows removed per shard per run while webhooks are off. Dropping needs no HTTP, so this is larger
+ * than the delivery batch (20). The delete binds the tenant, the lease time and one id per row, and
+ * D1 allows 100 bound parameters per statement, so 90 leaves room.
+ */
+export const DROP_BATCH_PER_SHARD = 90;
+
+interface DroppedRow {
+  id: string;
+  event_type: string;
+  occurred_at: number | string;
+}
+
+/** What is recorded when the outbox drops events because webhooks are off: counts and times only. */
+export interface DroppedOutboxAuditEntry {
+  tenantId: string;
+  userId: string;
+  action: 'webhook.outbox.dropped';
+  resource: string;
+  resourceId: string;
+  ipAddress: string;
+  userAgent: string;
+  metadata: string;
+  severity: 'warning';
+}
+
+function droppedAuditEntry(
+  tenantId: string,
+  rows: DroppedRow[],
+  nowMs: number
+): DroppedOutboxAuditEntry {
+  const eventTypes: Record<string, number> = {};
+  const times = rows.map((row) => Number(row.occurred_at));
+  for (const row of rows) eventTypes[row.event_type] = (eventTypes[row.event_type] ?? 0) + 1;
+  return {
+    tenantId,
+    userId: 'system',
+    action: 'webhook.outbox.dropped',
+    resource: 'account_webhook_outbox',
+    resourceId: tenantId,
+    ipAddress: 'unknown',
+    userAgent: 'account-webhook-outbox',
+    metadata: JSON.stringify({
+      capability: 'webhooks',
+      reason: 'capability_disabled',
+      dropped: rows.length,
+      event_types: eventTypes,
+      oldest_occurred_at: Math.min(...times),
+      newest_occurred_at: Math.max(...times),
+      recorded_at: nowMs,
+    }),
+    severity: 'warning',
+  };
+}
+
 type Publish = (payload: EventPublishPayload, options: EventPublishOptions) => Promise<boolean>;
 
 /** Bounded, lease-fenced, at-least-once delivery. No PII or current user lookup in the payload. */
@@ -36,8 +93,10 @@ export async function processAccountWebhookOutbox(
     snapshotAdapters?: (tenantId: string) => Promise<DatabaseAdapter[]>;
     publisher?: (tenantId: string) => Promise<Publish>;
     deletionReady?: (tenantId: string, userId: string) => Promise<boolean>;
+    /** Records events dropped while webhooks are off (default: the audit log). */
+    auditDropped?: (entry: DroppedOutboxAuditEntry) => Promise<void>;
   } = {}
-): Promise<{ delivered: number; deferred: number }> {
+): Promise<{ delivered: number; deferred: number; dropped?: number }> {
   const now = options.now ?? Date.now;
   const publisher =
     options.publisher ??
@@ -66,8 +125,92 @@ export async function processAccountWebhookOutbox(
       );
       return state.lifecycle === 'deleted';
     });
+  // The platform can turn webhooks off for tenants. While it is off, events that become due are
+  // discarded as they are processed: the rows are removed (after the audit record), at most
+  // DROP_BATCH_PER_SHARD per shard per run. Nothing is marked for later: a row still pending at the
+  // moment the capability is turned back on (beyond that batch, or kept because the record could
+  // not be written) is delivered then, like any pending row. An unreadable switch is not "off": the
+  // rows are delivered as before.
+  const capability = await getTenantCapabilityState(env, 'webhooks');
+  if (capability === 'unknown') {
+    log.warn('Tenant capability switch could not be read; treating the capability as enabled', {
+      capability: 'webhooks',
+    });
+  }
+  const webhooksOff = capability === 'off';
+  let dropped = 0;
   let delivered = 0;
   let deferred = 0;
+  if (webhooksOff) {
+    const audit = options.auditDropped ?? ((entry) => createAuditLog(env, entry));
+    for (const target of targets) {
+      // 1. Find what is due, on every shard of the tenant.
+      const due: Array<{ adapter: DatabaseAdapter; rows: DroppedRow[] }> = [];
+      for (const { adapter, bindingRef } of target.adapters) {
+        try {
+          const rows = await adapter.query<DroppedRow>(
+            `SELECT id, event_type, occurred_at FROM account_webhook_outbox
+             WHERE tenant_id = ? AND delivered_at IS NULL
+             AND next_attempt_at <= ? AND lease_until <= ? ORDER BY occurred_at, id LIMIT ${DROP_BATCH_PER_SHARD}`,
+            [target.tenantId, now(), now()],
+            { consistencyClass: 'primary_required' }
+          );
+          if (rows.length > 0) due.push({ adapter, rows });
+        } catch {
+          log.warn('Account webhook reconciliation deferred', {
+            tenantId: target.tenantId,
+            bindingRef,
+          });
+        }
+      }
+      const rows = due.flatMap((entry) => entry.rows);
+      if (rows.length > 0) {
+        // 2. The record comes first. If it cannot be written, nothing is removed: the rows stay
+        //    and the next run tries again, so no event is ever lost without a record. (If a delete
+        //    then fails after the record was written, the next run records those rows again: a
+        //    duplicate record, never a missing one. The stores are separate databases, so one
+        //    transaction across the audit log and the outbox is not available.)
+        try {
+          await audit(droppedAuditEntry(target.tenantId, rows, now()));
+        } catch {
+          log.warn('Account webhook outbox rows kept: the drop could not be recorded', {
+            tenantId: target.tenantId,
+            pending: rows.length,
+          });
+          continue;
+        }
+        // 3. Remove them.
+        for (const { adapter, rows: shardRows } of due) {
+          try {
+            const removed = await adapter.execute(
+              `DELETE FROM account_webhook_outbox WHERE tenant_id = ? AND delivered_at IS NULL
+               AND lease_until <= ? AND id IN (${shardRows.map(() => '?').join(', ')})`,
+              [target.tenantId, now(), ...shardRows.map((row) => row.id)]
+            );
+            dropped += removed.rowsAffected ?? 0;
+          } catch {
+            log.warn('Account webhook reconciliation deferred', { tenantId: target.tenantId });
+          }
+        }
+      }
+      for (const { adapter } of target.adapters) {
+        try {
+          await adapter.execute(
+            'DELETE FROM account_webhook_outbox WHERE tenant_id = ? AND delivered_at < ?',
+            [target.tenantId, now() - 30 * 86400_000]
+          );
+        } catch {
+          log.warn('Account webhook cleanup deferred', { tenantId: target.tenantId });
+        }
+      }
+    }
+    if (dropped > 0) {
+      log.warn('Account webhook outbox rows dropped: webhooks are turned off for tenants', {
+        dropped,
+      });
+    }
+    return { delivered: 0, deferred: 0, dropped };
+  }
   for (const target of targets) {
     let publish: Publish | undefined;
     for (const { adapter, bindingRef } of target.adapters) {
