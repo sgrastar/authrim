@@ -132,6 +132,14 @@ export interface Phase5InstalledAdapterPorts {
     planDigest: string
   ): Promise<Pick<DatabaseAdapter, 'query'>>;
   loadExternalPrerequisites(context: TenantBackupStepContext, planDigest: string): Promise<unknown>;
+  /**
+   * Non-blocking preview warnings about the target (for example a platform profile the bundle's
+   * Flows name which the target lacks). Shown in the preview only; never gates activation.
+   */
+  loadPreviewWarnings?(
+    context: TenantBackupStepContext,
+    planDigest: string
+  ): Promise<readonly unknown[]>;
   loadDeliverySafety(context: TenantBackupStepContext, planDigest: string): Promise<unknown>;
 }
 
@@ -495,13 +503,17 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         ...input.ports.import,
         ...otherStores,
         async previewRestore(context, planDigest) {
-          const [prerequisites, deliverySafety] = await Promise.all([
+          const [prerequisites, warnings, deliverySafety] = await Promise.all([
             input.ports.loadExternalPrerequisites(context, planDigest),
+            input.ports.loadPreviewWarnings?.(context, planDigest) ?? [],
             input.ports.loadDeliverySafety(context, planDigest),
           ]);
           return createTenantBackupRestorePreview({
             planDigest,
-            prerequisites,
+            // A non-array stays as it is, for the strict parser to refuse.
+            prerequisites: Array.isArray(prerequisites)
+              ? [...(prerequisites as unknown[]), ...warnings]
+              : prerequisites,
             deliverySafety,
           });
         },

@@ -24,7 +24,6 @@ export const arProfileLayer: { [K in keyof typeof jaProfileLayer]: string } = {
 	'pl.revertBody': 'تُحذف القيم التي تم تغييرها لهذا المستأجر وتُطبَّق قيم المنصة.',
 	'pl.revertSuccess': 'تُستخدم الآن قيم المنصة',
 	'pl.revertFailed': 'تعذّرت العودة إلى قيم المنصة',
-	'pl.revertPartial': 'عاد جزء فقط إلى قيم المنصة. أُعيد تحميل الحالة الحالية، حاول مرة أخرى.',
 	'pl.notEditable': 'لا تسمح المنصة بهذا التغيير، لذا لم يُحفظ',
 	'pl.creationNotAllowed': 'لا تسمح المنصة للمستأجرين بإضافة ملفات شخصية خاصة بهم.',
 	'pl.optionPlatform': '{name} (المنصة)'

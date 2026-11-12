@@ -282,6 +282,18 @@ export interface SettingsCanonicalStore {
     document: CanonicalSettingsDocument,
     history?: IdentityMappingLevelHistoryInput
   ): Promise<boolean>;
+  /**
+   * Save several documents at once, each only if still at its version: all of them or none
+   * (false). Optional: a store without it cannot save a change across categories.
+   */
+  compareAndSetMany?(
+    writes: ReadonlyArray<{
+      category: string;
+      scope: SettingScope;
+      expectedVersion: string;
+      document: CanonicalSettingsDocument;
+    }>
+  ): Promise<boolean>;
   markProjected(category: string, scope: SettingScope, version: string): Promise<void>;
   /**
    * Ask for this version to be projected again by the scheduled retry. Does nothing when a
@@ -695,22 +707,13 @@ export class SettingsManager {
     return result.values[key];
   }
 
-  /**
-   * Patch settings (partial update with optimistic locking)
-   *
-   * Rules:
-   * - ifMatch is required and must match current version
-   * - Partial success is OK (some keys may be rejected)
-   * - Version updates if anything was applied
-   * - validate() has no side effects - always reject, never auto-fix
-   */
-  async patch(
+  /** What a PATCH would do to one document (nothing saved); throws on a version conflict. */
+  private async decide(
     category: string,
     scope: SettingScope,
     request: SettingsPatchRequest,
-    actor: string,
-    options: SettingsPatchOptions = {}
-  ): Promise<SettingsPatchResult> {
+    options: SettingsPatchOptions
+  ) {
     const meta = this.categoryMeta.get(category);
     if (!meta) {
       throw new Error(`Unknown category: ${category}`);
@@ -859,6 +862,28 @@ export class SettingsManager {
       diff[key] = { before: original[key], after: DISABLED_MARKER };
     }
 
+    return { meta, kvData, original, currentVersion, applied, cleared, disabled, rejected, diff };
+  }
+
+  /**
+   * Patch settings (partial update with optimistic locking)
+   *
+   * Rules:
+   * - ifMatch is required and must match current version
+   * - Partial success is OK (some keys may be rejected)
+   * - Version updates if anything was applied
+   * - validate() has no side effects - always reject, never auto-fix
+   */
+  async patch(
+    category: string,
+    scope: SettingScope,
+    request: SettingsPatchRequest,
+    actor: string,
+    options: SettingsPatchOptions = {}
+  ): Promise<SettingsPatchResult> {
+    const { kvData, original, currentVersion, applied, cleared, disabled, rejected, diff } =
+      await this.decide(category, scope, request, options);
+
     if (options.dryRun) {
       return {
         version: currentVersion,
@@ -920,6 +945,90 @@ export class SettingsManager {
       rejected,
       ...(projection === 'pending' ? { projection } : {}),
     };
+  }
+
+  /**
+   * PATCHes of several categories of one scope, saved together: all of them or none. Each is
+   * decided as `patch` decides it (its `ifMatch` checked, what it rejects left out); the
+   * documents that change are then saved in one step of the canonical store, so a conflict on
+   * any of them saves none (ConflictError). Needs a canonical store that can do that.
+   */
+  async patchMany(
+    scope: SettingScope,
+    changes: ReadonlyArray<{
+      category: string;
+      request: SettingsPatchRequest;
+      options?: Omit<SettingsPatchOptions, 'dryRun'>;
+    }>,
+    actor: string
+  ): Promise<SettingsPatchResult[]> {
+    if (this.readOnly) throw new Error('Settings manager is read-only');
+    const store = this.canonicalStore;
+    if (!store?.compareAndSetMany) throw new Error('settings_atomic_save_unavailable');
+    if (new Set(changes.map((change) => change.category)).size !== changes.length)
+      throw new Error('settings_atomic_save_duplicate_category');
+    // The identity mapping choice keeps a history row with its save: one category at a time.
+    if (changes.some((change) => change.category === 'identity-mapping'))
+      throw new Error('settings_atomic_save_unsupported_category');
+    const decided = [];
+    for (const change of changes)
+      decided.push({
+        category: change.category,
+        ...(await this.decide(change.category, scope, change.request, change.options ?? {})),
+      });
+    const changed = decided.filter(
+      (item) => item.applied.length > 0 || item.cleared.length > 0 || item.disabled.length > 0
+    );
+    if (changed.length > 0) {
+      const saved = await store.compareAndSetMany(
+        changed.map((item) => ({
+          category: item.category,
+          scope,
+          expectedVersion: item.currentVersion,
+          document: { data: item.kvData, version: generateVersion(item.kvData) },
+        }))
+      );
+      if (!saved) {
+        // Name the version of the first document another save changed meanwhile.
+        for (const item of changed) {
+          const latest = await store.load(item.category, scope);
+          if (latest?.version !== item.currentVersion)
+            throw new ConflictError('Settings were updated by someone else. Please refresh.', {
+              currentVersion: latest?.version ?? item.currentVersion,
+            });
+        }
+        throw new ConflictError('Settings were updated by someone else. Please refresh.', {
+          currentVersion: changed[0].currentVersion,
+        });
+      }
+    }
+    const projections = new Map<string, 'applied' | 'pending'>();
+    for (const item of changed) {
+      projections.set(
+        item.category,
+        await this.projectLatest(item.category, scope, getKVKey(item.category, scope))
+      );
+      this.invalidateCache(item.category, scope);
+      if (this.auditCallback && Object.keys(item.diff).length > 0) {
+        await this.auditCallback({
+          event: 'settings.updated',
+          scope: scope.type,
+          scopeId: scope.type === 'platform' ? 'platform' : scope.id,
+          category: item.category,
+          diff: item.diff,
+          actor,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+    return decided.map((item) => ({
+      version: generateVersion(item.kvData),
+      applied: item.applied,
+      cleared: item.cleared,
+      disabled: item.disabled,
+      rejected: item.rejected,
+      ...(projections.get(item.category) === 'pending' ? { projection: 'pending' as const } : {}),
+    }));
   }
 
   /**

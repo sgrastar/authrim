@@ -114,6 +114,14 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_preview_blocked:
 		'この復元を承認する前に、表示された環境要件を解決してください。',
 	admin_dr_backup_tenant_blocker_external: '移行先resourceを解決してください: {id}',
+	admin_dr_backup_tenant_preview_profile_warning:
+		'このバックアップのFlowが指定しているプラットフォームプロファイルのうち、この環境に存在しない、または削除中のものがあります。承認は可能ですが、プロファイルを作成するかFlowを変更するまで、該当Flowはサインイン方法を提示できない、またはセッションを作成できません。',
+	admin_dr_backup_tenant_preview_profile_method: '認証方法プロファイル: {id}',
+	admin_dr_backup_tenant_preview_profile_session: 'セッションプロファイル: {id}',
+	admin_dr_backup_tenant_preview_profile_truncated:
+		'表示は先頭の一部だけです。ほかにもある可能性があります。',
+	admin_dr_backup_tenant_preview_profile_incomplete:
+		'このバックアップは大きいため、Flowが指定するプロファイルをすべては確認できませんでした。この環境にないものがある可能性があります。',
 	admin_dr_backup_tenant_blocker_delivery:
 		'旧環境が停止し、過去の配信が保留されたままであることを確認してください。',
 	admin_dr_backup_tenant_admin_mapping_title: 'Adminの対応付け',

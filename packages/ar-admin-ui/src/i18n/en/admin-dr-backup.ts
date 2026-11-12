@@ -115,6 +115,14 @@ const adminDrBackup = {
 	admin_dr_backup_tenant_preview_blocked:
 		'Resolve the listed environment prerequisites before approving this restore.',
 	admin_dr_backup_tenant_blocker_external: 'Resolve target resource: {id:string}',
+	admin_dr_backup_tenant_preview_profile_warning:
+		'Flows in this backup name platform profiles that this environment does not have, or is deleting. You can still approve, but those Flows will offer no sign-in method or make no session until you create the profile or change the Flow.',
+	admin_dr_backup_tenant_preview_profile_method: 'Authentication method profile: {id:string}',
+	admin_dr_backup_tenant_preview_profile_session: 'Session profile: {id:string}',
+	admin_dr_backup_tenant_preview_profile_truncated:
+		'Only the first of them are listed; there may be more.',
+	admin_dr_backup_tenant_preview_profile_incomplete:
+		'This backup is too large to check every profile its Flows name; some may be missing in this environment.',
 	admin_dr_backup_tenant_blocker_delivery:
 		'Confirm the source is stopped and historical delivery remains on hold.',
 	admin_dr_backup_tenant_admin_mapping_title: 'Administrator mapping',

@@ -28,6 +28,7 @@
 	import { provideBusy } from '#lib/ui/busy/busy.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import AuthenticationMethodFields from './AuthenticationMethodFields.svelte';
+	import { withUnsetMethodsOn } from './authentication-method-fields';
 
 	interface Props {
 		client: AuthenticationMethodProfilesClient;
@@ -96,7 +97,10 @@
 	function setProfile(profile: AuthenticationMethodProfile) {
 		name = profile.name;
 		nameBeforeEdit = profile.name;
-		values = structuredClone(profile.values);
+		values =
+			profile.id === 'default'
+				? structuredClone(profile.values)
+				: withUnsetMethodsOn(profile.values);
 		version = profile.version;
 		isSystem = profile.is_system;
 		layer = profile.layer;
@@ -116,7 +120,8 @@
 			if (target === 'new') {
 				name = '';
 				nameBeforeEdit = '';
-				values = structuredClone(profile.values);
+				// Made from the Default's values: what it leaves unset is allowed, so it starts on.
+				values = withUnsetMethodsOn(profile.values);
 				version = 0;
 				isSystem = false;
 				layer = null;

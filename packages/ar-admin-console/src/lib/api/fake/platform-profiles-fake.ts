@@ -10,6 +10,8 @@ export interface FakePlatformProfilesOptions {
 	inUse?: string[];
 	/** How many profiles the platform may hold (409 limit_reached past it). */
 	limit?: number;
+	/** How many tenants keep a copy of a profile now (the dev mock counts the tenants' fake). */
+	overridingTenants?: (id: string) => number;
 }
 
 /** The platform's profiles of one kind, in memory (`pmp_` / `psp_` ids). */
@@ -21,7 +23,12 @@ export function createFakePlatformProfiles(
 	const profiles = new Map<string, PlatformProfile>();
 	for (const profile of initial) profiles.set(profile.id, structuredClone(profile));
 	let next = 1;
-	const copy = <T>(value: T): T => structuredClone(value);
+	const copy = (profile: PlatformProfile): PlatformProfile => {
+		const answer = structuredClone(profile);
+		if (options.overridingTenants) answer.overridingTenants = options.overridingTenants(profile.id);
+		return answer;
+	};
+	const clone = <T>(value: T): T => structuredClone(value);
 	const found = (id: string) => {
 		const profile = profiles.get(id);
 		if (!profile) throw new ApiError(404, 'not_found', 'Platform profile not found');
@@ -63,7 +70,7 @@ export function createFakePlatformProfiles(
 			const profile: PlatformProfile = {
 				id: `${idPrefix}${next++}`,
 				name: input.name,
-				values: copy(input.values),
+				values: clone(input.values),
 				version: 1,
 				locked: false,
 				state: 'active',
@@ -84,7 +91,7 @@ export function createFakePlatformProfiles(
 			const profile = {
 				...before,
 				name: input.name,
-				values: copy(input.values),
+				values: clone(input.values),
 				version: version + 1,
 				updated_at: Date.now()
 			};

@@ -9,6 +9,7 @@ import { DatabaseTenantBackupRestorePlanInventory } from '@authrim/ar-lib-core/s
 import {
   decodeTenantBackupRestoreApprovalCursor,
   encodeTenantBackupRestoreApprovalCursor,
+  isTenantBackupRestorePreviewCurrent,
   type TenantBackupRestorePreview,
 } from '@authrim/ar-lib-core/services/tenant-portability/restore-preview';
 import { runSqliteRestoreSequenceStep } from '@authrim/ar-lib-core/services/tenant-portability/restore-sqlite-sequence';
@@ -348,7 +349,7 @@ export async function runTenantBackupImportOperationStep(
     if (
       preview.blockers.length > 0 ||
       cursor.preview.blockers.length > 0 ||
-      JSON.stringify(preview) !== JSON.stringify(cursor.preview)
+      !isTenantBackupRestorePreviewCurrent(cursor.preview, preview)
     )
       fail();
     await adapter.assertRestoreApproval?.(context, cursor.planDigest);

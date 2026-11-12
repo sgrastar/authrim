@@ -35,7 +35,11 @@ import {
   reconcileRunnerExternalGate,
   setRunnerExternalGate,
 } from '../../external-plugin-gate-sync';
-import { gateStepUpSettingsPatch, verifyProfileSwitch } from './step-up-settings';
+import {
+  gateStepUpSettingsPatch,
+  patchTouchesStepUpSettings,
+  verifyProfileSwitch,
+} from './step-up-settings';
 import type { ProfileSwitchGuard } from '../../profile-switch-verify';
 import { identityMappingReferenceProblem } from './identity-mapping-reference';
 import { guardTenantSettingsChangeForLite, patchTouchesLiteMode } from './lite-settings-guard';
@@ -771,4 +775,67 @@ export async function applyTenantSettingsChange(
       throw error;
     }
   });
+}
+
+/**
+ * The categories whose changes can be saved together (`saveTenantSettingsTogether`): those a
+ * save of has nothing to do before or after it beyond the checks `applyTenantSettingsChange`
+ * runs (no plugin gate, no lite guard, no step-up, no cache to clear).
+ */
+const TOGETHER_CATEGORIES: ReadonlySet<CategoryName> = new Set<CategoryName>(['session', 'oauth']);
+
+/**
+ * Saves changes of several categories of one tenant together: all of them or none. Each change
+ * must have been checked first with `applyTenantSettingsChange({ dryRun: true })` (permissions,
+ * the Default layer, validations); the versions they name are checked again here, so a document
+ * saved by someone else since that check saves nothing (409). Null when saved.
+ */
+export async function saveTenantSettingsTogether(input: {
+  c: TenantSettingsContext;
+  adminAuth: AdminAuthContext | undefined;
+  tenantId: string;
+  changes: ReadonlyArray<{
+    category: CategoryName;
+    body: { ifMatch: string; set: Record<string, unknown>; clear: string[] };
+  }>;
+}): Promise<Response | null> {
+  const { c, tenantId } = input;
+  for (const change of input.changes) {
+    if (!TOGETHER_CATEGORIES.has(change.category) || patchTouchesStepUpSettings(change.body))
+      throw new Error('settings_together_unsupported');
+  }
+  const scope: SettingScope = { type: 'tenant', id: tenantId };
+  const response = await runTenantBackupCoveredMutation({
+    env: c.env,
+    tenantId,
+    run: async () => {
+      const manager = getSettingsManager(c.env, c, true, false);
+      try {
+        await manager.patchMany(
+          scope,
+          input.changes.map((change) => ({
+            category: change.category,
+            request: change.body,
+            options: { parents: settingsParentScopes(change.category, scope) },
+          })),
+          input.adminAuth?.userId ?? 'unknown'
+        );
+        return new Response(null, { status: 204 });
+      } catch (error) {
+        if (!(error instanceof ConflictError)) throw error;
+        for (const change of input.changes)
+          await recordSettingsAuditFailure(c, {
+            category: change.category,
+            scope,
+            reason: 'version_conflict',
+            metadata: { current_version: error.currentVersion },
+          });
+        return c.json(
+          { error: 'conflict', message: error.message, currentVersion: error.currentVersion },
+          409
+        );
+      }
+    },
+  });
+  return response.status === 204 ? null : response;
 }

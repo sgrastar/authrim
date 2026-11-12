@@ -13,7 +13,11 @@ import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentica
 import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
 import { createFakePlatformProfiles } from '#lib/api/fake/platform-profiles-fake.js';
 import type { PlatformProfile, PlatformProfilesClient } from '#lib/api/platform-profiles.js';
-import { fakeLayer, fakeProfileRow, type FakeProfile } from '#lib/api/fake/profile-fake-core.js';
+import {
+	fakeProfileRow,
+	type FakeProfile,
+	type FakeProfileCopy
+} from '#lib/api/fake/profile-fake-core.js';
 import type { AuthenticationMethodProfilesClient } from '#lib/api/authentication-method-profiles.js';
 import type { SessionProfilesClient } from '#lib/api/session-profiles.js';
 import { MOCK_CLIENTS } from '#lib/api/fake/clients-fake.js';
@@ -137,58 +141,31 @@ async function handleSettings(
 	return null;
 }
 
-/** In-memory sign-in method and session profiles; reset when the dev server restarts. */
-// One platform profile each, so the platform layer shows in the lists and editors.
-const methodProfiles = createFakeAuthenticationMethodProfiles([
-	{
-		id: 'pmp_dev',
-		name: 'Platform: passkeys only',
-		is_system: false,
-		values: { 'authentication-methods.passkey.login_enabled': true },
-		version: 0,
-		created_at: null,
-		updated_at: null,
-		layer: fakeLayer({
-			platformValues: { 'authentication-methods.passkey.login_enabled': true }
-		})
-	}
-]);
-const sessionProfiles = createFakeSessionProfiles([
-	{
-		id: 'psp_dev',
-		name: 'Platform: short sessions',
-		is_system: false,
-		values: { 'session.default_ttl': 3_600_000 },
-		version: 0,
-		created_at: null,
-		updated_at: null,
-		layer: fakeLayer({
-			locked: true,
-			editable: false,
-			platformValues: { 'session.default_ttl': 3_600_000 }
-		})
-	}
-]);
-const row = (profile: unknown) => fakeProfileRow(profile as FakeProfile);
-const fakeErrorResponse = (error: unknown, fallback: { error: string; status: number }) =>
-	error instanceof ApiError && error.status !== 0
-		? json({ ...error.body, error: error.code, error_description: error.message }, error.status)
-		: json({ error: fallback.error }, fallback.status);
-
-/** The platform's own profiles (seeded with the ones the tenant lists). */
-const platformMethodProfiles = createFakePlatformProfiles('pmp_', [
-	{
-		id: 'pmp_dev',
-		name: 'Platform: passkeys only',
-		values: { 'authentication-methods.passkey.login_enabled': true },
-		version: 1,
-		locked: false,
-		state: 'active',
-		overridingTenants: 0,
-		created_at: null,
-		updated_at: null
-	}
-]);
+/**
+ * In-memory sign-in method and session profiles; reset when the dev server restarts. The
+ * platform's profiles live in the platform fakes only: the tenant's lists and pages read them
+ * from there each time (a lock, a change or a delete there shows at once), and the tenant's
+ * copies of them are counted on the platform's pages.
+ */
+const methodCopies = new Map<string, FakeProfileCopy>();
+const sessionCopies = new Map<string, FakeProfileCopy>();
+const platformMethodProfiles = createFakePlatformProfiles(
+	'pmp_',
+	[
+		{
+			id: 'pmp_dev',
+			name: 'Platform: passkeys only',
+			values: { 'authentication-methods.passkey.login_enabled': true },
+			version: 1,
+			locked: false,
+			state: 'active',
+			overridingTenants: 0,
+			created_at: null,
+			updated_at: null
+		}
+	],
+	{ overridingTenants: (id) => (methodCopies.has(id) ? 1 : 0) }
+);
 const platformSessionProfiles = createFakePlatformProfiles(
 	'psp_',
 	[
@@ -199,13 +176,26 @@ const platformSessionProfiles = createFakePlatformProfiles(
 			version: 1,
 			locked: true,
 			state: 'active',
-			overridingTenants: 1,
+			overridingTenants: 0,
 			created_at: null,
 			updated_at: null
 		}
 	],
-	{ inUse: ['psp_dev'] }
+	{ inUse: ['psp_dev'], overridingTenants: (id) => (sessionCopies.has(id) ? 1 : 0) }
 );
+const methodProfiles = createFakeAuthenticationMethodProfiles([], {
+	platform: platformMethodProfiles,
+	copies: methodCopies
+});
+const sessionProfiles = createFakeSessionProfiles([], {
+	platform: platformSessionProfiles,
+	copies: sessionCopies
+});
+const row = (profile: unknown) => fakeProfileRow(profile as FakeProfile);
+const fakeErrorResponse = (error: unknown, fallback: { error: string; status: number }) =>
+	error instanceof ApiError && error.status !== 0
+		? json({ ...error.body, error: error.code, error_description: error.message }, error.status)
+		: json({ error: fallback.error }, fallback.status);
 const platformRow = (profile: PlatformProfile) => {
 	const { overridingTenants, ...rest } = profile;
 	return { ...rest, overriding_tenants: overridingTenants };

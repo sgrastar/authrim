@@ -4,6 +4,7 @@
  * them (profile-layer.ts).
  */
 import { ApiError } from '../api-error';
+import type { PlatformProfile } from '../platform-profiles';
 import type { ProfileLayer } from '../profile-layer';
 
 export interface FakeProfile {
@@ -22,6 +23,23 @@ export interface FakeProfilesOptions {
 	defaultLayer?: ProfileLayer;
 	/** The platform does not let the tenant add profiles of its own. */
 	creationNotAllowed?: boolean;
+	/**
+	 * The platform's profiles of this kind, read on every call: the tenant sees them as they are
+	 * now (a lock, a change, a delete on the platform shows at once). Its copies of them are kept
+	 * in `copies`. Without it, the platform profiles are the ones given in `initial`.
+	 */
+	platform?: { list(): Promise<PlatformProfile[]> };
+	/** The tenant's copies of platform profiles (with `platform`; shared to count them there). */
+	copies?: Map<string, FakeProfileCopy>;
+}
+
+/** A tenant's copy of a platform profile. */
+export interface FakeProfileCopy {
+	values: Record<string, unknown>;
+	/** The copy's own version (what its next save names). */
+	copyVersion: number;
+	/** The platform profile's version the copy was made from. */
+	from: number;
 }
 
 /** A layer for a fake: a profile the tenant may change, nothing kept over the platform's. */
@@ -80,14 +98,52 @@ export function createFakeProfileStore(
 		return profile;
 	};
 	const copy = <T>(value: T): T => structuredClone(value);
+	const copies = options.copies ?? new Map<string, FakeProfileCopy>();
+	const platformVersions = new Map<string, number>();
+	/** The platform's profiles as the tenant lists them now, with its copies over them. */
+	async function sync() {
+		if (!options.platform) return;
+		const platform = (await options.platform.list()).filter((item) => item.state === 'active');
+		for (const [id, profile] of profiles)
+			if (profile.layer?.scope === 'platform') profiles.delete(id);
+		platformVersions.clear();
+		for (const item of platform) {
+			platformVersions.set(item.id, item.version);
+			const kept = copies.get(item.id);
+			// A locked profile sets the tenant's copy aside (kept, not applied).
+			const setAside = kept !== undefined && item.locked;
+			profiles.set(item.id, {
+				id: item.id,
+				name: item.name,
+				is_system: false,
+				values: copy(kept && !setAside ? kept.values : item.values),
+				version: item.version,
+				created_at: item.created_at,
+				updated_at: item.updated_at,
+				layer: fakeLayer({
+					platformValues: copy(item.values),
+					overridden: kept !== undefined && !setAside,
+					overrideInactive: setAside,
+					overrideInactiveReason: setAside ? 'locked' : null,
+					locked: item.locked,
+					editable: !item.locked,
+					platformUpdated: kept !== undefined && kept.from !== item.version,
+					copyVersion: kept?.copyVersion ?? null
+				})
+			});
+		}
+	}
 	return {
 		async list() {
+			await sync();
 			return [...profiles.values()].map(copy);
 		},
 		async get(id: string) {
+			await sync();
 			return copy(found(id));
 		},
 		async create(input: { name: string; values: Record<string, unknown> }) {
+			await sync();
 			if (options.creationNotAllowed) {
 				throw new ApiError(
 					403,
@@ -114,6 +170,7 @@ export function createFakeProfileStore(
 			version: number | string,
 			input: { name: string; values: Record<string, unknown> }
 		) {
+			await sync();
 			const before = found(id);
 			if (before.layer && !before.layer.editable) throw notEditable(before.layer);
 			if (before.version !== version) throw new Error('Profile changed');
@@ -129,14 +186,27 @@ export function createFakeProfileStore(
 			return copy(profile);
 		},
 		async remove(id: string) {
+			await sync();
+			if (found(id).layer?.scope === 'platform') throw new Error('A platform profile');
 			profiles.delete(id);
 		},
 		async saveCopy(id: string, version: number | null, values: Record<string, unknown>) {
+			await sync();
 			const before = found(id);
 			const layer = before.layer;
 			if (!layer || layer.scope !== 'platform') throw new Error('Not a platform profile');
 			if (!layer.editable) throw notEditable(layer);
 			if (layer.copyVersion !== version) throw new Error('Profile changed');
+			if (options.platform) {
+				copies.set(id, {
+					values: copy(values),
+					copyVersion: (version ?? 0) + 1,
+					// Saving a copy again keeps the version it was made from (as the Admin API does).
+					from: copies.get(id)?.from ?? platformVersions.get(id) ?? 0
+				});
+				await sync();
+				return copy(found(id));
+			}
 			const profile: FakeProfile = {
 				...before,
 				values: copy(values),
@@ -154,7 +224,13 @@ export function createFakeProfileStore(
 			return copy(profile);
 		},
 		async revert(id: string) {
+			await sync();
 			const before = found(id);
+			if (options.platform && before.layer?.scope === 'platform') {
+				copies.delete(id);
+				await sync();
+				return copy(found(id));
+			}
 			const layer = before.layer ?? fakeLayer({ scope: 'tenant' });
 			const profile: FakeProfile = {
 				...before,

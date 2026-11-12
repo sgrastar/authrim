@@ -100,6 +100,27 @@ vi.mock('../routes/settings-v2/tenant-settings-apply', () => ({
     }
     return Response.json({ version: `${input.category}-${doc.version}`, rejected: {} });
   },
+  // All of it or none: every version is checked, and a refused document saves nothing.
+  saveTenantSettingsTogether: async (input: {
+    changes: Array<{
+      category: string;
+      body: { ifMatch: string; set: Record<string, unknown>; clear: string[] };
+    }>;
+  }) => {
+    for (const { category, body } of input.changes) {
+      if (body.ifMatch !== `${category}-${mocks.settings[category].version}`)
+        return Response.json({ error: 'conflict' }, { status: 409 });
+      if (mocks.throwSave === category) throw new Error('db down');
+      if (mocks.failSave === category) return Response.json({ error: 'conflict' }, { status: 409 });
+    }
+    for (const { category, body } of input.changes) {
+      const doc = mocks.settings[category];
+      Object.assign(doc.values, body.set);
+      for (const key of body.clear) delete doc.values[key];
+      doc.version++;
+    }
+    return null;
+  },
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -285,7 +306,7 @@ describe('session profiles', () => {
     expect(mocks.settings.oauth.version).toBe(2);
   });
 
-  it('answers a Default save that stopped halfway with what was applied, and records it', async () => {
+  it('saves none of the Default when one of its documents cannot be saved', async () => {
     mocks.failSave = 'oauth';
     const response = await call('PUT', '/default', {
       name: 'Default',
@@ -293,15 +314,8 @@ describe('session profiles', () => {
       values: { 'session.default_ttl': 7_200_000, 'oauth.sso_enabled': false },
     });
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({
-      error: 'partially_applied',
-      applied: ['session'],
-      failed: 'oauth',
-    });
-    expect(mocks.audit).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ action: 'session.profile.partially_updated', result: 'failure' })
-    );
+    expect(mocks.settings.session.values['session.default_ttl']).not.toBe(7_200_000);
+    expect(mocks.settings.session.version).toBe(1);
   });
 
   it('shows single sign-on in Default only to an admin who may see oauth settings', async () => {
@@ -334,18 +348,16 @@ describe('session profiles', () => {
     expect(mocks.settings.oauth.values['oauth.sso_enabled']).toBe(true);
   });
 
-  it('answers a second save that throws as halfway too', async () => {
+  it('saves none of the Default when the save throws', async () => {
     mocks.throwSave = 'oauth';
     const response = await call('PUT', '/default', {
       name: 'Default',
       version: DEFAULT_VERSION,
       values: { 'session.default_ttl': 7_200_000, 'oauth.sso_enabled': false },
     });
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({
-      error: 'partially_applied',
-      applied: ['session'],
-    });
+    // The request fails (createErrorResponse is mocked to one answer here) and saves nothing.
+    expect(response.ok).toBe(false);
+    expect(mocks.settings.session.version).toBe(1);
   });
 });
 

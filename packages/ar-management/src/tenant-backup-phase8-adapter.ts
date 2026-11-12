@@ -70,6 +70,7 @@ import {
   ADMIN_ROLES_DATASET,
   createTenantBackupRestoreAuthorityGuard,
 } from './tenant-backup-restore-authority';
+import { loadBundlePlatformProfileWarnings } from './tenant-backup-platform-profile-warnings';
 import { createTenantBackupGuestAuthority } from './tenant-backup-guest-authority';
 import type { createProductionGuestRestoreAuthority } from './tenant-backup-guest-authority-production';
 
@@ -488,6 +489,13 @@ export function createPhase8TenantBackupInstalledAdapter(
     now: input.now,
     ports: {
       ...input.ports,
+      loadPreviewWarnings: (context, planDigest) =>
+        loadBundlePlatformProfileWarnings({
+          validatedInput,
+          admin: database,
+          context,
+          planDigest,
+        }),
       rowTransform,
       otherStores,
       cleanup: {

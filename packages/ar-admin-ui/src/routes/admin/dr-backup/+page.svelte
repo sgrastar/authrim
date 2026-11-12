@@ -29,6 +29,11 @@
 	} from '#lib/api/admin-saml.js';
 	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
+	import {
+		RESTORE_PROFILE_WARNING_LIMIT,
+		restorePlatformProfileCheckIncomplete,
+		restorePlatformProfileWarnings
+	} from '#lib/admin/restore-preview-warnings.js';
 
 	type MetadataRole = 'idp' | 'sp';
 	type CertificateSlot = 'active' | 'next' | 'backup';
@@ -922,6 +927,35 @@
 												<li>{restoreBlockerLabel(blocker)}</li>
 											{/each}
 										</ul>
+									</div>
+								</div>
+							{/if}
+							{#if restorePlatformProfileWarnings(selectedTenantBackup.preview.prerequisites).length > 0 || restorePlatformProfileCheckIncomplete(selectedTenantBackup.preview.prerequisites)}
+								<div class="warning-box" data-testid="tenant-backup-profile-warning">
+									<i class="i-ph-warning-circle"></i>
+									<div>
+										{#if restorePlatformProfileWarnings(selectedTenantBackup.preview.prerequisites).length > 0}
+											<span>{$LL.admin_dr_backup_tenant_preview_profile_warning()}</span>
+											<ul>
+												{#each restorePlatformProfileWarnings(selectedTenantBackup.preview.prerequisites) as warning (warning.id)}
+													<li>
+														{warning.kind === 'method'
+															? $LL.admin_dr_backup_tenant_preview_profile_method({
+																	id: warning.id
+																})
+															: $LL.admin_dr_backup_tenant_preview_profile_session({
+																	id: warning.id
+																})}
+													</li>
+												{/each}
+											</ul>
+										{/if}
+										{#if restorePlatformProfileCheckIncomplete(selectedTenantBackup.preview.prerequisites)}
+											<span>{$LL.admin_dr_backup_tenant_preview_profile_incomplete()}</span>
+										{/if}
+										{#if restorePlatformProfileWarnings(selectedTenantBackup.preview.prerequisites).length >= RESTORE_PROFILE_WARNING_LIMIT}
+											<span>{$LL.admin_dr_backup_tenant_preview_profile_truncated()}</span>
+										{/if}
 									</div>
 								</div>
 							{/if}

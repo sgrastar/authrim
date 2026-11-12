@@ -5,6 +5,11 @@ export const PHASE4_EXTERNAL_PREREQUISITE_KINDS = [
   'certificate_trust',
   'email_delivery',
   'directory_connection',
+  // A platform profile (pmp_/psp_) a restored Flow names; the target environment owns it.
+  'platform_method_profile',
+  'platform_session_profile',
+  // The check of those profiles stopped at a limit (advisory: the bundle still restores).
+  'platform_profile_check',
 ] as const;
 
 export type Phase4ExternalPrerequisiteKind = (typeof PHASE4_EXTERNAL_PREREQUISITE_KINDS)[number];

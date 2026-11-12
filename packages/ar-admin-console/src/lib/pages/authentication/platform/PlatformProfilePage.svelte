@@ -23,7 +23,7 @@
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import AuthenticationMethodFields from '../AuthenticationMethodFields.svelte';
 	import SessionProfileFields from '../SessionProfileFields.svelte';
-	import { BUILT_IN_METHODS, guestKey, methodKey } from '../authentication-method-fields';
+	import { PROFILE_METHOD_KEYS, withUnsetMethodsOn } from '../authentication-method-fields';
 
 	/**
 	 * One of the platform's profiles: its name and values (the settings that mean the same in
@@ -52,11 +52,6 @@
 		dirty = $bindable(false)
 	}: Props = $props();
 
-	const GUEST_KEYS = [
-		guestKey('guest.login_enabled'),
-		guestKey('passkey.guest_upgrade_enabled'),
-		guestKey('email_otp.guest_upgrade_enabled')
-	];
 	const isNew = $derived(id === 'new');
 	let phase = $state<'loading' | 'ready' | 'missing' | 'forbidden' | 'failed'>('loading');
 	let profile = $state<PlatformProfile | null>(null);
@@ -81,14 +76,7 @@
 	 * but would let the method through.
 	 */
 	const startValues = (): Record<string, unknown> =>
-		kind === 'method'
-			? Object.fromEntries([
-					...BUILT_IN_METHODS.flatMap((method) =>
-						method.supports.map((use) => [methodKey(method.id, use), false] as const)
-					),
-					...GUEST_KEYS.map((key) => [key, false] as const)
-				])
-			: {};
+		kind === 'method' ? Object.fromEntries(PROFILE_METHOD_KEYS.map((key) => [key, false])) : {};
 
 	const snapshot = (theName = name, theValues = values) =>
 		JSON.stringify({ name: theName.trim(), values: theValues });
@@ -103,12 +91,8 @@
 	 * A method profile's values as the page shows them: a method (or guest use) it leaves unset is
 	 * allowed at sign-in (only an explicit off narrows), so it shows, and saves, as on.
 	 */
-	function shownValues(read: Record<string, unknown>): Record<string, unknown> {
-		if (kind !== 'method') return structuredClone(read);
-		const shown = structuredClone(read);
-		for (const key of Object.keys(startValues())) if (shown[key] === undefined) shown[key] = true;
-		return shown;
-	}
+	const shownValues = (read: Record<string, unknown>): Record<string, unknown> =>
+		kind === 'method' ? withUnsetMethodsOn(read) : structuredClone(read);
 
 	function setProfile(next: PlatformProfile) {
 		profile = next;

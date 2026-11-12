@@ -27,8 +27,6 @@ export const deProfileLayer: { [K in keyof typeof jaProfileLayer]: string } = {
 		'Die für diesen Mandanten geänderten Werte werden entfernt und die Werte der Plattform gelten.',
 	'pl.revertSuccess': 'Es gelten jetzt die Werte der Plattform',
 	'pl.revertFailed': 'Die Werte der Plattform konnten nicht wiederhergestellt werden',
-	'pl.revertPartial':
-		'Nur ein Teil wurde auf die Werte der Plattform zurückgesetzt. Der aktuelle Stand wurde neu geladen; versuchen Sie es erneut.',
 	'pl.notEditable': 'Die Plattform erlaubt diese Änderung nicht; sie wurde nicht gespeichert',
 	'pl.creationNotAllowed': 'Die Plattform erlaubt Mandanten nicht, eigene Profile hinzuzufügen.',
 	'pl.optionPlatform': '{name} (Plattform)'

@@ -59,6 +59,52 @@
 </Story>
 
 <Story
+	name="Unset methods show as on"
+	parameters={{
+		docs: {
+			description: {
+				story:
+					'A profile only narrows: a method it leaves unset is allowed at sign-in, so it shows (and saves) as on. Only an explicit off is unchecked.'
+			}
+		}
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Partners' });
+		const [passkeyLogin] = canvas.getAllByRole('checkbox', {
+			name: new RegExp(t('am.methods.passkey'))
+		});
+		await expect(passkeyLogin).toBeChecked();
+		await expect(canvas.getByRole('checkbox', { name: /DID/ })).not.toBeChecked();
+		// Shown as on is not a change: nothing to save.
+		await expect(canvas.queryByRole('region', { name: t('common.unsaved') })).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<AuthenticationMethodProfilePage
+			client={createFakeAuthenticationMethodProfiles([
+				{
+					id: 'amp_partners',
+					name: 'Partners',
+					is_system: false,
+					values: { 'authentication-methods.did.login_enabled': false },
+					version: 1,
+					created_at: null,
+					updated_at: null,
+					layer: null
+				}
+			])}
+			{directoryStatusClient}
+			tenantId="acme"
+			id="amp_partners"
+			canWrite
+			listHref="/admin/authentication/methods"
+			{oncreated}
+		/>
+	{/snippet}
+</Story>
+
+<Story
 	name="Default profile"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);

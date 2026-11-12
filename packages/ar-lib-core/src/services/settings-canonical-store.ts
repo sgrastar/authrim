@@ -385,6 +385,82 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
     return result.success && result.rowsAffected === 1;
   }
 
+  /**
+   * Saves several documents at once: all of them, each only if it is still at the version given,
+   * or none (false). The statements run in one batch (a transaction): each document is set only
+   * from the version given, and a last statement checks that every document now holds what this
+   * save writes. When one does not (another save changed it first), that statement breaks a
+   * constraint of the table on purpose, and the whole batch is rolled back.
+   *
+   * Success means every document holds this save's version, however it got there: a retried batch
+   * whose first try committed, or another save that wrote the very same document, is a success.
+   */
+  async compareAndSetMany(
+    writes: ReadonlyArray<{
+      category: string;
+      scope: SettingScope;
+      expectedVersion: string;
+      document: CanonicalSettingsDocument;
+    }>
+  ): Promise<boolean> {
+    if (!this.database.batch) throw new Error('settings_canonical_batch_required');
+    if (writes.length === 0) return true;
+    const items = writes.map((write) => {
+      if (!/^sha256:[0-9a-f]{16}$/.test(write.expectedVersion)) invalid();
+      return {
+        key: identity(write.category, write.scope),
+        expected: write.expectedVersion,
+        saved: document(write.document),
+      };
+    });
+    const names = items.map((item) => item.key.storageKey);
+    if (new Set(names).size !== names.length) invalid();
+    const now = this.timestamp();
+    const updates = items.map((item) => ({
+      sql: `UPDATE ${item.key.table}
+        SET document_json=?,version=?,revision=revision+1,projection_state='pending',updated_at=?,projected_at=NULL
+        WHERE ${item.key.where} AND version=?`,
+      params: [item.saved.json, item.saved.version, now, ...item.key.params, item.expected],
+    }));
+    const allSaved = items.map((item) => ({
+      sql: `EXISTS (SELECT 1 FROM ${item.key.table} WHERE ${item.key.where} AND version=?)`,
+      params: [...item.key.params, item.saved.version],
+    }));
+    const saved = allSaved.map((part) => part.sql).join(' AND ');
+    const savedParams = allSaved.flatMap((part) => part.params);
+    // A row with no key breaks the table's NOT NULL constraints, whatever rows exist: when not
+    // every document holds this save's version, this fails the batch and rolls all of it back.
+    const check = {
+      sql: `INSERT INTO tenant_settings_documents (tenant_id) SELECT NULL WHERE NOT (${saved})`,
+      params: savedParams,
+    };
+    try {
+      await this.database.batch([...updates, check]);
+    } catch (error) {
+      // Read as one snapshot: every document at this save's version, or one moved on by another.
+      const movedOn = items
+        .map(
+          (item) =>
+            `NOT EXISTS (SELECT 1 FROM ${item.key.table} WHERE ${item.key.where} AND version IN (?,?))`
+        )
+        .join(' OR ');
+      const state = await this.database.queryOne<{ state: string }>(
+        `SELECT CASE WHEN ${saved} THEN 'saved' WHEN ${movedOn} THEN 'moved_on' ELSE 'unknown' END AS state`,
+        [
+          ...savedParams,
+          ...items.flatMap((item) => [...item.key.params, item.expected, item.saved.version]),
+        ],
+        { consistencyClass: 'primary_required' }
+      );
+      if (state?.state === 'saved') return true;
+      // Another save moved a document on: the check refused the batch, and nothing was saved.
+      if (state?.state === 'moved_on') return false;
+      throw error;
+    }
+    // The check passed inside the batch: every document holds this save's version.
+    return true;
+  }
+
   /** Replace a document for a fenced/bootstrap workflow that has no concurrent editor. */
   async replace(
     category: string,
