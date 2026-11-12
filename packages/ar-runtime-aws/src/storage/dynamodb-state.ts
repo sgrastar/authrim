@@ -23,16 +23,18 @@ import type {
   AuthorizationCodeStore,
   CheckRateLimitInput,
   ConsumeChallengeInput,
-  ConsumeSamlRequestInput,
+  CompleteSamlRequestInput,
+  CreateSamlRequestInput,
   PersistentNameIDStore,
   PutTransientKeyInput,
   RateLimitStore,
   RecordReplayInput,
   ReplayGuardStore,
   StoreChallengeInput,
-  StoreSamlRequestInput,
+  SamlRequestKeyInput,
   StoreSessionInput,
   TransientChallenge,
+  UpdateSamlRequestInput,
   TransientSession,
   TransientStateStore,
 } from './state-ports';
@@ -690,16 +692,26 @@ export class DynamoTransientStateStore implements TransientStateStore {
       false
     ));
   }
-  async storeSamlRequest(input: StoreSamlRequestInput): Promise<void> {
+  /**
+   * Store a new AuthnRequest at revision 1. Any item with this id (waiting, completed, or expired
+   * while retained) refuses the write; only an item past `retainUntilMs` that DynamoDB has not yet
+   * deleted is replaced. `expiresAtMs` is the request's own expiry; the item TTL is `retainUntil`.
+   */
+  async createSamlRequest(input: CreateSamlRequestInput): Promise<boolean> {
     identifier(input.spEntityId, 'SP entity ID', 4096);
     const key = this.key(input.tenantId, 'SAML', input.request.requestId);
     const request = input.request;
     if (request.type !== 'authn_request' || request.issuer !== input.spEntityId)
       throw new Error('Invalid SAML request binding');
     integer(request.expiresAt, 'SAML request expiry');
+    if (request.retainUntil === undefined) throw new Error('Invalid SAML request retention');
+    integer(request.retainUntil, 'SAML request retention');
     const now = this.table.now();
     if (request.expiresAt <= now || request.expiresAt > now + 30 * 60 * 1000)
       throw new Error('SAML request expired or binding conflict');
+    if (request.retainUntil < request.expiresAt || request.retainUntil > now + 60 * 60 * 1000)
+      throw new Error('Invalid SAML request retention');
+    const stored = { ...request, revision: 1, used: false };
     const immutable = hash(
       canonicalDynamoStateJson(
         JSON.parse(
@@ -717,55 +729,33 @@ export class DynamoTransientStateStore implements TransientStateStore {
       )
     );
     try {
-      // Trusted continuation only: retain original deadline and identity, reset the current claim.
       await this.table.client.send(
-        new UpdateItemCommand({
+        new PutItemCommand({
           TableName: this.table.tableName,
-          Key: key,
-          UpdateExpression:
-            'SET payloadJson = :payload, immutableHash = :immutable, spHash = :sp, createdAtMs = if_not_exists(createdAtMs, :now), expiresAtMs = if_not_exists(expiresAtMs, :expires), #ttl = if_not_exists(#ttl, :ttl) REMOVE consumedAtMs',
-          ConditionExpression:
-            'attribute_not_exists(pk) OR (immutableHash = :immutable AND spHash = :sp AND expiresAtMs > :now)',
-          ExpressionAttributeNames: { '#ttl': 'ttl' },
-          ExpressionAttributeValues: {
-            ':payload': S(json({ spEntityId: input.spEntityId, request })),
-            ':immutable': S(immutable),
-            ':sp': S(hash(input.spEntityId)),
-            ':now': N(now),
-            ':expires': N(request.expiresAt),
-            ':ttl': N(Math.ceil(request.expiresAt / 1000)),
+          Item: {
+            ...this.table.transient(
+              key,
+              { spEntityId: input.spEntityId, request: stored },
+              now,
+              request.expiresAt
+            ),
+            ttl: N(Math.ceil(request.retainUntil / 1000)),
+            retainUntilMs: N(request.retainUntil),
+            revision: N(1),
+            immutableHash: S(immutable),
+            spHash: S(hash(input.spEntityId)),
           },
+          ConditionExpression: 'attribute_not_exists(pk) OR retainUntilMs <= :now',
+          ExpressionAttributeValues: { ':now': N(now) },
         })
       );
+      return true;
     } catch (error) {
-      if (conditional(error)) throw new Error('SAML request expired or binding conflict');
+      if (conditional(error)) return false;
       throw error;
     }
   }
-  async consumeSamlRequest(input: ConsumeSamlRequestInput): Promise<SAMLRequestData | null> {
-    identifier(input.spEntityId, 'SP entity ID', 4096);
-    const key = this.key(input.tenantId, 'SAML', input.requestId);
-    let exact: Item = {};
-    if (input.loginNonceHash !== undefined) {
-      identifier(input.loginNonceHash, 'SAML login nonce hash', 256);
-      // Only a request stored with this login nonce hash (a cancel). The hash is inside the
-      // stored JSON, so the item is read and consumed only if it is still exactly what was read.
-      const current = await this.table.get(key);
-      if (!this.table.live(current)) return null;
-      const context = object(payload(current).request).context;
-      const held =
-        context && typeof context === 'object' && !Array.isArray(context)
-          ? (context as Record<string, unknown>).loginNonceHash
-          : undefined;
-      if (typeof held !== 'string' || held !== input.loginNonceHash) return null;
-      exact = { ':exact': S(text(current, 'payloadJson')) };
-    }
-    const item = await this.table.consume(
-      key,
-      ` AND spHash = :sp${input.loginNonceHash === undefined ? '' : ' AND payloadJson = :exact'}`,
-      { ':sp': S(hash(input.spEntityId)), ...exact }
-    );
-    if (!item) return null;
+  private samlRequest(item: Item, input: SamlRequestKeyInput, used: boolean): SAMLRequestData {
     const p = payload(item);
     const request = object(p.request);
     if (
@@ -779,8 +769,95 @@ export class DynamoTransientStateStore implements TransientStateStore {
       ...request,
       createdAt: number(item, 'createdAtMs'),
       expiresAt: number(item, 'expiresAtMs'),
-      used: true,
+      revision: number(item, 'revision'),
+      used,
     } as unknown as SAMLRequestData;
+  }
+  /** The item only while it is waiting and bound to this SP. */
+  private async waitingSamlItem(input: SamlRequestKeyInput): Promise<Item | null> {
+    identifier(input.spEntityId, 'SP entity ID', 4096);
+    const item = await this.table.get(this.key(input.tenantId, 'SAML', input.requestId));
+    if (!this.table.live(item) || item.spHash?.S !== hash(input.spEntityId)) return null;
+    return item;
+  }
+  async readSamlRequest(input: SamlRequestKeyInput): Promise<SAMLRequestData | null> {
+    const item = await this.waitingSamlItem(input);
+    return item ? this.samlRequest(item, input, false) : null;
+  }
+  async updateSamlRequest(input: UpdateSamlRequestInput): Promise<SAMLRequestData | null> {
+    integer(input.expectedRevision, 'SAML request revision');
+    const item = await this.waitingSamlItem(input);
+    if (!item || number(item, 'revision') !== input.expectedRevision) return null;
+    const p = payload(item);
+    const revision = input.expectedRevision + 1;
+    const next = {
+      ...p,
+      request: { ...object(p.request), context: input.context, revision },
+    };
+    try {
+      const result = await this.table.client.send(
+        new UpdateItemCommand({
+          TableName: this.table.tableName,
+          Key: this.key(input.tenantId, 'SAML', input.requestId),
+          UpdateExpression: 'SET payloadJson = :payload, revision = :next',
+          ConditionExpression:
+            'attribute_exists(pk) AND attribute_not_exists(consumedAtMs) AND expiresAtMs > :now AND spHash = :sp AND revision = :rev',
+          ExpressionAttributeValues: {
+            ':payload': S(json(next)),
+            ':next': N(revision),
+            ':rev': N(input.expectedRevision),
+            ':sp': S(hash(input.spEntityId)),
+            ':now': N(this.table.now()),
+          },
+          ReturnValues: 'ALL_NEW',
+        })
+      );
+      if (!result.Attributes) throw new Error('aws_state_consume_receipt_missing');
+      return this.table.live(result.Attributes)
+        ? this.samlRequest(result.Attributes, input, false)
+        : null;
+    } catch (error) {
+      if (conditional(error)) return null;
+      throw error;
+    }
+  }
+  async completeSamlRequest(input: CompleteSamlRequestInput): Promise<SAMLRequestData | null> {
+    identifier(input.spEntityId, 'SP entity ID', 4096);
+    if (input.expectedRevision !== undefined)
+      integer(input.expectedRevision, 'SAML request revision');
+    if (input.loginNonceHash !== undefined)
+      identifier(input.loginNonceHash, 'SAML login nonce hash', 256);
+    // A cancel (login nonce hash) without a revision of its own: the hash is inside the stored
+    // JSON, so the item is read and completed at the revision read. A context update in between
+    // that keeps the hash is read again, as the Durable Object and PostgreSQL complete it too.
+    const attempts =
+      input.loginNonceHash !== undefined && input.expectedRevision === undefined ? 3 : 1;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      let revision = input.expectedRevision;
+      if (input.loginNonceHash !== undefined) {
+        const current = await this.waitingSamlItem(input);
+        if (!current) return null;
+        const context = object(payload(current).request).context;
+        const held =
+          context && typeof context === 'object' && !Array.isArray(context)
+            ? (context as Record<string, unknown>).loginNonceHash
+            : undefined;
+        if (typeof held !== 'string' || held !== input.loginNonceHash) return null;
+        const read = number(current, 'revision');
+        if (revision !== undefined && revision !== read) return null;
+        revision = read;
+      }
+      const item = await this.table.consume(
+        this.key(input.tenantId, 'SAML', input.requestId),
+        ` AND spHash = :sp${revision === undefined ? '' : ' AND revision = :rev'}`,
+        {
+          ':sp': S(hash(input.spEntityId)),
+          ...(revision === undefined ? {} : { ':rev': N(revision) }),
+        }
+      );
+      if (item) return this.samlRequest(item, input, true);
+    }
+    return null;
   }
   async putKey(input: PutTransientKeyInput): Promise<void> {
     ttl(input.ttlMs);

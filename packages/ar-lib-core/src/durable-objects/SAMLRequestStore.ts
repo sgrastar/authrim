@@ -11,7 +11,7 @@
  */
 
 import type { Env } from '../types/env';
-import type { SAMLRequestData, SAMLArtifactData } from '../types/saml';
+import type { SAMLRequestData, SAMLArtifactData, SAMLRequestContext } from '../types/saml';
 import { createLogger, type Logger } from '../utils/logger';
 import { timingSafeEqual } from '../utils/crypto';
 
@@ -45,6 +45,10 @@ const ARTIFACT_EXPIRY_MS = 5 * 60 * 1000;
  */
 const ASSERTION_ID_RETENTION_MS = 30 * 60 * 1000;
 const ASSERTION_CLEANUP_INTERVAL_MS = 60 * 1000;
+
+/** The longest a stored IdP AuthnRequest may wait, and the longest its id may be kept. */
+const MAX_AUTHN_REQUEST_LIFETIME_MS = 30 * 60 * 1000;
+const MAX_AUTHN_REQUEST_RETENTION_MS = 60 * 60 * 1000;
 
 /**
  * SAMLRequestStore Durable Object
@@ -212,6 +216,106 @@ export class SAMLRequestStore {
     return !request.used && Date.now() <= request.expiresAt;
   }
 
+  /** A stored IdP AuthnRequest of this SP that is waiting (not completed, not expired). */
+  private waitingAuthnRequest(requestId: string, spEntityId: string): SAMLRequestData | null {
+    const request = this.getState().requests.get(requestId);
+    if (
+      !request ||
+      request.type !== 'authn_request' ||
+      request.issuer !== spEntityId ||
+      typeof request.revision !== 'number' ||
+      request.used ||
+      Date.now() >= request.expiresAt
+    ) {
+      return null;
+    }
+    return request;
+  }
+
+  /**
+   * Store a new IdP AuthnRequest at revision 1. False when its id is already known (waiting,
+   * completed, or kept after it expired): a request is stored once, never again.
+   */
+  async createAuthnRequest(spEntityId: string, request: SAMLRequestData): Promise<boolean> {
+    await this.initializeState();
+    const state = this.getState();
+    const now = Date.now();
+    if (
+      request.type !== 'authn_request' ||
+      request.issuer !== spEntityId ||
+      typeof request.requestId !== 'string' ||
+      !request.requestId ||
+      !Number.isSafeInteger(request.expiresAt) ||
+      request.expiresAt <= now ||
+      request.expiresAt > now + MAX_AUTHN_REQUEST_LIFETIME_MS ||
+      !Number.isSafeInteger(request.retainUntil) ||
+      (request.retainUntil as number) < request.expiresAt ||
+      (request.retainUntil as number) > now + MAX_AUTHN_REQUEST_RETENTION_MS
+    ) {
+      throw new Error('Invalid SAML AuthnRequest to store');
+    }
+    if (state.requests.has(request.requestId)) {
+      this.log.warn('SAML request stored again', { requestId: request.requestId });
+      return false;
+    }
+    state.requests.set(request.requestId, {
+      ...request,
+      used: false,
+      revision: 1,
+      createdAt: now,
+    });
+    await this.saveState();
+    return true;
+  }
+
+  /** A waiting IdP AuthnRequest, without using it up. */
+  async readAuthnRequest(requestId: string, spEntityId: string): Promise<SAMLRequestData | null> {
+    await this.initializeState();
+    return this.waitingAuthnRequest(requestId, spEntityId);
+  }
+
+  /** Replace a waiting request's context at a revision (raising it); null otherwise. */
+  async updateAuthnRequest(
+    requestId: string,
+    spEntityId: string,
+    expectedRevision: number,
+    context: SAMLRequestContext
+  ): Promise<SAMLRequestData | null> {
+    await this.initializeState();
+    const request = this.waitingAuthnRequest(requestId, spEntityId);
+    if (!request || request.revision !== expectedRevision) return null;
+    request.context = context;
+    request.revision = expectedRevision + 1;
+    await this.saveState();
+    return request;
+  }
+
+  /**
+   * Use up a waiting request once, right before the SP is answered. Null when it is not waiting,
+   * not at `expectedRevision`, or (a login cancel) not stored with `loginNonceHash`.
+   */
+  async completeAuthnRequest(
+    requestId: string,
+    spEntityId: string,
+    options: { expectedRevision?: number; loginNonceHash?: string } = {}
+  ): Promise<SAMLRequestData | null> {
+    await this.initializeState();
+    const request = this.waitingAuthnRequest(requestId, spEntityId);
+    if (!request) return null;
+    if (options.expectedRevision !== undefined && request.revision !== options.expectedRevision) {
+      return null;
+    }
+    if (options.loginNonceHash !== undefined) {
+      const held = request.context?.loginNonceHash;
+      if (typeof held !== 'string' || !held || !timingSafeEqual(held, options.loginNonceHash)) {
+        return null;
+      }
+    }
+    request.used = true;
+    await this.saveState();
+    return request;
+  }
+
   /**
    * Store a SAML artifact
    */
@@ -327,7 +431,8 @@ export class SAMLRequestStore {
 
     // Clean up expired requests
     for (const [id, request] of state.requests) {
-      if (now > request.expiresAt + 60000) {
+      // A stored IdP AuthnRequest's id is kept until it could no longer be accepted.
+      if (now > Math.max(request.expiresAt + 60000, request.retainUntil ?? 0)) {
         // Keep for 1 minute after expiry for debugging
         state.requests.delete(id);
         changed = true;
@@ -402,6 +507,54 @@ export class SAMLRequestStore {
         return new Response(JSON.stringify({ exists }), {
           headers: { 'Content-Type': 'application/json' },
         });
+      }
+
+      // The IdP's AuthnRequest lifecycle: create, read, update, complete.
+      if (path === '/authn/create' && request.method === 'POST') {
+        const body = await request.json<{ spEntityId: string; request: SAMLRequestData }>();
+        const created = await this.createAuthnRequest(body.spEntityId, body.request);
+        return Response.json({ created }, { status: created ? 201 : 409 });
+      }
+      if (path === '/authn/read' && request.method === 'POST') {
+        const body = await request.json<{ spEntityId: string; requestId: string }>();
+        const found = await this.readAuthnRequest(body.requestId, body.spEntityId);
+        return found
+          ? Response.json(found)
+          : Response.json({ error: 'not_waiting' }, { status: 404 });
+      }
+      if (path === '/authn/update' && request.method === 'POST') {
+        const body = await request.json<{
+          spEntityId: string;
+          requestId: string;
+          expectedRevision: number;
+          context: SAMLRequestContext;
+        }>();
+        const updated = await this.updateAuthnRequest(
+          body.requestId,
+          body.spEntityId,
+          body.expectedRevision,
+          body.context
+        );
+        return updated
+          ? Response.json(updated)
+          : Response.json({ error: 'not_waiting' }, { status: 409 });
+      }
+      if (path === '/authn/complete' && request.method === 'POST') {
+        const body = await request.json<{
+          spEntityId: string;
+          requestId: string;
+          expectedRevision?: number;
+          loginNonceHash?: string;
+        }>();
+        const completed = await this.completeAuthnRequest(body.requestId, body.spEntityId, {
+          ...(body.expectedRevision !== undefined
+            ? { expectedRevision: body.expectedRevision }
+            : {}),
+          ...(body.loginNonceHash !== undefined ? { loginNonceHash: body.loginNonceHash } : {}),
+        });
+        return completed
+          ? Response.json(completed)
+          : Response.json({ error: 'not_waiting' }, { status: 409 });
       }
 
       // POST /artifact - Store an artifact

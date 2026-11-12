@@ -151,6 +151,7 @@ vi.mock('../error-response', async (importOriginal) => {
 
 import { handleIdPSSO } from '../sso';
 import { handleIdPInitiated } from '../idp-initiated';
+import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
 
 const consentTransactionId = '12345678-1234-4234-8234-123456789abc';
 
@@ -169,13 +170,15 @@ async function sso() {
   app.post('/sso', handleIdPSSO as never);
   const form = new FormData();
   form.set('SAMLRequest', btoa(authnRequest()));
+  // One store for the request's whole exchange (it is recorded, then used up when answered).
+  const requestStore = createSamlRequestStoreFake();
   return app.fetch(
     new Request('https://tenant.example.test/sso', { method: 'POST', body: form }),
     {
       SETTINGS: { get: vi.fn(async () => null) },
       SAML_REQUEST_STORE: {
         idFromName: vi.fn(() => ({})),
-        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response('{}')) })),
+        get: vi.fn(() => ({ fetch: requestStore.fetch })),
       },
     },
     { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as never

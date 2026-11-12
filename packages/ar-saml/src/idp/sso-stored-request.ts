@@ -30,6 +30,7 @@ import {
   resolveSamlRequestTtlSeconds,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
+import { DEFAULTS } from '../common/constants';
 
 /** What a resumed request's login keeps of its nonce (see redirectToSAMLLogin). */
 export type ResumedSAMLLogin =
@@ -49,6 +50,11 @@ export function carrySAMLRequestContext(
     ...(typeof context?.sentToSignInAt === 'number' && Number.isSafeInteger(context.sentToSignInAt)
       ? { sentToSignInAt: context.sentToSignInAt }
       : {}),
+    // The hash of the nonce the browser was sent to sign in with: a login cancel needs it after
+    // the request comes back through another screen.
+    ...(typeof context?.loginNonceHash === 'string' && context.loginNonceHash
+      ? { loginNonceHash: context.loginNonceHash }
+      : {}),
   };
 }
 
@@ -60,47 +66,38 @@ export function readSAMLReauthentication(
   return typeof issuedAt === 'number' && Number.isSafeInteger(issuedAt) ? { issuedAt } : undefined;
 }
 
-function consumeQuery(options: { loginNonceHash?: string }): string {
-  const params = new URLSearchParams();
-  if (options.loginNonceHash !== undefined) params.set('login_nonce_hash', options.loginNonceHash);
-  const text = params.toString();
-  return text ? `?${text}` : '';
+/** The SAML request store instance (Workers) of an SP's requests to this IdP. */
+function idpRequestStore(env: Env, tenantId: string, spEntityId: string): DurableObjectStub {
+  return env.SAML_REQUEST_STORE.get(
+    env.SAML_REQUEST_STORE.idFromName(
+      buildSAMLRequestStoreInstanceName(tenantId, 'idp', spEntityId)
+    )
+  );
 }
 
-/**
- * Consume the stored AuthnRequest of a request id: it is returned once and cannot be used again.
- */
-export async function consumeStoredAuthnRequest(
+async function callIdPRequestStore(
   env: Env,
   tenantId: string,
-  requestId: string,
   spEntityId: string,
-  /**
-   * Use the request up only if it holds this login nonce hash (a login cancel); any other is left
-   * as it is, not consumed.
-   */
-  options: { loginNonceHash?: string } = {}
-): Promise<SAMLRequestData> {
-  let storedRequest: SAMLRequestData | null;
-  if (env.SAML_RUNTIME_PORTS) {
-    storedRequest = await env.SAML_RUNTIME_PORTS.requests.consume({
-      tenantId,
-      spEntityId,
-      requestId,
-      ...(options.loginNonceHash !== undefined ? { loginNonceHash: options.loginNonceHash } : {}),
-    });
-  } else {
-    const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
-      buildSAMLRequestStoreInstanceName(tenantId, 'idp', spEntityId)
-    );
-    const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
-    const response = await samlRequestStore.fetch(
-      `https://saml-request-store/consume/${encodeURIComponent(requestId)}${consumeQuery(options)}`,
-      { method: 'POST' }
-    );
-    storedRequest = response.ok ? await response.json<SAMLRequestData>() : null;
-  }
+  operation: 'create' | 'read' | 'update' | 'complete',
+  body: Record<string, unknown>
+): Promise<Response> {
+  return idpRequestStore(env, tenantId, spEntityId).fetch(
+    `https://saml-request-store/authn/${operation}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spEntityId, ...body }),
+    }
+  );
+}
 
+/** A stored request read back: its type, SP and id must be the ones asked for. */
+function assertStoredAuthnRequest(
+  storedRequest: SAMLRequestData | null,
+  requestId: string,
+  spEntityId: string
+): SAMLRequestData {
   if (!storedRequest) {
     throw new Error('Stored SAML request not found or already used');
   }
@@ -108,71 +105,156 @@ export async function consumeStoredAuthnRequest(
     storedRequest.type !== 'authn_request' ||
     storedRequest.issuer !== spEntityId ||
     storedRequest.requestId !== requestId ||
-    !storedRequest.data
+    !storedRequest.data ||
+    typeof storedRequest.revision !== 'number'
   ) {
     throw new Error('Stored SAML request is invalid');
   }
-
   return storedRequest;
 }
 
 /**
- * Store the AuthnRequest for later retrieval after login.
+ * Read a stored AuthnRequest that is waiting, without using it up: it is used up only when the
+ * SP is answered (completeStoredAuthnRequest), after the request has been checked again.
  */
-export async function storeAuthnRequest(
+export async function readStoredAuthnRequest(
   env: Env,
   tenantId: string,
-  authnRequest: SAMLAuthnRequest,
-  relayState?: string,
-  context?: SAMLRequestContext,
-  /** The request's lifetime (seconds), when the caller has read it already. */
-  knownRequestTtlSeconds?: number
-): Promise<void> {
-  const requestTtlSeconds =
-    knownRequestTtlSeconds ?? (await resolveSamlRequestTtlSeconds(env, tenantId));
+  requestId: string,
+  spEntityId: string
+): Promise<SAMLRequestData> {
+  let storedRequest: SAMLRequestData | null;
   if (env.SAML_RUNTIME_PORTS) {
-    await env.SAML_RUNTIME_PORTS.requests.store({
-      tenantId,
-      spEntityId: authnRequest.issuer,
-      request: {
-        requestId: authnRequest.id,
-        issuer: authnRequest.issuer,
-        destination: authnRequest.destination ?? '',
-        acsUrl: authnRequest.assertionConsumerServiceURL,
-        binding: 'post',
-        type: 'authn_request',
-        data: authnRequest,
-        relayState,
-        context,
-        used: false,
-        createdAt: Date.now(),
-        expiresAt: Date.now() + requestTtlSeconds * 1000,
-      },
-    });
-    return;
+    storedRequest = await env.SAML_RUNTIME_PORTS.requests.read({ tenantId, spEntityId, requestId });
+  } else {
+    const response = await callIdPRequestStore(env, tenantId, spEntityId, 'read', { requestId });
+    storedRequest = response.ok ? await response.json<SAMLRequestData>() : null;
   }
-  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
-    buildSAMLRequestStoreInstanceName(tenantId, 'idp', authnRequest.issuer)
-  );
-  const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
+  return assertStoredAuthnRequest(storedRequest, requestId, spEntityId);
+}
 
-  await samlRequestStore.fetch('https://saml-request-store/store', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      requestId: authnRequest.id,
-      issuer: authnRequest.issuer,
-      destination: authnRequest.destination,
-      acsUrl: authnRequest.assertionConsumerServiceURL,
-      binding: 'post', // Default response binding
-      type: 'authn_request',
-      data: authnRequest,
-      relayState,
-      context,
-      used: false,
-      expiresAt: Date.now() + requestTtlSeconds * 1000,
-    }),
-  });
+/**
+ * Use up a stored AuthnRequest once, right before the SP is answered for it: a request answered
+ * in another tab, or changed since it was read (`expectedRevision`), is not answered again. A
+ * login cancel uses it up only if it was sent to sign in with that nonce (`loginNonceHash`); any
+ * other is left as it is.
+ */
+export async function completeStoredAuthnRequest(
+  env: Env,
+  tenantId: string,
+  requestId: string,
+  spEntityId: string,
+  options: { expectedRevision?: number; loginNonceHash?: string } = {}
+): Promise<SAMLRequestData> {
+  let storedRequest: SAMLRequestData | null;
+  if (env.SAML_RUNTIME_PORTS) {
+    storedRequest = await env.SAML_RUNTIME_PORTS.requests.complete({
+      tenantId,
+      spEntityId,
+      requestId,
+      ...options,
+    });
+  } else {
+    const response = await callIdPRequestStore(env, tenantId, spEntityId, 'complete', {
+      requestId,
+      ...options,
+    });
+    storedRequest = response.ok ? await response.json<SAMLRequestData>() : null;
+  }
+  return assertStoredAuthnRequest(storedRequest, requestId, spEntityId);
+}
+
+/**
+ * Until when a request's id is kept once it is stored: as long as the SP's request could still be
+ * accepted (validateAuthnRequest: IssueInstant + the request lifetime + the clock skew), and not
+ * less than the stored request's own expiry.
+ */
+export function authnRequestRetainUntil(
+  authnRequest: SAMLAuthnRequest,
+  requestTtlSeconds: number,
+  expiresAt: number
+): number {
+  const issuedAt = Date.parse(authnRequest.issueInstant);
+  const acceptableUntil = Number.isFinite(issuedAt)
+    ? issuedAt + (requestTtlSeconds + DEFAULTS.CLOCK_SKEW_SECONDS) * 1000
+    : expiresAt;
+  return Math.max(expiresAt, acceptableUntil);
+}
+
+/**
+ * Keep an AuthnRequest while the person signs in or answers a screen: a request that arrives is
+ * stored once (`storedRevision` absent; one already known is a replay and is refused), a stored
+ * one only has its context replaced at the revision it was read at. Its expiry counts from when
+ * it first arrived and is never extended. Returns the stored request.
+ */
+export async function saveStoredAuthnRequest(
+  env: Env,
+  tenantId: string,
+  input: {
+    authnRequest: SAMLAuthnRequest;
+    relayState?: string;
+    context: SAMLRequestContext;
+    /** The revision a stored request was read at; absent for a request that arrived now. */
+    storedRevision?: number;
+    /** The request's lifetime (seconds), when the caller has read it already. */
+    requestTtlSeconds?: number;
+  }
+): Promise<SAMLRequestData> {
+  const { authnRequest } = input;
+  const spEntityId = authnRequest.issuer;
+  if (input.storedRevision !== undefined) {
+    let updated: SAMLRequestData | null;
+    if (env.SAML_RUNTIME_PORTS) {
+      updated = await env.SAML_RUNTIME_PORTS.requests.update({
+        tenantId,
+        spEntityId,
+        requestId: authnRequest.id,
+        expectedRevision: input.storedRevision,
+        context: input.context,
+      });
+    } else {
+      const response = await callIdPRequestStore(env, tenantId, spEntityId, 'update', {
+        requestId: authnRequest.id,
+        expectedRevision: input.storedRevision,
+        context: input.context,
+      });
+      updated = response.ok ? await response.json<SAMLRequestData>() : null;
+    }
+    return assertStoredAuthnRequest(updated, authnRequest.id, spEntityId);
+  }
+
+  const requestTtlSeconds =
+    input.requestTtlSeconds ?? (await resolveSamlRequestTtlSeconds(env, tenantId));
+  const now = Date.now();
+  const expiresAt = now + requestTtlSeconds * 1000;
+  const request: SAMLRequestData = {
+    requestId: authnRequest.id,
+    issuer: spEntityId,
+    destination: authnRequest.destination ?? '',
+    acsUrl: authnRequest.assertionConsumerServiceURL,
+    binding: 'post', // Default response binding
+    type: 'authn_request',
+    data: authnRequest,
+    relayState: input.relayState,
+    context: input.context,
+    used: false,
+    createdAt: now,
+    expiresAt,
+    retainUntil: authnRequestRetainUntil(authnRequest, requestTtlSeconds, expiresAt),
+    revision: 1,
+  };
+  let created: boolean;
+  if (env.SAML_RUNTIME_PORTS) {
+    created = await env.SAML_RUNTIME_PORTS.requests.create({ tenantId, spEntityId, request });
+  } else {
+    const response = await callIdPRequestStore(env, tenantId, spEntityId, 'create', { request });
+    created = response.status === 201;
+  }
+  if (!created) {
+    // The same request was stored before (it is waiting, answered, or expired): a replay.
+    throw new Error('SAML AuthnRequest was already received');
+  }
+  return request;
 }
 
 /**
@@ -209,6 +291,8 @@ export async function redirectToSAMLLogin(
      * fresh: a new nonce is issued.
      */
     resumedLogin?: ResumedSAMLLogin;
+    /** The revision a stored request was read at (a resume); absent for one that arrived now. */
+    storedRevision?: number;
   }
 ): Promise<Response> {
   const { env, tenantId, authnRequest } = input;
@@ -219,20 +303,19 @@ export async function redirectToSAMLLogin(
     input.resumedLogin === 'none' ? null : (input.resumedLogin ?? (await createSAMLLoginNonce()));
   // Only a nonce the browser presented (or that was just issued) goes on the login URL.
   const loginNonceOnUrl = loginNonce?.nonce;
-  await storeAuthnRequest(
-    env,
-    tenantId,
+  await saveStoredAuthnRequest(env, tenantId, {
     authnRequest,
-    input.relayState,
+    relayState: input.relayState,
     // When the person was first sent: a session made since answers the request only if its
     // sign-in ran for it (sso.ts, sessionAnswersSAMLRequest).
-    {
+    context: {
       ...input.context,
       sentToSignInAt: input.context?.sentToSignInAt ?? Date.now(),
       ...(loginNonce ? { loginNonceHash: loginNonce.hash } : {}),
     },
-    requestTtlSeconds
-  );
+    ...(input.storedRevision !== undefined ? { storedRevision: input.storedRevision } : {}),
+    requestTtlSeconds,
+  });
 
   const uiConfig = await getUIConfig(env, tenantId);
   if (uiConfig?.baseUrl) {

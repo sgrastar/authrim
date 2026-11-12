@@ -59,46 +59,34 @@ const databaseUrl = (globalThis as { process?: { env?: Record<string, string | u
         used: false,
         createdAt: now,
         expiresAt: now + 300_000,
+        retainUntil: now + 600_000,
       };
-      await storeA.storeSamlRequest({ tenantId, spEntityId, request });
+      expect(await storeA.createSamlRequest({ tenantId, spEntityId, request })).toBe(true);
+      expect(await storeB.createSamlRequest({ tenantId, spEntityId, request })).toBe(false);
+      const key = { tenantId, spEntityId, requestId: request.requestId };
+      expect(await storeB.readSamlRequest({ ...key, tenantId: 'tenant-b' })).toBeNull();
       expect(
-        await storeB.consumeSamlRequest({
-          tenantId: 'tenant-b',
-          spEntityId,
-          requestId: request.requestId,
-        })
+        await storeB.readSamlRequest({ ...key, spEntityId: 'https://other.example.test' })
       ).toBeNull();
-      expect(
-        await storeB.consumeSamlRequest({
-          tenantId,
-          spEntityId: 'https://other.example.test',
-          requestId: request.requestId,
-        })
-      ).toBeNull();
-      const consumeRequest = { tenantId, spEntityId, requestId: request.requestId };
-      const firstRace = await Promise.all([
-        storeA.consumeSamlRequest(consumeRequest),
-        storeB.consumeSamlRequest(consumeRequest),
-      ]);
-      expect(firstRace.filter(Boolean)).toHaveLength(1);
-      expect(await storeA.consumeSamlRequest(consumeRequest)).toBeNull();
-
-      await storeA.storeSamlRequest({
-        tenantId,
-        spEntityId,
-        request: { ...request, context: { reauthentication: { issuedAt: Date.now() } } },
+      expect(await storeB.readSamlRequest(key)).toMatchObject({ revision: 1, used: false });
+      const updated = await storeA.updateSamlRequest({
+        ...key,
+        expectedRevision: 1,
+        context: { reauthentication: { issuedAt: Date.now() } },
       });
-      const resumed = await storeB.consumeSamlRequest(consumeRequest);
-      expect(resumed?.createdAt).toBeGreaterThan(0);
-      expect(resumed?.expiresAt).toBe(request.expiresAt);
-      expect(resumed?.context?.reauthentication).toBeDefined();
-      await expect(
-        storeA.storeSamlRequest({
-          tenantId,
-          spEntityId,
-          request: { ...request, acsUrl: 'https://attacker.example.test/acs' },
-        })
-      ).rejects.toThrow('binding conflict');
+      expect(updated?.revision).toBe(2);
+      expect(
+        await storeB.updateSamlRequest({ ...key, expectedRevision: 1, context: {} })
+      ).toBeNull();
+      const race = await Promise.all([
+        storeA.completeSamlRequest({ ...key, expectedRevision: 2 }),
+        storeB.completeSamlRequest({ ...key, expectedRevision: 2 }),
+      ]);
+      expect(race.filter(Boolean)).toHaveLength(1);
+      expect(race.find(Boolean)?.expiresAt).toBe(request.expiresAt);
+      expect(await storeA.completeSamlRequest(key)).toBeNull();
+      // A completed request keeps blocking the id until its retention.
+      expect(await storeA.createSamlRequest({ tenantId, spEntityId, request })).toBe(false);
 
       const challenge = {
         tenantId,

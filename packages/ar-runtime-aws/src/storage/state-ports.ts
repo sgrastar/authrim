@@ -1,5 +1,6 @@
 /** Storage-independent contracts used by the AWS SAML runtime. */
 import type {
+  SAMLRequestContext,
   SAMLRequestData,
   AccountAuthenticationLifecycle,
   AccountAuthenticationSnapshot,
@@ -66,19 +67,29 @@ export interface TransientChallenge {
   consumedBy?: string;
 }
 
-export interface StoreSamlRequestInput {
+/** The identity of a stored IdP AuthnRequest: tenant, SP and request id. */
+export interface SamlRequestKeyInput {
+  tenantId: string;
+  spEntityId: string;
+  requestId: string;
+}
+
+export interface CreateSamlRequestInput {
   tenantId: string;
   spEntityId: string;
   request: SAMLRequestData;
 }
 
-export interface ConsumeSamlRequestInput {
-  tenantId: string;
-  spEntityId: string;
-  requestId: string;
+export interface UpdateSamlRequestInput extends SamlRequestKeyInput {
+  expectedRevision: number;
+  context: SAMLRequestContext;
+}
+
+export interface CompleteSamlRequestInput extends SamlRequestKeyInput {
+  expectedRevision?: number;
   /**
-   * Consume only a request stored with this login nonce hash (`context.loginNonceHash`, a login
-   * cancel); any other is left as it is, not consumed.
+   * Complete only a request stored with this login nonce hash (`context.loginNonceHash`, a login
+   * cancel); any other is left waiting.
    */
   loginNonceHash?: string;
 }
@@ -110,8 +121,14 @@ export interface TransientStateStore {
     minRemainingMs: number;
   }): Promise<boolean>;
   deleteChallenge(input: { tenantId: string; id: string }): Promise<boolean>;
-  storeSamlRequest(input: StoreSamlRequestInput): Promise<void>;
-  consumeSamlRequest(input: ConsumeSamlRequestInput): Promise<SAMLRequestData | null>;
+  /** Store a new request at revision 1; false when its id is known in any state (never overwrites). */
+  createSamlRequest(input: CreateSamlRequestInput): Promise<boolean>;
+  /** The request while it is waiting (not completed, not expired), without using it up. */
+  readSamlRequest(input: SamlRequestKeyInput): Promise<SAMLRequestData | null>;
+  /** Replace the context of a waiting request at `expectedRevision`; null otherwise. */
+  updateSamlRequest(input: UpdateSamlRequestInput): Promise<SAMLRequestData | null>;
+  /** Mark a waiting request completed once and return it; null otherwise. */
+  completeSamlRequest(input: CompleteSamlRequestInput): Promise<SAMLRequestData | null>;
   putKey(input: PutTransientKeyInput): Promise<void>;
   getKey(input: { tenantId: string; key: string }): Promise<string | null>;
   deleteKey(input: { tenantId: string; key: string }): Promise<boolean>;

@@ -22,8 +22,10 @@ import type {
   StoreChallengeInput,
   ConsumeChallengeInput,
   TransientChallenge,
-  StoreSamlRequestInput,
-  ConsumeSamlRequestInput,
+  CreateSamlRequestInput,
+  SamlRequestKeyInput,
+  UpdateSamlRequestInput,
+  CompleteSamlRequestInput,
   PutTransientKeyInput,
 } from './state-ports';
 export type {
@@ -32,8 +34,10 @@ export type {
   StoreChallengeInput,
   ConsumeChallengeInput,
   TransientChallenge,
-  StoreSamlRequestInput,
-  ConsumeSamlRequestInput,
+  CreateSamlRequestInput,
+  SamlRequestKeyInput,
+  UpdateSamlRequestInput,
+  CompleteSamlRequestInput,
   PutTransientKeyInput,
 } from './state-ports';
 
@@ -49,6 +53,7 @@ const TABLE = 'authrim_aws_transient_state';
 const DB_NOW_MS = 'floor(extract(epoch from clock_timestamp()) * 1000)::bigint';
 const MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_SAML_REQUEST_FUTURE_MS = 30 * 60 * 1000;
+const MAX_SAML_RETAIN_FUTURE_MS = 60 * 60 * 1000;
 const MAX_JSON_BYTES = 64 * 1024;
 const TENANT_ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
@@ -74,6 +79,12 @@ function assertTtlMs(value: number): void {
 
 function assertTimestamp(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Invalid ${name}`);
+}
+
+function assertSamlKey(input: SamlRequestKeyInput): void {
+  assertTenantId(input.tenantId);
+  assertIdentifier(input.spEntityId, 'SP entity ID', 4096);
+  assertIdentifier(input.requestId, 'SAML request ID');
 }
 
 function jsonObject(value: Record<string, unknown>): string {
@@ -117,7 +128,11 @@ function samlImmutablePart(request: SAMLRequestData): Record<string, unknown> {
   };
 }
 
-function readSamlRequest(row: StoredRow, expected: ConsumeSamlRequestInput): SAMLRequestData {
+function samlFromRow(
+  row: StoredRow,
+  expected: SamlRequestKeyInput,
+  used: boolean
+): SAMLRequestData {
   const payload = asObject(row.payload);
   const request = asObject(payload.request);
   if (
@@ -128,11 +143,12 @@ function readSamlRequest(row: StoredRow, expected: ConsumeSamlRequestInput): SAM
   ) {
     throw new Error('SAML request storage binding invalid');
   }
+  // `expires_at_ms` is the retention deadline; the request's own expiry is in its payload.
   return {
     ...(request as unknown as SAMLRequestData),
     createdAt: asMs(row.created_at_ms),
-    expiresAt: asMs(row.expires_at_ms),
-    used: true,
+    expiresAt: asMs(request.expiresAt as number),
+    used,
   };
 }
 
@@ -413,11 +429,11 @@ export class PostgresTransientStateStore {
   }
 
   /**
-   * A trusted IdP continuation may store the same request ID after consuming it.
-   * PostgreSQL permits this only for the same SP and immutable AuthnRequest, and
-   * retains the original expiry. The operation is serialized by the primary key.
+   * Store a new AuthnRequest at revision 1. Any row with this id, waiting, completed or expired
+   * but retained, makes it a replay (false); only a row past its retention (`expires_at_ms`, kept
+   * until `retainUntil`) and not yet pruned is replaced. Nothing is overwritten or resurrected.
    */
-  async storeSamlRequest(input: StoreSamlRequestInput): Promise<void> {
+  async createSamlRequest(input: CreateSamlRequestInput): Promise<boolean> {
     assertTenantId(input.tenantId);
     assertIdentifier(input.spEntityId, 'SP entity ID', 4096);
     assertIdentifier(input.request.requestId, 'SAML request ID');
@@ -425,51 +441,116 @@ export class PostgresTransientStateStore {
       throw new Error('Invalid SAML request binding');
     }
     assertTimestamp(input.request.expiresAt, 'SAML request expiry');
-    const payload = jsonObject({ spEntityId: input.spEntityId, request: input.request });
-    const immutable = jsonObject(samlImmutablePart(input.request));
+    const retainUntil = input.request.retainUntil;
+    if (retainUntil === undefined) throw new Error('Invalid SAML request retention');
+    assertTimestamp(retainUntil, 'SAML request retention');
+    if (retainUntil < input.request.expiresAt) throw new Error('Invalid SAML request retention');
+    const stored: SAMLRequestData = { ...input.request, revision: 1, used: false };
+    const payload = jsonObject({ spEntityId: input.spEntityId, request: stored });
+    const immutable = jsonObject(samlImmutablePart(stored));
     const result = await this.db.query<{ id: string }>(
-      `/* aws-transient:store-saml-request */
+      `/* aws-transient:create-saml-request */
        WITH at AS (SELECT ${DB_NOW_MS} AS now_ms)
        INSERT INTO ${TABLE} AS current
          (tenant_id, kind, id, payload, immutable_payload, created_at_ms,
           expires_at_ms, consumed_at_ms)
        SELECT $1, 'saml_request', $2, $3::jsonb, $4::jsonb,
-              at.now_ms, $5::bigint, NULL FROM at
+              at.now_ms, $6::bigint, NULL FROM at
        WHERE $5::bigint > at.now_ms
          AND $5::bigint <= at.now_ms + ${MAX_SAML_REQUEST_FUTURE_MS}
+         AND $6::bigint >= $5::bigint
+         AND $6::bigint <= at.now_ms + ${MAX_SAML_RETAIN_FUTURE_MS}
        ON CONFLICT (tenant_id, kind, id) DO UPDATE
          SET payload = EXCLUDED.payload,
+             immutable_payload = EXCLUDED.immutable_payload,
+             created_at_ms = EXCLUDED.created_at_ms,
+             expires_at_ms = EXCLUDED.expires_at_ms,
              consumed_at_ms = NULL
-       WHERE current.immutable_payload = EXCLUDED.immutable_payload
-         AND current.payload->>'spEntityId' = EXCLUDED.payload->>'spEntityId'
-         AND current.expires_at_ms > ${DB_NOW_MS}
+       WHERE current.expires_at_ms <= ${DB_NOW_MS}
        RETURNING id`,
-      [input.tenantId, input.request.requestId, payload, immutable, input.request.expiresAt]
+      [
+        input.tenantId,
+        input.request.requestId,
+        payload,
+        immutable,
+        input.request.expiresAt,
+        retainUntil,
+      ]
     );
-    if (result.rows.length !== 1) throw new Error('SAML request expired or binding conflict');
+    // No row: a replay, or a request outside the accepted expiry/retention window.
+    return result.rows.length === 1;
   }
 
-  async consumeSamlRequest(input: ConsumeSamlRequestInput): Promise<SAMLRequestData | null> {
-    assertTenantId(input.tenantId);
-    assertIdentifier(input.spEntityId, 'SP entity ID', 4096);
-    assertIdentifier(input.requestId, 'SAML request ID');
+  /** The waiting request (not completed, not expired), without changing anything. */
+  async readSamlRequest(input: SamlRequestKeyInput): Promise<SAMLRequestData | null> {
+    assertSamlKey(input);
+    const result = await this.db.query<StoredRow>(
+      `/* aws-transient:read-saml-request */
+       SELECT payload, created_at_ms, expires_at_ms FROM ${TABLE}
+       WHERE tenant_id = $1 AND kind = 'saml_request' AND id = $2
+         AND payload->>'spEntityId' = $3
+         AND immutable_payload->>'issuer' = $3
+         AND consumed_at_ms IS NULL
+         AND (payload->'request'->>'expiresAt')::bigint > ${DB_NOW_MS}`,
+      [input.tenantId, input.requestId, input.spEntityId]
+    );
+    return result.rows[0] ? samlFromRow(result.rows[0], input, false) : null;
+  }
+
+  /** Replace only the context of a waiting request at `expectedRevision`, raising the revision. */
+  async updateSamlRequest(input: UpdateSamlRequestInput): Promise<SAMLRequestData | null> {
+    assertSamlKey(input);
+    assertTimestamp(input.expectedRevision, 'SAML request revision');
+    const context = jsonObject(input.context as unknown as Record<string, unknown>);
+    const result = await this.db.query<StoredRow>(
+      `/* aws-transient:update-saml-request */
+       UPDATE ${TABLE}
+       SET payload = jsonb_set(
+         jsonb_set(payload, '{request,context}', $5::jsonb, true),
+         '{request,revision}', to_jsonb($4::bigint + 1), true)
+       WHERE tenant_id = $1 AND kind = 'saml_request' AND id = $2
+         AND payload->>'spEntityId' = $3
+         AND immutable_payload->>'issuer' = $3
+         AND (payload->'request'->>'revision')::bigint = $4::bigint
+         AND consumed_at_ms IS NULL
+         AND (payload->'request'->>'expiresAt')::bigint > ${DB_NOW_MS}
+       RETURNING payload, created_at_ms, expires_at_ms`,
+      [input.tenantId, input.requestId, input.spEntityId, input.expectedRevision, context]
+    );
+    return result.rows[0] ? samlFromRow(result.rows[0], input, false) : null;
+  }
+
+  /** Mark a waiting request completed once (optionally at a revision, or on a login nonce hash). */
+  async completeSamlRequest(input: CompleteSamlRequestInput): Promise<SAMLRequestData | null> {
+    assertSamlKey(input);
+    if (input.expectedRevision !== undefined) {
+      assertTimestamp(input.expectedRevision, 'SAML request revision');
+    }
     if (input.loginNonceHash !== undefined) {
       assertIdentifier(input.loginNonceHash, 'SAML login nonce hash', 256);
     }
-    // With a login nonce hash, only a request stored with that hash is consumed (a cancel).
     const result = await this.db.query<StoredRow>(
-      `/* aws-transient:consume-saml-request */
+      `/* aws-transient:complete-saml-request */
        UPDATE ${TABLE} SET consumed_at_ms = ${DB_NOW_MS}
        WHERE tenant_id = $1 AND kind = 'saml_request' AND id = $2
          AND payload->>'spEntityId' = $3
          AND immutable_payload->>'issuer' = $3
          AND ($4::text IS NULL
               OR payload->'request'->'context'->>'loginNonceHash' = $4)
-         AND consumed_at_ms IS NULL AND expires_at_ms > ${DB_NOW_MS}
+         AND ($5::bigint IS NULL
+              OR (payload->'request'->>'revision')::bigint = $5::bigint)
+         AND consumed_at_ms IS NULL
+         AND (payload->'request'->>'expiresAt')::bigint > ${DB_NOW_MS}
        RETURNING payload, created_at_ms, expires_at_ms`,
-      [input.tenantId, input.requestId, input.spEntityId, input.loginNonceHash ?? null]
+      [
+        input.tenantId,
+        input.requestId,
+        input.spEntityId,
+        input.loginNonceHash ?? null,
+        input.expectedRevision ?? null,
+      ]
     );
-    return result.rows[0] ? readSamlRequest(result.rows[0], input) : null;
+    return result.rows[0] ? samlFromRow(result.rows[0], input, true) : null;
   }
 
   /** A short-lived tenant-scoped string slot for SAML continuation state. */

@@ -28,7 +28,7 @@ import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import { resolveSAMLResponseDestination } from './response-destination';
 import { scheduleSAMLPolicyFailureAudit } from './audit';
-import { consumeStoredAuthnRequest } from './sso-stored-request';
+import { completeStoredAuthnRequest } from './sso-stored-request';
 import { generateSAMLProtocolErrorResponse, sendSAMLResponse } from './sso';
 
 function noGrant(c: Context<{ Bindings: Env }>): Response {
@@ -62,7 +62,7 @@ export async function handleIdPLoginCancel(c: Context<{ Bindings: Env }>): Promi
     );
     if (!claimed) return noGrant(c);
 
-    const storedRequest = await consumeStoredAuthnRequest(
+    const storedRequest = await completeStoredAuthnRequest(
       env,
       tenantId,
       claimed.requestId,

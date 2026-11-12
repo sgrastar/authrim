@@ -71,9 +71,10 @@ import { gateSAMLAuthnAssurance } from './sso-authn-assurance-gate';
 import {
   carrySAMLRequestContext,
   readSAMLReauthentication,
-  consumeStoredAuthnRequest,
+  completeStoredAuthnRequest,
+  readStoredAuthnRequest,
+  saveStoredAuthnRequest,
   redirectToSAMLLogin,
-  storeAuthnRequest,
   type ResumedSAMLLogin,
 } from './sso-stored-request';
 import { resolveSAMLAuthnInteraction } from './authn-request-policy';
@@ -145,6 +146,8 @@ interface ParsedAuthnRequestInput {
   requestContext?: SAMLRequestContext;
   /** For a resumed request: what its login keeps of the nonce (redirectToSAMLLogin). */
   resumedLogin?: ResumedSAMLLogin;
+  /** For a resumed request: the revision it was read at (completed or updated only at it). */
+  storedRevision?: number;
 }
 
 /**
@@ -172,6 +175,27 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
     let { authnRequest } = parsedInput;
     const { relayState } = parsedInput;
+    // Every answer to the SP for a stored request uses the request up first, at the revision it
+    // was read at: a request answered in another tab, or changed since, is not answered again.
+    // A request refused before it is recorded (its signature, ACS or binding failed) is recorded
+    // and used up at once too, so the same AuthnRequest sent again is refused.
+    const answerSP = async (destination: string, responseXml: string): Promise<Response> => {
+      const storedRevision =
+        parsedInput.storedRevision ??
+        (
+          await saveStoredAuthnRequest(env, tenantId, {
+            authnRequest,
+            relayState,
+            // Never resumed, even if it is left waiting (the completion below failed).
+            context: { refusedOnArrival: true },
+            requestTtlSeconds,
+          })
+        ).revision;
+      await completeStoredAuthnRequest(env, tenantId, authnRequest.id, authnRequest.issuer, {
+        expectedRevision: storedRevision,
+      });
+      return sendSAMLResponse(c, destination, responseXml, relayState);
+    };
 
     // Validate AuthnRequest
     await validateAuthnRequest(authnRequest, issuerUrl, requestTtlSeconds);
@@ -245,12 +269,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
           'SAML request was rejected by IdP policy',
           error.failureKind
         );
-        return sendSAMLResponse(
-          c,
-          resolveSAMLResponseDestination(authnRequest, spConfig),
-          responseXml,
-          relayState
-        );
+        return answerSP(resolveSAMLResponseDestination(authnRequest, spConfig), responseXml);
       }
 
       if (error instanceof InvalidSAMLResponseDestinationError) {
@@ -301,15 +320,24 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
           'Requested SAML response binding is not supported',
           'authn_request_unsupported_response_binding'
         );
-        return sendSAMLResponse(
-          c,
-          resolveSAMLResponseDestination(authnRequest, spConfig),
-          responseXml,
-          relayState
-        );
+        return answerSP(resolveSAMLResponseDestination(authnRequest, spConfig), responseXml);
       }
 
       throw error;
+    }
+
+    // A request that arrives is recorded once it has passed the checks above, before anything is
+    // done for it: the same AuthnRequest sent again, while it could still be accepted, finds its
+    // id known and is refused here (no user, NameID or Assertion is touched for it).
+    if (parsedInput.storedRevision === undefined) {
+      parsedInput.storedRevision = (
+        await saveStoredAuthnRequest(env, tenantId, {
+          authnRequest,
+          relayState,
+          context: {},
+          requestTtlSeconds,
+        })
+      ).revision;
     }
 
     // Check user authentication
@@ -340,9 +368,8 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         );
         if (!answers) authenticatedSession = null;
       } catch (error) {
-        // The stored request is used up by now: answering with an error would leave the person
-        // nothing to retry. The session is not taken; the person is sent to sign in again, which
-        // stores the request anew.
+        // The session is not taken: the person is sent to sign in again (the stored request is
+        // updated, not used up), rather than answered with an error they could not retry.
         log.warn('SAML sign-in Flow could not be read for the session', {}, error as Error);
         authenticatedSession = null;
       }
@@ -382,12 +409,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         authnInteraction.statusMessage,
         authnInteraction.failureKind
       );
-      return sendSAMLResponse(
-        c,
-        resolveSAMLResponseDestination(authnRequest, spConfig),
-        responseXml,
-        relayState
-      );
+      return answerSP(resolveSAMLResponseDestination(authnRequest, spConfig), responseXml);
     }
 
     if (authnInteraction.action === 'interactive_login') {
@@ -413,6 +435,9 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
             : {}),
         },
         resumedLogin: parsedInput.resumedLogin,
+        ...(parsedInput.storedRevision !== undefined
+          ? { storedRevision: parsedInput.storedRevision }
+          : {}),
       });
     }
 
@@ -473,12 +498,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
           : 'SAML request was rejected by IdP policy',
         unavailable ? 'identity_assurance_unavailable' : 'identity_assurance_insufficient'
       );
-      return sendSAMLResponse(
-        c,
-        resolveSAMLResponseDestination(authnRequest, spConfig),
-        responseXml,
-        relayState
-      );
+      return answerSP(resolveSAMLResponseDestination(authnRequest, spConfig), responseXml);
     }
 
     // The AAL the sign-in must have (the SP's minimum, and what the request's AuthnContext asks
@@ -494,10 +514,12 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       relayState,
       requestContext: parsedInput.requestContext,
       resumedLogin: parsedInput.resumedLogin,
+      ...(parsedInput.storedRevision !== undefined
+        ? { storedRevision: parsedInput.storedRevision }
+        : {}),
       log,
       refuse: async (answer) =>
-        sendSAMLResponse(
-          c,
+        answerSP(
           resolveSAMLResponseDestination(authnRequest, spConfig),
           await generateSAMLProtocolErrorResponse(
             issuerUrl,
@@ -510,8 +532,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
             answer.secondLevelStatusCode,
             answer.statusMessage,
             answer.failureKind
-          ),
-          relayState
+          )
         ),
     });
     if ('response' in assuranceGate) return assuranceGate.response;
@@ -650,7 +671,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         });
 
         const challengeId = crypto.randomUUID();
-        await storeAuthnRequest(env, tenantId, authnRequest, relayState, {
+        const challengeContext: SAMLRequestContext = {
           ...carrySAMLRequestContext({
             ...parsedInput.requestContext,
             // The step-up, with the session it was verified against: the request comes back
@@ -668,6 +689,15 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
             consentMode: error.consentMode,
             createdAt: Date.now(),
           },
+        };
+        await saveStoredAuthnRequest(env, tenantId, {
+          authnRequest,
+          relayState,
+          context: challengeContext,
+          ...(parsedInput.storedRevision !== undefined
+            ? { storedRevision: parsedInput.storedRevision }
+            : {}),
+          requestTtlSeconds,
         });
 
         return await renderSAMLAttributeReleaseConsentPage(c, {
@@ -743,12 +773,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     }
 
     // Return response based on SP's preferred binding
-    return sendSAMLResponse(
-      c,
-      resolveSAMLResponseDestination(authnRequest, spConfig),
-      responseXml,
-      relayState
-    );
+    return answerSP(resolveSAMLResponseDestination(authnRequest, spConfig), responseXml);
   } catch (error) {
     log.error('SSO Error', { method }, error as Error);
     // SECURITY: Do not expose internal error details in response
@@ -800,7 +825,8 @@ export async function handleIdPAttributeReleaseConsent(
     const oneTimeApproval =
       decision === 'approve_once' || (decision === 'approve' && releaseScope === 'once');
 
-    const storedRequest = await consumeStoredAuthnRequest(env, tenantId, requestId, spEntityId);
+    // Checked before anything is used up: a stale or wrong post leaves the request waiting.
+    const storedRequest = await readStoredAuthnRequest(env, tenantId, requestId, spEntityId);
     const authnRequest = storedRequest.data as SAMLAuthnRequest;
     const challenge = storedRequest.context?.attributeReleaseConsentChallenge;
     if (
@@ -848,6 +874,9 @@ export async function handleIdPAttributeReleaseConsent(
         'Attribute release was denied',
         'attribute_release_consent_required'
       );
+      await completeStoredAuthnRequest(env, tenantId, requestId, spEntityId, {
+        expectedRevision: storedRequest.revision,
+      });
       return sendSAMLResponse(
         c,
         resolveSAMLResponseDestination(authnRequest, spConfig),
@@ -856,6 +885,25 @@ export async function handleIdPAttributeReleaseConsent(
       );
     }
 
+    await saveStoredAuthnRequest(env, tenantId, {
+      authnRequest,
+      relayState: storedRequest.relayState,
+      context: {
+        ...carrySAMLRequestContext(storedRequest.context),
+        attributeReleaseConsentConfirmed: {
+          subjectId: authSession.userId,
+          destinationType: 'saml_sp',
+          destinationId: spEntityId,
+          attributeSetHash,
+          confirmedAt: Date.now(),
+        },
+      },
+      storedRevision: storedRequest.revision,
+      requestTtlSeconds,
+    });
+
+    // Remembered only once the decision has been recorded on the request at the revision it was
+    // read at: a decision that lost to another tab (or to the request expiring) leaves nothing.
     if (!oneTimeApproval) {
       const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
         env,
@@ -872,17 +920,6 @@ export async function handleIdPAttributeReleaseConsent(
         consent_mode: challenge.consentMode,
       });
     }
-
-    await storeAuthnRequest(env, tenantId, authnRequest, storedRequest.relayState, {
-      ...carrySAMLRequestContext(storedRequest.context),
-      attributeReleaseConsentConfirmed: {
-        subjectId: authSession.userId,
-        destinationType: 'saml_sp',
-        destinationId: spEntityId,
-        attributeSetHash,
-        confirmedAt: Date.now(),
-      },
-    });
 
     return c.redirect(buildSAMLSSOResumeUrl(c.req.url, requestId, spEntityId));
   } catch (error) {
@@ -1184,7 +1221,13 @@ async function parseStoredAuthnRequest(
   // the browser that was given that nonce can cancel it), and the nonce goes on the login URL only
   // when the one the Login UI presents matches it. A request stored before nonces stays without.
   const presentedNonce = url.searchParams.get('saml_login_nonce') ?? '';
-  const storedRequest = await consumeStoredAuthnRequest(c.env, tenantId, requestId, spEntityId);
+  // Read, not used up: the request is checked again and used up only when the SP is answered.
+  const storedRequest = await readStoredAuthnRequest(c.env, tenantId, requestId, spEntityId);
+  // One refused as it arrived (it failed its signature, ACS or binding check) is never resumed:
+  // a resume would take it as checked.
+  if (storedRequest.context?.refusedOnArrival) {
+    throw new Error('Stored SAML request was refused');
+  }
   const held = storedRequest.context?.loginNonceHash;
   const keptHash = typeof held === 'string' && held ? held : null;
   const matched =
@@ -1204,6 +1247,7 @@ async function parseStoredAuthnRequest(
     xml: '',
     storedRequestValidated: true,
     requestContext: storedRequest.context,
+    storedRevision: storedRequest.revision,
   };
 }
 
