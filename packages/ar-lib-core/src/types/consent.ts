@@ -365,6 +365,25 @@ export interface UserConsentRecord {
   expiresAt?: number;
   /** Policy versions agreed to */
   policyVersions?: ConsentVersionInfo;
+  /** The information release decision recorded with the consent (absent: none recorded) */
+  informationRelease?: AccountInformationRelease;
+}
+
+/** What a person's account page shows about the information a service is given. */
+export interface AccountInformationRelease {
+  /** user: the person chose; trust: everything, the service is trusted; not_asked: required only. */
+  basis: 'user' | 'trust' | 'not_asked';
+  /** Claims the person approved (basis user). */
+  approved: string[];
+  /** Optional claims the person declined (basis user). */
+  declined: string[];
+  /** When it was decided (milliseconds since the epoch). */
+  decidedAt: number;
+  /**
+   * The service's policy made this decision and no longer decides: what was already issued keeps
+   * it, and the next sign-in asks the person.
+   */
+  superseded?: boolean;
 }
 
 // =============================================================================

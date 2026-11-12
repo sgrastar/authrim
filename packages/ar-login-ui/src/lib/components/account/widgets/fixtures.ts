@@ -211,6 +211,12 @@ export const clientConsent = (
 	scopes: ['openid', 'profile', 'email'],
 	grantedAt: FIXTURE_NOW - 20 * DAY,
 	policyVersions: { privacyPolicyVersion: '2026-04', tosVersion: '3.1' },
+	informationRelease: {
+		basis: 'user',
+		approved: ['name', 'email'],
+		declined: ['picture'],
+		decidedAt: FIXTURE_NOW - 20 * DAY
+	},
 	...overrides
 });
 

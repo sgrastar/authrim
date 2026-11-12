@@ -165,6 +165,15 @@ export type AccountOAuthClientConsent = {
 		tosVersion?: string;
 		consentVersion?: number;
 	};
+	/** The information release decision recorded with the consent (absent: none recorded). */
+	informationRelease?: {
+		basis: 'user' | 'trust' | 'not_asked';
+		approved: string[];
+		declined: string[];
+		decidedAt: number;
+		/** Made by the service's policy, which no longer decides: the next sign-in asks. */
+		superseded?: boolean;
+	};
 };
 
 export type AccountStatementConsent = {

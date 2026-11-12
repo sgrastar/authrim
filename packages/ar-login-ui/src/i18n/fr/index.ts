@@ -202,6 +202,16 @@ const fr = createTranslation({
 	account_consentExpiresAt: 'Expire le',
 	account_consentNoExpiry: 'Sans expiration',
 	account_consentPolicyVersions: 'Versions des politiques',
+	account_consentInformationRelease: 'Informations fournies',
+	account_consentInformationDeclined: 'Non fournies',
+	account_consentInformationNone: 'Aucune',
+	account_consentInformationTrusted: 'Tout ce que le service demande (service de confiance)',
+	account_consentInformationRequiredOnly:
+		'Éléments obligatoires uniquement (le service ne demande pas)',
+	account_consentInformationNotRecorded:
+		'Pas encore décidé (la question vous sera posée à votre prochaine connexion)',
+	account_consentInformationSuperseded:
+		'(modifié : la question vous sera posée à votre prochaine connexion)',
 	account_consentPrivacyPolicy: 'Politique de confidentialité',
 	account_consentTerms: 'Conditions',
 	account_consentVersion: 'Consentement',

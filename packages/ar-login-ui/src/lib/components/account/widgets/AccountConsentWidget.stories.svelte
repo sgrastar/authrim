@@ -21,7 +21,7 @@
 			docs: {
 				description: {
 					component:
-						'What the account has agreed to: OAuth clients with the scopes granted, and consent statements (terms, policies, marketing) with their version and choice. Read-only.'
+						'What the account has agreed to: OAuth clients with the scopes granted and the information they are given, and consent statements (terms, policies, marketing) with their version and choice. Read-only.'
 				}
 			}
 		}
@@ -41,7 +41,43 @@
 		).toBeInTheDocument();
 		await expect(canvas.getByText('Docs')).toBeVisible();
 		await expect(canvas.getByText('openid, profile, email')).toBeVisible();
+		await expect(canvas.getByText('Full name, Email address')).toBeVisible();
 		await expect(canvas.getByText(get(LL).account_consentSelectedAlways())).toBeVisible();
+	}}
+>
+	{#snippet template(args)}{@render widget(args)}{/snippet}
+</Story>
+
+<Story
+	name="Information decided for the user"
+	args={{
+		consents: [
+			clientConsent({
+				id: 'consent-trusted',
+				clientName: 'Intranet',
+				clientId: 'client-intranet',
+				informationRelease: { basis: 'trust', approved: [], declined: [], decidedAt: 1 }
+			}),
+			clientConsent({
+				id: 'consent-not-asked',
+				clientName: 'Status page',
+				clientId: 'client-status',
+				informationRelease: { basis: 'not_asked', approved: [], declined: [], decidedAt: 1 }
+			}),
+			clientConsent({
+				id: 'consent-not-recorded',
+				clientName: 'Legacy app',
+				clientId: 'client-legacy',
+				informationRelease: undefined
+			})
+		]
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const messages = get(LL);
+		await expect(canvas.getByText(messages.account_consentInformationTrusted())).toBeVisible();
+		await expect(canvas.getByText(messages.account_consentInformationRequiredOnly())).toBeVisible();
+		await expect(canvas.getByText(messages.account_consentInformationNotRecorded())).toBeVisible();
 	}}
 >
 	{#snippet template(args)}{@render widget(args)}{/snippet}

@@ -94,7 +94,13 @@ describe('the lite account widgets', async () => {
 						scopes: ['openid', 'email'],
 						selectedScopes: ['openid'],
 						grantedAt: 1,
-						policyVersions: { tosVersion: '3', consentVersion: 2 }
+						policyVersions: { tosVersion: '3', consentVersion: 2 },
+						informationRelease: {
+							basis: 'user',
+							approved: ['email'],
+							declined: ['picture'],
+							decidedAt: 1
+						}
 					},
 					{
 						kind: 'statement',
@@ -124,6 +130,10 @@ describe('the lite account widgets', async () => {
 		// No logo: the lite page loads no image from elsewhere.
 		expect(client).not.toHaveProperty('logo');
 		expect(client.rows[0]).toEqual({ label: LL.account_consentScopes(), value: 'openid' });
+		expect(client.rows.slice(1, 3)).toEqual([
+			{ label: LL.account_consentInformationRelease(), value: LL.consent_claim_email() },
+			{ label: LL.account_consentInformationDeclined(), value: LL.consent_claim_picture() }
+		]);
 		expect(client.rows.at(-1)?.value).toBe(
 			`${LL.account_consentTerms()}: 3 / ${LL.account_consentVersion()}: 2`
 		);
