@@ -337,6 +337,10 @@ export interface OAuthClientConsentListRow {
   privacy_policy_version: string | null;
   tos_version: string | null;
   consent_version: number | null;
+  release_approved_json: string | null;
+  release_declined_json: string | null;
+  release_basis: string | null;
+  release_decided_at: number | null;
   client_name: string | null;
   logo_uri: string | null;
 }
@@ -360,7 +364,8 @@ export async function listOAuthClientConsentsWithClients(input: {
     Omit<OAuthClientConsentListRow, 'client_name' | 'logo_uri'>
   >(
     `SELECT id, client_id, scope, selected_scopes, granted_at, expires_at,
-            privacy_policy_version, tos_version, consent_version
+            privacy_policy_version, tos_version, consent_version,
+            release_approved_json, release_declined_json, release_basis, release_decided_at
        FROM oauth_client_consents
       WHERE tenant_id = ? AND user_id = ?
       ORDER BY granted_at DESC`,

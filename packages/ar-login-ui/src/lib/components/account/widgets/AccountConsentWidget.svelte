@@ -6,6 +6,7 @@
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
 	import type { AccountConsent } from '#lib/api/account.js';
 	import { formatTimestamp } from '#lib/utils/date.js';
+	import { accountReleaseRows } from '#lib/consent-release.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetHeadingLevel } from './types';
@@ -151,6 +152,12 @@
 								<dt>{$LL.account_consentScopes()}</dt>
 								<dd>{formatScopes(consent)}</dd>
 							</div>
+							{#each accountReleaseRows($LL, consent.informationRelease) as row (row.label)}
+								<div>
+									<dt>{row.label}</dt>
+									<dd>{row.value}</dd>
+								</div>
+							{/each}
 						{/if}
 						<div>
 							<dt>{$LL.account_consentGrantedAt()}</dt>

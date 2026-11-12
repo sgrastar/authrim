@@ -828,6 +828,30 @@ type RootTranslation = {
 	 */
 	account_consentPolicyVersions: string;
 	/**
+	 * I​n​f​o​r​m​a​t​i​o​n​ ​p​r​o​v​i​d​e​d
+	 */
+	account_consentInformationRelease: string;
+	/**
+	 * N​o​t​ ​p​r​o​v​i​d​e​d
+	 */
+	account_consentInformationDeclined: string;
+	/**
+	 * N​o​n​e
+	 */
+	account_consentInformationNone: string;
+	/**
+	 * E​v​e​r​y​t​h​i​n​g​ ​t​h​e​ ​s​e​r​v​i​c​e​ ​a​s​k​s​ ​f​o​r​ ​(​a​ ​t​r​u​s​t​e​d​ ​s​e​r​v​i​c​e​)
+	 */
+	account_consentInformationTrusted: string;
+	/**
+	 * R​e​q​u​i​r​e​d​ ​i​t​e​m​s​ ​o​n​l​y​ ​(​t​h​e​ ​s​e​r​v​i​c​e​ ​d​o​e​s​ ​n​o​t​ ​a​s​k​)
+	 */
+	account_consentInformationRequiredOnly: string;
+	/**
+	 * N​o​t​ ​d​e​c​i​d​e​d​ ​y​e​t​ ​(​y​o​u​ ​w​i​l​l​ ​b​e​ ​a​s​k​e​d​ ​a​t​ ​y​o​u​r​ ​n​e​x​t​ ​s​i​g​n​-​i​n​)
+	 */
+	account_consentInformationNotRecorded: string;
+	/**
 	 * P​r​i​v​a​c​y​ ​p​o​l​i​c​y
 	 */
 	account_consentPrivacyPolicy: string;
@@ -2767,6 +2791,30 @@ export type TranslationFunctions = {
 	 * Policy versions
 	 */
 	account_consentPolicyVersions: () => LocalizedString;
+	/**
+	 * Information provided
+	 */
+	account_consentInformationRelease: () => LocalizedString;
+	/**
+	 * Not provided
+	 */
+	account_consentInformationDeclined: () => LocalizedString;
+	/**
+	 * None
+	 */
+	account_consentInformationNone: () => LocalizedString;
+	/**
+	 * Everything the service asks for (a trusted service)
+	 */
+	account_consentInformationTrusted: () => LocalizedString;
+	/**
+	 * Required items only (the service does not ask)
+	 */
+	account_consentInformationRequiredOnly: () => LocalizedString;
+	/**
+	 * Not decided yet (you will be asked at your next sign-in)
+	 */
+	account_consentInformationNotRecorded: () => LocalizedString;
 	/**
 	 * Privacy policy
 	 */

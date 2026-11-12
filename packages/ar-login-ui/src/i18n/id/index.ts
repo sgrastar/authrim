@@ -196,6 +196,13 @@ const id = createTranslation({
 	account_consentExpiresAt: 'Berakhir',
 	account_consentNoExpiry: 'Tanpa masa berlaku',
 	account_consentPolicyVersions: 'Versi kebijakan',
+	account_consentInformationRelease: 'Informasi yang diberikan',
+	account_consentInformationDeclined: 'Tidak diberikan',
+	account_consentInformationNone: 'Tidak ada',
+	account_consentInformationTrusted: 'Semua yang diminta layanan (layanan tepercaya)',
+	account_consentInformationRequiredOnly: 'Hanya item wajib (layanan tidak menanyakan)',
+	account_consentInformationNotRecorded:
+		'Belum ditentukan (Anda akan ditanya saat masuk berikutnya)',
 	account_consentPrivacyPolicy: 'Kebijakan privasi',
 	account_consentTerms: 'Ketentuan',
 	account_consentVersion: 'Persetujuan',

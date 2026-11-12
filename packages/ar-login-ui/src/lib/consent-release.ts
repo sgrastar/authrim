@@ -96,3 +96,44 @@ export function releaseSelectedNames(
 		.filter((item) => !item.required && (choices[item.name] ?? releaseDefaultChecked(item)))
 		.map((item) => item.name);
 }
+
+const MAX_ACCOUNT_RELEASE_NAMES = 100;
+
+function releaseNames(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((name): name is string => typeof name === 'string' && name.length > 0)
+		.slice(0, MAX_ACCOUNT_RELEASE_NAMES);
+}
+
+/**
+ * What the account page shows about the information a service is given, as label/value rows:
+ * the items the user approved and declined, or how it was decided for them (a trusted service,
+ * or one that does not ask). Accepts the API's value as is (the lite page passes raw JSON).
+ */
+export function accountReleaseRows(
+	LL: TranslationFunctions,
+	release: unknown
+): Array<{ label: string; value: string }> {
+	const label = LL.account_consentInformationRelease();
+	const record =
+		release && typeof release === 'object' ? (release as Record<string, unknown>) : null;
+	switch (record?.basis) {
+		case 'trust':
+			return [{ label, value: LL.account_consentInformationTrusted() }];
+		case 'not_asked':
+			return [{ label, value: LL.account_consentInformationRequiredOnly() }];
+		case 'user': {
+			const list = (names: string[]) => names.map((name) => releaseClaimLabel(LL, name)).join(', ');
+			const approved = releaseNames(record.approved);
+			const declined = releaseNames(record.declined);
+			const rows = [{ label, value: list(approved) || LL.account_consentInformationNone() }];
+			if (declined.length > 0) {
+				rows.push({ label: LL.account_consentInformationDeclined(), value: list(declined) });
+			}
+			return rows;
+		}
+		default:
+			return [{ label, value: LL.account_consentInformationNotRecorded() }];
+	}
+}

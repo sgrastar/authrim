@@ -226,6 +226,11 @@ describe('Account Page consents API', () => {
           privacy_policy_version: 'privacy-v1',
           tos_version: 'tos-v1',
           consent_version: 2,
+          // The information release decision recorded with the consent; markers are not shown.
+          release_approved_json: JSON.stringify(['email', 'name']),
+          release_declined_json: JSON.stringify(['picture']),
+          release_basis: 'user',
+          release_decided_at: 1_777_200_000_000,
         },
       ],
       clients: [
@@ -328,6 +333,12 @@ describe('Account Page consents API', () => {
             privacyPolicyVersion: 'privacy-v1',
             tosVersion: 'tos-v1',
             consentVersion: 2,
+          },
+          informationRelease: {
+            basis: 'user',
+            approved: ['email', 'name'],
+            declined: ['picture'],
+            decidedAt: 1_777_200_000_000,
           },
         },
       ],

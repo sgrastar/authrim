@@ -1613,7 +1613,15 @@ components:
                   - openid
                   - profile
                 grantedAt: 1770000000000
-            total: 1
+                informationRelease:
+                  basis: user
+                  approved:
+                    - email
+                    - name
+                  declined:
+                    - phone_number
+                  decidedAt: 1770000000000
+            total: 2
     AccountReturnCreate:
       description: Account Page return transaction creation response.
       content:
@@ -3553,6 +3561,42 @@ components:
               type: string
             consentVersion:
               type: integer
+        informationRelease:
+          $ref: '#/components/schemas/AccountInformationRelease'
+    AccountInformationRelease:
+      type: object
+      description: >-
+        The information release decision recorded with the consent. Absent when none was
+        recorded (the person is asked at the next authorization).
+      required:
+        - basis
+        - approved
+        - declined
+        - decidedAt
+      properties:
+        basis:
+          type: string
+          enum:
+            - user
+            - trust
+            - not_asked
+          description: >-
+            user: the person chose the items; trust: the service is trusted and receives
+            everything it asks for; not_asked: the service does not ask and receives its
+            required items only.
+        approved:
+          type: array
+          description: Claims the person approved (basis user).
+          items:
+            type: string
+        declined:
+          type: array
+          description: Optional claims the person declined (basis user).
+          items:
+            type: string
+        decidedAt:
+          type: integer
+          description: When it was decided (milliseconds since the epoch).
     UserConsentsResponse:
       type: object
       required:

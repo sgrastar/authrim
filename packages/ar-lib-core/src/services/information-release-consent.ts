@@ -11,6 +11,7 @@
  * and is what the person sees and withdraws.
  */
 import type { DatabaseAdapter } from '../db/adapter';
+import type { AccountInformationRelease } from '../types/consent';
 import {
   AUTHORIZATION_SERVER_COMPUTED_CLAIMS,
   AUTHORIZATION_SERVER_GRANT_CLAIMS,
@@ -234,6 +235,47 @@ export function readReleaseConsentRecord(row: {
     basis,
     decidedAt: Number(row.release_decided_at),
   };
+}
+
+/**
+ * The information release decision recorded with a service consent, as the account page shows it
+ * (undefined when none was recorded, or the record cannot be read).
+ */
+export function accountInformationRelease(row: {
+  release_approved_json?: string | null;
+  release_declined_json?: string | null;
+  release_basis?: string | null;
+  release_decided_at?: number | null;
+}): AccountInformationRelease | undefined {
+  const record = readReleaseConsentRecord(row);
+  if (!record || !record.basis || !Number.isSafeInteger(record.decidedAt)) return undefined;
+  const isMarker = (name: string) =>
+    name === RELEASE_APPROVE_ALL || name === RELEASE_APPROVE_REQUIRED;
+  // The person's own items are shown as they were recorded; a record that cannot be read is not
+  // shown as "nothing approved".
+  const strictNames = (value: string | null | undefined): string[] | null => {
+    if (typeof value !== 'string') return null;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return Array.isArray(parsed) && parsed.every((name) => typeof name === 'string')
+        ? parsed.filter((name) => !isMarker(name))
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  if (record.basis !== 'user') {
+    return {
+      basis: record.basis,
+      approved: [],
+      declined: [],
+      decidedAt: record.decidedAt as number,
+    };
+  }
+  const approved = strictNames(row.release_approved_json);
+  const declined = strictNames(row.release_declined_json);
+  if (!approved || !declined) return undefined;
+  return { basis: 'user', approved, declined, decidedAt: record.decidedAt as number };
 }
 
 /**

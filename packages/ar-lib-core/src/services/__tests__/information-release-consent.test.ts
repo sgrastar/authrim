@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_INFORMATION_RELEASE_CONSENT,
+  accountInformationRelease,
   applyReleaseApproval,
   automaticReleaseApproval,
   mergeReleaseCandidates,
@@ -175,5 +176,47 @@ describe('holding claims to an approval', () => {
       ok: true,
       claims: { sub: 'u', aud: 'app' },
     });
+  });
+});
+
+describe('the decision as the account page shows it', () => {
+  const row = (overrides: Record<string, unknown> = {}) => ({
+    release_approved_json: JSON.stringify(['email', 'name']),
+    release_declined_json: JSON.stringify(['picture']),
+    release_basis: 'user',
+    release_decided_at: 5,
+    ...overrides,
+  });
+
+  it("gives the person's approved and declined claims", () => {
+    expect(accountInformationRelease(row())).toEqual({
+      basis: 'user',
+      approved: ['email', 'name'],
+      declined: ['picture'],
+      decidedAt: 5,
+    });
+  });
+
+  it('names no claims when the decision was made for the person', () => {
+    expect(
+      accountInformationRelease(row({ release_basis: 'trust', release_approved_json: '["*"]' }))
+    ).toEqual({ basis: 'trust', approved: [], declined: [], decidedAt: 5 });
+    expect(
+      accountInformationRelease(
+        row({ release_basis: 'not_asked', release_approved_json: '["@required"]' })
+      )
+    ).toEqual({ basis: 'not_asked', approved: [], declined: [], decidedAt: 5 });
+  });
+
+  it('is absent when nothing was decided or the record cannot be read', () => {
+    expect(accountInformationRelease(row({ release_decided_at: null }))).toBeUndefined();
+    expect(accountInformationRelease(row({ release_basis: 'other' }))).toBeUndefined();
+    expect(accountInformationRelease({})).toBeUndefined();
+    // A person's record whose items cannot be read is not shown as "nothing approved".
+    for (const broken of ['{', 'null', '"email"', '[1]']) {
+      expect(accountInformationRelease(row({ release_approved_json: broken }))).toBeUndefined();
+      expect(accountInformationRelease(row({ release_declined_json: broken }))).toBeUndefined();
+    }
+    expect(accountInformationRelease(row({ release_decided_at: Number.NaN }))).toBeUndefined();
   });
 });

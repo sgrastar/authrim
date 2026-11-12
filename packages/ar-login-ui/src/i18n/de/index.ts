@@ -205,6 +205,13 @@ const de = createTranslation({
 	account_consentExpiresAt: 'Läuft ab',
 	account_consentNoExpiry: 'Kein Ablaufdatum',
 	account_consentPolicyVersions: 'Richtlinienversionen',
+	account_consentInformationRelease: 'Weitergegebene Informationen',
+	account_consentInformationDeclined: 'Nicht weitergegeben',
+	account_consentInformationNone: 'Keine',
+	account_consentInformationTrusted: 'Alles, was der Dienst anfordert (vertrauenswürdiger Dienst)',
+	account_consentInformationRequiredOnly: 'Nur erforderliche Angaben (der Dienst fragt nicht nach)',
+	account_consentInformationNotRecorded:
+		'Noch nicht entschieden (Sie werden bei der nächsten Anmeldung gefragt)',
 	account_consentPrivacyPolicy: 'Datenschutzrichtlinie',
 	account_consentTerms: 'Bedingungen',
 	account_consentVersion: 'Einwilligung',
