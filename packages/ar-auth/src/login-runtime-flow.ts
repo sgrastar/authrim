@@ -49,8 +49,6 @@ import {
   resolveOidcFieldRequiredScopes,
   resolveDestinationProfileConsentVersion,
   resolveRuntimeIdentityMappingBinding,
-  resolveOidcIdentityMappingBinding,
-  toOidcIdentityMappingRuntimeError,
   requireDedicatedAdminDatabaseAdapter,
   CanonicalRuntimeUserStore,
   ensureDatabaseAdapter,
@@ -2009,52 +2007,8 @@ async function resolveRuntimeDestinationProfileSelector(
   /** The client's policy for claims requested through the claims parameter. */
   claimsPolicy?: OIDCClaimsClientPolicy;
 } | null> {
-  if (requestContext.protocol === 'oidc' && requestContext.client_id) {
-    const row = await db.queryOne<{
-      identity_mapping: string | null;
-      attribute_release_consent: string | null;
-      allow_claims_without_scope?: number | boolean | null;
-      claims_parameter_policy?: string | null;
-    }>(
-      `SELECT identity_mapping, attribute_release_consent, allow_claims_without_scope,
-              claims_parameter_policy
-         FROM oauth_clients
-        WHERE tenant_id = ? AND client_id = ?`,
-      [tenantId, requestContext.client_id]
-    );
-    const claimsPolicy: OIDCClaimsClientPolicy = {
-      allow_claims_without_scope:
-        row?.allow_claims_without_scope === 1 || row?.allow_claims_without_scope === true,
-      claims_parameter_policy: parseJsonRecord(
-        row?.claims_parameter_policy
-      ) as OIDCClaimsClientPolicy['claims_parameter_policy'],
-    };
-    // The same selection and reading of the Mapping Set the ID token and UserInfo go through
-    // (applyOIDCIdentityMapping), so the fields the user is asked about are the fields the release
-    // is held to. An app's own choice, else the tenant's default, else the platform's, else none:
-    // an activation's scope never binds an app to a set. A choice that cannot be used fails.
-    let profileId: string | undefined;
-    try {
-      const resolution = await resolveOidcIdentityMappingBinding({
-        env,
-        tenantId,
-        clientId: requestContext.client_id,
-        clientSelector: row?.identity_mapping,
-      });
-      // Exactly one Destination Profile is checked by the reading of the set.
-      profileId = resolution.binding?.destinationProfileId;
-    } catch (error) {
-      throw toOidcIdentityMappingRuntimeError(error, { clientId: requestContext.client_id });
-    }
-    return profileId
-      ? {
-          profileId,
-          consentMode: readAttributeReleaseConsentMode(row?.attribute_release_consent),
-          claimsPolicy,
-        }
-      : null;
-  }
-
+  // An OIDC app's information is asked on the consent screen (information release consent,
+  // information-release-consent.ts), not in the Flow: only a SAML SP's fields are asked here.
   if (requestContext.protocol === 'saml' && requestContext.saml_sp_id) {
     if (!adminDb) return null;
     const rows = await db.query<{ id: string; config_json: string }>(

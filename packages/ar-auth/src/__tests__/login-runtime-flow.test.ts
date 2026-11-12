@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
 import {
-  IdentityMappingResolutionError,
   IdentityMappingSelectionError,
-  OIDCIdentityMappingRuntimeError,
   readClientIdentityMappingChoice,
   type DatabaseAdapter,
   type Env,
@@ -15,7 +13,6 @@ import {
   clearLoginRuntimeFlowVersionCacheForTests,
   loginRuntimeEmailVerificationChallengeHandler,
   loginRuntimeInteractionStartHandler,
-  insertDestinationFieldConsentRecord,
   recordFlowStatementConsents,
   loginRuntimeInteractionSubmitHandler,
   loginRuntimeInteractionBackHandler,
@@ -2322,13 +2319,12 @@ describe('LoginUI runtime Flow handlers', () => {
     );
   });
 
-  it('hydrates Destination Profile fields and records the selected optional OIDC claims', async () => {
+  it("does not ask an OIDC app's Destination Profile fields in the Flow (the consent screen asks the information release)", async () => {
     mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+    mocks.coreAdapter.queryOne.mockResolvedValue({
       identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
     });
-    mocks.coreAdapter.query.mockResolvedValueOnce([]);
-    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+    mocks.adminAdapter.queryOne.mockResolvedValue({
       profile_id: 'destination_oidc_1',
       destination_type: 'oidc',
       version_id: 'destination_oidc_version_1',
@@ -2336,7 +2332,6 @@ describe('LoginUI runtime Flow handlers', () => {
         claims: [
           { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
           { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
-          { claimName: 'email', label: 'Email', required: false, requiredScopes: ['email'] },
         ],
       }),
     });
@@ -2351,17 +2346,24 @@ describe('LoginUI runtime Flow handlers', () => {
         },
       })
     );
-    const startData = await readJson(startResponse);
-    const startContract = startData.contract as FlowRuntimeContract;
+
     expect(startResponse.status).toBe(200);
-    expect(startContract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
-      profile_id: 'destination_oidc_1',
-      profile_version_id: 'destination_oidc_version_1',
-      fields: [
-        expect.objectContaining({ key: 'sub', required: true }),
-        expect.objectContaining({ key: 'name', required: false }),
-      ],
-    });
+    const startContract = (await readJson(startResponse)).contract as FlowRuntimeContract;
+    expect(startContract.ui.steps[0]?.content?.destination_field_consent).toBeUndefined();
+    // Neither the app's Mapping Set nor its Destination Profile is read for it.
+    expect(mocks.adminAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mocks.resolveOidcIdentityMappingBinding).not.toHaveBeenCalled();
+  });
+
+  it('records no Destination Profile consent for an OIDC consent step, whatever the answer carries', async () => {
+    mockStartQueries(consentRuntime);
+    const startResponse = await loginRuntimeInteractionStartHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid', 'profile'] },
+      })
+    );
+    const startData = await readJson(startResponse);
 
     resetAdapter();
     mockSubmitQueries({
@@ -2381,21 +2383,6 @@ describe('LoginUI runtime Flow handlers', () => {
         requested_scope: ['openid', 'profile'],
       },
     });
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-      identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-    });
-    mocks.coreAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
-      profile_id: 'destination_oidc_1',
-      destination_type: 'oidc',
-      version_id: 'destination_oidc_version_1',
-      schema_json: JSON.stringify({
-        claims: [
-          { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
-          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
-        ],
-      }),
-    });
     mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
       userId: 'user_1',
       expiresAt: Date.now() + 60_000,
@@ -2414,484 +2401,17 @@ describe('LoginUI runtime Flow handlers', () => {
           selected_handle: 'accepted',
           contract_hash: startData.contract_hash,
           signature: startData.signature,
-          input: {
-            destination_field_decisions: { sub: true, name: false },
-          },
-        },
-      })
-    );
-
-    expect(submitResponse.status).toBe(200);
-    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO consent_records'),
-      expect.arrayContaining([
-        'destination_field_mapping_set',
-        'destination_oidc_1',
-        'destination_profile:destination_oidc_1',
-        'destination_oidc_version_1',
-        JSON.stringify(['sub']),
-      ])
-    );
-  });
-
-  it.each([
-    [['openid'], ['sub', 'department']],
-    [
-      ['openid', 'email'],
-      ['sub', 'email', 'department'],
-    ],
-    [
-      ['openid', 'profile', 'email'],
-      ['sub', 'email', 'name', 'department'],
-    ],
-  ])(
-    'asks only about the fields a request with scopes %j can release when the profile lists none',
-    async (requestedScope, expectedKeys) => {
-      mockStartQueries(consentRuntime);
-      mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-      });
-      mocks.coreAdapter.query.mockResolvedValueOnce([]);
-      mocks.adminAdapter.queryOne.mockResolvedValueOnce({
-        profile_id: 'destination_oidc_1',
-        destination_type: 'oidc',
-        version_id: 'destination_oidc_version_1',
-        schema_json: JSON.stringify({
-          claims: [
-            { claimName: 'sub', label: 'Subject', required: true },
-            // Required and not sensitive, so a profile may list no scope for it.
-            {
-              claimName: 'email',
-              label: 'Email',
-              required: true,
-              classification: 'internal',
-              requiredScopes: [],
-            },
-            { claimName: 'name', label: 'Name', required: false, classification: 'internal' },
-            { claimName: 'department', label: 'Department', required: false },
-          ],
-        }),
-      });
-
-      const response = await loginRuntimeInteractionStartHandler(
-        createContext({
-          env: { DB_ADMIN: mocks.adminAdapter as never },
-          body: { flow_kind: 'login', client_id: 'client_1', requested_scope: requestedScope },
-        })
-      );
-      const contract = (await readJson(response)).contract as FlowRuntimeContract;
-      const consent = contract.ui.steps[0]?.content?.destination_field_consent as {
-        fields: Array<{ key: string; required_scopes: string[] }>;
-      };
-
-      expect(consent.fields.map((field) => field.key)).toEqual(expectedKeys);
-      // The scope shown is the one the release filter will require.
-      expect(consent.fields.find((field) => field.key === 'email')?.required_scopes).toEqual(
-        expectedKeys.includes('email') ? ['email'] : undefined
-      );
-    }
-  );
-
-  it('does not demand consent to a field the request cannot release', async () => {
-    const profile = {
-      profile_id: 'destination_oidc_1',
-      destination_type: 'oidc',
-      version_id: 'destination_oidc_version_1',
-      schema_json: JSON.stringify({
-        claims: [
-          { claimName: 'sub', label: 'Subject', required: true },
-          // Required, but a standard claim with no listed scope: only an email scope releases it.
-          {
-            claimName: 'email',
-            label: 'Email',
-            required: true,
-            classification: 'internal',
-            requiredScopes: [],
-          },
-        ],
-      }),
-    };
-    mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-      identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-    });
-    mocks.adminAdapter.queryOne.mockResolvedValueOnce(profile);
-    const startResponse = await loginRuntimeInteractionStartHandler(
-      createContext({
-        env: { DB_ADMIN: mocks.adminAdapter as never },
-        body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid'] },
-      })
-    );
-    const startData = await readJson(startResponse);
-
-    resetAdapter();
-    mockSubmitQueries({
-      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'consent',
-      currentStepId: 'consent:step',
-      stepState: 'waiting_input',
-      runtimeSnapshot: consentRuntime,
-      clientId: 'client_1',
-      context: {
-        protocol: 'oidc',
-        target_type: 'oidc_client',
-        target_id: 'client_1',
-        client_id: 'client_1',
-        requested_scope: ['openid'],
-      },
-    });
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-      identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-    });
-    mocks.adminAdapter.queryOne.mockResolvedValueOnce(profile);
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
-      userId: 'user_1',
-      expiresAt: Date.now() + 60_000,
-      createdAt: 1_700_000_000_000,
-      data: { authTime: 1_700_000_123 },
-    });
-
-    const submitResponse = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        env: { DB_ADMIN: mocks.adminAdapter as never },
-        params: { interaction_id: 'interaction_1' },
-        headers: { Cookie: 'authrim_session=sess_runtime_1', 'User-Agent': 'Vitest' },
-        body: {
-          step_id: 'consent:step',
-          node_id: 'consent',
-          selected_handle: 'accepted',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-          // The email field is not shown to this request, so it is not asked for.
-          input: { destination_field_decisions: { sub: true } },
+          input: { destination_field_decisions: { sub: true, name: false } },
         },
       })
     );
 
     expect(submitResponse.status).toBe(200);
     expect(await readJson(submitResponse)).not.toMatchObject({ error: 'consent_required' });
-  });
-
-  it('hydrates OIDC consent from the Mapping Set active Destination Profile', async () => {
-    mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-      identity_mapping: JSON.stringify({
-        fieldMappingSetId: 'mapping_set_1',
-        destinationProfileId: 'stale_destination_profile',
-      }),
-    });
-    mocks.coreAdapter.query.mockResolvedValueOnce([]);
-    mocks.resolveOidcIdentityMappingBinding.mockResolvedValueOnce(
-      oidcResolution('mapping_set_1', 'active_destination_profile')
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO consent_records'),
+      expect.arrayContaining(['destination_field_mapping_set'])
     );
-    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
-      profile_id: 'active_destination_profile',
-      destination_type: 'oidc',
-      version_id: 'active_destination_profile_v2',
-      schema_json: JSON.stringify({
-        claims: [{ claimName: 'sub', label: 'Subject', required: true }],
-      }),
-    });
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        env: { DB_ADMIN: mocks.adminAdapter as never },
-        body: {
-          flow_kind: 'login',
-          client_id: 'client_1',
-          requested_scope: ['openid'],
-        },
-      })
-    );
-    const data = await readJson(response);
-    const contract = data.contract as FlowRuntimeContract;
-
-    expect(response.status).toBe(200);
-    // The same selection and reading as the release: the app's row and the Worker's environment.
-    expect(mocks.resolveOidcIdentityMappingBinding).toHaveBeenCalledWith({
-      env: expect.objectContaining({ DB_ADMIN: mocks.adminAdapter }),
-      tenantId: 'tenant_test',
-      clientId: 'client_1',
-      clientSelector: JSON.stringify({
-        fieldMappingSetId: 'mapping_set_1',
-        destinationProfileId: 'stale_destination_profile',
-      }),
-    });
-    expect(contract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
-      profile_id: 'active_destination_profile',
-      profile_version_id: 'active_destination_profile_v2',
-    });
-  });
-
-  it("hydrates OIDC consent from the default Mapping Set the app's tenant names when the app names none", async () => {
-    mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ identity_mapping: null });
-    mocks.coreAdapter.query.mockResolvedValueOnce([]);
-    mocks.resolveOidcIdentityMappingBinding.mockResolvedValueOnce({
-      ...oidcResolution('tenant_default_set', 'tenant_destination_profile'),
-      selection: { kind: 'bound', tier: 'tenant_default', setId: 'tenant_default_set', chain: [] },
-    });
-    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
-      profile_id: 'tenant_destination_profile',
-      destination_type: 'oidc',
-      version_id: 'tenant_destination_profile_v1',
-      schema_json: JSON.stringify({
-        claims: [
-          { claimName: 'sub', label: 'Subject', required: true },
-          { claimName: 'email', label: 'Email', required: false, requiredScopes: ['email'] },
-        ],
-      }),
-    });
-
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        env: { DB_ADMIN: mocks.adminAdapter as never },
-        body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid', 'email'] },
-      })
-    );
-    const data = await readJson(response);
-    const contract = data.contract as FlowRuntimeContract;
-
-    expect(response.status).toBe(200);
-    expect(mocks.resolveOidcIdentityMappingBinding).toHaveBeenCalledWith(
-      expect.objectContaining({ clientId: 'client_1', clientSelector: null })
-    );
-    expect(contract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
-      profile_id: 'tenant_destination_profile',
-      fields: [
-        expect.objectContaining({ key: 'sub', required: true }),
-        expect.objectContaining({ key: 'email', required: false }),
-      ],
-    });
-  });
-
-  describe('an app that is bound to no Mapping Set', () => {
-    async function consentOf(clientRow: Record<string, unknown>, env: Partial<Env>) {
-      mockStartQueries(consentRuntime);
-      mocks.coreAdapter.queryOne.mockResolvedValueOnce(clientRow);
-      mocks.coreAdapter.query.mockResolvedValueOnce([]);
-      const response = await loginRuntimeInteractionStartHandler(
-        createContext({
-          env,
-          body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid', 'email'] },
-        })
-      );
-      const data = await readJson(response);
-      return {
-        response,
-        consent: (data.contract as FlowRuntimeContract | undefined)?.ui.steps[0]?.content
-          ?.destination_field_consent,
-      };
-    }
-
-    it.each([
-      ['has no choice of its own', { identity_mapping: null }],
-      ['opts out with { mode: "none" }', { identity_mapping: JSON.stringify({ mode: 'none' }) }],
-    ])(
-      'asks about no fields when it %s, with or without the Admin database',
-      async (_name, row) => {
-        for (const env of [{ DB_ADMIN: mocks.adminAdapter as never }, {}]) {
-          resetAdapter();
-          const { response, consent } = await consentOf(row, env);
-
-          expect(response.status).toBe(200);
-          expect(consent).toBeUndefined();
-          // No Destination Profile was looked up, and no activation was looked for by its scope.
-          expect(mocks.adminAdapter.queryOne).not.toHaveBeenCalled();
-          expect(mocks.resolveRuntimeIdentityMappingBinding).not.toHaveBeenCalled();
-        }
-      }
-    );
-
-    it.each([{ destinationProfileId: 'destination_oidc_1' }, { destination_profile_id: 'p' }])(
-      'fails for a selector of the older kind (%j), with or without the Admin database',
-      async (legacy) => {
-        for (const env of [{ DB_ADMIN: mocks.adminAdapter as never }, {}]) {
-          resetAdapter();
-
-          await expect(
-            consentOf({ identity_mapping: JSON.stringify(legacy) }, env)
-          ).rejects.toBeInstanceOf(OIDCIdentityMappingRuntimeError);
-          // Its Destination Profile was not looked up: it holds no gate any more, and the screen
-          // is not shown without one.
-          expect(mocks.adminAdapter.queryOne).not.toHaveBeenCalled();
-        }
-      }
-    );
-
-    it('fails, and does not go on with no fields to ask about, when the Mapping Set it is bound to cannot be used', async () => {
-      mocks.resolveOidcIdentityMappingBinding.mockRejectedValueOnce(
-        new IdentityMappingResolutionError('set_missing', 'tenant_default', 'set_gone')
-      );
-
-      await expect(
-        consentOf({ identity_mapping: null }, { DB_ADMIN: mocks.adminAdapter as never })
-      ).rejects.toBeInstanceOf(OIDCIdentityMappingRuntimeError);
-    });
-
-    it('fails when the Admin database is not bound and the app is bound to a set', async () => {
-      mocks.resolveOidcIdentityMappingBinding.mockRejectedValueOnce(
-        new IdentityMappingResolutionError(
-          'admin_database_unavailable',
-          'client',
-          'set_1',
-          'admin_database_not_configured'
-        )
-      );
-
-      await expect(
-        consentOf({ identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }) }, {})
-      ).rejects.toMatchObject({ code: 'admin_database_unavailable' });
-    });
-
-    it('fails when a default is not a usable value or the settings cannot be read', async () => {
-      for (const error of [
-        new IdentityMappingSelectionError('default_setting_invalid', 'tenant_default', undefined),
-        new IdentityMappingSelectionError('settings_unreadable', undefined, undefined),
-      ]) {
-        resetAdapter();
-        mocks.resolveOidcIdentityMappingBinding.mockRejectedValueOnce(error);
-
-        await expect(
-          consentOf({ identity_mapping: null }, { DB_ADMIN: mocks.adminAdapter as never })
-        ).rejects.toBeDefined();
-      }
-    });
-  });
-
-  describe('a claim the authorization request names in its claims parameter, without its scope', () => {
-    const profileRow = {
-      profile_id: 'destination_oidc_1',
-      destination_type: 'oidc',
-      version_id: 'destination_oidc_version_1',
-      schema_json: JSON.stringify({
-        claims: [
-          { claimName: 'sub', label: 'Subject', required: true },
-          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
-          { claimName: 'email', label: 'Email', required: false, requiredScopes: ['email'] },
-          { claimName: 'locale', label: 'Locale', required: false, requiredScopes: ['directory'] },
-        ],
-      }),
-    };
-
-    // As the real Login UI starts it: the body names the client and the authorization challenge,
-    // not the scope or the claims; those are the authorization request's own.
-    async function start(
-      client: Record<string, unknown>,
-      claims: unknown,
-      options: { scope?: string; rawClaims?: string } = {}
-    ): Promise<{ keys: string[]; context: Record<string, unknown> | null }> {
-      mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
-        id: 'login_challenge_1',
-        tenantId: 'tenant_test',
-        type: 'login',
-        userId: 'anonymous',
-        challenge: 'login_challenge_1',
-        metadata: {
-          client_id: 'client_1',
-          scope: options.scope ?? 'openid',
-          claims: options.rawClaims ?? JSON.stringify(claims),
-        },
-        createdAt: Date.now(),
-        expiresAt: Date.now() + 600_000,
-        consumed: false,
-      });
-      mockStartQueries(consentRuntime);
-      mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-        ...client,
-      });
-      mocks.coreAdapter.query.mockResolvedValueOnce([]);
-      mocks.adminAdapter.queryOne.mockResolvedValueOnce(profileRow);
-      const response = await loginRuntimeInteractionStartHandler(
-        createContext({
-          env: { DB_ADMIN: mocks.adminAdapter as never },
-          body: {
-            flow_kind: 'login',
-            client_id: 'client_1',
-            authorization_challenge_id: 'login_challenge_1',
-          },
-        })
-      );
-      const data = await readJson(response);
-      const contract = data.contract as FlowRuntimeContract;
-      const keys = (
-        contract.ui.steps[0]?.content?.destination_field_consent as {
-          fields: Array<{ key: string }>;
-        }
-      ).fields.map((field) => field.key);
-      const stored = txExecuteCalls
-        .filter(([sql]) => String(sql).includes('INSERT INTO flow_interactions'))
-        .flatMap(([, params]) => params ?? [])
-        .find(
-          (param): param is string =>
-            typeof param === 'string' && param.includes('"requested_scope"')
-        );
-      const context: Record<string, unknown> | null = stored
-        ? (JSON.parse(stored) as Record<string, unknown>)
-        : null;
-      return { keys, context };
-    }
-
-    it('is asked about when the client lets claims through without their scope', async () => {
-      const { keys } = await start(
-        { allow_claims_without_scope: 1 },
-        { id_token: { name: { essential: true } }, userinfo: { email: null } }
-      );
-      expect(keys).toEqual(['sub', 'name', 'email']);
-    });
-
-    it('is not asked about when the client requires the scope', async () => {
-      const { keys } = await start(
-        { allow_claims_without_scope: 0 },
-        { id_token: { name: { essential: true } } }
-      );
-      expect(keys).toEqual(['sub']);
-    });
-
-    it("takes the request's scope from the authorization request, not from the Login UI", async () => {
-      // scope=openid: the email field (scope email) is not released, so it is not asked about.
-      const { keys, context } = await start(
-        { allow_claims_without_scope: 1 },
-        {},
-        { scope: 'openid' }
-      );
-      expect(keys).toEqual(['sub']);
-      expect(context).toMatchObject({ requested_scope: ['openid'] });
-    });
-
-    it('asks about the fields of the scopes the authorization request carries', async () => {
-      const { keys, context } = await start({}, {}, { scope: 'openid email profile' });
-      expect(keys).toEqual(['sub', 'name', 'email']);
-      expect(context).toMatchObject({ requested_scope: ['openid', 'email', 'profile'] });
-    });
-
-    it('keeps every claim of a large claims parameter, for the resumed interaction too', async () => {
-      const unknownClaims = Object.fromEntries(
-        Array.from({ length: 600 }, (_, index) => [`claim_${index}`, null])
-      );
-      const rawClaims = JSON.stringify({
-        id_token: { ...unknownClaims, name: { essential: true } },
-      });
-      expect(rawClaims.length).toBeGreaterThan(8192);
-
-      const { keys, context } = await start({ allow_claims_without_scope: 1 }, null, {
-        rawClaims,
-      });
-
-      expect(keys).toEqual(['sub', 'name']);
-      expect(context).toMatchObject({ requested_claims: ['name'] });
-    });
-
-    it('is not asked about when the profile wants a scope of its own that was not requested', async () => {
-      const { keys } = await start(
-        { allow_claims_without_scope: 1 },
-        { id_token: { locale: null } }
-      );
-      expect(keys).toEqual(['sub']);
-    });
   });
 
   it('hydrates SAML destination consent from the per-SP release policy', async () => {
@@ -4047,94 +3567,6 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
-  it('keeps every-time Destination Profile consent visible despite an active matching record', async () => {
-    const { data: startData } = await startInteraction(
-      {
-        flow_kind: 'login',
-        client_id: 'client_1',
-        requested_scope: 'openid profile',
-      },
-      acceptedConsentRuntime
-    );
-    resetAdapter();
-    mockSubmitQueries({
-      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'auth',
-      currentStepId: 'auth:step',
-      stepState: 'waiting_input',
-      runtimeSnapshot: acceptedConsentRuntime,
-      editorSnapshot: acceptedConsentEditor,
-      clientId: 'client_1',
-      context: {
-        protocol: 'oidc',
-        target_type: 'oidc_client',
-        target_id: 'client_1',
-        client_id: 'client_1',
-        requested_scope: ['openid', 'profile'],
-      },
-    });
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-        attribute_release_consent: JSON.stringify({ enabled: true, mode: 'every_time' }),
-      })
-      .mockResolvedValueOnce({
-        id: 'existing_destination_consent_record',
-        released_scopes_json: JSON.stringify(['openid', 'profile']),
-      });
-    mocks.statementFake.seed({ id: 'statement_terms', slug: 'terms_of_service' });
-    mocks.statementFake.answer('user_1', 'statement_terms');
-    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
-      profile_id: 'destination_oidc_1',
-      destination_type: 'oidc',
-      version_id: 'destination_oidc_version_1',
-      schema_json: JSON.stringify({
-        claims: [
-          { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
-          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
-        ],
-      }),
-    });
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
-      userId: 'user_1',
-      expiresAt: Date.now() + 60_000,
-      createdAt: 1_700_000_000_000,
-      data: { authTime: 1_700_000_123 },
-    });
-
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        env: { DB_ADMIN: mocks.adminAdapter as never },
-        params: { interaction_id: 'interaction_1' },
-        headers: { Cookie: 'authrim_session=sess_runtime_1' },
-        body: {
-          step_id: 'auth:step',
-          node_id: 'auth',
-          selected_handle: 'passkey',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-        },
-      })
-    );
-    const data = await readJson(response);
-
-    expect(response.status).toBe(200);
-    expect(data.completed).toBe(false);
-    expect(data.step).toMatchObject({
-      id: 'consent:step',
-      content: {
-        consent_policy: { items: [] },
-        destination_field_consent: {
-          profile_id: 'destination_oidc_1',
-          profile_version_id: 'destination_oidc_version_1',
-          consent_mode: 'every_time',
-        },
-      },
-    });
-  });
-
   async function submitWithExistingDestinationConsent(
     existing: Record<string, unknown>,
     request: {
@@ -4222,104 +3654,19 @@ describe('LoginUI runtime Flow handlers', () => {
     return data;
   }
 
-  describe('an existing Destination Profile consent', () => {
-    const shown = (data: Record<string, unknown>) =>
-      JSON.stringify(data).includes('"destination_field_consent"');
-
+  describe('an OIDC app after the authentication step', () => {
     it.each([
-      ['presented only sub (the claims parameter now asks for name)', ['sub']],
-      ['was recorded before the presented fields were kept', undefined],
-    ])('is asked again when it %s', async (_name, presented) => {
-      const data = await submitWithExistingDestinationConsent({
-        evidence_json: JSON.stringify(presented ? { presented_field_keys: presented } : {}),
-      });
-      expect(data.completed).toBe(false);
-      expect(data.step).toMatchObject({
-        content: { destination_field_consent: { profile_id: 'destination_oidc_1' } },
-      });
-    });
+      ['no Destination Profile consent recorded', {}],
+      [
+        'one that presented only sub',
+        { evidence_json: JSON.stringify({ presented_field_keys: ['sub'] }) },
+      ],
+      ['one that stored no list of strings', { released_claims_json: JSON.stringify([1, 2]) }],
+    ])('is not asked Destination Profile fields again, with %s', async (_name, existing) => {
+      const data = await submitWithExistingDestinationConsent(existing, { scope: ['openid'] });
 
-    it('is reused when it presented every field asked about now, even one declined', async () => {
-      const data = await submitWithExistingDestinationConsent({
-        evidence_json: JSON.stringify({ presented_field_keys: ['sub', 'name'] }),
-      });
-      expect(shown(data)).toBe(false);
-    });
-
-    it('is reused after it is stored for a profile of 101 fields and a scope of 129 characters', async () => {
-      const longScope = `directory_${'x'.repeat(119)}`;
-      expect(longScope).toHaveLength(129);
-      const customFields = Array.from({ length: 101 }, (_, index) => ({
-        claimName: `custom_${index}`,
-        label: `Custom ${index}`,
-        required: false,
-        requiredScopes: [longScope],
-      }));
-      const profileClaims = [
-        { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
-        ...customFields,
-      ];
-      const scope = ['openid', longScope];
-
-      // The record as it is written for that request...
-      const written: unknown[][] = [];
-      await insertDestinationFieldConsentRecord({
-        db: {
-          execute: vi.fn(async (_sql: string, params?: unknown[]) => {
-            written.push(params ?? []);
-            return { success: true, rowsAffected: 1 };
-          }),
-        } as unknown as DatabaseAdapter,
-        tenantId: 'tenant_test',
-        interaction: {
-          id: 'interaction_0',
-          flow_id: 'flow_1',
-          flow_version_id: 'version_1',
-          client_id: 'client_1',
-          saml_sp_id: null,
-        } as never,
-        step: { id: 'consent:step', source_node_id: 'consent' } as never,
-        policyId: 'policy_1',
-        requestContext: {
-          protocol: 'oidc',
-          target_type: 'oidc_client',
-          target_id: 'client_1',
-          client_id: 'client_1',
-          requested_scope: scope,
-        } as never,
-        userId: 'user_1',
-        consent: {
-          profile_id: 'destination_oidc_1',
-          profile_version_id: 'destination_oidc_version_1',
-          consent_version: 'destination_oidc_version_1',
-          destination_type: 'oidc',
-          consent_mode: null,
-          fields: profileClaims.map((field) => ({ key: field.claimName })),
-        } as never,
-        selectedFields: ['sub'],
-      });
-      const params = written.find((entry) => entry.includes('selected')) ?? [];
-      const at = params.indexOf('selected');
-      const stored = { released_scopes_json: params[at + 3], evidence_json: params[at + 9] };
-      expect(JSON.parse(stored.released_scopes_json as string)).toEqual(scope);
-
-      // ...is the consent the next request reuses.
-      const data = await submitWithExistingDestinationConsent(stored, {
-        scope,
-        claims: [],
-        profileClaims,
-      });
-      expect(shown(data)).toBe(false);
-    });
-
-    it('is asked again when what it stored is not a list of strings', async () => {
-      const data = await submitWithExistingDestinationConsent({
-        released_scopes_json: JSON.stringify({ not: 'a list' }),
-        evidence_json: JSON.stringify({ presented_field_keys: ['sub', 'name'] }),
-      });
-      expect(data.step).toMatchObject({
-        content: { destination_field_consent: { profile_id: 'destination_oidc_1' } },
-      });
+      // The information an OIDC app is given is approved on the consent screen, not in the Flow.
+      expect(JSON.stringify(data)).not.toContain('"destination_field_consent"');
     });
   });
 

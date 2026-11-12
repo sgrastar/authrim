@@ -15,6 +15,7 @@ import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 import { resolveEffectiveSettings } from '../services/effective-settings';
 import { readClientMinimumIAL } from '../services/identity-assurance';
+import { readInformationReleaseConsentSetting } from '../services/information-release-consent';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
 import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
@@ -995,7 +996,7 @@ export async function getClient(
     allow_claims_without_scope: number | null;
     claims_parameter_policy: string | null;
     identity_mapping: string | null;
-    attribute_release_consent: string | null;
+    information_release_consent: string | null;
     asc_enabled: number | null;
     asc_protected_request_required: number | null;
     asc_sao_enabled: number | null;
@@ -1137,8 +1138,8 @@ export async function getClient(
       ? JSON.parse(result.claims_parameter_policy)
       : undefined,
     identity_mapping: result.identity_mapping ? JSON.parse(result.identity_mapping) : undefined,
-    attribute_release_consent: result.attribute_release_consent
-      ? JSON.parse(result.attribute_release_consent)
+    information_release_consent: result.information_release_consent
+      ? readInformationReleaseConsentSetting(result.information_release_consent)
       : undefined,
     asc_enabled:
       result.asc_enabled === null || result.asc_enabled === undefined

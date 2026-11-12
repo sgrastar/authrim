@@ -21,12 +21,19 @@ const mappingLookups = vi.hoisted(() => ({ found: [] as boolean[], setIds: [] as
 const profileFixture = vi.hoisted(() => ({
   claims: undefined as Array<Record<string, unknown>> | undefined,
   selection: 'all' as 'all' | 'none',
+  approval: ['*'] as string[],
 }));
 
+// No consent withdrawal is recorded (generation 0) unless a test says otherwise.
+const mockFindConsentRevocation = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ generation: 0, revokedAt: null })
+);
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    findOAuthClientConsentRevocation: mockFindConsentRevocation,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
     introspectTokenFromContext: mockIntrospectTokenFromContext,
     getClientCached: mockGetClientCached,
     CanonicalRuntimeUserProjectionRepository: vi.fn().mockImplementation(function () {
@@ -255,12 +262,19 @@ function arrange() {
   mappingLookups.setIds = [];
   profileFixture.claims = undefined;
   profileFixture.selection = 'all';
+  profileFixture.approval = ['*'];
   mockResolveEffectiveSettings.mockResolvedValue({ 'oauth.userinfo_require_openid': false });
   mockGetClientCached.mockResolvedValue({ client_id: 'client-1', identity_mapping: null });
-  mockIntrospectTokenFromContext.mockResolvedValue({
+  // The approval the grant carries (everything unless a test narrows it).
+  mockIntrospectTokenFromContext.mockImplementation(async () => ({
     valid: true,
-    claims: { sub: 'user-123', client_id: 'client-1', scope: 'openid email profile' },
-  });
+    claims: {
+      authrim_release: profileFixture.approval,
+      sub: 'user-123',
+      client_id: 'client-1',
+      scope: 'openid email profile',
+    },
+  }));
 }
 
 afterEach(async () => {
@@ -423,9 +437,10 @@ describe('UserInfo of an app with no Mapping Set, in a tenant with an activation
     expect(withoutAdmin).toEqual(withAdmin);
   });
 
-  it('holds the response to the profile of the set the tenant names as its default: no optional claim before the user selects it', async ({
+  it('holds the response to the profile of the set the tenant names as its default: no optional claim before the grant approves it', async ({
     signal,
   }) => {
+    profileFixture.approval = [];
     const { body } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: settingsWith({ tenant: 'set-tenant' }),
@@ -434,7 +449,7 @@ describe('UserInfo of an app with no Mapping Set, in a tenant with an activation
     expect(body).toEqual({ sub: 'user-123' });
   });
 
-  it('answers the claims once the user has selected the profile’s fields', async ({ signal }) => {
+  it('answers the claims once the grant approves the profile’s fields', async ({ signal }) => {
     profileFixture.selection = 'all';
 
     const { body } = await userinfo(signal, {

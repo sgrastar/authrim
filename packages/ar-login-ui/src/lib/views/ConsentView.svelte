@@ -1,4 +1,14 @@
 <script module lang="ts">
+	import type {
+		ConsentInformationRelease as ReleaseData,
+		ConsentInformationReleaseItem as ReleaseItem
+	} from '#lib/api/client.js';
+
+	export type {
+		ConsentInformationRelease,
+		ConsentInformationReleaseItem
+	} from '#lib/api/client.js';
+
 	export interface ConsentScopeInfo {
 		name: string;
 		title: string;
@@ -85,6 +95,8 @@
 		consent_items?: ConsentScreenItem[];
 		consent_management_enabled?: boolean;
 		consent_language?: string;
+		/** The information the app would be given, for the user to approve (optional items). */
+		information_release?: ReleaseData;
 	}
 </script>
 
@@ -96,6 +108,11 @@
 	import { Button, Card, Spinner } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import { isValidImageUrl, isValidLinkUrl } from '#lib/utils/url-validation.js';
+	import {
+		formatReleaseValue,
+		releaseClaimLabel,
+		releaseDefaultChecked
+	} from '#lib/consent-release.js';
 
 	type Props = {
 		loading?: boolean;
@@ -103,6 +120,8 @@
 		consentData?: ConsentScreenData | null;
 		selectedOrgId?: string | null;
 		consentItemDecisions?: Record<string, 'granted' | 'denied'>;
+		/** Optional information items by claim name: true while kept checked (unset = its default). */
+		releaseChoices?: Record<string, boolean>;
 		allowLoading?: boolean;
 		denyLoading?: boolean;
 		onOrgChange?: (event: Event) => void;
@@ -117,6 +136,7 @@
 		consentData = null,
 		selectedOrgId = null,
 		consentItemDecisions = $bindable({}),
+		releaseChoices = $bindable({}),
 		allowLoading = false,
 		denyLoading = false,
 		onOrgChange,
@@ -150,6 +170,14 @@
 			offline_access: $LL.consent_scope_offline_access()
 		};
 		return scopeLabels[scope] || scope;
+	}
+
+	const release = $derived(consentData?.information_release);
+	const requiredRelease = $derived(release?.items.filter((item) => item.required) ?? []);
+	const optionalRelease = $derived(release?.items.filter((item) => !item.required) ?? []);
+
+	function releaseValue(item: ReleaseItem): string | null {
+		return release?.show_values ? formatReleaseValue(item.value) : null;
 	}
 
 	function getActingAsDisplayName(actingAs: ConsentActingAsInfo): string {
@@ -455,6 +483,133 @@
 							</div>
 						</div>
 					{/each}
+				</div>
+			{/if}
+
+			<!-- Information shared with the app (release consent) -->
+			{#if release && release.items.length > 0}
+				<div
+					class="mb-6"
+					role="group"
+					aria-labelledby="release-title"
+					data-testid="information-release"
+				>
+					<h3
+						id="release-title"
+						class="text-sm font-medium mb-1"
+						style="color: var(--text-primary);"
+					>
+						{$LL.consent_release_title({ clientName: consentData.client.client_name })}
+					</h3>
+					<p class="text-xs mb-3" style="color: var(--text-secondary);">
+						{$LL.consent_release_hint()}
+					</p>
+					{#each requiredRelease as item (item.name)}
+						<div
+							class="flex items-start gap-3 p-3 rounded-lg mb-2"
+							style="background: var(--bg-subtle);"
+							data-release-item={item.name}
+							data-required="true"
+						>
+							<div class="flex-1 min-w-0">
+								<div class="flex items-center gap-2 flex-wrap">
+									<span class="text-sm font-medium" style="color: var(--text-primary);">
+										{releaseClaimLabel($LL, item.name)}
+									</span>
+									<span
+										class="px-1.5 py-0.5 rounded text-xs"
+										style="background: var(--danger-light, #fef2f2); color: var(--danger-fg, var(--danger));"
+									>
+										{$LL.consent_item_required_badge()}
+									</span>
+								</div>
+								{#if releaseValue(item)}
+									<p class="text-xs mt-1 break-words" style="color: var(--text-secondary);">
+										{releaseValue(item)}
+									</p>
+								{/if}
+							</div>
+						</div>
+					{/each}
+					{#each optionalRelease as item, index (item.name)}
+						{@const checkId = `release-optional-${index}`}
+						<div
+							class="flex items-start gap-3 p-3 rounded-lg mb-2"
+							style="background: var(--bg-subtle);"
+							data-release-item={item.name}
+							data-required="false"
+						>
+							<input
+								id={checkId}
+								type="checkbox"
+								class="mt-1 flex-shrink-0"
+								checked={releaseChoices[item.name] ?? releaseDefaultChecked(item)}
+								aria-describedby={releaseValue(item) ? `${checkId}-value` : undefined}
+								onchange={(event) => {
+									releaseChoices[item.name] = event.currentTarget.checked;
+								}}
+							/>
+							<div class="flex-1 min-w-0">
+								<div class="flex items-center gap-2 flex-wrap">
+									<label
+										for={checkId}
+										class="text-sm font-medium"
+										style="color: var(--text-primary);"
+									>
+										{releaseClaimLabel($LL, item.name)}
+									</label>
+									<span
+										class="px-1.5 py-0.5 rounded text-xs"
+										style="background: var(--primary-light, #eff6ff); color: var(--primary);"
+									>
+										{$LL.consent_item_optional_badge()}
+									</span>
+								</div>
+								{#if releaseValue(item)}
+									<p
+										id="{checkId}-value"
+										class="text-xs mt-1 break-words"
+										style="color: var(--text-secondary);"
+									>
+										{releaseValue(item)}
+									</p>
+								{/if}
+							</div>
+						</div>
+					{/each}
+					{#if release.purpose}
+						<div class="mt-3" data-testid="release-purpose">
+							<p class="text-xs" style="color: var(--text-secondary);">
+								<strong>{$LL.consent_release_purpose()}:</strong>
+								{release.purpose.title}
+							</p>
+							{#if release.purpose.description}
+								<p class="text-xs mt-1" style="color: var(--text-secondary);">
+									{release.purpose.description}
+								</p>
+							{/if}
+							{#if release.purpose.inline_content}
+								<p
+									class="text-xs mt-1"
+									style="color: var(--text-secondary); white-space: pre-wrap;"
+								>
+									{release.purpose.inline_content}
+								</p>
+							{/if}
+							{#if release.purpose.document_url && isValidLinkUrl(release.purpose.document_url)}
+								<a
+									href={release.purpose.document_url}
+									target="_blank"
+									rel="noopener noreferrer"
+									class="inline-flex items-center gap-1 text-xs mt-1"
+									style="color: var(--primary);"
+								>
+									{$LL.consent_item_view_document()}
+									<span class="i-ph-arrow-square-out h-3 w-3"></span>
+								</a>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/if}
 

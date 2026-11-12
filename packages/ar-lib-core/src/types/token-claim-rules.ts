@@ -178,6 +178,7 @@ export const RESERVED_CLAIMS = [
   'authrim_account_lifecycle',
   // The grant a token was issued under: written by the authorization server only.
   'authrim_consent_generation',
+  'authrim_release',
   'authrim_consent_client_id',
   'authrim_subject_issuer',
   'authrim_subject_ref',

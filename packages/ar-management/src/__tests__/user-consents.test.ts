@@ -108,6 +108,10 @@ function createConsentDatabase() {
       client_id TEXT NOT NULL,
       scope TEXT NOT NULL,
       granted_at INTEGER NOT NULL,
+      updated_at INTEGER,
+      release_approved_json TEXT,
+      release_declined_json TEXT,
+      release_decided_at INTEGER,
       UNIQUE (tenant_id, user_id, client_id)
     );
     CREATE TABLE consent_history (
@@ -118,7 +122,8 @@ function createConsentDatabase() {
       action TEXT NOT NULL,
       scopes_before TEXT,
       scopes_after TEXT,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      metadata_json TEXT
     );
     CREATE TABLE oauth_client_consent_revocations (
       tenant_id TEXT NOT NULL,
@@ -605,6 +610,40 @@ describe('User Consents API', () => {
           }),
         })
       );
+    });
+
+    it('keeps what the person had approved and declined in the withdrawal history', async () => {
+      const account = createConsentDatabase();
+      account.seedConsent('client-abc');
+      account.db
+        .prepare(
+          `UPDATE oauth_client_consents SET release_approved_json = '["name"]',
+             release_declined_json = '["email"]', release_decided_at = 1`
+        )
+        .run();
+      mockCreateAccountAuthContextFromHono.mockReturnValueOnce({ coreAdapter: account.adapter });
+      mockCreateAuthContextFromHono.mockReturnValue({
+        coreAdapter: createConsentDatabase().adapter,
+      });
+
+      const response = await userConsentRevokeHandler(
+        createMockContext({
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
+          params: { clientId: 'client-abc' },
+          env: { REFRESH_TOKEN_ROTATOR: createRotatorNamespace(vi.fn()).namespace as never },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const [entry] = account.db
+        .prepare('SELECT metadata_json FROM consent_history')
+        .all() as Array<{
+        metadata_json: string | null;
+      }>;
+      expect(JSON.parse(entry?.metadata_json ?? 'null')).toEqual({
+        release: { approved: ['name'], declined: ['email'] },
+      });
     });
 
     it('changes nothing and fails when the withdrawal cannot be recorded', async () => {

@@ -202,16 +202,22 @@ const adminClients = {
 		'Selects the active Field Mapping Set used for the ID token, UserInfo and consent screen of this client. Following the tenant default uses the tenant default Mapping Set, else the platform default, else no mapping. A mapping is never applied just because it is activated.',
 	admin_client_detail_identity_mapping_policy_display_hint:
 		'Client override for OIDC field mapping. Empty follows the tenant default Mapping Set (else the platform default, else none).',
-	admin_client_detail_attribute_release_consent: 'Claim release consent',
-	admin_client_detail_attribute_release_consent_disabled: 'Do not ask before releasing claims',
-	admin_client_detail_attribute_release_consent_once: 'Ask the first time, then remember',
-	admin_client_detail_attribute_release_consent_every_time: 'Ask every OIDC release',
-	admin_client_detail_attribute_release_consent_until_attributes_change:
-		'Ask again when claims change',
-	admin_client_detail_attribute_release_consent_hint:
-		'Controls whether Authrim must confirm claim release before issuing ID Token or UserInfo claims to this client.',
-	admin_client_detail_attribute_release_consent_display_hint:
-		'Runtime enforcement applies to OIDC ID Token and UserInfo claim release.',
+	admin_client_detail_information_release_consent: 'Information release consent',
+	admin_client_detail_information_release_consent_enabled:
+		'Ask the person before giving this service their information',
+	admin_client_detail_information_release_consent_off: 'Do not ask',
+	admin_client_detail_information_release_consent_ask: 'When to ask',
+	admin_client_detail_information_release_consent_ask_once: 'Once',
+	admin_client_detail_information_release_consent_ask_every_time: 'Every time',
+	admin_client_detail_information_release_consent_ask_when_items_change: 'When the items change',
+	admin_client_detail_information_release_consent_show_values: 'Show the values',
+	admin_client_detail_information_release_consent_purpose: 'Purpose consent statement ID',
+	admin_client_detail_information_release_consent_purpose_hint:
+		'Optional. A consent statement shown with the information list to explain why the service is given it.',
+	admin_client_detail_information_release_consent_hint:
+		'Controls the information release consent screen shown before ID Token or UserInfo claims are given to this service. Required items are always given; optional items are given only when the person agrees.',
+	admin_client_detail_information_release_consent_display_hint:
+		'Applies to OIDC ID Token, UserInfo and access token claim release.',
 	admin_client_detail_scope_required: 'Scope required',
 	admin_client_detail_advanced_syntax_claims: 'Advanced Syntax for Claims',
 	admin_client_detail_asc: 'ASC',

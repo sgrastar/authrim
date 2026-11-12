@@ -13,11 +13,13 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
 export type ClaimReleasePolicy = 'scope_required' | 'claims_allowed' | 'forbidden';
 export type ClaimsParameterPolicy = Record<string, ClaimReleasePolicy>;
-export type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
+export type InformationReleaseAsk = 'once' | 'every_time' | 'when_items_change';
 
-export interface AttributeReleaseConsentPolicy {
+export interface InformationReleaseConsentSetting {
 	enabled: boolean;
-	mode: AttributeReleaseConsentMode;
+	ask: InformationReleaseAsk;
+	show_values: boolean;
+	purpose_statement_id: string | null;
 }
 
 export interface ClientIdentityMappingFieldMappingSetSelector {
@@ -55,7 +57,7 @@ export interface Client {
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
 	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
-	attribute_release_consent?: AttributeReleaseConsentPolicy | null;
+	information_release_consent?: InformationReleaseConsentSetting | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;
 	asc_sao_enabled?: boolean;
@@ -133,7 +135,7 @@ export interface CreateClientInput {
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
 	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
-	attribute_release_consent?: AttributeReleaseConsentPolicy | null;
+	information_release_consent?: InformationReleaseConsentSetting | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;
 	asc_sao_enabled?: boolean;
@@ -169,7 +171,7 @@ export interface UpdateClientInput {
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: ClaimsParameterPolicy | null;
 	identity_mapping?: ClientIdentityMappingFieldMappingSetSelector | null;
-	attribute_release_consent?: AttributeReleaseConsentPolicy | null;
+	information_release_consent?: InformationReleaseConsentSetting | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;
 	asc_sao_enabled?: boolean;

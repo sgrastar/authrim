@@ -44,6 +44,10 @@
             {
               "path": "009_consent_policies_removed.sql",
               "checksum": "2345ea67a3577e00bf916891eeccd9acd9d684b14b7bff5776ce4e8550442c8f"
+            },
+            {
+              "path": "010_information_release_consent.sql",
+              "checksum": "c37b66fda7a0c512e072e49486ab184048419251b9ed41b2b869ced0c5b97fe2"
             }
           ]
         },
@@ -176,6 +180,10 @@
             {
               "path": "009_consent_policies_removed.sql",
               "checksum": "c6b12b016ca9b12d243ea19374c7c456c240f59e0f48d55a7a702cb61df7c958"
+            },
+            {
+              "path": "010_information_release_consent.sql",
+              "checksum": "961ee6f0d3ba12255374a1230049f2ee70d636e4cb7150489122b571d5f4c553"
             }
           ]
         },
@@ -243,6 +251,10 @@
         {
           "path": "009_consent_policies_removed.sql",
           "checksum": "2345ea67a3577e00bf916891eeccd9acd9d684b14b7bff5776ce4e8550442c8f"
+        },
+        {
+          "path": "010_information_release_consent.sql",
+          "checksum": "c37b66fda7a0c512e072e49486ab184048419251b9ed41b2b869ced0c5b97fe2"
         }
       ]
     },
@@ -401,6 +413,10 @@
         {
           "path": "009_consent_policies_removed.sql",
           "checksum": "c6b12b016ca9b12d243ea19374c7c456c240f59e0f48d55a7a702cb61df7c958"
+        },
+        {
+          "path": "010_information_release_consent.sql",
+          "checksum": "961ee6f0d3ba12255374a1230049f2ee70d636e4cb7150489122b571d5f4c553"
         }
       ]
     },

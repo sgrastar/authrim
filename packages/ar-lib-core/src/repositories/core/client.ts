@@ -18,7 +18,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
-import type { AttributeReleaseConsentPolicy } from '../../services/identity-release-consent';
+import type { InformationReleaseConsentSetting } from '../../services/information-release-consent';
 import type { IAL } from '../../types/settings/assurance-levels';
 import {
   type PaginationOptions,
@@ -121,7 +121,7 @@ export interface OAuthClient {
   allow_claims_without_scope: boolean;
   claims_parameter_policy: string | null; // JSON object
   identity_mapping?: string | null; // JSON object
-  attribute_release_consent?: string | null; // JSON object
+  information_release_consent?: string | null; // JSON object
   asc_enabled: boolean;
   asc_protected_request_required: boolean;
   asc_sao_enabled: boolean;
@@ -248,7 +248,7 @@ export interface CreateClientInput {
     'scope_required' | 'claims_allowed' | 'forbidden'
   > | null;
   identity_mapping?: ClientIdentityFieldMappingSetSelector | null;
-  attribute_release_consent?: AttributeReleaseConsentPolicy | null;
+  information_release_consent?: InformationReleaseConsentSetting | null;
   asc_enabled?: boolean;
   asc_protected_request_required?: boolean;
   asc_sao_enabled?: boolean;
@@ -326,7 +326,7 @@ export interface UpdateClientInput {
     'scope_required' | 'claims_allowed' | 'forbidden'
   > | null;
   identity_mapping?: ClientIdentityFieldMappingSetSelector | null;
-  attribute_release_consent?: AttributeReleaseConsentPolicy | null;
+  information_release_consent?: InformationReleaseConsentSetting | null;
   asc_enabled?: boolean;
   asc_protected_request_required?: boolean;
   asc_sao_enabled?: boolean;
@@ -507,8 +507,8 @@ export class ClientRepository {
         ? JSON.stringify(input.claims_parameter_policy)
         : null,
       identity_mapping: input.identity_mapping ? JSON.stringify(input.identity_mapping) : null,
-      attribute_release_consent: input.attribute_release_consent
-        ? JSON.stringify(input.attribute_release_consent)
+      information_release_consent: input.information_release_consent
+        ? JSON.stringify(input.information_release_consent)
         : null,
       asc_enabled: input.asc_enabled ?? true,
       asc_protected_request_required: input.asc_protected_request_required ?? true,
@@ -581,7 +581,7 @@ export class ClientRepository {
         post_logout_redirect_uris, subject_type, sector_identifier_uri,
         token_endpoint_auth_method, token_endpoint_auth_signing_alg, jwks, jwks_uri,
         is_trusted, skip_consent, allow_claims_without_scope,
-        claims_parameter_policy, identity_mapping, attribute_release_consent,
+        claims_parameter_policy, identity_mapping, information_release_consent,
         asc_enabled, asc_protected_request_required,
         asc_sao_enabled, asc_transformed_claims_enabled, asc_allowed_transformed_claims,
         token_exchange_allowed, allowed_subject_token_clients,
@@ -649,7 +649,7 @@ export class ClientRepository {
         client.allow_claims_without_scope ? 1 : 0,
         client.claims_parameter_policy,
         client.identity_mapping,
-        client.attribute_release_consent,
+        client.information_release_consent,
         client.asc_enabled ? 1 : 0,
         client.asc_protected_request_required ? 1 : 0,
         client.asc_sao_enabled ? 1 : 0,
@@ -833,10 +833,10 @@ export class ClientRepository {
       updates.push('identity_mapping = ?');
       params.push(input.identity_mapping ? JSON.stringify(input.identity_mapping) : null);
     }
-    if (input.attribute_release_consent !== undefined) {
-      updates.push('attribute_release_consent = ?');
+    if (input.information_release_consent !== undefined) {
+      updates.push('information_release_consent = ?');
       params.push(
-        input.attribute_release_consent ? JSON.stringify(input.attribute_release_consent) : null
+        input.information_release_consent ? JSON.stringify(input.information_release_consent) : null
       );
     }
     if (input.asc_enabled !== undefined) {

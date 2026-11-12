@@ -40,7 +40,13 @@ const testState = vi.hoisted(() => {
       rowsAffected: sql.includes('oauth_client_consents') ? 1 : 0,
     })),
     transaction: vi.fn(async (callback: (value: unknown) => unknown) => callback(adapter)),
-    batch: vi.fn(async () => []),
+    // The consent write and its history run as one batch; the write's row count is checked.
+    batch: vi.fn(async (statements: Array<{ sql: string }>) =>
+      statements.map((statement) => ({
+        success: true,
+        rowsAffected: statement.sql.includes('oauth_client_consents') ? 1 : 0,
+      }))
+    ),
     isHealthy: vi.fn(async () => ({ healthy: true, latencyMs: 0, type: 'mock' })),
     getType: vi.fn(() => 'mock'),
     close: vi.fn(async () => undefined),

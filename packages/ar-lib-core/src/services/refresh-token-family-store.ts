@@ -54,6 +54,8 @@ export interface CreateRefreshTokenFamilyInput {
   authContext?: RefreshTokenAuthContext;
   /** The user's consent withdrawal generation for the client the grant was given under. */
   consentGeneration?: number;
+  /** The claim names the grant's information release was approved for. */
+  releaseApproval?: string[];
 }
 
 export interface CreateRefreshTokenFamilyResult {
@@ -145,6 +147,7 @@ export async function createRefreshTokenFamily(
     ...(input.resourceAudience && { resourceAudience: input.resourceAudience }),
     ...(input.authContext && { authContext: input.authContext }),
     ...(input.consentGeneration !== undefined && { consentGeneration: input.consentGeneration }),
+    ...(input.releaseApproval !== undefined && { releaseApproval: input.releaseApproval }),
     generation: shardConfig.currentGeneration,
     shardIndex,
   });

@@ -1,4 +1,8 @@
-import type { ConsentScreenData, ConsentScreenItem } from './ConsentView.svelte';
+import type {
+	ConsentInformationRelease,
+	ConsentScreenData,
+	ConsentScreenItem
+} from './ConsentView.svelte';
 
 export const consentBase: ConsentScreenData = {
 	challenge_id: 'challenge-1',
@@ -71,3 +75,29 @@ export const consentItems: ConsentScreenItem[] = [
 		display_order: 2
 	})
 ];
+
+/** The information the app would be given: required and optional items, values and a purpose. */
+export const informationRelease: ConsentInformationRelease = {
+	items: [
+		{ name: 'email', required: true, value: 'ada.release@example.com' },
+		{ name: 'name', required: true, value: 'Ada Lovelace' },
+		{ name: 'phone_number', required: false, previously_approved: true, value: '+81 90 0000 0000' },
+		{ name: 'birthdate', required: false, previously_approved: false, value: '1815-12-10' },
+		{
+			name: 'address',
+			required: false,
+			value: { street: '1 Main St', locality: 'Tokyo' }
+		},
+		{ name: 'employee_number', required: false, value: '<b>E-1024</b>' }
+	],
+	show_values: true,
+	presentation_key: 'key-1',
+	purpose: {
+		statement_id: 'release-purpose',
+		version: '1',
+		title: 'Sign-in and account notices',
+		description: 'Used to identify you and to send account notices.',
+		document_url: 'https://example.com/purpose',
+		inline_content: '<b>not bold</b>'
+	}
+};

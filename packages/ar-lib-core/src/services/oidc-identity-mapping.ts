@@ -106,6 +106,12 @@ export interface ApplyOIDCIdentityMappingInput {
     | ((names: string[]) => Promise<Record<string, unknown> | null>);
   /** For an explanation: filled with what each step decided (see `OIDCReleaseTrace`). */
   trace?: OIDCReleaseTrace;
+  /**
+   * Filled with the optional fields of the app's Destination Profile among the claims returned.
+   * Every applicable field is returned; the caller holds them to the grant's information release
+   * approval (information-release-consent.ts). Without a profile every claim is required.
+   */
+  releaseOptionalOut?: Set<string>;
   /** Scalar failure coordinates for issuance; never a trace, claim value or account identifier. */
   failureContext?: IdentityMappingFailureContext;
   /**
@@ -480,6 +486,7 @@ async function applyOIDCDestinationFieldConsent(
       ? { assumedConsent: input.fixture.consent, unevaluatedClaims: unevaluated ?? new Set() }
       : {}),
     ...(input.trace ? { trace: input.trace } : {}),
+    ...(input.releaseOptionalOut ? { optionalOut: input.releaseOptionalOut } : {}),
     ...(input.claimsAuthorizedByRequest
       ? { authorizedClaims: unchangedClaimNames(input.claims, claims) }
       : authorizedClaimNames.length > 0

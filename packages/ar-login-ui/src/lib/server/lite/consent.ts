@@ -10,6 +10,7 @@
  * form post as data (a denial with `response_mode=form_post`, asked for by `X-Authrim-Relay`):
  * the page relays the browser there.
  */
+import { formatReleaseValue } from '#lib/consent-release.js';
 import type { LiteBackendClient } from './backend-client';
 
 /**
@@ -20,6 +21,13 @@ const MAX_ITEMS = 25;
 /** The most scopes drawn (a request asking for more is not drawn). */
 const MAX_SCOPES = 100;
 const MAX_TEXT = 4000;
+/**
+ * The most checkboxes a decision form carries: consent items and optional information items
+ * together. The lite form reader takes 32 fields; the hidden ones (transaction, token, form
+ * nonce) and the organization take 4.
+ */
+const MAX_CHECKBOXES = 26;
+const MAX_RELEASE_ITEMS = 60;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -64,6 +72,27 @@ export interface LiteConsentItem {
 	defaultChecked: boolean;
 }
 
+/** The information the app would be given: one item an OIDC claim. */
+export interface LiteReleaseItem {
+	name: string;
+	required: boolean;
+	/** An optional item starts checked only when it was approved last time. */
+	defaultChecked: boolean;
+	/** The value as plain text; only when the app's setting shows values. */
+	valueText: string | null;
+}
+
+export interface LiteRelease {
+	items: LiteReleaseItem[];
+	presentationKey: string;
+	purpose: {
+		title: string;
+		description: string | null;
+		documentUrl: string | null;
+		inlineContent: string | null;
+	} | null;
+}
+
 export interface LiteConsentView {
 	challengeId: string;
 	clientName: string;
@@ -82,6 +111,52 @@ export interface LiteConsentView {
 	targetOrg: { id: string; name: string } | null;
 	itemsEnabled: boolean;
 	items: LiteConsentItem[];
+	/** The information shared with the app (release consent); null when the answer has none. */
+	release: LiteRelease | null;
+}
+
+/**
+ * The information release part of the answer, checked: drawn in full or the consent is not drawn
+ * (`undefined`); null when the answer has none.
+ */
+function readRelease(raw: unknown): LiteRelease | null | undefined {
+	if (raw === undefined || raw === null) return null;
+	if (!isRecord(raw) || !Array.isArray(raw.items)) return undefined;
+	const presentationKey = text(raw.presentation_key, 512);
+	if (!presentationKey || raw.items.length > MAX_RELEASE_ITEMS) return undefined;
+	const showValues = raw.show_values === true;
+	const items: LiteReleaseItem[] = [];
+	const seen = new Set<string>();
+	for (const entry of raw.items) {
+		const name = isRecord(entry) ? text(entry.name, 128) : null;
+		if (!isRecord(entry) || !name || seen.has(name)) return undefined;
+		seen.add(name);
+		items.push({
+			name,
+			required: entry.required === true,
+			defaultChecked: entry.previously_approved === true,
+			valueText: showValues ? formatReleaseValue(entry.value) : null
+		});
+	}
+	let purpose: LiteRelease['purpose'] = null;
+	if (raw.purpose !== undefined && raw.purpose !== null) {
+		if (!isRecord(raw.purpose)) return undefined;
+		const title = shownText(raw.purpose.title);
+		const description = shownText(raw.purpose.description);
+		const inlineContent = shownText(raw.purpose.inline_content);
+		if (!title || description === undefined || inlineContent === undefined) return undefined;
+		// A purpose link that cannot be opened here means the purpose is not drawn in full.
+		const documentUrl = liteConsentLink(raw.purpose.document_url);
+		if (
+			!documentUrl &&
+			typeof raw.purpose.document_url === 'string' &&
+			raw.purpose.document_url.length > 0
+		) {
+			return undefined;
+		}
+		purpose = { title, description, documentUrl, inlineContent };
+	}
+	return items.length > 0 || purpose ? { items, presentationKey, purpose } : null;
 }
 
 /** The consent answer, checked; null when it is not one the page can draw. */
@@ -157,6 +232,11 @@ export function readLiteConsent(json: unknown): LiteConsentView | null {
 		});
 		if (items.length > MAX_ITEMS) return null;
 	}
+	const release = readRelease(json.information_release);
+	if (release === undefined) return null;
+	// Every checkbox is one field of the decision form (the reader takes 32).
+	const releaseOptional = release ? release.items.filter((item) => !item.required).length : 0;
+	if (items.length + releaseOptional > MAX_CHECKBOXES) return null;
 	const defaultOrgId = text(json.target_org_id, 200) ?? primary;
 	// With a choice, the organization an Allow is for by default is one of the choices.
 	if (
@@ -193,7 +273,8 @@ export function readLiteConsent(json: unknown): LiteConsentView | null {
 		targetOrg: named(defaultOrgId),
 		actingAs,
 		itemsEnabled: json.consent_management_enabled === true,
-		items
+		items,
+		release
 	};
 }
 
@@ -229,6 +310,8 @@ export interface LiteConsentShown {
 	orgs: string[];
 	defaultOrgId: string | null;
 	actingAsId: string | null;
+	/** The information release shown: its key and [claim name, required] per item. */
+	release: { key: string; items: Array<[string, boolean]> } | null;
 }
 
 export function liteConsentShown(view: LiteConsentView, op: string): LiteConsentShown {
@@ -245,7 +328,13 @@ export function liteConsentShown(view: LiteConsentView, op: string): LiteConsent
 		]),
 		orgs: view.organizations.map((org) => org.id),
 		defaultOrgId: view.defaultOrgId,
-		actingAsId: view.actingAs?.id ?? null
+		actingAsId: view.actingAs?.id ?? null,
+		release: view.release
+			? {
+					key: view.release.presentationKey,
+					items: view.release.items.map((item): [string, boolean] => [item.name, item.required])
+				}
+			: null
 	};
 }
 
@@ -273,9 +362,23 @@ export function readLiteConsentShown(
 		}
 		items.push([raw[0], raw[1], raw[2] as string | null, raw[3], raw[4]]);
 	}
+	let release: LiteConsentShown['release'] = null;
+	if (shown.release !== null && shown.release !== undefined) {
+		const kept = shown.release as { key?: unknown; items?: unknown };
+		if (typeof kept.key !== 'string' || !Array.isArray(kept.items)) return null;
+		const releaseItems: Array<[string, boolean]> = [];
+		for (const raw of kept.items as unknown[]) {
+			if (!Array.isArray(raw) || typeof raw[0] !== 'string' || typeof raw[1] !== 'boolean') {
+				return null;
+			}
+			releaseItems.push([raw[0], raw[1]]);
+		}
+		release = { key: kept.key, items: releaseItems };
+	}
 	return {
 		op,
 		challengeId,
+		release,
 		itemsEnabled: shown.itemsEnabled === true,
 		items,
 		orgs: (shown.orgs as unknown[]).filter((org): org is string => typeof org === 'string'),
@@ -319,7 +422,21 @@ export function liteConsentAllow(
 					{ version_id: versionId, content_hash: hash }
 				])
 			),
-			...(shown.itemsEnabled && shown.items.length > 0 ? { consent_item_decisions: decisions } : {})
+			...(shown.itemsEnabled && shown.items.length > 0
+				? { consent_item_decisions: decisions }
+				: {}),
+			// The optional information items still checked (only those shown; the required ones go
+			// with approval), for the information release the page showed.
+			...(shown.release
+				? {
+						release_selected: shown.release.items
+							.filter(
+								([name, required]) => !required && fields.get(`release:${name}`) === 'granted'
+							)
+							.map(([name]) => name),
+						release_presentation_key: shown.release.key
+					}
+				: {})
 		}
 	};
 }

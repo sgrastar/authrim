@@ -8,6 +8,7 @@
 	import { API_BASE_URL, consentAPI, type ConsentSubmission } from '#lib/api/client.js';
 	import { loginUiDisplayError, messageForCaughtError } from '#lib/errors/display-error.js';
 	import { isValidRedirectUrl } from '#lib/utils/url-validation.js';
+	import { releaseSelectedNames } from '#lib/consent-release.js';
 
 	const { brandingStore } = useLoginUIStores();
 
@@ -25,6 +26,8 @@
 	let error = $state('');
 	let selectedOrgId = $state<string | null>(null);
 	let consentItemDecisions = $state<Record<string, 'granted' | 'denied'>>({});
+	// The optional information items the user changed; an unset one starts from its default.
+	let releaseChoices = $state<Record<string, boolean>>({});
 
 	const challengeId = $derived(page.url.searchParams.get('challenge_id'));
 
@@ -53,6 +56,8 @@
 			}
 
 			consentData = data as ConsentScreenData;
+			// A reloaded screen starts from its own defaults (what is shown may have changed).
+			releaseChoices = {};
 			if (consentData) {
 				selectedOrgId = consentData.target_org_id || consentData.primary_org?.id || null;
 				// Initialize consent item decisions
@@ -95,6 +100,14 @@
 					{ version_id: item.version_id, content_hash: item.content_hash ?? null }
 				])
 			);
+			// The information release, for what was shown: the optional items kept checked.
+			if (consentData.information_release) {
+				submitPayload.release_selected = releaseSelectedNames(
+					consentData.information_release,
+					releaseChoices
+				);
+				submitPayload.release_presentation_key = consentData.information_release.presentation_key;
+			}
 			// Include consent item decisions if consent management is enabled
 			if (consentData.consent_management_enabled && Object.keys(consentItemDecisions).length > 0) {
 				submitPayload.consent_item_decisions = consentItemDecisions;
@@ -188,6 +201,7 @@
 		{consentData}
 		{selectedOrgId}
 		bind:consentItemDecisions
+		bind:releaseChoices
 		{allowLoading}
 		{denyLoading}
 		onOrgChange={handleOrgChange}
