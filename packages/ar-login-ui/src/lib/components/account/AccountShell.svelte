@@ -55,7 +55,7 @@
 </svelte:head>
 
 <div class="account-shell">
-	<div class="account-layout">
+	<main class="account-layout">
 		<header class="account-header">
 			<div>
 				<p class="account-kicker">{brand}</p>
@@ -74,7 +74,7 @@
 		<section class="account-grid" aria-busy={busy}>
 			{@render children()}
 		</section>
-	</div>
+	</main>
 
 	{#if loginUIPageStore.showTopbar}
 		<div class="account-preferences" data-position={loginUIPageStore.topbarPosition}>

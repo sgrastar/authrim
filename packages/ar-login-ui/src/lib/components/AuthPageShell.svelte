@@ -191,7 +191,7 @@
 			{/each}
 		</header>
 	{/if}
-	<div class="auth-main">
+	<main class="auth-main">
 		{#if loginUIPageStore.backgroundImageFilter}<span class="auth-image-filter" aria-hidden="true"
 			></span>{/if}
 		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card' && !topbarInForm && !topbarInBar}
@@ -279,7 +279,7 @@
 				/>
 			{/if}
 		</div>
-	</div>
+	</main>
 
 	<ConfiguredFooter
 		class="auth-page-footer"
