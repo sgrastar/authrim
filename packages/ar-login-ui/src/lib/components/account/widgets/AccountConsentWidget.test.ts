@@ -20,6 +20,26 @@ describe('AccountConsentWidget', () => {
 		expect(body).toMatch(/class="count-badge[^"]*">2</);
 	});
 
+	it('shows the information each client is given and how it was decided', () => {
+		setLocale('en');
+		const body = renderConsents({
+			consents: [
+				clientConsent(),
+				clientConsent({
+					id: 'trusted',
+					informationRelease: { basis: 'trust', approved: [], declined: [], decidedAt: 1 }
+				}),
+				clientConsent({ id: 'old', informationRelease: undefined })
+			]
+		});
+
+		expect(body).toContain('Information provided');
+		expect(body).toContain('Full name, Email address');
+		expect(body).toContain('Not provided');
+		expect(body).toContain('Everything the service asks for (a trusted service)');
+		expect(body).toContain('Not decided yet');
+	});
+
 	it('hides the decorative kind letters from assistive technology', () => {
 		setLocale('en');
 		const body = renderConsents({ consents: [clientConsent(), statementConsent()] });

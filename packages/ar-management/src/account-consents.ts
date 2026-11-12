@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
-import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import type { AccountInformationRelease, DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
+  accountInformationRelease,
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
   getTenantIdFromContext,
@@ -50,6 +51,7 @@ type AccountConsentRecord =
         tosVersion?: string;
         consentVersion?: number;
       };
+      informationRelease?: AccountInformationRelease;
     }
   | {
       kind: 'statement';
@@ -341,6 +343,7 @@ export async function listAccountConsentsHandler(c: Context<{ Bindings: Env }>):
             consentVersion: row.consent_version ?? 1,
           }
         : undefined,
+    informationRelease: accountInformationRelease(row),
   }));
   const consents = [...flowStatementConsents, ...statementConsents, ...oauthConsents];
 

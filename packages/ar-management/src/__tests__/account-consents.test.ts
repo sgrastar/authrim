@@ -96,6 +96,8 @@ interface Data {
   /** OAuth client consents (account database) and their clients (metadata). */
   oauthConsents: Row[];
   clients: Row[];
+  /** Active client trust policies (metadata) that skip the consent screen. */
+  trustPolicies: Row[];
 }
 
 function record(overrides: Row): Row {
@@ -133,6 +135,7 @@ function serve(data: Partial<Data>) {
     flow: [],
     oauthConsents: [],
     clients: [],
+    trustPolicies: [],
     ...data,
   };
   mockAccountCoreAdapter.query.mockReset().mockImplementation(async (sql: string) => {
@@ -145,6 +148,8 @@ function serve(data: Partial<Data>) {
     if (sql.includes('FROM consent_statement_localizations')) return all.localizations;
     if (sql.includes('FROM consent_records cr')) return all.flow;
     if (sql.includes('FROM oauth_clients')) return all.clients;
+    if (sql.includes('FROM client_trust_policies')) return all.trustPolicies;
+    if (sql.includes('FROM sign_in_confirmation_policies')) return [];
     throw new Error(`metadata database asked for a table it does not own: ${sql}`);
   });
 }
@@ -226,6 +231,11 @@ describe('Account Page consents API', () => {
           privacy_policy_version: 'privacy-v1',
           tos_version: 'tos-v1',
           consent_version: 2,
+          // The information release decision recorded with the consent; markers are not shown.
+          release_approved_json: JSON.stringify(['email', 'name']),
+          release_declined_json: JSON.stringify(['picture']),
+          release_basis: 'user',
+          release_decided_at: 1_777_200_000_000,
         },
       ],
       clients: [
@@ -329,10 +339,59 @@ describe('Account Page consents API', () => {
             tosVersion: 'tos-v1',
             consentVersion: 2,
           },
+          informationRelease: {
+            basis: 'user',
+            approved: ['email', 'name'],
+            declined: ['picture'],
+            decidedAt: 1_777_200_000_000,
+          },
         },
       ],
       total: 3,
     });
+  });
+
+  it('shows how a service is approved today when its policy decides, not the earlier choice', async () => {
+    const consent = {
+      id: 'consent-1',
+      client_id: 'client-abc',
+      scope: 'openid email',
+      selected_scopes: null,
+      granted_at: 1_777_200_000,
+      expires_at: null,
+      privacy_policy_version: null,
+      tos_version: null,
+      consent_version: 1,
+      release_approved_json: JSON.stringify(['email']),
+      release_declined_json: JSON.stringify(['name']),
+      release_basis: 'user',
+      release_decided_at: 1_777_200_000_000,
+    };
+    const client = { client_id: 'client-abc', client_name: 'Example App', logo_uri: null };
+    const releaseOf = async () =>
+      (await bodyOf(await listAccountConsentsHandler(createMockContext(COOKIE)))).consents.find(
+        (entry) => entry.kind === 'oauth_client'
+      )?.informationRelease;
+
+    // Made trusted after the choice: a new authorization gets everything.
+    serve({
+      oauthConsents: [consent],
+      clients: [client],
+      trustPolicies: [{ target_id: 'client-abc' }],
+    });
+    await expect(releaseOf()).resolves.toEqual({
+      basis: 'trust',
+      approved: [],
+      declined: [],
+      decidedAt: 1_777_200_000_000,
+    });
+
+    // The service stopped asking: its required items only.
+    serve({
+      oauthConsents: [consent],
+      clients: [{ ...client, information_release_consent: JSON.stringify({ enabled: false }) }],
+    });
+    await expect(releaseOf()).resolves.toMatchObject({ basis: 'not_asked', approved: [] });
   });
 
   it.each([

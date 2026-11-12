@@ -153,6 +153,113 @@ type RootTranslation = {
 	 */
 	login_continueWith: RequiredParams<'provider'>;
 	/**
+	 * S​i​g​n​-​i​n​ ​C​o​n​f​i​r​m​a​t​i​o​n
+	 */
+	admin_signin_confirmation_nav: string;
+	/**
+	 * S​i​g​n​-​i​n​ ​C​o​n​f​i​r​m​a​t​i​o​n​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
+	 */
+	admin_signin_confirmation_page_title: string;
+	/**
+	 * S​i​g​n​-​i​n​ ​C​o​n​f​i​r​m​a​t​i​o​n
+	 */
+	admin_signin_confirmation_title: string;
+	/**
+	 * C​o​n​t​r​o​l​s​ ​w​h​e​t​h​e​r​ ​u​s​e​r​s​ ​m​u​s​t​ ​c​o​n​f​i​r​m​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​ ​a​n​d​ ​t​e​n​a​n​t​ ​c​o​n​t​e​x​t​ ​d​u​r​i​n​g​ ​s​i​g​n​-​i​n​.​ ​U​s​e​ ​t​h​i​s​ ​w​h​e​n​ ​a​ ​l​o​n​g​-​l​i​v​e​d​ ​s​e​s​s​i​o​n​ ​m​a​y​ ​b​e​ ​r​e​u​s​e​d​ ​a​c​r​o​s​s​ ​a​p​p​l​i​c​a​t​i​o​n​s​,​ ​o​r​ ​w​h​e​n​ ​u​s​e​r​s​ ​s​h​o​u​l​d​ ​e​x​p​l​i​c​i​t​l​y​ ​c​o​n​f​i​r​m​ ​w​h​e​r​e​ ​t​h​e​y​ ​a​r​e​ ​s​i​g​n​i​n​g​ ​i​n​.
+	 */
+	admin_signin_confirmation_description: string;
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​s​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​y​.
+	 */
+	admin_signin_confirmation_load_error: string;
+	/**
+	 * L​o​a​d​i​n​g​ ​s​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​y​.​.​.
+	 */
+	admin_signin_confirmation_loading: string;
+	/**
+	 * M​o​d​e
+	 */
+	admin_signin_confirmation_mode: string;
+	/**
+	 * D​i​s​a​b​l​e​d
+	 */
+	admin_signin_confirmation_mode_disabled: string;
+	/**
+	 * F​i​r​s​t​ ​t​i​m​e
+	 */
+	admin_signin_confirmation_mode_first_time: string;
+	/**
+	 * E​v​e​r​y​ ​t​i​m​e
+	 */
+	admin_signin_confirmation_mode_every_time: string;
+	/**
+	 * R​e​m​e​m​b​e​r​ ​d​a​y​s
+	 */
+	admin_signin_confirmation_remember_days: string;
+	/**
+	 * {​d​a​y​s​}​ ​d​a​y​s
+	 * @param {number} days
+	 */
+	admin_signin_confirmation_remember_days_value: RequiredParams<'days'>;
+	/**
+	 * S​h​o​w​ ​a​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​e​x​t
+	 */
+	admin_signin_confirmation_show_application_context: string;
+	/**
+	 * S​h​o​w​ ​t​e​n​a​n​t​ ​c​o​n​t​e​x​t
+	 */
+	admin_signin_confirmation_show_tenant_context: string;
+	/**
+	 * A​c​t​i​v​e
+	 */
+	admin_signin_confirmation_active: string;
+	/**
+	 * S​a​v​e​ ​s​i​g​n​-​i​n​ ​p​o​l​i​c​y
+	 */
+	admin_signin_confirmation_save: string;
+	/**
+	 * S​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​y​ ​s​a​v​e​d​.
+	 */
+	admin_signin_confirmation_saved: string;
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​s​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​y​.
+	 */
+	admin_signin_confirmation_save_error: string;
+	/**
+	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​c​h​a​n​g​e​ ​s​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​i​e​s​.
+	 */
+	admin_signin_confirmation_permission: string;
+	/**
+	 * N​a​m​e
+	 */
+	admin_signin_confirmation_name: string;
+	/**
+	 * C​o​n​t​e​x​t
+	 */
+	admin_signin_confirmation_context: string;
+	/**
+	 * A​p​p​ ​{​a​p​p​}​ ​/​ ​T​e​n​a​n​t​ ​{​t​e​n​a​n​t​}
+	 * @param {string} app
+	 * @param {string} tenant
+	 */
+	admin_signin_confirmation_context_summary: RequiredParams<'app' | 'tenant'>;
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_signin_confirmation_status: string;
+	/**
+	 * N​o​ ​s​i​g​n​-​i​n​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​p​o​l​i​c​y​.
+	 */
+	admin_signin_confirmation_none: string;
+	/**
+	 * E​n​a​b​l​e​d
+	 */
+	admin_signin_confirmation_enabled: string;
+	/**
+	 * D​i​s​a​b​l​e​d
+	 */
+	admin_signin_confirmation_disabled: string;
+	/**
 	 * L​o​a​d​i​n​g​.​.​.
 	 */
 	admin_layout_loading: string;
@@ -3946,7 +4053,7 @@ type RootTranslation = {
 	 */
 	admin_external_idp_copy_to_clipboard: string;
 	/**
-	 * E​n​t​e​r​ ​a​ ​s​l​u​g​ ​t​o​ ​g​e​n​e​r​a​t​e​ ​t​h​e​ ​c​a​l​l​b​a​c​k​ ​U​R​L​.​ ​R​e​g​i​s​t​e​r​ ​t​h​e​ ​g​e​n​e​r​a​t​e​d​ ​U​R​L​ ​e​x​a​c​t​l​y​ ​i​n​ ​t​h​e​ ​e​x​t​e​r​n​a​l​ ​I​d​P​ ​c​a​l​l​b​a​c​k​ ​s​e​t​t​i​n​g​s​.
+	 * E​n​t​e​r​ ​a​ ​s​l​u​g​ ​t​o​ ​g​e​n​e​r​a​t​e​ ​t​h​e​ ​c​a​l​l​b​a​c​k​ ​U​R​L​.​ ​R​e​g​i​s​t​e​r​ ​t​h​e​ ​g​e​n​e​r​a​t​e​d​ ​U​R​L​ ​e​x​a​c​t​l​y​ ​i​n​ ​t​h​e​ ​e​x​t​e​r​n​a​l​ ​I​d​P​ ​c​a​l​l​b​a​c​k​ ​s​e​t​t​i​n​g​s​.​ ​I​t​ ​s​t​a​y​s​ ​o​n​ ​t​h​e​ ​p​l​a​t​f​o​r​m​ ​i​s​s​u​e​r​ ​h​o​s​t​ ​e​v​e​n​ ​w​h​e​n​ ​t​h​e​ ​t​e​n​a​n​t​ ​h​a​s​ ​a​ ​c​u​s​t​o​m​ ​d​o​m​a​i​n​:​ ​s​i​g​n​-​i​n​s​ ​s​t​a​r​t​e​d​ ​t​h​e​r​e​ ​c​o​m​e​ ​b​a​c​k​ ​t​o​ ​i​t​ ​(​a​ ​f​o​r​m​ ​p​o​s​t​ ​s​u​c​h​ ​a​s​ ​S​i​g​n​ ​i​n​ ​w​i​t​h​ ​A​p​p​l​e​ ​i​s​ ​r​e​l​a​y​e​d​)​,​ ​s​o​ ​t​h​e​ ​c​u​s​t​o​m​ ​d​o​m​a​i​n​ ​n​e​e​d​s​ ​n​o​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
 	 */
 	admin_external_idp_redirect_url_hint: string;
 	/**
@@ -7798,20 +7905,16 @@ type RootTranslation = {
 	 */
 	admin_dr_backup_tenant_blocker_external: RequiredParams<'id'>;
 	/**
-	 * C​o​n​f​i​r​m​ ​t​h​e​ ​s​o​u​r​c​e​ ​i​s​ ​s​t​o​p​p​e​d​ ​a​n​d​ ​h​i​s​t​o​r​i​c​a​l​ ​d​e​l​i​v​e​r​y​ ​r​e​m​a​i​n​s​ ​o​n​ ​h​o​l​d​.
-	 */
-	admin_dr_backup_tenant_blocker_delivery: string;
-	/**
-	 * Flows in this backup name platform profiles that this environment does not have, or is deleting. You can still approve, but those Flows will offer no sign-in method or make no session until you create the profile or change the Flow.
+	 * F​l​o​w​s​ ​i​n​ ​t​h​i​s​ ​b​a​c​k​u​p​ ​n​a​m​e​ ​p​l​a​t​f​o​r​m​ ​p​r​o​f​i​l​e​s​ ​t​h​a​t​ ​t​h​i​s​ ​e​n​v​i​r​o​n​m​e​n​t​ ​d​o​e​s​ ​n​o​t​ ​h​a​v​e​,​ ​o​r​ ​i​s​ ​d​e​l​e​t​i​n​g​.​ ​Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​a​p​p​r​o​v​e​,​ ​b​u​t​ ​t​h​o​s​e​ ​F​l​o​w​s​ ​w​i​l​l​ ​o​f​f​e​r​ ​n​o​ ​s​i​g​n​-​i​n​ ​m​e​t​h​o​d​ ​o​r​ ​m​a​k​e​ ​n​o​ ​s​e​s​s​i​o​n​ ​u​n​t​i​l​ ​y​o​u​ ​c​r​e​a​t​e​ ​t​h​e​ ​p​r​o​f​i​l​e​ ​o​r​ ​c​h​a​n​g​e​ ​t​h​e​ ​F​l​o​w​.
 	 */
 	admin_dr_backup_tenant_preview_profile_warning: string;
 	/**
-	 * Authentication method profile: {id}
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​p​r​o​f​i​l​e​:​ ​{​i​d​}
 	 * @param {string} id
 	 */
 	admin_dr_backup_tenant_preview_profile_method: RequiredParams<'id'>;
 	/**
-	 * Session profile: {id}
+	 * S​e​s​s​i​o​n​ ​p​r​o​f​i​l​e​:​ ​{​i​d​}
 	 * @param {string} id
 	 */
 	admin_dr_backup_tenant_preview_profile_session: RequiredParams<'id'>;
@@ -7823,6 +7926,10 @@ type RootTranslation = {
 	 * T​h​i​s​ ​b​a​c​k​u​p​ ​i​s​ ​t​o​o​ ​l​a​r​g​e​ ​t​o​ ​c​h​e​c​k​ ​e​v​e​r​y​ ​p​r​o​f​i​l​e​ ​i​t​s​ ​F​l​o​w​s​ ​n​a​m​e​;​ ​s​o​m​e​ ​m​a​y​ ​b​e​ ​m​i​s​s​i​n​g​ ​i​n​ ​t​h​i​s​ ​e​n​v​i​r​o​n​m​e​n​t​.
 	 */
 	admin_dr_backup_tenant_preview_profile_incomplete: string;
+	/**
+	 * C​o​n​f​i​r​m​ ​t​h​e​ ​s​o​u​r​c​e​ ​i​s​ ​s​t​o​p​p​e​d​ ​a​n​d​ ​h​i​s​t​o​r​i​c​a​l​ ​d​e​l​i​v​e​r​y​ ​r​e​m​a​i​n​s​ ​o​n​ ​h​o​l​d​.
+	 */
+	admin_dr_backup_tenant_blocker_delivery: string;
 	/**
 	 * A​d​m​i​n​i​s​t​r​a​t​o​r​ ​m​a​p​p​i​n​g
 	 */
@@ -13314,7 +13421,7 @@ type RootTranslation = {
 	 */
 	admin_tenant_discovery_dark: string;
 	/**
-	 * auto
+	 * a​u​t​o
 	 */
 	admin_tenant_discovery_auto: string;
 	/**
@@ -29816,6 +29923,54 @@ type RootTranslation = {
 	 */
 	admin_flows_screen_academic: string;
 	/**
+	 * i​n​a​c​t​i​v​e
+	 */
+	admin_flows_option_inactive: string;
+	/**
+	 * N​o​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s​ ​s​e​l​e​c​t​e​d
+	 */
+	admin_flows_statements_none: string;
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s
+	 */
+	admin_flows_statements_label: string;
+	/**
+	 * N​o​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s​ ​h​a​v​e​ ​b​e​e​n​ ​a​d​d​e​d​ ​t​o​ ​t​h​i​s​ ​n​o​d​e​.
+	 */
+	admin_flows_statements_empty: string;
+	/**
+	 * R​e​q​u​i​r​e​d
+	 */
+	admin_flows_statements_required: string;
+	/**
+	 * M​o​v​e​ ​u​p
+	 */
+	admin_flows_statements_move_up: string;
+	/**
+	 * M​o​v​e​ ​d​o​w​n
+	 */
+	admin_flows_statements_move_down: string;
+	/**
+	 * R​e​m​o​v​e
+	 */
+	admin_flows_statements_remove: string;
+	/**
+	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​t​o​ ​a​d​d
+	 */
+	admin_flows_statements_add_select: string;
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t
+	 */
+	admin_flows_statements_add_placeholder: string;
+	/**
+	 * A​d​d
+	 */
+	admin_flows_statements_add: string;
+	/**
+	 * S​t​a​t​e​m​e​n​t​s​ ​a​r​e​ ​s​h​o​w​n​ ​i​n​ ​t​h​i​s​ ​o​r​d​e​r​.​ ​T​h​e​ ​c​u​r​r​e​n​t​ ​v​e​r​s​i​o​n​ ​o​f​ ​e​a​c​h​ ​s​t​a​t​e​m​e​n​t​ ​i​s​ ​a​l​w​a​y​s​ ​a​s​k​e​d​.
+	 */
+	admin_flows_statements_hint: string;
+	/**
 	 * N​e​x​t
 	 */
 	admin_flows_output_next: string;
@@ -29971,166 +30126,6 @@ type RootTranslation = {
 	 * S​a​v​i​n​g​.​.​.
 	 */
 	admin_flows_trust_policy_saving: string;
-	/**
-	 * Sign-in Confirmation
-	 */
-	admin_signin_confirmation_nav: string;
-	/**
-	 * Sign-in Confirmation - Authrim Admin
-	 */
-	admin_signin_confirmation_page_title: string;
-	/**
-	 * Sign-in Confirmation
-	 */
-	admin_signin_confirmation_title: string;
-	/**
-	 * Controls whether users must confirm the application and tenant context during sign-in. Use this when a long-lived session may be reused across applications, or when users should explicitly confirm where they are signing in.
-	 */
-	admin_signin_confirmation_description: string;
-	/**
-	 * Failed to load sign-in confirmation policy.
-	 */
-	admin_signin_confirmation_load_error: string;
-	/**
-	 * Loading sign-in confirmation policy...
-	 */
-	admin_signin_confirmation_loading: string;
-	/**
-	 * Mode
-	 */
-	admin_signin_confirmation_mode: string;
-	/**
-	 * Disabled
-	 */
-	admin_signin_confirmation_mode_disabled: string;
-	/**
-	 * First time
-	 */
-	admin_signin_confirmation_mode_first_time: string;
-	/**
-	 * Every time
-	 */
-	admin_signin_confirmation_mode_every_time: string;
-	/**
-	 * Remember days
-	 */
-	admin_signin_confirmation_remember_days: string;
-	/**
-	 * {days:number} days
-	 */
-	admin_signin_confirmation_remember_days_value: RequiredParams<'days'>;
-	/**
-	 * Show application context
-	 */
-	admin_signin_confirmation_show_application_context: string;
-	/**
-	 * Show tenant context
-	 */
-	admin_signin_confirmation_show_tenant_context: string;
-	/**
-	 * Active
-	 */
-	admin_signin_confirmation_active: string;
-	/**
-	 * Save sign-in policy
-	 */
-	admin_signin_confirmation_save: string;
-	/**
-	 * Sign-in confirmation policy saved.
-	 */
-	admin_signin_confirmation_saved: string;
-	/**
-	 * Failed to save sign-in confirmation policy.
-	 */
-	admin_signin_confirmation_save_error: string;
-	/**
-	 * You do not have permission to change sign-in confirmation policies.
-	 */
-	admin_signin_confirmation_permission: string;
-	/**
-	 * Name
-	 */
-	admin_signin_confirmation_name: string;
-	/**
-	 * Context
-	 */
-	admin_signin_confirmation_context: string;
-	/**
-	 * App {app:string} / Tenant {tenant:string}
-	 */
-	admin_signin_confirmation_context_summary: RequiredParams<'app' | 'tenant'>;
-	/**
-	 * Status
-	 */
-	admin_signin_confirmation_status: string;
-	/**
-	 * No sign-in confirmation policy.
-	 */
-	admin_signin_confirmation_none: string;
-	/**
-	 * Enabled
-	 */
-	admin_signin_confirmation_enabled: string;
-	/**
-	 * Disabled
-	 */
-	admin_signin_confirmation_disabled: string;
-	/**
-	 * admin_consent_statements_required_version
-	 */
-	admin_consent_statements_required_version: string;
-	/**
-	 * admin_consent_versions_activate_reconsent
-	 */
-	admin_consent_versions_activate_reconsent: string;
-	/**
-	 * admin_flows_option_inactive
-	 */
-	admin_flows_option_inactive: string;
-	/**
-	 * admin_flows_statements_add
-	 */
-	admin_flows_statements_add: string;
-	/**
-	 * admin_flows_statements_add_placeholder
-	 */
-	admin_flows_statements_add_placeholder: string;
-	/**
-	 * admin_flows_statements_add_select
-	 */
-	admin_flows_statements_add_select: string;
-	/**
-	 * admin_flows_statements_empty
-	 */
-	admin_flows_statements_empty: string;
-	/**
-	 * admin_flows_statements_hint
-	 */
-	admin_flows_statements_hint: string;
-	/**
-	 * admin_flows_statements_label
-	 */
-	admin_flows_statements_label: string;
-	/**
-	 * admin_flows_statements_move_down
-	 */
-	admin_flows_statements_move_down: string;
-	/**
-	 * admin_flows_statements_move_up
-	 */
-	admin_flows_statements_move_up: string;
-	/**
-	 * admin_flows_statements_none
-	 */
-	admin_flows_statements_none: string;
-	/**
-	 * admin_flows_statements_remove
-	 */
-	admin_flows_statements_remove: string;
-	/**
-	 * admin_flows_statements_required
-	 */
-	admin_flows_statements_required: string;
 	/**
 	 * S​c​r​e​e​n​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
@@ -32118,7 +32113,7 @@ type RootTranslation = {
 	 */
 	admin_theme_saved_success: RequiredParams<'name'>;
 	/**
-	 * C​e​n​t​e​r​e​d​ ​c​a​r​d​,​ ​c​o​b​a​l​t​ ​o​n​ ​c​o​o​l​ ​p​a​p​e​r​,​ ​i​m​a​g​e​ ​o​p​t​i​o​n​a​l​.
+	 * W​h​i​t​e​ ​a​n​d​ ​t​h​i​n​ ​l​i​n​e​s​.​ ​N​o​ ​s​h​a​d​o​w​,​ ​n​o​ ​f​r​o​s​t​.
 	 */
 	admin_theme_template_clean_description: string;
 	/**
@@ -33462,6 +33457,14 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_reconsent_interval_preset_1095: string;
 	/**
+	 * R​e​q​u​i​r​e​d​ ​c​o​n​s​e​n​t​ ​v​e​r​s​i​o​n
+	 */
+	admin_consent_statements_required_version: string;
+	/**
+	 * A​s​k​ ​p​e​o​p​l​e​ ​w​h​o​ ​a​g​r​e​e​d​ ​t​o​ ​a​n​ ​e​a​r​l​i​e​r​ ​v​e​r​s​i​o​n​ ​a​g​a​i​n
+	 */
+	admin_consent_versions_activate_reconsent: string;
+	/**
 	 * W​i​t​h​d​r​a​w​a​l​ ​a​l​l​o​w​e​d
 	 */
 	admin_consent_statements_withdrawal_allowed: string;
@@ -33990,6 +33993,113 @@ export type TranslationFunctions = {
 	 * Continue with {provider}
 	 */
 	login_continueWith: (arg: { provider: string }) => LocalizedString;
+	/**
+	 * Sign-in Confirmation
+	 */
+	admin_signin_confirmation_nav: () => LocalizedString;
+	/**
+	 * Sign-in Confirmation - Authrim Admin
+	 */
+	admin_signin_confirmation_page_title: () => LocalizedString;
+	/**
+	 * Sign-in Confirmation
+	 */
+	admin_signin_confirmation_title: () => LocalizedString;
+	/**
+	 * Controls whether users must confirm the application and tenant context during sign-in. Use this when a long-lived session may be reused across applications, or when users should explicitly confirm where they are signing in.
+	 */
+	admin_signin_confirmation_description: () => LocalizedString;
+	/**
+	 * Failed to load sign-in confirmation policy.
+	 */
+	admin_signin_confirmation_load_error: () => LocalizedString;
+	/**
+	 * Loading sign-in confirmation policy...
+	 */
+	admin_signin_confirmation_loading: () => LocalizedString;
+	/**
+	 * Mode
+	 */
+	admin_signin_confirmation_mode: () => LocalizedString;
+	/**
+	 * Disabled
+	 */
+	admin_signin_confirmation_mode_disabled: () => LocalizedString;
+	/**
+	 * First time
+	 */
+	admin_signin_confirmation_mode_first_time: () => LocalizedString;
+	/**
+	 * Every time
+	 */
+	admin_signin_confirmation_mode_every_time: () => LocalizedString;
+	/**
+	 * Remember days
+	 */
+	admin_signin_confirmation_remember_days: () => LocalizedString;
+	/**
+	 * {days} days
+	 */
+	admin_signin_confirmation_remember_days_value: (arg: { days: number }) => LocalizedString;
+	/**
+	 * Show application context
+	 */
+	admin_signin_confirmation_show_application_context: () => LocalizedString;
+	/**
+	 * Show tenant context
+	 */
+	admin_signin_confirmation_show_tenant_context: () => LocalizedString;
+	/**
+	 * Active
+	 */
+	admin_signin_confirmation_active: () => LocalizedString;
+	/**
+	 * Save sign-in policy
+	 */
+	admin_signin_confirmation_save: () => LocalizedString;
+	/**
+	 * Sign-in confirmation policy saved.
+	 */
+	admin_signin_confirmation_saved: () => LocalizedString;
+	/**
+	 * Failed to save sign-in confirmation policy.
+	 */
+	admin_signin_confirmation_save_error: () => LocalizedString;
+	/**
+	 * You do not have permission to change sign-in confirmation policies.
+	 */
+	admin_signin_confirmation_permission: () => LocalizedString;
+	/**
+	 * Name
+	 */
+	admin_signin_confirmation_name: () => LocalizedString;
+	/**
+	 * Context
+	 */
+	admin_signin_confirmation_context: () => LocalizedString;
+	/**
+	 * App {app} / Tenant {tenant}
+	 */
+	admin_signin_confirmation_context_summary: (arg: {
+		app: string;
+		tenant: string;
+	}) => LocalizedString;
+	/**
+	 * Status
+	 */
+	admin_signin_confirmation_status: () => LocalizedString;
+	/**
+	 * No sign-in confirmation policy.
+	 */
+	admin_signin_confirmation_none: () => LocalizedString;
+	/**
+	 * Enabled
+	 */
+	admin_signin_confirmation_enabled: () => LocalizedString;
+	/**
+	 * Disabled
+	 */
+	admin_signin_confirmation_disabled: () => LocalizedString;
 	/**
 	 * Loading...
 	 */
@@ -37737,7 +37847,7 @@ export type TranslationFunctions = {
 	 */
 	admin_external_idp_copy_to_clipboard: () => LocalizedString;
 	/**
-	 * Enter a slug to generate the callback URL. Register the generated URL exactly in the external IdP callback settings.
+	 * Enter a slug to generate the callback URL. Register the generated URL exactly in the external IdP callback settings. It stays on the platform issuer host even when the tenant has a custom domain: sign-ins started there come back to it (a form post such as Sign in with Apple is relayed), so the custom domain needs no registration.
 	 */
 	admin_external_idp_redirect_url_hint: () => LocalizedString;
 	/**
@@ -41560,10 +41670,6 @@ export type TranslationFunctions = {
 	 */
 	admin_dr_backup_tenant_blocker_external: (arg: { id: string }) => LocalizedString;
 	/**
-	 * Confirm the source is stopped and historical delivery remains on hold.
-	 */
-	admin_dr_backup_tenant_blocker_delivery: () => LocalizedString;
-	/**
 	 * Flows in this backup name platform profiles that this environment does not have, or is deleting. You can still approve, but those Flows will offer no sign-in method or make no session until you create the profile or change the Flow.
 	 */
 	admin_dr_backup_tenant_preview_profile_warning: () => LocalizedString;
@@ -41583,6 +41689,10 @@ export type TranslationFunctions = {
 	 * This backup is too large to check every profile its Flows name; some may be missing in this environment.
 	 */
 	admin_dr_backup_tenant_preview_profile_incomplete: () => LocalizedString;
+	/**
+	 * Confirm the source is stopped and historical delivery remains on hold.
+	 */
+	admin_dr_backup_tenant_blocker_delivery: () => LocalizedString;
 	/**
 	 * Administrator mapping
 	 */
@@ -63336,6 +63446,54 @@ Remove this role from {email}?
 	 */
 	admin_flows_screen_academic: () => LocalizedString;
 	/**
+	 * inactive
+	 */
+	admin_flows_option_inactive: () => LocalizedString;
+	/**
+	 * No consent statements selected
+	 */
+	admin_flows_statements_none: () => LocalizedString;
+	/**
+	 * Consent statements
+	 */
+	admin_flows_statements_label: () => LocalizedString;
+	/**
+	 * No consent statements have been added to this node.
+	 */
+	admin_flows_statements_empty: () => LocalizedString;
+	/**
+	 * Required
+	 */
+	admin_flows_statements_required: () => LocalizedString;
+	/**
+	 * Move up
+	 */
+	admin_flows_statements_move_up: () => LocalizedString;
+	/**
+	 * Move down
+	 */
+	admin_flows_statements_move_down: () => LocalizedString;
+	/**
+	 * Remove
+	 */
+	admin_flows_statements_remove: () => LocalizedString;
+	/**
+	 * Consent statement to add
+	 */
+	admin_flows_statements_add_select: () => LocalizedString;
+	/**
+	 * Select a consent statement
+	 */
+	admin_flows_statements_add_placeholder: () => LocalizedString;
+	/**
+	 * Add
+	 */
+	admin_flows_statements_add: () => LocalizedString;
+	/**
+	 * Statements are shown in this order. The current version of each statement is always asked.
+	 */
+	admin_flows_statements_hint: () => LocalizedString;
+	/**
 	 * Next
 	 */
 	admin_flows_output_next: () => LocalizedString;
@@ -63491,166 +63649,6 @@ Remove this role from {email}?
 	 * Saving...
 	 */
 	admin_flows_trust_policy_saving: () => LocalizedString;
-	/**
-	 * Sign-in Confirmation
-	 */
-	admin_signin_confirmation_nav: () => LocalizedString;
-	/**
-	 * Sign-in Confirmation - Authrim Admin
-	 */
-	admin_signin_confirmation_page_title: () => LocalizedString;
-	/**
-	 * Sign-in Confirmation
-	 */
-	admin_signin_confirmation_title: () => LocalizedString;
-	/**
-	 * Controls whether users must confirm the application and tenant context during sign-in. Use this when a long-lived session may be reused across applications, or when users should explicitly confirm where they are signing in.
-	 */
-	admin_signin_confirmation_description: () => LocalizedString;
-	/**
-	 * Failed to load sign-in confirmation policy.
-	 */
-	admin_signin_confirmation_load_error: () => LocalizedString;
-	/**
-	 * Loading sign-in confirmation policy...
-	 */
-	admin_signin_confirmation_loading: () => LocalizedString;
-	/**
-	 * Mode
-	 */
-	admin_signin_confirmation_mode: () => LocalizedString;
-	/**
-	 * Disabled
-	 */
-	admin_signin_confirmation_mode_disabled: () => LocalizedString;
-	/**
-	 * First time
-	 */
-	admin_signin_confirmation_mode_first_time: () => LocalizedString;
-	/**
-	 * Every time
-	 */
-	admin_signin_confirmation_mode_every_time: () => LocalizedString;
-	/**
-	 * Remember days
-	 */
-	admin_signin_confirmation_remember_days: () => LocalizedString;
-	/**
-	 * {days:number} days
-	 */
-	admin_signin_confirmation_remember_days_value: (arg: { days: number }) => LocalizedString;
-	/**
-	 * Show application context
-	 */
-	admin_signin_confirmation_show_application_context: () => LocalizedString;
-	/**
-	 * Show tenant context
-	 */
-	admin_signin_confirmation_show_tenant_context: () => LocalizedString;
-	/**
-	 * Active
-	 */
-	admin_signin_confirmation_active: () => LocalizedString;
-	/**
-	 * Save sign-in policy
-	 */
-	admin_signin_confirmation_save: () => LocalizedString;
-	/**
-	 * Sign-in confirmation policy saved.
-	 */
-	admin_signin_confirmation_saved: () => LocalizedString;
-	/**
-	 * Failed to save sign-in confirmation policy.
-	 */
-	admin_signin_confirmation_save_error: () => LocalizedString;
-	/**
-	 * You do not have permission to change sign-in confirmation policies.
-	 */
-	admin_signin_confirmation_permission: () => LocalizedString;
-	/**
-	 * Name
-	 */
-	admin_signin_confirmation_name: () => LocalizedString;
-	/**
-	 * Context
-	 */
-	admin_signin_confirmation_context: () => LocalizedString;
-	/**
-	 * App {app:string} / Tenant {tenant:string}
-	 */
-	admin_signin_confirmation_context_summary: (arg: { app: string, tenant: string }) => LocalizedString;
-	/**
-	 * Status
-	 */
-	admin_signin_confirmation_status: () => LocalizedString;
-	/**
-	 * No sign-in confirmation policy.
-	 */
-	admin_signin_confirmation_none: () => LocalizedString;
-	/**
-	 * Enabled
-	 */
-	admin_signin_confirmation_enabled: () => LocalizedString;
-	/**
-	 * Disabled
-	 */
-	admin_signin_confirmation_disabled: () => LocalizedString;
-	/**
-	 * admin_consent_statements_required_version
-	 */
-	admin_consent_statements_required_version: () => LocalizedString;
-	/**
-	 * admin_consent_versions_activate_reconsent
-	 */
-	admin_consent_versions_activate_reconsent: () => LocalizedString;
-	/**
-	 * admin_flows_option_inactive
-	 */
-	admin_flows_option_inactive: () => LocalizedString;
-	/**
-	 * admin_flows_statements_add
-	 */
-	admin_flows_statements_add: () => LocalizedString;
-	/**
-	 * admin_flows_statements_add_placeholder
-	 */
-	admin_flows_statements_add_placeholder: () => LocalizedString;
-	/**
-	 * admin_flows_statements_add_select
-	 */
-	admin_flows_statements_add_select: () => LocalizedString;
-	/**
-	 * admin_flows_statements_empty
-	 */
-	admin_flows_statements_empty: () => LocalizedString;
-	/**
-	 * admin_flows_statements_hint
-	 */
-	admin_flows_statements_hint: () => LocalizedString;
-	/**
-	 * admin_flows_statements_label
-	 */
-	admin_flows_statements_label: () => LocalizedString;
-	/**
-	 * admin_flows_statements_move_down
-	 */
-	admin_flows_statements_move_down: () => LocalizedString;
-	/**
-	 * admin_flows_statements_move_up
-	 */
-	admin_flows_statements_move_up: () => LocalizedString;
-	/**
-	 * admin_flows_statements_none
-	 */
-	admin_flows_statements_none: () => LocalizedString;
-	/**
-	 * admin_flows_statements_remove
-	 */
-	admin_flows_statements_remove: () => LocalizedString;
-	/**
-	 * admin_flows_statements_required
-	 */
-	admin_flows_statements_required: () => LocalizedString;
 	/**
 	 * Screens - Authrim Admin
 	 */
@@ -65612,7 +65610,7 @@ Remove this role from {email}?
 	 */
 	admin_theme_saved_success: (arg: { name: string }) => LocalizedString;
 	/**
-	 * Centered card, cobalt on cool paper, image optional.
+	 * White and thin lines. No shadow, no frost.
 	 */
 	admin_theme_template_clean_description: () => LocalizedString;
 	/**
@@ -66934,6 +66932,14 @@ Remove this role from {email}?
 	 * 1095 days (3 years)
 	 */
 	admin_consent_statements_reconsent_interval_preset_1095: () => LocalizedString;
+	/**
+	 * Required consent version
+	 */
+	admin_consent_statements_required_version: () => LocalizedString;
+	/**
+	 * Ask people who agreed to an earlier version again
+	 */
+	admin_consent_versions_activate_reconsent: () => LocalizedString;
 	/**
 	 * Withdrawal allowed
 	 */
