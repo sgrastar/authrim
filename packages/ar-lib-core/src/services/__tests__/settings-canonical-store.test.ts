@@ -503,6 +503,197 @@ describe.each(['scheduled', 'pipeline'] as const)('DatabaseSettingsCanonicalStor
     });
   });
 
+  describe('saving several categories at once', () => {
+    const tenant = { type: 'tenant', id: 'tenant-a' } as const;
+    function twoCategories() {
+      const settings = manager();
+      settings.registerCategory({
+        category: 'oauth',
+        label: 'OAuth',
+        description: 'fixture',
+        settings: {
+          'oauth.sso_enabled': {
+            key: 'oauth.sso_enabled',
+            type: 'boolean',
+            default: true,
+            label: 'SSO',
+            description: 'fixture',
+          },
+        },
+      });
+      return settings;
+    }
+
+    it('saves every document and projects each to KV', async () => {
+      const settings = twoCategories();
+      const security = (await settings.getAll('security', tenant)).version;
+      const oauth = (await settings.getAll('oauth', tenant)).version;
+      const results = await settings.patchMany(
+        tenant,
+        [
+          {
+            category: 'security',
+            request: { ifMatch: security, set: { 'security.enabled': false } },
+          },
+          { category: 'oauth', request: { ifMatch: oauth, set: { 'oauth.sso_enabled': false } } },
+        ],
+        'admin'
+      );
+      expect(results.map((result) => result.applied)).toEqual([
+        ['security.enabled'],
+        ['oauth.sso_enabled'],
+      ]);
+      expect((await store.load('security', tenant))?.data).toEqual({ 'security.enabled': false });
+      expect((await store.load('oauth', tenant))?.data).toEqual({ 'oauth.sso_enabled': false });
+      expect(JSON.parse(values.get('settings:tenant:tenant-a:oauth') ?? '{}')).toEqual({
+        'oauth.sso_enabled': false,
+      });
+    });
+
+    it('saves none when another save changed one of them in between', async () => {
+      const settings = twoCategories();
+      const security = (await settings.getAll('security', tenant)).version;
+      const oauth = (await settings.getAll('oauth', tenant)).version;
+      // The second document changes after both were read: the store refuses the pair.
+      const decided = await store.load('oauth', tenant);
+      const other = { 'oauth.sso_enabled': true, extra: 1 };
+      await store.compareAndSet('oauth', tenant, decided?.version ?? '', {
+        data: other,
+        version: generateVersion(other),
+      });
+      await expect(
+        settings.patchMany(
+          tenant,
+          [
+            {
+              category: 'security',
+              request: { ifMatch: security, set: { 'security.enabled': false } },
+            },
+            { category: 'oauth', request: { ifMatch: oauth, set: { 'oauth.sso_enabled': false } } },
+          ],
+          'admin'
+        )
+      ).rejects.toBeInstanceOf(ConflictError);
+      expect((await store.load('security', tenant))?.data).toEqual({ 'security.enabled': true });
+    });
+
+    it('counts a document another save already wrote the same way as saved, never half of it', async () => {
+      await manager().getAll('security', tenant);
+      const first = await store.load('security', tenant);
+      const seed = { 'oauth.sso_enabled': true };
+      const oauth = await store.create('oauth', tenant, {
+        data: seed,
+        version: generateVersion(seed),
+      });
+      const next = { 'security.enabled': false };
+      const later = { 'oauth.sso_enabled': false };
+      // Another request saved exactly this security document first.
+      await store.compareAndSet('security', tenant, first?.version ?? '', {
+        data: next,
+        version: generateVersion(next),
+      });
+      await expect(
+        store.compareAndSetMany([
+          {
+            category: 'security',
+            scope: tenant,
+            expectedVersion: first?.version ?? '',
+            document: { data: next, version: generateVersion(next) },
+          },
+          {
+            category: 'oauth',
+            scope: tenant,
+            expectedVersion: oauth.version,
+            document: { data: later, version: generateVersion(later) },
+          },
+        ])
+      ).resolves.toBe(true);
+      expect((await store.load('oauth', tenant))?.data).toEqual(later);
+    });
+
+    it('saves nothing when the first document does not exist', async () => {
+      const seed = { 'oauth.sso_enabled': true };
+      const oauth = await store.create('oauth', tenant, {
+        data: seed,
+        version: generateVersion(seed),
+      });
+      const next = { 'security.enabled': false };
+      const later = { 'oauth.sso_enabled': false };
+      await expect(
+        store.compareAndSetMany([
+          {
+            category: 'security',
+            scope: tenant,
+            expectedVersion: generateVersion({}),
+            document: { data: next, version: generateVersion(next) },
+          },
+          {
+            category: 'oauth',
+            scope: tenant,
+            expectedVersion: oauth.version,
+            document: { data: later, version: generateVersion(later) },
+          },
+        ])
+      ).resolves.toBe(false);
+      expect((await store.load('oauth', tenant))?.data).toEqual(seed);
+    });
+
+    it('reads a batch whose answer was lost after it committed as saved', async () => {
+      await manager().getAll('security', tenant);
+      const first = await store.load('security', tenant);
+      const base = adapter(db);
+      const lossy = new DatabaseSettingsCanonicalStore(
+        {
+          ...base,
+          async batch(statements: PreparedStatement[]) {
+            await base.batch(statements);
+            throw new Error('network');
+          },
+        },
+        () => now++
+      );
+      const next = { 'security.enabled': false };
+      await expect(
+        lossy.compareAndSetMany([
+          {
+            category: 'security',
+            scope: tenant,
+            expectedVersion: first?.version ?? '',
+            document: { data: next, version: generateVersion(next) },
+          },
+        ])
+      ).resolves.toBe(true);
+    });
+
+    it('applies none of the batch when a later document is not at its version', async () => {
+      await manager().getAll('security', tenant);
+      const first = await store.load('security', tenant);
+      const seed = { 'oauth.sso_enabled': true };
+      await store.create('oauth', tenant, { data: seed, version: generateVersion(seed) });
+      const next = { 'security.enabled': false };
+      const later = { 'oauth.sso_enabled': false };
+      const stale = generateVersion({ stale: true });
+      await expect(
+        store.compareAndSetMany([
+          {
+            category: 'security',
+            scope: tenant,
+            expectedVersion: first?.version ?? '',
+            document: { data: next, version: generateVersion(next) },
+          },
+          {
+            category: 'oauth',
+            scope: tenant,
+            expectedVersion: stale,
+            document: { data: later, version: generateVersion(later) },
+          },
+        ])
+      ).resolves.toBe(false);
+      expect((await store.load('security', tenant))?.version).toBe(first?.version ?? '');
+      expect((await store.load('oauth', tenant))?.data).toEqual(seed);
+    });
+  });
+
   it('rejects a canonical JSON document larger than one MiB in UTF-8 bytes', async () => {
     const data = { label: 'あ'.repeat(400_000) };
     await expect(

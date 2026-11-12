@@ -10064,7 +10064,16 @@ async function handleTenantBackups(
 						{ datasetId: 'clients', recordCount: 12 },
 						{ datasetId: 'flows', recordCount: 30 }
 					],
-					prerequisites: [],
+					prerequisites: [
+						{
+							id: 'pmp_dev_missing',
+							kind: 'platform_method_profile',
+							scope: 'shared',
+							resolution: 'target_binding',
+							status: 'unresolved',
+							required: false
+						}
+					],
 					deliverySafety: {},
 					blockers: [],
 					canApprove: true

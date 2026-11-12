@@ -28,7 +28,10 @@ import {
   canAccessTenant,
   hasTenantSettingsPermission,
 } from '../settings-v2/settings-authorization';
-import { applyTenantSettingsChange } from '../settings-v2/tenant-settings-apply';
+import {
+  applyTenantSettingsChange,
+  saveTenantSettingsTogether,
+} from '../settings-v2/tenant-settings-apply';
 import {
   DEFAULT_BASE_VERSION_KEY,
   defaultLayerStatus,
@@ -258,9 +261,9 @@ async function defaultProfile(c: AdminContext, readOnly: boolean) {
 }
 
 /**
- * Saves a change of the Default across its documents: every one is tried first (nothing is saved
- * unless all of it can be), then they are saved one after the other. One that fails after another
- * was saved is answered with what was applied, and recorded, so nothing is left half-done unseen.
+ * Saves a change of the Default across its documents (session, and oauth for single sign-on):
+ * every one is checked first as its own save would check it (nothing is saved unless all of it
+ * can be), then all are saved together, so a failure leaves none of it saved.
  */
 async function saveDefaultDocuments(
   c: Parameters<typeof applyTenantSettingsChange>[0]['c'],
@@ -270,21 +273,18 @@ async function saveDefaultDocuments(
     ifMatch: string;
     set: Record<string, unknown>;
     clear: string[];
-  }>,
-  /** The audit action of a save that stopped halfway. */
-  partialAction: string
+  }>
 ): Promise<Response | null> {
-  const change = (step: (typeof plan)[number], dryRun: boolean) =>
-    applyTenantSettingsChange({
+  const tenantId = getTenantIdFromContext(c);
+  for (const step of plan) {
+    const trial = await applyTenantSettingsChange({
       c,
       adminAuth: auth,
-      tenantId: getTenantIdFromContext(c),
+      tenantId,
       category: step.category satisfies CategoryName,
-      dryRun,
+      dryRun: true,
       readBody: async () => ({ ifMatch: step.ifMatch, set: step.set, clear: step.clear }),
     });
-  for (const step of plan) {
-    const trial = await change(step, true);
     if (!trial.ok) return trial;
     const trialResult = await trial.json<{ rejected?: Record<string, unknown> }>();
     if (trialResult.rejected && Object.keys(trialResult.rejected).length) {
@@ -299,38 +299,15 @@ async function saveDefaultDocuments(
       );
     }
   }
-  const applied: Array<'session' | 'oauth'> = [];
-  for (const step of plan) {
-    let response: Response;
-    try {
-      response = await change(step, false);
-    } catch (error) {
-      if (applied.length === 0) throw error;
-      response = new Response(null, { status: 500 });
-    }
-    if (!response.ok) {
-      if (applied.length === 0) return response;
-      await writeAdminAuditLog(c, {
-        action: partialAction,
-        resourceType: 'session_profile',
-        resourceId: 'default',
-        result: 'failure',
-        metadata: { name: 'Default', applied, failed: step.category, status: response.status },
-      });
-      return c.json(
-        {
-          error: 'partially_applied',
-          error_description:
-            'Some of the Default profile was saved and the rest was not; reload and try again',
-          applied,
-          failed: step.category,
-        },
-        409
-      );
-    }
-    applied.push(step.category);
-  }
-  return null;
+  return saveTenantSettingsTogether({
+    c,
+    adminAuth: auth,
+    tenantId,
+    changes: plan.map(({ category, ifMatch, set, clear }) => ({
+      category,
+      body: { ifMatch, set, clear },
+    })),
+  });
 }
 
 sessionProfilesRouter.get('/', async (c) => {
@@ -492,7 +469,7 @@ sessionProfilesRouter.put('/:id', async (c) => {
           ? [{ category: 'oauth' as const, ifMatch: versions.oauth, set: oauthSet, clear: [] }]
           : []),
       ];
-      const failed = await saveDefaultDocuments(c, auth, plan, 'session.profile.partially_updated');
+      const failed = await saveDefaultDocuments(c, auth, plan);
       if (failed) return failed;
       await writeAdminAuditLog(c, {
         action: 'session.profile.updated',
@@ -569,12 +546,7 @@ sessionProfilesRouter.delete('/:id', async (c) => {
           : []),
       ];
       if (plan.length) {
-        const failed = await saveDefaultDocuments(
-          c,
-          auth,
-          plan,
-          'session.profile.default_partially_reverted'
-        );
+        const failed = await saveDefaultDocuments(c, auth, plan);
         if (failed) return failed;
         await writeAdminAuditLog(c, {
           action: 'session.profile.default_reverted',

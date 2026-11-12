@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createFakeSessionProfiles } from './session-profiles-fake';
-import { fakeLayer } from './profile-fake-core';
+import { createFakePlatformProfiles } from './platform-profiles-fake';
+import { fakeLayer, type FakeProfileCopy } from './profile-fake-core';
 
 describe('the profile fakes and the platform layer', () => {
 	it('reports Default’s layer, overridden once saved and cleared on revert', async () => {
@@ -61,5 +62,67 @@ describe('the profile fakes and the platform layer', () => {
 		await expect(client.create({ name: 'X', values: {} })).rejects.toMatchObject({
 			code: 'profile_creation_not_allowed'
 		});
+	});
+});
+
+describe('the tenant fakes over the platform fakes (the dev mock)', () => {
+	const setUp = () => {
+		const copies = new Map<string, FakeProfileCopy>();
+		const platform = createFakePlatformProfiles(
+			'psp_',
+			[
+				{
+					id: 'psp_1',
+					name: 'Short',
+					values: { 'session.default_ttl': 3_600_000 },
+					version: 1,
+					locked: false,
+					state: 'active',
+					overridingTenants: 0,
+					created_at: null,
+					updated_at: null
+				}
+			],
+			{ overridingTenants: (id) => (copies.has(id) ? 1 : 0) }
+		);
+		const tenant = createFakeSessionProfiles([], { platform, copies });
+		return { platform, tenant };
+	};
+
+	it('shows what the platform holds now: a change, a lock, a new and a deleted profile', async () => {
+		const { platform, tenant } = setUp();
+		expect((await tenant.get('psp_1')).layer).toMatchObject({ scope: 'platform', editable: true });
+		const changed = await platform.update('psp_1', 1, {
+			name: 'Shorter',
+			values: { 'session.default_ttl': 1_800_000 }
+		});
+		const read = await tenant.get('psp_1');
+		expect(read).toMatchObject({ name: 'Shorter', values: { 'session.default_ttl': 1_800_000 } });
+		await platform.setLocked('psp_1', changed.version, true);
+		expect((await tenant.get('psp_1')).layer).toMatchObject({ locked: true, editable: false });
+		const created = await platform.create({ name: 'Long', values: {} });
+		expect((await tenant.list()).map((profile) => profile.id)).toContain(created.id);
+		await platform.remove(created.id);
+		expect((await tenant.list()).map((profile) => profile.id)).not.toContain(created.id);
+	});
+
+	it('keeps the tenant’s copy, sets it aside under a lock and counts it on the platform', async () => {
+		const { platform, tenant } = setUp();
+		const saved = await tenant.saveCopy('psp_1', null, { 'session.default_ttl': 600_000 });
+		expect(saved.layer).toMatchObject({ overridden: true, copyVersion: 1 });
+		expect(saved.values).toEqual({ 'session.default_ttl': 600_000 });
+		expect((await platform.get('psp_1')).overridingTenants).toBe(1);
+		const changed = await platform.update('psp_1', 1, { name: 'Short', values: {} });
+		expect((await tenant.get('psp_1')).layer?.platformUpdated).toBe(true);
+		// Saving the copy again keeps the version it was made from: still behind the platform.
+		const again = await tenant.saveCopy('psp_1', 1, { 'session.default_ttl': 900_000 });
+		expect(again.layer?.platformUpdated).toBe(true);
+		await platform.setLocked('psp_1', changed.version, true);
+		const locked = await tenant.get('psp_1');
+		expect(locked.layer).toMatchObject({ overridden: false, overrideInactive: true });
+		expect(locked.values).toEqual({});
+		const reverted = await tenant.revert('psp_1');
+		expect(reverted.layer).toMatchObject({ overridden: false, overrideInactive: false });
+		expect((await platform.get('psp_1')).overridingTenants).toBe(0);
 	});
 });

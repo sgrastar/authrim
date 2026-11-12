@@ -25,8 +25,6 @@ export const jaProfileLayer = {
 	'pl.revertBody': 'このテナントで変更した値を消し、プラットフォームの値を使います。',
 	'pl.revertSuccess': 'プラットフォームの値に戻しました',
 	'pl.revertFailed': 'プラットフォームの値に戻せませんでした',
-	'pl.revertPartial':
-		'一部だけプラットフォームの値に戻りました。今の状態を読み直しました。もう一度お試しください。',
 	'pl.notEditable': 'プラットフォームが変更を許可していないため、保存できませんでした',
 	'pl.creationNotAllowed':
 		'プラットフォームが、テナント独自のプロフィールの追加を許可していません。',

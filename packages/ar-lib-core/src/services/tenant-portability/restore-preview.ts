@@ -2,6 +2,7 @@ import {
   parsePhase4ExternalPrerequisites,
   type Phase4ExternalPrerequisite,
 } from './phase4-external-prerequisites.js';
+import { isPlatformProfilePrerequisite } from './platform-profile-prerequisites.js';
 import {
   parsePhase5DeliverySafety,
   type Phase5DeliverySafetyEvidence,
@@ -60,6 +61,25 @@ export function createTenantBackupRestorePreview(input: {
     deliverySafety,
     blockers,
   };
+}
+
+/**
+ * Whether the preview recomputed at approval still describes the stored one. Platform profile
+ * warnings are left out of the comparison: they never block a restore, and they follow the
+ * target's own profiles, which may change while the operation waits (one created, one deleted).
+ * Comparing them would leave an approval that can never go through, as the stored preview is not
+ * shown again. Everything else compares exactly.
+ */
+export function isTenantBackupRestorePreviewCurrent(
+  stored: TenantBackupRestorePreview,
+  recomputed: TenantBackupRestorePreview
+): boolean {
+  const strip = (preview: TenantBackupRestorePreview) =>
+    JSON.stringify({
+      ...preview,
+      prerequisites: preview.prerequisites.filter((entry) => !isPlatformProfilePrerequisite(entry)),
+    });
+  return strip(stored) === strip(recomputed);
 }
 
 function parsePreview(value: unknown, planDigest: string): TenantBackupRestorePreview {

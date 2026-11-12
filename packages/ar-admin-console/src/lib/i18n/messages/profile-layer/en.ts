@@ -27,8 +27,6 @@ export const enProfileLayer: { [K in keyof typeof jaProfileLayer]: string } = {
 		"The values changed for this tenant are removed and the platform's values apply.",
 	'pl.revertSuccess': "Now using the platform's values",
 	'pl.revertFailed': "Could not go back to the platform's values",
-	'pl.revertPartial':
-		"Only part went back to the platform's values. The current state was reloaded; try again.",
 	'pl.notEditable': 'The platform does not allow this change, so it was not saved',
 	'pl.creationNotAllowed': 'The platform does not let tenants add profiles of their own.',
 	'pl.optionPlatform': '{name} (platform)'

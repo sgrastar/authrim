@@ -7782,6 +7782,28 @@ type RootTranslation = {
 	 */
 	admin_dr_backup_tenant_blocker_delivery: string;
 	/**
+	 * Flows in this backup name platform profiles that this environment does not have, or is deleting. You can still approve, but those Flows will offer no sign-in method or make no session until you create the profile or change the Flow.
+	 */
+	admin_dr_backup_tenant_preview_profile_warning: string;
+	/**
+	 * Authentication method profile: {id}
+	 * @param {string} id
+	 */
+	admin_dr_backup_tenant_preview_profile_method: RequiredParams<'id'>;
+	/**
+	 * Session profile: {id}
+	 * @param {string} id
+	 */
+	admin_dr_backup_tenant_preview_profile_session: RequiredParams<'id'>;
+	/**
+	 * O​n​l​y​ ​t​h​e​ ​f​i​r​s​t​ ​o​f​ ​t​h​e​m​ ​a​r​e​ ​l​i​s​t​e​d​;​ ​t​h​e​r​e​ ​m​a​y​ ​b​e​ ​m​o​r​e​.
+	 */
+	admin_dr_backup_tenant_preview_profile_truncated: string;
+	/**
+	 * T​h​i​s​ ​b​a​c​k​u​p​ ​i​s​ ​t​o​o​ ​l​a​r​g​e​ ​t​o​ ​c​h​e​c​k​ ​e​v​e​r​y​ ​p​r​o​f​i​l​e​ ​i​t​s​ ​F​l​o​w​s​ ​n​a​m​e​;​ ​s​o​m​e​ ​m​a​y​ ​b​e​ ​m​i​s​s​i​n​g​ ​i​n​ ​t​h​i​s​ ​e​n​v​i​r​o​n​m​e​n​t​.
+	 */
+	admin_dr_backup_tenant_preview_profile_incomplete: string;
+	/**
 	 * A​d​m​i​n​i​s​t​r​a​t​o​r​ ​m​a​p​p​i​n​g
 	 */
 	admin_dr_backup_tenant_admin_mapping_title: string;
@@ -41903,6 +41925,26 @@ export type TranslationFunctions = {
 	 * Confirm the source is stopped and historical delivery remains on hold.
 	 */
 	admin_dr_backup_tenant_blocker_delivery: () => LocalizedString;
+	/**
+	 * Flows in this backup name platform profiles that this environment does not have, or is deleting. You can still approve, but those Flows will offer no sign-in method or make no session until you create the profile or change the Flow.
+	 */
+	admin_dr_backup_tenant_preview_profile_warning: () => LocalizedString;
+	/**
+	 * Authentication method profile: {id}
+	 */
+	admin_dr_backup_tenant_preview_profile_method: (arg: { id: string }) => LocalizedString;
+	/**
+	 * Session profile: {id}
+	 */
+	admin_dr_backup_tenant_preview_profile_session: (arg: { id: string }) => LocalizedString;
+	/**
+	 * Only the first of them are listed; there may be more.
+	 */
+	admin_dr_backup_tenant_preview_profile_truncated: () => LocalizedString;
+	/**
+	 * This backup is too large to check every profile its Flows name; some may be missing in this environment.
+	 */
+	admin_dr_backup_tenant_preview_profile_incomplete: () => LocalizedString;
 	/**
 	 * Administrator mapping
 	 */

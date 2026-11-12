@@ -246,14 +246,8 @@
 			if (gone || turn !== loads || id !== target) return;
 			setProfile(profile);
 			toast.success(t('pl.revertSuccess'));
-		} catch (error) {
+		} catch {
 			if (gone || turn !== loads || id !== target) return;
-			// Default's two documents: one went back and the other did not. Show what holds now.
-			if (error instanceof ApiError && error.body.error === 'partially_applied') {
-				toast.error(t('pl.revertPartial'));
-				void load();
-				return;
-			}
 			toast.error(t('pl.revertFailed'));
 		} finally {
 			busy = false;
