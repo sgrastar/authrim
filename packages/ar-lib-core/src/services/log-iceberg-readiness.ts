@@ -29,6 +29,9 @@ import { decryptLogIcebergRecord, logIcebergCanonicalJson } from './log-iceberg-
 import { decodeLogIcebergRow } from './log-iceberg-row-codec';
 import { runTenantBackupCoveredEffect } from './tenant-portability/covered-mutation';
 
+/** Clock skew allowed between the setup host that stamps the attempt and the pipeline provider. */
+const PROBE_PROVIDER_INGEST_SKEW_MS = 10 * 60 * 1000;
+
 export interface LogIcebergReadinessAttempt {
   attemptId: string;
   startedAt: string;
@@ -168,6 +171,16 @@ export async function probeLogIcebergReadiness(
         sourceDatasets: ['runtime.admin_job_events'],
         eventIds: [eventId],
         nowMs: Date.now(),
+        // Pipeline tables gain one manifest per provider commit. The probe row is ingested and
+        // committed after its attempt started, so manifests committed earlier (and earlier
+        // provider ingest DAY partitions) are skipped instead of reading every manifest serially
+        // within the bounded read deadline.
+        ...(config.mode === 'pipeline'
+          ? {
+              providerIngestedAtFrom: firstAt - PROBE_PROVIDER_INGEST_SKEW_MS,
+              dataManifestsAddedFrom: firstAt - PROBE_PROVIDER_INGEST_SKEW_MS,
+            }
+          : {}),
       });
       const base: LogIcebergReadinessResult = {
         ...attempt,

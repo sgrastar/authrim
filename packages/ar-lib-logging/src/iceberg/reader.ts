@@ -31,6 +31,8 @@ export interface SnapshotReadOptions {
   eventAtFrom?: number;
   providerIngestedAtFrom?: number;
   providerIngestedAtTo?: number;
+  /** Lower bound (ms) on the commit time of the snapshot that added a data manifest. */
+  dataManifestsAddedFrom?: number;
   eventAtTo?: number;
   watermark?: IcebergReadWatermark;
   limits?: Partial<{
@@ -189,6 +191,7 @@ function validateRead(options: SnapshotReadOptions) {
       options.eventAtTo,
       options.providerIngestedAtFrom,
       options.providerIngestedAtTo,
+      options.dataManifestsAddedFrom,
     ].some((value) => value !== undefined && !Number.isSafeInteger(value)) ||
     (options.eventIds !== undefined &&
       (options.eventIds.length < 1 ||
@@ -258,6 +261,8 @@ async function scopeDigest(
     options.subjectIds ? [...options.subjectIds].sort() : null,
     includeExpired,
     includeDeleted,
+    // Appended only when set so cursors issued without the bound keep their digest.
+    ...(options.dataManifestsAddedFrom === undefined ? [] : [options.dataManifestsAddedFrom]),
   ]);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -277,6 +282,11 @@ async function readPage(
   }
 ): Promise<SnapshotPageResult> {
   const limits = validateRead(options);
+  // The commit-time bound depends on snapshot history, which can expire between public pages
+  // without changing the cursor digest. Only the one-shot scan, which keeps one metadata object
+  // and passes its own resolver, may continue a cursor under that bound.
+  if (options.cursor && options.dataManifestsAddedFrom !== undefined && !options.resolver)
+    throw new Error('Archive manifest commit bound cannot resume a page cursor');
   const size = options.pageSize ?? Math.min(128, limits.maxRows);
   if (!Number.isSafeInteger(size) || size < 1 || size > 128 || size > limits.maxRows)
     throw new Error('Invalid archive page size');
@@ -325,6 +335,7 @@ async function readPage(
     resolver,
     position: cursor?.position ?? { manifest: 0, entry: 0, row: 0 },
     filter: providerFilter,
+    dataManifestsAddedFrom: options.dataManifestsAddedFrom,
     mayMatch: (entry) =>
       manifestMayMatch(entry, options, Boolean(options.visitRow), profile.fieldIds),
   });
