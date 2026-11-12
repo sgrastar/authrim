@@ -284,6 +284,18 @@ export async function applyCertificationProfileHandler(c: AdminContext) {
           if (result.projection === 'pending') pending.push(change.category);
         });
         saved = 'yes';
+        // Decided as the dry run decided; a value refused now (it cannot be, with the same input)
+        // is not passed over as saved.
+        const refusedNow = changes.filter(
+          (_, index) => Object.keys(answers[index].rejected).length > 0
+        );
+        if (refusedNow.length > 0) {
+          log.error('Certification profile values were refused while saved', {
+            tenantId,
+            categories: refusedNow.map((change) => change.category),
+          });
+          return partial(503, 'Some profile values were refused');
+        }
         // A document left as it was may still wait for the copy of an earlier save (a clear an
         // earlier apply could not copy): copied now.
         for (const category of stale) {

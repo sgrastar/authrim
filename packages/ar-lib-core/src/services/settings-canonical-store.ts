@@ -464,17 +464,18 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
     try {
       await this.database.batch([...updates, check]);
     } catch (error) {
-      // The check (or another constraint) refused the batch: it was rolled back, nothing saved.
-      if (refusedOnItsOnlyTry(error)) return false;
-      // Anything else may have come after the batch committed (an answer lost): saved only if
-      // every document holds this save's version now. Otherwise it cannot be told (another save
-      // may have changed one since), so the failure is passed on, not read as nothing saved.
+      // What the documents hold decides first: every one at this save's version is saved,
+      // however the batch failed (an answer lost after it committed).
       const state = await this.database.queryOne<{ saved: number }>(
         `SELECT CASE WHEN ${saved} THEN 1 ELSE 0 END AS saved`,
         savedParams,
         { consistencyClass: 'primary_required' }
       );
       if (Number(state?.saved) === 1) return true;
+      // Not all of them: refused (nothing saved) only when a table constraint refused the batch
+      // on its only try. Anything else cannot be told apart from a commit that another save has
+      // changed since, so the failure is passed on, not read as nothing saved.
+      if (refusedOnItsOnlyTry(error)) return false;
       throw error;
     }
     // The check passed inside the batch: every document holds this save's version.
