@@ -10,15 +10,22 @@
 		DirectoryPasswordStatus,
 		DirectoryPasswordStatusClient
 	} from '#lib/api/directory-password-status.js';
+	import { keepsCopy, type ProfileLayer } from '#lib/api/profile-layer.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
+	import ProfileLayerBadges from './ProfileLayerBadges.svelte';
+	import ProfileLayerNotice from './ProfileLayerNotice.svelte';
+	import { layerEditable } from './profile-layer-model';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
 	import SaveBar from '#lib/ui/patterns/SaveBar.svelte';
+	import TitleEditor from '#lib/ui/patterns/TitleEditor.svelte';
 	import BackLink from '#lib/ui/primitives/BackLink.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
+	import { provideBusy } from '#lib/ui/busy/busy.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import AuthenticationMethodFields from './AuthenticationMethodFields.svelte';
 
@@ -48,14 +55,27 @@
 	let values = $state<AuthenticationMethodValues>({});
 	let version = $state<number | string>(0);
 	let isSystem = $state(false);
+	/** The platform layer: a platform profile, or Default with the platform's under it. */
+	let layer = $state<ProfileLayer | null>(null);
+	/** The profile whose own values the admin is about to remove (fixed when asked). */
+	let revertTarget = $state<string | null>(null);
+	const isPlatform = $derived(layer?.scope === 'platform');
+	/** The admin may save, and the platform lets the tenant change it now. */
+	const editable = $derived(canWrite && layerEditable(layer));
 	let directoryStatus = $state<DirectoryPasswordStatus | null>(null);
 	let saved = $state('');
 	let busy = $state(false);
 	let nameError = $state('');
 	let editingName = $state(false);
 	let nameBeforeEdit = '';
-	let nameInput = $state<HTMLInputElement>();
 	let editNameButton = $state<HTMLButtonElement>();
+	let nameEditor = $state<ReturnType<typeof TitleEditor>>();
+	/** Opens the name editor if needed and takes the admin to its field. */
+	async function focusNameEditor() {
+		editingName = true;
+		await tick();
+		nameEditor?.focus();
+	}
 	let gone = false;
 	let loads = 0;
 	let directoryLoads = 0;
@@ -63,6 +83,9 @@
 	onDestroy(() => {
 		gone = true;
 	});
+
+	// While a save or a revert is on its way the form takes no input: the answer replaces it.
+	provideBusy(() => busy);
 
 	const snapshot = (theName = name, theValues = values) =>
 		JSON.stringify({ name: theName.trim(), values: theValues });
@@ -76,12 +99,14 @@
 		values = structuredClone(profile.values);
 		version = profile.version;
 		isSystem = profile.is_system;
+		layer = profile.layer;
 		editingName = false;
 		saved = snapshot();
 		phase = 'ready';
 	}
 
 	async function load() {
+		revertTarget = null;
 		const turn = ++loads;
 		const target = id;
 		phase = 'loading';
@@ -94,10 +119,11 @@
 				values = structuredClone(profile.values);
 				version = 0;
 				isSystem = false;
+				layer = null;
+				// A new profile opens with its name being entered (the editor focuses itself).
 				editingName = canWrite;
 				saved = snapshot();
 				phase = 'ready';
-				if (editingName) void tick().then(() => nameInput?.focus());
 			} else setProfile(profile);
 		} catch (error) {
 			if (gone || turn !== loads || target !== id) return;
@@ -142,27 +168,8 @@
 		nameBeforeEdit = name;
 		nameError = '';
 		editingName = true;
-		void tick().then(() => {
-			nameInput?.focus();
-			nameInput?.select();
-		});
 	}
-	function finishNameEdit(): boolean {
-		const trimmed = name.trim();
-		if (!trimmed) {
-			nameError = t('am.page.nameRequired');
-			nameInput?.focus();
-			return false;
-		}
-		name = trimmed;
-		nameError = '';
-		editingName = false;
-		void tick().then(() => editNameButton?.focus());
-		return true;
-	}
-	function cancelNameEdit() {
-		name = nameBeforeEdit;
-		nameError = '';
+	function closeNameEditor() {
 		editingName = false;
 		void tick().then(() => editNameButton?.focus());
 	}
@@ -174,7 +181,8 @@
 		values = structuredClone(original.values);
 		nameError = '';
 		editingName = isNew && canWrite;
-		void tick().then(() => (editingName ? nameInput : editNameButton)?.focus());
+		if (editingName) void focusNameEditor();
+		else void tick().then(() => editNameButton?.focus());
 	}
 
 	function changeValue(key: string, checked: boolean) {
@@ -182,15 +190,20 @@
 	}
 
 	async function save() {
-		if (busy || !canWrite || phase !== 'ready') return;
+		if (busy || !editable || phase !== 'ready') return;
 		if (!name.trim()) {
+			// The editor opens (or stays open) and takes the admin to the field.
 			nameError = t('am.page.nameRequired');
-			editingName = true;
-			await tick();
-			nameInput?.focus();
+			await focusNameEditor();
 			return;
 		}
-		if (editingName && !finishNameEdit()) return;
+		// The name is there: an earlier problem with it (taken) is checked again by this save.
+		nameError = '';
+		// A name being typed is saved as it stands: the editor closes on it.
+		if (editingName) {
+			name = name.trim();
+			closeNameEditor();
+		}
 		const target = id;
 		const turn = loads;
 		const input = { name: name.trim(), values: structuredClone($state.snapshot(values)) };
@@ -198,9 +211,15 @@
 		busy = true;
 		try {
 			const profile =
-				target === 'new' ? await client.create(input) : await client.update(target, version, input);
+				target === 'new'
+					? await client.create(input)
+					: isPlatform
+						? // A platform profile: the tenant's copy of it.
+							await client.saveCopy(target, layer?.copyVersion ?? null, input.values)
+						: await client.update(target, version, input);
 			if (gone || turn !== loads || id !== target) return;
 			version = profile.version;
+			layer = profile.layer;
 			saved = sent;
 			toast.success(t('am.page.saved'));
 			if (target === 'new') {
@@ -211,9 +230,19 @@
 			if (gone || turn !== loads || id !== target) return;
 			if (error instanceof ApiError && error.body.error === 'profile_name_taken') {
 				nameError = t('am.page.nameTaken');
-				editingName = true;
-				await tick();
-				nameInput?.focus();
+				// The form takes input again first: a field that is still disabled takes no focus.
+				busy = false;
+				await focusNameEditor();
+				return;
+			}
+			if (error instanceof ApiError && error.code === 'profile_creation_not_allowed') {
+				toast.error(t('pl.creationNotAllowed'));
+				return;
+			}
+			// The platform set the tenant's values aside meanwhile: show what holds now.
+			if (error instanceof ApiError && error.code === 'profile_not_editable') {
+				toast.error(t('pl.notEditable'));
+				void load();
 				return;
 			}
 			toast.error(
@@ -221,6 +250,28 @@
 					? t('am.page.conflict')
 					: t('am.page.saveFailed')
 			);
+		} finally {
+			busy = false;
+		}
+	}
+
+	/** "Use the platform's values": removes the tenant's copy (or Default's own settings). */
+	async function revert() {
+		const target = revertTarget;
+		revertTarget = null;
+		// Only what was asked about, and only one that keeps values over the platform's.
+		if (busy || !canWrite || phase !== 'ready' || target !== id) return;
+		if (target !== 'default' && !keepsCopy(layer)) return;
+		const turn = loads;
+		busy = true;
+		try {
+			const profile = await client.revert(target);
+			if (gone || turn !== loads || id !== target) return;
+			setProfile(profile);
+			toast.success(t('pl.revertSuccess'));
+		} catch {
+			if (gone || turn !== loads || id !== target) return;
+			toast.error(t('pl.revertFailed'));
 		} finally {
 			busy = false;
 		}
@@ -240,56 +291,57 @@
 {/snippet}
 
 {#snippet nameForm()}
-	<form
-		class="name-editor"
-		onsubmit={(event) => {
-			event.preventDefault();
-			finishNameEdit();
+	<TitleEditor
+		bind:this={nameEditor}
+		value={name}
+		label={t('am.page.name')}
+		hint={t('am.page.nameHint')}
+		requiredMessage={t('am.page.nameRequired')}
+		error={nameError}
+		onrequired={() => (nameError = t('am.page.nameRequired'))}
+		maxlength={80}
+		doneLabel={t('am.page.nameDone')}
+		oninput={(typed) => {
+			name = typed;
+			nameError = '';
 		}}
-	>
-		<div class="name-editor__row">
-			<label class="sr-only" for="auth-method-profile-name">{t('am.page.name')}</label>
-			<input
-				id="auth-method-profile-name"
-				bind:this={nameInput}
-				bind:value={name}
-				maxlength="80"
-				aria-required="true"
-				aria-invalid={nameError ? 'true' : undefined}
-				aria-describedby={nameError ? 'auth-method-name-error' : 'auth-method-name-hint'}
-				oninput={() => (nameError = '')}
-				onkeydown={(event) => {
-					if (event.key === 'Escape') {
-						event.preventDefault();
-						cancelNameEdit();
-					}
-				}}
-			/>
-			<Button type="submit" variant="primary" size="sm">{t('am.page.nameDone')}</Button>
-			<Button variant="ghost" size="sm" onclick={cancelNameEdit}>{t('common.cancel')}</Button>
-		</div>
-		{#if nameError}<p id="auth-method-name-error" class="name-editor__error" role="alert">
-				{nameError}
-			</p>
-		{:else}<p id="auth-method-name-hint" class="name-editor__hint">{t('am.page.nameHint')}</p>{/if}
-	</form>
+		ondone={(typed) => {
+			name = typed;
+			nameError = '';
+			closeNameEditor();
+		}}
+		oncancel={() => {
+			name = nameBeforeEdit;
+			nameError = '';
+			closeNameEditor();
+		}}
+	/>
 {/snippet}
 
 <Page>
 	<PageHeader
 		{title}
 		description={t('am.page.description')}
-		titleAction={canWrite && phase === 'ready' && !isSystem && !editingName
+		titleAction={canWrite && phase === 'ready' && !isSystem && !isPlatform && !editingName
 			? nameAction
 			: undefined}
-		titleEditor={canWrite && phase === 'ready' && !isSystem && editingName ? nameForm : undefined}
+		titleEditor={canWrite && phase === 'ready' && !isSystem && !isPlatform && editingName
+			? nameForm
+			: undefined}
 	>
 		{#snippet back()}<BackLink href={listHref}>{t('am.page.back')}</BackLink>{/snippet}
+		{#snippet badges()}<ProfileLayerBadges {layer} size="md" />{/snippet}
 	</PageHeader>
 	{#if phase === 'loading'}
 		<LoadingState label={t('common.loading')} />
 	{:else if phase === 'ready'}
-		<AuthenticationMethodFields {values} {canWrite} {directoryStatus} onchange={changeValue} />
+		<ProfileLayerNotice {layer} {canWrite} {busy} onrevert={() => (revertTarget = id)} />
+		<AuthenticationMethodFields
+			{values}
+			canWrite={editable}
+			{directoryStatus}
+			onchange={changeValue}
+		/>
 	{:else}
 		<EmptyState
 			icon={phase === 'forbidden' ? 'lock' : 'warningCircle'}
@@ -306,41 +358,17 @@
 					>{/if}{/snippet}
 		</EmptyState>
 	{/if}
-	{#if canWrite && phase === 'ready'}
+	{#if editable && phase === 'ready'}
 		<SaveBar {dirty} saving={busy} invalid={nameError !== ''} onsave={save} ondiscard={discard} />
 	{/if}
 </Page>
 
-<style>
-	.name-editor {
-		width: min(100%, 520px);
-	}
-	.name-editor__row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 6px;
-	}
-	.name-editor input {
-		flex: 1 1 210px;
-		min-width: 0;
-		height: calc(var(--fs-page-title) * 1.6);
-		padding: 0 10px;
-		border: 1px solid var(--border-strong);
-		border-radius: var(--radius-control);
-		background: var(--bg-input);
-		color: var(--text-primary);
-		font: inherit;
-	}
-	.name-editor__hint,
-	.name-editor__error {
-		margin: 5px 0 0;
-		font-size: var(--fs-small);
-	}
-	.name-editor__hint {
-		color: var(--text-muted);
-	}
-	.name-editor__error {
-		color: var(--danger);
-	}
-</style>
+<ConfirmDialog
+	open={revertTarget !== null && revertTarget === id}
+	title={t('pl.revertTitle', { name })}
+	body={t('pl.revertBody')}
+	confirmLabel={t('pl.revert')}
+	{busy}
+	onconfirm={revert}
+	oncancel={() => (revertTarget = null)}
+/>

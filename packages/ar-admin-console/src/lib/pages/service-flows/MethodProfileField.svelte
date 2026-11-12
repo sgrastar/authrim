@@ -51,7 +51,16 @@
 	onMount(() => void load());
 
 	const chosen = $derived(profiles.find((profile) => profile.id === value));
-	const options = $derived(profiles.map((profile) => ({ value: profile.id, label: profile.name })));
+	// A platform profile is named as one (a native select cannot hold a badge).
+	const options = $derived(
+		profiles.map((profile) => ({
+			value: profile.id,
+			label:
+				profile.layer?.scope === 'platform'
+					? t('pl.optionPlatform', { name: profile.name })
+					: profile.name
+		}))
+	);
 
 	// Making a new profile in place.
 	let creating = $state(false);
@@ -106,6 +115,10 @@
 			if (error instanceof ApiError && error.body.error === 'profile_name_taken') {
 				nameError = t('am.page.nameTaken');
 				focusName();
+				return;
+			}
+			if (error instanceof ApiError && error.code === 'profile_creation_not_allowed') {
+				toast.error(t('pl.creationNotAllowed'));
 				return;
 			}
 			toast.error(t('am.page.saveFailed'));

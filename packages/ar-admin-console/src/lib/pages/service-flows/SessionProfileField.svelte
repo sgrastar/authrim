@@ -45,7 +45,16 @@
 	onMount(() => void load());
 
 	const chosen = $derived(profiles.find((profile) => profile.id === value));
-	const options = $derived(profiles.map((profile) => ({ value: profile.id, label: profile.name })));
+	// A platform profile is named as one (a native select cannot hold a badge).
+	const options = $derived(
+		profiles.map((profile) => ({
+			value: profile.id,
+			label:
+				profile.layer?.scope === 'platform'
+					? t('pl.optionPlatform', { name: profile.name })
+					: profile.name
+		}))
+	);
 	const PROFILES = '/admin/authentication/session-profiles';
 </script>
 

@@ -27,27 +27,27 @@ export const ALL_LOGIN_UI_LOCALES = sortLoginUILocalesByEnglishName(
 );
 
 export const DEFAULT_LOGIN_UI_TAGLINES: Record<LoginUILocale, string> = {
-	en: 'Identity & Access at the edge of everywhere.',
-	ja: 'アイデンティティ＆アクセスをあらゆる場所で',
-	'zh-CN': '身份与访问，无处不在',
-	'zh-TW': '身分與存取，無所不在',
-	es: 'Identidad y acceso en todas partes.',
-	pt: 'Identidade e acesso em todos os lugares.',
-	fr: 'Identité et accès partout.',
-	de: 'Identität und Zugriff überall.',
-	ko: '어디서나 가능한 아이덴티티 및 액세스',
-	ru: 'Идентификация и доступ повсюду.',
-	id: 'Identitas dan akses di mana saja.',
-	ar: 'الهوية والوصول في كل مكان.',
-	it: 'Identità e accesso ovunque.',
-	th: 'อัตลักษณ์และการเข้าถึงได้จากทุกที่',
-	vi: 'Danh tính và quyền truy cập ở mọi nơi.',
-	hi: 'हर जगह पहचान और पहुँच।',
-	bn: 'সর্বত্র পরিচয় ও প্রবেশাধিকার।',
-	tr: 'Her yerde kimlik ve erişim.',
-	sw: 'Utambulisho na ufikiaji kila mahali.',
-	am: 'ማንነት እና መዳረሻ በሁሉም ቦታ።',
-	pl: 'Tożsamość i dostęp wszędzie.'
+	en: 'Your account, kept safe.',
+	ja: 'あなたのアカウントを、安全に。',
+	'zh-CN': '安全守护您的账户。',
+	'zh-TW': '安全守護您的帳戶。',
+	es: 'Tu cuenta, siempre segura.',
+	pt: 'Sua conta, sempre segura.',
+	fr: 'Votre compte, en toute sécurité.',
+	de: 'Ihr Konto, sicher geschützt.',
+	ko: '당신의 계정을 안전하게.',
+	ru: 'Ваша учётная запись под надёжной защитой.',
+	id: 'Akun Anda, tetap aman.',
+	ar: 'حسابك، في أمان.',
+	it: 'Il tuo account, al sicuro.',
+	th: 'บัญชีของคุณ ปลอดภัยเสมอ',
+	vi: 'Tài khoản của bạn, luôn an toàn.',
+	hi: 'आपका खाता, सुरक्षित।',
+	bn: 'আপনার অ্যাকাউন্ট, সুরক্ষিত।',
+	tr: 'Hesabınız güvende.',
+	sw: 'Akaunti yako, salama.',
+	am: 'መለያዎ፣ ደህንነቱ የተጠበቀ።',
+	pl: 'Twoje konto, bezpieczne.'
 };
 
 const AUTHRIM_FOOTER_LINK = '<a href="https://authrim.com/">Authrim</a>';

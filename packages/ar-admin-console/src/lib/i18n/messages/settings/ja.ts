@@ -362,5 +362,38 @@ export const jaSettings = {
 	'persona.support.desc':
 		'利用者の手助け（ロックの解除、サインアウト）だけを行います。設定は見えません。',
 	'persona.viewer': '閲覧担当（限定）',
-	'persona.viewer.desc': '利用者・アプリ・設定を見るだけで、変更はできません。'
+	'persona.viewer.desc': '利用者・アプリ・設定を見るだけで、変更はできません。',
+	// The platform's Default methods and the profile switches (platform profile pages).
+	'set.k.authentication-methods.passkey.signup_enabled': 'パスキー：新規登録',
+	'set.k.authentication-methods.passkey.login_enabled': 'パスキー：ログイン',
+	'set.k.authentication-methods.passkey.reauth_enabled': 'パスキー：再認証',
+	'set.k.authentication-methods.passkey.account_link_enabled': 'パスキー：アカウント連携',
+	'set.k.authentication-methods.email_otp.signup_enabled': 'メールのワンタイムコード：新規登録',
+	'set.k.authentication-methods.email_otp.login_enabled': 'メールのワンタイムコード：ログイン',
+	'set.k.authentication-methods.email_otp.reauth_enabled': 'メールのワンタイムコード：再認証',
+	'set.k.authentication-methods.email_otp.account_link_enabled':
+		'メールのワンタイムコード：アカウント連携',
+	'set.k.authentication-methods.totp.signup_enabled': '認証アプリ(TOTP)：新規登録',
+	'set.k.authentication-methods.totp.login_enabled': '認証アプリ(TOTP)：ログイン',
+	'set.k.authentication-methods.totp.reauth_enabled': '認証アプリ(TOTP)：再認証',
+	'set.k.authentication-methods.totp.account_link_enabled': '認証アプリ(TOTP)：アカウント連携',
+	'set.k.authentication-methods.did.login_enabled': 'DID：ログイン',
+	'set.k.authentication-methods.directory_password.enabled': 'Directory Password：ログイン',
+	'set.k.authentication-methods.guest.login_enabled': 'ゲストログインを許可',
+	'set.k.authentication-methods.passkey.guest_upgrade_enabled': 'パスキーでアカウントに移行',
+	'set.k.authentication-methods.email_otp.guest_upgrade_enabled':
+		'メールのワンタイムコードでアカウントに移行',
+	'set.k.authentication-methods.totp.preset': '認証アプリのプリセット',
+	'set.k.authentication-methods.totp.preset.compatible': '互換性重視',
+	'set.k.authentication-methods.totp.preset.strong': '強固',
+	'set.k.authentication-methods.totp.default_acr': '認証アプリでサインインしたときの ACR',
+	'set.k.profiles.method.tenant_change_allowed':
+		'テナントがプラットフォームの方式プロフィールを変更できる',
+	'set.k.profiles.method.tenant_create_allowed': 'テナントが独自の方式プロフィールを作れる',
+	'set.k.profiles.method.default_locked': '方式の Default をロックする（テナントの値を使わない）',
+	'set.k.profiles.session.tenant_change_allowed':
+		'テナントがプラットフォームのセッションプロフィールを変更できる',
+	'set.k.profiles.session.tenant_create_allowed': 'テナントが独自のセッションプロフィールを作れる',
+	'set.k.profiles.session.default_locked':
+		'セッションの Default をロックする（テナントの値を使わない）'
 } as const;

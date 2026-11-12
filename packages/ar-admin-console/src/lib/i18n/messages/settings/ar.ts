@@ -356,5 +356,36 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'persona.support': 'الدعم (محدود)',
 	'persona.support.desc': 'يساعد المستخدمين فقط (إلغاء القفل، تسجيل الخروج). لا يرى الإعدادات.',
 	'persona.viewer': 'مشاهد (محدود)',
-	'persona.viewer.desc': 'يرى المستخدمين والتطبيقات والإعدادات، ولا يغيّر شيئاً.'
+	'persona.viewer.desc': 'يرى المستخدمين والتطبيقات والإعدادات، ولا يغيّر شيئاً.',
+	// The platform's Default methods and the profile switches (platform profile pages).
+	'set.k.authentication-methods.passkey.signup_enabled': 'مفتاح المرور: التسجيل',
+	'set.k.authentication-methods.passkey.login_enabled': 'مفتاح المرور: تسجيل الدخول',
+	'set.k.authentication-methods.passkey.reauth_enabled': 'مفتاح المرور: إعادة المصادقة',
+	'set.k.authentication-methods.passkey.account_link_enabled': 'مفتاح المرور: ربط الحساب',
+	'set.k.authentication-methods.email_otp.signup_enabled': 'رمز لمرة واحدة عبر البريد: التسجيل',
+	'set.k.authentication-methods.email_otp.login_enabled': 'رمز لمرة واحدة عبر البريد: تسجيل الدخول',
+	'set.k.authentication-methods.email_otp.reauth_enabled':
+		'رمز لمرة واحدة عبر البريد: إعادة المصادقة',
+	'set.k.authentication-methods.email_otp.account_link_enabled':
+		'رمز لمرة واحدة عبر البريد: ربط الحساب',
+	'set.k.authentication-methods.totp.signup_enabled': 'تطبيق المصادقة (TOTP): التسجيل',
+	'set.k.authentication-methods.totp.login_enabled': 'تطبيق المصادقة (TOTP): تسجيل الدخول',
+	'set.k.authentication-methods.totp.reauth_enabled': 'تطبيق المصادقة (TOTP): إعادة المصادقة',
+	'set.k.authentication-methods.totp.account_link_enabled': 'تطبيق المصادقة (TOTP): ربط الحساب',
+	'set.k.authentication-methods.did.login_enabled': 'DID: تسجيل الدخول',
+	'set.k.authentication-methods.directory_password.enabled': 'Directory Password: تسجيل الدخول',
+	'set.k.authentication-methods.guest.login_enabled': 'السماح بتسجيل دخول الضيف',
+	'set.k.authentication-methods.passkey.guest_upgrade_enabled': 'ترقية حساب الضيف بمفتاح مرور',
+	'set.k.authentication-methods.email_otp.guest_upgrade_enabled':
+		'ترقية حساب الضيف برمز البريد الإلكتروني',
+	'set.k.authentication-methods.totp.preset': 'الإعداد المسبق لتطبيق المصادقة',
+	'set.k.authentication-methods.totp.preset.compatible': 'متوافق',
+	'set.k.authentication-methods.totp.preset.strong': 'قوي',
+	'set.k.authentication-methods.totp.default_acr': 'قيمة ACR عند تسجيل الدخول بتطبيق المصادقة',
+	'set.k.profiles.method.tenant_change_allowed': 'يمكن للمستأجرين تغيير ملفات طرق المنصة',
+	'set.k.profiles.method.tenant_create_allowed': 'يمكن للمستأجرين إنشاء ملفات طرق خاصة بهم',
+	'set.k.profiles.method.default_locked': 'قفل طرق Default (لا تُطبَّق قيم المستأجرين)',
+	'set.k.profiles.session.tenant_change_allowed': 'يمكن للمستأجرين تغيير ملفات جلسات المنصة',
+	'set.k.profiles.session.tenant_create_allowed': 'يمكن للمستأجرين إنشاء ملفات جلسات خاصة بهم',
+	'set.k.profiles.session.default_locked': 'قفل قواعد جلسات Default (لا تُطبَّق قيم المستأجرين)'
 };

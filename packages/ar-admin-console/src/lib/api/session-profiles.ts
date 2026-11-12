@@ -4,6 +4,7 @@
  */
 import { API_BASE_URL, adminFetch } from './admin-request';
 import { errorFromResponse } from './api-error';
+import { profileLayerFromRow, type ProfileLayer } from './profile-layer';
 
 const BASE = `${API_BASE_URL}/api/admin/session-profiles`;
 export type SessionProfileValues = Record<string, unknown>;
@@ -16,6 +17,8 @@ export interface SessionProfile {
 	version: number | string;
 	created_at: number | null;
 	updated_at: number | null;
+	/** The platform layer (a platform profile, or Default); null for one of the tenant's own. */
+	layer: ProfileLayer | null;
 }
 
 export interface SessionProfileInput {
@@ -29,6 +32,19 @@ export interface SessionProfilesClient {
 	create(input: SessionProfileInput): Promise<SessionProfile>;
 	update(id: string, version: number | string, input: SessionProfileInput): Promise<SessionProfile>;
 	remove(id: string): Promise<void>;
+	/**
+	 * Saves the tenant's copy of a platform profile (`version`: the copy's, or null to make it).
+	 */
+	saveCopy(
+		id: string,
+		version: number | null,
+		values: Record<string, unknown>
+	): Promise<SessionProfile>;
+	/**
+	 * Removes the tenant's own values over the platform's: a platform profile's copy, or Default's
+	 * settings. Answers the profile as it now holds.
+	 */
+	revert(id: string): Promise<SessionProfile>;
 }
 
 const object = (value: unknown): Record<string, unknown> =>
@@ -45,7 +61,8 @@ export function sessionProfileFromRow(value: unknown): SessionProfile {
 		values: object(row.values),
 		version: typeof row.version === 'number' || typeof row.version === 'string' ? row.version : 0,
 		created_at: typeof row.created_at === 'number' ? row.created_at : null,
-		updated_at: typeof row.updated_at === 'number' ? row.updated_at : null
+		updated_at: typeof row.updated_at === 'number' ? row.updated_at : null,
+		layer: profileLayerFromRow(row)
 	};
 }
 
@@ -83,5 +100,15 @@ export const httpSessionProfiles: SessionProfilesClient = {
 	},
 	async remove(id) {
 		await responseBody(await adminFetch(path(id), { method: 'DELETE' }));
+	},
+	async saveCopy(id, version, values) {
+		const body = await responseBody(
+			await adminFetch(path(id), request('PUT', { values, version }))
+		);
+		return sessionProfileFromRow(body.profile);
+	},
+	async revert(id) {
+		const body = await responseBody(await adminFetch(path(id), { method: 'DELETE' }));
+		return sessionProfileFromRow(body.profile);
 	}
 };
