@@ -14,6 +14,7 @@
 	import { tick, type Snippet } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { beforeNavigate, goto } from '$app/navigation';
+	import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { provideBusy } from '../busy/busy';
 	import SaveBar from '../patterns/SaveBar.svelte';
@@ -114,6 +115,10 @@
 			draft.commit();
 		} catch (error) {
 			if (error instanceof SaveStopped) return;
+			if (error instanceof StepUpCancelledError) {
+				toast.error(t('settings.stepUpCancelled'));
+				return;
+			}
 			toast.error(error instanceof Error && error.message ? error.message : t('common.saveFailed'));
 		} finally {
 			saving = false;

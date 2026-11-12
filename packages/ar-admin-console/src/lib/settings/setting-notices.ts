@@ -13,7 +13,8 @@ export type SettingNoticeId =
 	| 'fapi'
 	| 'exchangeCeilings'
 	| 'samlDisabled'
-	| 'samlPostBinding';
+	| 'samlPostBinding'
+	| 'codeHandoff';
 
 export interface SettingNotice {
 	id: SettingNoticeId;
@@ -73,6 +74,13 @@ const NOTICE_RULES: readonly NoticeRule[] = [
 		tone: 'info',
 		keys: ['federation.saml_sso_binding'],
 		applies: (value) => value('federation.saml_sso_binding') === 'HTTP-POST'
+	},
+	{
+		// Admin invitation codes are handed to a machine in the API response, not e-mailed.
+		id: 'codeHandoff',
+		tone: 'warning',
+		keys: ['admin_invitations.code_handoff_enabled'],
+		applies: (value) => value('admin_invitations.code_handoff_enabled') === true
 	}
 ];
 
