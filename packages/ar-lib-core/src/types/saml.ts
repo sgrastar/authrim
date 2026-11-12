@@ -851,9 +851,25 @@ export interface SAMLRequestData {
   data?: SAMLAuthnRequest | SAMLLogoutRequest;
   /** Server-side continuation context for interactive protocol gates. */
   context?: SAMLRequestContext;
+  /**
+   * A stored IdP AuthnRequest's revision: 1 when it is created, raised by each update of its
+   * context. An update or completion that names a revision applies only to that revision.
+   */
+  revision?: number;
+  /**
+   * Until when (milliseconds) a completed, refused or expired IdP AuthnRequest's id is kept, so
+   * that the same request cannot be stored again while it could still be accepted
+   * (IssueInstant + the request lifetime + the clock skew).
+   */
+  retainUntil?: number;
 }
 
 export interface SAMLRequestContext {
+  /**
+   * The request was refused as it arrived (its signature, ACS or binding failed) and is recorded
+   * only so that it is not accepted again: it is never resumed.
+   */
+  refusedOnArrival?: true;
   /**
    * The IdP sent the person to sign in again because the request has ForceAuthn: when (milliseconds).
    * A session counts as that sign-in only when it was proven at or after this time, so the request

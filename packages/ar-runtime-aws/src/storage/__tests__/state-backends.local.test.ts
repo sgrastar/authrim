@@ -266,7 +266,8 @@ for (const backend of ['postgresql', 'dynamodb'] as const) {
         false
       );
     });
-    it('retains SAML immutable bindings and original deadline across trusted continuations', async () => {
+    it('runs the SAML AuthnRequest lifecycle: create once, read, update at a revision, complete once', async () => {
+      const now = Date.now();
       const request = {
         requestId: randomUUID(),
         issuer: 'https://sp.example.test',
@@ -274,78 +275,55 @@ for (const backend of ['postgresql', 'dynamodb'] as const) {
         acsUrl: 'https://sp.example.test/acs',
         binding: 'HTTP-Redirect',
         type: 'authn_request',
-        createdAt: Date.now(),
-        expiresAt: Date.now() + 30000,
-        used: false,
-        data: { a: 1, b: 2 },
-      } as unknown as SAMLRequestData;
-      const input = { tenantId: tenant, spEntityId: request.issuer, request };
-      await stores.state.storeSamlRequest(input);
-      const consume = {
-        tenantId: tenant,
-        spEntityId: input.spEntityId,
-        requestId: request.requestId,
-      };
-      expect(
-        await stores.state.consumeSamlRequest({
-          ...consume,
-          spEntityId: 'https://wrong-sp.example.test',
-        })
-      ).toBeNull();
-      const once = await Promise.all(
-        Array.from({ length: 8 }, () => stores.state.consumeSamlRequest(consume))
-      );
-      expect(once.filter(Boolean)).toHaveLength(1);
-      await expect(
-        stores.state.storeSamlRequest({
-          ...input,
-          request: { ...request, destination: 'https://attacker.example.test' },
-        })
-      ).rejects.toThrow();
-      await stores.state.storeSamlRequest({
-        ...input,
-        request: {
-          ...request,
-          expiresAt: request.expiresAt + 1000,
-          data: { b: 2, a: 1 },
-        } as unknown as SAMLRequestData,
-      });
-      expect((await stores.state.consumeSamlRequest(consume))?.expiresAt).toBe(request.expiresAt);
-    });
-    it('consumes a SAML request on a login nonce hash only when it holds that hash', async () => {
-      const request = {
-        requestId: randomUUID(),
-        issuer: 'https://sp.example.test',
-        destination: 'https://idp.example.test/saml',
-        acsUrl: 'https://sp.example.test/acs',
-        binding: 'HTTP-Redirect',
-        type: 'authn_request',
-        createdAt: Date.now(),
-        expiresAt: Date.now() + 30000,
+        createdAt: now,
+        expiresAt: now + 30000,
+        retainUntil: now + 60000,
         used: false,
         data: { a: 1 },
         context: { loginNonceHash: 'held-hash' },
       } as unknown as SAMLRequestData;
-      await stores.state.storeSamlRequest({
+      const input = { tenantId: tenant, spEntityId: request.issuer, request };
+      expect(await stores.state.createSamlRequest(input)).toBe(true);
+      expect(await stores.state.createSamlRequest(input)).toBe(false);
+      const key = {
         tenantId: tenant,
-        spEntityId: request.issuer,
-        request,
-      });
-      const consume = {
-        tenantId: tenant,
-        spEntityId: request.issuer,
+        spEntityId: input.spEntityId,
         requestId: request.requestId,
       };
+      expect(await stores.state.readSamlRequest({ ...key, tenantId: 'other' })).toBeNull();
       expect(
-        await stores.state.consumeSamlRequest({ ...consume, loginNonceHash: 'other' })
+        await stores.state.readSamlRequest({ ...key, spEntityId: 'https://wrong-sp.example.test' })
       ).toBeNull();
+      expect(await stores.state.readSamlRequest(key)).toMatchObject({ revision: 1, used: false });
+      expect(await stores.state.readSamlRequest(key)).not.toBeNull();
+      const updates = await Promise.all(
+        Array.from({ length: 6 }, () =>
+          stores.state.updateSamlRequest({
+            ...key,
+            expectedRevision: 1,
+            context: { loginNonceHash: 'held-hash', reauthentication: { issuedAt: now } },
+          })
+        )
+      );
+      expect(updates.filter(Boolean)).toHaveLength(1);
+      expect(
+        await stores.state.completeSamlRequest({ ...key, loginNonceHash: 'other' })
+      ).toBeNull();
+      expect(await stores.state.completeSamlRequest({ ...key, expectedRevision: 1 })).toBeNull();
       const once = await Promise.all(
         Array.from({ length: 6 }, () =>
-          stores.state.consumeSamlRequest({ ...consume, loginNonceHash: 'held-hash' })
+          stores.state.completeSamlRequest({
+            ...key,
+            expectedRevision: 2,
+            loginNonceHash: 'held-hash',
+          })
         )
       );
       expect(once.filter(Boolean)).toHaveLength(1);
-      expect(await stores.state.consumeSamlRequest(consume)).toBeNull();
+      expect(await stores.state.completeSamlRequest(key)).toBeNull();
+      expect(await stores.state.readSamlRequest(key)).toBeNull();
+      // Completed, the id still blocks a second create.
+      expect(await stores.state.createSamlRequest(input)).toBe(false);
     });
     it('keeps KV tenant scoped, supports overwrite and rejects expired keys', async () => {
       const input = { tenantId: tenant, key: randomUUID(), value: 'one', ttlMs: 60000 };

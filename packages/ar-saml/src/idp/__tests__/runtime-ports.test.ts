@@ -1,24 +1,56 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Env, SAMLRequestData } from '@authrim/ar-lib-core';
+import type { Env, SAMLRequestContext, SAMLRequestData } from '@authrim/ar-lib-core';
 import { getKeyManagerSecret, getSigningCertificate, getSigningKey } from '../../common/key-utils';
-import { consumeStoredAuthnRequest, storeAuthnRequest } from '../sso-stored-request';
+import {
+  completeStoredAuthnRequest,
+  readStoredAuthnRequest,
+  saveStoredAuthnRequest,
+} from '../sso-stored-request';
 import { resolveSAMLPairwiseSecret } from '../subject';
 
 describe('alternate SAML IdP runtime ports', () => {
-  it('stores and consumes the post-login AuthnRequest once within its tenant and SP', async () => {
+  it('creates, reads, updates and completes the AuthnRequest within its tenant and SP', async () => {
     let stored: SAMLRequestData | null = null;
-    const store = vi.fn(
+    const forThisRequest = (input: { tenantId: string; spEntityId: string }) =>
+      input.tenantId === 'tenant-a' && input.spEntityId === 'https://sp.example';
+    const create = vi.fn(
       async (input: { tenantId: string; spEntityId: string; request: SAMLRequestData }) => {
-        stored = input.request;
+        if (stored) return false;
+        stored = { ...input.request, revision: 1 };
+        return true;
       }
     );
-    const consume = vi.fn(async (input: { tenantId: string; spEntityId: string }) => {
-      if (input.tenantId !== 'tenant-a' || input.spEntityId !== 'https://sp.example') return null;
-      const result = stored;
-      stored = null;
-      return result;
-    });
-    const env = { SAML_RUNTIME_PORTS: { requests: { store, consume } } } as unknown as Env;
+    const read = vi.fn(async (input: { tenantId: string; spEntityId: string }) =>
+      forThisRequest(input) ? stored : null
+    );
+    const update = vi.fn(
+      async (input: {
+        tenantId: string;
+        spEntityId: string;
+        expectedRevision: number;
+        context: SAMLRequestContext;
+      }) => {
+        if (!forThisRequest(input) || !stored || stored.revision !== input.expectedRevision) {
+          return null;
+        }
+        stored = { ...stored, context: input.context, revision: input.expectedRevision + 1 };
+        return stored;
+      }
+    );
+    const complete = vi.fn(
+      async (input: { tenantId: string; spEntityId: string; expectedRevision?: number }) => {
+        if (!forThisRequest(input) || !stored) return null;
+        if (input.expectedRevision !== undefined && stored.revision !== input.expectedRevision) {
+          return null;
+        }
+        const result = stored;
+        stored = null;
+        return result;
+      }
+    );
+    const env = {
+      SAML_RUNTIME_PORTS: { requests: { create, read, update, complete } },
+    } as unknown as Env;
     const request = {
       id: '_request-1',
       issueInstant: new Date().toISOString(),
@@ -26,8 +58,13 @@ describe('alternate SAML IdP runtime ports', () => {
       destination: 'https://idp.example/saml/idp/sso',
     };
 
-    await storeAuthnRequest(env, 'tenant-a', request, 'relay', undefined, 300);
-    expect(store.mock.calls[0]?.[0]).toMatchObject({
+    await saveStoredAuthnRequest(env, 'tenant-a', {
+      authnRequest: request,
+      relayState: 'relay',
+      context: {},
+      requestTtlSeconds: 300,
+    });
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
       tenantId: 'tenant-a',
       spEntityId: request.issuer,
       request: {
@@ -35,37 +72,91 @@ describe('alternate SAML IdP runtime ports', () => {
         issuer: request.issuer,
         data: request,
         relayState: 'relay',
+        revision: 1,
       },
     });
+
+    // The same request again is a replay.
     await expect(
-      consumeStoredAuthnRequest(env, 'tenant-b', request.id, request.issuer)
+      saveStoredAuthnRequest(env, 'tenant-a', {
+        authnRequest: request,
+        context: {},
+        requestTtlSeconds: 300,
+      })
+    ).rejects.toThrow('already received');
+
+    // Reading does not use it up, and is bound to the tenant and SP.
+    await expect(
+      readStoredAuthnRequest(env, 'tenant-b', request.id, request.issuer)
+    ).rejects.toThrow('not found or already used');
+    for (let i = 0; i < 2; i++) {
+      await expect(
+        readStoredAuthnRequest(env, 'tenant-a', request.id, request.issuer)
+      ).resolves.toMatchObject({ requestId: request.id, data: request, revision: 1 });
+    }
+
+    // An update goes by revision: a stale one changes nothing.
+    await expect(
+      saveStoredAuthnRequest(env, 'tenant-a', {
+        authnRequest: request,
+        context: { loginNonceHash: 'h' },
+        storedRevision: 7,
+      })
     ).rejects.toThrow('not found or already used');
     await expect(
-      consumeStoredAuthnRequest(env, 'tenant-a', request.id, request.issuer)
+      saveStoredAuthnRequest(env, 'tenant-a', {
+        authnRequest: request,
+        context: { loginNonceHash: 'h' },
+        storedRevision: 1,
+      })
+    ).resolves.toMatchObject({ revision: 2, context: { loginNonceHash: 'h' } });
+    expect(update).toHaveBeenLastCalledWith({
+      tenantId: 'tenant-a',
+      spEntityId: request.issuer,
+      requestId: request.id,
+      expectedRevision: 1,
+      context: { loginNonceHash: 'h' },
+    });
+
+    // Completing uses it up once, at the revision it is at.
+    await expect(
+      completeStoredAuthnRequest(env, 'tenant-a', request.id, request.issuer, {
+        expectedRevision: 1,
+      })
+    ).rejects.toThrow('not found or already used');
+    await expect(
+      completeStoredAuthnRequest(env, 'tenant-a', request.id, request.issuer, {
+        expectedRevision: 2,
+      })
     ).resolves.toMatchObject({ requestId: request.id, data: request });
     await expect(
-      consumeStoredAuthnRequest(env, 'tenant-a', request.id, request.issuer)
+      completeStoredAuthnRequest(env, 'tenant-a', request.id, request.issuer, {
+        expectedRevision: 2,
+      })
+    ).rejects.toThrow('not found or already used');
+    await expect(
+      readStoredAuthnRequest(env, 'tenant-a', request.id, request.issuer)
     ).rejects.toThrow('not found or already used');
   });
 
-  it('passes the login nonce hash to the request port for a conditional consume', async () => {
-    const consume = vi.fn(async () => null);
-    const env = { SAML_RUNTIME_PORTS: { requests: { consume } } } as unknown as Env;
+  it('passes the login nonce hash to the request port for a conditional complete', async () => {
+    const complete = vi.fn(async () => null);
+    const env = { SAML_RUNTIME_PORTS: { requests: { complete } } } as unknown as Env;
     await expect(
-      consumeStoredAuthnRequest(env, 'tenant-a', '_request-1', 'https://sp.example', {
+      completeStoredAuthnRequest(env, 'tenant-a', '_request-1', 'https://sp.example', {
         loginNonceHash: 'a'.repeat(64),
       })
     ).rejects.toThrow('not found or already used');
-    expect(consume).toHaveBeenCalledWith({
+    expect(complete).toHaveBeenCalledWith({
       tenantId: 'tenant-a',
       spEntityId: 'https://sp.example',
       requestId: '_request-1',
       loginNonceHash: 'a'.repeat(64),
     });
     await expect(
-      consumeStoredAuthnRequest(env, 'tenant-a', '_request-1', 'https://sp.example')
+      completeStoredAuthnRequest(env, 'tenant-a', '_request-1', 'https://sp.example')
     ).rejects.toThrow('not found or already used');
-    expect(consume).toHaveBeenLastCalledWith({
+    expect(complete).toHaveBeenLastCalledWith({
       tenantId: 'tenant-a',
       spEntityId: 'https://sp.example',
       requestId: '_request-1',

@@ -43,6 +43,8 @@ export async function gateSAMLAuthnAssurance(
     requestContext?: SAMLRequestContext;
     /** The login nonce of the resumed request (kept when the person is sent to sign in again). */
     resumedLogin?: ResumedSAMLLogin;
+    /** The revision a stored request was read at (a resume). */
+    storedRevision?: number;
     log: GateLog;
     /** Answer the SP with an error response (Responder status; the second-level code, if any). */
     refuse(answer: {
@@ -98,6 +100,7 @@ export async function gateSAMLAuthnAssurance(
           requiredAal: check.requiredAal,
           signInAgain: { subjectUserId: input.session.userId, issuedAt: stepUpIssuedAt },
           resumedLogin: input.resumedLogin,
+          ...(input.storedRevision !== undefined ? { storedRevision: input.storedRevision } : {}),
           context: {
             ...carrySAMLRequestContext(input.requestContext),
             assuranceStepUp: {

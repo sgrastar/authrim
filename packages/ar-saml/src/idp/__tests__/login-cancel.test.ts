@@ -4,7 +4,7 @@ import { STATUS_CODES } from '../../common/constants';
 
 const mocks = vi.hoisted(() => ({
   row: null as null | { state: string; saml_sp_id: string | null; context_json: string | null },
-  consume: vi.fn(),
+  complete: vi.fn(),
   errorResponse: vi.fn(async (..._args: unknown[]) => '<failure/>'),
   send: vi.fn(
     (_c: unknown, acs: string, xml: string, relayState?: string) =>
@@ -46,7 +46,7 @@ vi.mock('../response-destination', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../response-destination')>()),
   resolveSAMLResponseDestination: vi.fn(() => 'https://sp.example.test/acs'),
 }));
-vi.mock('../sso-stored-request', () => ({ consumeStoredAuthnRequest: mocks.consume }));
+vi.mock('../sso-stored-request', () => ({ completeStoredAuthnRequest: mocks.complete }));
 vi.mock('../sso', () => ({
   generateSAMLProtocolErrorResponse: mocks.errorResponse,
   sendSAMLResponse: mocks.send,
@@ -85,7 +85,7 @@ describe('answering the SP for a sign-in the person cancelled', () => {
         login_cancel: grant.context,
       }),
     };
-    mocks.consume.mockResolvedValue({
+    mocks.complete.mockResolvedValue({
       data: { id: 'req_1', issuer: 'https://sp.example.test/entity' },
       relayState: 'relay-1',
     });
@@ -99,7 +99,7 @@ describe('answering the SP for a sign-in the person cancelled', () => {
       xml: '<failure/>',
       relayState: 'relay-1',
     });
-    expect(mocks.consume).toHaveBeenCalledWith(
+    expect(mocks.complete).toHaveBeenCalledWith(
       expect.anything(),
       'tenant-a',
       'req_1',
@@ -116,15 +116,15 @@ describe('answering the SP for a sign-in the person cancelled', () => {
     // The same link again answers nothing, and touches nothing.
     const second = await request(token);
     expect(second.status).toBe(400);
-    expect(mocks.consume).toHaveBeenCalledTimes(1);
+    expect(mocks.complete).toHaveBeenCalledTimes(1);
     expect(mocks.send).toHaveBeenCalledTimes(1);
   });
 
-  it('answers nothing for a wrong token, without using up the stored request', async () => {
+  it('answers nothing for a wrong token, without completing the stored request', async () => {
     const other = await createSAMLLoginCancelGrant();
     const response = await request(other.token);
     expect(response.status).toBe(400);
-    expect(mocks.consume).not.toHaveBeenCalled();
+    expect(mocks.complete).not.toHaveBeenCalled();
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
@@ -137,16 +137,16 @@ describe('answering the SP for a sign-in the person cancelled', () => {
       context_json: JSON.stringify({ saml_request_id: 'req_1', saml_login_nonce_hash: 'h' }),
     };
     expect((await request(token)).status).toBe(400);
-    expect(mocks.consume).not.toHaveBeenCalled();
+    expect(mocks.complete).not.toHaveBeenCalled();
   });
 
   it('answers nothing when the stored request was sent with another nonce', async () => {
     // The store refuses a request that does not hold the interaction's nonce hash, consuming
-    // nothing (a conditional consume, not a consume followed by a refusal).
-    mocks.consume.mockRejectedValue(new Error('Stored SAML request not found or already used'));
+    // nothing (a conditional complete, not a complete followed by a refusal).
+    mocks.complete.mockRejectedValue(new Error('Stored SAML request not found or already used'));
     const response = await request(token);
     expect(response.status).toBe(400);
-    expect(mocks.consume).toHaveBeenCalledWith(
+    expect(mocks.complete).toHaveBeenCalledWith(
       expect.anything(),
       'tenant-a',
       'req_1',
@@ -166,7 +166,7 @@ describe('answering the SP for a sign-in the person cancelled', () => {
       }),
     };
     expect((await request(token)).status).toBe(400);
-    expect(mocks.consume).not.toHaveBeenCalled();
+    expect(mocks.complete).not.toHaveBeenCalled();
   });
 
   it('answers nothing for a cancel token older than its lifetime', async () => {
@@ -179,17 +179,17 @@ describe('answering the SP for a sign-in the person cancelled', () => {
       context_json: JSON.stringify(old),
     };
     expect((await request(token)).status).toBe(400);
-    expect(mocks.consume).not.toHaveBeenCalled();
+    expect(mocks.complete).not.toHaveBeenCalled();
   });
 
-  it('answers the SP on a runtime with request ports too, consuming on the nonce hash', async () => {
+  it('answers the SP on a runtime with request ports too, completing on the nonce hash', async () => {
     const response = await app().request(
       `/saml/idp/login-cancel?interaction_id=interaction_1&token=${token}`,
       undefined,
       { SAML_RUNTIME_PORTS: {} }
     );
     expect(response.status).toBe(200);
-    expect(mocks.consume).toHaveBeenCalledWith(
+    expect(mocks.complete).toHaveBeenCalledWith(
       expect.objectContaining({ SAML_RUNTIME_PORTS: {} }),
       'tenant-a',
       'req_1',
@@ -202,11 +202,11 @@ describe('answering the SP for a sign-in the person cancelled', () => {
     mocks.row = null;
     expect((await request(token, 'req_1')).status).toBe(400);
     expect((await app().request('/saml/idp/login-cancel?saml_request_id=req_1')).status).toBe(400);
-    expect(mocks.consume).not.toHaveBeenCalled();
+    expect(mocks.complete).not.toHaveBeenCalled();
   });
 
   it('answers nothing when the stored AuthnRequest is gone', async () => {
-    mocks.consume.mockRejectedValue(new Error('Stored SAML request not found or already used'));
+    mocks.complete.mockRejectedValue(new Error('Stored SAML request not found or already used'));
     const response = await request(token);
     expect(response.status).toBe(400);
     expect(mocks.send).not.toHaveBeenCalled();

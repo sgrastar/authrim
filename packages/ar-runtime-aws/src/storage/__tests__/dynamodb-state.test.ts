@@ -217,42 +217,219 @@ describe('DynamoDB state boundary', () => {
     ).toBeNull();
     expect(await read(undefined)).toBeNull();
   });
-  it('consumes a SAML request on a login nonce hash only when it holds that hash', async () => {
-    const item = (loginNonceHash?: string) => ({
-      expiresAtMs: { N: '5000' },
-      payloadJson: {
-        S: JSON.stringify({
-          spEntityId: 'https://sp.example.test',
-          request: {
-            requestId: 'req-1',
-            issuer: 'https://sp.example.test',
-            type: 'authn_request',
-            ...(loginNonceHash ? { context: { loginNonceHash } } : {}),
-          },
-        }),
-      },
-    });
-    const input = {
-      tenantId: 'tenant-a',
-      spEntityId: 'https://sp.example.test',
-      requestId: 'req-1',
-      loginNonceHash: 'held-hash',
+  describe('SAML AuthnRequest lifecycle', () => {
+    type Stored = Record<string, { S?: string; N?: string }>;
+    type DynamoInput = {
+      Key: Stored;
+      Item: Stored;
+      ConditionExpression: string;
+      UpdateExpression: string;
+      ReturnValues?: string;
+      ExpressionAttributeValues: Stored;
     };
-    for (const held of [undefined, 'other-hash']) {
-      const f = fixture(async () => ({ Item: item(held) }));
-      expect(await f.state.consumeSamlRequest(input)).toBeNull();
-      expect(f.send).toHaveBeenCalledTimes(1);
+    /** An in-memory table that evaluates the conditions this store writes. */
+    function memory(clock: { now: number }) {
+      const items = new Map<string, Stored>();
+      const respond = async (command: unknown) => {
+        const input = (command as { input: DynamoInput }).input;
+        const id = (item: Stored) => `${item.pk.S}|${item.sk.S}`;
+        const num = (item: Stored | undefined, name: string) => Number(item?.[name]?.N);
+        if (command instanceof GetItemCommand) {
+          return { Item: items.get(id(input.Key)) };
+        }
+        if (command instanceof PutItemCommand) {
+          const existing = items.get(id(input.Item));
+          if (existing && !(num(existing, 'retainUntilMs') <= clock.now))
+            throw failure('ConditionalCheckFailedException');
+          items.set(id(input.Item), input.Item);
+          return {};
+        }
+        if (command instanceof UpdateItemCommand) {
+          const existing = items.get(id(input.Key));
+          const v = input.ExpressionAttributeValues;
+          const condition: string = input.ConditionExpression;
+          if (
+            !existing ||
+            existing.consumedAtMs ||
+            (condition.includes('expiresAtMs > :now') &&
+              !(num(existing, 'expiresAtMs') > clock.now)) ||
+            (condition.includes('spHash = :sp') && existing.spHash.S !== v[':sp'].S) ||
+            (condition.includes('revision = :rev') && existing.revision.N !== v[':rev'].N)
+          )
+            throw failure('ConditionalCheckFailedException');
+          const old = { ...existing };
+          if (input.UpdateExpression.includes('consumedAtMs')) {
+            existing.consumedAtMs = { N: String(clock.now) };
+          } else {
+            existing.payloadJson = v[':payload'];
+            existing.revision = v[':next'];
+          }
+          return { Attributes: input.ReturnValues === 'ALL_NEW' ? existing : old };
+        }
+        throw new Error('unexpected command');
+      };
+      return { items, respond };
     }
-    const f = fixture(async (command) => {
-      if (command instanceof GetItemCommand) return { Item: item('held-hash') };
-      throw failure('ConditionalCheckFailedException');
+    const sp = 'https://sp.example.test';
+    const key = { tenantId: 'tenant-a', spEntityId: sp, requestId: 'req-1' };
+    const base = {
+      requestId: 'req-1',
+      issuer: sp,
+      destination: 'https://idp.example.test',
+      acsUrl: 'https://sp.example.test/acs',
+      binding: 'post',
+      type: 'authn_request',
+      used: false,
+      createdAt: 1000,
+      expiresAt: 61_000,
+      retainUntil: 121_000,
+    } as never as import('@authrim/ar-lib-core').SAMLRequestData;
+    function setup() {
+      const clock = { now: 1000 };
+      const { items, respond } = memory(clock);
+      const f = fixture(respond, 1000);
+      // The fixture's clock is fixed at construction; build one that follows `clock`.
+      const options = {
+        client: (f.table as unknown as { client: never }).client,
+        tableName: 'test-state',
+        namespace: 'generation-one',
+        now: () => clock.now,
+      };
+      const stores = createAwsStateStores({ backend: 'dynamodb', ...options });
+      return { clock, items, state: stores.state, send: f.send };
+    }
+
+    it('creates once and blocks the id after completion and after expiry, until retainUntil', async () => {
+      const { clock, items, state } = setup();
+      expect(
+        await state.createSamlRequest({ tenantId: 'tenant-a', spEntityId: sp, request: base })
+      ).toBe(true);
+      const item = [...items.values()][0];
+      expect(item.expiresAtMs).toEqual({ N: '61000' });
+      expect(item.retainUntilMs).toEqual({ N: '121000' });
+      expect(item.ttl).toEqual({ N: '121' });
+      expect(item.revision).toEqual({ N: '1' });
+      expect(
+        await state.createSamlRequest({ tenantId: 'tenant-a', spEntityId: sp, request: base })
+      ).toBe(false);
+      expect(await state.completeSamlRequest(key)).toMatchObject({ used: true, revision: 1 });
+      expect(
+        await state.createSamlRequest({ tenantId: 'tenant-a', spEntityId: sp, request: base })
+      ).toBe(false);
+      expect(await state.readSamlRequest(key)).toBeNull();
+
+      // Expired while retained: unusable, still blocks create.
+      const other = { ...base, requestId: 'req-2' };
+      await state.createSamlRequest({ tenantId: 'tenant-a', spEntityId: sp, request: other });
+      clock.now = 62_000;
+      const k2 = { ...key, requestId: 'req-2' };
+      expect(await state.readSamlRequest(k2)).toBeNull();
+      expect(await state.updateSamlRequest({ ...k2, expectedRevision: 1, context: {} })).toBeNull();
+      expect(await state.completeSamlRequest(k2)).toBeNull();
+      expect(
+        await state.createSamlRequest({
+          tenantId: 'tenant-a',
+          spEntityId: sp,
+          request: { ...other, expiresAt: 100_000, retainUntil: 130_000 },
+        })
+      ).toBe(false);
+      clock.now = 122_000;
+      expect(
+        await state.createSamlRequest({
+          tenantId: 'tenant-a',
+          spEntityId: sp,
+          request: { ...other, expiresAt: 150_000, retainUntil: 200_000 },
+        })
+      ).toBe(true);
     });
-    expect(await f.state.consumeSamlRequest(input)).toBeNull();
-    const update = f.send.mock.calls[1][0] as UpdateItemCommand;
-    expect(update.input.ConditionExpression).toContain('AND payloadJson = :exact');
-    expect(update.input.ExpressionAttributeValues?.[':exact']).toEqual(
-      item('held-hash').payloadJson
-    );
+
+    it('refuses a retention outside the accepted window before calling storage', async () => {
+      const { state, send } = setup();
+      for (const overrides of [
+        { retainUntil: undefined },
+        { retainUntil: 60_000 },
+        { retainUntil: 1000 + 61 * 60 * 1000 },
+        { expiresAt: 1000 + 31 * 60 * 1000, retainUntil: 1000 + 40 * 60 * 1000 },
+      ])
+        await expect(
+          state.createSamlRequest({
+            tenantId: 'tenant-a',
+            spEntityId: sp,
+            request: { ...base, ...overrides },
+          })
+        ).rejects.toThrow();
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it('reads without using the request up and isolates tenant and SP', async () => {
+      const { state } = setup();
+      await state.createSamlRequest({ tenantId: 'tenant-a', spEntityId: sp, request: base });
+      expect(await state.readSamlRequest(key)).toMatchObject({ revision: 1, used: false });
+      expect(await state.readSamlRequest(key)).not.toBeNull();
+      expect(await state.readSamlRequest({ ...key, tenantId: 'tenant-b' })).toBeNull();
+      expect(
+        await state.readSamlRequest({ ...key, spEntityId: 'https://other.example.test' })
+      ).toBeNull();
+      expect(
+        await state.completeSamlRequest({ ...key, spEntityId: 'https://other.example.test' })
+      ).toBeNull();
+      expect(await state.readSamlRequest(key)).not.toBeNull();
+    });
+
+    it('updates the context only at the current revision', async () => {
+      const { state } = setup();
+      await state.createSamlRequest({ tenantId: 'tenant-a', spEntityId: sp, request: base });
+      const updated = await state.updateSamlRequest({
+        ...key,
+        expectedRevision: 1,
+        context: { loginNonceHash: 'h' },
+      });
+      expect(updated).toMatchObject({
+        revision: 2,
+        context: { loginNonceHash: 'h' },
+        acsUrl: base.acsUrl,
+        expiresAt: 61_000,
+        retainUntil: 121_000,
+      });
+      expect(
+        await state.updateSamlRequest({
+          ...key,
+          expectedRevision: 1,
+          context: { loginNonceHash: 'x' },
+        })
+      ).toBeNull();
+      expect((await state.readSamlRequest(key))?.context?.loginNonceHash).toBe('h');
+    });
+
+    it('completes once, at the expected revision, and on a login nonce hash only when it holds it', async () => {
+      const { state } = setup();
+      await state.createSamlRequest({
+        tenantId: 'tenant-a',
+        spEntityId: sp,
+        request: { ...base, context: { loginNonceHash: 'held-hash' } },
+      });
+      expect(await state.completeSamlRequest({ ...key, loginNonceHash: 'other' })).toBeNull();
+      expect(await state.completeSamlRequest({ ...key, expectedRevision: 2 })).toBeNull();
+      expect(await state.readSamlRequest(key)).not.toBeNull();
+      const results = await Promise.all([
+        state.completeSamlRequest({ ...key, expectedRevision: 1, loginNonceHash: 'held-hash' }),
+        state.completeSamlRequest({ ...key, expectedRevision: 1, loginNonceHash: 'held-hash' }),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(await state.completeSamlRequest(key)).toBeNull();
+      expect(
+        await state.updateSamlRequest({ ...key, expectedRevision: 1, context: {} })
+      ).toBeNull();
+
+      await state.createSamlRequest({
+        tenantId: 'tenant-a',
+        spEntityId: sp,
+        request: { ...base, requestId: 'req-2' },
+      });
+      const k2 = { ...key, requestId: 'req-2' };
+      expect(await state.completeSamlRequest({ ...k2, loginNonceHash: 'held-hash' })).toBeNull();
+      expect(await state.completeSamlRequest(k2)).not.toBeNull();
+    });
   });
   it('fails closed on unavailable storage and a consume without a receipt', async () => {
     const down = fixture(async () => {
@@ -351,7 +528,7 @@ it.each(['saml', 'kv'] as const)(
             value: 'data',
             ttlMs: 1000,
           })
-        : stores.state.storeSamlRequest({
+        : stores.state.createSamlRequest({
             tenantId: 'tenant-a',
             spEntityId: 'https://sp.example.test',
             request: {
@@ -360,6 +537,7 @@ it.each(['saml', 'kv'] as const)(
               destination: 'https://idp.example.test',
               type: 'authn_request',
               expiresAt: 2000,
+              retainUntil: 3000,
             } as never,
           });
     await expect(operation).rejects.toThrow('lost response');

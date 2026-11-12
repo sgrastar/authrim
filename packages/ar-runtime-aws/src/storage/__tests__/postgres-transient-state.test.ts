@@ -164,56 +164,66 @@ class FakePostgres implements PostgresQueryClient {
           rows = [this.returned(record)];
         }
         break;
-      case 'store-saml-request': {
+      case 'create-saml-request': {
         const payload = JSON.parse(values[2] as string) as Record<string, unknown>;
         const immutable = JSON.parse(values[3] as string) as Record<string, unknown>;
         const expiresAt = values[4] as number;
+        const retainUntil = values[5] as number;
         if (
           expiresAt > this.nowMs &&
           expiresAt <= this.nowMs + 30 * 60 * 1000 &&
-          (!record ||
-            (record.expiresAt > this.nowMs &&
-              record.payload.spEntityId === payload.spEntityId &&
-              JSON.stringify(record.immutable) === JSON.stringify(immutable)))
+          retainUntil >= expiresAt &&
+          retainUntil <= this.nowMs + 60 * 60 * 1000 &&
+          (!record || record.expiresAt <= this.nowMs)
         ) {
-          if (record) {
-            record.payload = payload;
-            record.consumedAt = null;
-            rows = [this.returned(record)];
-          } else {
-            const created: Stored = {
-              tenantId,
-              kind,
-              id,
-              payload,
-              immutable,
-              createdAt: this.nowMs,
-              expiresAt,
-              consumedAt: null,
-            };
-            this.records.set(this.key(tenantId, kind, id), created);
-            rows = [this.returned(created)];
-          }
+          const created: Stored = {
+            tenantId,
+            kind,
+            id,
+            payload,
+            immutable,
+            createdAt: this.nowMs,
+            expiresAt: retainUntil,
+            consumedAt: null,
+          };
+          this.records.set(this.key(tenantId, kind, id), created);
+          rows = [this.returned(created)];
         }
         break;
       }
-      case 'consume-saml-request':
+      case 'read-saml-request':
+      case 'update-saml-request':
+      case 'complete-saml-request': {
+        const stored = record?.payload.request as
+          | { expiresAt: number; revision: number; context?: { loginNonceHash?: unknown } }
+          | undefined;
         if (
           record &&
+          stored &&
           record.consumedAt === null &&
-          record.expiresAt > this.nowMs &&
+          stored.expiresAt > this.nowMs &&
           record.payload.spEntityId === values[2] &&
-          record.immutable.issuer === values[2] &&
-          (values[3] === null ||
-            (
-              (record.payload.request as { context?: { loginNonceHash?: unknown } } | undefined)
-                ?.context ?? {}
-            ).loginNonceHash === values[3])
+          record.immutable.issuer === values[2]
         ) {
-          record.consumedAt = this.nowMs;
+          if (action === 'update-saml-request') {
+            if (stored.revision !== values[3]) break;
+            record.payload = {
+              ...record.payload,
+              request: {
+                ...stored,
+                context: JSON.parse(values[4] as string) as unknown,
+                revision: stored.revision + 1,
+              },
+            };
+          } else if (action === 'complete-saml-request') {
+            if (values[3] !== null && stored.context?.loginNonceHash !== values[3]) break;
+            if (values[4] !== null && stored.revision !== values[4]) break;
+            record.consumedAt = this.nowMs;
+          }
           rows = [this.returned(record)];
         }
         break;
+      }
       case 'put-key': {
         const created: Stored = {
           tenantId,
@@ -259,6 +269,7 @@ function request(nowMs: number, overrides: Partial<SAMLRequestData> = {}): SAMLR
     used: false,
     createdAt: nowMs,
     expiresAt: nowMs + 5 * 60 * 1000,
+    retainUntil: nowMs + 10 * 60 * 1000,
     relayState: 'browser-state',
     ...overrides,
   };
@@ -282,19 +293,19 @@ describe('PostgresTransientStateStore', () => {
       type: 'login',
       challenge: 'secret',
     });
-    await store.storeSamlRequest({
+    await store.createSamlRequest({
       tenantId: 'tenant-a',
       spEntityId: 'https://sp.example.test/metadata',
       request: request(db.nowMs),
     });
-    await store.consumeSamlRequest({
+    await store.completeSamlRequest({
       tenantId: 'tenant-a',
       spEntityId: 'https://sp.example.test/metadata',
       requestId: '_authn-1',
     });
-    for (const sql of db.statements.filter((statement) => statement.includes(':consume-'))) {
+    for (const sql of db.statements.filter((statement) => /:(consume|complete)-/.test(statement))) {
       expect(sql).toMatch(/UPDATE authrim_aws_transient_state[\s\S]*tenant_id = \$1/);
-      expect(sql).toMatch(/consumed_at_ms IS NULL AND expires_at_ms >/);
+      expect(sql).toMatch(/consumed_at_ms IS NULL/);
       expect(sql).toMatch(/RETURNING/);
     }
   });
@@ -449,91 +460,179 @@ describe('PostgresTransientStateStore', () => {
     expect(await store.getChallenge({ tenantId: 'tenant-a', id: claim.id })).toBeNull();
   });
 
-  it('consumes a SAML request once per trusted re-store without changing original expiry', async () => {
-    const db = new FakePostgres();
-    const store = new PostgresTransientStateStore(db);
+  describe('SAML AuthnRequest lifecycle', () => {
     const spEntityId = 'https://sp.example.test/metadata';
-    const initial = request(db.nowMs);
-    await store.storeSamlRequest({ tenantId: 'tenant-a', spEntityId, request: initial });
-    expect(
-      await store.consumeSamlRequest({
-        tenantId: 'tenant-b',
-        spEntityId,
-        requestId: initial.requestId,
-      })
-    ).toBeNull();
-    expect(
-      await store.consumeSamlRequest({
-        tenantId: 'tenant-a',
-        spEntityId: 'https://other.example.test',
-        requestId: initial.requestId,
-      })
-    ).toBeNull();
-    const attempt = { tenantId: 'tenant-a', spEntityId, requestId: initial.requestId };
-    const [first, second] = await Promise.all([
-      store.consumeSamlRequest(attempt),
-      store.consumeSamlRequest(attempt),
-    ]);
-    expect([first, second].filter(Boolean)).toHaveLength(1);
-    expect(first?.used ?? second?.used).toBe(true);
-    expect(await store.consumeSamlRequest(attempt)).toBeNull();
+    const key = { tenantId: 'tenant-a', spEntityId, requestId: '_authn-1' };
+    function setup() {
+      const db = new FakePostgres();
+      return { db, store: new PostgresTransientStateStore(db) };
+    }
 
-    db.nowMs += 10_000;
-    await store.storeSamlRequest({
-      tenantId: 'tenant-a',
-      spEntityId,
-      request: request(db.nowMs, {
+    it('creates once and refuses any later create of the id, never resetting a completed one', async () => {
+      const { db, store } = setup();
+      const initial = request(db.nowMs);
+      expect(
+        await store.createSamlRequest({ tenantId: 'tenant-a', spEntityId, request: initial })
+      ).toBe(true);
+      expect(
+        await store.createSamlRequest({ tenantId: 'tenant-a', spEntityId, request: initial })
+      ).toBe(false);
+      expect(await store.completeSamlRequest(key)).toMatchObject({ used: true });
+      // A completed request still blocks the id, and stays completed.
+      expect(
+        await store.createSamlRequest({ tenantId: 'tenant-a', spEntityId, request: initial })
+      ).toBe(false);
+      expect(await store.readSamlRequest(key)).toBeNull();
+      // Expired but retained: it cannot be used, and still blocks create.
+      const other = request(db.nowMs, { requestId: '_authn-2' });
+      await store.createSamlRequest({ tenantId: 'tenant-a', spEntityId, request: other });
+      db.nowMs = other.expiresAt + 1000;
+      const k2 = { ...key, requestId: '_authn-2' };
+      expect(await store.readSamlRequest(k2)).toBeNull();
+      expect(await store.updateSamlRequest({ ...k2, expectedRevision: 1, context: {} })).toBeNull();
+      expect(await store.completeSamlRequest(k2)).toBeNull();
+      expect(
+        await store.createSamlRequest({
+          tenantId: 'tenant-a',
+          spEntityId,
+          request: { ...other, expiresAt: db.nowMs + 60_000, retainUntil: db.nowMs + 120_000 },
+        })
+      ).toBe(false);
+      // Past its retention the id can be taken again.
+      db.nowMs = (other.retainUntil ?? 0) + 1;
+      expect(
+        await store.createSamlRequest({
+          tenantId: 'tenant-a',
+          spEntityId,
+          request: request(db.nowMs, { requestId: '_authn-2' }),
+        })
+      ).toBe(true);
+    });
+
+    it('refuses an expiry or retention outside the accepted window', async () => {
+      const { db, store } = setup();
+      await expect(
+        store.createSamlRequest({
+          tenantId: 'tenant-a',
+          spEntityId,
+          request: request(db.nowMs, { retainUntil: db.nowMs + 60_000 }),
+        })
+      ).rejects.toThrow('retention');
+      for (const overrides of [
+        { expiresAt: db.nowMs },
+        { expiresAt: db.nowMs + 31 * 60 * 1000, retainUntil: db.nowMs + 40 * 60 * 1000 },
+        { retainUntil: db.nowMs + 61 * 60 * 1000 },
+      ]) {
+        expect(
+          await store.createSamlRequest({
+            tenantId: 'tenant-a',
+            spEntityId,
+            request: request(db.nowMs, overrides),
+          })
+        ).toBe(false);
+      }
+      await expect(
+        store.createSamlRequest({
+          tenantId: 'tenant-a',
+          spEntityId,
+          request: request(db.nowMs, { retainUntil: undefined }),
+        })
+      ).rejects.toThrow('retention');
+      await expect(
+        store.createSamlRequest({
+          tenantId: 'tenant-a',
+          spEntityId: 'https://other.example.test',
+          request: request(db.nowMs),
+        })
+      ).rejects.toThrow('Invalid SAML request binding');
+    });
+
+    it('reads without using the request up, and isolates tenant and SP', async () => {
+      const { db, store } = setup();
+      await store.createSamlRequest({
+        tenantId: 'tenant-a',
+        spEntityId,
+        request: request(db.nowMs),
+      });
+      expect(await store.readSamlRequest(key)).toMatchObject({
+        requestId: '_authn-1',
+        revision: 1,
+        used: false,
+      });
+      expect(await store.readSamlRequest(key)).not.toBeNull();
+      expect(await store.readSamlRequest({ ...key, tenantId: 'tenant-b' })).toBeNull();
+      expect(
+        await store.readSamlRequest({ ...key, spEntityId: 'https://other.example.test' })
+      ).toBeNull();
+      expect(
+        await store.completeSamlRequest({ ...key, spEntityId: 'https://other.example.test' })
+      ).toBeNull();
+      expect(await store.readSamlRequest(key)).not.toBeNull();
+    });
+
+    it('updates the context only at the current revision and changes nothing else', async () => {
+      const { db, store } = setup();
+      const initial = request(db.nowMs);
+      await store.createSamlRequest({ tenantId: 'tenant-a', spEntityId, request: initial });
+      const updated = await store.updateSamlRequest({
+        ...key,
+        expectedRevision: 1,
         context: { reauthentication: { issuedAt: db.nowMs } },
-        expiresAt: db.nowMs + 5 * 60 * 1000,
-      }),
+      });
+      expect(updated?.revision).toBe(2);
+      expect(updated?.context?.reauthentication?.issuedAt).toBe(db.nowMs);
+      expect(updated).toMatchObject({
+        acsUrl: initial.acsUrl,
+        relayState: initial.relayState,
+        binding: initial.binding,
+        expiresAt: initial.expiresAt,
+        retainUntil: initial.retainUntil,
+      });
+      // A stale revision fails and leaves the request as it is.
+      expect(
+        await store.updateSamlRequest({
+          ...key,
+          expectedRevision: 1,
+          context: { loginNonceHash: 'x' },
+        })
+      ).toBeNull();
+      const read = await store.readSamlRequest(key);
+      expect(read?.revision).toBe(2);
+      expect(read?.context?.loginNonceHash).toBeUndefined();
     });
-    const resumed = await store.consumeSamlRequest(attempt);
-    expect(resumed?.context?.reauthentication?.issuedAt).toBe(db.nowMs);
-    expect(resumed?.createdAt).toBe(initial.createdAt);
-    expect(resumed?.expiresAt).toBe(initial.expiresAt);
-    expect(await store.consumeSamlRequest(attempt)).toBeNull();
-  });
 
-  it('refuses SAML re-store with changed immutable request, SP or expired original request', async () => {
-    const db = new FakePostgres();
-    const store = new PostgresTransientStateStore(db);
-    const spEntityId = 'https://sp.example.test/metadata';
-    const initial = request(db.nowMs);
-    await store.storeSamlRequest({ tenantId: 'tenant-a', spEntityId, request: initial });
-    await store.consumeSamlRequest({
-      tenantId: 'tenant-a',
-      spEntityId,
-      requestId: initial.requestId,
+    it('completes once, at the expected revision, and on a login nonce hash only when it holds it', async () => {
+      const { db, store } = setup();
+      await store.createSamlRequest({
+        tenantId: 'tenant-a',
+        spEntityId,
+        request: request(db.nowMs, { context: { loginNonceHash: 'held-hash' } }),
+      });
+      expect(await store.completeSamlRequest({ ...key, loginNonceHash: 'other' })).toBeNull();
+      expect(await store.completeSamlRequest({ ...key, expectedRevision: 2 })).toBeNull();
+      // Both stayed waiting.
+      expect(await store.readSamlRequest(key)).not.toBeNull();
+      const [first, second] = await Promise.all([
+        store.completeSamlRequest({ ...key, expectedRevision: 1, loginNonceHash: 'held-hash' }),
+        store.completeSamlRequest({ ...key, expectedRevision: 1, loginNonceHash: 'held-hash' }),
+      ]);
+      expect([first, second].filter(Boolean)).toHaveLength(1);
+      expect(first?.used ?? second?.used).toBe(true);
+      expect(await store.completeSamlRequest(key)).toBeNull();
+      expect(
+        await store.updateSamlRequest({ ...key, expectedRevision: 1, context: {} })
+      ).toBeNull();
+
+      // A request stored without a hash is never completed on one.
+      await store.createSamlRequest({
+        tenantId: 'tenant-a',
+        spEntityId,
+        request: request(db.nowMs, { requestId: '_authn-2' }),
+      });
+      const k2 = { ...key, requestId: '_authn-2' };
+      expect(await store.completeSamlRequest({ ...k2, loginNonceHash: 'held-hash' })).toBeNull();
+      expect(await store.completeSamlRequest(k2)).not.toBeNull();
     });
-    await expect(
-      store.storeSamlRequest({
-        tenantId: 'tenant-a',
-        spEntityId,
-        request: { ...initial, acsUrl: 'https://attacker.example.test/acs' },
-      })
-    ).rejects.toThrow('binding conflict');
-    await expect(
-      store.storeSamlRequest({
-        tenantId: 'tenant-a',
-        spEntityId: 'https://other.example.test',
-        request: initial,
-      })
-    ).rejects.toThrow('Invalid SAML request binding');
-    db.nowMs = initial.expiresAt;
-    await expect(
-      store.storeSamlRequest({
-        tenantId: 'tenant-a',
-        spEntityId,
-        request: { ...initial, expiresAt: db.nowMs + 300_000 },
-      })
-    ).rejects.toThrow('binding conflict');
-    expect(
-      await store.consumeSamlRequest({
-        tenantId: 'tenant-a',
-        spEntityId,
-        requestId: initial.requestId,
-      })
-    ).toBeNull();
   });
 
   it('keeps sessions tenant-scoped and invalidates them immediately', async () => {
@@ -645,37 +744,5 @@ describe('PostgresTransientStateStore', () => {
     ).toBeNull();
     const consume = db.statements.find((sql) => sql.includes(':consume-challenge'));
     expect(consume).toMatch(/jsonb_set\(payload, '\{consumedBy\}'/);
-  });
-
-  it('consumes a SAML request on a login nonce hash only when it holds that hash', async () => {
-    const db = new FakePostgres();
-    const store = new PostgresTransientStateStore(db);
-    const spEntityId = 'https://sp.example.test/metadata';
-    await store.storeSamlRequest({
-      tenantId: 'tenant-a',
-      spEntityId,
-      request: request(db.nowMs, { context: { loginNonceHash: 'held-hash' } }),
-    });
-    const consume = { tenantId: 'tenant-a', spEntityId, requestId: '_authn-1' };
-    expect(await store.consumeSamlRequest({ ...consume, loginNonceHash: 'other' })).toBeNull();
-    expect(
-      await store.consumeSamlRequest({ ...consume, loginNonceHash: 'held-hash' })
-    ).toMatchObject({ requestId: '_authn-1', used: true });
-    expect(await store.consumeSamlRequest(consume)).toBeNull();
-
-    // A request stored without a hash is never consumed on one.
-    await store.storeSamlRequest({
-      tenantId: 'tenant-a',
-      spEntityId,
-      request: request(db.nowMs, { requestId: '_authn-2' }),
-    });
-    expect(
-      await store.consumeSamlRequest({
-        ...consume,
-        requestId: '_authn-2',
-        loginNonceHash: 'held-hash',
-      })
-    ).toBeNull();
-    expect(await store.consumeSamlRequest({ ...consume, requestId: '_authn-2' })).not.toBeNull();
   });
 });
