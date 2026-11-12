@@ -153,3 +153,43 @@ describe('isExternalPluginExecutionAllowed', () => {
     });
   });
 });
+
+describe('the platform external_plugins capability', () => {
+  const capabilityDoc = (value: boolean) => ({
+    'settings:platform:tenant-capabilities': JSON.stringify({
+      'tenant_capabilities.external_plugins': value,
+    }),
+  });
+
+  it('is denied while off, even for a tenant that turned plugin.enabled on', async () => {
+    const { kv } = kvWith({ ...doc('t', { 'plugin.enabled': true }), ...capabilityDoc(false) });
+    expect(await getExternalPluginExecutionState({ SETTINGS: kv }, 't')).toBe('denied');
+    expect(await isExternalPluginExecutionAllowed({ SETTINGS: kv }, 't')).toBe(false);
+  });
+
+  it('is unchanged while on (the tenant value decides)', async () => {
+    const { kv } = kvWith({ ...doc('t', { 'plugin.enabled': true }), ...capabilityDoc(true) });
+    expect(await getExternalPluginExecutionState({ SETTINGS: kv }, 't')).toBe('allowed');
+  });
+
+  it('stays closed when the switch cannot be read (this gate fails closed)', async () => {
+    const { kv, get } = kvWith(doc('t', { 'plugin.enabled': true }));
+    get.mockImplementation(async (key: string) => {
+      if (key === 'settings:platform:tenant-capabilities') throw new Error('kv down');
+      return JSON.stringify({ 'plugin.enabled': true });
+    });
+    expect(await getExternalPluginExecutionState({ SETTINGS: kv }, 't')).toBe('unreadable');
+    expect(await isExternalPluginExecutionAllowed({ SETTINGS: kv }, 't')).toBe(false);
+  });
+
+  it('follows a change when read past the cache', async () => {
+    const { kv, store } = kvWith({ ...doc('t2', { 'plugin.enabled': true }) });
+    const env = { SETTINGS: kv };
+    expect(await isExternalPluginExecutionAllowed(env, 't2')).toBe(true);
+    store.set(
+      'settings:platform:tenant-capabilities',
+      JSON.stringify({ 'tenant_capabilities.external_plugins': false })
+    );
+    expect(await isExternalPluginExecutionAllowed(env, 't2', { fresh: true })).toBe(false);
+  });
+});

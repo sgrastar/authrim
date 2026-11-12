@@ -1,4 +1,5 @@
 import type { Env } from '@authrim/ar-lib-core';
+import { createLogger, getTenantCapabilityState } from '@authrim/ar-lib-core';
 import {
   configureDynamicPluginWithControl,
   DynamicPluginResourcesPendingError,
@@ -119,6 +120,25 @@ export async function processDynamicPluginResourceFinalizations(
   }
   const listed = await kv.list({ prefix: PREFIX, limit: boundedLimit });
   const result = { inspected: 0, finalized: 0, pending: 0, failed: 0 };
+  // While the platform has external_plugins off (or the switch cannot be read), a job is left
+  // exactly as it is: not enabled, not cancelled, no attempt counted, its pending activation kept.
+  // Nobody can request an enable while it is off, so such a job comes from an enable requested
+  // earlier, and it completes after the capability is back on. The runner gate stays closed for
+  // tenants the whole time. The switch is read fresh (not from the 60 s cache) so that a stale
+  // "off" cannot hold a job back, nor turn another refusal into anything but the usual outcome.
+  const held =
+    listed.keys.length > 0 &&
+    (await getTenantCapabilityState(env, 'external_plugins', { fresh: true })) !== 'on';
+  if (held) {
+    result.inspected = listed.keys.length;
+    result.pending = listed.keys.length;
+    createLogger()
+      .module('PLUGIN-FINALIZATION')
+      .info('Dynamic plugin finalization held: external plugins are off for tenants', {
+        held_jobs: listed.keys.length,
+      });
+    return result;
+  }
   for (const item of listed.keys) {
     result.inspected += 1;
     const serialized = await kv.get(item.name);

@@ -349,7 +349,7 @@ export const CLOUDFLARE_ADMIN_READ_ROUTES: Readonly<Record<string, ManagementOpe
   },
   'admin.read.consent.inspect': {
     method: 'GET',
-    path: '/api/admin/consent-policies?page=1&limit=50',
+    path: '/api/admin/consent-statements?page=1&limit=50',
     response: projectAgentInspectionResponse,
   },
   'admin.read.sessions.inspect': {

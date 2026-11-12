@@ -467,7 +467,9 @@ async function validatePending(
   const code = refusal
     ? 'validation_failed'
     : answer.status === 403
-      ? 'forbidden'
+      ? answer.json.error === 'capability_disabled'
+        ? 'capability_disabled'
+        : 'forbidden'
       : answer.status === 409
         ? 'version_changed'
         : failureCode(answer);
@@ -667,7 +669,13 @@ async function applyCategory(
           })
         );
       } else if (answer.status === 403) {
-        results.set(entry.key, settle(entry, 'rejected', { reason: 'forbidden' }));
+        results.set(
+          entry.key,
+          settle(entry, 'rejected', {
+            reason:
+              answer.json.error === 'capability_disabled' ? 'capability_disabled' : 'forbidden',
+          })
+        );
       } else if (answer.status === 409) {
         results.set(entry.key, settle(entry, 'conflict', { reason: 'version_changed' }));
       } else {

@@ -39,7 +39,6 @@ export interface NewFlowTemplate {
 	primaryEntry: string;
 	primaryOutput: string;
 	mappingSet: string;
-	consentPolicy: string;
 	consentStatement: string;
 	userAction: string;
 	recordedState: string;
@@ -56,7 +55,6 @@ export interface LoginUiRuntimeContractPreview {
 		flow_id: string;
 		runtime_bindings: {
 			authentication_method_profile?: string;
-			consent_policy_ref?: string;
 			field_mapping_set_ref?: string;
 			consent_statement_ref?: string;
 		};
@@ -132,7 +130,6 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		primaryEntry: 'SAML AuthnRequest',
 		primaryOutput: 'SAML Response / Assertion',
 		mappingSet: 'GakuNin application standard Field Mapping Set',
-		consentPolicy: 'SAML attribute release policy',
 		consentStatement: 'saml_attribute_release_uapprove',
 		userAction: '送信属性を確認し、今回のみ許可または今後も許可を選択',
 		recordedState: 'tenant + user + SAML SP + statement/version + User Decision',
@@ -163,11 +160,8 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				label: 'Consent',
 				description: '送信属性と同意文をLoginUIで表示し、ユーザーの選択を受け取ります。',
 				icon: 'i-ph-handshake',
-				settings: ['Consent Policy', 'Consent Statement', 'User Decision'],
-				links: [
-					{ label: '同意ポリシー', href: '/admin/consent-policies' },
-					{ label: '同意文', href: '/admin/consent-statements' }
-				]
+				settings: ['Consent Statement', 'User Decision'],
+				links: [{ label: '同意文', href: '/admin/consent-statements' }]
 			},
 			{
 				id: 'output',
@@ -233,7 +227,6 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		primaryEntry: 'OIDC Authorization Request',
 		primaryOutput: 'Authorization Response / UserInfo grant',
 		mappingSet: 'OIDC standard claims',
-		consentPolicy: 'OIDC authorization consent policy',
 		consentStatement: 'oidc_authorization_consent',
 		userAction: 'scopeとclaimの提供内容を確認して許可',
 		recordedState: 'tenant + user + OIDC Client + statement/version + User Decision',
@@ -264,11 +257,8 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				label: 'Consent',
 				description: 'LoginUIでscope/claim提供内容を表示し、承認結果を受け取ります。',
 				icon: 'i-ph-handshake',
-				settings: ['Consent Policy', 'Consent Statement', 'User Decision'],
-				links: [
-					{ label: '同意ポリシー', href: '/admin/consent-policies' },
-					{ label: '同意文', href: '/admin/consent-statements' }
-				]
+				settings: ['Consent Statement', 'User Decision'],
+				links: [{ label: '同意文', href: '/admin/consent-statements' }]
 			},
 			{
 				id: 'output',
@@ -331,7 +321,6 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		primaryEntry: 'OIDC Authorization Request / Sign-up entry',
 		primaryOutput: 'Authorization Response / New Account Session',
 		mappingSet: 'OIDC registration profile fields',
-		consentPolicy: 'Registration consent policy',
 		consentStatement: 'terms_of_service / privacy_policy',
 		userAction: '登録方法を選び、プロフィールを入力し、利用規約とプライバシーポリシーに同意',
 		recordedState: 'tenant + user + OIDC Client + registration screen + consent statements',
@@ -368,10 +357,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				description: '利用規約、プライバシーポリシー、任意の登録同意をLoginUIで表示します。',
 				icon: 'i-ph-handshake',
 				settings: ['Terms of Service', 'Privacy Policy', 'Registration consent'],
-				links: [
-					{ label: '同意ポリシー', href: '/admin/consent-policies' },
-					{ label: '同意文', href: '/admin/consent-statements' }
-				]
+				links: [{ label: '同意文', href: '/admin/consent-statements' }]
 			},
 			{
 				id: 'account-create',
@@ -464,7 +450,6 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		primaryEntry: 'OIDC Authorization Request / Sign-up entry',
 		primaryOutput: 'Authorization Response / New Account Session',
 		mappingSet: 'OIDC registration profile fields',
-		consentPolicy: '',
 		consentStatement: '',
 		userAction: '登録方法を選び、プロフィール入力と登録同意なしでアカウントを作成',
 		recordedState: 'tenant + user + OIDC Client + credential binding + audit event',
@@ -553,7 +538,6 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		primaryEntry: 'SAML AuthnRequest',
 		primaryOutput: 'SAML Response / Assertion',
 		mappingSet: 'GakuNin application standard Field Mapping Set',
-		consentPolicy: 'SAML attribute release policy',
 		consentStatement: 'saml_attribute_release_uapprove',
 		userAction: '既存アカウントでログインし、SPへ送信する属性を確認して許可',
 		recordedState: 'tenant + user + SAML SP + statement/version + User Decision',
@@ -590,7 +574,6 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				icon: 'i-ph-handshake',
 				settings: ['SAML attribute release policy', 'masked attribute values', 'User Decision'],
 				links: [
-					{ label: '同意ポリシー', href: '/admin/consent-policies' },
 					{ label: '同意文', href: '/admin/consent-statements' },
 					{
 						label: 'Field Mapping Set',
@@ -672,7 +655,6 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		primaryEntry: 'OIDC Authorization Request / Login entry',
 		primaryOutput: 'Authorization Response / Existing Account Session',
 		mappingSet: 'OIDC login/session claims',
-		consentPolicy: 'Login and authorization consent policy',
 		consentStatement: 'oidc_authorization_consent',
 		userAction: '既存アカウントでログインし、必要に応じてscope/claim提供を確認',
 		recordedState: 'tenant + user + OIDC Client + session/authentication event + User Decision',
@@ -706,11 +688,8 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				label: 'Consent',
 				description: '必要な場合にscope/claim提供内容を表示し、ユーザーの承認を受け取ります。',
 				icon: 'i-ph-handshake',
-				settings: ['Consent Policy', 'scope / claims', 'User Decision'],
-				links: [
-					{ label: '同意ポリシー', href: '/admin/consent-policies' },
-					{ label: '同意文', href: '/admin/consent-statements' }
-				]
+				settings: ['Consent Statement', 'scope / claims', 'User Decision'],
+				links: [{ label: '同意文', href: '/admin/consent-statements' }]
 			},
 			{
 				id: 'output',
@@ -782,7 +761,6 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		primaryEntry: 'OIDC Authorization Request / Login entry',
 		primaryOutput: 'Authorization Response / Existing Account Session',
 		mappingSet: 'OIDC login/session claims',
-		consentPolicy: '',
 		consentStatement: '',
 		userAction: '既存アカウントでログイン',
 		recordedState: 'tenant + user + OIDC Client + session/authentication event + audit event',
@@ -878,7 +856,6 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		primaryEntry: 'SAML AuthnRequest / OIDC Authorization Request',
 		primaryOutput: 'SAML Response / OIDC Authorization Response',
 		mappingSet: '',
-		consentPolicy: '',
 		consentStatement: '',
 		userAction: '既存アカウントでログイン',
 		recordedState: 'tenant + user + protocol target + session/authentication event + audit event',
@@ -1067,7 +1044,6 @@ function createRuntimeBindings(
 		)
 			? { authentication_method_profile: 'default' }
 			: {}),
-		...(template.consentPolicy ? { consent_policy_ref: template.consentPolicy } : {}),
 		...(template.mappingSet ? { field_mapping_set_ref: template.mappingSet } : {}),
 		...(template.consentStatement ? { consent_statement_ref: template.consentStatement } : {})
 	};
@@ -1144,7 +1120,7 @@ function createAcademicSamlLoginPreviewEditorState(): LoginUiRuntimeContractPrev
 				position: { x: 360, y: 480 },
 				config: {
 					ui_kind: 'consent',
-					consent_policy_ref: 'saml_attribute_release_policy',
+					statements: [],
 					completion_block: {
 						id: 'saml-attribute-release-completion',
 						label: 'SAML Attribute Release Completion',
@@ -1260,7 +1236,7 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 				position: { x: 120, y: 480 },
 				config: {
 					ui_kind: 'consent',
-					consent_policy_ref: 'saml_attribute_release_policy',
+					statements: [],
 					completion_block: {
 						id: 'saml-attribute-release-completion',
 						label: 'SAML Attribute Release Completion',
@@ -1293,7 +1269,7 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 				position: { x: 600, y: 480 },
 				config: {
 					ui_kind: 'consent',
-					consent_policy_ref: 'oidc_authorization_consent_policy',
+					statements: [],
 					completion_block: {
 						id: 'oidc-authorization-completion',
 						label: 'OIDC Authorization Completion',
@@ -1852,12 +1828,7 @@ function runtimeConfigForNode(
 		config.screen_ref = 'profile_completion';
 	}
 	if (type === 'consent') {
-		config.consent_policy_ref =
-			template.id === 'academic-saml-login' || template.id === 'saml-attribute-release'
-				? 'saml_attribute_release_policy'
-				: template.id === 'default-registration'
-					? 'registration_consent_policy'
-					: 'oidc_authorization_consent_policy';
+		config.statements = [];
 	}
 	if (type === 'condition' && node.id === 'protocol-condition') {
 		config.conditions = {

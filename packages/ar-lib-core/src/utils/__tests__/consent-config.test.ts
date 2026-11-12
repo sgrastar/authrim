@@ -6,7 +6,6 @@ import {
   getConsentDefaultExpirationDays,
   getConsentExpirationEnabled,
   getConsentGranularScopes,
-  getConsentVersioningEnabled,
 } from '../consent-config';
 
 function consentEnv(values: Record<string, string>): Partial<Env> {
@@ -44,16 +43,6 @@ describe('consent options from env', () => {
   ])('validates CONSENT_DEFAULT_EXPIRATION_DAYS=%s', async (value, expected) => {
     await expect(
       getConsentDefaultExpirationDays(consentEnv({ CONSENT_DEFAULT_EXPIRATION_DAYS: value }))
-    ).resolves.toBe(expected);
-  });
-
-  it.each([
-    ['true', true],
-    ['1', true],
-    ['false', false],
-  ])('resolves CONSENT_VERSIONING_ENABLED=%s', async (value, expected) => {
-    await expect(
-      getConsentVersioningEnabled(consentEnv({ CONSENT_VERSIONING_ENABLED: value }))
     ).resolves.toBe(expected);
   });
 

@@ -29,7 +29,6 @@ export interface LocalizedFlowTemplateText {
 	primaryEntry: string;
 	primaryOutput: string;
 	mappingSet: string;
-	consentPolicy: string;
 	consentStatement: string;
 	userAction: string;
 	recordedState: string;
@@ -64,7 +63,6 @@ export function getFlowTemplateText(
 				primaryEntry: LL.admin_flows_template_saml_attribute_release_primary_entry(),
 				primaryOutput: LL.admin_flows_template_saml_attribute_release_primary_output(),
 				mappingSet: LL.admin_flows_template_saml_attribute_release_mapping_set(),
-				consentPolicy: LL.admin_flows_template_saml_attribute_release_consent_policy(),
 				consentStatement: LL.admin_flows_template_saml_attribute_release_consent_statement(),
 				userAction: LL.admin_flows_template_saml_attribute_release_user_action(),
 				recordedState: LL.admin_flows_template_saml_attribute_release_recorded_state()
@@ -77,7 +75,6 @@ export function getFlowTemplateText(
 				primaryEntry: LL.admin_flows_template_oidc_authorization_consent_primary_entry(),
 				primaryOutput: LL.admin_flows_template_oidc_authorization_consent_primary_output(),
 				mappingSet: LL.admin_flows_template_oidc_authorization_consent_mapping_set(),
-				consentPolicy: LL.admin_flows_template_oidc_authorization_consent_consent_policy(),
 				consentStatement: LL.admin_flows_template_oidc_authorization_consent_consent_statement(),
 				userAction: LL.admin_flows_template_oidc_authorization_consent_user_action(),
 				recordedState: LL.admin_flows_template_oidc_authorization_consent_recorded_state()
@@ -90,7 +87,6 @@ export function getFlowTemplateText(
 				primaryEntry: LL.admin_flows_template_oidc_registration_primary_entry(),
 				primaryOutput: LL.admin_flows_template_oidc_registration_primary_output(),
 				mappingSet: LL.admin_flows_template_oidc_registration_mapping_set(),
-				consentPolicy: LL.admin_flows_template_oidc_registration_consent_policy(),
 				consentStatement: LL.admin_flows_template_oidc_registration_consent_statement(),
 				userAction: LL.admin_flows_template_oidc_registration_user_action(),
 				recordedState: LL.admin_flows_template_oidc_registration_recorded_state()
@@ -103,7 +99,6 @@ export function getFlowTemplateText(
 				primaryEntry: LL.admin_flows_template_oidc_registration_no_consent_primary_entry(),
 				primaryOutput: LL.admin_flows_template_oidc_registration_no_consent_primary_output(),
 				mappingSet: LL.admin_flows_template_oidc_registration_no_consent_mapping_set(),
-				consentPolicy: flow.consentPolicy,
 				consentStatement: flow.consentStatement,
 				userAction: LL.admin_flows_template_oidc_registration_no_consent_user_action(),
 				recordedState: LL.admin_flows_template_oidc_registration_no_consent_recorded_state()
@@ -116,7 +111,6 @@ export function getFlowTemplateText(
 				primaryEntry: LL.admin_flows_template_academic_saml_login_primary_entry(),
 				primaryOutput: LL.admin_flows_template_academic_saml_login_primary_output(),
 				mappingSet: LL.admin_flows_template_academic_saml_login_mapping_set(),
-				consentPolicy: LL.admin_flows_template_academic_saml_login_consent_policy(),
 				consentStatement: LL.admin_flows_template_academic_saml_login_consent_statement(),
 				userAction: LL.admin_flows_template_academic_saml_login_user_action(),
 				recordedState: LL.admin_flows_template_academic_saml_login_recorded_state()
@@ -129,7 +123,6 @@ export function getFlowTemplateText(
 				primaryEntry: LL.admin_flows_template_oidc_login_primary_entry(),
 				primaryOutput: LL.admin_flows_template_oidc_login_primary_output(),
 				mappingSet: LL.admin_flows_template_oidc_login_mapping_set(),
-				consentPolicy: LL.admin_flows_template_oidc_login_consent_policy(),
 				consentStatement: LL.admin_flows_template_oidc_login_consent_statement(),
 				userAction: LL.admin_flows_template_oidc_login_user_action(),
 				recordedState: LL.admin_flows_template_oidc_login_recorded_state()
@@ -142,7 +135,6 @@ export function getFlowTemplateText(
 				primaryEntry: LL.admin_flows_template_oidc_login_no_consent_primary_entry(),
 				primaryOutput: LL.admin_flows_template_oidc_login_no_consent_primary_output(),
 				mappingSet: LL.admin_flows_template_oidc_login_no_consent_mapping_set(),
-				consentPolicy: flow.consentPolicy,
 				consentStatement: flow.consentStatement,
 				userAction: LL.admin_flows_template_oidc_login_no_consent_user_action(),
 				recordedState: LL.admin_flows_template_oidc_login_no_consent_recorded_state()
@@ -155,7 +147,6 @@ export function getFlowTemplateText(
 				primaryEntry: LL.admin_flows_template_saml_sp_oidc_rp_primary_entry(),
 				primaryOutput: LL.admin_flows_template_saml_sp_oidc_rp_primary_output(),
 				mappingSet: flow.mappingSet,
-				consentPolicy: flow.consentPolicy,
 				consentStatement: flow.consentStatement,
 				userAction: LL.admin_flows_template_saml_sp_oidc_rp_user_action(),
 				recordedState: LL.admin_flows_template_saml_sp_oidc_rp_recorded_state()
@@ -327,20 +318,6 @@ export function getFlowScreenOptions(LL: TranslationFunctions): FlowEditorOption
 	];
 }
 
-export function getFlowConsentPolicyOptions(LL: TranslationFunctions): FlowEditorOption[] {
-	return [
-		{ value: 'registration_consent_policy', label: LL.admin_flows_consent_policy_registration() },
-		{
-			value: 'oidc_authorization_consent_policy',
-			label: LL.admin_flows_consent_policy_oidc_authorization()
-		},
-		{
-			value: 'saml_attribute_release_policy',
-			label: LL.admin_flows_consent_policy_saml_attribute_release()
-		}
-	];
-}
-
 function getNodeText(
 	LL: TranslationFunctions,
 	flowId: NewFlowTemplateId,
@@ -489,8 +466,6 @@ function translateFlowSetting(LL: TranslationFunctions, setting: string): string
 			return LL.admin_flows_setting_release_fields();
 		case '属性名変換':
 			return LL.admin_flows_setting_attribute_name_mapping();
-		case 'Consent Policy':
-			return LL.admin_flows_setting_consent_policy();
 		case 'Consent Statement':
 			return LL.admin_flows_setting_consent_statement();
 		case 'User Decision':
@@ -574,8 +549,6 @@ function translateFlowLink(LL: TranslationFunctions, link: FlowLink): FlowLink {
 			return { ...link, label: LL.admin_flows_link_oidc_client_settings() };
 		case 'Field Mapping Set':
 			return { ...link, label: LL.admin_flows_link_field_mapping_set_title() };
-		case '同意ポリシー':
-			return { ...link, label: LL.admin_flows_consent_policies() };
 		case '同意文':
 			return { ...link, label: LL.admin_flows_link_consent_statement_title() };
 		case '認証方法':

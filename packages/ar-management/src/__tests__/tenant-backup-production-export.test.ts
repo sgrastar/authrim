@@ -184,7 +184,7 @@ it('excludes setup-owned OAuth clients and their child rows from portable backup
   await expect(
     isEnvironmentLocalSystemClientRow(
       database as never,
-      'core.client_consent_overrides',
+      'core.client_trust_policies',
       row({ tenant_id: ['text', 'tenant-a'], client_id: ['text', 'customer-client'] })
     )
   ).resolves.toBe(false);

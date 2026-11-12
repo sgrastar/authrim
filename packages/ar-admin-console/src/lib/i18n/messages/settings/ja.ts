@@ -293,6 +293,23 @@ export const jaSettings = {
 	'set.k.bulk_apply.max_keys_per_request.desc':
 		'一括適用の 1 回のリクエストに含められる設定（設定または解除するキー。カテゴリをまたいだ合計）の上限です。1 から 100 の範囲に収めます。プラットフォーム設定で、既定は 20 です。',
 
+	'set.k.tenant_capabilities.webhooks': 'テナントに Webhook を許可する',
+	'set.k.tenant_capabilities.webhooks.desc':
+		'オフにすると、テナントは Admin API で Webhook を管理できなくなり、テナントの Webhook は配信されません。オフの間に発生したイベントは破棄され、後から配信されません。送信待ちのアカウント Webhook イベントは、処理されるたびに期限が来たものから破棄され、監査ログ（webhook.outbox.dropped）に記録されます。オンに戻した時点でまだ送信待ちに残っているイベントは配信されます。プラットフォーム管理者は Admin API では対象外です。変更は最大で約 1 分で反映されます。既定はオンです。',
+
+	'set.k.tenant_capabilities.dynamic_client_registration':
+		'テナントに動的クライアント登録を許可する',
+	'set.k.tenant_capabilities.dynamic_client_registration.desc':
+		'オフにすると、公開のクライアント登録（POST /register）、クライアント構成エンドポイント、初期アクセストークンが拒否され、ディスカバリーは登録エンドポイントを公開しなくなります。テナントは動的クライアント登録の設定も変更できなくなります。既定はオンです。',
+
+	'set.k.tenant_capabilities.external_plugins': 'テナントに外部プラグインを許可する',
+	'set.k.tenant_capabilities.external_plugins.desc':
+		'オフにすると、外部プラグインはテナントでは一切実行されず、外部プラグインを有効にすることは誰にもできません（プラットフォーム管理者も同じです）。テナントは認証情報やプラグイン設定も変更できません。プラットフォーム管理者は認証情報や設定を管理できますが、テナントでは何も実行されません。組み込みプラグイン（メール通知、CAPTCHA、TOTP）は影響を受けません。実行の停止は定期処理で順に反映されるため、テナント数によっては数分以上かかります。テナントのバックアップ復元では、外部プラグインの導入内容は復元されません。既定はオンです。',
+
+	'set.k.tenant_capabilities.bulk_jobs': 'テナントに一括ジョブを許可する',
+	'set.k.tenant_capabilities.bulk_jobs.desc':
+		'オフにすると、テナントもプラットフォーム管理者も一括ジョブ（ユーザーのインポート、一括更新、レポート生成、組織メンバーの一括操作）を作成できません。待機中のジョブは開始されずにブロック済みとして終了し、オンに戻した後で作り直す必要があります。既存のジョブと結果は引き続き読めます。既定はオンです。',
+
 	'set.k.identity_mapping.reference_scan_tenant_limit': 'マッピングセット利用検索：テナント数',
 	'set.k.identity_mapping.reference_scan_tenant_limit.desc':
 		'プラットフォームが所有するマッピングセットの利用箇所を探すときに、アプリを読み取るテナントの最大数です。テナント 1 件ごとにデータベースを 1 回読みます。これより多いテナントがあるとき、残りは「未確認」として報告され、そのセットの削除や無効化は拒否されます。1〜1000 の範囲で指定します。プラットフォーム設定で、既定は 200 です。',

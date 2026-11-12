@@ -13,6 +13,8 @@ The current job system is intentionally small. It uses the `admin_jobs` table as
 | `reports/generate`           | `POST /api/admin/jobs/reports/generate`               | scheduled | `admin_job_result`   |
 | `organizations/bulk-members` | `POST /api/admin/jobs/organizations/:id/bulk-members` | scheduled | `admin_job_result`   |
 
+The platform can turn the `bulk_jobs` capability off for tenants (see "Tenant Capabilities" in `ENVIRONMENT_VARIABLES.md`): creating the four job types above is then refused for everyone (403 `capability_disabled`; a platform administrator too, because the job would not run) and queued ones end as `partial_failure` (`tenant_capability_disabled:bulk_jobs`) instead of starting. Reading jobs, results and artifacts stays allowed, and system job types (tenant lifecycle and deletion, tenant database export and restore checks, downstream logout, Support Ops, reindexing) are never held.
+
 The Admin UI reads `GET /api/admin/jobs/types` to discover enabled job types and supported result delivery modes.
 
 ## Tenant isolation

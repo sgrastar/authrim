@@ -78,9 +78,9 @@ import {
   getLogger,
   createLogger,
   // Consent Management
-  resolveConsentRequirements,
+  resolveStatementRequirements,
+  ssoConsentStatementsForTarget,
   checkUserConsentSatisfaction,
-  getUserClaimsForRules,
   resolveClientTrustPolicy,
   resolveSignInConfirmationPolicy,
   // Settings Manager
@@ -172,15 +172,6 @@ function splitScopes(scope: string | undefined | null): string[] {
     .split(/\s+/)
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
-}
-
-function collectRequestedClaimNames(
-  request: ReturnType<typeof parseClaimsRequest>['request']
-): string[] {
-  if (!request) return [];
-  return Array.from(
-    new Set([...Object.keys(request.userinfo ?? {}), ...Object.keys(request.id_token ?? {})])
-  );
 }
 
 /**
@@ -4397,62 +4388,34 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // ==========================================================================
-  // Consent Management Check (SAP CDC-like consent items)
-  // Only when consent_management_enabled and not already confirmed
+  // Consent statements the app's sign-in Flow requires (single sign-on)
+  // A person answered without going through the Flow must have agreed to the required statements
+  // that every way through it asks for (ar-lib-core flow-sso-consent.ts); otherwise they are asked
+  // for on the consent screen first. Not after the consent screen was answered.
   // ==========================================================================
   if (!consentConfirmed) {
     try {
       const tenantId = getTenantIdFromContext(c);
 
-      // Check KV first, then env, then code default (false)
-      let consentMgmtEnabled = false;
-      if (c.env.KV) {
-        try {
-          const settingsKv = c.env.KV;
-          const kvVal = await timeAuthRequestDiagnosticOperation(
-            c,
-            'auth_authorize_consent_management_config',
-            () => settingsKv.get('consent:consent_management_enabled')
-          );
-          if (kvVal !== null) {
-            consentMgmtEnabled = kvVal === 'true' || kvVal === '1';
-          } else {
-            const envVal = (c.env as unknown as Record<string, string>).ENABLE_CONSENT_MANAGEMENT;
-            consentMgmtEnabled = envVal === 'true' || envVal === '1';
-          }
-        } catch {
-          const envVal = (c.env as unknown as Record<string, string>).ENABLE_CONSENT_MANAGEMENT;
-          consentMgmtEnabled = envVal === 'true' || envVal === '1';
-        }
-      } else {
-        const envVal = (c.env as unknown as Record<string, string>).ENABLE_CONSENT_MANAGEMENT;
-        consentMgmtEnabled = envVal === 'true' || envVal === '1';
-      }
-
-      // Definitions are the tenant's (metadata); the user's profile and consent records live with
-      // the user's account, resolved above.
+      // Definitions are the tenant's (metadata); the user's consent records live with the user's
+      // account, resolved above.
       const authCtx = createAuthContextFromHono(c, tenantId);
       const accountAuthCtx = createAccountAuthContextFromHono(c, tenantId);
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const userClaims = await timeAuthRequestDiagnosticOperation(
-        c,
-        'auth_authorize_consent_user_claims',
-        () =>
-          getUserClaimsForRules(accountAuthCtx.coreAdapter, tenantId, sub, piiCtx.defaultPiiAdapter)
-      );
       const requirements = await timeAuthRequestDiagnosticOperation(
         c,
         'auth_authorize_consent_requirements',
-        () =>
-          resolveConsentRequirements(authCtx.coreAdapter, tenantId, validClientId, userClaims, {
-            target_type: 'oidc_client',
-            target_id: validClientId,
-            requested_scopes: splitScopes(scope),
-            requested_claims: collectRequestedClaimNames(parsedClaimsRequest.request),
-          })
+        async () =>
+          resolveStatementRequirements(
+            authCtx.coreAdapter,
+            tenantId,
+            await ssoConsentStatementsForTarget(authCtx.coreAdapter, tenantId, {
+              type: 'oidc_client',
+              id: validClientId,
+            })
+          )
       );
 
-      if (consentMgmtEnabled || requirements.length > 0) {
+      {
         if (requirements.length > 0) {
           const { satisfied, unsatisfied } = await timeAuthRequestDiagnosticOperation(
             c,

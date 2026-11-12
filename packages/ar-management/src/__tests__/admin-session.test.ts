@@ -84,7 +84,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 import { adminLogoutHandler, adminSessionStatusHandler } from '../admin-session';
 
-function createMockContext(options: { headers?: Record<string, string>; env?: Partial<Env> }) {
+function createMockContext(options: {
+  headers?: Record<string, string>;
+  env?: Partial<Env>;
+  adminAuth?: Record<string, unknown>;
+}) {
   const headers = Object.fromEntries(
     Object.entries(options.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
   );
@@ -98,6 +102,7 @@ function createMockContext(options: { headers?: Record<string, string>; env?: Pa
       DB_ADMIN: {} as D1Database,
       ...options.env,
     } as Env,
+    get: (key: string) => (key === 'adminAuth' ? options.adminAuth : undefined),
     json: vi.fn(
       (body: unknown, status = 200) =>
         new Response(JSON.stringify(body), {
@@ -211,6 +216,108 @@ describe('Admin Session Handlers', () => {
       permissions: ['*'],
       admin_scope: 'platform',
       is_platform_admin: true,
+    });
+  });
+
+  describe('disabled_capabilities', () => {
+    const signedInContext = (options: Parameters<typeof createMockContext>[0]) =>
+      createMockContext(options) as unknown as Parameters<typeof adminSessionStatusHandler>[0];
+
+    const capabilityKv = (document: string | null, fail = false) =>
+      ({
+        get: vi.fn(async (key: string) => {
+          if (fail) throw new Error('kv down');
+          return key === 'settings:platform:tenant-capabilities' ? document : null;
+        }),
+        put: vi.fn(),
+        delete: vi.fn(),
+        list: vi.fn(),
+        getWithMetadata: vi.fn(),
+      }) as unknown as KVNamespace;
+
+    const signIn = (role: string, scope: 'tenant' | 'global') => {
+      mockGetCookie.mockReturnValue('admin-session-123');
+      mockAdminSessionRepo.getSession.mockResolvedValue({
+        id: 'admin-session-123',
+        tenant_id: 'tenant-a',
+        admin_user_id: 'admin-user-1',
+        created_at: 100,
+        expires_at: 200,
+      });
+      mockAdminAdapter.query.mockResolvedValue([
+        {
+          id: `role-${role}`,
+          name: role,
+          permissions_json: '["*"]',
+          hierarchy_level: 100,
+          inherits_from: null,
+          scope_type: scope,
+          scope_id: null,
+        },
+      ]);
+      mockAdminAdapter.queryOne.mockResolvedValue({
+        email: 'admin@example.com',
+        name: 'Admin User',
+        last_login_at: 1,
+        is_active: 1,
+        status: 'active',
+      });
+    };
+    const off = JSON.stringify({
+      'tenant_capabilities.webhooks': false,
+      'tenant_capabilities.bulk_jobs': false,
+    });
+    const tenantAdminAuth = { tenantScope: ['tenant-a'], roles: ['ar_tenant_admin'] };
+    const platformAdminAuth = {
+      tenantScope: ['*'],
+      roles: ['ar_super_admin'],
+      globalRoles: ['ar_super_admin'],
+    };
+
+    it('lists what the platform turned off for a tenant admin', async () => {
+      signIn('ar_tenant_admin', 'tenant');
+      const response = await adminSessionStatusHandler(
+        signedInContext({
+          env: { SETTINGS: capabilityKv(off) },
+          adminAuth: tenantAdminAuth,
+        })
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        disabled_capabilities: ['webhooks', 'bulk_jobs'],
+      });
+    });
+
+    it('is empty when nothing is turned off', async () => {
+      signIn('ar_tenant_admin', 'tenant');
+      const response = await adminSessionStatusHandler(
+        signedInContext({
+          env: { SETTINGS: capabilityKv(null) },
+          adminAuth: tenantAdminAuth,
+        })
+      );
+      await expect(response.json()).resolves.toMatchObject({ disabled_capabilities: [] });
+    });
+
+    it('is empty for a platform admin, who is exempt, without reading the switches', async () => {
+      signIn('ar_super_admin', 'global');
+      const settings = capabilityKv(off);
+      const response = await adminSessionStatusHandler(
+        signedInContext({ env: { SETTINGS: settings }, adminAuth: platformAdminAuth })
+      );
+      await expect(response.json()).resolves.toMatchObject({ disabled_capabilities: [] });
+      expect(settings.get).not.toHaveBeenCalled();
+    });
+
+    it('is empty (and the session still answers) when the switches cannot be read', async () => {
+      signIn('ar_tenant_admin', 'tenant');
+      const response = await adminSessionStatusHandler(
+        signedInContext({
+          env: { SETTINGS: capabilityKv(null, true) },
+          adminAuth: tenantAdminAuth,
+        })
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ disabled_capabilities: [] });
     });
   });
 

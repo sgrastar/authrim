@@ -42,9 +42,37 @@ import { executeBeforeHooks } from './event-hook-registry';
 import { sendWebhook } from './webhook-sender';
 import { emitRuntimeLogRecords } from './logging-runtime-emitter';
 import { createLogger } from '../utils/logger';
+import { isTenantCapabilityEnabledAtRuntime } from './tenant-capabilities';
 import { writeLegacyAuditLog } from '../utils/audit-log';
 
 const log = createLogger().module('EVENT-DISPATCHER');
+
+/**
+ * Deliveries skipped because the platform turned webhooks off. No audit record per event: this is
+ * on the hot paths (sign-in, token issuance). The codebase has no metrics counter for it, so the
+ * skip is made observable by a log line at most once a minute per isolate, with the count since the
+ * previous line. (Dropped account webhook outbox rows are audited in ar-management.)
+ */
+const SKIPPED_LOG_INTERVAL_MS = 60_000;
+let skippedWebhookDeliveries = 0;
+let skippedWebhookLogAt = 0;
+
+function noteWebhookDeliverySkipped(now: number = Date.now()): void {
+  skippedWebhookDeliveries += 1;
+  if (now - skippedWebhookLogAt < SKIPPED_LOG_INTERVAL_MS) return;
+  log.warn('Webhook deliveries skipped: webhooks are turned off for tenants', {
+    capability: 'webhooks',
+    skipped_since_last_log: skippedWebhookDeliveries,
+  });
+  skippedWebhookDeliveries = 0;
+  skippedWebhookLogAt = now;
+}
+
+/** Test seam: forget the rate limit and the count. */
+export function resetWebhookSkipLogForTests(): void {
+  skippedWebhookDeliveries = 0;
+  skippedWebhookLogAt = 0;
+}
 
 // =============================================================================
 // Types
@@ -533,6 +561,12 @@ export class EventDispatcherImpl implements IEventDispatcher {
       /^account\.(?:guest|registered)\.(?:created|updated|deleted)$/.test(event.type) ||
       /^account\.registration\.(?:promoted|demoted)$/.test(event.type)
     ) {
+      return { sent: 0, failed: 0, skipped: 0 };
+    }
+    // The platform can turn webhooks off for tenants: nothing is delivered while it is off (an
+    // unreadable switch keeps delivering, as before).
+    if (!(await isTenantCapabilityEnabledAtRuntime(this.env, 'webhooks'))) {
+      noteWebhookDeliverySkipped();
       return { sent: 0, failed: 0, skipped: 0 };
     }
     // Find matching webhooks (tenant + optional client)

@@ -36,7 +36,9 @@ import {
 } from './admin-shared';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 import {
+  BULK_JOBS_CAPABILITY_BLOCKED_ERROR,
   isAdminJobAllowedForTenantLifecycle,
+  isBulkJobBlocked,
   readAdminJobTenantLifecycleState,
 } from './admin-job-executor';
 import {
@@ -1779,6 +1781,21 @@ export async function processPendingUserImportJobs(
             SET status = 'partial_failure', error_message = ?, completed_at = ?, updated_at = ?
           WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
         [`tenant_lifecycle_blocked:${lifecycleState}`, startedTs, startedTs, job.id, job.tenant_id]
+      );
+      if ((blocked.rowsAffected ?? 0) > 0) {
+        await deleteTerminalUserImportInput(inputBucket, job, logger);
+      }
+      continue;
+    }
+
+    // The platform turned bulk jobs off for tenants: the import ends as blocked, as a lifecycle
+    // block ends it, and is not retried.
+    if (await isBulkJobBlocked(env, 'users/import')) {
+      const blocked = await coreAdapter.execute(
+        `UPDATE admin_jobs
+            SET status = 'partial_failure', error_message = ?, completed_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
+        [BULK_JOBS_CAPABILITY_BLOCKED_ERROR, startedTs, startedTs, job.id, job.tenant_id]
       );
       if ((blocked.rowsAffected ?? 0) > 0) {
         await deleteTerminalUserImportInput(inputBucket, job, logger);

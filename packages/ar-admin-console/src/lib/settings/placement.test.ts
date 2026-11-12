@@ -335,6 +335,38 @@ describe('where settings live', () => {
 		});
 	});
 
+	it('places the tenant capability switches once, as applied platform-only booleans on the capabilities page', () => {
+		for (const capability of [
+			'webhooks',
+			'dynamic_client_registration',
+			'external_plugins',
+			'bulk_jobs'
+		] as const) {
+			const key = `tenant_capabilities.${capability}`;
+			const meta = ALL_CATEGORY_META['tenant-capabilities'].settings[key];
+			expect(categoryOf(key)).toBe('tenant-capabilities');
+			expect(meta.type).toBe('boolean');
+			// Every capability is on unless the platform turns it off.
+			expect(meta.default).toBe(true);
+			expect(meta.status).toBeUndefined();
+			expect(NOT_APPLIED.has(key)).toBe(false);
+			expect(meta.scopes).toEqual(['platform']);
+			expect(meta.envKey).toBe(`TENANT_CAPABILITIES_${capability.toUpperCase()}`);
+			expect(placed).not.toContain(key);
+			expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
+				{ page: 'plat-tenants/capabilities', depth: 'primary' }
+			]);
+			// Named in every language the console has.
+			expect(hasMessage(settingText(key).label)).toBe(true);
+			expect(settingText(key).description).toBeDefined();
+		}
+		expect(CATEGORY_SCOPE_CONFIG['tenant-capabilities'].allowedScopes).toEqual(['platform']);
+		expect(DRAFT_PAGES.find((page) => page.id === 'plat-tenants/capabilities')).toMatchObject({
+			scope: 'platform',
+			proposed: true
+		});
+	});
+
 	it('places the institution scopes and names once, on the SAML page, as applied tenant-only settings', () => {
 		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'enterprise');
 		for (const key of ['institution.scopes', 'institution.display_names']) {

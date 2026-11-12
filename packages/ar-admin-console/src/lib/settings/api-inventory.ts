@@ -486,15 +486,11 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		paths: [`${A}/launchers`]
 	},
 	{
-		id: 'consent-policies',
-		name: 'Consent policies and requirements',
+		id: 'sign-in-confirmation',
+		name: 'Sign-in confirmation',
 		kind: 'records',
 		page: 'customization/consent',
-		paths: [
-			`${A}/consent-policies`,
-			`${A}/consent-requirements`,
-			`${A}/sign-in-confirmation-policies`
-		]
+		paths: [`${A}/sign-in-confirmation-policies`]
 	},
 	{
 		id: 'consent-statements',

@@ -71,7 +71,7 @@
 						position: createPosition(4),
 						config: {
 							ui_kind: 'consent',
-							consent_policy_ref: 'registration_consent_policy'
+							statements: []
 						}
 					},
 					{
@@ -265,7 +265,7 @@
 						position: { x: 360, y: 468 },
 						config: {
 							ui_kind: 'consent',
-							consent_policy_ref: 'saml_attribute_release_policy',
+							statements: [],
 							completion_block: {
 								id: 'saml-attribute-release-completion',
 								label: $LL.admin_flows_completion_block_saml_attribute_release(),
@@ -380,7 +380,7 @@
 						position: { x: 108, y: 468 },
 						config: {
 							ui_kind: 'consent',
-							consent_policy_ref: 'saml_attribute_release_policy',
+							statements: [],
 							completion_block: {
 								id: 'saml-attribute_release-completion',
 								label: $LL.admin_flows_completion_block_saml_attribute_release(),
@@ -413,7 +413,7 @@
 						position: { x: 594, y: 468 },
 						config: {
 							ui_kind: 'consent',
-							consent_policy_ref: 'oidc_authorization_consent_policy',
+							statements: [],
 							completion_block: {
 								id: 'oidc-authorization-completion',
 								label: $LL.admin_flows_completion_block_oidc_authorization(),
@@ -653,14 +653,11 @@
 				{
 					id: 'consent',
 					type: 'consent',
-					title: flow.consentPolicy,
+					title: $LL.admin_flows_node_consent(),
 					position: createPosition(1),
 					config: {
 						ui_kind: 'consent',
-						consent_policy_ref:
-							flow.id === 'saml-attribute-release'
-								? 'saml_attribute_release_policy'
-								: 'oidc_authorization_consent_policy'
+						statements: []
 					}
 				},
 				{

@@ -594,30 +594,11 @@ export interface ExtendedConsentScreenData extends ConsentScreenData {
   /** Whether granular scope selection is enabled */
   granular_scopes_enabled?: boolean;
 
-  /** Current policy versions for this tenant */
-  current_policy_versions?: CurrentPolicyVersions;
-
-  /** Whether re-consent is required due to policy update */
-  requires_reconsent?: boolean;
-
-  /** Reason for requiring re-consent */
-  reconsent_reason?: 'policy_updated' | 'scopes_changed' | 'expired';
-
   /** Previous consent info (if updating existing consent) */
   previous_consent?: {
     scopes: string[];
     grantedAt: number;
     policyVersions?: ConsentVersionInfo;
-  };
-
-  /** Versioning information (structured format for UI consumption) */
-  versioning?: {
-    requiresReconsent: boolean;
-    changedPolicies: string[];
-    currentVersions: {
-      privacyPolicy?: { version: string; policyUri?: string };
-      termsOfService?: { version: string; policyUri?: string };
-    };
   };
 
   // Consent Management (SAP CDC-like)
@@ -633,12 +614,6 @@ export interface ExtendedConsentScreenData extends ConsentScreenData {
  * Extended consent submission with policy acknowledgement
  */
 export interface ExtendedConsentSubmission extends ConsentSubmission {
-  /** Acknowledged policy versions */
-  acknowledged_policy_versions?: {
-    privacy_policy?: string;
-    terms_of_service?: string;
-  };
-
   /** Consent item decisions (statement_id -> 'granted' | 'denied') */
   consent_item_decisions?: Record<string, 'granted' | 'denied'>;
 }

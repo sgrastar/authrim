@@ -685,6 +685,7 @@ const CATEGORY_VALIDATION_KIND: Readonly<Record<string, ValidationKind>> = {
   plugin: 'value',
   'diagnostic-logging': 'value',
   'bulk-apply': 'value',
+  'tenant-capabilities': 'value',
   institution: 'value',
   assurance: 'value',
   oauth: 'value',
@@ -715,6 +716,8 @@ export function validateCategoryPatch(
       return validateIdentityMappingPatch(body, scope === 'platform' ? 'platform' : 'tenant');
     case 'bulk-apply':
       return validateKnownSettingKeys('bulk-apply', 'bulk apply', body);
+    case 'tenant-capabilities':
+      return validateKnownSettingKeys('tenant-capabilities', 'tenant capabilities', body);
     case 'institution':
       return validateInstitutionPatch(body);
     case 'tenant':

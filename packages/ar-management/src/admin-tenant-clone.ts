@@ -537,8 +537,6 @@ async function estimateSelectedDatabaseQueries(
        (SELECT MAX(updated_at) FROM web_origin_registry WHERE tenant_id = ?) AS web_origins_updated,
        (SELECT COUNT(*) FROM client_trust_policies WHERE tenant_id = ?) AS trust_policies,
        (SELECT MAX(updated_at) FROM client_trust_policies WHERE tenant_id = ?) AS trust_updated,
-       (SELECT COUNT(*) FROM client_consent_overrides WHERE tenant_id = ?) AS consent_overrides,
-       (SELECT MAX(updated_at) FROM client_consent_overrides WHERE tenant_id = ?) AS consent_updated,
        (SELECT COUNT(*) FROM flow_assignments
          WHERE tenant_id = ? AND target_type = 'oidc_client') AS flow_assignments,
        (SELECT MAX(updated_at) FROM flow_assignments
@@ -549,7 +547,7 @@ async function estimateSelectedDatabaseQueries(
        (SELECT MAX(updated_at) FROM role_assignment_rules WHERE tenant_id = ?) AS rules_updated,
        (SELECT COUNT(*) FROM webhook_configs WHERE tenant_id = ?) AS webhooks,
        (SELECT MAX(updated_at) FROM webhook_configs WHERE tenant_id = ?) AS webhooks_updated`,
-    Array.from({ length: 16 }, () => tenantId)
+    Array.from({ length: 14 }, () => tenantId)
   );
   const count = (field: string) => Number(counts?.[field] ?? 0);
   let total = 0;
@@ -563,8 +561,6 @@ async function estimateSelectedDatabaseQueries(
       web_origins_updated: counts?.web_origins_updated ?? null,
       trust_policies: count('trust_policies'),
       trust_updated: counts?.trust_updated ?? null,
-      consent_overrides: count('consent_overrides'),
-      consent_updated: counts?.consent_updated ?? null,
       flow_assignments: count('flow_assignments'),
       flows_updated: counts?.flows_updated ?? null,
     });
@@ -1591,7 +1587,6 @@ async function cleanupInternalCloneDatabaseRows(
     'user_roles',
     'roles',
     'webhook_configs',
-    'client_consent_overrides',
     'client_trust_policies',
     'web_origin_registry',
     'oauth_clients',
@@ -1828,7 +1823,6 @@ async function executeTenantCloneHandler(
       client_contracts: 0,
       client_web_origins: 0,
       client_trust_policies: 0,
-      client_consent_overrides_skipped: 0,
       client_flow_assignments_skipped: 0,
       roles: 0,
       role_assignment_rules: 0,
@@ -1963,12 +1957,10 @@ async function executeTenantCloneHandler(
     if (options.clients) {
       const dependencyCounts = await sourceAdapter.queryOne<Record<string, unknown>>(
         `SELECT
-           (SELECT COUNT(*) FROM client_consent_overrides WHERE tenant_id = ?) AS consent_overrides,
            (SELECT COUNT(*) FROM flow_assignments
              WHERE tenant_id = ? AND target_type = 'oidc_client') AS flow_assignments`,
-        [sourceTenantId, sourceTenantId]
+        [sourceTenantId]
       );
-      summary.client_consent_overrides_skipped = Number(dependencyCounts?.consent_overrides ?? 0);
       summary.client_flow_assignments_skipped = Number(dependencyCounts?.flow_assignments ?? 0);
       const clonedClients = await cloneClients(
         sourceAdapter,
@@ -2098,11 +2090,6 @@ async function executeTenantCloneHandler(
       ...(summary.client_webhooks_skipped > 0
         ? [
             `${summary.client_webhooks_skipped} client-scoped webhooks were omitted because their clients were not copied.`,
-          ]
-        : []),
-      ...(summary.client_consent_overrides_skipped > 0
-        ? [
-            `${summary.client_consent_overrides_skipped} client consent overrides were omitted because consent statements and policies are separate tenant resources.`,
           ]
         : []),
       ...(summary.client_flow_assignments_skipped > 0

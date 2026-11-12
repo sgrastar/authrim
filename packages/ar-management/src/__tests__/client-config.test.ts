@@ -38,7 +38,11 @@ vi.mock('../request-issuer', () => ({
   getRequestAwareIssuerUrl: vi.fn().mockReturnValue('https://issuer.example.com'),
 }));
 
-import { clientConfigUpdateHandler } from '../client-config';
+import {
+  clientConfigDeleteHandler,
+  clientConfigGetHandler,
+  clientConfigUpdateHandler,
+} from '../client-config';
 
 function createMockAdapter(): DatabaseAdapter {
   return {
@@ -608,5 +612,68 @@ describe('client-config update handler', () => {
       error_description: 'jwks and jwks_uri must not both be provided',
     });
     expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
+  });
+});
+
+describe('client configuration endpoints and the dynamic_client_registration capability', () => {
+  const capabilityKv = (state: boolean | 'down') =>
+    ({
+      get: vi.fn(async (key: string) => {
+        if (state === 'down' && key === 'settings:platform:tenant-capabilities')
+          throw new Error('kv down');
+        return key === 'settings:platform:tenant-capabilities' && state !== 'down'
+          ? JSON.stringify({ 'tenant_capabilities.dynamic_client_registration': state })
+          : null;
+      }),
+      put: vi.fn(),
+      delete: vi.fn(),
+      list: vi.fn(),
+      getWithMetadata: vi.fn(),
+    }) as unknown as KVNamespace;
+
+  const asContext = (context: unknown) => context as Parameters<typeof clientConfigGetHandler>[0];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.getTenantIdFromContext.mockReturnValue('default');
+    mocked.getLogger.mockReturnValue({
+      module: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+    });
+  });
+
+  it.each([
+    ['read', clientConfigGetHandler],
+    ['update', clientConfigUpdateHandler],
+    ['delete', clientConfigDeleteHandler],
+  ] as const)(
+    'refuses the RFC 7592 %s with access_denied while it is off',
+    async (_name, handler) => {
+      const adapter = createMockAdapter();
+      mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+      const res = await handler(
+        asContext(createMockContext({ env: { SETTINGS: capabilityKv(false) } }))
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({
+        error: 'access_denied',
+        error_description: 'Dynamic Client Registration is disabled for this tenant',
+      });
+      // Not even the registration access token is looked at, and nothing is written.
+      expect(mocked.getClientCached).not.toHaveBeenCalled();
+      expect(adapter.execute).not.toHaveBeenCalled();
+    }
+  );
+
+  it('goes on to check the registration access token while it is on, and when the switch cannot be read', async () => {
+    for (const state of [true, 'down'] as const) {
+      mocked.getClientCached.mockReset();
+      mocked.getClientCached.mockResolvedValue(null);
+      const res = await clientConfigGetHandler(
+        asContext(createMockContext({ env: { SETTINGS: capabilityKv(state) } }))
+      );
+      // The token is checked (the mocked client lookup finds no client): not the capability refusal.
+      expect((await res.json<{ error: string }>()).error).not.toBe('access_denied');
+      expect(mocked.getClientCached).toHaveBeenCalled();
+    }
   });
 });

@@ -14,6 +14,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { Env } from '../types/env';
 import { createLogger } from '../utils/logger';
 import { getDCRSetting } from '../utils/dcr-config';
+import { dynamicClientRegistrationRefusal } from '../services/tenant-capabilities';
 import { buildDOKey } from '../utils/tenant-context';
 import { getTenantIdFromContext } from './request-context';
 
@@ -84,6 +85,12 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
 }> {
   return async (c: Context<{ Bindings: Env; Variables: ContextVariables }>, next) => {
     const env = c.env;
+
+    // The platform can turn dynamic client registration off for tenants.
+    const capabilityRefusal = await dynamicClientRegistrationRefusal(env);
+    if (capabilityRefusal) {
+      return c.json(capabilityRefusal, 403);
+    }
 
     // ==========================================================================
     // DCR Initial Access Token Requirement Check

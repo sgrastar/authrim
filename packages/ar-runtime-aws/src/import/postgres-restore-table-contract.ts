@@ -349,6 +349,7 @@ export const POSTGRES_RESTORE_TABLE_CONTRACTS: readonly PostgresRestoreTableCont
       'definition_generation',
       'closed_generation',
       'retired_at',
+      'required_consent_version',
     ],
     sqliteIntegerColumns: [
       'display_order',

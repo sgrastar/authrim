@@ -135,6 +135,58 @@ export interface StatementConsentDefinition extends StatementConsentDefinitionSn
   record_retention_days: number | null;
   reconsent_interval_days: number | null;
   withdrawal_allowed: boolean;
+  /**
+   * The version from which agreement is required (`YYYYMMDD`). Publishing a version that asks
+   * people again moves it there; one that does not leaves it. Null for a statement published
+   * before it was kept: the current version is required.
+   */
+  required_consent_version: string | null;
+}
+
+/**
+ * Whether an agreement has run out: its own expiry has passed, or a record kept before its
+ * settings were (no snapshot) is older than the re-consent interval defined now, as
+ * checkUserConsentSatisfaction judges it.
+ */
+export function statementConsentExpired(
+  record: Pick<
+    StatementConsentRawRecord,
+    'expires_at' | 'granted_at' | 'consent_settings_snapshot_at'
+  >,
+  definition: Pick<StatementConsentDefinition, 'reconsent_interval_days'>,
+  nowMs: number
+): boolean {
+  if (record.expires_at != null && record.expires_at <= nowMs) return true;
+  return (
+    record.consent_settings_snapshot_at == null &&
+    definition.reconsent_interval_days !== null &&
+    definition.reconsent_interval_days > 0 &&
+    record.granted_at != null &&
+    record.granted_at + definition.reconsent_interval_days * DAY_MS <= nowMs
+  );
+}
+
+/**
+ * Whether the subject's record satisfies the statement as defined now: the latest decision is an
+ * agreement, it has not expired (the re-consent interval is applied when it is granted) and it
+ * is to a version at or after the one agreement is required from.
+ */
+export function statementConsentSatisfied(
+  record: Pick<
+    StatementConsentRawRecord,
+    'status' | 'version' | 'expires_at' | 'granted_at' | 'consent_settings_snapshot_at'
+  > | null,
+  definition: Pick<
+    StatementConsentDefinition,
+    'version' | 'required_consent_version' | 'reconsent_interval_days'
+  >,
+  nowMs: number = Date.now()
+): boolean {
+  if (!record || record.status !== 'granted') return false;
+  if (statementConsentExpired(record, definition, nowMs)) return false;
+  // Versions are YYYYMMDD: their order is their string order.
+  const from = definition.required_consent_version ?? definition.version;
+  return record.version >= from;
 }
 
 const optionalNumber = (value: unknown): number | null => (value == null ? null : Number(value));
@@ -173,7 +225,8 @@ export async function readStatementConsentDefinition(
   >(
     `SELECT d.tenant_id,d.id AS statement_id,v.id AS version_id,v.version,v.content_hash,
        d.definition_generation,d.closed_generation,CASE WHEN d.retired_at IS NOT NULL THEN 0 ELSE d.is_active END AS is_active,v.status AS version_status,
-       d.record_retention_days,d.reconsent_interval_days,d.withdrawal_allowed
+       d.record_retention_days,d.reconsent_interval_days,d.withdrawal_allowed,
+       d.required_consent_version
      FROM consent_statements d JOIN consent_statement_versions v ON v.statement_id=d.id AND v.tenant_id=d.tenant_id
      WHERE d.tenant_id=? AND d.id=? AND ${versionId ? 'v.id=?' : 'v.is_current=1'}`,
     versionId ? [tenantId, statementId, versionId] : [tenantId, statementId],
@@ -189,6 +242,10 @@ export async function readStatementConsentDefinition(
         record_retention_days: optionalNumber(row.record_retention_days),
         reconsent_interval_days: optionalNumber(row.reconsent_interval_days),
         withdrawal_allowed: row.withdrawal_allowed == null || Number(row.withdrawal_allowed) !== 0,
+        required_consent_version:
+          typeof row.required_consent_version === 'string' && row.required_consent_version
+            ? row.required_consent_version
+            : null,
       }
     : null;
 }
@@ -208,14 +265,23 @@ export async function writeStatementConsentDecision(
 ): Promise<void> {
   const capability = statementConsentAtomicCapability(stores.account);
   const now = Date.now();
+  const sameVersion = before?.version_id === definition.version_id;
   const withdraw = decision === 'denied' && before?.status === 'granted';
   if (withdraw && !definition.withdrawal_allowed) return;
-  if (decision === 'denied' && before?.status === 'denied') return;
+  // A refusal already recorded for this version stands; one for an earlier version is replaced,
+  // so the refusal of the version asked now is the latest answer.
+  if (decision === 'denied' && before?.status === 'denied' && sameVersion) return;
+  // An agreement that has expired (the re-consent interval) is given again, with a new expiry.
+  const expired = before !== null && statementConsentExpired(before, definition, now);
   const noop =
     decision === 'granted' &&
     before?.status === 'granted' &&
-    before.version_id === definition.version_id &&
-    before.content_hash === definition.content_hash;
+    sameVersion &&
+    before.content_hash === definition.content_hash &&
+    !expired;
+  // A withdrawal keeps the version that was agreed to, unless it answers a newer version (a
+  // refusal of the version asked now, which ends the earlier agreement).
+  const keepBeforeVersion = withdraw && before !== null && sameVersion;
   const tenant = await ensureStatementConsentTenantGuard(stores.account, tenantId, now);
   await bootstrapRow(
     stores.account,
@@ -307,9 +373,9 @@ export async function writeStatementConsentDecision(
           tenant_id: tenantId,
           user_id: userId,
           statement_id: statementId,
-          version_id: withdraw && before ? before.version_id : definition.version_id,
-          version: withdraw && before ? before.version : definition.version,
-          content_hash: withdraw && before ? before.content_hash : definition.content_hash,
+          version_id: keepBeforeVersion && before ? before.version_id : definition.version_id,
+          version: keepBeforeVersion && before ? before.version : definition.version,
+          content_hash: keepBeforeVersion && before ? before.content_hash : definition.content_hash,
           status: withdraw ? 'withdrawn' : decision,
           granted_at: decision === 'granted' ? now : (before?.granted_at ?? null),
           withdrawn_at: withdraw ? now : null,
@@ -451,6 +517,7 @@ export async function withdrawStatementConsent(
       record_retention_days: optionalNumber(settings?.record_retention_days),
       reconsent_interval_days: optionalNumber(settings?.reconsent_interval_days),
       withdrawal_allowed: true,
+      required_consent_version: null,
     },
     before,
     {},

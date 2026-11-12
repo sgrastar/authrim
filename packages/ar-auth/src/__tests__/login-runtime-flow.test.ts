@@ -16,6 +16,7 @@ import {
   loginRuntimeEmailVerificationChallengeHandler,
   loginRuntimeInteractionStartHandler,
   insertDestinationFieldConsentRecord,
+  recordFlowStatementConsents,
   loginRuntimeInteractionSubmitHandler,
   loginRuntimeInteractionBackHandler,
   loginRuntimeInteractionCancelHandler,
@@ -69,7 +70,159 @@ const mocks = vi.hoisted(() => {
   };
   const idQueue = ['interaction_1', 'step_1', 'audit_1', 'audit_2', 'step_2', 'audit_3'];
 
+  /**
+   * The statements and the subject's statement consents (user_consent_records), standing in for
+   * the ar-lib-core readers and the atomic write (those are tested in ar-lib-core). The rules a
+   * decision follows are the real ones: an agreement to a version that is not the current one is
+   * `document_changed`, and a decline of an agreement is a withdrawal.
+   */
+  type FakeStatement = {
+    id: string;
+    slug: string;
+    category: string;
+    version_id: string;
+    version: string;
+    required_consent_version: string | null;
+    active: boolean;
+  };
+  type FakeStatementRecord = {
+    status: 'granted' | 'denied' | 'withdrawn';
+    version: string;
+    expires_at: number | null;
+    updated_at?: number;
+  };
+  const statementFake = {
+    statements: new Map<string, FakeStatement>(),
+    records: new Map<string, FakeStatementRecord>(),
+    /** Every decision written, in order. */
+    writes: [] as Array<{
+      userId: string;
+      statementId: string;
+      decision: 'granted' | 'denied';
+      version: string;
+      versionId: string;
+      clientId?: string;
+    }>,
+    reset() {
+      this.statements.clear();
+      this.records.clear();
+      this.writes.length = 0;
+    },
+    seed(statement: Partial<FakeStatement> & { id: string }) {
+      this.statements.set(statement.id, {
+        slug: statement.id,
+        category: 'terms_of_service',
+        version_id: `${statement.id}_v1`,
+        version: '20260701',
+        required_consent_version: null,
+        active: true,
+        ...statement,
+      });
+    },
+    answer(userId: string, statementId: string, record: Partial<FakeStatementRecord> = {}) {
+      this.records.set(`${userId}:${statementId}`, {
+        status: 'granted',
+        version: '20260701',
+        expires_at: null,
+        ...record,
+      });
+    },
+    record(userId: string, statementId: string) {
+      return this.records.get(`${userId}:${statementId}`) ?? null;
+    },
+  };
+
   return {
+    statementFake,
+    resolveStatementRequirements: vi.fn(
+      async (
+        _db: unknown,
+        _tenantId: string,
+        entries: ReadonlyArray<{ statement_id: string; required: boolean }>
+      ) =>
+        entries.flatMap((entry, order) => {
+          const statement = statementFake.statements.get(entry.statement_id);
+          if (!statement || !statement.active) return [];
+          return [
+            {
+              statement_id: statement.id,
+              statement: { id: statement.id, slug: statement.slug, category: statement.category },
+              current_version: {
+                id: statement.version_id,
+                version: statement.version,
+                status: 'active',
+              },
+              is_required: entry.required,
+              min_version: statement.required_consent_version ?? statement.version,
+              display_order: order,
+            },
+          ];
+        })
+    ),
+    readStatementConsentDefinition: vi.fn(
+      async (_db: unknown, _tenantId: string, statementId: string) => {
+        const statement = statementFake.statements.get(statementId);
+        return statement
+          ? {
+              statement_id: statement.id,
+              version_id: statement.version_id,
+              version: statement.version,
+              content_hash: null,
+              is_active: statement.active ? 1 : 0,
+              version_status: 'active',
+              withdrawal_allowed: true,
+              required_consent_version: statement.required_consent_version,
+            }
+          : null;
+      }
+    ),
+    readStatementConsentRecord: vi.fn(
+      async (_account: unknown, _tenantId: string, userId: string, statementId: string) =>
+        statementFake.record(userId, statementId)
+    ),
+    processConsentItemDecisions: vi.fn(
+      async (
+        _stores: unknown,
+        _tenantId: string,
+        userId: string,
+        decisions: Record<string, 'granted' | 'denied'>,
+        evidence: { client_id?: string },
+        _ipHash: string | undefined,
+        targets: Record<string, { version_id: string; version: string }> = {}
+      ) => {
+        for (const [statementId, decision] of Object.entries(decisions)) {
+          const target = targets[statementId];
+          const statement = statementFake.statements.get(statementId);
+          if (!statement) {
+            if (target) throw new Error('document_changed');
+            continue;
+          }
+          if (target && target.version !== statement.version) throw new Error('document_changed');
+          if (decision === 'granted' && !statement.active) throw new Error('document_changed');
+          const before = statementFake.record(userId, statementId);
+          if (decision === 'denied' && before?.status === 'denied') continue;
+          statementFake.records.set(`${userId}:${statementId}`, {
+            status:
+              decision === 'granted'
+                ? 'granted'
+                : before?.status === 'granted'
+                  ? 'withdrawn'
+                  : 'denied',
+            version: statement.version,
+            expires_at: null,
+            updated_at: Date.now(),
+          });
+          statementFake.writes.push({
+            userId,
+            statementId,
+            decision,
+            version: statement.version,
+            versionId: statement.version_id,
+            clientId: evidence.client_id,
+          });
+        }
+      }
+    ),
     piiAdapter,
     publishEvent,
     coreAdapter,
@@ -112,6 +265,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       coreAdapter: mocks.coreAdapter,
     })),
     createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
+    resolveStatementRequirements: mocks.resolveStatementRequirements,
+    readStatementConsentDefinition: mocks.readStatementConsentDefinition,
+    readStatementConsentRecord: mocks.readStatementConsentRecord,
+    processConsentItemDecisions: mocks.processConsentItemDecisions,
     resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: mocks.piiAdapter })),
     publishEvent: mocks.publishEvent,
@@ -228,7 +385,7 @@ const consentRuntime: FlowRuntimeContract = {
         component: 'consent_policy',
         render: true,
         config: {
-          consent_policy_ref: 'policy_registration',
+          statements: [{ statement_id: 'statement_terms', required: true }],
         },
       },
       {
@@ -298,7 +455,7 @@ const authScreenConsentRuntime: FlowRuntimeContract = {
         config: {
           authentication_profile_ref: 'default',
           screen_ref: 'login',
-          consent_policy_ref: 'policy_login',
+          statements: [{ statement_id: 'statement_login_terms', required: true }],
         },
       },
     ],
@@ -417,7 +574,7 @@ const acceptedConsentRuntime: FlowRuntimeContract = {
         component: 'consent_policy',
         render: true,
         config: {
-          consent_policy_ref: 'policy_registration',
+          statements: [{ statement_id: 'statement_terms', required: true }],
         },
       },
       {
@@ -893,6 +1050,7 @@ function namedSetId(clientSelector: unknown): string | null {
 
 function resetAdapter() {
   vi.clearAllMocks();
+  mocks.statementFake.reset();
   mocks.resolveOidcIdentityMappingBinding.mockReset();
   mocks.resolveOidcIdentityMappingBinding.mockImplementation(
     async (input: { clientSelector: unknown }) => {
@@ -1970,7 +2128,8 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
-  it('hydrates authentication steps with selected form and consent policy content', async () => {
+  it('hydrates authentication steps with selected form and consent statement content', async () => {
+    mocks.statementFake.seed({ id: 'statement_login_terms', slug: 'login_terms' });
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
         flow_id: 'flow_login',
@@ -2024,14 +2183,16 @@ describe('LoginUI runtime Flow handlers', () => {
         ]),
         localizations_json: JSON.stringify({}),
         settings_json: JSON.stringify({ canvas_layout: 'narrow' }),
-      })
-      .mockResolvedValueOnce({
-        id: 'policy_login',
-        display_name: 'Login consent',
-        description: 'Login consent policy',
-        is_active: 1,
       });
-    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      {
+        language: 'en',
+        title: 'Login terms',
+        description: '',
+        document_url: 'https://example.com/login-terms',
+        inline_content: null,
+      },
+    ]);
 
     const response = await loginRuntimeInteractionStartHandler(
       createContext({ body: { flow_kind: 'login' } })
@@ -2066,9 +2227,18 @@ describe('LoginUI runtime Flow handlers', () => {
     });
     expect(runtimeData.ui.steps[0].content).toMatchObject({
       consent_policy: {
-        id: 'policy_login',
-        display_name: 'Login consent',
-        items: [],
+        // The step's statements are its own content: the step is its identity.
+        id: 'auth:step',
+        items: [
+          {
+            statement_id: 'statement_login_terms',
+            title: 'Login terms',
+            version: '20260701',
+            is_required: true,
+            content_mode: 'checkbox',
+            checkbox_mode: 'required',
+          },
+        ],
       },
     });
   });
@@ -2154,16 +2324,9 @@ describe('LoginUI runtime Flow handlers', () => {
 
   it('hydrates Destination Profile fields and records the selected optional OIDC claims', async () => {
     mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-      })
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Authorization consent',
-        description: null,
-        is_active: 1,
-      });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+    });
     mocks.coreAdapter.query.mockResolvedValueOnce([]);
     mocks.adminAdapter.queryOne.mockResolvedValueOnce({
       profile_id: 'destination_oidc_1',
@@ -2218,22 +2381,9 @@ describe('LoginUI runtime Flow handlers', () => {
         requested_scope: ['openid', 'profile'],
       },
     });
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-      })
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Authorization consent',
-        description: null,
-        is_active: 1,
-      })
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Authorization consent',
-        description: null,
-        is_active: 1,
-      });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+    });
     mocks.coreAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     mocks.adminAdapter.queryOne.mockResolvedValueOnce({
       profile_id: 'destination_oidc_1',
@@ -2298,16 +2448,9 @@ describe('LoginUI runtime Flow handlers', () => {
     'asks only about the fields a request with scopes %j can release when the profile lists none',
     async (requestedScope, expectedKeys) => {
       mockStartQueries(consentRuntime);
-      mocks.coreAdapter.queryOne
-        .mockResolvedValueOnce({
-          identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-        })
-        .mockResolvedValueOnce({
-          id: 'policy_registration',
-          display_name: 'Authorization consent',
-          description: null,
-          is_active: 1,
-        });
+      mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+      });
       mocks.coreAdapter.query.mockResolvedValueOnce([]);
       mocks.adminAdapter.queryOne.mockResolvedValueOnce({
         profile_id: 'destination_oidc_1',
@@ -2368,19 +2511,10 @@ describe('LoginUI runtime Flow handlers', () => {
         ],
       }),
     };
-    const policy = {
-      id: 'policy_registration',
-      display_name: 'Authorization consent',
-      description: null,
-      is_active: 1,
-    };
     mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-      })
-      .mockResolvedValueOnce(policy);
-    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+    });
     mocks.adminAdapter.queryOne.mockResolvedValueOnce(profile);
     const startResponse = await loginRuntimeInteractionStartHandler(
       createContext({
@@ -2408,13 +2542,9 @@ describe('LoginUI runtime Flow handlers', () => {
         requested_scope: ['openid'],
       },
     });
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-      })
-      .mockResolvedValueOnce(policy)
-      .mockResolvedValueOnce(policy);
-    mocks.coreAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+    });
     mocks.adminAdapter.queryOne.mockResolvedValueOnce(profile);
     mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
       userId: 'user_1',
@@ -2446,19 +2576,12 @@ describe('LoginUI runtime Flow handlers', () => {
 
   it('hydrates OIDC consent from the Mapping Set active Destination Profile', async () => {
     mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({
-          fieldMappingSetId: 'mapping_set_1',
-          destinationProfileId: 'stale_destination_profile',
-        }),
-      })
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Authorization consent',
-        description: null,
-        is_active: 1,
-      });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      identity_mapping: JSON.stringify({
+        fieldMappingSetId: 'mapping_set_1',
+        destinationProfileId: 'stale_destination_profile',
+      }),
+    });
     mocks.coreAdapter.query.mockResolvedValueOnce([]);
     mocks.resolveOidcIdentityMappingBinding.mockResolvedValueOnce(
       oidcResolution('mapping_set_1', 'active_destination_profile')
@@ -2504,14 +2627,7 @@ describe('LoginUI runtime Flow handlers', () => {
 
   it("hydrates OIDC consent from the default Mapping Set the app's tenant names when the app names none", async () => {
     mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({ identity_mapping: null })
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Authorization consent',
-        description: null,
-        is_active: 1,
-      });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ identity_mapping: null });
     mocks.coreAdapter.query.mockResolvedValueOnce([]);
     mocks.resolveOidcIdentityMappingBinding.mockResolvedValueOnce({
       ...oidcResolution('tenant_default_set', 'tenant_destination_profile'),
@@ -2554,12 +2670,7 @@ describe('LoginUI runtime Flow handlers', () => {
   describe('an app that is bound to no Mapping Set', () => {
     async function consentOf(clientRow: Record<string, unknown>, env: Partial<Env>) {
       mockStartQueries(consentRuntime);
-      mocks.coreAdapter.queryOne.mockResolvedValueOnce(clientRow).mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Authorization consent',
-        description: null,
-        is_active: 1,
-      });
+      mocks.coreAdapter.queryOne.mockResolvedValueOnce(clientRow);
       mocks.coreAdapter.query.mockResolvedValueOnce([]);
       const response = await loginRuntimeInteractionStartHandler(
         createContext({
@@ -2688,17 +2799,10 @@ describe('LoginUI runtime Flow handlers', () => {
         consumed: false,
       });
       mockStartQueries(consentRuntime);
-      mocks.coreAdapter.queryOne
-        .mockResolvedValueOnce({
-          identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
-          ...client,
-        })
-        .mockResolvedValueOnce({
-          id: 'policy_registration',
-          display_name: 'Authorization consent',
-          description: null,
-          is_active: 1,
-        });
+      mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+        ...client,
+      });
       mocks.coreAdapter.query.mockResolvedValueOnce([]);
       mocks.adminAdapter.queryOne.mockResolvedValueOnce(profileRow);
       const response = await loginRuntimeInteractionStartHandler(
@@ -2792,12 +2896,6 @@ describe('LoginUI runtime Flow handlers', () => {
 
   it('hydrates SAML destination consent from the per-SP release policy', async () => {
     mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
-      id: 'policy_registration',
-      display_name: 'SAML release consent',
-      description: null,
-      is_active: 1,
-    });
     mocks.coreAdapter.query
       .mockResolvedValueOnce([
         {
@@ -3484,7 +3582,7 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
-  it('records a Flow ConsentRecord when a consent policy step is submitted', async () => {
+  it('records the answer in the account when a consent step is submitted', async () => {
     const { data: startData } = await startInteraction(
       {
         flow_kind: 'registration',
@@ -3511,74 +3609,7 @@ describe('LoginUI runtime Flow handlers', () => {
         requested_scope: ['openid', 'profile'],
       },
     });
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Registration consent policy',
-        description: null,
-        is_active: 1,
-      })
-      .mockResolvedValueOnce({ id: 'version_terms_current', version: '20260701' })
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Registration consent policy',
-        description: null,
-        is_active: 1,
-      })
-      .mockResolvedValueOnce({ id: 'version_terms_current', version: '20260701' });
-    mocks.coreAdapter.query
-      .mockResolvedValueOnce([
-        {
-          statement_id: 'statement_terms',
-          requirement: 'required',
-          version_mode: 'latest',
-          version_id: null,
-          checkbox_mode: 'required',
-          checkbox_default_checked: 0,
-          binding_type: 'subject',
-          binding_value: null,
-          evidence_profile: null,
-          language_fallback: null,
-          display_order: 0,
-          slug: 'terms_of_service',
-          category: 'terms_of_service',
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          language: 'en',
-          title: 'Terms of Service',
-          description: '',
-          document_url: 'https://example.com/tos',
-          inline_content: 'I agree to %link1%.',
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          statement_id: 'statement_terms',
-          requirement: 'required',
-          version_mode: 'latest',
-          version_id: null,
-          checkbox_mode: 'required',
-          checkbox_default_checked: 0,
-          binding_type: 'subject',
-          binding_value: null,
-          evidence_profile: null,
-          language_fallback: null,
-          display_order: 0,
-          slug: 'terms_of_service',
-          category: 'terms_of_service',
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          language: 'en',
-          title: 'Terms of Service',
-          description: '',
-          document_url: 'https://example.com/tos',
-          inline_content: 'I agree to %link1%.',
-        },
-      ]);
+    mocks.statementFake.seed({ id: 'statement_terms', slug: 'terms_of_service' });
     mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
       userId: 'user_1',
       expiresAt: Date.now() + 60_000,
@@ -3611,31 +3642,25 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(response.status).toBe(200);
     expect(data.completed).toBe(true);
     expect(data.step).toBeNull();
-    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+    // The answer is the subject's own, kept with the account: one record per statement, in the
+    // version that was shown, and not a consent_records row of the Flow.
+    expect(mocks.statementFake.writes).toEqual([
+      {
+        userId: 'user_1',
+        statementId: 'statement_terms',
+        decision: 'granted',
+        version: '20260701',
+        versionId: 'statement_terms_v1',
+        clientId: 'client_1',
+      },
+    ]);
+    expect(mocks.statementFake.record('user_1', 'statement_terms')).toMatchObject({
+      status: 'granted',
+      version: '20260701',
+    });
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO consent_records'),
-      expect.arrayContaining([
-        'tenant_test',
-        'user_1',
-        'user_1',
-        'oidc',
-        'terms',
-        'client_1',
-        null,
-        'oidc_client',
-        'client_1',
-        'subject',
-        null,
-        'document',
-        null,
-        'terms_of_service',
-        'statement_terms',
-        '20260701',
-        'policy_registration',
-        'flow_login',
-        'fv_1',
-        'consent',
-        'accepted',
-      ])
+      expect.anything()
     );
   });
 
@@ -3663,6 +3688,7 @@ describe('LoginUI runtime Flow handlers', () => {
         requested_scope: ['openid', 'profile'],
       },
     });
+    mocks.statementFake.seed({ id: 'statement_terms', slug: 'terms_of_service' });
     // A session another tab made for someone else.
     mocks.sessionStore.getSessionRpc.mockResolvedValue({
       userId: 'user_2',
@@ -3688,201 +3714,12 @@ describe('LoginUI runtime Flow handlers', () => {
 
     expect(response.status).toBe(403);
     expect(data.error).toBe('access_denied');
-    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO consent_records'),
-      expect.anything()
-    );
+    expect(mocks.statementFake.writes).toEqual([]);
+    expect(mocks.processConsentItemDecisions).not.toHaveBeenCalled();
     expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
   });
 
-  it('records selected User Decision radio values for SAML attribute release consent', async () => {
-    const { data: startData } = await startInteraction(
-      {
-        flow_kind: 'login',
-        saml_sp_id: 'saml_sp_1',
-        saml_request_id: 'saml_request_1',
-        saml_sp_entity_id: 'https://sp.example.test/metadata',
-      },
-      consentRuntime
-    );
-    resetAdapter();
-    mockSubmitQueries({
-      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'consent',
-      currentStepId: 'consent:step',
-      stepState: 'waiting_input',
-      runtimeSnapshot: consentRuntime,
-      samlSpId: 'saml_sp_1',
-      context: {
-        protocol: 'saml',
-        target_type: 'saml_sp',
-        target_id: 'saml_sp_1',
-        saml_sp_id: 'saml_sp_1',
-        saml_request_id: 'saml_request_1',
-        saml_sp_entity_id: 'https://sp.example.test/metadata',
-      },
-    });
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'SAML release policy',
-        description: null,
-        is_active: 1,
-      })
-      .mockResolvedValueOnce({ id: 'version_saml_current', version: '20260701' })
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'SAML release policy',
-        description: null,
-        is_active: 1,
-      })
-      .mockResolvedValueOnce({ id: 'version_saml_current', version: '20260701' });
-    mocks.coreAdapter.query
-      .mockResolvedValueOnce([
-        {
-          statement_id: 'statement_saml',
-          requirement: 'required',
-          version_mode: 'latest',
-          version_id: null,
-          checkbox_mode: 'required',
-          checkbox_default_checked: 0,
-          binding_type: 'user_decision',
-          binding_value: null,
-          evidence_profile: null,
-          language_fallback: null,
-          display_order: 0,
-          slug: 'saml_attribute_release_uapprove',
-          category: 'saml_attribute_release_confirmation',
-          conditional_rules_json: JSON.stringify({
-            content_mode: 'radio',
-            binding_type: 'user_decision',
-            attribute_value_display: 'masked_values',
-            content_options: [
-              {
-                id: 'option-1',
-                value: 'once',
-                labels: { en: 'Allow once' },
-                descriptions: { en: 'Allow this time only.' },
-              },
-              {
-                id: 'option-2',
-                value: 'always',
-                labels: { en: 'Always allow' },
-                descriptions: { en: 'Remember this choice.' },
-              },
-            ],
-          }),
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          language: 'en',
-          title: 'SAML attribute release',
-          description: '',
-          document_url: null,
-          inline_content: 'Choose how attributes are released.',
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          statement_id: 'statement_saml',
-          requirement: 'required',
-          version_mode: 'latest',
-          version_id: null,
-          checkbox_mode: 'required',
-          checkbox_default_checked: 0,
-          binding_type: 'user_decision',
-          binding_value: null,
-          evidence_profile: null,
-          language_fallback: null,
-          display_order: 0,
-          slug: 'saml_attribute_release_uapprove',
-          category: 'saml_attribute_release_confirmation',
-          conditional_rules_json: JSON.stringify({
-            content_mode: 'radio',
-            binding_type: 'user_decision',
-            attribute_value_display: 'masked_values',
-            content_options: [
-              {
-                id: 'option-1',
-                value: 'once',
-                labels: { en: 'Allow once' },
-                descriptions: { en: 'Allow this time only.' },
-              },
-              {
-                id: 'option-2',
-                value: 'always',
-                labels: { en: 'Always allow' },
-                descriptions: { en: 'Remember this choice.' },
-              },
-            ],
-          }),
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          language: 'en',
-          title: 'SAML attribute release',
-          description: '',
-          document_url: null,
-          inline_content: 'Choose how attributes are released.',
-        },
-      ]);
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
-      userId: 'user_1',
-      expiresAt: Date.now() + 60_000,
-      createdAt: 1_700_000_000_000,
-      data: { authTime: 1_700_000_123 },
-    });
-
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        params: { interaction_id: 'interaction_1' },
-        headers: {
-          Cookie: 'authrim_session=sess_runtime_1',
-          'User-Agent': 'Vitest',
-        },
-        body: {
-          step_id: 'consent:step',
-          node_id: 'consent',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-          input: {
-            consent_item_decisions: {
-              statement_saml: 'selected',
-            },
-            consent_item_selected_values: {
-              statement_saml: 'always',
-            },
-          },
-        },
-      })
-    );
-
-    expect(response.status).toBe(200);
-    const insertCall = mocks.coreAdapter.execute.mock.calls.find(([sql]) =>
-      String(sql).includes('INSERT INTO consent_records')
-    );
-    expect(insertCall).toBeTruthy();
-    const values = insertCall?.[1] as unknown[];
-    expect(values[4]).toBe('saml');
-    expect(values[5]).toBe('attribute_release');
-    expect(values[8]).toBe('saml_sp');
-    expect(values[10]).toBe('user_decision');
-    expect(values[21]).toBe('always');
-    expect(values[22]).toBe('always');
-    expect(values[23]).toBe(JSON.stringify(['always']));
-    expect(JSON.parse(String(values[30]))).toMatchObject({
-      content_mode: 'radio',
-      selected_value: 'always',
-      attribute_value_display: 'masked_values',
-      saml_sp_entity_id: 'https://sp.example.test/metadata',
-    });
-  });
-
-  it('skips a consent policy step when every consent item already has an active record', async () => {
+  it('skips a consent step when every statement it asks for is already answered in the account', async () => {
     const { data: startData } = await startInteraction(
       {
         flow_kind: 'login',
@@ -3910,44 +3747,10 @@ describe('LoginUI runtime Flow handlers', () => {
         requested_scope: ['openid', 'profile'],
       },
     });
-    mocks.coreAdapter.queryOne
-      // The app's row, read to select its Mapping Set (none: no Destination Profile fields).
-      .mockResolvedValueOnce({ identity_mapping: null })
-      .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Registration consent policy',
-        description: null,
-        is_active: 1,
-      })
-      .mockResolvedValueOnce({ id: 'version_terms_current', version: '20260701' })
-      .mockResolvedValueOnce({ id: 'existing_consent_record' });
-    mocks.coreAdapter.query
-      .mockResolvedValueOnce([
-        {
-          statement_id: 'statement_terms',
-          requirement: 'required',
-          version_mode: 'latest',
-          version_id: null,
-          checkbox_mode: 'required',
-          checkbox_default_checked: 0,
-          binding_type: 'subject',
-          binding_value: null,
-          evidence_profile: null,
-          language_fallback: null,
-          display_order: 0,
-          slug: 'terms_of_service',
-          category: 'terms_of_service',
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          language: 'en',
-          title: 'Terms of Service',
-          description: '',
-          document_url: 'https://example.com/tos',
-          inline_content: 'I agree to %link1%.',
-        },
-      ]);
+    // The app's row, read to select its Mapping Set (none: no Destination Profile fields).
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ identity_mapping: null });
+    mocks.statementFake.seed({ id: 'statement_terms', slug: 'terms_of_service' });
+    mocks.statementFake.answer('user_1', 'statement_terms');
     mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
       userId: 'user_1',
       expiresAt: Date.now() + 60_000,
@@ -3973,10 +3776,275 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(response.status).toBe(200);
     expect(data.completed).toBe(true);
     expect(data.step).toBeNull();
-    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO consent_records'),
-      expect.anything()
-    );
+    expect(mocks.statementFake.writes).toEqual([]);
+  });
+
+  describe('answers to the statements of a consent step', () => {
+    const twoStatements: FlowRuntimeContract = {
+      flow_kind: 'login',
+      ui: {
+        steps: [
+          {
+            id: 'consent:step',
+            source_node_id: 'consent',
+            component: 'consent_policy',
+            render: true,
+            config: {
+              statements: [
+                { statement_id: 'statement_terms', required: true },
+                { statement_id: 'statement_news', required: false },
+              ],
+            },
+          },
+          consentRuntime.ui.steps[1],
+        ],
+      },
+    };
+
+    async function submitConsent(
+      decisions: Record<string, string>,
+      setup: () => void = () => undefined
+    ) {
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'registration', client_id: 'client_1', requested_scope: 'openid' },
+        twoStatements
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'consent',
+        currentStepId: 'consent:step',
+        stepState: 'waiting_input',
+        runtimeSnapshot: twoStatements,
+        clientId: 'client_1',
+        context: {
+          protocol: 'oidc',
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          requested_scope: ['openid'],
+        },
+      });
+      mocks.statementFake.seed({ id: 'statement_terms', slug: 'terms_of_service' });
+      mocks.statementFake.seed({ id: 'statement_news', slug: 'news', category: 'marketing' });
+      setup();
+      mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+        userId: 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      });
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1', 'User-Agent': 'Vitest' },
+          body: {
+            step_id: 'consent:step',
+            node_id: 'consent',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+            input: { consent_item_decisions: decisions },
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    it('records an optional statement that is declined as declined, beside the one agreed to', async () => {
+      const { response } = await submitConsent({
+        statement_terms: 'granted',
+        statement_news: 'denied',
+      });
+      expect(response.status).toBe(200);
+      expect(mocks.statementFake.writes.map((w) => [w.statementId, w.decision])).toEqual([
+        ['statement_terms', 'granted'],
+        ['statement_news', 'denied'],
+      ]);
+      expect(mocks.statementFake.record('user_1', 'statement_news')).toMatchObject({
+        status: 'denied',
+      });
+    });
+
+    it('records nothing when a required statement is not agreed to', async () => {
+      const { response, data } = await submitConsent({
+        statement_terms: 'denied',
+        statement_news: 'granted',
+      });
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('consent_required');
+      expect(mocks.statementFake.writes).toEqual([]);
+    });
+
+    it('neither asks for nor records again a statement already agreed to', async () => {
+      const { response } = await submitConsent(
+        { statement_terms: 'granted', statement_news: 'denied' },
+        () => mocks.statementFake.answer('user_1', 'statement_news')
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.statementFake.writes.map((w) => w.statementId)).toEqual(['statement_terms']);
+      expect(mocks.statementFake.record('user_1', 'statement_news')).toMatchObject({
+        status: 'granted',
+      });
+    });
+
+    it('answers a write refused by the statement consent transition like a changed document', async () => {
+      const { response, data } = await submitConsent({ statement_terms: 'granted' }, () =>
+        mocks.processConsentItemDecisions.mockRejectedValueOnce(
+          new Error('statement_consent_transition_rejected')
+        )
+      );
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('consent_changed');
+    });
+
+    it('asks again, recording nothing, when a statement was published anew after it was shown', async () => {
+      const { response, data } = await submitConsent(
+        { statement_terms: 'granted', statement_news: 'denied' },
+        () =>
+          // The write finds a version other than the one shown.
+          mocks.processConsentItemDecisions.mockRejectedValueOnce(new Error('document_changed'))
+      );
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('consent_changed');
+      expect(mocks.statementFake.writes).toEqual([]);
+    });
+  });
+
+  describe('a statement the subject answered before', () => {
+    /** The sign-in step is submitted by user_1; the consent step after it asks for statement_terms. */
+    async function afterSignIn(setup: () => void, required = true) {
+      const runtimeSnapshot: FlowRuntimeContract = {
+        ...acceptedConsentRuntime,
+        ui: {
+          steps: acceptedConsentRuntime.ui.steps.map((step) =>
+            step.component === 'consent_policy'
+              ? {
+                  ...step,
+                  config: { statements: [{ statement_id: 'statement_terms', required }] },
+                }
+              : step
+          ),
+        },
+      };
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'login', client_id: 'client_1', requested_scope: 'openid profile' },
+        runtimeSnapshot
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'auth',
+        currentStepId: 'auth:step',
+        stepState: 'waiting_input',
+        runtimeSnapshot,
+        editorSnapshot: acceptedConsentEditor,
+        clientId: 'client_1',
+        context: {
+          protocol: 'oidc',
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          requested_scope: ['openid', 'profile'],
+        },
+      });
+      mocks.coreAdapter.queryOne.mockResolvedValueOnce({ identity_mapping: null });
+      mocks.statementFake.seed({ id: 'statement_terms', slug: 'terms_of_service' });
+      setup();
+      mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+        userId: 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      });
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          body: {
+            step_id: 'auth:step',
+            node_id: 'auth',
+            selected_handle: 'passkey',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      expect(response.status).toBe(200);
+      return readJson(response);
+    }
+
+    const askedAgain = (data: Record<string, unknown>) =>
+      expect(data.step).toMatchObject({
+        id: 'consent:step',
+        content: { consent_policy: { items: [{ statement_id: 'statement_terms' }] } },
+      });
+
+    it('is asked when the subject has no record of it', async () => {
+      askedAgain(await afterSignIn(() => undefined));
+    });
+
+    it('is asked again when the record is of a version before the one agreement is required from', async () => {
+      askedAgain(
+        await afterSignIn(() => {
+          mocks.statementFake.seed({
+            id: 'statement_terms',
+            slug: 'terms_of_service',
+            version: '20260901',
+            required_consent_version: '20260801',
+          });
+          mocks.statementFake.answer('user_1', 'statement_terms', { version: '20260701' });
+        })
+      );
+    });
+
+    it('is not asked again when the record is of a version since that boundary, though not the current one', async () => {
+      const data = await afterSignIn(() => {
+        mocks.statementFake.seed({
+          id: 'statement_terms',
+          slug: 'terms_of_service',
+          version: '20260901',
+          required_consent_version: '20260801',
+        });
+        mocks.statementFake.answer('user_1', 'statement_terms', { version: '20260815' });
+      });
+      expect(data.completed).toBe(true);
+    });
+
+    it('is asked again when the agreement has been withdrawn', async () => {
+      askedAgain(
+        await afterSignIn(() =>
+          mocks.statementFake.answer('user_1', 'statement_terms', { status: 'withdrawn' })
+        )
+      );
+    });
+
+    it('is asked again when the agreement has expired', async () => {
+      askedAgain(
+        await afterSignIn(() =>
+          mocks.statementFake.answer('user_1', 'statement_terms', { expires_at: Date.now() - 1000 })
+        )
+      );
+    });
+
+    it('is not asked again, when it is optional, once it was declined since the boundary', async () => {
+      const data = await afterSignIn(
+        () => mocks.statementFake.answer('user_1', 'statement_terms', { status: 'denied' }),
+        false
+      );
+      expect(data.completed).toBe(true);
+    });
+
+    it('is asked again, when it is required, though it was declined', async () => {
+      askedAgain(
+        await afterSignIn(() =>
+          mocks.statementFake.answer('user_1', 'statement_terms', { status: 'denied' })
+        )
+      );
+    });
   });
 
   it('keeps every-time Destination Profile consent visible despite an active matching record', async () => {
@@ -4013,44 +4081,11 @@ describe('LoginUI runtime Flow handlers', () => {
         attribute_release_consent: JSON.stringify({ enabled: true, mode: 'every_time' }),
       })
       .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Registration consent policy',
-        description: null,
-        is_active: 1,
-      })
-      .mockResolvedValueOnce({ id: 'version_terms_current', version: '20260701' })
-      .mockResolvedValueOnce({ id: 'existing_policy_consent_record' })
-      .mockResolvedValueOnce({
         id: 'existing_destination_consent_record',
         released_scopes_json: JSON.stringify(['openid', 'profile']),
       });
-    mocks.coreAdapter.query
-      .mockResolvedValueOnce([
-        {
-          statement_id: 'statement_terms',
-          requirement: 'required',
-          version_mode: 'latest',
-          version_id: null,
-          checkbox_mode: 'required',
-          checkbox_default_checked: 0,
-          binding_type: 'subject',
-          binding_value: null,
-          evidence_profile: null,
-          language_fallback: null,
-          display_order: 0,
-          slug: 'terms_of_service',
-          category: 'terms_of_service',
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          language: 'en',
-          title: 'Terms of Service',
-          description: '',
-          document_url: 'https://example.com/tos',
-          inline_content: 'I agree to %link1%.',
-        },
-      ]);
+    mocks.statementFake.seed({ id: 'statement_terms', slug: 'terms_of_service' });
+    mocks.statementFake.answer('user_1', 'statement_terms');
     mocks.adminAdapter.queryOne.mockResolvedValueOnce({
       profile_id: 'destination_oidc_1',
       destination_type: 'oidc',
@@ -4143,45 +4178,12 @@ describe('LoginUI runtime Flow handlers', () => {
         allow_claims_without_scope: 1,
       })
       .mockResolvedValueOnce({
-        id: 'policy_registration',
-        display_name: 'Registration consent policy',
-        description: null,
-        is_active: 1,
-      })
-      .mockResolvedValueOnce({ id: 'version_terms_current', version: '20260701' })
-      .mockResolvedValueOnce({ id: 'existing_policy_consent_record' })
-      .mockResolvedValueOnce({
         id: 'existing_destination_consent_record',
         released_scopes_json: JSON.stringify(requestedScope),
         ...existing,
       });
-    mocks.coreAdapter.query
-      .mockResolvedValueOnce([
-        {
-          statement_id: 'statement_terms',
-          requirement: 'required',
-          version_mode: 'latest',
-          version_id: null,
-          checkbox_mode: 'required',
-          checkbox_default_checked: 0,
-          binding_type: 'subject',
-          binding_value: null,
-          evidence_profile: null,
-          language_fallback: null,
-          display_order: 0,
-          slug: 'terms_of_service',
-          category: 'terms_of_service',
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
-          language: 'en',
-          title: 'Terms of Service',
-          description: '',
-          document_url: 'https://example.com/tos',
-          inline_content: 'I agree to %link1%.',
-        },
-      ]);
+    mocks.statementFake.seed({ id: 'statement_terms', slug: 'terms_of_service' });
+    mocks.statementFake.answer('user_1', 'statement_terms');
     mocks.adminAdapter.queryOne.mockResolvedValueOnce({
       profile_id: 'destination_oidc_1',
       destination_type: 'oidc',
@@ -4650,7 +4652,7 @@ describe('LoginUI runtime Flow handlers', () => {
             source_node_id: 'auth',
             component: 'authentication_method_selector',
             render: true,
-            config: { consent_policy_ref: 'policy_login' },
+            config: { statements: [{ statement_id: 'statement_terms', required: true }] },
           },
           oidcAuthCompletionRuntime.ui.steps[1],
         ],
@@ -5057,31 +5059,8 @@ describe('LoginUI runtime Flow handlers', () => {
     });
 
     describe('consent given at the method selection', () => {
-      const policyRow = {
-        id: 'policy_login',
-        display_name: 'Login consent',
-        description: null,
-        is_active: 1,
-      };
-      const itemRow = {
-        statement_id: 'statement_terms',
-        requirement: 'required',
-        version_mode: 'latest',
-        version_id: null,
-        checkbox_mode: 'required',
-        checkbox_default_checked: 0,
-        binding_type: 'subject',
-        binding_value: null,
-        evidence_profile: null,
-        language_fallback: null,
-        display_order: 0,
-        slug: 'terms_of_service',
-        category: 'terms_of_service',
-        conditional_rules_json: null,
-      };
-
       /**
-       * What the consent tables hold, for whatever the step reads after the interaction's own rows
+       * What the statement holds, for whatever the step reads after the interaction's own rows
        * (those come first, from the queue mockSubmitQueries fills). `queryOne` and `query` may
        * answer other statements first.
        */
@@ -5089,21 +5068,22 @@ describe('LoginUI runtime Flow handlers', () => {
         extra: {
           queryOne?: (sql: string) => unknown;
           query?: (sql: string) => unknown[] | undefined;
+          /** The statement has a newer version by now. */
+          newerVersion?: boolean;
         } = {}
       ) {
+        mocks.statementFake.seed(
+          extra.newerVersion
+            ? { id: 'statement_terms', version: '20260901', version_id: 'version_terms_next' }
+            : { id: 'statement_terms', version: '20260701', version_id: 'version_terms_current' }
+        );
         mocks.coreAdapter.queryOne.mockImplementation(async (sql: string) => {
           const answered = extra.queryOne?.(sql);
-          if (answered !== undefined) return answered;
-          if (sql.includes('FROM consent_policies')) return policyRow;
-          if (sql.includes('FROM consent_statement_versions')) {
-            return { id: 'version_terms_current', version: '20260701' };
-          }
-          return null;
+          return answered !== undefined ? answered : null;
         });
         mocks.coreAdapter.query.mockImplementation(async (sql: string) => {
           const answered = extra.query?.(sql);
           if (answered !== undefined) return answered;
-          if (sql.includes('FROM consent_policy_items')) return [itemRow];
           if (sql.includes('FROM consent_statement_localizations')) {
             return [
               {
@@ -5119,10 +5099,8 @@ describe('LoginUI runtime Flow handlers', () => {
         });
       }
 
-      const consentRecords = () =>
-        mocks.coreAdapter.execute.mock.calls.filter(
-          ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO consent_records')
-        );
+      /** The decisions written to the account, in order. */
+      const consentRecords = () => mocks.statementFake.writes;
 
       const given = { input: { consent_item_decisions: { statement_terms: 'granted' } } };
 
@@ -5175,7 +5153,10 @@ describe('LoginUI runtime Flow handlers', () => {
         return String((update?.[1] as unknown[])[1]);
       }
 
-      function readsKept(stateJson: string, extra: { queryOne?: (sql: string) => unknown } = {}) {
+      function readsKept(
+        stateJson: string,
+        extra: { queryOne?: (sql: string) => unknown; newerVersion?: boolean } = {}
+      ) {
         withPolicy({
           ...extra,
           query: (sql) =>
@@ -5198,11 +5179,19 @@ describe('LoginUI runtime Flow handlers', () => {
 
         expect(response.status, JSON.stringify(data)).toBe(200);
         expect(data.completed).toBe(true);
-        expect(consentRecords()).toHaveLength(1);
-        expect(consentRecords()[0][1]).toEqual(expect.arrayContaining(['tenant_test', 'user_1']));
-        // The record has a fixed identifier, so a retry or a concurrent attempt cannot add another.
-        expect(consentRecords()[0][0]).toContain('ON CONFLICT(id) DO UPDATE');
-        expect(String((consentRecords()[0][1] as unknown[])[0])).toMatch(/^consent_[0-9a-f]{64}$/);
+        // Recorded once, for the user who signed in, in the version it was given for.
+        expect(consentRecords()).toEqual([
+          expect.objectContaining({
+            userId: 'user_1',
+            statementId: 'statement_terms',
+            decision: 'granted',
+            version: '20260701',
+            versionId: 'version_terms_current',
+          }),
+        ]);
+        expect(mocks.statementFake.record('user_1', 'statement_terms')).toMatchObject({
+          status: 'granted',
+        });
         // Each is recorded once.
         expect(
           mocks.coreAdapter.execute.mock.calls.filter(
@@ -5225,12 +5214,7 @@ describe('LoginUI runtime Flow handlers', () => {
           authorizationChallengeId: 'login_challenge_1',
           beforeSubmit: () =>
             // The statement has a newer version by now.
-            readsKept(stateJson, {
-              queryOne: (sql) =>
-                sql.includes('FROM consent_statement_versions')
-                  ? { id: 'version_terms_next', version: '20260901' }
-                  : undefined,
-            }),
+            readsKept(stateJson, { newerVersion: true }),
         });
 
         expect(response.status).toBe(400);
@@ -5255,10 +5239,7 @@ describe('LoginUI runtime Flow handlers', () => {
           beforeSubmit: () =>
             // Recorded, and the statement has a newer version since.
             readsKept(JSON.stringify({ ...JSON.parse(stateJson), held_consent_recorded: true }), {
-              queryOne: (sql) =>
-                sql.includes('FROM consent_statement_versions')
-                  ? { id: 'version_terms_next', version: '20260901' }
-                  : undefined,
+              newerVersion: true,
             }),
         });
 
@@ -6208,7 +6189,7 @@ describe('LoginUI runtime Flow handlers', () => {
               source_node_id: 'auth',
               component: 'authentication_method_selector',
               render: true,
-              config: { consent_policy_ref: 'policy_login' },
+              config: { statements: [{ statement_id: 'statement_terms', required: true }] },
             },
             oidcAuthCompletionRuntime.ui.steps[1],
           ],
@@ -7737,5 +7718,122 @@ describe('resolveSignUpScreen', () => {
     await expect(resolveSignUpScreen(c(), 'tenant_1', 'fi_1')).resolves.toMatchObject({
       reason: 'interaction_not_found',
     });
+  });
+});
+
+describe('consent held from before sign-in, recorded later', () => {
+  beforeEach(() => {
+    mocks.statementFake.reset();
+    mocks.statementFake.seed({ id: 'statement_news', slug: 'news' });
+  });
+
+  const policy = {
+    id: 'auth:step',
+    display_name: '',
+    description: null,
+    language: 'en',
+    default_language: 'en',
+    items: [
+      {
+        statement_id: 'statement_news',
+        slug: 'news',
+        category: 'marketing',
+        title: 'News',
+        description: '',
+        document_url: null,
+        inline_content: null,
+        version: '20260701',
+        version_id: 'statement_news_v1',
+        is_required: false,
+        content_mode: 'checkbox' as const,
+        options: [],
+        attribute_value_display: null,
+        checkbox_mode: 'optional' as const,
+        checkbox_default_checked: false,
+        binding_type: null,
+        binding_value: null,
+        evidence_profile: null,
+        language_fallback: null,
+        display_order: 0,
+      },
+    ],
+  };
+  const interaction = { id: 'interaction_1', client_id: 'client_1', saml_sp_id: null };
+
+  it('does not override an answer given after it, in a later step', async () => {
+    const givenAtMs = Date.now() - 60_000;
+    // Declined in a later step, after the held agreement was given.
+    mocks.statementFake.answer('user_1', 'statement_news', {
+      status: 'denied',
+      updated_at: Date.now(),
+    });
+    await recordFlowStatementConsents({
+      c: createContext({}) as never,
+      db: mocks.coreAdapter,
+      tenantId: 'default',
+      interaction: interaction as never,
+      policy,
+      userId: 'user_1',
+      decisions: { statement_news: { decision: 'accepted', selectedValue: null } },
+      givenAtMs,
+    });
+    expect(mocks.statementFake.writes).toEqual([]);
+    expect(mocks.statementFake.record('user_1', 'statement_news')?.status).toBe('denied');
+  });
+
+  it('records it when nothing was answered since', async () => {
+    mocks.statementFake.answer('user_1', 'statement_news', {
+      status: 'denied',
+      updated_at: Date.now() - 120_000,
+    });
+    await recordFlowStatementConsents({
+      c: createContext({}) as never,
+      db: mocks.coreAdapter,
+      tenantId: 'default',
+      interaction: interaction as never,
+      policy,
+      userId: 'user_1',
+      decisions: { statement_news: { decision: 'accepted', selectedValue: null } },
+      givenAtMs: Date.now() - 60_000,
+    });
+    expect(mocks.statementFake.record('user_1', 'statement_news')?.status).toBe('granted');
+  });
+
+  it('does not withdraw an agreement for a box left unticked before sign-in', async () => {
+    mocks.statementFake.answer('user_1', 'statement_news', {
+      status: 'granted',
+      updated_at: Date.now() - 120_000,
+    });
+    await recordFlowStatementConsents({
+      c: createContext({}) as never,
+      db: mocks.coreAdapter,
+      tenantId: 'default',
+      interaction: interaction as never,
+      policy,
+      userId: 'user_1',
+      decisions: { statement_news: { decision: 'rejected', selectedValue: null } },
+      givenAtMs: Date.now() - 60_000,
+      heldBeforeSignIn: true,
+    });
+    expect(mocks.statementFake.writes).toEqual([]);
+    expect(mocks.statementFake.record('user_1', 'statement_news')?.status).toBe('granted');
+  });
+
+  it('records a refusal by someone signed in as a withdrawal', async () => {
+    mocks.statementFake.answer('user_1', 'statement_news', {
+      status: 'granted',
+      updated_at: Date.now() - 120_000,
+    });
+    await recordFlowStatementConsents({
+      c: createContext({}) as never,
+      db: mocks.coreAdapter,
+      tenantId: 'default',
+      interaction: interaction as never,
+      policy,
+      userId: 'user_1',
+      decisions: { statement_news: { decision: 'rejected', selectedValue: null } },
+      givenAtMs: Date.now() - 60_000,
+    });
+    expect(mocks.statementFake.record('user_1', 'statement_news')?.status).not.toBe('granted');
   });
 });

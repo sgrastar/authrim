@@ -1,3 +1,4 @@
+import { getTenantCapabilityState } from '@authrim/ar-lib-core';
 import type { Env, PortableDynamicPluginConfiguration } from '@authrim/ar-lib-core';
 import {
   encodePortablePluginConfiguration,
@@ -39,6 +40,19 @@ type PortablePluginConfig = PortableKvPluginConfig | PortableDynamicPluginConfig
 
 function invalid(): never {
   throw new Error('backup_plugin_configuration_invalid');
+}
+
+/**
+ * An external (dynamic worker) plugin installation is restored only while the platform has the
+ * `external_plugins` capability on: its restored credentials and enabled state would otherwise
+ * become effective when the capability returns. A switch that cannot be read counts as not on.
+ * This is for everyone: the port has no requester (built-in plugin configuration is not affected).
+ */
+async function assertExternalPluginRestoreAllowed(env: Env, decoded: object): Promise<void> {
+  if (!('sourceInstallationId' in decoded)) return;
+  if ((await getTenantCapabilityState(env, 'external_plugins')) !== 'on') {
+    throw new Error('backup_plugin_external_capability_disabled');
+  }
 }
 
 function kv(env: Pick<Env, 'SETTINGS'>): KVNamespace {
@@ -390,7 +404,7 @@ export function createTenantBackupPluginConfigurationPorts(env: Env) {
     }),
     async assertPluginSupported(configuration: PortablePluginConfiguration): Promise<void> {
       await installedEntry(env, configuration);
-      decodeConfig(configuration);
+      await assertExternalPluginRestoreAllowed(env, decodeConfig(configuration));
     },
     async importPlugin(
       context: { signal: AbortSignal },
@@ -399,6 +413,7 @@ export function createTenantBackupPluginConfigurationPorts(env: Env) {
       context.signal.throwIfAborted();
       await installedEntry(env, configuration);
       const decodedConfiguration = decodeConfig(configuration);
+      await assertExternalPluginRestoreAllowed(env, decodedConfiguration);
       if ('sourceInstallationId' in decodedConfiguration) {
         const runner = env.PLUGIN_RUNNER ?? invalid();
         await runner.restoreDynamicPluginBackup({

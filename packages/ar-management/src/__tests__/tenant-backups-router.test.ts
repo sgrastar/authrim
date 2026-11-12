@@ -537,7 +537,7 @@ it('records the authority of a platform operator who asks for an import', async 
     expect.objectContaining({
       authority: {
         actorId: 'admin',
-        platformSettingsCategories: ['institution'],
+        platformSettingsCategories: ['dcr', 'institution', 'plugin'],
         globalAdmin: { permitted: true, hierarchyLevel: 100 },
       },
     })

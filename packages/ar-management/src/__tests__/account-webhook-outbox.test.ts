@@ -10,6 +10,8 @@ import type {
   EventPublishOptions,
 } from '@authrim/ar-lib-core';
 import {
+  DROP_BATCH_PER_SHARD,
+  type DroppedOutboxAuditEntry,
   processAccountWebhookOutbox,
   processScheduledAccountWebhookOutbox,
 } from '../account-webhook-outbox';
@@ -490,5 +492,196 @@ describe('transactional account webhook production and delivery', () => {
     expect(log.warn).toHaveBeenCalledWith('Account webhook PII shard resolution deferred', {
       tenantId: 't',
     });
+  });
+});
+
+describe('the platform webhooks capability', () => {
+  const settingsWith = (state: boolean | 'down') =>
+    ({
+      get: vi.fn(async (key: string) => {
+        if (key !== 'settings:platform:tenant-capabilities') return null;
+        if (state === 'down') throw new Error('kv down');
+        return JSON.stringify({ 'tenant_capabilities.webhooks': state });
+      }),
+      put: vi.fn(),
+      delete: vi.fn(),
+      list: vi.fn(),
+      getWithMetadata: vi.fn(),
+    }) as unknown as KVNamespace;
+  const audited: DroppedOutboxAuditEntry[] = [];
+  const auditDropped = vi.fn(async (entry: DroppedOutboxAuditEntry) => {
+    audited.push(entry);
+  });
+  const runWith = (
+    state: boolean | 'down',
+    audit: (entry: DroppedOutboxAuditEntry) => Promise<void> = auditDropped
+  ) =>
+    processAccountWebhookOutbox({ SETTINGS: settingsWith(state) } as Env, targets(), log, {
+      now: () => now,
+      publisher: async () => publish,
+      deletionReady: async () => true,
+      auditDropped: audit,
+    });
+  beforeEach(() => {
+    audited.length = 0;
+    auditDropped.mockClear();
+  });
+  const rows = () =>
+    db
+      .prepare(
+        'SELECT delivered_at, attempts, lease_until, next_attempt_at FROM account_webhook_outbox'
+      )
+      .all() as Array<Record<string, unknown>>;
+
+  it('drops the events that become due while off, without any delivery, and keeps none', async () => {
+    account();
+    const total = rows().length;
+    expect(total).toBeGreaterThan(0);
+    expect(await runWith(false)).toEqual({ delivered: 0, deferred: 0, dropped: total });
+    expect(publish).not.toHaveBeenCalled();
+    expect(rows()).toEqual([]);
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('dropped'), { dropped: total });
+  });
+
+  it('does not grow over many cycles while off, and replays nothing when it is back on', async () => {
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      account('guest', 't', `u${cycle}`);
+      await runWith(false);
+      expect(rows()).toEqual([]);
+    }
+    expect(publish).not.toHaveBeenCalled();
+    expect(await runWith(true)).toEqual({ delivered: 0, deferred: 0 });
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('drops a bounded batch per run; what is still pending when it is turned back on is delivered', async () => {
+    for (let index = 0; index < DROP_BATCH_PER_SHARD + 1; index += 1) {
+      account('guest', 't', `batch-${index}`);
+    }
+    const total = rows().length;
+    expect(total).toBeGreaterThan(DROP_BATCH_PER_SHARD);
+    const first = await runWith(false);
+    expect(first.dropped).toBe(DROP_BATCH_PER_SHARD);
+    expect(
+      audited.map((entry) => (JSON.parse(entry.metadata) as { dropped: number }).dropped)
+    ).toEqual([DROP_BATCH_PER_SHARD]);
+    const remaining = total - DROP_BATCH_PER_SHARD;
+    expect(rows().length).toBe(remaining);
+    // Turned back on before the next drop run: the rest is delivered, deliberately.
+    expect(await runWith(true)).toEqual({ delivered: remaining, deferred: 0 });
+    expect(publish).toHaveBeenCalledTimes(remaining);
+  });
+
+  it('keeps the maintenance of old delivered rows running while off', async () => {
+    account();
+    db.exec(`UPDATE account_webhook_outbox SET delivered_at = ${now - 31 * 86400_000}`);
+    expect(rows().length).toBeGreaterThan(0);
+    await runWith(false);
+    expect(rows()).toEqual([]);
+  });
+
+  it('delivers as before while on', async () => {
+    account();
+    const total = rows().length;
+    expect(await runWith(true)).toEqual({ delivered: total, deferred: 0 });
+    expect(publish).toHaveBeenCalledTimes(total);
+    expect(rows().every((row) => row.delivered_at !== null)).toBe(true);
+  });
+
+  it('keeps delivering (the earlier behaviour) when the switch cannot be read', async () => {
+    account();
+    const total = rows().length;
+    expect(await runWith('down')).toEqual({ delivered: total, deferred: 0 });
+    expect(publish).toHaveBeenCalledTimes(total);
+  });
+});
+
+describe('dropped outbox events are recorded in the audit log', () => {
+  const CAPS = 'settings:platform:tenant-capabilities';
+  const settings = (state: boolean | 'down') =>
+    ({
+      get: async (key: string) => {
+        if (key !== CAPS) return null;
+        if (state === 'down') throw new Error('kv down');
+        return JSON.stringify({ 'tenant_capabilities.webhooks': state });
+      },
+      put: async () => undefined,
+      delete: async () => undefined,
+      list: async () => ({ keys: [] }),
+      getWithMetadata: async () => ({ value: null, metadata: null }),
+    }) as unknown as KVNamespace;
+  const audited: DroppedOutboxAuditEntry[] = [];
+  const run = (
+    state: boolean | 'down',
+    audit?: (entry: DroppedOutboxAuditEntry) => Promise<void>
+  ) =>
+    processAccountWebhookOutbox({ SETTINGS: settings(state) } as Env, targets(), log, {
+      now: () => now,
+      publisher: async () => publish,
+      deletionReady: async () => true,
+      auditDropped:
+        audit ??
+        (async (entry) => {
+          audited.push(entry);
+        }),
+    });
+  const count = () =>
+    (db.prepare('SELECT COUNT(*) AS n FROM account_webhook_outbox').get() as { n: number }).n;
+  beforeEach(() => {
+    audited.length = 0;
+  });
+
+  it('writes one entry per tenant per run, with counts and times and no personal data', async () => {
+    account('guest', 't', 'one');
+    account('registered', 't', 'two');
+    db.exec('UPDATE identity_accounts SET metadata_json = \'{"email":"secret@example.com"}\'');
+    const total = count();
+    expect(total).toBeGreaterThan(2);
+    const result = await run(false);
+    expect(result.dropped).toBe(total);
+    expect(count()).toBe(0);
+    expect(publish).not.toHaveBeenCalled();
+    expect(audited).toHaveLength(1);
+    const entry = audited[0];
+    expect(entry).toMatchObject({
+      tenantId: 't',
+      userId: 'system',
+      action: 'webhook.outbox.dropped',
+      severity: 'warning',
+    });
+    const metadata = JSON.parse(entry.metadata) as Record<string, unknown>;
+    expect(metadata).toMatchObject({ capability: 'webhooks', dropped: total });
+    const eventTypes = metadata.event_types as Record<string, number>;
+    expect(Object.values(eventTypes).reduce((sum, n) => sum + n, 0)).toBe(total);
+    expect(typeof metadata.oldest_occurred_at).toBe('number');
+    expect(typeof metadata.newest_occurred_at).toBe('number');
+    expect(entry.metadata).not.toContain('secret@example.com');
+    expect(entry.metadata).not.toContain('one');
+  });
+
+  it('keeps the rows, and retries, when the record cannot be written', async () => {
+    account();
+    const total = count();
+    const failed = await run(false, async () => {
+      throw new Error('audit down');
+    });
+    expect(failed.dropped).toBe(0);
+    expect(count()).toBe(total);
+    expect(audited).toHaveLength(0);
+    // Next run, the record works: rows are removed after the record.
+    const retried = await run(false);
+    expect(retried.dropped).toBe(total);
+    expect(audited).toHaveLength(1);
+    expect(count()).toBe(0);
+  });
+
+  it('writes no entry when there is nothing due, when delivering, or when the switch is unreadable', async () => {
+    await run(false);
+    expect(audited).toHaveLength(0);
+    account();
+    await run('down');
+    await run(true);
+    expect(audited).toHaveLength(0);
+    expect(publish).toHaveBeenCalled();
   });
 });

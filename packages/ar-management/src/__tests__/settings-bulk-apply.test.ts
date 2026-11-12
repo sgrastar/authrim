@@ -2954,3 +2954,74 @@ describe('how long the replay record lasts', () => {
     // The first import of the whole worker entry is slow on a loaded CI runner.
   }, 60_000);
 });
+
+describe('the platform capability switches in the bulk apply', () => {
+  const CAPABILITIES = 'settings:platform:tenant-capabilities';
+  const turnOff = (t: Awaited<ReturnType<typeof setup>>, capability: string) =>
+    t.settings.store.set(
+      CAPABILITIES,
+      JSON.stringify({ [`tenant_capabilities.${capability}`]: false })
+    );
+  type Outcome = { action?: string; status?: string; reason?: string };
+  const firstChange = (json: Record<string, unknown>, tenantId: string): Outcome =>
+    (resultFor(json, tenantId).changes as Outcome[])[0];
+  const dcrChange = { category: 'dcr', set: { 'dcr.enabled': true } };
+  const pluginChange = { category: 'plugin', set: { 'plugin.enabled': true } };
+
+  it.each([
+    ['dcr', 'dynamic_client_registration', dcrChange],
+    ['plugin', 'external_plugins', pluginChange],
+  ] as const)(
+    'refuses %s for a global token without admin:*, in a preview and an apply, and writes nothing',
+    async (_category, capability, change) => {
+      const t = await setup();
+      turnOff(t, capability);
+      const token = await t.principal(['admin:settings:write'], 'all');
+      await t.versions();
+      const before = t.snapshot();
+      for (const mode of ['preview', 'apply']) {
+        const response = await t.bulkAsToken(
+          token,
+          request({ mode, tenant_ids: ['tenant-a'], changes: [change] })
+        );
+        expect(response.status, mode).toBe(200);
+        const entry = firstChange(response.json, 'tenant-a');
+        if (mode === 'preview') {
+          expect(entry.action).toBe('would_reject');
+          expect(entry.reason).toBe('capability_disabled');
+        } else {
+          expect(entry.status).toBe('rejected');
+          expect(entry.reason).toBe('capability_disabled');
+        }
+      }
+      expect(t.snapshot()).toEqual(before);
+    }
+  );
+
+  it('lets a global token with admin:* and a global ar_super_admin change them while off', async () => {
+    const t = await setup();
+    turnOff(t, 'dynamic_client_registration');
+    const star = await t.principal(['admin:*'], 'all');
+    const byToken = await t.bulkAsToken(
+      star,
+      request({ tenant_ids: ['tenant-a'], changes: [dcrChange] })
+    );
+    expect(firstChange(byToken.json, 'tenant-a').status).toBe('applied');
+    const byAdmin = await t.bulk(
+      t.admin,
+      request({
+        tenant_ids: ['tenant-b'],
+        changes: [{ category: 'dcr', set: { 'dcr.enabled': true } }],
+      })
+    );
+    expect(firstChange(byAdmin.json, 'tenant-b').status).toBe('applied');
+  });
+
+  it('is unchanged for a category that belongs to no capability', async () => {
+    const t = await setup();
+    turnOff(t, 'dynamic_client_registration');
+    const token = await t.principal(['admin:settings:write'], 'all');
+    const response = await t.bulkAsToken(token, request());
+    expect(resultFor(response.json, 'tenant-a').status).toBe('applied');
+  });
+});

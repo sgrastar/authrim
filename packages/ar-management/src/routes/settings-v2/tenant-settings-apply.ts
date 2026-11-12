@@ -21,6 +21,7 @@ import {
   isDefaultLayerKey,
   LEGACY_METHOD_SWITCHES,
 } from '@authrim/ar-lib-core';
+import { capabilityRefusal, SETTINGS_CATEGORY_CAPABILITY } from '../../capability-authorization';
 import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 import {
   humanVerificationDocumentRefusal,
@@ -205,6 +206,19 @@ export async function applyTenantSettingsChange(
   // Security Check 4: Validate user can access this specific tenant
   if (!canAccess(adminAuth, tenantId)) {
     return errorResponse(c, 'forbidden', 'Cannot modify settings for this tenant', 403);
+  }
+
+  // The settings of a capability the platform turned off for tenants cannot be changed by a caller
+  // without global platform authority, whatever route brought the change (the tenant PATCH route,
+  // the bulk apply). Same answers as the Admin API gate: 403 capability_disabled, 503 when the
+  // switch cannot be read.
+  const settingsCapability = SETTINGS_CATEGORY_CAPABILITY[category];
+  if (settingsCapability) {
+    const refusal = await capabilityRefusal(c.env, adminAuth, settingsCapability);
+    if (refusal) {
+      input.onRefusal?.({ kind: 'state', code: refusal.body.error });
+      return c.json(refusal.body, refusal.status);
+    }
   }
 
   // While the tenant is in lite mode, a change that would give it something the lite Login UI
