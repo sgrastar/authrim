@@ -9,6 +9,16 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.section.adminSignInPlatform': 'Admin sign-in for every tenant',
 	'set.section.adminSignInPlatform.desc':
 		'Applies to the administrators of every tenant. Only platform administrators can change it.',
+	'set.section.adminInvitationsPlatform': 'Admin invitation codes',
+	'set.section.adminInvitationsPlatform.desc':
+		'Whether an admin invitation’s code is handed to a machine instead of being e-mailed. Applies to every tenant. Only platform administrators can change it.',
+	'set.k.admin_invitations.code_handoff_enabled': 'Hand the invitation code to a trusted machine',
+	'set.k.admin_invitations.code_handoff_enabled.desc':
+		'On lets a machine credential that holds the dedicated permission create an admin invitation and receive its code in the API response instead of by e-mail. The invitee’s e-mail address is then not treated as verified. Invitations made from this console are still e-mailed. Turning it on asks for an extra identity check (step-up); turning it off does not.',
+	'settings.notice.codeHandoff.title': 'Codes are handed over without e-mail',
+	'settings.notice.codeHandoff.body':
+		'A machine with the permission receives the enrollment code directly. Turn this off when no automation needs it.',
+	'settings.stepUpCancelled': 'The identity check was cancelled. Some changes are still unsaved.',
 	'set.k.session.ttl.admin_passkey': 'Sign-in length for administrators using a passkey',
 	'set.k.session.ttl.admin_passkey.desc':
 		'How long after signing in with a passkey an administrator is asked to sign in again.',

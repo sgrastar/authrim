@@ -491,7 +491,10 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				icon: 'users',
 				platform: 'tenant',
 				// The administrators (their read permission) or how they sign in (those settings).
-				requires: { settings: ['session', 'security'], permission: 'admin:admin_users:read' },
+				requires: {
+					settings: ['session', 'security', 'admin-invitations'],
+					permission: 'admin:admin_users:read'
+				},
 				// …/team/invite (later, an administrator's page).
 				details: true,
 				legacyRoutes: ['/admin/admins (このテナントの管理者のみ)']

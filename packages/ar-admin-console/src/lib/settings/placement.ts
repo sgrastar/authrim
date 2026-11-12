@@ -401,6 +401,13 @@ export const TEAM: SettingsPageDef = {
 				{ key: 'security.admin_keyring_dc_api', depth: 'primary' },
 				{ key: 'security.admin_last_resort_reenroll_window_seconds', depth: 'advanced' }
 			]
+		},
+		{
+			id: 'admin-invitations-platform',
+			title: 'set.section.adminInvitationsPlatform',
+			description: 'set.section.adminInvitationsPlatform.desc',
+			level: 'platform',
+			settings: [{ key: 'admin_invitations.code_handoff_enabled', depth: 'primary' }]
 		}
 	]
 };
