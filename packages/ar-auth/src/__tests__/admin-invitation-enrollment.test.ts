@@ -1,4 +1,6 @@
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+import { createRequire } from 'node:module';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -96,6 +98,17 @@ function createEnv() {
     ADMIN_UI_URL: 'https://admin.example.com',
   } as unknown as Env;
 }
+
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
+  DatabaseSync: new (path: string) => {
+    exec(sql: string): void;
+    prepare(sql: string): {
+      run(...values: unknown[]): unknown;
+      get(...values: unknown[]): Record<string, unknown> | undefined;
+    };
+    close(): void;
+  };
+};
 
 const secondFactorCredentials = new Set<string>();
 describe('Admin invitation enrollment', () => {
@@ -618,6 +631,109 @@ describe('Admin invitation enrollment', () => {
     ]);
     expect(JSON.stringify(row)).not.toContain(String(sessionId));
   });
+
+  it.each([
+    ['email', 1],
+    ['response', 0],
+  ] as const)(
+    'sets the Admin email_verified for a code delivered by %s',
+    async (codeDelivery, expectedVerified) => {
+      const env = createEnv();
+      Object.assign(invitation, { code_delivery: codeDelivery });
+      try {
+        await seedEnrollment('enrollment-token', {
+          invitationId: invitation.id,
+          phase: 'authentication',
+          clientIp: '203.0.113.42',
+          authentication: {
+            challengeId: 'challenge-id',
+            challenge: 'authentication-challenge',
+            rpID: 'admin.example.com',
+            origin: 'https://admin.example.com',
+            credentialId: 'credential-id',
+            publicKey: 'AQID',
+            counter: 1,
+            transports: ['internal'],
+            aaguid: null,
+          },
+        });
+        const response = await adminInvitationEnrollmentApp.request(
+          '/api/admin/invitations/activate',
+          {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'cf-connecting-ip': '203.0.113.42',
+              'user-agent': 'test-browser',
+            },
+            body: JSON.stringify({
+              enrollment_token: 'enrollment-token',
+              challenge_id: 'challenge-id',
+              credential: {
+                id: 'credential-id',
+                rawId: 'credential-id',
+                response: {
+                  clientDataJSON: 'client-data',
+                  authenticatorData: 'authenticator-data',
+                  signature: 'signature',
+                },
+                type: 'public-key',
+                clientExtensionResults: {},
+              },
+            }),
+          },
+          env
+        );
+        expect(response.status).toBe(200);
+
+        // The audit entry says how the code was delivered.
+        const [{ row }] = emitter.rows;
+        expect(
+          (JSON.parse(String(row.metadata_json)) as { code_delivery?: string }).code_delivery
+        ).toBe(codeDelivery);
+
+        // Run the activation's own INSERT on the real schema (baseline plus the column's
+        // migration), with the invitation row the way a create would have written it.
+        const statement = adapter.batch.mock.calls[0][0][0];
+        const db = new DatabaseSync(':memory:');
+        try {
+          const migrations = new URL('../../../../migrations/admin/d1/', import.meta.url);
+          db.exec(readRenderedMigrationSql(migrations, '001_0_5_0_admin_baseline.sql'));
+          db.exec(readRenderedMigrationSql(migrations, '016_admin_invitation_code_delivery.sql'));
+          db.prepare(
+            `INSERT INTO admin_invitations (
+               id, tenant_id, admin_user_id, email, pending_email_key, code_hash, status,
+               admin_role_id, admin_role_name, scope_type, expires_at, last_sent_at, created_by,
+               created_at, updated_at, code_delivery
+             ) VALUES (?, ?, ?, ?, ?, 'hash', 'pending', 'r', 'ar_tenant_admin', 'tenant', ?, 1,
+                       'creator', 1, 1, ?)`
+          ).run(
+            invitation.id,
+            invitation.tenant_id,
+            invitation.admin_user_id,
+            invitation.email,
+            invitation.email,
+            Date.now() + 600_000,
+            codeDelivery
+          );
+          db.prepare(
+            `INSERT INTO admin_invitation_enrollments
+               (token_hash, invitation_id, phase, state_json, expires_at, created_at, updated_at)
+             VALUES (?, ?, 'authentication', '{}', ?, 1, 1)`
+          ).run(await hashToken('enrollment-token'), invitation.id, Date.now() + 600_000);
+          db.prepare(statement.sql).run(...(statement.params ?? []));
+          const created = db
+            .prepare('SELECT email_verified FROM admin_users WHERE id = ?')
+            .get(invitation.admin_user_id);
+          expect(created?.email_verified).toBe(expectedVerified);
+        } finally {
+          db.close();
+        }
+      } finally {
+        delete (invitation as { code_delivery?: string }).code_delivery;
+      }
+    }
+  );
 
   it.each([
     ['refuses', 'tenant_123', undefined, 409],

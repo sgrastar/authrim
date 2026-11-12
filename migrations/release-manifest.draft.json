@@ -126,6 +126,10 @@
             {
               "path": "015_platform_profiles.sql",
               "checksum": "6db3e2e46b1a11c61a6007fba3af4119b682315d73e35a9a9db7ae583b5d5390"
+            },
+            {
+              "path": "016_admin_invitation_code_delivery.sql",
+              "checksum": "e9c464dfe4eeea88496a56844db53a0ec642e958c87151f8ad4db543a07164db"
             }
           ]
         },
@@ -341,6 +345,10 @@
         {
           "path": "015_platform_profiles.sql",
           "checksum": "6db3e2e46b1a11c61a6007fba3af4119b682315d73e35a9a9db7ae583b5d5390"
+        },
+        {
+          "path": "016_admin_invitation_code_delivery.sql",
+          "checksum": "e9c464dfe4eeea88496a56844db53a0ec642e958c87151f8ad4db543a07164db"
         }
       ]
     },

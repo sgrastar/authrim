@@ -322,6 +322,26 @@ describe('requireAdminStepUp', () => {
       ).toBe(403);
     });
 
+    it('never lets a machine turn the code handoff on, exemption or not, enforcement on or off', async () => {
+      const enable = {
+        operation: 'admin_invitation.code_handoff.enable' as const,
+        targetTenantId: 'tenant-a',
+      };
+      const exempt = machine([
+        'admin:step_up_exempt:admin_invitation.code_handoff.enable',
+        'admin:admin_invitations:code_handoff',
+        '*',
+      ]);
+      for (const enforced of [undefined, true, false]) {
+        mocks.resolveEffectiveSettings.mockResolvedValue({
+          'security.admin_step_up_enforced': enforced,
+        });
+        const { status, body } = await run(enable, exempt);
+        expect(status).toBe(403);
+        expect(body).toMatchObject({ error: 'step_up_human_required' });
+      }
+    });
+
     it('does not let a human session skip the step-up with an exemption', async () => {
       const { status } = await run(
         deleteTenant,

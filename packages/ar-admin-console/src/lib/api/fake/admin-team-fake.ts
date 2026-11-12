@@ -251,6 +251,7 @@ export function sampleInvitations(): TeamInvitation[] {
 		expires_at: NOW + 20 * HOUR,
 		last_sent_at: NOW - 4 * HOUR,
 		last_delivery_status: 'sent',
+		code_delivery: 'email',
 		accepted_at: null,
 		created_at: NOW - 4 * HOUR,
 		...partial
@@ -584,6 +585,7 @@ export function fakeAdminTeam(options: FakeAdminTeamOptions = {}): AdminTeamClie
 						expires_at: NOW + (input.expires_in_hours ?? 24) * HOUR,
 						last_sent_at: null,
 						last_delivery_status: 'pending',
+						code_delivery: 'email',
 						accepted_at: null,
 						created_at: NOW
 					};

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ADMIN_PERMISSIONS, hasAdminPermission } from '../admin-user';
+import {
+  ADMIN_PERMISSIONS,
+  hasAdminPermission,
+  isExactMatchOnlyAdminPermission,
+} from '../admin-user';
+import { ADMIN_ROLE_DEFINITIONS } from '../../constants/admin-roles';
 
 describe('operation-level Admin permissions', () => {
   it('accepts the exact or wildcard user suspension permission', () => {
@@ -144,5 +149,33 @@ describe('tenant provisioning and deletion permissions', () => {
     ).toBe(false);
     expect(hasAdminPermission([ADMIN_PERMISSIONS.SETTINGS_WRITE], provision)).toBe(false);
     expect(hasAdminPermission([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD], remove)).toBe(false);
+  });
+});
+
+describe('admin invitation code handoff permission', () => {
+  const handoff = ADMIN_PERMISSIONS.ADMIN_INVITATION_CODE_HANDOFF;
+
+  it('is named in the admin invitations namespace and held by exact name only', () => {
+    expect(handoff).toBe('admin:admin_invitations:code_handoff');
+    expect(isExactMatchOnlyAdminPermission(handoff)).toBe(true);
+    expect(hasAdminPermission([handoff], handoff)).toBe(true);
+  });
+
+  it.each([
+    ['*'],
+    ['admin:*'],
+    ['admin:admin_invitations:*'],
+    ['admin:admin_users:*'],
+    ['admin:admin_users:write'],
+    ['admin:admin_roles:write'],
+  ])('is not carried by %s', (permission) => {
+    expect(hasAdminPermission([permission], handoff)).toBe(false);
+  });
+
+  it('is in no built-in role', () => {
+    for (const role of ADMIN_ROLE_DEFINITIONS) {
+      expect(role.permissions, role.name).not.toContain(handoff);
+      expect(hasAdminPermission([...role.permissions], handoff), role.name).toBe(false);
+    }
   });
 });

@@ -49,6 +49,7 @@ export * from './service-site';
 export * from './identity-mapping';
 export * from './bulk-apply';
 export * from './tenant-capabilities';
+export * from './admin-invitations';
 export * from './institution';
 
 // Re-export SettingsManager types

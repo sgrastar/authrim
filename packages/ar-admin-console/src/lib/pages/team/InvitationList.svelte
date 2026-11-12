@@ -90,13 +90,19 @@
 		access.global ||
 		(invitation.scope_type !== 'global' && invitation.role.name !== SUPER_ADMIN_ROLE);
 
+	// A code that was handed over is not e-mailed again: the service that received it re-issues or
+	// revokes it through the API.
 	const actionsOf = (invitation: TeamInvitation): MenuAction[] => [
-		{
-			label: t('tm.inv.action.resend'),
-			icon: 'mail',
-			disabled: busy,
-			onselect: () => (pending = { change: 'resend', invitation })
-		},
+		...(invitation.code_delivery === 'response'
+			? []
+			: [
+					{
+						label: t('tm.inv.action.resend'),
+						icon: 'mail' as const,
+						disabled: busy,
+						onselect: () => (pending = { change: 'resend', invitation })
+					}
+				]),
 		{
 			label: t('tm.inv.action.revoke'),
 			icon: 'trash',
@@ -174,7 +180,9 @@
 					{:else if column.key === 'status'}
 						<Badge tone={STATUS[row.status].tone} dot>{t(STATUS[row.status].key)}</Badge>
 					{:else if column.key === 'delivery'}
-						{#if row.last_delivery_status === 'failed'}
+						{#if row.code_delivery === 'response'}
+							{t('tm.inv.delivery.handed')}
+						{:else if row.last_delivery_status === 'failed'}
 							<Badge tone="danger">{t('tm.inv.delivery.failed')}</Badge>
 						{:else if row.last_delivery_status === 'sent'}
 							{t('tm.inv.delivery.sent')}

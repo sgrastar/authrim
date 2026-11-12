@@ -77,6 +77,9 @@ export const ADMIN_STEP_UP_OPERATIONS = {
   'logging.policy.publish': 'L2',
   // Exporting logs with their sensitive detail or payload.
   'log.sensitive.export': 'L2',
+  // Turning on the platform switch that lets a machine principal receive an admin invitation's
+  // enrollment code in the API response instead of by e-mail.
+  'admin_invitation.code_handoff.enable': 'L2',
 } as const satisfies Record<string, Exclude<AdminStepUpLevel, 'L0'>>;
 
 /**
@@ -88,6 +91,8 @@ export const ADMIN_STEP_UP_ALWAYS_ENFORCED: ReadonlySet<AdminStepUpOperation> = 
   'admin_step_up.policy.relax',
   'admin.second_factor.add',
   'admin.second_factor.remove',
+  // A machine can never switch the code handoff on, exemption or not.
+  'admin_invitation.code_handoff.enable',
 ]);
 
 /** The platform setting that turns route enforcement on (default) or, during a migration, off. */

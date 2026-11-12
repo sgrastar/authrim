@@ -6,6 +6,10 @@
  * - `audit.retention.shorten`: `audit.check_api_retention_days` or `admin-notices.retention_days`
  *   becomes shorter (or is switched off).
  *
+ * - `admin_invitation.code_handoff.enable`: `admin_invitations.code_handoff_enabled` goes from off
+ *   (or unset, with the environment variable and default off) to on. Turning it off is free. A
+ *   machine can never do it (the operation is always enforced and needs a signed-in human).
+ *
  * - `tenant.jurisdiction.update`: the `tenant` category's `tenant.residency_profile_id` changes which
  *   residency profile applies and the jurisdiction differs (an unknown profile counts as differing).
  * - `audit.retention.shorten` also covers `tenant.audit_profile_id` switching to an audit profile
@@ -23,6 +27,7 @@ import {
   ADMIN_NOTICES_DEFAULTS,
   ADMIN_STEP_UP_ENFORCED_KEY,
   ADMIN_STEP_UP_OVERRIDES_KEY,
+  ADMIN_INVITATION_CODE_HANDOFF_KEY,
   CHECK_API_AUDIT_DEFAULTS,
   DISABLED_MARKER,
   settingsParentScopes,
@@ -59,6 +64,7 @@ export const TENANT_PROFILE_KEYS = [
   'tenant.audit_profile_id',
 ] as const;
 const POLICY_KEYS = [ADMIN_STEP_UP_OVERRIDES_KEY, ADMIN_STEP_UP_ENFORCED_KEY] as const;
+const HANDOFF_KEYS = [ADMIN_INVITATION_CODE_HANDOFF_KEY] as const;
 const LEVEL_RANK: Record<string, number> = { L1: 1, L2: 2 };
 
 type Doc = Record<string, unknown>;
@@ -84,7 +90,10 @@ export type StepUpSettingsDecision =
   | { kind: 'none' }
   | {
       kind: 'gate';
-      operation: 'admin_step_up.policy.relax' | 'audit.retention.shorten';
+      operation:
+        | 'admin_step_up.policy.relax'
+        | 'audit.retention.shorten'
+        | 'admin_invitation.code_handoff.enable';
       params: Record<string, unknown>;
     };
 
@@ -92,6 +101,7 @@ export type StepUpSettingsDecision =
 export function patchTouchesStepUpSettings(body: SettingsPatchRequest): boolean {
   const guarded: readonly string[] = [
     ...POLICY_KEYS,
+    ...HANDOFF_KEYS,
     ...RETENTION_SETTING_KEYS,
     ...TENANT_PROFILE_KEYS,
   ];
@@ -144,7 +154,21 @@ export function decideStepUpSettings(input: {
   const shorten = Object.keys(retention).length > 0;
   if (shorten) params.retention_days = retention;
 
+  // The code handoff switch: only off (or unset) -> on needs a human step-up. Anything that is not
+  // exactly true reads as off. An unset value is what the scope inherits: at platform scope that
+  // is the environment variable, else the default (off).
+  const handoffOn = (doc: Doc): boolean =>
+    effective(doc, inherited, ADMIN_INVITATION_CODE_HANDOFF_KEY) === true;
+  const handoffEnabled = !handoffOn(before) && handoffOn(after);
+
   if (relax) return { kind: 'gate', operation: 'admin_step_up.policy.relax', params };
+  if (handoffEnabled) {
+    return {
+      kind: 'gate',
+      operation: 'admin_invitation.code_handoff.enable',
+      params: { ...params, [ADMIN_INVITATION_CODE_HANDOFF_KEY]: true },
+    };
+  }
   if (shorten) return { kind: 'gate', operation: 'audit.retention.shorten', params };
   return { kind: 'none' };
 }
@@ -152,6 +176,7 @@ export function decideStepUpSettings(input: {
 type StepUpNeed = {
   operation:
     | 'admin_step_up.policy.relax'
+    | 'admin_invitation.code_handoff.enable'
     | 'tenant.jurisdiction.update'
     | 'webhook.destination.update'
     | 'audit.retention.shorten';
