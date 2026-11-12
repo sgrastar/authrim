@@ -25,7 +25,7 @@ const translation = {
 	login_guestNoExpiry: 'ለአዲስ የእንግዳ መለያዎች በራስ-ሰር መሰረዝ አልተዘጋጀም።',
 
 	app_title: 'Authrim',
-	app_subtitle: 'መታወቂያ እና መዳረሻ በሁሉም ቦታ ዳርቻ ላይ ነው።',
+	app_subtitle: 'መለያዎ፣ ደህንነቱ የተጠበቀ።',
 	button_openDialog: 'ክፍት ውይይት',
 	dialog_title: 'የአውታረ መረብ አገናኝ ውይይት ይቀልጡ',
 	dialog_description:

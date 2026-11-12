@@ -26,7 +26,7 @@ const ja = {
 	login_guestNoExpiry: '新規ゲストアカウントの自動削除は設定されていません。',
 
 	app_title: 'Authrim',
-	app_subtitle: 'アイデンティティ＆アクセスをあらゆる場所で',
+	app_subtitle: 'あなたのアカウントを、安全に。',
 	button_openDialog: 'ダイアログを開く',
 	dialog_title: 'Melt UIダイアログ',
 	dialog_description:

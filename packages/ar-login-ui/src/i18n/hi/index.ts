@@ -27,7 +27,7 @@ const translation = {
 	login_guestNoExpiry: 'नए अतिथि खातों के लिए अपने आप हटाने की कोई योजना नहीं है।',
 
 	app_title: 'Authrim',
-	app_subtitle: 'हर जगह एज पर पहचान और पहुँच।',
+	app_subtitle: 'आपका खाता, सुरक्षित।',
 	button_openDialog: 'संवाद खोलें',
 	dialog_title: 'Melt UI संवाद',
 	dialog_description:

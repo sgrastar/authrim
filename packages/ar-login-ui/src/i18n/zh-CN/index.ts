@@ -25,7 +25,7 @@ const zhCN = createTranslation({
 	login_guestNoExpiry: '新访客账户未设置自动删除。',
 
 	...completion,
-	app_subtitle: '身份与访问，无处不在',
+	app_subtitle: '安全守护您的账户。',
 	dialog_cancel: '取消',
 	dialog_close: '关闭',
 	language_switch: '切换语言',

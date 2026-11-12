@@ -27,7 +27,7 @@ const translation = {
 	login_guestNoExpiry: 'Yeni misafir hesapları için otomatik silme planlanmamıştır.',
 
 	app_title: 'Authrim',
-	app_subtitle: 'Her yerde uçta kimlik ve erişim.',
+	app_subtitle: 'Hesabınız güvende.',
 	button_openDialog: 'İletişim kutusunu aç',
 	dialog_title: 'Melt UI iletişim kutusu',
 	dialog_description:

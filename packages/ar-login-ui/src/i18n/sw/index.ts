@@ -27,7 +27,7 @@ const translation = {
 	login_guestNoExpiry: 'Hakuna ufutaji wa kiotomatiki uliopangwa kwa akaunti mpya za wageni.',
 
 	app_title: 'Authrim',
-	app_subtitle: 'Utambulisho & Ufikiaji katika makali ya kila mahali.',
+	app_subtitle: 'Akaunti yako, salama.',
 	button_openDialog: 'Fungua kisanduku cha mazungumzo',
 	dialog_title: 'Kisanduku cha mazungumzo cha Melt UI',
 	dialog_description:

@@ -26,7 +26,7 @@ const ar = createTranslation({
 	login_guestNoExpiry: 'لم تتم جدولة حذف تلقائي لحسابات الضيوف الجديدة.',
 
 	app_title: 'Authrim',
-	app_subtitle: 'الهوية والوصول في كل مكان.',
+	app_subtitle: 'حسابك، في أمان.',
 	button_openDialog: 'فتح مربع الحوار',
 	dialog_title: 'مربع حوار Melt UI',
 	dialog_description:

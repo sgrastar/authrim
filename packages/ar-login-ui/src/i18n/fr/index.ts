@@ -30,7 +30,7 @@ const fr = createTranslation({
 		'Aucune suppression automatique n’est prévue pour les nouveaux comptes invités.',
 
 	...completion,
-	app_subtitle: 'Identité et accès partout.',
+	app_subtitle: 'Votre compte, en toute sécurité.',
 	dialog_cancel: 'Annuler',
 	dialog_close: 'Fermer',
 	language_switch: 'Changer de langue',

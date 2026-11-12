@@ -49,9 +49,9 @@ describe('i18n-svelte locale registration', () => {
 
 	it('uses the Authrim tagline without styling-dependent markup', () => {
 		setLocale('en');
-		expect(get(LL).app_subtitle()).toBe('Identity & Access at the edge of everywhere.');
+		expect(get(LL).app_subtitle()).toBe('Your account, kept safe.');
 
 		setLocale('ja');
-		expect(get(LL).app_subtitle()).toBe('アイデンティティ＆アクセスをあらゆる場所で');
+		expect(get(LL).app_subtitle()).toBe('あなたのアカウントを、安全に。');
 	});
 });
