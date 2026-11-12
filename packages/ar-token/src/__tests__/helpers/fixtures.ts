@@ -321,6 +321,7 @@ export interface TestAuthCodeData {
   sid?: string;
   sessionId?: string;
   authorizationDetails?: string; // JSON string
+  releaseApproval?: string[]; // Claim names the information release was approved for ('*': all)
   replayAttack?: {
     accessTokenJti?: string;
     refreshTokenJti?: string;
@@ -342,6 +343,7 @@ export function createAuthCodeData(overrides?: Partial<TestAuthCodeData>): TestA
     authTime: now - 60, // Authenticated 1 minute ago
     acr: 'urn:mace:incommon:iap:silver',
     sid: 'session-' + Math.random().toString(36).substring(7),
+    releaseApproval: ['*'],
     ...overrides,
   };
 }

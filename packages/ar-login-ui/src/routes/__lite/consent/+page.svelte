@@ -96,6 +96,45 @@
 					{#if item.documentUrl}<p><a href={item.documentUrl}>{data.text.viewDocument}</a></p>{/if}
 				{/each}
 			{/if}
+			{#if consent.release}
+				<fieldset data-testid="information-release">
+					<legend>{data.text.releaseTitle}</legend>
+					<p class="muted">{data.text.releaseHint}</p>
+					{#each consent.release.required as item (item.name)}
+						<p data-required="true">
+							<strong>{item.label}</strong>
+							<span class="muted">({data.text.requiredBadge})</span>
+							{#if item.valueText}<br /><span class="muted">{item.valueText}</span>{/if}
+						</p>
+					{/each}
+					{#each consent.release.optional as item (item.name)}
+						<label class="check">
+							<input
+								type="checkbox"
+								name={`release:${item.name}`}
+								value="granted"
+								checked={item.defaultChecked}
+							/>
+							<span>
+								{item.label}
+								<span class="muted">({data.text.optionalBadge})</span>
+								{#if item.valueText}<br /><span class="muted">{item.valueText}</span>{/if}
+							</span>
+						</label>
+					{/each}
+					{#if consent.release.purpose}
+						{@const purpose = consent.release.purpose}
+						<p class="muted">{data.text.releasePurpose}: {purpose.title}</p>
+						{#if purpose.description}<p class="muted">{purpose.description}</p>{/if}
+						{#if purpose.inlineContent}<p class="muted" style="white-space: pre-wrap;">
+								{purpose.inlineContent}
+							</p>{/if}
+						{#if purpose.documentUrl}<p>
+								<a href={purpose.documentUrl}>{data.text.viewDocument}</a>
+							</p>{/if}
+					{/if}
+				</fieldset>
+			{/if}
 			<h2>{data.text.scopesTitle}</h2>
 			<ul>
 				{#each consent.scopes as scope, index (`${scope}:${index}`)}

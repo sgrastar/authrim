@@ -111,11 +111,21 @@ export interface TokenFamilyV2 {
   created_at?: number; // When the family was first issued (ms): the start of the absolute lifetime
   first_jti?: string; // The JWT ID the family was issued with: its row in the relational family index
   consent_generation?: number; // The consent withdrawal generation the family was granted under
+  release_approval?: string[]; // Claim names the information release was approved for
   user_id: string; // For tenant boundary enforcement
   client_id: string; // For scope validation
   allowed_scope: string; // Prevent scope amplification
   resource_aud?: string | string[]; // Original access token resource audience
   auth_context?: RefreshTokenAuthContext; // How the user authenticated for the first grant
+}
+
+/** A stored list of approved claim names: strings, bounded. */
+function isReleaseApprovalList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 256 &&
+    value.every((name) => typeof name === 'string' && name.length <= 256)
+  );
 }
 
 /**
@@ -132,6 +142,8 @@ export interface CreateFamilyRequestV2 {
   authContext?: RefreshTokenAuthContext;
   /** The user's consent withdrawal generation for the client when the grant was given. */
   consentGeneration?: number;
+  /** The claim names the grant's information release was approved for (kept across rotations). */
+  releaseApproval?: string[];
 }
 
 /**
@@ -508,7 +520,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       (family.first_jti !== undefined &&
         (typeof family.first_jti !== 'string' || !family.first_jti)) ||
       (family.consent_generation !== undefined &&
-        (!Number.isSafeInteger(family.consent_generation) || family.consent_generation < 0))
+        (!Number.isSafeInteger(family.consent_generation) || family.consent_generation < 0)) ||
+      (family.release_approval !== undefined && !isReleaseApprovalList(family.release_approval))
     ) {
       throw new Error('refresh_token_family_storage_invalid');
     }
@@ -619,7 +632,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       !Number.isSafeInteger(request.ttl) ||
       request.ttl < 1 ||
       (request.consentGeneration !== undefined &&
-        (!Number.isSafeInteger(request.consentGeneration) || request.consentGeneration < 0))
+        (!Number.isSafeInteger(request.consentGeneration) || request.consentGeneration < 0)) ||
+      (request.releaseApproval !== undefined && !isReleaseApprovalList(request.releaseApproval))
     ) {
       throw new Error('invalid_request: Invalid refresh token family input');
     }
@@ -673,6 +687,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       ...(authContext && { auth_context: authContext }),
       ...(request.consentGeneration !== undefined && {
         consent_generation: request.consentGeneration,
+      }),
+      ...(request.releaseApproval !== undefined && {
+        release_approval: [...request.releaseApproval],
       }),
     };
 

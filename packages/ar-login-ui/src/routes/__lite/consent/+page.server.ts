@@ -20,6 +20,7 @@ import {
 	submitLiteConsent,
 	type LiteConsentOutcome
 } from '#lib/server/lite/consent.js';
+import { releaseClaimLabel } from '#lib/consent-release.js';
 import { forwardSetCookies } from '#lib/server/lite/cookies.js';
 import { cspHashSource } from '#lib/server/lite/csp.js';
 import { readLiteForm } from '#lib/server/lite/form.js';
@@ -147,6 +148,17 @@ export const load: PageServerLoad = async (event) => {
 			scopes: view.scopes.map((scope) =>
 				Object.hasOwn(scopeLabels, scope) ? scopeLabels[scope] : scope
 			),
+			release: view.release
+				? {
+						required: view.release.items
+							.filter((item) => item.required)
+							.map((item) => ({ ...item, label: releaseClaimLabel(LL, item.name) })),
+						optional: view.release.items
+							.filter((item) => !item.required)
+							.map((item) => ({ ...item, label: releaseClaimLabel(LL, item.name) })),
+						purpose: view.release.purpose
+					}
+				: null,
 			requiredItems: view.itemsEnabled ? view.items.filter((item) => item.isRequired) : [],
 			optionalItems: view.itemsEnabled ? view.items.filter((item) => !item.isRequired) : []
 		},
@@ -167,6 +179,11 @@ export const load: PageServerLoad = async (event) => {
 			viewDocument: LL.consent_item_view_document(),
 			processingPurpose: LL.consent_item_processing_purpose(),
 			withdrawalImpact: LL.consent_item_withdrawal_impact(),
+			releaseTitle: view.release ? LL.consent_release_title({ clientName: view.clientName }) : '',
+			releaseHint: LL.consent_release_hint(),
+			releasePurpose: LL.consent_release_purpose(),
+			requiredBadge: LL.consent_item_required_badge(),
+			optionalBadge: LL.consent_item_optional_badge(),
 			blocked: LL.consent_block_message(),
 			retry: LL.error_temporarily_unavailable(),
 			expired: LL.error_authorizationRequestExpired()

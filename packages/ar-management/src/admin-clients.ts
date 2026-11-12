@@ -32,7 +32,9 @@ import {
   requireAdminDatabaseAdapter,
   validateOidcMappingSetReference,
   type DatabaseAdapter,
-  type AttributeReleaseConsentPolicy,
+  type InformationReleaseConsentSetting,
+  parseInformationReleaseConsentSetting,
+  readInformationReleaseConsentSetting,
   type ClaimReleasePolicy,
   buildContractKey,
   resolveTokenExchangeCeilingRefusal,
@@ -113,11 +115,6 @@ const VALID_CLAIM_RELEASE_POLICIES = new Set<ClaimReleasePolicy>([
   'scope_required',
   'claims_allowed',
   'forbidden',
-]);
-const VALID_ATTRIBUTE_RELEASE_CONSENT_MODES = new Set([
-  'once',
-  'every_time',
-  'until_attributes_change',
 ]);
 const VALID_ASC_TRANSFORMED_CLAIMS = new Set(DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS);
 const VALID_GRANT_TYPES = new Set([
@@ -809,61 +806,14 @@ async function validateOIDCIdentityMappingSelector(
   }
 }
 
-function parseAttributeReleaseConsentPolicyField(
+function validateOptionalInformationReleaseConsentField(
   value: unknown
-): AttributeReleaseConsentPolicy | null {
-  let current = value;
-  if (typeof current === 'string') {
-    const trimmed = current.trim();
-    if (!trimmed) {
-      return null;
-    }
-    try {
-      current = JSON.parse(trimmed);
-    } catch {
-      return null;
-    }
-  }
-  const validation = validateOptionalAttributeReleaseConsentPolicyField(
-    current,
-    'attribute_release_consent'
-  );
-  return validation.ok ? (validation.value ?? null) : null;
-}
-
-function validateOptionalAttributeReleaseConsentPolicyField(
-  value: unknown,
-  field: string
-): { ok: true; value?: AttributeReleaseConsentPolicy | null } | { ok: false; error: string } {
+): { ok: true; value?: InformationReleaseConsentSetting } | { ok: false; error: string } {
   if (value === undefined) {
     return { ok: true, value: undefined };
   }
-  if (value === null) {
-    return { ok: true, value: null };
-  }
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    return { ok: false, error: `${field} must be an object or null` };
-  }
-  const input = value as { enabled?: unknown; mode?: unknown };
-  if (typeof input.enabled !== 'boolean') {
-    return { ok: false, error: `${field}.enabled must be boolean` };
-  }
-  if (input.mode !== undefined && !VALID_ATTRIBUTE_RELEASE_CONSENT_MODES.has(String(input.mode))) {
-    return {
-      ok: false,
-      error: `${field}.mode must be one of once, every_time, until_attributes_change`,
-    };
-  }
-  return {
-    ok: true,
-    value: {
-      enabled: input.enabled,
-      mode:
-        input.mode === 'every_time' || input.mode === 'until_attributes_change'
-          ? input.mode
-          : 'once',
-    },
-  };
+  const parsed = parseInformationReleaseConsentSetting(value);
+  return parsed.ok ? { ok: true, value: parsed.setting } : { ok: false, error: parsed.error };
 }
 
 function validateWebOriginRegistryField(
@@ -995,7 +945,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allow_claims_without_scope?: boolean;
       claims_parameter_policy?: Record<string, ClaimReleasePolicy> | null;
       identity_mapping?: AdminOIDCIdentityMappingSelector | null;
-      attribute_release_consent?: AttributeReleaseConsentPolicy | null;
+      information_release_consent?: InformationReleaseConsentSetting | null;
       asc_enabled?: boolean;
       asc_protected_request_required?: boolean;
       asc_sao_enabled?: boolean;
@@ -1295,15 +1245,14 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
-    const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(
-      body.attribute_release_consent,
-      'attribute_release_consent'
+    const informationReleaseConsentValidation = validateOptionalInformationReleaseConsentField(
+      body.information_release_consent
     );
-    if (!attributeReleaseConsentValidation.ok) {
+    if (!informationReleaseConsentValidation.ok) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: attributeReleaseConsentValidation.error,
+          error_description: informationReleaseConsentValidation.error,
         },
         400
       );
@@ -1612,7 +1561,8 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allow_claims_without_scope: body.allow_claims_without_scope || false,
       claims_parameter_policy: claimsParameterPolicyValidation.value,
       identity_mapping: identityMappingValidation.value,
-      attribute_release_consent: attributeReleaseConsentValidation.value,
+      information_release_consent:
+        informationReleaseConsentValidation.value ?? readInformationReleaseConsentSetting(null),
       asc_enabled: ascEnabledValidation.value ?? true,
       asc_protected_request_required: ascProtectedRequestRequiredValidation.value ?? true,
       asc_sao_enabled: ascSaoEnabledValidation.value ?? true,
@@ -1710,8 +1660,9 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       claims_parameter_policy:
         parseClaimsParameterPolicyField(client.claims_parameter_policy) ?? undefined,
       identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
-      attribute_release_consent:
-        parseAttributeReleaseConsentPolicyField(client.attribute_release_consent) ?? undefined,
+      information_release_consent: readInformationReleaseConsentSetting(
+        client.information_release_consent
+      ),
       asc_enabled: client.asc_enabled,
       asc_protected_request_required: client.asc_protected_request_required,
       asc_sao_enabled: client.asc_sao_enabled,
@@ -1825,8 +1776,8 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           allow_claims_without_scope: client.allow_claims_without_scope,
           claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
           identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
-          attribute_release_consent: parseAttributeReleaseConsentPolicyField(
-            client.attribute_release_consent
+          information_release_consent: readInformationReleaseConsentSetting(
+            client.information_release_consent
           ),
           asc_enabled: client.asc_enabled,
           asc_protected_request_required: client.asc_protected_request_required,
@@ -1914,8 +1865,8 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
           : [],
         claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
         identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
-        attribute_release_consent: parseAttributeReleaseConsentPolicyField(
-          client.attribute_release_consent
+        information_release_consent: readInformationReleaseConsentSetting(
+          client.information_release_consent
         ),
         asc_allowed_transformed_claims: client.asc_allowed_transformed_claims
           ? parseClientStringArray(client.asc_allowed_transformed_claims, [])
@@ -1997,8 +1948,8 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
         : [],
       claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
       identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
-      attribute_release_consent: parseAttributeReleaseConsentPolicyField(
-        client.attribute_release_consent
+      information_release_consent: readInformationReleaseConsentSetting(
+        client.information_release_consent
       ),
       asc_allowed_transformed_claims: client.asc_allowed_transformed_claims
         ? parseClientStringArray(client.asc_allowed_transformed_claims, [])
@@ -2120,7 +2071,7 @@ async function executeAdminClientUpdate(
       allow_claims_without_scope,
       claims_parameter_policy,
       identity_mapping,
-      attribute_release_consent,
+      information_release_consent,
       asc_enabled,
       asc_protected_request_required,
       asc_sao_enabled,
@@ -2498,15 +2449,14 @@ async function executeAdminClientUpdate(
       );
     }
 
-    const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(
-      attribute_release_consent,
-      'attribute_release_consent'
+    const informationReleaseConsentValidation = validateOptionalInformationReleaseConsentField(
+      information_release_consent
     );
-    if (!attributeReleaseConsentValidation.ok) {
+    if (!informationReleaseConsentValidation.ok) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: attributeReleaseConsentValidation.error,
+          error_description: informationReleaseConsentValidation.error,
         },
         400
       );
@@ -2774,7 +2724,7 @@ async function executeAdminClientUpdate(
       allow_claims_without_scope,
       claims_parameter_policy,
       identity_mapping,
-      attribute_release_consent,
+      information_release_consent,
       asc_enabled,
       asc_protected_request_required,
       asc_sao_enabled,
@@ -2927,7 +2877,7 @@ async function executeAdminClientUpdate(
               allow_claims_without_scope,
               claims_parameter_policy: claimsParameterPolicyValidation.value,
               identity_mapping: identityMappingValidation.value,
-              attribute_release_consent: attributeReleaseConsentValidation.value,
+              information_release_consent: informationReleaseConsentValidation.value,
               asc_enabled: ascEnabledValidation.value ?? undefined,
               asc_protected_request_required:
                 ascProtectedRequestRequiredValidation.value ?? undefined,
@@ -3136,8 +3086,8 @@ async function executeAdminClientUpdate(
             updatedClient.claims_parameter_policy
           ),
           identity_mapping: parseIdentityMappingSelectorField(updatedClient.identity_mapping),
-          attribute_release_consent: parseAttributeReleaseConsentPolicyField(
-            updatedClient.attribute_release_consent
+          information_release_consent: readInformationReleaseConsentSetting(
+            updatedClient.information_release_consent
           ),
           asc_allowed_transformed_claims: updatedClient.asc_allowed_transformed_claims
             ? parseClientStringArray(updatedClient.asc_allowed_transformed_claims, [])

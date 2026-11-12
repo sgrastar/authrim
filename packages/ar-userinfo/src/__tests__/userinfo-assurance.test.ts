@@ -13,13 +13,18 @@ const mockGetClientCached = vi.hoisted(() => vi.fn());
 const mockCanonicalFindByLegacyUserId = vi.hoisted(() => vi.fn());
 const mockResolveEffectiveSettings = vi.hoisted(() => vi.fn());
 const mockApplyOIDCIdentityMapping = vi.hoisted(() => vi.fn());
-const mockEnforceOIDCAttributeReleaseConsent = vi.hoisted(() => vi.fn());
 const mockCreatePIIContextFromHono = vi.hoisted(() => vi.fn());
 
+// No consent withdrawal is recorded (generation 0) unless a test says otherwise.
+const mockFindConsentRevocation = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ generation: 0, revokedAt: null })
+);
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    findOAuthClientConsentRevocation: mockFindConsentRevocation,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
     introspectTokenFromContext: mockIntrospectTokenFromContext,
     getClientCached: mockGetClientCached,
     CanonicalRuntimeUserProjectionRepository: vi.fn().mockImplementation(function () {
@@ -28,7 +33,6 @@ vi.mock('@authrim/ar-lib-core', async () => {
     CanonicalSensitiveValueResolver: vi.fn(),
     resolveEffectiveSettings: mockResolveEffectiveSettings,
     applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping,
-    enforceOIDCAttributeReleaseConsent: mockEnforceOIDCAttributeReleaseConsent,
     resolveAccountDataContextFromHono: vi.fn().mockResolvedValue(undefined),
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     isUserInfoEncryptionRequired: () => false,
@@ -120,6 +124,7 @@ describe('UserInfo identity assurance claims', () => {
   let evidenceReads: number;
   let settings: Record<string, unknown>;
   let assuranceSettingReads: number;
+  let approval: string[];
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -139,7 +144,7 @@ describe('UserInfo identity assurance claims', () => {
     mockApplyOIDCIdentityMapping.mockImplementation(async (input: { claims: unknown }) => ({
       claims: input.claims,
     }));
-    mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue(undefined);
+    approval = ['*'];
     mockCreatePIIContextFromHono.mockReturnValue({
       coreAdapter: {
         query: vi.fn(async (sql: string) => {
@@ -157,6 +162,7 @@ describe('UserInfo identity assurance claims', () => {
     mockIntrospectTokenFromContext.mockResolvedValue({
       valid: true,
       claims: {
+        authrim_release: approval,
         sub: 'user-123',
         client_id: 'client-1',
         scope: token.scope,
@@ -251,11 +257,12 @@ describe('UserInfo identity assurance claims', () => {
       expect(evidenceReads).toBe(0);
     });
 
-    it('still answers the request that asks for nothing about assurance', async () => {
+    it('releases no user claim for a request that asks for nothing about assurance', async () => {
       mockGetClientCached.mockResolvedValue(null);
       const { body, status, logger } = await userinfo({ scope: 'openid profile' });
       expect(status).toBe(200);
-      expect(body.given_name).toBe('Test');
+      // Without the app's metadata nothing about the person is released, only the protocol claims.
+      expect(body).toEqual({ sub: 'user-123' });
       expect(logger.warn).not.toHaveBeenCalled();
     });
   });
@@ -307,16 +314,25 @@ describe('UserInfo identity assurance claims', () => {
       expect(body).not.toHaveProperty('eduperson_assurance');
     });
 
-    it('holds them to the attribute release consent', async () => {
+    it('holds them to the information release approval the grant carries', async () => {
       evidence = [evidenceRow('IAL2')];
-      let consented: Record<string, unknown> = {};
-      mockEnforceOIDCAttributeReleaseConsent.mockImplementation(
-        async (input: { claims: Record<string, unknown> }) => {
-          consented = { ...input.claims };
+      let optionalOut: Set<string> | undefined;
+      mockApplyOIDCIdentityMapping.mockImplementation(
+        async (input: { claims: unknown; releaseOptionalOut?: Set<string> }) => {
+          optionalOut = input.releaseOptionalOut;
+          optionalOut?.add('eduperson_assurance');
+          return { claims: input.claims };
         }
       );
-      await userinfo({ scope: 'openid eduperson_assurance' });
-      expect(consented.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
+
+      approval = [];
+      const dropped = await userinfo({ scope: 'openid eduperson_assurance' });
+      expect(dropped.status).toBe(200);
+      expect(dropped.body).not.toHaveProperty('eduperson_assurance');
+
+      approval = ['eduperson_assurance'];
+      const released = await userinfo({ scope: 'openid eduperson_assurance' });
+      expect(released.body.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
     });
   });
 });

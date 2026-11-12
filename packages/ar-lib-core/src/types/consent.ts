@@ -608,6 +608,37 @@ export interface ExtendedConsentScreenData extends ConsentScreenData {
   consent_management_enabled?: boolean;
   /** Consent language resolved for this user */
   consent_language?: string;
+  /** The information the app would be given about the user, to approve (release consent). */
+  information_release?: ConsentInformationReleaseScreen;
+}
+
+/** One piece of information the app would be given (an OIDC claim). */
+export interface ConsentInformationReleaseItem {
+  /** The claim name. */
+  name: string;
+  /** Required by the app: approving the request releases it. Optional ones can be left out. */
+  required: boolean;
+  /** Whether the user approved it last time (optional items start from this). */
+  previously_approved?: boolean;
+  /** The value released, when the app's setting shows values. */
+  value?: unknown;
+}
+
+/** The information release part of the consent screen. */
+export interface ConsentInformationReleaseScreen {
+  items: ConsentInformationReleaseItem[];
+  show_values: boolean;
+  /** Sent back with the answer: it is taken only for what was shown. */
+  presentation_key: string;
+  /** Why the app is given the information (shown only, not agreed to). */
+  purpose?: {
+    statement_id: string;
+    version: string;
+    title: string;
+    description?: string;
+    document_url?: string | null;
+    inline_content?: string | null;
+  };
 }
 
 /**
@@ -616,4 +647,8 @@ export interface ExtendedConsentScreenData extends ConsentScreenData {
 export interface ExtendedConsentSubmission extends ConsentSubmission {
   /** Consent item decisions (statement_id -> 'granted' | 'denied') */
   consent_item_decisions?: Record<string, 'granted' | 'denied'>;
+  /** The optional information items the user approved (the required ones go with approval). */
+  release_selected?: string[];
+  /** The presentation_key of the information release that was shown. */
+  release_presentation_key?: string;
 }

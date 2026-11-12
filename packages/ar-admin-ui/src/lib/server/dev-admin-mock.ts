@@ -136,7 +136,12 @@ interface DevClient {
 	allow_claims_without_scope?: boolean;
 	claims_parameter_policy?: Record<string, string> | null;
 	identity_mapping?: Record<string, unknown> | null;
-	attribute_release_consent?: { enabled: boolean; mode: string } | null;
+	information_release_consent?: {
+		enabled: boolean;
+		ask: string;
+		show_values: boolean;
+		purpose_statement_id: string | null;
+	} | null;
 	asc_enabled?: boolean;
 	asc_protected_request_required?: boolean;
 	asc_sao_enabled?: boolean;
@@ -1487,7 +1492,12 @@ const clients = new Map<string, DevClient>([
 				fieldMappingSetId: 'field-mapping-gakunin-basic',
 				destinationNamespace: 'oidc.claim'
 			},
-			attribute_release_consent: null,
+			information_release_consent: {
+				enabled: true,
+				ask: 'once',
+				show_values: true,
+				purpose_statement_id: null
+			},
 			asc_enabled: true,
 			asc_protected_request_required: true,
 			asc_sao_enabled: true,

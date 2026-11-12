@@ -16,6 +16,7 @@ import {
   StatementConsentAccountReadError,
 } from '@authrim/ar-lib-core';
 import { consentGetHandler, consentPostHandler } from '../consent';
+import { releasePresentationKey } from '@authrim/ar-lib-core';
 import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
 
 /** A SETTINGS mock holding an older `system_settings` document's values as platform values. */
@@ -32,6 +33,20 @@ const mockValidateActingAsRelationship = vi.hoisted(() => vi.fn());
 // logger, so each test waits for it; a log that lands after the file's last test reaches Vitest
 // while the worker is closing and fails the run as an unhandled error.
 const unawaitedEvents = vi.hoisted(() => ({ pending: [] as Promise<unknown>[] }));
+
+// What the app would release about the user (the release candidates the screen shows), and the
+// app's metadata when a test sets one: unset, the real lookup runs and the release is not asked.
+const releaseFixture = vi.hoisted(() => ({
+  client: undefined as Record<string, unknown> | undefined,
+  candidates: [] as Array<{ name: string; required: boolean }>,
+  values: {} as Record<string, unknown>,
+}));
+vi.mock('../release-candidates', () => ({
+  computeReleaseCandidates: vi.fn(async () => ({
+    candidates: releaseFixture.candidates,
+    values: releaseFixture.values,
+  })),
+}));
 
 const mockAnswerFormPostAsData = vi.hoisted(() => vi.fn());
 vi.mock('../authorize', () => ({
@@ -50,6 +65,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       unawaitedEvents.pending.push(delivery);
       return delivery;
     },
+    getClientCached: (...args: Parameters<typeof actual.getClientCached>) =>
+      releaseFixture.client
+        ? Promise.resolve(releaseFixture.client)
+        : actual.getClientCached(...args),
     getConsentUserInfo: vi.fn(async (_db, subjectId: string) => {
       if (subjectId !== 'user-123') return null;
       return {
@@ -87,7 +106,10 @@ function createMockDB(options: {
 
   return {
     prepare: vi.fn().mockReturnValue(mockStatement),
-    batch: vi.fn().mockResolvedValue([]),
+    // Each statement of a batch changed one row (the consent write, then its history).
+    batch: vi.fn(async (statements: unknown[]) =>
+      statements.map(() => ({ success: true, meta: { changes: 1 } }))
+    ),
     _mockStatement: mockStatement,
   } as unknown as D1Database & { _mockStatement: typeof mockStatement };
 }
@@ -1054,6 +1076,16 @@ describe('Consent Handlers', () => {
         const mockDB = createMockDB({ runResult: { success: true } });
         const statement = (mockDB as unknown as { _mockStatement: Record<string, unknown> })
           ._mockStatement;
+        if (options.consentWrites !== undefined) {
+          // The consent write is the first statement of the batch (its history follows).
+          vi.mocked(mockDB.batch).mockImplementation(
+            async (statements: unknown[]) =>
+              statements.map((_, index) => ({
+                success: true,
+                meta: { changes: index === 0 ? options.consentWrites : 1 },
+              })) as never
+          );
+        }
         vi.mocked(mockDB.prepare).mockImplementation((sql: string) => {
           if (sql.includes('SELECT generation, revoked_at FROM oauth_client_consent_revocations')) {
             return {
@@ -1881,6 +1913,197 @@ describe('Consent Handlers', () => {
       const response = c.json.mock.calls[0][0] as { redirect_url: string };
       expect(response.redirect_url).toMatch(/^https:\/\/client\.example\/cancel/);
       expect(response.redirect_url).toContain('error=access_denied');
+    });
+  });
+  describe('information release', () => {
+    const CANDIDATES = [
+      { name: 'email', required: true },
+      { name: 'name', required: false },
+      { name: 'phone_number', required: false },
+    ];
+
+    beforeEach(() => {
+      releaseFixture.client = {
+        client_id: 'test-client',
+        information_release_consent: { enabled: true, ask: 'once', show_values: true },
+      };
+      releaseFixture.candidates = CANDIDATES;
+      releaseFixture.values = { email: 'user@example.com', name: 'Example User' };
+    });
+
+    afterEach(() => {
+      releaseFixture.client = undefined;
+      releaseFixture.candidates = [];
+      releaseFixture.values = {};
+    });
+
+    function challenge() {
+      return createMockChallengeStore({
+        id: 'consent-challenge-release',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid profile email',
+          state: 'test-state',
+        },
+      });
+    }
+
+    async function key(candidates = CANDIDATES) {
+      return releasePresentationKey(candidates, null);
+    }
+
+    it('shows what the app would be given, with the optional items and a presentation key', async () => {
+      const mockDB = createMockDB({
+        firstResult: {
+          client_id: 'test-client',
+          client_name: 'Test Application',
+          logo_uri: null,
+          client_uri: null,
+          policy_uri: null,
+          tos_uri: null,
+          is_trusted: 0,
+        },
+      });
+      const c = createMockContext({
+        query: { challenge_id: 'consent-challenge-release' },
+        challengeStore: challenge(),
+        db: mockDB,
+        accountDb: createMockDB({}),
+      });
+
+      const response = await consentGetHandler(c);
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        information_release?: {
+          items: Array<Record<string, unknown>>;
+          show_values: boolean;
+          presentation_key: string;
+        };
+      };
+      expect(body.information_release?.show_values).toBe(true);
+      expect(body.information_release?.presentation_key).toBe(await key());
+      expect(body.information_release?.items).toEqual([
+        expect.objectContaining({ name: 'email', required: true, value: 'user@example.com' }),
+        expect.objectContaining({ name: 'name', required: false, previously_approved: false }),
+        expect.objectContaining({ name: 'phone_number', required: false }),
+      ]);
+    });
+
+    it('records the decision with its history, and carries the approval in the confirmation challenge', async () => {
+      const challengeStore = challenge();
+      const mockDB = createMockDB({ runResult: { success: true } });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          challenge_id: 'consent-challenge-release',
+          approved: true,
+          release_selected: ['name'],
+          release_presentation_key: await key(),
+        },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        db: mockDB,
+      });
+
+      await consentPostHandler(c);
+
+      const jsonBody = c.json.mock.calls[0][0] as { redirect_url: string };
+      const confirmation = new URL(jsonBody.redirect_url, 'https://example.com').searchParams.get(
+        '_consent_confirmation_challenge'
+      );
+      // Required items and the optional one the user chose; the one left unticked is declined.
+      expect(challengeStore._challenges.get(confirmation!)).toMatchObject({
+        metadata: { release_approval: ['email', 'name'] },
+      });
+      // The consent write and its history are one batch (nothing recorded without the other).
+      const sqls = vi.mocked(mockDB.prepare).mock.calls.map(([sql]) => sql);
+      expect(sqls.some((sql) => sql.includes('INSERT INTO oauth_client_consents'))).toBe(true);
+      expect(sqls.some((sql) => sql.includes('INSERT INTO consent_history'))).toBe(true);
+      expect(mockDB.batch).toHaveBeenCalledTimes(1);
+      const bound = JSON.stringify(
+        (mockDB as unknown as { _mockStatement: { bind: { mock: { calls: unknown[] } } } })
+          ._mockStatement.bind.mock.calls
+      );
+      // Approved: the required item and the one the user chose; declined: the one left unticked.
+      expect(bound).toContain('[\\"email\\",\\"name\\"]');
+      expect(bound).toContain('[\\"phone_number\\"]');
+      expect(bound).toContain('user');
+    });
+
+    it('answers 409 document_changed, and records nothing, when the items shown are no longer the ones to approve', async () => {
+      const challengeStore = challenge();
+      const mockDB = createMockDB({ runResult: { success: true } });
+      const stale = await key([{ name: 'email', required: true }]);
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          challenge_id: 'consent-challenge-release',
+          approved: true,
+          release_selected: ['name'],
+          release_presentation_key: stale,
+        },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        db: mockDB,
+      });
+
+      const response = await consentPostHandler(c);
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ error: 'document_changed' });
+      expect(mockDB.batch).not.toHaveBeenCalled();
+    });
+
+    it('approves only the required items of an app that does not ask, and records that it was not asked', async () => {
+      releaseFixture.client = {
+        client_id: 'test-client',
+        information_release_consent: { enabled: false, ask: 'once', show_values: false },
+      };
+      const challengeStore = challenge();
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'consent-challenge-release', approved: true },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        db: createMockDB({ runResult: { success: true } }),
+      });
+
+      await consentPostHandler(c);
+
+      const jsonBody = c.json.mock.calls[0][0] as { redirect_url: string };
+      const confirmation = new URL(jsonBody.redirect_url, 'https://example.com').searchParams.get(
+        '_consent_confirmation_challenge'
+      );
+      expect(challengeStore._challenges.get(confirmation!)).toMatchObject({
+        metadata: { release_approval: ['@required'] },
+      });
+    });
+
+    it('approves nothing, and keeps the empty answer, when there is nothing about the user to release', async () => {
+      releaseFixture.candidates = [];
+      const challengeStore = challenge();
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'consent-challenge-release', approved: true },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        db: createMockDB({ runResult: { success: true } }),
+      });
+
+      await consentPostHandler(c);
+
+      const jsonBody = c.json.mock.calls[0][0] as { redirect_url: string };
+      const confirmation = new URL(jsonBody.redirect_url, 'https://example.com').searchParams.get(
+        '_consent_confirmation_challenge'
+      );
+      expect(challengeStore._challenges.get(confirmation!)).toMatchObject({
+        metadata: { release_approval: [] },
+      });
     });
   });
 });

@@ -2931,33 +2931,53 @@ type RootTranslation = {
 	 */
 	admin_client_detail_identity_mapping_policy_display_hint: string;
 	/**
-	 * C​l​a​i​m​ ​r​e​l​e​a​s​e​ ​c​o​n​s​e​n​t
+	 * I​n​f​o​r​m​a​t​i​o​n​ ​r​e​l​e​a​s​e​ ​c​o​n​s​e​n​t
 	 */
-	admin_client_detail_attribute_release_consent: string;
+	admin_client_detail_information_release_consent: string;
 	/**
-	 * D​o​ ​n​o​t​ ​a​s​k​ ​b​e​f​o​r​e​ ​r​e​l​e​a​s​i​n​g​ ​c​l​a​i​m​s
+	 * A​s​k​ ​t​h​e​ ​p​e​r​s​o​n​ ​b​e​f​o​r​e​ ​g​i​v​i​n​g​ ​t​h​i​s​ ​s​e​r​v​i​c​e​ ​t​h​e​i​r​ ​i​n​f​o​r​m​a​t​i​o​n
 	 */
-	admin_client_detail_attribute_release_consent_disabled: string;
+	admin_client_detail_information_release_consent_enabled: string;
 	/**
-	 * A​s​k​ ​t​h​e​ ​f​i​r​s​t​ ​t​i​m​e​,​ ​t​h​e​n​ ​r​e​m​e​m​b​e​r
+	 * D​o​ ​n​o​t​ ​a​s​k
 	 */
-	admin_client_detail_attribute_release_consent_once: string;
+	admin_client_detail_information_release_consent_off: string;
 	/**
-	 * A​s​k​ ​e​v​e​r​y​ ​O​I​D​C​ ​r​e​l​e​a​s​e
+	 * W​h​e​n​ ​t​o​ ​a​s​k
 	 */
-	admin_client_detail_attribute_release_consent_every_time: string;
+	admin_client_detail_information_release_consent_ask: string;
 	/**
-	 * A​s​k​ ​a​g​a​i​n​ ​w​h​e​n​ ​c​l​a​i​m​s​ ​c​h​a​n​g​e
+	 * O​n​c​e
 	 */
-	admin_client_detail_attribute_release_consent_until_attributes_change: string;
+	admin_client_detail_information_release_consent_ask_once: string;
 	/**
-	 * C​o​n​t​r​o​l​s​ ​w​h​e​t​h​e​r​ ​A​u​t​h​r​i​m​ ​m​u​s​t​ ​c​o​n​f​i​r​m​ ​c​l​a​i​m​ ​r​e​l​e​a​s​e​ ​b​e​f​o​r​e​ ​i​s​s​u​i​n​g​ ​I​D​ ​T​o​k​e​n​ ​o​r​ ​U​s​e​r​I​n​f​o​ ​c​l​a​i​m​s​ ​t​o​ ​t​h​i​s​ ​c​l​i​e​n​t​.
+	 * E​v​e​r​y​ ​t​i​m​e
 	 */
-	admin_client_detail_attribute_release_consent_hint: string;
+	admin_client_detail_information_release_consent_ask_every_time: string;
 	/**
-	 * R​u​n​t​i​m​e​ ​e​n​f​o​r​c​e​m​e​n​t​ ​a​p​p​l​i​e​s​ ​t​o​ ​O​I​D​C​ ​I​D​ ​T​o​k​e​n​ ​a​n​d​ ​U​s​e​r​I​n​f​o​ ​c​l​a​i​m​ ​r​e​l​e​a​s​e​.
+	 * W​h​e​n​ ​t​h​e​ ​i​t​e​m​s​ ​c​h​a​n​g​e
 	 */
-	admin_client_detail_attribute_release_consent_display_hint: string;
+	admin_client_detail_information_release_consent_ask_when_items_change: string;
+	/**
+	 * S​h​o​w​ ​t​h​e​ ​v​a​l​u​e​s
+	 */
+	admin_client_detail_information_release_consent_show_values: string;
+	/**
+	 * P​u​r​p​o​s​e​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​I​D
+	 */
+	admin_client_detail_information_release_consent_purpose: string;
+	/**
+	 * O​p​t​i​o​n​a​l​.​ ​A​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​s​h​o​w​n​ ​w​i​t​h​ ​t​h​e​ ​i​n​f​o​r​m​a​t​i​o​n​ ​l​i​s​t​ ​t​o​ ​e​x​p​l​a​i​n​ ​w​h​y​ ​t​h​e​ ​s​e​r​v​i​c​e​ ​i​s​ ​g​i​v​e​n​ ​i​t​.
+	 */
+	admin_client_detail_information_release_consent_purpose_hint: string;
+	/**
+	 * C​o​n​t​r​o​l​s​ ​t​h​e​ ​i​n​f​o​r​m​a​t​i​o​n​ ​r​e​l​e​a​s​e​ ​c​o​n​s​e​n​t​ ​s​c​r​e​e​n​ ​s​h​o​w​n​ ​b​e​f​o​r​e​ ​I​D​ ​T​o​k​e​n​ ​o​r​ ​U​s​e​r​I​n​f​o​ ​c​l​a​i​m​s​ ​a​r​e​ ​g​i​v​e​n​ ​t​o​ ​t​h​i​s​ ​s​e​r​v​i​c​e​.​ ​R​e​q​u​i​r​e​d​ ​i​t​e​m​s​ ​a​r​e​ ​a​l​w​a​y​s​ ​g​i​v​e​n​;​ ​o​p​t​i​o​n​a​l​ ​i​t​e​m​s​ ​a​r​e​ ​g​i​v​e​n​ ​o​n​l​y​ ​w​h​e​n​ ​t​h​e​ ​p​e​r​s​o​n​ ​a​g​r​e​e​s​.
+	 */
+	admin_client_detail_information_release_consent_hint: string;
+	/**
+	 * A​p​p​l​i​e​s​ ​t​o​ ​O​I​D​C​ ​I​D​ ​T​o​k​e​n​,​ ​U​s​e​r​I​n​f​o​ ​a​n​d​ ​a​c​c​e​s​s​ ​t​o​k​e​n​ ​c​l​a​i​m​ ​r​e​l​e​a​s​e​.
+	 */
+	admin_client_detail_information_release_consent_display_hint: string;
 	/**
 	 * S​c​o​p​e​ ​r​e​q​u​i​r​e​d
 	 */
@@ -36709,33 +36729,53 @@ export type TranslationFunctions = {
 	 */
 	admin_client_detail_identity_mapping_policy_display_hint: () => LocalizedString;
 	/**
-	 * Claim release consent
+	 * Information release consent
 	 */
-	admin_client_detail_attribute_release_consent: () => LocalizedString;
+	admin_client_detail_information_release_consent: () => LocalizedString;
 	/**
-	 * Do not ask before releasing claims
+	 * Ask the person before giving this service their information
 	 */
-	admin_client_detail_attribute_release_consent_disabled: () => LocalizedString;
+	admin_client_detail_information_release_consent_enabled: () => LocalizedString;
 	/**
-	 * Ask the first time, then remember
+	 * Do not ask
 	 */
-	admin_client_detail_attribute_release_consent_once: () => LocalizedString;
+	admin_client_detail_information_release_consent_off: () => LocalizedString;
 	/**
-	 * Ask every OIDC release
+	 * When to ask
 	 */
-	admin_client_detail_attribute_release_consent_every_time: () => LocalizedString;
+	admin_client_detail_information_release_consent_ask: () => LocalizedString;
 	/**
-	 * Ask again when claims change
+	 * Once
 	 */
-	admin_client_detail_attribute_release_consent_until_attributes_change: () => LocalizedString;
+	admin_client_detail_information_release_consent_ask_once: () => LocalizedString;
 	/**
-	 * Controls whether Authrim must confirm claim release before issuing ID Token or UserInfo claims to this client.
+	 * Every time
 	 */
-	admin_client_detail_attribute_release_consent_hint: () => LocalizedString;
+	admin_client_detail_information_release_consent_ask_every_time: () => LocalizedString;
 	/**
-	 * Runtime enforcement applies to OIDC ID Token and UserInfo claim release.
+	 * When the items change
 	 */
-	admin_client_detail_attribute_release_consent_display_hint: () => LocalizedString;
+	admin_client_detail_information_release_consent_ask_when_items_change: () => LocalizedString;
+	/**
+	 * Show the values
+	 */
+	admin_client_detail_information_release_consent_show_values: () => LocalizedString;
+	/**
+	 * Purpose consent statement ID
+	 */
+	admin_client_detail_information_release_consent_purpose: () => LocalizedString;
+	/**
+	 * Optional. A consent statement shown with the information list to explain why the service is given it.
+	 */
+	admin_client_detail_information_release_consent_purpose_hint: () => LocalizedString;
+	/**
+	 * Controls the information release consent screen shown before ID Token or UserInfo claims are given to this service. Required items are always given; optional items are given only when the person agrees.
+	 */
+	admin_client_detail_information_release_consent_hint: () => LocalizedString;
+	/**
+	 * Applies to OIDC ID Token, UserInfo and access token claim release.
+	 */
+	admin_client_detail_information_release_consent_display_hint: () => LocalizedString;
 	/**
 	 * Scope required
 	 */

@@ -284,8 +284,20 @@ describe('admin tenant clone', () => {
           ),
         ].map((match) => match[1].toLowerCase())
       );
+    // Columns dropped after the baseline.
+    const droppedColumns = new Set(
+      readdirSync(new URL('core/d1/', migrationsUrl))
+        .filter((file) => file.endsWith('.sql'))
+        .flatMap((file) =>
+          [
+            ...readFileSync(new URL(`core/d1/${file}`, migrationsUrl), 'utf8').matchAll(
+              /ALTER TABLE oauth_clients DROP COLUMN ([a-z_][a-z0-9_]*)/giu
+            ),
+          ].map((match) => match[1].toLowerCase())
+        )
+    );
     expect(new Set([...OAUTH_CLIENT_CLONE_COLUMNS, ...OAUTH_CLIENT_NON_CLONE_COLUMNS])).toEqual(
-      new Set([...schemaColumns, ...addedColumns])
+      new Set([...schemaColumns, ...addedColumns].filter((column) => !droppedColumns.has(column)))
     );
     expect(
       OAUTH_CLIENT_CLONE_COLUMNS.filter((column) => OAUTH_CLIENT_NON_CLONE_COLUMNS.has(column))

@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { sealSubjectReference, type Env } from '@authrim/ar-lib-core';
+import { RELEASE_APPROVAL_CLAIM, sealSubjectReference, type Env } from '@authrim/ar-lib-core';
 import { AuthorizationCodeStore } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   createMockEnv,
@@ -8246,6 +8246,82 @@ describe('Client Authentication Tests', () => {
 
       expect(response.status).toBe(401);
       expect(body.error).toBe('invalid_client');
+    });
+  });
+
+  describe('Information release approval travels with the authorization code grant', () => {
+    async function exchange(approval: string[] | undefined) {
+      const client = createConfidentialClient({ token_endpoint_auth_method: 'client_secret_post' });
+      const authCodeData = createAuthCodeData({ scope: 'openid profile offline_access' });
+      if (approval === undefined) delete authCodeData.releaseApproval;
+      else authCodeData.releaseApproval = approval;
+      const createFamilyRpc = vi.fn(async (request: { jti: string; scope: string }) => ({
+        version: 1,
+        newJti: request.jti,
+        expiresIn: 3600,
+        allowedScope: request.scope,
+      }));
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+      const env = {
+        ...mockEnv,
+        REFRESH_TOKEN_ROTATOR: {
+          idFromName: vi.fn((name: string) => name),
+          get: vi.fn(() => ({ createFamilyRpc, revokeFamilyIfFirstJtiRpc: vi.fn() })),
+        },
+      } as unknown as typeof mockEnv;
+      const response = await tokenHandler(
+        createMockContext({
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env,
+        })
+      );
+      return { response, createFamilyRpc };
+    }
+
+    it("puts the code's approval on the access token and in the refresh family", async () => {
+      const { response, createFamilyRpc } = await exchange(['email', 'name']);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+        [RELEASE_APPROVAL_CLAIM]: ['email', 'name'],
+      });
+      expect(createFamilyRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ releaseApproval: ['email', 'name'] })
+      );
+    });
+
+    it('carries the trusted approval marker through unchanged', async () => {
+      const { response, createFamilyRpc } = await exchange(['*']);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+        [RELEASE_APPROVAL_CLAIM]: ['*'],
+      });
+      expect(createFamilyRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ releaseApproval: ['*'] })
+      );
+    });
+
+    it('carries an empty approval (not an absent one) when the code has none', async () => {
+      const { response, createFamilyRpc } = await exchange(undefined);
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+        [RELEASE_APPROVAL_CLAIM]: [],
+      });
+      expect(createFamilyRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ releaseApproval: [] })
+      );
     });
   });
 });

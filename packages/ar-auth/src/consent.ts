@@ -53,7 +53,6 @@ import {
   CONSENT_EVENTS,
   type ConsentEventData,
   // Consent Versioning
-  recordConsentHistory,
   // Consent Management
   getConsentItemsForScreen,
   checkUserConsentSatisfaction,
@@ -76,6 +75,7 @@ import {
   getSessionCookieSameSite,
 } from '@authrim/ar-lib-core';
 import { answerFormPostAsData, formPostAnsweredAsData, redirectWithError } from './authorize';
+import { answerInformationRelease, loadInformationReleaseScreen } from './consent-release';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 
 // Scope descriptions (human-readable)
@@ -184,7 +184,9 @@ async function createConsentConfirmationChallenge(
   /** A re-authentication /authorize completed before sending the user here; it hands it back. */
   confirmedReauth: unknown,
   /** The user's consent withdrawal generation for the client when the consent was approved. */
-  consentGeneration: number
+  consentGeneration: number,
+  /** The claim names the information release was approved for (information-release-consent.ts). */
+  releaseApproval: string[]
 ): Promise<{ id: string; browserBinding: string }> {
   const confirmationId = crypto.randomUUID();
   const browserBinding = generateSecureRandomString(32);
@@ -203,6 +205,7 @@ async function createConsentConfirmationChallenge(
       authorization_request: authorizationRequest,
       ...(confirmedReauth !== undefined ? { confirmed_reauth: confirmedReauth } : {}),
       consent_generation: consentGeneration,
+      release_approval: releaseApproval,
     },
   });
   return { id: confirmationId, browserBinding };
@@ -485,6 +488,44 @@ async function handleJsonConsentGet(
     // Non-blocking: consent management items are optional
   }
 
+  // What the app would be given about the user, to approve. Unreadable, the screen is not shown
+  // without it (it would approve information the user never saw).
+  let informationRelease: ExtendedConsentScreenData['information_release'];
+  try {
+    const consentGeneration = (
+      await findOAuthClientConsentRevocation(authCtx.coreAdapter, {
+        tenantId,
+        userId,
+        clientId: clientRow.client_id,
+      })
+    ).generation;
+    informationRelease = await loadInformationReleaseScreen({
+      c,
+      tenantId,
+      userId,
+      clientId: clientRow.client_id,
+      metadata,
+      language: consentLanguage,
+      defaultLanguage: 'en',
+      consentGeneration,
+    });
+  } catch (error) {
+    getLogger(c)
+      .module('CONSENT')
+      .error(
+        'Failed to load the information release',
+        { action: 'consent_release' },
+        error as Error
+      );
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'The information to approve is temporarily unavailable',
+      },
+      503
+    );
+  }
+
   // Build response with extended data
   const responseData: ExtendedConsentScreenData = {
     challenge_id,
@@ -503,6 +544,7 @@ async function handleJsonConsentGet(
     consent_items: consentItems,
     consent_management_enabled: consentManagementEnabled,
     consent_language: consentLanguage,
+    ...(informationRelease ? { information_release: informationRelease } : {}),
   };
 
   return c.json(responseData);
@@ -681,7 +723,16 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       selected_scopes?: string[];
       consent_item_decisions?: Record<string, 'granted' | 'denied'>;
       consent_item_versions?: DisplayedStatementVersions;
+      release_selected?: unknown;
+      release_presentation_key?: unknown;
     }>();
+    const releaseSelected = Array.isArray(jsonBody.release_selected)
+      ? jsonBody.release_selected.filter((name): name is string => typeof name === 'string')
+      : undefined;
+    const releasePresentationKey =
+      typeof jsonBody.release_presentation_key === 'string'
+        ? jsonBody.release_presentation_key
+        : undefined;
     const challenge_id = jsonBody.challenge_id;
     const approved = jsonBody.approved === true;
     const selected_org_id = jsonBody.selected_org_id;
@@ -774,6 +825,18 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       });
       if (!statementSnapshotsMatch(pendingItems, jsonBody.consent_item_versions))
         return await changedConsentDocument(c, pendingChallenge, false);
+      // The information release shown must be the one the app would be given now.
+      const shownRelease = await answerInformationRelease({
+        c,
+        tenantId: getTenantIdFromContext(c),
+        userId: pendingChallenge.userId,
+        clientId: pendingChallenge.metadata.client_id,
+        metadata: pendingChallenge.metadata,
+        effectiveScopes: (pendingChallenge.metadata.scope ?? '').split(' ').filter(Boolean),
+        selected: releaseSelected,
+        presentationKey: releasePresentationKey,
+      });
+      if (!shownRelease.ok) return await changedConsentDocument(c, pendingChallenge, false);
     }
 
     let consumedChallengeData: {
@@ -1009,6 +1072,18 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     });
     if (!statementSnapshotsMatch(consentItems, jsonBody.consent_item_versions))
       return await changedConsentDocument(c, pendingChallenge, true);
+    // The information release, taken for what was shown and approved for the scopes kept.
+    const releaseAnswer = await answerInformationRelease({
+      c,
+      tenantId,
+      userId,
+      clientId: client_id,
+      metadata,
+      effectiveScopes: effectiveScope.split(' ').filter(Boolean),
+      selected: releaseSelected,
+      presentationKey: releasePresentationKey,
+    });
+    if (!releaseAnswer.ok) return await changedConsentDocument(c, pendingChallenge, true);
     const targets = Object.fromEntries(
       consentItems.map((item) => [
         item.statement_id,
@@ -1148,6 +1223,13 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         tosVersion: null,
         now,
         consentGeneration,
+        ...(releaseAnswer.decision ? { release: releaseAnswer.decision } : {}),
+        // The history of this approval, written with it (a withdrawal racing it leaves neither).
+        history: {
+          action: 'granted',
+          scopesAfter: effectiveScope.split(' '),
+          userAgent: c.req.header('User-Agent') ?? null,
+        },
       });
     } catch (error) {
       // The application's consent generation changed; approval must restart.
@@ -1166,21 +1248,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
 
     // Invalidate consent cache so next check reflects updated consent
     await invalidateConsentCache(c.env, userId, tenantId, client_id);
-
-    // Record consent history for audit trail (GDPR compliance)
-    try {
-      await recordConsentHistory(authCtx.coreAdapter, {
-        tenantId,
-        userId,
-        clientId: client_id,
-        action: 'granted',
-        scopesAfter: effectiveScope.split(' '),
-        userAgent: c.req.header('User-Agent'),
-      });
-    } catch {
-      log.warn('Failed to record consent history', { action: 'record_history' });
-      // Non-blocking - don't fail the consent flow
-    }
 
     // Publish consent.granted event (non-blocking)
     publishEvent(c, {
@@ -1211,7 +1278,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       consentSessionId,
       authorizationRequest,
       authorizationMetadata.confirmed_reauth,
-      consentGeneration
+      consentGeneration,
+      releaseAnswer.approval
     );
     const redirectUrl = buildAuthorizeContinuationUrl(
       authorizationMetadata,

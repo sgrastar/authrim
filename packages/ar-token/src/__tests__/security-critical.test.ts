@@ -13,11 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import { exportPKCS8, generateKeyPair } from 'jose';
-import {
-  OIDCAttributeReleaseConsentRequiredError,
-  openSubjectReference,
-  type DatabaseAdapter,
-} from '@authrim/ar-lib-core';
+import { openSubjectReference, type DatabaseAdapter } from '@authrim/ar-lib-core';
 import {
   createMockEnv,
   createMockContext,
@@ -214,9 +210,7 @@ const mocks = vi.hoisted(() => ({
 // replaces them (see "ID token claim release consent under identity mapping").
 const identityRelease = vi.hoisted(() => ({
   apply: vi.fn<(input: unknown) => unknown>(),
-  enforce: vi.fn<(input: unknown) => unknown>(),
   actualApply: undefined as undefined | ((input: unknown) => unknown),
-  actualEnforce: undefined as undefined | ((input: unknown) => unknown),
 }));
 vi.mock('@authrim/ar-lib-core/services/oidc-identity-mapping', async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
@@ -226,17 +220,6 @@ vi.mock('@authrim/ar-lib-core/services/oidc-identity-mapping', async () => {
   identityRelease.apply.mockImplementation(identityRelease.actualApply);
   return { ...actual, applyOIDCIdentityMapping: identityRelease.apply };
 });
-vi.mock('@authrim/ar-lib-core/services/oidc-attribute-release-consent', async () => {
-  const actual = await vi.importActual<Record<string, unknown>>(
-    '@authrim/ar-lib-core/services/oidc-attribute-release-consent'
-  );
-  identityRelease.actualEnforce = actual.enforceOIDCAttributeReleaseConsent as (
-    input: unknown
-  ) => unknown;
-  identityRelease.enforce.mockImplementation(identityRelease.actualEnforce);
-  return { ...actual, enforceOIDCAttributeReleaseConsent: identityRelease.enforce };
-});
-
 // The database boundary of a real identity mapping (the Mapping Set the app is bound to, and the
 // Destination Profile consent filter). Unset, each is the real implementation; the mapping itself
 // runs for real. The selection and the reading of the set are tested in ar-lib-core: a binding
@@ -1083,6 +1066,7 @@ describe('Security-Critical Tests', () => {
       mocks.mockGetClientCached.mockResolvedValue(client);
       mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
       mocks.mockGetRefreshToken.mockResolvedValue({
+        family_release_approval: ['*'],
         sub: refreshTokenPayload.sub,
         scope: refreshTokenPayload.scope,
         client_id: refreshTokenPayload.client_id,
@@ -1159,58 +1143,52 @@ describe('Security-Critical Tests', () => {
       pairwise: 'pairwise-sub-for-client',
       persistent: 'persistent-id-for-client',
     } as const;
-    let consentedUsers: Set<string>;
-    let releaseChecks: Array<{ subjectId: string; claims: Record<string, unknown> }>;
+    // The approval the grant carries (the code's `releaseApproval`, the refresh family's
+    // `family_release_approval`), and what the mapping puts in the ID token: an optional claim
+    // and a required one, as the app's Destination Profile would classify them.
+    let grantApproval: string[] | null;
+    let mappedExtraClaims: Record<string, unknown>;
     let releaseRequestContext: ReturnType<typeof createMockContext>;
 
     function mapSubTo(sub: string) {
       identityRelease.apply.mockImplementation((input) => {
-        const { claims } = input as { claims: Record<string, unknown> };
-        return Promise.resolve({ claims: { ...claims, sub }, binding: null });
+        const { claims, releaseOptionalOut } = input as {
+          claims: Record<string, unknown>;
+          releaseOptionalOut?: Set<string>;
+        };
+        // The Destination Profile lists `nickname` as optional; `email` is required.
+        releaseOptionalOut?.add('nickname');
+        return Promise.resolve({ claims: { ...claims, ...mappedExtraClaims, sub }, binding: null });
       });
     }
 
     beforeEach(() => {
-      consentedUsers = new Set([USER_ID]);
-      releaseChecks = [];
-      identityRelease.enforce.mockImplementation((input) => {
-        const { subjectId, claims } = input as {
-          subjectId: string;
-          claims: Record<string, unknown>;
-        };
-        releaseChecks.push({ subjectId, claims });
-        if (!consentedUsers.has(subjectId)) {
-          return Promise.reject(
-            new OIDCAttributeReleaseConsentRequiredError({
-              claimSetHash: 'sha256:claims',
-              reasonCodes: ['release.attribute_consent.not_granted'],
-              consentMode: 'once',
-              claimNames: ['sub'],
-            })
-          );
-        }
-        return Promise.resolve({ action: 'release', claimSetHash: null, reasonCodes: [] });
-      });
+      grantApproval = ['*'];
+      mappedExtraClaims = {};
       (mockEnv as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = ROOT_KEY;
     });
 
     afterEach(() => {
       identityRelease.apply.mockImplementation(identityRelease.actualApply!);
-      identityRelease.enforce.mockImplementation(identityRelease.actualEnforce!);
     });
 
     function consentRequiringClient() {
       const client = createConfidentialClient({ require_pkce: false });
       mocks.mockGetClientCached.mockResolvedValue({
         ...client,
-        attribute_release_consent: { enabled: true, mode: 'once' },
+        information_release_consent: { enabled: true, ask: 'once' },
       });
       return client;
     }
 
     async function exchangeCodeForUser(scope = 'openid profile') {
       const client = consentRequiringClient();
-      const authCodeData = createAuthCodeData({ userId: USER_ID, scope });
+      const authCodeData = createAuthCodeData({
+        userId: USER_ID,
+        scope,
+        releaseApproval: grantApproval ?? undefined,
+      });
+      if (grantApproval === null) delete authCodeData.releaseApproval;
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
         registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
@@ -1238,6 +1216,7 @@ describe('Security-Critical Tests', () => {
       });
       mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
       mocks.mockGetRefreshToken.mockResolvedValue({
+        family_release_approval: grantApproval,
         sub: USER_ID,
         scope: refreshTokenPayload.scope,
         client_id: refreshTokenPayload.client_id,
@@ -1357,16 +1336,12 @@ describe('Security-Critical Tests', () => {
 
     describe.each(Object.entries(MAPPED_SUBS))('with a %s sub', (_kind, mappedSub) => {
       describe.each(flows)('on the %s grant', (_grant, exchange) => {
-        it("finds the user's consent and issues the ID token with the mapped sub", async () => {
+        it('issues the ID token with the mapped sub under the approval the grant carries', async () => {
           mapSubTo(mappedSub);
 
           const response = await exchange();
 
           expect(response.status).toBe(200);
-          // The consent is looked up by the user, not by the sub the ID token carries.
-          expect(releaseChecks).toHaveLength(1);
-          expect(releaseChecks[0].subjectId).toBe(USER_ID);
-          expect(releaseChecks[0].claims.sub).toBe(mappedSub);
           const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<
             string,
             unknown
@@ -1385,9 +1360,39 @@ describe('Security-Critical Tests', () => {
           });
         });
 
-        it('asks for consent, and issues nothing, when the user has not consented', async () => {
+        it('puts the approval the grant carries on the access token it issues', async () => {
           mapSubTo(mappedSub);
-          consentedUsers.clear();
+          grantApproval = ['email', 'nickname'];
+
+          const response = await exchange();
+
+          expect(response.status).toBe(200);
+          expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+            authrim_release: ['email', 'nickname'],
+          });
+        });
+
+        it('releases an approved claim, and drops an optional one the grant does not approve', async () => {
+          mapSubTo(mappedSub);
+          mappedExtraClaims = { email: 'a@example.com', nickname: 'Al' };
+          grantApproval = ['email'];
+
+          const response = await exchange();
+
+          expect(response.status).toBe(200);
+          const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<
+            string,
+            unknown
+          >;
+          expect(idClaims.sub).toBe(mappedSub);
+          expect(idClaims.email).toBe('a@example.com');
+          expect(idClaims).not.toHaveProperty('nickname');
+        });
+
+        it('asks for consent, and issues nothing, when a required claim is not approved', async () => {
+          mapSubTo(mappedSub);
+          mappedExtraClaims = { email: 'a@example.com' };
+          grantApproval = ['nickname'];
 
           const response = await exchange();
 
@@ -1395,20 +1400,39 @@ describe('Security-Critical Tests', () => {
           expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(
             'consent_required'
           );
-          expect(releaseChecks[0].subjectId).toBe(USER_ID);
           expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
         });
 
-        it('is not satisfied by a consent recorded under the mapped sub', async () => {
+        it('releases only the protocol claims for a grant that carries no approval', async () => {
           mapSubTo(mappedSub);
-          consentedUsers = new Set([mappedSub]);
+          mappedExtraClaims = { nickname: 'Al' };
+          grantApproval = null;
 
           const response = await exchange();
 
-          expect(response.status).toBe(400);
-          expect((await parseJsonResponse<{ error: string }>(response)).error).toBe(
-            'consent_required'
-          );
+          expect(response.status).toBe(200);
+          const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<
+            string,
+            unknown
+          >;
+          expect(idClaims.sub).toBe(mappedSub);
+          expect(idClaims).not.toHaveProperty('nickname');
+        });
+
+        it('releases the required claims only when the app does not ask (@required)', async () => {
+          mapSubTo(mappedSub);
+          mappedExtraClaims = { email: 'a@example.com', nickname: 'Al' };
+          grantApproval = ['@required'];
+
+          const response = await exchange();
+
+          expect(response.status).toBe(200);
+          const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<
+            string,
+            unknown
+          >;
+          expect(idClaims.email).toBe('a@example.com');
+          expect(idClaims).not.toHaveProperty('nickname');
         });
       });
     });
@@ -1611,11 +1635,10 @@ describe('Security-Critical Tests', () => {
       });
     });
 
-    it('still checks the consent by the user id when the app has no identity mapping', async () => {
+    it('issues the ID token for the user id when the app has no identity mapping', async () => {
       const response = await exchangeCodeForUser();
 
       expect(response.status).toBe(200);
-      expect(releaseChecks[0].subjectId).toBe(USER_ID);
       expect(mocks.mockCreateIDToken.mock.calls.at(-1)?.[0]).toMatchObject({ sub: USER_ID });
     });
   });
@@ -2853,6 +2876,7 @@ describe('Security-Critical Tests', () => {
       mocks.mockExtractDPoPProof.mockReturnValue('valid-dpop-proof');
       mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'dpop-jkt' });
       mocks.mockGetRefreshToken.mockResolvedValue({
+        family_release_approval: ['*'],
         sub: refreshTokenPayload.sub,
         scope: refreshTokenPayload.scope,
         client_id: refreshTokenPayload.client_id,
@@ -3313,6 +3337,7 @@ describe('Security-Critical Tests', () => {
           mocks.mockGetClientCached.mockResolvedValue(client);
           mocks.mockParseToken.mockReturnValue(payload);
           mocks.mockGetRefreshToken.mockResolvedValue({
+            family_release_approval: ['*'],
             sub: payload.sub,
             scope: payload.scope,
             client_id: payload.client_id,
@@ -3547,6 +3572,7 @@ describe('Security-Critical Tests', () => {
       mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
       mocks.mockVerifyToken.mockRejectedValue(new Error('bad signature'));
       mocks.mockGetRefreshToken.mockResolvedValue({
+        family_release_approval: ['*'],
         sub: refreshTokenPayload.sub,
         scope: refreshTokenPayload.scope,
         client_id: refreshTokenPayload.client_id,
@@ -3579,6 +3605,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(payload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: payload.sub,
           scope: payload.scope,
           client_id: payload.client_id,
@@ -3653,6 +3680,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -3708,6 +3736,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -3757,6 +3786,7 @@ describe('Security-Critical Tests', () => {
           mocks.mockGetClientCached.mockResolvedValue(client);
           mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
           mocks.mockGetRefreshToken.mockResolvedValue({
+            family_release_approval: ['*'],
             sub: refreshTokenPayload.sub,
             scope: refreshTokenPayload.scope,
             client_id: refreshTokenPayload.client_id,
@@ -3941,6 +3971,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -3983,6 +4014,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -4032,6 +4064,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
         mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'browser-jkt' });
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -4096,6 +4129,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
         mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'other-jkt' });
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -4143,6 +4177,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -4196,6 +4231,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -4248,6 +4284,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: 'openid profile', // Original scope
           client_id: refreshTokenPayload.client_id,
@@ -4289,6 +4326,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: 'openid profile email',
           client_id: refreshTokenPayload.client_id,
@@ -4345,6 +4383,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -4405,6 +4444,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: refreshTokenPayload.client_id,
@@ -4444,6 +4484,7 @@ describe('Security-Critical Tests', () => {
         mocks.mockGetClientCached.mockResolvedValue(client);
         mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
         mocks.mockGetRefreshToken.mockResolvedValue({
+          family_release_approval: ['*'],
           sub: refreshTokenPayload.sub,
           scope: refreshTokenPayload.scope,
           client_id: 'client-b', // Token was issued to different client

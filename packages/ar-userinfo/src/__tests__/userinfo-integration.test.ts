@@ -49,6 +49,10 @@ const { privateKey: testSigningPrivateKey } = generateKeyPairSync('rsa', {
 });
 
 // Mock shared module
+// No consent withdrawal is recorded (generation 0) unless a test says otherwise.
+const mockFindConsentRevocation = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ generation: 0, revokedAt: null })
+);
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = (await vi.importActual('@authrim/ar-lib-core')) as Record<string, unknown>;
   const oidcClaims = (await vi.importActual('@authrim/ar-lib-core/utils/oidc-claims')) as Record<
@@ -57,6 +61,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
   >;
   return {
     ...actual,
+    findOAuthClientConsentRevocation: mockFindConsentRevocation,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
     ...oidcClaims,
     introspectTokenFromContext: mockIntrospectTokenFromContext,
     getClient: mockGetClient,
@@ -203,8 +209,10 @@ describe('UserInfo Integration Tests', () => {
     vi.clearAllMocks();
     mockEnv = createMockEnv();
     // Re-apply mock implementations after vi.clearAllMocks()
-    mockGetClientCached.mockImplementation((_c: unknown, env: unknown, clientId: string) =>
-      mockGetClient(env, clientId)
+    // A client no test set up is a known client with no settings.
+    mockGetClientCached.mockImplementation(
+      async (_c: unknown, env: unknown, clientId: string) =>
+        (await mockGetClient(env, clientId)) ?? { client_id: clientId }
     );
     // Default mock for getCachedUser (PII/Non-PII DB separation)
     vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
@@ -236,7 +244,12 @@ describe('UserInfo Integration Tests', () => {
     it('should accept GET requests', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
@@ -255,7 +268,12 @@ describe('UserInfo Integration Tests', () => {
     it('should accept POST requests', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
@@ -344,6 +362,7 @@ describe('UserInfo Integration Tests', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile email',
           client_id: 'client-123',
@@ -373,6 +392,7 @@ describe('UserInfo Integration Tests', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid profile',
           client_id: 'client-123',
@@ -458,7 +478,12 @@ describe('UserInfo Integration Tests', () => {
     it('should return only sub for openid scope', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
@@ -479,7 +504,12 @@ describe('UserInfo Integration Tests', () => {
     it('should include profile claims for profile scope', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid profile', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
@@ -499,7 +529,12 @@ describe('UserInfo Integration Tests', () => {
     it('should include email claims for email scope', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid email', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid email',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
@@ -518,7 +553,12 @@ describe('UserInfo Integration Tests', () => {
     it('should include phone claims for phone scope', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid phone', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid phone',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
@@ -537,7 +577,12 @@ describe('UserInfo Integration Tests', () => {
     it('should include address for address scope', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid address', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid address',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
@@ -558,7 +603,12 @@ describe('UserInfo Integration Tests', () => {
     it('should return encrypted JWT when client requires encryption', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid profile', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue({
         client_id: 'client-123',
@@ -606,7 +656,12 @@ describe('UserInfo Integration Tests', () => {
     it('should return 400 when encryption is required but client has no public key', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid profile', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue({
         client_id: 'client-123',
@@ -633,7 +688,12 @@ describe('UserInfo Integration Tests', () => {
     it('should return 400 when JWE algorithm is not supported', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid profile', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue({
         client_id: 'client-123',
@@ -664,7 +724,12 @@ describe('UserInfo Integration Tests', () => {
     it('should return signed JWT when client requires signing (not encryption)', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid profile', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid profile',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue({
         client_id: 'client-123',
@@ -692,6 +757,7 @@ describe('UserInfo Integration Tests', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid', // No email scope
           client_id: 'client-123',
@@ -724,6 +790,7 @@ describe('UserInfo Integration Tests', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid', // No email scope
           client_id: 'client-123',
@@ -756,6 +823,7 @@ describe('UserInfo Integration Tests', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid',
           client_id: 'client-123',
@@ -792,6 +860,7 @@ describe('UserInfo Integration Tests', () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: {
+          authrim_release: ['*'],
           sub: 'user-123',
           scope: 'openid',
           client_id: 'client-123',
@@ -843,7 +912,12 @@ describe('UserInfo Integration Tests', () => {
     it('should include security headers in response', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
@@ -862,7 +936,12 @@ describe('UserInfo Integration Tests', () => {
     it('should include CORS headers', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'user-123', scope: 'openid', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'user-123',
+          scope: 'openid',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
@@ -935,7 +1014,12 @@ describe('UserInfo Integration Tests', () => {
     it('should return 401 when user does not exist', async () => {
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
-        claims: { sub: 'nonexistent-user', scope: 'openid', client_id: 'client-123' },
+        claims: {
+          authrim_release: ['*'],
+          sub: 'nonexistent-user',
+          scope: 'openid',
+          client_id: 'client-123',
+        },
       });
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);

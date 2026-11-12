@@ -4,7 +4,8 @@
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import {
 		adminClientsAPI,
-		type AttributeReleaseConsentPolicy,
+		type InformationReleaseAsk,
+		type InformationReleaseConsentSetting,
 		type ClaimReleasePolicy,
 		type ClaimsParameterPolicy,
 		type Client,
@@ -359,31 +360,48 @@
 			: fieldMappingSetId;
 	}
 
-	function attributeReleaseConsentValue(policy?: AttributeReleaseConsentPolicy | null): string {
-		return policy?.enabled ? policy.mode : 'disabled';
+	const DEFAULT_INFORMATION_RELEASE_CONSENT: InformationReleaseConsentSetting = {
+		enabled: true,
+		ask: 'once',
+		show_values: true,
+		purpose_statement_id: null
+	};
+
+	function informationReleaseConsentValue(
+		setting?: InformationReleaseConsentSetting | null
+	): InformationReleaseConsentSetting {
+		return { ...DEFAULT_INFORMATION_RELEASE_CONSENT, ...(setting ?? {}) };
 	}
 
-	function setAttributeReleaseConsent(value: string) {
-		editForm.attribute_release_consent =
-			value === 'disabled'
-				? null
-				: {
-						enabled: true,
-						mode: value === 'every_time' || value === 'until_attributes_change' ? value : 'once'
-					};
+	function updateInformationReleaseConsent(patch: Partial<InformationReleaseConsentSetting>) {
+		editForm.information_release_consent = {
+			...informationReleaseConsentValue(editForm.information_release_consent),
+			...patch
+		};
 	}
 
-	function attributeReleaseConsentLabel(policy?: AttributeReleaseConsentPolicy | null): string {
-		switch (attributeReleaseConsentValue(policy)) {
-			case 'once':
-				return $LL.admin_client_detail_attribute_release_consent_once();
+	function informationReleaseAskLabel(ask: InformationReleaseAsk): string {
+		switch (ask) {
 			case 'every_time':
-				return $LL.admin_client_detail_attribute_release_consent_every_time();
-			case 'until_attributes_change':
-				return $LL.admin_client_detail_attribute_release_consent_until_attributes_change();
+				return $LL.admin_client_detail_information_release_consent_ask_every_time();
+			case 'when_items_change':
+				return $LL.admin_client_detail_information_release_consent_ask_when_items_change();
 			default:
-				return $LL.admin_client_detail_attribute_release_consent_disabled();
+				return $LL.admin_client_detail_information_release_consent_ask_once();
 		}
+	}
+
+	function informationReleaseConsentLabel(
+		setting?: InformationReleaseConsentSetting | null
+	): string {
+		const value = informationReleaseConsentValue(setting);
+		if (!value.enabled) return $LL.admin_client_detail_information_release_consent_off();
+		const parts = [informationReleaseAskLabel(value.ask)];
+		if (value.show_values) {
+			parts.push($LL.admin_client_detail_information_release_consent_show_values());
+		}
+		if (value.purpose_statement_id) parts.push(value.purpose_statement_id);
+		return parts.join(' / ');
 	}
 
 	/** The value of the Mapping Set select that stands for the opt-out { mode: 'none' }. */
@@ -502,8 +520,8 @@
 			Boolean(a.allow_claims_without_scope) === Boolean(b.allow_claims_without_scope) &&
 			identityMappingSelectValue(a.identity_mapping) ===
 				identityMappingSelectValue(b.identity_mapping) &&
-			attributeReleaseConsentValue(a.attribute_release_consent) ===
-				attributeReleaseConsentValue(b.attribute_release_consent) &&
+			JSON.stringify(informationReleaseConsentValue(a.information_release_consent)) ===
+				JSON.stringify(informationReleaseConsentValue(b.information_release_consent)) &&
 			(a.asc_enabled ?? true) === (b.asc_enabled ?? true) &&
 			(a.asc_protected_request_required ?? true) === (b.asc_protected_request_required ?? true) &&
 			(a.asc_sao_enabled ?? true) === (b.asc_sao_enabled ?? true) &&
@@ -960,7 +978,9 @@
 								destinationNamespace: client.identity_mapping.destinationNamespace ?? 'oidc.claim'
 							}
 						: null,
-			attribute_release_consent: client.attribute_release_consent ?? null,
+			information_release_consent: informationReleaseConsentValue(
+				client.information_release_consent
+			),
 			asc_allowed_transformed_claims: getEffectiveAscAllowedTransformedClaims(client)
 		};
 		claimsParameterPolicyText = formatClaimsParameterPolicy(client.claims_parameter_policy);
@@ -2732,36 +2752,82 @@ svc://op-userinfo/customer-export"
 
 						<div class="form-group">
 							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label class="form-label">{$LL.admin_client_detail_attribute_release_consent()}</label
+							<label class="form-label"
+								>{$LL.admin_client_detail_information_release_consent()}</label
 							>
 							{#if isEditing}
-								<select
-									class="form-select"
-									value={attributeReleaseConsentValue(editForm.attribute_release_consent)}
-									onchange={(event) => setAttributeReleaseConsent(event.currentTarget.value)}
-								>
-									<option value="disabled"
-										>{$LL.admin_client_detail_attribute_release_consent_disabled()}</option
+								{@const releaseConsent = informationReleaseConsentValue(
+									editForm.information_release_consent
+								)}
+								<label class="checkbox-list-item">
+									<input
+										type="checkbox"
+										checked={releaseConsent.enabled}
+										onchange={(event) =>
+											updateInformationReleaseConsent({ enabled: event.currentTarget.checked })}
+									/>
+									{$LL.admin_client_detail_information_release_consent_enabled()}
+								</label>
+								{#if releaseConsent.enabled}
+									<label class="form-label" for="information-release-ask"
+										>{$LL.admin_client_detail_information_release_consent_ask()}</label
 									>
-									<option value="once"
-										>{$LL.admin_client_detail_attribute_release_consent_once()}</option
+									<select
+										id="information-release-ask"
+										class="form-select"
+										value={releaseConsent.ask}
+										onchange={(event) =>
+											updateInformationReleaseConsent({
+												ask: event.currentTarget.value as InformationReleaseAsk
+											})}
 									>
-									<option value="every_time"
-										>{$LL.admin_client_detail_attribute_release_consent_every_time()}</option
+										<option value="once"
+											>{$LL.admin_client_detail_information_release_consent_ask_once()}</option
+										>
+										<option value="every_time"
+											>{$LL.admin_client_detail_information_release_consent_ask_every_time()}</option
+										>
+										<option value="when_items_change"
+											>{$LL.admin_client_detail_information_release_consent_ask_when_items_change()}</option
+										>
+									</select>
+									<label class="checkbox-list-item">
+										<input
+											type="checkbox"
+											checked={releaseConsent.show_values}
+											onchange={(event) =>
+												updateInformationReleaseConsent({
+													show_values: event.currentTarget.checked
+												})}
+										/>
+										{$LL.admin_client_detail_information_release_consent_show_values()}
+									</label>
+									<label class="form-label" for="information-release-purpose"
+										>{$LL.admin_client_detail_information_release_consent_purpose()}</label
 									>
-									<option value="until_attributes_change"
-										>{$LL.admin_client_detail_attribute_release_consent_until_attributes_change()}</option
-									>
-								</select>
+									<input
+										id="information-release-purpose"
+										type="text"
+										class="form-input"
+										value={releaseConsent.purpose_statement_id ?? ''}
+										oninput={(event) =>
+											updateInformationReleaseConsent({
+												purpose_statement_id: event.currentTarget.value.trim() || null
+											})}
+									/>
+									<p class="form-hint">
+										{$LL.admin_client_detail_information_release_consent_purpose_hint()}
+									</p>
+								{/if}
 								<p class="form-hint">
-									{$LL.admin_client_detail_attribute_release_consent_hint()}
+									{$LL.admin_client_detail_information_release_consent_hint()}
 								</p>
 							{:else}
 								<p class="display-text">
-									{attributeReleaseConsentLabel(client.attribute_release_consent)}
+									{informationReleaseConsentLabel(client.information_release_consent)}
 								</p>
 								<p class="form-hint">
-									{$LL.admin_client_detail_attribute_release_consent_display_hint()}
+									{$LL.admin_client_detail_information_release_consent_display_hint()}
 								</p>
 							{/if}
 						</div>
