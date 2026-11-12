@@ -56630,6 +56630,27 @@ components:
               additionalProperties:
                 type: string
                 enum: [tenant, platform, env, default]
+        locked:
+          type: array
+          items:
+            type: string
+          description: >-
+            The settings the platform has locked (sorted). At a tenant or client scope their
+            `values` and `sources` are the platform's value, else the environment variable, else
+            the default: a value the tenant or client stored for them is ignored (kept, and applied
+            again if the platform unlocks the setting), and setting or disabling them is refused
+            with the reason `locked_by_platform`. At the platform scope this is the list that
+            `lock` and `unlock` of a platform PATCH edit. Only settings marked lockable can be
+            locked.
+        setAside:
+          type: array
+          items:
+            type: string
+          description: >-
+            Tenant and client reads: the locked settings for which this scope still stores a value
+            of its own (sorted). That value is set aside, not applied (`sources` says where the
+            applied value comes from), and `clear` removes it; if it is not cleared it applies
+            again when the platform unlocks the setting. Always empty at the platform scope.
       example:
         category: oauth
         scope:
@@ -56686,6 +56707,33 @@ components:
           type: array
           items:
             type: string
+          description: >-
+            Boolean settings to disable. A tenant or client PATCH that sets or disables a setting
+            the platform has locked rejects that key with a reason starting `locked_by_platform`;
+            `clear` of such a key stays allowed.
+        lock:
+          type: array
+          items:
+            type: string
+          description: >-
+            Platform scope only (`/api/admin/platform/settings/{category}`, the authority to edit
+            platform settings): settings of the category to lock, so that tenants and clients cannot
+            change them and the values they stored are ignored. Each key must be a setting marked
+            lockable (the rate_limit.email_max_requests and rate_limit.email_window settings of
+            rate-limit, and oauth.https_request_uri_enabled and
+            oauth.https_request_uri_allowed_domains of oauth), in a category tenants can also set.
+            A key that is unknown or not lockable is rejected per key in `rejected`; a key named in
+            both `lock` and `unlock` is rejected. The list is part of the platform document, so
+            `ifMatch` covers it. A lock takes effect for runtime readers within their settings
+            cache (about 60 seconds; a category that also keeps an authentication-methods cache
+            revision bumps it at once). Rejected at a tenant or client scope.
+        unlock:
+          type: array
+          items:
+            type: string
+          description: >-
+            Platform scope only: settings to unlock. The values tenants and clients stored apply
+            again. Unlocking a key that is not locked changes nothing.
     SettingsV2PatchResponse:
       type: object
       additionalProperties: true
@@ -56695,6 +56743,26 @@ components:
         inherited value, the environment or the default is accepted; dependencies are checked
         against effective values, not only the values stored at the requested scope.
       properties:
+        rejected:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Rejected keys with the reason. A tenant or client change to a setting the platform has
+            locked is rejected with a reason that starts with `locked_by_platform`; when nothing
+            else was applied the response is 400.
+        locked:
+          type: array
+          items:
+            type: string
+          description: >-
+            Platform PATCH only, when it named lock or unlock. The keys newly locked.
+        unlocked:
+          type: array
+          items:
+            type: string
+          description: >-
+            Platform PATCH only, when it named lock or unlock. The keys newly unlocked.
         projection:
           type: string
           enum: [pending]

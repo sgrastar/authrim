@@ -32,7 +32,7 @@ import {
 export interface Entry {
 	v: unknown;
 	here: boolean;
-	/** Fixed by the scope above: shown, never offered for change. */
+	/** Fixed by the platform: shown with the platform's value, never offered for change. */
 	locked?: boolean;
 }
 
@@ -72,7 +72,8 @@ export function valuesFrom(page: SettingsPageDef, loaded: Loaded): Values {
 			values[fieldOf(key)] = {
 				v: result.values[key],
 				here: result.sources[key] === 'kv',
-				...(result.locked?.includes(key) ? { locked: true } : {})
+				// At the platform, `locked` is its own list to edit, not something fixed above it.
+				...(result.scope.type !== 'platform' && result.locked.includes(key) ? { locked: true } : {})
 			};
 		}
 	}

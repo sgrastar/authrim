@@ -370,6 +370,8 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     envBoolean: 'exactly-true',
     label: 'Request URI Enabled',
     description: 'Enable request_uri parameter support',
+    // Read only through resolveProtocolSettings (resolved settings), which honours the platform lock.
+    lockable: true,
     visibility: 'public',
   },
   'oauth.https_request_uri_max_size': {
@@ -431,6 +433,8 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     envKey: 'HTTPS_REQUEST_URI_ALLOWED_DOMAINS',
     label: 'Allowed Request URI Domains',
     description: 'Comma-separated list of allowed domains for HTTPS request_uri (empty for any)',
+    // Read only through resolveProtocolSettings (resolved settings), which honours the platform lock.
+    lockable: true,
     visibility: 'admin',
   },
   'oauth.error_locale': {

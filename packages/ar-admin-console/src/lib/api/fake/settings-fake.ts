@@ -45,7 +45,11 @@ export interface FakeSettingsOptions {
 	failGet?: 'error' | 'hang';
 	/** Just before the next change, someone else saves these values (a conflict). */
 	othersSaveFirst?: Record<string, unknown>;
-	/** Settings the scope above has fixed: read as usual, refused when changed. */
+	/**
+	 * Settings the platform has locked. Read at a tenant or an app they show the platform's value
+	 * (else the environment, else the default) whatever is stored there; set or disable is refused
+	 * (`locked_by_platform`), clear is allowed. At the platform they are only listed.
+	 */
 	locked?: readonly string[];
 }
 
@@ -161,8 +165,12 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 			const inherited: SettingsGetResult['inherited'] = { values: {}, sources: {} };
 			for (const [key, meta] of Object.entries(settingsOf(category))) {
 				// A value stored at a scope the setting cannot be set at is ignored, as the API does.
+				const isLocked = target.level !== 'platform' && options.locked?.includes(key) === true;
 				const parent = parents.find(
-					(p) => key in p.stored && settableAt(meta, p.source === 'tenant' ? 'tenant' : 'platform')
+					(p) =>
+						key in p.stored &&
+						(!isLocked || p.source === 'platform') &&
+						settableAt(meta, p.source === 'tenant' ? 'tenant' : 'platform')
 				);
 				const [value, source]: [unknown, InheritedSettingSource] = parent
 					? [parent.stored[key], parent.source]
@@ -171,7 +179,7 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 						: [meta.default, 'default'];
 				inherited.values[key] = value;
 				inherited.sources[key] = source;
-				const own = key in stored && settableAt(meta, target.level);
+				const own = !isLocked && key in stored && settableAt(meta, target.level);
 				values[key] = own ? stored[key] : value;
 				sources[key] = own ? 'kv' : source;
 			}
@@ -181,10 +189,18 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 				version: version(target, category),
 				values,
 				sources,
-				inherited
+				inherited,
+				locked: (options.locked ?? []).filter((key) => key in values),
+				setAside:
+					target.level === 'platform'
+						? []
+						: (options.locked ?? []).filter(
+								(key) =>
+									key in values &&
+									key in stored &&
+									settableAt(settingsOf(category)[key], target.level)
+							)
 			};
-			const locked = (options.locked ?? []).filter((key) => key in values);
-			if (locked.length > 0) result.locked = locked;
 			return result;
 		},
 
@@ -211,7 +227,9 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 				disabled: [],
 				rejected: {}
 			};
-			const isLocked = (key: string) => options.locked?.includes(key) === true;
+			const isLocked = (key: string) =>
+				target.level !== 'platform' && options.locked?.includes(key) === true;
+			const lockedReason = 'locked_by_platform: This setting is locked by the platform';
 			for (const [key, value] of Object.entries(request.set ?? {})) {
 				const meta = metas[key];
 				const reason = !meta
@@ -219,7 +237,7 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 					: !settableAt(meta, target.level)
 						? 'Not settable at this scope'
 						: isLocked(key)
-							? 'Fixed by the scope above'
+							? lockedReason
 							: refusal(meta, value);
 				if (reason) {
 					result.rejected[key] = reason;
@@ -228,15 +246,18 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 				stored[key] = value;
 				result.applied.push(key);
 			}
+			// Disabling is not modelled here, but a locked setting is refused as the API does.
+			for (const key of request.disable ?? []) {
+				if (isLocked(key)) result.rejected[key] = lockedReason;
+			}
+			// Clearing a locked setting is allowed: it only removes a stale value of this scope.
 			for (const key of request.clear ?? []) {
 				const meta = metas[key];
 				const reason = !meta
 					? 'Unknown setting'
 					: !settableAt(meta, target.level)
 						? 'Not settable at this scope'
-						: isLocked(key)
-							? 'Fixed by the scope above'
-							: null;
+						: null;
 				if (reason) {
 					result.rejected[key] = reason;
 					continue;

@@ -326,10 +326,17 @@ async function applyWrites(
     }
 
     if (dryRun) {
-      for (const [key, value] of Object.entries(set)) {
-        const validation = manager.validate(category, { [key]: value });
-        if (validation.valid) result.applied.push(key);
-        else result.rejected[key] = validation.errors[0]?.reason ?? 'Validation failed';
+      // Decided as the save decides it (validation, and the platform's locks), saving nothing.
+      if (Object.keys(set).length > 0) {
+        const decided = await manager.patch(
+          category,
+          scope,
+          { ifMatch: current.version, set },
+          actor,
+          { skipDependencyCheck: true, dryRun: true }
+        );
+        result.applied = decided.applied;
+        Object.assign(result.rejected, decided.rejected);
       }
     } else if (Object.keys(set).length > 0) {
       // A conflicting save throws: the step stops, and the next one repeats this page.

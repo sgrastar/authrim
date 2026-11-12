@@ -59,6 +59,12 @@ export function parsePatchRequest(rawBody: unknown): SettingsPatchRequest {
     disable: Array.isArray(body.disable)
       ? body.disable.filter((k): k is string => typeof k === 'string')
       : undefined,
+    lock: Array.isArray(body.lock)
+      ? body.lock.filter((k): k is string => typeof k === 'string')
+      : undefined,
+    unlock: Array.isArray(body.unlock)
+      ? body.unlock.filter((k): k is string => typeof k === 'string')
+      : undefined,
   };
 }
 

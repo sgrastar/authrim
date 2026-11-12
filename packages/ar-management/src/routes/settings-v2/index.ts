@@ -1114,6 +1114,22 @@ settingsV2.patch('/platform/settings/:category', (c) => {
           }
           const body = parsed.body;
 
+          // A lock is stored in the platform document and held by tenants: a category tenants
+          // cannot set has nothing to lock.
+          if ((body.lock?.length ?? 0) > 0 && !isCategoryAllowedAtScope(category, 'tenant')) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'lock_category_not_tenant_scoped',
+            });
+            return errorResponse(
+              c,
+              'bad_request',
+              `Category "${category}" is not available at tenant scope, so none of its settings can be locked`,
+              400
+            );
+          }
+
           if (!body.ifMatch) {
             await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
             return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
@@ -1247,8 +1263,14 @@ settingsV2.patch('/platform/settings/:category', (c) => {
             );
           }
           const hasRejections = Object.keys(result.rejected).length > 0;
+          // A lock change takes effect like a value change: a category with a cached revision
+          // bumps it, the others are read by runtime within its settings cache (60 seconds).
           const hasApplied =
-            result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+            result.applied.length > 0 ||
+            result.cleared.length > 0 ||
+            result.disabled.length > 0 ||
+            (result.locked?.length ?? 0) > 0 ||
+            (result.unlocked?.length ?? 0) > 0;
 
           if (!hasApplied && hasRejections) {
             await recordSettingsAuditFailure(c, {
