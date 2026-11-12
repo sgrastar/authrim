@@ -371,6 +371,45 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		expect(headersOf(1).has('X-Authrim-Human-Verification-Action')).toBe(false);
 	});
 
+	it.each([true, false])(
+		'tells an address with no account (sign-up available: %s) from any other failure',
+		async (signUpAvailable) => {
+			const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						error: 'account_not_found',
+						error_description: 'No account uses this address',
+						sign_up_available: signUpAvailable
+					}),
+					{ status: 404, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+			Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+			const { emailCodeAPI } = await loadClient();
+
+			const { data, error } = await emailCodeAPI.send({ email: 'nobody@example.com' });
+
+			expect(data).toBeUndefined();
+			expect(error?.error).toBe('account_not_found');
+			expect(error?.error_details).toEqual({ sign_up_available: signUpAvailable });
+		}
+	);
+
+	it('leaves the sign-up flag out of an error that does not carry one', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+			new Response(JSON.stringify({ error: 'server_error', error_description: 'Oops' }), {
+				status: 500,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { emailCodeAPI } = await loadClient();
+
+		const { error } = await emailCodeAPI.send({ email: 'user@example.com' });
+
+		expect(error?.error_details).toBeUndefined();
+	});
+
 	it('keeps the Email Code request loading until routed provisioning is ready', async () => {
 		const token = 'A'.repeat(43);
 		const fetchMock = vi

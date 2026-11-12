@@ -24,11 +24,18 @@ import {
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
   createConfigurationError,
+  createSAMLLoginNonce,
   createSAMLReauthChallenge,
   getUIConfig,
   resolveSamlRequestTtlSeconds,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
+
+/** What a resumed request's login keeps of its nonce (see redirectToSAMLLogin). */
+export type ResumedSAMLLogin =
+  | { nonce: string; hash: string }
+  | { hash: string; nonce?: undefined }
+  | 'none';
 
 /** The parts of a stored request's context that follow the request through its sign-ins. */
 export function carrySAMLRequestContext(
@@ -53,6 +60,13 @@ export function readSAMLReauthentication(
   return typeof issuedAt === 'number' && Number.isSafeInteger(issuedAt) ? { issuedAt } : undefined;
 }
 
+function consumeQuery(options: { loginNonceHash?: string }): string {
+  const params = new URLSearchParams();
+  if (options.loginNonceHash !== undefined) params.set('login_nonce_hash', options.loginNonceHash);
+  const text = params.toString();
+  return text ? `?${text}` : '';
+}
+
 /**
  * Consume the stored AuthnRequest of a request id: it is returned once and cannot be used again.
  */
@@ -60,9 +74,17 @@ export async function consumeStoredAuthnRequest(
   env: Env,
   tenantId: string,
   requestId: string,
-  spEntityId: string
+  spEntityId: string,
+  /**
+   * Use the request up only if it holds this login nonce hash (a login cancel); any other is left
+   * as it is, not consumed. Not supported by an imported runtime's request port, which refuses.
+   */
+  options: { loginNonceHash?: string } = {}
 ): Promise<SAMLRequestData> {
   let storedRequest: SAMLRequestData | null;
+  if (options.loginNonceHash !== undefined && env.SAML_RUNTIME_PORTS) {
+    throw new Error('Conditional consume of a stored SAML request is not supported here');
+  }
   if (env.SAML_RUNTIME_PORTS) {
     storedRequest = await env.SAML_RUNTIME_PORTS.requests.consume({
       tenantId,
@@ -75,7 +97,7 @@ export async function consumeStoredAuthnRequest(
     );
     const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
     const response = await samlRequestStore.fetch(
-      `https://saml-request-store/consume/${encodeURIComponent(requestId)}`,
+      `https://saml-request-store/consume/${encodeURIComponent(requestId)}${consumeQuery(options)}`,
       { method: 'POST' }
     );
     storedRequest = response.ok ? await response.json<SAMLRequestData>() : null;
@@ -181,10 +203,24 @@ export async function redirectToSAMLLogin(
     requiredAal?: AAL;
     signInAgain?: { subjectUserId: string; issuedAt: number };
     context?: SAMLRequestContext;
+    /**
+     * What a resumed request keeps of its login nonce. A resume never issues a nonce: the stored
+     * request's ORIGINAL hash is carried over (so only the browser given the original nonce can
+     * cancel it), and the nonce goes on the login URL only when the presented one matched it. A
+     * request stored before nonces stays without one (`none`). Absent for a request that arrives
+     * fresh: a new nonce is issued.
+     */
+    resumedLogin?: ResumedSAMLLogin;
   }
 ): Promise<Response> {
   const { env, tenantId, authnRequest } = input;
   const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
+  // The browser sent to sign in holds this nonce (on the login URL); the request keeps its hash
+  // only. A request that arrives fresh gets a new one; a resumed one keeps the matched one.
+  const loginNonce =
+    input.resumedLogin === 'none' ? null : (input.resumedLogin ?? (await createSAMLLoginNonce()));
+  // Only a nonce the browser presented (or that was just issued) goes on the login URL.
+  const loginNonceOnUrl = loginNonce?.nonce;
   await storeAuthnRequest(
     env,
     tenantId,
@@ -192,7 +228,11 @@ export async function redirectToSAMLLogin(
     input.relayState,
     // When the person was first sent: a session made since answers the request only if its
     // sign-in ran for it (sso.ts, sessionAnswersSAMLRequest).
-    { ...input.context, sentToSignInAt: input.context?.sentToSignInAt ?? Date.now() },
+    {
+      ...input.context,
+      sentToSignInAt: input.context?.sentToSignInAt ?? Date.now(),
+      ...(loginNonce ? { loginNonceHash: loginNonce.hash } : {}),
+    },
     requestTtlSeconds
   );
 
@@ -224,6 +264,7 @@ export async function redirectToSAMLLogin(
       : uiConfig.paths?.login || '/login';
     const loginUrl = new URL(loginPath, loginBaseUrl);
     loginUrl.searchParams.set('saml_request_id', authnRequest.id);
+    if (loginNonceOnUrl) loginUrl.searchParams.set('saml_login_nonce', loginNonceOnUrl);
     loginUrl.searchParams.set('saml_sp_entity_id', authnRequest.issuer);
     loginUrl.searchParams.set('return_to', 'saml_sso');
     if (input.forceReauthentication) {

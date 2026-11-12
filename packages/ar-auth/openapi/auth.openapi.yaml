@@ -1294,6 +1294,10 @@ paths:
         and then answers where that submit left the interaction; if the submit keeps the step
         longer, the resume is answered 409 `step_conflict` (`AR_FLOW_STEP_CONFLICT`, `recoverable`)
         and can be sent again.
+        Wherever the interaction object is answered (start, resume, `/submit`, `/back`) it carries
+        `cancel_available`: true exactly when `POST /api/v1/login/interactions/{interaction_id}/cancel`
+        would accept the interaction (a live interaction of a sign-in Flow whose sign-in step says
+        `on_cancel: error`, started for an OIDC authorization request or a SAML request).
       requestBody:
         required: true
         content:
@@ -1350,6 +1354,15 @@ paths:
                 saml_sp_entity_id:
                   type: string
                   description: SAML service provider entity ID for Flow protocol continuation.
+                saml_login_nonce:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{32,128}$'
+                  description: >-
+                    The nonce the IdP put on the login URL for `saml_request_id` (query parameter
+                    `saml_login_nonce`). Only its SHA-256 is kept with the interaction; a SAML
+                    request can be cancelled (and `cancel_available` is true) only for an
+                    interaction started with it. A value of the wrong form is refused with 400
+                    `invalid_request`.
                 return_to:
                   type: string
                   description: LoginUI return mode associated with the protocol request.
@@ -1824,13 +1837,112 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+  /api/v1/login/interactions/{interaction_id}/cancel:
+    post:
+      tags:
+        - Login Runtime
+      operationId: postApiV1LoginInteractionsInteractionIdCancel
+      summary: Stop signing in and go back to the app.
+      description: >
+        Authorised and held like a submit (interaction state, expiry, contract hash, HMAC signature,
+        current step identity; one claim, so it and a submit of the same step cannot both land).
+        `step_id` and `node_id` may be left out (the contract hash and signature authorise the
+        request); when sent they must be the current step's.
+        Accepted only for a live interaction of a `login` Flow whose sign-in step says
+        `on_cancel: error`, started for an OIDC authorization request (`authorization_challenge_id`)
+        or a SAML request (`saml_request_id`); otherwise 409 `cancel_not_available`
+        (`AR_FLOW_CANCEL_NOT_AVAILABLE`), changing nothing (this includes an interaction that was
+        ended any other way, and a SAML request whose interaction was started without a valid
+        `saml_login_nonce`). The interaction ends (state `failed`) and cannot be continued.
+        The answer is kept with the ended interaction in the same write: a repeat of an OIDC
+        cancel (same authorisation) answers the same body, so one whose answer was lost can be
+        sent again; a SAML cancel keeps only the hash of its one-time token and cannot be repeated.
+        The app is answered only once this cancel has used up the authorization request (the
+        request records which operation used it up). If another sign-in used it up first, or it
+        is gone (expired, or cleaned up after a lost answer), the answer is 409
+        `cancel_not_available` and the interaction stays ended. If the request store cannot tell,
+        the answer is 503 `temporarily_unavailable` (retryable): the interaction stays ended with
+        its stored answer, and a repeat of the cancel tries again and then returns the stored
+        answer.
+        OIDC: the authorization request is used up and the app is sent `access_denied` with the
+        request's `state` and `iss`, to its `cancel_uri` when it gave one, else its `redirect_uri`
+        (JWT-secured response modes are answered signed). The answer is the one a denied consent
+        gives: `{ "redirect_url": "..." }`, or `{ "form_post": { "action": "...", "fields": [[name,
+        value], ...] } }` for a `form_post` response mode when the caller sent
+        `X-Authrim-Relay: structured`.
+        SAML: `{ "redirect_url": "/saml/idp/login-cancel?interaction_id=...&token=..." }`, a path
+        (relative to the origin the browser is on) that answers the service provider once.
+      parameters:
+        - name: interaction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - contract_hash
+                - signature
+              properties:
+                step_id:
+                  type: string
+                node_id:
+                  type: string
+                contract_hash:
+                  type: string
+                signature:
+                  type: string
+      responses:
+        '200':
+          description: The interaction has ended; the browser follows `redirect_url` (or posts `form_post`).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [redirect_url]
+                    properties:
+                      redirect_url:
+                        type: string
+                  - type: object
+                    required: [form_post]
+                    properties:
+                      form_post:
+                        type: object
+                        required: [action, fields]
+                        properties:
+                          action:
+                            type: string
+                          fields:
+                            type: array
+                            items:
+                              type: array
+                              items:
+                                type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/v1/auth/direct/email-code/send:
     post:
       tags:
         - Direct Auth
       operationId: postApiV1AuthDirectEmailCodeSend
       summary: Send a Direct Auth email code.
-      description:
+      description: >-
         Creates an email-code challenge for Direct Auth after validating the client, channel,
         origin, and requested email identifier. For an eligible explicit email-verification Flow,
         a valid Email Verification Protocol presentation completes verification without sending a
@@ -1846,6 +1958,17 @@ paths:
         not fit it, or that names no interaction where the tenant accepts sign-ups only through a
         Flow (authentication-methods.signup.flow_required), sends nothing and gets the usual
         accepted response.
+        A send bound to a live interaction of a sign-in Flow that guides unregistered addresses
+        (`unregistered_signin: guide`), for an address with no account, creates no account and sends
+        no code: 404 `account_not_found` with `sign_up_available` (true only when the tenant has a
+        published, enabled tenant-level sign-up Flow and `login-ui.auth_switch_link_enabled` is on;
+        false when that cannot be read). The send limit, the client checks, the LOGIN human
+        verification (whatever screen the caller declares) and the email code switch for sign-in
+        have all passed first. Under such a Flow an address without an account is never signed up
+        from this endpoint: when any of those fails (login human verification not satisfied, email
+        code not enabled for sign-in) the answer is the usual accepted 200 response, with no
+        account made and no code sent. Invitations, re-authentication and sign-up Flows are not guided, and the
+        default (`generic`) behaves as above.
       responses:
         '200':
           $ref: '#/components/responses/DirectEmailCodeSend'
@@ -1857,6 +1980,21 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '404':
+          description: No account uses this address (a sign-in Flow that guides unregistered addresses).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, error_description, sign_up_available]
+                properties:
+                  error:
+                    type: string
+                    enum: [account_not_found]
+                  error_description:
+                    type: string
+                  sign_up_available:
+                    type: boolean
         '503':
           $ref: '#/components/responses/Error'
       requestBody:

@@ -31,6 +31,7 @@ import {
 import { localizeRuntimeScreen } from '#lib/i18n/runtime-screen-localization.js';
 import { getPlatformEnv } from '#lib/server/platform-env.js';
 import { getCachedAuthenticationMethodsForRequest } from '../../../hooks.server';
+import { buildAuthSwitchHref } from '#lib/authrim/auth-switch-url.js';
 import { advanceLiteFlow } from './advance';
 import type { LiteBackendClient } from './backend-client';
 import { liteBackendForEvent } from './backend-for-event';
@@ -671,7 +672,13 @@ export function litePagePath(event: RequestEvent): '/login' | '/signup' {
  * still going on), and its Flow resumed and kept. A failure is the action's answer.
  */
 export async function openPost(
-	event: RequestEvent
+	event: RequestEvent,
+	/**
+	 * `cancel`: the Flow is not resumed (the interaction may have ended by a cancel whose answer was
+	 * lost, which `/cancel` answers again), and a transaction ended by that cancel is still taken.
+	 * The kept hash and signature are what `/cancel` is authorised by.
+	 */
+	options: { cancel?: boolean } = {}
 ): Promise<
 	{ post: LitePost } | { failure: ActionFailure<{ restart: boolean } | { error: 'retry' }> }
 > {
@@ -689,12 +696,31 @@ export async function openPost(
 	if (!read.ok || !sameToken(read.txn.csrfToken, token)) return refused(403);
 	const purpose = litePagePurpose(event);
 	if (read.txn.bound.purpose !== purpose) return refused(403);
-	if (read.txn.state === 'completed' || read.txn.state === 'abandoned') {
+	const endedByCancel = options.cancel === true && read.txn.data.cancelled === true;
+	if ((read.txn.state === 'completed' && !endedByCancel) || read.txn.state === 'abandoned') {
 		return refused(403);
 	}
-	const kept = readKeptFlow(read.txn.data);
+	// A cancel in flight keeps the interaction it was sent for (`cancelPending`), which is what a
+	// retry sends again whatever the Flow was kept as since.
+	const kept =
+		(options.cancel ? readKeptFlow({ flow: read.txn.data.cancelPending }) : null) ??
+		readKeptFlow(read.txn.data);
 	if (!kept) backToPage(event);
 	const locale = event.locals.locale ?? 'en';
+	if (options.cancel) {
+		const flow: LiteFlowView = {
+			state: kept,
+			step: null,
+			interactionState: 'active',
+			codeInputElsewhere: false,
+			backScreens: [],
+			visitId: null,
+			cancelAvailable: true
+		};
+		return {
+			post: { event, txns, txn: read.txn, fields: form.fields, backend, flow, locale, purpose }
+		};
+	}
 	// A resume or a save that fails is answered with a retry: what the transaction holds (a code
 	// sent, a sign-in made) stays, and the page draws what can still be done with it.
 	const flow = await resumeLiteFlow(backend, kept, locale);
@@ -718,7 +744,8 @@ type OperationKind =
 	| 'continue'
 	| 'invite'
 	| 'provisioning'
-	| 'back';
+	| 'back'
+	| 'cancel';
 
 /**
  * Starts the post's operation. `started`: carry it out, then `finishOperation`. Otherwise the
@@ -867,12 +894,17 @@ export async function relayCompletion(
 	const signInRedirect =
 		readSignedIn(txn.data, post.flow.state.interactionId)?.redirectUrl ??
 		(nonEmpty(txn.data.signInRedirect) ? txn.data.signInRedirect : null);
-	const saml = (txn.data.saml ?? {}) as { requestId?: string; spEntityId?: string };
+	const saml = (txn.data.saml ?? {}) as {
+		requestId?: string;
+		loginNonce?: string;
+		spEntityId?: string;
+	};
 	const destination = liteCompletionDestination(output, {
 		publicOrigin: txn.bound.publicOrigin,
 		returnTo: txn.bound.returnTo,
 		fallback: signInRedirect,
 		samlRequestId: saml.requestId ?? null,
+		samlLoginNonce: saml.loginNonce ?? null,
 		samlSpEntityId: saml.spEntityId ?? null
 	});
 	// Finished for good, in one move (never refused for the budget): it no longer counts as live,
@@ -1523,6 +1555,17 @@ export const liteSendCodeAction = guarded(async (event) => {
 			});
 		}
 		await finishOperation(post, post.txn, operation, { error: sent.error });
+		// A sign-in Flow that guides an address with no account says so (404): the page says it,
+		// the address kept (the failed post's answers are drawn again), no code entry.
+		if (sent.status === 404 && sent.error === 'account_not_found') {
+			return fail(404, {
+				error: 'account_not_found' as const,
+				// Lite's own sign-up page, with the request's parameters (as the SPA's auth switch).
+				signUpHref: sent.signUpAvailable
+					? buildAuthSwitchHref('/signup', event.url.searchParams)
+					: null
+			});
+		}
 		return sendFailure(sent.status);
 	}
 	return keepSentCode(post, step, operation, {

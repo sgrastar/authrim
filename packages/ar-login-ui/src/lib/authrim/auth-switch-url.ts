@@ -8,6 +8,7 @@ const AUTH_CONTEXT_QUERY_PARAMETERS = [
 	'return_to',
 	'account_return',
 	'saml_request_id',
+	'saml_login_nonce',
 	'saml_sp_entity_id'
 ] as const;
 

@@ -198,6 +198,7 @@ describe('the profiles a Flow names', () => {
       sessionProfileRef: 'short',
       flowKind: 'login',
       completion: { behavior: 'service_site', service_site_path: '/portal' },
+      signIn: { unregistered: 'generic', onCancel: 'stay' },
       live: true,
       authorizationChallengeId: null,
       samlRequestId: null,
@@ -259,6 +260,8 @@ describe('the sign-in Flow graph', () => {
     profileRef: 'members',
     sessionProfileRef: 'short',
     completion: { behavior: 'custom_url' as const, redirect_url: '/welcome' },
+    unregistered: 'generic' as const,
+    onCancel: 'stay' as const,
   };
 
   it('is read back as the spec it was built from', () => {

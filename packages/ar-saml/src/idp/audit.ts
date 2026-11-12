@@ -10,6 +10,7 @@ export const SAML_ATTRIBUTE_WITHHELD_AUDIT_EVENT = 'saml.attribute.withheld';
 export type SAMLPolicyFailureKind =
   | 'required_attribute_missing'
   | 'attribute_release_consent_required'
+  | 'login_cancelled'
   | 'identity_mapping_failed'
   | 'identity_assurance_insufficient'
   | 'identity_assurance_unavailable'

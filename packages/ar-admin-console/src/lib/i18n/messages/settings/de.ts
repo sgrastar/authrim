@@ -172,6 +172,12 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.rate_limit.email_window': 'Zeitraum, in dem gezählt wird',
 	'set.k.rate_limit.email_window.desc':
 		'Der Zeitraum, in dem die Zahl oben gezählt wird (5 bis 60 Minuten). Danach darf wieder gesendet werden.',
+	'set.section.failedSignIns': 'Fehlgeschlagene Anmeldungen',
+	'set.section.failedSignIns.desc':
+		'Sperrt ein Konto eine Zeit lang, wenn sein Passwort zu oft hintereinander falsch eingegeben wird, damit es nicht erraten werden kann.',
+	'set.k.rate_limit.auth_max_failed_attempts': 'Fehlversuche bis zur Sperre',
+	'set.k.rate_limit.auth_max_failed_attempts.desc':
+		'Falsche Passwörter (Verzeichnis-Anmeldung) innerhalb von 15 Minuten, nach denen das Konto für den Rest dieser 15 Minuten gesperrt wird (3 bis 20).',
 	'set.section.totpAttempts': 'Versuche mit der Authenticator-App',
 	'set.section.totpAttempts.desc':
 		'Begrenzt, wie oft eine Anmeldung mit einer Authenticator-App begonnen werden kann, damit die Codes nicht durch viele Versuche erraten werden.',

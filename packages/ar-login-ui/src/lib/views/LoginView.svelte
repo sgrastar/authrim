@@ -21,6 +21,11 @@
 		 */
 		humanVerificationUnavailable?: boolean;
 		runtimeFlow?: string;
+		/**
+		 * The address has no account (a sign-in Flow that says so). `signUpHref`: where the Sign up
+		 * link goes, or null when no sign-up is offered (the Flow has none, or the page hides it).
+		 */
+		accountNotFound?: { signUpHref: string | null } | null;
 		/** The runtime step needs a screen the tenant has not configured. */
 		runtimeScreenMissing?: boolean;
 		passkeyProgress?: string;
@@ -121,6 +126,8 @@
 		showTurnstileFor?: (target: string) => boolean;
 		/** The "Create account" link, or null when the tenant hides it. */
 		signupHref?: string | null;
+		/** The "Back to the app" action: offered when the Flow allows leaving the sign-in. */
+		cancel?: { available: boolean; loading: boolean };
 		email?: string;
 		directoryUsername?: string;
 		directoryPassword?: string;
@@ -161,6 +168,8 @@
 		onTotpKeyPress?: (event: KeyboardEvent) => void;
 		/** Leave the authenticator-code entry for the identifier again. */
 		onTotpBack?: () => void;
+		/** "Back to the app" was chosen. */
+		onCancel?: () => void;
 		onExternalProvider?: (providerId: string) => void;
 		onMigrationPasskey?: () => void;
 		onMigrationEmailSend?: () => void;
@@ -198,6 +207,7 @@
 		humanVerification,
 		showTurnstileFor = () => false,
 		signupHref = null,
+		cancel = { available: false, loading: false },
 		email = $bindable(''),
 		directoryUsername = $bindable(''),
 		directoryPassword = $bindable(''),
@@ -232,6 +242,7 @@
 		onTotpVerify,
 		onTotpKeyPress,
 		onTotpBack,
+		onCancel,
 		onExternalProvider,
 		onMigrationPasskey,
 		onMigrationEmailSend,
@@ -253,6 +264,23 @@
 				loadingLabel={$LL.common_loading()}
 			/>
 		</p>
+	{/if}
+{/snippet}
+
+<!-- Back to the app: leaves the sign-in for the application (a real button, not a submit) -->
+{#snippet backToApp()}
+	{#if cancel.available}
+		<Button
+			variant="ghost"
+			size="sm"
+			class="w-full mt-2"
+			type="button"
+			loading={cancel.loading}
+			disabled={cancel.loading || busy}
+			onclick={() => onCancel?.()}
+		>
+			{$LL.login_backToApp()}
+		</Button>
 	{/if}
 {/snippet}
 
@@ -338,6 +366,7 @@
 		<Alert variant="error" class="mb-0">
 			{methodsError}
 		</Alert>
+		{@render backToApp()}
 		{@render createAccountLink(true)}
 	</Card>
 {:else}
@@ -404,6 +433,22 @@
 					class="mb-4"
 				>
 					{alerts.runtimeFlow}
+				</Alert>
+			{/if}
+
+			{#if alerts.accountNotFound}
+				<!-- A sign-in Flow that guides an address with no account: said here, the address kept. -->
+				<Alert variant="warning" class="mb-4" data-testid="account-not-found">
+					<p>{$LL.login_accountNotFound()}</p>
+					{#if alerts.accountNotFound.signUpHref}
+						<p class="mt-1">
+							<AuthSwitchLink
+								href={alerts.accountNotFound.signUpHref}
+								label={$LL.login_accountNotFoundSignUp()}
+								loadingLabel={$LL.common_loading()}
+							/>
+						</p>
+					{/if}
 				</Alert>
 			{/if}
 
@@ -773,6 +818,7 @@
 				/>
 			{/if}
 
+			{@render backToApp()}
 			{@render createAccountLink(false)}
 		</Card>
 	</form>

@@ -70,7 +70,24 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.reg-result': 'Legen Sie fest, wohin die Person nach der Registrierung geht.',
 	'af.lead.login-methods': 'Wählen Sie das Anmeldeverfahren-Profil für diese Anmeldung.',
 	'af.lead.login-validation':
-		'Wiederholte Fehlversuche und die Antwort an nicht registrierte Personen folgen den Sicherheitseinstellungen des Mandanten.',
+		'Legen Sie fest, was bei wiederholten Fehlversuchen geschieht, was Personen ohne Konto gesagt wird und was ein Abbruch der Anmeldung bewirkt.',
+	'af.field.login.unregistered': 'Wenn jemand ohne Konto kommt',
+	'af.hint.login.unregistered':
+		'„Mitteilen“ sagt, dass zu der Adresse kein Konto besteht. Damit lässt sich herausfinden, welche Adressen registriert sind; wählen Sie es nur, wenn nötig.',
+	'af.hint.login.unregisteredNoSignUp':
+		'Dieser Mandant hat keinen Registrierungs-Flow, daher kann „Mitteilen und zur Registrierung führen“ nicht gewählt werden.',
+	'af.unregistered.generic': 'Wie bei einer registrierten Adresse antworten',
+	'af.unregistered.guide': 'Mitteilen, dass kein Konto besteht, und zur Registrierung führen',
+	'af.field.login.onCancel': 'Wenn die Anmeldung abgebrochen wird oder scheitert',
+	'af.hint.login.onCancel':
+		'„Zurück zur App“ zeigt auf der Anmeldeseite „Zurück zur App“. Der App wird mitgeteilt, dass keine Anmeldung erfolgte (OIDC access_denied, SAML-Fehlerantwort).',
+	'af.onCancel.stay': 'Auf der Anmeldeseite bleiben',
+	'af.onCancel.error': 'Zurück zur App und mitteilen, dass keine Anmeldung erfolgte',
+	'af.info.failedSignIns':
+		'Wiederholte Fehlversuche: {count} falsche Passwörter (Verzeichnis-Anmeldung) innerhalb von 15 Minuten sperren das Konto. Das ist die Einstellung des Mandanten.',
+	'af.info.failedSignInsUnknown':
+		'Wiederholte Fehlversuche folgen der Einstellung des Mandanten (sie konnte gerade nicht gelesen werden).',
+	'af.info.failedSignInsLink': 'Unter Angriffsschutz ändern',
 	'af.lead.login-session':
 		'Sobald die erforderliche Authentifizierung abgeschlossen ist, erstellt Authrim die Sitzung.',
 

@@ -36,7 +36,9 @@
 		| 'answer_invalid'
 		| 'account_exists'
 		| 'provisioning_wait'
-		| 'provisioning_failed';
+		| 'provisioning_failed'
+		| 'account_not_found'
+		| 'cancel_failed';
 	const formError = $derived(
 		form && 'error' in form && typeof form.error === 'string' ? (form.error as FormError) : null
 	);
@@ -76,6 +78,18 @@
 				{#each form.backupCodes as code (code)}<li><code>{code}</code></li>{/each}
 			</ul>
 		</section>
+	{/if}
+{/snippet}
+
+{#snippet cancelForm()}
+	{#if data.page === 'step' && data.cancelAvailable}
+		<!-- Back to the app: leaves the sign-in for the application (the backend says where). -->
+		<form method="post" action={actionOf(data.search, 'cancel')}>
+			<input type="hidden" name="txn" value={data.txnId} />
+			<input type="hidden" name="csrf" value={data.csrfToken} />
+			<input type="hidden" name="op" value={data.op} />
+			<button type="submit" class="secondary">{data.text.cancel}</button>
+		</form>
 	{/if}
 {/snippet}
 
@@ -149,6 +163,18 @@
 		<h1>{data.title}</h1>
 		<p>{data.message}</p>
 		<p><a href={data.backHref}>{data.back}</a></p>
+	</LiteShell>
+{:else if data.page === 'cancel_retry'}
+	<LiteShell title={data.title} brandName={data.brandName} logo={data.logo}>
+		<h1>{data.title}</h1>
+		<!-- A cancel whose answer did not come: asked again (the backend repeats an answer it has). -->
+		<p role="alert">{data.message}</p>
+		<form method="post" action={actionOf(data.search, 'cancel')}>
+			<input type="hidden" name="txn" value={data.txnId} />
+			<input type="hidden" name="csrf" value={data.csrfToken} />
+			<input type="hidden" name="op" value={data.op} />
+			<button type="submit" class="secondary">{data.cancel}</button>
+		</form>
 	</LiteShell>
 {:else if data.page === 'relay'}
 	<LiteShell title={data.title} brandName={data.brandName} logo={data.logo}>
@@ -310,6 +336,12 @@
 			{#if formError === 'account_exists'}
 				<!-- The address has an account: the sign-in page, for the same request. -->
 				<p role="alert"><a href={`/login${data.search}`}>{data.text.errors.account_exists}</a></p>
+			{:else if formError === 'account_not_found'}
+				<!-- No account uses the address: said here; a plain link to the sign-up when the Flow offers it. -->
+				<p role="alert">{data.text.errors.account_not_found}</p>
+				{#if form && 'signUpHref' in form && typeof form.signUpHref === 'string'}
+					<p><a href={form.signUpHref}>{data.text.signUp}</a></p>
+				{/if}
 			{:else if formError}<p role="alert">{data.text.errors[formError]}</p>{/if}
 			<form
 				method="post"
@@ -573,5 +605,7 @@
 				{@html solverTag}
 			{/if}
 		{/if}
+		<!-- On every screen of a sign-in the Flow lets the person leave for the application. -->
+		{@render cancelForm()}
 	</LiteShell>
 {/if}

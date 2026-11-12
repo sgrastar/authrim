@@ -346,6 +346,43 @@ function absoluteHttpUrl(value: unknown): string | null {
 	}
 }
 
+/**
+ * Where an answer sends the browser: a destination (resolved on the public origin when relative),
+ * or a form post as data. Null when it names neither, or one that cannot be used. Shared with the
+ * answers shaped like a consent denial's (a sign-in cancelled).
+ */
+export function relayOutcomeOf(
+	json: Record<string, unknown>,
+	publicOrigin: string
+): Extract<LiteConsentOutcome, { kind: 'redirect' | 'form_post' }> | null {
+	if (typeof json.redirect_url === 'string') {
+		// A relative continuation (the issuer's own /authorize) is resolved on the public origin.
+		let url: string | null = null;
+		try {
+			url = absoluteHttpUrl(new URL(json.redirect_url, publicOrigin).toString());
+		} catch {
+			url = null;
+		}
+		return url ? { kind: 'redirect', url } : null;
+	}
+	if (isRecord(json.form_post)) {
+		const action = absoluteHttpUrl(json.form_post.action);
+		const fields = Array.isArray(json.form_post.fields)
+			? json.form_post.fields.filter(
+					(field): field is [string, string] =>
+						Array.isArray(field) &&
+						field.length === 2 &&
+						typeof field[0] === 'string' &&
+						typeof field[1] === 'string'
+				)
+			: [];
+		return action && fields.length > 0 && fields.length <= 20
+			? { kind: 'form_post', action, fields }
+			: null;
+	}
+	return null;
+}
+
 /** Sends the decision; the outcome the page relays or draws. */
 export async function submitLiteConsent(
 	backend: LiteBackendClient,
@@ -362,32 +399,7 @@ export async function submitLiteConsent(
 	if (!answer) return { kind: 'failed', status: 503 };
 	const json = isRecord(answer.json) ? answer.json : {};
 	if (answer.status === 200) {
-		if (typeof json.redirect_url === 'string') {
-			// A relative continuation (the issuer's own /authorize) is resolved on the public origin.
-			let url: string | null = null;
-			try {
-				url = absoluteHttpUrl(new URL(json.redirect_url, publicOrigin).toString());
-			} catch {
-				url = null;
-			}
-			return url ? { kind: 'redirect', url } : { kind: 'failed', status: 502 };
-		}
-		if (isRecord(json.form_post)) {
-			const action = absoluteHttpUrl(json.form_post.action);
-			const fields = Array.isArray(json.form_post.fields)
-				? json.form_post.fields.filter(
-						(field): field is [string, string] =>
-							Array.isArray(field) &&
-							field.length === 2 &&
-							typeof field[0] === 'string' &&
-							typeof field[1] === 'string'
-					)
-				: [];
-			return action && fields.length > 0 && fields.length <= 20
-				? { kind: 'form_post', action, fields }
-				: { kind: 'failed', status: 502 };
-		}
-		return { kind: 'failed', status: 502 };
+		return relayOutcomeOf(json, publicOrigin) ?? { kind: 'failed', status: 502 };
 	}
 	if (json.error === 'document_changed') {
 		const details = isRecord(json.error_details) ? json.error_details : {};

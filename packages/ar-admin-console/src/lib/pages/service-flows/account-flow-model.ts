@@ -359,8 +359,30 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		id: 'login-validation',
 		label: 'af.part.login-validation',
 		lead: 'af.lead.login-validation',
-		// Repeated failures and unregistered addresses follow the tenant's security settings.
-		fields: []
+		// Repeated failures follow the tenant's setting (shown, not chosen here): a lock is the
+		// account's, so a Flow of its own would reach the tenant's other Flows too.
+		info: 'failed-sign-ins',
+		fields: [
+			{
+				// `guide` only where the tenant has a sign-up to point to (the field says so).
+				key: 'login.unregistered',
+				kind: 'unregistered',
+				label: 'af.field.login.unregistered',
+				hint: 'af.hint.login.unregistered',
+				options: choices('unregistered', ['generic', 'guide']),
+				required: true,
+				initial: 'generic'
+			},
+			{
+				key: 'login.onCancel',
+				kind: 'select',
+				label: 'af.field.login.onCancel',
+				hint: 'af.hint.login.onCancel',
+				options: choices('onCancel', ['stay', 'error']),
+				required: true,
+				initial: 'stay'
+			}
+		]
 	},
 	'login-result': {
 		id: 'login-result',

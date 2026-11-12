@@ -76,6 +76,12 @@ import {
 	liteTotpStartAction,
 	liteTotpVerifyAction
 } from '#lib/server/lite/method-actions.js';
+import { liteCancelAction } from '#lib/server/lite/cancel-actions.js';
+import {
+	cancelRequestKey,
+	cancelRequestKeyOfTxn,
+	readCancelWaiting
+} from '#lib/server/lite/cancel.js';
 import { liteMessages } from '#lib/server/lite/messages.js';
 import { fetchLitePowChallenge, type LitePowChallenge } from '#lib/server/lite/pow.js';
 import { liteTxnClient } from '#lib/server/lite/txn-client.js';
@@ -140,6 +146,25 @@ async function errorPage(
 	};
 }
 
+/** The small page that asks a cancel again (its answer did not come). */
+async function cancelRetryPage(
+	event: RequestEvent,
+	purpose: 'login' | 'signup',
+	txn: { id: string; csrfToken: string }
+) {
+	const { LL } = await liteMessages(event.locals.locale);
+	return {
+		page: 'cancel_retry' as const,
+		title: purpose === 'signup' ? LL.register_title() : LL.login_title(),
+		search: pageSearch(event.url),
+		txnId: txn.id,
+		csrfToken: txn.csrfToken,
+		op: newOperationNonce(),
+		message: LL.login_cancelFailed(),
+		cancel: LL.login_backToApp()
+	};
+}
+
 export async function liteStepPage(event: RequestEvent) {
 	const purpose = litePagePurpose(event);
 	// After a `continue` that finished the sign-in (SvelteKit runs load after an action): draw
@@ -153,6 +178,18 @@ export async function liteStepPage(event: RequestEvent) {
 			continueLabel: event.locals.liteRelay.continueLabel
 		};
 	}
+	// A cancel that sends the browser on as a form post (the application's response mode): the
+	// relay form, to that destination only (its CSP is set by the action).
+	if (event.locals.liteRelayPost) {
+		const { LL } = await liteMessages(event.locals.locale);
+		const post = event.locals.liteRelayPost;
+		return {
+			page: 'relay' as const,
+			title: purpose === 'signup' ? LL.register_title() : LL.login_title(),
+			relay: { method: 'post' as const, action: post.action, fields: post.fields },
+			continueLabel: post.continueLabel
+		};
+	}
 	const txns = liteTxnClient(event);
 	const backend = liteBackendForEvent(event, 'page_load');
 	if (!txns || !backend) error(503, 'temporarily_unavailable');
@@ -161,21 +198,13 @@ export async function liteStepPage(event: RequestEvent) {
 		clientId: null,
 		authorizationChallengeId: queryValue(event, 'challenge_id'),
 		samlRequestId: queryValue(event, 'saml_request_id'),
+		samlLoginNonce: queryValue(event, 'saml_login_nonce'),
 		samlSpEntityId: queryValue(event, 'saml_sp_entity_id'),
 		returnTo: queryValue(event, 'return_to')
 	};
 	// `return_to=saml_sso` names the SAML continuation (the Flow start takes it as it is); it is
 	// not a destination, so the transaction keeps none for it.
 	const txnReturnTo = target.returnTo === 'saml_sso' ? null : target.returnTo;
-	if (target.authorizationChallengeId) {
-		const challenge = await backend.request(
-			`/auth/login-challenge?challenge_id=${encodeURIComponent(target.authorizationChallengeId)}`
-		);
-		if (challenge.status !== 200) return errorPage(event, 'expired');
-		const client = (challenge.json as { client?: { client_id?: unknown } } | null)?.client;
-		target.clientId = typeof client?.client_id === 'string' ? client.client_id : null;
-	}
-
 	// A sign-up's invitation: its token names the transaction (a reload reuses it), which checks it
 	// once (below) and keeps it checked.
 	// Whatever its value (empty, too long, malformed): a link that carries one is an invitation's.
@@ -186,6 +215,51 @@ export async function liteStepPage(event: RequestEvent) {
 	const inviteToken = readInviteToken(inviteQuery);
 	if (inviteQuery !== null && !inviteToken) return errorPage(event, 'invitation');
 
+	// A cancel sent whose answer did not come: nothing is resumed or started (the interaction may
+	// have ended), and the challenge is not looked up again (it may be gone since, its cancel done);
+	// a small page asks again, with the interaction the cancel was sent for. The transaction is the
+	// one the cancel cookie names, read through the store's browser-binding checks, and only for the
+	// request it was made for.
+	const requestKey = cancelRequestKey({
+		challengeId: target.authorizationChallengeId,
+		samlRequestId: target.samlRequestId,
+		samlSpEntityId: target.samlSpEntityId
+	});
+	const waitingId = requestKey ? await readCancelWaiting(event, requestKey) : null;
+	if (requestKey && waitingId) {
+		const waiting = await txns.get(waitingId).catch(() => null);
+		if (
+			waiting?.ok &&
+			waiting.txn.bound.purpose === purpose &&
+			// The very request it was sent for (an OIDC challenge, or a SAML request and its SP).
+			cancelRequestKeyOfTxn(waiting.txn) === requestKey &&
+			waiting.txn.state !== 'completed' &&
+			waiting.txn.state !== 'abandoned' &&
+			readKeptFlow({ flow: waiting.txn.data.cancelPending })
+		) {
+			return cancelRetryPage(event, purpose, waiting.txn);
+		}
+	}
+	if (target.authorizationChallengeId) {
+		const challenge = await backend.request(
+			`/auth/login-challenge?challenge_id=${encodeURIComponent(target.authorizationChallengeId)}`
+		);
+		if (challenge.status !== 200) return errorPage(event, 'expired');
+		const client = (challenge.json as { client?: { client_id?: unknown } } | null)?.client;
+		target.clientId = typeof client?.client_id === 'string' ? client.client_id : null;
+	}
+
+	const reuseKey = await sha256Hex(
+		JSON.stringify([
+			purpose,
+			target.authorizationChallengeId,
+			target.samlRequestId,
+			target.samlLoginNonce,
+			target.samlSpEntityId,
+			target.returnTo,
+			inviteToken
+		])
+	);
 	// The transaction first (its budgets), then the Flow. A reload of the same request reuses it.
 	const created = await txns.create({
 		purpose,
@@ -193,19 +267,14 @@ export async function liteStepPage(event: RequestEvent) {
 		challengeId: target.authorizationChallengeId,
 		returnTo: txnReturnTo,
 		data: {
-			saml: { requestId: target.samlRequestId, spEntityId: target.samlSpEntityId },
+			saml: {
+				requestId: target.samlRequestId,
+				loginNonce: target.samlLoginNonce,
+				spEntityId: target.samlSpEntityId
+			},
 			...(inviteToken ? { invite: { token: inviteToken } } : {})
 		},
-		reuseKey: await sha256Hex(
-			JSON.stringify([
-				purpose,
-				target.authorizationChallengeId,
-				target.samlRequestId,
-				target.samlSpEntityId,
-				target.returnTo,
-				inviteToken
-			])
-		)
+		reuseKey
 	});
 	if (!created.ok) {
 		const canonical = (created as { canonicalOrigin?: unknown }).canonicalOrigin;
@@ -225,6 +294,7 @@ export async function liteStepPage(event: RequestEvent) {
 		return errorPage(event, 'unavailable');
 	}
 	let txn = created.txn;
+	if (readKeptFlow({ flow: txn.data.cancelPending })) return cancelRetryPage(event, purpose, txn);
 	// The invitation checked once, when the transaction takes it (the SPA's sign-up page checks it
 	// first): a code sent reserves its use, so a later check would find none left for the sign-up
 	// that reserved it. One there is none to take, or of another tenant, stops the page.
@@ -475,6 +545,8 @@ export async function liteStepPage(event: RequestEvent) {
 					challenge: passkey.challengeId
 				}
 			: null,
+		// "Back to the app": only when the Flow says the sign-in can be left.
+		cancelAvailable: flow.view.cancelAvailable,
 		// The screens a link on this screen can go back to; a link to another is drawn but disabled.
 		backScreens: decision.kind === 'screen' ? flow.view.backScreens : [],
 		/** The action a Continue form posts to (an expired start's check, else `continue`). */
@@ -552,6 +624,8 @@ export async function liteStepPage(event: RequestEvent) {
 			resend: LL.emailCode_resendButton(),
 			resendWait: LL.emailCode_resendTimer({ seconds: resendWait }),
 			restart: LL.common_backToLogin(),
+			cancel: LL.login_backToApp(),
+			signUp: LL.login_accountNotFoundSignUp(),
 			errors: {
 				email_invalid: LL.login_errorEmailInvalid(),
 				code_invalid: LL.emailCode_errorInvalid(),
@@ -566,7 +640,9 @@ export async function liteStepPage(event: RequestEvent) {
 				answer_invalid: LL.error_invalid_request(),
 				account_exists: LL.register_alreadyHaveAccount(),
 				provisioning_wait: LL.lite_provisioningWait(),
-				provisioning_failed: LL.lite_provisioningFailed()
+				provisioning_failed: LL.lite_provisioningFailed(),
+				account_not_found: LL.login_accountNotFound(),
+				cancel_failed: LL.login_cancelFailed()
 			}
 		}
 	};
@@ -589,5 +665,6 @@ export const liteStepActions = {
 	invite_proof_verify: liteInviteProofVerifyAction,
 	provisioning_continue: liteProvisioningContinueAction,
 	back: liteBackAction,
+	cancel: liteCancelAction,
 	restart: liteRestartAction
 };

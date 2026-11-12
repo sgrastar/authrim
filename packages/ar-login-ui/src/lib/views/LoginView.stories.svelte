@@ -152,6 +152,7 @@
 			onTotpVerify: fn(),
 			onTotpKeyPress: fn(),
 			onTotpBack: fn(),
+			onCancel: fn(),
 			onExternalProvider: fn(),
 			onMigrationPasskey: fn(),
 			onMigrationEmailSend: fn(),
@@ -428,4 +429,123 @@
 
 <Story name="No methods available" args={{ methods: { any: false } }}>
 	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Address with no account"
+	args={{ alerts: { accountNotFound: { signUpHref: '/signup' } }, email: 'nobody@example.com' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The message is an alert, the address stays, and the sign-up link goes to the page's link.
+		const alert = await canvas.findByTestId('account-not-found');
+		await expect(alert).toHaveAttribute('role', 'alert');
+		await expect(alert).toHaveTextContent(get(LL).login_accountNotFound());
+		await expect(
+			within(alert).getByRole('link', { name: get(LL).login_accountNotFoundSignUp() })
+		).toHaveAttribute('href', '/signup');
+		await expect(canvas.getByRole('textbox', { name: get(LL).common_email() })).toHaveValue(
+			'nobody@example.com'
+		);
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Address with no account, no sign-up"
+	args={{
+		alerts: { accountNotFound: { signUpHref: null } },
+		signupHref: null,
+		email: 'nobody@example.com'
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const alert = await canvas.findByTestId('account-not-found');
+		await expect(alert).toHaveTextContent(get(LL).login_accountNotFound());
+		// Nothing to sign up with: only the message.
+		await expect(within(alert).queryByRole('link')).toBeNull();
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Back to the app"
+	args={{ cancel: { available: true, loading: false } }}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).login_backToApp() }));
+		await expect(args.onCancel).toHaveBeenCalled();
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Back to the app, on a runtime screen"
+	args={{
+		legacyHeading: false,
+		legacyMethods: false,
+		runtimeStep: screenStep(defaultLoginScreen),
+		runtime: runtime(),
+		cancel: { available: true, loading: false }
+	}}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).login_backToApp() }));
+		await expect(args.onCancel).toHaveBeenCalled();
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Back to the app, going back"
+	args={{ cancel: { available: true, loading: true } }}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		// One request at a time: the button is busy and does not send again.
+		const button = canvas.getByRole('button', { name: get(LL).login_backToApp() });
+		await expect(button).toBeDisabled();
+		await expect(args.onCancel).not.toHaveBeenCalled();
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
+	name="Back to the app, after an error that cannot be recovered"
+	args={{
+		legacyHeading: false,
+		legacyMethods: false,
+		cancel: { available: true, loading: false }
+	}}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The sign-in cannot go on: the way out is still there, and a refused one says so.
+		await expect(await canvas.findByRole('alert')).toBeVisible();
+		await userEvent.click(canvas.getByRole('button', { name: get(LL).login_backToApp() }));
+		await expect(args.onCancel).toHaveBeenCalled();
+	}}
+>
+	<!-- The message is built when the story renders (see "Too many authenticator app attempts"). -->
+	{#snippet template(args)}{@render page({
+			...args,
+			alerts: { runtimeFlow: get(LL).error_authorizationRequestExpired() }
+		})}{/snippet}
+</Story>
+
+<Story
+	name="Back to the app refused"
+	args={{ cancel: { available: true, loading: false } }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(await canvas.findByText(get(LL).login_cancelFailed())).toBeVisible();
+		await expect(canvas.getByRole('button', { name: get(LL).login_backToApp() })).toBeEnabled();
+	}}
+>
+	{#snippet template(args)}{@render page({
+			...args,
+			alerts: { error: get(LL).login_cancelFailed() }
+		})}{/snippet}
 </Story>

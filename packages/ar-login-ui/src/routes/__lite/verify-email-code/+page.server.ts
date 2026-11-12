@@ -8,7 +8,13 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 
-const KEPT = ['challenge_id', 'saml_request_id', 'saml_sp_entity_id', 'return_to'] as const;
+const KEPT = [
+	'challenge_id',
+	'saml_request_id',
+	'saml_login_nonce',
+	'saml_sp_entity_id',
+	'return_to'
+] as const;
 
 export const load: PageServerLoad = (event) => {
 	const params = new URLSearchParams();
