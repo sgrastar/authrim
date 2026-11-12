@@ -598,6 +598,12 @@ export const ADMIN_PERMISSIONS = {
   TENANT_LIFECYCLE_RECOVERY: 'admin:tenants:lifecycle:recovery',
   TENANT_LIFECYCLE_BREAK_GLASS: 'admin:tenants:lifecycle:break_glass',
 
+  // Tenant provisioning and deletion, for an automation machine principal with a global tenant
+  // scope. Ordinary permissions (`*`, `admin:*` and `admin:tenants:*` carry them), held by no
+  // built-in role. A human still needs the global `ar_super_admin` role for the same routes.
+  TENANT_PROVISION: 'admin:tenants:provision',
+  TENANT_DELETE: 'admin:tenants:delete',
+
   // Audit log (EndUser audit)
   AUDIT_READ: 'admin:audit:read',
   AUDIT_ALL: 'admin:audit:*',

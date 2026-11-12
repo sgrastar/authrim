@@ -426,3 +426,12 @@ describe('migration 054 (ar_ roles)', () => {
     });
   });
 });
+
+describe('tenant provisioning and deletion permissions in the built-in roles', () => {
+  it('are named by no built-in role (only the wildcard roles carry them)', () => {
+    for (const role of ADMIN_ROLE_DEFINITIONS) {
+      expect(role.permissions).not.toContain(ADMIN_PERMISSIONS.TENANT_PROVISION);
+      expect(role.permissions).not.toContain(ADMIN_PERMISSIONS.TENANT_DELETE);
+    }
+  });
+});

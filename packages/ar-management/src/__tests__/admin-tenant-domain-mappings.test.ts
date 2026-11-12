@@ -54,7 +54,7 @@ function context(
 ) {
   return {
     get: vi.fn((name: string) =>
-      name === 'adminAuth' && options.adminId ? { adminId: options.adminId } : undefined
+      name === 'adminAuth' && options.adminId ? { actorId: options.adminId } : undefined
     ),
     req: {
       query: vi.fn((name: string) => options.query?.[name]),
@@ -357,6 +357,7 @@ describe('tenant domain mappings', () => {
     expect(mocks.adapter.execute).toHaveBeenCalledWith(expect.stringContaining('verified = 1'), [
       expect.any(Number),
       'mapping-1',
+      'token',
     ]);
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),

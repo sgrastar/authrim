@@ -5,7 +5,7 @@ vi.mock('../admin-step-up-gate', () => ({
   requireAdminStepUp: stepUp.gate,
   refuseAdminFreshAuth: vi.fn(),
 }));
-import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import { createAuditLogFromContext, type DatabaseAdapter, type Env } from '@authrim/ar-lib-core';
 import {
   adminTenantCreateHandler,
   adminTenantDeleteHandler,
@@ -16,6 +16,7 @@ import {
   adminTenantUpdateHandler,
   adminTenantSuspendHandler,
   adminTenantFreezeHandler,
+  adminTenantSetDefaultHandler,
   adminTenantResumeHandler,
   adminTenantLifecycleJobRetryHandler,
   adminTenantsListHandler,
@@ -67,6 +68,8 @@ vi.mock('@authrim/ar-lib-core', () => ({
   ADMIN_PERMISSIONS: {
     SETTINGS_READ: 'admin:settings:read',
     TENANT_LIFECYCLE_BREAK_GLASS: 'admin:tenants:lifecycle:break_glass',
+    TENANT_PROVISION: 'admin:tenants:provision',
+    TENANT_DELETE: 'admin:tenants:delete',
   },
   hasAdminPermission: vi.fn((permissions: string[], required: string) =>
     permissions.includes(required)
@@ -79,6 +82,19 @@ vi.mock('@authrim/ar-lib-core', () => ({
       (auth?.tenantScope ?? []).includes('*') &&
       (auth?.globalPermissions ?? []).some(
         (permission) => permission === '*' || permission === required
+      )
+  ),
+  hasGlobalMachinePermission: vi.fn(
+    (
+      auth:
+        | { authMethod?: string; tenantScope?: string[]; globalPermissions?: string[] }
+        | undefined,
+      required: string
+    ) =>
+      auth?.authMethod === 'machine_access_token' &&
+      (auth?.tenantScope ?? []).includes('*') &&
+      (auth?.globalPermissions ?? []).some(
+        (permission) => permission === '*' || permission === 'admin:*' || permission === required
       )
   ),
   hasGlobalAdminRole: vi.fn(
@@ -208,7 +224,11 @@ function createAdapter(
       return (await handler(sql, params, 'execute', adapter)) ?? { rowsAffected: 1 };
     }),
     transaction: vi.fn(async (fn: (tx: MockAdapter) => Promise<unknown>) => fn(adapter)),
-    batch: vi.fn(async () => []),
+    // The default answer is a batch whose statements each matched one row.
+    batch: vi.fn(async () => [
+      { rowsAffected: 1, success: true },
+      { rowsAffected: 1, success: true },
+    ]),
     isHealthy: vi.fn(async () => ({ healthy: true, latency: 0 })),
     getType: vi.fn(() => 'mock'),
     close: vi.fn(async () => {}),
@@ -335,6 +355,81 @@ const deleteCtx = () =>
   createContext({}, {}, { id: 'second' }) as unknown as Parameters<
     typeof adminTenantDeleteHandler
   >[0];
+
+function mockProvisioningAdapters() {
+  let tenant: TenantRow | null = null;
+  let operation: Record<string, unknown> | null = null;
+  const steps: Array<Record<string, unknown>> = [];
+  adapters.defaultAdapter = createAdapter((sql, params, op) => {
+    if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') return null;
+    if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE tenant_code = ?') return null;
+    if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
+      tenant = createTenantRowFromInsertParams(params);
+      return { rowsAffected: 1 };
+    }
+    if (op === 'queryOne' && sql.includes('SELECT id, tenant_code, name')) return tenant;
+    throw new Error(`unexpected platform adapter SQL: ${sql}`);
+  });
+  adapters.adminAdapter = createAdapter((sql, params, op) => {
+    if (op === 'queryOne' && sql.includes('WHERE tenant_id = ?')) return null;
+    if (op === 'execute' && sql.includes('INSERT INTO tenant_provisioning_operations')) {
+      operation = {
+        operation_id: params[0],
+        environment_id: params[1],
+        tenant_id: params[2],
+        tenant_code: params[3],
+        tenant_name: params[4],
+        tenant_description: params[5],
+        operation_kind: params[6],
+        source_tenant_id: params[7],
+        preparation_payload_json: params[8],
+        preparation_result_json: null,
+        residency_policy_id: params[9],
+        residency_partition: params[10],
+        isolation_policy: params[11],
+        request_hash: params[12],
+        idempotency_key: params[13],
+        status: 'queued',
+        current_step: 'request_accepted',
+        capacity_operation_ids_json: '{}',
+        default_route_allocation_json: null,
+        attempt_count: 0,
+        retry_budget_started_at: params[14],
+        next_attempt_at: null,
+        last_error_code: null,
+        lease_owner: null,
+        lease_expires_at: null,
+        fencing_token: 0,
+        created_by: params[15],
+        created_at: params[16],
+        started_at: null,
+        completed_at: null,
+        updated_at: params[17],
+      };
+      return { rowsAffected: 1 };
+    }
+    if (op === 'execute' && sql.includes('INSERT INTO tenant_provisioning_operation_steps')) {
+      steps.push({
+        step_key: params[1],
+        display_order: params[2],
+        status: params[3],
+        attempt_count: 0,
+        retry_budget_started_at: params[10],
+        next_attempt_at: null,
+        last_error_code: null,
+        observed_resource_id: null,
+        started_at: null,
+        completed_at: params[4],
+        updated_at: params[5],
+      });
+      return { rowsAffected: 1 };
+    }
+    if (op === 'queryOne' && sql.includes('WHERE operation_id = ?')) return operation;
+    if (op === 'query' && sql.includes('tenant_provisioning_operation_steps')) return steps;
+    throw new Error(`unexpected admin adapter SQL: ${sql}`);
+  });
+  return { operation: () => operation, steps };
+}
 
 describe('Control Plane tenant management', () => {
   beforeEach(() => {
@@ -476,78 +571,7 @@ describe('Control Plane tenant management', () => {
   });
 
   it('accepts Control provisioning without reading a preallocated slot', async () => {
-    let tenant: TenantRow | null = null;
-    let operation: Record<string, unknown> | null = null;
-    const steps: Array<Record<string, unknown>> = [];
-    adapters.defaultAdapter = createAdapter((sql, params, op) => {
-      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') return null;
-      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE tenant_code = ?') return null;
-      if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-        tenant = createTenantRowFromInsertParams(params);
-        return { rowsAffected: 1 };
-      }
-      if (op === 'queryOne' && sql.includes('SELECT id, tenant_code, name')) return tenant;
-      throw new Error(`unexpected platform adapter SQL: ${sql}`);
-    });
-    adapters.adminAdapter = createAdapter((sql, params, op) => {
-      if (op === 'queryOne' && sql.includes('WHERE tenant_id = ?')) return null;
-      if (op === 'execute' && sql.includes('INSERT INTO tenant_provisioning_operations')) {
-        operation = {
-          operation_id: params[0],
-          environment_id: params[1],
-          tenant_id: params[2],
-          tenant_code: params[3],
-          tenant_name: params[4],
-          tenant_description: params[5],
-          operation_kind: params[6],
-          source_tenant_id: params[7],
-          preparation_payload_json: params[8],
-          preparation_result_json: null,
-          residency_policy_id: params[9],
-          residency_partition: params[10],
-          isolation_policy: params[11],
-          request_hash: params[12],
-          idempotency_key: params[13],
-          status: 'queued',
-          current_step: 'request_accepted',
-          capacity_operation_ids_json: '{}',
-          default_route_allocation_json: null,
-          attempt_count: 0,
-          retry_budget_started_at: params[14],
-          next_attempt_at: null,
-          last_error_code: null,
-          lease_owner: null,
-          lease_expires_at: null,
-          fencing_token: 0,
-          created_by: params[15],
-          created_at: params[16],
-          started_at: null,
-          completed_at: null,
-          updated_at: params[17],
-        };
-        return { rowsAffected: 1 };
-      }
-      if (op === 'execute' && sql.includes('INSERT INTO tenant_provisioning_operation_steps')) {
-        steps.push({
-          step_key: params[1],
-          display_order: params[2],
-          status: params[3],
-          attempt_count: 0,
-          retry_budget_started_at: params[10],
-          next_attempt_at: null,
-          last_error_code: null,
-          observed_resource_id: null,
-          started_at: null,
-          completed_at: params[4],
-          updated_at: params[5],
-        });
-        return { rowsAffected: 1 };
-      }
-      if (op === 'queryOne' && sql.includes('WHERE operation_id = ?')) return operation;
-      if (op === 'query' && sql.includes('tenant_provisioning_operation_steps')) return steps;
-      throw new Error(`unexpected admin adapter SQL: ${sql}`);
-    });
-
+    const { operation: currentOperation } = mockProvisioningAdapters();
     const response = await adminTenantCreateHandler(
       createContext({ id: 'second', name: 'Second Tenant' })
     );
@@ -572,10 +596,11 @@ describe('Control Plane tenant management', () => {
         isolation_policy: 'tenant_exclusive',
       },
     });
-    expect(operation).toMatchObject({ isolation_policy: 'tenant_exclusive' });
+    expect(currentOperation()).toMatchObject({ isolation_policy: 'tenant_exclusive' });
     expect(body.provisioning.steps).toHaveLength(9);
     expect(
-      adapters.adminAdapter.calls.some((call) => call.sql.includes('tenant_database_slots'))
+      adapters.adminAdapter?.calls.some((call) => call.sql.includes('tenant_database_slots')) ??
+        false
     ).toBe(false);
   });
 
@@ -902,6 +927,75 @@ describe('Control Plane tenant management', () => {
       provisioning: { current_step: 'lookup_activate' },
     });
     expect(adapters.adminAdapter.execute).not.toHaveBeenCalled();
+    expect(releaseTenantDefaultRoute).not.toHaveBeenCalled();
+  });
+
+  it('refuses cleanup, and removes nothing, when the operation moved to activation after it was read', async () => {
+    const operation = {
+      operation_id: 'tenant-create-second',
+      environment_id: 'test',
+      tenant_id: 'second',
+      tenant_code: 'second',
+      tenant_name: 'Second Tenant',
+      tenant_description: null,
+      residency_policy_id: 'builtin:residency:default',
+      residency_partition: 'default',
+      request_hash: 'a'.repeat(64),
+      idempotency_key: 'tenant-create-second',
+      status: 'waiting_retry',
+      current_step: 'registry_publish',
+      capacity_operation_ids_json: '{}',
+      default_route_allocation_json: null,
+      attempt_count: 1,
+      retry_budget_started_at: 100,
+      next_attempt_at: 200,
+      last_error_code: null,
+      lease_owner: null,
+      lease_expires_at: null,
+      fencing_token: 2,
+      created_by: 'platform-admin',
+      created_at: 100,
+      started_at: 101,
+      completed_at: null,
+      updated_at: 102,
+    };
+    let activated = false;
+    adapters.adminAdapter = createAdapter((sql, params, op) => {
+      if (op === 'queryOne' && sql.includes('WHERE tenant_id = ?')) {
+        // The first read sees a pre-activation operation; a worker then activates the tenant.
+        const seen = { ...operation, ...(activated ? { current_step: 'tenant_active' } : {}) };
+        activated = true;
+        return seen;
+      }
+      if (op === 'query' && sql.includes('tenant_provisioning_operation_steps')) return [];
+      if (op === 'execute' && sql.includes("SET status = 'canceled'")) {
+        // The conditional cancel: it names the step that was read, which is no longer current.
+        expect(sql).toContain('current_step = ?');
+        expect(sql).toContain("NOT IN ('lookup_activate', 'tenant_active')");
+        expect(params).toContain('registry_publish');
+        return { rowsAffected: 0 };
+      }
+      throw new Error(`unexpected cleanup adapter SQL: ${sql}`);
+    });
+    adapters.defaultAdapter = createAdapter(() => {
+      throw new Error('the tenant inventory must not be touched');
+    });
+    const releaseTenantDefaultRoute = vi.fn();
+    const env = {
+      CONTROL: { releaseTenantDefaultRoute } as unknown as Env['CONTROL'],
+      AUTHRIM_CONFIG: createKVNamespace(),
+      SETTINGS: createKVNamespace(),
+    };
+
+    const response = await adminTenantProvisioningCleanupHandler(
+      protectedContext({}, env, { id: 'second' })
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: 'tenant_provisioning_cleanup_conflict' });
+    const writes = adapters.adminAdapter.calls.filter((call) => call.op === 'execute');
+    expect(writes).toHaveLength(1); // the refused cancel only
+    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
     expect(releaseTenantDefaultRoute).not.toHaveBeenCalled();
   });
 
@@ -1278,15 +1372,112 @@ describe('Control Plane tenant management', () => {
 
     expect(response.status).toBe(202);
     expect(body.status).toBe('pending');
-    expect(adapters.defaultAdapter.transaction).toHaveBeenCalledOnce();
-    expect(adapters.defaultAdapter.execute).toHaveBeenCalledWith(
-      "UPDATE tenants SET lifecycle_state = 'deleting', updated_at = ? WHERE id = ?",
-      [expect.any(Number), 'second']
-    );
-    expect(adapters.defaultAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_jobs'),
+    expect(adapters.defaultAdapter.batch).toHaveBeenCalledOnce();
+    const [statements] = adapters.defaultAdapter.batch.mock.calls[0] as unknown as [
+      Array<{ sql: string; params: unknown[] }>,
+    ];
+    expect(statements[0].sql).toContain("SET lifecycle_state = 'deleting'");
+    expect(statements[0].params.slice(0, 2)).toEqual([expect.any(Number), 'second']);
+    expect(statements[1].sql).toContain('INSERT INTO admin_jobs');
+    expect(statements[1].params).toEqual(
       expect.arrayContaining(['tenants/delete', 'pending', JSON.stringify({ tenant_id: 'second' })])
     );
+  });
+
+  it('starts deletion only through one guarded update, and queues nothing when it matches no row', async () => {
+    // The read saw a non-default active tenant; `set-default` ran before the update.
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (
+        op === 'queryOne' &&
+        sql === 'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?'
+      ) {
+        return { id: 'second', is_default: 0, lifecycle_state: 'active' };
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+    adapters.defaultAdapter.batch.mockResolvedValue([
+      { rowsAffected: 0, success: true },
+      { rowsAffected: 0, success: true },
+    ]);
+    stepUp.gate.mockReset();
+    stepUp.gate.mockResolvedValue(null);
+    const kv = createKVNamespace();
+
+    const response = await adminTenantDeleteHandler(
+      protectedContext({}, { AUTHRIM_CONFIG: kv }, { id: 'second' })
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: 'tenant_state_changed' });
+    const [statements] = adapters.defaultAdapter.batch.mock.calls[0] as unknown as [
+      Array<{ sql: string }>,
+    ];
+    expect(statements[0].sql).toContain('is_default = 0');
+    expect(statements[0].sql).toContain('default_tenant_guard IS NULL');
+    expect(statements[0].sql).toContain("'active', 'suspended', 'frozen', 'migration_read_only'");
+    expect(statements[0].sql).toContain('NOT EXISTS');
+    expect(statements[1].sql).toContain("lifecycle_state = 'deleting'");
+    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+    expect(kv.delete).not.toHaveBeenCalled();
+    expect(createAuditLogFromContext).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing outside the atomic batch, so a failed batch leaves the tenant as it was', async () => {
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (
+        op === 'queryOne' &&
+        sql === 'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?'
+      ) {
+        return { id: 'second', is_default: 0, lifecycle_state: 'suspended' };
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+    adapters.defaultAdapter.batch.mockRejectedValueOnce(new Error('boom'));
+    stepUp.gate.mockReset();
+    stepUp.gate.mockResolvedValue(null);
+
+    const response = await adminTenantDeleteHandler(deleteCtx());
+
+    expect(response.status).toBe(500);
+    // No compensating statement: the lifecycle update and the job insert are one unit.
+    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('sets the default in one guarded batch, and changes nothing when the tenant is no longer active', async () => {
+    const setup = (rows: number) => {
+      adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+        // After a refused batch: is a deletion in progress? (no)
+        if (op === 'queryOne' && sql.startsWith('SELECT 1 AS found WHERE EXISTS')) return null;
+        if (op === 'queryOne' && sql.startsWith('SELECT id, lifecycle_state FROM tenants')) {
+          return { id: 'second', lifecycle_state: 'active' };
+        }
+        if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
+          return createTenantRow('second', { is_default: 1 });
+        }
+        throw new Error(`unexpected default adapter SQL: ${sql}`);
+      });
+      adapters.defaultAdapter.batch.mockResolvedValue([
+        { rowsAffected: rows, success: true },
+        { rowsAffected: rows, success: true },
+      ]);
+    };
+    const ctx = () =>
+      createContext({}, {}, { id: 'second' }) as unknown as Parameters<
+        typeof adminTenantSetDefaultHandler
+      >[0];
+
+    // A deletion started between the read and the batch: both statements match nothing.
+    setup(0);
+    const refused = await adminTenantSetDefaultHandler(ctx());
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ error: 'tenant_state_changed' });
+    const [statements] = adapters.defaultAdapter!.batch.mock.calls[0] as [Array<{ sql: string }>];
+    expect(statements[0].sql).toContain("lifecycle_state = 'active'");
+    expect(statements[1].sql).toContain("lifecycle_state = 'active'");
+    expect(createAuditLogFromContext).not.toHaveBeenCalled();
+
+    setup(1);
+    expect((await adminTenantSetDefaultHandler(ctx())).status).toBe(200);
   });
 
   it('rejects deleting the current default tenant by row flag', async () => {
@@ -1338,7 +1529,7 @@ describe('Control Plane tenant management', () => {
       }
       throw new Error(`unexpected default adapter SQL: ${sql}`);
     });
-    adapters.defaultAdapter.transaction.mockRejectedValueOnce(new Error('job insert failed'));
+    adapters.defaultAdapter.batch.mockRejectedValueOnce(new Error('job insert failed'));
 
     const response = await adminTenantDeleteHandler(
       createContext({}, { AUTHRIM_CONFIG: kv }, { id: 'second' })
@@ -1399,5 +1590,194 @@ describe('Control Plane tenant management', () => {
     });
     expect((await adminTenantDeleteHandler(deleteCtx())).status).toBe(404);
     expect(stepUp.gate).not.toHaveBeenCalled();
+  });
+
+  describe('tenant provisioning and deletion authority', () => {
+    const globalMachine = (permissions: string[], overrides: Record<string, unknown> = {}) => ({
+      userId: 'machine-9',
+      actorId: 'machine-9',
+      actorType: 'machine',
+      authMethod: 'machine_access_token',
+      roles: [],
+      globalRoles: [],
+      tenantScope: ['*'],
+      permissions,
+      globalPermissions: permissions,
+      ...overrides,
+    });
+    const handlers = [
+      ['create', adminTenantCreateHandler, {}, 'admin:tenants:provision'],
+      ['status', adminTenantProvisioningStatusHandler, { id: 'second' }, 'admin:tenants:provision'],
+      ['retry', adminTenantProvisioningRetryHandler, { id: 'second' }, 'admin:tenants:provision'],
+      [
+        'cleanup',
+        adminTenantProvisioningCleanupHandler,
+        { id: 'second' },
+        'admin:tenants:provision',
+      ],
+      ['delete', adminTenantDeleteHandler, { id: 'second' }, 'admin:tenants:delete'],
+    ] as const;
+
+    type HandlerContext = Parameters<typeof adminTenantDeleteHandler>[0];
+    const contextFor = (
+      body: Record<string, unknown>,
+      routeParams: Record<string, string>,
+      auth: Record<string, unknown>
+    ) => createContext(body, {}, routeParams, auth) as unknown as HandlerContext;
+
+    /** Whether the handler got past its authority check (what follows needs no database here). */
+    async function passesAuthority(
+      handler: (c: HandlerContext) => Promise<Response>,
+      routeParams: Record<string, string>,
+      auth: Record<string, unknown>
+    ): Promise<boolean> {
+      try {
+        const response = await handler(contextFor({}, routeParams, auth));
+        return response.status !== 403;
+      } catch {
+        return true; // got into the handler body, which needs adapters this test leaves out
+      }
+    }
+
+    for (const [name, handler, params, permission] of handlers) {
+      it(`${name}: a global machine passes with the route's own permission, with a wildcard, and not with a lesser one`, async () => {
+        const run = (auth: Record<string, unknown>) => passesAuthority(handler, params, auth);
+        expect(await run(globalMachine([permission]))).toBe(true);
+        expect(await run(globalMachine(['*']))).toBe(true);
+        expect(await run(globalMachine(['admin:*']))).toBe(true);
+        // The old shortcut let any global machine through, whatever it held.
+        expect(await run(globalMachine(['admin:settings:write']))).toBe(false);
+        expect(await run(globalMachine([]))).toBe(false);
+        const other =
+          permission === 'admin:tenants:provision'
+            ? 'admin:tenants:delete'
+            : 'admin:tenants:provision';
+        expect(await run(globalMachine([other]))).toBe(false);
+        // A token limited to some tenants holds nothing for the platform.
+        expect(
+          await run(
+            globalMachine([permission], { tenantScope: ['tenant-a'], globalPermissions: [] })
+          )
+        ).toBe(false);
+      });
+
+      it(`${name}: a human needs the global super admin role, not a permission`, async () => {
+        const run = (auth: Record<string, unknown>) => passesAuthority(handler, params, auth);
+        const base = { userId: 'human-1', authMethod: 'session', actorType: 'human', roles: [] };
+        expect(
+          await run({
+            ...base,
+            roles: ['ar_super_admin'],
+            globalRoles: ['ar_super_admin'],
+            tenantScope: ['*'],
+          })
+        ).toBe(true);
+        expect(
+          await run({
+            ...base,
+            roles: ['custom'],
+            globalRoles: ['custom'],
+            tenantScope: ['*'],
+            permissions: [permission, '*'],
+            globalPermissions: [permission, '*'],
+          })
+        ).toBe(false);
+        expect(await run({ ...base, roles: ['ar_super_admin'], tenantScope: ['tenant-a'] })).toBe(
+          false
+        );
+        expect(await run({ ...base, roles: ['ar_tenant_admin'], tenantScope: ['tenant-a'] })).toBe(
+          false
+        );
+      });
+    }
+
+    it('keeps the permission-agnostic helper behaviour for the other handlers', async () => {
+      // A global machine holding nothing relevant still passes the helper without a permission:
+      // the other tenant routes are held back by the Worker guard, which this test does not run.
+      const response = await adminTenantGetHandler(
+        contextFor({}, { id: 'second' }, globalMachine(['admin:settings:write']))
+      ).catch(() => null);
+      expect(response?.status).not.toBe(403);
+    });
+
+    it('records the real actor on a created tenant and in the audit entry', async () => {
+      for (const [auth, expected, type] of [
+        [
+          {
+            userId: 'platform-admin',
+            actorType: 'human',
+            authMethod: 'session',
+            roles: ['ar_super_admin'],
+            globalRoles: ['ar_super_admin'],
+            tenantScope: ['*'],
+          },
+          'platform-admin',
+          'admin_user',
+        ],
+        [globalMachine(['admin:tenants:provision']), 'machine-9', 'machine'],
+      ] as const) {
+        vi.clearAllMocks();
+        const adapterState = mockProvisioningAdapters();
+        const response = await adminTenantCreateHandler(
+          contextFor({ id: 'second', name: 'Second Tenant' }, {}, auth)
+        );
+        expect(response.status).toBe(202);
+        expect(adapterState.operation()).toMatchObject({ created_by: expected });
+        expect(createAuditLogFromContext).toHaveBeenCalledWith(
+          expect.anything(),
+          'tenant.provisioning_requested',
+          'tenant',
+          'second',
+          expect.objectContaining({ admin_actor_id: expected, admin_actor_type: type })
+        );
+      }
+    });
+
+    it('records the real actor on the deletion job and in the audit entry', async () => {
+      for (const [auth, expected, type] of [
+        [
+          {
+            userId: 'platform-admin',
+            actorType: 'human',
+            authMethod: 'session',
+            roles: ['ar_super_admin'],
+            globalRoles: ['ar_super_admin'],
+            tenantScope: ['*'],
+          },
+          'platform-admin',
+          'admin_user',
+        ],
+        [globalMachine(['admin:tenants:delete']), 'machine-9', 'machine'],
+      ] as const) {
+        vi.clearAllMocks();
+        stepUp.gate.mockReset();
+        stepUp.gate.mockResolvedValue(null);
+        adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+          if (
+            op === 'queryOne' &&
+            sql === 'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?'
+          ) {
+            return { id: 'second', is_default: 0, lifecycle_state: 'active' };
+          }
+          if (op === 'execute') return { rowsAffected: 1 };
+          throw new Error(`unexpected default adapter SQL: ${sql}`);
+        });
+        const response = await adminTenantDeleteHandler(contextFor({}, { id: 'second' }, auth));
+        expect(response.status).toBe(202);
+        const [statements] = adapters.defaultAdapter.batch.mock.calls[0] as unknown as [
+          Array<{ sql: string; params: unknown[] }>,
+        ];
+        // created_by is the seventh bound value of the job insert (the batch's second statement).
+        expect(statements[1].sql).toContain('INSERT INTO admin_jobs');
+        expect(statements[1].params[6]).toBe(expected);
+        expect(createAuditLogFromContext).toHaveBeenCalledWith(
+          expect.anything(),
+          'tenant.delete_queued',
+          'tenant',
+          'second',
+          expect.objectContaining({ admin_actor_id: expected, admin_actor_type: type })
+        );
+      }
+    });
   });
 });

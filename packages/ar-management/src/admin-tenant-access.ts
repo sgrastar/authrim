@@ -6,6 +6,7 @@ import {
   getTenantIdFromContext,
   hasGlobalAdminPermission,
   hasGlobalAdminRole,
+  hasGlobalMachinePermission,
   ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 
@@ -135,6 +136,41 @@ export async function requirePlatformTenantManagementAuthority(
       required_scope: 'platform',
       ...(requiredPermission ? { required_permission: requiredPermission } : {}),
       reason: 'Tenant management requires platform administrator authority',
+    },
+  });
+}
+
+/**
+ * The handler-level check of the five routes an automation machine principal runs on its own
+ * permission (create, follow and clean up a provisioning, delete): the platform role through a
+ * global assignment, or a machine token with a global scope holding `requiredPermission` (`*` and
+ * `admin:*` carry it). Unlike `hasPlatformTenantManagementAuthority` without a permission, a
+ * global machine token does not pass for holding anything at all; and a human needs the role.
+ */
+export function hasTenantProvisioningAuthority(
+  adminAuth: AdminAuthContext | undefined,
+  requiredPermission: string
+): boolean {
+  return (
+    adminAuth !== undefined &&
+    (hasGlobalAdminRole(adminAuth, [...PLATFORM_TENANT_MANAGEMENT_ROLES]) ||
+      hasGlobalMachinePermission(adminAuth, requiredPermission))
+  );
+}
+
+export async function requireTenantProvisioningAuthority(
+  c: Context<{ Bindings: Env }>,
+  requiredPermission: string
+): Promise<Response | null> {
+  if (hasTenantProvisioningAuthority(getAdminAuth(c), requiredPermission)) {
+    return null;
+  }
+
+  return await createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
+    variables: {
+      required_scope: 'platform',
+      required_permission: requiredPermission,
+      reason: 'Tenant provisioning requires platform administrator authority',
     },
   });
 }
