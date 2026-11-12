@@ -149,7 +149,7 @@ describe('the standard Admin roles against the declared route access rules', () 
       expect(findAdminRouteAccessRule(method, path), 'a declared rule').not.toBeNull();
       const roles = [SUPER, TENANT_ADMIN, SUPPORT, VIEWER] as const;
       const statuses = await Promise.all(
-        roles.map(async (role) => (await apps[role].request(path, { method })).status)
+        roles.map(async (role) => (await apps[role].request(path, { method }, {})).status)
       );
       expect(statuses.map((status) => status === 200)).toEqual([...allowed]);
       for (const status of statuses) expect([200, 403]).toContain(status);

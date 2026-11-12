@@ -14,6 +14,7 @@
  */
 
 import { resolveEffectiveSettings, type EffectiveSettingsEnv } from './effective-settings';
+import { getTenantCapabilityState } from './tenant-capabilities';
 
 /** The error code of an enable that the gate refused. */
 export const EXTERNAL_PLUGIN_EXECUTION_NOT_ALLOWED = 'external_plugin_execution_not_allowed';
@@ -27,6 +28,10 @@ export type ExternalPluginExecutionState = 'allowed' | 'denied' | 'unreadable';
  * (rather than refuse it) retry on 'unreadable'; none may treat it as 'allowed'. Nothing from the
  * settings is logged.
  *
+ * The platform's `external_plugins` capability (category `tenant-capabilities`) comes first: while
+ * it is off the answer is 'denied' whatever the tenant saved, and while it cannot be read the
+ * answer is 'unreadable' (this gate fails closed).
+ *
  * Runtime reads use the short per-isolate cache; `fresh` skips it, for admin actions that must see
  * a value just saved.
  */
@@ -36,6 +41,9 @@ export async function getExternalPluginExecutionState(
   options: { fresh?: boolean } = {}
 ): Promise<ExternalPluginExecutionState> {
   try {
+    const capability = await getTenantCapabilityState(env, 'external_plugins', options);
+    if (capability === 'off') return 'denied';
+    if (capability === 'unknown') return 'unreadable';
     const values = await resolveEffectiveSettings(env, 'plugin', {
       tenantId,
       ...(options.fresh ? { fresh: true } : {}),

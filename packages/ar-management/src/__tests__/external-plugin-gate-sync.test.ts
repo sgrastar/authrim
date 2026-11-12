@@ -36,7 +36,12 @@ function adminDatabase(document: Record<string, unknown> | null, options: { fail
       all: async () => ({ results: [] }),
       run: async () => ({ success: true, meta: { changes: 1 } }),
     };
-    return { bind: () => handle, ...handle };
+    // The platform's capability switches have no saved document here: they read as on.
+    const noDocument = { ...handle, first: async () => null };
+    return {
+      bind: (...bound: unknown[]) => (bound.includes('tenant-capabilities') ? noDocument : handle),
+      ...handle,
+    };
   };
   const session = { prepare: statement };
   return { db: { prepare: statement, withSession: () => session } as unknown as D1Database, sql };
@@ -286,5 +291,83 @@ describe('reconcileRunnerExternalGate', () => {
       ExternalPluginGateUnavailableError
     );
     expect(set).not.toHaveBeenCalled();
+  });
+});
+
+describe('the platform external_plugins capability in the saved setting', () => {
+  const capabilityKey = 'settings:platform:tenant-capabilities';
+  const off = JSON.stringify({ 'tenant_capabilities.external_plugins': false });
+
+  it('reads as off whatever the tenant saved, in KV and in the canonical document', async () => {
+    const kvOnly = {
+      SETTINGS: {
+        get: vi.fn(async (key: string) =>
+          key === capabilityKey
+            ? off
+            : key === savedKey
+              ? JSON.stringify({ 'plugin.enabled': true })
+              : null
+        ),
+      },
+      PLUGIN_ENABLED: 'true',
+    } as unknown as Env;
+    expect(await readSavedExternalPluginSetting(kvOnly, 'tenant-a')).toBe(false);
+
+    const canonical = {
+      SETTINGS: { get: vi.fn(async (key: string) => (key === capabilityKey ? off : null)) },
+      DB_ADMIN: adminDatabase({ 'plugin.enabled': true }).db,
+    } as unknown as Env;
+    expect(await readSavedExternalPluginSetting(canonical, 'tenant-a')).toBe(false);
+  });
+
+  it('is unchanged while the switch is on', async () => {
+    const on = {
+      SETTINGS: kv({
+        [savedKey]: { 'plugin.enabled': true },
+        [capabilityKey]: { 'tenant_capabilities.external_plugins': true },
+      }),
+    } as unknown as Env;
+    expect(await readSavedExternalPluginSetting(on, 'tenant-a')).toBe(true);
+  });
+
+  it('cannot read: an unreadable switch is never "on"', async () => {
+    const env = {
+      SETTINGS: {
+        get: vi.fn(async (key: string) => {
+          if (key === capabilityKey) throw new Error('kv down');
+          return key === savedKey ? JSON.stringify({ 'plugin.enabled': true }) : null;
+        }),
+      },
+    } as unknown as Env;
+    await expect(readSavedExternalPluginSetting(env, 'tenant-a')).rejects.toBeInstanceOf(
+      ExternalPluginGateUnavailableError
+    );
+  });
+
+  it('closes an open gate on reconcile (the mirror follows a platform change)', async () => {
+    const set = vi.fn(async (input: { tenantId: string; allowed: boolean }) => ({
+      tenantId: input.tenantId,
+      allowed: input.allowed,
+      generation: 4,
+    }));
+    const get = vi.fn(async (input: { tenantId: string }) => ({
+      tenantId: input.tenantId,
+      allowed: true,
+      generation: 3,
+    }));
+    const env = {
+      ...runnerWith(set, get),
+      SETTINGS: {
+        get: vi.fn(async (key: string) =>
+          key === capabilityKey
+            ? off
+            : key === savedKey
+              ? JSON.stringify({ 'plugin.enabled': true })
+              : null
+        ),
+      },
+    } as unknown as Env;
+    await expect(reconcileRunnerExternalGate(env, 'tenant-a')).resolves.toBe(false);
+    expect(set).toHaveBeenCalledWith({ tenantId: 'tenant-a', allowed: false });
   });
 });

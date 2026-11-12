@@ -41,6 +41,14 @@ not offer what would fail, and keeps them in one file:
 - **A category no role may edit at a scope is read-only there for everyone** (infrastructure
   and encryption on the platform: they are set when deploying).
 - Other areas are checked by permission (`admin:users:read`, wildcards included).
+- **A capability the platform turned off for tenants** (webhooks, dynamic client registration,
+  external plugins, bulk jobs) is listed in `disabled_capabilities` of `GET /api/admin/me/session`
+  (empty for a platform administrator, who is exempt). A navigation item that belongs to the
+  capability alone states it as `requires.capability` and is left out, like any item the admin
+  cannot use. A page shared with other things must not name it. Opening a page of the capability
+  anyway ends in the same no-access state: the API answers 403 `capability_disabled`, which
+  `ApiError` reads as forbidden (`capabilityDisabled` tells it apart; the message says the platform
+  turned the capability off).
 
 If the API refuses what the rules allowed (a role the rules do not know), the page treats that
 part as `none`.

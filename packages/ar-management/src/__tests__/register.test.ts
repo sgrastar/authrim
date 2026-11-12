@@ -2478,6 +2478,52 @@ describe('Dynamic Client Registration Handler', () => {
     });
   });
 
+  describe('the platform dynamic_client_registration capability', () => {
+    const capabilityKv = (state: boolean | 'down') =>
+      ({
+        get: vi.fn(async (key: string) => {
+          // Only the switch is unreadable: the rest of the settings are as before.
+          if (state === 'down' && key === 'settings:platform:tenant-capabilities')
+            throw new Error('kv down');
+          return key === 'settings:platform:tenant-capabilities' && state !== 'down'
+            ? JSON.stringify({ 'tenant_capabilities.dynamic_client_registration': state })
+            : null;
+        }),
+        put: vi.fn(),
+        delete: vi.fn(),
+        list: vi.fn(),
+        getWithMetadata: vi.fn(),
+      }) as unknown as KVNamespace;
+    const register = () =>
+      app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ redirect_uris: ['https://example.com/callback'] }),
+        },
+        mockEnv
+      );
+
+    it('refuses with access_denied and creates nothing while it is off', async () => {
+      mockEnv.SETTINGS = capabilityKv(false);
+      const res = await register();
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({
+        error: 'access_denied',
+        error_description: 'Dynamic Client Registration is disabled for this tenant',
+      });
+      expect(getOauthClientInsertPlaceholderCount(mockEnv)).toBe(0);
+    });
+
+    it('registers while it is on, and when the switch cannot be read (the earlier behaviour)', async () => {
+      for (const state of [true, 'down'] as const) {
+        mockEnv.SETTINGS = capabilityKv(state);
+        expect((await register()).status).toBe(201);
+      }
+    });
+  });
+
   describe('Error Handling', () => {
     it('should reject non-JSON request body', async () => {
       const res = await app.request(

@@ -1,6 +1,8 @@
 /**
  * One shape for every failed Admin API call, so pages handle failures the same way:
- *   403  → the admin may not do this (the page shows "no access", not an error)
+ *   403  → the admin may not do this (the page shows "no access", not an error); this includes
+ *          `capability_disabled`, where the platform has turned the capability off for tenants
+ *          (the message says so)
  *   404  → it does not exist (any more)
  *   409  → someone else changed it since it was loaded (ConflictError)
  *   400 with per-key reasons → some values were refused (RejectedError)
@@ -23,6 +25,11 @@ export class ApiError extends Error {
 
 	get forbidden(): boolean {
 		return this.status === 403;
+	}
+
+	/** The platform has turned the capability off for tenants (403 `capability_disabled`). */
+	get capabilityDisabled(): boolean {
+		return this.status === 403 && this.code === 'capability_disabled';
 	}
 
 	get notFound(): boolean {

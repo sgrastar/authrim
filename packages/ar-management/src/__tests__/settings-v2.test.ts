@@ -132,10 +132,11 @@ function createAdminD1(): D1Database {
 }
 
 // Mock KV namespace
-function createMockKV(data: Record<string, string> = {}): KVNamespace {
+function createMockKV(data: Record<string, string> = {}, failingKeys: string[] = []): KVNamespace {
   const store = new Map<string, string>(Object.entries(data));
   return {
     get: vi.fn(async (key: string, options?: 'text' | 'json' | 'arrayBuffer' | 'stream') => {
+      if (failingKeys.includes(key)) throw new Error('kv down');
       const value = store.get(key);
       if (value === undefined) return null;
       // Handle JSON option
@@ -4956,7 +4957,7 @@ describe('Settings API v2', () => {
     ];
 
     // Platform-only categories (not available at tenant scope)
-    const platformOnlyCategories = ['infrastructure', 'encryption'];
+    const platformOnlyCategories = ['infrastructure', 'encryption', 'tenant-capabilities'];
 
     it.each(tenantCategories)('should handle GET for tenant category: %s', async (category) => {
       const { app, mockEnv } = createTestApp();
@@ -5006,6 +5007,177 @@ describe('Settings API v2', () => {
         expect(body.category).toBe(category);
       }
     );
+  });
+
+  describe('tenant-capabilities (platform-only switches)', () => {
+    const URL = '/api/admin/platform/settings/tenant-capabilities';
+
+    it('reads every capability as on by default, from the code default', async () => {
+      const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+      const res = await app.request(URL, { method: 'GET' }, mockEnv);
+      expect(res.status).toBe(200);
+      const body = await res.json<SettingsGetResult>();
+      expect(body.values).toEqual({
+        'tenant_capabilities.webhooks': true,
+        'tenant_capabilities.dynamic_client_registration': true,
+        'tenant_capabilities.external_plugins': true,
+        'tenant_capabilities.bulk_jobs': true,
+      });
+      expect(body.sources?.['tenant_capabilities.webhooks']).toBe('default');
+    });
+
+    it('lets a deployment default one off by environment variable', async () => {
+      const { app, mockEnv } = createTestApp({
+        kv: createMockKV(),
+        env: { TENANT_CAPABILITIES_BULK_JOBS: 'false' },
+      });
+      const res = await app.request(URL, { method: 'GET' }, mockEnv);
+      const body = await res.json<SettingsGetResult>();
+      expect(body.values['tenant_capabilities.bulk_jobs']).toBe(false);
+      expect(body.sources?.['tenant_capabilities.bulk_jobs']).toBe('env');
+      expect(body.values['tenant_capabilities.webhooks']).toBe(true);
+    });
+
+    it('is saved through the platform PATCH and read back', async () => {
+      const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+      const current = await (
+        await app.request(URL, { method: 'GET' }, mockEnv)
+      ).json<SettingsGetResult>();
+      const res = await app.request(
+        URL,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ifMatch: current.version,
+            set: { 'tenant_capabilities.webhooks': false },
+          }),
+        },
+        mockEnv
+      );
+      expect(res.status).toBe(200);
+      const after = await (
+        await app.request(URL, { method: 'GET' }, mockEnv)
+      ).json<SettingsGetResult>();
+      expect(after.values['tenant_capabilities.webhooks']).toBe(false);
+      expect(after.values['tenant_capabilities.external_plugins']).toBe(true);
+    });
+
+    it('refuses keys that are not capabilities', async () => {
+      const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+      const current = await (
+        await app.request(URL, { method: 'GET' }, mockEnv)
+      ).json<SettingsGetResult>();
+      const res = await app.request(
+        URL,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ifMatch: current.version,
+            set: { 'tenant_capabilities.scim': false },
+          }),
+        },
+        mockEnv
+      );
+      expect(res.status).toBe(400);
+    });
+
+    describe('the dcr and plugin categories of a tenant while the capability is off', () => {
+      const CAPABILITIES = 'settings:platform:tenant-capabilities';
+      const off = (capability: string) =>
+        JSON.stringify({ [`tenant_capabilities.${capability}`]: false });
+      const tenantAdmin: AdminAuthContext = {
+        userId: 'tenant_admin',
+        authMethod: 'bearer',
+        roles: ['ar_tenant_admin'],
+        tenantScope: ['test_tenant'],
+        tenantId: 'test_tenant',
+      };
+      const patchCategory = async (
+        fixture: ReturnType<typeof createTestApp>,
+        category: string,
+        set: Record<string, unknown>
+      ) => {
+        const url = `/api/admin/tenants/test_tenant/settings/${category}`;
+        const current = await (
+          await fixture.app.request(url, { method: 'GET' }, fixture.mockEnv)
+        ).json<SettingsGetResult>();
+        return fixture.app.request(
+          url,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ifMatch: current.version, set }),
+          },
+          fixture.mockEnv
+        );
+      };
+
+      it.each([
+        ['dcr', 'dynamic_client_registration', { 'dcr.enabled': true }],
+        ['plugin', 'external_plugins', { 'plugin.enabled': true }],
+      ] as const)(
+        'refuses %s for a tenant admin with 403 capability_disabled',
+        async (category, capability, set) => {
+          const fixture = createTestApp({
+            kv: createMockKV({ [CAPABILITIES]: off(capability) }),
+            adminAuth: tenantAdmin,
+          });
+          const res = await patchCategory(fixture, category, set);
+          expect(res.status).toBe(403);
+          expect(await res.json()).toMatchObject({ error: 'capability_disabled', capability });
+        }
+      );
+
+      it('refuses with 503 when the switch cannot be read', async () => {
+        const fixture = createTestApp({
+          kv: createMockKV({}, [CAPABILITIES]),
+          adminAuth: tenantAdmin,
+        });
+        const res = await patchCategory(fixture, 'dcr', { 'dcr.enabled': true });
+        expect(res.status).toBe(503);
+        expect(await res.json()).toMatchObject({ error: 'temporarily_unavailable' });
+      });
+
+      it('lets a caller with global platform authority through, and leaves other categories alone', async () => {
+        const exempt = createTestApp({
+          kv: createMockKV({ [CAPABILITIES]: off('dynamic_client_registration') }),
+        });
+        const platform = await patchCategory(exempt, 'dcr', { 'dcr.enabled': true });
+        expect(platform.status).toBe(200);
+
+        const tenant = createTestApp({
+          kv: createMockKV({ [CAPABILITIES]: off('dynamic_client_registration') }),
+          adminAuth: tenantAdmin,
+        });
+        const other = await patchCategory(tenant, 'tenant', { 'tenant.display_name': 'x' });
+        expect(other.status).not.toBe(503);
+        expect((await other.json<ApiResponse>()).error).not.toBe('capability_disabled');
+      });
+
+      it('is unchanged while the capability is on', async () => {
+        const fixture = createTestApp({ kv: createMockKV(), adminAuth: tenantAdmin });
+        const res = await patchCategory(fixture, 'dcr', { 'dcr.enabled': true });
+        expect(res.status).toBe(200);
+      });
+    });
+
+    it('cannot be changed by a tenant', async () => {
+      const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+      const res = await app.request(
+        '/api/admin/tenants/test_tenant/settings/tenant-capabilities',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ifMatch: 'x', set: { 'tenant_capabilities.webhooks': false } }),
+        },
+        mockEnv
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json<ApiResponse>();
+      expect(body.error).toBe('bad_request');
+    });
   });
 
   describe('Single-tenant tenant guard', () => {

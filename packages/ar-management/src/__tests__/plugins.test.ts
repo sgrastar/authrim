@@ -107,6 +107,7 @@ import { writeAdminAuditLog } from '../admin-shared';
 function createMockKV(options: {
   getValues?: Record<string, string | null>;
   putCallback?: (key: string, value: string) => void;
+  failingKeys?: string[];
 }): KVNamespace {
   const storage = new Map<string, string>(
     Object.entries(options.getValues ?? {}).filter(([, v]) => v !== null) as [string, string][]
@@ -114,6 +115,7 @@ function createMockKV(options: {
 
   return {
     get: vi.fn().mockImplementation(async (key: string) => {
+      if (options.failingKeys?.includes(key)) throw new Error('kv down');
       return storage.get(key) ?? null;
     }),
     put: vi.fn().mockImplementation(async (key: string, value: string) => {
@@ -136,7 +138,7 @@ function createMockContext(options: {
   kv?: KVNamespace;
   headers?: Record<string, string>;
   envOverrides?: Record<string, unknown>;
-  adminAuth?: { userId?: string; authMethod?: string };
+  adminAuth?: Record<string, unknown>;
   tenantId?: string;
   pluginTenantScope?: 'tenant' | 'platform';
 }) {
@@ -1358,6 +1360,46 @@ describe('Plugin Admin API - Enable/Disable', () => {
       );
 
       expect(kv.put).toHaveBeenCalledWith('plugins:enabled:test-plugin', 'true');
+    });
+
+    it('still enables and configures a built-in plugin while the platform has external_plugins off', async () => {
+      const registry = { 'test-plugin': createPluginEntry({ id: 'test-plugin' }) };
+      const stored: Record<string, string> = {};
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'settings:platform:tenant-capabilities': JSON.stringify({
+            'tenant_capabilities.external_plugins': false,
+          }),
+        },
+        putCallback: (key, value) => {
+          stored[key] = value;
+        },
+      });
+
+      const enable: unknown = createMockContext({
+        method: 'PUT',
+        params: { id: 'test-plugin' },
+        pluginTenantScope: 'platform',
+        body: {},
+        kv,
+      });
+      await enablePluginHandler(enable as Parameters<typeof enablePluginHandler>[0]);
+      expect((enable as { json: unknown }).json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, pluginId: 'test-plugin', enabled: true })
+      );
+      expect(stored['plugins:enabled:test-plugin']).toBe('true');
+
+      const configure: unknown = createMockContext({
+        method: 'PUT',
+        params: { id: 'test-plugin' },
+        body: { config: { endpoint: 'https://new-api.example.com', timeout: 3000 } },
+        kv,
+      });
+      await updatePluginConfigHandler(configure as Parameters<typeof updatePluginConfigHandler>[0]);
+      expect((configure as { json: unknown }).json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true })
+      );
     });
 
     it('should return 404 for non-existent plugin', async () => {
@@ -3832,6 +3874,188 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
     expect(kv.put).not.toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toContain('provider-secret-value');
     expect(body).toMatchObject({ config: {}, encryptedFields: ['apiKey'] });
+  });
+
+  describe('the platform external_plugins capability for the per-plugin routes', () => {
+    const CAPABILITIES = 'settings:platform:tenant-capabilities';
+    const OFF = JSON.stringify({ 'tenant_capabilities.external_plugins': false });
+    const tenantAdmin = { userId: 'admin-t', authMethod: 'session', tenantScope: ['tenant-a'] };
+    const platformAdmin = {
+      userId: 'admin-p',
+      authMethod: 'session',
+      roles: ['ar_super_admin'],
+      globalRoles: ['ar_super_admin'],
+      tenantScope: ['*'],
+    };
+    type Handler = (c: Parameters<typeof enablePluginHandler>[0]) => Promise<Response | void>;
+    /** Runs a handler on a context built from `createMockContext` (untyped) and says how it answered. */
+    const call = async (
+      handler: Handler,
+      options: Parameters<typeof createMockContext>[0]
+    ): Promise<Response | void> => {
+      const context: unknown = createMockContext(options);
+      return handler(context as Parameters<Handler>[0]);
+    };
+    const refusalOf = async (response: Response | void) => {
+      const result = await getResponseData(response);
+      const body: unknown = result.body;
+      const error =
+        typeof body === 'object' && body !== null && 'error' in body
+          ? String(body.error)
+          : undefined;
+      return { status: result.status, error };
+    };
+
+    function fixtureFor(switchState: 'on' | 'off' | 'down') {
+      const service = runner();
+      const controlService = control();
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': '{}',
+          ...(switchState === 'off' ? { [CAPABILITIES]: OFF } : {}),
+        },
+        failingKeys: switchState === 'down' ? [CAPABILITIES] : [],
+      });
+      const common = {
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        kv,
+        envOverrides: {
+          PLUGIN_RUNNER: service,
+          CONTROL: controlService,
+          ...EXTERNAL_PLUGINS_ALLOWED,
+        },
+      };
+      return { service, common };
+    }
+
+    it('refuses a tenant admin credentials and enabling an external plugin while off', async () => {
+      const { service, common } = fixtureFor('off');
+      const put = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        ...common,
+        body: { config: { apiKey: 'v' } },
+        adminAuth: tenantAdmin,
+      });
+      expect(await refusalOf(put)).toEqual({ status: 403, error: 'capability_disabled' });
+      const enable = await call(enablePluginHandler, {
+        method: 'PUT',
+        ...common,
+        body: {},
+        adminAuth: tenantAdmin,
+      });
+      expect(await refusalOf(enable)).toEqual({ status: 403, error: 'capability_disabled' });
+      expect(service.replaceDynamicPluginCredentials).not.toHaveBeenCalled();
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+      expect(service.setTenantExternalGate).not.toHaveBeenCalled();
+    });
+
+    it('refuses with 503 (never as if on) when the switch cannot be read', async () => {
+      const { service, common } = fixtureFor('down');
+      const put = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        ...common,
+        body: { config: { apiKey: 'v' } },
+        adminAuth: tenantAdmin,
+      });
+      expect(await refusalOf(put)).toEqual({ status: 503, error: 'temporarily_unavailable' });
+      expect(service.replaceDynamicPluginCredentials).not.toHaveBeenCalled();
+    });
+
+    it('lets a caller with global platform authority configure credentials, but not enable, while off', async () => {
+      const { service, common } = fixtureFor('off');
+      const put = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        ...common,
+        body: { config: { apiKey: 'v' } },
+        adminAuth: platformAdmin,
+      });
+      expect((await getResponseData(put)).status).toBe(200);
+      expect(service.replaceDynamicPluginCredentials).toHaveBeenCalledTimes(1);
+
+      // Enabling is execution for a tenant: closed for everyone while the capability is off.
+      const enable = await call(enablePluginHandler, {
+        method: 'PUT',
+        ...common,
+        body: {},
+        adminAuth: platformAdmin,
+      });
+      const refused = await getResponseData(enable);
+      expect(refused.status).toBe(403);
+      expect(JSON.stringify(refused.body)).toContain('capability_disabled');
+      expect(JSON.stringify(refused.body)).toContain('nothing can execute for tenants');
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+      expect(service.setTenantExternalGate).not.toHaveBeenCalled();
+    });
+
+    it('refuses enabling with 503 for everyone when the switch cannot be read', async () => {
+      const { service, common } = fixtureFor('down');
+      const enable = await call(enablePluginHandler, {
+        method: 'PUT',
+        ...common,
+        body: {},
+        adminAuth: platformAdmin,
+      });
+      expect(await refusalOf(enable)).toEqual({ status: 503, error: 'temporarily_unavailable' });
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('still lets anyone who could disable do so while off', async () => {
+      const { service, common } = fixtureFor('off');
+      const disable = await call(disablePluginHandler, {
+        method: 'PUT',
+        ...common,
+        body: {},
+        adminAuth: tenantAdmin,
+      });
+      expect((await getResponseData(disable)).status).toBe(200);
+      expect(service.configureDynamicPluginInstallation).toHaveBeenCalledWith({
+        tenantId: 'tenant-a',
+        pluginId: 'custom-a',
+        enabled: false,
+      });
+    });
+
+    it('is unchanged while on', async () => {
+      const { service, common } = fixtureFor('on');
+      const put = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        ...common,
+        body: { config: { apiKey: 'v' } },
+        adminAuth: tenantAdmin,
+      });
+      expect((await getResponseData(put)).status).toBe(200);
+      expect(service.replaceDynamicPluginCredentials).toHaveBeenCalledTimes(1);
+    });
+
+    it('never asks for a built-in plugin: its config and enable work for a tenant admin while off', async () => {
+      const registry = { 'test-plugin': createPluginEntry({ id: 'test-plugin' }) };
+      const kv = createMockKV({
+        getValues: { 'plugins:registry': JSON.stringify(registry), [CAPABILITIES]: OFF },
+        failingKeys: [],
+      });
+      const response = await call(enablePluginHandler, {
+        method: 'PUT',
+        params: { id: 'test-plugin' },
+        pluginTenantScope: 'platform',
+        body: {},
+        kv,
+        adminAuth: tenantAdmin,
+      });
+      expect(await refusalOf(response)).toEqual({ status: 200, error: undefined });
+      const down = createMockKV({
+        getValues: { 'plugins:registry': JSON.stringify(registry) },
+        failingKeys: [CAPABILITIES],
+      });
+      const configure = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        params: { id: 'test-plugin' },
+        body: { config: { endpoint: 'https://new-api.example.com', timeout: 3000 } },
+        kv: down,
+        adminAuth: tenantAdmin,
+      });
+      expect((await getResponseData(configure)).status).toBe(200);
+    });
   });
 
   it('enables and disables through Runner without writing a KV enable flag', async () => {

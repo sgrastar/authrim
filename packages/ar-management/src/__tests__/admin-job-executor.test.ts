@@ -327,6 +327,76 @@ describe('generic admin job executor', () => {
     );
   });
 
+  describe('the platform bulk_jobs capability', () => {
+    const settingsWith = (state: boolean | 'down') =>
+      ({
+        get: vi.fn(async (key: string) => {
+          if (key !== 'settings:platform:tenant-capabilities') return null;
+          if (state === 'down') throw new Error('kv down');
+          return JSON.stringify({ 'tenant_capabilities.bulk_jobs': state });
+        }),
+        put: vi.fn(),
+        delete: vi.fn(),
+        list: vi.fn(),
+        getWithMetadata: vi.fn(),
+      }) as unknown as KVNamespace;
+    const pending = (jobType: string) => ({
+      id: `job-${jobType}`,
+      tenant_id: 'tenant-a',
+      job_type: jobType,
+      status: 'pending',
+      progress: null,
+      config: '{}',
+      created_at: 1,
+    });
+    const claimedAsProcessing = () =>
+      mockAdapter.execute.mock.calls.some(([sql]) =>
+        String(sql).includes("SET status = 'processing'")
+      );
+    const blockedWith = (message: string) =>
+      mockAdapter.execute.mock.calls.some(
+        ([sql, params]) =>
+          String(sql).includes("SET status = 'partial_failure'") &&
+          (params as unknown[]).includes(message)
+      );
+
+    it.each(['reports/generate', 'users/bulk-update', 'organizations/bulk-members'])(
+      'ends a queued %s job as blocked, without starting it, while off',
+      async (jobType) => {
+        mockAdapter.query.mockResolvedValueOnce([pending(jobType)]);
+        await processPendingGenericAdminJobs({ SETTINGS: settingsWith(false) }, logger);
+        expect(blockedWith('tenant_capability_disabled:bulk_jobs')).toBe(true);
+        expect(claimedAsProcessing()).toBe(false);
+        // The state a lifecycle block leaves, with its own stage.
+        const update = mockAdapter.execute.mock.calls.find(([sql]) =>
+          String(sql).includes("SET status = 'partial_failure'")
+        );
+        expect(JSON.parse((update![1] as string[])[0])).toMatchObject({
+          stage: 'blocked_by_tenant_capability',
+        });
+      }
+    );
+
+    it.each(['tenants/lifecycle-validation', 'tenant-database/export'])(
+      'does not hold the system job type %s while off',
+      async (jobType) => {
+        mockAdapter.execute.mockResolvedValue({ rowsAffected: 0 });
+        mockAdapter.query.mockResolvedValueOnce([pending(jobType)]);
+        await processPendingGenericAdminJobs({ SETTINGS: settingsWith(false) }, logger);
+        expect(blockedWith('tenant_capability_disabled:bulk_jobs')).toBe(false);
+        expect(claimedAsProcessing()).toBe(true);
+      }
+    );
+
+    it.each([true, 'down'] as const)('starts a bulk job as before when %s', async (state) => {
+      mockAdapter.execute.mockResolvedValue({ rowsAffected: 0 });
+      mockAdapter.query.mockResolvedValueOnce([pending('reports/generate')]);
+      await processPendingGenericAdminJobs({ SETTINGS: settingsWith(state) }, logger);
+      expect(blockedWith('tenant_capability_disabled:bulk_jobs')).toBe(false);
+      expect(claimedAsProcessing()).toBe(true);
+    });
+  });
+
   it.each([false, true])(
     'completes lifecycle restore validation after probes (dispatch failure=%s)',
     async (dispatchFails) => {

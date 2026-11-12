@@ -1348,3 +1348,71 @@ describe('Discovery Handler', () => {
     });
   });
 });
+
+describe('Discovery and the dynamic_client_registration capability', () => {
+  const CAPABILITY_DOC = 'settings:platform:tenant-capabilities';
+
+  function envWithSwitch(state: boolean | 'down' | 'unset') {
+    const settings = {
+      get: vi.fn(async (key: string) => {
+        if (key !== CAPABILITY_DOC) return null;
+        if (state === 'down') throw new Error('kv down');
+        if (state === 'unset') return null;
+        return JSON.stringify({ 'tenant_capabilities.dynamic_client_registration': state });
+      }),
+      put: vi.fn(),
+      delete: vi.fn(),
+      list: vi.fn(),
+      getWithMetadata: vi.fn(),
+    } as unknown as KVNamespace;
+    return { ...createMockEnv(), SETTINGS: settings } as Env;
+  }
+
+  beforeEach(() => {
+    clearDiscoveryMetadataCache();
+    clearNativeSSOConfigCache();
+  });
+
+  it('advertises the registration endpoint while the capability is on or unset', async () => {
+    for (const state of [true, 'unset'] as const) {
+      const metadata = await fetchDiscoveryMetadata(
+        'tenant-a',
+        'https://test.example.com/.well-known/openid-configuration',
+        envWithSwitch(state)
+      );
+      expect(metadata.registration_endpoint, String(state)).toBe(
+        'https://test.example.com/register'
+      );
+    }
+  });
+
+  it('leaves the registration endpoint out while it is off, and the rest of the metadata stays', async () => {
+    const metadata = await fetchDiscoveryMetadata(
+      'tenant-a',
+      'https://test.example.com/.well-known/openid-configuration',
+      envWithSwitch(false)
+    );
+    expect(metadata).not.toHaveProperty('registration_endpoint');
+    expect(metadata.authorization_endpoint).toBe('https://test.example.com/authorize');
+    expect(metadata.token_endpoint).toBe('https://test.example.com/token');
+  });
+
+  it('follows a change at once, without waiting for the metadata cache to expire', async () => {
+    const url = 'https://test.example.com/.well-known/openid-configuration';
+    const on = await fetchDiscoveryMetadata('tenant-a', url, envWithSwitch(true));
+    expect(on.registration_endpoint).toBeDefined();
+    const off = await fetchDiscoveryMetadata('tenant-a', url, envWithSwitch(false));
+    expect(off.registration_endpoint).toBeUndefined();
+    const onAgain = await fetchDiscoveryMetadata('tenant-a', url, envWithSwitch(true));
+    expect(onAgain.registration_endpoint).toBeDefined();
+  });
+
+  it('keeps advertising it (the earlier behaviour) when the switch cannot be read', async () => {
+    const metadata = await fetchDiscoveryMetadata(
+      'tenant-a',
+      'https://test.example.com/.well-known/openid-configuration',
+      envWithSwitch('down')
+    );
+    expect(metadata.registration_endpoint).toBe('https://test.example.com/register');
+  });
+});

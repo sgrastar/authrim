@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	accessFromSession,
 	hasPermission,
+	isCapabilityDisabled,
 	NO_ACCESS,
 	permissionLevel,
 	settingsLevel,
@@ -86,8 +87,22 @@ describe('settings, as the settings API decides it for a person', () => {
 		expect(access).toEqual({
 			platform: false,
 			roles: ['viewer'],
-			permissions: ['admin:users:read']
+			permissions: ['admin:users:read'],
+			disabledCapabilities: []
 		});
+	});
+
+	it('reads the capabilities the platform turned off, and drops names it does not know', () => {
+		const access = accessFromSession({
+			roles: ['ar_tenant_admin'],
+			disabled_capabilities: ['webhooks', 'bulk_jobs', 'something_else']
+		});
+		expect(access.disabledCapabilities).toEqual(['webhooks', 'bulk_jobs']);
+		expect(isCapabilityDisabled(access, 'webhooks')).toBe(true);
+		expect(isCapabilityDisabled(access, 'external_plugins')).toBe(false);
+		// A session without the list (an older API) disables nothing.
+		expect(isCapabilityDisabled(accessFromSession({ roles: [] }), 'webhooks')).toBe(false);
+		expect(isCapabilityDisabled(NO_ACCESS, 'webhooks')).toBe(false);
 	});
 });
 

@@ -1,5 +1,6 @@
 import type { Env, StageDynamicPluginActivationInput } from '@authrim/ar-lib-core';
 import { describe, expect, it, vi } from 'vitest';
+import { getTenantCapabilityState } from '@authrim/ar-lib-core';
 import {
   cancelDynamicPluginResourceFinalization,
   enqueueDynamicPluginResourceFinalization,
@@ -281,5 +282,112 @@ describe('dynamic plugin resource finalization', () => {
       lastErrorCode: 'plugin_resource_finalization_failed',
     });
     expect(serialized).not.toContain('sk_live_unexpected_secret_value');
+  });
+
+  describe('while the platform has external_plugins off', () => {
+    const CAPABILITIES = 'settings:platform:tenant-capabilities';
+    const OFF = JSON.stringify({ 'tenant_capabilities.external_plugins': false });
+    const JOB_KEY = 'plugins:dynamic-resource-finalization:op-plugin-a';
+
+    async function queued(readiness: 'pending' | 'ready' | 'blocked') {
+      const store = kv();
+      await enqueueDynamicPluginResourceFinalization(
+        store.binding,
+        { operationId: 'op-plugin-a', tenantId: 'tenant-a', pluginId: 'plugin-a' },
+        100
+      );
+      const target = env(store.binding, readiness as 'pending' | 'ready');
+      const binding = target.value.CONTROL;
+      if (!binding) throw new Error('test_control_binding_missing');
+      binding.getPluginDynamicWorkerResourcePreparation = rpcMethod(target.getPreparation);
+      const runner = target.value.PLUGIN_RUNNER as unknown as {
+        setTenantExternalGate: ReturnType<typeof vi.fn>;
+      };
+      return { store, target, runner, before: store.store.get(JOB_KEY) };
+    }
+
+    it.each(['pending', 'blocked', 'ready'] as const)(
+      'leaves a job untouched during %s readiness, and finishes it once the capability is back on',
+      async (readiness) => {
+        const { store, target, runner, before } = await queued(readiness);
+        store.store.set(CAPABILITIES, OFF);
+
+        await expect(processDynamicPluginResourceFinalizations(target.value)).resolves.toEqual({
+          inspected: 1,
+          finalized: 0,
+          pending: 1,
+          failed: 0,
+        });
+        // Not enabled, not disabled, no gate opened or closed, no attempt counted.
+        expect(store.store.get(JOB_KEY)).toBe(before);
+        expect(target.configure).not.toHaveBeenCalled();
+        expect(target.stage).not.toHaveBeenCalled();
+        expect(runner.setTenantExternalGate).not.toHaveBeenCalled();
+
+        // Back on: the job completes as it would have (a ready one is enabled and removed).
+        store.store.delete(CAPABILITIES);
+        const resumed = await processDynamicPluginResourceFinalizations(target.value);
+        if (readiness === 'ready') {
+          expect(resumed).toEqual({ inspected: 1, finalized: 1, pending: 0, failed: 0 });
+          expect(store.store.has(JOB_KEY)).toBe(false);
+          expect(target.configure).toHaveBeenCalledTimes(1);
+        } else {
+          expect(resumed).toMatchObject({ inspected: 1, finalized: 0, failed: 0 });
+          expect(store.store.get(JOB_KEY)).toBe(before);
+        }
+      }
+    );
+
+    it('leaves the job untouched when the switch cannot be read', async () => {
+      const { store, target, before } = await queued('ready');
+      const get = store.binding.get as unknown as {
+        mockImplementation(fn: (key: string) => Promise<string | null>): void;
+      };
+      get.mockImplementation(async (key: string) => {
+        if (key === CAPABILITIES) throw new Error('kv down');
+        return store.store.get(key) ?? null;
+      });
+      await expect(processDynamicPluginResourceFinalizations(target.value)).resolves.toMatchObject({
+        finalized: 0,
+        failed: 0,
+      });
+      expect(store.store.get(JOB_KEY)).toBe(before);
+      expect(target.configure).not.toHaveBeenCalled();
+    });
+
+    it('is not held back by a stale cached "off" once the fresh read says on', async () => {
+      const { store, target } = await queued('ready');
+      store.store.set(CAPABILITIES, OFF);
+      // The per-isolate cache sees "off" (a runtime read a moment ago) ...
+      expect(await getTenantCapabilityState(target.value, 'external_plugins')).toBe('off');
+      // ... and then the platform turns it back on.
+      store.store.delete(CAPABILITIES);
+      await expect(processDynamicPluginResourceFinalizations(target.value)).resolves.toEqual({
+        inspected: 1,
+        finalized: 1,
+        pending: 0,
+        failed: 0,
+      });
+    });
+
+    it('gives a tenant refusal the usual outcome, whatever the cached switch says', async () => {
+      const { store, target, before } = await queued('ready');
+      store.store.set(CAPABILITIES, OFF);
+      expect(await getTenantCapabilityState(target.value, 'external_plugins')).toBe('off');
+      store.store.delete(CAPABILITIES);
+      // The tenant itself does not allow external plugin code (plugin.enabled).
+      (target.value as unknown as { PLUGIN_ENABLED: string }).PLUGIN_ENABLED = 'false';
+      await expect(processDynamicPluginResourceFinalizations(target.value)).resolves.toEqual({
+        inspected: 1,
+        finalized: 0,
+        pending: 0,
+        failed: 1,
+      });
+      // As on develop: the job stays, with the attempt counted; it is not deleted.
+      const kept = JSON.parse(store.store.get(JOB_KEY) ?? 'null') as { attemptCount: number };
+      expect(kept.attemptCount).toBe(1);
+      expect(store.store.get(JOB_KEY)).not.toBe(before);
+      expect(target.configure).not.toHaveBeenCalled();
+    });
   });
 });

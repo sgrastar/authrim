@@ -113,6 +113,13 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 		note: 'Gives the same settings to several tenants: choose the settings and tenants, preview what changes, apply, and see the result for each tenant (POST /api/admin/settings/bulk-apply). The screen is built later; these are its limits.'
 	},
 	{
+		id: 'plat-tenants/capabilities',
+		title: 'Tenant capabilities',
+		proposed: true,
+		scope: 'platform',
+		note: 'Switches that turn a capability off for tenants (webhooks, dynamic client registration, external plugins, bulk jobs). Shown to platform administrators, who are exempt from them at the Admin API.'
+	},
+	{
 		id: 'plat-infra/scale',
 		scope: 'platform',
 		note: 'Caches, retries and timeouts: technical tuning, found by search.'
@@ -834,6 +841,14 @@ place('plat-tenants/discovery', 'Discovery screen', {
 		'tenant-discovery-ui.kicker_text',
 		'tenant-discovery-ui.title_text',
 		'tenant-discovery-ui.subtitle_text'
+	]
+});
+place('plat-tenants/capabilities', 'What tenants may use', {
+	primary: [
+		'tenant_capabilities.webhooks',
+		'tenant_capabilities.dynamic_client_registration',
+		'tenant_capabilities.external_plugins',
+		'tenant_capabilities.bulk_jobs'
 	]
 });
 place(

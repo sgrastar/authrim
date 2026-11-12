@@ -1,5 +1,6 @@
 import {
   derivePluginInstallationId,
+  getTenantCapabilityState,
   requireDedicatedAdminDatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -309,6 +310,7 @@ export function createPhase8TenantBackupInstalledAdapter(
     database,
     logEnv: input.env,
     now,
+    capabilityState: (capability) => getTenantCapabilityState(input.env, capability),
     // The bundle's own role definitions, from the validated input under the sealed restore plan.
     loadBundleRoles: async (context) => {
       const datasets = await validatedInput.loadValidatedSqliteDatasets(context);

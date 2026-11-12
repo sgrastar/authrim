@@ -43,6 +43,7 @@ import {
   hashClientSecret,
   // DCR Configuration
   getDCRSetting,
+  dynamicClientRegistrationRefusal,
   resolveDcrDefaultTarget,
   getTenantMetadataContextFromHono,
   type DatabaseSource,
@@ -1515,6 +1516,12 @@ async function handleRegistration(
           503
         );
       }
+    }
+    if (!restrictedAgentRegistration) {
+      // The platform can turn dynamic client registration off for tenants (machine access, the
+      // restricted agent registration, is a separate capability).
+      const capabilityRefusal = await dynamicClientRegistrationRefusal(c.env);
+      if (capabilityRefusal) return c.json(capabilityRefusal, 403);
     }
     const dcrEnabled = restrictedAgentRegistration
       ? agentAccessEnabled
