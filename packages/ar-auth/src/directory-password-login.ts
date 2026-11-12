@@ -2886,6 +2886,7 @@ async function resolveDirectoryConnector(
       keyId,
       secret,
       timeoutMs: directoryConnector.timeouts?.request_ms,
+      allowLocalhost: env.ENVIRONMENT === 'development',
     },
     attributeNames: directoryConnector.attribute_names ?? DEFAULT_DIRECTORY_PASSWORD_ATTRIBUTES,
     autoProvision: normalizeBoolean(connectorSettings?.auto_provision),
