@@ -27,8 +27,13 @@ import {
   applyOIDCIdentityMapping,
   createAuthContextFromHono,
   OIDCIdentityMappingRuntimeError,
-  enforceOIDCAttributeReleaseConsent,
-  OIDCAttributeReleaseConsentRequiredError,
+  applyReleaseApproval,
+  readReleaseApproval,
+  RELEASE_APPROVAL_CLAIM,
+  accessTokenConsentGrant,
+  isAccessTokenConsentWithdrawn,
+  findOAuthClientConsentRevocation,
+  createAccountAuthContextFromHono,
   setBoundedMapEntry,
   resolveAccountDataContextFromHono,
   resolveIDTokenSigningPolicy,
@@ -217,6 +222,39 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  // A withdrawal of the consent the token was granted under ends it here too, as it does at the
+  // token endpoint and introspection: the token's generation must still be the current one.
+  const consentGrant = accessTokenConsentGrant(tokenClaims);
+  if (consentGrant.clientId) {
+    let withdrawn: boolean;
+    try {
+      withdrawn = isAccessTokenConsentWithdrawn(
+        await findOAuthClientConsentRevocation(
+          createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+          { tenantId, userId: sub, clientId: consentGrant.clientId }
+        ),
+        tokenClaims
+      );
+    } catch (error) {
+      log.error('Failed to read the consent withdrawal for UserInfo', {}, error as Error);
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: 'temporarily_unavailable', error_description: 'Consent state is unavailable' },
+        503
+      );
+    }
+    if (withdrawn) {
+      c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: 'invalid_token', error_description: 'The access token is invalid' },
+        401
+      );
+    }
+  }
+
   const parsedClaims = parseClaimsRequest(claimsParam);
   const claimsRequest = parsedClaims.ok ? parsedClaims.request : undefined;
 
@@ -334,6 +372,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   // attribute release consent hold it to the same rules.
   const userClaims: Record<string, unknown> = claimEvaluation.claims;
 
+  // The optional fields of the app's Destination Profile among the claims (see below).
+  const releaseOptional = new Set<string>();
   if (client_id && clientMetadata) {
     const failureContext: IdentityMappingFailureContext = {};
     try {
@@ -358,6 +398,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         // The mapping reads the user's attributes, not only what these scopes release, so it
         // derives the same sub as the ID token does.
         sourceAttributes: userData,
+        releaseOptionalOut: releaseOptional,
       });
       if (mapped.claims !== userClaims) {
         Object.keys(userClaims).forEach((key) => {
@@ -434,44 +475,36 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  if (client_id && clientMetadata) {
-    try {
-      await enforceOIDCAttributeReleaseConsent({
-        env: c.env,
-        tenantId,
-        subjectId: sub,
-        clientMetadata,
-        claims: userClaims,
-        target: 'userinfo',
-      });
-    } catch (consentError) {
-      log.warn('OIDC UserInfo claim release consent required', {
-        client_id,
-        reasonCodes:
-          consentError instanceof OIDCAttributeReleaseConsentRequiredError
-            ? consentError.reasonCodes
-            : [],
-      });
-      if (consentError instanceof OIDCAttributeReleaseConsentRequiredError) {
-        c.header('Cache-Control', 'no-store');
-        c.header('Pragma', 'no-cache');
-        return c.json(
-          {
-            error: 'consent_required',
-            error_description: describeOIDCUserInfoClaimReleaseConsentRequired(consentError),
-          },
-          403
-        );
-      }
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Failed to evaluate claim release consent',
-        },
-        500
-      );
-    }
+  // The information release the token's authorization was approved for: claims about the person
+  // it does not approve are left out, and a required one it does not approve refuses the answer
+  // (the app asks for authorization again, where the person is asked). Without the app's
+  // metadata nothing about the person is released (its rules cannot be applied).
+  const held = clientMetadata
+    ? applyReleaseApproval(
+        userClaims,
+        releaseOptional,
+        readReleaseApproval(tokenClaims[RELEASE_APPROVAL_CLAIM])
+      )
+    : applyReleaseApproval(userClaims, new Set(Object.keys(userClaims)), null);
+  if (!held.ok) {
+    log.warn('OIDC UserInfo claim release is not approved', {
+      client_id,
+      missing: held.missing.length,
+    });
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    return c.json(
+      {
+        error: 'consent_required',
+        error_description: 'User consent is required before releasing UserInfo claims',
+      },
+      403
+    );
   }
+  Object.keys(userClaims).forEach((key) => {
+    delete userClaims[key];
+  });
+  Object.assign(userClaims, held.claims);
 
   // JWE: Check if client requires UserInfo encryption (RFC 7516)
   if (!client_id || !clientMetadata) {
@@ -631,16 +664,4 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
   return c.json(userClaims);
-}
-
-function describeOIDCUserInfoClaimReleaseConsentRequired(
-  error: OIDCAttributeReleaseConsentRequiredError
-): string {
-  if (error.reasonCodes.includes('release.attribute_consent.attribute_set_changed')) {
-    return 'User consent is required because the UserInfo claim set has changed';
-  }
-  if (error.reasonCodes.includes('release.attribute_consent.every_time')) {
-    return 'User consent is required for this UserInfo claim release';
-  }
-  return 'User consent is required before releasing UserInfo claims';
 }

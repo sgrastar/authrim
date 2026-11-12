@@ -93,7 +93,12 @@ import {
   standardUserAttributeNames,
   canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
-  normalizeAttributeReleaseConsentPolicy,
+  readInformationReleaseConsentSetting,
+  automaticReleaseApproval,
+  reusableReleaseApproval,
+  findReleaseConsentRecord,
+  readReleaseApproval,
+  RELEASE_APPROVAL_CLAIM,
   resolveProtocolSettings,
   type FAPIProtocolSettings,
   type OIDCProtocolSettings,
@@ -160,6 +165,7 @@ import { getRequestIssuer } from './issuer';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import { isSelfRegistrationAvailable } from './authentication-method-settings';
+import { computeReleaseCandidates } from './release-candidates';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
@@ -225,6 +231,12 @@ function isClientPublic(clientMetadata: {
     clientMetadata.token_endpoint_auth_method === 'none' ||
     (!clientMetadata.client_secret_hash && !clientMetadata.client_secret)
   );
+}
+
+/** response_type=id_token: no access token, so the ID token carries the scope claims. */
+function isIdTokenOnlyResponse(responseType: string | undefined): boolean {
+  const types = splitScopes(responseType);
+  return types.includes('id_token') && !types.includes('token') && !types.includes('code');
 }
 
 function responseTypeIssuesAuthorizationCode(responseType: string | undefined): boolean {
@@ -742,6 +754,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let confirmedConsentUserId: string | undefined;
   // The consent withdrawal generation the confirmed consent was approved under.
   let confirmedConsentGeneration: number | undefined;
+  // The claim names the consent screen approved the information release for.
+  let confirmedReleaseApproval: string[] | null = null;
   // Phase 2-B RBAC extensions
   let org_id: string | undefined; // Target organization ID
   let acting_as: string | undefined; // Acting on behalf of user ID
@@ -1035,6 +1049,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         authorization_request?: unknown;
         confirmed_reauth?: unknown;
         consent_generation?: unknown;
+        release_approval?: unknown;
       };
     };
 
@@ -1158,6 +1173,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       typeof approvedGeneration === 'number' && Number.isSafeInteger(approvedGeneration)
         ? approvedGeneration
         : undefined;
+    confirmedReleaseApproval = readReleaseApproval(confirmationData.metadata.release_approval);
     // A re-authentication (prompt=login, max_age, step-up) completed before the consent screen
     // stays completed: the restored request still carries prompt=login / max_age, and asking
     // again would send the user back and forth between the two screens.
@@ -4050,6 +4066,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     });
     return current?.consent_generation === consentWithdrawal.generation ? current : null;
   };
+  // The claim names this authorization's information release is approved for, which the code
+  // and tokens it issues carry (information-release-consent.ts): the consent screen's answer, the
+  // automatic approval (a trusted app, or one that does not ask), or the person's earlier
+  // decision when it still answers what this request would release.
+  let releaseApproval: string[] | null = consentConfirmed ? confirmedReleaseApproval : null;
 
   // Enforce PAR request_uri one-time use only after the request has reached an authenticated
   // authorization journey. The Durable Object consume remains atomic, so concurrent attempts
@@ -4121,12 +4142,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const attributeReleaseConsentPolicy = normalizeAttributeReleaseConsentPolicy(
-      clientMetadata?.attribute_release_consent
+    const releaseSetting = readInformationReleaseConsentSetting(
+      clientMetadata?.information_release_consent
     );
-    const requiresPerAuthorizationAttributeReleaseConsent =
-      attributeReleaseConsentPolicy?.enabled === true &&
-      attributeReleaseConsentPolicy.mode === 'every_time';
     const requiresEveryTimeSignInConfirmation = signInConfirmationMode === 'every_time';
 
     // Debug: Log consent decision factors
@@ -4137,8 +4155,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       firstParty,
       clientTrustPolicySource,
       signInConfirmationMode,
-      attributeReleaseConsentMode: attributeReleaseConsentPolicy?.mode ?? null,
-      requiresPerAuthorizationAttributeReleaseConsent,
+      informationReleaseConsent: releaseSetting.enabled ? releaseSetting.ask : 'off',
       // Legacy D1 fields (for migration tracking)
       legacy_is_trusted: clientMetadata?.is_trusted,
       legacy_skip_consent: clientMetadata?.skip_consent,
@@ -4148,6 +4165,49 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // (unless prompt=consent is explicitly specified)
     const isTrustedClient = !consentRequired;
 
+    // Information release: approved without asking (trust, or a setting that does not ask), or by
+    // the person's earlier decision while it still answers this request's candidates; otherwise
+    // the consent screen asks. Judged apart from the scope consent, the documents and prompt.
+    let releaseNeedsAsking = false;
+    const automaticRelease = automaticReleaseApproval(releaseSetting, isTrustedClient);
+    if (automaticRelease) {
+      releaseApproval = automaticRelease.approval;
+    } else {
+      try {
+        const record = await findReleaseConsentRecord(accountAuthCtx.coreAdapter, {
+          tenantId,
+          userId: sub,
+          clientId: validClientId,
+          consentGeneration: consentWithdrawal.generation,
+        });
+        // Without a decision of the person's own to reuse, the screen asks (and computes what it
+        // shows); only a reusable one is checked against what this request would release.
+        const reusable =
+          record !== null && record.basis === 'user' && releaseSetting.ask !== 'every_time';
+        const release =
+          reusable && clientMetadata
+            ? await computeReleaseCandidates({
+                c,
+                tenantId,
+                userId: sub,
+                clientId: validClientId,
+                clientMetadata,
+                scopes: splitScopes(scope),
+                claimsRequest: parsedClaimsRequest.request,
+                claimsRequestProtected: claimsRequestIntegrityProtected === true,
+                idTokenOnly: isIdTokenOnlyResponse(response_type),
+              })
+            : { candidates: [] };
+        releaseApproval = reusable
+          ? reusableReleaseApproval(releaseSetting, record, release.candidates)
+          : null;
+        releaseNeedsAsking = releaseApproval === null;
+      } catch (error) {
+        log.error('Failed to check information release consent', {}, error as Error);
+        return sendError('server_error', 'Failed to evaluate information release consent');
+      }
+    }
+
     log.info('Consent check - decision', {
       action: 'consent_check_decision',
       clientId: validClientId,
@@ -4156,7 +4216,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       willSkipConsent:
         isTrustedClient &&
         !promptValues.has('consent') &&
-        !requiresPerAuthorizationAttributeReleaseConsent &&
+        !releaseNeedsAsking &&
         !requiresFirstTimeSignInConfirmation &&
         !requiresEveryTimeSignInConfirmation,
     });
@@ -4165,7 +4225,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (
       isTrustedClient &&
       !promptValues.has('consent') &&
-      !requiresPerAuthorizationAttributeReleaseConsent &&
+      !releaseNeedsAsking &&
       !requiresFirstTimeSignInConfirmation &&
       !requiresEveryTimeSignInConfirmation
     ) {
@@ -4195,6 +4255,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               expiresAt: null,
               now,
               consentGeneration: consentWithdrawal.generation,
+              release: {
+                presented: [],
+                approved: releaseApproval ?? [],
+                declined: [],
+                mode: releaseSetting.ask,
+                basis: automaticRelease?.basis ?? 'trust',
+              },
+              history: { action: 'granted', scopesAfter: splitScopes(scope) },
             })
           );
         } catch (error) {
@@ -4278,7 +4346,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (promptValues.has('consent')) {
           consentRequired = true;
         }
-        if (requiresPerAuthorizationAttributeReleaseConsent) {
+        if (releaseNeedsAsking) {
           consentRequired = true;
         }
         if (requiresEveryTimeSignInConfirmation) {
@@ -4798,6 +4866,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             consentConfirmed && confirmedConsentGeneration !== undefined
               ? confirmedConsentGeneration
               : consentWithdrawal.generation,
+          releaseApproval: releaseApproval ?? [],
         })
       );
       log.info('Stored authorization code', {
@@ -4875,6 +4944,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             consentClientId: validClientId,
             tokenClientId: validClientId,
           }),
+          // The information release this authorization was approved for (UserInfo holds to it).
+          [RELEASE_APPROVAL_CLAIM]: releaseApproval ?? [],
           // Assurance (include_in_access_token): how the user authenticated, as RFC 9068 has it.
           ...(assuranceEnabled && assuranceSettings['assurance.include_in_access_token'] === true
             ? {
@@ -5046,7 +5117,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         {
           claims: idTokenClaims,
           grantedScopes: scopes.filter(Boolean),
-          grant: { userId: sub, consentGeneration: consentWithdrawal.generation },
+          grant: {
+            userId: sub,
+            consentGeneration: consentWithdrawal.generation,
+            releaseApproval,
+          },
           // The scope and claims-parameter claims above were authorized for this request already
           // (evaluateClaimsForTarget), and with no access token the ID token is the only place
           // the app can get them: the profile's UserInfo-only fields are released in it.

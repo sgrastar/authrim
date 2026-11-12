@@ -1450,6 +1450,99 @@ type RootTranslation = {
 	 */
 	consent_item_withdrawal_impact: string;
 	/**
+	 * I​n​f​o​r​m​a​t​i​o​n​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​c​l​i​e​n​t​N​a​m​e​}
+	 * @param {string} clientName
+	 */
+	consent_release_title: RequiredParams<'clientName'>;
+	/**
+	 * I​t​e​m​s​ ​m​a​r​k​e​d​ ​R​e​q​u​i​r​e​d​ ​a​r​e​ ​a​l​w​a​y​s​ ​s​h​a​r​e​d​ ​i​f​ ​y​o​u​ ​a​l​l​o​w​.​ ​U​n​t​i​c​k​ ​a​n​y​ ​o​p​t​i​o​n​a​l​ ​i​t​e​m​ ​y​o​u​ ​d​o​ ​n​o​t​ ​w​a​n​t​ ​t​o​ ​s​h​a​r​e​.
+	 */
+	consent_release_hint: string;
+	/**
+	 * P​u​r​p​o​s​e
+	 */
+	consent_release_purpose: string;
+	/**
+	 * A​c​c​o​u​n​t​ ​i​d​e​n​t​i​f​i​e​r
+	 */
+	consent_claim_sub: string;
+	/**
+	 * F​u​l​l​ ​n​a​m​e
+	 */
+	consent_claim_name: string;
+	/**
+	 * F​i​r​s​t​ ​n​a​m​e
+	 */
+	consent_claim_given_name: string;
+	/**
+	 * L​a​s​t​ ​n​a​m​e
+	 */
+	consent_claim_family_name: string;
+	/**
+	 * M​i​d​d​l​e​ ​n​a​m​e
+	 */
+	consent_claim_middle_name: string;
+	/**
+	 * N​i​c​k​n​a​m​e
+	 */
+	consent_claim_nickname: string;
+	/**
+	 * U​s​e​r​n​a​m​e
+	 */
+	consent_claim_preferred_username: string;
+	/**
+	 * P​r​o​f​i​l​e​ ​p​a​g​e
+	 */
+	consent_claim_profile: string;
+	/**
+	 * P​r​o​f​i​l​e​ ​p​i​c​t​u​r​e
+	 */
+	consent_claim_picture: string;
+	/**
+	 * W​e​b​s​i​t​e
+	 */
+	consent_claim_website: string;
+	/**
+	 * E​m​a​i​l​ ​a​d​d​r​e​s​s
+	 */
+	consent_claim_email: string;
+	/**
+	 * E​m​a​i​l​ ​v​e​r​i​f​i​e​d
+	 */
+	consent_claim_email_verified: string;
+	/**
+	 * G​e​n​d​e​r
+	 */
+	consent_claim_gender: string;
+	/**
+	 * D​a​t​e​ ​o​f​ ​b​i​r​t​h
+	 */
+	consent_claim_birthdate: string;
+	/**
+	 * T​i​m​e​ ​z​o​n​e
+	 */
+	consent_claim_zoneinfo: string;
+	/**
+	 * L​a​n​g​u​a​g​e
+	 */
+	consent_claim_locale: string;
+	/**
+	 * P​h​o​n​e​ ​n​u​m​b​e​r
+	 */
+	consent_claim_phone_number: string;
+	/**
+	 * P​h​o​n​e​ ​n​u​m​b​e​r​ ​v​e​r​i​f​i​e​d
+	 */
+	consent_claim_phone_number_verified: string;
+	/**
+	 * P​o​s​t​a​l​ ​a​d​d​r​e​s​s
+	 */
+	consent_claim_address: string;
+	/**
+	 * P​r​o​f​i​l​e​ ​l​a​s​t​ ​u​p​d​a​t​e​d
+	 */
+	consent_claim_updated_at: string;
+	/**
 	 * R​e​q​u​e​s​t​ ​a​c​c​o​u​n​t​ ​d​e​l​e​t​i​o​n
 	 */
 	consent_delete_account_link: string;
@@ -3289,6 +3382,98 @@ export type TranslationFunctions = {
 	 * Withdrawal impact
 	 */
 	consent_item_withdrawal_impact: () => LocalizedString;
+	/**
+	 * Information shared with {clientName}
+	 */
+	consent_release_title: (arg: { clientName: string }) => LocalizedString;
+	/**
+	 * Items marked Required are always shared if you allow. Untick any optional item you do not want to share.
+	 */
+	consent_release_hint: () => LocalizedString;
+	/**
+	 * Purpose
+	 */
+	consent_release_purpose: () => LocalizedString;
+	/**
+	 * Account identifier
+	 */
+	consent_claim_sub: () => LocalizedString;
+	/**
+	 * Full name
+	 */
+	consent_claim_name: () => LocalizedString;
+	/**
+	 * First name
+	 */
+	consent_claim_given_name: () => LocalizedString;
+	/**
+	 * Last name
+	 */
+	consent_claim_family_name: () => LocalizedString;
+	/**
+	 * Middle name
+	 */
+	consent_claim_middle_name: () => LocalizedString;
+	/**
+	 * Nickname
+	 */
+	consent_claim_nickname: () => LocalizedString;
+	/**
+	 * Username
+	 */
+	consent_claim_preferred_username: () => LocalizedString;
+	/**
+	 * Profile page
+	 */
+	consent_claim_profile: () => LocalizedString;
+	/**
+	 * Profile picture
+	 */
+	consent_claim_picture: () => LocalizedString;
+	/**
+	 * Website
+	 */
+	consent_claim_website: () => LocalizedString;
+	/**
+	 * Email address
+	 */
+	consent_claim_email: () => LocalizedString;
+	/**
+	 * Email verified
+	 */
+	consent_claim_email_verified: () => LocalizedString;
+	/**
+	 * Gender
+	 */
+	consent_claim_gender: () => LocalizedString;
+	/**
+	 * Date of birth
+	 */
+	consent_claim_birthdate: () => LocalizedString;
+	/**
+	 * Time zone
+	 */
+	consent_claim_zoneinfo: () => LocalizedString;
+	/**
+	 * Language
+	 */
+	consent_claim_locale: () => LocalizedString;
+	/**
+	 * Phone number
+	 */
+	consent_claim_phone_number: () => LocalizedString;
+	/**
+	 * Phone number verified
+	 */
+	consent_claim_phone_number_verified: () => LocalizedString;
+	/**
+	 * Postal address
+	 */
+	consent_claim_address: () => LocalizedString;
+	/**
+	 * Profile last updated
+	 */
+	consent_claim_updated_at: () => LocalizedString;
 	/**
 	 * Request account deletion
 	 */

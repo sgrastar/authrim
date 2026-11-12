@@ -295,7 +295,7 @@ describe('destination profile field consent', () => {
     ]);
   });
 
-  it('removes an unselected optional OIDC claim while preserving required and envelope claims', async () => {
+  it('releases every listed OIDC claim and reports the optional ones (the approval of the grant decides)', async () => {
     const adminAdapter = adapter({
       queryOne: vi.fn().mockResolvedValue({
         profile_id: 'profile_oidc',
@@ -317,7 +317,9 @@ describe('destination profile field consent', () => {
       }),
     });
 
+    const optional = new Set<string>();
     const claims = await filterOidcClaimsByDestinationConsent({
+      optionalOut: optional,
       coreAdapter,
       adminAdapter,
       tenantId: 'tenant_a',
@@ -333,11 +335,15 @@ describe('destination profile field consent', () => {
       },
     });
 
-    expect(claims).toEqual({ iss: 'https://issuer.example', sub: 'user_1', name: 'A' });
-    expect(coreAdapter.queryOne).toHaveBeenCalledWith(
-      expect.stringContaining('AND statement_version = ?'),
-      expect.arrayContaining(['destination_profile:profile_oidc', 'version_1'])
-    );
+    expect(claims).toEqual({
+      iss: 'https://issuer.example',
+      sub: 'user_1',
+      email: 'a@example.com',
+      name: 'A',
+    });
+    expect(optional).toEqual(new Set(['email', 'name']));
+    // The person's choice is no longer read from the Flow's consent records.
+    expect(coreAdapter.queryOne).not.toHaveBeenCalled();
   });
 
   it('fails OIDC release when a required claim is missing or a non-nullable claim is null', async () => {
@@ -1006,6 +1012,45 @@ describe('destination profile field consent', () => {
         attributes: [{ name: 'mail', values: ['user@example.com'] }],
       })
     ).rejects.toThrow(/cannot lower sensitive classification/i);
+  });
+});
+
+describe('the claims the person is asked to release', () => {
+  it('does not let a mapping produce the claims the server computes (RBAC, lifecycle)', () => {
+    for (const claim of ['authrim_roles', 'authrim_org_name', 'authrim_account_lifecycle']) {
+      expect(isProtectedIdentityMappingDestinationClaim('oidc.claim', claim)).toBe(true);
+    }
+  });
+
+  it('keeps a claim required when one applicable entry requires it and another does not', async () => {
+    const adminAdapter = {
+      queryOne: vi.fn().mockResolvedValue({
+        profile_id: 'profile_oidc',
+        destination_type: 'oidc',
+        version_id: 'version_1',
+        schema_json: JSON.stringify({
+          claims: [
+            { claimName: 'sub', required: true },
+            { claimName: 'email', required: true, surfaces: ['id_token'] },
+            { claimName: 'email', required: false, surfaces: ['userinfo'] },
+          ],
+        }),
+      }),
+    } as unknown as DatabaseAdapter;
+    const optional = new Set<string>();
+    await filterOidcClaimsByDestinationConsent({
+      coreAdapter: {} as DatabaseAdapter,
+      adminAdapter,
+      tenantId: 'tenant_a',
+      subjectId: 'user_1',
+      clientId: 'client_1',
+      profileId: 'profile_oidc',
+      surface: 'id_token',
+      alsoSurfaces: ['userinfo'],
+      optionalOut: optional,
+      claims: { sub: 'user_1', email: 'a@example.com' },
+    });
+    expect(optional.has('email')).toBe(false);
   });
 });
 

@@ -65,6 +65,7 @@ export interface AuthorizationCode {
   agentGrantGeneration?: number;
   agentConsentVersion?: number;
   consentGeneration?: number; // The user's consent withdrawal generation for the client
+  releaseApproval?: string[]; // Claim names the information release was approved for
   used: boolean;
   expiresAt: number;
   createdAt: number;
@@ -127,6 +128,8 @@ export interface StoreCodeRequest {
   agentConsentVersion?: number;
   /** The user's consent withdrawal generation for the client when the code was granted. */
   consentGeneration?: number;
+  /** The claim names the authorization's information release was approved for. */
+  releaseApproval?: string[];
 }
 
 function assertValidTenantId(tenantId: unknown): asserts tenantId is string {
@@ -184,6 +187,7 @@ export interface ConsumeCodeResponse {
   agentGrantGeneration?: number;
   agentConsentVersion?: number;
   consentGeneration?: number;
+  releaseApproval?: string[];
   createdAt?: number; // When the code was issued (ms): a consent withdrawn since refuses it
   // Present when replay attack is detected - contains JTIs to revoke
   replayAttack?: {
@@ -528,6 +532,14 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     ) {
       throw new Error('invalid_request: Invalid consent generation');
     }
+    if (
+      request.releaseApproval !== undefined &&
+      (!Array.isArray(request.releaseApproval) ||
+        request.releaseApproval.length > 256 ||
+        request.releaseApproval.some((name) => typeof name !== 'string' || name.length > 256))
+    ) {
+      throw new Error('invalid_request: Invalid release approval');
+    }
 
     // DDoS protection: Limit codes per user
     const userCodeCount = this.countUserCodes(request.userId);
@@ -569,6 +581,9 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       agentConsentVersion: request.agentConsentVersion,
       ...(request.consentGeneration !== undefined
         ? { consentGeneration: request.consentGeneration }
+        : {}),
+      ...(request.releaseApproval !== undefined
+        ? { releaseApproval: [...request.releaseApproval] }
         : {}),
       used: false,
       expiresAt: now + positiveIntegerOr(request.ttlSeconds, this.CODE_TTL) * 1000,
@@ -799,6 +814,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         agentGrantGeneration: stored.agentGrantGeneration,
         agentConsentVersion: stored.agentConsentVersion,
         consentGeneration: stored.consentGeneration,
+        releaseApproval: stored.releaseApproval,
         createdAt: stored.createdAt,
       };
     } finally {

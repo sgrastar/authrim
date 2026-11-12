@@ -14,6 +14,8 @@ describe('UI URL sink guards', () => {
 		const consentSource = source('lib/views/ConsentView.svelte');
 
 		expect(consentSource.match(/isValidLinkUrl\(item\.document_url\)/g)).toHaveLength(2);
+		expect(consentSource).toContain('isValidLinkUrl(release.purpose.document_url)');
+		expect(consentSource).toContain('href={release.purpose.document_url}');
 		expect(consentSource).toContain('isValidLinkUrl(i.deletion_url)');
 		expect(consentSource).toContain('href={item.document_url}');
 		expect(consentSource).toContain('href={deletionItem.deletion_url}');

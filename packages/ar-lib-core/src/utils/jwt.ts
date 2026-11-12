@@ -32,6 +32,7 @@ export interface AccessTokenClaims extends JWTPayload {
   cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
   authrim_consent_generation?: number; // Consent generation the user × client grant recorded
   authrim_consent_client_id?: string; // Client consented to, when not client_id (Token Exchange)
+  authrim_release?: string[]; // Claim names the grant's information release was approved for
   authrim_subject_issuer?: string; // External issuer that asserted sub (JWT bearer, ID-JAG)
   authrim_subject_principal?: string; // Client or admin principal a Token Exchange's subject named
 }

@@ -54943,9 +54943,9 @@ components:
           oneOf:
             - $ref: '#/components/schemas/OIDCIdentityMappingSelector'
             - type: 'null'
-        attribute_release_consent:
+        information_release_consent:
           oneOf:
-            - $ref: '#/components/schemas/AttributeReleaseConsentPolicy'
+            - $ref: '#/components/schemas/InformationReleaseConsentSetting'
             - type: 'null'
         allowed_redirect_origins:
           type: array
@@ -55124,21 +55124,28 @@ components:
           type: string
           enum:
             - none
-    AttributeReleaseConsentPolicy:
+    InformationReleaseConsentSetting:
       type: object
       additionalProperties: false
-      required:
-        - enabled
-        - mode
       properties:
         enabled:
           type: boolean
-        mode:
+          default: true
+        ask:
           type: string
           enum:
             - once
             - every_time
-            - until_attributes_change
+            - when_items_change
+          default: once
+        show_values:
+          type: boolean
+          default: true
+        purpose_statement_id:
+          type:
+            - string
+            - 'null'
+          pattern: '^[A-Za-z0-9_.:-]{1,128}$'
     AdminClientCreate:
       allOf:
         - $ref: '#/components/schemas/AdminClientBase'

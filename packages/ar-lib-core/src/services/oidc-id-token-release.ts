@@ -6,7 +6,8 @@
  *
  *  1. the app's identity mapping (sub, claim mapping, Destination Profile consent filter,
  *     protocol and grant claims left alone, reserved sub refused),
- *  2. the app's attribute release consent for the claims that result,
+ *  2. the information release approval the grant carries (information-release-consent.ts): the
+ *     claims about the person it does not approve are left out, a required one stops the release,
  *  3. the grant claims: the consent generation, and the sealed account reference when the sub is
  *     not the user's id.
  *
@@ -22,10 +23,7 @@ import {
   scheduleIdentityMappingFailure,
   type IdentityMappingFailureContext,
 } from './identity-mapping-failures';
-import {
-  enforceOIDCAttributeReleaseConsent,
-  OIDCAttributeReleaseConsentRequiredError,
-} from './oidc-attribute-release-consent';
+import { applyReleaseApproval, RELEASE_APPROVAL_CLAIM } from './information-release-consent';
 import { accessTokenConsentClaims } from './oauth-client-consent-revocation';
 import {
   isSubjectReferenceAvailable,
@@ -40,6 +38,11 @@ export interface IDTokenGrant {
   userId: string;
   /** The consent generation the grant was checked against. */
   consentGeneration: number;
+  /**
+   * The claim names this grant's information release was approved for (null: none, so no
+   * information about the person is released).
+   */
+  releaseApproval: readonly string[] | null;
 }
 
 /** Why an ID token's claims could not be released, as an OAuth error the endpoint answers with. */
@@ -57,6 +60,11 @@ export interface IDTokenReleaseFailure {
 
 export type IDTokenReleaseResult =
   | { ok: true; claims: Record<string, unknown> }
+  | { ok: false; failure: IDTokenReleaseFailure };
+
+/** A mapped ID token, with the optional fields of the app's Destination Profile among its claims. */
+export type MappedIDTokenResult =
+  | { ok: true; claims: Record<string, unknown>; optional: Set<string> }
   | { ok: false; failure: IDTokenReleaseFailure };
 
 export interface IDTokenReleaseContext {
@@ -117,10 +125,11 @@ export async function mapIDTokenClaims(
   claims: Record<string, unknown>,
   grantedScopes?: string[],
   carries?: IDTokenClaimsCarried
-): Promise<IDTokenReleaseResult> {
+): Promise<MappedIDTokenResult> {
   const { clientId } = ctx;
   const userId = typeof claims.sub === 'string' ? claims.sub : '';
   const failureContext: IdentityMappingFailureContext = {};
+  const optional = new Set<string>();
   try {
     const mapped = await applyOIDCIdentityMapping({
       adapter: ctx.adapter,
@@ -138,9 +147,10 @@ export async function mapIDTokenClaims(
         : {}),
       ...(carries?.userInfoClaims ? { userInfoClaimsInIdToken: true } : {}),
       claims,
+      releaseOptionalOut: optional,
       ...(userId ? { sourceAttributes: (names) => ctx.loadUserAttributes(userId, names) } : {}),
     });
-    return { ok: true, claims: mapped.claims };
+    return { ok: true, claims: mapped.claims, optional };
   } catch (error) {
     failureContext.code ??=
       error instanceof OIDCIdentityMappingRuntimeError ? error.details.code : 'mapping_failed';
@@ -183,66 +193,33 @@ export async function mapIDTokenClaims(
   }
 }
 
-function describeClaimReleaseConsentRequired(
-  error: OIDCAttributeReleaseConsentRequiredError
-): string {
-  if (error.reasonCodes.includes('release.attribute_consent.attribute_set_changed')) {
-    return 'User consent is required because the ID token claim set has changed';
-  }
-  if (error.reasonCodes.includes('release.attribute_consent.every_time')) {
-    return 'User consent is required for this ID token claim release';
-  }
-  return 'User consent is required before releasing ID token claims';
-}
-
 /**
- * Hold an ID token's claims to the app's attribute release consent. The consent is the user's, so
- * it is looked up by `userId`, not by the sub the ID token carries (which a mapping may have made
- * another identifier).
+ * Hold an ID token's claims to the information release approval its grant carries: claims about
+ * the person it does not approve are left out; a required one it does not approve refuses the ID
+ * token (`consent_required`, so the app asks for authorization again, where the person is asked).
+ * The claims returned are the ones to put in the ID token.
  */
-export async function enforceIDTokenAttributeRelease(
-  ctx: IDTokenReleaseContext,
-  userId: string,
-  claims: Record<string, unknown>
-): Promise<IDTokenReleaseResult> {
-  if (!userId) return { ok: true, claims };
-  try {
-    await enforceOIDCAttributeReleaseConsent({
-      env: ctx.env,
-      tenantId: ctx.tenantId,
-      subjectId: userId,
-      clientMetadata: ctx.clientMetadata,
-      claims,
-      target: 'id_token',
-    });
-    return { ok: true, claims };
-  } catch (error) {
-    ctx.log.warn('OIDC ID token claim release consent required', {
-      clientId: ctx.clientId,
-      reasonCodes:
-        error instanceof OIDCAttributeReleaseConsentRequiredError ? error.reasonCodes : [],
-    });
-    if (error instanceof OIDCAttributeReleaseConsentRequiredError) {
-      return {
-        ok: false,
-        failure: {
-          kind: 'consent_required',
-          error: 'consent_required',
-          description: describeClaimReleaseConsentRequired(error),
-          status: 400,
-        },
-      };
-    }
-    return {
-      ok: false,
-      failure: {
-        kind: 'consent_check_failed',
-        error: 'server_error',
-        description: 'Failed to evaluate claim release consent',
-        status: 500,
-      },
-    };
-  }
+export function enforceIDTokenAttributeRelease(
+  ctx: Pick<IDTokenReleaseContext, 'clientId' | 'log'>,
+  approval: readonly string[] | null,
+  claims: Record<string, unknown>,
+  optional: ReadonlySet<string>
+): IDTokenReleaseResult {
+  const held = applyReleaseApproval(claims, optional, approval);
+  if (held.ok) return { ok: true, claims: held.claims };
+  ctx.log.warn('OIDC ID token claim release is not approved', {
+    clientId: ctx.clientId,
+    missing: held.missing.length,
+  });
+  return {
+    ok: false,
+    failure: {
+      kind: 'consent_required',
+      error: 'consent_required',
+      description: 'User consent is required before releasing ID token claims',
+      status: 400,
+    },
+  };
 }
 
 /**
@@ -271,11 +248,15 @@ export async function idTokenGrantClaims(
   claims: Record<string, unknown>,
   grant: IDTokenGrant
 ): Promise<Record<string, unknown>> {
-  const consentClaims = accessTokenConsentClaims({
-    generation: grant.consentGeneration,
-    consentClientId: clientId,
-    tokenClientId: clientId,
-  });
+  const consentClaims = {
+    ...accessTokenConsentClaims({
+      generation: grant.consentGeneration,
+      consentClientId: clientId,
+      tokenClientId: clientId,
+    }),
+    // So a Token Exchange of this ID token by the same app keeps the same approval.
+    [RELEASE_APPROVAL_CLAIM]: [...(grant.releaseApproval ?? [])],
+  };
   if (claims.sub === grant.userId) return { ...consentClaims, [SUBJECT_ACCOUNT_CLAIM]: true };
   if (!isSubjectReferenceAvailable(env)) throw new IDTokenSubjectReferenceUnavailableError();
   return {
@@ -304,7 +285,12 @@ export async function releaseIDTokenClaims(
 ): Promise<IDTokenReleaseResult> {
   const mapped = await mapIDTokenClaims(ctx, input.claims, input.grantedScopes, input.carries);
   if (!mapped.ok) return mapped;
-  const released = await enforceIDTokenAttributeRelease(ctx, input.grant.userId, mapped.claims);
+  const released = enforceIDTokenAttributeRelease(
+    ctx,
+    input.grant.releaseApproval,
+    mapped.claims,
+    mapped.optional
+  );
   if (!released.ok) return released;
   let grantClaims: Record<string, unknown>;
   try {
