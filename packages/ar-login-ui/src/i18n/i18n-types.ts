@@ -916,6 +916,42 @@ type RootTranslation = {
 	 */
 	account_consentSelectedNone: string;
 	/**
+	 * W​i​t​h​d​r​a​w​ ​c​o​n​s​e​n​t
+	 */
+	account_consentWithdraw: string;
+	/**
+	 * W​i​t​h​d​r​a​w​ ​c​o​n​s​e​n​t​ ​f​o​r​ ​{​n​a​m​e​}
+	 * @param {unknown} name
+	 */
+	account_consentWithdrawFor: RequiredParams<'name'>;
+	/**
+	 * W​i​t​h​d​r​a​w​ ​y​o​u​r​ ​c​o​n​s​e​n​t​ ​f​o​r​ ​{​n​a​m​e​}​?​ ​T​h​e​ ​s​e​r​v​i​c​e​ ​w​i​l​l​ ​a​s​k​ ​f​o​r​ ​y​o​u​r​ ​c​o​n​s​e​n​t​ ​a​g​a​i​n​ ​t​h​e​ ​n​e​x​t​ ​t​i​m​e​ ​y​o​u​ ​u​s​e​ ​i​t​,​ ​a​n​d​ ​y​o​u​ ​m​a​y​ ​b​e​ ​s​i​g​n​e​d​ ​o​u​t​ ​o​f​ ​i​t​.
+	 * @param {unknown} name
+	 */
+	account_consentWithdrawConfirmService: RequiredParams<'name'>;
+	/**
+	 * W​i​t​h​d​r​a​w​ ​y​o​u​r​ ​c​o​n​s​e​n​t​ ​f​o​r​ ​{​n​a​m​e​}​?​ ​T​h​e​ ​s​e​r​v​i​c​e​ ​w​i​l​l​ ​a​s​k​ ​a​g​a​i​n​ ​t​h​e​ ​n​e​x​t​ ​t​i​m​e​ ​y​o​u​ ​s​i​g​n​ ​i​n​.
+	 * @param {unknown} name
+	 */
+	account_consentWithdrawConfirmSamlSp: RequiredParams<'name'>;
+	/**
+	 * W​i​t​h​d​r​a​w​ ​y​o​u​r​ ​a​g​r​e​e​m​e​n​t​ ​t​o​ ​{​n​a​m​e​}​?​ ​I​f​ ​i​t​ ​i​s​ ​r​e​q​u​i​r​e​d​,​ ​y​o​u​ ​w​i​l​l​ ​b​e​ ​a​s​k​e​d​ ​t​o​ ​a​g​r​e​e​ ​a​g​a​i​n​ ​a​t​ ​y​o​u​r​ ​n​e​x​t​ ​s​i​g​n​-​i​n​.
+	 * @param {unknown} name
+	 */
+	account_consentWithdrawConfirmStatement: RequiredParams<'name'>;
+	/**
+	 * T​h​e​ ​c​o​n​s​e​n​t​ ​w​a​s​ ​w​i​t​h​d​r​a​w​n​.
+	 */
+	account_consentWithdrawn: string;
+	/**
+	 * T​h​i​s​ ​c​o​n​s​e​n​t​ ​i​s​ ​a​l​r​e​a​d​y​ ​g​o​n​e​.​ ​T​h​e​ ​l​i​s​t​ ​w​a​s​ ​r​e​f​r​e​s​h​e​d​.
+	 */
+	account_consentWithdrawGone: string;
+	/**
+	 * T​h​e​ ​c​o​n​s​e​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​i​t​h​d​r​a​w​n​.​ ​T​r​y​ ​a​g​a​i​n​.
+	 */
+	account_consentWithdrawFailed: string;
+	/**
 	 * W​e​l​c​o​m​e​ ​b​a​c​k
 	 */
 	login_title: string;
@@ -1463,6 +1499,53 @@ type RootTranslation = {
 	 * V​i​e​w​ ​d​o​c​u​m​e​n​t
 	 */
 	consent_item_view_document: string;
+	/**
+	 * I​ ​a​g​r​e​e​ ​t​o​ ​{​t​i​t​l​e​}
+	 * @param {string} title
+	 */
+	consent_statement_agree: RequiredParams<'title'>;
+	/**
+	 * R​e​a​d​ ​{​t​i​t​l​e​}
+	 * @param {string} title
+	 */
+	consent_statement_read: RequiredParams<'title'>;
+	/**
+	 * (​o​p​e​n​s​ ​i​n​ ​a​ ​n​e​w​ ​t​a​b​)
+	 */
+	consent_statement_newTab: string;
+	/**
+	 * V​e​r​s​i​o​n​ ​o​f​ ​{​d​a​t​e​}
+	 * @param {string} date
+	 */
+	statement_pageVersion: RequiredParams<'date'>;
+	/**
+	 * C​u​r​r​e​n​t​ ​v​e​r​s​i​o​n
+	 */
+	statement_pageCurrent: string;
+	/**
+	 * T​h​i​s​ ​i​s​ ​a​n​ ​e​a​r​l​i​e​r​ ​v​e​r​s​i​o​n​.
+	 */
+	statement_pageOlder: string;
+	/**
+	 * S​e​e​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​v​e​r​s​i​o​n
+	 */
+	statement_pageShowCurrent: string;
+	/**
+	 * P​u​b​l​i​s​h​e​d​ ​v​e​r​s​i​o​n​s
+	 */
+	statement_pageVersions: string;
+	/**
+	 * T​h​i​s​ ​d​o​c​u​m​e​n​t​ ​i​s​ ​p​u​b​l​i​s​h​e​d​ ​o​n​ ​a​n​o​t​h​e​r​ ​s​i​t​e​.
+	 */
+	statement_pageExternal: string;
+	/**
+	 * T​h​i​s​ ​s​t​a​t​e​m​e​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​f​o​u​n​d​.
+	 */
+	statement_pageNotFound: string;
+	/**
+	 * T​h​e​ ​s​t​a​t​e​m​e​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.​ ​T​r​y​ ​a​g​a​i​n​ ​l​a​t​e​r​.
+	 */
+	statement_pageUnavailable: string;
 	/**
 	 * {​o​l​d​V​e​r​s​i​o​n​}​ ​→​ ​{​n​e​w​V​e​r​s​i​o​n​}​ ​u​p​d​a​t​e​d
 	 * @param {string} newVersion
@@ -2900,6 +2983,38 @@ export type TranslationFunctions = {
 	 */
 	account_consentSelectedNone: () => LocalizedString;
 	/**
+	 * Withdraw consent
+	 */
+	account_consentWithdraw: () => LocalizedString;
+	/**
+	 * Withdraw consent for {name}
+	 */
+	account_consentWithdrawFor: (arg: { name: unknown }) => LocalizedString;
+	/**
+	 * Withdraw your consent for {name}? The service will ask for your consent again the next time you use it, and you may be signed out of it.
+	 */
+	account_consentWithdrawConfirmService: (arg: { name: unknown }) => LocalizedString;
+	/**
+	 * Withdraw your consent for {name}? The service will ask again the next time you sign in.
+	 */
+	account_consentWithdrawConfirmSamlSp: (arg: { name: unknown }) => LocalizedString;
+	/**
+	 * Withdraw your agreement to {name}? If it is required, you will be asked to agree again at your next sign-in.
+	 */
+	account_consentWithdrawConfirmStatement: (arg: { name: unknown }) => LocalizedString;
+	/**
+	 * The consent was withdrawn.
+	 */
+	account_consentWithdrawn: () => LocalizedString;
+	/**
+	 * This consent is already gone. The list was refreshed.
+	 */
+	account_consentWithdrawGone: () => LocalizedString;
+	/**
+	 * The consent could not be withdrawn. Try again.
+	 */
+	account_consentWithdrawFailed: () => LocalizedString;
+	/**
 	 * Welcome back
 	 */
 	login_title: () => LocalizedString;
@@ -3439,6 +3554,50 @@ export type TranslationFunctions = {
 	 * View document
 	 */
 	consent_item_view_document: () => LocalizedString;
+	/**
+	 * I agree to {title}
+	 */
+	consent_statement_agree: (arg: { title: string }) => LocalizedString;
+	/**
+	 * Read {title}
+	 */
+	consent_statement_read: (arg: { title: string }) => LocalizedString;
+	/**
+	 * (opens in a new tab)
+	 */
+	consent_statement_newTab: () => LocalizedString;
+	/**
+	 * Version of {date}
+	 */
+	statement_pageVersion: (arg: { date: string }) => LocalizedString;
+	/**
+	 * Current version
+	 */
+	statement_pageCurrent: () => LocalizedString;
+	/**
+	 * This is an earlier version.
+	 */
+	statement_pageOlder: () => LocalizedString;
+	/**
+	 * See the current version
+	 */
+	statement_pageShowCurrent: () => LocalizedString;
+	/**
+	 * Published versions
+	 */
+	statement_pageVersions: () => LocalizedString;
+	/**
+	 * This document is published on another site.
+	 */
+	statement_pageExternal: () => LocalizedString;
+	/**
+	 * This statement could not be found.
+	 */
+	statement_pageNotFound: () => LocalizedString;
+	/**
+	 * The statement could not be loaded. Try again later.
+	 */
+	statement_pageUnavailable: () => LocalizedString;
 	/**
 	 * {oldVersion} → {newVersion} updated
 	 */

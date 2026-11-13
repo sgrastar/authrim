@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const zhCN = createTranslation({
+	consent_statement_agree: '我同意《{title}》',
+	consent_statement_read: '阅读《{title}》',
+	consent_statement_newTab: '（在新标签页中打开）',
+	statement_pageVersion: '{date} 版',
+	statement_pageCurrent: '当前版本',
+	statement_pageOlder: '这是较早的版本。',
+	statement_pageShowCurrent: '查看当前版本',
+	statement_pageVersions: '已发布的版本',
+	statement_pageExternal: '此文档发布在其他网站上。',
+	statement_pageNotFound: '找不到此声明。',
+	statement_pageUnavailable: '无法加载声明。请稍后重试。',
 	account_guestLogoutWarning:
 		'退出登录后，无法再返回此访客账户。请先注册以保留对账户和数据的访问权限。仍要退出吗？',
 	account_guestTitle: '注册账户',
@@ -205,6 +216,16 @@ const zhCN = createTranslation({
 	account_consentSelectedOnce: '仅本次',
 	account_consentSelectedAlways: '始终允许',
 	account_consentSelectedNone: '不允许',
+	account_consentWithdraw: '撤回同意',
+	account_consentWithdrawFor: '撤回对 {name} 的同意',
+	account_consentWithdrawConfirmService:
+		'要撤回对 {name} 的同意吗？下次使用该服务时将再次征求您的同意，您也可能会被退出该服务。',
+	account_consentWithdrawConfirmSamlSp: '要撤回对 {name} 的同意吗？下次登录时该服务将再次询问。',
+	account_consentWithdrawConfirmStatement:
+		'要撤回对 {name} 的同意吗？如果该项为必需，下次登录时将再次请您同意。',
+	account_consentWithdrawn: '已撤回同意。',
+	account_consentWithdrawGone: '该同意已不存在，列表已刷新。',
+	account_consentWithdrawFailed: '无法撤回同意，请重试。',
 	login_title: '欢迎回来',
 	login_subtitle: '登录您的账户',
 	login_signInWithPasskey: '使用 Passkey 登录',

@@ -520,7 +520,15 @@
 			</ul>
 		{/if}
 	{:else if widget === 'account_consent_widget'}
+		{@const confirmingConsent =
+			mine('consent') && form && 'confirmWithdraw' in form ? String(form.confirmWithdraw) : null}
 		<p class="muted">{data.text.consentDescription}</p>
+		{#if notice('consent') === 'consent_withdrawn'}
+			<p role="status">{data.text.consentWithdrawn}</p>
+		{:else if notice('consent') === 'consent_gone'}
+			<p role="alert">{data.text.consentGone}</p>
+		{/if}
+		{#if failed('consent')}<p role="alert">{data.text.consentWithdrawFailed}</p>{/if}
 		{#if data.widgets.consents === null}
 			<p role="alert">{data.text.loadFailed}</p>
 		{:else if data.widgets.consents.length === 0}
@@ -538,6 +546,25 @@
 								<dd>{row.value}</dd>
 							{/each}
 						</dl>
+						{#if consent.withdraw}
+							<form method="post" action={actionOf(data.search, 'consent_withdraw')}>
+								{@render hidden()}
+								<input type="hidden" name="kind" value={consent.withdraw.kind} />
+								<input type="hidden" name="target" value={consent.withdraw.target} />
+								{#if confirmingConsent === consent.withdraw.key}
+									<p>{consent.withdraw.confirm}</p>
+									<input type="hidden" name="confirm" value="1" />
+									<button type="submit" aria-label={consent.withdraw.label}>
+										{data.text.consentWithdraw}
+									</button>
+									<a href={data.search || '?'}>{data.text.cancel}</a>
+								{:else}
+									<button type="submit" aria-label={consent.withdraw.label}>
+										{data.text.consentWithdraw}
+									</button>
+								{/if}
+							</form>
+						{/if}
 					</li>
 				{/each}
 			</ul>

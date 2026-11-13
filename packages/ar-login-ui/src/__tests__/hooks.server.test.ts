@@ -1270,7 +1270,9 @@ describe('Login UI proxy hooks', () => {
 			"script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://challenges.cloudflare.com"
 		);
 		expect(enabled).toContain('https://static.cloudflareinsights.com');
-		expect(enabled).toContain('frame-src https://challenges.cloudflare.com');
+		expect(enabled).toContain("frame-src 'self' https://challenges.cloudflare.com");
+		// The statement text framed on the consent step is from this origin.
+		expect(disabled).toContain("frame-src 'self'");
 	});
 
 	it('adds hCaptcha and reCAPTCHA CSP origins only for the selected provider', async () => {
@@ -1664,5 +1666,67 @@ describe('environment banner noindex header', () => {
 		expect(
 			(await run({ noindex: true }, 'application/json')).headers.get('X-Robots-Tag')
 		).toBeNull();
+	});
+});
+
+describe('statement text framed on the consent step', () => {
+	async function headersOf(path: string) {
+		const { securityHeadersHandle } = await import('../hooks.server');
+		const url = new URL(path, 'https://login.example.com');
+		const event = { request: new Request(url), url, locals: {} as never, platform: { env: {} } };
+		const response = await securityHeadersHandle({
+			event: event as never,
+			resolve: async () => new Response('x', { headers: { 'Content-Type': 'text/html' } })
+		});
+		return response.headers;
+	}
+
+	it('lets only this origin frame the statement text', async () => {
+		const embed = await headersOf('/statements/terms/embed');
+		expect(embed.get('X-Frame-Options')).toBe('SAMEORIGIN');
+		expect(embed.get('Content-Security-Policy')).toContain("frame-ancestors 'self'");
+		expect(embed.get('Content-Security-Policy')).not.toContain("frame-ancestors 'none'");
+	});
+
+	it('keeps every other page, the statement page itself included, out of frames', async () => {
+		for (const path of ['/statements/terms', '/login', '/statements/terms/embed/x']) {
+			const headers = await headersOf(path);
+			expect(headers.get('X-Frame-Options'), path).toBe('DENY');
+			expect(headers.get('Content-Security-Policy'), path).toContain("frame-ancestors 'none'");
+		}
+	});
+});
+
+describe('fetchPublicApiForPageRequest', () => {
+	it('reads for the tenant chosen on the shared Login UI, without credentials', async () => {
+		const { fetchPublicApiForPageRequest } = await import('../hooks.server');
+		const seen: Request[] = [];
+		const binding = {
+			fetch: async (input: string, init: RequestInit) => {
+				seen.push(new Request(input, init));
+				return Response.json({ ok: true });
+			}
+		};
+		const url = new URL(
+			'https://login.example.com/statements/terms/embed?tenant_host=acme.example.com'
+		);
+		const event = {
+			request: new Request(url, {
+				headers: { cookie: 'session=secret', authorization: 'Bearer x' }
+			}),
+			url,
+			locals: {},
+			platform: { env: { AR_ROUTER: binding, PUBLIC_API_BASE_URL: 'https://api.example.com' } },
+			getClientAddress: () => '203.0.113.1'
+		};
+		const answer = await fetchPublicApiForPageRequest(
+			event as never,
+			'/api/v1/consent-statements/terms'
+		);
+		expect(answer).toEqual({ status: 200, json: { ok: true } });
+		expect(seen[0].headers.get('X-Authrim-Forwarded-Host')).toBe('acme.example.com');
+		expect(seen[0].headers.get('cookie')).toBeNull();
+		expect(seen[0].headers.get('authorization')).toBeNull();
+		expect(await fetchPublicApiForPageRequest(event as never, '//evil.example/x')).toBeNull();
 	});
 });

@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const fr = createTranslation({
+	consent_statement_agree: "J'accepte {title}",
+	consent_statement_read: 'Lire {title}',
+	consent_statement_newTab: '(s’ouvre dans un nouvel onglet)',
+	statement_pageVersion: 'Version du {date}',
+	statement_pageCurrent: 'Version actuelle',
+	statement_pageOlder: 'Ceci est une version antérieure.',
+	statement_pageShowCurrent: 'Voir la version actuelle',
+	statement_pageVersions: 'Versions publiées',
+	statement_pageExternal: 'Ce document est publié sur un autre site.',
+	statement_pageNotFound: 'Cette déclaration est introuvable.',
+	statement_pageUnavailable: 'Impossible de charger la déclaration. Réessayez plus tard.',
 	account_guestLogoutWarning:
 		'Après la déconnexion, vous ne pourrez plus accéder à ce compte invité. Inscrivez-vous pour conserver votre accès au compte et aux données. Se déconnecter quand même ?',
 	account_guestTitle: 'Enregistrer votre compte',
@@ -227,6 +238,17 @@ const fr = createTranslation({
 	account_consentSelectedOnce: 'Cette fois seulement',
 	account_consentSelectedAlways: 'Toujours autoriser',
 	account_consentSelectedNone: 'Ne pas autoriser',
+	account_consentWithdraw: 'Retirer le consentement',
+	account_consentWithdrawFor: 'Retirer le consentement pour {name}',
+	account_consentWithdrawConfirmService:
+		'Retirer votre consentement pour {name} ? Le service vous le redemandera à votre prochaine utilisation, et vous pourriez être déconnecté.',
+	account_consentWithdrawConfirmSamlSp:
+		'Retirer votre consentement pour {name} ? Le service vous le redemandera à votre prochaine connexion.',
+	account_consentWithdrawConfirmStatement:
+		"Retirer votre accord pour {name} ? S'il est obligatoire, il vous sera redemandé à votre prochaine connexion.",
+	account_consentWithdrawn: 'Le consentement a été retiré.',
+	account_consentWithdrawGone: "Ce consentement n'existe plus. La liste a été actualisée.",
+	account_consentWithdrawFailed: 'Impossible de retirer le consentement. Réessayez.',
 	login_title: 'Ravi de vous revoir',
 	login_subtitle: 'Connectez-vous à votre compte',
 	login_signInWithPasskey: 'Se connecter avec une Passkey',

@@ -136,23 +136,56 @@
 						</label>
 					{/each}
 				</fieldset>
-			{:else if item.kind === 'display'}
-				<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
-				<div>{@html item.html}</div>
+				{#if item.link}<p>
+						<a href={item.link} target="_blank" rel="noopener noreferrer">{item.readLabel}</a>
+					</p>{/if}
 			{:else}
-				<label class="check">
-					<input
-						type="checkbox"
-						name={`consent:${item.id}`}
-						value="granted"
-						checked={echo ? echo[`consent:${item.id}`] === 'granted' : item.defaultChecked}
-						required={item.required}
-					/>
-					<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
-					<span>{@html item.html}</span>
-				</label>
+				<div class="statement">
+					{#if item.display !== 'external' || item.kind === 'display'}
+						<p class="statement-title">{item.title}</p>
+					{/if}
+					{#if item.descriptionHtml}
+						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
+						<p class="statement-description">{@html item.descriptionHtml}</p>
+					{/if}
+					{#if item.html}
+						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
+						<div class="statement-text">{@html item.html}</div>
+					{/if}
+					{#if item.frame}
+						<iframe
+							class="statement-frame"
+							src={item.frame}
+							title={item.title}
+							loading="lazy"
+							referrerpolicy="same-origin"
+							sandbox="allow-popups allow-popups-to-escape-sandbox"
+						></iframe>
+					{/if}
+					{#if item.link}
+						<p>
+							<a
+								href={item.link}
+								target="_blank"
+								rel={item.display === 'external' ? 'noopener noreferrer' : 'noopener'}
+								>{item.readLabel}</a
+							>
+						</p>
+					{/if}
+					{#if item.kind === 'checkbox'}
+						<label class="check">
+							<input
+								type="checkbox"
+								name={`consent:${item.id}`}
+								value="granted"
+								checked={echo ? echo[`consent:${item.id}`] === 'granted' : item.defaultChecked}
+								required={item.required}
+							/>
+							<span>{item.agreeLabel}</span>
+						</label>
+					{/if}
+				</div>
 			{/if}
-			{#if item.documentUrl}<p><a href={item.documentUrl}>{item.documentUrl}</a></p>{/if}
 		{/each}
 	</fieldset>
 {/snippet}

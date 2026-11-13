@@ -237,6 +237,17 @@ const ja = {
 	account_consentSelectedOnce: '今回のみ',
 	account_consentSelectedAlways: '今後も許可',
 	account_consentSelectedNone: '許可しない',
+	account_consentWithdraw: '同意を取り消す',
+	account_consentWithdrawFor: '{name} への同意を取り消す',
+	account_consentWithdrawConfirmService:
+		'{name} への同意を取り消しますか？次にこのサービスを利用するときに、あらためて同意をお尋ねします。サービスからサインアウトされる場合があります。',
+	account_consentWithdrawConfirmSamlSp:
+		'{name} への同意を取り消しますか？次回のサインインのときに、あらためてお尋ねします。',
+	account_consentWithdrawConfirmStatement:
+		'{name} への同意を取り消しますか？この同意が必須の場合は、次回のサインインのときに、あらためて同意をお願いします。',
+	account_consentWithdrawn: '同意を取り消しました。',
+	account_consentWithdrawGone: 'この同意はすでにありません。一覧を更新しました。',
+	account_consentWithdrawFailed: '同意を取り消せませんでした。もう一度お試しください。',
 
 	login_title: 'おかえりなさい',
 	login_subtitle: 'アカウントにログイン',
@@ -401,6 +412,18 @@ const ja = {
 	consent_items_required_title: '必須の同意項目',
 	consent_items_optional_title: '任意の同意項目',
 	consent_item_view_document: '文書を表示',
+	consent_statement_agree: '「{title}」に同意する',
+	consent_statement_read: '「{title}」を読む',
+	consent_statement_newTab: '（新しいタブで開きます）',
+	statement_pageVersion: '{date} 版',
+	statement_pageCurrent: '現在の版',
+	statement_pageOlder: 'これは過去の版です。',
+	statement_pageShowCurrent: '現在の版を見る',
+	statement_pageVersions: '公開された版',
+	statement_pageExternal: 'この文書は別のサイトで公開されています。',
+	statement_pageNotFound: 'この同意文は見つかりません。',
+	statement_pageUnavailable:
+		'同意文を読み込めませんでした。しばらくしてから、もう一度お試しください。',
 	consent_item_version_updated: '{oldVersion} → {newVersion} に更新',
 	consent_item_required_badge: '必須',
 	consent_item_optional_badge: '任意',

@@ -109,25 +109,42 @@ export function liteAccountDevices(
 	});
 }
 
-export type LiteAccountConsentItem =
-	| {
-			kind: 'oauth_client';
-			title: string;
-			subtitle: string;
-			rows: Array<{ label: string; value: string }>;
-	  }
-	| {
-			kind: 'statement';
-			title: string;
-			subtitle: string;
-			rows: Array<{ label: string; value: string }>;
-	  }
-	| {
-			kind: 'saml_sp';
-			title: string;
-			subtitle: string;
-			rows: Array<{ label: string; value: string }>;
-	  };
+/** The withdrawal a consent offers (the form it posts, and the question asked first). */
+export interface LiteAccountConsentWithdraw {
+	kind: 'oauth_client' | 'saml_sp' | 'statement';
+	/** The client ID, the SP's entity ID, or the statement ID. */
+	target: string;
+	/** `kind:target`, which the page names as the one being confirmed. */
+	key: string;
+	confirm: string;
+	/** The button's accessible name (it names the service or statement). */
+	label: string;
+}
+
+export type LiteAccountConsentItem = {
+	kind: 'oauth_client' | 'statement' | 'saml_sp';
+	title: string;
+	subtitle: string;
+	rows: Array<{ label: string; value: string }>;
+	/** Null: it cannot be withdrawn here (a statement that does not allow it). */
+	withdraw: LiteAccountConsentWithdraw | null;
+};
+
+function withdrawOf(
+	kind: LiteAccountConsentWithdraw['kind'],
+	target: string,
+	name: string,
+	confirm: string,
+	LL: LL
+): LiteAccountConsentWithdraw {
+	return {
+		kind,
+		target,
+		key: `${kind}:${target}`,
+		confirm,
+		label: LL.account_consentWithdrawFor({ name })
+	};
+}
 
 export function liteAccountConsents(
 	json: Record<string, unknown>,
@@ -152,7 +169,14 @@ export function liteAccountConsents(
 					rows: [
 						...accountReleaseRows(LL, row.informationRelease),
 						{ label: LL.account_consentGrantedAt(), value: when(row.decidedAt) }
-					]
+					],
+					withdraw: withdrawOf(
+						'saml_sp',
+						spEntityId,
+						text(row.spName) ?? spEntityId,
+						LL.account_consentWithdrawConfirmSamlSp({ name: text(row.spName) ?? spEntityId }),
+						LL
+					)
 				}
 			];
 		}
@@ -190,7 +214,14 @@ export function liteAccountConsents(
 						{ label: LL.account_consentGrantedAt(), value: when(row.grantedAt) },
 						{ label: LL.account_consentExpiresAt(), value: expires(row.expiresAt) },
 						{ label: LL.account_consentPolicyVersions(), value: parts.join(' / ') || '-' }
-					]
+					],
+					withdraw: withdrawOf(
+						'oauth_client',
+						clientId,
+						text(row.clientName) ?? clientId,
+						LL.account_consentWithdrawConfirmService({ name: text(row.clientName) ?? clientId }),
+						LL
+					)
 				}
 			];
 		}
@@ -232,7 +263,20 @@ export function liteAccountConsents(
 							: []),
 						{ label: LL.account_consentGrantedAt(), value: when(row.grantedAt) },
 						{ label: LL.account_consentExpiresAt(), value: expires(row.expiresAt) }
-					]
+					],
+					// Only a granted agreement whose statement allows it (the API says so).
+					withdraw:
+						row.withdrawable === true
+							? withdrawOf(
+									'statement',
+									statementId,
+									text(row.title) ?? statementId,
+									LL.account_consentWithdrawConfirmStatement({
+										name: text(row.title) ?? statementId
+									}),
+									LL
+								)
+							: null
 				}
 			];
 		}

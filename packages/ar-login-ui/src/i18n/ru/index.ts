@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const ru = createTranslation({
+	consent_statement_agree: 'Я принимаю «{title}»',
+	consent_statement_read: 'Прочитать «{title}»',
+	consent_statement_newTab: '(откроется в новой вкладке)',
+	statement_pageVersion: 'Редакция от {date}',
+	statement_pageCurrent: 'Текущая редакция',
+	statement_pageOlder: 'Это одна из прежних редакций.',
+	statement_pageShowCurrent: 'Открыть текущую редакцию',
+	statement_pageVersions: 'Опубликованные редакции',
+	statement_pageExternal: 'Этот документ опубликован на другом сайте.',
+	statement_pageNotFound: 'Этот документ не найден.',
+	statement_pageUnavailable: 'Не удалось загрузить документ. Повторите попытку позже.',
 	account_guestLogoutWarning:
 		'После выхода вы не сможете вернуться в этот гостевой аккаунт. Сначала зарегистрируйтесь, чтобы сохранить доступ к аккаунту и данным. Всё равно выйти?',
 	account_guestTitle: 'Зарегистрируйте аккаунт',
@@ -220,6 +231,17 @@ const ru = createTranslation({
 	account_consentSelectedOnce: 'Только сейчас',
 	account_consentSelectedAlways: 'Разрешать всегда',
 	account_consentSelectedNone: 'Не разрешать',
+	account_consentWithdraw: 'Отозвать согласие',
+	account_consentWithdrawFor: 'Отозвать согласие для {name}',
+	account_consentWithdrawConfirmService:
+		'Отозвать ваше согласие для {name}? При следующем использовании сервис снова запросит согласие, а вы можете быть выведены из него.',
+	account_consentWithdrawConfirmSamlSp:
+		'Отозвать ваше согласие для {name}? Сервис снова спросит при следующем входе.',
+	account_consentWithdrawConfirmStatement:
+		'Отозвать ваше согласие с «{name}»? Если оно обязательно, при следующем входе вас снова попросят согласиться.',
+	account_consentWithdrawn: 'Согласие отозвано.',
+	account_consentWithdrawGone: 'Этого согласия уже нет. Список обновлён.',
+	account_consentWithdrawFailed: 'Не удалось отозвать согласие. Повторите попытку.',
 	login_title: 'С возвращением',
 	login_subtitle: 'Войдите в свою учётную запись',
 	login_signInWithPasskey: 'Войти с Passkey',

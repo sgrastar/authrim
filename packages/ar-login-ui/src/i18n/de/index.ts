@@ -2,6 +2,18 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const de = createTranslation({
+	consent_statement_agree: 'Ich stimme {title} zu',
+	consent_statement_read: '{title} lesen',
+	consent_statement_newTab: '(öffnet in einem neuen Tab)',
+	statement_pageVersion: 'Fassung vom {date}',
+	statement_pageCurrent: 'Aktuelle Fassung',
+	statement_pageOlder: 'Dies ist eine frühere Fassung.',
+	statement_pageShowCurrent: 'Aktuelle Fassung ansehen',
+	statement_pageVersions: 'Veröffentlichte Fassungen',
+	statement_pageExternal: 'Dieses Dokument ist auf einer anderen Website veröffentlicht.',
+	statement_pageNotFound: 'Diese Erklärung wurde nicht gefunden.',
+	statement_pageUnavailable:
+		'Die Erklärung konnte nicht geladen werden. Versuchen Sie es später erneut.',
 	account_guestLogoutWarning:
 		'Nach dem Abmelden können Sie nicht zu diesem Gastkonto zurückkehren. Registrieren Sie sich zuerst, um den Zugriff auf Ihr Konto und Ihre Daten zu behalten. Trotzdem abmelden?',
 	account_guestTitle: 'Konto registrieren',
@@ -228,6 +240,19 @@ const de = createTranslation({
 	account_consentSelectedOnce: 'Nur dieses Mal',
 	account_consentSelectedAlways: 'Immer erlauben',
 	account_consentSelectedNone: 'Nicht erlauben',
+	account_consentWithdraw: 'Einwilligung widerrufen',
+	account_consentWithdrawFor: 'Einwilligung für {name} widerrufen',
+	account_consentWithdrawConfirmService:
+		'Ihre Einwilligung für {name} widerrufen? Der Dienst fragt bei der nächsten Nutzung erneut nach Ihrer Einwilligung, und Sie werden möglicherweise abgemeldet.',
+	account_consentWithdrawConfirmSamlSp:
+		'Ihre Einwilligung für {name} widerrufen? Der Dienst fragt bei der nächsten Anmeldung erneut.',
+	account_consentWithdrawConfirmStatement:
+		'Ihre Zustimmung zu {name} widerrufen? Falls sie erforderlich ist, werden Sie bei der nächsten Anmeldung erneut um Zustimmung gebeten.',
+	account_consentWithdrawn: 'Die Einwilligung wurde widerrufen.',
+	account_consentWithdrawGone:
+		'Diese Einwilligung existiert nicht mehr. Die Liste wurde aktualisiert.',
+	account_consentWithdrawFailed:
+		'Die Einwilligung konnte nicht widerrufen werden. Versuchen Sie es erneut.',
 	login_title: 'Willkommen zurück',
 	login_subtitle: 'Melden Sie sich bei Ihrem Konto an',
 	login_signInWithPasskey: 'Mit Passkey anmelden',

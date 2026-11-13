@@ -430,6 +430,15 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route the public consent statement API to OP_AUTH', async () => {
+        const req = new Request(
+          'https://example.com/api/v1/consent-statements/terms?version=20261113'
+        );
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      });
+
       it('should route account provisioning status polls to OP_AUTH', async () => {
         const req = new Request('https://example.com/api/v1/auth/account-provisioning/status', {
           method: 'POST',
@@ -2196,6 +2205,27 @@ describe('Router Worker', () => {
       expect(rootResponse.status).toBe(200);
       expect(await rootResponse.json()).toMatchObject({ name: 'Authrim OIDC Provider' });
       expect(loginUiWorker.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('should proxy the public statement page to Login UI on the issuer host', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const env = {
+        ...mockEnv,
+        ENABLE_LOGIN_UI_PATH_PROXY: 'true',
+        ENABLE_LOGIN_UI_PROXY: 'false',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const response = await app.fetch(
+        new Request('https://test.example.com/statements/terms?version=20261113'),
+        env
+      );
+
+      expect(response.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
+      expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).pathname).toBe('/statements/terms');
     });
 
     it('should proxy browser requests on the configured Login UI host to Login UI before API routing', async () => {

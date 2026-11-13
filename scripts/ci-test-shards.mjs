@@ -58,6 +58,7 @@ export const SHARDS = {
     'ar-control',
     'ar-agent-access',
     'ar-plugin-runner',
+    'ar-demo',
   ]),
 };
 

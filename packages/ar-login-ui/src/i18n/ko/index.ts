@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const ko = createTranslation({
+	consent_statement_agree: '{title}에 동의합니다',
+	consent_statement_read: '{title} 읽기',
+	consent_statement_newTab: '(새 탭에서 열림)',
+	statement_pageVersion: '{date} 버전',
+	statement_pageCurrent: '현재 버전',
+	statement_pageOlder: '이전 버전입니다.',
+	statement_pageShowCurrent: '현재 버전 보기',
+	statement_pageVersions: '게시된 버전',
+	statement_pageExternal: '이 문서는 다른 사이트에 게시되어 있습니다.',
+	statement_pageNotFound: '이 동의서를 찾을 수 없습니다.',
+	statement_pageUnavailable: '동의서를 불러오지 못했습니다. 잠시 후 다시 시도하세요.',
 	account_guestLogoutWarning:
 		'로그아웃하면 이 게스트 계정으로 돌아올 수 없습니다. 계정과 데이터에 계속 접근하려면 먼저 등록하세요. 그래도 로그아웃하시겠습니까?',
 	account_guestTitle: '계정 등록',
@@ -214,6 +225,17 @@ const ko = createTranslation({
 	account_consentSelectedOnce: '이번만',
 	account_consentSelectedAlways: '항상 허용',
 	account_consentSelectedNone: '허용 안 함',
+	account_consentWithdraw: '동의 철회',
+	account_consentWithdrawFor: '{name}에 대한 동의 철회',
+	account_consentWithdrawConfirmService:
+		'{name}에 대한 동의를 철회할까요? 다음에 이 서비스를 이용할 때 다시 동의를 요청하며, 서비스에서 로그아웃될 수 있습니다.',
+	account_consentWithdrawConfirmSamlSp:
+		'{name}에 대한 동의를 철회할까요? 다음 로그인 때 서비스가 다시 묻습니다.',
+	account_consentWithdrawConfirmStatement:
+		'{name}에 대한 동의를 철회할까요? 필수 항목이라면 다음 로그인 때 다시 동의하셔야 합니다.',
+	account_consentWithdrawn: '동의를 철회했습니다.',
+	account_consentWithdrawGone: '이 동의는 이미 없습니다. 목록을 새로 고쳤습니다.',
+	account_consentWithdrawFailed: '동의를 철회하지 못했습니다. 다시 시도해 주세요.',
 	login_title: '다시 오신 것을 환영합니다',
 	login_subtitle: '계정에 로그인하세요',
 	login_signInWithPasskey: 'Passkey로 로그인',

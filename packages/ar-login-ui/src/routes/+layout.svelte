@@ -21,7 +21,8 @@
 	{/if}
 </svelte:head>
 
-{#if banner}
+<!-- A statement's text framed in the consent screen draws no banner of its own. -->
+{#if banner && !page.route.id?.endsWith('/embed')}
 	<EnvironmentBanner
 		text={banner.text}
 		textLocalizations={banner.textLocalizations}

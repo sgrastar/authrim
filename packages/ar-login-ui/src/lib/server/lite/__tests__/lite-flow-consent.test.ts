@@ -390,13 +390,27 @@ describe('a consent step', () => {
 		expect(page.decision).toMatchObject({ kind: 'screen' });
 		expect(page.stepContinue).toBe(true);
 		const consent = page.consent as {
-			items: Array<{ id: string; html: string }>;
+			items: Array<{
+				id: string;
+				title: string;
+				descriptionHtml: string;
+				display: string;
+				link: string | null;
+				frame: string | null;
+			}>;
 			fields: unknown[];
 		};
 		expect(consent.items.map((item) => item.id)).toEqual(['tos', 'share']);
-		expect(consent.items[0].html).not.toContain('<script>');
 		// A link of the words stays a link (its attribute escaped, as the SPA's sanitizer does).
-		expect(consent.items[0].html).toContain('<a href="https:&#x2F;&#x2F;d.example&#x2F;t"');
+		expect(consent.items[0].descriptionHtml).toContain(
+			'<a href="https:&#x2F;&#x2F;d.example&#x2F;t"'
+		);
+		// A document kept elsewhere is a link to it; nothing is framed.
+		expect(consent.items[0]).toMatchObject({
+			display: 'external',
+			link: 'https://d.example/terms',
+			frame: null
+		});
 		expect(consent.fields).toEqual([{ key: 'email', label: 'Email', required: true }]);
 	});
 

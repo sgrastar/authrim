@@ -9,6 +9,10 @@ import { tenantBackupObjectKeyPrefixes } from './admin-job-executor';
 import { disableTenantLookupDirectory } from './tenant-deletion-lookup-cleanup';
 import { publishTenantRuntimeRegistryRouteState } from './tenant-runtime-registry-route-state';
 import { deleteTenantPublicAssets } from './r2-storage-maintenance';
+import {
+  createTenantAdminPurgeAuditWriter,
+  purgeTenantHomedAdmins,
+} from './tenant-deletion-admin-accounts';
 
 interface TenantDeletionJobLogger {
   info(message: string, metadata?: Record<string, unknown>): void;
@@ -21,6 +25,8 @@ interface TenantDeletionJobRow {
   config: string;
   attempt_count?: number | null;
   max_attempts?: number | null;
+  /** Epoch seconds the job was queued; fixed for the job's life. */
+  created_at?: number | null;
 }
 
 interface TenantDeletionJobConfig {
@@ -428,6 +434,44 @@ async function deleteTenantAdminRows(
 }
 
 /**
+ * Removes the administrators homed in the deleted tenant (see tenant-deletion-admin-accounts).
+ * Runs only after `deleteTenantAdminRows`, i.e. after the point of no return; a failure fails the
+ * step (it is retried, and the tenant is not marked deleted) rather than passing silently.
+ */
+async function purgeTenantAdminAccounts(
+  env: Env,
+  log: TenantDeletionJobLogger,
+  coreAdapter: Pick<DatabaseAdapter, 'queryOne'>,
+  adminAdapter: DatabaseAdapter,
+  targetTenantId: string,
+  job: TenantDeletionJobRow
+): Promise<void> {
+  const jobId = job.id;
+  const jobTenantId = job.tenant_id;
+  // Every audit event of the job carries the time the job was queued, so a retry rewrites the
+  // same events (the audit store refuses an event id whose content changed). A row without it
+  // (never in the table: the column is NOT NULL) falls back to the clock.
+  const auditAt =
+    Number.isSafeInteger(job.created_at) && Number(job.created_at) > 0
+      ? Number(job.created_at) * 1000
+      : Date.now();
+  // Checked again here, right before the destructive step.
+  await assertDeletionTargetNotDefault(coreAdapter, targetTenantId);
+  // The audit rows belong to a live tenant: the one the deletion was requested from.
+  const auditTenantId =
+    jobTenantId !== targetTenantId ? jobTenantId : env.DEFAULT_TENANT_ID || 'default';
+  await purgeTenantHomedAdmins({
+    adapter: adminAdapter,
+    tenantId: targetTenantId,
+    jobId,
+    auditTenantId,
+    auditAt,
+    writeAudit: createTenantAdminPurgeAuditWriter(adminAdapter, env),
+    log,
+  });
+}
+
+/**
  * The object catalog entries an export job's result names (its manifest and table artifacts),
  * besides the job's own result artifact.
  */
@@ -575,7 +619,7 @@ async function processPendingTenantDeletionJobsInStore(
     ? ensureDatabaseAdapter(env.DB_ADMIN, 'tenant-deletion-admin')
     : null;
   const pendingJobs = await coreAdapter.query<TenantDeletionJobRow>(
-    `SELECT id, tenant_id, config, attempt_count, max_attempts
+    `SELECT id, tenant_id, config, attempt_count, max_attempts, created_at
        FROM admin_jobs
       WHERE job_type = 'tenants/delete'
         AND status = 'pending'
@@ -632,6 +676,14 @@ async function processPendingTenantDeletionJobsInStore(
         await adminAdapter.transaction(async (tx) => {
           await deleteTenantAdminRows(tx, deletionTargetTenantId);
         });
+        await purgeTenantAdminAccounts(
+          env,
+          log,
+          coreAdapter,
+          adminAdapter,
+          deletionTargetTenantId,
+          job
+        );
         await updateTenantDatabaseLifecycleState(
           adminAdapter,
           deletionTargetTenantId,
@@ -715,6 +767,14 @@ async function processPendingTenantDeletionJobsInStore(
         await adminAdapter.transaction(async (tx) => {
           await deleteTenantAdminRows(tx, deletionTargetTenantId);
         });
+        await purgeTenantAdminAccounts(
+          env,
+          log,
+          coreAdapter,
+          adminAdapter,
+          deletionTargetTenantId,
+          job
+        );
         await updateTenantDatabaseLifecycleState(
           adminAdapter,
           deletionTargetTenantId,

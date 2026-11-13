@@ -6,8 +6,9 @@
  * (src/hooks.ts): a direct request for `/__lite/...` is refused (lite-guard.ts).
  *
  * In scope (plan): sign-in, code entry, consent, error, sign-up (with invitations), account,
- * re-authentication, the external sign-in callback, signed out, and `/`. Not in scope: `/device`,
- * `/ciba` (the normal UI), `/discover`, and every path the Login UI proxies to the backends.
+ * re-authentication, the external sign-in callback, signed out, the public statement page, and
+ * `/`. Not in scope: `/device`, `/ciba` (the normal UI), `/discover`, and every path the Login UI
+ * proxies to the backends.
  */
 
 /** The internal prefix of the lite routes; never a public path. */
@@ -65,6 +66,8 @@ export function liteRouteForPath(pathname: string): string | null {
 	const page = LITE_PAGE_PATHS.get(path);
 	if (page) return `${LITE_ROUTE_PREFIX}${page}`;
 	if (path.startsWith('/account/')) return `${LITE_ROUTE_PREFIX}${path}`;
+	// The public statement page of one statement (`/statements/<slug>`).
+	if (/^\/statements\/[^/]+$/u.test(path)) return `${LITE_ROUTE_PREFIX}${path}`;
 	return null;
 }
 

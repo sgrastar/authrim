@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const pt = createTranslation({
+	consent_statement_agree: 'Concordo com {title}',
+	consent_statement_read: 'Ler {title}',
+	consent_statement_newTab: '(abre em uma nova aba)',
+	statement_pageVersion: 'Versão de {date}',
+	statement_pageCurrent: 'Versão atual',
+	statement_pageOlder: 'Esta é uma versão anterior.',
+	statement_pageShowCurrent: 'Ver a versão atual',
+	statement_pageVersions: 'Versões publicadas',
+	statement_pageExternal: 'Este documento está publicado em outro site.',
+	statement_pageNotFound: 'Esta declaração não foi encontrada.',
+	statement_pageUnavailable: 'Não foi possível carregar a declaração. Tente novamente mais tarde.',
 	account_guestLogoutWarning:
 		'Ao sair, você não poderá voltar a esta conta de convidado. Cadastre-se primeiro para manter o acesso à sua conta e aos seus dados. Sair mesmo assim?',
 	account_guestTitle: 'Registre sua conta',
@@ -221,6 +232,17 @@ const pt = createTranslation({
 	account_consentSelectedOnce: 'Somente desta vez',
 	account_consentSelectedAlways: 'Permitir sempre',
 	account_consentSelectedNone: 'Não permitir',
+	account_consentWithdraw: 'Revogar consentimento',
+	account_consentWithdrawFor: 'Revogar consentimento para {name}',
+	account_consentWithdrawConfirmService:
+		'Revogar seu consentimento para {name}? O serviço pedirá seu consentimento novamente na próxima vez que você o usar, e você pode ser desconectado dele.',
+	account_consentWithdrawConfirmSamlSp:
+		'Revogar seu consentimento para {name}? O serviço perguntará novamente no seu próximo login.',
+	account_consentWithdrawConfirmStatement:
+		'Revogar sua concordância com {name}? Se for obrigatória, você precisará concordar novamente no próximo login.',
+	account_consentWithdrawn: 'O consentimento foi revogado.',
+	account_consentWithdrawGone: 'Este consentimento não existe mais. A lista foi atualizada.',
+	account_consentWithdrawFailed: 'Não foi possível revogar o consentimento. Tente novamente.',
 	login_title: 'Boas-vindas',
 	login_subtitle: 'Entre na sua conta',
 	login_signInWithPasskey: 'Entrar com Passkey',
