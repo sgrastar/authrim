@@ -236,6 +236,17 @@ const en = {
 	account_consentSelectedOnce: 'This time only',
 	account_consentSelectedAlways: 'Always allow',
 	account_consentSelectedNone: 'Do not allow',
+	account_consentWithdraw: 'Withdraw consent',
+	account_consentWithdrawFor: 'Withdraw consent for {name}',
+	account_consentWithdrawConfirmService:
+		'Withdraw your consent for {name}? The service will ask for your consent again the next time you use it, and you may be signed out of it.',
+	account_consentWithdrawConfirmSamlSp:
+		'Withdraw your consent for {name}? The service will ask again the next time you sign in.',
+	account_consentWithdrawConfirmStatement:
+		'Withdraw your agreement to {name}? If it is required, you will be asked to agree again at your next sign-in.',
+	account_consentWithdrawn: 'The consent was withdrawn.',
+	account_consentWithdrawGone: 'This consent is already gone. The list was refreshed.',
+	account_consentWithdrawFailed: 'The consent could not be withdrawn. Try again.',
 
 	login_title: 'Welcome back',
 	login_subtitle: 'Sign in to your account',

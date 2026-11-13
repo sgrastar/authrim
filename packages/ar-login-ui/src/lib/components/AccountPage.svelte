@@ -150,6 +150,8 @@
 	let accountError = $state('');
 	let profileError = $state('');
 	let consentError = $state('');
+	let consentNotice = $state<{ kind: 'success' | 'error'; message: string } | null>(null);
+	let consentAction = $state('');
 	let profileSaved = $state(false);
 	let profileSaving = $state(false);
 	let emailChangeStage = $state<'idle' | 'challenge' | 'processing' | 'completed'>('idle');
@@ -717,6 +719,45 @@
 			consentError = localizeApiError(result.error, $LL.account_loadFailed());
 		}
 		consentsLoading = false;
+	}
+
+	/** Withdraws one consent (after the widget's confirmation) and refreshes the list. */
+	async function withdrawConsent(consent: AccountConsent) {
+		if (consentAction) return;
+		consentAction = `consent:${consent.id}`;
+		consentNotice = null;
+		try {
+			const result =
+				consent.kind === 'oauth_client'
+					? await accountAPI.withdrawOAuthClientConsent(consent.clientId)
+					: consent.kind === 'saml_sp'
+						? await accountAPI.withdrawSamlSpConsent(consent.spEntityId)
+						: await accountAPI.withdrawStatementConsent(consent.statementId);
+			// Already gone (another tab or the service): the list is refreshed all the same.
+			const gone = result.error?.error === 'not_found';
+			if (result.error && !gone) {
+				consentNotice = {
+					kind: 'error',
+					message: localizeApiError(result.error, $LL.account_consentWithdrawFailed())
+				};
+				return;
+			}
+			consentNotice = gone
+				? { kind: 'error', message: $LL.account_consentWithdrawGone() }
+				: { kind: 'success', message: $LL.account_consentWithdrawn() };
+			// The newest load ends any loading state, also one a language change started meanwhile.
+			const generation = ++consentLoadGeneration;
+			const refreshed = await accountAPI.getConsents(getLocale());
+			if (generation === consentLoadGeneration) {
+				if (refreshed.data) {
+					consents = refreshed.data.consents;
+					consentError = '';
+				}
+				consentsLoading = false;
+			}
+		} finally {
+			consentAction = '';
+		}
 	}
 
 	async function refreshSecurity(areas?: SecurityArea[]) {
@@ -1428,6 +1469,9 @@
 								loading={consentsLoading}
 								title={accountWidgetTitle(field)}
 								error={consentError}
+								actionLoading={consentAction}
+								notice={consentNotice}
+								onWithdraw={withdrawConsent}
 							/>
 						{:else if field.block_type === 'account_activity_widget'}
 							<AccountActivityWidget

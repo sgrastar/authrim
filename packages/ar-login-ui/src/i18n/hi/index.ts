@@ -234,6 +234,17 @@ const translation = {
 	account_consentSelectedOnce: 'इस बार केवल',
 	account_consentSelectedAlways: 'हमेशा अनुमति दें',
 	account_consentSelectedNone: 'अनुमति न दें',
+	account_consentWithdraw: 'सहमति वापस लें',
+	account_consentWithdrawFor: '{name} के लिए सहमति वापस लें',
+	account_consentWithdrawConfirmService:
+		'{name} के लिए अपनी सहमति वापस लें? अगली बार इस सेवा का उपयोग करने पर यह दोबारा सहमति माँगेगी, और आप इससे साइन आउट हो सकते हैं।',
+	account_consentWithdrawConfirmSamlSp:
+		'{name} के लिए अपनी सहमति वापस लें? अगली बार साइन इन करने पर सेवा दोबारा पूछेगी।',
+	account_consentWithdrawConfirmStatement:
+		'{name} पर अपनी स्वीकृति वापस लें? यदि यह आवश्यक है, तो अगली बार साइन इन करने पर आपसे दोबारा स्वीकृति माँगी जाएगी।',
+	account_consentWithdrawn: 'सहमति वापस ले ली गई।',
+	account_consentWithdrawGone: 'यह सहमति पहले ही हट चुकी है। सूची ताज़ा की गई।',
+	account_consentWithdrawFailed: 'सहमति वापस नहीं ली जा सकी। फिर से कोशिश करें।',
 	login_title: 'वापस आपका स्वागत है',
 	login_subtitle: 'अपने खाते में साइन इन करें',
 	login_signInWithPasskey: 'Passkey से साइन इन करें',

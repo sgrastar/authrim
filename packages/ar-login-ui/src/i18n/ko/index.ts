@@ -214,6 +214,17 @@ const ko = createTranslation({
 	account_consentSelectedOnce: '이번만',
 	account_consentSelectedAlways: '항상 허용',
 	account_consentSelectedNone: '허용 안 함',
+	account_consentWithdraw: '동의 철회',
+	account_consentWithdrawFor: '{name}에 대한 동의 철회',
+	account_consentWithdrawConfirmService:
+		'{name}에 대한 동의를 철회할까요? 다음에 이 서비스를 이용할 때 다시 동의를 요청하며, 서비스에서 로그아웃될 수 있습니다.',
+	account_consentWithdrawConfirmSamlSp:
+		'{name}에 대한 동의를 철회할까요? 다음 로그인 때 서비스가 다시 묻습니다.',
+	account_consentWithdrawConfirmStatement:
+		'{name}에 대한 동의를 철회할까요? 필수 항목이라면 다음 로그인 때 다시 동의하셔야 합니다.',
+	account_consentWithdrawn: '동의를 철회했습니다.',
+	account_consentWithdrawGone: '이 동의는 이미 없습니다. 목록을 새로 고쳤습니다.',
+	account_consentWithdrawFailed: '동의를 철회하지 못했습니다. 다시 시도해 주세요.',
 	login_title: '다시 오신 것을 환영합니다',
 	login_subtitle: '계정에 로그인하세요',
 	login_signInWithPasskey: 'Passkey로 로그인',

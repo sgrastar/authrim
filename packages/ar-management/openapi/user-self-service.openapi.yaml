@@ -709,6 +709,84 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
       security: *accountSession
+  /api/account/consents/oauth-client:
+    delete:
+      tags:
+        - Account Page
+      operationId: deleteApiAccountConsentsOauthClient
+      summary: Withdraw the current user's consent to an OIDC service.
+      description:
+        Ends the tokens issued under the consent (refresh token families included) and deletes
+        it, so the next authorization asks again. A failure leaves the consent in place so that a
+        retry can complete the withdrawal. Uses the `authrim_session` cookie.
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 256
+      responses:
+        '200':
+          description: Withdrawn.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - withdrawn
+                properties:
+                  withdrawn:
+                    type: boolean
+                    enum:
+                      - true
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  /api/account/consents/statements/{statementId}:
+    delete:
+      tags:
+        - Account Page
+      operationId: deleteApiAccountConsentsStatement
+      summary: Withdraw the current user's agreement to a consent statement.
+      description:
+        Withdraws a granted agreement to a statement that allows withdrawal (`withdrawable` in the
+        consent list). A required statement is asked again at the next sign-in or single sign-on.
+        Uses the `authrim_session` cookie.
+      parameters:
+        - name: statementId
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+      responses:
+        '200':
+          description: Withdrawn.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - withdrawn
+                properties:
+                  withdrawn:
+                    type: boolean
+                    enum:
+                      - true
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
   /api/account/return:
     post:
       tags:
@@ -2434,6 +2512,11 @@ components:
           type: string
         updatedAt:
           type: integer
+        withdrawable:
+          type: boolean
+          description: >-
+            The agreement can be withdrawn on the account page (granted, and the statement allows
+            withdrawal): DELETE /api/account/consents/statements/{statementId}.
     AccountOAuthClientConsent:
       allOf:
         - $ref: '#/components/schemas/UserConsent'

@@ -235,6 +235,17 @@ const translation = {
 	account_consentSelectedOnce: 'Sadece bu sefer.',
 	account_consentSelectedAlways: 'Her zaman izin ver',
 	account_consentSelectedNone: 'İzin verme',
+	account_consentWithdraw: 'Onayı geri çek',
+	account_consentWithdrawFor: '{name} için onayı geri çek',
+	account_consentWithdrawConfirmService:
+		'{name} için onayınızı geri çekmek istiyor musunuz? Hizmet, bir sonraki kullanışınızda onayınızı yeniden isteyecek ve oturumunuz kapatılabilir.',
+	account_consentWithdrawConfirmSamlSp:
+		'{name} için onayınızı geri çekmek istiyor musunuz? Hizmet, bir sonraki girişinizde yeniden soracak.',
+	account_consentWithdrawConfirmStatement:
+		'{name} için kabulünüzü geri çekmek istiyor musunuz? Zorunluysa bir sonraki girişinizde yeniden kabul etmeniz istenecek.',
+	account_consentWithdrawn: 'Onay geri çekildi.',
+	account_consentWithdrawGone: 'Bu onay artık yok. Liste yenilendi.',
+	account_consentWithdrawFailed: 'Onay geri çekilemedi. Tekrar deneyin.',
 	login_title: 'Tekrar hoş geldiniz',
 	login_subtitle: 'Hesabınıza giriş yapın',
 	login_signInWithPasskey: 'Passkey ile giriş yap',

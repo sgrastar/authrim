@@ -227,6 +227,17 @@ const fr = createTranslation({
 	account_consentSelectedOnce: 'Cette fois seulement',
 	account_consentSelectedAlways: 'Toujours autoriser',
 	account_consentSelectedNone: 'Ne pas autoriser',
+	account_consentWithdraw: 'Retirer le consentement',
+	account_consentWithdrawFor: 'Retirer le consentement pour {name}',
+	account_consentWithdrawConfirmService:
+		'Retirer votre consentement pour {name} ? Le service vous le redemandera à votre prochaine utilisation, et vous pourriez être déconnecté.',
+	account_consentWithdrawConfirmSamlSp:
+		'Retirer votre consentement pour {name} ? Le service vous le redemandera à votre prochaine connexion.',
+	account_consentWithdrawConfirmStatement:
+		"Retirer votre accord pour {name} ? S'il est obligatoire, il vous sera redemandé à votre prochaine connexion.",
+	account_consentWithdrawn: 'Le consentement a été retiré.',
+	account_consentWithdrawGone: "Ce consentement n'existe plus. La liste a été actualisée.",
+	account_consentWithdrawFailed: 'Impossible de retirer le consentement. Réessayez.',
 	login_title: 'Ravi de vous revoir',
 	login_subtitle: 'Connectez-vous à votre compte',
 	login_signInWithPasskey: 'Se connecter avec une Passkey',

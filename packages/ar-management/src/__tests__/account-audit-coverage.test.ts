@@ -7,7 +7,9 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const AUDITED_MUTATION_ROUTES = [
   'POST /api/account/guest-upgrade/start',
   'POST /api/account/guest-upgrade/complete',
+  'DELETE /api/account/consents/oauth-client',
   'DELETE /api/account/consents/saml-sp',
+  'DELETE /api/account/consents/statements/:statementId',
   'DELETE /api/account/devices/:id',
   'DELETE /api/account/passkeys/:id',
   'DELETE /api/account/sessions/:id',
