@@ -4,6 +4,7 @@
  * browser) and the lite page (on the server).
  */
 import { API_BASE_URL } from '#lib/api/client.js';
+import { isStatementPageSlug } from '#lib/consent/statement-display.js';
 import { isValidLinkUrl } from '#lib/utils/url-validation.js';
 
 export interface StatementPageVersion {
@@ -30,12 +31,14 @@ export type StatementPageResult =
 	| { ok: true; statement: StatementPageData }
 	| { ok: false; reason: 'not_found' | 'unavailable' };
 
-const SLUG = /^[^/?#\s]{1,128}$/u;
 const VERSION = /^\d{8}$/u;
 
-/** Whether a path segment can name a statement (anything else is not found, without a request). */
+/**
+ * Whether a path segment can name a statement: the same rule as the links to the page, so a key
+ * can never change the API path it is read from (no `/`, `%`, `.` or `..`).
+ */
 export function isStatementSlug(value: string): boolean {
-	return SLUG.test(value);
+	return isStatementPageSlug(value);
 }
 
 /** The version a page asks for: a YYYYMMDD value, else none (the current version). */

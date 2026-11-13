@@ -10,6 +10,8 @@ export const load: PageServerLoad = async (event) => {
 	const asked = event.url.searchParams.get('lang');
 	const locale = asked && isLocale(asked) ? asked : (event.locals.locale ?? 'en');
 	const { LL } = await liteMessages(locale);
+	// The tenant may come from the shared Login UI's cookie: never kept by a cache.
+	event.setHeaders({ 'Cache-Control': 'private, no-store' });
 	const statement = await liteStatementPage(
 		(path) => fetchPublicApiForPageRequest(event, path),
 		event.params.slug,

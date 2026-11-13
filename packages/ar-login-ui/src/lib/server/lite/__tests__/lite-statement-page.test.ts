@@ -54,9 +54,11 @@ describe('the lite statement page', () => {
 			message: null
 		});
 		const malformed = backend(200, BODY);
-		expect(await liteStatementPage(malformed.client, 'a/b', null, 'en', LL)).toMatchObject({
-			kind: 'missing'
-		});
+		for (const slug of ['a/b', '..', '.', 'a%2F..']) {
+			expect(await liteStatementPage(malformed.client, slug, null, 'en', LL), slug).toMatchObject({
+				kind: 'missing'
+			});
+		}
 		expect(malformed.request).not.toHaveBeenCalled();
 		expect(await liteStatementPage(backend(500, null).client, 'x', null, 'en', LL)).toMatchObject({
 			kind: 'missing',
