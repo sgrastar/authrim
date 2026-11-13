@@ -1,7 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { get } from 'svelte/store';
-	import { expect, within } from 'storybook/test';
+	import { expect, fn, userEvent, within } from 'storybook/test';
 	import { LL } from '$i18n/i18n-svelte';
 	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import AccountConsentWidget from './AccountConsentWidget.svelte';
@@ -15,13 +15,14 @@
 			consents: [clientConsent(), statementConsent()],
 			loading: false,
 			error: '',
-			headingLevel: 2
+			headingLevel: 2,
+			onWithdraw: fn()
 		},
 		parameters: {
 			docs: {
 				description: {
 					component:
-						'What the account has agreed to: OAuth clients with the scopes granted and the information they are given, and consent statements (terms, policies, marketing) with their version and choice. Read-only.'
+						'What the account has agreed to: OAuth clients with the scopes granted and the information they are given, and consent statements (terms, policies, marketing) with their version and choice. Each service and SAML service provider has a withdraw button, and so does a statement that allows withdrawal; the button asks first (what happens next time) and the page refreshes the list afterwards. Without `onWithdraw` the list is read-only.'
 				}
 			}
 		}
@@ -43,6 +44,96 @@
 		await expect(canvas.getByText('openid, profile, email')).toBeVisible();
 		await expect(canvas.getByText('Full name, Email address')).toBeVisible();
 		await expect(canvas.getByText(get(LL).account_consentSelectedAlways())).toBeVisible();
+	}}
+>
+	{#snippet template(args)}{@render widget(args)}{/snippet}
+</Story>
+
+<Story
+	name="Withdraw asks first"
+	play={async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		const messages = get(LL);
+		// Each row's button names what it withdraws.
+		await userEvent.click(
+			canvas.getByRole('button', { name: messages.account_consentWithdrawFor({ name: 'Docs' }) })
+		);
+		await expect(
+			canvas.getByText(messages.account_consentWithdrawConfirmService({ name: 'Docs' }))
+		).toBeVisible();
+		await expect(args.onWithdraw).not.toHaveBeenCalled();
+		await userEvent.click(canvas.getByRole('button', { name: messages.dialog_cancel() }));
+		await expect(args.onWithdraw).not.toHaveBeenCalled();
+		await userEvent.click(
+			canvas.getByRole('button', { name: messages.account_consentWithdrawFor({ name: 'Docs' }) })
+		);
+		await userEvent.click(
+			canvas.getByRole('button', { name: messages.account_consentWithdrawFor({ name: 'Docs' }) })
+		);
+		await expect(args.onWithdraw).toHaveBeenCalledTimes(1);
+	}}
+>
+	{#snippet template(args)}{@render widget(args)}{/snippet}
+</Story>
+
+<Story
+	name="Withdrawn"
+	args={{
+		consents: [clientConsent()],
+		notice: { kind: 'success', message: 'The consent was withdrawn.' }
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('status')).toHaveTextContent('The consent was withdrawn.');
+	}}
+>
+	{#snippet template(args)}{@render widget(args)}{/snippet}
+</Story>
+
+<Story
+	name="Withdrawing"
+	args={{ actionLoading: 'consent:consent-client-1' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The other rows' buttons are disabled while one request runs.
+		const messages = get(LL);
+		await expect(
+			canvas.getByRole('button', {
+				name: messages.account_consentWithdrawFor({ name: 'Product news by email' })
+			})
+		).toBeDisabled();
+	}}
+>
+	{#snippet template(args)}{@render widget(args)}{/snippet}
+</Story>
+
+<Story
+	name="Withdraw failed"
+	args={{
+		consents: [clientConsent()],
+		notice: { kind: 'error', message: 'The consent could not be withdrawn. Try again.' }
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('alert')).toHaveTextContent(
+			'The consent could not be withdrawn.'
+		);
+	}}
+>
+	{#snippet template(args)}{@render widget(args)}{/snippet}
+</Story>
+
+<Story
+	name="Statement that cannot be withdrawn"
+	args={{
+		consents: [
+			statementConsent({ id: 'consent-terms', title: 'Terms of service', withdrawable: false }),
+			statementConsent({ id: 'consent-legacy', title: 'Older record', withdrawable: undefined })
+		]
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.queryByRole('button')).toBeNull();
 	}}
 >
 	{#snippet template(args)}{@render widget(args)}{/snippet}

@@ -489,6 +489,72 @@ describe('the lite account page', () => {
 			expect(next.widgets.activityNextHref).toBe('/account?lang=ja&activity_cursor=next_1');
 		});
 
+		it('offers each consent its withdrawal, a statement only when the API says it can be', async () => {
+			withWidgets();
+			routes['/api/account/consents'] = () =>
+				json({
+					consents: [
+						{ kind: 'oauth_client', clientId: 'c1', clientName: 'Docs', scopes: [], grantedAt: 1 },
+						{ kind: 'saml_sp', spEntityId: 'https://sp.example/sp', decidedAt: 1 },
+						{
+							kind: 'statement',
+							statementId: 's1',
+							title: 'News',
+							status: 'granted',
+							withdrawable: true
+						},
+						{ kind: 'statement', statementId: 's2', title: 'Terms', status: 'granted' }
+					]
+				});
+			const page = (await view()) as {
+				widgets: { consents: Array<{ withdraw: { key: string; label: string } | null }> };
+			};
+			expect(page.widgets.consents.map((item) => item.withdraw?.key ?? null)).toEqual([
+				'oauth_client:c1',
+				'saml_sp:https://sp.example/sp',
+				'statement:s1',
+				null
+			]);
+			expect(page.widgets.consents[0].withdraw?.label).toContain('Docs');
+		});
+
+		it('withdraws a consent once asked, and says when it was already gone', async () => {
+			withWidgets();
+			const seen: string[] = [];
+			await view();
+			routes['/api/account/consents/oauth-client'] = (_body, init) => {
+				seen.push(String(init.method));
+				return json({ withdrawn: true });
+			};
+			routes['/api/account/consents/saml-sp'] = () => json({ error: 'not_found' }, 404);
+			routes['/api/account/consents/statements/s1'] = () => json({ error: 'invalid_request' }, 400);
+			routes['/api/account/consents/statements/s2'] = () => json({ error: 'boom' }, 503);
+			await expect(
+				post('consent_withdraw', { kind: 'oauth_client', target: 'c1' })
+			).resolves.toEqual({ confirmWithdraw: 'oauth_client:c1', widget: 'consent' });
+			expect(seen).toEqual([]);
+			await expect(
+				post('consent_withdraw', { kind: 'oauth_client', target: 'c1', confirm: '1' })
+			).resolves.toEqual({ notice: 'consent_withdrawn', widget: 'consent' });
+			expect(seen).toEqual(['DELETE']);
+			expect(calls.some((call) => call.path === '/api/account/consents/oauth-client')).toBe(true);
+			await expect(
+				post('consent_withdraw', { kind: 'saml_sp', target: 'https://sp.example/sp', confirm: '1' })
+			).resolves.toEqual({ notice: 'consent_gone', widget: 'consent' });
+			await expect(
+				post('consent_withdraw', { kind: 'statement', target: 's1', confirm: '1' })
+			).resolves.toMatchObject({
+				status: 400,
+				data: { error: 'invalid_request', widget: 'consent' }
+			});
+			await expect(
+				post('consent_withdraw', { kind: 'statement', target: 's2', confirm: '1' })
+			).resolves.toMatchObject({ status: 503, data: { widget: 'consent' } });
+			await expect(
+				post('consent_withdraw', { kind: 'other', target: 'x', confirm: '1' })
+			).resolves.toMatchObject({ status: 400 });
+		});
+
 		it('says the activity is incomplete when the log cannot be read whole', async () => {
 			withWidgets();
 			routes['/api/account/operations'] = () =>

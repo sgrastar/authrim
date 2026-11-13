@@ -230,6 +230,17 @@ const ar = createTranslation({
 	account_consentSelectedOnce: 'هذه المرة فقط',
 	account_consentSelectedAlways: 'السماح دائمًا',
 	account_consentSelectedNone: 'عدم السماح',
+	account_consentWithdraw: 'سحب الموافقة',
+	account_consentWithdrawFor: 'سحب الموافقة على {name}',
+	account_consentWithdrawConfirmService:
+		'هل تريد سحب موافقتك على {name}؟ ستطلب الخدمة موافقتك مرة أخرى عند استخدامها في المرة القادمة، وقد يتم تسجيل خروجك منها.',
+	account_consentWithdrawConfirmSamlSp:
+		'هل تريد سحب موافقتك على {name}؟ ستسألك الخدمة مرة أخرى عند تسجيل الدخول في المرة القادمة.',
+	account_consentWithdrawConfirmStatement:
+		'هل تريد سحب موافقتك على {name}؟ إذا كانت مطلوبة، فسيُطلب منك الموافقة عليها مرة أخرى عند تسجيل الدخول في المرة القادمة.',
+	account_consentWithdrawn: 'تم سحب الموافقة.',
+	account_consentWithdrawGone: 'هذه الموافقة لم تعد موجودة. تم تحديث القائمة.',
+	account_consentWithdrawFailed: 'تعذّر سحب الموافقة. حاول مرة أخرى.',
 	login_title: 'مرحبًا بعودتك',
 	login_subtitle: 'سجّل الدخول إلى حسابك',
 	login_signInWithPasskey: 'تسجيل الدخول باستخدام مفتاح مرور',

@@ -1,9 +1,11 @@
 <script lang="ts">
 	/**
 	 * What the account has agreed to: OAuth clients with their scopes, and consent statements
-	 * (terms, policies) with their version and choice. Read-only.
+	 * (terms, policies) with their version and choice. Each can be withdrawn behind an inline
+	 * confirmation (statements only when they allow it); omit `onWithdraw` for a read-only list.
 	 */
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
+	import { Button } from '#lib/components/index.js';
 	import type { AccountConsent } from '#lib/api/account.js';
 	import { formatTimestamp } from '#lib/utils/date.js';
 	import { accountReleaseRows } from '#lib/consent-release.js';
@@ -16,7 +18,10 @@
 		loading = false,
 		error = '',
 		title = '',
-		headingLevel = 2
+		headingLevel = 2,
+		actionLoading = '',
+		notice = null,
+		onWithdraw
 	}: {
 		consents?: AccountConsent[];
 		/** First load: a skeleton instead of the (possibly empty) list. */
@@ -25,7 +30,42 @@
 		error?: string;
 		title?: string;
 		headingLevel?: AccountWidgetHeadingLevel;
+		/** `consent:<id>` while that consent is being withdrawn. */
+		actionLoading?: string;
+		/** The outcome of the last withdrawal. */
+		notice?: { kind: 'success' | 'error'; message: string } | null;
+		onWithdraw?: (consent: AccountConsent) => void;
 	} = $props();
+
+	const uid = $props.id();
+	let confirming = $state<string | null>(null);
+	const busy = $derived(actionLoading.startsWith('consent:'));
+
+	// An outcome closes the confirmation (the list is refreshed after it).
+	$effect(() => {
+		if (notice) confirming = null;
+	});
+
+	function consentName(consent: AccountConsent): string {
+		return consent.kind === 'statement'
+			? consent.title
+			: consent.kind === 'saml_sp'
+				? (consent.spName ?? consent.spEntityId)
+				: (consent.clientName ?? consent.clientId);
+	}
+
+	function canWithdraw(consent: AccountConsent): boolean {
+		return Boolean(onWithdraw) && (consent.kind !== 'statement' || consent.withdrawable === true);
+	}
+
+	function confirmText(consent: AccountConsent): string {
+		const name = consentName(consent);
+		return consent.kind === 'statement'
+			? $LL.account_consentWithdrawConfirmStatement({ name })
+			: consent.kind === 'saml_sp'
+				? $LL.account_consentWithdrawConfirmSamlSp({ name })
+				: $LL.account_consentWithdrawConfirmService({ name });
+	}
 
 	function formatScopes(consent: AccountConsent): string {
 		if (consent.kind !== 'oauth_client') {
@@ -95,6 +135,15 @@
 		{#if !loading && !error}<span class="count-badge">{consents.length}</span>{/if}
 	{/snippet}
 	<p class="panel-description">{$LL.account_consentDescription()}</p>
+	{#if notice}
+		<p
+			class="notice"
+			class:notice--error={notice.kind === 'error'}
+			role={notice.kind === 'error' ? 'alert' : 'status'}
+		>
+			{notice.message}
+		</p>
+	{/if}
 
 	{#if loading}
 		<AccountSectionSkeleton variant="list" />
@@ -105,6 +154,7 @@
 	{:else}
 		<ul class="consent-list">
 			{#each consents as consent (consent.id)}
+				{@const nameId = `${uid}-consent-${consent.id}`}
 				<li>
 					<div class="consent-app" class:statement-consent={consent.kind === 'statement'}>
 						{#if consent.kind === 'oauth_client' && consent.clientLogoUri}
@@ -115,13 +165,7 @@
 							</span>
 						{/if}
 						<div>
-							<strong>
-								{consent.kind === 'statement'
-									? consent.title
-									: consent.kind === 'saml_sp'
-										? (consent.spName ?? consent.spEntityId)
-										: (consent.clientName ?? consent.clientId)}
-							</strong>
+							<strong id={nameId}>{consentName(consent)}</strong>
 							<span>
 								{consent.kind === 'statement'
 									? (consent.category ?? consent.statementId)
@@ -192,6 +236,45 @@
 							</div>
 						{/if}
 					</dl>
+					{#if canWithdraw(consent)}
+						{#if confirming === consent.id}
+							<div class="confirm" role="group" aria-labelledby={`${nameId}-confirm`}>
+								<p id={`${nameId}-confirm`}>{confirmText(consent)}</p>
+								<div class="confirm-actions">
+									<Button
+										variant="danger"
+										size="sm"
+										loading={actionLoading === `consent:${consent.id}`}
+										disabled={busy && actionLoading !== `consent:${consent.id}`}
+										aria-label={$LL.account_consentWithdrawFor({ name: consentName(consent) })}
+										onclick={() => onWithdraw?.(consent)}
+									>
+										{$LL.account_consentWithdraw()}
+									</Button>
+									<Button
+										variant="ghost"
+										size="sm"
+										disabled={actionLoading === `consent:${consent.id}`}
+										onclick={() => (confirming = null)}
+									>
+										{$LL.dialog_cancel()}
+									</Button>
+								</div>
+							</div>
+						{:else}
+							<div class="withdraw">
+								<Button
+									variant="secondary"
+									size="sm"
+									disabled={busy}
+									aria-label={$LL.account_consentWithdrawFor({ name: consentName(consent) })}
+									onclick={() => (confirming = consent.id)}
+								>
+									{$LL.account_consentWithdraw()}
+								</Button>
+							</div>
+						{/if}
+					{/if}
 				</li>
 			{/each}
 		</ul>
@@ -218,6 +301,38 @@
 		margin: 0;
 		font-size: 0.8125rem;
 		color: var(--text-muted);
+	}
+
+	.notice {
+		margin: 0;
+		padding: 10px 12px;
+		border-radius: var(--radius-sm);
+		background: var(--bg-subtle);
+		color: var(--text-primary);
+		font-size: 0.875rem;
+	}
+
+	.notice--error {
+		background: var(--danger-light);
+		color: var(--danger-fg);
+	}
+
+	.withdraw,
+	.confirm-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.confirm {
+		display: grid;
+		gap: 8px;
+	}
+
+	.confirm p {
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--text-primary);
 	}
 
 	.consent-list {

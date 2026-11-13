@@ -228,6 +228,19 @@ const de = createTranslation({
 	account_consentSelectedOnce: 'Nur dieses Mal',
 	account_consentSelectedAlways: 'Immer erlauben',
 	account_consentSelectedNone: 'Nicht erlauben',
+	account_consentWithdraw: 'Einwilligung widerrufen',
+	account_consentWithdrawFor: 'Einwilligung für {name} widerrufen',
+	account_consentWithdrawConfirmService:
+		'Ihre Einwilligung für {name} widerrufen? Der Dienst fragt bei der nächsten Nutzung erneut nach Ihrer Einwilligung, und Sie werden möglicherweise abgemeldet.',
+	account_consentWithdrawConfirmSamlSp:
+		'Ihre Einwilligung für {name} widerrufen? Der Dienst fragt bei der nächsten Anmeldung erneut.',
+	account_consentWithdrawConfirmStatement:
+		'Ihre Zustimmung zu {name} widerrufen? Falls sie erforderlich ist, werden Sie bei der nächsten Anmeldung erneut um Zustimmung gebeten.',
+	account_consentWithdrawn: 'Die Einwilligung wurde widerrufen.',
+	account_consentWithdrawGone:
+		'Diese Einwilligung existiert nicht mehr. Die Liste wurde aktualisiert.',
+	account_consentWithdrawFailed:
+		'Die Einwilligung konnte nicht widerrufen werden. Versuchen Sie es erneut.',
 	login_title: 'Willkommen zurück',
 	login_subtitle: 'Melden Sie sich bei Ihrem Konto an',
 	login_signInWithPasskey: 'Mit Passkey anmelden',

@@ -223,6 +223,17 @@ const translation = {
 	account_consentSelectedOnce: 'በዚህ ጊዜ ብቻ',
 	account_consentSelectedAlways: 'ሁሌም ይፍቀዱ',
 	account_consentSelectedNone: 'አትፍቀዱ',
+	account_consentWithdraw: 'ፈቃድን ሰርዝ',
+	account_consentWithdrawFor: 'ለ{name} የሰጡትን ፈቃድ ሰርዝ',
+	account_consentWithdrawConfirmService:
+		'ለ{name} የሰጡትን ፈቃድ መሰረዝ ይፈልጋሉ? አገልግሎቱ በሚቀጥለው ጊዜ ሲጠቀሙት ፈቃድዎን እንደገና ይጠይቃል፣ እንዲሁም ከእሱ ሊወጡ ይችላሉ።',
+	account_consentWithdrawConfirmSamlSp:
+		'ለ{name} የሰጡትን ፈቃድ መሰረዝ ይፈልጋሉ? አገልግሎቱ በሚቀጥለው ጊዜ ሲገቡ እንደገና ይጠይቃል።',
+	account_consentWithdrawConfirmStatement:
+		'ለ{name} የሰጡትን ስምምነት መሰረዝ ይፈልጋሉ? አስገዳጅ ከሆነ በሚቀጥለው ጊዜ ሲገቡ እንደገና እንዲስማሙ ይጠየቃሉ።',
+	account_consentWithdrawn: 'ፈቃዱ ተሰርዟል።',
+	account_consentWithdrawGone: 'ይህ ፈቃድ አስቀድሞ የለም። ዝርዝሩ ታድሷል።',
+	account_consentWithdrawFailed: 'ፈቃዱን መሰረዝ አልተቻለም። እንደገና ይሞክሩ።',
 	login_title: 'እንኳን ደህና መጡ',
 	login_subtitle: 'ወደ መለያዎ ይግቡ',
 	login_signInWithPasskey: 'በPasskey ይግቡ',

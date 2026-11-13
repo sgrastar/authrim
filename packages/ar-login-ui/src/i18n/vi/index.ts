@@ -236,6 +236,17 @@ const vi = createTranslation({
 	account_consentSelectedOnce: 'Chỉ lần này',
 	account_consentSelectedAlways: 'Luôn cho phép',
 	account_consentSelectedNone: 'Không cho phép',
+	account_consentWithdraw: 'Thu hồi sự đồng ý',
+	account_consentWithdrawFor: 'Thu hồi sự đồng ý cho {name}',
+	account_consentWithdrawConfirmService:
+		'Thu hồi sự đồng ý của bạn cho {name}? Dịch vụ sẽ hỏi lại vào lần bạn dùng tiếp theo, và bạn có thể bị đăng xuất khỏi dịch vụ.',
+	account_consentWithdrawConfirmSamlSp:
+		'Thu hồi sự đồng ý của bạn cho {name}? Dịch vụ sẽ hỏi lại vào lần đăng nhập tiếp theo.',
+	account_consentWithdrawConfirmStatement:
+		'Thu hồi sự chấp thuận của bạn với {name}? Nếu đây là mục bắt buộc, bạn sẽ được yêu cầu chấp thuận lại vào lần đăng nhập tiếp theo.',
+	account_consentWithdrawn: 'Đã thu hồi sự đồng ý.',
+	account_consentWithdrawGone: 'Sự đồng ý này không còn nữa. Danh sách đã được làm mới.',
+	account_consentWithdrawFailed: 'Không thể thu hồi sự đồng ý. Hãy thử lại.',
 	login_title: 'Chào mừng bạn trở lại',
 	login_subtitle: 'Đăng nhập vào tài khoản',
 	login_signInWithPasskey: 'Đăng nhập bằng khoá truy cập',

@@ -237,6 +237,17 @@ const ja = {
 	account_consentSelectedOnce: '今回のみ',
 	account_consentSelectedAlways: '今後も許可',
 	account_consentSelectedNone: '許可しない',
+	account_consentWithdraw: '同意を取り消す',
+	account_consentWithdrawFor: '{name} への同意を取り消す',
+	account_consentWithdrawConfirmService:
+		'{name} への同意を取り消しますか？次にこのサービスを利用するときに、あらためて同意をお尋ねします。サービスからサインアウトされる場合があります。',
+	account_consentWithdrawConfirmSamlSp:
+		'{name} への同意を取り消しますか？次回のサインインのときに、あらためてお尋ねします。',
+	account_consentWithdrawConfirmStatement:
+		'{name} への同意を取り消しますか？この同意が必須の場合は、次回のサインインのときに、あらためて同意をお願いします。',
+	account_consentWithdrawn: '同意を取り消しました。',
+	account_consentWithdrawGone: 'この同意はすでにありません。一覧を更新しました。',
+	account_consentWithdrawFailed: '同意を取り消せませんでした。もう一度お試しください。',
 
 	login_title: 'おかえりなさい',
 	login_subtitle: 'アカウントにログイン',
