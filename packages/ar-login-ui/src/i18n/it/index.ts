@@ -235,6 +235,17 @@ const it = createTranslation({
 	account_consentSelectedOnce: 'Solo questa volta',
 	account_consentSelectedAlways: 'Consenti sempre',
 	account_consentSelectedNone: 'Non consentire',
+	account_consentWithdraw: 'Revoca il consenso',
+	account_consentWithdrawFor: 'Revoca il consenso per {name}',
+	account_consentWithdrawConfirmService:
+		'Revocare il tuo consenso per {name}? Il servizio ti chiederà di nuovo il consenso al prossimo utilizzo e potresti essere disconnesso.',
+	account_consentWithdrawConfirmSamlSp:
+		'Revocare il tuo consenso per {name}? Il servizio te lo chiederà di nuovo al prossimo accesso.',
+	account_consentWithdrawConfirmStatement:
+		'Revocare la tua accettazione di {name}? Se è obbligatoria, ti verrà chiesto di accettarla di nuovo al prossimo accesso.',
+	account_consentWithdrawn: 'Il consenso è stato revocato.',
+	account_consentWithdrawGone: "Questo consenso non esiste più. L'elenco è stato aggiornato.",
+	account_consentWithdrawFailed: 'Impossibile revocare il consenso. Riprova.',
 	login_title: 'Bentornato',
 	login_subtitle: 'Accedi al tuo account',
 	login_signInWithPasskey: 'Accedi con una passkey',

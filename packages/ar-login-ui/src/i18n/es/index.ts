@@ -226,6 +226,17 @@ const es = createTranslation({
 	account_consentSelectedOnce: 'Solo esta vez',
 	account_consentSelectedAlways: 'Permitir siempre',
 	account_consentSelectedNone: 'No permitir',
+	account_consentWithdraw: 'Retirar el consentimiento',
+	account_consentWithdrawFor: 'Retirar el consentimiento para {name}',
+	account_consentWithdrawConfirmService:
+		'¿Retirar tu consentimiento para {name}? El servicio volverá a pedírtelo la próxima vez que lo uses y es posible que se cierre tu sesión en él.',
+	account_consentWithdrawConfirmSamlSp:
+		'¿Retirar tu consentimiento para {name}? El servicio volverá a preguntarte en tu próximo inicio de sesión.',
+	account_consentWithdrawConfirmStatement:
+		'¿Retirar tu aceptación de {name}? Si es obligatoria, se te pedirá aceptarla de nuevo en tu próximo inicio de sesión.',
+	account_consentWithdrawn: 'Se retiró el consentimiento.',
+	account_consentWithdrawGone: 'Este consentimiento ya no existe. Se actualizó la lista.',
+	account_consentWithdrawFailed: 'No se pudo retirar el consentimiento. Inténtalo de nuevo.',
 	login_title: 'Te damos la bienvenida',
 	login_subtitle: 'Inicia sesión en tu cuenta',
 	login_signInWithPasskey: 'Iniciar sesión con Passkey',

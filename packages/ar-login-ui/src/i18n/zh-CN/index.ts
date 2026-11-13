@@ -205,6 +205,16 @@ const zhCN = createTranslation({
 	account_consentSelectedOnce: '仅本次',
 	account_consentSelectedAlways: '始终允许',
 	account_consentSelectedNone: '不允许',
+	account_consentWithdraw: '撤回同意',
+	account_consentWithdrawFor: '撤回对 {name} 的同意',
+	account_consentWithdrawConfirmService:
+		'要撤回对 {name} 的同意吗？下次使用该服务时将再次征求您的同意，您也可能会被退出该服务。',
+	account_consentWithdrawConfirmSamlSp: '要撤回对 {name} 的同意吗？下次登录时该服务将再次询问。',
+	account_consentWithdrawConfirmStatement:
+		'要撤回对 {name} 的同意吗？如果该项为必需，下次登录时将再次请您同意。',
+	account_consentWithdrawn: '已撤回同意。',
+	account_consentWithdrawGone: '该同意已不存在，列表已刷新。',
+	account_consentWithdrawFailed: '无法撤回同意，请重试。',
 	login_title: '欢迎回来',
 	login_subtitle: '登录您的账户',
 	login_signInWithPasskey: '使用 Passkey 登录',

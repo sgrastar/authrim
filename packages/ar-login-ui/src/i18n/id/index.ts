@@ -219,6 +219,17 @@ const id = createTranslation({
 	account_consentSelectedOnce: 'Hanya kali ini',
 	account_consentSelectedAlways: 'Selalu izinkan',
 	account_consentSelectedNone: 'Jangan izinkan',
+	account_consentWithdraw: 'Cabut persetujuan',
+	account_consentWithdrawFor: 'Cabut persetujuan untuk {name}',
+	account_consentWithdrawConfirmService:
+		'Cabut persetujuan Anda untuk {name}? Layanan akan meminta persetujuan lagi saat Anda menggunakannya berikutnya, dan Anda mungkin keluar dari layanan tersebut.',
+	account_consentWithdrawConfirmSamlSp:
+		'Cabut persetujuan Anda untuk {name}? Layanan akan bertanya lagi saat Anda masuk berikutnya.',
+	account_consentWithdrawConfirmStatement:
+		'Cabut persetujuan Anda atas {name}? Jika wajib, Anda akan diminta menyetujuinya lagi saat masuk berikutnya.',
+	account_consentWithdrawn: 'Persetujuan telah dicabut.',
+	account_consentWithdrawGone: 'Persetujuan ini sudah tidak ada. Daftar telah diperbarui.',
+	account_consentWithdrawFailed: 'Persetujuan tidak dapat dicabut. Coba lagi.',
 	login_title: 'Selamat datang kembali',
 	login_subtitle: 'Masuk ke akun Anda',
 	login_signInWithPasskey: 'Masuk dengan Passkey',

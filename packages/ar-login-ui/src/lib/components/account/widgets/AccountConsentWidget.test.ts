@@ -63,4 +63,57 @@ describe('AccountConsentWidget', () => {
 		expect(nested).toMatch(/<h3[^>]*>/);
 		expect(nested).not.toContain('class="card');
 	});
+
+	describe('withdrawal', () => {
+		const saml = {
+			kind: 'saml_sp' as const,
+			id: 'https://sp.example.edu/sp',
+			spEntityId: 'https://sp.example.edu/sp',
+			spName: 'Library portal',
+			decidedAt: 1
+		};
+
+		it('offers a button naming each service, SAML provider and withdrawable statement', () => {
+			setLocale('en');
+			const body = renderConsents({
+				consents: [
+					clientConsent(),
+					saml,
+					statementConsent(),
+					statementConsent({ id: 'fixed', title: 'Terms', withdrawable: false }),
+					statementConsent({ id: 'old', title: 'Older record', withdrawable: undefined })
+				],
+				onWithdraw: () => {}
+			});
+
+			expect(body).toContain('aria-label="Withdraw consent for Docs"');
+			expect(body).toContain('aria-label="Withdraw consent for Library portal"');
+			expect(body).toContain('aria-label="Withdraw consent for Product news by email"');
+			expect(body).not.toContain('Withdraw consent for Terms');
+			expect(body).not.toContain('Withdraw consent for Older record');
+		});
+
+		it('draws no button for a read-only list, and shows the outcome', () => {
+			setLocale('en');
+			const readOnly = renderConsents({ consents: [clientConsent()] });
+			expect(readOnly).not.toContain('Withdraw consent');
+
+			const body = renderConsents({
+				consents: [clientConsent()],
+				onWithdraw: () => {},
+				notice: { kind: 'error', message: 'It is already gone.' }
+			});
+			expect(body).toMatch(/role="alert"[^>]*>\s*It is already gone\./);
+		});
+
+		it('disables the other buttons while one withdrawal runs', () => {
+			setLocale('en');
+			const body = renderConsents({
+				consents: [clientConsent(), statementConsent()],
+				onWithdraw: () => {},
+				actionLoading: 'consent:consent-client-1'
+			});
+			expect(body.match(/<button[^>]*disabled/gu)?.length).toBe(2);
+		});
+	});
 });

@@ -237,6 +237,17 @@ const translation = {
 	account_consentSelectedOnce: 'Tylko tym razem.',
 	account_consentSelectedAlways: 'Zawsze pozwalaj',
 	account_consentSelectedNone: 'Nie pozwalaj',
+	account_consentWithdraw: 'Cofnij zgodę',
+	account_consentWithdrawFor: 'Cofnij zgodę dla {name}',
+	account_consentWithdrawConfirmService:
+		'Cofnąć zgodę dla {name}? Usługa poprosi o zgodę ponownie przy następnym użyciu, a możesz zostać z niej wylogowany.',
+	account_consentWithdrawConfirmSamlSp:
+		'Cofnąć zgodę dla {name}? Usługa zapyta ponownie przy następnym logowaniu.',
+	account_consentWithdrawConfirmStatement:
+		'Cofnąć zgodę na {name}? Jeśli jest wymagana, przy następnym logowaniu zostaniesz poproszony o ponowną zgodę.',
+	account_consentWithdrawn: 'Zgoda została cofnięta.',
+	account_consentWithdrawGone: 'Ta zgoda już nie istnieje. Lista została odświeżona.',
+	account_consentWithdrawFailed: 'Nie udało się cofnąć zgody. Spróbuj ponownie.',
 	login_title: 'Witamy ponownie',
 	login_subtitle: 'Zaloguj się na swoje konto',
 	login_signInWithPasskey: 'Zaloguj się za pomocą Passkey',

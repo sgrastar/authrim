@@ -46,6 +46,7 @@ import {
 	liteAccountSocialActions,
 	liteAccountSocialOutcome
 } from './account-social';
+import { liteAccountConsentActions } from './account-consents';
 import {
 	liteAccountEmailActions,
 	liteAccountEmailChangeStale,
@@ -573,6 +574,10 @@ export async function liteAccountPage(event: RequestEvent) {
 			currentDevice: LL.account_currentDevice(),
 			consentDescription: LL.account_consentDescription(),
 			consentEmpty: LL.account_consentEmpty(),
+			consentWithdraw: LL.account_consentWithdraw(),
+			consentWithdrawn: LL.account_consentWithdrawn(),
+			consentGone: LL.account_consentWithdrawGone(),
+			consentWithdrawFailed: LL.account_consentWithdrawFailed(),
 			activityMore: LL.account_activityLoadMore(),
 			activityIncomplete: LL.account_activityIncomplete(),
 			anotherWay: LL.lite_reauthAnotherWay(),
@@ -756,6 +761,7 @@ export const liteAccountActions = {
 	...liteAccountSecurityActions,
 	...liteAccountTotpActions,
 	...liteAccountSocialActions,
+	...liteAccountConsentActions,
 	...liteAccountLauncherActions,
 	...liteAccountGuestActions,
 	...liteAccountEmailActions,

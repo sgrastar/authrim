@@ -925,7 +925,12 @@ import {
   getAccountReauthStatusHandler,
 } from './account-page';
 import { getAccountCapabilitiesHandler } from './account-capabilities';
-import { listAccountConsentsHandler, withdrawAccountSamlConsentHandler } from './account-consents';
+import {
+  listAccountConsentsHandler,
+  withdrawAccountOAuthClientConsentHandler,
+  withdrawAccountSamlConsentHandler,
+  withdrawAccountStatementConsentHandler,
+} from './account-consents';
 import { listAccountOperationsHandler } from './account-operations';
 import { listAccountSessionsHandler, deleteAccountSessionHandler } from './account-sessions';
 import {
@@ -1558,6 +1563,8 @@ app.post(
 app.get('/api/account/identifier-replacements/:id', getAccountIdentifierReplacementHandler);
 app.get('/api/account/consents', listAccountConsentsHandler);
 app.delete('/api/account/consents/saml-sp', withdrawAccountSamlConsentHandler);
+app.delete('/api/account/consents/oauth-client', withdrawAccountOAuthClientConsentHandler);
+app.delete('/api/account/consents/statements/:statementId', withdrawAccountStatementConsentHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
 app.delete('/api/account/sessions/:id', deleteAccountSessionHandler);

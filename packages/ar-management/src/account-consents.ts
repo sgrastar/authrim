@@ -2,17 +2,24 @@ import type { Context } from 'hono';
 import type { AccountInformationRelease, DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   accountInformationRelease,
+  CONSENT_EVENTS,
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
+  getLogger,
   getTenantIdFromContext,
+  invalidateConsentCache,
   listOAuthClientConsentsWithClients,
   listSamlSpReleaseConsentsWithProviders,
   listUserStatementConsentRecords,
+  publishEvent,
   withdrawSamlSpReleaseConsent,
+  withdrawStatementConsent,
   lookupStatementDefinitions,
+  type ExtendedConsentEventData,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession } from './account-page';
 import { recordAccountOperation } from './account-operation-log';
+import { withdrawOAuthClientConsent } from './oauth-client-consent-withdrawal';
 
 type StatementConsentRow = {
   id: string;
@@ -30,6 +37,8 @@ type StatementConsentRow = {
   category: string | null;
   title: string | null;
   description: string | null;
+  /** The person can withdraw it here: granted, and the statement allows withdrawal. */
+  withdrawable?: boolean;
 };
 
 type FlowConsentRecordRow = StatementConsentRow & {
@@ -83,6 +92,8 @@ type AccountConsentRecord =
       receiptId?: string;
       updatedAt: number;
       selectedValue?: string;
+      /** It can be withdrawn on the account page (DELETE /api/account/consents/statements/:id). */
+      withdrawable?: boolean;
     };
 
 function setNoStore(c: Context<{ Bindings: Env }>): void {
@@ -176,6 +187,28 @@ async function listStatementConsentRows(input: {
     input.userId
   );
   if (records.length === 0) return [];
+  const statementIds = [...new Set(records.map((record) => record.statement_id))];
+  // Whether each statement allows withdrawal (read in chunks: D1 binds at most 100 values).
+  const allowsWithdrawal = new Map<string, boolean>();
+  for (let start = 0; start < statementIds.length; start += 90) {
+    const chunk = statementIds.slice(start, start + 90);
+    const rows = await input.metadata.query<{
+      id: string;
+      withdrawal_allowed: number | string | boolean | null;
+    }>(
+      `SELECT id, withdrawal_allowed FROM consent_statements
+        WHERE tenant_id = ? AND id IN (${chunk.map(() => '?').join(',')})`,
+      [input.tenantId, ...chunk]
+    );
+    for (const row of rows) {
+      allowsWithdrawal.set(
+        row.id,
+        row.withdrawal_allowed === null ||
+          row.withdrawal_allowed === true ||
+          Number(row.withdrawal_allowed) === 1
+      );
+    }
+  }
   const definitions = await lookupStatementDefinitions(
     input.metadata,
     input.tenantId,
@@ -205,6 +238,9 @@ async function listStatementConsentRows(input: {
         category: statement?.category ?? null,
         title: localization?.title ?? statement?.slug ?? record.statement_id,
         description: localization?.description ?? null,
+        withdrawable:
+          // A statement that is gone no longer forbids it (the withdrawal itself allows it then).
+          record.status === 'granted' && allowsWithdrawal.get(record.statement_id) !== false,
       };
     })
     .sort((left, right) => right.updated_at - left.updated_at);
@@ -322,6 +358,7 @@ export async function listAccountConsentsHandler(c: Context<{ Bindings: Env }>):
     clientId: row.client_id ?? undefined,
     receiptId: row.receipt_id ?? undefined,
     updatedAt: row.updated_at,
+    withdrawable: row.withdrawable === true,
   }));
 
   const flowStatementConsents: AccountConsentRecord[] = flowRecordRows.map((row) => ({
@@ -434,6 +471,149 @@ export async function withdrawAccountSamlConsentHandler(
     resourceType: 'saml_sp',
     resourceId: spEntityId,
     metadata: { protocol: 'saml' },
+  });
+  return c.json({ withdrawn: true });
+}
+
+/**
+ * Withdraw the person's consent to an OIDC service:
+ * DELETE /api/account/consents/oauth-client?client_id=...
+ *
+ * Ends the tokens issued under it (refresh token families included) and deletes it; the next
+ * authorization asks again. A failure leaves the consent in place, so a retry can complete it.
+ */
+export async function withdrawAccountOAuthClientConsentHandler(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  setNoStore(c);
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    return accountSession;
+  }
+  const clientId = c.req.query('client_id');
+  if (!clientId || clientId.length > 256) {
+    return c.json({ error: 'invalid_request', error_description: 'client_id is required' }, 400);
+  }
+  const tenantId = getTenantIdFromContext(c);
+  const userId = accountSession.userId;
+  const accountCtx = createAccountAuthContextFromHono(c, tenantId);
+  const existing = await accountCtx.coreAdapter.query<{ scope: string }>(
+    `SELECT scope FROM oauth_client_consents
+      WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
+    [tenantId, userId, clientId]
+  );
+  if (existing.length === 0) {
+    return c.json({ error: 'not_found', error_description: 'Consent not found' }, 404);
+  }
+  const previousScopes = existing[0].scope.split(' ').filter(Boolean);
+  await withdrawOAuthClientConsent(c.env, accountCtx.coreAdapter, {
+    tenantId,
+    userId,
+    clientId,
+    previousScopes,
+  });
+  await invalidateConsentCache(c.env, userId, tenantId, clientId);
+  publishEvent(c, {
+    type: CONSENT_EVENTS.REVOKED,
+    tenantId,
+    data: {
+      userId,
+      clientId,
+      scopes: previousScopes,
+      previousScopes,
+      revocationReason: 'user_request',
+      initiatedBy: 'user',
+    } satisfies ExtendedConsentEventData,
+  }).catch((error: unknown) => {
+    getLogger(c)
+      .module('ACCOUNT')
+      .error(
+        'Failed to publish consent.revoked event',
+        { action: 'publish_event' },
+        error as Error
+      );
+  });
+  await recordAccountOperation(c, {
+    userId,
+    action: 'account.consent.withdrawn',
+    resourceType: 'oauth_client',
+    resourceId: clientId,
+    metadata: { protocol: 'oidc' },
+  });
+  return c.json({ withdrawn: true });
+}
+
+/**
+ * Withdraw the person's agreement to a consent statement:
+ * DELETE /api/account/consents/statements/:statementId
+ *
+ * Only a granted agreement to a statement that allows withdrawal; a required statement is asked
+ * again at the next sign-in or single sign-on.
+ */
+export async function withdrawAccountStatementConsentHandler(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  setNoStore(c);
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    return accountSession;
+  }
+  const statementId = c.req.param('statementId');
+  if (!statementId || statementId.length > 128) {
+    return c.json({ error: 'invalid_request', error_description: 'statementId is required' }, 400);
+  }
+  const tenantId = getTenantIdFromContext(c);
+  const userId = accountSession.userId;
+  try {
+    const result = await withdrawStatementConsent(
+      {
+        metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+        account: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      },
+      tenantId,
+      userId,
+      statementId,
+      { env: c.env, actor: { id: userId, type: 'user' } }
+    );
+    if (result === 'missing') {
+      return c.json({ error: 'not_found', error_description: 'Consent not found' }, 404);
+    }
+    if (result === 'not_granted') {
+      return c.json(
+        { error: 'invalid_request', error_description: 'Only a granted consent can be withdrawn' },
+        400
+      );
+    }
+    if (result === 'withdrawal_forbidden') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'This consent statement does not allow withdrawal',
+        },
+        400
+      );
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'statement_consent_atomic_backend_unsupported'
+    ) {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Consent cannot be withdrawn on this database backend',
+        },
+        503
+      );
+    }
+    throw error;
+  }
+  await recordAccountOperation(c, {
+    userId,
+    action: 'account.consent.withdrawn',
+    resourceType: 'statement',
+    resourceId: statementId,
+    metadata: { kind: 'statement' },
   });
   return c.json({ withdrawn: true });
 }

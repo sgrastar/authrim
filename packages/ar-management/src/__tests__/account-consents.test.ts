@@ -198,7 +198,14 @@ describe('Account Page consents API', () => {
           updated_at: 1_777_100_000,
         }),
       ],
-      statements: [{ id: 'privacy-policy', slug: 'privacy', category: 'privacy_policy' }],
+      statements: [
+        {
+          id: 'privacy-policy',
+          slug: 'privacy',
+          category: 'privacy_policy',
+          withdrawal_allowed: 1,
+        },
+      ],
       localizations: [
         {
           version_id: 'version-1',
@@ -331,6 +338,7 @@ describe('Account Page consents API', () => {
           clientId: 'client-abc',
           receiptId: 'receipt-1',
           updatedAt: 1_777_100_000,
+          withdrawable: true,
         },
         {
           kind: 'oauth_client',
@@ -490,8 +498,28 @@ describe('Account Page consents API', () => {
         statementId: 'statement-deleted',
         versionId: 'version-deleted',
         title: 'statement-deleted',
+        // Gone statements no longer forbid it: the withdrawal API allows it too.
+        withdrawable: true,
       }),
     ]);
+  });
+
+  it('offers withdrawal only for a granted record whose statement allows it', async () => {
+    serve({
+      records: [
+        record({ id: 'r-allowed', statement_id: 'news' }),
+        record({ id: 'r-forbidden', statement_id: 'tos' }),
+        record({ id: 'r-withdrawn', statement_id: 'news2', status: 'withdrawn' }),
+      ],
+      statements: [
+        { id: 'news', slug: 'news', category: 'custom', withdrawal_allowed: 1 },
+        { id: 'tos', slug: 'tos', category: 'terms_of_service', withdrawal_allowed: 0 },
+        { id: 'news2', slug: 'news2', category: 'custom', withdrawal_allowed: 1 },
+      ],
+    });
+    const body = await bodyOf(await listAccountConsentsHandler(createMockContext(COOKIE)));
+    const byId = Object.fromEntries(body.consents.map((item) => [item.id, item.withdrawable]));
+    expect(byId).toEqual({ 'r-allowed': true, 'r-forbidden': false, 'r-withdrawn': false });
   });
 
   it('does not answer from the metadata database when the account database cannot be read', async () => {
