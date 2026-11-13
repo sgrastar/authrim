@@ -126,6 +126,23 @@
 	{/snippet}
 </Story>
 
+<!-- One option can be closed on its own (it does not apply here) while the others stay open. -->
+<Story name="Checkbox row, one option closed">
+	{#snippet template()}
+		<div style="max-width: 720px">
+			<CheckboxRow
+				label="Grant types"
+				selected={['authorization_code']}
+				options={[
+					{ value: 'authorization_code', label: 'Authorization code' },
+					{ value: 'refresh_token', label: 'Refresh token' },
+					{ value: 'client_credentials', label: 'Client credentials', disabled: true }
+				]}
+			/>
+		</div>
+	{/snippet}
+</Story>
+
 <Story
 	name="Check row"
 	play={async ({ canvasElement }) => {

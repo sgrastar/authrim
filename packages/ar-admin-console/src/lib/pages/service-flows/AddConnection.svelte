@@ -36,6 +36,7 @@
 		type ConnectionKind,
 		type Direction
 	} from './connection-model';
+	import { settingsFromImport } from './connection-settings';
 	import InSteps from './InSteps.svelte';
 	import RpSteps from './RpSteps.svelte';
 	import SpSteps from './SpSteps.svelte';
@@ -283,7 +284,10 @@
 			: undefined}
 		final={chosen ? undefined : false}
 		finishLabel={t('sf.wizard.finish')}
-		onfinish={() => (reviewing = true)}
+		onfinish={() => {
+			if (answers.kind === 'idp') settingsFromImport(answers.settings, answers.idp.importMode);
+			reviewing = true;
+		}}
 		oncancel={oncancel ? cancel : undefined}
 	>
 		{#snippet children(stepInfo)}

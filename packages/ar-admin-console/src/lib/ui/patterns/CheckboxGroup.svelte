@@ -3,6 +3,8 @@
 		value: string;
 		label: string;
 		description?: string;
+		/** This one cannot be changed (it does not apply here); the others still can. */
+		disabled?: boolean;
 	}
 </script>
 
@@ -67,7 +69,7 @@
 				description={option.description}
 				value={option.value}
 				changed={optionChanged(option.value)}
-				{disabled}
+				disabled={disabled || option.disabled}
 				onchange={(event) => setOne(option.value, event.currentTarget.checked)}
 			>
 				{option.label}

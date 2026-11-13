@@ -18,13 +18,16 @@
 		singleScope?: boolean;
 		/** The platform's environment notice, in the shell's banner slot (none by default). */
 		environmentBanner?: { text: string; textLocalizations?: Record<string, string> };
+		/** The addresses whose page is built; the rest are marked as under construction. */
+		built?: readonly string[];
 	}
 
 	let {
 		path = '/admin/users/all',
 		notifications = [],
 		singleScope = false,
-		environmentBanner
+		environmentBanner,
+		built
 	}: Props = $props();
 
 	// Information is dismissed in place; the demo keeps what is left.
@@ -77,6 +80,7 @@
 		}}
 		account={{ name: 'Alex Morgan', email: 'admin@example.com', initials: 'AM' }}
 		onsignout={() => {}}
+		built={built ? (href) => built.includes(href) : undefined}
 		notifications={shown}
 		ondismiss={(id) => (dismissed = [...dismissed, id])}
 		banner={environmentBanner ? banner : undefined}

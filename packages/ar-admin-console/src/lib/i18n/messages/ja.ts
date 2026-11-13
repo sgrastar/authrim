@@ -2,6 +2,7 @@ import { jaSettings } from './settings/ja';
 import { jaCompliance } from './compliance/ja';
 import { jaMappingConsole } from './mapping-console/ja';
 import { jaServiceFlows } from './service-flows/ja';
+import { jaConnectionSettings } from './connection-settings/ja';
 import { jaAccountFlows } from './account-flows/ja';
 import { jaSchemaSetting } from './schema-setting/ja';
 import { jaTenantGeneral } from './tenant-general/ja';
@@ -31,6 +32,7 @@ export const ja = {
 	...jaCompliance,
 	...jaMappingConsole,
 	...jaServiceFlows,
+	...jaConnectionSettings,
 	...jaAccountFlows,
 	...jaSchemaSetting,
 	...jaTenantGeneral,
@@ -59,6 +61,7 @@ export const ja = {
 	'nav.cluster.operate': '運用',
 	'nav.cluster.platform': 'プラットフォーム',
 	'nav.overview': '概要',
+	'nav.wip': '工事中',
 	'nav.users': 'ユーザー',
 	'nav.access': 'アクセス制御',
 	'nav.applications': 'サービスフロー',

@@ -47,6 +47,7 @@
 		timer = setTimeout(() => {
 			if (read !== reads || form.metadataUrl !== url) return;
 			form.fetched = true;
+			form.reads = (form.reads ?? 0) + 1;
 			fetching = false;
 		}, 500);
 	}
@@ -58,6 +59,8 @@
 		if (files.length > 0) {
 			picked = true;
 			form.fileName = files[0].name;
+			// Counted without being watched: the count is not what this follows.
+			untrack(() => (form.reads = (form.reads ?? 0) + 1));
 		} else if (picked) {
 			picked = false;
 			form.fileName = '';
