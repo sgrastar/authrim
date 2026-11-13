@@ -56,6 +56,11 @@ export interface SessionStatus {
 	is_platform_admin: boolean;
 	/** Capabilities the platform has turned off for tenants (empty for a platform admin). */
 	disabled_capabilities?: string[];
+	/** The platform's environment notice, null while there is none (a notice, not a control). */
+	environment_banner?: {
+		text: string;
+		text_localizations: Record<string, string>;
+	} | null;
 	expires_at: number;
 	created_at: number;
 	last_login_at?: number | null;

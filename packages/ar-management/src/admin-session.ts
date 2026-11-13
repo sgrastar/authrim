@@ -14,8 +14,10 @@ import { getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   AdminGroupRepository,
+  environmentBannerNotice,
   hasGlobalPlatformAuthority,
   listDisabledTenantCapabilities,
+  readEnvironmentBanner,
   type AdminAuthContext,
   getTenantIdFromContext,
   parseAllowedOrigins,
@@ -273,6 +275,9 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       ? []
       : ((await listDisabledTenantCapabilities(c.env)) ?? []);
 
+    // The platform's environment banner (a notice; unreadable settings read as off).
+    const bannerNotice = environmentBannerNotice(await readEnvironmentBanner(c.env));
+
     return c.json({
       active: true,
       user_id: session.admin_user_id,
@@ -285,6 +290,9 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       admin_scope: isPlatformAdmin ? 'platform' : 'tenant',
       is_platform_admin: isPlatformAdmin,
       disabled_capabilities: disabledCapabilities,
+      environment_banner: bannerNotice
+        ? { text: bannerNotice.text, text_localizations: bannerNotice.textLocalizations }
+        : null,
       expires_at: session.expires_at,
       created_at: session.created_at,
       last_login_at: lastLoginAt,

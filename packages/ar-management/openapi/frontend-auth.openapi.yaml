@@ -1756,6 +1756,30 @@ components:
                       accountTitle:
                         type: string
                         description: Primary heading override for the account page.
+        environmentBanner:
+          type: object
+          description: >-
+            The platform's environment banner (a notice, not a security control) and noindex
+            request. Platform-wide: it is never read from a tenant's settings. Absent unless the
+            banner is enabled with some text, or noindex is on.
+          required:
+            - noindex
+          properties:
+            text:
+              type: string
+              maxLength: 200
+              description: Plain text shown in the banner. Present only while the banner is enabled.
+            textLocalizations:
+              type: object
+              description: >-
+                The banner text by language tag (at most 16). A viewer whose language is not listed
+                sees `text`. Present only while the banner is enabled.
+              additionalProperties:
+                type: string
+                maxLength: 200
+            noindex:
+              type: boolean
+              description: The Login UI asks search engines not to index itself.
         meta:
           type: object
           required:

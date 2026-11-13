@@ -287,9 +287,21 @@ export interface AuthenticationMethodsMeta {
 	revision: string;
 }
 
+/**
+ * The platform's environment banner (a notice, not a security control). `text` and
+ * `textLocalizations` are there only while it is enabled; `noindex` asks to keep the Login UI out
+ * of search engines. Absent when neither applies.
+ */
+export interface EnvironmentBannerAnswer {
+	text?: string;
+	textLocalizations?: Record<string, string>;
+	noindex: boolean;
+}
+
 export interface AuthenticationMethodsResponse {
 	methods: AuthenticationMethods;
 	ui: LoginUIConfig;
+	environmentBanner?: EnvironmentBannerAnswer;
 	meta: AuthenticationMethodsMeta;
 }
 

@@ -180,6 +180,33 @@
 	}}
 />
 
+<Story
+	name="Environment banner"
+	args={{
+		path: '/admin/users/all',
+		environmentBanner: {
+			text: 'This is the staging environment. Data here may be reset at any time.'
+		}
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// A flat band under the header categories, above the left nav and the page.
+		const band = canvas.getByRole('region', { name: /Environment notice|環境の案内/ });
+		await expect(band).toHaveTextContent('This is the staging environment.');
+		await expect(getComputedStyle(band).position).toBe('static');
+	}}
+/>
+
+<Story
+	name="Environment banner: long text"
+	args={{
+		path: '/admin/platform/users/all',
+		environmentBanner: {
+			text: 'This is the staging environment used to rehearse upgrades before they reach production. Accounts, applications and settings created here are not copied anywhere, and the whole environment may be rebuilt without notice, so do not keep anything here that you need.'
+		}
+	}}
+/>
+
 <Story name="Notifications: many" args={{ path: '/admin/users/all', notifications: busy }} />
 
 <Story

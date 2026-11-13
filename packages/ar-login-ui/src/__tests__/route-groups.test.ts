@@ -31,7 +31,10 @@ describe('Login UI route groups', () => {
 		expect(rootLayout).not.toMatch(/import\s+['"][^'"]+\.css['"]/u);
 		expect(rootLayout).not.toContain('virtual:uno.css');
 		expect(rootLayout).not.toContain('initializeLoginUIStores');
-		expect(files).not.toContain('+layout.server.ts');
+		// Its one server load only reads the platform's environment banner from the request's
+		// authentication methods answer (no fetch of its own); it has no universal load.
+		const rootLoad = readFileSync(join(ROUTES, '+layout.server.ts'), 'utf8');
+		expect(rootLoad).not.toMatch(/\bfetch\(/u);
 		expect(files).not.toContain('+layout.ts');
 	});
 

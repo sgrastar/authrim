@@ -3,6 +3,23 @@ import type { jaSettings } from './ja';
 export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.page.team': 'المسؤولون',
 	'set.page.team.desc': 'كيف يسجّل المسؤولون الدخول إلى وحدة التحكم هذه.',
+	'set.page.general': 'عام',
+	'set.page.general.desc': 'اسم المستأجر والعناوين التي يوفّرها.',
+	'set.section.environmentBanner': 'شريط تنبيه البيئة',
+	'set.section.environmentBanner.desc':
+		'تنبيه حول هذه البيئة يظهر أعلى شاشات تسجيل الدخول ووحدة التحكم هذه. ينطبق على جميع المستأجرين، ولا يمكن تغييره إلا لمسؤولي المنصّة.',
+	'set.k.environment_banner.enabled': 'إظهار شريط تنبيه البيئة',
+	'set.k.environment_banner.enabled.desc':
+		'يعرض تنبيهًا حول هذه البيئة أعلى شاشات تسجيل الدخول ووحدة تحكم المسؤول.',
+	'set.k.environment_banner.text': 'نص الشريط',
+	'set.k.environment_banner.text.desc':
+		'الجملة التي يعرضها الشريط: نص عادي حتى 200 حرف دون HTML (مثال: هذه بيئة الاختبار.). يُعرض بكل لغة ليس لها نص خاص.',
+	'set.k.environment_banner.text_localizations': 'النص لكل لغة',
+	'set.k.environment_banner.text_localizations.desc':
+		'النص بكل لغة بصيغة JSON (مثال: {"ja": "ステージング環境です。", "en": "This is the staging environment."}). حتى 16 لغة، وكل نص حتى 200 حرف، ولا تُشترط أي لغة.',
+	'set.k.environment_banner.noindex': 'إبعاد شاشات تسجيل الدخول عن محركات البحث',
+	'set.k.environment_banner.noindex.desc':
+		'عند التفعيل: يُطلب من محركات البحث عدم فهرسة شاشات تسجيل الدخول. يعمل سواء ظهر الشريط أم لا.',
 	'set.section.adminSignIn': 'تسجيل دخول المسؤولين',
 	'set.section.adminSignIn.desc':
 		'المدة التي يبقى فيها مسؤولو هذا المستأجر مسجّلين، والتحققات المطلوبة قبل أي عملية.',

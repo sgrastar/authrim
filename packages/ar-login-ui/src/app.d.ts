@@ -72,6 +72,10 @@ declare global {
 			authenticationMethods?:
 				| import('#lib/api/authentication-methods.js').AuthenticationMethodsResponse
 				| null;
+			/** Cache-only answer for the plain sign-in entry (no bootstrap): the environment banner only. */
+			peekedAuthenticationMethods?:
+				| import('#lib/api/authentication-methods.js').AuthenticationMethodsResponse
+				| null;
 			/** The tenant's lite Login UI mode, as the request's authentication methods tell it. */
 			loginUiLite?: import('#lib/lite/routing.js').LiteModeAnswer;
 			/** What the Router checked at its edge, or the UI's own check (lib/server/edge-context.ts). */

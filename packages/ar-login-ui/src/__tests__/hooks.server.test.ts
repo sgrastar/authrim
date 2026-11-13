@@ -1633,3 +1633,36 @@ describe('guest authentication methods client selection', () => {
 		).toBe(expected);
 	});
 });
+
+describe('environment banner noindex header', () => {
+	async function run(
+		environmentBanner: { noindex: boolean } | undefined,
+		contentType = 'text/html; charset=utf-8'
+	) {
+		const { securityHeadersHandle } = await import('../hooks.server');
+		const url = new URL('/login', 'https://login.example.com');
+		const event = {
+			request: new Request(url),
+			url,
+			locals: { authenticationMethods: { environmentBanner } } as never,
+			platform: { env: {} }
+		};
+		return securityHeadersHandle({
+			event: event as never,
+			resolve: async () => new Response('x', { headers: { 'Content-Type': contentType } })
+		});
+	}
+
+	it('sets X-Robots-Tag on an HTML response when the platform asks for noindex', async () => {
+		const response = await run({ noindex: true });
+		expect(response.headers.get('X-Robots-Tag')).toBe('noindex, nofollow');
+	});
+
+	it('does not set it when noindex is off or absent, or for a non-HTML response', async () => {
+		expect((await run({ noindex: false })).headers.get('X-Robots-Tag')).toBeNull();
+		expect((await run(undefined)).headers.get('X-Robots-Tag')).toBeNull();
+		expect(
+			(await run({ noindex: true }, 'application/json')).headers.get('X-Robots-Tag')
+		).toBeNull();
+	});
+});

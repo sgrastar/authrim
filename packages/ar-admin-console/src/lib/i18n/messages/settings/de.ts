@@ -3,6 +3,23 @@ import type { jaSettings } from './ja';
 export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.page.team': 'Administratoren',
 	'set.page.team.desc': 'Wie sich Administratoren bei dieser Konsole anmelden.',
+	'set.page.general': 'Allgemein',
+	'set.page.general.desc': 'Wie der Mandant heißt und welche Adressen er bereitstellt.',
+	'set.section.environmentBanner': 'Umgebungshinweis',
+	'set.section.environmentBanner.desc':
+		'Ein Hinweis zu dieser Umgebung oben auf den Anmeldeseiten und in dieser Konsole. Er gilt für alle Mandanten und kann nur von Plattformadministratoren geändert werden.',
+	'set.k.environment_banner.enabled': 'Umgebungshinweis anzeigen',
+	'set.k.environment_banner.enabled.desc':
+		'Zeigt oben auf den Anmeldeseiten und in der Admin-Konsole einen Hinweis zu dieser Umgebung an.',
+	'set.k.environment_banner.text': 'Text des Hinweises',
+	'set.k.environment_banner.text.desc':
+		'Der Satz, den der Hinweis zeigt: reiner Text mit bis zu 200 Zeichen, ohne HTML (zum Beispiel: Dies ist die Staging-Umgebung.). Wird in jeder Sprache ohne eigenen Text angezeigt.',
+	'set.k.environment_banner.text_localizations': 'Text je Sprache',
+	'set.k.environment_banner.text_localizations.desc':
+		'Der Text in jeder Sprache als JSON-Text (zum Beispiel {"ja": "ステージング環境です。", "en": "This is the staging environment."}). Bis zu 16 Sprachen mit je bis zu 200 Zeichen; keine Sprache ist Pflicht.',
+	'set.k.environment_banner.noindex': 'Anmeldeseiten aus Suchmaschinen heraushalten',
+	'set.k.environment_banner.noindex.desc':
+		'An: bittet Suchmaschinen, die Anmeldeseiten nicht zu indexieren. Wirkt unabhängig davon, ob der Hinweis angezeigt wird.',
 	'set.section.adminSignIn': 'Anmeldung der Administratoren',
 	'set.section.adminSignIn.desc':
 		'Wie lange die Administratoren dieses Mandanten angemeldet bleiben und welche Prüfungen vor einem Vorgang verlangt werden.',
