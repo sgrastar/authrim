@@ -58,6 +58,7 @@ import {
   checkUserConsentSatisfaction,
   resolveStatementRequirements,
   ssoConsentStatementsForTarget,
+  flowConditionAttributeReader,
   StatementConsentAccountReadError,
   type StatementConsentStores,
   processConsentItemDecisions,
@@ -606,10 +607,12 @@ export async function loadConsentScreenItems(
   const requirements = await resolveStatementRequirements(
     stores.metadata,
     params.tenantId,
-    await ssoConsentStatementsForTarget(stores.metadata, params.tenantId, {
-      type: params.targetType ?? 'oidc_client',
-      id: params.clientId,
-    })
+    await ssoConsentStatementsForTarget(
+      stores.metadata,
+      params.tenantId,
+      { type: params.targetType ?? 'oidc_client', id: params.clientId },
+      flowConditionAttributeReader(c.env, params.tenantId, params.userId)
+    )
   );
   // Only what the user has not yet agreed to (as the Flow leaves out what is answered): a statement
   // agreed to from the version it is required from is neither asked nor recorded again.

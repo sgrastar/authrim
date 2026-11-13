@@ -11,6 +11,7 @@ import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
   type CanonicalRuntimeUserProjection,
+  type CanonicalRuntimeUserProjectionOptions,
   type CanonicalSensitiveUserField,
 } from './canonical-runtime-user-projection';
 import {
@@ -304,7 +305,7 @@ export class CanonicalRuntimeUserStore {
 
   async findById(
     userId: string,
-    options?: { includeInactive?: boolean }
+    options?: CanonicalRuntimeUserProjectionOptions
   ): Promise<CanonicalRuntimeUserProjection | null> {
     return this.projection.findByLegacyUserId(userId, options);
   }

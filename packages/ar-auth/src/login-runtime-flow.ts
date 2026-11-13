@@ -24,6 +24,9 @@ import {
   resolveAccountDataContextFromHono,
   createPIIContextFromHono,
   evaluateFlowConditionRows,
+  conditionUserAttributeKeys,
+  runtimeConditionExpressions,
+  flowConditionAttributeReader,
   generateId,
   getChallengeStoreByChallengeId,
   getFeatureFlag,
@@ -2490,10 +2493,20 @@ async function buildConditionEvaluationContext(
     requested_scope: parseScopeList(requestContext.requested_scope),
     authentication_method: authenticationMethod,
     user: interaction.user_id
-      ? await getFlowConditionUserContext(c, db, tenantId, interaction.user_id)
+      ? await getFlowConditionUserContext(
+          c,
+          db,
+          tenantId,
+          interaction.user_id,
+          // Only the attributes a condition of this Flow reads (none: nothing is read).
+          conditionUserAttributeKeys(runtimeConditionExpressions(runtime))
+        )
       : undefined,
     // The choices screen steps sent to the Flow (a screen answer condition reads them).
     screen_answers: screenAnswersOf(requestContext.screen_answers),
+    ...(typeof requestContext.locale === 'string' && requestContext.locale
+      ? { locale: requestContext.locale }
+      : {}),
   };
 }
 
@@ -2501,7 +2514,8 @@ async function getFlowConditionUserContext(
   c: AuthContext,
   db: DatabaseAdapter,
   tenantId: string,
-  userId: string
+  userId: string,
+  attributeKeys: readonly string[] = []
 ): Promise<NonNullable<FlowConditionEvaluationContext['user']>> {
   // Role and organisation definitions are in the tenant metadata database (`db`); the user's
   // assignments and memberships in the user's account database. A user the tenant has no account
@@ -2514,13 +2528,19 @@ async function getFlowConditionUserContext(
   } catch (error) {
     if (!(error instanceof Error && error.message === 'account_data_route_not_found')) throw error;
   }
-  const [roles, orgIds] = await Promise.all([
+  const [roles, orgIds, attributes] = await Promise.all([
     getFlowConditionUserRoles(db, rbac, tenantId, userId),
     getFlowConditionUserOrgIds(rbac, tenantId, userId),
+    // Read, like the roles, only for a user the tenant has an account for; one that cannot be
+    // read throws, so no condition on it is decided without it.
+    rbac && attributeKeys.length > 0
+      ? flowConditionAttributeReader(c.env, tenantId, userId)([...attributeKeys])
+      : Promise.resolve(undefined),
   ]);
   return {
     roles,
     org_ids: orgIds,
+    ...(attributes ? { attributes } : {}),
   };
 }
 

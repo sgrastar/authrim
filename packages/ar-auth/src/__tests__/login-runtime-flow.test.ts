@@ -240,6 +240,7 @@ const mocks = vi.hoisted(() => {
     readAuthorizationChallengeFreshness: vi.fn(),
     getFeatureFlag: vi.fn(),
     resolveAccountCoreDataContext: vi.fn(),
+    readConditionAttributes: vi.fn(),
     resolveAccountDataContextFromHono: vi.fn(async () => undefined),
     resolveCustomClaimRuntimeSourcesFromHono: vi.fn(),
     validateCustomClaimWrite: vi.fn(),
@@ -299,6 +300,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveRuntimeIdentityMappingBinding: mocks.resolveRuntimeIdentityMappingBinding,
     resolveOidcIdentityMappingBinding: mocks.resolveOidcIdentityMappingBinding,
     resolveAccountCoreDataContext: mocks.resolveAccountCoreDataContext,
+    flowConditionAttributeReader: vi.fn(
+      () => (keys: string[]) => mocks.readConditionAttributes(keys) as Promise<unknown>
+    ),
   };
 });
 
@@ -930,6 +934,37 @@ const roleConditionRuntime: FlowRuntimeContract = {
   },
 };
 
+/** A condition on a user attribute: someone not from JP goes to consent, others skip it. */
+const attributeConditionRuntime: FlowRuntimeContract = {
+  ...conditionRuntime,
+  ui: {
+    steps: conditionRuntime.ui.steps.map((step) =>
+      step.component === 'condition'
+        ? {
+            ...step,
+            config: {
+              conditions: {
+                rows: [
+                  {
+                    id: 'abroad',
+                    condition: {
+                      type: 'user.attribute',
+                      attribute: 'nationality',
+                      operator: 'ne',
+                      value: 'JP',
+                    },
+                    output_handle: 'needs_consent',
+                  },
+                ],
+                otherwise: { output_handle: 'skip_consent' },
+              },
+            },
+          }
+        : step
+    ),
+  },
+};
+
 const conditionEditor = {
   nodes: [
     { id: 'entry', type: 'entry' },
@@ -1099,6 +1134,7 @@ function resetAdapter() {
   // No account unless a test gives one (a user without an account has no roles).
   mocks.resolveAccountCoreDataContext.mockReset();
   mocks.resolveAccountCoreDataContext.mockRejectedValue(new Error('account_data_route_not_found'));
+  mocks.readConditionAttributes.mockReset();
   clearLoginRuntimeFlowVersionCacheForTests();
   mocks.idQueue.splice(
     0,
@@ -2808,6 +2844,88 @@ describe('LoginUI runtime Flow handlers', () => {
 
       expect(data.step).not.toMatchObject({ id: 'complete:step' });
       expect(data.step).not.toMatchObject({ id: 'consent:step' });
+      expect(JSON.stringify(data)).toContain('AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE');
+      // No condition of this Flow reads an attribute: none is read.
+      expect(mocks.readConditionAttributes).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a condition on the user's attributes", () => {
+    const emptyAccount = {
+      query: vi.fn(async () => []),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+      batch: vi.fn(),
+      transaction: vi.fn(),
+      isHealthy: vi.fn(),
+      getType: () => 'mock',
+      close: vi.fn(),
+    };
+
+    /** `attributes`: what reading the user's attributes answers (after the adapter is reset). */
+    async function submitAttributeCondition(attributes: () => void) {
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'login' },
+        attributeConditionRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'scope-condition',
+        currentStepId: 'scope-condition:step',
+        stepState: 'pending',
+        runtimeSnapshot: attributeConditionRuntime,
+        editorSnapshot: conditionEditor,
+        userId: 'user_1',
+      });
+      mocks.coreAdapter.query.mockResolvedValue([]);
+      mocks.resolveAccountCoreDataContext.mockResolvedValue({ coreDb: emptyAccount });
+      attributes();
+      return loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          body: {
+            step_id: 'scope-condition:step',
+            node_id: 'scope-condition',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+    }
+
+    it('reads only the attributes the conditions name, and branches on them', async () => {
+      const data = await readJson(
+        await submitAttributeCondition(() =>
+          mocks.readConditionAttributes.mockResolvedValue({ nationality: 'US' })
+        )
+      );
+
+      expect(data.step).toMatchObject({ id: 'consent:step' });
+      expect(mocks.readConditionAttributes).toHaveBeenCalledWith(['nationality']);
+    });
+
+    it('takes the other way for someone the condition does not hold for', async () => {
+      const data = await readJson(
+        await submitAttributeCondition(() =>
+          mocks.readConditionAttributes.mockResolvedValue({ nationality: 'JP' })
+        )
+      );
+
+      expect(data.step).toMatchObject({ id: 'complete:step' });
+    });
+
+    it('chooses no branch when the attributes cannot be read', async () => {
+      const data = await readJson(
+        await submitAttributeCondition(() =>
+          mocks.readConditionAttributes.mockRejectedValue(new Error('pii_unavailable'))
+        )
+      );
+
+      expect(data.step).not.toMatchObject({ id: 'consent:step' });
+      expect(data.step).not.toMatchObject({ id: 'complete:step' });
       expect(JSON.stringify(data)).toContain('AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE');
     });
   });
