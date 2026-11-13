@@ -20,13 +20,17 @@
 		type ConsentEntry
 	} from './consent-field-model';
 	import { useFlowResources } from './flow-resources-context';
+	import StatementPeek from './StatementPeek.svelte';
+	import StatementQuickCreate from './StatementQuickCreate.svelte';
 	import { statementName } from '#lib/pages/customization/statements/statement-model.js';
 
 	/**
 	 * The consent statements a flow asks, in the order they are shown: chosen from the tenant's
 	 * statements (only those turned on and with a published version), each required or optional.
 	 * A statement that is no longer there (deleted or retired) stays in the list, flagged, so it
-	 * can be removed. Statements are made and changed on their own pages: links lead there.
+	 * can be removed. A chosen statement's text can be read here; a new statement can be made
+	 * here (published and chosen at once), as a sign-in method profile can. Statements are changed
+	 * on their own pages: links lead there.
 	 */
 	interface Props {
 		label: string;
@@ -51,7 +55,12 @@
 	}: Props = $props();
 
 	const STATEMENTS = '/admin/customization/statements';
-	const { consentStatements: client } = useFlowResources();
+	const resources = useFlowResources();
+	const client = resources.consentStatements;
+	const canCreate = () => (resources.canCreateStatement ?? resources.canCreateProfile)();
+	let creating = $state(false);
+	/** The statements whose text is open below them. */
+	let peeking = $state<string[]>([]);
 	let phase = $state<'loading' | 'ready' | 'failed'>('loading');
 	let items = $state<ConsentStatementListItem[]>([]);
 	const controller = new AbortController();
@@ -92,6 +101,21 @@
 		set([...entries, { statementId: picked, required: true }]);
 		picked = '';
 	}
+
+	/** A statement made here: the list is read again (it is there now) and it is chosen. */
+	async function created(id: string) {
+		creating = false;
+		await load();
+		// The setting was closed meanwhile: nothing is chosen in it.
+		if (controller.signal.aborted) return;
+		if (!entries.some((entry) => entry.statementId === id) && !full) {
+			set([...entries, { statementId: id, required: true }]);
+		}
+	}
+
+	const itemOf = (id: string) => items.find((item) => item.statement.id === id);
+	const togglePeek = (id: string) =>
+		(peeking = peeking.includes(id) ? peeking.filter((other) => other !== id) : [...peeking, id]);
 </script>
 
 <fieldset class="consent" disabled={unavailable}>
@@ -117,6 +141,8 @@
 				{#each entries as entry, index (entry.statementId)}
 					{@const info = consentLabel(entry.statementId, items, i18n.locale)}
 					{@const known = phase === 'failed' || info.known}
+					{@const current = itemOf(entry.statementId)?.current ?? null}
+					{@const open = peeking.includes(entry.statementId)}
 					<li class="consent__row">
 						<div class="consent__line" role="group" aria-label={info.name}>
 							<span class="consent__name" class:is-id={!info.known && phase === 'ready'}
@@ -152,6 +178,25 @@
 								onclick={() => set(entries.filter((_, i) => i !== index))}
 							/>
 						</div>
+						{#if phase === 'ready' && current}
+							<div>
+								<Button
+									size="sm"
+									variant="ghost"
+									icon={open ? 'eyeSlash' : 'eye'}
+									aria-expanded={open}
+									onclick={() => togglePeek(entry.statementId)}
+									>{open ? t('af.consent.peek.hide') : t('af.consent.peek.show')}</Button
+								>
+							</div>
+							{#if open}
+								<StatementPeek
+									statementId={entry.statementId}
+									versionId={current.id}
+									contentType={current.content_type}
+								/>
+							{/if}
+						{/if}
 						{#if phase === 'ready' && !known}
 							<Badge tone="danger">{t('af.consent.unknown')}</Badge>
 						{:else if phase === 'ready' && !info.choosable}
@@ -164,7 +209,7 @@
 		{#if phase === 'ready'}
 			{#if full}
 				<p class="consent__hint">{t('af.consent.max', { n: MAX_CONSENT_STATEMENTS })}</p>
-			{:else if offered.length > 0}
+			{:else if offered.length > 0 && !creating}
 				<div class="consent__add">
 					<Select
 						label={t('af.consent.add')}
@@ -178,9 +223,20 @@
 				<p class="consent__hint">{t('af.consent.none')}</p>
 			{/if}
 		{/if}
+		{#if creating}
+			<StatementQuickCreate
+				oncreated={(id) => void created(id)}
+				oncancel={() => (creating = false)}
+			/>
+		{:else if phase === 'ready' && !full && canCreate()}
+			<div>
+				<Button icon="plus" size="sm" onclick={() => (creating = true)}
+					>{t('af.consent.new.open')}</Button
+				>
+			</div>
+		{/if}
 		<div class="consent__links">
 			<Link href={STATEMENTS} standalone>{t('af.consent.manage')}</Link>
-			<Link href={`${STATEMENTS}/new`} standalone>{t('af.consent.create')}</Link>
 		</div>
 	{/if}
 </fieldset>

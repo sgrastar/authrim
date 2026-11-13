@@ -131,6 +131,7 @@
 		notifications={mockNoticeInbox.notifications}
 		ondismiss={(id) => mockNoticeInbox.dismiss(id)}
 		{banner}
+		built={(href) => mockPageFor(href) !== undefined}
 	>
 		{#key consolePath}
 			{#if !known}

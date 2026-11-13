@@ -19,16 +19,26 @@
 		/** What the flow already asks (`<id>:required` / `<id>:optional`). */
 		initial?: string[];
 		unavailable?: boolean;
+		/** Whether a statement may be made from the flow (default yes). */
+		canCreate?: boolean;
 	}
 
-	let { answer, initial = [], unavailable = false }: Props = $props();
+	let { answer, initial = [], unavailable = false, canCreate = true }: Props = $props();
 
 	const real = createFakeConsentStatements(MOCK_CONSENT_STATEMENTS);
+	/** Statements made in the story: listed even when the tenant had none. */
+	const made: string[] = [];
 	const consentStatements: ConsentStatementsClient = {
 		...real,
 		async list(signal) {
 			if (answer === 'failed') throw new ApiError(500, 'server_error', 'Failed');
-			return answer === 'none' ? [] : real.list(signal);
+			const list = await real.list(signal);
+			return answer === 'none' ? list.filter((item) => made.includes(item.statement.id)) : list;
+		},
+		async create(input) {
+			const statement = await real.create(input);
+			made.push(statement.id);
+			return statement;
 		}
 	};
 	provideFlowResources({
@@ -38,7 +48,8 @@
 		clients: createFakeClients(),
 		samlProviders: createFakeSamlProviders(),
 		consentStatements,
-		canCreateProfile: () => false
+		canCreateProfile: () => false,
+		canCreateStatement: () => canCreate
 	});
 	let value = $derived([...initial]);
 </script>
