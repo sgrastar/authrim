@@ -291,6 +291,7 @@ export * from './utils/consent-statements';
 export * from './utils/consent-history';
 export * from './services/flow-consent-statements';
 export * from './services/flow-sso-consent';
+export * from './services/flow-condition-user-attributes';
 
 // Initial Setup (Admin Account Setup)
 export * from './utils/setup-token';

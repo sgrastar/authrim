@@ -17,8 +17,11 @@
  * (`ssoRequiredConsentStatementIds`).
  */
 import {
+  conditionUserAttributeKeys,
   evaluateFlowCondition,
+  runtimeConditionExpressions,
   type FlowConditionEvaluationContext,
+  type FlowConditionEvaluationUser,
   type FlowConditionExpression,
   type FlowEditorState,
   type FlowRuntimeContract,
@@ -85,11 +88,101 @@ function stepProtocol(step: FlowRuntimeStep | undefined): string | null {
 /** The protocol of a request that is answered at single sign-on. */
 export type FlowSsoProtocol = 'oidc' | 'saml';
 
+/** The attributes of the person signing in, by key (only the keys asked for need be there). */
+export type FlowSsoUserAttributes = NonNullable<FlowConditionEvaluationUser['attributes']>;
+
 /** What is known of a request answered at single sign-on, before any Flow runs. */
 export interface FlowSsoContext {
   protocol: FlowSsoProtocol;
   client_id?: string;
   saml_sp_id?: string;
+  /**
+   * Reads the signed-in person's attributes (the keys the Flow's conditions read), so a condition
+   * on a user attribute or an age is judged for them. Called once, only when a condition reads
+   * one. Without it, or when it fails, such a condition may go either way.
+   */
+  user_attributes?: (keys: string[]) => Promise<FlowSsoUserAttributes>;
+  /** When the conditions are judged (an age is the age on this day); now when absent. */
+  now_ms?: number;
+}
+
+/** Condition kinds judged from the person signing in, when their attributes can be read. */
+const USER_CONDITION_TYPES = new Set(['user.attribute', 'user.age']);
+
+/** What a walk knows: the request, and the person's attributes once read (null: unreadable). */
+interface SsoKnowledge {
+  context: FlowSsoContext;
+  known: FlowConditionEvaluationContext;
+  user: () => Promise<FlowSsoUserAttributes | null>;
+}
+
+function ssoKnowledge(runtime: FlowRuntimeContract, context: FlowSsoContext): SsoKnowledge {
+  const known: FlowConditionEvaluationContext = {
+    protocol: context.protocol,
+    flow_kind: 'login',
+    ...(context.client_id ? { client_id: context.client_id } : {}),
+    ...(context.saml_sp_id ? { saml_sp_id: context.saml_sp_id } : {}),
+    ...(context.now_ms !== undefined ? { now_ms: context.now_ms } : {}),
+  };
+  let read: Promise<FlowSsoUserAttributes | null> | null = null;
+  const user = () => {
+    if (!context.user_attributes) return Promise.resolve(null);
+    read ??= (async () => {
+      const keys = conditionUserAttributeKeys(runtimeConditionExpressions(runtime));
+      if (keys.length === 0) return {};
+      try {
+        return await (context.user_attributes as NonNullable<FlowSsoContext['user_attributes']>)(
+          keys
+        );
+      } catch {
+        // Not read: such a condition may go either way (asking once more is the safer way).
+        return null;
+      }
+    })();
+    return read;
+  };
+  return { context, known, user };
+}
+
+/**
+ * Whether a condition holds for this request: true or false when it can be judged from the request
+ * (or the person's attributes), null when it depends on the run. An `all` holds when each of its
+ * conditions does, does not when any one is judged not to, and is unknown otherwise.
+ */
+async function judgeCondition(
+  condition: Record<string, unknown>,
+  knowledge: SsoKnowledge
+): Promise<boolean | null> {
+  const { context, known } = knowledge;
+  const type = condition.type;
+  if (type === 'all') {
+    if (!Array.isArray(condition.all) || condition.all.length === 0) return false;
+    let unknown = false;
+    for (const member of condition.all) {
+      if (!isRecord(member) || member.type === 'all') return false;
+      const result = await judgeCondition(member, knowledge);
+      if (result === false) return false;
+      if (result === null) unknown = true;
+    }
+    return unknown ? null : true;
+  }
+  if (typeof type !== 'string') return null;
+  if (USER_CONDITION_TYPES.has(type)) {
+    const attributes = await knowledge.user();
+    if (!attributes) return null;
+    return evaluateFlowCondition(condition as unknown as FlowConditionExpression, {
+      ...known,
+      user: { attributes },
+    });
+  }
+  // An app id condition is judged when the request's id is known, or when the request has none
+  // of that kind (an OIDC request has no SAML SP, a SAML one no client): it does not match then.
+  const judged =
+    KNOWN_CONDITION_TYPES.has(type) &&
+    !(type === 'client_id' && context.protocol === 'oidc' && !known.client_id) &&
+    !(type === 'saml_sp_id' && context.protocol === 'saml' && !known.saml_sp_id);
+  if (!judged) return null;
+  return evaluateFlowCondition(condition as unknown as FlowConditionExpression, known);
 }
 
 /** Condition kinds judged from the request alone (the others depend on the run). */
@@ -109,35 +202,22 @@ const KNOWN_CONDITION_TYPES = new Set([
  */
 async function conditionHandles(
   step: FlowRuntimeStep,
-  context: FlowSsoContext | null
+  knowledge: SsoKnowledge | null
 ): Promise<Set<string> | null> {
-  if (step.component !== 'condition' || !context || !isRecord(step.config)) return null;
+  if (step.component !== 'condition' || !knowledge || !isRecord(step.config)) return null;
   const conditions = step.config.conditions;
   if (!isRecord(conditions) || !Array.isArray(conditions.rows)) return null;
-  const known: FlowConditionEvaluationContext = {
-    protocol: context.protocol,
-    flow_kind: 'login',
-    ...(context.client_id ? { client_id: context.client_id } : {}),
-    ...(context.saml_sp_id ? { saml_sp_id: context.saml_sp_id } : {}),
-  };
   const handles = new Set<string>();
   for (const row of conditions.rows) {
     if (!isRecord(row) || !isRecord(row.condition) || typeof row.output_handle !== 'string') {
       return null;
     }
-    const type = row.condition.type;
-    // An app id condition is judged when the request's id is known, or when the request has none
-    // of that kind (an OIDC request has no SAML SP, a SAML one no client): it does not match then.
-    const judged =
-      typeof type === 'string' &&
-      KNOWN_CONDITION_TYPES.has(type) &&
-      !(type === 'client_id' && context.protocol === 'oidc' && !known.client_id) &&
-      !(type === 'saml_sp_id' && context.protocol === 'saml' && !known.saml_sp_id);
-    if (!judged) {
+    const holds = await judgeCondition(row.condition, knowledge);
+    if (holds === null) {
       handles.add(row.output_handle);
       continue;
     }
-    if (await evaluateFlowCondition(row.condition as unknown as FlowConditionExpression, known)) {
+    if (holds) {
       handles.add(row.output_handle);
       return handles;
     }
@@ -151,7 +231,7 @@ async function successorsOf(
   runtime: FlowRuntimeContract,
   editor: Pick<FlowEditorState, 'edges'> | null,
   index: number,
-  context: FlowSsoContext | null
+  knowledge: SsoKnowledge | null
 ): Promise<number[]> {
   const step = runtime.ui.steps[index];
   if (!step) return [];
@@ -161,7 +241,7 @@ async function successorsOf(
   const indexOf = (target: string) =>
     runtime.ui.steps.findIndex((candidate) => candidate.source_node_id === target);
   // Every handle may be taken, except those a condition judged from the request rules out.
-  const reachable = await conditionHandles(step, context);
+  const reachable = await conditionHandles(step, knowledge);
   // The runtime picks among the edges of the handle it was sent (exactly that handle), or, sent
   // none, among the default edges (unlabeled or `next`). Each such set is taken into account.
   const groups: (typeof edges)[] = [];
@@ -175,7 +255,7 @@ async function successorsOf(
   }
   const defaults = edges.filter((edge) => !edge.source_handle || edge.source_handle === 'next');
   if (defaults.length > 0 && (!reachable || reachable.has('next'))) groups.push(defaults);
-  const protocol = context?.protocol ?? null;
+  const protocol = knowledge?.context.protocol ?? null;
   const targets: number[] = [];
   for (const group of groups) {
     // Among a set the runtime prefers a target that answers the request's protocol (or names
@@ -200,6 +280,7 @@ async function reachableSteps(
   editor: Pick<FlowEditorState, 'edges'> | null,
   context: FlowSsoContext | null
 ): Promise<Set<number>> {
+  const knowledge = context ? ssoKnowledge(runtime, context) : null;
   const seen = new Set<number>();
   if (runtime.ui.steps.length === 0) return seen;
   seen.add(0);
@@ -207,7 +288,7 @@ async function reachableSteps(
   while (queue.length > 0) {
     const index = queue.shift() as number;
     if (runtime.ui.steps[index]?.component === 'completion') continue;
-    for (const target of await successorsOf(runtime, editor, index, context)) {
+    for (const target of await successorsOf(runtime, editor, index, knowledge)) {
       if (seen.has(target)) continue;
       seen.add(target);
       queue.push(target);
@@ -220,8 +301,9 @@ async function reachableSteps(
  * The required statements a person who is answered without going through the Flow (single
  * sign-on) must have agreed to, in the order the steps come: those of every step the request can
  * reach. Only what is certain from the request narrows the ways: its protocol picks among edges
- * made for a protocol, and conditions judged from the request (protocol, app, Flow kind) pick
- * their branch. Everything else (a condition on the run, a screen's exits, an action's outcome)
+ * made for a protocol, and conditions judged from the request (protocol, app, Flow kind), or from
+ * the signed-in person's attributes when they can be read (a user attribute, an age), pick their
+ * branch. Everything else (a condition on the run, a screen's exits, an action's outcome)
  * may go either way, so a required statement on any of those ways is required here: asking once
  * more is better than letting someone past a statement their way would have asked for.
  */

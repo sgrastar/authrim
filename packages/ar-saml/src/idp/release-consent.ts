@@ -38,6 +38,8 @@ import {
   reusableReleaseApproval,
   SAML_RELEASE_CONSENT_PURPOSE,
   ssoConsentStatementsForTarget,
+  flowConditionAttributeReader,
+  type FlowSsoContext,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { getSamlUserCoreAdapter, type SAMLUserInfo } from '../common/user-store';
@@ -95,15 +97,22 @@ async function metadataAdapter(env: Env, tenantId: string): Promise<DatabaseAdap
 async function unansweredDocuments(
   metadata: DatabaseAdapter,
   account: DatabaseAdapter,
-  input: { tenantId: string; spEntityId: string; userId: string }
+  input: {
+    tenantId: string;
+    spEntityId: string;
+    userId: string;
+    userAttributes?: FlowSsoContext['user_attributes'];
+  }
 ): Promise<string[]> {
   const requirements = await resolveStatementRequirements(
     metadata,
     input.tenantId,
-    await ssoConsentStatementsForTarget(metadata, input.tenantId, {
-      type: 'saml_sp',
-      id: input.spEntityId,
-    })
+    await ssoConsentStatementsForTarget(
+      metadata,
+      input.tenantId,
+      { type: 'saml_sp', id: input.spEntityId },
+      input.userAttributes
+    )
   );
   if (requirements.length === 0) return [];
   const { unsatisfied } = await checkUserConsentSatisfaction(
@@ -188,6 +197,7 @@ export async function resolveSAMLReleaseConsent(
     tenantId,
     spEntityId: spConfig.entityId,
     userId: session.userId,
+    userAttributes: flowConditionAttributeReader(env, tenantId, session.userId),
   });
   const items = samlReleaseItems(input.release, {
     nameIdFormat: input.nameIdFormat,

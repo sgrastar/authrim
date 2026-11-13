@@ -80,6 +80,7 @@ import {
   // Consent Management
   resolveStatementRequirements,
   ssoConsentStatementsForTarget,
+  flowConditionAttributeReader,
   checkUserConsentSatisfaction,
   resolveClientTrustPolicy,
   resolveSignInConfirmationPolicy,
@@ -4476,10 +4477,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           resolveStatementRequirements(
             authCtx.coreAdapter,
             tenantId,
-            await ssoConsentStatementsForTarget(authCtx.coreAdapter, tenantId, {
-              type: 'oidc_client',
-              id: validClientId,
-            })
+            await ssoConsentStatementsForTarget(
+              authCtx.coreAdapter,
+              tenantId,
+              { type: 'oidc_client', id: validClientId },
+              flowConditionAttributeReader(c.env, tenantId, sub)
+            )
           )
       );
 

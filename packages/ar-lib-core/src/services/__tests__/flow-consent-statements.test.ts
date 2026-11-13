@@ -404,3 +404,119 @@ describe('ssoRequiredConsentStatementIds and next beside an unlabeled edge', () 
     ]);
   });
 });
+
+describe('ssoRequiredConsentStatementIds and conditions on the person', () => {
+  // Everyone is asked the terms; someone not from JP is asked the local law too, and a minor the
+  // guardian statement.
+  const law = { statement_id: 'law', required: true };
+  const guardian = { statement_id: 'guardian', required: true };
+  const flow = runtime([
+    step('entry', 'interaction_context'),
+    step('terms', 'consent_policy', { statements: [tos] }),
+    step('abroad', 'condition', {
+      conditions: {
+        rows: [
+          {
+            condition: {
+              type: 'user.attribute',
+              attribute: 'nationality',
+              operator: 'ne',
+              value: 'JP',
+            },
+            output_handle: 'yes',
+          },
+        ],
+        otherwise: { output_handle: 'no' },
+      },
+    }),
+    step('law', 'consent_policy', { statements: [law] }),
+    step('minor', 'condition', {
+      conditions: {
+        rows: [
+          {
+            condition: {
+              type: 'all',
+              all: [
+                { type: 'user.age', operator: 'lt', value: 18 },
+                { type: 'client_id', value: 'kids' },
+              ],
+            },
+            output_handle: 'yes',
+          },
+        ],
+        otherwise: { output_handle: 'no' },
+      },
+    }),
+    step('guardian', 'consent_policy', { statements: [guardian] }),
+    step('done', 'completion'),
+  ]);
+  const editor = {
+    edges: [
+      { id: 'e1', source: 'entry', target: 'terms' },
+      { id: 'e2', source: 'terms', target: 'abroad' },
+      { id: 'e3', source: 'abroad', target: 'law', source_handle: 'yes' },
+      { id: 'e4', source: 'abroad', target: 'minor', source_handle: 'no' },
+      { id: 'e5', source: 'law', target: 'minor' },
+      { id: 'e6', source: 'minor', target: 'guardian', source_handle: 'yes' },
+      { id: 'e7', source: 'minor', target: 'done', source_handle: 'no' },
+      { id: 'e8', source: 'guardian', target: 'done' },
+    ],
+  };
+  const NOW = Date.UTC(2026, 10, 13);
+
+  it('requires of each person only the statements their way asks', async () => {
+    const read: string[][] = [];
+    const as = (attributes: Record<string, string>) => ({
+      protocol: 'oidc' as const,
+      client_id: 'kids',
+      now_ms: NOW,
+      user_attributes: async (keys: string[]) => {
+        read.push(keys);
+        return attributes;
+      },
+    });
+    expect(
+      await ssoRequiredConsentStatementIds(
+        flow,
+        editor,
+        as({ nationality: 'JP', birthdate: '1990-01-01' })
+      )
+    ).toEqual(['tos']);
+    expect(
+      await ssoRequiredConsentStatementIds(
+        flow,
+        editor,
+        as({ nationality: 'US', birthdate: '2012-05-01' })
+      )
+    ).toEqual(['tos', 'law', 'guardian']);
+    // Read once per walk, only the keys the conditions read.
+    expect(read).toEqual([
+      ['nationality', 'birthdate'],
+      ['nationality', 'birthdate'],
+    ]);
+  });
+
+  it('rules a way out when a judged part of an all condition does not hold', async () => {
+    expect(
+      await ssoRequiredConsentStatementIds(flow, editor, {
+        protocol: 'oidc',
+        client_id: 'other',
+      })
+    ).toEqual(['tos', 'law']);
+  });
+
+  it('keeps every way open when the attributes are not read or cannot be', async () => {
+    expect(
+      await ssoRequiredConsentStatementIds(flow, editor, { protocol: 'oidc', client_id: 'kids' })
+    ).toEqual(['tos', 'law', 'guardian']);
+    expect(
+      await ssoRequiredConsentStatementIds(flow, editor, {
+        protocol: 'oidc',
+        client_id: 'kids',
+        user_attributes: async () => {
+          throw new Error('unreadable');
+        },
+      })
+    ).toEqual(['tos', 'law', 'guardian']);
+  });
+});

@@ -30,9 +30,20 @@ export class UserCustomDataFetcher {
   private coreAdapter: DatabaseAdapter;
   private piiAdapter: DatabaseAdapter | null;
 
-  constructor(db: DatabaseSource, dbPii: DatabaseSource | null) {
+  private strict: boolean;
+
+  /**
+   * `strict`: a value that cannot be read throws (for a caller that must not decide without it),
+   * rather than being left out.
+   */
+  constructor(
+    db: DatabaseSource,
+    dbPii: DatabaseSource | null,
+    options: { strict?: boolean } = {}
+  ) {
     this.coreAdapter = ensureDatabaseAdapter(db, 'custom-claims-data-core');
     this.piiAdapter = ensureOptionalDatabaseAdapter(dbPii, 'custom-claims-data-pii');
+    this.strict = options.strict === true;
   }
 
   /**
@@ -48,6 +59,13 @@ export class UserCustomDataFetcher {
 
     const nonPiiKeys = schemas.filter((s) => !s.is_pii).map((s) => s.field_key);
     const piiKeys = schemas.filter((s) => s.is_pii).map((s) => s.field_key);
+    // A strict reader is not left with part of what it asked for.
+    if (this.strict) {
+      if (nonPiiKeys.length > MAX_FIELDS_PER_QUERY || piiKeys.length > MAX_FIELDS_PER_QUERY) {
+        throw new Error('custom_data_too_many_fields');
+      }
+      if (piiKeys.length > 0 && !this.piiAdapter) throw new Error('custom_data_pii_unavailable');
+    }
 
     // Fetch non-PII data
     if (nonPiiKeys.length > 0) {
@@ -82,6 +100,7 @@ export class UserCustomDataFetcher {
         }
       } catch (error) {
         log.error('Failed to fetch non-PII custom data', { tenantId, userId }, error as Error);
+        if (this.strict) throw error;
       }
     }
 
@@ -99,13 +118,17 @@ export class UserCustomDataFetcher {
       try {
         const valueKeys = keysToFetch.map(customAttributeValueKey);
         const piiAdapter = this.piiAdapter;
+        // PostgreSQL returns JSONB decoded: read it as the JSON text D1 stores, as the profile's
+        // sensitive values are read.
+        const valueColumn =
+          piiAdapter.getType?.() === 'postgres' ? 'value_json::text AS value_json' : 'value_json';
         const pages = await Promise.all(
           chunkForBoundParameters(valueKeys, 2).map((chunk) =>
             piiAdapter.query<{
               value_key: string;
               value_json: unknown;
             }>(
-              `SELECT value_key, value_json
+              `SELECT value_key, ${valueColumn}
                  FROM identity_sensitive_values
                 WHERE tenant_id = ?
                   AND owner_type = 'runtime_user'
@@ -121,10 +144,14 @@ export class UserCustomDataFetcher {
         for (const row of rows) {
           const fieldKey = customAttributeFieldKey(row.value_key);
           const value = deserializeCustomAttributeValue(row.value_json);
+          if (this.strict && fieldKey && value === null && row.value_json !== null) {
+            throw new Error('custom_data_unreadable');
+          }
           if (fieldKey && value !== null) result.set(fieldKey, value);
         }
       } catch (error) {
         log.error('Failed to fetch PII custom data', { tenantId }, error as Error);
+        if (this.strict) throw error;
       }
     }
 

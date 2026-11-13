@@ -7,6 +7,22 @@
  */
 
 import { SCREEN_LINK_EXIT_PATTERN, SCREEN_RESERVED_EXITS } from '../../types/screens';
+import {
+  ageOn,
+  FLOW_CONDITION_OPERATORS,
+  FLOW_CONDITION_ORDERING_OPERATORS,
+  isOrderableConditionValue,
+  matchOperator,
+  type FlowConditionOperand,
+  type FlowConditionOperator,
+} from './condition-operators';
+
+export {
+  ageOn,
+  FLOW_CONDITION_OPERATORS,
+  matchOperator,
+  type FlowConditionOperator,
+} from './condition-operators';
 
 export const FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION = 'authrim.login_ui.contract.v1' as const;
 export const FLOW_RUNTIME_INTERACTION_TTL_SECONDS = 600 as const;
@@ -473,7 +489,13 @@ export type FlowConditionType =
   | 'policy_evaluation'
   | 'organization_membership'
   /** A choice a screen step sent to the Flow (`attribute` is its answer key). */
-  | 'screen.answer';
+  | 'screen.answer'
+  /** The user's age in whole years, from their `birthdate` attribute. */
+  | 'user.age'
+  /** The language the run is shown in. */
+  | 'locale'
+  /** Every condition of `all` holds (one level: no `all` inside). */
+  | 'all';
 
 export interface FlowConditionExpression {
   type: FlowConditionType;
@@ -484,7 +506,18 @@ export interface FlowConditionExpression {
   org_ref?: FlowReference;
   match?: 'allow' | 'deny' | 'any';
   membership?: string[];
+  /** How the value is compared (see `condition-operators.ts`). None: equal to one of the values. */
+  operator?: FlowConditionOperator;
+  /** For `all`: the conditions that must all hold. */
+  all?: FlowConditionExpression[];
 }
+
+/** The most conditions an `all` condition combines. */
+export const MAX_FLOW_CONDITION_ALL = 10;
+/** The longest user attribute key a condition names. */
+export const MAX_USER_ATTRIBUTE_CONDITION_KEY_LENGTH = 100;
+/** The oldest age a `user.age` condition compares with. */
+export const MAX_FLOW_CONDITION_AGE = 150;
 
 export interface FlowConditionRow {
   id: string;
@@ -527,6 +560,10 @@ export interface FlowConditionEvaluationContext {
   authentication_method?: string;
   /** The choices screen steps sent to the Flow, by answer key (see `screenAnswersOf`). */
   screen_answers?: Record<string, string | boolean>;
+  /** The language the run is shown in. */
+  locale?: string;
+  /** When the conditions are judged (an age is the age on this day); now when absent. */
+  now_ms?: number;
 }
 
 /** The longest answer key a screen answer condition names. */
@@ -649,6 +686,24 @@ export async function evaluateFlowCondition(
       return matchScalar(context.authentication_method, condition);
     case 'screen.answer':
       return matchScreenAnswer(context.screen_answers, condition);
+    case 'user.age':
+      return matchCompared(
+        ageOn(ownValue(context.user?.attributes, 'birthdate'), context.now_ms ?? Date.now()),
+        condition
+      );
+    case 'locale':
+      return matchCompared(context.locale, condition);
+    case 'all': {
+      const members = condition.all ?? [];
+      if (members.length === 0) return false;
+      for (const member of members) {
+        // One level only: an `all` inside never holds.
+        if (member.type === 'all' || !(await evaluateFlowCondition(member, context, resolvers))) {
+          return false;
+        }
+      }
+      return true;
+    }
     case 'policy_rule':
     case 'policy_evaluation':
       if (!resolvers.evaluate_policy) {
@@ -1256,6 +1311,18 @@ function validateConditionNodeConfig(
         node_id: nodeId,
         ref: { type: 'config', key: 'condition.value' },
       });
+    } else {
+      const problem = conditionExpressionIssue(condition, false);
+      if (problem) {
+        issues.push({
+          level,
+          code: problem.code,
+          message: problem.message,
+          path: `${rowPath}.condition.${problem.key}`,
+          node_id: nodeId,
+          ref: { type: 'config', key: `condition.${problem.key}` },
+        });
+      }
     }
   });
 
@@ -1330,7 +1397,234 @@ const FLOW_CONDITION_TYPES = new Set<FlowConditionType>([
   'policy_evaluation',
   'organization_membership',
   'screen.answer',
+  'user.age',
+  'locale',
+  'all',
 ]);
+
+/** The condition kinds that may name an operator (`condition-operators.ts`). */
+const OPERATOR_CONDITION_TYPES = new Set<FlowConditionType>([
+  'protocol',
+  'client_id',
+  'saml_sp_id',
+  'flow_kind',
+  'requested_scope',
+  'user.attribute',
+  'user.group',
+  'user.role',
+  'authentication_method',
+  'screen.answer',
+  'user.age',
+  'locale',
+]);
+/** The condition kinds whose values can be ordered (numbers or dates). */
+const ORDERED_CONDITION_TYPES = new Set<FlowConditionType>(['user.attribute', 'user.age']);
+/** A user attribute key: a standard profile claim (`birthdate`, `address.country`) or a custom one. */
+const USER_ATTRIBUTE_KEY = /^[a-z][a-z0-9_.:-]*$/u;
+
+interface ConditionIssue {
+  code: string;
+  message: string;
+  /** Where in the condition (after `condition.`). */
+  key: string;
+}
+
+function conditionScalar(value: unknown): value is string | number | boolean {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+}
+
+function isAge(value: unknown): boolean {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= MAX_FLOW_CONDITION_AGE
+  );
+}
+
+/**
+ * What is wrong with a condition's own fields beyond its kind (its operator, values, attribute
+ * key, the conditions an `all` combines), or null. `nested`: inside an `all`.
+ */
+function conditionExpressionIssue(
+  condition: Record<string, unknown>,
+  nested: boolean
+): ConditionIssue | null {
+  const type = condition.type as FlowConditionType;
+  if (type === 'all') {
+    if (nested) {
+      return {
+        code: 'nested_all_condition',
+        message: 'An all condition cannot hold another.',
+        key: 'type',
+      };
+    }
+    const members = condition.all;
+    if (
+      !Array.isArray(members) ||
+      members.length === 0 ||
+      members.length > MAX_FLOW_CONDITION_ALL
+    ) {
+      return {
+        code: 'invalid_all_condition',
+        message: `An all condition combines 1 to ${MAX_FLOW_CONDITION_ALL} conditions.`,
+        key: 'all',
+      };
+    }
+    for (const [index, member] of members.entries()) {
+      if (
+        !isRecord(member) ||
+        typeof member.type !== 'string' ||
+        !FLOW_CONDITION_TYPES.has(member.type as FlowConditionType)
+      ) {
+        return {
+          code: 'invalid_condition_type',
+          message: 'Each condition of an all condition needs a supported type.',
+          key: `all[${index}].type`,
+        };
+      }
+      const problem = conditionExpressionIssue(member, true);
+      if (problem) return { ...problem, key: `all[${index}].${problem.key}` };
+    }
+    return null;
+  }
+  if (nested && type === 'screen.answer') {
+    const key = condition.attribute;
+    if (
+      typeof key !== 'string' ||
+      key.trim() === '' ||
+      key.length > MAX_SCREEN_ANSWER_CONDITION_KEY_LENGTH
+    ) {
+      return {
+        code: 'invalid_screen_answer_condition',
+        message: 'A screen answer condition names the answer key it compares.',
+        key: 'attribute',
+      };
+    }
+  }
+  if (nested && type === 'protocol' && condition.value !== 'oidc' && condition.value !== 'saml') {
+    return {
+      code: 'invalid_protocol_condition_value',
+      message: 'Protocol condition value must be oidc or saml.',
+      key: 'value',
+    };
+  }
+  if (type === 'user.attribute') {
+    const key = condition.attribute;
+    if (
+      typeof key !== 'string' ||
+      key.length > MAX_USER_ATTRIBUTE_CONDITION_KEY_LENGTH ||
+      !USER_ATTRIBUTE_KEY.test(key)
+    ) {
+      return {
+        code: 'invalid_user_attribute_condition',
+        message: 'A user attribute condition names the attribute it compares.',
+        key: 'attribute',
+      };
+    }
+  }
+  // Values are a list (the runtime maps over them).
+  if (condition.values !== undefined && !Array.isArray(condition.values)) {
+    return {
+      code: 'invalid_condition_value',
+      message: 'The values a condition compares with are a list.',
+      key: 'values',
+    };
+  }
+  const operator = condition.operator;
+  if (operator === undefined) {
+    // As before: equal to its value or one of its values. An age is a whole number of years.
+    if (type === 'user.age') {
+      const values = Array.isArray(condition.values) ? condition.values : [condition.value];
+      if (values.length === 0 || !values.every(isAge)) {
+        return {
+          code: 'invalid_age_condition_value',
+          message: `An age is a whole number from 0 to ${MAX_FLOW_CONDITION_AGE}.`,
+          key: 'value',
+        };
+      }
+    }
+    return null;
+  }
+  if (
+    typeof operator !== 'string' ||
+    !FLOW_CONDITION_OPERATORS.has(operator as FlowConditionOperator) ||
+    !OPERATOR_CONDITION_TYPES.has(type) ||
+    // A protocol branch is checked against the completion it leads to as one protocol: only
+    // `eq` (what the condition means without an operator) is taken.
+    (type === 'protocol' && operator !== 'eq')
+  ) {
+    return {
+      code: 'invalid_condition_operator',
+      message: `The operator is not supported for a ${type} condition.`,
+      key: 'operator',
+    };
+  }
+  const op = operator as FlowConditionOperator;
+  if (op === 'exists' || op === 'not_exists') return null;
+  if (FLOW_CONDITION_ORDERING_OPERATORS.has(op)) {
+    const value = condition.value;
+    const comparable =
+      condition.values === undefined &&
+      ORDERED_CONDITION_TYPES.has(type) &&
+      (type === 'user.age' ? isAge(value) : isOrderableConditionValue(value));
+    return comparable
+      ? null
+      : {
+          code: 'invalid_condition_value',
+          message:
+            type === 'user.age'
+              ? `An age is a whole number from 0 to ${MAX_FLOW_CONDITION_AGE}.`
+              : 'An ordering condition compares with one number or date.',
+          key: 'value',
+        };
+  }
+  const values = Array.isArray(condition.values)
+    ? condition.values
+    : condition.value === undefined
+      ? []
+      : [condition.value];
+  const usable =
+    values.length > 0 &&
+    values.every((value) => (type === 'user.age' ? isAge(value) : conditionScalar(value)));
+  return usable
+    ? null
+    : {
+        code: 'invalid_condition_value',
+        message: 'The condition names the values it compares with.',
+        key: 'value',
+      };
+}
+
+/**
+ * The user attributes the conditions of a run read (a `user.age` reads `birthdate`), so only
+ * those are loaded: none when no condition reads one.
+ */
+export function conditionUserAttributeKeys(conditions: readonly unknown[]): string[] {
+  const keys = new Set<string>();
+  const visit = (condition: unknown) => {
+    if (!isRecord(condition)) return;
+    if (condition.type === 'user.attribute' && typeof condition.attribute === 'string') {
+      keys.add(condition.attribute);
+    } else if (condition.type === 'user.age') {
+      keys.add('birthdate');
+    } else if (condition.type === 'all' && Array.isArray(condition.all)) {
+      condition.all.forEach(visit);
+    }
+  };
+  conditions.forEach(visit);
+  return [...keys];
+}
+
+/** The conditions of every condition step of a contract (to know what a run will read). */
+export function runtimeConditionExpressions(runtime: Pick<FlowRuntimeContract, 'ui'>): unknown[] {
+  return runtime.ui.steps.flatMap((step) => {
+    if (step.component !== 'condition' || !isRecord(step.config)) return [];
+    const conditions = step.config.conditions;
+    if (!isRecord(conditions) || !Array.isArray(conditions.rows)) return [];
+    return conditions.rows.flatMap((row) => (isRecord(row) ? [row.condition] : []));
+  });
+}
 
 function validateRuntimeContract(runtime: Record<string, unknown>): FlowValidationIssue[] {
   const issues: FlowValidationIssue[] = [];
@@ -1485,7 +1779,19 @@ function conditionBooleanValue(condition: FlowConditionExpression, fallback: boo
   return typeof condition.value === 'boolean' ? condition.value : fallback;
 }
 
+/** A value against a condition: by its operator when it names one, else as `matchScalar` does. */
+function matchCompared(value: FlowConditionOperand, condition: FlowConditionExpression): boolean {
+  if (condition.operator)
+    return matchOperator(value, { ...condition, operator: condition.operator });
+  if (value === undefined || value === null) return false;
+  return Array.isArray(value)
+    ? matchArray(value.map(String), condition)
+    : matchScalar(String(value), condition);
+}
+
 function matchScalar(value: string | undefined, condition: FlowConditionExpression): boolean {
+  if (condition.operator)
+    return matchOperator(value, { ...condition, operator: condition.operator });
   if (value === undefined) {
     return false;
   }
@@ -1499,6 +1805,8 @@ function matchScalar(value: string | undefined, condition: FlowConditionExpressi
 }
 
 function matchArray(values: string[], condition: FlowConditionExpression): boolean {
+  if (condition.operator)
+    return matchOperator(values, { ...condition, operator: condition.operator });
   if (condition.values) {
     return condition.values.map(String).some((candidate) => values.includes(candidate));
   }
@@ -1517,22 +1825,29 @@ function matchScreenAnswer(
   const value = Object.prototype.hasOwnProperty.call(answers, condition.attribute)
     ? answers[condition.attribute]
     : undefined;
-  return value === undefined ? false : matchScalar(String(value), condition);
+  return matchCompared(value === undefined ? undefined : String(value), condition);
+}
+
+/** An attribute the user has (own key only: never one inherited, such as `constructor`). */
+function ownValue<T>(attributes: Record<string, T> | undefined, key: string): T | undefined {
+  return attributes && Object.prototype.hasOwnProperty.call(attributes, key)
+    ? attributes[key]
+    : undefined;
 }
 
 function matchUserAttribute(
   user: FlowConditionEvaluationUser | undefined,
   condition: FlowConditionExpression
 ): boolean {
-  if (!user || !condition.attribute) {
+  if (!condition.attribute) {
     return false;
   }
-  const value = user.attributes?.[condition.attribute];
-  if (Array.isArray(value)) {
-    return matchArray(value.map(String), condition);
+  if (!user) {
+    // Nothing is known of someone not signed in: only a condition that matches nothing known can.
+    return condition.operator
+      ? matchOperator(undefined, { ...condition, operator: condition.operator })
+      : false;
   }
-  if (value === undefined || value === null) {
-    return false;
-  }
-  return matchScalar(String(value), condition);
+  const value = ownValue(user.attributes, condition.attribute);
+  return matchCompared(Array.isArray(value) ? value.map(String) : value, condition);
 }
