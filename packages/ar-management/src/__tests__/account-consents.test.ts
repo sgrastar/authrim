@@ -518,7 +518,9 @@ describe('Account Page consents API', () => {
       ],
     });
     const body = await bodyOf(await listAccountConsentsHandler(createMockContext(COOKIE)));
-    const byId = Object.fromEntries(body.consents.map((item) => [item.id, item.withdrawable]));
+    const byId: Record<string, unknown> = Object.fromEntries(
+      body.consents.map((item) => [String(item.id), item.withdrawable])
+    );
     expect(byId).toEqual({ 'r-allowed': true, 'r-forbidden': false, 'r-withdrawn': false });
   });
 
