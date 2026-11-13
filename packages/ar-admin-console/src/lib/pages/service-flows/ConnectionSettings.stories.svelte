@@ -142,6 +142,10 @@
 		await expect(
 			await within(summary).findByText('Changed', undefined, { timeout: 4000 })
 		).toBeInTheDocument();
+		// Let the fold finish too: the accessibility check runs after this and must not meet the
+		// fields half-faded.
+		const details = summary.closest('details')!;
+		await waitFor(() => expect(details.getAnimations({ subtree: true })).toHaveLength(0));
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
