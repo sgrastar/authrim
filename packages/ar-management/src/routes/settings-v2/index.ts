@@ -91,10 +91,10 @@ import { bulkApplyHandler, requireBulkApplyAuthority } from './bulk-apply';
 import { bulkApplyIdempotency } from './bulk-apply-idempotency';
 import {
   canAccessTenant,
-  checkRolePermission,
   hasClientSettingsPermission,
   hasGlobalPlatformSettingsEdit,
   hasPlatformAuthorityForTenantEdit,
+  hasPlatformSettingsView,
   hasTenantSettingsPermission,
   isCategoryAllowedAtScope,
   isCategoryWritableAtScope,
@@ -1033,9 +1033,8 @@ settingsV2.get('/platform/settings/:category', async (c) => {
 
   // Security Check 3: Validate user has permission for this category at platform scope
   const adminAuth = c.get('adminAuth');
-  const userRoles = adminAuth?.roles || [];
 
-  if (!checkRolePermission(userRoles, category, 'platform', 'view')) {
+  if (!hasPlatformSettingsView(adminAuth, category)) {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view platform settings', 403);
   }
 

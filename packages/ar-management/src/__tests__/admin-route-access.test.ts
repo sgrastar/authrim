@@ -35,6 +35,7 @@ function createHarness(permissions: string[], roles: string[] = []) {
   registerDeclaredAdminRouteAccessMiddleware(app);
 
   app.get('/api/admin/users', (c) => c.json({ ok: true }));
+  app.get('/api/admin/platform/settings/login-entry', (c) => c.json({ ok: true }));
   app.get('/api/admin/identity-mapping/history', (c) => c.json({ ok: true }));
   app.get('/api/admin/identity-mapping/failures', (c) => c.json({ ok: true }));
   app.post('/api/admin/platform/identity-mapping/preview-default', (c) => c.json({ ok: true }));
@@ -116,6 +117,14 @@ function createHarness(permissions: string[], roles: string[] = []) {
 }
 
 describe('declared admin route access', () => {
+  it('admits a machine on the settings read permission alone for platform settings reads, not on write', async () => {
+    const path = '/api/admin/platform/settings/login-entry';
+    expect((await createHarness([ADMIN_PERMISSIONS.SETTINGS_READ]).request(path)).status).toBe(200);
+    expect((await createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE]).request(path)).status).toBe(
+      403
+    );
+  });
+
   it('declares history reads and lets the restore handler select the exact write permission', async () => {
     const reader = createHarness([ADMIN_PERMISSIONS.SETTINGS_READ]);
     const settingsWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
