@@ -48,13 +48,24 @@ export function checkRolePermission(
  * every tenant (a global tenant scope, and the permission among its global ones), the read
  * counterpart of the edit rule below, so that automation can read the version a write needs. The
  * write permission does not stand in for it: a token that may only write cannot read.
+ *
+ * The category's own view roles still bound a machine: when only the super admin may view it (for
+ * example `encryption`), the read permission is not enough and the token needs what stands for the
+ * super admin, the global wildcard permission. The view roles come from the same table people are
+ * judged on (`getScopedCategoryMeta`, with the defaults applied), so a category added later with a
+ * restricted view is covered without being named here.
  */
 export function hasPlatformSettingsView(
   adminAuth: AdminAuthContext | undefined,
   category: CategoryName
 ): boolean {
   if (adminAuth?.authMethod === 'machine_access_token') {
-    return hasGlobalMachinePermission(adminAuth, ADMIN_PERMISSIONS.SETTINGS_READ);
+    const viewRoles = getScopedCategoryMeta(category).scopePermissions.platform.viewRoles;
+    const superAdminOnly = !viewRoles.some((role) => role !== ADMIN_ROLES.SUPER_ADMIN);
+    return hasGlobalMachinePermission(
+      adminAuth,
+      superAdminOnly ? '*' : ADMIN_PERMISSIONS.SETTINGS_READ
+    );
   }
   return checkRolePermission(adminAuth?.roles || [], category, 'platform', 'view');
 }

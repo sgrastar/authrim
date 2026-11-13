@@ -143,10 +143,11 @@ function assertPurgeTarget(tenantId: string, auditTenantId: string): void {
 function tenantLevelStatements(tenantId: string): PreparedStatement[] {
   return [
     // Sessions of any administrator (a platform administrator's included) derived into this
-    // tenant: they act in a tenant that no longer exists. Only the derived child goes; the
-    // administrator's own base session (no parent, no derived target) is not touched.
+    // tenant: they act in a tenant that no longer exists. The target tenant alone defines the rows
+    // (a row with that target and no parent goes too); an administrator's own base session (no
+    // derived target) is not touched.
     {
-      sql: 'DELETE FROM admin_sessions WHERE derived_target_tenant_id = ? AND parent_session_id IS NOT NULL',
+      sql: 'DELETE FROM admin_sessions WHERE derived_target_tenant_id = ?',
       params: [tenantId],
     },
     {

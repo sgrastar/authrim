@@ -426,6 +426,35 @@ describe('purging the administrators of a deleted tenant', () => {
     ).toBe(2);
   });
 
+  it('removes a session that targets the tenant even without a parent, and keeps base sessions', async () => {
+    const db = setup();
+    put(db, 'admin_sessions', {
+      id: 'orphan-derived-x',
+      tenant_id: 'default',
+      admin_user_id: 'platform',
+      created_at: NOW,
+      expires_at: NOW + HOUR,
+      parent_session_id: null,
+      derived_target_tenant_id: X,
+    });
+
+    await run(db).result();
+
+    const ids = (
+      db.prepare('SELECT id FROM admin_sessions ORDER BY id').all() as Array<{ id: string }>
+    ).map((row) => row.id);
+    expect(ids).not.toContain('orphan-derived-x');
+    // Base sessions (no derived target) of the platform and of another tenant's administrators stay.
+    expect(ids).toContain('platform-base');
+    expect(
+      count(
+        db,
+        'SELECT COUNT(*) AS n FROM admin_sessions WHERE tenant_id = ? AND derived_target_tenant_id IS NULL',
+        Y
+      )
+    ).toBeGreaterThan(0);
+  });
+
   it('keeps an administrator with a current global assignment, with every row and the assignment', async () => {
     const db = setup();
     admin(db, X, `${X}-global`);

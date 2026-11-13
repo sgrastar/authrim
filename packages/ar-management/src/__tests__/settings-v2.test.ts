@@ -41,6 +41,11 @@ vi.mock('../admin-step-up-gate', () => ({
 import { createAuditLogFromContext } from '@authrim/ar-lib-core';
 import { sweepExternalPluginGates } from '../external-plugin-gate-sweep';
 import settingsV2 from '../routes/settings-v2';
+import {
+  checkRolePermission,
+  hasPlatformSettingsView,
+} from '../routes/settings-v2/settings-authorization';
+import { ADMIN_ROLES, CATEGORY_SCOPE_CONFIG, type CategoryName } from '@authrim/ar-lib-core';
 
 // Response types
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -5568,6 +5573,42 @@ describe('Settings API v2', () => {
         }),
       });
       expect((await app.request(PLATFORM_URL, { method: 'GET' }, mockEnv)).status).toBe(403);
+    });
+
+    it('keeps a category only the super admin may view closed to a read-only machine', async () => {
+      const readOnly = createTestApp({
+        adminAuth: machine({
+          permissions: ['admin:settings:read'],
+          globalPermissions: ['admin:settings:read'],
+        }),
+      });
+      const get = (t: ReturnType<typeof createTestApp>, category: string) =>
+        t.app.request(`/api/admin/platform/settings/${category}`, { method: 'GET' }, t.mockEnv);
+      expect((await get(readOnly, 'encryption')).status).toBe(403);
+      expect((await get(readOnly, 'infrastructure')).status).toBe(200);
+      expect((await get(readOnly, 'login-entry')).status).toBe(200);
+
+      const wildcard = createTestApp({
+        adminAuth: machine({ permissions: ['*'], globalPermissions: ['*'] }),
+      });
+      expect((await get(wildcard, 'encryption')).status).toBe(200);
+    });
+
+    it('lets a read-only machine view exactly the platform categories a non-super-admin role may', () => {
+      const readOnly = machine({
+        permissions: ['admin:settings:read'],
+        globalPermissions: ['admin:settings:read'],
+      });
+      const categories = (Object.keys(CATEGORY_SCOPE_CONFIG) as CategoryName[]).filter((category) =>
+        CATEGORY_SCOPE_CONFIG[category].allowedScopes.includes('platform')
+      );
+      expect(categories.length).toBeGreaterThan(5);
+      for (const category of categories) {
+        const nonSuperAdminMayView = Object.values(ADMIN_ROLES)
+          .filter((role) => role !== ADMIN_ROLES.SUPER_ADMIN)
+          .some((role) => checkRolePermission([role], category, 'platform', 'view'));
+        expect(hasPlatformSettingsView(readOnly, category), category).toBe(nonSuperAdminMayView);
+      }
     });
 
     it('refuses a machine limited to some tenants, whatever it holds', async () => {
