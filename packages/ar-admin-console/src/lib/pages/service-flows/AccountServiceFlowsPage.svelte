@@ -30,6 +30,7 @@
 	import {
 		isConsoleShaped,
 		registrationSpecOf,
+		registrationSpecFitsForm,
 		registrationStateOf
 	} from './registration-flow-mapping';
 	import {
@@ -37,6 +38,7 @@
 		canSetSignInConsent,
 		buildLoginFlowEditor,
 		loginSpecOf,
+		loginSpecFitsForm,
 		loginStateOf,
 		readLoginFlowEditor
 	} from './login-flow-mapping';
@@ -113,10 +115,10 @@
 			const spec = isConsoleShaped(record.editor)
 				? readRegistrationFlowEditor(record.editor)
 				: null;
-			state = spec ? registrationStateOf(spec, about) : null;
+			state = spec && registrationSpecFitsForm(spec) ? registrationStateOf(spec, about) : null;
 		} else {
 			const spec = readLoginFlowEditor(record.editor);
-			state = spec ? loginStateOf(spec, about) : null;
+			state = spec && loginSpecFitsForm(spec) ? loginStateOf(spec, about) : null;
 		}
 		flowStates[flow] = state ?? aboutState(flow, about.name, about.scope);
 		saved[flow] = {
@@ -155,7 +157,7 @@
 		// but cannot take consent (the apply below would give nothing back).
 		if (
 			spec &&
-			spec.consent.length > 0 &&
+			spec.consents.length > 0 &&
 			saved[flow].id &&
 			!canSetSignInConsent(saved[flow].editor)
 		) {

@@ -3257,6 +3257,161 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  it('looks through a condition and its consent step, judging the person the session found', async () => {
+    // A consent step shown to some people only has a condition node before it.
+    const when = (completion: string) => ({
+      id: `sign-in-when-${completion}:step`,
+      source_node_id: `sign-in-when-${completion}`,
+      component: 'condition' as const,
+      render: false,
+      config: {
+        conditions: {
+          rows: [
+            {
+              id: 'show',
+              condition: {
+                type: 'user.attribute',
+                attribute: 'nationality',
+                operator: 'ne',
+                value: 'JP',
+              },
+              output_handle: 'show',
+            },
+          ],
+          otherwise: { output_handle: 'skip' },
+        },
+      },
+    });
+    const consentStep = (completion: string) => ({
+      id: `sign-in-consent-${completion}:step`,
+      source_node_id: `sign-in-consent-${completion}`,
+      component: 'consent_policy' as const,
+      render: true,
+      config: { statements: [{ statement_id: 'tos', required: true }] },
+    });
+    const steps = mixedProtocolCompletionRuntime.ui.steps;
+    const runtimeSnapshot: FlowRuntimeContract = {
+      ...mixedProtocolCompletionRuntime,
+      ui: {
+        steps: [
+          steps[0],
+          when('saml-complete'),
+          consentStep('saml-complete'),
+          steps[1],
+          when('oidc-complete'),
+          consentStep('oidc-complete'),
+          steps[2],
+        ],
+      },
+    };
+    const chain = (completion: string) => [
+      {
+        id: `w-${completion}-show`,
+        source: `sign-in-when-${completion}`,
+        target: `sign-in-consent-${completion}`,
+        source_handle: 'show',
+      },
+      {
+        id: `w-${completion}-skip`,
+        source: `sign-in-when-${completion}`,
+        target: completion,
+        source_handle: 'skip',
+      },
+      {
+        id: `c-${completion}`,
+        source: `sign-in-consent-${completion}`,
+        target: completion,
+        source_handle: 'accepted',
+      },
+    ];
+    const editorSnapshot = {
+      nodes: [
+        { id: 'session-check', type: 'session_check' },
+        { id: 'sign-in-when-saml-complete', type: 'condition' },
+        { id: 'sign-in-consent-saml-complete', type: 'consent' },
+        { id: 'saml-complete', type: 'complete' },
+        { id: 'sign-in-when-oidc-complete', type: 'condition' },
+        { id: 'sign-in-consent-oidc-complete', type: 'consent' },
+        { id: 'oidc-complete', type: 'complete' },
+      ],
+      edges: [
+        {
+          id: 'edge_session_saml',
+          source: 'session-check',
+          target: 'sign-in-when-saml-complete',
+          source_handle: 'continue',
+        },
+        {
+          id: 'edge_session_oidc',
+          source: 'session-check',
+          target: 'sign-in-when-oidc-complete',
+          source_handle: 'continue',
+        },
+        ...chain('saml-complete'),
+        ...chain('oidc-complete'),
+      ],
+    };
+    const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'session-check',
+      currentStepId: 'session-check:step',
+      stepState: 'pending',
+      runtimeSnapshot,
+      editorSnapshot,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+      },
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+    mocks.resolveAccountCoreDataContext.mockResolvedValue({
+      coreDb: {
+        query: vi.fn(async () => []),
+        queryOne: vi.fn(),
+        execute: vi.fn(),
+        batch: vi.fn(),
+        transaction: vi.fn(),
+        isHealthy: vi.fn(),
+        getType: () => 'mock',
+        close: vi.fn(),
+      },
+    });
+    mocks.readConditionAttributes.mockResolvedValue({ nationality: 'US' });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'session-check:step',
+          node_id: 'session-check',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(200);
+    // The interaction started with nobody: the condition reads the person the session found.
+    expect(mocks.readConditionAttributes).toHaveBeenCalledWith(['nationality']);
+    expect(data.output).toMatchObject({
+      protocol_continuation: { protocol: 'oidc', completion_block: { protocol: 'oidc' } },
+    });
+  });
+
   it('records the answer in the account when a consent step is submitted', async () => {
     const { data: startData } = await startInteraction(
       {

@@ -2297,15 +2297,27 @@ function targetMatchesRequestProtocol(
   if (!step || !requestContext || readRuntimeCompletionBlock(step) || !editor) {
     return stepMatchesRequestProtocol(step, requestContext);
   }
-  const protocols = new Set(
-    editor.edges
-      .filter((edge) => edge.source === target)
-      .map((edge) => {
-        const next = findRuntimeStepBySourceNode(runtime, edge.target);
-        const block = next ? readRuntimeCompletionBlock(next) : null;
-        return typeof block?.protocol === 'string' ? block.protocol : null;
-      })
-  );
+  // The completions the target goes on to, through any steps between (consent steps and their
+  // conditions before a completion): each one's protocol, null for one that names none.
+  const protocols = new Set<string | null>();
+  const seen = new Set<string>([target]);
+  const queue = [target];
+  while (queue.length > 0 && seen.size <= runtime.ui.steps.length) {
+    const source = queue.shift() as string;
+    for (const edge of editor.edges.filter((candidate) => candidate.source === source)) {
+      const next = findRuntimeStepBySourceNode(runtime, edge.target);
+      const block = next ? readRuntimeCompletionBlock(next) : null;
+      if (block) {
+        protocols.add(typeof block.protocol === 'string' ? block.protocol : null);
+      } else if (!next || !editor.edges.some((candidate) => candidate.source === edge.target)) {
+        // Not a step, or one that goes on in order: where it ends is not known from here.
+        protocols.add(null);
+      } else if (!seen.has(edge.target)) {
+        seen.add(edge.target);
+        queue.push(edge.target);
+      }
+    }
+  }
   if (protocols.size !== 1) return true;
   const [protocol] = [...protocols];
   return !protocol || protocol === requestContext.protocol;
@@ -3472,7 +3484,12 @@ async function resolveNextDisplayStep(input: {
       c: input.c,
       db: input.db,
       tenantId: input.tenantId,
-      interaction: input.interaction,
+      // As the run knows it by now: a session check on the way may have found who it is, and a
+      // condition after it judges them (their roles, attributes).
+      interaction:
+        userId === input.interaction.user_id
+          ? input.interaction
+          : { ...input.interaction, user_id: userId },
       runtime: input.runtime,
       step,
     });

@@ -4,6 +4,7 @@ import {
 	applyLoginFlowSpec,
 	buildLoginFlowEditor,
 	canSetSignInConsent,
+	loginSpecFitsForm,
 	loginSpecOf,
 	loginStateOf,
 	readLoginFlowEditor
@@ -18,7 +19,7 @@ describe('the sign-in flow saved as a Flow', () => {
 			completion: null,
 			unregistered: 'generic',
 			onCancel: 'stay',
-			consent: []
+			consents: []
 		});
 	});
 
@@ -41,7 +42,7 @@ describe('the sign-in flow saved as a Flow', () => {
 			},
 			unregistered: 'generic',
 			onCancel: 'stay',
-			consent: []
+			consents: []
 		});
 		const back = loginStateOf(readLoginFlowEditor(buildLoginFlowEditor(spec))!, {
 			name: 'Partner sign-in',
@@ -75,7 +76,7 @@ describe('the sign-in flow saved as a Flow', () => {
 				completion: null,
 				unregistered: 'generic',
 				onCancel: 'stay',
-				consent: []
+				consents: []
 			},
 			{ name: 'x', scope: 'default-ui' }
 		);
@@ -115,13 +116,17 @@ describe('the sign-in flow saved as a Flow', () => {
 			scope: 'default-ui'
 		});
 		expect(state.added).not.toContain('consent');
-		expect(loginSpecOf(state).consent).toEqual([]);
+		expect(loginSpecOf(state).consents).toEqual([]);
 		state.added.push('consent');
 		state.values['login.statements'] = ['stmt_terms:required', 'stmt_privacy:optional'];
 		const spec = loginSpecOf(state);
-		expect(spec.consent).toEqual([
-			{ statement_id: 'stmt_terms', required: true },
-			{ statement_id: 'stmt_privacy', required: false }
+		expect(spec.consents).toEqual([
+			{
+				statements: [
+					{ statement_id: 'stmt_terms', required: true },
+					{ statement_id: 'stmt_privacy', required: false }
+				]
+			}
 		]);
 		expect(canSetSignInConsent(SEEDED_LOGIN_EDITOR)).toBe(true);
 		const saved = applyLoginFlowSpec(SEEDED_LOGIN_EDITOR, spec);
@@ -135,7 +140,7 @@ describe('the sign-in flow saved as a Flow', () => {
 		// Taken away again: the step goes and nothing is asked.
 		back.added = back.added.filter((id) => id !== 'consent');
 		const without = applyLoginFlowSpec(saved, loginSpecOf(back));
-		expect(readLoginFlowEditor(without)?.consent).toEqual([]);
+		expect(readLoginFlowEditor(without)?.consents).toEqual([]);
 	});
 
 	it('cannot ask consent in a Flow with no completion an edge leads to', () => {
@@ -149,5 +154,22 @@ describe('the sign-in flow saved as a Flow', () => {
 		state.added.push('consent');
 		state.values['login.statements'] = ['stmt_terms:required'];
 		expect(applyLoginFlowSpec(flow, loginSpecOf(state))).toBeNull();
+	});
+});
+
+describe('a sign-in the form cannot hold', () => {
+	it('is shown, not saved: more than one consent step, or one shown to some people', () => {
+		const base = readLoginFlowEditor(SEEDED_LOGIN_EDITOR)!;
+		const terms = [{ statement_id: 'stmt_terms', required: true }];
+		expect(loginSpecFitsForm({ ...base, consents: [{ statements: terms }] })).toBe(true);
+		expect(
+			loginSpecFitsForm({ ...base, consents: [{ statements: terms }, { statements: terms }] })
+		).toBe(false);
+		expect(
+			loginSpecFitsForm({
+				...base,
+				consents: [{ statements: terms, when: [{ type: 'locale', value: 'ja' }] }]
+			})
+		).toBe(false);
 	});
 });

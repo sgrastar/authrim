@@ -7,6 +7,7 @@ import { aboutState, isReady, titleKey } from './account-flow-model';
 import {
 	domainsOf,
 	isConsoleShaped,
+	registrationSpecFitsForm,
 	registrationSpecOf,
 	registrationStateOf
 } from './registration-flow-mapping';
@@ -65,13 +66,17 @@ describe('the sign-up flow saved as a Flow', () => {
 		const state = aboutState('registration', 'Sign-up', 'default-ui');
 		// Not added: nothing is asked, whatever was chosen before.
 		state.values['reg.statements'] = ['stmt_terms:required'];
-		expect(registrationSpecOf(state).consent).toEqual([]);
+		expect(registrationSpecOf(state).consents).toEqual([]);
 		state.added.push('consent');
 		state.values['reg.statements'] = ['stmt_privacy:optional', 'stmt_terms:required'];
 		const spec = registrationSpecOf(state);
-		expect(spec.consent).toEqual([
-			{ statement_id: 'stmt_privacy', required: false },
-			{ statement_id: 'stmt_terms', required: true }
+		expect(spec.consents).toEqual([
+			{
+				statements: [
+					{ statement_id: 'stmt_privacy', required: false },
+					{ statement_id: 'stmt_terms', required: true }
+				]
+			}
 		]);
 		const editor = buildRegistrationFlowEditor(spec);
 		expect(isConsoleShaped(editor)).toBe(true);
@@ -135,5 +140,52 @@ describe('the sign-up flow saved as a Flow', () => {
 		const edited = structuredClone(seeded);
 		(edited.nodes[2].config as Record<string, unknown>).screen_ref = 'profile_completion';
 		expect(isConsoleShaped(edited)).toBe(false);
+	});
+});
+
+describe('a sign-up the form cannot hold', () => {
+	it('is shown, not saved: a step shown to some people, or more than one consent step', () => {
+		const spec = registrationSpecOf(aboutState('registration', 'Sign-up', 'default-ui'));
+		const terms = [{ statement_id: 'stmt_terms', required: true }];
+		const when = [{ type: 'locale' as const, value: 'ja' }];
+		expect(registrationSpecFitsForm(spec)).toBe(true);
+		expect(
+			registrationSpecFitsForm({
+				...spec,
+				screens: [{ n: 1, screenKey: 'profile', exits: {}, when }]
+			})
+		).toBe(false);
+		expect(
+			registrationSpecFitsForm({
+				...spec,
+				consents: [{ statements: terms }, { statements: terms }]
+			})
+		).toBe(false);
+		expect(registrationSpecFitsForm({ ...spec, consents: [{ statements: terms, when }] })).toBe(
+			false
+		);
+	});
+});
+
+describe('a sign-up with more consent steps than the console builds', () => {
+	it('is shown, not taken as the console’s (and does not stop the page)', () => {
+		const spec = registrationSpecOf(aboutState('registration', 'Sign-up', 'default-ui'));
+		const five = buildRegistrationFlowEditor({
+			...spec,
+			consents: Array.from({ length: 5 }, () => ({
+				statements: [{ statement_id: 'stmt_terms', required: true }]
+			}))
+		});
+		// A sixth step put in by hand, as the Flow editor could.
+		const six = JSON.parse(JSON.stringify(five)) as typeof five;
+		const index = six.nodes.findIndex((node) => node.id === 'account-create');
+		six.nodes.splice(index, 0, {
+			id: 'consent-6',
+			type: 'consent',
+			position: { x: 0, y: 0 },
+			config: { statements: [{ statement_id: 'stmt_terms', required: true }] }
+		});
+		expect(() => isConsoleShaped(six)).not.toThrow();
+		expect(isConsoleShaped(six)).toBe(false);
 	});
 });
