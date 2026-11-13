@@ -15,6 +15,7 @@
  */
 import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
 import { sanitizeRuntimeConsentHtml } from '#lib/consent/runtime-consent-html.js';
+import { statementPresentation } from '#lib/consent/statement-display.js';
 import {
 	consentStepKey,
 	type ConsentPresentationDestination,
@@ -71,8 +72,19 @@ export interface LiteFlowConsentItem {
 	id: string;
 	/** The item's title, as text (the name of a radio item's choices). */
 	title: string;
-	/** The item's words, through the SPA's consent HTML sanitizer. */
-	html: string;
+	/** The item's description, through the SPA's consent HTML sanitizer (null when none). */
+	descriptionHtml: string | null;
+	/**
+	 * How the statement's text is shown (as the SPA's StatementConsentItem): its statement page
+	 * `embedded` in a frame (`frame`), a link to its `external` document (`link`), or `plain`.
+	 */
+	display: 'embedded' | 'inline' | 'external' | 'plain';
+	/** The text itself, sanitized, for a statement whose key cannot be a page path (`inline`). */
+	html: string | null;
+	/** The statement page's text alone, framed in the screen. */
+	frame: string | null;
+	/** The statement page, or the external document, opened in a new tab. */
+	link: string | null;
 	documentUrl: string | null;
 	required: boolean;
 	kind: 'display' | 'checkbox' | 'radio';
@@ -113,6 +125,8 @@ export function readLiteFlowConsent(
 		? content.destination_field_consent
 		: null;
 	const rawItems = policy && Array.isArray(policy.items) ? policy.items : [];
+	// The language the step is drawn in: its statements' frames and pages show their text in it.
+	const language = typeof policy?.language === 'string' ? policy.language : null;
 	const rawFields = destination && Array.isArray(destination.fields) ? destination.fields : [];
 	if (!policy && !destination) return null;
 	if (policy && !Array.isArray(policy.items)) return 'unsupported';
@@ -128,10 +142,27 @@ export function readLiteFlowConsent(
 		const documentUrl = documentLink(raw.document_url);
 		if (!id || !title || description === undefined || inline === undefined) return 'unsupported';
 		if (documentUrl === undefined) return 'unsupported';
-		// The SPA's `consentItemHtml`: the inline content, else the title and the description.
-		const html = sanitizeRuntimeConsentHtml(
-			inline ?? (description ? `<strong>${title}</strong><br>${description}` : title)
+		// As the SPA's StatementConsentItem shows it.
+		const presentation = statementPresentation(
+			{
+				slug: typeof raw.slug === 'string' ? raw.slug : '',
+				title,
+				version: typeof raw.version === 'string' ? raw.version : '',
+				document_url: documentUrl,
+				inline_content: inline
+			},
+			language
 		);
+		const display = presentation.kind;
+		const frame = presentation.kind === 'embedded' ? presentation.src : null;
+		const link =
+			presentation.kind === 'external'
+				? presentation.href
+				: presentation.kind === 'embedded'
+					? presentation.pageHref
+					: null;
+		const html =
+			presentation.kind === 'inline' ? sanitizeRuntimeConsentHtml(presentation.content) : null;
 		const mode = raw.content_mode;
 		const options: LiteFlowConsentItem['options'] = [];
 		if (mode === 'radio') {
@@ -160,7 +191,11 @@ export function readLiteFlowConsent(
 		items.push({
 			id,
 			title,
+			descriptionHtml: description ? sanitizeRuntimeConsentHtml(description) : null,
+			display,
 			html,
+			frame,
+			link,
 			documentUrl,
 			// Held to `is_required` only, as the SPA (`canSubmitRuntimeConsent`) and the Flow runtime
 			// (`consentItemInputSatisfied`) are: a checkbox in a required mode is not required by it.

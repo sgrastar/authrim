@@ -2465,6 +2465,63 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
       security: []
+  /api/v1/consent-statements/{slug}:
+    get:
+      tags:
+        - Consent
+      operationId: getApiV1ConsentStatement
+      summary: Read a consent statement's text for the public statement page.
+      description: >-
+        Returns one active consent statement of the resolved tenant in the asked language: the
+        current version, or an earlier version named by `version`. Only published versions
+        (active or archived) are shown, never a draft, and the list of published versions is
+        included so a reader can open an earlier one. A statement that is inactive or retired is
+        not found. The language is `lang`, else the first `Accept-Language` tag, falling back to
+        English and then to the first localization.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: version
+          in: query
+          required: false
+          description: A published version (YYYYMMDD). Defaults to the current version.
+          schema:
+            type: string
+            pattern: '^\d{8}$'
+        - name: lang
+          in: query
+          required: false
+          description: BCP 47 language tag.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The statement text.
+          headers:
+            Cache-Control:
+              description: >-
+                Always `no-store`: on the shared Login UI the tenant is chosen by a cookie, so the
+                same URL can name another tenant's statement.
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicConsentStatement'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: []
   /auth/login-challenge:
     options:
       operationId: optionsLoginChallenge
@@ -4132,6 +4189,63 @@ components:
           schema:
             $ref: '#/components/schemas/FlowStateResponse'
   schemas:
+    PublicConsentStatementVersion:
+      type: object
+      additionalProperties: false
+      required: [version, effective_at, is_current]
+      properties:
+        version:
+          type: string
+          description: YYYYMMDD
+        effective_at:
+          type: integer
+          description: Epoch milliseconds.
+        is_current:
+          type: boolean
+    PublicConsentStatement:
+      type: object
+      additionalProperties: false
+      required:
+        - slug
+        - category
+        - language
+        - title
+        - description
+        - content_type
+        - document_url
+        - inline_content
+        - version
+        - versions
+      properties:
+        slug:
+          type: string
+        category:
+          type: string
+        language:
+          type: string
+          description: The language of the text returned.
+        title:
+          type: string
+        description:
+          type: string
+        content_type:
+          type: string
+          enum: [inline, url]
+        document_url:
+          type: [string, 'null']
+          description: The external document, when the text is kept outside Authrim.
+        inline_content:
+          type: [string, 'null']
+          description: >-
+            The text, in the limited markup the consent step accepts (p, br, span, strong, and a
+            with href); everything else is shown as text.
+        version:
+          $ref: '#/components/schemas/PublicConsentStatementVersion'
+        versions:
+          type: array
+          description: The published versions, newest first.
+          items:
+            $ref: '#/components/schemas/PublicConsentStatementVersion'
     JsonObject:
       type: object
       additionalProperties: true

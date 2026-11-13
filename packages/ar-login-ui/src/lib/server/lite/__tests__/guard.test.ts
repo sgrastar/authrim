@@ -316,7 +316,7 @@ describe('the lite document', () => {
 describe('buildLiteContentSecurityPolicy', () => {
 	it('allows nothing but the listed hashes', () => {
 		expect(buildLiteContentSecurityPolicy({ styleHashes: [] })).toBe(
-			"default-src 'none'; style-src 'none'; script-src 'none'; img-src data:; form-action 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; connect-src 'none'"
+			"default-src 'none'; style-src 'none'; script-src 'none'; img-src data:; form-action 'self'; base-uri 'none'; object-src 'none'; frame-src 'self'; frame-ancestors 'none'; connect-src 'none'"
 		);
 	});
 });

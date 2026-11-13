@@ -8,7 +8,11 @@ const ROUTES = resolve(__dirname, '../routes');
  * Pages that live outside the `(main)` group on purpose. They get the bare root layout: no
  * Login UI stores, no `app.css`, no UnoCSS. Add a page here only when it brings its own styles.
  */
-const PAGES_OUTSIDE_MAIN = new Set<string>([]);
+/**
+ * Pages outside (main) and the lite group: the statement text framed on the consent step, drawn
+ * on the server without the normal Login UI (the same for both).
+ */
+const PAGES_OUTSIDE_MAIN = new Set<string>(['statements/[slug]/embed']);
 
 /**
  * The lite Login UI's pages (routes/__lite): reached only through reroute, with their own inline

@@ -2,6 +2,18 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const de = createTranslation({
+	consent_statement_agree: 'Ich stimme {title} zu',
+	consent_statement_read: '{title} lesen',
+	consent_statement_newTab: '(öffnet in einem neuen Tab)',
+	statement_pageVersion: 'Fassung vom {date}',
+	statement_pageCurrent: 'Aktuelle Fassung',
+	statement_pageOlder: 'Dies ist eine frühere Fassung.',
+	statement_pageShowCurrent: 'Aktuelle Fassung ansehen',
+	statement_pageVersions: 'Veröffentlichte Fassungen',
+	statement_pageExternal: 'Dieses Dokument ist auf einer anderen Website veröffentlicht.',
+	statement_pageNotFound: 'Diese Erklärung wurde nicht gefunden.',
+	statement_pageUnavailable:
+		'Die Erklärung konnte nicht geladen werden. Versuchen Sie es später erneut.',
 	account_guestLogoutWarning:
 		'Nach dem Abmelden können Sie nicht zu diesem Gastkonto zurückkehren. Registrieren Sie sich zuerst, um den Zugriff auf Ihr Konto und Ihre Daten zu behalten. Trotzdem abmelden?',
 	account_guestTitle: 'Konto registrieren',

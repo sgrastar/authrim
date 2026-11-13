@@ -36,6 +36,8 @@ export function buildLiteContentSecurityPolicy(input: LiteCspInput): string {
 		`form-action ${input.formAction ?? "'self'"}`,
 		"base-uri 'none'",
 		"object-src 'none'",
+		// The statement text framed on the consent step (`/statements/<slug>/embed`).
+		"frame-src 'self'",
 		"frame-ancestors 'none'",
 		"connect-src 'none'"
 	].join('; ');

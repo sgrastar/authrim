@@ -321,7 +321,10 @@ export function buildContentSecurityPolicy(
 	const uniqueConnectOrigins = [...new Set(connectOrigins)];
 	const uniqueStyleOrigins = [...new Set(styleOrigins)];
 	const scriptSrc = `script-src 'self' 'unsafe-inline'${uniqueScriptOrigins.length ? ` ${uniqueScriptOrigins.join(' ')}` : ''}`;
-	const frameSrc = uniqueFrameOrigins.length ? [`frame-src ${uniqueFrameOrigins.join(' ')}`] : [];
+	// 'self': the statement text framed on the consent step (`/statements/<slug>/embed`).
+	const frameSrc = [
+		`frame-src 'self'${uniqueFrameOrigins.length ? ` ${uniqueFrameOrigins.join(' ')}` : ''}`
+	];
 	const styleSrc = `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com${uniqueStyleOrigins.length ? ` ${uniqueStyleOrigins.join(' ')}` : ''}`;
 	const connectSrc = `${buildConnectSrc(platformEnv)}${uniqueConnectOrigins.length ? ` ${uniqueConnectOrigins.join(' ')}` : ''}`;
 
@@ -335,6 +338,14 @@ export function buildContentSecurityPolicy(
 		...frameSrc,
 		"frame-ancestors 'none'"
 	].join('; ');
+}
+
+/**
+ * The text of a statement for the frame on the consent step (`/statements/<slug>/embed`): the only
+ * page this origin may frame, and only this origin.
+ */
+export function isStatementEmbedPath(pathname: string): boolean {
+	return /^\/statements\/[^/]+\/embed\/?$/u.test(pathname);
 }
 
 function getCacheKeyOrigin(apiBackendUrl: string): string {
@@ -392,6 +403,41 @@ async function fetchAuthenticationMethodsForRequest(
 		if (!response.ok) return null;
 
 		return (await response.json()) as AuthenticationMethodsResponse;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * A public, read-only backend API for a page drawn on the server (the statement page): sent for
+ * the tenant the request is for, chosen as the API proxy chooses it (`getForwardedHost`: the
+ * tenant host of the URL or of the shared Login UI's tenant cookie, else the original host), so a
+ * page on the shared Login UI reads the chosen tenant's data. No credential is sent with it.
+ */
+export async function fetchPublicApiForPageRequest(
+	event: RequestEvent,
+	path: string
+): Promise<{ status: number; json: unknown } | null> {
+	if (!path.startsWith('/') || path.startsWith('//')) return null;
+	const platformEnv = getPlatformEnv(event);
+	const apiBackendUrl = getApiBackendUrl(platformEnv);
+	const forwardedHost = getForwardedHost(event, platformEnv);
+	const apiBinding =
+		(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
+		(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
+		null;
+	try {
+		const base = apiBinding
+			? getForwardedHostApiBackendUrl(apiBackendUrl, forwardedHost)
+			: apiBackendUrl;
+		const url = new URL(path, base);
+		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
+		for (const name of ['cookie', 'authorization', 'dpop']) headers.delete(name);
+		headers.set('Accept', 'application/json');
+		const response = apiBinding
+			? await apiBinding.fetch(url.toString(), { headers })
+			: await fetch(new Request(url.toString(), { headers }));
+		return { status: response.status, json: await response.json().catch(() => null) };
 	} catch {
 		return null;
 	}
@@ -1179,11 +1225,15 @@ export const securityHeadersHandle: Handle = async ({ event, resolve }) => {
 		platformEnv
 	);
 	const csp = buildContentSecurityPolicy(platformEnv, humanVerificationProvider);
+	const framedBySelf = isStatementEmbedPath(event.url.pathname);
 
-	response.headers.set('Content-Security-Policy', csp);
+	response.headers.set(
+		'Content-Security-Policy',
+		framedBySelf ? csp.replace("frame-ancestors 'none'", "frame-ancestors 'self'") : csp
+	);
 	response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 	response.headers.set('X-Content-Type-Options', 'nosniff');
-	response.headers.set('X-Frame-Options', 'DENY');
+	response.headers.set('X-Frame-Options', framedBySelf ? 'SAMEORIGIN' : 'DENY');
 	response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
 	response.headers.set('Cross-Origin-Resource-Policy', 'same-origin');
 	response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');

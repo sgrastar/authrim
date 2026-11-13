@@ -158,6 +158,7 @@ const LOGIN_UI_PATHS = [
   '/logout-complete',
   '/api/set-language',
   '/callback',
+  '/statements',
 ];
 
 const BEARER_TOKEN_TRANSPORT_UNSUPPORTED = 'bearer_token_transport_unsupported';
@@ -1191,6 +1192,7 @@ app.use('*', async (c, next) => {
     path.startsWith('/error') ||
     path.startsWith('/api/set-language') ||
     path.startsWith('/callback') ||
+    path.startsWith('/statements/') ||
     path.startsWith(`${LOGIN_UI_ASSET_PREFIX}/`) || // Login UI SvelteKit static assets
     path.startsWith(`${ADMIN_UI_ASSET_PREFIX}/`) || // Admin UI SvelteKit static assets
     path === '/' // Root path for Login UI (external auth callbacks)
@@ -1696,6 +1698,11 @@ app.all('/api/v1/login/interactions/*', async (c) => {
 });
 
 app.get('/api/v1/registration-fields', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.get('/api/v1/consent-statements/:slug', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });

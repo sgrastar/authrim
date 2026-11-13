@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const zhCN = createTranslation({
+	consent_statement_agree: '我同意《{title}》',
+	consent_statement_read: '阅读《{title}》',
+	consent_statement_newTab: '（在新标签页中打开）',
+	statement_pageVersion: '{date} 版',
+	statement_pageCurrent: '当前版本',
+	statement_pageOlder: '这是较早的版本。',
+	statement_pageShowCurrent: '查看当前版本',
+	statement_pageVersions: '已发布的版本',
+	statement_pageExternal: '此文档发布在其他网站上。',
+	statement_pageNotFound: '找不到此声明。',
+	statement_pageUnavailable: '无法加载声明。请稍后重试。',
 	account_guestLogoutWarning:
 		'退出登录后，无法再返回此访客账户。请先注册以保留对账户和数据的访问权限。仍要退出吗？',
 	account_guestTitle: '注册账户',

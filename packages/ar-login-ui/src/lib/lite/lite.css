@@ -226,3 +226,32 @@ nav.lang a {
 		color: #fcd34d;
 	}
 }
+/* A consent statement: its page framed (or a link to its document), then "I agree". */
+.statement {
+	margin: 0.75rem 0;
+}
+.statement-title {
+	margin: 0 0 0.25rem;
+	font-weight: 600;
+}
+.statement-description {
+	margin: 0 0 0.25rem;
+}
+.statement-frame {
+	display: block;
+	width: 100%;
+	height: 12rem;
+	border: 1px solid var(--line);
+	border-radius: 0.4rem;
+}
+.statement-text {
+	max-height: 12rem;
+	overflow-y: auto;
+	padding: 0.6rem;
+	border: 1px solid var(--line);
+	border-radius: 0.4rem;
+	overflow-wrap: anywhere;
+}
+.statement-page-body {
+	overflow-wrap: anywhere;
+}

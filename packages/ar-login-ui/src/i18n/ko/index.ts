@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const ko = createTranslation({
+	consent_statement_agree: '{title}에 동의합니다',
+	consent_statement_read: '{title} 읽기',
+	consent_statement_newTab: '(새 탭에서 열림)',
+	statement_pageVersion: '{date} 버전',
+	statement_pageCurrent: '현재 버전',
+	statement_pageOlder: '이전 버전입니다.',
+	statement_pageShowCurrent: '현재 버전 보기',
+	statement_pageVersions: '게시된 버전',
+	statement_pageExternal: '이 문서는 다른 사이트에 게시되어 있습니다.',
+	statement_pageNotFound: '이 동의서를 찾을 수 없습니다.',
+	statement_pageUnavailable: '동의서를 불러오지 못했습니다. 잠시 후 다시 시도하세요.',
 	account_guestLogoutWarning:
 		'로그아웃하면 이 게스트 계정으로 돌아올 수 없습니다. 계정과 데이터에 계속 접근하려면 먼저 등록하세요. 그래도 로그아웃하시겠습니까?',
 	account_guestTitle: '계정 등록',

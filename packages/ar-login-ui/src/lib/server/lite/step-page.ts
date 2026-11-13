@@ -570,8 +570,17 @@ export async function liteStepPage(event: RequestEvent) {
 					}
 				: null,
 		// The step's consent (drawn by its screen's consent part); a screen that asks for consent and no
-		// sign-in has a Continue of its own.
-		consent,
+		// sign-in has a Continue of its own. Each statement with its "Read" and "I agree" words.
+		consent: consent
+			? {
+					...consent,
+					items: consent.items.map((item) => ({
+						...item,
+						readLabel: LL.consent_statement_read({ title: item.title }),
+						agreeLabel: LL.consent_statement_agree({ title: item.title })
+					}))
+				}
+			: null,
 		// What was shown, by its digest: a decision is taken only for these terms.
 		consentKey,
 		consentWords: consentWidget ? { label: consentWidget.label, text: consentWidget.text } : null,

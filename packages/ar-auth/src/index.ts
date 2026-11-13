@@ -108,6 +108,7 @@ import {
   verifyInvitationEmailCodeHandler,
 } from './invitation-handlers';
 import { registrationFieldsHandler } from './registration-fields';
+import { publicConsentStatementHandler } from './public-consent-statements';
 import {
   loginRuntimeEmailVerificationChallengeHandler,
   loginRuntimeInteractionStartHandler,
@@ -507,6 +508,17 @@ app.use(
 );
 app.use('/oauth/admin-agent/authorize', csrfProtectionMiddleware());
 
+// The public statement page reads one statement's text: a cheap read, counted on its own.
+app.use('/api/v1/consent-statements/*', async (c: Context<{ Bindings: Env }>, next: Next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/v1/consent-statements/*'],
+    endpointClass: 'public_consent_statement',
+    nonBlockingRead: true,
+  })(c, next);
+});
+
 // Rate limiting for browser guest login.
 app.use('/api/auth/guest/login', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
@@ -892,6 +904,10 @@ app.post('/api/v1/invitations/email-verification/verify', verifyInvitationEmailC
 // Registration fields (public)
 // - GET /api/v1/registration-fields  - Fields visible on signup form
 app.get('/api/v1/registration-fields', registrationFieldsHandler);
+
+// Consent statement text (public), for the Login UI's statement page
+// - GET /api/v1/consent-statements/:slug[?version=YYYYMMDD&lang=xx]
+app.get('/api/v1/consent-statements/:slug', publicConsentStatementHandler);
 
 // Flow Engine API
 // Track C: Flow-based authentication with UIContract
