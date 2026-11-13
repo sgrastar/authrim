@@ -15,6 +15,8 @@
 				tag?: string;
 				tagTone?: 'lookup' | 'tenant' | 'template';
 				badge?: string;
+				/** The page is not built yet: a "under construction" mark at the end of the label. */
+				wip?: boolean;
 		  };
 </script>
 
@@ -22,6 +24,7 @@
 	import CountBadge from '#lib/ui/primitives/CountBadge.svelte';
 	import { untrack } from 'svelte';
 	import Icon from '#lib/ui/icons/Icon.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { motionReduced, SUBNAV_RISE_DELAY_MS, SUBNAV_SETTLE_MS, SUBNAV_STEP_MS } from './motion';
 
 	/**
@@ -92,6 +95,9 @@
 			<span class="subnav__label">{entry.label}</span>
 			{#if entry.tag}<span class="subnav__tag subnav__tag--{entry.tagTone}">{entry.tag}</span>{/if}
 			{#if entry.badge}<span class="subnav__badge"><CountBadge value={entry.badge} /></span>{/if}
+			{#if entry.wip}<span class="subnav__wip" title={t('nav.wip')}
+					><Icon name="barricade" /><span class="sr-only">{t('nav.wip')}</span></span
+				>{/if}
 		</a>
 	{:else}
 		<span class="subnav__item" class:is-active={entry.active} style:--fi={index}>
@@ -226,6 +232,14 @@
 	}
 
 	/* A single long German compound breaks inside the word instead of overflowing. */
+	/* Not built yet: a quiet mark right after the label. */
+	.subnav__wip {
+		display: inline-flex;
+		flex: none;
+		color: var(--text-muted);
+		--icon-size: var(--icon-xs);
+	}
+
 	.subnav__label {
 		min-width: 0;
 		overflow-wrap: anywhere;

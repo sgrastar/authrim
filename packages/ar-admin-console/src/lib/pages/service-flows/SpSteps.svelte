@@ -16,9 +16,11 @@
 		form: SpForm;
 		/** What Authrim gives the service to register on its side (default: the sample values). */
 		ours?: { label: string; value: string }[];
+		/** What the test runs against (see `testBasis`). */
+		basis?: string;
 	}
 
-	let { step, form = $bindable(), ours }: Props = $props();
+	let { step, form = $bindable(), ours, basis }: Props = $props();
 
 	// Looked up when shown, so the labels follow a change of language.
 	const ourItems = $derived(
@@ -80,6 +82,7 @@
 		lead={t('sf.sp.testLead')}
 		checks={[t('sf.test.metadataRead'), t('sf.sp.check.signed'), t('sf.sp.check.answered')]}
 		note={t('sf.sp.certNote', { days: 29 })}
+		{basis}
 		bind:tested={form.tested}
 	/>
 {/if}
