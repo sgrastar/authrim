@@ -413,9 +413,8 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'Ohne Bedingung sehen alle diesen Schritt. Mit Bedingungen nur, wer alle erfüllt. Soll er für alle gelten, die eine davon erfüllen, teilen Sie ihn in Schritte auf.',
 	'af.when.everyone': 'Wird allen angezeigt.',
 	'af.when.count': '{n} Bedingungen',
-	'af.when.attributesFailed':
-		'Die Attribute konnten nicht geladen werden, daher lassen sich die Bedingungen nicht ändern. Gespeicherte Bedingungen bleiben erhalten.',
-	'af.when.loadFailed': 'Einige Auswahlmöglichkeiten für Bedingungen konnten nicht geladen werden.',
+	'af.when.loadFailed':
+		'Die Auswahlmöglichkeiten für Bedingungen konnten nicht geladen werden, daher lassen sich die Bedingungen nicht ändern. Gespeicherte Bedingungen bleiben erhalten.',
 	'af.when.source.attribute': 'Attribut',
 	'af.when.source.age': 'Alter',
 	'af.when.source.answer': 'Antwort auf einem Bildschirm',

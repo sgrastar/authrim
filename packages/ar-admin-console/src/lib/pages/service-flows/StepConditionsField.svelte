@@ -43,10 +43,11 @@
 	let clients = $state<ClientOption[]>([]);
 	let failed = $state(false);
 	/**
-	 * The attributes were read. Until then the rules are not edited: a rule on an attribute is
-	 * checked by the attribute's type, which a saved rule does not carry.
+	 * Every list was read. Until then the rules are not edited: a rule is checked and drawn by what
+	 * it compares (an attribute's type, a screen part's kind, the apps), which a saved rule does not
+	 * carry; a rule drawn without it could be changed into another one.
 	 */
-	let attributesRead = $state(false);
+	let ready = $state(false);
 	let controller: AbortController | undefined;
 	onDestroy(() => controller?.abort());
 
@@ -55,21 +56,25 @@
 		const current = new AbortController();
 		controller = current;
 		failed = false;
-		attributesRead = false;
-		// Each list on its own: what is read is offered, whatever else fails.
+		ready = false;
 		const [schemaRead, screenRead, clientRead] = await Promise.allSettled([
 			resources.userAttributes ? resources.userAttributes(current.signal) : Promise.resolve([]),
 			resources.screens.list(),
 			resources.clients.list(current.signal)
 		]);
 		if (current.signal.aborted) return;
-		if (schemaRead.status === 'fulfilled') {
-			schemas = schemaRead.value;
-			attributesRead = true;
+		if (
+			schemaRead.status === 'rejected' ||
+			screenRead.status === 'rejected' ||
+			clientRead.status === 'rejected'
+		) {
+			failed = true;
+			return;
 		}
-		if (screenRead.status === 'fulfilled') screens = screenRead.value.screens;
-		if (clientRead.status === 'fulfilled') clients = clientRead.value;
-		failed = [schemaRead, screenRead, clientRead].some((read) => read.status === 'rejected');
+		schemas = schemaRead.value;
+		screens = screenRead.value.screens;
+		clients = clientRead.value;
+		ready = true;
 	}
 	onMount(() => void load());
 
@@ -97,7 +102,7 @@
 </script>
 
 <div class="when">
-	{#if !attributesRead}
+	{#if !ready}
 		{#if !failed}<LoadingState label={t('common.loading')} />{/if}
 	{:else}
 		<ConditionBuilder
@@ -113,7 +118,7 @@
 	{#if hint}<p class="when__hint">{hint}</p>{/if}
 	{#if failed}
 		<Callout tone="warning">
-			{attributesRead ? t('af.when.loadFailed') : t('af.when.attributesFailed')}
+			{t('af.when.loadFailed')}
 			<Button size="sm" onclick={load}>{t('common.retry')}</Button>
 		</Callout>
 	{/if}

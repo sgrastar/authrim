@@ -89,8 +89,26 @@
 	args={{ attributesFail: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(await canvas.findByText(t('af.when.attributesFailed'))).toBeInTheDocument();
+		await expect(await canvas.findByText(t('af.when.loadFailed'))).toBeInTheDocument();
 		await expect(canvas.queryByRole('button', { name: t('cond.addRule') })).toBeNull();
 		await expect(canvas.getByRole('button', { name: t('common.retry') })).toBeInTheDocument();
+	}}
+></Story>
+
+<!--
+	The screens cannot be read: a saved rule on a ticked box is not drawn as a text answer (where it
+	could be changed into another rule); it stays as saved until the screens are read.
+-->
+<Story
+	name="Screens not loaded"
+	args={{
+		screensFail: true,
+		initial: [JSON.stringify({ id: 'a', field: 'answer:opt_in', operator: 'eq', value: true })]
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(await canvas.findByText(t('af.when.loadFailed'))).toBeInTheDocument();
+		await expect(canvas.queryByRole('button', { name: t('cond.addRule') })).toBeNull();
+		await expect(canvas.getByTestId('when')).toHaveTextContent('"value":true');
 	}}
 ></Story>

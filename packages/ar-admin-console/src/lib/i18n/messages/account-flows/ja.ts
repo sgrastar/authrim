@@ -394,9 +394,8 @@ export const jaAccountFlows = {
 		'条件がなければ、全員に表示します。条件を足すと、すべてに当てはまる人にだけ表示します。どれかに当てはまる人に出すときは、手順を分けてください。',
 	'af.when.everyone': '全員に表示します。',
 	'af.when.count': '{n} 件の条件',
-	'af.when.attributesFailed':
-		'属性の一覧を読み込めなかったため、条件を変更できません。保存済みの条件はそのまま残ります。',
-	'af.when.loadFailed': '条件の選択肢の一部を読み込めませんでした。',
+	'af.when.loadFailed':
+		'条件の選択肢を読み込めなかったため、条件を変更できません。保存済みの条件はそのまま残ります。',
 	'af.when.source.attribute': '属性',
 	'af.when.source.age': '年齢',
 	'af.when.source.answer': '画面の回答',

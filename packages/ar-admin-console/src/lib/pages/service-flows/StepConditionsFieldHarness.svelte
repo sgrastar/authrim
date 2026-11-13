@@ -24,15 +24,30 @@
 		answerScreens?: string[];
 		/** The attribute schema cannot be read. */
 		attributesFail?: boolean;
+		/** The screens cannot be read. */
+		screensFail?: boolean;
 	}
 
-	let { initial = [], answerScreens = [], attributesFail = false }: Props = $props();
+	let {
+		initial = [],
+		answerScreens = [],
+		attributesFail = false,
+		screensFail = false
+	}: Props = $props();
+
+	const fakeScreens = createFakeScreens({ screens: MOCK_SCREENS });
 
 	const schema = createFakeSchemaSetting();
 	provideFlowResources({
 		methodProfiles: createFakeAuthenticationMethodProfiles(),
 		sessionProfiles: createFakeSessionProfiles(),
-		screens: createFakeScreens({ screens: MOCK_SCREENS }),
+		screens: {
+			...fakeScreens,
+			list: () =>
+				screensFail
+					? Promise.reject(new ApiError(500, 'server_error', 'Failed'))
+					: fakeScreens.list()
+		},
 		clients: createFakeClients(),
 		samlProviders: createFakeSamlProviders(),
 		consentStatements: createFakeConsentStatements(MOCK_CONSENT_STATEMENTS),

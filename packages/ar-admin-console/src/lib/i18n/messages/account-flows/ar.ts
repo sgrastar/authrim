@@ -396,9 +396,8 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'من دون شرط يرى الجميع هذه الخطوة. ومع الشروط لا يراها إلا من يستوفيها كلها. لعرضها لمن يستوفي أيًّا منها، قسّمها إلى خطوات.',
 	'af.when.everyone': 'تُعرض للجميع.',
 	'af.when.count': '{n} شروط',
-	'af.when.attributesFailed':
-		'تعذّر تحميل السمات، لذا لا يمكن تغيير الشروط. تبقى الشروط المحفوظة كما هي.',
-	'af.when.loadFailed': 'تعذّر تحميل بعض خيارات الشروط.',
+	'af.when.loadFailed':
+		'تعذّر تحميل خيارات الشروط، لذا لا يمكن تغيير الشروط. تبقى الشروط المحفوظة كما هي.',
 	'af.when.source.attribute': 'سمة',
 	'af.when.source.age': 'العمر',
 	'af.when.source.answer': 'إجابة في شاشة',

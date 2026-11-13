@@ -394,9 +394,8 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'With no condition, everyone sees this step. With conditions, only people who meet all of them do. To show it to people who meet any one of them, split it into steps.',
 	'af.when.everyone': 'Shown to everyone.',
 	'af.when.count': '{n} conditions',
-	'af.when.attributesFailed':
-		'The attributes could not be loaded, so the conditions cannot be changed. Saved conditions are kept as they are.',
-	'af.when.loadFailed': 'Some of the choices for conditions could not be loaded.',
+	'af.when.loadFailed':
+		'The choices for conditions could not be loaded, so the conditions cannot be changed. Saved conditions are kept as they are.',
 	'af.when.source.attribute': 'Attribute',
 	'af.when.source.age': 'Age',
 	'af.when.source.answer': 'Screen answer',
