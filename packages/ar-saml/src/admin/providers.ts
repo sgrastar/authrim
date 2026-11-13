@@ -64,6 +64,9 @@ import {
   isIAL,
   samlDestinationPolicyCoversProfile,
   findRenamedOutputAttributes,
+  tenantCapabilityRefusal,
+  carriesMetadataUrl,
+  sameMetadataUrlValue,
   parseInformationReleaseConsentSetting,
 } from '@authrim/ar-lib-core';
 import {
@@ -719,6 +722,23 @@ async function withProviderCertificateValidation<T extends SAMLIdPConfig | SAMLS
     ...config,
     certificateValidation,
   };
+}
+
+/**
+ * Null while the platform lets the caller use metadata URLs (saml_metadata_url on, or the caller
+ * has global platform authority); else the refusal: 403 `capability_disabled`, or 503 when the
+ * switch cannot be read. Judged by the one rule the Admin API shares (ar-lib-core
+ * `tenantCapabilityRefusal`). It covers only what fetches a URL or stores one for later fetching;
+ * pasted metadata, reads and deletes never ask.
+ */
+async function refuseWhileSamlMetadataUrlOff(c: AdminSAMLContext): Promise<Response | null> {
+  const refusal = await tenantCapabilityRefusal(
+    c.env,
+    (c as unknown as AdminSAMLAuthContext).get('adminAuth'),
+    'saml_metadata_url'
+  );
+  if (!refusal) return null;
+  return c.json(refusal.body, refusal.status, refusal.status === 503 ? { 'Retry-After': '5' } : {});
 }
 
 async function requireSAMLAdminPermission(
@@ -1861,6 +1881,12 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         intervalSeconds: config.metadataRefreshPolicy.intervalSeconds,
       };
     }
+    // A new provider that ends up with a stored metadata URL (given in the request config as well
+    // as fetched above) would be refreshed from it by the scheduled poller.
+    if (carriesMetadataUrl(config.metadataUrl)) {
+      const capabilityRefused = await refuseWhileSamlMetadataUrlOff(c);
+      if (capabilityRefused) return capabilityRefused;
+    }
 
     // Validate config based on type
     if (body.providerType === 'saml_idp') {
@@ -2137,6 +2163,15 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       body.config.metadataUrl !== existingConfig.metadataUrl
     ) {
       mergedConfig.metadataRefreshPolicy = undefined;
+    }
+    // A new or changed metadata URL would be refreshed by the scheduled poller; keeping the stored
+    // one (whatever else changes) and clearing it stay allowed.
+    if (
+      carriesMetadataUrl(mergedConfig.metadataUrl) &&
+      !sameMetadataUrlValue(mergedConfig.metadataUrl, existingConfig.metadataUrl)
+    ) {
+      const capabilityRefused = await refuseWhileSamlMetadataUrlOff(c);
+      if (capabilityRefused) return capabilityRefused;
     }
     const newConfig =
       existing.provider_type === 'saml_sp'
@@ -2559,6 +2594,9 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
     if (!id) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    // Every refresh fetches a metadata URL (the stored one or the one in the request).
+    const capabilityRefused = await refuseWhileSamlMetadataUrlOff(c);
+    if (capabilityRefused) return capabilityRefused;
 
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
@@ -2940,6 +2978,9 @@ export async function handleRefreshFederationMetadataSource(
     );
     if (forbidden) return forbidden;
     if (!sourceId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    // A refresh fetches the source's metadata URL.
+    const capabilityRefused = await refuseWhileSamlMetadataUrlOff(c);
+    if (capabilityRefused) return capabilityRefused;
 
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const { refreshFederationMetadataSource } = await import('./metadata-polling');
@@ -3022,6 +3063,8 @@ export async function handlePreviewFederationTrustCertificate(
     }
 
     if (certificateUrl) {
+      const capabilityRefused = await refuseWhileSamlMetadataUrlOff(c);
+      if (capabilityRefused) return capabilityRefused;
       const ssrfError = validateExternalUrl(certificateUrl, {
         requireHttps: true,
         allowLocalhost: false,
@@ -3114,6 +3157,12 @@ export async function handleStartAggregateBatchCreate(c: AdminSAMLContext): Prom
     const preview = await getAggregatePreview(c.env, previewId);
     if (!preview || preview.tenantId !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+    // The providers it creates keep the URL the preview was fetched from, which the scheduled
+    // poller then refreshes from.
+    if (carriesMetadataUrl(preview.metadataUrl)) {
+      const capabilityRefused = await refuseWhileSamlMetadataUrlOff(c);
+      if (capabilityRefused) return capabilityRefused;
     }
 
     const validated = await validateAggregateBatchCreateRequest(c.env, tenantId, preview, {
@@ -3784,6 +3833,10 @@ async function resolveMetadataImportInput(
       variables: { field: 'metadataXml or metadataUrl' },
     });
   }
+
+  // Fetching the URL is what the capability governs (preview, create and import all come here).
+  const capabilityRefused = await refuseWhileSamlMetadataUrlOff(c);
+  if (capabilityRefused) return capabilityRefused;
 
   const ssrfError = validateExternalUrl(input.metadataUrl, {
     requireHttps: true,

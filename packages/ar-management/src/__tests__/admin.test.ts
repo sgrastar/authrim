@@ -36,7 +36,7 @@ vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original)
 }));
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DatabaseAdapter, Env, GuestLifecycleRow } from '@authrim/ar-lib-core';
-import { createAuditLogFromContext } from '@authrim/ar-lib-core';
+import { createAuditLogFromContext, NotificationQuotaExceededError } from '@authrim/ar-lib-core';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 let newLogFixture: Awaited<ReturnType<typeof logProducerFixture>>;
 const auditBackgroundWork: Promise<unknown>[] = [];
@@ -5977,6 +5977,39 @@ describe('Admin API Handlers', () => {
 
       expect(response.status).toBe(502);
       await expect(response.json()).resolves.toMatchObject({ error: 'email_delivery_failed' });
+    });
+
+    it('answers 429 with the quota scope and Retry-After when the e-mail quota is used up', async () => {
+      vi.mocked(produceNotificationDelivery).mockRejectedValueOnce(
+        new NotificationQuotaExceededError('tenant', 1800)
+      );
+      const context = createUserEmailContext().context as unknown as Parameters<
+        typeof adminUserSendEmailHandler
+      >[0];
+
+      const response = await adminUserSendEmailHandler(context);
+
+      expect(response.status).toBe(429);
+      expect(response.headers.get('Retry-After')).toBe('1800');
+      await expect(response.json()).resolves.toEqual({
+        error: 'email_quota_exceeded',
+        scope: 'tenant',
+      });
+    });
+
+    it('answers 429 without Retry-After when the limiter reports no reset time', async () => {
+      vi.mocked(produceNotificationDelivery).mockRejectedValueOnce(
+        new NotificationQuotaExceededError('deployment')
+      );
+      const context = createUserEmailContext().context as unknown as Parameters<
+        typeof adminUserSendEmailHandler
+      >[0];
+
+      const response = await adminUserSendEmailHandler(context);
+
+      expect(response.status).toBe(429);
+      expect(response.headers.get('Retry-After')).toBeNull();
+      await expect(response.json()).resolves.toMatchObject({ scope: 'deployment' });
     });
   });
 

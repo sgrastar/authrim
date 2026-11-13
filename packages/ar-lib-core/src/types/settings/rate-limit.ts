@@ -32,6 +32,8 @@ export interface RateLimitSettings {
   'rate_limit.send_challenge': number;
   'rate_limit.loadtest': number;
   'rate_limit.admin_write': number;
+  'rate_limit.email_tenant_hourly_max': number;
+  'rate_limit.email_deployment_hourly_max': number;
   'rate_limit.strict_window_seconds': number;
   'rate_limit.moderate_window_seconds': number;
   'rate_limit.lenient_window_seconds': number;
@@ -230,6 +232,35 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     visibility: 'admin',
     default: 600,
   },
+  'rate_limit.email_tenant_hourly_max': {
+    key: 'rate_limit.email_tenant_hourly_max',
+    type: 'number',
+    default: 2000,
+    envKey: 'EMAIL_TENANT_HOURLY_MAX',
+    label: 'Email Quota per Tenant (hourly)',
+    description:
+      'E-mails one tenant can have sent per hour (security notices and invitations included), for the whole platform. 0 turns the limit off.',
+    min: 0,
+    max: 10000000,
+    integer: true,
+    // A volume cap on what tenants can cause: tenants must not raise it.
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
+  'rate_limit.email_deployment_hourly_max': {
+    key: 'rate_limit.email_deployment_hourly_max',
+    type: 'number',
+    default: 20000,
+    envKey: 'EMAIL_DEPLOYMENT_HOURLY_MAX',
+    label: 'Email Quota per Deployment (hourly)',
+    description:
+      'E-mails the whole deployment can send per hour (platform e-mails included). 0 turns the limit off.',
+    min: 0,
+    max: 100000000,
+    integer: true,
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
   'rate_limit.strict_window_seconds': {
     key: 'rate_limit.strict_window_seconds',
     type: 'number',
@@ -363,6 +394,8 @@ export const RATE_LIMIT_DEFAULTS: RateLimitSettings = {
   'rate_limit.send_challenge': 30,
   'rate_limit.loadtest': 10000,
   'rate_limit.admin_write': 600,
+  'rate_limit.email_tenant_hourly_max': 2000,
+  'rate_limit.email_deployment_hourly_max': 20000,
   'rate_limit.strict_window_seconds': 60,
   'rate_limit.moderate_window_seconds': 60,
   'rate_limit.lenient_window_seconds': 60,

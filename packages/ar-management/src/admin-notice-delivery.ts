@@ -602,7 +602,13 @@ export async function sendDueNoticeDeliveries(
             : { status: 'failed', error: message };
         }
       }
-      if (result.status === 'failed' && delivery.attempts >= MAX_ATTEMPTS) {
+      // An hourly e-mail quota that is used up is not the notice's fault: keep retrying (hourly)
+      // until the notice expires instead of dead-lettering an operator notice.
+      if (
+        result.status === 'failed' &&
+        delivery.attempts >= MAX_ATTEMPTS &&
+        result.error !== 'notification_quota_exceeded'
+      ) {
         result = { status: 'dead_letter', error: result.error };
       }
       // Only a code is kept and shown back, whichever path the error came by.

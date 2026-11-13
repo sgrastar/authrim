@@ -340,7 +340,13 @@ describe('where settings live', () => {
 			'webhooks',
 			'dynamic_client_registration',
 			'external_plugins',
-			'bulk_jobs'
+			'bulk_jobs',
+			'admin_sent_email',
+			'machine_credentials',
+			'email_provider_config',
+			'directory_connectors',
+			'external_identity_providers',
+			'saml_metadata_url'
 		] as const) {
 			const key = `tenant_capabilities.${capability}`;
 			const meta = ALL_CATEGORY_META['tenant-capabilities'].settings[key];

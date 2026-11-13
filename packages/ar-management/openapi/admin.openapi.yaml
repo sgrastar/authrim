@@ -43,7 +43,9 @@ info:
 
     The platform can turn a named capability off for tenants (platform setting category
     `tenant-capabilities`: `webhooks`, `dynamic_client_registration`, `external_plugins`,
-    `bulk_jobs`; every capability is on by default). While one is off, the management operations
+    `bulk_jobs`, `admin_sent_email`, `machine_credentials`, `email_provider_config`,
+    `directory_connectors`, `external_identity_providers`, `saml_metadata_url`; every
+    capability is on by default). While one is off, the management operations
     of the capability (the webhooks API, the creating operations under `/api/admin/jobs`, the
     writes of the `dcr` and `plugin` tenant settings categories, external plugin credentials)
     answer HTTP 403 `capability_disabled` (see the `CapabilityDisabled` response) to tenant-scoped
@@ -52,10 +54,42 @@ info:
     Operations that would make something run for a tenant are refused for everyone while the
     capability is off, global callers included: sending a webhook test or replay, enabling an
     external plugin, creating a bulk job, and restoring external plugin installations from a
-    tenant backup. An external plugin enable requested before the capability was turned off
+    tenant backup. A tenant backup restore also refuses, to a requester without global platform
+    authority, the settings rows (`dcr`, `plugin`, `email-settings`), the Check API key rows and
+    the configuration records of the built-in e-mail notifier plugins of a capability that is off
+    or unreadable, at validation and before the restore writes; exporting and verifying a backup
+    are never refused by a capability, and other built-in plugins are restored as usual. An external plugin enable requested before the capability was turned off
     completes after it is turned back on. When the switch cannot be read, the gated operations
     answer HTTP 503 `temporarily_unavailable` (see `CapabilityUnavailable`) to callers who would
-    otherwise be allowed. The signed-in administrator's disabled capabilities are listed in
+    otherwise be allowed. `admin_sent_email` stops e-mail sent on an administrator's request (the
+    user send-email action, e-mailed sign-up and admin invitations, the plugin test e-mail; an
+    admin invitation whose code is handed back in the response sends no e-mail and is not
+    affected). `machine_credentials` stops issuing new machine credentials (machine access
+    principals and credentials, SCIM tokens, Check API keys); reading, revoking and disabling stay
+    open and credentials already issued keep working. `email_provider_config` stops changing the
+    tenant e-mail provider settings and the built-in e-mail notifier plugin configuration.
+    `directory_connectors` stops making the platform reach a directory connector endpoint a tenant
+    chose (connector secrets, the health check, and saving connector settings other than
+    removing connectors or switching sign-in off). `external_identity_providers` stops adding or
+    changing external identity providers (create, update, OIDC discovery, dynamic registration at
+    the provider); reading and deleting stay open. `saml_metadata_url` stops fetching SAML
+    metadata from a tenant-chosen URL and storing a new or changed metadata URL for later
+    refresh (SAML metadata preview, import, refresh and certificate preview with a URL, SAML
+    providers and federation sources with a new or changed URL, batch creation from a URL
+    preview); pasted metadata, keeping or clearing a stored URL, reading and deleting stay open.
+    The SAML routes are served by the SAML Worker and judged by the same rule
+    (`packages/ar-saml/openapi/saml.openapi.yaml`). For all three, what an operator already configured keeps
+    running: URLs and endpoints already stored are still fetched or called at runtime, and the
+    scheduled metadata refresh is not stopped. A tenant backup restore refuses, to a requester
+    without global platform authority and while the capability is off or unreadable, the
+    directory connector settings document (`directory-connectors`), the external identity
+    provider rows (`core.upstream_providers`), and the SAML provider and federation source rows
+    that carry a metadata URL (`core.identity_providers`, `admin.federation_trust_sources`);
+    rows without a URL restore as usual. The client rows of the dynamic client registration
+    capability are held the same way: while `dynamic_client_registration` is off, a restore
+    refuses to a requester without global platform authority the client rows that carry a
+    `jwks_uri`, `backchannel_logout_uri`, `backchannel_client_notification_endpoint` or
+    `logout_webhook_uri`. The signed-in administrator's disabled capabilities are listed in
     `disabled_capabilities` of `GET /api/admin/me/session`.
   x-authrim-coverage: initial security-testing contract
 servers:
@@ -4280,6 +4314,7 @@ paths:
         Creates a pending invitation and emails a one-time enrollment code. The code is not returned
         by this API (except in the code handoff below) and cannot create an Admin session. IP
         restrictions are disabled by default.
+        While the platform has the `admin_sent_email` capability off, a request that would send e-mail answers 403 `capability_disabled` before anything is written or sent (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
 
         **Code handoff** (`code_delivery: response`). A global machine principal (a provisioning
         portal) can receive the code in the response instead of an e-mail; nothing is e-mailed.
@@ -4322,6 +4357,8 @@ paths:
             schema:
               $ref: '#/components/schemas/AdminInvitationCreate'
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '201':
           description: >-
             Invitation created. By e-mail: `email_sent` true and no code. With the code handoff:
@@ -4400,6 +4437,7 @@ paths:
         ar_super_admin invitation needs the wildcard from a global assignment), and to give the
         roles of the admin groups it names. 403 `insufficient_permissions` otherwise; 404
         `role_not_found` when the role is gone.
+        While the platform has the `admin_sent_email` capability off, a request that would send e-mail answers 403 `capability_disabled` before anything is written or sent (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
 
         An invitation keeps the way its code is delivered. A resend by e-mail of an invitation
         whose code was handed over (`code_delivery` response), and a handoff re-issue of an
@@ -4427,6 +4465,8 @@ paths:
                   maximum: 60
                   description: With `code_delivery` response only (default 15).
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           description: >-
             Invitation code replaced; by e-mail, or with the code handoff the response also
@@ -8415,6 +8455,7 @@ paths:
             type: boolean
           description: Filter by active or revoked keys.
     post:
+      x-authrim-capability: machine_credentials
       tags:
         - Admin Miscellaneous
       operationId: postApiAdminCheckApiKeys
@@ -8422,6 +8463,7 @@ paths:
       description: >-
         Creates a tenant-scoped Check API key for a client. The plaintext `api_key` is returned only
         in this creation response and cannot be retrieved later.
+        While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       responses:
         '201':
           $ref: '#/components/responses/CheckApiKeyCreated'
@@ -8509,6 +8551,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/check-api-keys/{id}/rotate':
     post:
+      x-authrim-capability: machine_credentials
       tags:
         - Admin Miscellaneous
       operationId: postApiAdminCheckApiKeysByIdRotate
@@ -8516,6 +8559,7 @@ paths:
       description: >-
         Creates a replacement Check API key with the same policy as the existing active key, then
         revokes the old key. The new plaintext `api_key` is returned only once.
+        While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       responses:
         '201':
           $ref: '#/components/responses/CheckApiKeyCreated'
@@ -10842,6 +10886,7 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
     post:
+      x-authrim-capability: external_identity_providers
       tags:
         - External Providers
       operationId: postApiAdminExternalProviders
@@ -10854,6 +10899,7 @@ paths:
         [] updates none, and a list names any of name, given_name, family_name, middle_name,
         nickname, profile, picture, website, gender, birthdate, zoneinfo and locale, each once;
         any other value is refused with 400.
+        While the platform has the `external_identity_providers` capability off, this operation answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Reading and deleting providers stay open, and providers already configured keep working.
       responses:
         '200':
           $ref: '#/components/responses/ExternalProviderProxy'
@@ -10864,7 +10910,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/CapabilityDisabled'
         '500':
           $ref: '#/components/responses/Error'
         '503':
@@ -10942,6 +10988,7 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
     put:
+      x-authrim-capability: external_identity_providers
       tags:
         - External Providers
       operationId: putApiAdminExternalProvidersById
@@ -10954,6 +11001,7 @@ paths:
         [] updates none, and a list names any of name, given_name, family_name, middle_name,
         nickname, profile, picture, website, gender, birthdate, zoneinfo and locale, each once;
         any other value is refused with 400.
+        While the platform has the `external_identity_providers` capability off, this operation answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Reading and deleting providers stay open, and providers already configured keep working.
       responses:
         '200':
           $ref: '#/components/responses/ExternalProviderProxy'
@@ -10962,7 +11010,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/CapabilityDisabled'
         '404':
           $ref: '#/components/responses/Error'
         '500':
@@ -10983,6 +11031,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/external-providers/{id}/register':
     post:
+      x-authrim-capability: external_identity_providers
       tags:
         - External Providers
       operationId: postApiAdminExternalProvidersByIdRegister
@@ -10990,6 +11039,7 @@ paths:
       description: >-
         Discovers the configured OpenID Provider, performs Dynamic Client Registration, and stores
         the returned client credentials encrypted in the External IdP Bridge.
+        While the platform has the `external_identity_providers` capability off, this operation answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Reading and deleting providers stay open, and providers already configured keep working.
       responses:
         '200':
           $ref: '#/components/responses/ExternalProviderProxy'
@@ -10998,7 +11048,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/CapabilityDisabled'
         '404':
           $ref: '#/components/responses/Error'
         '500':
@@ -11019,6 +11069,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/external-providers/discover-oidc:
     post:
+      x-authrim-capability: external_identity_providers
       tags:
         - External Providers
       operationId: postApiAdminExternalProvidersDiscoverOidc
@@ -11029,6 +11080,7 @@ paths:
         match and the OpenID Connect issuer relation. The implementation blocks localhost,
         private/internal hosts, non-standard ports, oversized responses, unsafe redirects, and
         non-JSON responses.
+        While the platform has the `external_identity_providers` capability off, this operation answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Reading and deleting providers stay open, and providers already configured keep working.
       responses:
         '200':
           $ref: '#/components/responses/OidcDiscovery'
@@ -11037,7 +11089,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/CapabilityDisabled'
         '404':
           $ref: '#/components/responses/Error'
         '500':
@@ -11698,6 +11750,7 @@ paths:
       description: >-
         Creates a federation trust source and optional anchors/scope bindings for SAML aggregate,
         metadata, or federation inputs.
+        While the platform has the `saml_metadata_url` capability off, a protocol payload that adds a metadata URL the source does not already hold (`metadataUrl`, or an exact `metadataUrlPatterns` entry) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Keeping or clearing the stored URLs, and a source without a URL, are not affected. This is decided by the handler, not by the route table, so the operation carries no `x-authrim-capability` tag.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -11772,6 +11825,7 @@ paths:
         scope bindings. Only polling mode and interval are operator-controlled; HTTP validators,
         timestamps, failure counters, and lifecycle observations are reset and maintained by the
         metadata poller.
+        While the platform has the `saml_metadata_url` capability off, a protocol payload that adds a metadata URL the source does not already hold (`metadataUrl`, or an exact `metadataUrlPatterns` entry) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Keeping or clearing the stored URLs, and a source without a URL, are not affected. This is decided by the handler, not by the route table, so the operation carries no `x-authrim-capability` tag.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingFederationTrustSourceMutation'
@@ -19724,7 +19778,10 @@ paths:
         Updates a plugin configuration document in KV, preserving existing encrypted secret
         placeholders, encrypting configured secret fields when a plugin encryption key is available,
         and returning a masked config.
+        While the platform has the `email_provider_config` capability off, changing the tenant e-mail provider settings or the configuration of a built-in e-mail notifier plugin answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           $ref: '#/components/responses/AdminPluginConfigUpdate'
         '400':
@@ -19844,7 +19901,10 @@ paths:
       description: >-
         Enables a platform plugin only after required configuration fields are present, then
         invalidates runtime plugin caches.
+        While the platform has the `email_provider_config` capability off, changing the tenant e-mail provider settings or the configuration of a built-in e-mail notifier plugin answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           $ref: '#/components/responses/AdminPluginToggle'
         '400':
@@ -19936,7 +19996,11 @@ paths:
         Sends a test email through the selected materialized Plugin Runner installation using saved
         platform configuration. Invalid plugin type/configuration returns 400; a durable pending
         delivery returns 202 and a permanent provider failure returns 502.
+        While the platform has the `admin_sent_email` capability off, a request that would send e-mail answers 403 `capability_disabled` before anything is written or sent (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
+        Over an hourly e-mail quota (per tenant or per deployment) the request answers 429 `email_quota_exceeded` with the `scope` and, when known, `Retry-After`; nothing is stored or sent.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           $ref: '#/components/responses/AdminPluginTestEmail'
         '202':
@@ -19951,6 +20015,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/EmailQuotaExceeded'
         '502':
           $ref: '#/components/responses/Error'
       parameters:
@@ -20628,7 +20694,10 @@ paths:
       description: >-
         Validate and store tenant plugin configuration. Secret fields are encrypted when a
         key-encryption key is configured, and the response returns masked values.
+        While the platform has the `email_provider_config` capability off, changing the tenant e-mail provider settings or the configuration of a built-in e-mail notifier plugin answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           $ref: '#/components/responses/AdminPluginConfigUpdate'
         '400':
@@ -20662,7 +20731,10 @@ paths:
         Remove the current tenant override, return to inherited platform configuration, and
         automatically schedule durable reprojection for built-in notification and human-verification
         providers.
+        While the platform has the `email_provider_config` capability off, changing the tenant e-mail provider settings or the configuration of a built-in e-mail notifier plugin answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           $ref: '#/components/responses/AdminPluginConfig'
         '401':
@@ -20776,6 +20848,7 @@ paths:
         one also needs the tenant's `plugin.enabled` setting to be on (off by default); otherwise
         the request is refused with 403 and error `external_plugin_execution_not_allowed`. Built-in
         plugins (email providers, CAPTCHA providers) are not affected by `plugin.enabled`. The gate for external plugin code in ar-plugin-runner is opened from the saved setting just before the plugin is switched on; if the setting or the gate is unavailable the request is refused with 503 (temporarily_unavailable).
+        While the platform has the `email_provider_config` capability off, changing the tenant e-mail provider settings or the configuration of a built-in e-mail notifier plugin answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
       responses:
         '200':
           $ref: '#/components/responses/AdminPluginToggle'
@@ -20909,7 +20982,11 @@ paths:
       description: >-
         Send a test email through a configured built-in email notifier plugin and return only the
         normalized delivery reference. Provider response bodies are not exposed.
+        While the platform has the `admin_sent_email` capability off, a request that would send e-mail answers 403 `capability_disabled` before anything is written or sent (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
+        Over an hourly e-mail quota (per tenant or per deployment) the request answers 429 `email_quota_exceeded` with the `scope` and, when known, `Retry-After`; nothing is stored or sent.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           $ref: '#/components/responses/AdminPluginTestEmail'
         '202':
@@ -20924,6 +21001,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/EmailQuotaExceeded'
         '502':
           $ref: '#/components/responses/Error'
       parameters:
@@ -22159,6 +22238,7 @@ paths:
         - adminSessionCookie: []
       parameters: []
     post:
+      x-authrim-capability: machine_credentials
       tags:
         - Admin Miscellaneous
       operationId: postApiAdminScimTokens
@@ -22166,7 +22246,10 @@ paths:
       description: >-
         Creates a tenant SCIM bearer token. The plaintext token is returned once and must be stored
         by the caller.
+        While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '201':
           $ref: '#/components/responses/AdminScimTokenCreate'
         '400':
@@ -24702,7 +24785,10 @@ paths:
       description: >-
         Creates an invitation token for tenant-specific signup routing and optionally sends an email
         through the configured email notifier.
+        While the platform has the `admin_sent_email` capability off, a request that would send e-mail answers 403 `capability_disabled` before anything is written or sent (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '201':
           $ref: '#/components/responses/TenantInvitationCreate'
         '400':
@@ -25087,12 +25173,17 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
     patch:
+      x-authrim-capability: email_provider_config
       tags:
         - Tenants
       operationId: patchApiAdminTenantsByTenantIdEmailSettings
       summary: Update tenant email settings
-      description: Updates tenant email notifier provider order for priority failover routing.
+      description: >-
+        Updates tenant email notifier provider order for priority failover routing.
+        While the platform has the `email_provider_config` capability off, changing the tenant e-mail provider settings or the configuration of a built-in e-mail notifier plugin answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           $ref: '#/components/responses/TenantEmailSettings'
         '400':
@@ -25142,7 +25233,9 @@ paths:
         - Tenants
       operationId: putApiAdminTenantsByTenantIdDirectoryConnectors
       summary: Update tenant directory connectors
-      description: Updates Wordwarden Directory Connector configuration for a tenant.
+      description: >-
+        Updates Wordwarden Directory Connector configuration for a tenant.
+        While the platform has the `directory_connectors` capability off, a save may only take connectors away, switch directory sign-in off or turn automatic provisioning off, keeping every remaining connector exactly as stored; any other save answers 403 `capability_disabled` (see `CapabilityDisabled`). When the switch cannot be read every save answers 503 `temporarily_unavailable`. Callers with global platform authority are exempt. This is decided by the handler, not by the route table, so the operation carries no `x-authrim-capability` tag.
       responses:
         '200':
           $ref: '#/components/responses/TenantDirectoryConnectors'
@@ -25151,7 +25244,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/CapabilityDisabled'
       parameters:
         - name: tenantId
           in: path
@@ -26277,11 +26370,14 @@ paths:
         - adminSessionCookie: []
   '/api/admin/tenants/{tenantId}/directory-connectors/{connectorId}/health':
     post:
+      x-authrim-capability: directory_connectors
       tags:
         - Tenants
       operationId: postApiAdminTenantsByTenantIdDirectoryConnectorsByConnectorIdHealth
       summary: Check directory connector health
-      description: Calls the configured connector `/healthz` endpoint for direct transport, or returns relay transport status metadata for outbound relay connectors.
+      description: >-
+        Calls the configured connector `/healthz` endpoint for direct transport, or returns relay transport status metadata for outbound relay connectors.
+        While the platform has the `directory_connectors` capability off, this operation answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Connectors already configured keep working.
       responses:
         '200':
           $ref: '#/components/responses/TenantDirectoryConnectorHealth'
@@ -26290,7 +26386,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/CapabilityDisabled'
         '404':
           $ref: '#/components/responses/Error'
         '502':
@@ -26349,11 +26445,14 @@ paths:
         - adminSessionCookie: []
   '/api/admin/tenants/{tenantId}/directory-connectors/{connectorId}/secret':
     post:
+      x-authrim-capability: directory_connectors
       tags:
         - Tenants
       operationId: postApiAdminTenantsByTenantIdDirectoryConnectorsByConnectorIdSecret
       summary: Issue a directory connector secret
-      description: Issues a new Authrim-managed one-time Wordwarden relay secret for a connector. The secret value is returned only in this response.
+      description: >-
+        Issues a new Authrim-managed one-time Wordwarden relay secret for a connector. The secret value is returned only in this response.
+        While the platform has the `directory_connectors` capability off, this operation answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Connectors already configured keep working.
       responses:
         '200':
           $ref: '#/components/responses/TenantDirectoryConnectorSecret'
@@ -26362,7 +26461,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/CapabilityDisabled'
         '404':
           $ref: '#/components/responses/Error'
       parameters:
@@ -26381,11 +26480,14 @@ paths:
         - adminSessionCookie: []
   '/api/admin/tenants/{tenantId}/directory-connectors/{connectorId}/secret/rotate':
     post:
+      x-authrim-capability: directory_connectors
       tags:
         - Tenants
       operationId: postApiAdminTenantsByTenantIdDirectoryConnectorsByConnectorIdSecretRotate
       summary: Rotate a directory connector secret
-      description: Rotates the Authrim-managed Wordwarden relay secret and keeps the previous secret usable during the connector rotation grace period.
+      description: >-
+        Rotates the Authrim-managed Wordwarden relay secret and keeps the previous secret usable during the connector rotation grace period.
+        While the platform has the `directory_connectors` capability off, this operation answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Connectors already configured keep working.
       responses:
         '200':
           $ref: '#/components/responses/TenantDirectoryConnectorSecret'
@@ -26394,7 +26496,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/CapabilityDisabled'
         '404':
           $ref: '#/components/responses/Error'
       parameters:
@@ -27158,6 +27260,7 @@ paths:
         - adminSessionCookie: []
   '/api/admin/users/{id}/send-email':
     post:
+      x-authrim-capability: admin_sent_email
       tags:
         - Users
       operationId: postApiAdminUsersByIdSendEmail
@@ -27166,7 +27269,11 @@ paths:
         Records a durable delivery intent for a templated user email and dispatches it through the
         configured notification provider. The response distinguishes a queued attempt from provider
         acceptance; neither state asserts final inbox delivery.
+        While the platform has the `admin_sent_email` capability off, a request that would send e-mail answers 403 `capability_disabled` before anything is written or sent (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
+        Over an hourly e-mail quota (per tenant or per deployment) the request answers 429 `email_quota_exceeded` with the `scope` and, when known, `Retry-After`; nothing is stored or sent.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           $ref: '#/components/responses/UserSendEmail'
         '400':
@@ -27175,6 +27282,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/EmailQuotaExceeded'
         '502':
           $ref: '#/components/responses/Error'
       parameters:
@@ -32311,9 +32420,13 @@ paths:
         - Machine Access
       operationId: postApiAdminMachineAccessPrincipals
       summary: Create a machine access principal
-      description: 'Create a machine principal with explicit permissions, tenant scopes, and token TTL.'
+      description: >-
+        Create a machine principal with explicit permissions, tenant scopes, and token TTL.
+        While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
           $ref: '#/components/responses/AdminStepUpRequired'
         '201':
@@ -32375,9 +32488,13 @@ paths:
         - Machine Access
       operationId: patchApiAdminMachineAccessPrincipalsById
       summary: Update a machine access principal
-      description: 'Update display metadata, token TTL, permissions, or tenant scopes for a machine principal.'
+      description: >-
+        Update display metadata, token TTL, permissions, or tenant scopes for a machine principal.
+        A change of permissions or tenant scopes is refused while the capability is off (narrowing included); display metadata and token TTL stay open. While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
           $ref: '#/components/responses/AdminStepUpRequired'
         '200':
@@ -32404,8 +32521,11 @@ paths:
       description: >-
         Register a public JWK credential for a machine principal with explicit permissions and
         tenant scopes.
+        While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
           $ref: '#/components/responses/AdminStepUpRequired'
         '201':
@@ -32460,8 +32580,13 @@ paths:
       description: >-
         Update Credential in the Machine Access area. The request body is JSON unless the detailed
         schema for this operation states otherwise.
+        While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/CapabilityDisabled'
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '200':
           $ref: '#/components/responses/AdminMachineCredential'
         default:
@@ -32522,8 +32647,13 @@ paths:
       description: >-
         Rotate Credential in the Machine Access area. The request body is JSON unless the detailed
         schema for this operation states otherwise.
+        While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/CapabilityDisabled'
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '201':
           $ref: '#/components/responses/AdminMachineCredentialRotate'
         default:
@@ -32580,8 +32710,11 @@ paths:
         Enable Principal in the Machine Access area. The request body is JSON unless the detailed
         schema for this operation states otherwise. Bringing a disabled principal back puts its
         credentials to work again, so it needs admin step-up (machine.permission.grant).
+        While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
           $ref: '#/components/responses/AdminStepUpRequired'
         '200':
@@ -44619,11 +44752,45 @@ components:
                 type: string
               capability:
                 type: string
-                enum: [webhooks, dynamic_client_registration, external_plugins, bulk_jobs]
+                enum:
+                  - webhooks
+                  - dynamic_client_registration
+                  - external_plugins
+                  - bulk_jobs
+                  - admin_sent_email
+                  - machine_credentials
+                  - email_provider_config
+                  - directory_connectors
+                  - external_identity_providers
+                  - saml_metadata_url
           example:
             error: capability_disabled
             error_description: This capability has been turned off for tenants by the platform.
             capability: webhooks
+    EmailQuotaExceeded:
+      description: >-
+        The hourly e-mail volume cap is used up, for the tenant (`scope` tenant) or for the whole
+        deployment (`scope` deployment). Nothing was stored or sent. `Retry-After` (seconds) is
+        present when the limiter reports when the window resets.
+      headers:
+        Retry-After:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+              - error
+              - scope
+            properties:
+              error:
+                type: string
+                enum: [email_quota_exceeded]
+              scope:
+                type: string
+                enum: [tenant, deployment]
     CapabilityUnavailable:
       description: >-
         Whether the capability is available could not be determined (the platform setting cannot
@@ -44649,7 +44816,17 @@ components:
                 type: string
               capability:
                 type: string
-                enum: [webhooks, dynamic_client_registration, external_plugins, bulk_jobs]
+                enum:
+                  - webhooks
+                  - dynamic_client_registration
+                  - external_plugins
+                  - bulk_jobs
+                  - admin_sent_email
+                  - machine_credentials
+                  - email_provider_config
+                  - directory_connectors
+                  - external_identity_providers
+                  - saml_metadata_url
     AdminStepUpRequired:
       description: >-
         The operation needs admin step-up (unless the platform turned
@@ -54702,7 +54879,17 @@ components:
             platform authority (exempt), and empty when the switches cannot be read.
           items:
             type: string
-            enum: [webhooks, dynamic_client_registration, external_plugins, bulk_jobs]
+            enum:
+              - webhooks
+              - dynamic_client_registration
+              - external_plugins
+              - bulk_jobs
+              - admin_sent_email
+              - machine_credentials
+              - email_provider_config
+              - directory_connectors
+              - external_identity_providers
+              - saml_metadata_url
         expires_at:
           type: integer
           format: int64

@@ -26,6 +26,7 @@ import {
 import { writeAdminAuditLog } from '../../admin-shared';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
 import { sha256Hex } from '../../admin-step-up-digest';
+import { refuseWhileCapabilityOff } from '../../capability-authorization';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 
@@ -647,6 +648,8 @@ machineAccessRouter.get('/principals', async (c) => {
 machineAccessRouter.post('/principals', async (c) => {
   const forbidden = await requirePermission(c, ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE);
   if (forbidden) return forbidden;
+  const capabilityOff = await refuseWhileCapabilityOff(c, 'machine_credentials');
+  if (capabilityOff) return capabilityOff;
 
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const clientId = asString(body?.client_id);
@@ -774,6 +777,13 @@ machineAccessRouter.patch('/principals/:id', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
 
+  // While the machine_credentials capability is off, a change of what the principal may do (its
+  // permissions or tenants) is refused, narrowing included; renaming and the like stay possible.
+  if (body?.permissions !== undefined || body?.tenant_scopes !== undefined) {
+    const capabilityOff = await refuseWhileCapabilityOff(c, 'machine_credentials');
+    if (capabilityOff) return capabilityOff;
+  }
+
   // What the principal ends up with is what has to be within the actor's authority, whichever of
   // its permissions and tenants the request changes; both are checked before anything is saved.
   const newPermissions =
@@ -897,6 +907,8 @@ machineAccessRouter.delete('/principals/:id', async (c) => {
 machineAccessRouter.post('/principals/:id/credentials', async (c) => {
   const forbidden = await requirePermission(c, ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE);
   if (forbidden) return forbidden;
+  const capabilityOff = await refuseWhileCapabilityOff(c, 'machine_credentials');
+  if (capabilityOff) return capabilityOff;
 
   const repo = getRepo(c);
   const principalId = c.req.param('id');
@@ -1031,6 +1043,21 @@ machineAccessRouter.patch('/principals/:id/credentials/:credentialId', async (c)
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
 
+  // While the machine_credentials capability is off, whatever keeps or brings back what the
+  // credential can do is refused: its permissions or tenants (narrowing included), its validity
+  // window, making it usable again. Renaming it, revoking it and expiring it stay possible.
+  if (
+    body?.permissions !== undefined ||
+    body?.tenant_scopes !== undefined ||
+    body?.not_before !== undefined ||
+    body?.expires_at !== undefined ||
+    status === 'active' ||
+    status === 'rotating'
+  ) {
+    const capabilityOff = await refuseWhileCapabilityOff(c, 'machine_credentials');
+    if (capabilityOff) return capabilityOff;
+  }
+
   const newPermissions =
     body?.permissions === undefined ? undefined : asStringArray(body.permissions);
   const newTenantScopes =
@@ -1137,6 +1164,8 @@ machineAccessRouter.patch('/principals/:id/credentials/:credentialId', async (c)
 machineAccessRouter.post('/principals/:id/credentials/:credentialId/rotate', async (c) => {
   const forbidden = await requirePermission(c, ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE);
   if (forbidden) return forbidden;
+  const capabilityOff = await refuseWhileCapabilityOff(c, 'machine_credentials');
+  if (capabilityOff) return capabilityOff;
 
   const repo = getRepo(c);
   const principalId = c.req.param('id');
@@ -1342,6 +1371,8 @@ machineAccessRouter.post('/principals/:id/disable', async (c) => {
 machineAccessRouter.post('/principals/:id/enable', async (c) => {
   const forbidden = await requirePermission(c, ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE);
   if (forbidden) return forbidden;
+  const capabilityOff = await refuseWhileCapabilityOff(c, 'machine_credentials');
+  if (capabilityOff) return capabilityOff;
 
   const repo = getRepo(c);
   const principalId = c.req.param('id');

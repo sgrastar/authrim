@@ -67,6 +67,8 @@ import {
   transitionAccountAuthenticationState,
   readAccountAuthenticationState,
   produceNotificationDelivery,
+  NotificationQuotaExceededError,
+  emailQuotaExceededResponse,
   SESSION_MAX_TTL_DEFINITION,
   type CanonicalOtpLoginUser,
 } from '@authrim/ar-lib-core';
@@ -3171,6 +3173,10 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       created_at: new Date(nowTs * 1000).toISOString(),
     });
   } catch (error) {
+    if (error instanceof NotificationQuotaExceededError) {
+      const refused = emailQuotaExceededResponse(error);
+      return c.json(refused.body, 429, refused.headers);
+    }
     const incomplete = logQueryErrorResponse(c, error);
     if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN');

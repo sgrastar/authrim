@@ -478,6 +478,9 @@ export function createPhase8TenantBackupInstalledAdapter(
       validatedInput.isDatasetSelected(context, planDigest, datasetId),
     ...r2Objects,
     ...icebergRestores,
+    // The port itself is requester-agnostic; a restore holds the record to the requester's recorded
+    // authority first (built-in notifier configuration needs `email_provider_config`).
+    importPlugin: restoreAuthority.wrapPluginImport(input.ports.otherStores.importPlugin),
     restoreAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.restoreAdminEnvelope>) =>
       adminEnvelopes.restoreAdminEnvelope(...args),
     verifyAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.verifyAdminEnvelope>) =>
@@ -489,6 +492,7 @@ export function createPhase8TenantBackupInstalledAdapter(
     env: input.env,
     planned: input.planned ?? [],
     now: input.now,
+    wrapRecordPolicies: (recordPolicies) => restoreAuthority.wrapRecords(recordPolicies),
     ports: {
       ...input.ports,
       loadPreviewWarnings: (context, planDigest) =>

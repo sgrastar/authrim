@@ -21,6 +21,7 @@ import {
 import { ensureCrossTenantPlacement } from './cross-tenant-placement';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
+import { refuseWhileCapabilityOff } from '../../capability-authorization';
 import {
   NO_STORE_HEADERS,
   handoffPreconditionRefusal,
@@ -342,6 +343,14 @@ adminInvitationsRouter.post('/', async (c) => {
       { error: 'invalid_request', error_description: 'email and role_id are required' },
       400
     );
+  }
+
+  // An invitation delivered by e-mail makes the deployment send mail on an administrator's
+  // request: refused, before anything is written, while admin_sent_email is off. A code handoff
+  // sends no e-mail and is not affected.
+  if (codeDelivery === 'email') {
+    const capabilityOff = await refuseWhileCapabilityOff(c, 'admin_sent_email');
+    if (capabilityOff) return capabilityOff;
   }
 
   // The code handoff: every condition that does not need the role is checked first, before
@@ -680,6 +689,12 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
       body: resendBody,
       requested: requestedDelivery,
     });
+  }
+
+  // The e-mail resend sends mail on an administrator's request (the handoff path above does not).
+  {
+    const capabilityOff = await refuseWhileCapabilityOff(c, 'admin_sent_email');
+    if (capabilityOff) return capabilityOff;
   }
 
   // A resend gives the invitation a new code and a new 24 hours, which brings an expired one back.
