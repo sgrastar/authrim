@@ -84,6 +84,9 @@ const completion = {
 	consent_item_processing_purpose: 'Цель обработки',
 	consent_item_withdrawal_impact: 'Последствия отзыва',
 	consent_release_title: 'Информация, передаваемая {clientName}',
+	consent_release_saml_nameid: 'Ваш идентификатор для этого сервиса',
+	consent_release_saml_nameid_email:
+		'Ваш адрес электронной почты (как идентификатор для этого сервиса)',
 	consent_release_hint:
 		'Пункты, отмеченные как обязательные, всегда передаются, если вы разрешаете доступ. Снимите отметку с необязательных пунктов, которые не хотите передавать.',
 	consent_release_purpose: 'Цель',

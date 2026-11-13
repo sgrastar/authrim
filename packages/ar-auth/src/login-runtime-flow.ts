@@ -4,7 +4,6 @@ import type { Context } from 'hono';
 import {
   consentPresentationKey,
   consentStepKey,
-  destinationPresentationKey,
 } from '@authrim/ar-lib-core/utils/consent-presentation-key';
 import {
   consumeAuthorizationChallengeContinuation,
@@ -39,17 +38,9 @@ import {
   resolveStatementRequirements,
   statementConsentSatisfied,
   type FlowConsentStatement,
-  isOidcFieldApplicableToScopes,
-  canReleaseClaim,
   parseClaimsRequest,
   OIDC_STANDARD_CLAIM_SCOPE,
-  type OIDCClaimsClientPolicy,
   isShardedSessionId,
-  loadDestinationProfileConsentDescriptor,
-  resolveOidcFieldRequiredScopes,
-  resolveDestinationProfileConsentVersion,
-  resolveRuntimeIdentityMappingBinding,
-  requireDedicatedAdminDatabaseAdapter,
   CanonicalRuntimeUserStore,
   ensureDatabaseAdapter,
   persistCustomClaimWrite,
@@ -74,8 +65,6 @@ import {
   type FlowRuntimeErrorAction,
   type FlowRuntimeErrorCategory,
   type FlowRuntimeStep,
-  type DestinationProfileConsentDescriptor,
-  type DestinationFieldReleasePolicies,
   type Session,
   type FlowScreenSubmittedEventData,
   FLOW_EVENTS,
@@ -298,23 +287,6 @@ interface RuntimeConsentPolicyContent extends FlowRuntimeJsonObject {
   language: string;
   default_language: string;
   items: RuntimeConsentPolicyItem[];
-}
-
-interface RuntimeDestinationFieldConsentContent extends FlowRuntimeJsonObject {
-  profile_id: string;
-  profile_version_id: string;
-  consent_version: string;
-  destination_type: 'oidc' | 'saml';
-  consent_mode: 'once' | 'every_time' | 'until_attributes_change' | null;
-  fields: Array<{
-    key: string;
-    label: string;
-    required: boolean;
-    nullable: boolean;
-    classification: string;
-    surfaces: string[];
-    required_scopes: string[];
-  }>;
 }
 
 interface RuntimeScreenFieldLocalization {
@@ -700,25 +672,6 @@ function parseJsonObjectArray(value: string | null): FlowRuntimeJsonObject[] {
   } catch {
     return [];
   }
-}
-
-/**
- * A string array read back from a stored record (scopes, field keys), whole: it was accepted when
- * it was written, so nothing is cut off. Absent is an empty list; anything that is not a list of
- * strings is null, which the caller treats as not covering anything (the consent is asked again).
- */
-function parseStoredStringArray(value: unknown): string[] | null {
-  if (value === undefined || value === null || value === '') return [];
-  let parsed: unknown = value;
-  if (typeof value === 'string') {
-    try {
-      parsed = JSON.parse(value) as unknown;
-    } catch {
-      return null;
-    }
-  }
-  if (!Array.isArray(parsed)) return null;
-  return parsed.every((item): item is string => typeof item === 'string') ? parsed : null;
 }
 
 function parseRuntimeJsonObject(value: string | null): FlowRuntimeJsonObject {
@@ -1931,198 +1884,6 @@ export async function resolveSignUpScreen(
   return { kind: 'invalid', reason: 'not_a_sign_up_step' };
 }
 
-async function resolveRuntimeDestinationFieldConsent(
-  c: AuthContext,
-  db: DatabaseAdapter,
-  tenantId: string,
-  requestContext: FlowRequestContext
-): Promise<RuntimeDestinationFieldConsentContent | null> {
-  if (requestContext.protocol === 'direct') return null;
-  // An OIDC request reads the Admin database only when the Mapping Set it is bound to is one (a
-  // selection of none needs none), and fails then if it is not bound, as the release of claims
-  // does. The other protocols have nothing to look up without it.
-  if (!c.env.DB_ADMIN && requestContext.protocol !== 'oidc') return null;
-
-  const adminAdapter = c.env.DB_ADMIN
-    ? requireDedicatedAdminDatabaseAdapter(c.env, 'flow-destination-profile-consent')
-    : null;
-  const selector = await resolveRuntimeDestinationProfileSelector(
-    db,
-    adminAdapter,
-    c.env,
-    tenantId,
-    requestContext
-  );
-  if (!selector) return null;
-  // A selector is only returned with an Admin database to read the profile from.
-  if (!adminAdapter) return null;
-  const descriptor = await loadDestinationProfileConsentDescriptor(
-    adminAdapter,
-    tenantId,
-    selector.profileId
-  );
-  if (!descriptor || descriptor.destinationType !== requestContext.protocol) return null;
-
-  const fields = applicableDestinationConsentFields(
-    descriptor,
-    requestContext,
-    selector.fieldPolicies,
-    selector.claimsPolicy
-  );
-  if (fields.length === 0) return null;
-  return {
-    profile_id: descriptor.profileId,
-    profile_version_id: descriptor.profileVersionId,
-    consent_version: resolveDestinationProfileConsentVersion(
-      descriptor.profileVersionId,
-      selector.fieldPolicies
-    ),
-    destination_type: descriptor.destinationType,
-    consent_mode: selector.consentMode ?? null,
-    fields: fields.map((field) => ({
-      key: field.key,
-      label: field.label,
-      required: field.required,
-      nullable: field.nullable,
-      classification: field.classification,
-      surfaces: field.surfaces,
-      required_scopes:
-        descriptor.destinationType === 'oidc'
-          ? resolveOidcFieldRequiredScopes(field)
-          : field.requiredScopes,
-    })),
-  };
-}
-
-async function resolveRuntimeDestinationProfileSelector(
-  db: DatabaseAdapter,
-  adminDb: DatabaseAdapter | null,
-  env: Env,
-  tenantId: string,
-  requestContext: FlowRequestContext
-): Promise<{
-  profileId: string;
-  fieldPolicies?: DestinationFieldReleasePolicies;
-  consentMode?: 'once' | 'every_time' | 'until_attributes_change';
-  /** The client's policy for claims requested through the claims parameter. */
-  claimsPolicy?: OIDCClaimsClientPolicy;
-} | null> {
-  // An OIDC app's information is asked on the consent screen (information release consent,
-  // information-release-consent.ts), not in the Flow: only a SAML SP's fields are asked here.
-  if (requestContext.protocol === 'saml' && requestContext.saml_sp_id) {
-    if (!adminDb) return null;
-    const rows = await db.query<{ id: string; config_json: string }>(
-      `SELECT id, config_json
-         FROM identity_providers
-        WHERE tenant_id = ? AND provider_type = 'saml_sp' AND enabled = 1`,
-      [tenantId]
-    );
-    const expectedIds = new Set(
-      [requestContext.saml_sp_id, requestContext.saml_sp_entity_id].filter(
-        (value): value is string => Boolean(value)
-      )
-    );
-    for (const row of rows) {
-      const config = parseJsonRecord(row.config_json);
-      if (!expectedIds.has(row.id) && !expectedIds.has(readString(config.entityId, 512) ?? '')) {
-        continue;
-      }
-      const selector = parseJsonRecord(config.identityMapping);
-      const fieldMappingSetId = readString(selector.fieldMappingSetId, 200);
-      let profileId: string | undefined;
-      if (fieldMappingSetId) {
-        const binding = await resolveRuntimeIdentityMappingBinding(adminDb, {
-          tenantId,
-          protocol: 'saml',
-          role: 'idp',
-          fieldMappingSetId,
-          fieldMappingVersionId: readString(selector.fieldMappingVersionId, 200) ?? undefined,
-          partnerEntityId: readString(config.entityId, 512) ?? undefined,
-        });
-        if (
-          !binding ||
-          binding.destinationProfileIds.length !== 1 ||
-          !binding.destinationProfileId
-        ) {
-          throw new Error('SAML Mapping Set must resolve exactly one Destination Profile');
-        }
-        profileId = binding.destinationProfileId;
-      } else {
-        profileId = readString(selector.destinationProfileId, 200) ?? undefined;
-      }
-      return profileId
-        ? {
-            profileId,
-            fieldPolicies: readDestinationFieldReleasePolicies(selector.destinationFieldPolicies),
-            consentMode: readAttributeReleaseConsentMode(config.attributeReleaseConsent),
-          }
-        : null;
-    }
-  }
-  return null;
-}
-
-function readAttributeReleaseConsentMode(
-  value: unknown
-): 'once' | 'every_time' | 'until_attributes_change' | undefined {
-  const policy = parseJsonRecord(value);
-  if (policy.enabled !== true) return undefined;
-  return policy.mode === 'every_time' || policy.mode === 'until_attributes_change'
-    ? policy.mode
-    : 'once';
-}
-
-function applicableDestinationConsentFields(
-  descriptor: DestinationProfileConsentDescriptor,
-  requestContext: FlowRequestContext,
-  fieldPolicies?: DestinationFieldReleasePolicies,
-  claimsPolicy?: OIDCClaimsClientPolicy
-) {
-  if (descriptor.destinationType === 'saml') {
-    return descriptor.fields
-      .filter((field) => fieldPolicies?.[field.key] !== 'hidden')
-      .map((field) => ({
-        ...field,
-        required: fieldPolicies?.[field.key] === 'required',
-        nullable: fieldPolicies?.[field.key] === 'required' ? false : true,
-      }));
-  }
-  // The release filter's own judgement, so the fields asked about and required here are the
-  // fields that can be released: a standard claim that lists no scope needs its OIDC scope.
-  const scopes =
-    requestContext.requested_scope.length === 0 ? null : new Set(requestContext.requested_scope);
-  // A claim the request names in its claims parameter and the client's policy lets through
-  // without its scope is released as the scope claims are (the OIDC scope it would need counts as
-  // granted, a scope of the profile's own does not), so its field is asked about too.
-  const requestedClaims = new Set(
-    (requestContext.requested_claims ?? []).filter((name) =>
-      canReleaseClaim(name, scopes ?? new Set<string>(), claimsPolicy ?? {})
-    )
-  );
-  return descriptor.fields.filter((field) => {
-    const standardScope = requestedClaims.has(field.key)
-      ? OIDC_STANDARD_CLAIM_SCOPE[field.key]
-      : undefined;
-    return isOidcFieldApplicableToScopes(
-      field,
-      scopes && standardScope ? new Set([...scopes, standardScope]) : scopes
-    );
-  });
-}
-
-function readDestinationFieldReleasePolicies(
-  value: unknown
-): DestinationFieldReleasePolicies | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const policies: DestinationFieldReleasePolicies = {};
-  for (const [key, mode] of Object.entries(value)) {
-    if (mode === 'required' || mode === 'optional' || mode === 'hidden') {
-      policies[key] = mode;
-    }
-  }
-  return policies;
-}
-
 async function hydrateRuntimeContract(
   c: AuthContext,
   db: DatabaseAdapter,
@@ -2131,12 +1892,6 @@ async function hydrateRuntimeContract(
   requestContext: FlowRequestContext,
   editor: FlowEditorState | null = null
 ): Promise<FlowRuntimeContract> {
-  const destinationFieldConsent = await resolveRuntimeDestinationFieldConsent(
-    c,
-    db,
-    tenantId,
-    requestContext
-  );
   const steps = await Promise.all(
     runtime.ui.steps.map(async (step) => {
       const config = parseJsonRecord(step.config);
@@ -2194,9 +1949,6 @@ async function hydrateRuntimeContract(
           consentStatements,
           requestContext
         );
-      }
-      if (step.component === 'consent_policy' && destinationFieldConsent) {
-        nextContent.destination_field_consent = destinationFieldConsent;
       }
 
       return {
@@ -2420,21 +2172,6 @@ function bytesToBase64Url(bytes: ArrayBuffer): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-/**
- * An identifier made from what a record is about, so the same record has the same identifier
- * however often it is written (the table's primary key then keeps it from being written twice).
- */
-async function deterministicRecordId(
-  kind: string,
-  ...parts: Array<string | null>
-): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(JSON.stringify([kind, ...parts]))
-  );
-  return `${kind}_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-}
-
 async function sha256Base64Url(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return bytesToBase64Url(digest);
@@ -2645,38 +2382,6 @@ function withRuntimeConsentPolicyContent(
       consent_policy: policy,
     },
   };
-}
-
-function withoutRuntimeDestinationFieldConsent(step: FlowRuntimeStep): FlowRuntimeStep {
-  const remainingContent = {
-    ...(parseJsonRecord(step.content) as FlowRuntimeJsonObject),
-  };
-  delete remainingContent.destination_field_consent;
-  return {
-    ...step,
-    content: remainingContent,
-  };
-}
-
-function readRuntimeDestinationFieldConsent(
-  step: FlowRuntimeStep
-): RuntimeDestinationFieldConsentContent | null {
-  const content = parseJsonRecord(step.content);
-  const consent = parseJsonRecord(content.destination_field_consent);
-  const profileId = readString(consent.profile_id, 200);
-  const profileVersionId = readString(consent.profile_version_id, 200);
-  if (
-    !profileId ||
-    !profileVersionId ||
-    (consent.destination_type !== 'oidc' && consent.destination_type !== 'saml') ||
-    !Array.isArray(consent.fields)
-  ) {
-    return null;
-  }
-  return {
-    ...consent,
-    consent_version: readString(consent.consent_version, 240) ?? profileVersionId,
-  } as RuntimeDestinationFieldConsentContent;
 }
 
 function parseConditionConfig(value: unknown): FlowConditionConfig | null {
@@ -3328,10 +3033,6 @@ interface HeldRuntimeConsent {
    * override an answer to the same statement given after it (in a later step of the Flow).
    */
   given_at_ms?: number;
-  destination?: {
-    consent: RuntimeDestinationFieldConsentContent;
-    selected_fields: string[];
-  };
 }
 
 interface RuntimeAuditEventInput {
@@ -3533,14 +3234,6 @@ function readConsentSelectedValueMap(input: unknown): Record<string, string> {
   return selectedValues;
 }
 
-function readDestinationFieldDecisionMap(input: unknown): Record<string, boolean> {
-  const inputRecord = parseJsonRecord(input);
-  const raw = parseJsonRecord(inputRecord.destination_field_decisions);
-  return Object.fromEntries(
-    Object.entries(raw).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')
-  );
-}
-
 function consentOptionValueSet(item: RuntimeConsentPolicyItem): Set<string> {
   return new Set(item.options.map((option) => option.value));
 }
@@ -3588,21 +3281,6 @@ function consentItemInputSatisfied(
   return decision.decision !== 'rejected';
 }
 
-function consentRecordRecipient(input: {
-  interaction: FlowInteractionRow;
-  requestContext: FlowRequestContext;
-}): { recipientType: 'oidc_client' | 'saml_sp' | 'tenant'; recipientId: string | null } {
-  const recipientType =
-    input.requestContext.protocol === 'saml'
-      ? 'saml_sp'
-      : input.requestContext.protocol === 'oidc'
-        ? 'oidc_client'
-        : 'tenant';
-  const recipientId =
-    input.interaction.saml_sp_id ?? input.interaction.client_id ?? input.requestContext.target_id;
-  return { recipientType, recipientId };
-}
-
 /**
  * Whether the subject has already answered a statement the step asks for, so it is not asked
  * again: agreed to it, to a version from the one agreement is required from, and not expired; or,
@@ -3638,78 +3316,6 @@ async function statementAlreadyAnswered(input: {
     record !== null &&
     (record.status === 'denied' || record.status === 'withdrawn') &&
     record.version >= from
-  );
-}
-
-async function hasActiveDestinationFieldConsentRecord(input: {
-  db: DatabaseAdapter;
-  tenantId: string;
-  interaction: FlowInteractionRow;
-  requestContext: FlowRequestContext;
-  userId: string;
-  consent: RuntimeDestinationFieldConsentContent;
-}): Promise<boolean> {
-  if (input.consent.consent_mode === 'every_time') return false;
-  const { recipientType, recipientId } = consentRecordRecipient(input);
-  const destinationRecipientId =
-    input.consent.destination_type === 'saml'
-      ? (input.requestContext.saml_sp_entity_id ?? recipientId)
-      : recipientId;
-  const row = await input.db.queryOne<{
-    id: string;
-    released_scopes_json: unknown;
-    evidence_json?: unknown;
-  }>(
-    `SELECT id, released_scopes_json, evidence_json
-       FROM consent_records
-      WHERE tenant_id = ?
-        AND subject_user_id = ?
-        AND protocol = ?
-        AND recipient_type = ?
-        AND ((recipient_id = ?) OR (recipient_id IS NULL AND ? IS NULL))
-        AND binding_type = 'destination_field_mapping_set'
-        AND binding_key = ?
-        AND statement_id = ?
-        AND statement_version = ?
-        AND decision = 'selected'
-        AND status = 'active'
-        AND (expires_at IS NULL OR expires_at > ?)
-      ORDER BY created_at DESC, id DESC
-      LIMIT 1`,
-    [
-      input.tenantId,
-      input.userId,
-      input.requestContext.protocol,
-      recipientType,
-      destinationRecipientId,
-      destinationRecipientId,
-      input.consent.profile_id,
-      `destination_profile:${input.consent.profile_id}`,
-      input.consent.consent_version,
-      nowSeconds(),
-    ]
-  );
-  if (!row) return false;
-  if (input.consent.destination_type !== 'oidc') return true;
-  const storedScopes = parseStoredStringArray(row.released_scopes_json);
-  if (!storedScopes) return false;
-  const releasedScopes = new Set(storedScopes);
-  if (!input.requestContext.requested_scope.every((scope) => releasedScopes.has(scope))) {
-    return false;
-  }
-  // The consent covers the fields asked about now only if it was asked about them: a field a
-  // claims parameter newly asks for (the scope unchanged) is asked about before it can be selected.
-  // A record from before the fields were kept stands for the fields its scopes made applicable.
-  const presented = parseStoredStringArray(parseJsonRecord(row.evidence_json).presented_field_keys);
-  if (!presented) return false;
-  const covered = new Set(presented);
-  return input.consent.fields.every(
-    (field) =>
-      covered.has(field.key) ||
-      (presented.length === 0 &&
-        (field.key === 'sub' ||
-          field.required_scopes.length === 0 ||
-          field.required_scopes.some((scope) => releasedScopes.has(scope))))
   );
 }
 
@@ -3750,7 +3356,7 @@ async function removeAcceptedConsentItems(input: {
   if (!input.userId) return input.step;
   const policy = readRuntimeConsentPolicyContent(input.step);
   if (!policy) return input.step;
-  let step = withRuntimeConsentPolicyContent(
+  return withRuntimeConsentPolicyContent(
     input.step,
     await withoutAnsweredStatements({
       c: input.c,
@@ -3760,21 +3366,6 @@ async function removeAcceptedConsentItems(input: {
       policy,
     })
   );
-  const destinationFieldConsent = readRuntimeDestinationFieldConsent(step);
-  if (
-    destinationFieldConsent &&
-    (await hasActiveDestinationFieldConsentRecord({
-      db: input.db,
-      tenantId: input.tenantId,
-      interaction: input.interaction,
-      requestContext: input.requestContext,
-      userId: input.userId,
-      consent: destinationFieldConsent,
-    }))
-  ) {
-    step = withoutRuntimeDestinationFieldConsent(step);
-  }
-  return step;
 }
 
 async function resolveNextDisplayStep(input: {
@@ -3901,8 +3492,7 @@ async function resolveNextDisplayStep(input: {
         step,
       });
       const policy = readRuntimeConsentPolicyContent(filteredStep);
-      const destinationFieldConsent = readRuntimeDestinationFieldConsent(filteredStep);
-      if (!policy || policy.items.length > 0 || destinationFieldConsent) {
+      if (!policy || policy.items.length > 0) {
         return { step: filteredStep, terminalStep: null, userId, autoAdvancedSteps };
       }
 
@@ -4146,158 +3736,6 @@ export async function recordFlowStatementConsents(input: {
       env: input.c.env,
       ...(input.givenAtMs !== undefined ? { givenAtMs: input.givenAtMs } : {}),
     }
-  );
-}
-
-/** Exported for the tests of how records are written. */
-export async function insertDestinationFieldConsentRecord(input: {
-  db: DatabaseAdapter;
-  tenantId: string;
-  interaction: FlowInteractionRow;
-  step: FlowRuntimeStep;
-  policyId: string;
-  requestContext: FlowRequestContext;
-  userId: string;
-  consent: RuntimeDestinationFieldConsentContent;
-  selectedFields: string[];
-  /**
-   * The consent version that applies as this is written (read just before, not the one this
-   * record is in): the record in that version is the one that stands. A record in another version
-   * (a request delayed past a change of the terms) is written but does not displace it.
-   */
-  currentConsentVersion?: string;
-  ipHash?: string;
-  userAgent?: string;
-}): Promise<void> {
-  const now = nowSeconds();
-  const { recipientType, recipientId } = consentRecordRecipient(input);
-  const destinationRecipientId =
-    input.consent.destination_type === 'saml'
-      ? (input.requestContext.saml_sp_entity_id ?? recipientId)
-      : recipientId;
-  const releasedScopes =
-    input.requestContext.protocol === 'oidc' && input.requestContext.requested_scope.length > 0
-      ? JSON.stringify(input.requestContext.requested_scope)
-      : null;
-  const releasedClaims =
-    input.consent.destination_type === 'oidc' ? JSON.stringify(input.selectedFields) : null;
-  const releasedAttributes =
-    input.consent.destination_type === 'saml' ? JSON.stringify(input.selectedFields) : null;
-
-  // One record per interaction, step, profile and consent version: a retry updates it (the last
-  // selection stands). Afterwards every active record of the binding but one is retired, in one
-  // statement, the record just written included. The one that stands is the one in the consent
-  // version that applies (read just before, not the version this record is in), and then the latest
-  // by (created_at, id): a record written late in an older version does not displace one in the
-  // version that applies, and a retry of an older record does not retire a newer one. A reader asks
-  // for the version that applies, and then takes the same order.
-  const recordId = await deterministicRecordId(
-    'consent_destination',
-    input.interaction.id,
-    input.step.id,
-    input.consent.profile_id,
-    input.consent.profile_version_id,
-    input.consent.consent_version
-  );
-  await input.db.execute(
-    `INSERT INTO consent_records (
-      id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
-      client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
-      resource_type, resource_id, purpose_key, statement_id, statement_version, policy_id,
-      flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
-      released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
-      revoked_at, evidence_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      selected_options_json = excluded.selected_options_json,
-      released_scopes_json = excluded.released_scopes_json,
-      released_claims_json = excluded.released_claims_json,
-      released_attributes_json = excluded.released_attributes_json,
-      evidence_json = excluded.evidence_json,
-      updated_at = excluded.updated_at`,
-    [
-      recordId,
-      input.tenantId,
-      input.userId,
-      input.userId,
-      input.requestContext.protocol,
-      input.consent.destination_type === 'oidc' ? 'scope_claim_release' : 'attribute_release',
-      input.interaction.client_id,
-      input.interaction.saml_sp_id,
-      recipientType,
-      destinationRecipientId,
-      'destination_field_mapping_set',
-      input.consent.profile_id,
-      input.consent.destination_type === 'oidc' ? 'userinfo' : 'saml_attributes',
-      input.consent.profile_id,
-      'destination_field_release',
-      `destination_profile:${input.consent.profile_id}`,
-      input.consent.consent_version,
-      input.policyId,
-      input.interaction.flow_id,
-      input.interaction.flow_version_id,
-      input.step.source_node_id,
-      'selected',
-      null,
-      JSON.stringify(input.selectedFields),
-      releasedScopes,
-      releasedClaims,
-      releasedAttributes,
-      'active',
-      null,
-      null,
-      JSON.stringify({
-        source: 'flow_runtime',
-        interaction_id: input.interaction.id,
-        step_id: input.step.id,
-        node_id: input.step.source_node_id,
-        destination_profile_id: input.consent.profile_id,
-        destination_profile_version_id: input.consent.profile_version_id,
-        selected_field_keys: input.selectedFields,
-        // What the user was asked about, so a later request that asks about more is told apart
-        // from one for which a field was declined.
-        presented_field_keys: input.consent.fields.map((field) => field.key),
-        saml_request_id: input.requestContext.saml_request_id,
-        user_agent: input.userAgent,
-        ip_address_hash: input.ipHash,
-      }),
-      now,
-      now,
-    ]
-  );
-  const bindingMatch = `tenant_id = ?
-        AND subject_user_id = ?
-        AND protocol = ?
-        AND recipient_type = ?
-        AND ((recipient_id = ?) OR (recipient_id IS NULL AND ? IS NULL))
-        AND binding_type = 'destination_field_mapping_set'
-        AND binding_key = ?
-        AND status = 'active'`;
-  const bindingParams = [
-    input.tenantId,
-    input.userId,
-    input.requestContext.protocol,
-    recipientType,
-    destinationRecipientId,
-    destinationRecipientId,
-    input.consent.profile_id,
-  ];
-  await input.db.execute(
-    `UPDATE consent_records
-        SET status = 'superseded', updated_at = ?
-      WHERE ${bindingMatch}
-        AND id <> (
-          SELECT id FROM consent_records
-           WHERE ${bindingMatch}
-           ORDER BY CASE WHEN statement_version = ? THEN 0 ELSE 1 END, created_at DESC, id DESC
-           LIMIT 1
-        )`,
-    [
-      now,
-      ...bindingParams,
-      ...bindingParams,
-      input.currentConsentVersion ?? input.consent.consent_version,
-    ]
   );
 }
 
@@ -4608,10 +4046,9 @@ async function persistRuntimeConsentStep(input: {
   held?: HeldRuntimeConsent;
 }> {
   const requestContext = getRequestContextFromInteraction(input.interaction);
-  const destinationFieldConsent = readRuntimeDestinationFieldConsent(input.step);
   const config = parseJsonRecord(input.step.config);
   const consentStatements = readFlowConsentStatements(config);
-  if (!consentStatements?.length && !destinationFieldConsent) {
+  if (!consentStatements?.length) {
     if (input.step.component !== 'consent_policy') return { ok: true };
     return {
       ok: false,
@@ -4669,7 +4106,7 @@ async function persistRuntimeConsentStep(input: {
     typeof presented === 'string' &&
     // Kept from the contract, which lists every statement the step asks for: judged against all of
     // them (what was answered already is left out only of what is required and recorded).
-    presented !== consentStepKey(configured, destinationFieldConsent)
+    presented !== consentStepKey(configured, null)
   ) {
     return {
       ok: false,
@@ -4709,7 +4146,6 @@ async function persistRuntimeConsentStep(input: {
 
   const submitted = readConsentDecisionMap(input.submitInput);
   const submittedSelectedValues = readConsentSelectedValueMap(input.submitInput);
-  const submittedDestinationFields = readDestinationFieldDecisionMap(input.submitInput);
   const decisions = Object.fromEntries(
     policy.items.map((item) => [
       item.statement_id,
@@ -4738,40 +4174,11 @@ async function persistRuntimeConsentStep(input: {
       ),
     };
   }
-  const missingRequiredDestinationFields = destinationFieldConsent?.fields.filter(
-    (field) => field.required && submittedDestinationFields[field.key] !== true
-  );
-  if (missingRequiredDestinationFields && missingRequiredDestinationFields.length > 0) {
-    return {
-      ok: false,
-      response: runtimeError(
-        input.c,
-        400,
-        'consent_required',
-        'Required destination fields must be granted',
-        'AR_FLOW_DESTINATION_FIELD_CONSENT_REQUIRED',
-        'recoverable',
-        'retry_step',
-        input.interaction.id
-      ),
-    };
-  }
-
   // What was validated, and for which statements and versions: this is what gets recorded.
   const given: HeldRuntimeConsent = {
     policy,
     decisions,
     given_at_ms: Date.now(),
-    ...(destinationFieldConsent
-      ? {
-          destination: {
-            consent: destinationFieldConsent,
-            selected_fields: destinationFieldConsent.fields
-              .filter((field) => field.required || submittedDestinationFields[field.key] === true)
-              .map((field) => field.key),
-          },
-        }
-      : {}),
   };
 
   if (!userId) {
@@ -4917,46 +4324,18 @@ async function recordRuntimeConsent(input: {
     }
     throw error;
   }
-  if (input.consent.destination) {
-    // The version that applies now: this record may be in an older one.
-    const applicable = await resolveRuntimeDestinationFieldConsent(
-      input.c,
-      input.db,
-      input.tenantId,
-      input.requestContext
-    );
-    await insertDestinationFieldConsentRecord({
-      db: input.db,
-      tenantId: input.tenantId,
-      interaction: input.interaction,
-      step: input.step,
-      policyId: input.consent.policy.id,
-      requestContext: input.requestContext,
-      userId: input.userId,
-      consent: input.consent.destination.consent,
-      selectedFields: input.consent.destination.selected_fields,
-      currentConsentVersion:
-        applicable?.profile_id === input.consent.destination.consent.profile_id
-          ? applicable.consent_version
-          : undefined,
-      ipHash,
-      userAgent,
-    });
-  }
   return { ok: true };
 }
 
 /**
- * What the consent steps of a contract ask, by step: the statements, their versions and terms, the
- * destination fields. Kept with the interaction as what its browser was shown.
+ * What the consent steps of a contract ask, by step: the statements, their versions and terms. Kept with the interaction as what its browser was shown.
  */
 function consentPresentedKeys(contract: FlowRuntimeContract): Record<string, string> {
   const keys: Record<string, string> = {};
   for (const step of contract.ui.steps) {
     const policy = readRuntimeConsentPolicyContent(step);
-    const destination = readRuntimeDestinationFieldConsent(step);
-    if (!policy && !destination) continue;
-    keys[step.id] = consentStepKey(policy, destination);
+    if (!policy) continue;
+    keys[step.id] = consentStepKey(policy, null);
   }
   return keys;
 }
@@ -5060,7 +4439,6 @@ async function recordHeldRuntimeConsent(input: {
           input.requestContext
         )
       : null;
-    const currentDestination = readRuntimeDestinationFieldConsent(step);
     // A statement answered again in a later held answer is judged (and recorded) by that one only.
     const ownItem = (item: { statement_id: string }) =>
       latestFor.get(item.statement_id) === row.id || !(item.statement_id in held.decisions);
@@ -5081,14 +4459,7 @@ async function recordHeldRuntimeConsent(input: {
           (decision.selectedValue !== null &&
             !consentOptionValueSet(item).has(decision.selectedValue))
         );
-      }) ||
-      (held.destination &&
-        (!currentDestination ||
-          destinationPresentationKey(currentDestination) !==
-            destinationPresentationKey(held.destination.consent) ||
-          currentDestination.fields.some(
-            (field) => field.required && !held.destination?.selected_fields.includes(field.key)
-          )))
+      })
     ) {
       // The consent is asked for again: the interaction goes back to the step that took it (the
       // signed-in browser resumes there), with nothing held. Only under the submit's claim, as

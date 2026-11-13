@@ -373,17 +373,6 @@ const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
     gate: 'legal basis gate service + tests; live protocol challenge UI later',
   },
   {
-    id: 'UIM-SCH-088',
-    objectName: 'attribute_release_consents',
-    area: 'Destination-specific released attribute set consent',
-    introducedPr: 'schema baseline PR',
-    expectedConnectionPr: 'PR9 consent / review',
-    runtimePath: 'SAML / federation release consent',
-    status: 'repo_connected',
-    gate: 'repository + release challenge tests; user-facing challenge UI later',
-    schemaObject: 'attribute_release_consents',
-  },
-  {
     id: 'UIM-SCH-089',
     objectName: 'source_profiles',
     area: 'Source and destination profile registration',

@@ -118,12 +118,16 @@
 							<strong>
 								{consent.kind === 'statement'
 									? consent.title
-									: (consent.clientName ?? consent.clientId)}
+									: consent.kind === 'saml_sp'
+										? (consent.spName ?? consent.spEntityId)
+										: (consent.clientName ?? consent.clientId)}
 							</strong>
 							<span>
 								{consent.kind === 'statement'
 									? (consent.category ?? consent.statementId)
-									: consent.clientId}
+									: consent.kind === 'saml_sp'
+										? consent.spEntityId
+										: consent.clientId}
 							</span>
 						</div>
 					</div>
@@ -148,10 +152,12 @@
 								</div>
 							{/if}
 						{:else}
-							<div>
-								<dt>{$LL.account_consentScopes()}</dt>
-								<dd>{formatScopes(consent)}</dd>
-							</div>
+							{#if consent.kind === 'oauth_client'}
+								<div>
+									<dt>{$LL.account_consentScopes()}</dt>
+									<dd>{formatScopes(consent)}</dd>
+								</div>
+							{/if}
 							{#each accountReleaseRows($LL, consent.informationRelease) as row (row.label)}
 								<div>
 									<dt>{row.label}</dt>
@@ -162,17 +168,23 @@
 						<div>
 							<dt>{$LL.account_consentGrantedAt()}</dt>
 							<dd>
-								{consent.grantedAt ? formatTimestamp(consent.grantedAt, getLocale()) : '-'}
+								{consent.kind === 'saml_sp'
+									? formatTimestamp(consent.decidedAt, getLocale())
+									: consent.grantedAt
+										? formatTimestamp(consent.grantedAt, getLocale())
+										: '-'}
 							</dd>
 						</div>
-						<div>
-							<dt>{$LL.account_consentExpiresAt()}</dt>
-							<dd>
-								{consent.expiresAt
-									? formatTimestamp(consent.expiresAt, getLocale())
-									: $LL.account_consentNoExpiry()}
-							</dd>
-						</div>
+						{#if consent.kind !== 'saml_sp'}
+							<div>
+								<dt>{$LL.account_consentExpiresAt()}</dt>
+								<dd>
+									{consent.expiresAt
+										? formatTimestamp(consent.expiresAt, getLocale())
+										: $LL.account_consentNoExpiry()}
+								</dd>
+							</div>
+						{/if}
 						{#if consent.kind === 'oauth_client'}
 							<div>
 								<dt>{$LL.account_consentPolicyVersions()}</dt>

@@ -48,6 +48,10 @@
             {
               "path": "010_information_release_consent.sql",
               "checksum": "c37b66fda7a0c512e072e49486ab184048419251b9ed41b2b869ced0c5b97fe2"
+            },
+            {
+              "path": "011_saml_sp_release_consent.sql",
+              "checksum": "ae4ccf262942c2f11e125a0740cd715d9c3a63d6e7fea8371113740037e7fec2"
             }
           ]
         },
@@ -188,6 +192,10 @@
             {
               "path": "010_information_release_consent.sql",
               "checksum": "961ee6f0d3ba12255374a1230049f2ee70d636e4cb7150489122b571d5f4c553"
+            },
+            {
+              "path": "011_saml_sp_release_consent.sql",
+              "checksum": "b5ccc3d6c7350ef76298cf22f8ca2d94307fdce2f4306c151a7545fa3994f382"
             }
           ]
         },
@@ -259,6 +267,10 @@
         {
           "path": "010_information_release_consent.sql",
           "checksum": "c37b66fda7a0c512e072e49486ab184048419251b9ed41b2b869ced0c5b97fe2"
+        },
+        {
+          "path": "011_saml_sp_release_consent.sql",
+          "checksum": "ae4ccf262942c2f11e125a0740cd715d9c3a63d6e7fea8371113740037e7fec2"
         }
       ]
     },
@@ -425,6 +437,10 @@
         {
           "path": "010_information_release_consent.sql",
           "checksum": "961ee6f0d3ba12255374a1230049f2ee70d636e4cb7150489122b571d5f4c553"
+        },
+        {
+          "path": "011_saml_sp_release_consent.sql",
+          "checksum": "b5ccc3d6c7350ef76298cf22f8ca2d94307fdce2f4306c151a7545fa3994f382"
         }
       ]
     },

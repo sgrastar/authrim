@@ -5,7 +5,7 @@ import {
   filterIntrospectionClaimsByResourceServerProfile,
   filterOidcClaimsByDestinationConsent,
   filterOidcClaimsWithoutDestinationProfile,
-  filterSamlAttributesByDestinationConsent,
+  filterSamlAttributesByDestinationProfile,
   isOidcFieldApplicableToScopes,
   isProtectedIdentityMappingDestinationClaim,
   loadDestinationProfileConsentDescriptor,
@@ -859,19 +859,9 @@ describe('destination profile field consent', () => {
         }),
       }),
     });
-    const coreAdapter = adapter({
-      queryOne: vi.fn().mockResolvedValue({
-        released_claims_json: null,
-        released_attributes_json: ['mail', 'department'],
-      }),
-    });
-
-    const attributes = await filterSamlAttributesByDestinationConsent({
-      coreAdapter,
+    const release = await filterSamlAttributesByDestinationProfile({
       adminAdapter,
       tenantId: 'tenant_a',
-      subjectId: 'user_1',
-      samlSpId: 'https://sp.example',
       profileId: 'profile_saml',
       fieldPolicies: {
         mail: 'required',
@@ -886,14 +876,12 @@ describe('destination profile field consent', () => {
       ],
     });
 
-    expect(attributes.map((attribute) => attribute.name)).toEqual(['mail', 'department']);
-    expect(coreAdapter.queryOne).toHaveBeenCalledWith(
-      expect.stringContaining('AND statement_version = ?'),
-      expect.arrayContaining([expect.stringContaining('version_2:sp-policy-')])
-    );
+    // Hidden and unlisted attributes are dropped; which optional ones go is the person's approval.
+    expect(release.attributes.map((attribute) => attribute.name)).toEqual(['mail', 'department']);
+    expect([...release.required]).toEqual(['mail']);
   });
 
-  it('fails closed to required SAML attributes when no destination consent exists', async () => {
+  it('reports which SAML attributes the SP requires, and their labels', async () => {
     const adminAdapter = adapter({
       queryOne: vi.fn().mockResolvedValue({
         profile_id: 'profile_saml',
@@ -907,14 +895,9 @@ describe('destination profile field consent', () => {
         }),
       }),
     });
-    const coreAdapter = adapter({ queryOne: vi.fn().mockResolvedValue(null) });
-
-    const attributes = await filterSamlAttributesByDestinationConsent({
-      coreAdapter,
+    const release = await filterSamlAttributesByDestinationProfile({
       adminAdapter,
       tenantId: 'tenant_a',
-      subjectId: 'user_1',
-      samlSpId: 'https://sp.example',
       profileId: 'profile_saml',
       fieldPolicies: { mail: 'required', displayName: 'optional' },
       attributes: [
@@ -923,7 +906,10 @@ describe('destination profile field consent', () => {
       ],
     });
 
-    expect(attributes.map((attribute) => attribute.name)).toEqual(['mail']);
+    expect(release.attributes.map((attribute) => attribute.name)).toEqual(['mail', 'displayName']);
+    expect(release.required.has('mail')).toBe(true);
+    expect(release.required.has('displayName')).toBe(false);
+    expect(release.labels.get('mail')).toBe('mail');
   });
 
   it('rejects SAML attribute values outside the destination profile contract', async () => {
@@ -944,15 +930,10 @@ describe('destination profile field consent', () => {
         }),
       }),
     });
-    const coreAdapter = adapter({ queryOne: vi.fn().mockResolvedValue(null) });
-
     await expect(
-      filterSamlAttributesByDestinationConsent({
-        coreAdapter,
+      filterSamlAttributesByDestinationProfile({
         adminAdapter,
         tenantId: 'tenant_a',
-        subjectId: 'user_1',
-        samlSpId: 'https://sp.example',
         profileId: 'profile_saml',
         attributes: [{ name: 'eduPersonAffiliation', values: ['staff'] }],
       })
@@ -973,15 +954,10 @@ describe('destination profile field consent', () => {
         }),
       }),
     });
-    const coreAdapter = adapter({ queryOne: vi.fn().mockResolvedValue(null) });
-
     await expect(
-      filterSamlAttributesByDestinationConsent({
-        coreAdapter,
+      filterSamlAttributesByDestinationProfile({
         adminAdapter,
         tenantId: 'tenant_a',
-        subjectId: 'user_1',
-        samlSpId: 'https://sp.example',
         profileId: 'profile_saml',
         releaseSafetyBinding: {
           catalog: {

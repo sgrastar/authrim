@@ -135,12 +135,14 @@
 					{/if}
 				</fieldset>
 			{/if}
-			<h2>{data.text.scopesTitle}</h2>
-			<ul>
-				{#each consent.scopes as scope, index (`${scope}:${index}`)}
-					<li>{scope}</li>
-				{/each}
-			</ul>
+			{#if consent.scopes.length > 0}
+				<h2>{data.text.scopesTitle}</h2>
+				<ul>
+					{#each consent.scopes as scope, index (`${scope}:${index}`)}
+						<li>{scope}</li>
+					{/each}
+				</ul>
+			{/if}
 			{#if consent.organizations.length <= 1 && consent.targetOrg}
 				<p>{data.text.currentOrganization}: {consent.targetOrg.name}</p>
 			{/if}

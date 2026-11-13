@@ -76,6 +76,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { answerFormPostAsData, formPostAnsweredAsData, redirectWithError } from './authorize';
 import { answerInformationRelease, loadInformationReleaseScreen } from './consent-release';
+import { samlConsentGet, samlConsentPost } from './consent-saml';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 
 // Scope descriptions (human-readable)
@@ -110,13 +111,13 @@ const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }>
   },
 };
 
-type SessionBoundConsentChallenge = {
+export type SessionBoundConsentChallenge = {
   userId: string;
   expiresAt?: number;
   metadata?: ConsentChallengeMetadata & { session_id?: unknown };
 };
 
-async function validateConsentSessionBinding(
+export async function validateConsentSessionBinding(
   c: Context<{ Bindings: Env }>,
   challenge: SessionBoundConsentChallenge
 ): Promise<Response | null> {
@@ -286,6 +287,11 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
 
     const sessionError = await validateConsentSessionBinding(c, typedChallengeData);
     if (sessionError) return sessionError;
+
+    // A SAML service's consent (the SAML IdP put it on the challenge): shown from the challenge.
+    if ((typedChallengeData.metadata as { protocol?: unknown } | undefined)?.protocol === 'saml') {
+      return await samlConsentGet(c, challenge_id, typedChallengeData);
+    }
 
     const metadata = typedChallengeData.metadata || {};
     const client_id = metadata.client_id as string;
@@ -554,7 +560,7 @@ async function handleJsonConsentGet(
  * Statement definitions are the tenant's (metadata database); the subject's consent records live
  * with the subject's account (resolved by the caller before this is used).
  */
-function statementConsentStores(
+export function statementConsentStores(
   c: Context<{ Bindings: Env }>,
   tenantId: string
 ): StatementConsentStores {
@@ -564,7 +570,7 @@ function statementConsentStores(
   };
 }
 
-function consentRecordsUnavailable(
+export function consentRecordsUnavailable(
   c: Context<{ Bindings: Env }>,
   error: StatementConsentAccountReadError
 ): Response {
@@ -584,11 +590,13 @@ function consentRecordsUnavailable(
  * The statements the consent screen asks for: those the app's sign-in Flow requires at single
  * sign-on (flow-sso-consent.ts), with the user's current answers.
  */
-async function loadConsentScreenItems(
+export async function loadConsentScreenItems(
   c: Context<{ Bindings: Env }>,
   params: {
     tenantId: string;
     clientId: string;
+    /** The kind of service asked for (an OIDC client unless said otherwise). */
+    targetType?: 'oidc_client' | 'saml_sp';
     userId: string;
     language?: string;
     defaultLanguage?: string;
@@ -599,7 +607,7 @@ async function loadConsentScreenItems(
     stores.metadata,
     params.tenantId,
     await ssoConsentStatementsForTarget(stores.metadata, params.tenantId, {
-      type: 'oidc_client',
+      type: params.targetType ?? 'oidc_client',
       id: params.clientId,
     })
   );
@@ -623,11 +631,11 @@ async function loadConsentScreenItems(
   );
 }
 
-type DisplayedStatementVersions = Record<
+export type DisplayedStatementVersions = Record<
   string,
   { version_id: string; content_hash: string | null }
 >;
-function statementSnapshotsMatch(
+export function statementSnapshotsMatch(
   items: ConsentScreenItem[],
   displayed: DisplayedStatementVersions | undefined
 ): boolean {
@@ -652,7 +660,7 @@ function statementSnapshotsMatch(
 }
 
 /** Refresh consent, never approval. Preserve the original challenge's expiry and session binding. */
-async function changedConsentDocument(
+export async function changedConsentDocument(
   c: Context<{ Bindings: Env }>,
   pending: SessionBoundConsentChallenge,
   consumed: boolean
@@ -773,6 +781,16 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     }
     const sessionError = await validateConsentSessionBinding(c, pendingChallenge);
     if (sessionError) return sessionError;
+    // A SAML service's consent is decided on the challenge, not used up here (consent-saml.ts).
+    if ((pendingChallenge.metadata as { protocol?: unknown } | undefined)?.protocol === 'saml') {
+      return await samlConsentPost(c, challenge_id, pendingChallenge, {
+        approved,
+        consentItemDecisions: consent_item_decisions,
+        consentItemVersions: jsonBody.consent_item_versions,
+        releaseSelected,
+        releasePresentationKey,
+      });
+    }
     const consentSessionId = pendingChallenge.metadata!.session_id as string;
 
     // The consent withdrawal generation an approval is given under, read before the challenge is

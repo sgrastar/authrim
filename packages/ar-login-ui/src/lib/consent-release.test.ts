@@ -4,8 +4,10 @@ import { loadAllLocales } from '$i18n/i18n-util.sync';
 import {
 	accountReleaseRows,
 	formatReleaseValue,
+	recordedReleaseItemLabel,
 	releaseClaimLabel,
 	releaseDefaultChecked,
+	releaseItemLabel,
 	releaseSelectedNames
 } from './consent-release';
 
@@ -120,5 +122,54 @@ describe('accountReleaseRows', () => {
 		expect(
 			accountReleaseRows(LL, { basis: 'user', approved: ['email', 3, null, ''], declined: 'x' })
 		).toEqual([{ label: 'Information provided', value: 'Email address' }]);
+	});
+});
+
+describe('releaseItemLabel', () => {
+	it("uses a SAML attribute's own label and names the NameID by what it is", () => {
+		const en = i18nObject('en');
+		expect(releaseItemLabel(en, { name: 'k', kind: 'attribute', label: 'Affiliation' })).toBe(
+			'Affiliation'
+		);
+		expect(
+			releaseItemLabel(en, {
+				name: 'k',
+				kind: 'nameid',
+				label: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'
+			})
+		).toBe(en.consent_release_saml_nameid_email());
+		expect(
+			releaseItemLabel(en, {
+				name: 'k',
+				kind: 'nameid',
+				label: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent'
+			})
+		).toBe(en.consent_release_saml_nameid());
+		expect(releaseItemLabel(en, { name: 'email' })).toBe('Email address');
+	});
+
+	it('names a recorded SAML item key by its attribute name', () => {
+		const en = i18nObject('en');
+		expect(recordedReleaseItemLabel(en, '["attribute","mail",null]')).toBe('mail');
+		expect(recordedReleaseItemLabel(en, 'email')).toBe('Email address');
+		expect(recordedReleaseItemLabel(en, '[not json')).toBe('[not json');
+	});
+
+	it('shows a refused SAML SP as refused on the account page', () => {
+		const en = i18nObject('en');
+		expect(
+			accountReleaseRows(en, {
+				basis: 'user',
+				approved: [],
+				declined: [],
+				decidedAt: 1,
+				refused: true
+			})
+		).toEqual([
+			{
+				label: en.account_consentInformationRelease(),
+				value: en.account_consentInformationRefused()
+			}
+		]);
 	});
 });

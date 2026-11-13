@@ -81,6 +81,8 @@ const completion = {
 	consent_item_processing_purpose: 'Tujuan pemrosesan',
 	consent_item_withdrawal_impact: 'Dampak penarikan',
 	consent_release_title: 'Informasi yang dibagikan kepada {clientName}',
+	consent_release_saml_nameid: 'Pengenal Anda untuk layanan ini',
+	consent_release_saml_nameid_email: 'Alamat email Anda (sebagai pengenal untuk layanan ini)',
 	consent_release_hint:
 		'Item yang ditandai wajib selalu dibagikan jika Anda mengizinkan. Hapus centang pada item opsional yang tidak ingin Anda bagikan.',
 	consent_release_purpose: 'Tujuan',

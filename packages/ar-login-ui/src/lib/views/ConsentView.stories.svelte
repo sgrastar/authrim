@@ -3,7 +3,7 @@
 	import { expect, fn, userEvent, within } from 'storybook/test';
 	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
 	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
-	import { consentBase, consentItems, informationRelease } from './consent-fixtures';
+	import { consentBase, consentItems, informationRelease, samlConsent } from './consent-fixtures';
 	import ConsentView from './ConsentView.svelte';
 
 	const { Story } = defineMeta({
@@ -129,6 +129,10 @@
 		}
 	}}
 >
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story name="SAML service provider" args={{ consentData: samlConsent }}>
 	{#snippet template(args)}{@render page(args)}{/snippet}
 </Story>
 

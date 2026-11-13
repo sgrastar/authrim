@@ -72,9 +72,12 @@ export interface LiteConsentItem {
 	defaultChecked: boolean;
 }
 
-/** The information the app would be given: one item an OIDC claim. */
+/** The information the app would be given: an OIDC claim, or a SAML SP's attribute or NameID. */
 export interface LiteReleaseItem {
 	name: string;
+	/** A SAML SP's item: what it is called, and whether it is an attribute or the NameID. */
+	label?: string;
+	kind?: 'attribute' | 'nameid';
 	required: boolean;
 	/** An optional item starts checked only when it was approved last time. */
 	defaultChecked: boolean;
@@ -128,11 +131,16 @@ function readRelease(raw: unknown): LiteRelease | null | undefined {
 	const items: LiteReleaseItem[] = [];
 	const seen = new Set<string>();
 	for (const entry of raw.items) {
-		const name = isRecord(entry) ? text(entry.name, 128) : null;
+		// A SAML SP's item name is its key (kind, name and format), longer than a claim name.
+		const name = isRecord(entry) ? text(entry.name, 2048) : null;
 		if (!isRecord(entry) || !name || seen.has(name)) return undefined;
 		seen.add(name);
+		const kind = entry.kind === 'attribute' || entry.kind === 'nameid' ? entry.kind : undefined;
+		const label = kind ? text(entry.label, 512) : null;
+		if (kind && !label) return undefined;
 		items.push({
 			name,
+			...(kind && label ? { kind, label } : {}),
 			required: entry.required === true,
 			defaultChecked: entry.previously_approved === true,
 			valueText: showValues ? formatReleaseValue(entry.value) : null

@@ -175,6 +175,7 @@ const it = createTranslation({
 	account_operationPasskeyCreated: 'Passkey aggiunta',
 	account_operationPasskeyUpdated: 'Passkey rinominata',
 	account_operationPasskeyDeleted: 'Passkey eliminata',
+	account_operationConsentWithdrawn: 'Consenso a un servizio revocato',
 	account_operationSessionRevoked: 'Sessione terminata',
 	account_operationGuestCreated: 'Account ospite creato',
 	account_operationGuestUpgradeFailed: 'Registrazione ospite non riuscita',
@@ -214,6 +215,7 @@ const it = createTranslation({
 	account_consentNoExpiry: 'Nessuna scadenza',
 	account_consentPolicyVersions: 'Versioni delle informative',
 	account_consentInformationRelease: 'Informazioni fornite',
+	account_consentInformationRefused: 'Rifiutato',
 	account_consentInformationDeclined: 'Non fornite',
 	account_consentInformationNone: 'Nessuna',
 	account_consentInformationTrusted: 'Tutto ciò che il servizio richiede (servizio attendibile)',
@@ -391,6 +393,9 @@ const it = createTranslation({
 	consent_item_processing_purpose: 'Finalità del trattamento',
 	consent_item_withdrawal_impact: 'Conseguenze della revoca',
 	consent_release_title: 'Informazioni condivise con {clientName}',
+	consent_release_saml_nameid: 'Il tuo identificativo per questo servizio',
+	consent_release_saml_nameid_email:
+		'Il tuo indirizzo email (come identificativo per questo servizio)',
 	consent_release_hint:
 		'Le voci contrassegnate come obbligatorie vengono sempre condivise se consenti. Deseleziona le voci facoltative che non vuoi condividere.',
 	consent_release_purpose: 'Finalità',

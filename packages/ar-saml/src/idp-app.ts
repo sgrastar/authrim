@@ -16,7 +16,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { isSamlProtocolPath, samlEnabledMiddleware } from './common/saml-enabled';
 import { handleIdPMetadataWithOptions } from './idp/metadata';
-import { handleIdPAttributeReleaseConsent, handleIdPSSO } from './idp/sso';
+import { handleIdPSSO } from './idp/sso';
 import { handleIdPLoginCancel } from './idp/login-cancel';
 import { handleIdPSLO } from './idp/slo';
 import {
@@ -65,7 +65,6 @@ export function createSAMLIdPApp(options: SAMLIdPAppOptions): Hono<{ Bindings: E
   app.post('/saml/idp/sso', handleIdPSSO);
   app.get(GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_REDIRECT_PATH, handleIdPSSO);
   app.post(GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_POST_PATH, handleIdPSSO);
-  app.post('/saml/idp/attribute-release-consent', handleIdPAttributeReleaseConsent);
   app.get(SAML_LOGIN_CANCEL_PATH, handleIdPLoginCancel);
   if (options.sloEnabled === true) {
     app.get('/saml/idp/slo', handleIdPSLO);

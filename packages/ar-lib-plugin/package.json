@@ -42,7 +42,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "hono": "4.13.12",
+    "hono": "4.13.18",
     "zod": "^4.6.7"
   },
   "peerDependencies": {

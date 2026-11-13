@@ -12,20 +12,16 @@
  */
 
 import type { Context } from 'hono';
-import type { AttributeReleaseConsentMode, Env } from '@authrim/ar-lib-core';
+import type { Env, NameIDFormat, SAMLAttribute } from '@authrim/ar-lib-core';
 import type { SAMLAuthnRequest, SAMLRequestContext, SAMLSPConfig } from '@authrim/ar-lib-core';
 import {
-  AttributeReleaseConsentRepository,
+  buildSAMLSSOResumePath,
   getSessionStoreBySessionId,
   isShardedSessionId,
   getTenantSettingsDocument,
   getLogger,
-  getLocalization,
   resolveAuthCorePersistenceAdapterFromEnv,
   sessionAnswersSAMLRequest,
-  requireAdminDatabaseAdapter,
-  filterSamlAttributesByDestinationConsentWithStatus,
-  filterSamlAttributesByDestinationConsentDescriptorWithStatus,
   resolveSamlAssertionTtlSeconds,
   resolveSamlRequestTtlSeconds,
   RuntimeIdentityMappingReleaseSafetyError,
@@ -53,12 +49,7 @@ import { getSPConfig } from '../admin/providers';
 import { getSamlUserInfoById, type SAMLUserInfo } from '../common/user-store';
 import { getSAMLIdPSigningMaterial } from '../common/idp-signing';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
-import {
-  MissingRequiredSAMLAttributeError,
-  resolveSAMLIdentityMappingFieldMappingBinding,
-  type SAMLIdentityMappingReleaseConfig,
-  SAMLIdentityMappingRuntimeError,
-} from './attributes';
+import { MissingRequiredSAMLAttributeError, SAMLIdentityMappingRuntimeError } from './attributes';
 import {
   SAMLAuthnRequestSignatureValidationError,
   validateSAMLAuthnRequestSignature,
@@ -91,12 +82,9 @@ import {
   SAMLNameIDPolicyError,
   resolveSAMLNameIDFormat,
   resolveSAMLNameIDValue,
-  resolveSAMLEduPersonTargetedIDOpaque,
   resolveSAMLPairwiseSecret,
-  resolveSAMLPairwiseSecretForRef,
   resolveSAMLPersistentNameIDRegistryStore,
   resolveSAMLTransientNameIDStore,
-  type SAMLPersistentIdentifierAlgorithm,
 } from './subject';
 import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
 import {
@@ -104,18 +92,14 @@ import {
   buildSAMLIdPErrorResponse,
   getSAMLAttributeReleaseFailureStatusMessage,
 } from './error-response';
+import { resolveSAMLReleaseConsent, samlReleaseConsentStillCurrent } from './release-consent';
 import {
-  enforceSAMLAttributeReleaseConsent,
-  SAMLAttributeReleaseConsentRequiredError,
-} from './attribute-release-consent';
+  applySAMLReleaseApproval,
+  computeSAMLAttributeRelease,
+  samlApprovalNeedsIdentifiers,
+} from './release-items';
 import { scheduleSAMLAttributeWithheldAudit, scheduleSAMLPolicyFailureAudit } from './audit';
-import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
-import { releaseSAMLAttributesWithInstitution } from './institution-release';
-import type { SAMLWithheldScopedValues } from './institution-scope';
-import {
-  assertSAMLImportedSPRelease,
-  resolveSAMLRuntimeIdentityMapping,
-} from './runtime-identity-mapping';
+import { checkSAMLIdentityAssurance } from './identity-assurance';
 import { buildSAMLAssertionTiming, resolveSAMLAuthnInstant } from './assertion-timing';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
@@ -134,6 +118,13 @@ interface AuthenticatedSAMLSession {
   provenAt?: number;
   /** When the session was created (milliseconds), the last resort for the time of the sign-in. */
   createdAt?: number;
+}
+
+/** A pending IdP-initiated sign-in came back to the SP-initiated endpoint (see its use). */
+class IdPInitiatedResume extends Error {
+  constructor(readonly path: string) {
+    super('Stored SAML request is an IdP-initiated sign-in');
+  }
 }
 
 interface ParsedAuthnRequestInput {
@@ -547,8 +538,140 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     // Generate SAML Response
     let responseXml: string;
     try {
+      const refuseRequest = async (
+        secondLevelStatusCode: string,
+        statusMessage: string,
+        failureKind: string
+      ) =>
+        answerSP(
+          resolveSAMLResponseDestination(authnRequest, spConfig),
+          await generateSAMLProtocolErrorResponse(
+            issuerUrl,
+            idpEntityId,
+            env,
+            authnRequest,
+            spConfig,
+            tenantId,
+            STATUS_CODES.RESPONDER,
+            secondLevelStatusCode,
+            statusMessage,
+            failureKind
+          )
+        );
+      const nameIdFormat = resolveSAMLNameIDFormat(authnRequest, spConfig);
+      const releaseInput = {
+        env,
+        tenantId,
+        idpEntityId,
+        spConfig,
+        userInfo,
+        userId: authnInteraction.session.userId,
+        requestScope: c,
+        onError: (message: string, error: unknown) =>
+          log.error(
+            message,
+            { tenantId, spEntityId: spConfig.entityId, authnRequestId: authnRequest.id },
+            error instanceof Error ? error : new Error(String(error))
+          ),
+      };
+      // What the SP would be given, with no identifier made for it yet.
+      const release = await computeSAMLAttributeRelease({
+        ...releaseInput,
+        identifiers: 'deferred',
+      });
+      const consent = await resolveSAMLReleaseConsent({
+        c,
+        env,
+        tenantId,
+        spConfig,
+        userInfo,
+        session: authnInteraction.session,
+        release,
+        nameIdFormat,
+        isPassive: authnRequest.isPassive === true,
+        requestId: authnRequest.id,
+        idpInitiated: false,
+        resumePath: buildSAMLSSOResumePath({
+          requestId: authnRequest.id,
+          spEntityId: authnRequest.issuer,
+        }),
+        ...(parsedInput.requestContext?.releaseConsent
+          ? { pendingChallengeId: parsedInput.requestContext.releaseConsent.challengeId }
+          : {}),
+        notAfterMs: Date.parse(authnRequest.issueInstant) + requestTtlSeconds * 1000,
+        operationId: crypto.randomUUID(),
+      });
+      if (consent.kind === 'ask') {
+        // The request waits for this challenge only: asking again replaces the one before.
+        await saveStoredAuthnRequest(env, tenantId, {
+          authnRequest,
+          relayState,
+          context: {
+            ...carrySAMLRequestContext({
+              ...parsedInput.requestContext,
+              // The step-up, with the session it was verified against: the request comes back
+              // through the consent screen with that session holding the combined evidence.
+              ...(authnAssurance.outcome === 'met' && authnAssurance.assuranceStepUp
+                ? { assuranceStepUp: authnAssurance.assuranceStepUp }
+                : {}),
+            }),
+            releaseConsent: { challengeId: consent.challengeId },
+          },
+          ...(parsedInput.storedRevision !== undefined
+            ? { storedRevision: parsedInput.storedRevision }
+            : {}),
+          requestTtlSeconds,
+        });
+        return c.redirect(consent.consentUrl);
+      }
+      if (consent.kind !== 'issue') {
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          failureKind: `release_consent_${consent.kind}` as const,
+        });
+        return consent.kind === 'no_passive'
+          ? await refuseRequest(
+              STATUS_CODES.NO_PASSIVE,
+              'The request needs the user to consent',
+              'release_consent_no_passive'
+            )
+          : await refuseRequest(
+              STATUS_CODES.REQUEST_DENIED,
+              consent.kind === 'refused'
+                ? 'The user did not consent'
+                : 'SAML request was rejected by IdP policy',
+              `release_consent_${consent.kind}`
+            );
+      }
+      // Identifiers are made only when an approved item needs one.
+      const finalRelease = samlApprovalNeedsIdentifiers(release, consent.approval)
+        ? await computeSAMLAttributeRelease({ ...releaseInput, identifiers: 'made' })
+        : release;
+      if (finalRelease.withheldScopedValues.length > 0) {
+        scheduleSAMLAttributeWithheldAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          withheld: finalRelease.withheldScopedValues,
+        });
+      }
+      const approved = applySAMLReleaseApproval(finalRelease, consent.approval, nameIdFormat);
+      if (!approved.ok) {
+        throw new MissingRequiredSAMLAttributeError(
+          approved.missing.map((name: string) => ({ name, source: 'identity_mapping' as const }))
+        );
+      }
+      if (finalRelease.optionalMissingAttributes.length > 0) {
+        log.debug('Optional SAML attributes omitted', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          missingAttributes: finalRelease.optionalMissingAttributes,
+        });
+      }
       responseXml = await generateSAMLResponse(
-        issuerUrl,
         idpEntityId,
         env,
         authnRequest,
@@ -556,18 +679,33 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         userInfo,
         tenantId,
         authnInteraction.session,
-        parsedInput.requestContext,
+        { attributes: approved.attributes, nameIdFormat },
         log,
-        c,
-        authnAssurance.outcome === 'met' ? authnAssurance : undefined,
-        (withheld) =>
-          scheduleSAMLAttributeWithheldAudit(c, {
-            tenantId,
-            spEntityId: spConfig.entityId,
-            authnRequestId: authnRequest.id,
-            withheld,
-          })
+        authnAssurance.outcome === 'met' ? authnAssurance : undefined
       );
+      // The last check, once the response is built and just before the request is completed and
+      // answered: a withdrawal since the decision issues nothing (the person starts again from the
+      // service).
+      if (
+        !(await samlReleaseConsentStillCurrent(env, {
+          tenantId,
+          userId: authnInteraction.session.userId,
+          spEntityId: spConfig.entityId,
+          consentGeneration: consent.consentGeneration,
+        }))
+      ) {
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          failureKind: 'release_consent_withdrawn',
+        });
+        return await refuseRequest(
+          STATUS_CODES.REQUEST_DENIED,
+          'SAML request was rejected by IdP policy',
+          'release_consent_withdrawn'
+        );
+      }
     } catch (error) {
       if (error instanceof MissingRequiredSAMLAttributeError) {
         log.warn('SAML attribute release policy failed', {
@@ -650,67 +788,6 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
           'SAML field mapping set could not be evaluated',
           'identity_mapping_failed'
         );
-      } else if (error instanceof SAMLAttributeReleaseConsentRequiredError) {
-        log.warn('SAML attribute release consent required', {
-          tenantId,
-          spEntityId: spConfig.entityId,
-          authnRequestId: authnRequest.id,
-          consentMode: error.consentMode,
-          reasonCodes: error.reasonCodes,
-        });
-        scheduleSAMLPolicyFailureAudit(c, {
-          tenantId,
-          spEntityId: spConfig.entityId,
-          authnRequestId: authnRequest.id,
-          failureKind: 'attribute_release_consent_required',
-          policyDetails: {
-            consent_mode: error.consentMode,
-            reason_codes: error.reasonCodes,
-            attribute_set_hash: error.attributeSetHash,
-          },
-        });
-
-        const challengeId = crypto.randomUUID();
-        const challengeContext: SAMLRequestContext = {
-          ...carrySAMLRequestContext({
-            ...parsedInput.requestContext,
-            // The step-up, with the session it was verified against: the request comes back
-            // through this screen with that session holding the combined evidence.
-            ...(authnAssurance.outcome === 'met' && authnAssurance.assuranceStepUp
-              ? { assuranceStepUp: authnAssurance.assuranceStepUp }
-              : {}),
-          }),
-          attributeReleaseConsentChallenge: {
-            challengeId,
-            subjectId: authnInteraction.session.userId,
-            destinationType: 'saml_sp',
-            destinationId: spConfig.entityId,
-            attributeSetHash: error.attributeSetHash,
-            consentMode: error.consentMode,
-            createdAt: Date.now(),
-          },
-        };
-        await saveStoredAuthnRequest(env, tenantId, {
-          authnRequest,
-          relayState,
-          context: challengeContext,
-          ...(parsedInput.storedRevision !== undefined
-            ? { storedRevision: parsedInput.storedRevision }
-            : {}),
-          requestTtlSeconds,
-        });
-
-        return await renderSAMLAttributeReleaseConsentPage(c, {
-          tenantId,
-          requestId: authnRequest.id,
-          spEntityId: spConfig.entityId,
-          challengeId,
-          attributeSetHash: error.attributeSetHash,
-          consentMode: error.consentMode,
-          spConfig,
-          spDisplayName: spConfig.entityId,
-          attributes: error.attributeSummaries,
-        });
       } else if (error instanceof SAMLAuthnContextPolicyError) {
         log.warn('SAML RequestedAuthnContext policy failed', {
           tenantId,
@@ -775,382 +852,13 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     // Return response based on SP's preferred binding
     return answerSP(resolveSAMLResponseDestination(authnRequest, spConfig), responseXml);
   } catch (error) {
+    if (error instanceof IdPInitiatedResume) {
+      return c.redirect(new URL(error.path, issuerUrl).toString());
+    }
     log.error('SSO Error', { method }, error as Error);
     // SECURITY: Do not expose internal error details in response
     return createErrorResponse(c, 'SSO processing failed', STATUS_CODES.RESPONDER);
   }
-}
-
-export async function handleIdPAttributeReleaseConsent(
-  c: Context<{ Bindings: Env }>
-): Promise<Response> {
-  const env = c.env;
-  const log = getLogger(c).module('SAML-IDP');
-  const tenantId = resolveSAMLTenantIdFromContext(c);
-  const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
-  const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
-
-  try {
-    const authSession = await checkUserAuthentication(c, env);
-    if (!authSession) {
-      return createErrorResponse(c, 'Authentication required', STATUS_CODES.UNKNOWN_PRINCIPAL);
-    }
-
-    const body = await c.req.parseBody();
-    const requestId = readFormString(body.saml_request_id);
-    const spEntityId = readFormString(body.saml_sp_entity_id);
-    const challengeId = readFormString(body.challenge_id);
-    const attributeSetHash = readFormString(body.attribute_set_hash);
-    const decision = readFormString(body.decision);
-    const releaseScope = readFormString(body.release_scope);
-    if (!requestId || !spEntityId || !challengeId || !attributeSetHash || !decision) {
-      return createErrorResponse(
-        c,
-        'Missing attribute release consent fields',
-        STATUS_CODES.REQUESTER
-      );
-    }
-    if (
-      decision !== 'approve' &&
-      decision !== 'approve_once' &&
-      decision !== 'approve_remember' &&
-      decision !== 'deny'
-    ) {
-      return createErrorResponse(
-        c,
-        'Invalid attribute release consent decision',
-        STATUS_CODES.REQUESTER
-      );
-    }
-    const oneTimeApproval =
-      decision === 'approve_once' || (decision === 'approve' && releaseScope === 'once');
-
-    // Checked before anything is used up: a stale or wrong post leaves the request waiting.
-    const storedRequest = await readStoredAuthnRequest(env, tenantId, requestId, spEntityId);
-    const authnRequest = storedRequest.data as SAMLAuthnRequest;
-    const challenge = storedRequest.context?.attributeReleaseConsentChallenge;
-    if (
-      !challenge ||
-      challenge.challengeId !== challengeId ||
-      challenge.subjectId !== authSession.userId ||
-      challenge.destinationType !== 'saml_sp' ||
-      challenge.destinationId !== spEntityId ||
-      challenge.attributeSetHash !== attributeSetHash ||
-      Date.now() - challenge.createdAt > requestTtlSeconds * 1000
-    ) {
-      return createErrorResponse(
-        c,
-        'Invalid or expired attribute release consent challenge',
-        STATUS_CODES.REQUEST_DENIED
-      );
-    }
-
-    const spConfig = await getSPConfig(env, tenantId, spEntityId);
-    if (!spConfig) {
-      return createErrorResponse(c, 'Unknown Service Provider', STATUS_CODES.REQUEST_DENIED);
-    }
-
-    if (decision === 'deny') {
-      scheduleSAMLPolicyFailureAudit(c, {
-        tenantId,
-        spEntityId,
-        authnRequestId: authnRequest.id,
-        failureKind: 'attribute_release_consent_required',
-        policyDetails: {
-          user_decision: 'deny',
-          consent_mode: challenge.consentMode,
-          attribute_set_hash: attributeSetHash,
-        },
-      });
-      const responseXml = await generateSAMLProtocolErrorResponse(
-        issuerUrl,
-        idpEntityId,
-        env,
-        authnRequest,
-        spConfig,
-        tenantId,
-        STATUS_CODES.RESPONDER,
-        STATUS_CODES.REQUEST_DENIED,
-        'Attribute release was denied',
-        'attribute_release_consent_required'
-      );
-      await completeStoredAuthnRequest(env, tenantId, requestId, spEntityId, {
-        expectedRevision: storedRequest.revision,
-      });
-      return sendSAMLResponse(
-        c,
-        resolveSAMLResponseDestination(authnRequest, spConfig),
-        responseXml,
-        storedRequest.relayState
-      );
-    }
-
-    await saveStoredAuthnRequest(env, tenantId, {
-      authnRequest,
-      relayState: storedRequest.relayState,
-      context: {
-        ...carrySAMLRequestContext(storedRequest.context),
-        attributeReleaseConsentConfirmed: {
-          subjectId: authSession.userId,
-          destinationType: 'saml_sp',
-          destinationId: spEntityId,
-          attributeSetHash,
-          confirmedAt: Date.now(),
-        },
-      },
-      storedRevision: storedRequest.revision,
-      requestTtlSeconds,
-    });
-
-    // Remembered only once the decision has been recorded on the request at the revision it was
-    // read at: a decision that lost to another tab (or to the request expiring) leaves nothing.
-    if (!oneTimeApproval) {
-      const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-        env,
-        'saml-attribute-release-consent-post',
-        { tenantId }
-      );
-      const repository = new AttributeReleaseConsentRepository(adapter);
-      await repository.grant({
-        tenant_id: tenantId,
-        subject_id: authSession.userId,
-        destination_type: 'saml_sp',
-        destination_id: spEntityId,
-        attribute_set_hash: attributeSetHash,
-        consent_mode: challenge.consentMode,
-      });
-    }
-
-    return c.redirect(buildSAMLSSOResumeUrl(c.req.url, requestId, spEntityId));
-  } catch (error) {
-    log.error('SAML attribute release consent error', {}, error as Error);
-    return createErrorResponse(
-      c,
-      'Attribute release consent processing failed',
-      STATUS_CODES.RESPONDER
-    );
-  }
-}
-
-function readFormString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function buildSAMLSSOResumeUrl(baseUrl: string, requestId: string, spEntityId: string): string {
-  const url = new URL('/saml/idp/sso', baseUrl);
-  url.searchParams.set('saml_request_id', requestId);
-  url.searchParams.set('saml_sp_entity_id', spEntityId);
-  url.searchParams.set('return_to', 'saml_sso');
-  return url.toString();
-}
-
-async function renderSAMLAttributeReleaseConsentPage(
-  c: Context<{ Bindings: Env }>,
-  input: {
-    tenantId: string;
-    requestId: string;
-    spEntityId: string;
-    challengeId: string;
-    attributeSetHash: string;
-    consentMode: AttributeReleaseConsentMode;
-    spConfig: SAMLSPConfig;
-    spDisplayName: string;
-    attributes: SAMLAttributeReleaseConsentRequiredError['attributeSummaries'];
-  }
-): Promise<Response> {
-  const presentation = await loadSAMLAttributeReleaseConsentPresentation(c, input);
-  const rememberHelp =
-    input.consentMode === 'until_attributes_change'
-      ? presentation.rememberUntilChangedHelp
-      : presentation.rememberHelp;
-  const rows = input.attributes
-    .map((attribute) => {
-      const label = attribute.friendlyName || attribute.name;
-      const detail =
-        attribute.valueCount === 1
-          ? '1 value'
-          : `${attribute.valueCount.toLocaleString('en-US')} values`;
-      return `<li><span>${escapeHtml(label)}</span><small>${escapeHtml(detail)}</small></li>`;
-    })
-    .join('');
-  const allowRememberChoice =
-    input.consentMode === 'once' || input.consentMode === 'until_attributes_change';
-  const approveButtonLabel =
-    input.spConfig.attributeReleaseConfirmation?.buttonLabel?.trim() ||
-    (presentation.language.startsWith('ja') ? '続行' : 'Continue');
-  const inlineContent = presentation.inlineContent
-    ? `<div class="notice">${escapeHtml(presentation.inlineContent)
-        .replaceAll('{spName}', escapeHtml(input.spDisplayName))
-        .replaceAll('{entityId}', escapeHtml(input.spEntityId))
-        .replaceAll('\n', '<br>')}</div>`
-    : '';
-  const decisionControls = allowRememberChoice
-    ? `<fieldset>
-        <legend>${escapeHtml(presentation.choiceLegend)}</legend>
-        <label class="choice">
-          <input type="radio" name="release_scope" value="once" checked>
-          <span>${escapeHtml(presentation.onceLabel)}<small>${escapeHtml(presentation.onceHelp)}</small></span>
-        </label>
-        <label class="choice">
-          <input type="radio" name="release_scope" value="remember">
-          <span>${escapeHtml(presentation.rememberLabel)}<small>${escapeHtml(rememberHelp)}</small></span>
-        </label>
-      </fieldset>`
-    : '<input type="hidden" name="release_scope" value="once">';
-
-  c.header('Cache-Control', 'no-store');
-  c.header('Pragma', 'no-cache');
-  return c.html(`<!doctype html>
-<html lang="${escapeHtml(presentation.language)}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Attribute Release Consent</title>
-  <style>
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f7f9; color: #17202a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    main { width: min(92vw, 560px); background: #fff; border: 1px solid #d8dde6; border-radius: 8px; padding: 28px; box-shadow: 0 18px 46px rgba(28, 35, 45, 0.08); }
-    h1 { font-size: 1.35rem; line-height: 1.25; margin: 0 0 12px; }
-    p { color: #526070; line-height: 1.55; margin: 0 0 18px; }
-    ul { border: 1px solid #e2e7ef; border-radius: 6px; list-style: none; margin: 0 0 22px; padding: 0; overflow: hidden; }
-    li { align-items: center; display: flex; justify-content: space-between; gap: 16px; padding: 12px 14px; border-top: 1px solid #e2e7ef; }
-    li:first-child { border-top: 0; }
-    small { color: #66758a; white-space: nowrap; }
-    fieldset { border: 0; margin: 0 0 24px; padding: 0; }
-    legend { color: #344256; font-size: .92rem; font-weight: 700; margin: 0 0 12px; }
-    .choice { align-items: flex-start; display: flex; gap: 12px; margin: 0 0 14px; }
-    .choice input { height: 22px; margin: 1px 0 0; width: 22px; }
-    .choice span { color: #243044; display: grid; font-weight: 600; gap: 4px; line-height: 1.45; }
-    .choice small { white-space: normal; }
-    .notice { background: #f8fafc; border: 1px solid #e2e7ef; border-radius: 6px; color: #526070; line-height: 1.55; margin: 0 0 18px; padding: 12px 14px; }
-    .actions { display: flex; gap: 12px; }
-    button { border: 0; border-radius: 6px; cursor: pointer; font-size: 1rem; padding: 11px 16px; }
-    .approve { background: #235ad1; color: #fff; flex: 1; }
-    .deny { background: #e7ebf1; color: #1d2733; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>${escapeHtml(presentation.title)}</h1>
-    <p>${escapeHtml(presentation.description)}</p>
-    ${inlineContent}
-    <ul>${rows}</ul>
-    <form method="post" action="/saml/idp/attribute-release-consent">
-      <input type="hidden" name="saml_request_id" value="${escapeHtml(input.requestId)}">
-      <input type="hidden" name="saml_sp_entity_id" value="${escapeHtml(input.spEntityId)}">
-      <input type="hidden" name="challenge_id" value="${escapeHtml(input.challengeId)}">
-      <input type="hidden" name="attribute_set_hash" value="${escapeHtml(input.attributeSetHash)}">
-      ${decisionControls}
-      <div class="actions">
-        <button class="deny" type="submit" name="decision" value="deny">${escapeHtml(presentation.denyLabel)}</button>
-        <button class="approve" type="submit" name="decision" value="approve">${escapeHtml(approveButtonLabel)}</button>
-      </div>
-    </form>
-  </main>
-</body>
-</html>`);
-}
-
-async function loadSAMLAttributeReleaseConsentPresentation(
-  c: Context<{ Bindings: Env }>,
-  input: {
-    tenantId: string;
-    spEntityId: string;
-    spDisplayName: string;
-    spConfig: SAMLSPConfig;
-  }
-): Promise<{
-  language: string;
-  title: string;
-  description: string;
-  inlineContent: string;
-  choiceLegend: string;
-  onceLabel: string;
-  onceHelp: string;
-  rememberLabel: string;
-  rememberHelp: string;
-  rememberUntilChangedHelp: string;
-  denyLabel: string;
-}> {
-  const language = preferredConsentLanguage(c);
-  const fallback = defaultSAMLAttributeReleaseConsentPresentation(
-    language,
-    input.spDisplayName,
-    input.spEntityId
-  );
-  const statementId = input.spConfig.attributeReleaseConfirmation?.templateStatementId;
-  if (!statementId) {
-    return fallback;
-  }
-
-  try {
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      c.env,
-      'saml-attribute-release-consent-template',
-      { tenantId: input.tenantId }
-    );
-    const version = await adapter.queryOne<{ id: string }>(
-      `SELECT id
-         FROM consent_statement_versions
-        WHERE tenant_id = ?
-          AND statement_id = ?
-          AND is_current = ?
-        LIMIT 1`,
-      [input.tenantId, statementId, 1]
-    );
-    if (!version) {
-      return fallback;
-    }
-    const localization = await getLocalization(adapter, input.tenantId, version.id, language, 'en');
-    return {
-      ...fallback,
-      title: localization?.title || fallback.title,
-      description: localization?.description || fallback.description,
-      inlineContent: localization?.inline_content || fallback.inlineContent,
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-function defaultSAMLAttributeReleaseConsentPresentation(
-  language: string,
-  spDisplayName: string,
-  spEntityId: string
-) {
-  const ja = language.startsWith('ja');
-  return ja
-    ? {
-        language,
-        title: 'SPへの属性提供に対する同意',
-        description: `${spDisplayName} に送信される属性情報を確認してください。`,
-        inlineContent: `サービス名: ${spDisplayName}\n送信先: ${spEntityId}`,
-        choiceLegend: '同意方法',
-        onceLabel: '今回だけ情報を送信することに同意する',
-        onceHelp: '次回ログイン時に再度同意確認を行う',
-        rememberLabel: '今後も情報を自動的にこのサービスに送信することに同意する',
-        rememberHelp: '次回ログイン以降、同意確認は行わない',
-        rememberUntilChangedHelp: '送信される属性が変更されるまでは同意確認を行わない',
-        denyLabel: 'キャンセル',
-      }
-    : {
-        language,
-        title: 'Consent for releasing attributes to the SP',
-        description: `Review the attributes that will be released to ${spDisplayName}.`,
-        inlineContent: `Service: ${spDisplayName}\nDestination: ${spEntityId}`,
-        choiceLegend: 'Consent choice',
-        onceLabel: 'Release the information this time only',
-        onceHelp: 'Authrim will ask again at the next login.',
-        rememberLabel: 'Automatically release the information to this service in the future',
-        rememberHelp: 'Authrim will not ask again on later logins.',
-        rememberUntilChangedHelp: 'Authrim will ask again if the released attributes change.',
-        denyLabel: 'Deny',
-      };
-}
-
-function preferredConsentLanguage(c: Context<{ Bindings: Env }>): string {
-  const languageHeader = c.req.header('accept-language') || '';
-  const firstLanguage = languageHeader.split(',')[0]?.trim().toLowerCase();
-  return firstLanguage?.startsWith('ja') ? 'ja' : 'en';
 }
 
 async function resolveAttributeReleaseFailureUserMessageMode(
@@ -1227,6 +935,14 @@ async function parseStoredAuthnRequest(
   // a resume would take it as checked.
   if (storedRequest.context?.refusedOnArrival) {
     throw new Error('Stored SAML request was refused');
+  }
+  // A pending IdP-initiated sign-in is resumed only where it was started (idp-initiated.ts): the
+  // Login UI sends every SAML sign-in back here, so it is sent on to that endpoint, which checks
+  // it again. Nothing of it is answered here.
+  if (storedRequest.context?.idpInitiated) {
+    throw new IdPInitiatedResume(
+      `/saml/idp/init?${new URLSearchParams({ sp: spEntityId, pending: requestId }).toString()}`
+    );
   }
   const held = storedRequest.context?.loginNonceHash;
   const keptHash = typeof held === 'string' && held ? held : null;
@@ -1403,7 +1119,7 @@ function parseOptionalNonNegativeInteger(value: string | null): number | null {
 /**
  * Check if user is authenticated (sharded)
  */
-async function checkUserAuthentication(
+export async function checkUserAuthentication(
   c: Context<{ Bindings: Env }>,
   env: Env
 ): Promise<AuthenticatedSAMLSession | null> {
@@ -1481,7 +1197,6 @@ async function getUserInfo(
  * Generate SAML Response with Assertion
  */
 async function generateSAMLResponse(
-  issuerUrl: string,
   idpEntityId: string,
   env: Env,
   authnRequest: SAMLAuthnRequest,
@@ -1489,16 +1204,14 @@ async function generateSAMLResponse(
   userInfo: SAMLUserInfo,
   tenantId: string,
   authSession: AuthenticatedSAMLSession,
-  requestContext?: SAMLRequestContext,
+  /** The attributes approved for release, and the NameID format chosen for the request. */
+  release: { attributes: SAMLAttribute[]; nameIdFormat: NameIDFormat },
   log?: {
     debug(message: string, context?: Record<string, unknown>): void;
     error(message: string, context?: Record<string, unknown>, error?: Error): void;
   },
-  requestScope?: object,
   /** The class reference chosen for the AAL reached, and what the one issued is checked against. */
-  assurance?: { classRef?: string; guard: SAMLClassRefGuard },
-  /** Told what scoped values the tenant's institution scopes kept out of the assertion. */
-  onScopedValuesWithheld?: (withheld: SAMLWithheldScopedValues[]) => void
+  assurance?: { classRef?: string; guard: SAMLClassRefGuard }
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
@@ -1512,14 +1225,13 @@ async function generateSAMLResponse(
     tenantId,
     spConfig.assertionValiditySeconds
   );
-  const nameIdFormat = resolveSAMLNameIDFormat(authnRequest, spConfig);
-  const pairwiseSecret = await resolveSAMLPairwiseSecret(env, tenantId);
-  const persistentRegistry = resolveSAMLPersistentNameIDRegistryStore(env);
+  const nameIdFormat = release.nameIdFormat;
+  // Made only now, once the release is approved: a refused request makes no NameID.
   const nameIdValue = await resolveSAMLNameIDValue(userInfo, nameIdFormat, {
     tenantId,
     spEntityId: spConfig.entityId,
-    pairwiseSalt: pairwiseSecret,
-    persistentRegistry,
+    pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
+    persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
     allowCreate: authnRequest.nameIdPolicy?.allowCreate ?? true,
     transientStore: resolveSAMLTransientNameIDStore(env),
     transientTtlSeconds: assertionTtlSeconds,
@@ -1528,144 +1240,6 @@ async function generateSAMLResponse(
 
   // Determine ACS URL
   const acsUrl = resolveSAMLResponseDestination(authnRequest, spConfig);
-  const identityMapping = await resolveSAMLRuntimeIdentityMapping(
-    env,
-    tenantId,
-    idpEntityId,
-    spConfig
-  );
-  const identityMappingRuntimeContext = await buildSAMLIdentityMappingRuntimeContext({
-    env,
-    tenantId,
-    idpEntityId,
-    spEntityId: spConfig.entityId,
-    userInfo,
-    pairwiseSecret,
-    persistentRegistry,
-    identityMapping,
-  });
-  const mappingContext = {
-    role: 'idp' as const,
-    tenantId,
-    localEntityId: idpEntityId,
-    partnerEntityId: spConfig.entityId,
-    runtimeContext: identityMappingRuntimeContext,
-  };
-  const onReadError = (message: string, error: unknown) =>
-    log?.error(
-      message,
-      { tenantId, spEntityId: spConfig.entityId, authnRequestId: authnRequest.id },
-      error instanceof Error ? error : new Error(String(error))
-    );
-  // The assurance values a mapping releases come from the person's evidence, read only when
-  // one is released. The tenant's institution (the scopes the scoped attributes must be under,
-  // and the attributes a mapping may release about it) is applied when the mapping has a use for it.
-  const attributeRelease = await releaseSAMLAttributesWithInstitution({
-    env,
-    tenantId,
-    subject: await withSAMLAssuranceAttributes(userInfo, {
-      requestScope: requestScope ?? {},
-      env,
-      tenantId,
-      userId: authSession.userId,
-      identityMapping,
-      mappingContext,
-      onError: onReadError,
-    }),
-    releaseConfig: {
-      ...spConfig,
-      tenantId,
-      localEntityId: idpEntityId,
-      identityMapping: identityMapping
-        ? {
-            ...identityMapping,
-            runtimeContext: identityMappingRuntimeContext,
-          }
-        : undefined,
-    },
-    onError: onReadError,
-  });
-  if (attributeRelease.withheldScopedValues?.length) {
-    onScopedValuesWithheld?.(attributeRelease.withheldScopedValues);
-  }
-  let destinationFieldConsentConfirmed: { consentRecordId: string } | undefined;
-  if (identityMapping?.destinationProfileId) {
-    const importedRelease = env.SAML_RUNTIME_PORTS?.serviceProviders.getRelease({
-      tenantId,
-      entityId: spConfig.entityId,
-    });
-    if (env.SAML_RUNTIME_PORTS) {
-      assertSAMLImportedSPRelease(importedRelease ?? null, {
-        tenantId,
-        spEntityId: spConfig.entityId,
-        idpEntityId,
-        sourceSelector: spConfig.identityMapping,
-      });
-    }
-    const releaseInput = {
-      coreAdapter: await resolveAuthCorePersistenceAdapterFromEnv(
-        env,
-        'saml-destination-profile-consent',
-        { tenantId }
-      ),
-      tenantId,
-      subjectId: userInfo.id,
-      samlSpId: spConfig.entityId,
-      profileId: identityMapping.destinationProfileId,
-      fieldPolicies: identityMapping.destinationFieldPolicies,
-      releaseSafetyBinding: resolveSAMLIdentityMappingFieldMappingBinding(identityMapping, {
-        role: 'idp',
-        tenantId,
-        localEntityId: idpEntityId,
-        partnerEntityId: spConfig.entityId,
-        runtimeContext: identityMappingRuntimeContext,
-      }),
-      attributes: attributeRelease.attributes,
-    };
-    const destinationRelease = (
-      env.SAML_RUNTIME_PORTS
-        ? await filterSamlAttributesByDestinationConsentDescriptorWithStatus({
-            ...releaseInput,
-            descriptor: importedRelease?.destinationProfile ?? null,
-          })
-        : await filterSamlAttributesByDestinationConsentWithStatus({
-            ...releaseInput,
-            adminAdapter: requireAdminDatabaseAdapter(env, 'saml-destination-profile-consent'),
-          })
-    ) as {
-      attributes: typeof attributeRelease.attributes;
-      consentApplied: boolean;
-      consentRecordId?: string;
-      consentEvidence?: Record<string, unknown>;
-    };
-    attributeRelease.attributes = destinationRelease.attributes;
-    if (
-      destinationRelease.consentApplied &&
-      destinationRelease.consentRecordId &&
-      destinationRelease.consentEvidence?.saml_request_id === authnRequest.id
-    ) {
-      destinationFieldConsentConfirmed = {
-        consentRecordId: destinationRelease.consentRecordId,
-      };
-    }
-  }
-  await enforceSAMLAttributeReleaseConsent({
-    env,
-    tenantId,
-    subjectId: userInfo.id,
-    spConfig,
-    attributes: attributeRelease.attributes,
-    confirmedRelease: requestContext?.attributeReleaseConsentConfirmed,
-    destinationFieldConsentConfirmed,
-  });
-  if (attributeRelease.optionalMissingAttributes.length > 0) {
-    log?.debug('Optional SAML attributes omitted', {
-      tenantId,
-      spEntityId: spConfig.entityId,
-      authnRequestId: authnRequest.id,
-      missingAttributes: attributeRelease.optionalMissingAttributes,
-    });
-  }
 
   const authnContextClassRef = chooseSAMLAuthnContextClassRef(
     authnRequest,
@@ -1720,7 +1294,7 @@ async function generateSAMLResponse(
     notBefore: timing.notBefore,
     notOnOrAfter: timing.notOnOrAfter,
     authnContextClassRef,
-    attributes: attributeRelease.attributes,
+    attributes: release.attributes,
   });
 
   const encryptFullAssertion = Boolean(spConfig.encryptAssertions);
@@ -1753,164 +1327,6 @@ async function generateSAMLResponse(
   }
 
   return responseXml;
-}
-
-async function buildSAMLIdentityMappingRuntimeContext(input: {
-  env: Env;
-  tenantId: string;
-  idpEntityId: string;
-  spEntityId: string;
-  userInfo: SAMLUserInfo;
-  pairwiseSecret?: string;
-  persistentRegistry?: ReturnType<typeof resolveSAMLPersistentNameIDRegistryStore>;
-  identityMapping?: SAMLIdentityMappingReleaseConfig;
-}): Promise<Record<string, unknown>> {
-  const samlContext: Record<string, unknown> = {
-    localEntityId: input.idpEntityId,
-    partnerEntityId: input.spEntityId,
-  };
-
-  if (usesSAMLEduPersonTargetedIDTransform(input.identityMapping)) {
-    const profileId = findSAMLPersistentIdentifierProfileId(input.identityMapping);
-    const profile = profileId
-      ? await loadSAMLPersistentIdentifierProfile(input.env, input.tenantId, profileId)
-      : null;
-    const pairwiseSecret = profile?.secretRef
-      ? await resolveSAMLPairwiseSecretForRef(input.env, input.tenantId, profile.secretRef)
-      : input.pairwiseSecret;
-    if (profile?.issuerEntityId) {
-      samlContext.localEntityId = profile.issuerEntityId;
-    }
-    if (!pairwiseSecret) {
-      throw new SAMLIdentityMappingRuntimeError([
-        {
-          category: 'policy',
-          code: profile
-            ? 'policy.persistent_identifier_secret_missing'
-            : 'policy.identity_mapping_pairwise_secret_missing',
-          severity: 'critical',
-        },
-      ]);
-    }
-    samlContext.eduPersonTargetedIdOpaque = await resolveSAMLEduPersonTargetedIDOpaque(
-      input.userInfo,
-      {
-        tenantId: input.tenantId,
-        spEntityId: input.spEntityId,
-        pairwiseSalt: pairwiseSecret,
-        pairwiseAlgorithm: profile?.algorithm,
-        pairwiseAudienceMode: profile?.audienceMode,
-        persistentProfileId: profile?.id,
-        persistentRegistry: input.persistentRegistry,
-      }
-    );
-  }
-
-  return { saml: samlContext };
-}
-
-interface SAMLPersistentIdentifierProfile {
-  id: string;
-  secretRef?: string;
-  issuerEntityId?: string;
-  algorithm?: SAMLPersistentIdentifierAlgorithm;
-  audienceMode?: 'runtime' | 'saml_sp_entity_id' | 'oidc_sector_identifier';
-}
-
-interface SAMLPersistentIdentifierProfileRow {
-  id: string;
-  mode: string;
-  algorithm: string;
-  protocol_scope: string;
-  secret_ref: string | null;
-  issuer_entity_id: string | null;
-  audience_mode: string | null;
-}
-
-function findSAMLPersistentIdentifierProfileId(
-  identityMapping?: SAMLIdentityMappingReleaseConfig
-): string | undefined {
-  const bindings = [
-    identityMapping,
-    identityMapping?.defaultBinding,
-    ...(identityMapping?.bindings ?? []),
-  ];
-  for (const binding of bindings) {
-    const transform = binding?.transforms?.find(
-      (item) => item.operation === 'saml_edu_person_targeted_id'
-    );
-    const profileId = readString(transform?.parameters?.persistentIdentifierProfileId);
-    if (profileId) {
-      return profileId;
-    }
-  }
-  return undefined;
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-async function loadSAMLPersistentIdentifierProfile(
-  env: Env,
-  tenantId: string,
-  profileId: string
-): Promise<SAMLPersistentIdentifierProfile | null> {
-  const adapter = requireAdminDatabaseAdapter(env, 'saml-persistent-identifier-profile');
-  const rows = await adapter.query<SAMLPersistentIdentifierProfileRow>(
-    `SELECT id, mode, algorithm, protocol_scope, secret_ref, issuer_entity_id, audience_mode
-       FROM persistent_identifier_profiles
-      WHERE tenant_id = ? AND id = ? AND lifecycle_state = 'active'
-      LIMIT 1`,
-    [tenantId, profileId]
-  );
-  const row = rows[0];
-  if (!row) {
-    throw new SAMLIdentityMappingRuntimeError([
-      {
-        category: 'policy',
-        code: 'policy.persistent_identifier_profile_not_found',
-        severity: 'critical',
-      },
-    ]);
-  }
-  if (row.mode !== 'computed' || !['any', 'saml', 'generic'].includes(row.protocol_scope)) {
-    throw new SAMLIdentityMappingRuntimeError([
-      {
-        category: 'policy',
-        code: 'policy.persistent_identifier_profile_unsupported_mode',
-        severity: 'critical',
-      },
-    ]);
-  }
-  return {
-    id: row.id,
-    secretRef: row.secret_ref ?? undefined,
-    issuerEntityId: row.issuer_entity_id ?? undefined,
-    algorithm: row.algorithm === 'shibboleth_sha1_base64' ? 'shibboleth_sha1_base64' : undefined,
-    audienceMode: isSAMLPersistentIdentifierAudienceMode(row.audience_mode)
-      ? row.audience_mode
-      : undefined,
-  };
-}
-
-function isSAMLPersistentIdentifierAudienceMode(
-  value: string | null
-): value is 'runtime' | 'saml_sp_entity_id' | 'oidc_sector_identifier' {
-  return value === 'runtime' || value === 'saml_sp_entity_id' || value === 'oidc_sector_identifier';
-}
-
-function usesSAMLEduPersonTargetedIDTransform(
-  identityMapping?: SAMLIdentityMappingReleaseConfig
-): boolean {
-  const bindings = [
-    identityMapping,
-    identityMapping?.defaultBinding,
-    ...(identityMapping?.bindings ?? []),
-  ];
-  return bindings.some((binding) =>
-    binding?.transforms?.some((transform) => transform.operation === 'saml_edu_person_targeted_id')
-  );
 }
 
 export async function generateSAMLProtocolErrorResponse(
@@ -1994,16 +1410,5 @@ function createErrorResponse(
   );
 }
 
-/**
- * Escape HTML special characters
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 const TENANT_SAML_ATTRIBUTE_RELEASE_FAILURE_MESSAGE_MODE =
   'tenant.saml_attribute_release_failure_message_mode';

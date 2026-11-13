@@ -2378,7 +2378,13 @@ interface ConsentFeatureFlags {
 
 /** One piece of information (an OIDC claim) the app would be given. */
 export interface ConsentInformationReleaseItem {
+	/** An OIDC claim's name; for a SAML SP, the item's key (sent back as is). */
 	name: string;
+	/** A SAML SP's item: what it is called, and whether it is an attribute or the NameID. */
+	label?: string;
+	kind?: 'attribute' | 'nameid';
+	/** A SAML SP's item whose value is made only once approved (none shown). */
+	deferred?: boolean;
 	/** Always released when the user allows. Optional items can be left out. */
 	required: boolean;
 	/** Whether the user approved it last time; optional items start from this. */

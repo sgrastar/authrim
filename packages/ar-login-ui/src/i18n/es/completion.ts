@@ -83,6 +83,9 @@ const completion = {
 	consent_item_processing_purpose: 'Finalidad del tratamiento',
 	consent_item_withdrawal_impact: 'Consecuencias de retirar el consentimiento',
 	consent_release_title: 'Información compartida con {clientName}',
+	consent_release_saml_nameid: 'Tu identificador para este servicio',
+	consent_release_saml_nameid_email:
+		'Tu dirección de correo electrónico (como identificador para este servicio)',
 	consent_release_hint:
 		'Los elementos marcados como obligatorios siempre se comparten si lo permites. Desmarca los elementos opcionales que no quieras compartir.',
 	consent_release_purpose: 'Finalidad',

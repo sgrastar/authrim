@@ -34,7 +34,9 @@ export function productionSpConfig(
     signAssertions: false,
     allowedBindings: ['post'],
     authnRequestSignaturePolicy: 'optional',
-    attributeReleaseConsent: { enabled: false, mode: 'once' },
+    // The SP does not ask the person: the attributes it requires are released, the optional
+    // ones are not (a trusted SP, or a person's approval of everything, releases them too).
+    informationReleaseConsent: { enabled: false, ask: 'once', show_values: false },
     identityMapping: {
       fieldMappingSetId: 'field_mapping_00000000',
       destinationFieldPolicies: policies,

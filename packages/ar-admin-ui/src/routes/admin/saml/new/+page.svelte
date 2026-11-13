@@ -6,7 +6,6 @@
 	import {
 		adminSAMLAPI,
 		type CreateSAMLProviderRequest,
-		type SAMLAttributeReleaseConfirmationValueDisplay,
 		type SAMLDestinationFieldReleaseMode,
 		type SAMLFederationTrustProfile,
 		type SAMLFederationRuntimeResolutionPolicy,
@@ -22,22 +21,14 @@
 		type SAMLTrustCertificatePreview
 	} from '#lib/api/admin-saml.js';
 
-	import {
-		adminConsentStatementsAPI,
-		type ConsentStatement
-	} from '#lib/api/admin-consent-statements.js';
-
+	import type { InformationReleaseConsentSetting } from '#lib/api/admin-clients.js';
+	import SAMLInformationReleaseConsentEditor from '#lib/components/saml/SAMLInformationReleaseConsentEditor.svelte';
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary,
 		type IdentityMappingFieldMappingVersionSummary
 	} from '#lib/api/admin-identity-mapping.js';
-	import {
-		AdminDataTable,
-		AdminPageHeader,
-		AdminPageShell,
-		AdminSection
-	} from '#lib/components/admin/index.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import LoginProviderIconPicker from '#lib/components/admin/LoginProviderIconPicker.svelte';
 	import SAMLMappingSetReleasePolicy from '#lib/components/saml/SAMLMappingSetReleasePolicy.svelte';
 	import {
@@ -56,14 +47,6 @@
 
 	type SetupMode = 'metadata_url' | 'metadata_xml' | 'manual';
 	type SetupTarget = SAMLProvider['providerType'] | 'federation';
-	type AttributeReleaseConfirmationMode =
-		| 'disabled'
-		| 'uapprove_once'
-		| 'uapprove_until_attributes_change'
-		| 'every_time';
-	type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
-
-	const samlAttributeReleaseConfirmationCategory = 'saml_attribute_release_confirmation';
 
 	const nameIdFormats = [
 		{
@@ -137,12 +120,7 @@
 	let mappingReleaseFieldsError = $state('');
 	let mappingReleaseLoadSequence = 0;
 	let metadataRequestedAttributes = $state<SAMLProviderConfig['metadataRequestedAttributes']>([]);
-	let attributeReleaseConfirmationMode = $state<AttributeReleaseConfirmationMode>('disabled');
-	let attributeReleaseValueDisplay =
-		$state<SAMLAttributeReleaseConfirmationValueDisplay>('masked_values');
-	let attributeReleaseTemplateStatementId = $state('');
-	let attributeReleaseButtonLabel = $state('');
-	let consentStatements = $state<ConsentStatement[]>([]);
+	let informationReleaseConsent = $state<InformationReleaseConsentSetting | null>(null);
 	let importingMetadata = $state(false);
 	let metadataImported = $state(false);
 	let metadataImportedProviderType = $state<SAMLProvider['providerType'] | ''>('');
@@ -212,17 +190,6 @@
 	let metadataImportTimer: ReturnType<typeof setTimeout> | undefined;
 	let providerCertificatePreviewTimer: ReturnType<typeof setTimeout> | undefined;
 	let federationCertificatePreviewTimer: ReturnType<typeof setTimeout> | undefined;
-	const attributeReleaseTemplateStatements = $derived(
-		consentStatements.filter(
-			(statement) => statement.category === samlAttributeReleaseConfirmationCategory
-		)
-	);
-	const selectedAttributeReleaseTemplate = $derived(
-		attributeReleaseTemplateStatements.find(
-			(statement) => statement.id === attributeReleaseTemplateStatementId
-		) || null
-	);
-
 	onMount(() => {
 		const trustProfileId = page.url.searchParams.get('trustProfileId');
 		const requestedType = page.url.searchParams.get('type');
@@ -235,7 +202,6 @@
 			setupTarget = providerType;
 		}
 		void loadFieldMappingSets();
-		void loadConsentStatements();
 	});
 
 	async function loadFieldMappingSets() {
@@ -292,21 +258,6 @@
 		mappingReleaseFieldsError = '';
 		loadingMappingReleaseFields = false;
 		mappingReleaseLoadSequence += 1;
-	}
-
-	async function loadConsentStatements() {
-		try {
-			const result = await adminConsentStatementsAPI.listStatements();
-			consentStatements = result.statements || [];
-			if (!attributeReleaseTemplateStatementId) {
-				attributeReleaseTemplateStatementId =
-					consentStatements.find(
-						(statement) => statement.category === samlAttributeReleaseConfirmationCategory
-					)?.id || '';
-			}
-		} catch {
-			consentStatements = [];
-		}
 	}
 
 	async function loadFederationTrustProfileForEdit(id: string) {
@@ -367,39 +318,9 @@
 		return bindings;
 	}
 
-	function attributeReleaseConfirmationEnabled(): boolean {
-		return providerType === 'saml_sp' && attributeReleaseConfirmationMode !== 'disabled';
-	}
-
-	function attributeReleaseConsentMode(): AttributeReleaseConsentMode {
-		if (attributeReleaseConfirmationMode === 'every_time') return 'every_time';
-		if (attributeReleaseConfirmationMode === 'uapprove_once') return 'once';
-		return 'until_attributes_change';
-	}
-
-	function attributeReleaseConfirmationConfig(): Partial<SAMLProviderConfig> {
-		if (providerType !== 'saml_sp') return {};
-		if (!attributeReleaseConfirmationEnabled()) {
-			return {
-				attributeReleaseConsent: {
-					enabled: false,
-					mode: 'once'
-				}
-			};
-		}
-		return {
-			attributeReleaseConsent: {
-				enabled: true,
-				mode: attributeReleaseConsentMode()
-			},
-			attributeReleaseConfirmation: {
-				compatibilityMode:
-					attributeReleaseConfirmationMode === 'every_time' ? 'custom' : 'uapprove',
-				valueDisplay: attributeReleaseValueDisplay,
-				templateStatementId: attributeReleaseTemplateStatementId || undefined,
-				buttonLabel: attributeReleaseButtonLabel.trim() || undefined
-			}
-		};
+	function informationReleaseConsentConfig(): Partial<SAMLProviderConfig> {
+		if (providerType !== 'saml_sp' || !informationReleaseConsent) return {};
+		return { informationReleaseConsent };
 	}
 
 	function identityMappingConfig(
@@ -487,79 +408,6 @@
 		destinationFieldPolicies = { ...destinationFieldPolicies, [key]: mode };
 	}
 
-	function tAttributeRelease(key: string): string {
-		const ja = getLocale() === 'ja';
-		const labels: Record<string, { ja: string; en: string }> = {
-			title: { ja: '属性送信確認', en: 'Attribute release confirmation' },
-			description: {
-				ja: 'uApprove互換の確認画面として、SPに送信する属性をユーザーに提示します。',
-				en: 'Show a uApprove-compatible confirmation before releasing attributes to this SP.'
-			},
-			displayMode: { ja: '表示モード', en: 'Display mode' },
-			disabled: { ja: '表示しない', en: 'Do not show' },
-			uapproveOnce: {
-				ja: 'uApprove互換: 初回のみ確認',
-				en: 'uApprove compatible: first time only'
-			},
-			uapproveChanged: {
-				ja: 'uApprove互換: 属性が変わったら再確認',
-				en: 'uApprove compatible: ask again when attributes change'
-			},
-			everyTime: { ja: '毎回確認', en: 'Ask every SSO' },
-			valueDisplay: { ja: '属性値表示', en: 'Attribute value display' },
-			names: { ja: '属性名のみ', en: 'Attribute names only' },
-			maskedValues: { ja: '値をマスクして表示', en: 'Show masked values' },
-			fullValues: { ja: '属性値を表示', en: 'Show values' },
-			template: { ja: '通知文テンプレート', en: 'Notice template' },
-			noTemplate: { ja: 'テンプレートを指定しない', en: 'No template' },
-			buttonLabel: { ja: 'ユーザー画面のボタン文言', en: 'User-facing button label' },
-			buttonPlaceholder: { ja: '同意して続行', en: 'Accept and continue' },
-			preview: { ja: 'ユーザー表示プレビュー', en: 'User-facing display preview' },
-			previewCaption: {
-				ja: 'この枠は保存される設定値ではなく、ユーザーに表示される確認画面の見え方です。',
-				en: 'This preview shows what users will see. It is not a saved configuration summary.'
-			},
-			previewTitle: {
-				ja: 'このサービスに以下の情報を送信します。',
-				en: 'The following information will be released to this service.'
-			},
-			service: { ja: 'サービス', en: 'Service' },
-			entityId: { ja: '送信先', en: 'Destination' },
-			attribute: { ja: '属性', en: 'Attribute' },
-			value: { ja: '値', en: 'Value' },
-			remember: {
-				ja: 'このサービスへの属性送信を次回から表示しない',
-				en: 'Do not show this again for this service'
-			},
-			rememberChanged: {
-				ja: '送信される属性が変更された場合は再度表示されます。',
-				en: 'It will be shown again if released attributes change.'
-			},
-			noAttributes: {
-				ja: '送信属性の詳細はField Mapping Setの設定ページで確認してください。',
-				en: 'Use the Field Mapping Set settings page to review the released attributes.'
-			},
-			enabled: { ja: '有効', en: 'Enabled' }
-		};
-		return ja ? labels[key]?.ja || key : labels[key]?.en || key;
-	}
-
-	function attributeReleaseButtonText(): string {
-		return attributeReleaseButtonLabel.trim() || tAttributeRelease('buttonPlaceholder');
-	}
-
-	function releasePreviewAttributes(): Array<{ name: string; value: string }> {
-		return [];
-	}
-
-	function displayPreviewValue(value: string): string {
-		if (attributeReleaseValueDisplay === 'names') return '-';
-		if (attributeReleaseValueDisplay === 'full_values') return value;
-		if (!value) return '';
-		if (value.length <= 4) return '••••';
-		return `${value.slice(0, 2)}••••${value.slice(-2)}`;
-	}
-
 	function buildManualConfig(): SAMLProviderConfig {
 		const config: SAMLProviderConfig = {
 			description: description.trim() || undefined,
@@ -607,7 +455,7 @@
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
 			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
 			...identityMappingConfig(),
-			...attributeReleaseConfirmationConfig()
+			...informationReleaseConsentConfig()
 		};
 	}
 
@@ -642,7 +490,7 @@
 			defaultAuthnContextClassRef: defaultAuthnContextClassRef.trim() || undefined,
 			passkeyAuthnContextClassRef: passkeyAuthnContextClassRef.trim() || undefined,
 			...identityMappingConfig(),
-			...attributeReleaseConfirmationConfig()
+			...informationReleaseConsentConfig()
 		};
 	}
 
@@ -2780,163 +2628,15 @@
 								/>
 							</div>
 
-							<div class="admin-field admin-field--full attribute-release-confirmation">
-								<div class="attribute-release-confirmation__header">
-									<div>
-										<h3>{tAttributeRelease('title')}</h3>
-										<p>{tAttributeRelease('description')}</p>
-									</div>
-									<span
-										class="status-badge"
-										data-state={attributeReleaseConfirmationEnabled() ? 'active' : 'inactive'}
-									>
-										{attributeReleaseConfirmationEnabled()
-											? tAttributeRelease('enabled')
-											: $LL.admin_saml_detail_disabled()}
-									</span>
+							{#if providerType === 'saml_sp'}
+								<div class="admin-field admin-field--full">
+									<SAMLInformationReleaseConsentEditor
+										value={informationReleaseConsent}
+										onChange={(next) => (informationReleaseConsent = next)}
+										idPrefix="saml-information-release"
+									/>
 								</div>
-
-								<div class="form-grid compact-release-grid">
-									<div class="admin-field">
-										<label for="attributeReleaseConfirmationMode" class="admin-field__label">
-											{tAttributeRelease('displayMode')}
-										</label>
-										<select
-											id="attributeReleaseConfirmationMode"
-											bind:value={attributeReleaseConfirmationMode}
-											class="admin-select"
-										>
-											<option value="disabled">{tAttributeRelease('disabled')}</option>
-											<option value="uapprove_once">{tAttributeRelease('uapproveOnce')}</option>
-											<option value="uapprove_until_attributes_change">
-												{tAttributeRelease('uapproveChanged')}
-											</option>
-											<option value="every_time">{tAttributeRelease('everyTime')}</option>
-										</select>
-									</div>
-
-									<div class="admin-field">
-										<label for="attributeReleaseValueDisplay" class="admin-field__label">
-											{tAttributeRelease('valueDisplay')}
-										</label>
-										<select
-											id="attributeReleaseValueDisplay"
-											bind:value={attributeReleaseValueDisplay}
-											class="admin-select"
-											disabled={!attributeReleaseConfirmationEnabled()}
-										>
-											<option value="names">{tAttributeRelease('names')}</option>
-											<option value="masked_values">{tAttributeRelease('maskedValues')}</option>
-											<option value="full_values">{tAttributeRelease('fullValues')}</option>
-										</select>
-									</div>
-
-									<div class="admin-field">
-										<label for="attributeReleaseTemplate" class="admin-field__label">
-											{tAttributeRelease('template')}
-										</label>
-										<select
-											id="attributeReleaseTemplate"
-											bind:value={attributeReleaseTemplateStatementId}
-											class="admin-select"
-											disabled={!attributeReleaseConfirmationEnabled()}
-										>
-											<option value="">{tAttributeRelease('noTemplate')}</option>
-											{#each attributeReleaseTemplateStatements as statement (statement.id)}
-												<option value={statement.id}>{statement.slug}</option>
-											{/each}
-										</select>
-									</div>
-
-									<div class="admin-field">
-										<label for="attributeReleaseButtonLabel" class="admin-field__label">
-											{tAttributeRelease('buttonLabel')}
-										</label>
-										<input
-											id="attributeReleaseButtonLabel"
-											type="text"
-											class="admin-input"
-											bind:value={attributeReleaseButtonLabel}
-											placeholder={tAttributeRelease('buttonPlaceholder')}
-											disabled={!attributeReleaseConfirmationEnabled()}
-										/>
-									</div>
-								</div>
-
-								{#if attributeReleaseConfirmationEnabled()}
-									<div class="attribute-release-preview" aria-label={tAttributeRelease('preview')}>
-										<div class="attribute-release-preview__copy">
-											<div>
-												<p class="attribute-release-preview__eyebrow">
-													{tAttributeRelease('preview')}
-												</p>
-												<p class="attribute-release-preview__caption">
-													{tAttributeRelease('previewCaption')}
-												</p>
-											</div>
-											<p>{tAttributeRelease('previewTitle')}</p>
-											<dl>
-												<div>
-													<dt>{tAttributeRelease('service')}</dt>
-													<dd>{name || '-'}</dd>
-												</div>
-												<div>
-													<dt>{tAttributeRelease('entityId')}</dt>
-													<dd>{entityId || '-'}</dd>
-												</div>
-												{#if selectedAttributeReleaseTemplate}
-													<div>
-														<dt>{tAttributeRelease('template')}</dt>
-														<dd>{selectedAttributeReleaseTemplate.slug}</dd>
-													</div>
-												{/if}
-											</dl>
-										</div>
-
-										{#if releasePreviewAttributes().length > 0}
-											<AdminDataTable compact>
-												<thead>
-													<tr>
-														<th>{tAttributeRelease('attribute')}</th>
-														<th>{tAttributeRelease('value')}</th>
-													</tr>
-												</thead>
-												<tbody>
-													{#each releasePreviewAttributes() as attribute, index (`${attribute.name}-${index}`)}
-														<tr>
-															<td>{attribute.name}</td>
-															<td>{displayPreviewValue(attribute.value)}</td>
-														</tr>
-													{/each}
-												</tbody>
-											</AdminDataTable>
-										{:else}
-											<p class="field-hint">{tAttributeRelease('noAttributes')}</p>
-										{/if}
-
-										<label class="preview-check">
-											<input
-												type="checkbox"
-												checked={attributeReleaseConfirmationMode !== 'every_time'}
-												disabled
-											/>
-											<span>
-												{tAttributeRelease('remember')}
-												<small>{tAttributeRelease('rememberChanged')}</small>
-											</span>
-										</label>
-
-										<div class="attribute-release-preview__actions">
-											<button type="button" class="btn btn-primary" disabled>
-												{attributeReleaseButtonText()}
-											</button>
-											<button type="button" class="btn btn-secondary" disabled>
-												{$LL.admin_consent_statements_cancel()}
-											</button>
-										</div>
-									</div>
-								{/if}
-							</div>
+							{/if}
 
 							<div class="admin-field">
 								<span class="admin-field__label">
@@ -3336,39 +3036,6 @@
 		text-decoration: underline;
 	}
 
-	.attribute-release-confirmation {
-		display: grid;
-		gap: 16px;
-		padding: 14px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-control);
-		background: var(--color-surface-subtle);
-	}
-
-	.attribute-release-confirmation__header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 12px;
-	}
-
-	.attribute-release-confirmation__header h3 {
-		margin: 0 0 4px;
-		color: var(--color-text);
-		font-size: 0.95rem;
-	}
-
-	.attribute-release-confirmation__header p {
-		margin: 0;
-		color: var(--color-text-muted);
-		font-size: 0.8125rem;
-		line-height: 1.45;
-	}
-
-	.compact-release-grid {
-		gap: 12px;
-	}
-
 	.radio-card-group {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -3402,109 +3069,6 @@
 	.radio-card input {
 		flex: 0 0 auto;
 		margin: 0;
-	}
-
-	.status-badge {
-		display: inline-flex;
-		align-items: center;
-		min-height: 24px;
-		padding: 2px 8px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-full);
-		color: var(--color-text-muted);
-		font-size: 0.75rem;
-		font-weight: 700;
-		white-space: nowrap;
-	}
-
-	.status-badge[data-state='active'] {
-		color: var(--color-success);
-		border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
-		background: color-mix(in srgb, var(--color-success) 8%, transparent);
-	}
-
-	.attribute-release-preview {
-		display: grid;
-		gap: 12px;
-		padding: 14px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-control);
-		background: var(--color-surface);
-	}
-
-	.attribute-release-preview__copy {
-		display: grid;
-		gap: 10px;
-	}
-
-	.attribute-release-preview__copy p {
-		margin: 0;
-		color: var(--color-text);
-		font-size: 0.9rem;
-		font-weight: 700;
-	}
-
-	.attribute-release-preview__copy .attribute-release-preview__eyebrow {
-		margin: 0 0 3px;
-		color: var(--color-accent);
-		font-size: 0.75rem;
-		font-weight: 800;
-		text-transform: uppercase;
-	}
-
-	.attribute-release-preview__copy .attribute-release-preview__caption {
-		margin: 0;
-		color: var(--color-text-muted);
-		font-size: 0.8125rem;
-		font-weight: 400;
-		line-height: 1.45;
-	}
-
-	.attribute-release-preview dl {
-		display: grid;
-		gap: 6px;
-		margin: 0;
-	}
-
-	.attribute-release-preview dl div {
-		display: grid;
-		grid-template-columns: 110px minmax(0, 1fr);
-		gap: 8px;
-	}
-
-	.attribute-release-preview dt {
-		color: var(--color-text-muted);
-		font-size: 0.8125rem;
-		font-weight: 700;
-	}
-
-	.attribute-release-preview dd {
-		margin: 0;
-		color: var(--color-text);
-		font-size: 0.8125rem;
-		overflow-wrap: anywhere;
-	}
-
-	.preview-check {
-		display: flex;
-		align-items: flex-start;
-		gap: 8px;
-		color: var(--color-text);
-		font-size: 0.8125rem;
-	}
-
-	.preview-check small {
-		display: block;
-		margin-top: 2px;
-		color: var(--color-text-muted);
-		line-height: 1.4;
-	}
-
-	.attribute-release-preview__actions {
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: flex-end;
-		gap: 8px;
 	}
 
 	.aggregate-entity-list {

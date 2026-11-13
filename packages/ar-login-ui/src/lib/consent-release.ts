@@ -1,5 +1,6 @@
 /**
- * What the consent screen shows about the information an app is given (OIDC claims): the labels
+ * What the consent screen shows about the information an app is given (OIDC claims, or a SAML
+ * SP's attributes and NameID): the labels
  * of the standard claims, how a value is written as text, and which optional items start checked.
  * Shared by the SPA consent view and the lite consent page; plain text only, never HTML.
  */
@@ -34,6 +35,47 @@ const CLAIM_LABELS: Readonly<Record<string, Label>> = {
 /** The label of a claim in the page's language; the raw claim name when it has none. */
 export function releaseClaimLabel(LL: TranslationFunctions, name: string): string {
 	return Object.hasOwn(CLAIM_LABELS, name) ? CLAIM_LABELS[name](LL) : name;
+}
+
+const SAML_EMAIL_NAMEID = 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress';
+
+/**
+ * The label of a release item: an OIDC claim's (by its name), or a SAML SP's item, which carries
+ * its own label; the NameID is called the identifier the service gets (the email address when
+ * that is what it is).
+ */
+export function releaseItemLabel(
+	LL: TranslationFunctions,
+	item: { name: string; label?: string; kind?: string }
+): string {
+	if (item.kind === 'nameid') {
+		return item.label === SAML_EMAIL_NAMEID
+			? LL.consent_release_saml_nameid_email()
+			: LL.consent_release_saml_nameid();
+	}
+	if (item.kind === 'attribute' && typeof item.label === 'string' && item.label) return item.label;
+	return releaseClaimLabel(LL, item.name);
+}
+
+/**
+ * What a recorded release item is called on the account page: a SAML SP's items are recorded by
+ * key (`["attribute", name, format]` or `["nameid", format]`), an OIDC service's by claim name.
+ */
+export function recordedReleaseItemLabel(LL: TranslationFunctions, name: string): string {
+	if (name.startsWith('[')) {
+		try {
+			const key: unknown = JSON.parse(name);
+			if (Array.isArray(key) && key[0] === 'nameid' && typeof key[1] === 'string') {
+				return releaseItemLabel(LL, { name, kind: 'nameid', label: key[1] });
+			}
+			if (Array.isArray(key) && key[0] === 'attribute' && typeof key[1] === 'string') {
+				return key[1];
+			}
+		} catch {
+			// Not a key: shown as it is.
+		}
+	}
+	return releaseClaimLabel(LL, name);
 }
 
 const MAX_VALUE_TEXT = 300;
@@ -128,7 +170,11 @@ export function accountReleaseRows(
 		case 'not_asked':
 			return [{ label, value: superseded(LL.account_consentInformationRequiredOnly()) }];
 		case 'user': {
-			const list = (names: string[]) => names.map((name) => releaseClaimLabel(LL, name)).join(', ');
+			if (record.refused === true) {
+				return [{ label, value: LL.account_consentInformationRefused() }];
+			}
+			const list = (names: string[]) =>
+				names.map((name) => recordedReleaseItemLabel(LL, name)).join(', ');
 			const approved = releaseNames(record.approved);
 			const declined = releaseNames(record.declined);
 			const rows = [{ label, value: list(approved) || LL.account_consentInformationNone() }];

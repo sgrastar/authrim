@@ -6,10 +6,13 @@ import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   listOAuthClientConsentsWithClients,
+  listSamlSpReleaseConsentsWithProviders,
   listUserStatementConsentRecords,
+  withdrawSamlSpReleaseConsent,
   lookupStatementDefinitions,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession } from './account-page';
+import { recordAccountOperation } from './account-operation-log';
 
 type StatementConsentRow = {
   id: string;
@@ -51,6 +54,15 @@ type AccountConsentRecord =
         tosVersion?: string;
         consentVersion?: number;
       };
+      informationRelease?: AccountInformationRelease;
+    }
+  | {
+      /** A SAML SP the person decided the information release for. */
+      kind: 'saml_sp';
+      id: string;
+      spEntityId: string;
+      spName?: string;
+      decidedAt: number;
       informationRelease?: AccountInformationRelease;
     }
   | {
@@ -209,7 +221,7 @@ export async function listAccountConsentsHandler(c: Context<{ Bindings: Env }>):
   const authCtx = createAuthContextFromHono(c, tenantId);
   const accountCtx = createAccountAuthContextFromHono(c, tenantId);
   const preferredLanguage = getPreferredLanguage(c);
-  const [statementRows, flowRecordRows, oauthRows] = await Promise.all([
+  const [statementRows, flowRecordRows, oauthRows, samlRows] = await Promise.all([
     // The record is the user's, in the account database; what it names is the tenant's, in the
     // metadata database. A record whose definition is gone is still returned (it is evidence).
     listStatementConsentRows({
@@ -284,6 +296,13 @@ export async function listAccountConsentsHandler(c: Context<{ Bindings: Env }>):
       tenantId,
       userId: accountSession.userId,
     }),
+    // SAML SPs' information release decisions: kept with the user, SP names are tenant metadata.
+    listSamlSpReleaseConsentsWithProviders({
+      accountCore: accountCtx.coreAdapter,
+      tenantMetadata: authCtx.coreAdapter,
+      tenantId,
+      userId: accountSession.userId,
+    }),
   ]);
 
   const statementConsents: AccountConsentRecord[] = statementRows.map((row) => ({
@@ -345,10 +364,76 @@ export async function listAccountConsentsHandler(c: Context<{ Bindings: Env }>):
         : undefined,
     informationRelease: accountInformationRelease(row),
   }));
-  const consents = [...flowStatementConsents, ...statementConsents, ...oauthConsents];
+  const samlConsents: AccountConsentRecord[] = samlRows.map((row) => ({
+    kind: 'saml_sp',
+    id: row.spEntityId,
+    spEntityId: row.spEntityId,
+    spName: row.spName ?? undefined,
+    decidedAt: row.decidedAt,
+    // The SP's trust wins over the record (a new sign-in is approved by it); a record that cannot
+    // be read is shown without its items.
+    informationRelease: row.currentBasis
+      ? { basis: row.currentBasis, approved: [], declined: [], decidedAt: row.decidedAt }
+      : row.release
+        ? {
+            basis: row.release.basis,
+            approved: row.release.basis === 'user' ? row.release.approved : [],
+            declined: row.release.basis === 'user' ? row.release.declined : [],
+            decidedAt: row.decidedAt,
+            ...(row.release.refused ? { refused: true } : {}),
+          }
+        : undefined,
+  }));
+  const consents = [
+    ...flowStatementConsents,
+    ...statementConsents,
+    ...oauthConsents,
+    ...samlConsents,
+  ];
 
   return c.json({
     consents,
     total: consents.length,
   });
+}
+
+/**
+ * Withdraw the person's information release decision on a SAML SP:
+ * DELETE /api/account/consents/saml-sp?sp_entity_id=...
+ *
+ * The next sign-in to the SP asks again; a sign-in in flight issues nothing under the old
+ * decision (the withdrawal generation moves on).
+ */
+export async function withdrawAccountSamlConsentHandler(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  setNoStore(c);
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    return accountSession;
+  }
+  const spEntityId = c.req.query('sp_entity_id');
+  if (!spEntityId || spEntityId.length > 2048) {
+    return c.json({ error: 'invalid_request', error_description: 'sp_entity_id is required' }, 400);
+  }
+  const tenantId = getTenantIdFromContext(c);
+  const accountCtx = createAccountAuthContextFromHono(c, tenantId);
+  const { withdrawn } = await withdrawSamlSpReleaseConsent(accountCtx.coreAdapter, {
+    tenantId,
+    userId: accountSession.userId,
+    spEntityId,
+    now: Date.now(),
+    userAgent: c.req.header('User-Agent') ?? null,
+  });
+  if (!withdrawn) {
+    return c.json({ error: 'not_found', error_description: 'Consent not found' }, 404);
+  }
+  await recordAccountOperation(c, {
+    userId: accountSession.userId,
+    action: 'account.consent.withdrawn',
+    resourceType: 'saml_sp',
+    resourceId: spEntityId,
+    metadata: { protocol: 'saml' },
+  });
+  return c.json({ withdrawn: true });
 }

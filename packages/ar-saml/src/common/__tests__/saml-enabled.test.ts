@@ -7,7 +7,6 @@ describe('isSamlProtocolPath', () => {
     '/saml/idp/sso',
     '/saml/idp/init',
     '/saml/idp/slo',
-    '/saml/idp/attribute-release-consent',
     '/saml/sp/metadata',
     '/saml/sp/login',
     '/saml/sp/acs',
