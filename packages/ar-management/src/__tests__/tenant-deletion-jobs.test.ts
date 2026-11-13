@@ -11,6 +11,8 @@ const {
   mockDisableTenantLookupDirectory,
   mockPublishTenantRuntimeRegistryRouteState,
   mockPurgeTenantAuthoritativeShards,
+  mockPurgeTenantHomedAdmins,
+  mockCreateAdminPurgeAuditWriter,
 } = vi.hoisted(() => {
   const tx = {
     execute: vi.fn(),
@@ -45,6 +47,8 @@ const {
     mockDisableTenantLookupDirectory: vi.fn(),
     mockPublishTenantRuntimeRegistryRouteState: vi.fn(),
     mockPurgeTenantAuthoritativeShards: vi.fn(),
+    mockPurgeTenantHomedAdmins: vi.fn(),
+    mockCreateAdminPurgeAuditWriter: vi.fn(),
   };
 });
 
@@ -69,7 +73,18 @@ vi.mock('../tenant-deletion-authoritative-purge', () => ({
   purgeTenantAuthoritativeShards: mockPurgeTenantAuthoritativeShards,
 }));
 
+vi.mock('../tenant-deletion-admin-accounts', () => ({
+  purgeTenantHomedAdmins: mockPurgeTenantHomedAdmins,
+  createTenantAdminPurgeAuditWriter: mockCreateAdminPurgeAuditWriter,
+}));
+
 import { processPendingTenantDeletionJobs } from '../tenant-deletion-jobs';
+
+/** The registry write that marks the tenant `deleted` (its first parameter is the status). */
+function isDeletedLifecycleWrite(call: unknown[]): boolean {
+  const params = call[1];
+  return Array.isArray(params) && params[0] === 'deleted';
+}
 
 const lookupShards = [
   { lookupShardId: 'lookup-1', bindingRef: 'LOOKUP_1', status: 'active' as const },
@@ -173,6 +188,10 @@ describe('tenant deletion jobs', () => {
     );
     mockPurgeTenantAuthoritativeShards.mockReset();
     mockPurgeTenantAuthoritativeShards.mockResolvedValue(undefined);
+    mockPurgeTenantHomedAdmins.mockReset();
+    mockPurgeTenantHomedAdmins.mockResolvedValue({ removed: 0, kept: [] });
+    mockCreateAdminPurgeAuditWriter.mockReset();
+    mockCreateAdminPurgeAuditWriter.mockReturnValue(vi.fn());
     mockGetTenantDeletionInventory.mockReset();
     mockGetTenantDeletionInventory.mockImplementation(
       async ({ tenantId, operationId }: { tenantId: string; operationId: string }) => ({
@@ -744,6 +763,134 @@ describe('tenant deletion jobs', () => {
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining("SET status = 'completed'"),
       expect.arrayContaining(['job-finalized', 'operator-tenant'])
+    );
+  });
+
+  it('removes the administrators homed in the tenant right after the Admin rows, before it is marked deleted', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-purge',
+        tenant_id: 'operator-tenant',
+        created_at: 1_700_000_000,
+        config: JSON.stringify({ tenant_id: 'target-tenant', skip_backup: true }),
+      },
+    ]);
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(mockPurgeTenantHomedAdmins).toHaveBeenCalledTimes(1);
+    expect(mockPurgeTenantHomedAdmins).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapter: mockControlAdapter,
+        tenantId: 'target-tenant',
+        jobId: 'job-purge',
+        auditTenantId: 'operator-tenant',
+        // The job's queued time stamps every audit event, so a retry rewrites the same ones.
+        auditAt: 1_700_000_000_000,
+      })
+    );
+    const purgeOrder = mockPurgeTenantHomedAdmins.mock.invocationCallOrder[0];
+    expect(mockFinalizeTenantDeletionControlState.mock.invocationCallOrder[0]).toBeLessThan(
+      purgeOrder
+    );
+    expect(mockControlTx.execute.mock.invocationCallOrder.at(-1)).toBeLessThan(purgeOrder);
+    const deletedOrder = mockControlAdapter.execute.mock.calls
+      .map((call, index) => ({
+        call,
+        order: mockControlAdapter.execute.mock.invocationCallOrder[index],
+      }))
+      .find(({ call }) => isDeletedLifecycleWrite(call))?.order;
+    expect(deletedOrder).toBeGreaterThan(purgeOrder);
+  });
+
+  it('removes them on the finalized-resume branch as well', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-resume',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant', skip_backup: true }),
+      },
+    ]);
+    mockGetTenantDeletionInventory.mockResolvedValueOnce({
+      environmentId: 'test',
+      tenantId: 'target-tenant',
+      operationId: 'job-resume',
+      state: 'finalized',
+      lookupShards: [],
+      tenantShards: [],
+    });
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(mockPurgeTenantHomedAdmins).toHaveBeenCalledTimes(1);
+    expect(mockPurgeTenantHomedAdmins).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'target-tenant', jobId: 'job-resume' })
+    );
+  });
+
+  it('does not remove any administrator when the job fails before the purge', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-early-failure',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant', skip_backup: true }),
+      },
+    ]);
+    mockFinalizeTenantDeletionControlState.mockRejectedValueOnce(new Error('control down'));
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(mockPurgeTenantHomedAdmins).not.toHaveBeenCalled();
+  });
+
+  it('does not remove any administrator of a tenant that is the default', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-default',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'default-tenant', skip_backup: true }),
+      },
+    ]);
+    mockAdapter.queryOne.mockResolvedValue({ is_default: 1 });
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(mockPurgeTenantHomedAdmins).not.toHaveBeenCalled();
+  });
+
+  it('retries the step, and does not mark the tenant deleted, when the purge fails', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-purge-failed',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant', skip_backup: true }),
+      },
+    ]);
+    mockPurgeTenantHomedAdmins.mockRejectedValueOnce(
+      new Error('tenant_deletion_admin_purge_audit_failed')
+    );
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(
+      mockControlAdapter.execute.mock.calls.some((call) => isDeletedLifecycleWrite(call))
+    ).toBe(false);
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'completed'"),
+      expect.anything()
+    );
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'pending', progress = ?, error_message = ?"),
+      [
+        expect.stringContaining('retry_scheduled'),
+        'tenant_deletion_admin_purge_audit_failed',
+        1,
+        3,
+        expect.any(Number),
+        expect.any(Number),
+        'job-purge-failed',
+        'operator-tenant',
+      ]
     );
   });
 
