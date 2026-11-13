@@ -110,6 +110,8 @@ export interface TeamInvitation {
 	expires_at: number;
 	last_sent_at: number | null;
 	last_delivery_status: DeliveryStatus;
+	/** 'response': the code was handed to a provisioning service, not e-mailed. */
+	code_delivery: 'email' | 'response';
 	accepted_at: number | null;
 	created_at: number;
 }
@@ -302,6 +304,7 @@ export function invitationFromRow(value: unknown): TeamInvitation {
 		expires_at: count(row.expires_at),
 		last_sent_at: countOrNull(row.last_sent_at),
 		last_delivery_status: oneOf(row.last_delivery_status, ['pending', 'sent', 'failed'], 'pending'),
+		code_delivery: row.code_delivery === 'response' ? 'response' : 'email',
 		accepted_at: countOrNull(row.accepted_at),
 		created_at: count(row.created_at)
 	};

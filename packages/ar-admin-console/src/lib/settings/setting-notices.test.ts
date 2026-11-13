@@ -90,4 +90,14 @@ describe('notices about the consequences of a choice', () => {
 			sectionNotices(binding, values({ 'federation.saml_sso_binding': 'HTTP-Redirect' }))
 		).toEqual([]);
 	});
+
+	it('warns while admin invitation codes are handed to a machine', () => {
+		const handoff = section('admin_invitations.code_handoff_enabled');
+		expect(
+			sectionNotices(handoff, values({ 'admin_invitations.code_handoff_enabled': true }))
+		).toEqual([{ id: 'codeHandoff', tone: 'warning' }]);
+		expect(
+			sectionNotices(handoff, values({ 'admin_invitations.code_handoff_enabled': false }))
+		).toEqual([]);
+	});
 });

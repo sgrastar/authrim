@@ -9,6 +9,18 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.section.adminSignInPlatform': 'Anmeldung der Administratoren für alle Mandanten',
 	'set.section.adminSignInPlatform.desc':
 		'Gilt für die Administratoren aller Mandanten. Nur Plattform-Administratoren können es ändern.',
+	'set.section.adminInvitationsPlatform': 'Einladungscodes für Administratoren',
+	'set.section.adminInvitationsPlatform.desc':
+		'Ob der Code einer Administratoreinladung an eine Maschine übergeben statt per E-Mail gesendet wird. Gilt für alle Mandanten. Nur Plattformadministratoren können das ändern.',
+	'set.k.admin_invitations.code_handoff_enabled':
+		'Einladungscode an eine vertrauenswürdige Maschine übergeben',
+	'set.k.admin_invitations.code_handoff_enabled.desc':
+		'Eingeschaltet kann eine Maschinenidentität mit der dafür vorgesehenen Berechtigung eine Administratoreinladung erstellen und ihren Code in der API-Antwort statt per E-Mail erhalten. Die E-Mail-Adresse der eingeladenen Person gilt dann nicht als bestätigt. Einladungen aus dieser Konsole werden weiterhin per E-Mail gesendet. Das Einschalten verlangt eine zusätzliche Identitätsprüfung (Step-up), das Ausschalten nicht.',
+	'settings.notice.codeHandoff.title': 'Codes werden ohne E-Mail übergeben',
+	'settings.notice.codeHandoff.body':
+		'Eine Maschine mit der Berechtigung erhält den Registrierungscode direkt. Schalten Sie das aus, wenn keine Automatisierung es braucht.',
+	'settings.stepUpCancelled':
+		'Die Identitätsprüfung wurde abgebrochen. Einige Änderungen sind noch nicht gespeichert.',
 	'set.k.session.ttl.admin_passkey': 'Anmeldedauer für Administratoren mit Passkey',
 	'set.k.session.ttl.admin_passkey.desc':
 		'Wie lange nach der Anmeldung mit einem Passkey ein Administrator erneut zur Anmeldung aufgefordert wird.',

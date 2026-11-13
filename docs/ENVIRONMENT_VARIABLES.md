@@ -177,6 +177,12 @@ time, so the limits keep one request inside what a Worker invocation can do; a l
 in several requests. See the OpenAPI description of the endpoint for what the bulk apply gives and
 refuses.
 
+### Admin invitations
+
+| Variable                                 | Type    | Default | Description                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_INVITATIONS_CODE_HANDOFF_ENABLED` | boolean | `false` | Deployment default of `admin_invitations.code_handoff_enabled`: hand an admin invitation's code over in the API response to a global machine principal holding `admin:admin_invitations:code_handoff` (see `docs/access-control.md`). A saved platform setting overrides it; turning the setting on needs a human step-up. |
+
 ### Tenant Capabilities
 
 | Variable                                          | Type    | Default | Description                                      |

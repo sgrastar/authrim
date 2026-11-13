@@ -1299,6 +1299,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     tenant_capabilities.bulk_jobs
   `,
     ],
+    [
+      'admin-invitations',
+      'boolean',
+      'value',
+      `
+    admin_invitations.code_handoff_enabled
+  `,
+    ],
   ];
 
 export const TENANT_SETTING_FIELD_POLICIES: readonly TenantSettingFieldPolicy[] =

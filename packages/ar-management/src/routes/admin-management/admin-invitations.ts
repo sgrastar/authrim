@@ -22,6 +22,15 @@ import { ensureCrossTenantPlacement } from './cross-tenant-placement';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
 import {
+  NO_STORE_HEADERS,
+  handoffPreconditionRefusal,
+  holdsCodeHandoffPermission,
+  readCodeDelivery,
+  resendByHandoff,
+  roleAllowedForHandoff,
+  type CodeDelivery,
+} from './admin-invitation-code-handoff';
+import {
   callerOutranks,
   callerOutranksGlobally,
   mayRemoveAssignment,
@@ -65,6 +74,8 @@ interface AdminInvitationRow {
   expires_at: number;
   last_sent_at: number;
   last_delivery_status: 'pending' | 'sent' | 'failed';
+  /** How the code reached the person invited; absent on a database without the column ('email'). */
+  code_delivery?: CodeDelivery;
   accepted_at: number | null;
   created_by: string;
   created_at: number;
@@ -115,6 +126,9 @@ function callerMayInviteRole(
   if (auth.hierarchyLevel !== undefined && role.hierarchy_level >= auth.hierarchyLevel) {
     return false;
   }
+  // A machine's level is 0, so a role with a negative level would pass the comparison above; a
+  // machine does not hand out such a role by this path (the code handoff has its own rules).
+  if (auth.authMethod === 'machine_access_token' && role.hierarchy_level < 0) return false;
   return scopeType !== 'global' || callerOutranksGlobally(auth, role.hierarchy_level);
 }
 
@@ -138,6 +152,7 @@ function formatInvitation(row: AdminInvitationRow) {
     expires_at: row.expires_at,
     last_sent_at: row.last_sent_at,
     last_delivery_status: row.last_delivery_status,
+    code_delivery: row.code_delivery ?? 'email',
     accepted_at: row.accepted_at,
     created_by: row.created_by,
     created_at: row.created_at,
@@ -301,8 +316,12 @@ adminInvitationsRouter.post('/', async (c) => {
   const expiresInHours = body.expires_in_hours;
   const restrictionRequested = body.ip_restriction_enabled;
   const groupIds = readGroupIds(body.group_ids);
+  const codeDelivery = readCodeDelivery(body.code_delivery);
   if (
     groupIds === null ||
+    codeDelivery === null ||
+    // The handoff's own lifetime field means nothing to an e-mailed code.
+    (codeDelivery === 'email' && body.expires_in_minutes !== undefined) ||
     !email ||
     email.length > MAX_EMAIL_LENGTH ||
     !/^\S+@\S+\.\S+$/.test(email) ||
@@ -325,6 +344,21 @@ adminInvitationsRouter.post('/', async (c) => {
     );
   }
 
+  // The code handoff: every condition that does not need the role is checked first, before
+  // anything is read or written. Only a global machine holding the dedicated permission, with the
+  // platform switch on, gets this far (see admin-invitation-code-handoff.ts).
+  const handoff = codeDelivery === 'response';
+  let handoffTtlMs = 0;
+  if (handoff) {
+    const precondition = await handoffPreconditionRefusal(c.env, auth, body);
+    if ('error' in precondition) return c.json({ error: precondition.error }, precondition.status);
+    if (requestedScopeType === 'global') return c.json({ error: 'invalid_scope' }, 400);
+    if (groupIds.length > 0) {
+      return c.json({ error: 'code_handoff_groups_not_supported' }, 400);
+    }
+    handoffTtlMs = precondition.ttlMs;
+  }
+
   const adapter = getAdapter(c);
   const tenantId = getTenantIdFromContext(c);
   const now = Date.now();
@@ -342,7 +376,14 @@ adminInvitationsRouter.post('/', async (c) => {
   // A global invitation (and an ar_super_admin one is always global) takes effect for every tenant,
   // so it needs the wildcard from a global assignment, not one that is only held for this tenant.
   const wildcardAuthority = hasGlobalAdminPermission(auth, '*');
-  if (!callerMayInviteRole(auth, role, 'tenant')) {
+  // In handoff mode the dedicated permission is the authorization for the role, within the
+  // limits `roleAllowedForHandoff` sets; the hierarchy comparison (a machine ranks 0) is for every
+  // other caller and mode, and is not weakened for them.
+  if (handoff) {
+    if (!(await roleAllowedForHandoff(new AdminRoleRepository(adapter), role))) {
+      return c.json({ error: 'code_handoff_role_not_allowed' }, 403);
+    }
+  } else if (!callerMayInviteRole(auth, role, 'tenant')) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
 
@@ -358,7 +399,7 @@ adminInvitationsRouter.post('/', async (c) => {
   }
   // A global invitation is a global assignment once accepted, so the role is measured by the
   // caller's global hierarchy (a peer ar_super_admin invitation is the one exception, as above).
-  if (!callerMayInviteRole(auth, role, scopeType)) {
+  if (!handoff && !callerMayInviteRole(auth, role, scopeType)) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
   // The invited admin is homed in this (request) tenant.
@@ -400,7 +441,7 @@ adminInvitationsRouter.post('/', async (c) => {
   }
   const allowedIpRanges = restrictionEnabled ? rangeValidation.ranges : [];
 
-  const requestedTtl = (expiresInHours ?? 24) * 60 * 60 * 1000;
+  const requestedTtl = handoff ? handoffTtlMs : (expiresInHours ?? 24) * 60 * 60 * 1000;
   if (!Number.isFinite(requestedTtl) || requestedTtl <= 0 || requestedTtl > MAX_INVITATION_TTL_MS) {
     return c.json({ error: 'invalid_expiry' }, 400);
   }
@@ -421,23 +462,27 @@ adminInvitationsRouter.post('/', async (c) => {
   // Redeeming the invitation creates a role assignment, so creating it is a role grant. All checks
   // above have passed; the receipt is spent here, right before the invitation is written. Only
   // request inputs are bound (the TTL, not the absolute expiry), so the console's repeat matches.
-  const stepUpRefused = await requireAdminStepUp(c as never, {
-    operation: 'admin.role.grant',
-    targetTenantId: tenantId,
-    targetIds: [email, role.id],
-    params: {
-      invitation: 'create',
-      email,
-      role: role.id,
-      scope_type: scopeType,
-      scope_id: scopeId,
-      role_expires_at: roleExpiresAt ?? null,
-      expires_in_hours: expiresInHours ?? null,
-      ip_restriction_enabled: restrictionEnabled,
-      allowed_ip_ranges: [...allowedIpRanges].sort(),
-      ...(groupIds.length > 0 ? { admin_groups: [...groupIds].sort() } : {}),
-    },
-  });
+  // The handoff is authorized by its dedicated permission, which only a machine can hold, so the
+  // human step-up does not apply to it; no other caller or mode skips it.
+  const stepUpRefused = handoff
+    ? null
+    : await requireAdminStepUp(c as never, {
+        operation: 'admin.role.grant',
+        targetTenantId: tenantId,
+        targetIds: [email, role.id],
+        params: {
+          invitation: 'create',
+          email,
+          role: role.id,
+          scope_type: scopeType,
+          scope_id: scopeId,
+          role_expires_at: roleExpiresAt ?? null,
+          expires_in_hours: expiresInHours ?? null,
+          ip_restriction_enabled: restrictionEnabled,
+          allowed_ip_ranges: [...allowedIpRanges].sort(),
+          ...(groupIds.length > 0 ? { admin_groups: [...groupIds].sort() } : {}),
+        },
+      });
   if (stepUpRefused) return stepUpRefused;
 
   await adapter.execute(
@@ -460,8 +505,12 @@ adminInvitationsRouter.post('/', async (c) => {
          scope_type, scope_id, role_expires_at, ip_restriction_enabled,
          allowed_ip_ranges_json, expires_at, last_sent_at,
          last_delivery_status, created_by, created_at, updated_at, pending_email_key,
-         admin_role_name, admin_role_display_name
-       ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+         admin_role_name, admin_role_display_name${handoff ? ', code_delivery' : ''}
+       ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ${
+         // Constants, never request input. An e-mailed invitation leaves the column to its
+         // default, so it also works against a database the migration has not reached yet.
+         handoff ? "'sent'" : "'pending'"
+       }, ?, ?, ?, ?, ?, ?${handoff ? ", 'response'" : ''})`,
       params: [
         invitationId,
         tenantId,
@@ -510,6 +559,41 @@ adminInvitationsRouter.post('/', async (c) => {
     throw error;
   }
 
+  if (handoff) {
+    // No e-mail. The code goes back in this response only: it is not logged, audited or stored
+    // (the invitation keeps its hash), and the response is kept out of every cache.
+    await writeAdminAuditLog(c, {
+      action: 'admin_invitation.create',
+      resourceType: 'admin_invitation',
+      resourceId: invitationId,
+      result: 'success',
+      severity: 'critical',
+      metadata: {
+        invited_email: email,
+        role_id: role.id,
+        scope_type: scopeType,
+        ip_restriction_enabled: restrictionEnabled,
+        allowed_ip_ranges: allowedIpRanges,
+        email_sent: false,
+        // The machine actor is recorded with every audit row (admin_actor_*).
+        code_delivery: 'response',
+      },
+    });
+    return c.json(
+      {
+        id: invitationId,
+        email,
+        expires_at: expiresAt,
+        email_sent: false,
+        code_delivery: 'response',
+        code,
+        join_url: resolveJoinUrl(c.env),
+      },
+      201,
+      NO_STORE_HEADERS
+    );
+  }
+
   const delivery = await sendInvitationEmail(c, {
     deliveryId: invitationId,
     email,
@@ -539,6 +623,7 @@ adminInvitationsRouter.post('/', async (c) => {
       ip_restriction_enabled: restrictionEnabled,
       allowed_ip_ranges: allowedIpRanges,
       email_sent: delivery.success,
+      code_delivery: 'email',
     },
   });
 
@@ -570,6 +655,32 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
     [c.req.param('id'), tenantId]
   );
   if (!invitation) return c.json({ error: 'invitation_not_found' }, 404);
+
+  // The way the new code is delivered: by e-mail unless the body asks for a handoff. An invitation
+  // whose code was handed over, or a request that asks for a handoff, goes through its own path.
+  let resendBody: Record<string, unknown> = {};
+  try {
+    // Earlier callers sent no body at all; one that cannot be read keeps the e-mail default.
+    const parsed: unknown = JSON.parse(await c.req.text());
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      resendBody = parsed as Record<string, unknown>;
+    }
+  } catch {
+    resendBody = {};
+  }
+  const requestedDelivery = readCodeDelivery(resendBody.code_delivery);
+  if (requestedDelivery === null) return c.json({ error: 'invalid_request' }, 400);
+  if (requestedDelivery === 'response' || (invitation.code_delivery ?? 'email') === 'response') {
+    return resendByHandoff({
+      c,
+      auth,
+      adapter,
+      tenantId,
+      invitation,
+      body: resendBody,
+      requested: requestedDelivery,
+    });
+  }
 
   // A resend gives the invitation a new code and a new 24 hours, which brings an expired one back.
   // An invitation for a global assignment (an ar_super_admin one always is) takes effect for every
@@ -712,8 +823,9 @@ adminInvitationsRouter.delete('/:id', async (c) => {
     scope_type: string;
     role_name: string | null;
     admin_role_id: string;
+    code_delivery?: CodeDelivery;
   }>(
-    `SELECT scope_type, admin_role_name AS role_name, admin_role_id FROM admin_invitations
+    `SELECT *, admin_role_name AS role_name FROM admin_invitations
       WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
     [c.req.param('id'), tenantId]
   );
@@ -729,11 +841,21 @@ adminInvitationsRouter.delete('/:id', async (c) => {
   // is now. One that cannot be read (deleted under an expired invitation) is not skipped: only the
   // strongest authority (the wildcard and the roles' write permission from a global assignment)
   // revokes it, so taking it away stays possible without letting a lower admin through.
-  const role = await new AdminRoleRepository(adapter).getRole(pending.admin_role_id);
-  const allowed = role
-    ? mayRemoveAssignment(auth, pending.scope_type, role.hierarchy_level)
-    : hasGlobalAdminPermission(auth, '*') &&
-      hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE);
+  // A global machine holding the code handoff permission revokes the tenant-scoped invitations it
+  // handed a code out for (only those), which the rank comparison cannot admit: a machine ranks 0.
+  const revokesHandedOver =
+    pending.code_delivery === 'response' &&
+    pending.scope_type === 'tenant' &&
+    holdsCodeHandoffPermission(auth);
+  const role = revokesHandedOver
+    ? null
+    : await new AdminRoleRepository(adapter).getRole(pending.admin_role_id);
+  const allowed = revokesHandedOver
+    ? true
+    : role
+      ? mayRemoveAssignment(auth, pending.scope_type, role.hierarchy_level)
+      : hasGlobalAdminPermission(auth, '*') &&
+        hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE);
   if (!allowed) return c.json({ error: 'insufficient_permissions' }, 403);
 
   const result = await adapter.execute(

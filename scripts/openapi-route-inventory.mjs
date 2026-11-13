@@ -203,6 +203,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/admin-invitations.ts',
+        receiverPrefixes: {
+          adminInvitationsRouter: '/api/admin/admin-invitations',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-groups.ts',
         receiverPrefixes: {
           adminGroupsRouter: '/api/admin/admin-groups',

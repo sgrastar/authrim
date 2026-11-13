@@ -69,6 +69,7 @@ export const jaTeam = {
 	'tm.inv.status.revoked': '取り消し済み',
 	'tm.inv.delivery.pending': '送信中',
 	'tm.inv.delivery.sent': '送信済み',
+	'tm.inv.delivery.handed': 'コード受け渡し済み',
 	'tm.inv.delivery.failed': '送れませんでした',
 	'tm.inv.scope.global': '全テナント',
 	'tm.inv.action.resend': '招待をもう一度送る',

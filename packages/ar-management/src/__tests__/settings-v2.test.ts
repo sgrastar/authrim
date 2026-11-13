@@ -5393,6 +5393,115 @@ describe('Settings API v2', () => {
     });
   });
 
+  describe('admin invitation code handoff switch', () => {
+    const URL_ = '/api/admin/platform/settings/admin-invitations';
+    const KEY = 'admin_invitations.code_handoff_enabled';
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 });
+    type Fixture = ReturnType<typeof createTestApp>;
+    const patch = async (
+      f: Fixture,
+      change: { set?: Record<string, unknown>; clear?: string[] }
+    ) => {
+      const current = await (
+        await f.app.request(URL_, { method: 'GET' }, f.mockEnv)
+      ).json<SettingsGetResult>();
+      return f.app.request(
+        URL_,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ifMatch: current.version, ...change }),
+        },
+        f.mockEnv
+      );
+    };
+
+    it('is off by default and platform only', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      const current = await (
+        await f.app.request(URL_, { method: 'GET' }, f.mockEnv)
+      ).json<SettingsGetResult>();
+      expect(current.values[KEY]).toBe(false);
+      const tenant = await f.app.request(
+        '/api/admin/tenants/tenant_123/settings/admin-invitations',
+        { method: 'GET' },
+        f.mockEnv
+      );
+      expect(tenant.status).toBeGreaterThanOrEqual(400);
+      const tenantPatch = await f.app.request(
+        '/api/admin/tenants/tenant_123/settings/admin-invitations',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ifMatch: 'x', set: { [KEY]: true } }),
+        },
+        f.mockEnv
+      );
+      expect(tenantPatch.status).toBeGreaterThanOrEqual(400);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+
+    it('turning it on needs the step-up, and is not saved when the step-up refuses', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      mockRequireAdminStepUp.mockResolvedValue(refusal());
+      const refused = await patch(f, { set: { [KEY]: true } });
+      expect(refused.status).toBe(403);
+      expect(mockRequireAdminStepUp.mock.calls[0][1]).toMatchObject({
+        operation: 'admin_invitation.code_handoff.enable',
+        params: { category: 'admin-invitations', scope: 'platform' },
+      });
+      const after = await (
+        await f.app.request(URL_, { method: 'GET' }, f.mockEnv)
+      ).json<SettingsGetResult>();
+      expect(after.values[KEY]).toBe(false);
+
+      mockRequireAdminStepUp.mockReset();
+      mockRequireAdminStepUp.mockResolvedValue(null);
+      expect((await patch(f, { set: { [KEY]: true } })).status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+    });
+
+    it('turning it off, or saving it off again, is free', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      expect((await patch(f, { set: { [KEY]: true } })).status).toBe(200);
+      mockRequireAdminStepUp.mockClear();
+      expect((await patch(f, { set: { [KEY]: false } })).status).toBe(200);
+      expect((await patch(f, { set: { [KEY]: false } })).status).toBeLessThan(500);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+
+    it('treats clearing a saved off value under an environment that says on as turning it on', async () => {
+      const f = createTestApp({
+        kv: createMockKV(),
+        env: { ADMIN_INVITATIONS_CODE_HANDOFF_ENABLED: 'true' },
+      });
+      // The environment already says on; a saved off wins over it, and removing that is "on".
+      mockRequireAdminStepUp.mockResolvedValue(null);
+      expect((await patch(f, { set: { [KEY]: false } })).status).toBe(200);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+      expect((await patch(f, { clear: [KEY] })).status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockRequireAdminStepUp.mock.calls[0][1]).toMatchObject({
+        operation: 'admin_invitation.code_handoff.enable',
+      });
+    });
+
+    it('cannot be rolled back through the history routes (the category has none)', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      const response = await f.app.request(
+        '/api/admin/settings/admin-invitations/rollback',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetVersion: 1 }),
+        },
+        f.mockEnv
+      );
+      expect(response.status).toBe(400);
+    });
+  });
+
   describe('admin step-up on settings that weaken a protection', () => {
     const TENANT_SECURITY = '/api/admin/tenants/tenant_123/settings/security';
     const PLATFORM_SECURITY = '/api/admin/platform/settings/security';

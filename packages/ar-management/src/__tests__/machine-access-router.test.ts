@@ -744,6 +744,17 @@ describe('machineAccessRouter', () => {
       expect(mockRepo.updateCredentialWithGrant).not.toHaveBeenCalled();
     });
 
+    it('credential PATCH: adding the invitation code handoff permission to an inheriting key is gated', async () => {
+      mockRepo.getCredentialPermissions.mockResolvedValue([]);
+      mockRequireAdminStepUp.mockResolvedValue(refusal());
+      const res = await send('PATCH', '/principals/amp_mcp/credentials/amk_old', {
+        permissions: ['admin:admin_invitations:code_handoff'],
+      });
+      expect(res.status).toBe(403);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockRepo.updateCredentialWithGrant).not.toHaveBeenCalled();
+    });
+
     it('credential PATCH: moving the window outward revives by time and is gated', async () => {
       mockRepo.findCredentialById.mockImplementation(async (id: string) => ({
         id,

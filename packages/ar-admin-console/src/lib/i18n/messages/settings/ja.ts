@@ -11,6 +11,16 @@ export const jaSettings = {
 	'set.section.adminSignInPlatform': '全テナント共通の管理者ログイン',
 	'set.section.adminSignInPlatform.desc':
 		'すべてのテナントの管理者に適用されます。変更できるのはプラットフォーム管理者だけです。',
+	'set.section.adminInvitationsPlatform': '管理者の招待コードの受け渡し',
+	'set.section.adminInvitationsPlatform.desc':
+		'管理者の招待コードを、メールではなくマシンに渡すかどうかです。全テナントに適用されます。変更できるのはプラットフォーム管理者だけです。',
+	'set.k.admin_invitations.code_handoff_enabled': '招待コードを信頼するマシンに渡す',
+	'set.k.admin_invitations.code_handoff_enabled.desc':
+		'オンにすると、専用の権限を持つマシン用の認証情報が、管理者の招待を作り、そのコードをメールではなく API の応答で受け取れます。このとき、招待された人のメールアドレスは確認済みとして扱いません。このコンソールから作る招待は、これまでどおりメールで届きます。オンにするときは追加の本人確認（ステップアップ）が必要で、オフにするときは不要です。',
+	'settings.notice.codeHandoff.title': 'コードがメールなしで渡されます',
+	'settings.notice.codeHandoff.body':
+		'権限を持つマシンが、登録コードを直接受け取ります。自動化で使わないときは、オフにしてください。',
+	'settings.stepUpCancelled': '本人確認を中止しました。保存されていない変更が残っています。',
 	'set.k.session.ttl.admin_passkey': 'パスキーでログインした管理者のログイン時間',
 	'set.k.session.ttl.admin_passkey.desc':
 		'管理者がパスキーでログインしてから、もう一度ログインを求めるまでの時間です。',

@@ -181,6 +181,60 @@ custom global role).
 - The created tenant, the deletion job and their audit entries record the caller: the Admin user
   id for a human, the machine principal id and `admin_actor_type: machine` for a machine.
 
+#### Enrollment code handoff (a provisioning portal without `admin:*`)
+
+Normally the one-time enrollment code of an admin invitation is e-mailed to the person invited. A
+trusted **global machine principal** (a provisioning portal) can instead receive the code in the
+`POST /api/admin/admin-invitations` response by sending `"code_delivery": "response"`. Nothing is
+e-mailed. It is off, and unreachable for everyone else, unless all of this holds:
+
+- **Who.** A machine access token with a **global tenant scope** holding the exact-name permission
+  `admin:admin_invitations:code_handoff`. No wildcard (`*`, `admin:*`, `admin:admin_invitations:*`)
+  carries it, no built-in role lists it, and a super admin hands it to a principal through the
+  machine access API, which asks for the `machine.permission.grant` step-up. **A human can never
+  use it, whatever their role.** A token limited to some tenants is refused. The write pair
+  (`admin:admin_users:write` and `admin:admin_roles:write`) is still required; the handoff
+  permission replaces only the rank comparison (a machine ranks 0) and the `admin.role.grant`
+  step-up, and only in this mode. Holding the permission gives a machine nothing in the e-mail
+  mode, and the step-up exemption of `admin.role.grant` alone gives it nothing at all: a machine
+  ranks 0, so it invites no role by e-mail, and a role with a negative level is refused for it.
+- **The platform switch.** Setting `admin_invitations.code_handoff_enabled` (category
+  `admin-invitations`, platform scope only, environment variable
+  `ADMIN_INVITATIONS_CODE_HANDOFF_ENABLED`, default **off**). It is read without the settings
+  cache, and an unreadable value counts as off (`403 code_handoff_disabled`). Turning it **on**,
+  through the platform PATCH, a bulk apply or any other settings write, needs a signed-in human
+  with an L2 step-up (`admin_invitation.code_handoff.enable`); a machine can never do it, even with
+  a step-up exemption or while the platform has turned step-up enforcement off. Turning it off is
+  free.
+- **What it may invite.** A tenant-scoped invitation for the request tenant, to a role that is not
+  `ar_super_admin`, not a platform role, carries no wildcard permission, and ranks from 0 up to but
+  not including the super admin level. No admin groups (`group_ids`). Otherwise `403
+code_handoff_role_not_allowed`, `400 invalid_scope` or `400 code_handoff_groups_not_supported`.
+- **Lifetime.** 15 minutes by default; `expires_in_minutes` (1 to 60) sets it. `expires_in_hours` is
+  refused with the handoff.
+
+The 201 response has `code`, `code_delivery: "response"`, `email_sent: false` and `join_url` (the
+join page without the code, or null when `ADMIN_UI_URL` is not a safe origin), with
+`Cache-Control: no-store`. The code is shown once, never logged or audited, and only its hash is
+stored; the audit entry records `code_delivery: response` and the machine principal.
+
+- **The address is not verified.** Nobody proved that the invited address is the person's, so
+  accepting such an invitation creates the admin with `email_verified` off. Features that need a
+  verified admin address (for example an approval code by e-mail) are not offered to that admin
+  and answer as they do for any admin without one.
+- **Passing the code on.** Put it in the URL **fragment**, `join_url#code=XXXX-XXXX-XXXX-XXXX&email=...`.
+  A fragment is never sent to a server, and the Admin console join page reads it, fills in the form
+  (it does not submit), and removes it from the address bar and the history at once. A query string
+  is never read.
+- **Re-issue and revoke.** An invitation keeps its delivery: e-mail resend of a handed-over
+  invitation, and a handoff re-issue of an e-mailed one, are `409 code_delivery_mismatch`. The
+  portal re-issues a handed-over code by `POST /api/admin/admin-invitations/{id}/resend` with
+  `"code_delivery": "response"` (same conditions as creating), or revokes it with `DELETE`; the
+  handoff permission alone revokes a tenant-scoped handed-over invitation, and only those.
+- The migration `016_admin_invitation_code_delivery.sql` adds the column `code_delivery`
+  (`email` or `response`) to `admin_invitations`; a handed-over invitation reads as `sent` in
+  `last_delivery_status`.
+
 #### Preset roles of the service's users
 
 Only two roles are preset. Business roles (billing, support, per-department roles) are created by

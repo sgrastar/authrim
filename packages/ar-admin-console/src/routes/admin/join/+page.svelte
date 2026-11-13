@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
+	import { onMount } from 'svelte';
 	import {
 		adminInvitationEnrollmentAPI,
-		enrollmentErrorKey
+		enrollmentErrorKey,
+		readJoinFragment
 	} from '#lib/api/admin-invitation-enrollment.js';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import DisplayMenu from '#lib/shell/DisplayMenu.svelte';
@@ -28,6 +30,20 @@
 	let enrolling = $state(false);
 	let completed = $state(false);
 	let errorKey = $state<MessageKey | null>(null);
+
+	// A provisioning service may link here with `#code=...&email=...`: prefill the form (never
+	// submit it), and take the fragment out of the address bar and the history right away.
+	onMount(() => {
+		const fromLink = readJoinFragment(window.location.hash);
+		if (!fromLink) return;
+		if (fromLink.email) email = fromLink.email;
+		if (fromLink.code) code = fromLink.code;
+		window.history.replaceState(
+			window.history.state,
+			'',
+			window.location.pathname + window.location.search
+		);
+	});
 
 	async function redeem(event: SubmitEvent) {
 		event.preventDefault();

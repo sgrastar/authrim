@@ -112,3 +112,26 @@ export function enrollmentErrorKey(cause: unknown): MessageKey {
 			return 'join.error.generic';
 	}
 }
+
+/** The longest value read from the address fragment (an e-mail address is at most 320). */
+const FRAGMENT_VALUE_MAX = 320;
+
+/**
+ * What a provisioning service put in the join link's URL fragment (`#code=...&email=...`).
+ * The fragment never reaches a server, and the page removes it from the address bar and history
+ * as soon as it has read it. Only the fragment is read, never the query string. Null when it
+ * carries neither value (the page then leaves the address alone).
+ */
+export function readJoinFragment(hash: string): { code?: string; email?: string } | null {
+	if (!hash.startsWith('#')) return null;
+	const params = new URLSearchParams(hash.slice(1));
+	const clean = (value: string | null) => {
+		const trimmed = value?.trim();
+		return trimmed && trimmed.length <= FRAGMENT_VALUE_MAX ? trimmed : undefined;
+	};
+	const code = clean(params.get('code'));
+	const email = clean(params.get('email'));
+	return code === undefined && email === undefined
+		? null
+		: { ...(code !== undefined ? { code } : {}), ...(email !== undefined ? { email } : {}) };
+}

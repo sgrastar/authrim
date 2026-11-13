@@ -9,6 +9,16 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.section.adminSignInPlatform': 'تسجيل دخول المسؤولين لكل المستأجرين',
 	'set.section.adminSignInPlatform.desc':
 		'ينطبق على مسؤولي كل المستأجرين. لا يغيّره إلا مسؤولو المنصة.',
+	'set.section.adminInvitationsPlatform': 'رموز دعوات المسؤولين',
+	'set.section.adminInvitationsPlatform.desc':
+		'تحدد ما إذا كان رمز دعوة المسؤول يُسلَّم إلى جهاز آلي بدلاً من إرساله بالبريد الإلكتروني. يسري على كل المستأجرين. لا يمكن تغييره إلا لمسؤولي المنصة.',
+	'set.k.admin_invitations.code_handoff_enabled': 'تسليم رمز الدعوة إلى جهاز موثوق',
+	'set.k.admin_invitations.code_handoff_enabled.desc':
+		'عند التشغيل، يمكن لبيانات اعتماد آلية تملك الصلاحية المخصصة إنشاء دعوة مسؤول واستلام رمزها في استجابة API بدلاً من البريد الإلكتروني. ولا يُعدّ البريد الإلكتروني للمدعو موثّقاً حينها. أما الدعوات المنشأة من هذه الوحدة فتُرسل بالبريد الإلكتروني كما كانت. يتطلب التشغيل تحققاً إضافياً من الهوية (step-up)، بينما لا يتطلب الإيقاف ذلك.',
+	'settings.notice.codeHandoff.title': 'تُسلَّم الرموز دون بريد إلكتروني',
+	'settings.notice.codeHandoff.body':
+		'يستلم الجهاز الذي يملك الصلاحية رمز التسجيل مباشرة. أوقف هذا الخيار إذا لم تكن أي أتمتة تحتاج إليه.',
+	'settings.stepUpCancelled': 'أُلغي التحقق من الهوية. ما زالت بعض التغييرات غير محفوظة.',
 	'set.k.session.ttl.admin_passkey': 'مدة تسجيل دخول المسؤولين بمفتاح المرور',
 	'set.k.session.ttl.admin_passkey.desc':
 		'المدة بعد تسجيل الدخول بمفتاح مرور قبل أن يُطلب من المسؤول تسجيل الدخول مجددًا.',
