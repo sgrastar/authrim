@@ -51,6 +51,18 @@ export function consentSpecOf(
 	});
 }
 
+/**
+ * The consent steps a flow asks: the one step the console sets, with the statements chosen
+ * (none when the step was not added, or nothing is chosen in it).
+ */
+export function consentStepsOf(
+	added: boolean,
+	value: AccountValue | undefined
+): { statements: { statement_id: string; required: boolean }[] }[] {
+	const statements = added ? consentSpecOf(value) : [];
+	return statements.length > 0 ? [{ statements }] : [];
+}
+
 /** The flow value for a spec's statements. */
 export function consentValueOf(
 	statements: readonly { statement_id: string; required: boolean }[]
