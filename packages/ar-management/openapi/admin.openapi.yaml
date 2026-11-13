@@ -9478,6 +9478,76 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/consent-statements/usage:
+    get:
+      tags:
+        - Consent
+      operationId: getApiAdminConsentStatementsUsage
+      summary: Where the tenant's consent statements are used.
+      description: >-
+        Requires consent settings read permission. Lists, for each statement that is used, the
+        flows whose consent nodes ask for it (in the draft and/or the published version) and the
+        services (OIDC clients and SAML service providers) that use it as the purpose of their
+        information release consent. Statements that are not used are not listed. For display
+        only: deletion is decided by the evidence checks of DELETE. usages_complete is false when
+        a stored flow document could not be read; the lists are then at least these.
+      responses:
+        '200':
+          description: The uses of the tenant's statements.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [usages, usages_complete]
+                properties:
+                  usages:
+                    type: array
+                    items:
+                      type: object
+                      required: [statement_id, flows, services]
+                      properties:
+                        statement_id:
+                          type: string
+                        flows:
+                          type: array
+                          items:
+                            type: object
+                            required: [flow_id, name, kind, draft, published]
+                            properties:
+                              flow_id:
+                                type: string
+                              name:
+                                type: string
+                              kind:
+                                type: string
+                              draft:
+                                type: boolean
+                              published:
+                                type: boolean
+                        services:
+                          type: array
+                          items:
+                            type: object
+                            required: [protocol, id, name]
+                            properties:
+                              protocol:
+                                type: string
+                                enum: [oidc, saml]
+                              id:
+                                type: string
+                              name:
+                                type: string
+                  usages_complete:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/consent-statements/{id}':
     delete:
       tags:
@@ -62569,7 +62639,24 @@ components:
         statements:
           type: array
           items:
-            $ref: '#/components/schemas/ConsentStatement'
+            allOf:
+              - $ref: '#/components/schemas/ConsentStatement'
+              - type: object
+                description: >-
+                  List-only summary: the current version, whether a draft version exists, and
+                  the titles (by language) of the version a list shows (the current one, or the
+                  latest draft when none is current).
+                properties:
+                  current_version:
+                    nullable: true
+                    allOf:
+                      - $ref: '#/components/schemas/ConsentVersion'
+                  has_draft:
+                    type: boolean
+                  titles:
+                    type: object
+                    additionalProperties:
+                      type: string
     ConsentStatementCreateRequest:
       type: object
       additionalProperties: false

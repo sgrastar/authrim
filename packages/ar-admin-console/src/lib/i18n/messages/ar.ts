@@ -11,6 +11,7 @@ import { arKeyringPresentation } from './keyring-presentation/ar';
 import { arNotices } from './notices/ar';
 import { arCustomization } from './customization/ar';
 import { arScreens } from './screens/ar';
+import { arStatements } from './statements/ar';
 import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
@@ -35,6 +36,7 @@ export const ar = {
 	...arNotices,
 	...arCustomization,
 	...arScreens,
+	...arStatements,
 	...arStepUp,
 	...arAdminAudit,
 	...arUserAudit,

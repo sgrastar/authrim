@@ -257,6 +257,70 @@ function optionalNonNegativeInteger(value: unknown): number | null | undefined {
 // Consent Statements CRUD
 // =============================================================================
 
+/** Bound parameters per `IN (…)` query (D1 allows 100 per statement). */
+const LIST_SUMMARY_CHUNK = 90;
+
+interface StatementListSummary {
+  current: Record<string, unknown> | null;
+  hasDraft: boolean;
+  titles: Record<string, string>;
+}
+
+/** The current version, draft presence and shown titles of every statement of a tenant. */
+async function statementListSummaries(
+  db: DatabaseAdapter,
+  tenantId: string
+): Promise<Map<string, StatementListSummary>> {
+  const versions = await db.query<{
+    id: string;
+    statement_id: string;
+    status: string;
+    is_current: number | string | boolean;
+    created_at: number | string;
+  }>(
+    `SELECT * FROM consent_statement_versions WHERE tenant_id = ? ORDER BY created_at DESC, id DESC`,
+    [tenantId]
+  );
+  const summaries = new Map<string, StatementListSummary>();
+  const shown = new Map<string, string>();
+  for (const version of versions) {
+    const summary = summaries.get(version.statement_id) ?? {
+      current: null,
+      hasDraft: false,
+      titles: {},
+    };
+    const current = Number(version.is_current) === 1 || version.is_current === true;
+    if (current && !summary.current) summary.current = version;
+    if (version.status === 'draft') summary.hasDraft = true;
+    summaries.set(version.statement_id, summary);
+    // Newest first: the first draft seen is the latest one; a current version wins over it.
+    if (current) shown.set(version.statement_id, version.id);
+    else if (version.status === 'draft' && !shown.has(version.statement_id)) {
+      shown.set(version.statement_id, version.id);
+    }
+  }
+  const statementOfVersion = new Map(
+    [...shown].map(([statement, version]) => [version, statement])
+  );
+  const versionIds = [...statementOfVersion.keys()];
+  for (let start = 0; start < versionIds.length; start += LIST_SUMMARY_CHUNK) {
+    const chunk = versionIds.slice(start, start + LIST_SUMMARY_CHUNK);
+    const localizations = await db.query<{ version_id: string; language: string; title: string }>(
+      `SELECT version_id, language, title FROM consent_statement_localizations
+        WHERE tenant_id = ? AND version_id IN (${chunk.map(() => '?').join(',')})`,
+      [tenantId, ...chunk]
+    );
+    for (const item of localizations) {
+      const statementId = statementOfVersion.get(item.version_id);
+      const summary = statementId ? summaries.get(statementId) : undefined;
+      if (summary && typeof item.title === 'string' && item.title) {
+        summary.titles[item.language] = item.title;
+      }
+    }
+  }
+  return summaries;
+}
+
 /** GET /api/admin/consent-statements */
 export async function adminConsentStatementsListHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN_CONSENT');
@@ -264,12 +328,22 @@ export async function adminConsentStatementsListHandler(c: Context<{ Bindings: E
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    const rows = await authCtx.coreAdapter.query(
+    const rows = await authCtx.coreAdapter.query<Record<string, unknown> & { id: string }>(
       `SELECT * FROM consent_statements WHERE tenant_id = ? ORDER BY display_order ASC, created_at ASC`,
       [tenantId]
     );
+    const summaries = await statementListSummaries(authCtx.coreAdapter, tenantId);
 
-    return c.json({ statements: rows });
+    // Each row also carries its current version, whether a draft exists, and the titles of the
+    // version a list shows (the current one, or the latest draft), so a list needs one request.
+    return c.json({
+      statements: rows.map((row) => ({
+        ...row,
+        current_version: summaries.get(row.id)?.current ?? null,
+        has_draft: summaries.get(row.id)?.hasDraft ?? false,
+        titles: summaries.get(row.id)?.titles ?? {},
+      })),
+    });
   } catch (error) {
     log.error('Failed to list consent statements', { action: 'list' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to list statements' }, 500);
