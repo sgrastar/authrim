@@ -25,6 +25,7 @@
 		samlProviders: httpSamlProviders,
 		consentStatements: httpConsentStatements,
 		canCreateProfile: () => hasPermission(adminAccess.current, 'admin:settings:write'),
+		canCreateStatement: () => hasPermission(adminAccess.current, 'admin:settings:write'),
 		loadTheme: (signal) => readAppliedThemeValues(tenantScope.tenantId, signal),
 		failedSignInLimit: async (signal) => {
 			const tenantId = tenantScope.tenantId;
