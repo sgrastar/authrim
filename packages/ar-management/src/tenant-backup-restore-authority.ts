@@ -37,12 +37,23 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import {
+  decodePortablePluginConfiguration,
+  PLUGIN_CONFIGURATION_DATASET,
+  type PortablePluginConfiguration,
+} from '@authrim/ar-lib-core/services/tenant-portability/phase5-record-datasets';
+import {
   TENANT_BACKUP_RESTORE_AUTHORITY_REQUIRED,
   type PortableSqliteRow,
   type SqliteDatasetInspectionPolicy,
 } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import { hasPlatformAuthorityForTenantEdit } from './routes/settings-v2/settings-authorization';
-import { SETTINGS_CATEGORY_CAPABILITY } from './capability-authorization';
+import {
+  isBuiltinNotifierPlugin,
+  RESTORE_BUILTIN_NOTIFIER_CAPABILITY,
+  RESTORE_DATASET_CAPABILITY,
+  RESTORE_ROW_CAPABILITY,
+  SETTINGS_CATEGORY_CAPABILITY,
+} from './capability-authorization';
 import { isRoleNameReserved } from './routes/admin-management/admin-role-authority';
 
 export const TENANT_SETTINGS_DOCUMENTS_DATASET = 'admin.tenant_settings_documents';
@@ -64,7 +75,12 @@ export function tenantBackupImportAuthority(
   // platform turned off for tenants (see admitSettings); the record is the same list, so the
   // intent keeps its shape.
   const capabilityCategories = hasGlobalPlatformAuthority(auth, 'admin:*')
-    ? Object.keys(SETTINGS_CATEGORY_CAPABILITY)
+    ? [
+        ...Object.keys(SETTINGS_CATEGORY_CAPABILITY),
+        ...Object.values(RESTORE_DATASET_CAPABILITY).map(({ exemption }) => exemption),
+        ...Object.values(RESTORE_ROW_CAPABILITY).map(({ exemption }) => exemption),
+        RESTORE_BUILTIN_NOTIFIER_CAPABILITY.exemption,
+      ]
     : [];
   const platformSettingsCategories = [...new Set([...own, ...capabilityCategories])].sort();
   const permitted = hasGlobalAdminPermission(auth, '*');
@@ -92,6 +108,11 @@ export function tenantBackupImportAuthority(
 export function outranksForRestore(requesterLevel: number, roleLevel: number): boolean {
   return roleLevel <= requesterLevel;
 }
+
+type PluginImport = (
+  context: TenantBackupStepContext,
+  configuration: PortablePluginConfiguration
+) => Promise<void>;
 
 function refused(): never {
   throw new Error(TENANT_BACKUP_RESTORE_AUTHORITY_REQUIRED);
@@ -381,6 +402,100 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
   }
 
   /**
+   * The rows of a dataset a capability covers are restored only while the capability is on (an
+   * unreadable switch counts as not on), unless the requester has global platform authority: a
+   * restored row would otherwise become effective when the capability returns.
+   */
+  async function admitCapabilityDataset(context: TenantBackupStepContext, datasetId: string) {
+    const covered = RESTORE_DATASET_CAPABILITY[datasetId];
+    if (
+      input.capabilityState &&
+      (await input.capabilityState(covered.capability)) !== 'on' &&
+      !(await authority(context)).platformSettingsCategories.includes(covered.exemption)
+    )
+      refused();
+  }
+
+  /**
+   * The rows of a dataset a capability covers only when they carry what it governs (a client's
+   * endpoint only dynamic client registration sets, a SAML provider or federation source with a
+   * metadata URL) are restored only while the capability is on (an unreadable switch counts as not
+   * on), unless the requester has global platform authority. Other rows restore as usual.
+   */
+  async function admitCapabilityRows(
+    context: TenantBackupStepContext,
+    datasetId: string,
+    rowJson: string
+  ) {
+    const covered = RESTORE_ROW_CAPABILITY[datasetId];
+    if (!input.capabilityState || !covered.carries(parse(rowJson))) return;
+    if (
+      (await input.capabilityState(covered.capability)) !== 'on' &&
+      !(await authority(context)).platformSettingsCategories.includes(covered.exemption)
+    )
+      refused();
+  }
+
+  /**
+   * A built-in e-mail notifier's configuration and enabled state decide the provider and sender of
+   * the tenant's mail, so they are restored only while `email_provider_config` is on (an unreadable
+   * switch counts as not on), unless the requester has global platform authority. Other plugins
+   * (and dynamic workers, which `external_plugins` covers) are not judged here.
+   */
+  async function admitPluginConfiguration(
+    context: TenantBackupStepContext,
+    configuration: PortablePluginConfiguration
+  ) {
+    const config = configuration.config as { backend?: unknown };
+    const backendKind = config.backend === 'dynamic_worker' ? 'dynamic_worker' : undefined;
+    if (!isBuiltinNotifierPlugin(configuration.pluginId, { backendKind })) return;
+    if (
+      input.capabilityState &&
+      (await input.capabilityState(RESTORE_BUILTIN_NOTIFIER_CAPABILITY.capability)) !== 'on' &&
+      !(await authority(context)).platformSettingsCategories.includes(
+        RESTORE_BUILTIN_NOTIFIER_CAPABILITY.exemption
+      )
+    )
+      refused();
+  }
+
+  /**
+   * Plugin configuration records bypass `wrap` (they are record datasets, not SQLite rows): this
+   * adds the validation-time check to their policy only. The restore-time check is
+   * `admitPluginConfiguration`, run by the restore's `importPlugin`.
+   */
+  function wrapRecords(
+    policies: readonly SqliteDatasetInspectionPolicy[]
+  ): SqliteDatasetInspectionPolicy[] {
+    return policies.map((policy) => {
+      if (policy.dataset.id !== PLUGIN_CONFIGURATION_DATASET.id) return policy;
+      if (policy.admitRow) throw new Error('backup_restore_authority_guard_conflict');
+      return {
+        ...policy,
+        admitRow: {
+          id: `${GUARD_ID}:${policy.dataset.id}`,
+          admit: (context, rowJson) =>
+            admitPluginConfiguration(
+              context,
+              decodePortablePluginConfiguration(rowJson, context.lease.tenantId)
+            ),
+        },
+      };
+    });
+  }
+
+  /**
+   * The restore-time check for plugin configuration records: the port's `importPlugin` behind
+   * `admitPluginConfiguration`. The port itself stays requester-agnostic.
+   */
+  function wrapPluginImport(importPlugin: PluginImport): PluginImport {
+    return async (context, configuration) => {
+      await admitPluginConfiguration(context, configuration);
+      return importPlugin(context, configuration);
+    };
+  }
+
+  /**
    * A tenant-scoped assignment is a tenant's own; any other scope reaches every tenant, with what
    * the role holds and inherits. Validation checks the permission; the restore (still a phase that
    * cleanup can undo) also the highest level in the role's chain, from the bundle's own roles, and
@@ -588,6 +703,19 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
     [ADMIN_ROLE_ASSIGNMENTS_DATASET]: (context, rowJson, restore) =>
       admitAssignment(context, rowJson, restore),
     [ADMIN_ROLES_DATASET]: (context, rowJson, restore) => admitRole(context, rowJson, restore),
+    ...Object.fromEntries(
+      Object.keys(RESTORE_DATASET_CAPABILITY).map((datasetId) => [
+        datasetId,
+        (context: TenantBackupStepContext) => admitCapabilityDataset(context, datasetId),
+      ])
+    ),
+    ...Object.fromEntries(
+      Object.keys(RESTORE_ROW_CAPABILITY).map((datasetId) => [
+        datasetId,
+        (context: TenantBackupStepContext, rowJson: string) =>
+          admitCapabilityRows(context, datasetId, rowJson),
+      ])
+    ),
   };
 
   /** Hold the guarded datasets' rows to the request's authority, on validation and restore. */
@@ -624,5 +752,5 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
     });
   }
 
-  return { wrap, authority };
+  return { wrap, wrapRecords, wrapPluginImport, authority };
 }

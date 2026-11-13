@@ -195,6 +195,12 @@ export const jaSettings = {
 	'set.k.rate_limit.totp_window': '回数を数える期間',
 	'set.k.rate_limit.totp_window.desc':
 		'上の回数を数える期間です（1 分から 60 分）。この期間が過ぎると、また試せます。',
+	'set.k.rate_limit.email_tenant_hourly_max': 'テナントごとのメール送信数の上限（1時間）',
+	'set.k.rate_limit.email_tenant_hourly_max.desc':
+		'1 つのテナントが 1 時間に送れるメールの数です（セキュリティ通知や招待も含みます）。上限を超えると、そのテナントからのメール送信は次の時間帯まで断られます。0 にすると、この上限は無効になります。プラットフォーム設定で、既定は 2000 です。',
+	'set.k.rate_limit.email_deployment_hourly_max': '環境全体のメール送信数の上限（1時間）',
+	'set.k.rate_limit.email_deployment_hourly_max.desc':
+		'この環境全体で 1 時間に送れるメールの数です（プラットフォーム自身のメールも含みます）。上限を超えると、メール送信は次の時間帯まで断られます。0 にすると、この上限は無効になります。プラットフォーム設定で、既定は 20000 です。',
 	'set.section.introspection': 'トークンのイントロスペクション',
 	'set.section.introspection.desc':
 		'Resource Server がトークンの有効性を問い合わせたときの答えです。',
@@ -319,6 +325,32 @@ export const jaSettings = {
 	'set.k.tenant_capabilities.bulk_jobs': 'テナントに一括ジョブを許可する',
 	'set.k.tenant_capabilities.bulk_jobs.desc':
 		'オフにすると、テナントもプラットフォーム管理者も一括ジョブ（ユーザーのインポート、一括更新、レポート生成、組織メンバーの一括操作）を作成できません。待機中のジョブは開始されずにブロック済みとして終了し、オンに戻した後で作り直す必要があります。既存のジョブと結果は引き続き読めます。既定はオンです。',
+
+	'set.k.tenant_capabilities.admin_sent_email': 'テナントの管理者によるメール送信を許可する',
+	'set.k.tenant_capabilities.admin_sent_email.desc':
+		'オフにすると、テナントの管理者が依頼に応じてこのサービスからメールを送信させることはできなくなります。対象は、ユーザー向けのメール送信、メールアドレスを指定したサインアップ招待、メールで届ける管理者招待（作成と再送）、メールプラグインのテストメールです。コードを API レスポンスで受け渡す管理者招待（code_delivery が response）はメールを送らないため対象外です。エンドユーザー自身の操作によるメール（サインインコード、確認メールなど）も対象外です。プラットフォーム管理者は Admin API では対象外です。既定はオンです。',
+
+	'set.k.tenant_capabilities.machine_credentials':
+		'テナントの管理者によるマシン認証情報の発行を許可する',
+	'set.k.tenant_capabilities.machine_credentials.desc':
+		'オフにすると、テナントの管理者は新しい長期のマシン認証情報を発行できなくなります。対象は、マシンアクセスのプリンシパルと認証情報の作成・ローテーション・再有効化（権限、テナント、有効期間の変更を含む）、SCIM トークンの作成、Check API キーの作成とローテーションです。一覧の取得、失効、無効化、削除はできます。すでに発行された認証情報は、失効するか期限が切れるまで使えます。プラットフォーム管理者は Admin API では対象外です。既定はオンです。',
+
+	'set.k.tenant_capabilities.email_provider_config':
+		'テナントの管理者によるメールプロバイダー変更を許可する',
+	'set.k.tenant_capabilities.email_provider_config.desc':
+		'オフにすると、テナントの管理者はテナントのメールの送信経路（プロバイダーと送信元）を変更できなくなります。対象は、テナントのメール設定（プロバイダーの順序）と、組み込みのメール通知プラグインの設定・リセット・有効化です。参照と、通知プラグインの無効化はできます。プラットフォーム管理者は Admin API では対象外です。既定はオンです。',
+
+	'set.k.tenant_capabilities.directory_connectors': 'ディレクトリ連携の設定',
+	'set.k.tenant_capabilities.directory_connectors.desc':
+		'オフにすると、テナントの管理者は、サービスが自分で選んだエンドポイントへ接続することになる設定ができなくなります。対象は、ディレクトリコネクタ設定の保存（コネクタの削除、ディレクトリサインインのオフ、保存済みコネクタをそのまま残す変更を除く）、コネクタのシークレットの発行とローテーション、コネクタの接続確認です。参照はできます。すでに設定済みのコネクタは引き続き使われます。プラットフォーム管理者は Admin API では対象外です。テナントのバックアップ復元でも、プラットフォーム管理者が依頼した場合を除き、ディレクトリコネクタの設定は復元されません。既定はオンです。',
+
+	'set.k.tenant_capabilities.external_identity_providers': '外部IdPの設定',
+	'set.k.tenant_capabilities.external_identity_providers.desc':
+		'オフにすると、テナントの管理者は外部 IdP を追加・変更できなくなります。対象は、作成、更新、OIDC ディスカバリー、プロバイダーへの動的クライアント登録です。参照と削除はできます。すでに設定済みの外部 IdP は引き続き使われます。プラットフォーム管理者は Admin API では対象外です。テナントのバックアップ復元でも、プラットフォーム管理者が依頼した場合を除き、外部 IdP は復元されません。既定はオンです。',
+
+	'set.k.tenant_capabilities.saml_metadata_url': 'URLからのSAMLメタデータ取得',
+	'set.k.tenant_capabilities.saml_metadata_url.desc':
+		'オフにすると、テナントの管理者は、自分で指定した URL から SAML メタデータを取得させること、および取得用の URL を新しく保存・変更することができなくなります。対象は、URL を使うメタデータのプレビュー・インポート・更新と証明書のプレビュー、新しい URL や変更した URL を持つ SAML プロバイダーとフェデレーションソースの保存です。メタデータ XML の貼り付け、保存済みの URL を残す変更、URL の消去、参照、削除はできます。すでに保存されている URL からの自動更新は続きます。プラットフォーム管理者は Admin API では対象外です。テナントのバックアップ復元でも、プラットフォーム管理者が依頼した場合を除き、メタデータ URL を持つプロバイダーとソースは復元されません。既定はオンです。',
 
 	'set.k.identity_mapping.reference_scan_tenant_limit': 'マッピングセット利用検索：テナント数',
 	'set.k.identity_mapping.reference_scan_tenant_limit.desc':

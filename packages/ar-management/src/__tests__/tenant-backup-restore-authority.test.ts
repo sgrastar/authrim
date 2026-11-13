@@ -9,7 +9,7 @@ import {
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ADMIN_PERMISSIONS,
   type AdminAuthContext,
@@ -23,6 +23,10 @@ import { createPhase8SqliteInspectionPolicies } from '@authrim/ar-lib-core/servi
 import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import { planPhase8InstalledSqliteResources } from '../tenant-backup-phase8-plan-loader';
+import {
+  createPhase5RecordDatasetPolicies,
+  decodePortablePluginConfiguration,
+} from '@authrim/ar-lib-core/services/tenant-portability/phase5-record-datasets';
 import { createSqliteDatasetInspectorFactory } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import {
   ADMIN_ROLE_ASSIGNMENTS_DATASET,
@@ -225,6 +229,12 @@ async function importRequest(authority: TenantBackupImportAuthority | null, tena
   } as unknown as TenantBackupStepContext;
 }
 
+const UPSTREAM = 'core.upstream_providers';
+const CLIENTS = 'core.oauth_clients';
+const SAML_PROVIDERS = 'core.identity_providers';
+const FEDERATION_SOURCES = 'admin.federation_trust_sources';
+const NEW_GUARDED = [UPSTREAM, CLIENTS, SAML_PROVIDERS, FEDERATION_SOURCES];
+
 function guarded(
   capabilityState?: (capability: TenantCapability) => Promise<TenantCapabilityState>
 ) {
@@ -240,6 +250,8 @@ function guarded(
         policies.get(TENANT_SETTINGS_DOCUMENTS_DATASET)!,
         policies.get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!,
         policies.get(ADMIN_ROLES_DATASET)!,
+        policies.get('core.check_api_keys')!,
+        ...NEW_GUARDED.map((datasetId) => policies.get(datasetId)!),
       ])
       .map((policy) => [policy.dataset.id, policy])
   );
@@ -313,7 +325,19 @@ describe('what an import requester may grant', () => {
   it('records the institution settings and the global level of a platform operator', () => {
     expect(tenantBackupImportAuthority(platformOperator, 'platform-admin')).toEqual({
       actorId: 'platform-admin',
-      platformSettingsCategories: ['dcr', 'institution', 'plugin'],
+      platformSettingsCategories: [
+        'dataset-admin-federation-trust-sources-metadata-url',
+        'dataset-core-check-api-keys',
+        'dataset-core-identity-providers-metadata-url',
+        'dataset-core-oauth-clients-registered-endpoints',
+        'dataset-core-upstream-providers',
+        'dataset-integrations-builtin-notifiers',
+        'dcr',
+        'directory-connectors',
+        'email-settings',
+        'institution',
+        'plugin',
+      ],
       globalAdmin: { permitted: true, hierarchyLevel: 100 },
     });
   });
@@ -411,6 +435,553 @@ describe('settings of a capability the platform turned off', () => {
     const tenant = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
     const policy = guarded(state('off')).get(TENANT_SETTINGS_DOCUMENTS_DATASET)!;
     await expect(policy.admitRow!.admit(tenant, settingsRow('security'))).resolves.toBeUndefined();
+  });
+});
+
+describe('tenant e-mail settings and check API keys while their capabilities are off', () => {
+  const state = (value: TenantCapabilityState) => async () => value;
+  const keyRow = JSON.stringify({
+    id: ['text', 'key-1'],
+    tenant_id: ['text', 'tenant-a'],
+    key_hash: ['text', 'a'.repeat(64)],
+    is_active: ['integer', '1'],
+  });
+  const CHECK_KEYS = 'core.check_api_keys';
+
+  it('refuses a tenant-only requester the e-mail settings document while off or unreadable, at validation and restore', async () => {
+    const context = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+    for (const value of ['off', 'unknown'] as const) {
+      const policy = guarded(state(value)).get(TENANT_SETTINGS_DOCUMENTS_DATASET)!;
+      await expect(policy.admitRow!.admit(context, settingsRow('email-settings'))).rejects.toThrow(
+        REFUSED
+      );
+      await expect(
+        policy.restoreTransform!.transform(context, settingsRow('email-settings'), 'write')
+      ).rejects.toThrow(REFUSED);
+    }
+  });
+
+  it('restores the e-mail settings for a platform operator while off, and for anyone while on', async () => {
+    const operator = await importRequest(
+      tenantBackupImportAuthority(platformOperator, 'platform-admin')
+    );
+    await expect(
+      guarded(state('off'))
+        .get(TENANT_SETTINGS_DOCUMENTS_DATASET)!
+        .admitRow!.admit(operator, settingsRow('email-settings'))
+    ).resolves.toBeUndefined();
+    const tenant = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+    await expect(
+      guarded(state('on'))
+        .get(TENANT_SETTINGS_DOCUMENTS_DATASET)!
+        .admitRow!.admit(tenant, settingsRow('email-settings'))
+    ).resolves.toBeUndefined();
+  });
+
+  it('refuses a tenant-only requester check API key rows while off or unreadable, at validation and restore', async () => {
+    const context = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+    for (const value of ['off', 'unknown'] as const) {
+      const policy = guarded(state(value)).get(CHECK_KEYS)!;
+      await expect(policy.admitRow!.admit(context, keyRow)).rejects.toThrow(REFUSED);
+      await expect(policy.restoreTransform!.transform(context, keyRow, 'write')).rejects.toThrow(
+        REFUSED
+      );
+    }
+  });
+
+  it('restores check API keys while on, and for a platform operator while off', async () => {
+    const tenant = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+    const onPolicy = guarded(state('on')).get(CHECK_KEYS)!;
+    await expect(onPolicy.admitRow!.admit(tenant, keyRow)).resolves.toBeUndefined();
+    await expect(onPolicy.restoreTransform!.transform(tenant, keyRow, 'write')).resolves.toBe(
+      keyRow
+    );
+    const operator = await importRequest(
+      tenantBackupImportAuthority(platformOperator, 'platform-admin')
+    );
+    const offPolicy = guarded(state('off')).get(CHECK_KEYS)!;
+    await expect(offPolicy.admitRow!.admit(operator, keyRow)).resolves.toBeUndefined();
+  });
+
+  it('refuses a request recorded before the exemption existed, while off (fails closed)', async () => {
+    const legacy = await importRequest(null);
+    await expect(
+      guarded(state('off')).get(CHECK_KEYS)!.admitRow!.admit(legacy, keyRow)
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it('leaves other datasets and categories unaffected by the machine_credentials switch', async () => {
+    const tenant = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+    const only = async (capability: TenantCapability): Promise<TenantCapabilityState> =>
+      capability === 'machine_credentials' ? 'off' : 'on';
+    await expect(
+      guarded(only)
+        .get(TENANT_SETTINGS_DOCUMENTS_DATASET)!
+        .admitRow!.admit(tenant, settingsRow('security'))
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('settings, providers and clients that make the platform call a tenant-chosen URL', () => {
+  const state = (value: TenantCapabilityState) => async () => value;
+  const only =
+    (capability: TenantCapability, value: TenantCapabilityState) =>
+    async (asked: TenantCapability): Promise<TenantCapabilityState> =>
+      asked === capability ? value : 'on';
+  const tenantContext = () =>
+    importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+  const operatorContext = () =>
+    importRequest(tenantBackupImportAuthority(platformOperator, 'platform-admin'));
+
+  const upstreamRow = JSON.stringify({
+    id: ['text', 'up-1'],
+    tenant_id: ['text', 'tenant-a'],
+    issuer: ['text', 'https://idp.example'],
+  });
+  const clientRow = (columns: Record<string, readonly [string, string | null]> = {}) =>
+    JSON.stringify({
+      client_id: ['text', 'client-1'],
+      tenant_id: ['text', 'tenant-a'],
+      jwks_uri: ['null', null],
+      backchannel_logout_uri: ['null', null],
+      backchannel_client_notification_endpoint: ['null', null],
+      logout_webhook_uri: ['null', null],
+      ...columns,
+    });
+  const samlRow = (config: unknown) =>
+    JSON.stringify({
+      id: ['text', 'saml-1'],
+      tenant_id: ['text', 'tenant-a'],
+      provider_type: ['text', 'saml_sp'],
+      config_json: ['text', typeof config === 'string' ? config : JSON.stringify(config)],
+    });
+  const sourceRow = (payload: unknown) =>
+    JSON.stringify({
+      id: ['text', 'source-1'],
+      tenant_id: ['text', 'tenant-a'],
+      source_type: ['text', 'saml_federation'],
+      protocol_payload_json:
+        payload === null
+          ? ['null', null]
+          : ['text', typeof payload === 'string' ? payload : JSON.stringify(payload)],
+    });
+
+  describe('directory-connectors settings (directory_connectors)', () => {
+    it('refuses a tenant requester the document while off or unreadable, at validation and restore', async () => {
+      const context = await tenantContext();
+      for (const value of ['off', 'unknown'] as const) {
+        const policy = guarded(only('directory_connectors', value)).get(
+          TENANT_SETTINGS_DOCUMENTS_DATASET
+        )!;
+        await expect(
+          policy.admitRow!.admit(context, settingsRow('directory-connectors'))
+        ).rejects.toThrow(REFUSED);
+        await expect(
+          policy.restoreTransform!.transform(context, settingsRow('directory-connectors'), 'write')
+        ).rejects.toThrow(REFUSED);
+      }
+    });
+
+    it('restores it for a platform operator while off, and for anyone while on', async () => {
+      const operator = await operatorContext();
+      await expect(
+        guarded(only('directory_connectors', 'off'))
+          .get(TENANT_SETTINGS_DOCUMENTS_DATASET)!
+          .admitRow!.admit(operator, settingsRow('directory-connectors'))
+      ).resolves.toBeUndefined();
+      const tenant = await tenantContext();
+      await expect(
+        guarded(state('on'))
+          .get(TENANT_SETTINGS_DOCUMENTS_DATASET)!
+          .admitRow!.admit(tenant, settingsRow('directory-connectors'))
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuses a global request recorded without the marker while off', async () => {
+      const authority = tenantBackupImportAuthority(platformOperator, 'platform-admin');
+      const markerless = await importRequest({
+        ...authority,
+        platformSettingsCategories: authority.platformSettingsCategories.filter(
+          (entry) => entry !== 'directory-connectors'
+        ),
+      });
+      await expect(
+        guarded(only('directory_connectors', 'off'))
+          .get(TENANT_SETTINGS_DOCUMENTS_DATASET)!
+          .admitRow!.admit(markerless, settingsRow('directory-connectors'))
+      ).rejects.toThrow(REFUSED);
+    });
+  });
+
+  describe('external identity providers (external_identity_providers)', () => {
+    it('refuses a tenant requester provider rows while off or unreadable, at validation and restore', async () => {
+      const context = await tenantContext();
+      for (const value of ['off', 'unknown'] as const) {
+        const policy = guarded(only('external_identity_providers', value)).get(UPSTREAM)!;
+        await expect(policy.admitRow!.admit(context, upstreamRow)).rejects.toThrow(REFUSED);
+        await expect(
+          policy.restoreTransform!.transform(context, upstreamRow, 'write')
+        ).rejects.toThrow(REFUSED);
+      }
+    });
+
+    it('restores them for a platform operator while off, and for anyone while on', async () => {
+      const operator = await operatorContext();
+      await expect(
+        guarded(only('external_identity_providers', 'off'))
+          .get(UPSTREAM)!
+          .admitRow!.admit(operator, upstreamRow)
+      ).resolves.toBeUndefined();
+      const tenant = await tenantContext();
+      await expect(
+        guarded(state('on')).get(UPSTREAM)!.admitRow!.admit(tenant, upstreamRow)
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuses a global request recorded without the marker while off', async () => {
+      const authority = tenantBackupImportAuthority(platformOperator, 'platform-admin');
+      const markerless = await importRequest({
+        ...authority,
+        platformSettingsCategories: authority.platformSettingsCategories.filter(
+          (entry) => entry !== 'dataset-core-upstream-providers'
+        ),
+      });
+      await expect(
+        guarded(only('external_identity_providers', 'off'))
+          .get(UPSTREAM)!
+          .admitRow!.admit(markerless, upstreamRow)
+      ).rejects.toThrow(REFUSED);
+    });
+
+    it('is not moved by the other switches', async () => {
+      const tenant = await tenantContext();
+      await expect(
+        guarded(only('saml_metadata_url', 'off'))
+          .get(UPSTREAM)!
+          .admitRow!.admit(tenant, upstreamRow)
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('client endpoints only dynamic client registration sets (dynamic_client_registration)', () => {
+    const REGISTERED = [
+      'jwks_uri',
+      'backchannel_logout_uri',
+      'backchannel_client_notification_endpoint',
+      'logout_webhook_uri',
+    ] as const;
+
+    it.each(REGISTERED)(
+      'refuses a tenant requester a client row with %s while off or unreadable, at validation and restore',
+      async (column) => {
+        const context = await tenantContext();
+        const row = clientRow({ [column]: ['text', 'https://rp.example/endpoint'] });
+        for (const value of ['off', 'unknown'] as const) {
+          const policy = guarded(only('dynamic_client_registration', value)).get(CLIENTS)!;
+          await expect(policy.admitRow!.admit(context, row)).rejects.toThrow(REFUSED);
+          await expect(policy.restoreTransform!.transform(context, row, 'write')).rejects.toThrow(
+            REFUSED
+          );
+        }
+      }
+    );
+
+    it('restores a client row without those fields while off, as before', async () => {
+      const tenant = await tenantContext();
+      const policy = guarded(only('dynamic_client_registration', 'off')).get(CLIENTS)!;
+      const plain = clientRow({
+        initiate_login_uri: ['text', 'https://rp.example/login'],
+        jwks_uri: ['text', '   '],
+      });
+      await expect(policy.admitRow!.admit(tenant, plain)).resolves.toBeUndefined();
+      await expect(policy.restoreTransform!.transform(tenant, plain, 'write')).resolves.toBe(plain);
+      await expect(policy.admitRow!.admit(tenant, clientRow())).resolves.toBeUndefined();
+    });
+
+    it('treats a field it cannot read as carrying one (fails closed)', async () => {
+      const tenant = await tenantContext();
+      const policy = guarded(only('dynamic_client_registration', 'off')).get(CLIENTS)!;
+      await expect(
+        policy.admitRow!.admit(tenant, clientRow({ jwks_uri: ['integer', '1'] }))
+      ).rejects.toThrow(REFUSED);
+    });
+
+    it('restores them for a platform operator while off, and for anyone while on', async () => {
+      const row = clientRow({ logout_webhook_uri: ['text', 'https://rp.example/hook'] });
+      const operator = await operatorContext();
+      await expect(
+        guarded(only('dynamic_client_registration', 'off'))
+          .get(CLIENTS)!
+          .admitRow!.admit(operator, row)
+      ).resolves.toBeUndefined();
+      const tenant = await tenantContext();
+      await expect(
+        guarded(state('on')).get(CLIENTS)!.admitRow!.admit(tenant, row)
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuses a global request recorded without the marker while off', async () => {
+      const authority = tenantBackupImportAuthority(platformOperator, 'platform-admin');
+      const markerless = await importRequest({
+        ...authority,
+        platformSettingsCategories: authority.platformSettingsCategories.filter(
+          (entry) => entry !== 'dataset-core-oauth-clients-registered-endpoints'
+        ),
+      });
+      await expect(
+        guarded(only('dynamic_client_registration', 'off'))
+          .get(CLIENTS)!
+          .admitRow!.admit(markerless, clientRow({ jwks_uri: ['text', 'https://rp.example/jwks'] }))
+      ).rejects.toThrow(REFUSED);
+    });
+  });
+
+  describe('SAML providers and federation sources with a metadata URL (saml_metadata_url)', () => {
+    const withUrl = samlRow({
+      entityId: 'https://sp.example',
+      metadataUrl: 'https://sp.example/md',
+    });
+    const pasted = samlRow({ entityId: 'https://sp.example', metadataXml: '<x/>' });
+    const sourceWithUrl = sourceRow({
+      metadataUrl: 'https://fed.example/md.xml',
+      policy: 'strict',
+    });
+    const sourceExactPattern = sourceRow({ metadataUrlPatterns: ['https://fed.example/md.xml'] });
+    const sourceWildcard = sourceRow({ metadataUrlPatterns: ['https://fed.example/*'] });
+    const sourceNoUrl = sourceRow({ policy: 'strict' });
+
+    it('refuses a tenant requester rows that carry a URL while off or unreadable, at validation and restore', async () => {
+      const context = await tenantContext();
+      for (const value of ['off', 'unknown'] as const) {
+        const provider = guarded(only('saml_metadata_url', value)).get(SAML_PROVIDERS)!;
+        await expect(provider.admitRow!.admit(context, withUrl)).rejects.toThrow(REFUSED);
+        await expect(
+          provider.restoreTransform!.transform(context, withUrl, 'write')
+        ).rejects.toThrow(REFUSED);
+        const sources = guarded(only('saml_metadata_url', value)).get(FEDERATION_SOURCES)!;
+        for (const row of [sourceWithUrl, sourceExactPattern]) {
+          await expect(sources.admitRow!.admit(context, row)).rejects.toThrow(REFUSED);
+          await expect(sources.restoreTransform!.transform(context, row, 'write')).rejects.toThrow(
+            REFUSED
+          );
+        }
+      }
+    });
+
+    it('restores rows without a URL as usual while off', async () => {
+      const context = await tenantContext();
+      const offGuards = guarded(only('saml_metadata_url', 'off'));
+      await expect(
+        offGuards.get(SAML_PROVIDERS)!.admitRow!.admit(context, pasted)
+      ).resolves.toBeUndefined();
+      await expect(
+        offGuards.get(SAML_PROVIDERS)!.admitRow!.admit(context, samlRow({ metadataUrl: '' }))
+      ).resolves.toBeUndefined();
+      for (const row of [sourceNoUrl, sourceWildcard, sourceRow(null)]) {
+        await expect(
+          offGuards.get(FEDERATION_SOURCES)!.admitRow!.admit(context, row)
+        ).resolves.toBeUndefined();
+      }
+    });
+
+    it.each([
+      ['an array', ['https://sp.example/md']],
+      ['an object', { href: 'https://sp.example/md' }],
+      ['a number', 1],
+    ])('counts a non-string metadataUrl (%s) as carrying a URL', async (_n, value) => {
+      const tenant = await tenantContext();
+      const operator = await operatorContext();
+      const provider = samlRow({ entityId: 'https://sp.example', metadataUrl: value });
+      const source = sourceRow({ metadataUrl: value });
+      const offGuards = guarded(only('saml_metadata_url', 'off'));
+      for (const [dataset, row] of [
+        [SAML_PROVIDERS, provider],
+        [FEDERATION_SOURCES, source],
+      ] as const) {
+        await expect(offGuards.get(dataset)!.admitRow!.admit(tenant, row)).rejects.toThrow(REFUSED);
+        await expect(
+          offGuards.get(dataset)!.admitRow!.admit(operator, row)
+        ).resolves.toBeUndefined();
+      }
+    });
+
+    it('counts a metadataUrlPatterns that is not an array of strings as carrying a URL', async () => {
+      const tenant = await tenantContext();
+      const offGuards = guarded(only('saml_metadata_url', 'off')).get(FEDERATION_SOURCES)!;
+      for (const patterns of ['https://fed.example/md.xml', { a: 1 }, [1], [['https://x']]]) {
+        await expect(
+          offGuards.admitRow!.admit(tenant, sourceRow({ metadataUrlPatterns: patterns }))
+        ).rejects.toThrow(REFUSED);
+      }
+    });
+
+    it('treats a config it cannot read as carrying a URL (fails closed)', async () => {
+      const context = await tenantContext();
+      const offGuards = guarded(only('saml_metadata_url', 'off'));
+      await expect(
+        offGuards.get(SAML_PROVIDERS)!.admitRow!.admit(context, samlRow('not json'))
+      ).rejects.toThrow(REFUSED);
+      await expect(
+        offGuards.get(FEDERATION_SOURCES)!.admitRow!.admit(context, sourceRow('[1]'))
+      ).rejects.toThrow(REFUSED);
+    });
+
+    it('restores them for a platform operator while off, and for anyone while on', async () => {
+      const operator = await operatorContext();
+      const offGuards = guarded(only('saml_metadata_url', 'off'));
+      await expect(
+        offGuards.get(SAML_PROVIDERS)!.admitRow!.admit(operator, withUrl)
+      ).resolves.toBeUndefined();
+      await expect(
+        offGuards.get(FEDERATION_SOURCES)!.admitRow!.admit(operator, sourceWithUrl)
+      ).resolves.toBeUndefined();
+      const tenant = await tenantContext();
+      const onGuards = guarded(state('on'));
+      await expect(
+        onGuards.get(SAML_PROVIDERS)!.admitRow!.admit(tenant, withUrl)
+      ).resolves.toBeUndefined();
+      await expect(
+        onGuards.get(FEDERATION_SOURCES)!.admitRow!.admit(tenant, sourceWithUrl)
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuses a global request recorded without the marker while off', async () => {
+      const authority = tenantBackupImportAuthority(platformOperator, 'platform-admin');
+      const without = (marker: string) =>
+        importRequest({
+          ...authority,
+          platformSettingsCategories: authority.platformSettingsCategories.filter(
+            (entry) => entry !== marker
+          ),
+        });
+      const offGuards = guarded(only('saml_metadata_url', 'off'));
+      await expect(
+        offGuards
+          .get(SAML_PROVIDERS)!
+          .admitRow!.admit(await without('dataset-core-identity-providers-metadata-url'), withUrl)
+      ).rejects.toThrow(REFUSED);
+      await expect(
+        offGuards
+          .get(FEDERATION_SOURCES)!
+          .admitRow!.admit(
+            await without('dataset-admin-federation-trust-sources-metadata-url'),
+            sourceWithUrl
+          )
+      ).rejects.toThrow(REFUSED);
+    });
+  });
+});
+
+describe('built-in notifier plugin configuration while email_provider_config is off', () => {
+  const state = (value: TenantCapabilityState) => async () => value;
+  const SHA = 'ab'.repeat(32);
+  const kvConfig = JSON.stringify({
+    version: 1,
+    backend: 'kv',
+    enabled: true,
+    value: { apiKey: 'x' },
+    secretFields: [],
+  });
+  const dynamicConfig = JSON.stringify({ version: 1, backend: 'dynamic_worker' });
+  const pluginRow = (pluginId: string, config = kvConfig) =>
+    JSON.stringify({
+      tenant_id: ['text', 'tenant-a'],
+      installation_id: ['text', `kv-plugin:${pluginId}`],
+      plugin_id: ['text', pluginId],
+      version_digest: ['text', SHA],
+      contract_version: ['integer', '1'],
+      config_json: ['text', config],
+    });
+  const PLUGIN_DATASET = 'integrations.plugin_runner_configuration';
+
+  function setup(value?: TenantCapabilityState) {
+    const guard = createTenantBackupRestoreAuthorityGuard({
+      logEnv: logFixture.env,
+      database: adapter(admin),
+      loadBundleRoles: async () => bundleRoles,
+      ...(value ? { capabilityState: state(value) } : {}),
+    });
+    const policy = guard
+      .wrapRecords(createPhase5RecordDatasetPolicies({ assertPluginSupported: async () => {} }))
+      .find(({ dataset }) => dataset.id === PLUGIN_DATASET)!;
+    const delegate = vi.fn(async () => {});
+    return { guard, policy, importPlugin: guard.wrapPluginImport(delegate), delegate };
+  }
+  const tenantRequest = () =>
+    importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
+  const decode = (row: string) => decodePortablePluginConfiguration(row, 'tenant-a');
+
+  it.each(['off', 'unknown'] as const)(
+    'refuses a tenant-only requester at validation and restore while %s',
+    async (value) => {
+      const { policy, importPlugin, delegate } = setup(value);
+      const context = await tenantRequest();
+      const row = pluginRow('notifier-resend');
+      await expect(policy.admitRow!.admit(context, row)).rejects.toThrow(REFUSED);
+      await expect(importPlugin(context, decode(row))).rejects.toThrow(REFUSED);
+      expect(delegate).not.toHaveBeenCalled();
+    }
+  );
+
+  it('lets a platform operator through in both phases while off', async () => {
+    const { policy, importPlugin, delegate } = setup('off');
+    const context = await importRequest(
+      tenantBackupImportAuthority(platformOperator, 'platform-admin')
+    );
+    const row = pluginRow('notifier-resend');
+    await expect(policy.admitRow!.admit(context, row)).resolves.toBeUndefined();
+    await importPlugin(context, decode(row));
+    expect(delegate).toHaveBeenCalledOnce();
+  });
+
+  it('lets anyone through while on', async () => {
+    const { policy, importPlugin, delegate } = setup('on');
+    const context = await tenantRequest();
+    const row = pluginRow('notifier-resend');
+    await expect(policy.admitRow!.admit(context, row)).resolves.toBeUndefined();
+    await importPlugin(context, decode(row));
+    expect(delegate).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a global request recorded without the new marker while off', async () => {
+    const { policy, importPlugin } = setup('off');
+    const authority = tenantBackupImportAuthority(platformOperator, 'platform-admin');
+    const context = await importRequest({
+      ...authority,
+      platformSettingsCategories: authority.platformSettingsCategories.filter(
+        (category) => category !== 'dataset-integrations-builtin-notifiers'
+      ),
+    });
+    const row = pluginRow('notifier-resend');
+    await expect(policy.admitRow!.admit(context, row)).rejects.toThrow(REFUSED);
+    await expect(importPlugin(context, decode(row))).rejects.toThrow(REFUSED);
+    const legacy = await importRequest(null);
+    await expect(policy.admitRow!.admit(legacy, row)).rejects.toThrow(REFUSED);
+  });
+
+  it('does not judge other built-in plugins or dynamic workers named like a notifier', async () => {
+    const { policy, importPlugin, delegate } = setup('off');
+    const context = await tenantRequest();
+    const other = pluginRow('some-other-plugin');
+    const dynamic = pluginRow('notifier-custom', dynamicConfig);
+    await expect(policy.admitRow!.admit(context, other)).resolves.toBeUndefined();
+    await expect(policy.admitRow!.admit(context, dynamic)).resolves.toBeUndefined();
+    await importPlugin(context, decode(other));
+    await importPlugin(context, decode(dynamic));
+    expect(delegate).toHaveBeenCalledTimes(2);
+  });
+
+  it('adds only admitRow to the plugin record policy and leaves the other policies as they are', () => {
+    const { guard } = setup('off');
+    const base = createPhase5RecordDatasetPolicies({ assertPluginSupported: async () => {} });
+    const wrapped = guard.wrapRecords(base);
+    expect(wrapped).toHaveLength(base.length);
+    for (const [index, policy] of wrapped.entries()) {
+      if (policy.dataset.id === PLUGIN_DATASET) {
+        expect(policy.admitRow).toBeDefined();
+        expect({ ...policy, admitRow: undefined }).toEqual({ ...base[index], admitRow: undefined });
+      } else expect(policy).toBe(base[index]);
+    }
   });
 });
 
@@ -1048,12 +1619,20 @@ describe('policy wrapping', () => {
     expect(wrapped.get(ADMIN_ROLE_ASSIGNMENTS_DATASET)?.restoreTransform?.id).toBe(
       `${policies.get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!.restoreTransform!.id}.restore-authority-v1`
     );
+    expect(wrapped.get('core.check_api_keys')?.admitRow?.id).toBe(
+      'restore-authority-v1:core.check_api_keys'
+    );
+    for (const datasetId of NEW_GUARDED) {
+      expect(wrapped.get(datasetId)?.admitRow?.id).toBe(`restore-authority-v1:${datasetId}`);
+    }
     const others = [...wrapped.values()].filter(
       ({ dataset }) =>
         ![
           TENANT_SETTINGS_DOCUMENTS_DATASET,
           ADMIN_ROLE_ASSIGNMENTS_DATASET,
           ADMIN_ROLES_DATASET,
+          'core.check_api_keys',
+          ...NEW_GUARDED,
         ].includes(dataset.id)
     );
     expect(others.length).toBeGreaterThan(100);

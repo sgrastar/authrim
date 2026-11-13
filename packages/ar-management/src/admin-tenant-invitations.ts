@@ -25,6 +25,7 @@ import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { getAdminAuth, requireTenantResourceAccess } from './admin-tenant-access';
 import { canManageRoleHierarchy } from './admin-rbac';
+import { refuseWhileCapabilityOff } from './capability-authorization';
 import {
   disableTenantDiscoveryAliasDirectory,
   ensureActiveTenantDiscoveryAliasDirectory,
@@ -136,6 +137,13 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     }
 
     const { invited_email, role_id, org_id, max_uses, expires_in_hours } = parsed.data;
+
+    // An invitation addressed to an e-mail address is mailed: refused, before anything is written,
+    // while admin_sent_email is off. One without an address sends nothing and stays possible.
+    if (invited_email) {
+      const capabilityOff = await refuseWhileCapabilityOff(c, 'admin_sent_email');
+      if (capabilityOff) return capabilityOff;
+    }
 
     // Verify tenant exists
     const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;

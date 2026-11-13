@@ -26,6 +26,7 @@ import {
   type DirectoryConnectorStatusEpisodeRow,
 } from '@authrim/ar-lib-core';
 import { requireTenantResourceAccess } from '../admin-tenant-access';
+import { capabilityRefusal } from '../capability-authorization';
 import { publishAccountExternalSubjectAddition } from '../account-identifier-addition';
 
 const CATEGORY = 'directory-connectors';
@@ -1390,6 +1391,44 @@ export async function listDirectoryConnectorRelayEventsHandler(c: Context<{ Bind
 }
 
 /**
+ * Whether `next` only takes something away from `stored`: every connector it keeps is exactly as
+ * stored (same endpoint, key and settings), and it neither switches directory sign-in on nor turns
+ * automatic provisioning on. Choosing another default among the kept connectors is allowed.
+ * Both configs are normalized.
+ */
+export function onlyReducesDirectoryConnectors(
+  stored: DirectoryConnectorsConfig,
+  next: DirectoryConnectorsConfig
+): boolean {
+  if (next.enabled && !stored.enabled) return false;
+  if (next.auto_provision && !stored.auto_provision) return false;
+  const storedById = new Map(
+    stored.connectors.map((connector) => [connector.id, JSON.stringify(connector)])
+  );
+  return next.connectors.every(
+    (connector) => storedById.get(connector.id) === JSON.stringify(connector)
+  );
+}
+
+async function refuseDirectoryConnectorsWrite(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  next: DirectoryConnectorsConfig | null
+): Promise<Response | null> {
+  const refusal = await capabilityRefusal(
+    c.env,
+    c.get('adminAuth' as never) as Parameters<typeof capabilityRefusal>[1],
+    'directory_connectors'
+  );
+  if (!refusal) return null;
+  if (refusal.status === 403 && next) {
+    const stored = normalizeConfig(await readConfig(c.env, tenantId));
+    if (onlyReducesDirectoryConnectors(stored, next)) return null;
+  }
+  return c.json(refusal.body, refusal.status, refusal.status === 503 ? { 'Retry-After': '5' } : {});
+}
+
+/**
  * The directory password is not in the lite Login UI: switching the directory sign-in on is
  * refused for a tenant in lite mode (lite-mode-guard.ts). Access is checked first, so a caller
  * without it learns nothing about the tenant.
@@ -1399,6 +1438,15 @@ export async function updateDirectoryConnectorsHandler(c: Context<{ Bindings: En
   const accessError = await requireTenantResourceAccess(c, tenantId);
   if (accessError) return accessError;
   const parsed = DirectoryConnectorsUpdateSchema.safeParse(await c.req.json().catch(() => null));
+  // While the platform has the directory_connectors capability off, a save may only take
+  // connectors away or switch sign-in off (see onlyReducesDirectoryConnectors); an unreadable
+  // switch refuses every save.
+  const capabilityError = await refuseDirectoryConnectorsWrite(
+    c,
+    tenantId,
+    parsed.success ? normalizeConfig(parsed.data) : null
+  );
+  if (capabilityError) return capabilityError;
   if (!parsed.success || normalizeConfig(parsed.data).enabled !== true) {
     return updateDirectoryConnectorsUnguarded(c);
   }

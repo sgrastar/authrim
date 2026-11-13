@@ -10,10 +10,12 @@ import {
   type NotificationIntentOwner,
   type NotificationIntentRoutingEnv,
 } from './notification-intent-routing';
+import { consumeEmailQuota, type EmailQuotaEnv } from './notification-email-quota';
 
 const SAFE_ENVIRONMENT = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 
-export interface NotificationDeliveryProducerEnv extends NotificationIntentRoutingEnv {
+export interface NotificationDeliveryProducerEnv
+  extends NotificationIntentRoutingEnv, EmailQuotaEnv {
   PLUGIN_RUNNER?: Pick<
     PluginRunnerServiceBinding,
     'deliverNotification' | 'encryptNotificationPayload' | 'resolveNotificationProviderOrder'
@@ -99,6 +101,13 @@ export async function produceNotificationDelivery(
   const target = await resolveNotificationIntentTarget(env, input.owner);
   if (!env.PLUGIN_RUNNER) {
     throw new Error('notification_delivery_provider_order_unavailable');
+  }
+  // Before anything is encrypted or stored: a refused e-mail leaves no outbox row to retry.
+  if (input.payload.channel === 'email') {
+    await consumeEmailQuota(env, {
+      tenantId: input.owner.owner === 'tenant' ? target.tenantId : null,
+      notificationKind: input.notificationKind,
+    });
   }
   const [providerOrder, encryptedPayload] = await Promise.all([
     env.PLUGIN_RUNNER.resolveNotificationProviderOrder({

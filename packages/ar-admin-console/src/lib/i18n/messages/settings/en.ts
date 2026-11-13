@@ -195,6 +195,12 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.rate_limit.totp_window': 'Period the attempts are counted in',
 	'set.k.rate_limit.totp_window.desc':
 		'The period the number above is counted in (1 to 60 minutes). Once it passes, attempts are allowed again.',
+	'set.k.rate_limit.email_tenant_hourly_max': 'E-mails per tenant per hour',
+	'set.k.rate_limit.email_tenant_hourly_max.desc':
+		'How many e-mails one tenant can have sent in an hour, security notices and invitations included. Over the limit, the e-mails of that tenant are refused until the next hour. 0 turns the limit off. Platform setting; the default is 2000.',
+	'set.k.rate_limit.email_deployment_hourly_max': 'E-mails for the whole deployment per hour',
+	'set.k.rate_limit.email_deployment_hourly_max.desc':
+		'How many e-mails the whole deployment can send in an hour, including those of the platform itself. Over the limit, e-mails are refused until the next hour. 0 turns the limit off. Platform setting; the default is 20000.',
 	'set.section.introspection': 'Token introspection',
 	'set.section.introspection.desc':
 		'The answer a Resource Server gets when it asks whether a token is valid.',
@@ -320,6 +326,32 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.tenant_capabilities.bulk_jobs': 'Tenants may run bulk jobs',
 	'set.k.tenant_capabilities.bulk_jobs.desc':
 		'Off: neither tenants nor platform administrators can create bulk jobs (user import, bulk update, report generation, bulk organization members). Queued jobs do not start: they end as blocked and must be created again once it is back on. Existing jobs and their results stay readable. On by default.',
+
+	'set.k.tenant_capabilities.admin_sent_email': 'Tenant admins may have e-mail sent',
+	'set.k.tenant_capabilities.admin_sent_email.desc':
+		'Off: an administrator of a tenant cannot make the deployment send e-mail on request: the send-email action for a user, sign-up invitations addressed to an e-mail address, admin invitations delivered by e-mail (create and resend) and the test e-mail of an e-mail provider plugin. Admin invitations whose code is handed back in the API response (code_delivery response) send no e-mail and are not affected, nor is e-mail of end-user flows (sign-in codes, verification). Platform administrators are exempt at the Admin API. On by default.',
+
+	'set.k.tenant_capabilities.machine_credentials': 'Tenant admins may issue machine credentials',
+	'set.k.tenant_capabilities.machine_credentials.desc':
+		'Off: tenant administrators cannot issue new long-lived machine credentials: creating, rotating or re-enabling machine access principals and credentials (including changes of their permissions, tenants or validity), creating SCIM tokens, and creating or rotating Check API keys. Listing, revoking, disabling and deleting stay possible. Credentials already issued keep working until they are revoked or expire. Platform administrators are exempt at the Admin API. On by default.',
+
+	'set.k.tenant_capabilities.email_provider_config': 'Tenant admins may change the e-mail provider',
+	'set.k.tenant_capabilities.email_provider_config.desc':
+		'Off: tenant administrators cannot change which provider or sender the tenant e-mail goes through: the tenant e-mail settings (provider order) and the configuration, reset and enabling of the built-in e-mail notifier plugins. Reading, and disabling a notifier plugin, stay possible. Platform administrators are exempt at the Admin API. On by default.',
+
+	'set.k.tenant_capabilities.directory_connectors':
+		'Tenant admins may configure directory connectors',
+	'set.k.tenant_capabilities.directory_connectors.desc':
+		'Off: tenant administrators cannot make the platform reach a directory connector endpoint they chose: saving directory connector settings (except a save that only removes connectors, switches directory sign-in off or keeps the stored connectors as they are), issuing and rotating connector secrets, and the connector health check. Reading stays possible. Connectors already configured keep working. Platform administrators are exempt at the Admin API. A tenant backup restore does not bring back directory connector settings while it is off, unless a platform administrator asked for it. On by default.',
+
+	'set.k.tenant_capabilities.external_identity_providers':
+		'Tenant admins may configure external identity providers',
+	'set.k.tenant_capabilities.external_identity_providers.desc':
+		'Off: tenant administrators cannot add or change external identity providers (create, update, OIDC discovery and dynamic client registration at the provider). Reading and deleting stay possible. Providers already configured keep working. Platform administrators are exempt at the Admin API. A tenant backup restore does not bring back external identity providers while it is off, unless a platform administrator asked for it. On by default.',
+
+	'set.k.tenant_capabilities.saml_metadata_url': 'Tenant admins may fetch SAML metadata from a URL',
+	'set.k.tenant_capabilities.saml_metadata_url.desc':
+		'Off: tenant administrators cannot make the platform fetch SAML metadata from a URL they chose, or store a new URL for later fetching: metadata preview, import, refresh and certificate preview with a URL, and saving a SAML provider or a federation source with a new or changed metadata URL. Pasting metadata XML, keeping or clearing a stored URL, reading and deleting stay possible. URLs already stored keep being refreshed automatically. Platform administrators are exempt at the Admin API. A tenant backup restore does not bring back providers or sources that carry a metadata URL while it is off, unless a platform administrator asked for it. On by default.',
 
 	'set.k.identity_mapping.reference_scan_tenant_limit': 'Mapping Set usage search: tenants',
 	'set.k.identity_mapping.reference_scan_tenant_limit.desc':

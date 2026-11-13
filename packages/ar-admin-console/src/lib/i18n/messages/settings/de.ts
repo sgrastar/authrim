@@ -199,6 +199,12 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.rate_limit.totp_window': 'Zeitraum, in dem gezählt wird',
 	'set.k.rate_limit.totp_window.desc':
 		'Der Zeitraum, in dem die Zahl oben gezählt wird (1 bis 60 Minuten). Danach sind wieder Versuche erlaubt.',
+	'set.k.rate_limit.email_tenant_hourly_max': 'E-Mails pro Mandant und Stunde',
+	'set.k.rate_limit.email_tenant_hourly_max.desc':
+		'Wie viele E-Mails ein Mandant pro Stunde versenden lassen kann, einschließlich Sicherheitshinweisen und Einladungen. Darüber werden die E-Mails dieses Mandanten bis zur nächsten Stunde abgelehnt. 0 schaltet die Grenze ab. Plattform-Einstellung; Standard ist 2000.',
+	'set.k.rate_limit.email_deployment_hourly_max': 'E-Mails der gesamten Umgebung pro Stunde',
+	'set.k.rate_limit.email_deployment_hourly_max.desc':
+		'Wie viele E-Mails die gesamte Umgebung pro Stunde versenden kann, einschließlich der E-Mails der Plattform selbst. Darüber werden E-Mails bis zur nächsten Stunde abgelehnt. 0 schaltet die Grenze ab. Plattform-Einstellung; Standard ist 20000.',
 	'set.section.introspection': 'Token-Introspektion',
 	'set.section.introspection.desc':
 		'Die Antwort, die ein Resource Server erhält, wenn er fragt, ob ein Token gültig ist.',
@@ -326,6 +332,36 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.tenant_capabilities.bulk_jobs': 'Tenants dürfen Massenjobs ausführen',
 	'set.k.tenant_capabilities.bulk_jobs.desc':
 		'Aus: Weder Tenants noch Plattformadministratoren können Massenjobs anlegen (Benutzerimport, Massenänderung, Berichtserstellung, Massenmitglieder einer Organisation). Wartende Jobs starten nicht, sondern enden als blockiert und müssen nach dem Wiedereinschalten neu angelegt werden. Vorhandene Jobs und ihre Ergebnisse bleiben lesbar. Standardmäßig an.',
+
+	'set.k.tenant_capabilities.admin_sent_email':
+		'Tenant-Administratoren dürfen E-Mail versenden lassen',
+	'set.k.tenant_capabilities.admin_sent_email.desc':
+		'Aus: Ein Administrator eines Tenants kann den Dienst nicht mehr auffordern, E-Mail zu senden: die Aktion „E-Mail senden“ für einen Benutzer, Registrierungseinladungen an eine E-Mail-Adresse, per E-Mail zugestellte Admin-Einladungen (Anlegen und erneut Senden) und die Test-E-Mail eines E-Mail-Provider-Plugins. Admin-Einladungen, deren Code in der API-Antwort übergeben wird (code_delivery response), senden keine E-Mail und sind nicht betroffen; ebenso wenig E-Mails aus Endnutzer-Abläufen (Anmeldecodes, Bestätigung). Plattformadministratoren sind an der Admin-API ausgenommen. Standardmäßig an.',
+
+	'set.k.tenant_capabilities.machine_credentials':
+		'Tenant-Administratoren dürfen Maschinenzugangsdaten ausstellen',
+	'set.k.tenant_capabilities.machine_credentials.desc':
+		'Aus: Tenant-Administratoren können keine neuen langlebigen Maschinenzugangsdaten ausstellen: Anlegen, Rotieren oder Wiederaktivieren von Maschinenzugangs-Principals und -Zugangsdaten (einschließlich Änderungen von Berechtigungen, Tenants oder Gültigkeit), Anlegen von SCIM-Tokens sowie Anlegen oder Rotieren von Check-API-Schlüsseln. Auflisten, Widerrufen, Deaktivieren und Löschen bleiben möglich. Bereits ausgestellte Zugangsdaten gelten weiter, bis sie widerrufen werden oder ablaufen. Plattformadministratoren sind an der Admin-API ausgenommen. Standardmäßig an.',
+
+	'set.k.tenant_capabilities.email_provider_config':
+		'Tenant-Administratoren dürfen den E-Mail-Provider ändern',
+	'set.k.tenant_capabilities.email_provider_config.desc':
+		'Aus: Tenant-Administratoren können nicht ändern, über welchen Provider oder Absender die E-Mail des Tenants läuft: die E-Mail-Einstellungen des Tenants (Provider-Reihenfolge) sowie Konfiguration, Zurücksetzen und Aktivieren der integrierten E-Mail-Notifier-Plugins. Lesen und das Deaktivieren eines Notifier-Plugins bleiben möglich. Plattformadministratoren sind an der Admin-API ausgenommen. Standardmäßig an.',
+
+	'set.k.tenant_capabilities.directory_connectors':
+		'Tenant-Administratoren dürfen Verzeichnis-Connectors konfigurieren',
+	'set.k.tenant_capabilities.directory_connectors.desc':
+		'Aus: Tenant-Administratoren können nicht veranlassen, dass die Plattform einen von ihnen gewählten Verzeichnis-Connector-Endpunkt aufruft: Speichern der Connector-Einstellungen (außer einem Speichern, das nur Connectors entfernt, die Verzeichnis-Anmeldung ausschaltet oder die gespeicherten Connectors unverändert lässt), Ausstellen und Rotieren von Connector-Secrets und die Integritätsprüfung des Connectors. Lesen bleibt möglich. Bereits konfigurierte Connectors funktionieren weiter. Plattformadministratoren sind an der Admin-API ausgenommen. Eine Wiederherstellung aus einem Tenant-Backup stellt die Connector-Einstellungen nicht wieder her, solange die Option aus ist, außer ein Plattformadministrator hat sie angefordert. Standardmäßig an.',
+
+	'set.k.tenant_capabilities.external_identity_providers':
+		'Tenant-Administratoren dürfen externe Identitätsanbieter konfigurieren',
+	'set.k.tenant_capabilities.external_identity_providers.desc':
+		'Aus: Tenant-Administratoren können externe Identitätsanbieter nicht hinzufügen oder ändern (Erstellen, Aktualisieren, OIDC-Discovery und dynamische Client-Registrierung beim Anbieter). Lesen und Löschen bleiben möglich. Bereits konfigurierte Anbieter funktionieren weiter. Plattformadministratoren sind an der Admin-API ausgenommen. Eine Wiederherstellung aus einem Tenant-Backup stellt externe Identitätsanbieter nicht wieder her, solange die Option aus ist, außer ein Plattformadministrator hat sie angefordert. Standardmäßig an.',
+
+	'set.k.tenant_capabilities.saml_metadata_url':
+		'Tenant-Administratoren dürfen SAML-Metadaten von einer URL abrufen',
+	'set.k.tenant_capabilities.saml_metadata_url.desc':
+		'Aus: Tenant-Administratoren können nicht veranlassen, dass die Plattform SAML-Metadaten von einer von ihnen gewählten URL abruft oder eine neue URL für späteres Abrufen speichert: Metadaten-Vorschau, Import, Aktualisierung und Zertifikatsvorschau mit URL sowie das Speichern eines SAML-Anbieters oder einer Föderationsquelle mit neuer oder geänderter Metadaten-URL. Das Einfügen von Metadaten-XML, das Beibehalten oder Löschen einer gespeicherten URL, Lesen und Löschen bleiben möglich. Bereits gespeicherte URLs werden weiter automatisch aktualisiert. Plattformadministratoren sind an der Admin-API ausgenommen. Eine Wiederherstellung aus einem Tenant-Backup stellt Anbieter und Quellen mit Metadaten-URL nicht wieder her, solange die Option aus ist, außer ein Plattformadministrator hat sie angefordert. Standardmäßig an.',
 
 	'set.k.identity_mapping.reference_scan_tenant_limit': 'Nutzungssuche des Mapping-Sets: Tenants',
 	'set.k.identity_mapping.reference_scan_tenant_limit.desc':

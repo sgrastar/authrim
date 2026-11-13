@@ -102,5 +102,14 @@ export const VC_RATE_LIMITS: ReadonlyArray<{
     profile: 'lenient',
     endpointClass: 'vc_metadata',
   },
+  // Anonymous, and for did:web the server fetches a document from a host the caller chooses
+  // (10 s timeout, failures not cached): kept well below the other /did/ routes. A request is also
+  // counted in the /did/ bucket below; the stricter bucket is the one that stops a flood.
+  {
+    path: '/did/resolve/*',
+    endpoint: '/did/resolve/',
+    profile: 'moderate',
+    endpointClass: 'vc_did_resolve',
+  },
   { path: '/did/*', endpoint: '/did/', profile: 'lenient', endpointClass: 'vc_did' },
 ];

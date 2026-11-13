@@ -1193,6 +1193,8 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     rate_limit.send_challenge
     rate_limit.loadtest
     rate_limit.admin_write
+    rate_limit.email_tenant_hourly_max
+    rate_limit.email_deployment_hourly_max
     rate_limit.strict_window_seconds
     rate_limit.moderate_window_seconds
     rate_limit.lenient_window_seconds
@@ -1297,6 +1299,12 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     tenant_capabilities.dynamic_client_registration
     tenant_capabilities.external_plugins
     tenant_capabilities.bulk_jobs
+    tenant_capabilities.admin_sent_email
+    tenant_capabilities.machine_credentials
+    tenant_capabilities.email_provider_config
+    tenant_capabilities.directory_connectors
+    tenant_capabilities.external_identity_providers
+    tenant_capabilities.saml_metadata_url
   `,
     ],
     [

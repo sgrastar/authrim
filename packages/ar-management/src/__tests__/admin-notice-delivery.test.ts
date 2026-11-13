@@ -390,6 +390,33 @@ describe('admin notice delivery', () => {
     expect(await sendDueNoticeDeliveries(env, adapter, NOW, vi.fn())).toEqual({ dead_letter: 1 });
   });
 
+  it('keeps retrying, instead of dead-lettering, while the hourly e-mail quota is used up', async () => {
+    db.prepare(
+      `INSERT INTO admin_notice_preferences (admin_user_id, email_enabled, email_min_severity,
+         updated_at) VALUES ('lead', 1, 'info', 1)`
+    ).run();
+    await notices.create(
+      {
+        scope_type: 'admin_user',
+        tenant_id: 'tenant-a',
+        admin_user_id: 'lead',
+        severity: 'high',
+        source: 'announcement',
+        category: 'announcement',
+        title: 'x',
+      },
+      NOW
+    );
+    await planNoticeDeliveries(adapter, NOW);
+    db.prepare(`UPDATE admin_notice_deliveries SET attempts = ?`).run(MAX_ATTEMPTS - 1);
+    const { produceNotificationDelivery, NotificationQuotaExceededError } =
+      await import('@authrim/ar-lib-core');
+    vi.mocked(produceNotificationDelivery).mockRejectedValueOnce(
+      new NotificationQuotaExceededError('tenant')
+    );
+    expect(await sendDueNoticeDeliveries(env, adapter, NOW, vi.fn())).toEqual({ failed: 1 });
+  });
+
   it('does not email someone who lost the notice’s audience or opted out after planning', async () => {
     await notices.create(
       {
