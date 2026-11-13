@@ -393,7 +393,19 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.loadFailed': 'Die Erklärungen konnten nicht geladen werden.',
 	'af.consent.max': 'Es können bis zu {n} Erklärungen gewählt werden.',
 	'af.consent.manage': 'Einwilligungserklärungen verwalten',
-	'af.consent.create': 'Einwilligungserklärung erstellen',
+	'af.consent.peek.show': 'Text anzeigen',
+	'af.consent.peek.hide': 'Text ausblenden',
+	'af.consent.peek.failed': 'Der Text der Erklärung konnte nicht geladen werden.',
+	'af.consent.new.open': 'Erklärung erstellen',
+	'af.consent.new.title': 'Neue Erklärung',
+	'af.consent.new.lead':
+		'Die Erklärung wird sofort veröffentlicht und für diesen Ablauf ausgewählt. Andere Abläufe können sie ebenfalls verwenden. Weitere Einstellungen und neue Versionen finden Sie auf der Seite der Erklärung.',
+	'af.consent.new.publish': 'Veröffentlichen und auswählen',
+	'af.consent.new.created': 'Die Erklärung wurde erstellt und veröffentlicht.',
+	'af.consent.new.noLanguage': 'Fügen Sie mindestens eine Sprache hinzu.',
+	'af.consent.new.unpublished':
+		'Die Erklärung wurde erstellt, konnte aber nicht veröffentlicht werden. Schließen Sie sie auf der Seite der Erklärung ab.',
+	'af.consent.new.openUnfinished': 'Seite der Erklärung öffnen',
 	'af.consent.unavailable':
 		'Dieser Anmelde-Flow wurde im Flow-Editor aufgebaut; die Einwilligung kann hier nicht festgelegt werden. Legen Sie den Einwilligungsschritt im Flow-Editor fest.'
 };

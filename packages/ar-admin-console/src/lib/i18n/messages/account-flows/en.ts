@@ -374,7 +374,19 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.loadFailed': 'The statements could not be loaded.',
 	'af.consent.max': 'Up to {n} statements can be chosen.',
 	'af.consent.manage': 'Manage consent statements',
-	'af.consent.create': 'Create a consent statement',
+	'af.consent.peek.show': 'Show the text',
+	'af.consent.peek.hide': 'Hide the text',
+	'af.consent.peek.failed': 'The statement text could not be loaded.',
+	'af.consent.new.open': 'Create a statement',
+	'af.consent.new.title': 'New statement',
+	'af.consent.new.lead':
+		'The statement is published at once and chosen for this flow. Other flows can use it too. Its other settings and later versions are on the statement page.',
+	'af.consent.new.publish': 'Publish and choose',
+	'af.consent.new.created': 'The statement was created and published.',
+	'af.consent.new.noLanguage': 'Add at least one language.',
+	'af.consent.new.unpublished':
+		'The statement was created but could not be published. Finish it on the statement page.',
+	'af.consent.new.openUnfinished': 'Open the statement page',
 	'af.consent.unavailable':
 		'This sign-in flow was built in the flow editor, so consent cannot be set here. Set the consent step in the flow editor.'
 };

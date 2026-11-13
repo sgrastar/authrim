@@ -1,21 +1,16 @@
 <script lang="ts">
-	import { SUPPORTED_LOCALES, isSupportedLocale, localeDir } from '#lib/i18n/locales.js';
+	import { isSupportedLocale, localeDir } from '#lib/i18n/locales.js';
 	import type { ConsentLocalization, ConsentVersion } from '#lib/api/consent-statements.js';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import Columns from '#lib/ui/patterns/Columns.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
-	import Button from '#lib/ui/primitives/Button.svelte';
-	import RadioGroup from '#lib/ui/primitives/RadioGroup.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
-	import TextArea from '#lib/ui/primitives/TextArea.svelte';
-	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import StatementPreview from './StatementPreview.svelte';
+	import StatementTextForm from './StatementTextForm.svelte';
 	import {
-		LIMITS,
-		emptyLanguage,
 		languageName,
 		languageProblems,
 		languageValue,
@@ -56,7 +51,6 @@
 	}: Props = $props();
 
 	let chosen = $state('');
-	let adding = $state('');
 
 	const viewed = $derived(versions.find((version) => version.id === viewId) ?? null);
 	const languages = $derived(
@@ -71,12 +65,6 @@
 		const item = (texts ?? []).find((entry) => entry.language === language);
 		return item ? languageValue(item) : undefined;
 	});
-	const addable = $derived(
-		SUPPORTED_LOCALES.filter((code) => !(code in value.languages)).map((code) => ({
-			value: code,
-			label: languageName(code)
-		}))
-	);
 	const problems = $derived.by((): LanguageProblem[] =>
 		editable && attempted && value.languages[language]
 			? languageProblems(value.languages[language], value.contentType)
@@ -88,26 +76,7 @@
 			label: `${versionLabel(version.version)} · ${t(`cs.version.status.${version.status}` as MessageKey)}`
 		}))
 	);
-	const typeOptions = $derived([
-		{ value: 'inline', label: t('cs.content.typeInline') },
-		{ value: 'url', label: t('cs.content.typeUrl') }
-	]);
 	const dir = $derived(isSupportedLocale(language) ? localeDir(language) : undefined);
-
-	function add() {
-		if (!adding) return;
-		value.languages[adding] = emptyLanguage();
-		chosen = adding;
-		adding = '';
-	}
-
-	function removeLanguage() {
-		delete value.languages[language];
-		chosen = '';
-	}
-
-	const problem = (field: LanguageProblem) =>
-		problems.includes(field) ? t(`cs.error.field.${field}` as MessageKey) : undefined;
 </script>
 
 <Card title={t('cs.content.title')} description={t('cs.content.intro')}>
@@ -142,74 +111,12 @@
 				<LoadingState label={t('common.loading')} />
 			{:else if editable}
 				<Columns columns={2} minWidth="320px">
-					<div class="content__form">
-						<RadioGroup
-							label={t('cs.content.type')}
-							orientation="horizontal"
-							options={typeOptions}
-							field="contentType"
-							bind:value={value.contentType}
-						/>
-						{#if value.languages[language]}
-							<TextField
-								label={t('cs.content.name')}
-								maxlength={LIMITS.title}
-								field={`languages.${language}.title`}
-								error={problem('title')}
-								bind:value={value.languages[language].title}
-							/>
-							<TextArea
-								label={t('cs.content.summary')}
-								hint={t('cs.content.summaryHint')}
-								rows={3}
-								maxlength={LIMITS.description}
-								field={`languages.${language}.description`}
-								error={problem('description')}
-								bind:value={value.languages[language].description}
-							/>
-							{#if value.contentType === 'url'}
-								<TextField
-									label={t('cs.content.url')}
-									hint={t('cs.content.urlHint')}
-									type="url"
-									maxlength={LIMITS.url}
-									field={`languages.${language}.url`}
-									error={problem('url')}
-									bind:value={value.languages[language].url}
-								/>
-							{:else}
-								<TextArea
-									label={t('cs.content.body')}
-									rows={10}
-									maxlength={LIMITS.content}
-									field={`languages.${language}.content`}
-									error={problem('content')}
-									bind:value={value.languages[language].content}
-								/>
-							{/if}
-							<div>
-								<Button size="sm" variant="ghost" icon="trash" onclick={removeLanguage}>
-									{t('cs.content.removeLanguage', { language: languageName(language) })}
-								</Button>
-							</div>
-						{:else}
-							<Callout>{t('cs.content.noLanguage')}</Callout>
-						{/if}
-						{#if addable.length > 0}
-							<div class="content__add">
-								<Select
-									label={t('cs.content.addLanguage')}
-									size="sm"
-									placeholder={t('cs.content.choose')}
-									options={addable}
-									bind:value={adding}
-								/>
-								<Button size="sm" icon="plus" disabled={!adding} onclick={add}>
-									{t('cs.content.add')}
-								</Button>
-							</div>
-						{/if}
-					</div>
+					<StatementTextForm
+						bind:value
+						{language}
+						onlanguage={(code) => (chosen = code)}
+						{problems}
+					/>
 					<StatementPreview value={shownValue} {contentType} {dir} />
 				</Columns>
 			{:else}
@@ -220,15 +127,13 @@
 </Card>
 
 <style>
-	.content,
-	.content__form {
+	.content {
 		display: grid;
 		gap: var(--space-related);
 		min-inline-size: 0;
 	}
 
-	.content__bar,
-	.content__add {
+	.content__bar {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: end;
