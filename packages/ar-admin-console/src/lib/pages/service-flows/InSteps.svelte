@@ -25,9 +25,11 @@
 		step: string;
 		op: OpForm;
 		idp: IdpForm;
+		/** What the test runs against (see `testBasis`). */
+		basis?: string;
 	}
 
-	let { step, op = $bindable(), idp = $bindable() }: Props = $props();
+	let { step, op = $bindable(), idp = $bindable(), basis }: Props = $props();
 
 	let reading = $state(false);
 
@@ -180,6 +182,7 @@
 	<ConnectionTest
 		lead={t('sf.in.testLead')}
 		checks={[t('sf.op.check.config'), t('sf.op.check.answered'), t('sf.op.check.token')]}
+		{basis}
 		bind:tested={op.tested}
 	/>
 {:else if step === 'idp-import'}
@@ -207,6 +210,7 @@
 		lead={t('sf.in.testLead')}
 		checks={[t('sf.test.metadataRead'), t('sf.idp.check.response'), t('sf.idp.check.matched')]}
 		note={t('sf.idp.certNote', { days: 12 })}
+		{basis}
 		bind:tested={idp.tested}
 	/>
 {/if}

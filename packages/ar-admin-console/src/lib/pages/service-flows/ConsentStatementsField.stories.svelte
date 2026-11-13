@@ -12,7 +12,7 @@
 			docs: {
 				description: {
 					component:
-						'The consent statements a sign-up or sign-in flow asks, in the order they are shown. Statements are added from the tenant’s own (only those turned on and with a published version), each required or optional, moved up and down, or removed. A statement that is no longer there (deleted or retired) or not published stays in the list, flagged, so it can be removed. Statements themselves are made on their own pages, linked from here. A list that cannot be read is told in the field and the rest of the page carries on.'
+						'The consent statements a sign-up or sign-in flow asks, in the order they are shown. Statements are added from the tenant’s own (only those turned on and with a published version), each required or optional, moved up and down, or removed. A statement that is no longer there (deleted or retired) or not published stays in the list, flagged, so it can be removed. A chosen statement’s current text can be read in place, in each of its languages. A new statement can be made here, as a sign-in method profile can: its key, kind and text in every language, published at once and chosen (its other settings and later versions are on its own page). A list that cannot be read is told in the field and the rest of the page carries on.'
 				}
 			}
 		}
@@ -46,10 +46,58 @@
 			'href',
 			'/admin/customization/statements'
 		);
-		await expect(canvas.getByRole('link', { name: t('af.consent.create') })).toHaveAttribute(
-			'href',
-			'/admin/customization/statements/new'
+		await expect(
+			canvas.getByRole('button', { name: t('af.consent.new.open') })
+		).toBeInTheDocument();
+	}}
+></Story>
+
+<!-- The text the person is asked to agree to, read without leaving the flow. -->
+<Story
+	name="Reading a chosen statement"
+	args={{ answer: 'some', initial: ['stmt_terms:required'] }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('af.consent.peek.show') }));
+		await expect(
+			await canvas.findByRole('heading', { name: 'Terms of service' })
+		).toBeInTheDocument();
+		await userEvent.click(canvas.getByRole('button', { name: t('af.consent.peek.hide') }));
+		await waitFor(() =>
+			expect(canvas.queryByRole('heading', { name: 'Terms of service' })).toBeNull()
 		);
+	}}
+></Story>
+
+<!-- Made, published and chosen from the flow, as a sign-in method profile is. -->
+<Story
+	name="Making one here"
+	args={{ answer: 'none' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('af.consent.new.open') }));
+		const publish = canvas.getByRole('button', { name: t('af.consent.new.publish') });
+		// Nothing is made until the key and the text are there.
+		await userEvent.click(publish);
+		await expect(await canvas.findByText(t('cs.error.fix'))).toBeInTheDocument();
+		await userEvent.type(canvas.getByLabelText(t('cs.create.slug')), 'newsletter');
+		await userEvent.type(canvas.getByLabelText(t('cs.content.name')), 'Newsletter');
+		await userEvent.type(canvas.getByLabelText(t('cs.content.summary')), 'News by email.');
+		await userEvent.type(canvas.getByLabelText(t('cs.content.body')), 'We send news monthly.');
+		await userEvent.click(publish);
+		await waitFor(() => expect(canvas.getByTestId('value')).toHaveTextContent(/:required$/u));
+		await expect(canvas.getByText('Newsletter')).toBeInTheDocument();
+		await expect(canvas.queryByText(t('af.consent.unpublished'))).toBeNull();
+	}}
+></Story>
+
+<Story
+	name="Without permission to make one"
+	args={{ answer: 'some', canCreate: false }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('combobox', { name: t('af.consent.add') });
+		await expect(canvas.queryByRole('button', { name: t('af.consent.new.open') })).toBeNull();
 	}}
 ></Story>
 

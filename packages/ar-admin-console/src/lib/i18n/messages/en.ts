@@ -3,6 +3,7 @@ import { enSettings } from './settings/en';
 import { enCompliance } from './compliance/en';
 import { enMappingConsole } from './mapping-console/en';
 import { enServiceFlows } from './service-flows/en';
+import { enConnectionSettings } from './connection-settings/en';
 import { enAccountFlows } from './account-flows/en';
 import { enSchemaSetting } from './schema-setting/en';
 import { enTenantGeneral } from './tenant-general/en';
@@ -28,6 +29,7 @@ export const en = {
 	...enCompliance,
 	...enMappingConsole,
 	...enServiceFlows,
+	...enConnectionSettings,
 	...enAccountFlows,
 	...enSchemaSetting,
 	...enTenantGeneral,
@@ -56,6 +58,7 @@ export const en = {
 	'nav.cluster.operate': 'Operate',
 	'nav.cluster.platform': 'Platform',
 	'nav.overview': 'Overview',
+	'nav.wip': 'Under construction',
 	'nav.users': 'Users',
 	'nav.access': 'Access Control',
 	'nav.applications': 'Service flows',

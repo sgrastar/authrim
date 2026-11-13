@@ -3,6 +3,7 @@ import { deSettings } from './settings/de';
 import { deCompliance } from './compliance/de';
 import { deMappingConsole } from './mapping-console/de';
 import { deServiceFlows } from './service-flows/de';
+import { deConnectionSettings } from './connection-settings/de';
 import { deAccountFlows } from './account-flows/de';
 import { deSchemaSetting } from './schema-setting/de';
 import { deTenantGeneral } from './tenant-general/de';
@@ -28,6 +29,7 @@ export const de = {
 	...deCompliance,
 	...deMappingConsole,
 	...deServiceFlows,
+	...deConnectionSettings,
 	...deAccountFlows,
 	...deSchemaSetting,
 	...deTenantGeneral,
@@ -56,6 +58,7 @@ export const de = {
 	'nav.cluster.operate': 'Betrieb',
 	'nav.cluster.platform': 'Plattform',
 	'nav.overview': 'Übersicht',
+	'nav.wip': 'In Arbeit',
 	'nav.users': 'Benutzer',
 	'nav.access': 'Zugriffssteuerung',
 	'nav.applications': 'Serviceabläufe',
