@@ -86,6 +86,14 @@ const DIRECT_TABLE_READERS: Record<string, { why: string; globalOnly?: true; lin
       "await adminAdapter.execute('DELETE FROM admin_role_assignments WHERE tenant_id = ?', [",
     ],
   },
+  'packages/ar-management/src/tenant-deletion-admin-accounts.ts': {
+    why: "removes the deleted tenant's own assignment rows; the one read of authority (who holds a current GLOBAL assignment) may use the table because groups never give a global role (admin_group_role_grants has CHECK scope_type = 'tenant', and the repository only writes 'tenant'); the role-reference check reads the assignments and the group grants side by side",
+    lines: [
+      `sql: "DELETE FROM admin_role_assignments WHERE tenant_id = ? AND scope_type <> 'global'",`,
+      'SELECT 1 FROM admin_role_assignments ra',
+      '`SELECT DISTINCT admin_user_id FROM admin_role_assignments',
+    ],
+  },
   'packages/ar-management/src/tenant-backup-restore-authority.ts': {
     why: "restore authority for the table's own global rows",
     globalOnly: true,
