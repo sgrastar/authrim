@@ -22,6 +22,10 @@ import type {
   FlowRuntimeJsonObject,
 } from '../schemas/flow-runtime';
 import {
+  readFlowConsentStatements,
+  type FlowConsentStatement,
+} from '../services/flow-consent-statements';
+import {
   DEFAULT_REGISTRATION_POLICY,
   readRegistrationPolicy,
   type RegistrationPolicy,
@@ -48,6 +52,12 @@ export interface RegistrationFlowSpec {
   screenTitle?: string;
   screens: RegistrationFlowScreen[];
   policy: RegistrationPolicy;
+  /**
+   * The consent statements asked on the first screen, with the method choice, in order (empty:
+   * none). Everyone signing up is new, so each is asked; the answers are recorded once the
+   * account exists.
+   */
+  consent: FlowConsentStatement[];
 }
 
 /** The sign-up a new tenant is given: its built-in screen, its own methods, the safer policy. */
@@ -58,6 +68,7 @@ export function defaultRegistrationFlowSpec(): RegistrationFlowSpec {
     screenKey: 'registration',
     screens: [],
     policy: structuredClone(DEFAULT_REGISTRATION_POLICY),
+    consent: [],
   };
 }
 
@@ -69,8 +80,15 @@ function screenNodeId(n: number): string {
   return `screen-${n}`;
 }
 
-function targetNodeId(target: string, screens: readonly RegistrationFlowScreen[]): string | null {
-  if (target === 'complete') return 'account-create';
+/** The consent step a sign-up asks its statements on, right before the account is made. */
+export const REGISTRATION_CONSENT_NODE = 'consent';
+
+function targetNodeId(
+  target: string,
+  screens: readonly RegistrationFlowScreen[],
+  finish = 'account-create'
+): string | null {
+  if (target === 'complete') return finish;
   const match = /^screen:([1-9][0-9]{0,2})$/u.exec(target);
   if (!match) return null;
   const n = Number(match[1]);
@@ -122,6 +140,25 @@ export function buildRegistrationFlowEditor(spec: RegistrationFlowSpec): FlowEdi
       config: { screen_ref: screen.screenKey },
     });
   }
+  const asksConsent = spec.consent.length > 0;
+  // Its own step (every screen can show it), before the account is made: what is agreed to is
+  // held until then and recorded with the account.
+  if (asksConsent) {
+    nodes.push({
+      id: REGISTRATION_CONSENT_NODE,
+      type: 'consent',
+      title: 'Consent',
+      position: at(nodes.length),
+      config: {
+        ui_kind: 'consent',
+        statements: spec.consent.map((entry) => ({
+          statement_id: entry.statement_id,
+          required: entry.required,
+        })),
+      },
+    });
+  }
+  const finish = asksConsent ? REGISTRATION_CONSENT_NODE : 'account-create';
   nodes.push({
     id: 'account-create',
     type: 'account_action',
@@ -162,7 +199,8 @@ export function buildRegistrationFlowEditor(spec: RegistrationFlowSpec): FlowEdi
     const id = screenNodeId(screen.n);
     // Its submit goes on to the next step unless the spec sends it elsewhere.
     const submittedTo =
-      (screen.exits.submitted ? targetNodeId(screen.exits.submitted, screens) : null) ?? after(id);
+      (screen.exits.submitted ? targetNodeId(screen.exits.submitted, screens, finish) : null) ??
+      after(id);
     edges.push({
       id: `${id}:submitted`,
       source: id,
@@ -171,10 +209,18 @@ export function buildRegistrationFlowEditor(spec: RegistrationFlowSpec): FlowEdi
     });
     for (const [exit, target] of Object.entries(screen.exits)) {
       if (exit === 'submitted' || !(exit === 'skipped' || EXIT_HANDLE.test(exit))) continue;
-      const node = targetNodeId(target, screens);
+      const node = targetNodeId(target, screens, finish);
       if (!node || node === id) continue;
       edges.push({ id: `${id}:${exit}`, source: id, source_handle: exit, target: node });
     }
+  }
+  if (asksConsent) {
+    edges.push({
+      id: `${REGISTRATION_CONSENT_NODE}:accepted`,
+      source: REGISTRATION_CONSENT_NODE,
+      source_handle: 'accepted',
+      target: 'account-create',
+    });
   }
   edges.push({
     id: 'account-create:completed->output',
@@ -222,7 +268,7 @@ export function readRegistrationFlowEditor(editor: unknown): RegistrationFlowSpe
       // The submit is kept only where it leaves the order (see `buildRegistrationFlowEditor`).
       if (edge.source_handle === 'submitted' && edge.target === nextNodeOf(node.id)) continue;
       const target =
-        edge.target === 'account-create'
+        edge.target === 'account-create' || edge.target === REGISTRATION_CONSENT_NODE
           ? 'complete'
           : typeof edge.target === 'string' && SCREEN_NODE.test(edge.target)
             ? `screen:${edge.target.slice('screen-'.length)}`
@@ -253,5 +299,11 @@ export function readRegistrationFlowEditor(editor: unknown): RegistrationFlowSpe
       : {}),
     screens: screens.sort((a, b) => a.n - b.n),
     policy: policyRead.ok ? policyRead.policy : structuredClone(DEFAULT_REGISTRATION_POLICY),
+    consent: (() => {
+      const step = nodes.find(
+        (node) => node.id === REGISTRATION_CONSENT_NODE && node.type === 'consent'
+      );
+      return step ? (readFlowConsentStatements(step.config) ?? []) : [];
+    })(),
   };
 }

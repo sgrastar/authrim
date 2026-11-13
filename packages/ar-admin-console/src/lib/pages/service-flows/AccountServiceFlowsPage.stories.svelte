@@ -111,3 +111,55 @@
 >
 	{#snippet template()}<AccountServiceFlowsHarness answer="race" {control} />{/snippet}
 </Story>
+
+<!-- Consent asked before sign-in completes is saved into the Flow: a consent step before each completion. -->
+<Story
+	name="Sign-in consent is saved into the Flow"
+	play={async ({ canvasElement }) => {
+		saves.length = 0;
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('button', {
+				name: t('sf.mock.open', { name: 'Authentication-only Login' })
+			})
+		);
+		await userEvent.click(await canvas.findByRole('button', { name: t('flow.add') }));
+		await userEvent.click(await canvas.findByRole('button', { name: 'Consent at sign-in' }));
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('af.consent.add') }),
+			'stmt_terms'
+		);
+		await userEvent.click(canvas.getByRole('button', { name: t('af.consent.add') }));
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await waitFor(() => expect(saves.length).toBeGreaterThan(0));
+		const editor = saves[saves.length - 1].editor as {
+			nodes: { id: string; type: string; config?: { statements?: unknown } }[];
+		};
+		const consent = editor.nodes.filter((node) => node.type === 'consent');
+		await expect(consent.length).toBeGreaterThan(0);
+		await expect(consent[0].config?.statements).toEqual([
+			{ statement_id: 'stmt_terms', required: true }
+		]);
+	}}
+>
+	{#snippet template()}<AccountServiceFlowsHarness answer="seeded" {saves} />{/snippet}
+</Story>
+
+<!-- A sign-in with no completion step cannot take consent here: the setting is shown disabled and says to use the Flow editor. -->
+<Story
+	name="Sign-in consent is not available without a completion"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('button', {
+				name: t('sf.mock.open', { name: 'Authentication-only Login' })
+			})
+		);
+		await userEvent.click(await canvas.findByRole('button', { name: t('flow.add') }));
+		await userEvent.click(await canvas.findByRole('button', { name: 'Consent at sign-in' }));
+		await expect(await canvas.findByText(t('af.consent.unavailable'))).toBeInTheDocument();
+		await expect(canvas.queryByRole('combobox', { name: t('af.consent.add') })).toBeNull();
+	}}
+>
+	{#snippet template()}<AccountServiceFlowsHarness answer="no-completion" />{/snippet}
+</Story>

@@ -61,6 +61,28 @@ describe('the sign-up flow saved as a Flow', () => {
 		expect(isReady('registration', back)).toBe(true);
 	});
 
+	it('saves the statements asked before the account is made, in order, and reads them back', () => {
+		const state = aboutState('registration', 'Sign-up', 'default-ui');
+		// Not added: nothing is asked, whatever was chosen before.
+		state.values['reg.statements'] = ['stmt_terms:required'];
+		expect(registrationSpecOf(state).consent).toEqual([]);
+		state.added.push('consent');
+		state.values['reg.statements'] = ['stmt_privacy:optional', 'stmt_terms:required'];
+		const spec = registrationSpecOf(state);
+		expect(spec.consent).toEqual([
+			{ statement_id: 'stmt_privacy', required: false },
+			{ statement_id: 'stmt_terms', required: true }
+		]);
+		const editor = buildRegistrationFlowEditor(spec);
+		expect(isConsoleShaped(editor)).toBe(true);
+		const back = registrationStateOf(readRegistrationFlowEditor(editor)!, {
+			name: 'Sign-up',
+			scope: 'default-ui'
+		});
+		expect(back.added).toContain('consent');
+		expect(back.values['reg.statements']).toEqual(['stmt_privacy:optional', 'stmt_terms:required']);
+	});
+
 	it('reads the domains as typed, however separated', () => {
 		expect(domainsOf(' a.example,b.example  @C.example ')).toEqual([
 			'a.example',

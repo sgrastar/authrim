@@ -70,3 +70,39 @@ describe('a sign-up Flow’s graph', () => {
     expect(readRegistrationFlowEditor(null)).toBeNull();
   });
 });
+
+describe('a sign-up Flow’s consent', () => {
+  const consent = [
+    { statement_id: 'tos', required: true },
+    { statement_id: 'news', required: false },
+  ];
+
+  it('is its own step right before the account is made, read back in order', () => {
+    const spec: RegistrationFlowSpec = {
+      ...defaultRegistrationFlowSpec(),
+      screens: [{ n: 1, screenKey: 'profile', exits: { skipped: 'complete' } }],
+      consent,
+    };
+    const editor = buildRegistrationFlowEditor(spec);
+    const order = editor.nodes.map((node) => node.id);
+    expect(order.slice(-3)).toEqual(['consent', 'account-create', 'output']);
+    expect(editor.nodes.find((node) => node.id === 'consent')?.config?.statements).toEqual(consent);
+    // The registration step itself asks nothing.
+    expect(editor.nodes.find((node) => node.id === 'registration')?.config).not.toHaveProperty(
+      'statements'
+    );
+    // A screen's way to the end goes through the consent step.
+    expect(editor.edges.find((edge) => edge.id === 'screen-1:skipped')?.target).toBe('consent');
+    expect(editor.edges.find((edge) => edge.id === 'consent:accepted')?.target).toBe(
+      'account-create'
+    );
+    expect(errorsOf(editor)).toEqual([]);
+    expect(readRegistrationFlowEditor(JSON.parse(JSON.stringify(editor)))).toEqual(spec);
+  });
+
+  it('is not there when nothing is asked', () => {
+    const none = buildRegistrationFlowEditor(defaultRegistrationFlowSpec());
+    expect(none.nodes.some((node) => node.type === 'consent')).toBe(false);
+    expect(readRegistrationFlowEditor(none)?.consent).toEqual([]);
+  });
+});

@@ -1,6 +1,10 @@
 <script lang="ts">
 	import type { FlowRecord, FlowsClient } from '#lib/api/flows.js';
 	import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentication-method-profiles-fake.js';
+	import {
+		createFakeConsentStatements,
+		MOCK_CONSENT_STATEMENTS
+	} from '#lib/api/fake/consent-statements-fake.js';
 	import { createFakeClients } from '#lib/api/fake/clients-fake.js';
 	import { createFakeSamlProviders } from '#lib/api/fake/saml-providers-fake.js';
 	import { createFakeScreens } from '#lib/api/fake/screens-fake.js';
@@ -14,11 +18,13 @@
 	 * The account service flows with the tenant's Flows behind them (Storybook): the standard
 	 * sign-in every tenant is given, or a read that fails. What is saved is kept in `saves`.
 	 *
+	 * `no-completion`: the sign-in has no completion, so consent cannot be set in it.
+	 *
 	 * `race`: the first read of the sign-up fails while that of the sign-in is held (an older
 	 * sign-in, answered only when `control.release()` is called); a retry reads the current one.
 	 */
 	interface Props {
-		answer: 'seeded' | 'failed' | 'race';
+		answer: 'seeded' | 'failed' | 'race' | 'no-completion';
 		saves?: { kind: string; editor: unknown }[];
 		control?: { release?: () => void };
 	}
@@ -26,12 +32,22 @@
 	let { answer, saves = [], control = {} }: Props = $props();
 	let reads = 0;
 
+	/** A sign-in with nowhere to put consent: no completion step. */
+	const initialEditor = () => {
+		if (answer !== 'no-completion') return structuredClone(SEEDED_LOGIN_EDITOR);
+		const editor = structuredClone(SEEDED_LOGIN_EDITOR);
+		editor.nodes = editor.nodes.filter((node) => node.type !== 'complete');
+		editor.edges = editor.edges.filter((edge) =>
+			editor.nodes.some((node) => node.id === edge.target)
+		);
+		return editor;
+	};
 	const seededLogin: FlowRecord = {
 		id: 'flow-default-login-no-consent',
 		displayName: 'Authentication-only Login',
 		kind: 'login',
 		status: 'published',
-		editor: structuredClone(SEEDED_LOGIN_EDITOR),
+		editor: initialEditor(),
 		publishedVersionId: 'v1',
 		createdAt: 1_790_000_000,
 		updatedAt: 1_790_000_000
@@ -63,6 +79,7 @@
 		screens: createFakeScreens({ screens: MOCK_SCREENS }),
 		clients: createFakeClients(),
 		samlProviders: createFakeSamlProviders(),
+		consentStatements: createFakeConsentStatements(MOCK_CONSENT_STATEMENTS),
 		flows,
 		canCreateProfile: () => false
 	});

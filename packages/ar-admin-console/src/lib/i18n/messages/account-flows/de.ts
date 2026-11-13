@@ -53,7 +53,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.part.reg-methods': 'Profil für Anmeldeverfahren',
 	'af.part.reg-verification': 'Bestätigung der E-Mail-Adresse',
 	'af.part.reg-statements': 'Einwilligungserklärungen',
-	'af.part.reg-policy': 'Einwilligungsrichtlinie',
 	'af.part.reg-result': 'Nach dem Abschluss',
 	'af.part.login-methods': 'Anmeldeverfahren-Profil',
 	'af.part.login-validation': 'Prüfregeln',
@@ -63,10 +62,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'Wählen Sie das Profil für Anmeldeverfahren, das diese Registrierung verwendet.',
 	'af.lead.reg-verification':
 		'Prüfen Sie per E-Mail, dass die Person unter der angegebenen Adresse Post erhält.',
-	'af.lead.reg-statements':
-		'Wählen Sie die Erklärungen, etwa die Nutzungsbedingungen, denen bei der Registrierung zugestimmt wird.',
-	'af.lead.reg-policy':
-		'Legen Sie fest, wann und wie bei der Registrierung um Einwilligung gebeten wird.',
 	'af.lead.reg-result': 'Legen Sie fest, wohin die Person nach der Registrierung geht.',
 	'af.lead.login-methods': 'Wählen Sie das Anmeldeverfahren-Profil für diese Anmeldung.',
 	'af.lead.login-validation':
@@ -91,10 +86,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.login-session':
 		'Sobald die erforderliche Authentifizierung abgeschlossen ist, erstellt Authrim die Sitzung.',
 
-	'af.note.reg-statements':
-		'Unabhängig von der Zustimmung, Informationen mit einer App zu teilen. Diese wird im Ablauf der jeweiligen Verbindung festgelegt.',
-	'af.note.reg-policy': 'Stimmt die Person nicht zu, wird das Konto nicht angelegt.',
-
 	'af.field.reg.methodProfile': 'Zu verwendendes Profil',
 	'af.profile.create': 'Neues Profil für Anmeldeverfahren erstellen',
 	'af.profile.newTitle': 'Neues Profil für Anmeldeverfahren',
@@ -116,8 +107,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.live.notConsole':
 		'Dieser Registrierungs-Flow enthält Schritte aus dem Flow-Editor und kann hier nicht gespeichert werden.',
 	'af.live.loadFailed': 'Der Registrierungs-Flow konnte nicht geladen werden.',
-	'af.live.consentNotWired':
-		'Die Einwilligung bei der Registrierung kann noch nicht gespeichert werden. Entfernen Sie den Einwilligungsschritt, um zu speichern.',
 	'af.title.edit': 'Titel bearbeiten',
 	'af.title.label': 'Titel',
 	'af.title.done': 'Fertig',
@@ -193,8 +182,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'Die Person gibt einen per E-Mail gesendeten Code ein. Hat der Anbieter keine Adresse geliefert, geht er an die Adresse, die die Person eingibt. Das Konto wird erst nach der Bestätigung erstellt.',
 	'af.hint.reg.expiry': 'Wie lange der Link oder Code aus der E-Mail gültig ist.',
 	'af.field.reg.expiry': 'Wie lange die Prüfung gültig bleibt',
-	'af.field.reg.statements': 'Erklärungen, denen bei der Registrierung zugestimmt wird',
-	'af.field.reg.consentWhen': 'Wann um Einwilligung gebeten wird',
 	'af.field.reg.after': 'Nach dem Abschluss',
 
 	'af.field.reg.extraWhen':
@@ -366,8 +353,6 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.hint.reg.domains':
 		'Etwa example.com, durch Kommas oder Leerzeichen getrennt. Eine Subdomain gesondert angeben.',
 	'af.expiry.15m': '15 Minuten',
-	'af.consentWhen.signup': 'Nur bei der Registrierung',
-	'af.consentWhen.version': 'Bei der Registrierung und wenn sich eine Erklärung ändert',
 	'af.after.tenant': 'Der Einstellung des Mandanten folgen',
 	'af.part.login-result': 'Nach der Anmeldung',
 	'af.lead.login-result': 'Legen Sie fest, wohin Personen nach der Anmeldung gelangen.',
@@ -376,5 +361,39 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.hint.login.appClient':
 		'Nach der Anmeldung wird die Person direkt beim gewählten Dienst (Client) angemeldet. Beim Client müssen First Party App und App Login eingeschaltet sein.',
 	'af.hint.login.samlSp':
-		'Nach der Anmeldung wird die Person per IdP-initiiertem SSO direkt beim gewählten SAML-Dienst (SP) angemeldet. Der SP muss IdP-initiierte SAML-Antworten annehmen.'
+		'Nach der Anmeldung wird die Person per IdP-initiiertem SSO direkt beim gewählten SAML-Dienst (SP) angemeldet. Der SP muss IdP-initiierte SAML-Antworten annehmen.',
+
+	'af.group.loginConsent': 'Einwilligung bei der Anmeldung',
+	'af.part.login-statements': 'Einwilligungserklärungen',
+	'af.lead.reg-statements':
+		'Die Einwilligung wird auf einem eigenen Bildschirm abgefragt, direkt bevor das Konto angelegt wird. Die Antworten werden gespeichert, sobald das Konto besteht.',
+	'af.note.reg-statements':
+		'Getrennt von der Einwilligung, Informationen mit einem Dienst zu teilen. Diese wird im Flow jeder Verbindung festgelegt. Erklärungen werden auf den Seiten für Einwilligungserklärungen erstellt und veröffentlicht.',
+	'af.lead.login-statements':
+		'Vor Abschluss der Anmeldung werden nur die Erklärungen abgefragt, denen die Person noch nicht zugestimmt hat. Erforderliche Erklärungen werden auch beim Single Sign-on abgefragt, bei Personen, die bereits angemeldet sind.',
+	'af.note.login-statements': 'Personen, die allem zugestimmt haben, sehen diesen Schritt nicht.',
+	'af.field.reg.statements': 'Erklärungen, für die um Einwilligung gebeten wird',
+	'af.field.login.statements': 'Erklärungen, für die um Einwilligung gebeten wird',
+	'af.live.consentNoPlace':
+		'Dieser Anmelde-Flow hat keinen Abschluss, vor den die Einwilligung gesetzt werden kann; sie kann hier nicht gespeichert werden. Legen Sie sie im Flow-Editor fest.',
+	'af.consent.count': '{n} Erklärungen',
+	'af.consent.add': 'Erklärung hinzufügen',
+	'af.consent.addPlaceholder': 'Erklärung zum Hinzufügen wählen',
+	'af.consent.empty': 'Noch nichts gewählt.',
+	'af.consent.none':
+		'Es gibt keine Erklärungen zur Auswahl. Erstellen und veröffentlichen Sie eine.',
+	'af.consent.required': 'Erforderlich',
+	'af.consent.moveUp': 'Nach oben: {name}',
+	'af.consent.moveDown': 'Nach unten: {name}',
+	'af.consent.remove': 'Entfernen: {name}',
+	'af.consent.unknown':
+		'Nicht gefunden (eine gelöschte oder stillgelegte Erklärung). Entfernen Sie sie.',
+	'af.consent.unpublished':
+		'Kann jetzt nicht gewählt werden (ausgeschaltet oder ohne veröffentlichte Version). Das Veröffentlichen des Flows wird abgelehnt; entfernen Sie sie oder veröffentlichen Sie die Erklärung.',
+	'af.consent.loadFailed': 'Die Erklärungen konnten nicht geladen werden.',
+	'af.consent.max': 'Es können bis zu {n} Erklärungen gewählt werden.',
+	'af.consent.manage': 'Einwilligungserklärungen verwalten',
+	'af.consent.create': 'Einwilligungserklärung erstellen',
+	'af.consent.unavailable':
+		'Dieser Anmelde-Flow wurde im Flow-Editor aufgebaut; die Einwilligung kann hier nicht festgelegt werden. Legen Sie den Einwilligungsschritt im Flow-Editor fest.'
 };

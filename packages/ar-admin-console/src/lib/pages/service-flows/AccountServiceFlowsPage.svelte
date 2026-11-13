@@ -34,6 +34,7 @@
 	} from './registration-flow-mapping';
 	import {
 		applyLoginFlowSpec,
+		canSetSignInConsent,
 		buildLoginFlowEditor,
 		loginSpecOf,
 		loginStateOf,
@@ -149,17 +150,23 @@
 		if (!flows) return;
 		if (!saved[flow].loaded) throw new Error(t('af.live.loadFailed'));
 		if (!saved[flow].editable) throw new Error(t('af.live.notConsole'));
-		// Consent at sign-up is not saved with the Flow yet: saving without it would publish a
-		// sign-up that asks for none.
-		if (flow === 'registration' && state.added.includes('consent')) {
-			throw new Error(t('af.live.consentNotWired'));
+		const spec = flow === 'login' ? loginSpecOf(state) : null;
+		// Consent needs a completion to sit before; a Flow without one keeps its other settings
+		// but cannot take consent (the apply below would give nothing back).
+		if (
+			spec &&
+			spec.consent.length > 0 &&
+			saved[flow].id &&
+			!canSetSignInConsent(saved[flow].editor)
+		) {
+			throw new Error(t('af.live.consentNoPlace'));
 		}
 		const editor =
 			flow === 'registration'
 				? buildRegistrationFlowEditor(registrationSpecOf(state))
 				: saved[flow].id
-					? applyLoginFlowSpec(saved[flow].editor, loginSpecOf(state))
-					: buildLoginFlowEditor(loginSpecOf(state));
+					? applyLoginFlowSpec(saved[flow].editor, spec ?? loginSpecOf(state))
+					: buildLoginFlowEditor(spec ?? loginSpecOf(state));
 		if (!editor) throw new Error(t('af.live.notConsole'));
 		const prefix = flow === 'registration' ? 'reg' : 'login';
 		const name = state.values[`${prefix}.name`];
@@ -200,6 +207,10 @@
 			onback={() => (opened = null)}
 			focusTitle
 			onsave={flows ? (state) => saveFlow(current, state) : undefined}
+			consentUnavailable={current === 'login' &&
+				flows !== undefined &&
+				saved.login.id !== null &&
+				!canSetSignInConsent(saved.login.editor)}
 		/>
 	{:else if adding}
 		<AddConnection accountOnly bind:dirty oncancel={leaveWizard} ondone={leaveWizard} />

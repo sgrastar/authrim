@@ -1,6 +1,6 @@
 import { t } from '#lib/i18n/i18n.svelte.js';
 import type { WizardStep } from '#lib/ui/patterns/WizardSteps.svelte';
-import { consentStatements } from './connection-model';
+import { consentEntries } from './consent-field-model';
 import {
 	aboutFields,
 	choices,
@@ -296,24 +296,24 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 		fields: [
 			{
 				key: 'reg.statements',
-				kind: 'checks',
+				kind: 'consent-statements',
 				label: 'af.field.reg.statements',
-				options: consentStatements,
+				options: () => [],
 				required: true
 			}
 		]
 	},
-	'reg-policy': {
-		id: 'reg-policy',
-		label: 'af.part.reg-policy',
-		lead: 'af.lead.reg-policy',
-		note: 'af.note.reg-policy',
+	'login-statements': {
+		id: 'login-statements',
+		label: 'af.part.login-statements',
+		lead: 'af.lead.login-statements',
+		note: 'af.note.login-statements',
 		fields: [
 			{
-				key: 'reg.consentWhen',
-				kind: 'select',
-				label: 'af.field.reg.consentWhen',
-				options: choices('consentWhen', ['signup', 'version']),
+				key: 'login.statements',
+				kind: 'consent-statements',
+				label: 'af.field.login.statements',
+				options: () => [],
 				required: true
 			}
 		]
@@ -437,7 +437,7 @@ export const FLOWS: Record<FlowId, AccountFlowDef> = {
 			{
 				id: 'consent',
 				label: 'af.group.regConsent',
-				parts: ['reg-statements', 'reg-policy'],
+				parts: ['reg-statements'],
 				optional: true
 			},
 			{ id: 'complete', label: 'af.group.complete', parts: ['reg-result'] }
@@ -454,6 +454,12 @@ export const FLOWS: Record<FlowId, AccountFlowDef> = {
 		general: ['login-validation'],
 		groups: [
 			{ id: 'authenticate', label: 'af.group.authenticate', parts: ['login-methods'] },
+			{
+				id: 'consent',
+				label: 'af.group.loginConsent',
+				parts: ['login-statements'],
+				optional: true
+			},
 			{ id: 'finish', label: 'af.group.finish', parts: ['login-session', 'login-result'] }
 		]
 	},
@@ -651,6 +657,13 @@ export function summaryRows(flow: FlowId, state: AccountFlowState): SummaryRow[]
 		.flatMap((partId) => shownFields(partId, state))
 		.map((field) => {
 			const chosen = state.values[field.key];
+			if (field.kind === 'consent-statements') {
+				const n = consentEntries(chosen).length;
+				return {
+					label: t(field.label),
+					value: n > 0 ? t('af.consent.count', { n }) : t('sf.value.notSet')
+				};
+			}
 			const options = field.options();
 			const texts = (Array.isArray(chosen) ? chosen : chosen ? [chosen] : []).map(
 				(value) => options.find((option) => option.value === value)?.label ?? value

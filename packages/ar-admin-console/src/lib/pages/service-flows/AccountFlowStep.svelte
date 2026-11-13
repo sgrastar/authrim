@@ -5,6 +5,7 @@
 	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
 	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 	import ClientField from './ClientField.svelte';
+	import ConsentStatementsField from './ConsentStatementsField.svelte';
 	import FailedSignInsNote from './FailedSignInsNote.svelte';
 	import MethodProfileField from './MethodProfileField.svelte';
 	import SessionProfileField from './SessionProfileField.svelte';
@@ -29,9 +30,11 @@
 		form: AccountFlowState;
 		/** The flow the step is in: a screen step then asks where each of its ways out leads. */
 		flow?: FlowId;
+		/** The flow cannot hold its consent setting (a sign-in built in the Flow editor): shown, not editable. */
+		consentUnavailable?: boolean;
 	}
 
-	let { part, form = $bindable(), flow }: Props = $props();
+	let { part, form = $bindable(), flow, consentUnavailable = false }: Props = $props();
 
 	const def = $derived(partDef(part));
 	const fields = $derived(shownFields(part, form));
@@ -105,6 +108,15 @@
 			hint={field.hint ? t(field.hint) : undefined}
 			value={typeof form.values[field.key] === 'string' ? (form.values[field.key] as string) : ''}
 			onchange={(value) => (form.values[field.key] = value)}
+		/>
+	{:else if field.kind === 'consent-statements'}
+		<ConsentStatementsField
+			label={t(field.label)}
+			required={field.required}
+			hint={field.hint ? t(field.hint) : undefined}
+			value={chosen(field.key)}
+			onchange={(value) => (form.values[field.key] = value)}
+			unavailable={consentUnavailable}
 		/>
 	{:else if field.kind === 'saml-sp'}
 		<ClientField

@@ -3,6 +3,10 @@
 	import type { ClientsClient } from '#lib/api/clients.js';
 	import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentication-method-profiles-fake.js';
 	import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
+	import {
+		createFakeConsentStatements,
+		MOCK_CONSENT_STATEMENTS
+	} from '#lib/api/fake/consent-statements-fake.js';
 	import { createFakeClients } from '#lib/api/fake/clients-fake.js';
 	import { createFakeSamlProviders } from '#lib/api/fake/saml-providers-fake.js';
 	import { createFakeScreens } from '#lib/api/fake/screens-fake.js';
@@ -29,6 +33,7 @@
 		screens: createFakeScreens({ screens: [] }),
 		clients,
 		samlProviders: createFakeSamlProviders(),
+		consentStatements: createFakeConsentStatements(MOCK_CONSENT_STATEMENTS),
 		canCreateProfile: () => false
 	});
 	let value = $state('');
