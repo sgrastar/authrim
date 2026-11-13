@@ -2279,17 +2279,47 @@ function stepMatchesRequestProtocol(
   return !protocol || protocol === requestContext.protocol;
 }
 
+/**
+ * Whether the step an edge leads to suits the request's protocol: by its own completion, or, for
+ * a step that is not a completion (a consent step put before one), by the completions its own
+ * edges lead to, all of one protocol.
+ */
+function targetMatchesRequestProtocol(
+  runtime: FlowRuntimeContract,
+  editor: FlowEditorState | null,
+  target: string,
+  requestContext: FlowRequestContext | null
+): boolean {
+  const step = findRuntimeStepBySourceNode(runtime, target);
+  if (!step || !requestContext || readRuntimeCompletionBlock(step) || !editor) {
+    return stepMatchesRequestProtocol(step, requestContext);
+  }
+  const protocols = new Set(
+    editor.edges
+      .filter((edge) => edge.source === target)
+      .map((edge) => {
+        const next = findRuntimeStepBySourceNode(runtime, edge.target);
+        const block = next ? readRuntimeCompletionBlock(next) : null;
+        return typeof block?.protocol === 'string' ? block.protocol : null;
+      })
+  );
+  if (protocols.size !== 1) return true;
+  const [protocol] = [...protocols];
+  return !protocol || protocol === requestContext.protocol;
+}
+
 function selectProtocolCompatibleEdge<T extends { target: string }>(
   runtime: FlowRuntimeContract,
   edges: T[],
-  requestContext: FlowRequestContext | null
+  requestContext: FlowRequestContext | null,
+  editor: FlowEditorState | null = null
 ): T | null {
   if (edges.length === 0) return null;
   if (edges.length === 1) return edges[0];
 
   return (
     edges.find((edge) =>
-      stepMatchesRequestProtocol(findRuntimeStepBySourceNode(runtime, edge.target), requestContext)
+      targetMatchesRequestProtocol(runtime, editor, edge.target, requestContext)
     ) ?? edges[0]
   );
 }
@@ -2308,7 +2338,12 @@ function resolveNextStep(
       const selectedEdges = selectedHandle
         ? outgoingEdges.filter((edge) => edge.source_handle === selectedHandle)
         : [];
-      const selectedEdge = selectProtocolCompatibleEdge(runtime, selectedEdges, requestContext);
+      const selectedEdge = selectProtocolCompatibleEdge(
+        runtime,
+        selectedEdges,
+        requestContext,
+        editor
+      );
       if (selectedHandle && !selectedEdge) {
         return { step: null, errorCode: 'AR_FLOW_INVALID_SELECTED_HANDLE' };
       }
@@ -2317,7 +2352,7 @@ function resolveNextStep(
         (edge) => !edge.source_handle || edge.source_handle === 'next'
       );
       const defaultEdge =
-        selectProtocolCompatibleEdge(runtime, defaultEdges, requestContext) ??
+        selectProtocolCompatibleEdge(runtime, defaultEdges, requestContext, editor) ??
         (outgoingEdges.length === 1 ? outgoingEdges[0] : null);
       if (!selectedHandle && !defaultEdge) {
         return { step: null, errorCode: 'AR_FLOW_SELECTED_HANDLE_REQUIRED' };

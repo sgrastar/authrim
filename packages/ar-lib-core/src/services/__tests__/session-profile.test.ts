@@ -262,6 +262,7 @@ describe('the sign-in Flow graph', () => {
     completion: { behavior: 'custom_url' as const, redirect_url: '/welcome' },
     unregistered: 'generic' as const,
     onCancel: 'stay' as const,
+    consent: [],
   };
 
   it('is read back as the spec it was built from', () => {

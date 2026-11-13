@@ -70,9 +70,18 @@
 		 * Absent: it is kept in the page only. A failure is shown, and the draft is kept.
 		 */
 		onsave?: (state: AccountFlowState) => Promise<void>;
+		/** The sign-in cannot hold consent (no completion to put it before): its setting is shown disabled. */
+		consentUnavailable?: boolean;
 	}
 
-	let { flow, form = $bindable(), onback, focusTitle = false, onsave }: Props = $props();
+	let {
+		flow,
+		form = $bindable(),
+		onback,
+		focusTitle = false,
+		onsave,
+		consentUnavailable = false
+	}: Props = $props();
 
 	// What is on screen is a draft of the flow; `form` (the saved flow) changes only with Save.
 	const draft = new Draft<AccountFlowState>(untrack(() => form));
@@ -357,7 +366,7 @@
 								{/if}
 							</section>
 						{:else}
-							<AccountFlowStep part={current} bind:form={draft.value} {flow} />
+							<AccountFlowStep part={current} bind:form={draft.value} {flow} {consentUnavailable} />
 						{/if}
 					</div>
 				</section>

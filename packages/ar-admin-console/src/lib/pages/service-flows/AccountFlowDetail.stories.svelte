@@ -341,10 +341,14 @@
 		await expect(
 			await canvas.findByRole('heading', { name: 'Consent statements', level: 2 })
 		).toBeInTheDocument();
-		await expect(inFlow(canvasElement, /^Consent policy.*Not set yet/)).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^Consent statements.*Not set yet/)).toBeInTheDocument();
 		// Added but not set: still ready, and the step is listed as still to do.
 		await expect(canvas.getByText('Active')).toBeInTheDocument();
-		await userEvent.click(canvas.getByRole('checkbox', { name: 'Terms of use (v3)' }));
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('af.consent.add') }),
+			'stmt_terms'
+		);
+		await userEvent.click(canvas.getByRole('button', { name: t('af.consent.add') }));
 		await waitFor(() =>
 			expect(inFlow(canvasElement, /^Consent statements.*Configured/)).toBeInTheDocument()
 		);
@@ -358,6 +362,29 @@
 		);
 	}}
 ></Story>
+
+<!-- Sign-in can ask for consent before it completes: an optional step with the same list as sign-up's. -->
+<Story
+	name="Sign-in adds a consent step"
+	args={{ flow: 'login', filled: 'required' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(
+			flowButtonsOf(canvasElement).queryByRole('button', { name: /^Consent statements/ })
+		).toBeNull();
+		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[0]);
+		await userEvent.click(await canvas.findByRole('button', { name: 'Consent at sign-in' }));
+		await expect(await canvas.findByText(t('af.lead.login-statements'))).toBeInTheDocument();
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('af.consent.add') }),
+			'stmt_privacy'
+		);
+		await userEvent.click(canvas.getByRole('button', { name: t('af.consent.add') }));
+		await waitFor(() =>
+			expect(inFlow(canvasElement, /^Consent statements.*Configured/)).toBeInTheDocument()
+		);
+	}}
+/>
 
 <!-- Someone from another provider may arrive with no email address, or one that cannot be trusted: they are verified by email too, in the flow-wide settings. -->
 <Story

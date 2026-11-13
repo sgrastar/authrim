@@ -3,6 +3,7 @@ import { initialState } from './account-flow-model';
 import {
 	applyLoginFlowSpec,
 	buildLoginFlowEditor,
+	canSetSignInConsent,
 	loginSpecOf,
 	loginStateOf,
 	readLoginFlowEditor
@@ -16,7 +17,8 @@ describe('the sign-in flow saved as a Flow', () => {
 			sessionProfileRef: 'default',
 			completion: null,
 			unregistered: 'generic',
-			onCancel: 'stay'
+			onCancel: 'stay',
+			consent: []
 		});
 	});
 
@@ -38,7 +40,8 @@ describe('the sign-in flow saved as a Flow', () => {
 				app_login_scope: 'openid profile email'
 			},
 			unregistered: 'generic',
-			onCancel: 'stay'
+			onCancel: 'stay',
+			consent: []
 		});
 		const back = loginStateOf(readLoginFlowEditor(buildLoginFlowEditor(spec))!, {
 			name: 'Partner sign-in',
@@ -71,7 +74,8 @@ describe('the sign-in flow saved as a Flow', () => {
 				sessionProfileRef: 'default',
 				completion: null,
 				unregistered: 'generic',
-				onCancel: 'stay'
+				onCancel: 'stay',
+				consent: []
 			},
 			{ name: 'x', scope: 'default-ui' }
 		);
@@ -103,5 +107,47 @@ describe('the sign-in flow saved as a Flow', () => {
 		const twice = structuredClone(SEEDED_LOGIN_EDITOR);
 		twice.nodes.push({ ...structuredClone(twice.nodes[2]), id: 'authentication-2' });
 		expect(readLoginFlowEditor(twice)).toBeNull();
+	});
+
+	it('saves the statements asked before sign-in completes and reads them back in order', () => {
+		const state = loginStateOf(readLoginFlowEditor(SEEDED_LOGIN_EDITOR)!, {
+			name: 'Sign-in',
+			scope: 'default-ui'
+		});
+		expect(state.added).not.toContain('consent');
+		expect(loginSpecOf(state).consent).toEqual([]);
+		state.added.push('consent');
+		state.values['login.statements'] = ['stmt_terms:required', 'stmt_privacy:optional'];
+		const spec = loginSpecOf(state);
+		expect(spec.consent).toEqual([
+			{ statement_id: 'stmt_terms', required: true },
+			{ statement_id: 'stmt_privacy', required: false }
+		]);
+		expect(canSetSignInConsent(SEEDED_LOGIN_EDITOR)).toBe(true);
+		const saved = applyLoginFlowSpec(SEEDED_LOGIN_EDITOR, spec);
+		expect(saved).not.toBeNull();
+		const back = loginStateOf(readLoginFlowEditor(saved)!, { name: 'x', scope: 'default-ui' });
+		expect(back.added).toContain('consent');
+		expect(back.values['login.statements']).toEqual([
+			'stmt_terms:required',
+			'stmt_privacy:optional'
+		]);
+		// Taken away again: the step goes and nothing is asked.
+		back.added = back.added.filter((id) => id !== 'consent');
+		const without = applyLoginFlowSpec(saved, loginSpecOf(back));
+		expect(readLoginFlowEditor(without)?.consent).toEqual([]);
+	});
+
+	it('cannot ask consent in a Flow with no completion an edge leads to', () => {
+		const flow = structuredClone(SEEDED_LOGIN_EDITOR);
+		flow.nodes = flow.nodes.filter((node) => node.type !== 'complete');
+		flow.edges = flow.edges.filter((edge) => flow.nodes.some((node) => node.id === edge.target));
+		expect(canSetSignInConsent(flow)).toBe(false);
+		const state = loginStateOf(readLoginFlowEditor(flow)!, { name: 'x', scope: 'default-ui' });
+		// Without consent the other settings still save.
+		expect(applyLoginFlowSpec(flow, loginSpecOf(state))).not.toBeNull();
+		state.added.push('consent');
+		state.values['login.statements'] = ['stmt_terms:required'];
+		expect(applyLoginFlowSpec(flow, loginSpecOf(state))).toBeNull();
 	});
 });

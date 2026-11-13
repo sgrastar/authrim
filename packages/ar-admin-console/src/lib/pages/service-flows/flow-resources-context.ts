@@ -1,12 +1,17 @@
 /**
  * What a service flow chooses from that lives elsewhere in the console: the tenant's sign-in
- * method profiles, its screens, its clients and its SAML service providers. The live page hands down the Admin API clients; the mock pages
+ * method profiles, its screens, its clients, its SAML service providers and its consent statements. The live page hands down the Admin API clients; the mock pages
  * and Storybook, which have none, fall back to in-memory ones, so a profile made there lives only
  * as long as the page.
  */
 import { getContext, setContext } from 'svelte';
 import type { AuthenticationMethodProfilesClient } from '#lib/api/authentication-method-profiles.js';
 import type { ClientsClient } from '#lib/api/clients.js';
+import type { ConsentStatementsClient } from '#lib/api/consent-statements.js';
+import {
+	createFakeConsentStatements,
+	MOCK_CONSENT_STATEMENTS
+} from '#lib/api/fake/consent-statements-fake.js';
 import type { FlowsClient } from '#lib/api/flows.js';
 import type { SamlProvidersClient } from '#lib/api/saml-providers.js';
 import { createFakeAuthenticationMethodProfiles } from '#lib/api/fake/authentication-method-profiles-fake.js';
@@ -30,6 +35,8 @@ export interface FlowResources {
 	clients: ClientsClient;
 	/** The tenant's SAML service providers (the same, by SAML). */
 	samlProviders: SamlProvidersClient;
+	/** The tenant's consent statements (what a sign-up or sign-in can ask people to agree to). */
+	consentStatements: ConsentStatementsClient;
 	/**
 	 * Where the sign-up flow is kept (the tenant's Flows). Absent (the mock pages, Storybook): the
 	 * flows are kept in the page only.
@@ -63,6 +70,7 @@ export function useFlowResources(): FlowResources {
 		screens: createFakeScreens({ screens: MOCK_SCREENS }),
 		clients: createFakeClients(),
 		samlProviders: createFakeSamlProviders(),
+		consentStatements: createFakeConsentStatements(MOCK_CONSENT_STATEMENTS),
 		canCreateProfile: () => true
 	};
 	return fallback;

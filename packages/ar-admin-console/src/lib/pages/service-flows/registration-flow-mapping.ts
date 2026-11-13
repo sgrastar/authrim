@@ -1,8 +1,7 @@
 /**
  * The sign-up flow as the console holds it (`AccountFlowState`) and the sign-up spec it is saved
  * as (ar-lib-core `RegistrationFlowSpec`: a Flow graph with its registration policy). Both ways,
- * so what is saved reads back the same. What the spec has no place for (consent, not wired yet)
- * is not saved.
+ * so what is saved reads back the same. Consent is the statements the first sign-up screen asks.
  */
 import {
 	buildRegistrationFlowEditor,
@@ -17,6 +16,7 @@ import {
 } from '@authrim/ar-lib-core/types/registration-policy';
 import { initialState, titleKey } from './account-flow-model';
 import { completionOf, setCompletion } from './completion-mapping';
+import { consentSpecOf, consentValueOf } from './consent-field-model';
 import { exitKey } from './screen-exits';
 import type { AccountFlowState, AccountValue } from './flow-spec';
 
@@ -110,7 +110,9 @@ export function registrationSpecOf(state: AccountFlowState): RegistrationFlowSpe
 		screenKey: text(values['reg.screen']),
 		...(screenTitle ? { screenTitle } : {}),
 		screens,
-		policy
+		policy,
+		// The step is added once someone wants consent; taken away, nothing is asked.
+		consent: state.added.includes('consent') ? consentSpecOf(values['reg.statements']) : []
 	};
 }
 
@@ -148,6 +150,10 @@ export function registrationStateOf(
 			values[exitKey(fieldKey, exit)] =
 				target === 'complete' ? 'complete' : target.replace(/^screen:/u, 'extra-screen:');
 		}
+	}
+	if (spec.consent.length > 0) {
+		state.added.push('consent');
+		values['reg.statements'] = consentValueOf(spec.consent);
 	}
 	return state;
 }

@@ -46,7 +46,8 @@ export interface AccountField {
 	key: string;
 	/**
 	 * `profile`: one of the tenant's sign-in method profiles, by id; `session-profile`: one of its
-	 * session profiles, by id; `screen`: one of its screens of `screenKinds`, by id. Their choices
+	 * session profiles, by id; `consent-statements`: an ordered list of the tenant's consent statements
+	 * (`<id>:required` / `<id>:optional`, see `consent-field-model.ts`); `screen`: one of its screens of `screenKinds`, by id. Their choices
 	 * are loaded, not listed here.
 	 */
 	kind:
@@ -59,6 +60,7 @@ export interface AccountField {
 		| 'client'
 		| 'client-redirect'
 		| 'saml-sp'
+		| 'consent-statements'
 		| 'unregistered';
 	screenKinds?: readonly ScreenKind[];
 	/** A `client-redirect` field: the key of the `client` field whose redirect URIs it offers. */

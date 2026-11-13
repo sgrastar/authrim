@@ -49,7 +49,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.part.reg-methods': 'Sign-in method profile',
 	'af.part.reg-verification': 'Verifying the email address',
 	'af.part.reg-statements': 'Consent statements',
-	'af.part.reg-policy': 'Consent policy',
 	'af.part.reg-result': 'After completion',
 	'af.part.login-methods': 'Sign-in method profile',
 	'af.part.login-validation': 'Validation rules',
@@ -58,9 +57,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.reg-methods': 'Choose the sign-in method profile this sign-up uses.',
 	'af.lead.reg-verification':
 		'Check by email that the person can receive mail at the address they sign up with.',
-	'af.lead.reg-statements':
-		'Choose the statements, such as terms of use, to agree to when signing up.',
-	'af.lead.reg-policy': 'Decide when, and how, consent is asked for at sign-up.',
 	'af.lead.reg-result': 'Decide where the person goes once sign-up is done.',
 	'af.lead.login-methods': 'Choose the sign-in method profile this sign-in uses.',
 	'af.lead.login-validation':
@@ -85,10 +81,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.login-session':
 		'Once the required authentication is complete, Authrim creates the session.',
 
-	'af.note.reg-statements':
-		'Separate from agreeing to share information with an app. That is set in each connection’s flow.',
-	'af.note.reg-policy': 'If the person does not agree, the account is not created.',
-
 	'af.field.reg.methodProfile': 'Profile to use',
 	'af.profile.create': 'Create a sign-in method profile',
 	'af.profile.newTitle': 'New sign-in method profile',
@@ -108,8 +100,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.live.notConsole':
 		'This sign-up flow has steps made in the Flow editor, so it cannot be saved here.',
 	'af.live.loadFailed': 'Could not load the sign-up flow.',
-	'af.live.consentNotWired':
-		'Consent at sign-up cannot be saved yet. Remove the consent step to save.',
 	'af.title.edit': 'Edit the title',
 	'af.title.label': 'Title',
 	'af.title.done': 'Done',
@@ -183,8 +173,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'The person enters a code sent by email. When the provider gave no address, it goes to the one the person enters. The account is not created until the check is passed.',
 	'af.hint.reg.expiry': 'How long the link or code in the email can be used.',
 	'af.field.reg.expiry': 'How long the check stays valid',
-	'af.field.reg.statements': 'Statements to agree to at sign-up',
-	'af.field.reg.consentWhen': 'When to ask for consent',
 	'af.field.reg.after': 'After completion',
 
 	'af.field.reg.extraWhen': 'Also verify by email, when signing up through another provider',
@@ -348,8 +336,6 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.hint.reg.domains':
 		'Such as example.com, separated by commas or spaces. List a sub-domain on its own.',
 	'af.expiry.15m': '15 minutes',
-	'af.consentWhen.signup': 'At sign-up only',
-	'af.consentWhen.version': 'At sign-up, and when a statement changes',
 	'af.after.tenant': 'Follow the tenant’s setting',
 	'af.part.login-result': 'After sign-in',
 	'af.lead.login-result': 'Choose where people go once they have signed in.',
@@ -358,5 +344,37 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.hint.login.appClient':
 		'Once signed in, the person is signed in to the chosen service (client) straight away. The client must have First Party App and App Login turned on.',
 	'af.hint.login.samlSp':
-		'Once signed in, the person is signed in to the chosen SAML service (SP) straight away by IdP-initiated SSO. The SP must accept IdP-initiated SAML responses.'
+		'Once signed in, the person is signed in to the chosen SAML service (SP) straight away by IdP-initiated SSO. The SP must accept IdP-initiated SAML responses.',
+
+	'af.group.loginConsent': 'Consent at sign-in',
+	'af.part.login-statements': 'Consent statements',
+	'af.lead.reg-statements':
+		'Consent is asked for on its own screen, right before the account is made. The answers are recorded once the account exists.',
+	'af.note.reg-statements':
+		'Separate from agreeing to share information with a service. That is set in each connection’s flow. Statements are made and published on the consent statements pages.',
+	'af.lead.login-statements':
+		'Before sign-in completes, only the statements the person has not agreed to yet are asked. Required statements are also asked at single sign-on, of people who are already signed in.',
+	'af.note.login-statements': 'People who have agreed to everything do not see this step.',
+	'af.field.reg.statements': 'Statements to ask for consent',
+	'af.field.login.statements': 'Statements to ask for consent',
+	'af.live.consentNoPlace':
+		'This sign-in flow has no completion to put consent before, so consent cannot be saved here. Set it in the flow editor.',
+	'af.consent.count': '{n} statements',
+	'af.consent.add': 'Add a statement',
+	'af.consent.addPlaceholder': 'Choose a statement to add',
+	'af.consent.empty': 'None chosen yet.',
+	'af.consent.none': 'There are no statements to choose from. Create and publish one.',
+	'af.consent.required': 'Required',
+	'af.consent.moveUp': 'Move up: {name}',
+	'af.consent.moveDown': 'Move down: {name}',
+	'af.consent.remove': 'Remove: {name}',
+	'af.consent.unknown': 'Not found (a deleted or retired statement). Remove it.',
+	'af.consent.unpublished':
+		'Cannot be chosen now (turned off, or no published version). Publishing the flow will be refused; remove it or publish the statement.',
+	'af.consent.loadFailed': 'The statements could not be loaded.',
+	'af.consent.max': 'Up to {n} statements can be chosen.',
+	'af.consent.manage': 'Manage consent statements',
+	'af.consent.create': 'Create a consent statement',
+	'af.consent.unavailable':
+		'This sign-in flow was built in the flow editor, so consent cannot be set here. Set the consent step in the flow editor.'
 };
