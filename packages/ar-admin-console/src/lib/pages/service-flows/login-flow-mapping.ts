@@ -12,7 +12,7 @@ import {
 	type LoginFlowSpec
 } from '@authrim/ar-lib-core/types/login-flow-graph';
 import { initialState } from './account-flow-model';
-import { consentSpecOf, consentValueOf } from './consent-field-model';
+import { consentStepsOf, consentValueOf } from './consent-field-model';
 import { completionOf, setCompletion } from './completion-mapping';
 import type { AccountFlowState, AccountValue } from './flow-spec';
 
@@ -29,8 +29,16 @@ export function loginSpecOf(state: AccountFlowState): LoginFlowSpec {
 		completion: completionOf(values, 'login'),
 		unregistered: values['login.unregistered'] === 'guide' ? 'guide' : 'generic',
 		onCancel: values['login.onCancel'] === 'error' ? 'error' : 'stay',
-		consent: state.added.includes('consent') ? consentSpecOf(values['login.statements']) : []
+		consents: consentStepsOf(state.added.includes('consent'), values['login.statements'])
 	};
+}
+
+/**
+ * Whether the console's form can hold everything a spec sets: one consent step at most, asked of
+ * everyone. Anything more is shown, not saved (saving would drop it).
+ */
+export function loginSpecFitsForm(spec: LoginFlowSpec): boolean {
+	return spec.consents.length <= 1 && spec.consents.every((step) => !step.when?.length);
 }
 
 /** The console's sign-in flow, read from a saved spec (its name and place given apart). */
@@ -47,9 +55,10 @@ export function loginStateOf(
 	values['login.unregistered'] = spec.unregistered;
 	values['login.onCancel'] = spec.onCancel;
 	setCompletion(values, spec.completion, 'login');
-	if (spec.consent.length > 0) {
+	const consent = spec.consents[0]?.statements ?? [];
+	if (consent.length > 0) {
 		state.added.push('consent');
-		values['login.statements'] = consentValueOf(spec.consent);
+		values['login.statements'] = consentValueOf(consent);
 	}
 	return state;
 }

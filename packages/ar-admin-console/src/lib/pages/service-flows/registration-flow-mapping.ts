@@ -16,9 +16,10 @@ import {
 } from '@authrim/ar-lib-core/types/registration-policy';
 import { initialState, titleKey } from './account-flow-model';
 import { completionOf, setCompletion } from './completion-mapping';
-import { consentSpecOf, consentValueOf } from './consent-field-model';
+import { consentStepsOf, consentValueOf } from './consent-field-model';
 import { exitKey } from './screen-exits';
 import type { AccountFlowState, AccountValue } from './flow-spec';
+import { MAX_FLOW_CONSENT_STEPS } from '@authrim/ar-lib-core/types/flow-step-condition';
 
 const TTL: Record<string, number> = { '5m': 300, '10m': 600, '15m': 900 };
 const TTL_BACK: Record<number, string> = { 300: '5m', 600: '10m', 900: '15m' };
@@ -112,8 +113,20 @@ export function registrationSpecOf(state: AccountFlowState): RegistrationFlowSpe
 		screens,
 		policy,
 		// The step is added once someone wants consent; taken away, nothing is asked.
-		consent: state.added.includes('consent') ? consentSpecOf(values['reg.statements']) : []
+		consents: consentStepsOf(state.added.includes('consent'), values['reg.statements'])
 	};
+}
+
+/**
+ * Whether the console's form can hold everything a spec sets: one consent step at most, and no
+ * step shown to some people only. Anything more is shown, not saved (saving would drop it).
+ */
+export function registrationSpecFitsForm(spec: RegistrationFlowSpec): boolean {
+	return (
+		spec.screens.every((screen) => !screen.when?.length) &&
+		spec.consents.length <= 1 &&
+		spec.consents.every((step) => !step.when?.length)
+	);
 }
 
 /** The console's sign-up flow, read from a saved spec (its name and place given apart). */
@@ -151,9 +164,10 @@ export function registrationStateOf(
 				target === 'complete' ? 'complete' : target.replace(/^screen:/u, 'extra-screen:');
 		}
 	}
-	if (spec.consent.length > 0) {
+	const consent = spec.consents[0]?.statements ?? [];
+	if (consent.length > 0) {
 		state.added.push('consent');
-		values['reg.statements'] = consentValueOf(spec.consent);
+		values['reg.statements'] = consentValueOf(consent);
 	}
 	return state;
 }
@@ -237,5 +251,7 @@ function isSeededSignUp(editor: unknown): boolean {
 export function isConsoleShaped(editor: unknown): boolean {
 	if (isSeededSignUp(editor)) return true;
 	const spec = readRegistrationFlowEditor(editor);
-	return spec !== null && runShape(buildRegistrationFlowEditor(spec)) === runShape(editor);
+	// More consent steps than the console builds (made in the Flow editor): not its own.
+	if (spec === null || spec.consents.length > MAX_FLOW_CONSENT_STEPS) return false;
+	return runShape(buildRegistrationFlowEditor(spec)) === runShape(editor);
 }

@@ -2930,6 +2930,172 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  describe('a condition that reads the person, after a method chosen before its sign-in', () => {
+    // Sign in → a condition on the person → an extra screen for some, then the completion.
+    const heldRuntime: FlowRuntimeContract = {
+      flow_kind: 'login',
+      ui: {
+        steps: [
+          {
+            id: 'auth:step',
+            source_node_id: 'auth',
+            component: 'authentication_method_selector',
+            render: true,
+          },
+          {
+            id: 'who:step',
+            source_node_id: 'who',
+            component: 'condition',
+            render: false,
+            config: {
+              conditions: {
+                rows: [
+                  {
+                    id: 'show',
+                    condition: { type: 'user.attribute', attribute: 'nationality', value: 'US' },
+                    output_handle: 'show',
+                  },
+                ],
+                otherwise: { output_handle: 'skip' },
+              },
+            },
+          },
+          { id: 'extra:step', source_node_id: 'extra', component: 'screen', render: true },
+          {
+            id: 'complete:step',
+            source_node_id: 'complete',
+            component: 'completion',
+            render: true,
+          },
+        ],
+      },
+    };
+    const heldEditor = {
+      nodes: [
+        { id: 'auth', type: 'authentication' },
+        { id: 'who', type: 'condition' },
+        { id: 'extra', type: 'screen' },
+        { id: 'complete', type: 'complete' },
+      ],
+      edges: [
+        { id: 'e_auth', source: 'auth', target: 'who', source_handle: 'mail_otp' },
+        { id: 'e_show', source: 'who', target: 'extra', source_handle: 'show' },
+        { id: 'e_skip', source: 'who', target: 'complete', source_handle: 'skip' },
+        { id: 'e_extra', source: 'extra', target: 'complete' },
+      ],
+    };
+    const account = {
+      query: vi.fn(async () => []),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+      batch: vi.fn(),
+      transaction: vi.fn(),
+      isHealthy: vi.fn(),
+      getType: () => 'mock',
+      close: vi.fn(),
+    };
+
+    async function submit(input: {
+      step: 'auth' | 'who';
+      /** The method selection this run completed before (what a held condition waits after). */
+      methodChosen?: boolean;
+      signedIn?: boolean;
+    }) {
+      const { data: startData } = await startInteraction({ flow_kind: 'login' }, heldRuntime);
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: input.step,
+        currentStepId: `${input.step}:step`,
+        stepState: input.step === 'auth' ? 'waiting_input' : 'pending',
+        runtimeSnapshot: heldRuntime,
+        editorSnapshot: heldEditor,
+      });
+      mocks.coreAdapter.query.mockResolvedValue([]);
+      // The run's method selection, as the held condition asks it (after the submit's own reads).
+      const readRows = mocks.coreAdapter.queryOne.getMockImplementation();
+      mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, ...rest: unknown[]) =>
+        sql.includes('SELECT 1 AS found')
+          ? input.methodChosen
+            ? { found: 1 }
+            : null
+          : (readRows?.(sql, ...rest) as unknown)
+      );
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(
+        input.signedIn
+          ? {
+              userId: 'user_1',
+              expiresAt: Date.now() + 60_000,
+              createdAt: 1_700_000_000_000,
+              data: { authTime: 1_700_000_123 },
+            }
+          : null
+      );
+      mocks.resolveAccountCoreDataContext.mockResolvedValue({ coreDb: account });
+      mocks.readConditionAttributes.mockResolvedValue({ nationality: 'US' });
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: input.signedIn ? { Cookie: 'authrim_session=sess_runtime_1' } : {},
+          body: {
+            step_id: `${input.step}:step`,
+            node_id: input.step,
+            ...(input.step === 'auth' ? { selected_handle: 'mail_otp' } : {}),
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    it('holds the condition when the method is chosen before anyone is signed in', async () => {
+      const { response, data } = await submit({ step: 'auth' });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(false);
+      // Not judged for nobody (which would skip the screen): it waits as the current step.
+      expect(data.step).toMatchObject({ id: 'who:step', component: 'condition' });
+      expect(mocks.readConditionAttributes).not.toHaveBeenCalled();
+    });
+
+    it('asks for the sign-in when the held condition is submitted before it', async () => {
+      const { response, data } = await submit({ step: 'who', methodChosen: true });
+
+      expect(response.status).toBe(401);
+      expect(data).toMatchObject({ error: 'authentication_required' });
+      expect(JSON.stringify(data)).toContain('AR_FLOW_CONDITION_AUTH_REQUIRED');
+    });
+
+    it('judges the held condition for the person signed in since', async () => {
+      const { response, data } = await submit({ step: 'who', methodChosen: true, signedIn: true });
+
+      expect(response.status).toBe(200);
+      expect(mocks.readConditionAttributes).toHaveBeenCalledWith(['nationality']);
+      expect(data.step).toMatchObject({ id: 'extra:step' });
+      // The interaction is now theirs.
+      expect(
+        mocks.coreAdapter.execute.mock.calls.some(
+          ([sql, params]) =>
+            typeof sql === 'string' &&
+            sql.includes('SET user_id = ?') &&
+            Array.isArray(params) &&
+            params[0] === 'user_1'
+        )
+      ).toBe(true);
+    });
+
+    it('judges a condition as before when no method was chosen yet', async () => {
+      const { response, data } = await submit({ step: 'who' });
+
+      expect(response.status).toBe(200);
+      // For nobody, as a condition before the sign-in always was: the screen is skipped.
+      expect(data.step).toMatchObject({ id: 'complete:step' });
+    });
+  });
+
   it('routes a session check node to authentication when no active session exists', async () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
     resetAdapter();
@@ -3254,6 +3420,161 @@ describe('LoginUI runtime Flow handlers', () => {
         protocol: 'oidc',
         completion_block: { id: 'oidc-authorization-completion', protocol: 'oidc' },
       },
+    });
+  });
+
+  it('looks through a condition and its consent step, judging the person the session found', async () => {
+    // A consent step shown to some people only has a condition node before it.
+    const when = (completion: string) => ({
+      id: `sign-in-when-${completion}:step`,
+      source_node_id: `sign-in-when-${completion}`,
+      component: 'condition' as const,
+      render: false,
+      config: {
+        conditions: {
+          rows: [
+            {
+              id: 'show',
+              condition: {
+                type: 'user.attribute',
+                attribute: 'nationality',
+                operator: 'ne',
+                value: 'JP',
+              },
+              output_handle: 'show',
+            },
+          ],
+          otherwise: { output_handle: 'skip' },
+        },
+      },
+    });
+    const consentStep = (completion: string) => ({
+      id: `sign-in-consent-${completion}:step`,
+      source_node_id: `sign-in-consent-${completion}`,
+      component: 'consent_policy' as const,
+      render: true,
+      config: { statements: [{ statement_id: 'tos', required: true }] },
+    });
+    const steps = mixedProtocolCompletionRuntime.ui.steps;
+    const runtimeSnapshot: FlowRuntimeContract = {
+      ...mixedProtocolCompletionRuntime,
+      ui: {
+        steps: [
+          steps[0],
+          when('saml-complete'),
+          consentStep('saml-complete'),
+          steps[1],
+          when('oidc-complete'),
+          consentStep('oidc-complete'),
+          steps[2],
+        ],
+      },
+    };
+    const chain = (completion: string) => [
+      {
+        id: `w-${completion}-show`,
+        source: `sign-in-when-${completion}`,
+        target: `sign-in-consent-${completion}`,
+        source_handle: 'show',
+      },
+      {
+        id: `w-${completion}-skip`,
+        source: `sign-in-when-${completion}`,
+        target: completion,
+        source_handle: 'skip',
+      },
+      {
+        id: `c-${completion}`,
+        source: `sign-in-consent-${completion}`,
+        target: completion,
+        source_handle: 'accepted',
+      },
+    ];
+    const editorSnapshot = {
+      nodes: [
+        { id: 'session-check', type: 'session_check' },
+        { id: 'sign-in-when-saml-complete', type: 'condition' },
+        { id: 'sign-in-consent-saml-complete', type: 'consent' },
+        { id: 'saml-complete', type: 'complete' },
+        { id: 'sign-in-when-oidc-complete', type: 'condition' },
+        { id: 'sign-in-consent-oidc-complete', type: 'consent' },
+        { id: 'oidc-complete', type: 'complete' },
+      ],
+      edges: [
+        {
+          id: 'edge_session_saml',
+          source: 'session-check',
+          target: 'sign-in-when-saml-complete',
+          source_handle: 'continue',
+        },
+        {
+          id: 'edge_session_oidc',
+          source: 'session-check',
+          target: 'sign-in-when-oidc-complete',
+          source_handle: 'continue',
+        },
+        ...chain('saml-complete'),
+        ...chain('oidc-complete'),
+      ],
+    };
+    const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'session-check',
+      currentStepId: 'session-check:step',
+      stepState: 'pending',
+      runtimeSnapshot,
+      editorSnapshot,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+      },
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+    mocks.resolveAccountCoreDataContext.mockResolvedValue({
+      coreDb: {
+        query: vi.fn(async () => []),
+        queryOne: vi.fn(),
+        execute: vi.fn(),
+        batch: vi.fn(),
+        transaction: vi.fn(),
+        isHealthy: vi.fn(),
+        getType: () => 'mock',
+        close: vi.fn(),
+      },
+    });
+    mocks.readConditionAttributes.mockResolvedValue({ nationality: 'US' });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'session-check:step',
+          node_id: 'session-check',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(200);
+    // The interaction started with nobody: the condition reads the person the session found.
+    expect(mocks.readConditionAttributes).toHaveBeenCalledWith(['nationality']);
+    expect(data.output).toMatchObject({
+      protocol_continuation: { protocol: 'oidc', completion_block: { protocol: 'oidc' } },
     });
   });
 

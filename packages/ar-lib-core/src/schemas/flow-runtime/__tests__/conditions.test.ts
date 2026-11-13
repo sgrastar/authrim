@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ageOn,
   conditionUserAttributeKeys,
+  conditionsReadSignedInUser,
   evaluateFlowCondition,
   matchOperator,
   runtimeConditionExpressions,
@@ -283,5 +284,37 @@ describe('the attributes a Flow reads', () => {
       'nationality',
       'birthdate',
     ]);
+  });
+});
+
+describe('conditionsReadSignedInUser', () => {
+  it.each([
+    [{ type: 'user.attribute', attribute: 'nationality', value: 'JP' }],
+    [{ type: 'user.role', value: 'admin' }],
+    [{ type: 'user.age', operator: 'lt', value: 18 }],
+    [{ type: 'organization_membership', org_ref: { id: 'org_1' } }],
+    [
+      {
+        type: 'all',
+        all: [
+          { type: 'locale', value: 'ja' },
+          { type: 'user.group', value: 'g' },
+        ],
+      },
+    ],
+  ])('is true for a condition that reads the person: %j', (condition) => {
+    expect(conditionsReadSignedInUser([condition])).toBe(true);
+  });
+
+  it.each([
+    [{ type: 'always' }],
+    [{ type: 'locale', value: 'ja' }],
+    [{ type: 'protocol', value: 'oidc' }],
+    [{ type: 'screen.answer', attribute: 'plan', value: 'pro' }],
+    [{ type: 'authentication_method', value: 'mail_otp' }],
+    [{ type: 'all', all: [{ type: 'locale', value: 'ja' }] }],
+    ['not a condition'],
+  ])('is false for one that does not: %j', (condition) => {
+    expect(conditionsReadSignedInUser([condition])).toBe(false);
   });
 });

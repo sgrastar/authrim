@@ -32,6 +32,10 @@ import { localizeRuntimeScreen } from '#lib/i18n/runtime-screen-localization.js'
 import { getPlatformEnv } from '#lib/server/platform-env.js';
 import { getCachedAuthenticationMethodsForRequest } from '../../../hooks.server';
 import { buildAuthSwitchHref } from '#lib/authrim/auth-switch-url.js';
+import {
+	runtimeCodeSuccessHandle,
+	runtimeStepHasCodeInput
+} from '#lib/authrim/flow-runtime-steps.js';
 import { advanceLiteFlow } from './advance';
 import type { LiteBackendClient } from './backend-client';
 import { liteBackendForEvent } from './backend-for-event';
@@ -401,27 +405,10 @@ export function signInUnderway(data: Record<string, unknown>, interactionId: str
 }
 
 /** Whether a step's own screen asks for the code (SPA `runtimeStepHasCodeInputWidget`). */
-export function stepHasCodeInput(step: FlowRuntimeStep | null): boolean {
-	if (!step) return false;
-	const screens = [step.config?.screen, step.content?.screen];
-	return screens.some(
-		(screen) =>
-			isRecord(screen) &&
-			Array.isArray(screen.fields) &&
-			screen.fields.some((field) => isRecord(field) && field.block_type === 'code_input_widget')
-	);
-}
+export const stepHasCodeInput = runtimeStepHasCodeInput;
 
-/**
- * What the step the code was asked on is submitted with once the code is right (the SPA's
- * `getRuntimeCodeInputSuccessHandle` and /verify-email-code): an email verification step is
- * `verified`, a screen asking for the code `submitted`; any other step only advances (null).
- */
-export function codeSuccessHandle(step: FlowRuntimeStep): string | null {
-	if (step.component === 'email_verification') return 'verified';
-	if (step.component === 'screen' && stepHasCodeInput(step)) return 'submitted';
-	return null;
-}
+/** What the step the code was asked on is submitted with once the code is right (see there). */
+export const codeSuccessHandle = runtimeCodeSuccessHandle;
 
 /**
  * The page's own query, without SvelteKit's action key (`/continue`): where a post goes back to,

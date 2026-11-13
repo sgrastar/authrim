@@ -25,7 +25,9 @@ import {
   createPIIContextFromHono,
   evaluateFlowConditionRows,
   conditionUserAttributeKeys,
+  conditionsReadSignedInUser,
   runtimeConditionExpressions,
+  stepConditionExpressions,
   flowConditionAttributeReader,
   generateId,
   getChallengeStoreByChallengeId,
@@ -2297,15 +2299,27 @@ function targetMatchesRequestProtocol(
   if (!step || !requestContext || readRuntimeCompletionBlock(step) || !editor) {
     return stepMatchesRequestProtocol(step, requestContext);
   }
-  const protocols = new Set(
-    editor.edges
-      .filter((edge) => edge.source === target)
-      .map((edge) => {
-        const next = findRuntimeStepBySourceNode(runtime, edge.target);
-        const block = next ? readRuntimeCompletionBlock(next) : null;
-        return typeof block?.protocol === 'string' ? block.protocol : null;
-      })
-  );
+  // The completions the target goes on to, through any steps between (consent steps and their
+  // conditions before a completion): each one's protocol, null for one that names none.
+  const protocols = new Set<string | null>();
+  const seen = new Set<string>([target]);
+  const queue = [target];
+  while (queue.length > 0 && seen.size <= runtime.ui.steps.length) {
+    const source = queue.shift() as string;
+    for (const edge of editor.edges.filter((candidate) => candidate.source === source)) {
+      const next = findRuntimeStepBySourceNode(runtime, edge.target);
+      const block = next ? readRuntimeCompletionBlock(next) : null;
+      if (block) {
+        protocols.add(typeof block.protocol === 'string' ? block.protocol : null);
+      } else if (!next || !editor.edges.some((candidate) => candidate.source === edge.target)) {
+        // Not a step, or one that goes on in order: where it ends is not known from here.
+        protocols.add(null);
+      } else if (!seen.has(edge.target)) {
+        seen.add(edge.target);
+        queue.push(edge.target);
+      }
+    }
+  }
   if (protocols.size !== 1) return true;
   const [protocol] = [...protocols];
   return !protocol || protocol === requestContext.protocol;
@@ -2428,6 +2442,41 @@ function parseConditionConfig(value: unknown): FlowConditionConfig | null {
   if (!Array.isArray(config.rows)) return null;
   if (!config.otherwise || typeof config.otherwise !== 'object') return null;
   return config;
+}
+
+function isMethodSelectorStep(step: FlowRuntimeStep): boolean {
+  return (
+    step.component === 'authentication_method_selector' ||
+    step.component === 'registration_method_selector'
+  );
+}
+
+/**
+ * Whether a method selection of this run is complete (its method chosen), however many steps came
+ * after it: asked of the selection steps themselves.
+ */
+async function hasCompletedMethodSelection(
+  db: DatabaseAdapter,
+  tenantId: string,
+  interactionId: string,
+  runtime: FlowRuntimeContract
+): Promise<boolean> {
+  const stepIds = [
+    ...new Set(runtime.ui.steps.filter(isMethodSelectorStep).map((step) => step.id)),
+  ];
+  if (stepIds.length === 0) return false;
+  const row = await db.queryOne<{ found: number }>(
+    `SELECT 1 AS found
+     FROM flow_interaction_steps
+     WHERE tenant_id = ?
+       AND interaction_id = ?
+       AND state = 'completed'
+       AND selected_handle IS NOT NULL
+       AND step_id IN (${stepIds.map(() => '?').join(', ')})
+     LIMIT 1`,
+    [tenantId, interactionId, ...stepIds]
+  );
+  return row !== null && row !== undefined;
 }
 
 async function getLatestCompletedAuthenticationMethod(
@@ -3434,6 +3483,11 @@ async function resolveNextDisplayStep(input: {
   userId: string | null;
   initialStep: FlowRuntimeStep | null;
   completeTerminalStep?: boolean;
+  /**
+   * Whether the run waits for a sign-in (`runtimeWaitsForSignIn` in the submit): a condition that
+   * reads the person is then held as the current step, judged once someone is signed in.
+   */
+  awaitsSignIn?: () => Promise<boolean>;
 }): Promise<{
   step: FlowRuntimeStep | null;
   terminalStep: FlowRuntimeStep | null;
@@ -3468,11 +3522,27 @@ async function resolveNextDisplayStep(input: {
         : { step: null, terminalStep: step, userId, autoAdvancedSteps };
     }
 
+    if (
+      step.component === 'condition' &&
+      !userId &&
+      input.awaitsSignIn &&
+      conditionsReadSignedInUser(stepConditionExpressions(step)) &&
+      (await input.awaitsSignIn())
+    ) {
+      // Judged now it would be judged for nobody: it waits, like the completion, for the sign-in.
+      return { step, terminalStep: null, userId, autoAdvancedSteps };
+    }
+
     const autoAdvance = await resolveAutoAdvanceForStep({
       c: input.c,
       db: input.db,
       tenantId: input.tenantId,
-      interaction: input.interaction,
+      // As the run knows it by now: a session check on the way may have found who it is, and a
+      // condition after it judges them (their roles, attributes).
+      interaction:
+        userId === input.interaction.user_id
+          ? input.interaction
+          : { ...input.interaction, user_id: userId },
       runtime: input.runtime,
       step,
     });
@@ -6503,6 +6573,47 @@ async function submitClaimedRuntimeStep(input: {
     );
   }
 
+  const sessionForChallenge = await resolveSessionForChallenge(
+    c,
+    tenantId,
+    requestContext.authorization_challenge_id,
+    { ...sessionOptionsForRuntime(runtime, interaction), judgeChallengeWithoutSession: true }
+  );
+  if (sessionForChallenge.unavailable) {
+    // Nothing is recorded yet: the browser may submit this step again.
+    return authorizationRequestUnavailable(c, interactionId);
+  }
+  if (sessionForChallenge.expired) {
+    // Signing in again does not answer a request that is gone, so this is not a request to sign in.
+    return runtimeError(
+      c,
+      400,
+      authorizationRequestExpired().error,
+      authorizationRequestExpired().message ?? '',
+      'AR_FLOW_AUTH_REQUEST_EXPIRED',
+      'restart_required',
+      'restart_interaction',
+      interactionId
+    );
+  }
+  const challengeSession = sessionForChallenge.session;
+
+  // A login or registration is complete only for someone signed in (with a session the
+  // authorization request accepts). Until then the interaction waits at its completion step: the
+  // method is chosen first (an emailed code, an external provider) and the proof comes later, so
+  // the completion is submitted again, by the browser, once it exists.
+  const completionNeedsSession =
+    (runtime.flow_kind === 'login' || runtime.flow_kind === 'registration') && !challengeSession;
+  // Whether this run waits for that sign-in: the method is chosen (here, or by a step before) and
+  // the proof is still to come. Read once, when a condition that reads the person asks.
+  let awaitsSignIn: Promise<boolean> | null = null;
+  const runtimeWaitsForSignIn = () =>
+    (awaitsSignIn ??= completionNeedsSession
+      ? isMethodSelectorStep(current.step)
+        ? Promise.resolve(true)
+        : hasCompletedMethodSelection(db, tenantId, interaction.id, runtime)
+      : Promise.resolve(false));
+
   let branchResolution: {
     selectedHandle: string | null;
     userId?: string | null;
@@ -6511,11 +6622,31 @@ async function submitClaimedRuntimeStep(input: {
     unavailable?: true;
   };
   if (current.step.component === 'condition') {
+    // A condition held for the sign-in (see resolveNextDisplayStep) is judged for the person signed
+    // in now; with no one yet it waits, like the completion.
+    const judgedFor = interaction.user_id ?? challengeSession?.userId ?? null;
+    if (
+      !judgedFor &&
+      conditionsReadSignedInUser(stepConditionExpressions(current.step)) &&
+      (await runtimeWaitsForSignIn())
+    ) {
+      return runtimeError(
+        c,
+        401,
+        'authentication_required',
+        'Sign in to continue',
+        'AR_FLOW_CONDITION_AUTH_REQUIRED',
+        'reauthentication_required',
+        'reauthenticate',
+        interactionId
+      );
+    }
     branchResolution = await resolveConditionSelectedHandle({
       c,
       db,
       tenantId,
-      interaction,
+      interaction:
+        judgedFor === interaction.user_id ? interaction : { ...interaction, user_id: judgedFor },
       runtime,
       step: current.step,
     });
@@ -6633,37 +6764,6 @@ async function submitClaimedRuntimeStep(input: {
     );
   }
 
-  const sessionForChallenge = await resolveSessionForChallenge(
-    c,
-    tenantId,
-    requestContext.authorization_challenge_id,
-    { ...sessionOptionsForRuntime(runtime, interaction), judgeChallengeWithoutSession: true }
-  );
-  if (sessionForChallenge.unavailable) {
-    // Nothing is recorded yet: the browser may submit this step again.
-    return authorizationRequestUnavailable(c, interactionId);
-  }
-  if (sessionForChallenge.expired) {
-    // Signing in again does not answer a request that is gone, so this is not a request to sign in.
-    return runtimeError(
-      c,
-      400,
-      authorizationRequestExpired().error,
-      authorizationRequestExpired().message ?? '',
-      'AR_FLOW_AUTH_REQUEST_EXPIRED',
-      'restart_required',
-      'restart_interaction',
-      interactionId
-    );
-  }
-  const challengeSession = sessionForChallenge.session;
-
-  // A login or registration is complete only for someone signed in (with a session the
-  // authorization request accepts). Until then the interaction waits at its completion step: the
-  // method is chosen first (an emailed code, an external provider) and the proof comes later, so
-  // the completion is submitted again, by the browser, once it exists.
-  const completionNeedsSession =
-    (runtime.flow_kind === 'login' || runtime.flow_kind === 'registration') && !challengeSession;
   if (current.step.component === 'completion' && completionNeedsSession) {
     return runtimeError(
       c,
@@ -6814,6 +6914,8 @@ async function submitClaimedRuntimeStep(input: {
     (current.step.component === 'authentication_method_selector' ||
       current.step.component === 'registration_method_selector' ||
       current.step.component === 'completion' ||
+      // Judged for the person signed in (above): the interaction is theirs.
+      current.step.component === 'condition' ||
       nextResolution.step?.component === 'consent_policy' ||
       nextResolution.step?.component === 'completion')
   ) {
@@ -6879,6 +6981,7 @@ async function submitClaimedRuntimeStep(input: {
           initialStep: nextResolution.step,
           // Without a session the completion is not reached: it waits as the current step.
           ...(completionNeedsSession ? { completeTerminalStep: false } : {}),
+          awaitsSignIn: runtimeWaitsForSignIn,
         });
   if (visibleStepResolution.unavailable) {
     return authorizationRequestUnavailable(c, interactionId);
