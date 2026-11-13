@@ -11,6 +11,7 @@ import { enKeyringPresentation } from './keyring-presentation/en';
 import { enNotices } from './notices/en';
 import { enCustomization } from './customization/en';
 import { enScreens } from './screens/en';
+import { enStatements } from './statements/en';
 import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
 import { enUserAudit } from './user-audit/en';
@@ -35,6 +36,7 @@ export const en = {
 	...enNotices,
 	...enCustomization,
 	...enScreens,
+	...enStatements,
 	...enStepUp,
 	...enAdminAudit,
 	...enUserAudit,

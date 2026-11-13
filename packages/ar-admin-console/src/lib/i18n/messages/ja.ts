@@ -10,6 +10,7 @@ import { jaKeyringPresentation } from './keyring-presentation/ja';
 import { jaNotices } from './notices/ja';
 import { jaCustomization } from './customization/ja';
 import { jaScreens } from './screens/ja';
+import { jaStatements } from './statements/ja';
 import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
 import { jaUserAudit } from './user-audit/ja';
@@ -38,6 +39,7 @@ export const ja = {
 	...jaNotices,
 	...jaCustomization,
 	...jaScreens,
+	...jaStatements,
 	...jaStepUp,
 	...jaAdminAudit,
 	...jaUserAudit,

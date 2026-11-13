@@ -19,6 +19,7 @@ export function openCoreStore(tenantId = 'tenant-a'): {
   for (const file of [
     '001_0_5_0_core_baseline.sql',
     '009_consent_policies_removed.sql',
+    '010_information_release_consent.sql',
     '011_saml_sp_release_consent.sql',
   ]) {
     db.exec(

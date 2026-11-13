@@ -99,7 +99,7 @@ describe('admin consent statement lifecycle', () => {
   it('lists only the current tenant statements and handles failures', async () => {
     mocks.adapter.query.mockResolvedValueOnce([{ id: 'statement-1' }]);
     await expect((await adminConsentStatementsListHandler(context())).json()).resolves.toEqual({
-      statements: [{ id: 'statement-1' }],
+      statements: [{ id: 'statement-1', current_version: null, has_draft: false, titles: {} }],
     });
     expect(mocks.adapter.query).toHaveBeenCalledWith(expect.any(String), ['tenant-a']);
     mocks.adapter.query.mockRejectedValueOnce(new Error('failure'));

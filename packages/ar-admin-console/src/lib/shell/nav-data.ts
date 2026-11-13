@@ -345,6 +345,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'statements',
 				label: 'nav.custom.statements',
 				icon: 'file',
+				// The statement page: …/statements/new and …/statements/<statement id>.
+				details: true,
 				legacyRoutes: ['/admin/consent-statements', '/admin/consent-statements/[id]']
 			},
 			{

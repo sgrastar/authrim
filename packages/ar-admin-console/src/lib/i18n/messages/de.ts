@@ -11,6 +11,7 @@ import { deKeyringPresentation } from './keyring-presentation/de';
 import { deNotices } from './notices/de';
 import { deCustomization } from './customization/de';
 import { deScreens } from './screens/de';
+import { deStatements } from './statements/de';
 import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 import { deUserAudit } from './user-audit/de';
@@ -35,6 +36,7 @@ export const de = {
 	...deNotices,
 	...deCustomization,
 	...deScreens,
+	...deStatements,
 	...deStepUp,
 	...deAdminAudit,
 	...deUserAudit,
