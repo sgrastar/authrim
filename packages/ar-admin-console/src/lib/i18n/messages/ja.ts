@@ -583,6 +583,7 @@ export const ja = {
 	'cond.problem.noValue': '値を入力してください。',
 	'cond.problem.notNumber': '数字で入力してください。',
 	'cond.problem.badPattern': '正規表現として読み取れません。',
+	'cond.problem.invalidValue': 'この値は使えません。',
 	'color.pick': '{name} を選ぶ',
 	'color.opacity': '{name} の不透明度',
 	'color.invalid': '#RRGGBB の形式で入力してください。',

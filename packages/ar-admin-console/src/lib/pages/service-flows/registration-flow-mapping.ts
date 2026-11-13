@@ -1,7 +1,8 @@
 /**
  * The sign-up flow as the console holds it (`AccountFlowState`) and the sign-up spec it is saved
  * as (ar-lib-core `RegistrationFlowSpec`: a Flow graph with its registration policy). Both ways,
- * so what is saved reads back the same. Consent is the statements the first sign-up screen asks.
+ * so what is saved reads back the same. Consent is asked in steps of its own after the screens,
+ * each shown to everyone or on its conditions, like a more screen.
  */
 import {
 	buildRegistrationFlowEditor,
@@ -16,7 +17,8 @@ import {
 } from '@authrim/ar-lib-core/types/registration-policy';
 import { initialState, titleKey } from './account-flow-model';
 import { completionOf, setCompletion } from './completion-mapping';
-import { consentStepsOf, consentValueOf } from './consent-field-model';
+import { consentStepsOf, setConsentSteps } from './consent-field-model';
+import { valueOfWhen, whenOf } from './step-condition-model';
 import { exitKey } from './screen-exits';
 import type { AccountFlowState, AccountValue } from './flow-spec';
 import { MAX_FLOW_CONSENT_STEPS } from '@authrim/ar-lib-core/types/flow-step-condition';
@@ -102,7 +104,16 @@ export function registrationSpecOf(state: AccountFlowState): RegistrationFlowSpe
 			else if (other) exits[exit] = `screen:${other[1]}`;
 		}
 		const title = text(values[titleKey(`reg-extra-screen:${n}`)]);
-		return [{ n, screenKey: text(values[fieldKey]), ...(title ? { title } : {}), exits }];
+		const when = whenOf(values[`reg.extraScreenWhen:${n}`]);
+		return [
+			{
+				n,
+				screenKey: text(values[fieldKey]),
+				...(title ? { title } : {}),
+				exits,
+				...(when.length > 0 ? { when } : {})
+			}
+		];
 	});
 	const screenTitle = text(values[titleKey('reg-screen')]);
 	return {
@@ -112,20 +123,21 @@ export function registrationSpecOf(state: AccountFlowState): RegistrationFlowSpe
 		...(screenTitle ? { screenTitle } : {}),
 		screens,
 		policy,
-		// The step is added once someone wants consent; taken away, nothing is asked.
-		consents: consentStepsOf(state.added.includes('consent'), values['reg.statements'])
+		// A step is added once someone wants consent; taken away, it asks nothing.
+		consents: consentStepsOf(state, 'reg')
 	};
 }
 
 /**
- * Whether the console's form can hold everything a spec sets: one consent step at most, and no
- * step shown to some people only. Anything more is shown, not saved (saving would drop it).
+ * Whether the console's form can hold everything a spec sets: its consent steps, and each step
+ * shown to everyone or on conditions the form can show. Anything more is shown, not saved (saving
+ * would drop it).
  */
 export function registrationSpecFitsForm(spec: RegistrationFlowSpec): boolean {
 	return (
-		spec.screens.every((screen) => !screen.when?.length) &&
-		spec.consents.length <= 1 &&
-		spec.consents.every((step) => !step.when?.length)
+		spec.screens.every((screen) => valueOfWhen(screen.when) !== null) &&
+		spec.consents.length <= MAX_FLOW_CONSENT_STEPS &&
+		spec.consents.every((step) => valueOfWhen(step.when) !== null)
 	);
 }
 
@@ -163,12 +175,10 @@ export function registrationStateOf(
 			values[exitKey(fieldKey, exit)] =
 				target === 'complete' ? 'complete' : target.replace(/^screen:/u, 'extra-screen:');
 		}
+		const when = valueOfWhen(screen.when);
+		if (when && when.length > 0) values[`reg.extraScreenWhen:${screen.n}`] = when;
 	}
-	const consent = spec.consents[0]?.statements ?? [];
-	if (consent.length > 0) {
-		state.added.push('consent');
-		values['reg.statements'] = consentValueOf(consent);
-	}
+	setConsentSteps(state, 'reg', spec.consents);
 	return state;
 }
 

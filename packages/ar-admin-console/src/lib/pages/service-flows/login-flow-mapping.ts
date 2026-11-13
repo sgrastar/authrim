@@ -12,7 +12,9 @@ import {
 	type LoginFlowSpec
 } from '@authrim/ar-lib-core/types/login-flow-graph';
 import { initialState } from './account-flow-model';
-import { consentStepsOf, consentValueOf } from './consent-field-model';
+import { MAX_FLOW_CONSENT_STEPS } from '@authrim/ar-lib-core/types/flow-step-condition';
+import { consentStepsOf, setConsentSteps } from './consent-field-model';
+import { valueOfWhen } from './step-condition-model';
 import { completionOf, setCompletion } from './completion-mapping';
 import type { AccountFlowState, AccountValue } from './flow-spec';
 
@@ -29,16 +31,20 @@ export function loginSpecOf(state: AccountFlowState): LoginFlowSpec {
 		completion: completionOf(values, 'login'),
 		unregistered: values['login.unregistered'] === 'guide' ? 'guide' : 'generic',
 		onCancel: values['login.onCancel'] === 'error' ? 'error' : 'stay',
-		consents: consentStepsOf(state.added.includes('consent'), values['login.statements'])
+		consents: consentStepsOf(state, 'login')
 	};
 }
 
 /**
- * Whether the console's form can hold everything a spec sets: one consent step at most, asked of
- * everyone. Anything more is shown, not saved (saving would drop it).
+ * Whether the console's form can hold everything a spec sets: its consent steps, each shown to
+ * everyone or on conditions the form can show. Anything more is shown, not saved (saving would
+ * drop it).
  */
 export function loginSpecFitsForm(spec: LoginFlowSpec): boolean {
-	return spec.consents.length <= 1 && spec.consents.every((step) => !step.when?.length);
+	return (
+		spec.consents.length <= MAX_FLOW_CONSENT_STEPS &&
+		spec.consents.every((step) => valueOfWhen(step.when) !== null)
+	);
 }
 
 /** The console's sign-in flow, read from a saved spec (its name and place given apart). */
@@ -55,11 +61,7 @@ export function loginStateOf(
 	values['login.unregistered'] = spec.unregistered;
 	values['login.onCancel'] = spec.onCancel;
 	setCompletion(values, spec.completion, 'login');
-	const consent = spec.consents[0]?.statements ?? [];
-	if (consent.length > 0) {
-		state.added.push('consent');
-		values['login.statements'] = consentValueOf(consent);
-	}
+	setConsentSteps(state, 'login', spec.consents);
 	return state;
 }
 

@@ -576,6 +576,7 @@ export const ar = {
 	'cond.problem.noValue': 'أدخل قيمة.',
 	'cond.problem.notNumber': 'أدخل رقمًا.',
 	'cond.problem.badPattern': 'ليس تعبيرًا نمطيًا صالحًا.',
+	'cond.problem.invalidValue': 'لا يمكن استخدام هذه القيمة هنا.',
 	'color.pick': 'اختيار {name}',
 	'color.opacity': 'عتامة {name}',
 	'color.invalid': 'أدخل اللون بصيغة #RRGGBB.',

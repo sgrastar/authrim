@@ -52,7 +52,7 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.part.reg-general': 'Accepting sign-ups',
 	'af.part.reg-methods': 'ملف تعريف طرق تسجيل الدخول',
 	'af.part.reg-verification': 'Verifying the email address',
-	'af.part.reg-statements': 'Consent statements',
+	'af.part.reg-statements': 'بيانات الموافقة {n}',
 	'af.part.reg-result': 'After completion',
 	'af.part.login-methods': 'ملف تعريف طرق تسجيل الدخول',
 	'af.part.login-validation': 'Validation rules',
@@ -350,7 +350,7 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'بعد تسجيل الدخول، يُسجَّل دخول الشخص مباشرة إلى خدمة SAML المختارة (SP) عبر SSO يبدأ من مزوّد الهوية. يجب أن يقبل الـ SP استجابات SAML التي يبدأها مزوّد الهوية.',
 
 	'af.group.loginConsent': 'Consent at sign-in',
-	'af.part.login-statements': 'Consent statements',
+	'af.part.login-statements': 'بيانات الموافقة {n}',
 	'af.lead.reg-statements':
 		'Consent is asked for on its own screen, right before the account is made. The answers are recorded once the account exists.',
 	'af.note.reg-statements':
@@ -390,5 +390,25 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.new.unpublished': 'تم إنشاء البيان لكن تعذر نشره. أكمله في صفحة البيان.',
 	'af.consent.new.openUnfinished': 'فتح صفحة البيان',
 	'af.consent.unavailable':
-		'This sign-in flow was built in the flow editor, so consent cannot be set here. Set the consent step in the flow editor.'
+		'This sign-in flow was built in the flow editor, so consent cannot be set here. Set the consent step in the flow editor.',
+	'af.field.when': 'يُعرض لـ',
+	'af.hint.when':
+		'من دون شرط يرى الجميع هذه الخطوة. ومع الشروط لا يراها إلا من يستوفيها كلها. لعرضها لمن يستوفي أيًّا منها، قسّمها إلى خطوات.',
+	'af.when.everyone': 'تُعرض للجميع.',
+	'af.when.count': '{n} شروط',
+	'af.when.attributesFailed':
+		'تعذّر تحميل السمات، لذا لا يمكن تغيير الشروط. تبقى الشروط المحفوظة كما هي.',
+	'af.when.loadFailed': 'تعذّر تحميل بعض خيارات الشروط.',
+	'af.when.source.attribute': 'سمة',
+	'af.when.source.age': 'العمر',
+	'af.when.source.answer': 'إجابة في شاشة',
+	'af.when.source.app': 'التطبيق',
+	'af.when.source.locale': 'لغة العرض',
+	'af.when.attr.birthdate': 'تاريخ الميلاد',
+	'af.when.attr.gender': 'الجنس',
+	'af.when.attr.locale': 'اللغة (الملف الشخصي)',
+	'af.when.attr.zoneinfo': 'المنطقة الزمنية',
+	'af.when.attr.address.country': 'البلد (العنوان)',
+	'af.when.attr.address.region': 'المنطقة (العنوان)',
+	'af.live.whenIncomplete': 'أحد الشروط في «يُعرض لـ» غير مكتمل. أكمله أو احذفه.'
 };

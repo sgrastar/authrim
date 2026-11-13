@@ -590,6 +590,7 @@ export const de = {
 	'cond.problem.noValue': 'Geben Sie einen Wert ein.',
 	'cond.problem.notNumber': 'Geben Sie eine Zahl ein.',
 	'cond.problem.badPattern': 'Kein gültiger regulärer Ausdruck.',
+	'cond.problem.invalidValue': 'Dieser Wert ist hier nicht möglich.',
 	'color.pick': '{name} auswählen',
 	'color.opacity': 'Deckkraft von {name}',
 	'color.invalid': 'Geben Sie eine Farbe als #RRGGBB ein.',

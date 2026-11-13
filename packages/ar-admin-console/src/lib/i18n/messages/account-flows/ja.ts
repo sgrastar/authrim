@@ -50,7 +50,7 @@ export const jaAccountFlows = {
 	'af.part.reg-general': '登録の受付',
 	'af.part.reg-methods': '認証方式プロフィール',
 	'af.part.reg-verification': 'メールアドレスの確認',
-	'af.part.reg-statements': '同意文',
+	'af.part.reg-statements': '同意文{n}',
 	'af.part.reg-result': '完了後の動作',
 	'af.part.login-methods': '認証方式プロフィール',
 	'af.part.login-validation': '認証の検証条件',
@@ -347,7 +347,7 @@ export const jaAccountFlows = {
 		'ログインが終わったら、選んだ SAML のサービス（SP）に IdP 起点の SSO でそのままログインします。SP 側が IdP 起点の SAML 応答を受け付ける設定になっている必要があります。',
 
 	'af.group.loginConsent': 'ログイン時の同意',
-	'af.part.login-statements': '同意文',
+	'af.part.login-statements': '同意文{n}',
 	'af.lead.reg-statements':
 		'アカウントを作る直前に、同意の画面で求めます。答えはアカウントができたときに記録します。',
 	'af.note.reg-statements':
@@ -388,5 +388,26 @@ export const jaAccountFlows = {
 		'同意文は作られましたが、公開できませんでした。同意文のページで続きを行ってください。',
 	'af.consent.new.openUnfinished': '同意文のページを開く',
 	'af.consent.unavailable':
-		'このサインインフローは、フロー編集画面で作られた構成のため、ここでは同意を設定できません。フロー編集画面で同意の手順を設定してください。'
+		'このサインインフローは、フロー編集画面で作られた構成のため、ここでは同意を設定できません。フロー編集画面で同意の手順を設定してください。',
+	'af.field.when': '表示する人',
+	'af.hint.when':
+		'条件がなければ、全員に表示します。条件を足すと、すべてに当てはまる人にだけ表示します。どれかに当てはまる人に出すときは、手順を分けてください。',
+	'af.when.everyone': '全員に表示します。',
+	'af.when.count': '{n} 件の条件',
+	'af.when.attributesFailed':
+		'属性の一覧を読み込めなかったため、条件を変更できません。保存済みの条件はそのまま残ります。',
+	'af.when.loadFailed': '条件の選択肢の一部を読み込めませんでした。',
+	'af.when.source.attribute': '属性',
+	'af.when.source.age': '年齢',
+	'af.when.source.answer': '画面の回答',
+	'af.when.source.app': 'アプリ',
+	'af.when.source.locale': '表示言語',
+	'af.when.attr.birthdate': '生年月日',
+	'af.when.attr.gender': '性別',
+	'af.when.attr.locale': '言語（プロフィール）',
+	'af.when.attr.zoneinfo': 'タイムゾーン',
+	'af.when.attr.address.country': '住所の国',
+	'af.when.attr.address.region': '住所の都道府県・州',
+	'af.live.whenIncomplete':
+		'「表示する人」に書きかけの条件があります。条件を最後まで入力するか、外してください。'
 } as const;

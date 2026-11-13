@@ -1,6 +1,7 @@
 /**
  * What a service flow chooses from that lives elsewhere in the console: the tenant's sign-in
- * method profiles, its screens, its clients, its SAML service providers and its consent statements. The live page hands down the Admin API clients; the mock pages
+ * method profiles, its screens, its clients, its SAML service providers, its consent statements
+ * and its attribute schema. The live page hands down the Admin API clients; the mock pages
  * and Storybook, which have none, fall back to in-memory ones, so a profile made there lives only
  * as long as the page.
  */
@@ -22,6 +23,9 @@ import { createFakeSamlProviders } from '#lib/api/fake/saml-providers-fake.js';
 import { createFakeScreens } from '#lib/api/fake/screens-fake.js';
 import type { ThemeValues } from '#lib/api/login-ui-themes.js';
 import type { ScreensClient } from '#lib/api/screens.js';
+import type { Schema } from '#lib/api/schema-setting.js';
+import { createFakeSchemaSetting } from '#lib/api/fake/schema-setting-fake.js';
+import { loadSchemas } from '#lib/pages/customization/screens/schema-choices.svelte.js';
 import { MOCK_SCREENS } from '#lib/mock/fixtures/screens.js';
 
 const FLOW_RESOURCES = Symbol('flow-resources');
@@ -56,6 +60,11 @@ export interface FlowResources {
 	failedSignInLimit?: (signal: AbortSignal) => Promise<number>;
 	/** The applied Login UI theme, for the screen preview; without it the default theme is used. */
 	loadTheme?: (signal: AbortSignal) => Promise<ThemeValues>;
+	/**
+	 * The tenant's attribute schema (what a step's "shown to" can compare besides the standard
+	 * profile attributes). Without it, only the standard ones are offered.
+	 */
+	userAttributes?: (signal: AbortSignal) => Promise<Schema[]>;
 }
 
 export function provideFlowResources(resources: FlowResources): void {
@@ -76,7 +85,8 @@ export function useFlowResources(): FlowResources {
 		clients: createFakeClients(),
 		samlProviders: createFakeSamlProviders(),
 		consentStatements: createFakeConsentStatements(MOCK_CONSENT_STATEMENTS),
-		canCreateProfile: () => true
+		canCreateProfile: () => true,
+		userAttributes: (signal) => loadSchemas(createFakeSchemaSetting(), 'mock', signal)
 	};
 	return fallback;
 }
