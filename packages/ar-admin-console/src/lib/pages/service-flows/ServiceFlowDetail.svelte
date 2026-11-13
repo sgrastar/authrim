@@ -377,7 +377,12 @@
 							{:else if current.startsWith('sp-')}
 								<SpSteps step={current} bind:form={draft.value.sp} />
 							{:else}
-								<InSteps step={current} bind:op={draft.value.op} bind:idp={draft.value.idp} />
+								<InSteps
+									step={current}
+									bind:op={draft.value.op}
+									bind:idp={draft.value.idp}
+									bind:opSettings={draft.value.settings.op}
+								/>
 							{/if}
 						{/key}
 					</div>

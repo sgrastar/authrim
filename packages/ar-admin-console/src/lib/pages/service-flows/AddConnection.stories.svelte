@@ -429,7 +429,9 @@
 		).toBeInTheDocument();
 		// Matching people has a sensible choice already; Authrim gives the provider a redirect address.
 		await userEvent.click(inFlow(canvasElement, /^Matching people/));
-		await expect(canvas.getByRole('radio', { name: /^By verified email/ })).toBeChecked();
+		await expect(
+			canvas.getByRole('radio', { name: /^Link automatically by verified email/ })
+		).toBeChecked();
 		// What Authrim gives the provider is below the general settings, not a step of the flow.
 		await userEvent.click(
 			within(canvasElement.querySelector<HTMLElement>('.detail__panel')!).getByRole('button', {
@@ -487,7 +489,9 @@
 			await canvas.findByRole('heading', { level: 1, name: 'Corporate sign-in' })
 		).toBeInTheDocument();
 		await userEvent.click(inFlow(canvasElement, /^Matching people/));
-		await expect(canvas.getByRole('radio', { name: /^By verified email/ })).toBeChecked();
+		await expect(
+			canvas.getByRole('radio', { name: /^Link automatically by verified email/ })
+		).toBeChecked();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

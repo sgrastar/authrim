@@ -108,17 +108,19 @@ export const jaServiceFlows = {
 	'sf.appType.native.desc':
 		'スマートフォンやパソコンにインストールされ、シークレットを保管できません。',
 
-	'sf.link.verified-email': '確認済みのメールアドレスで照合',
-	'sf.link.ask': '利用者に連携先を選んでもらう',
-	'sf.link.new': '常に新しいアカウントを作る',
-	'sf.link.option.verified-email': '確認済みのメールで照合',
+	'sf.link.verified-email': '確認済みのメールアドレスで自動的につなぐ',
+	'sf.link.manual': '自動ではつながない',
+	'sf.link.option.verified-email': '確認済みのメールで自動的につなぐ',
 	'sf.link.option.verified-email.desc':
-		'プロバイダーがメールアドレスを確認済みなら、そのアドレスを持つアカウントにサインインします。',
-	'sf.link.option.ask': '利用者に尋ねる',
-	'sf.link.option.ask.desc': '既存のアカウントと連携できる画面を表示します。',
-	'sf.link.option.new': '常に新しいアカウント',
-	'sf.link.option.new.desc':
-		'照合しません。プロバイダーでのサインインごとに別のアカウントになります。',
+		'プロバイダーが確認済みと返したメールアドレスと同じアドレスのアカウントがあれば、そのアカウントでサインインします。',
+	'sf.link.option.manual': '自動ではつながない',
+	'sf.link.option.manual.desc':
+		'同じメールアドレスのアカウントがある人には、いつもの方法でサインインして、アカウント画面からつなぐよう案内します。',
+	'sf.link.lead':
+		'一度つないだ外部アカウントは、次回からそのつながりで本人を見つけます。ここで決めるのは、まだつながっていない人を既存のアカウントとどう照らし合わせるかです。',
+	'sf.link.idpSource': '照合には、マッピングで取り込んだメールアドレスを使います。',
+	'sf.link.trustWarn':
+		'確認されていないメールアドレスでも既存のアカウントにつながります。他人のアカウントにつながるおそれがあります。',
 	'sf.link.label': '利用者とアカウントの照合方法',
 
 	'sf.schema.authrim': 'Authrim の利用者',

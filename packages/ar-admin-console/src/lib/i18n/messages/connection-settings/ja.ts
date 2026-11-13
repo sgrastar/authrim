@@ -223,8 +223,6 @@ export const jaConnectionSettings = {
 	'cs.warn.unsigned':
 		'Response と Assertion のどちらにも署名しないと、サービスは内容を確かめられません。',
 	'cs.warn.legacyEncryption': '古い暗号方式は、対応していないサービスのためだけに使ってください。',
-	'cs.warn.trustUnverified':
-		'この設定では、確認されていないメールアドレスでも既存のアカウントにつながります。他人のアカウントにつながるおそれがあります。',
 	'cert.active': '使用中',
 	'cert.next': '次の証明書',
 	'cert.expired': '期限切れ',

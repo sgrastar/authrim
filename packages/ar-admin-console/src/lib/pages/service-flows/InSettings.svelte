@@ -181,14 +181,6 @@
 	/>
 {:else if part === 'op-accounts'}
 	<ToggleRow label={t('cs.row.jit')} description={t('cs.desc.jit')} bind:checked={op.jit} />
-	<ToggleRow
-		label={t('cs.row.trustEmail')}
-		description={t('cs.desc.trustEmail')}
-		bind:checked={op.trustEmail}
-	/>
-	{#if op.trustEmail && opForm.link === 'verified-email'}
-		<Callout tone="warning" live>{t('cs.warn.trustUnverified')}</Callout>
-	{/if}
 	<SelectRow
 		label={t('cs.row.profileUpdate')}
 		value={op.profileUpdate}
