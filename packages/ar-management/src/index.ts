@@ -353,6 +353,7 @@ import {
   adminUserConsentHistoryHandler,
   adminUserConsentWithdrawHandler,
 } from './admin-consent-statements';
+import { adminConsentStatementUsageHandler } from './admin-consent-statement-usage';
 import {
   adminClientTrustPoliciesListHandler,
   adminClientTrustPolicyUpsertHandler,
@@ -3976,6 +3977,7 @@ app.use('/api/admin/users/:userId/consent-records/*', async (c, next) => {
 app.get('/api/admin/consent-statements', adminConsentStatementsListHandler);
 app.post('/api/admin/consent-statements', adminConsentStatementCreateHandler);
 app.get('/api/admin/consent-statements/reference-audit', adminConsentReferenceAuditHandler);
+app.get('/api/admin/consent-statements/usage', adminConsentStatementUsageHandler);
 app.get('/api/admin/consent-statements/:id', adminConsentStatementGetHandler);
 app.put('/api/admin/consent-statements/:id', adminConsentStatementUpdateHandler);
 app.delete('/api/admin/consent-statements/:id', adminConsentStatementDeleteHandler);

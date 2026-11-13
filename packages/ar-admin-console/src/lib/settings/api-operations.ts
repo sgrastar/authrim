@@ -725,6 +725,7 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	['GET', '/api/admin/compliance/status', 'Get tenant compliance status.', 'admin'],
 	['GET', '/api/admin/consent-statements', 'List consent statements.', 'admin'],
 	['POST', '/api/admin/consent-statements', 'Create a consent statement.', 'admin'],
+	['GET', '/api/admin/consent-statements/usage', "Where the tenant's consent statements are used.", 'admin'],
 	['GET', '/api/admin/consent-statements/{id}', 'Get a consent statement.', 'admin'],
 	['PUT', '/api/admin/consent-statements/{id}', 'Update a consent statement.', 'admin'],
 	['DELETE', '/api/admin/consent-statements/{id}', 'Deactivate a consent statement.', 'admin'],
