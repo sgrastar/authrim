@@ -1,0 +1,35 @@
+{
+  // Start portal of the public demo environment. NOT managed by the setup tool: it is deployed by
+  // hand (see README.md). Every id below is a placeholder.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ar-demo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "vars": {
+    // Origin of the Authrim API (token endpoint and Admin API). https, no path.
+    "ADMIN_API_ORIGIN": "https://api.example.invalid",
+    // Origin of the admin console the visitor is sent to (its /admin/join page).
+    "CONSOLE_ORIGIN": "https://console.example.invalid",
+    // Origin of this portal. The Origin header of POST /start must equal it.
+    "PORTAL_ORIGIN": "https://start.example.invalid",
+    // Cloudflare Turnstile site key (public).
+    "TURNSTILE_SITE_KEY": "0x0000000000000000000000",
+    "MAX_ACTIVE_TENANTS": "50",
+    "MAX_STARTS_PER_IP_PER_DAY": "3",
+    "TENANT_TTL_HOURS": "12",
+    "ENVIRONMENT": "production",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ar-demo-registry",
+      // Placeholder: create the database and put its id here.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  // Secrets (wrangler secret put): TURNSTILE_SECRET_KEY, MACHINE_CLIENT_ID, MACHINE_KEY_ID,
+  // MACHINE_PRIVATE_JWK, IP_HASH_SECRET.
+}
