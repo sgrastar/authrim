@@ -8,7 +8,8 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { isValidLinkUrl } from '#lib/utils/url-validation.js';
 	import type { RuntimeStepView } from '../auth-entry-types';
-	import { getRuntimeConsentItemHtml, getRuntimeConsentOptionHtml } from './runtime-consent';
+	import { getRuntimeConsentOptionHtml } from './runtime-consent';
+	import StatementConsentItem from '#lib/components/StatementConsentItem.svelte';
 
 	type Props = {
 		step: RuntimeStepView;
@@ -110,34 +111,25 @@
 										</label>
 									{/each}
 								</fieldset>
-							{:else if item.checkbox_mode === 'none' || (choiceItems && item.content_mode === 'display_only')}
-								<SanitizedHtml
-									tag="div"
-									class="runtime-consent-content"
-									sanitizedHtml={getRuntimeConsentItemHtml(item)}
-								/>
+								{#if item.document_url && isValidLinkUrl(item.document_url)}
+									<a
+										class="runtime-consent-link"
+										href={item.document_url}
+										target="_blank"
+										rel="noopener noreferrer"
+									>
+										{$LL.consent_statement_read({ title: item.title })}
+									</a>
+								{/if}
 							{:else}
-								<label class="runtime-consent-choice">
-									<input
-										type="checkbox"
-										bind:checked={decisions[item.statement_id]}
-										required={item.is_required || item.checkbox_mode === 'required'}
-									/>
-									<SanitizedHtml
-										class="runtime-consent-content"
-										sanitizedHtml={getRuntimeConsentItemHtml(item)}
-									/>
-								</label>
-							{/if}
-							{#if item.document_url && isValidLinkUrl(item.document_url)}
-								<a
-									class="runtime-consent-link"
-									href={item.document_url}
-									target="_blank"
-									rel="noopener noreferrer"
-								>
-									{item.document_url}
-								</a>
+								<StatementConsentItem
+									{item}
+									asks={item.checkbox_mode !== 'none' &&
+										!(choiceItems && item.content_mode === 'display_only')}
+									checked={decisions[item.statement_id] === true}
+									required={item.is_required || item.checkbox_mode === 'required'}
+									onchange={(checked) => (decisions[item.statement_id] = checked)}
+								/>
 							{/if}
 						</div>
 					{/each}

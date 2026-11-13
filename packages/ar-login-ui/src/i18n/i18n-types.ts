@@ -1500,6 +1500,53 @@ type RootTranslation = {
 	 */
 	consent_item_view_document: string;
 	/**
+	 * I​ ​a​g​r​e​e​ ​t​o​ ​{​t​i​t​l​e​}
+	 * @param {string} title
+	 */
+	consent_statement_agree: RequiredParams<'title'>;
+	/**
+	 * R​e​a​d​ ​{​t​i​t​l​e​}
+	 * @param {string} title
+	 */
+	consent_statement_read: RequiredParams<'title'>;
+	/**
+	 * (​o​p​e​n​s​ ​i​n​ ​a​ ​n​e​w​ ​t​a​b​)
+	 */
+	consent_statement_newTab: string;
+	/**
+	 * V​e​r​s​i​o​n​ ​o​f​ ​{​d​a​t​e​}
+	 * @param {string} date
+	 */
+	statement_pageVersion: RequiredParams<'date'>;
+	/**
+	 * C​u​r​r​e​n​t​ ​v​e​r​s​i​o​n
+	 */
+	statement_pageCurrent: string;
+	/**
+	 * T​h​i​s​ ​i​s​ ​a​n​ ​e​a​r​l​i​e​r​ ​v​e​r​s​i​o​n​.
+	 */
+	statement_pageOlder: string;
+	/**
+	 * S​e​e​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​v​e​r​s​i​o​n
+	 */
+	statement_pageShowCurrent: string;
+	/**
+	 * P​u​b​l​i​s​h​e​d​ ​v​e​r​s​i​o​n​s
+	 */
+	statement_pageVersions: string;
+	/**
+	 * T​h​i​s​ ​d​o​c​u​m​e​n​t​ ​i​s​ ​p​u​b​l​i​s​h​e​d​ ​o​n​ ​a​n​o​t​h​e​r​ ​s​i​t​e​.
+	 */
+	statement_pageExternal: string;
+	/**
+	 * T​h​i​s​ ​s​t​a​t​e​m​e​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​f​o​u​n​d​.
+	 */
+	statement_pageNotFound: string;
+	/**
+	 * T​h​e​ ​s​t​a​t​e​m​e​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.​ ​T​r​y​ ​a​g​a​i​n​ ​l​a​t​e​r​.
+	 */
+	statement_pageUnavailable: string;
+	/**
 	 * {​o​l​d​V​e​r​s​i​o​n​}​ ​→​ ​{​n​e​w​V​e​r​s​i​o​n​}​ ​u​p​d​a​t​e​d
 	 * @param {string} newVersion
 	 * @param {string} oldVersion
@@ -3507,6 +3554,50 @@ export type TranslationFunctions = {
 	 * View document
 	 */
 	consent_item_view_document: () => LocalizedString;
+	/**
+	 * I agree to {title}
+	 */
+	consent_statement_agree: (arg: { title: string }) => LocalizedString;
+	/**
+	 * Read {title}
+	 */
+	consent_statement_read: (arg: { title: string }) => LocalizedString;
+	/**
+	 * (opens in a new tab)
+	 */
+	consent_statement_newTab: () => LocalizedString;
+	/**
+	 * Version of {date}
+	 */
+	statement_pageVersion: (arg: { date: string }) => LocalizedString;
+	/**
+	 * Current version
+	 */
+	statement_pageCurrent: () => LocalizedString;
+	/**
+	 * This is an earlier version.
+	 */
+	statement_pageOlder: () => LocalizedString;
+	/**
+	 * See the current version
+	 */
+	statement_pageShowCurrent: () => LocalizedString;
+	/**
+	 * Published versions
+	 */
+	statement_pageVersions: () => LocalizedString;
+	/**
+	 * This document is published on another site.
+	 */
+	statement_pageExternal: () => LocalizedString;
+	/**
+	 * This statement could not be found.
+	 */
+	statement_pageNotFound: () => LocalizedString;
+	/**
+	 * The statement could not be loaded. Try again later.
+	 */
+	statement_pageUnavailable: () => LocalizedString;
 	/**
 	 * {oldVersion} → {newVersion} updated
 	 */

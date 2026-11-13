@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const pt = createTranslation({
+	consent_statement_agree: 'Concordo com {title}',
+	consent_statement_read: 'Ler {title}',
+	consent_statement_newTab: '(abre em uma nova aba)',
+	statement_pageVersion: 'Versão de {date}',
+	statement_pageCurrent: 'Versão atual',
+	statement_pageOlder: 'Esta é uma versão anterior.',
+	statement_pageShowCurrent: 'Ver a versão atual',
+	statement_pageVersions: 'Versões publicadas',
+	statement_pageExternal: 'Este documento está publicado em outro site.',
+	statement_pageNotFound: 'Esta declaração não foi encontrada.',
+	statement_pageUnavailable: 'Não foi possível carregar a declaração. Tente novamente mais tarde.',
 	account_guestLogoutWarning:
 		'Ao sair, você não poderá voltar a esta conta de convidado. Cadastre-se primeiro para manter o acesso à sua conta e aos seus dados. Sair mesmo assim?',
 	account_guestTitle: 'Registre sua conta',

@@ -8,6 +8,7 @@
 	import AuthSwitchLink from '#lib/components/AuthSwitchLink.svelte';
 	import PinCodeInput from '#lib/components/PinCodeInput.svelte';
 	import SanitizedHtml from '#lib/components/SanitizedHtml.svelte';
+	import StatementConsentItem from '#lib/components/StatementConsentItem.svelte';
 	import TurnstileWidget from '#lib/components/TurnstileWidget.svelte';
 	import { sanitizeRuntimeConsentHtml } from '#lib/consent/runtime-consent-html.js';
 	import { withRequestedTotpCodeInput } from '#lib/authrim/runtime-code-input.js';
@@ -18,6 +19,7 @@
 	} from '#lib/runtime-screen-methods.js';
 	import { localizeRuntimeScreen } from '#lib/i18n/runtime-screen-localization.js';
 	import { linkActionOf, safeLinkHref } from '#lib/screen-link.js';
+	import { isValidLinkUrl } from '#lib/utils/url-validation.js';
 
 	type RuntimeField = {
 		field: string;
@@ -653,14 +655,6 @@
 		onFieldValueChange?.(field.field, value);
 	}
 
-	function consentItemHtml(item: FlowRuntimeConsentPolicyContent['items'][number]): string {
-		if (item.inline_content) return sanitizeRuntimeConsentHtml(item.inline_content);
-		const fallback = item.description
-			? `<strong>${item.title}</strong><br>${item.description}`
-			: item.title;
-		return sanitizeRuntimeConsentHtml(fallback);
-	}
-
 	function consentOptionHtml(option: FlowRuntimeConsentPolicyOption): string {
 		const body = option.description || option.label || option.value;
 		return sanitizeRuntimeConsentHtml(body);
@@ -882,40 +876,25 @@
 										</label>
 									{/each}
 								</fieldset>
-							{:else if item.checkbox_mode === 'none' || item.content_mode === 'display_only'}
-								<SanitizedHtml
-									tag="div"
-									class="runtime-consent-content"
-									sanitizedHtml={consentItemHtml(item)}
-								/>
+								{#if item.document_url && isValidLinkUrl(item.document_url)}
+									<a
+										class="runtime-consent-link"
+										href={item.document_url}
+										target="_blank"
+										rel="noopener noreferrer"
+									>
+										{$LL.consent_statement_read({ title: item.title })}
+									</a>
+								{/if}
 							{:else}
-								<label class="runtime-consent-choice">
-									<input
-										type="checkbox"
-										checked={consentDecisions[item.statement_id] === true}
-										required={item.is_required || item.checkbox_mode === 'required'}
-										{disabled}
-										onchange={(event) =>
-											onConsentDecisionChange?.(
-												item.statement_id,
-												(event.currentTarget as HTMLInputElement).checked
-											)}
-									/>
-									<SanitizedHtml
-										class="runtime-consent-content"
-										sanitizedHtml={consentItemHtml(item)}
-									/>
-								</label>
-							{/if}
-							{#if item.document_url}
-								<a
-									class="runtime-consent-link"
-									href={item.document_url}
-									target="_blank"
-									rel="noopener noreferrer"
-								>
-									{item.document_url}
-								</a>
+								<StatementConsentItem
+									{item}
+									asks={item.checkbox_mode !== 'none' && item.content_mode !== 'display_only'}
+									checked={consentDecisions[item.statement_id] === true}
+									required={item.is_required || item.checkbox_mode === 'required'}
+									{disabled}
+									onchange={(checked) => onConsentDecisionChange?.(item.statement_id, checked)}
+								/>
 							{/if}
 						</div>
 					{/each}

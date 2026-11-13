@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const ru = createTranslation({
+	consent_statement_agree: 'Я принимаю «{title}»',
+	consent_statement_read: 'Прочитать «{title}»',
+	consent_statement_newTab: '(откроется в новой вкладке)',
+	statement_pageVersion: 'Редакция от {date}',
+	statement_pageCurrent: 'Текущая редакция',
+	statement_pageOlder: 'Это одна из прежних редакций.',
+	statement_pageShowCurrent: 'Открыть текущую редакцию',
+	statement_pageVersions: 'Опубликованные редакции',
+	statement_pageExternal: 'Этот документ опубликован на другом сайте.',
+	statement_pageNotFound: 'Этот документ не найден.',
+	statement_pageUnavailable: 'Не удалось загрузить документ. Повторите попытку позже.',
 	account_guestLogoutWarning:
 		'После выхода вы не сможете вернуться в этот гостевой аккаунт. Сначала зарегистрируйтесь, чтобы сохранить доступ к аккаунту и данным. Всё равно выйти?',
 	account_guestTitle: 'Зарегистрируйте аккаунт',

@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const id = createTranslation({
+	consent_statement_agree: 'Saya menyetujui {title}',
+	consent_statement_read: 'Baca {title}',
+	consent_statement_newTab: '(terbuka di tab baru)',
+	statement_pageVersion: 'Versi {date}',
+	statement_pageCurrent: 'Versi saat ini',
+	statement_pageOlder: 'Ini adalah versi sebelumnya.',
+	statement_pageShowCurrent: 'Lihat versi saat ini',
+	statement_pageVersions: 'Versi yang dipublikasikan',
+	statement_pageExternal: 'Dokumen ini dipublikasikan di situs lain.',
+	statement_pageNotFound: 'Pernyataan ini tidak ditemukan.',
+	statement_pageUnavailable: 'Pernyataan tidak dapat dimuat. Coba lagi nanti.',
 	account_guestLogoutWarning:
 		'Setelah keluar, Anda tidak dapat kembali ke akun tamu ini. Daftar terlebih dahulu untuk mempertahankan akses ke akun dan data Anda. Tetap keluar?',
 	account_guestTitle: 'Daftarkan akun Anda',

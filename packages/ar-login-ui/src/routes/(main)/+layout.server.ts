@@ -15,6 +15,7 @@ const RESOLVED_TENANT_AUTH_ROUTES = new Set([
 	'/logout-complete',
 	'/reauth',
 	'/signup',
+	'/statements/[slug]',
 	'/verify-email-code'
 ]);
 

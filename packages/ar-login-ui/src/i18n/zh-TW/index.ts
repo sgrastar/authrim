@@ -2,6 +2,17 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const zhTW = createTranslation({
+	consent_statement_agree: '我同意《{title}》',
+	consent_statement_read: '閱讀《{title}》',
+	consent_statement_newTab: '（在新分頁中開啟）',
+	statement_pageVersion: '{date} 版',
+	statement_pageCurrent: '目前版本',
+	statement_pageOlder: '這是較早的版本。',
+	statement_pageShowCurrent: '查看目前版本',
+	statement_pageVersions: '已發布的版本',
+	statement_pageExternal: '此文件發布於其他網站。',
+	statement_pageNotFound: '找不到此聲明。',
+	statement_pageUnavailable: '無法載入聲明。請稍後再試。',
 	account_guestLogoutWarning:
 		'登出後，無法再返回此訪客帳戶。請先註冊以保留帳戶和資料的存取權。仍要登出嗎？',
 	account_guestTitle: '註冊帳戶',
