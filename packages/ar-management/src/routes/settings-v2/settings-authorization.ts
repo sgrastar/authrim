@@ -43,6 +43,23 @@ export function checkRolePermission(
 }
 
 /**
+ * Whether the caller may view a category at the platform scope. A person is judged on the roles of
+ * the request, as before. A machine token has no roles; it needs the settings read permission for
+ * every tenant (a global tenant scope, and the permission among its global ones), the read
+ * counterpart of the edit rule below, so that automation can read the version a write needs. The
+ * write permission does not stand in for it: a token that may only write cannot read.
+ */
+export function hasPlatformSettingsView(
+  adminAuth: AdminAuthContext | undefined,
+  category: CategoryName
+): boolean {
+  if (adminAuth?.authMethod === 'machine_access_token') {
+    return hasGlobalMachinePermission(adminAuth, ADMIN_PERMISSIONS.SETTINGS_READ);
+  }
+  return checkRolePermission(adminAuth?.roles || [], category, 'platform', 'view');
+}
+
+/**
  * Whether the caller may edit a category at the platform scope. A person needs a role that may,
  * held through a global assignment, with a global tenant scope: `adminAuth.roles` adds up every
  * assignment that applies to the request, so it is not what a change that reaches every tenant is

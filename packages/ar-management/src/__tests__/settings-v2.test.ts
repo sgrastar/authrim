@@ -5508,6 +5508,133 @@ describe('Settings API v2', () => {
     });
   });
 
+  describe('Machine Access token reads of platform and tenant settings', () => {
+    const PLATFORM_URL = '/api/admin/platform/settings/login-entry';
+    const machine = (overrides: Partial<AdminAuthContext>): AdminAuthContext => ({
+      userId: 'automation-machine',
+      authMethod: 'machine_access_token',
+      actorType: 'machine',
+      roles: [],
+      tenantId: 'tenant_123',
+      tenantScope: ['*'],
+      permissions: [],
+      globalPermissions: [],
+      ...overrides,
+    });
+
+    it('lets a global machine with the read permission read the version a write needs', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: machine({
+          permissions: ['admin:settings:read', 'admin:settings:write'],
+          globalPermissions: ['admin:settings:read', 'admin:settings:write'],
+        }),
+      });
+
+      const read = await app.request(PLATFORM_URL, { method: 'GET' }, mockEnv);
+      expect(read.status).toBe(200);
+      const current: SettingsGetResult = await read.json();
+
+      const patch = await app.request(
+        PLATFORM_URL,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ifMatch: current.version,
+            set: { 'login-entry.skip_discovery_if_only_one_tenant': true },
+          }),
+        },
+        mockEnv
+      );
+      expect(patch.status).toBe(200);
+    });
+
+    it('does not let the write permission stand in for the read permission', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: machine({
+          permissions: ['admin:settings:write'],
+          globalPermissions: ['admin:settings:write'],
+        }),
+      });
+      expect((await app.request(PLATFORM_URL, { method: 'GET' }, mockEnv)).status).toBe(403);
+    });
+
+    it('refuses a machine without the permission, even with a role', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: machine({
+          roles: ['ar_super_admin'],
+          permissions: ['admin:clients:read'],
+          globalPermissions: ['admin:clients:read'],
+        }),
+      });
+      expect((await app.request(PLATFORM_URL, { method: 'GET' }, mockEnv)).status).toBe(403);
+    });
+
+    it('refuses a machine limited to some tenants, whatever it holds', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: machine({
+          tenantScope: ['tenant_123'],
+          permissions: ['admin:settings:read'],
+          globalPermissions: [],
+        }),
+      });
+      expect((await app.request(PLATFORM_URL, { method: 'GET' }, mockEnv)).status).toBe(403);
+    });
+
+    it('returns a machine exactly what a platform viewer gets (no value is added or unmasked)', async () => {
+      const kv = createMockKV({
+        'settings:platform:login-entry': JSON.stringify({
+          'login-entry.email_resolution_policy': 'disabled',
+        }),
+      });
+      const human = createTestApp({ kv });
+      const automation = createTestApp({
+        kv,
+        adminAuth: machine({
+          permissions: ['admin:settings:read'],
+          globalPermissions: ['admin:settings:read'],
+        }),
+      });
+      const humanBody = await (
+        await human.app.request(PLATFORM_URL, { method: 'GET' }, human.mockEnv)
+      ).json();
+      const machineRes = await automation.app.request(
+        PLATFORM_URL,
+        { method: 'GET' },
+        automation.mockEnv
+      );
+      expect(machineRes.status).toBe(200);
+      expect(await machineRes.json()).toEqual(humanBody);
+    });
+
+    it('reads a tenant only when the token is allowed for that tenant', async () => {
+      const { app, mockEnv } = createTestApp({
+        adminAuth: machine({
+          tenantScope: ['tenant_123'],
+          permissions: ['admin:settings:read'],
+        }),
+      });
+      expect(
+        (
+          await app.request(
+            '/api/admin/tenants/tenant_123/settings/diagnostic-logging',
+            { method: 'GET' },
+            mockEnv
+          )
+        ).status
+      ).toBe(200);
+      expect(
+        (
+          await app.request(
+            '/api/admin/tenants/tenant_other/settings/diagnostic-logging',
+            { method: 'GET' },
+            mockEnv
+          )
+        ).status
+      ).toBe(403);
+    });
+  });
+
   describe('admin invitation code handoff switch', () => {
     const URL_ = '/api/admin/platform/settings/admin-invitations';
     const KEY = 'admin_invitations.code_handoff_enabled';
