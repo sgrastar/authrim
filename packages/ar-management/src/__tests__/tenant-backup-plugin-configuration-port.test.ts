@@ -312,4 +312,48 @@ describe('tenant backup plugin configuration production port', () => {
       ).resolves.toBeUndefined();
     });
   });
+  describe('while the platform has email_provider_config off', () => {
+    const OFF = {
+      'settings:platform:tenant-capabilities': JSON.stringify({
+        'tenant_capabilities.email_provider_config': false,
+      }),
+    };
+    const notifierRegistry = JSON.stringify({
+      'notifier-resend': { id: 'notifier-resend', version: '1.0.0', backendKind: 'in_process' },
+    });
+
+    // A built-in notifier keeps working while the capability is off (the platform operator
+    // configures it for the tenant), so export, verification and restore of its configuration are
+    // not held back at the port: the restore-time check lives where the requester is known.
+    it('exports, validates, restores and verifies a built-in notifier configuration as usual', async () => {
+      const sourceEnv = environment(
+        memoryKv({ 'plugins:registry': notifierRegistry, ...OFF }),
+        'source-plugin-encryption-key-32-bytes-minimum'
+      );
+      const source = sourceEnv.SETTINGS as KVNamespace;
+      await source.put(
+        'plugins:config:notifier-resend:tenant:tenant-a',
+        JSON.stringify({ endpoint: 'https://example.test' })
+      );
+      await source.put('plugins:enabled:notifier-resend:tenant:tenant-a', 'true');
+      createTenantBackupPluginConfigurationPorts(sourceEnv);
+      const snapshot = mocks.createSnapshot.mock.calls.at(-1)![0] as {
+        capture(context: AdapterContext): AsyncIterable<Uint8Array>;
+      };
+      const rows: Uint8Array[] = [];
+      for await (const row of snapshot.capture(context())) rows.push(row);
+      const configuration = decodePortablePluginConfiguration(
+        new TextDecoder().decode(rows[0]).trimEnd(),
+        'tenant-a'
+      );
+      const target = memoryKv({ 'plugins:registry': notifierRegistry, ...OFF });
+      const ports = createTenantBackupPluginConfigurationPorts(
+        environment(target, 'target-plugin-encryption-key-32-bytes-minimum')
+      );
+      const signal = new AbortController().signal;
+      await expect(ports.assertPluginSupported(configuration)).resolves.toBeUndefined();
+      await expect(ports.importPlugin({ signal }, configuration)).resolves.toBeUndefined();
+      await expect(ports.verifyPlugin({ signal }, configuration)).resolves.toBe(true);
+    });
+  });
 });

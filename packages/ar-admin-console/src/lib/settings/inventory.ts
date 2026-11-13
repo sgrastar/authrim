@@ -306,7 +306,9 @@ place('authentication/protection', 'API rate limits', {
 		'rate_limit.public_read',
 		'rate_limit.login_start',
 		'rate_limit.send_challenge',
-		'rate_limit.admin_write'
+		'rate_limit.admin_write',
+		'rate_limit.email_tenant_hourly_max',
+		'rate_limit.email_deployment_hourly_max'
 	],
 	search: [
 		'rate_limit.strict_window_seconds',
@@ -850,7 +852,13 @@ place('plat-tenants/capabilities', 'What tenants may use', {
 		'tenant_capabilities.webhooks',
 		'tenant_capabilities.dynamic_client_registration',
 		'tenant_capabilities.external_plugins',
-		'tenant_capabilities.bulk_jobs'
+		'tenant_capabilities.bulk_jobs',
+		'tenant_capabilities.admin_sent_email',
+		'tenant_capabilities.machine_credentials',
+		'tenant_capabilities.email_provider_config',
+		'tenant_capabilities.directory_connectors',
+		'tenant_capabilities.external_identity_providers',
+		'tenant_capabilities.saml_metadata_url'
 	]
 });
 place(

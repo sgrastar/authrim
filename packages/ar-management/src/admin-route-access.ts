@@ -567,6 +567,16 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.USERS_DELETE,
     'end users'
   ),
+  // Sends e-mail to a user on an administrator's request: needs the admin_sent_email capability.
+  // Same permission as the catch-all below.
+  ...forCapability('admin_sent_email', [
+    rule({
+      pattern: '/api/admin/users/:id/send-email',
+      methods: ['POST'],
+      permissions: [ADMIN_PERMISSIONS.USERS_WRITE],
+      description: 'end user e-mail sent on an administrator request',
+    }),
+  ]),
   ...byMethod(
     '/api/admin/users/*',
     ADMIN_PERMISSIONS.USERS_READ,
@@ -882,12 +892,18 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'scoped tenant settings'
   ),
-  ...byMethod(
-    '/api/admin/tenants/:tenantId/email-settings',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'tenant email settings'
+  // Which provider the tenant's mail goes through: writes need the email_provider_config
+  // capability; reading stays open.
+  ...forCapability(
+    'email_provider_config',
+    byMethod(
+      '/api/admin/tenants/:tenantId/email-settings',
+      ADMIN_PERMISSIONS.SETTINGS_READ,
+      ADMIN_PERMISSIONS.SETTINGS_WRITE,
+      ADMIN_PERMISSIONS.SETTINGS_WRITE,
+      'tenant email settings'
+    ),
+    [...WRITE_METHODS, ...DELETE_METHODS]
   ),
   // A tenant Admin reaches these for the tenant the handler resolves from the path (see
   // requireTenantResourceAccess); the catch-all below stays platform-only for everything else.
@@ -915,6 +931,30 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_READ,
     'tenant effective runtime profiles'
   ),
+  // What makes the platform reach an endpoint the tenant chose (connector secrets, the health
+  // check) needs the directory_connectors capability. Saving the connector settings (PUT) is
+  // judged by its handler, which still lets a save that only removes or switches off through;
+  // reads, the pending users and the fleet stay open.
+  ...forCapability('directory_connectors', [
+    rule({
+      pattern: '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/secret',
+      methods: ['POST'],
+      permissions: [ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE],
+      description: 'tenant directory connector secret issue',
+    }),
+    rule({
+      pattern: '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/secret/rotate',
+      methods: ['POST'],
+      permissions: [ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE],
+      description: 'tenant directory connector secret rotate',
+    }),
+    rule({
+      pattern: '/api/admin/tenants/:tenantId/directory-connectors/:connectorId/health',
+      methods: ['POST'],
+      permissions: [ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE],
+      description: 'tenant directory connector health check',
+    }),
+  ]),
   ...byMethod(
     '/api/admin/tenants/:tenantId/directory-connectors',
     ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,
@@ -1401,19 +1441,27 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SECURITY_WRITE,
     'signing keys'
   ),
-  ...byMethod(
-    '/api/admin/scim-tokens',
-    ADMIN_PERMISSIONS.SECURITY_READ,
-    ADMIN_PERMISSIONS.SECURITY_WRITE,
-    ADMIN_PERMISSIONS.SECURITY_WRITE,
-    'SCIM bearer tokens'
+  ...forCapability(
+    'machine_credentials',
+    byMethod(
+      '/api/admin/scim-tokens',
+      ADMIN_PERMISSIONS.SECURITY_READ,
+      ADMIN_PERMISSIONS.SECURITY_WRITE,
+      ADMIN_PERMISSIONS.SECURITY_WRITE,
+      'SCIM bearer tokens'
+    ),
+    WRITE_METHODS
   ),
-  ...byMethod(
-    '/api/admin/scim-tokens/*',
-    ADMIN_PERMISSIONS.SECURITY_READ,
-    ADMIN_PERMISSIONS.SECURITY_WRITE,
-    ADMIN_PERMISSIONS.SECURITY_WRITE,
-    'SCIM bearer tokens'
+  ...forCapability(
+    'machine_credentials',
+    byMethod(
+      '/api/admin/scim-tokens/*',
+      ADMIN_PERMISSIONS.SECURITY_READ,
+      ADMIN_PERMISSIONS.SECURITY_WRITE,
+      ADMIN_PERMISSIONS.SECURITY_WRITE,
+      'SCIM bearer tokens'
+    ),
+    WRITE_METHODS
   ),
   ...byMethod(
     '/api/admin/scim-settings',
@@ -1457,19 +1505,27 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'logout notification failures'
   ),
-  ...byMethod(
-    '/api/admin/check-api-keys',
-    ADMIN_PERMISSIONS.SECURITY_READ,
-    ADMIN_PERMISSIONS.SECURITY_WRITE,
-    ADMIN_PERMISSIONS.SECURITY_WRITE,
-    'check API keys'
+  ...forCapability(
+    'machine_credentials',
+    byMethod(
+      '/api/admin/check-api-keys',
+      ADMIN_PERMISSIONS.SECURITY_READ,
+      ADMIN_PERMISSIONS.SECURITY_WRITE,
+      ADMIN_PERMISSIONS.SECURITY_WRITE,
+      'check API keys'
+    ),
+    WRITE_METHODS
   ),
-  ...byMethod(
-    '/api/admin/check-api-keys/*',
-    ADMIN_PERMISSIONS.SECURITY_READ,
-    ADMIN_PERMISSIONS.SECURITY_WRITE,
-    ADMIN_PERMISSIONS.SECURITY_WRITE,
-    'check API keys'
+  ...forCapability(
+    'machine_credentials',
+    byMethod(
+      '/api/admin/check-api-keys/*',
+      ADMIN_PERMISSIONS.SECURITY_READ,
+      ADMIN_PERMISSIONS.SECURITY_WRITE,
+      ADMIN_PERMISSIONS.SECURITY_WRITE,
+      'check API keys'
+    ),
+    WRITE_METHODS
   ),
   ...byMethod(
     '/api/admin/security',
@@ -1502,19 +1558,30 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'verifiable credential status'
   ),
 
-  ...byMethod(
-    '/api/admin/external-providers',
-    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ,
-    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE,
-    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_DELETE,
-    'external identity providers'
+  // Adding or changing an external identity provider (create, update, OIDC discovery, dynamic
+  // registration at the provider) needs the external_identity_providers capability; reads and
+  // deletes stay open.
+  ...forCapability(
+    'external_identity_providers',
+    byMethod(
+      '/api/admin/external-providers',
+      ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ,
+      ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE,
+      ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_DELETE,
+      'external identity providers'
+    ),
+    WRITE_METHODS
   ),
-  ...byMethod(
-    '/api/admin/external-providers/*',
-    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ,
-    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE,
-    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_DELETE,
-    'external identity providers'
+  ...forCapability(
+    'external_identity_providers',
+    byMethod(
+      '/api/admin/external-providers/*',
+      ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ,
+      ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE,
+      ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_DELETE,
+      'external identity providers'
+    ),
+    WRITE_METHODS
   ),
   ...byMethod(
     '/api/admin/external-token-refresh',

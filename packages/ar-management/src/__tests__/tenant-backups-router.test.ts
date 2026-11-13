@@ -537,7 +537,19 @@ it('records the authority of a platform operator who asks for an import', async 
     expect.objectContaining({
       authority: {
         actorId: 'admin',
-        platformSettingsCategories: ['dcr', 'institution', 'plugin'],
+        platformSettingsCategories: [
+          'dataset-admin-federation-trust-sources-metadata-url',
+          'dataset-core-check-api-keys',
+          'dataset-core-identity-providers-metadata-url',
+          'dataset-core-oauth-clients-registered-endpoints',
+          'dataset-core-upstream-providers',
+          'dataset-integrations-builtin-notifiers',
+          'dcr',
+          'directory-connectors',
+          'email-settings',
+          'institution',
+          'plugin',
+        ],
         globalAdmin: { permitted: true, hierarchyLevel: 100 },
       },
     })

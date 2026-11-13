@@ -244,6 +244,13 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
   ports: Phase5InstalledAdapterPorts;
   /** Server-installed Phase 8 extension; never accepted from an upload or API request. */
   sqliteExtension?: InstalledSqliteExtension;
+  /**
+   * Server-installed hook that adds import-time admission to the record datasets' policies. It is
+   * applied only where policies validate an import, never to export or its verification.
+   */
+  wrapRecordPolicies?: (
+    policies: readonly SqliteDatasetInspectionPolicy[]
+  ) => SqliteDatasetInspectionPolicy[];
   now?: () => number;
 }): TenantBackupInstalledOperationAdapter {
   const hasStaticSqlitePolicies = input.sqliteExtension?.policies !== undefined;
@@ -269,7 +276,12 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
     }),
     ...(input.sqliteExtension?.recordSnapshots ?? []).map(({ policy }) => policy),
   ];
-  const policies = staticSqlitePolicies ? [...staticSqlitePolicies, ...nonSqlitePolicies] : null;
+  const importNonSqlitePolicies = input.wrapRecordPolicies
+    ? input.wrapRecordPolicies(nonSqlitePolicies)
+    : nonSqlitePolicies;
+  const policies = staticSqlitePolicies
+    ? [...staticSqlitePolicies, ...importNonSqlitePolicies]
+    : null;
   const sqlExport = createTenantBackupInstalledSqliteExportAdapter({
     requiredDatabases: input.sqliteExtension?.requiredDatabases ?? {
       roles: ['tenant_core'],
@@ -555,7 +567,7 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         async loadPolicies(context) {
           const sqlitePolicies = await input.sqliteExtension?.loadPolicies?.(context);
           if (!sqlitePolicies) throw new Error('backup_phase5_sqlite_policy_loader');
-          return [...sqlitePolicies, ...nonSqlitePolicies];
+          return [...sqlitePolicies, ...importNonSqlitePolicies];
         },
         ports,
       });

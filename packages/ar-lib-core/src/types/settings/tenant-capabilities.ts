@@ -16,6 +16,12 @@ export interface TenantCapabilitiesSettings {
   'tenant_capabilities.dynamic_client_registration': boolean;
   'tenant_capabilities.external_plugins': boolean;
   'tenant_capabilities.bulk_jobs': boolean;
+  'tenant_capabilities.admin_sent_email': boolean;
+  'tenant_capabilities.machine_credentials': boolean;
+  'tenant_capabilities.email_provider_config': boolean;
+  'tenant_capabilities.directory_connectors': boolean;
+  'tenant_capabilities.external_identity_providers': boolean;
+  'tenant_capabilities.saml_metadata_url': boolean;
 }
 
 /** The capabilities the platform can turn off for tenants (the names clients see). */
@@ -24,6 +30,12 @@ export const TENANT_CAPABILITIES = [
   'dynamic_client_registration',
   'external_plugins',
   'bulk_jobs',
+  'admin_sent_email',
+  'machine_credentials',
+  'email_provider_config',
+  'directory_connectors',
+  'external_identity_providers',
+  'saml_metadata_url',
 ] as const;
 
 export type TenantCapability = (typeof TENANT_CAPABILITIES)[number];
@@ -89,6 +101,72 @@ export const TENANT_CAPABILITIES_SETTINGS_META: Record<
     scopes: ['platform'],
     visibility: 'admin',
   },
+  'tenant_capabilities.admin_sent_email': {
+    key: 'tenant_capabilities.admin_sent_email',
+    type: 'boolean',
+    default: true,
+    envKey: 'TENANT_CAPABILITIES_ADMIN_SENT_EMAIL',
+    label: 'Tenants may have admins send e-mail',
+    description:
+      'Off: an administrator of a tenant cannot make the deployment send e-mail on request: the send-email action for a user, sign-up invitations addressed to an e-mail address, admin invitations delivered by e-mail (create and resend) and the test e-mail of an e-mail provider plugin. Admin invitations whose code is handed back in the API response (code_delivery response) send no e-mail and are not affected. E-mail sent by end-user flows (sign-in codes, verification) is not affected. Platform administrators are exempt at the Admin API.',
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
+  'tenant_capabilities.machine_credentials': {
+    key: 'tenant_capabilities.machine_credentials',
+    type: 'boolean',
+    default: true,
+    envKey: 'TENANT_CAPABILITIES_MACHINE_CREDENTIALS',
+    label: 'Tenants may issue machine credentials',
+    description:
+      'Off: tenant administrators cannot issue new long-lived machine credentials: creating, rotating or re-enabling machine access principals and credentials (and changing their permissions, tenants or validity), creating SCIM tokens, and creating or rotating Check API keys. Listing, revoking, disabling and deleting stay possible. Credentials already issued keep working until they are revoked or expire. Platform administrators are exempt at the Admin API.',
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
+  'tenant_capabilities.email_provider_config': {
+    key: 'tenant_capabilities.email_provider_config',
+    type: 'boolean',
+    default: true,
+    envKey: 'TENANT_CAPABILITIES_EMAIL_PROVIDER_CONFIG',
+    label: 'Tenants may choose their e-mail provider',
+    description:
+      'Off: tenant administrators cannot change which provider or sender the tenant e-mail goes through: the tenant e-mail settings (provider order) and the configuration, reset and enabling of the built-in e-mail notifier plugins. Reading, and disabling a notifier plugin, stay possible. Platform administrators are exempt at the Admin API.',
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
+  'tenant_capabilities.directory_connectors': {
+    key: 'tenant_capabilities.directory_connectors',
+    type: 'boolean',
+    default: true,
+    envKey: 'TENANT_CAPABILITIES_DIRECTORY_CONNECTORS',
+    label: 'Tenants may configure directory connectors',
+    description:
+      'Off: tenant administrators cannot make the platform reach a directory connector endpoint they chose: saving directory connector settings (except a save that only removes connectors, switches directory sign-in off or keeps the stored connectors as they are), issuing and rotating connector secrets, and the connector health check. Reading stays possible. Connectors already configured keep working. Platform administrators are exempt at the Admin API. A tenant backup restore does not bring back directory connector settings while it is off, unless a platform administrator asked for it.',
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
+  'tenant_capabilities.external_identity_providers': {
+    key: 'tenant_capabilities.external_identity_providers',
+    type: 'boolean',
+    default: true,
+    envKey: 'TENANT_CAPABILITIES_EXTERNAL_IDENTITY_PROVIDERS',
+    label: 'Tenants may configure external identity providers',
+    description:
+      'Off: tenant administrators cannot add or change external identity providers (create, update, OIDC discovery and dynamic client registration at the provider). Reading and deleting stay possible. Providers already configured keep working. Platform administrators are exempt at the Admin API. A tenant backup restore does not bring back external identity providers while it is off, unless a platform administrator asked for it.',
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
+  'tenant_capabilities.saml_metadata_url': {
+    key: 'tenant_capabilities.saml_metadata_url',
+    type: 'boolean',
+    default: true,
+    envKey: 'TENANT_CAPABILITIES_SAML_METADATA_URL',
+    label: 'Tenants may fetch SAML metadata from a URL',
+    description:
+      'Off: tenant administrators cannot make the platform fetch SAML metadata from a URL they chose, or store a new URL for later fetching: metadata preview, import, refresh and certificate preview with a URL, and saving a SAML provider or a federation source with a new or changed metadata URL. Pasting metadata XML, keeping or clearing a stored URL, reading and deleting stay possible. URLs already stored keep being refreshed automatically. Platform administrators are exempt at the Admin API. A tenant backup restore does not bring back providers or sources that carry a metadata URL while it is off, unless a platform administrator asked for it.',
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
 };
 
 export const TENANT_CAPABILITIES_CATEGORY_META: CategoryMeta = {
@@ -103,4 +181,10 @@ export const TENANT_CAPABILITIES_DEFAULTS: TenantCapabilitiesSettings = {
   'tenant_capabilities.dynamic_client_registration': true,
   'tenant_capabilities.external_plugins': true,
   'tenant_capabilities.bulk_jobs': true,
+  'tenant_capabilities.admin_sent_email': true,
+  'tenant_capabilities.machine_credentials': true,
+  'tenant_capabilities.email_provider_config': true,
+  'tenant_capabilities.directory_connectors': true,
+  'tenant_capabilities.external_identity_providers': true,
+  'tenant_capabilities.saml_metadata_url': true,
 };

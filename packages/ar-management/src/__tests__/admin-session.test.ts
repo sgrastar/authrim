@@ -266,6 +266,12 @@ describe('Admin Session Handlers', () => {
     const off = JSON.stringify({
       'tenant_capabilities.webhooks': false,
       'tenant_capabilities.bulk_jobs': false,
+      'tenant_capabilities.admin_sent_email': false,
+      'tenant_capabilities.machine_credentials': false,
+      'tenant_capabilities.email_provider_config': false,
+      'tenant_capabilities.directory_connectors': false,
+      'tenant_capabilities.external_identity_providers': false,
+      'tenant_capabilities.saml_metadata_url': false,
     });
     const tenantAdminAuth = { tenantScope: ['tenant-a'], roles: ['ar_tenant_admin'] };
     const platformAdminAuth = {
@@ -283,7 +289,16 @@ describe('Admin Session Handlers', () => {
         })
       );
       await expect(response.json()).resolves.toMatchObject({
-        disabled_capabilities: ['webhooks', 'bulk_jobs'],
+        disabled_capabilities: [
+          'webhooks',
+          'bulk_jobs',
+          'admin_sent_email',
+          'machine_credentials',
+          'email_provider_config',
+          'directory_connectors',
+          'external_identity_providers',
+          'saml_metadata_url',
+        ],
       });
     });
 

@@ -61,6 +61,12 @@ describe('the tenant-capabilities category', () => {
       'dynamic_client_registration',
       'external_plugins',
       'bulk_jobs',
+      'admin_sent_email',
+      'machine_credentials',
+      'email_provider_config',
+      'directory_connectors',
+      'external_identity_providers',
+      'saml_metadata_url',
     ]);
     expect(isTenantCapability('webhooks')).toBe(true);
     expect(isTenantCapability('scim')).toBe(false);
@@ -76,6 +82,12 @@ describe('reading the switches', () => {
       dynamic_client_registration: 'on',
       external_plugins: 'on',
       bulk_jobs: 'on',
+      admin_sent_email: 'on',
+      machine_credentials: 'on',
+      email_provider_config: 'on',
+      directory_connectors: 'on',
+      external_identity_providers: 'on',
+      saml_metadata_url: 'on',
     });
     expect(await listDisabledTenantCapabilities({ SETTINGS: kv })).toEqual([]);
     // No KV at all: the defaults hold.

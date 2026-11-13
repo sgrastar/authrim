@@ -98,6 +98,7 @@ import {
   updatePluginHealth,
 } from '../routes/settings/plugins';
 import { getPluginEncryptionKey } from '@authrim/ar-lib-plugin';
+import { NotificationQuotaExceededError, produceNotificationDelivery } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../admin-shared';
 
 // =============================================================================
@@ -2180,6 +2181,45 @@ describe('Plugin Admin API - Test Email', () => {
         messageId: expect.stringMatching(/^admin-test-email:/u),
       });
       expect(JSON.stringify(body)).not.toContain('secret provider response');
+    });
+
+    it('answers 429 with the quota scope and Retry-After when the e-mail quota is used up', async () => {
+      vi.mocked(produceNotificationDelivery).mockRejectedValueOnce(
+        new NotificationQuotaExceededError('deployment', 600)
+      );
+      const registry = {
+        'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+      };
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:schema:notifier-cloudflare': JSON.stringify({
+            type: 'object',
+            required: ['defaultFrom'],
+          }),
+          'plugins:config:notifier-cloudflare': JSON.stringify({
+            defaultFrom: 'noreply@example.com',
+          }),
+          'plugins:enabled:notifier-cloudflare': 'true',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'notifier-cloudflare' },
+        kv,
+        body: { to: 'user@example.com' },
+        envOverrides: { EMAIL: { send: vi.fn() } },
+      }) as unknown as Parameters<typeof sendPluginTestEmailHandler>[0];
+
+      const response = await sendPluginTestEmailHandler(c);
+
+      expect(response.status).toBe(429);
+      // The mock context drops the headers argument, so it is checked on the call.
+      expect(c.json).toHaveBeenCalledWith(
+        { error: 'email_quota_exceeded', scope: 'deployment' },
+        429,
+        { 'Retry-After': '600' }
+      );
     });
   });
 });
@@ -4793,6 +4833,231 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       expect(configureHumanVerificationInstallation).toHaveBeenCalledWith(
         expect.objectContaining({ pluginId, enabled: false })
       );
+    });
+  });
+});
+
+// =============================================================================
+// The platform's e-mail capabilities on the per-plugin routes
+// =============================================================================
+
+describe('the platform e-mail capabilities for the per-plugin routes', () => {
+  const CAPABILITIES = 'settings:platform:tenant-capabilities';
+  const tenantAdmin = { userId: 'admin-t', authMethod: 'session', tenantScope: ['tenant-a'] };
+  const platformAdmin = {
+    userId: 'admin-p',
+    authMethod: 'session',
+    roles: ['ar_super_admin'],
+    globalRoles: ['ar_super_admin'],
+    tenantScope: ['*'],
+  };
+  type Handler = (c: Parameters<typeof enablePluginHandler>[0]) => Promise<Response | void>;
+  const call = async (
+    handler: Handler,
+    options: Parameters<typeof createMockContext>[0]
+  ): Promise<{ status: number; error?: string }> => {
+    const context: unknown = createMockContext(options);
+    const result = await getResponseData(await handler(context as Parameters<Handler>[0]));
+    const body: unknown = result.body;
+    return {
+      status: result.status,
+      error:
+        typeof body === 'object' && body !== null && 'error' in body
+          ? String(body.error)
+          : undefined,
+    };
+  };
+
+  function fixture(
+    capability: 'email_provider_config' | 'admin_sent_email',
+    state: 'on' | 'off' | 'down'
+  ) {
+    const emailSend = vi.fn().mockResolvedValue({ messageId: 'msg-1' });
+    const kv = createMockKV({
+      getValues: {
+        'plugins:registry': JSON.stringify({
+          'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+          'notifier-resend': createPluginEntry({ id: 'notifier-resend' }),
+          'test-plugin': createPluginEntry({ id: 'test-plugin', capabilities: ['notifier.sms'] }),
+          'plugins:schema:notifier-cloudflare': '',
+        }),
+        'plugins:config:notifier-cloudflare': JSON.stringify({
+          defaultFrom: 'noreply@example.com',
+        }),
+        'plugins:enabled:notifier-cloudflare': 'true',
+        ...(state === 'off'
+          ? { [CAPABILITIES]: JSON.stringify({ [`tenant_capabilities.${capability}`]: false }) }
+          : {}),
+      },
+      failingKeys: state === 'down' ? [CAPABILITIES] : [],
+    });
+    const runnerStub = {
+      configureNotificationInstallation: vi.fn().mockResolvedValue({ configVersion: 'v1' }),
+      replacePluginCredentials: vi.fn().mockResolvedValue(undefined),
+      replaceNotificationProviderOrder: vi.fn().mockResolvedValue(undefined),
+      resolveNotificationProviderOrder: vi
+        .fn()
+        .mockRejectedValue(new Error('plugin_notification_provider_order_unavailable')),
+    };
+    const base = {
+      kv,
+      tenantId: 'tenant-a',
+      envOverrides: { EMAIL: { send: emailSend }, PLUGIN_RUNNER: runnerStub },
+    };
+    return { kv, emailSend, base, runnerStub };
+  }
+  const configWrites = (kv: KVNamespace) =>
+    (kv.put as ReturnType<typeof vi.fn>).mock.calls.filter(([key]) =>
+      String(key).startsWith('plugins:')
+    );
+
+  describe('email_provider_config', () => {
+    it.each([
+      ['configuring', updatePluginConfigHandler, { config: { defaultFrom: 'a@example.com' } }],
+      ['enabling', enablePluginHandler, {}],
+      ['resetting the configuration of', resetPluginConfigHandler, {}],
+    ] as const)(
+      'refuses a tenant admin %s a built-in notifier while off, writing nothing',
+      async (_n, handler, body) => {
+        for (const id of ['notifier-cloudflare', 'notifier-resend']) {
+          const { kv, base } = fixture('email_provider_config', 'off');
+          const result = await call(handler as Handler, {
+            method: 'PUT',
+            ...base,
+            params: { id },
+            body,
+            adminAuth: tenantAdmin,
+          });
+          expect(result, `${_n} ${id}`).toEqual({ status: 403, error: 'capability_disabled' });
+          expect(configWrites(kv)).toEqual([]);
+          expect(kv.delete).not.toHaveBeenCalled();
+        }
+      }
+    );
+
+    it('answers 503 (never as if on) when the switch cannot be read, writing nothing', async () => {
+      const { kv, base } = fixture('email_provider_config', 'down');
+      const result = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        ...base,
+        params: { id: 'notifier-cloudflare' },
+        body: { config: { defaultFrom: 'a@example.com' } },
+        adminAuth: tenantAdmin,
+      });
+      expect(result).toEqual({ status: 503, error: 'temporarily_unavailable' });
+      expect(configWrites(kv)).toEqual([]);
+    });
+
+    it('configures and enables a notifier while on', async () => {
+      const { base } = fixture('email_provider_config', 'on');
+      const put = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        ...base,
+        params: { id: 'notifier-cloudflare' },
+        body: { config: { defaultFrom: 'a@example.com' } },
+        adminAuth: tenantAdmin,
+      });
+      expect(put.status).toBe(200);
+    });
+
+    it('lets a caller with global platform authority configure a notifier while off', async () => {
+      const { kv, base } = fixture('email_provider_config', 'off');
+      const put = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        ...base,
+        params: { id: 'notifier-cloudflare' },
+        body: { config: { defaultFrom: 'a@example.com' } },
+        adminAuth: platformAdmin,
+      });
+      expect(put.status).toBe(200);
+      expect(configWrites(kv).length).toBeGreaterThan(0);
+    });
+
+    it('does not touch a built-in plugin that is not a notifier, and still disables and reads a notifier', async () => {
+      const { base } = fixture('email_provider_config', 'off');
+      const other = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        ...base,
+        params: { id: 'test-plugin' },
+        body: { config: { endpoint: 'https://api.example.com' } },
+        adminAuth: tenantAdmin,
+      });
+      expect(other.status).toBe(200);
+      const disable = await call(disablePluginHandler, {
+        method: 'PUT',
+        ...base,
+        params: { id: 'notifier-cloudflare' },
+        body: {},
+        adminAuth: tenantAdmin,
+      });
+      expect(disable.status).toBe(200);
+      const read = await call(getPluginConfigHandler, {
+        method: 'GET',
+        ...base,
+        params: { id: 'notifier-cloudflare' },
+        adminAuth: tenantAdmin,
+      });
+      expect(read.status).toBe(200);
+    });
+
+    it('is not what stops the test e-mail (admin_sent_email is)', async () => {
+      const { base, emailSend } = fixture('email_provider_config', 'off');
+      const result = await call(sendPluginTestEmailHandler, {
+        method: 'POST',
+        ...base,
+        params: { id: 'notifier-cloudflare' },
+        body: { to: 'user@example.com' },
+        adminAuth: tenantAdmin,
+      });
+      expect(result.status).toBe(200);
+      expect(emailSend).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('admin_sent_email', () => {
+    const send = (base: ReturnType<typeof fixture>['base'], adminAuth: Record<string, unknown>) =>
+      call(sendPluginTestEmailHandler, {
+        method: 'POST',
+        ...base,
+        params: { id: 'notifier-cloudflare' },
+        body: { to: 'user@example.com' },
+        adminAuth,
+      });
+
+    it('refuses the test e-mail for a tenant admin while off; nothing is sent', async () => {
+      const { base, emailSend } = fixture('admin_sent_email', 'off');
+      expect(await send(base, tenantAdmin)).toEqual({ status: 403, error: 'capability_disabled' });
+      expect(emailSend).not.toHaveBeenCalled();
+    });
+
+    it('answers 503 when the switch cannot be read; nothing is sent', async () => {
+      const { base, emailSend } = fixture('admin_sent_email', 'down');
+      expect(await send(base, tenantAdmin)).toEqual({
+        status: 503,
+        error: 'temporarily_unavailable',
+      });
+      expect(emailSend).not.toHaveBeenCalled();
+    });
+
+    it('sends while on, and for a caller with global platform authority while off', async () => {
+      const on = fixture('admin_sent_email', 'on');
+      expect((await send(on.base, tenantAdmin)).status).toBe(200);
+      expect(on.emailSend).toHaveBeenCalledOnce();
+      const off = fixture('admin_sent_email', 'off');
+      expect((await send(off.base, platformAdmin)).status).toBe(200);
+      expect(off.emailSend).toHaveBeenCalledOnce();
+    });
+
+    it('does not stop configuring a notifier', async () => {
+      const { base } = fixture('admin_sent_email', 'off');
+      const put = await call(updatePluginConfigHandler, {
+        method: 'PUT',
+        ...base,
+        params: { id: 'notifier-cloudflare' },
+        body: { config: { defaultFrom: 'a@example.com' } },
+        adminAuth: tenantAdmin,
+      });
+      expect(put.status).toBe(200);
     });
   });
 });

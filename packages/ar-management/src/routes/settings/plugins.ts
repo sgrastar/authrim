@@ -38,6 +38,8 @@ import {
   getLogger,
   createLogger,
   produceNotificationDelivery,
+  NotificationQuotaExceededError,
+  emailQuotaExceededResponse,
   getTenantEmailSettings,
   putTenantEmailSettings,
   invalidatePluginRuntimeCaches,
@@ -86,6 +88,8 @@ import {
   capabilityDisabledRefusal,
   capabilityRefusal,
   capabilityUnavailableRefusal,
+  isBuiltinNotifierPlugin,
+  refuseWhileCapabilityOff,
 } from '../../capability-authorization';
 import { ExternalPluginGateUnavailableError } from '../../external-plugin-gate-sync';
 import {
@@ -323,6 +327,20 @@ async function externalPluginCapabilityRefusal(
 ): Promise<Response | null> {
   const refusal = await capabilityRefusal(c.env, getAdminAuth(c) ?? undefined, 'external_plugins');
   return refusal ? c.json(refusal.body, refusal.status) : null;
+}
+
+/**
+ * The platform's `email_provider_config` capability for the Admin API: null when the plugin is not
+ * a built-in notifier, or when the caller may change the tenant's mail provider now (capability on,
+ * or global platform authority); else the refusal. Called before anything is written.
+ */
+async function notifierConfigCapabilityRefusal(
+  c: Context<{ Bindings: Env }>,
+  pluginId: string,
+  entry: { backendKind?: string }
+): Promise<Response | null> {
+  if (!isBuiltinNotifierPlugin(pluginId, entry)) return null;
+  return refuseWhileCapabilityOff(c, 'email_provider_config');
 }
 
 function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
@@ -1265,6 +1283,8 @@ export async function resetPluginConfigHandler(c: Context<{ Bindings: Env }>) {
       variables: { field: 'dynamic plugin credential reset' },
     });
   }
+  const notifierRefused = await notifierConfigCapabilityRefusal(c, pluginId, entry);
+  if (notifierRefused) return notifierRefused;
 
   const overrideKey = `plugins:config:${pluginId}:tenant:${tenantId}`;
   if ((await kv.get(overrideKey)) !== null) {
@@ -1326,6 +1346,9 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   if (!registry[pluginId]) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
+
+  const notifierRefused = await notifierConfigCapabilityRefusal(c, pluginId, registry[pluginId]);
+  if (notifierRefused) return notifierRefused;
 
   const body = await c.req.json<{
     config: Record<string, unknown>;
@@ -1515,6 +1538,9 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
   if (!registry[pluginId]) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
+
+  const notifierRefused = await notifierConfigCapabilityRefusal(c, pluginId, registry[pluginId]);
+  if (notifierRefused) return notifierRefused;
 
   let enableInput: ReturnType<typeof parsePluginEnableBody>;
   try {
@@ -2025,6 +2051,9 @@ export async function uninstallPluginHandler(c: Context<{ Bindings: Env }>) {
  * Send a test email using the selected plugin's current configuration.
  */
 export async function sendPluginTestEmailHandler(c: Context<{ Bindings: Env }>) {
+  // A test e-mail makes the deployment send mail to an address the administrator names.
+  const mailRefused = await refuseWhileCapabilityOff(c, 'admin_sent_email');
+  if (mailRefused) return mailRefused;
   const pluginId = c.req.param('id')!;
   const kv = getPluginKV(c.env);
   const logger = getLogger(c).module('PluginAdminAPI');
@@ -2159,6 +2188,10 @@ export async function sendPluginTestEmailHandler(c: Context<{ Bindings: Env }>) 
       delivery.delivery === 'pending' ? 202 : 200
     );
   } catch (error) {
+    if (error instanceof NotificationQuotaExceededError) {
+      const refused = emailQuotaExceededResponse(error);
+      return c.json(refused.body, 429, refused.headers);
+    }
     logger.warn('Plugin test email failed', {
       pluginId,
       tenantId,

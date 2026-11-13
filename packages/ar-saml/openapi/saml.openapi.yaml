@@ -18,6 +18,17 @@ info:
     answer HTTP 429 `rate_limit_exceeded` from the Admin API write limit (`rate_limit.admin_write`
     per `rate_limit.admin_write_window_seconds`, per authenticated principal and tenant, shared with the
     rest of the Admin API; see the Admin API contract).
+
+    The platform can turn the `saml_metadata_url` capability off for tenants (platform setting
+    `tenant_capabilities.saml_metadata_url`, on by default). While it is off, an operation that
+    fetches a metadata URL, or stores a new or changed metadata URL for later refresh, answers
+    HTTP 403 `capability_disabled` to a caller without global platform authority (HTTP 503
+    `temporarily_unavailable` with Retry-After when the switch cannot be read). Operations
+    marked `x-authrim-capability: saml_metadata_url` are refused only for the part that uses a
+    URL: pasted metadata XML, keeping or clearing a stored URL, reading and deleting stay open.
+    URLs already stored keep being refreshed by the scheduled poller. A tenant backup restore
+    refuses SAML provider and federation source rows that carry a metadata URL, for a requester
+    without global platform authority, while the capability is off (see the Admin API contract).
 servers:
   - url: https://{tenant_domain}
     variables:
@@ -292,17 +303,22 @@ paths:
         '200':
           $ref: '#/components/responses/Json'
     post:
+      x-authrim-capability: saml_metadata_url
       tags:
         - SAML Admin
       summary: Create a SAML provider.
+      description: >-
+        While the `saml_metadata_url` capability is off, a request with a `metadataUrl` (or whose config carries a `metadataUrl`) is refused; pasted `metadataXml` and a config without a URL are not.
       security:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
         $ref: '#/components/requestBodies/SAMLProviderCreate'
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
-          $ref: '#/components/responses/AdminStepUpRequired'
+          $ref: '#/components/responses/AdminStepUpOrCapabilityDisabled'
         '200':
           $ref: '#/components/responses/SAMLProvider'
         '201':
@@ -321,9 +337,12 @@ paths:
         '200':
           $ref: '#/components/responses/Json'
     put:
+      x-authrim-capability: saml_metadata_url
       tags:
         - SAML Admin
       summary: Update a SAML provider.
+      description: >-
+        While the `saml_metadata_url` capability is off, a new or changed `config.metadataUrl` is refused; keeping the stored URL while other fields change, and clearing it, are allowed.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -332,8 +351,10 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/SAMLProviderUpdate'
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
-          $ref: '#/components/responses/AdminStepUpRequired'
+          $ref: '#/components/responses/AdminStepUpOrCapabilityDisabled'
         '200':
           $ref: '#/components/responses/SAMLProvider'
     delete:
@@ -377,15 +398,22 @@ paths:
           $ref: '#/components/responses/SAMLAttributePreset'
   /api/admin/saml-metadata/preview:
     post:
+      x-authrim-capability: saml_metadata_url
       tags:
         - SAML Admin
       summary: Preview SAML metadata import.
+      description: >-
+        With a `metadataUrl` the request is refused while the `saml_metadata_url` capability is off; pasted `metadataXml` is not.
       security:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
         $ref: '#/components/requestBodies/SAMLAggregateMetadataInput'
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
+        '403':
+          $ref: '#/components/responses/CapabilityDisabled'
         '200':
           $ref: '#/components/responses/SAMLMetadataPreview'
   /api/admin/saml-attribute-presets/{id}:
@@ -432,13 +460,19 @@ paths:
       security: *a1
   /api/admin/saml-metadata/certificate-preview:
     post:
+      x-authrim-capability: saml_metadata_url
       tags:
         - SAML Admin
       operationId: postApiAdminSamlMetadataCertificatePreview
       summary: Preview federation trust certificate.
       description: Parses a PEM certificate or fetches a certificate from an HTTPS URL, then returns
         normalized certificate metadata and validation diagnostics.
+        With a `certificateUrl` the request is refused while the `saml_metadata_url` capability is off; a pasted `certificate` is not.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
+        '403':
+          $ref: '#/components/responses/CapabilityDisabled'
         '200':
           $ref: '#/components/responses/SAMLTrustCertificatePreview'
       requestBody:
@@ -446,6 +480,7 @@ paths:
       security: *a1
   /api/admin/saml-metadata/previews/{previewId}/batch-create:
     post:
+      x-authrim-capability: saml_metadata_url
       tags:
         - SAML Admin
       operationId: postApiAdminSamlMetadataPreviewsByPreviewIdBatchCreate
@@ -454,9 +489,12 @@ paths:
         Starts an asynchronous provider creation job from selected EntityDescriptor entries in
         an aggregate metadata preview. When enabled is false and identityMapping is omitted, mixed IdP and
         SP selections are registered as disabled providers so each provider can be mapped and enabled later.
+        A batch created from a preview that was fetched from a URL is refused while the `saml_metadata_url` capability is off (the created providers keep that URL); a preview made from pasted metadata is not.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
-          $ref: '#/components/responses/AdminStepUpRequired'
+          $ref: '#/components/responses/AdminStepUpOrCapabilityDisabled'
         '202':
           $ref: '#/components/responses/SAMLBatchStatus'
         '400':
@@ -529,15 +567,19 @@ paths:
       security: *a1
   /api/admin/saml-providers/{id}/import-metadata:
     post:
+      x-authrim-capability: saml_metadata_url
       tags:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdImportMetadata
       summary: Import SAML provider metadata.
       description: Imports single-entity SAML metadata into an existing provider, preserving custom
         settings while updating metadata-derived configuration and refresh status.
+        With a `metadataUrl` the request is refused while the `saml_metadata_url` capability is off; pasted `metadataXml` is not.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
-          $ref: '#/components/responses/AdminStepUpRequired'
+          $ref: '#/components/responses/AdminStepUpOrCapabilityDisabled'
         '200':
           $ref: '#/components/responses/SAMLMetadataImport'
       parameters:
@@ -552,6 +594,7 @@ paths:
       security: *a1
   /api/admin/saml-providers/{id}/refresh-metadata:
     post:
+      x-authrim-capability: saml_metadata_url
       tags:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdRefreshMetadata
@@ -562,9 +605,12 @@ paths:
         metadata-refresh permission is sufficient only when the configured URL and entityID remain
         unchanged. Supplying a different URL or approving an entityID change also requires the
         provider-update permission.
+        Every refresh fetches a URL, so it is refused while the `saml_metadata_url` capability is off.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
-          $ref: '#/components/responses/AdminStepUpRequired'
+          $ref: '#/components/responses/AdminStepUpOrCapabilityDisabled'
         '200':
           $ref: '#/components/responses/SAMLMetadataRefresh'
       parameters:
@@ -579,6 +625,7 @@ paths:
       security: *a1
   /api/admin/saml-federation-sources/{id}/refresh-metadata:
     post:
+      x-authrim-capability: saml_metadata_url
       tags:
         - SAML Admin
       operationId: postApiAdminSamlFederationSourcesByIdRefreshMetadata
@@ -587,9 +634,12 @@ paths:
         Fetches and verifies the aggregate metadata source immediately, records the validated
         document and entity summaries, and reconciles already activated providers. This manual
         operation is available whether scheduled polling is automatic or manual.
+        Refused while the `saml_metadata_url` capability is off.
       responses:
+        '503':
+          $ref: '#/components/responses/CapabilityUnavailable'
         '403':
-          $ref: '#/components/responses/AdminStepUpRequired'
+          $ref: '#/components/responses/AdminStepUpOrCapabilityDisabled'
         '200':
           $ref: '#/components/responses/SAMLFederationMetadataRefresh'
         '409':
@@ -1002,6 +1052,84 @@ components:
             attribute_set_hash: sha256:abcdef
             decision: approve
   responses:
+    CapabilityDisabled:
+      description: >-
+        The platform turned the `saml_metadata_url` capability off for tenants, and the request
+        would fetch a metadata URL or store a new or changed one. Callers with global platform
+        authority are exempt.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+              - error_description
+              - capability
+            properties:
+              error:
+                type: string
+                enum: [capability_disabled]
+              error_description:
+                type: string
+              capability:
+                type: string
+                enum: [saml_metadata_url]
+    CapabilityUnavailable:
+      description: >-
+        Whether the `saml_metadata_url` capability is on could not be determined, and the request
+        would fetch a metadata URL or store a new or changed one. Retry after the delay in
+        Retry-After.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+              - error_description
+              - capability
+            properties:
+              error:
+                type: string
+                enum: [temporarily_unavailable]
+              error_description:
+                type: string
+              capability:
+                type: string
+                enum: [saml_metadata_url]
+    AdminStepUpOrCapabilityDisabled:
+      description: >-
+        Either the trust change needs admin step-up L2 (see `AdminStepUpRequired`), or the
+        platform turned the `saml_metadata_url` capability off for tenants and the request would
+        fetch a metadata URL or store a new or changed one (`capability_disabled`).
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+                enum: [step_up_required, step_up_human_required, capability_disabled]
+              error_description:
+                type: string
+              capability:
+                type: string
+                enum: [saml_metadata_url]
+              required_level:
+                type: string
+              step_up_id:
+                type: string
+              expires_at:
+                type: integer
+              missing:
+                type: array
+                items:
+                  type: string
     AdminStepUpRequired:
       description: >-
         The trust change needs admin step-up L2 (federation.trust.update), unless the platform

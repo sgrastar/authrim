@@ -24,4 +24,17 @@ describe('VC rate limits', () => {
     // Nonces are unauthenticated and stored until they expire.
     expect(profileOf('/vci/nonce')).toBe('moderate');
   });
+
+  it('limits DID resolution, which fetches caller-chosen hosts, harder than other DID routes', () => {
+    const paths = VC_RATE_LIMITS.map((limit) => limit.path);
+    const resolve = VC_RATE_LIMITS.find((limit) => limit.path === '/did/resolve/*');
+    expect(resolve).toMatchObject({
+      endpoint: '/did/resolve/',
+      profile: 'moderate',
+      endpointClass: 'vc_did_resolve',
+    });
+    // The resolve rule comes before the general /did/ rule, which keeps the lenient profile.
+    expect(paths.indexOf('/did/resolve/*')).toBeLessThan(paths.indexOf('/did/*'));
+    expect(VC_RATE_LIMITS.find((limit) => limit.path === '/did/*')?.profile).toBe('lenient');
+  });
 });

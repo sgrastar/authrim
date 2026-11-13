@@ -5022,6 +5022,12 @@ describe('Settings API v2', () => {
         'tenant_capabilities.dynamic_client_registration': true,
         'tenant_capabilities.external_plugins': true,
         'tenant_capabilities.bulk_jobs': true,
+        'tenant_capabilities.admin_sent_email': true,
+        'tenant_capabilities.machine_credentials': true,
+        'tenant_capabilities.email_provider_config': true,
+        'tenant_capabilities.directory_connectors': true,
+        'tenant_capabilities.external_identity_providers': true,
+        'tenant_capabilities.saml_metadata_url': true,
       });
       expect(body.sources?.['tenant_capabilities.webhooks']).toBe('default');
     });

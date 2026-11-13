@@ -21,6 +21,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
     createAuditLogFromContext: vi.fn(),
     produceNotificationDelivery: vi.fn(async () => ({ delivery: 'delivered' })),
+    // No settings store in this harness: the admin_sent_email capability reads as on.
+    getTenantCapabilityState: vi.fn(async () => 'on' as const),
     getLogger: () => ({ module: () => ({ warn: vi.fn(), error: vi.fn() }) }),
     createErrorResponse: vi.fn(
       async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {

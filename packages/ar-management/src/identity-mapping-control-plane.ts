@@ -11,6 +11,7 @@ import {
 } from '@authrim/ar-lib-core/services/log-iceberg-core-publication';
 import type { Context } from 'hono';
 import { requireAdminStepUp } from './admin-step-up-gate';
+import { capabilityRefusal } from './capability-authorization';
 import type {
   Env,
   DatabaseAdapter,
@@ -20,6 +21,7 @@ import type {
   PreparedStatement,
 } from '@authrim/ar-lib-core';
 import {
+  carriesMetadataUrl,
   raiseInternalEventConsoleNotice,
   ensureDatabaseAdapter,
   getTenantMetadataContextFromHono,
@@ -7368,6 +7370,25 @@ export class IdentityMappingControlPlaneRepository {
     }
   }
 
+  /** The metadata URLs a stored federation trust source holds (none when it does not exist). */
+  async federationTrustSourceMetadataUrls(
+    tenantId: string,
+    trustSourceId: string
+  ): Promise<string[]> {
+    const row = await this.adapter.queryOne<{ protocol_payload_json: string | null }>(
+      `SELECT protocol_payload_json
+         FROM federation_trust_sources
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!row?.protocol_payload_json) return [];
+    try {
+      return federationSourceMetadataUrls(JSON.parse(row.protocol_payload_json));
+    } catch {
+      return [];
+    }
+  }
+
   private async applyProvisioningAssignment(
     tenantId: string,
     rule: ProvisioningAssignmentRuleRow,
@@ -9030,6 +9051,66 @@ class AdminStepUpRefusal extends Error {
 }
 
 /**
+ * The metadata URLs a federation source's protocol payload names that the scheduled poller would
+ * fetch: its metadata URL and its exact (no wildcard) URL patterns.
+ */
+function federationSourceMetadataUrls(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  const { metadataUrl, metadataUrlPatterns } = payload as Record<string, unknown>;
+  // A value that is not a string (or a pattern list that is not an array of strings) is kept as its
+  // JSON so that it compares by value and always counts as a URL.
+  const asUrl = (value: unknown): string =>
+    typeof value === 'string' ? value.trim() : (JSON.stringify(value) ?? 'unserializable');
+  const urls: string[] = [];
+  if (carriesMetadataUrl(metadataUrl)) urls.push(asUrl(metadataUrl));
+  if (metadataUrlPatterns !== undefined && metadataUrlPatterns !== null) {
+    if (!Array.isArray(metadataUrlPatterns)) {
+      urls.push(asUrl(metadataUrlPatterns));
+    } else {
+      for (const pattern of metadataUrlPatterns) {
+        if (typeof pattern !== 'string') urls.push(asUrl(pattern));
+        else if (pattern.trim() && !pattern.includes('*')) urls.push(pattern.trim());
+      }
+    }
+  }
+  return urls;
+}
+
+/**
+ * While the platform has `saml_metadata_url` off, a federation source write may not add a metadata
+ * URL the source does not already hold (the scheduled poller would fetch it). Keeping or clearing
+ * the stored URLs stays allowed, and a source without any URL is not judged. Throws the refusal.
+ */
+async function requireFederationSourceUrlCapability(
+  c: AdminContext,
+  tenantId: string,
+  trustSourceId: string | null,
+  body: unknown
+): Promise<void> {
+  const payload =
+    body && typeof body === 'object'
+      ? (body as { protocolPayload?: unknown }).protocolPayload
+      : null;
+  const requested = federationSourceMetadataUrls(payload);
+  if (!requested.length) return;
+  const stored = trustSourceId
+    ? await createRepository(c).federationTrustSourceMetadataUrls(tenantId, trustSourceId)
+    : [];
+  if (requested.every((url) => stored.includes(url))) return;
+  const refusal = await capabilityRefusal(
+    c.env,
+    (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
+      | Parameters<typeof capabilityRefusal>[1]
+      | undefined,
+    'saml_metadata_url'
+  );
+  if (!refusal) return;
+  throw new AdminStepUpRefusal(
+    c.json(refusal.body, refusal.status, refusal.status === 503 ? { 'Retry-After': '5' } : {})
+  );
+}
+
+/**
  * The step-up for a federation trust source write (`federation.trust.update`): the repository
  * calls it after validating the request, just before its first write. The request is bound as a
  * digest of its stable JSON (it carries certificates and trust policy).
@@ -9042,6 +9123,10 @@ function federationTrustStepUp(
   body: unknown
 ): () => Promise<void> {
   return async () => {
+    // Judged before the step-up: a write the platform refuses is not worth a prompt.
+    if (action !== 'delete') {
+      await requireFederationSourceUrlCapability(c, tenantId, trustSourceId, body);
+    }
     const refused = await requireAdminStepUp(c as never, {
       operation: 'federation.trust.update',
       targetTenantId: tenantId,
