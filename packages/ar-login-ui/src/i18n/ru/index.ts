@@ -220,6 +220,17 @@ const ru = createTranslation({
 	account_consentSelectedOnce: 'Только сейчас',
 	account_consentSelectedAlways: 'Разрешать всегда',
 	account_consentSelectedNone: 'Не разрешать',
+	account_consentWithdraw: 'Отозвать согласие',
+	account_consentWithdrawFor: 'Отозвать согласие для {name}',
+	account_consentWithdrawConfirmService:
+		'Отозвать ваше согласие для {name}? При следующем использовании сервис снова запросит согласие, а вы можете быть выведены из него.',
+	account_consentWithdrawConfirmSamlSp:
+		'Отозвать ваше согласие для {name}? Сервис снова спросит при следующем входе.',
+	account_consentWithdrawConfirmStatement:
+		'Отозвать ваше согласие с «{name}»? Если оно обязательно, при следующем входе вас снова попросят согласиться.',
+	account_consentWithdrawn: 'Согласие отозвано.',
+	account_consentWithdrawGone: 'Этого согласия уже нет. Список обновлён.',
+	account_consentWithdrawFailed: 'Не удалось отозвать согласие. Повторите попытку.',
 	login_title: 'С возвращением',
 	login_subtitle: 'Войдите в свою учётную запись',
 	login_signInWithPasskey: 'Войти с Passkey',

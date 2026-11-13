@@ -194,6 +194,8 @@ export type AccountStatementConsent = {
 	receiptId?: string;
 	updatedAt: number;
 	selectedValue?: string;
+	/** A granted agreement whose statement allows withdrawal (older flow records never have it). */
+	withdrawable?: boolean;
 };
 
 /** A SAML service provider the person decided the information release for. */
@@ -661,6 +663,25 @@ export const accountAPI = {
 		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents', {
 			headers: locale ? { 'Accept-Language': locale.replace('_', '-') } : undefined
 		}),
+
+	/** Withdraws the consent to an OIDC service (ends the tokens issued under it). */
+	withdrawOAuthClientConsent: (clientId: string) =>
+		accountFetch<{ withdrawn: true }>(
+			`/api/account/consents/oauth-client?client_id=${encodeURIComponent(clientId)}`,
+			{ method: 'DELETE' }
+		),
+
+	withdrawSamlSpConsent: (spEntityId: string) =>
+		accountFetch<{ withdrawn: true }>(
+			`/api/account/consents/saml-sp?sp_entity_id=${encodeURIComponent(spEntityId)}`,
+			{ method: 'DELETE' }
+		),
+
+	withdrawStatementConsent: (statementId: string) =>
+		accountFetch<{ withdrawn: true }>(
+			`/api/account/consents/statements/${encodeURIComponent(statementId)}`,
+			{ method: 'DELETE' }
+		),
 
 	// Linked external accounts (served by the external identity bridge).
 	getLinkedIdentities: () =>

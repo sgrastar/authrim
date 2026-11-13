@@ -236,6 +236,17 @@ const translation = {
 	account_consentSelectedOnce: 'Mara hii tu',
 	account_consentSelectedAlways: 'Daima kuruhusu',
 	account_consentSelectedNone: 'Usiruhusu',
+	account_consentWithdraw: 'Ondoa idhini',
+	account_consentWithdrawFor: 'Ondoa idhini kwa {name}',
+	account_consentWithdrawConfirmService:
+		'Ondoa idhini yako kwa {name}? Huduma itaomba idhini yako tena utakapoitumia wakati ujao, na huenda ukatolewa kwenye huduma hiyo.',
+	account_consentWithdrawConfirmSamlSp:
+		'Ondoa idhini yako kwa {name}? Huduma itauliza tena utakapoingia wakati ujao.',
+	account_consentWithdrawConfirmStatement:
+		'Ondoa makubaliano yako kwa {name}? Ikiwa yanahitajika, utaombwa kukubali tena utakapoingia wakati ujao.',
+	account_consentWithdrawn: 'Idhini imeondolewa.',
+	account_consentWithdrawGone: 'Idhini hii haipo tena. Orodha imesasishwa.',
+	account_consentWithdrawFailed: 'Idhini haikuweza kuondolewa. Jaribu tena.',
 	login_title: 'Karibu tena',
 	login_subtitle: 'Ingia kwenye akaunti yako',
 	login_signInWithPasskey: 'Ingia na Passkey',

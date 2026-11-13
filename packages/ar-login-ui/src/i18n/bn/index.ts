@@ -238,6 +238,17 @@ const translation = {
 	account_consentSelectedOnce: 'এইবার শুধু',
 	account_consentSelectedAlways: 'সর্বদা অনুমতি দিন',
 	account_consentSelectedNone: 'অনুমতি দেবেন না',
+	account_consentWithdraw: 'সম্মতি প্রত্যাহার করুন',
+	account_consentWithdrawFor: '{name}-এর জন্য সম্মতি প্রত্যাহার করুন',
+	account_consentWithdrawConfirmService:
+		'{name}-এর জন্য আপনার সম্মতি প্রত্যাহার করবেন? পরের বার এটি ব্যবহার করলে সেবাটি আবার সম্মতি চাইবে, এবং আপনি এটি থেকে সাইন আউট হয়ে যেতে পারেন।',
+	account_consentWithdrawConfirmSamlSp:
+		'{name}-এর জন্য আপনার সম্মতি প্রত্যাহার করবেন? পরের বার সাইন ইন করলে সেবাটি আবার জিজ্ঞাসা করবে।',
+	account_consentWithdrawConfirmStatement:
+		'{name}-এ আপনার সম্মতি প্রত্যাহার করবেন? এটি বাধ্যতামূলক হলে পরের বার সাইন ইনের সময় আপনাকে আবার সম্মত হতে বলা হবে।',
+	account_consentWithdrawn: 'সম্মতি প্রত্যাহার করা হয়েছে।',
+	account_consentWithdrawGone: 'এই সম্মতি আর নেই। তালিকা রিফ্রেশ করা হয়েছে।',
+	account_consentWithdrawFailed: 'সম্মতি প্রত্যাহার করা যায়নি। আবার চেষ্টা করুন।',
 	login_title: 'ফিরে আসতে স্বাগতম',
 	login_subtitle: 'আপনার অ্যাকাউন্টে সাইন ইন করুন',
 	login_signInWithPasskey: 'Passkey দিয়ে সাইন ইন করুন',

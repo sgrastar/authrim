@@ -206,6 +206,16 @@ const zhTW = createTranslation({
 	account_consentSelectedOnce: '僅本次',
 	account_consentSelectedAlways: '一律允許',
 	account_consentSelectedNone: '不允許',
+	account_consentWithdraw: '撤回同意',
+	account_consentWithdrawFor: '撤回對 {name} 的同意',
+	account_consentWithdrawConfirmService:
+		'要撤回對 {name} 的同意嗎？下次使用該服務時將再次徵求您的同意，您也可能會被登出該服務。',
+	account_consentWithdrawConfirmSamlSp: '要撤回對 {name} 的同意嗎？下次登入時該服務將再次詢問。',
+	account_consentWithdrawConfirmStatement:
+		'要撤回對 {name} 的同意嗎？如果該項為必要，下次登入時將再次請您同意。',
+	account_consentWithdrawn: '已撤回同意。',
+	account_consentWithdrawGone: '該同意已不存在，清單已重新整理。',
+	account_consentWithdrawFailed: '無法撤回同意，請再試一次。',
 	login_title: '歡迎回來',
 	login_subtitle: '登入您的帳戶',
 	login_signInWithPasskey: '使用 Passkey 登入',

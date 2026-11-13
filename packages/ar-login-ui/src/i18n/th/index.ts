@@ -232,6 +232,17 @@ const th = createTranslation({
 	account_consentSelectedOnce: 'เฉพาะครั้งนี้',
 	account_consentSelectedAlways: 'อนุญาตเสมอ',
 	account_consentSelectedNone: 'ไม่อนุญาต',
+	account_consentWithdraw: 'ถอนความยินยอม',
+	account_consentWithdrawFor: 'ถอนความยินยอมสำหรับ {name}',
+	account_consentWithdrawConfirmService:
+		'ถอนความยินยอมของคุณสำหรับ {name} หรือไม่ บริการจะขอความยินยอมอีกครั้งเมื่อคุณใช้งานครั้งถัดไป และคุณอาจถูกออกจากระบบของบริการนั้น',
+	account_consentWithdrawConfirmSamlSp:
+		'ถอนความยินยอมของคุณสำหรับ {name} หรือไม่ บริการจะถามอีกครั้งเมื่อคุณลงชื่อเข้าใช้ครั้งถัดไป',
+	account_consentWithdrawConfirmStatement:
+		'ถอนการยอมรับ {name} ของคุณหรือไม่ หากเป็นรายการที่จำเป็น คุณจะถูกขอให้ยอมรับอีกครั้งเมื่อลงชื่อเข้าใช้ครั้งถัดไป',
+	account_consentWithdrawn: 'ถอนความยินยอมแล้ว',
+	account_consentWithdrawGone: 'ไม่มีความยินยอมนี้แล้ว รีเฟรชรายการแล้ว',
+	account_consentWithdrawFailed: 'ไม่สามารถถอนความยินยอมได้ โปรดลองอีกครั้ง',
 	login_title: 'ยินดีต้อนรับกลับ',
 	login_subtitle: 'เข้าสู่ระบบบัญชีของคุณ',
 	login_signInWithPasskey: 'เข้าสู่ระบบด้วยพาสคีย์',

@@ -234,6 +234,7 @@ export const statementConsent = (
 	grantedAt: FIXTURE_NOW - 5 * DAY,
 	updatedAt: FIXTURE_NOW - 5 * DAY,
 	selectedValue: 'always',
+	withdrawable: true,
 	...overrides
 });
 
