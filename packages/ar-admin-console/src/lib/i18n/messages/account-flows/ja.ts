@@ -374,7 +374,19 @@ export const jaAccountFlows = {
 	'af.consent.loadFailed': '同意文の一覧を読み込めませんでした。',
 	'af.consent.max': '同意文は {n} 件まで選べます。',
 	'af.consent.manage': '同意文を管理',
-	'af.consent.create': '同意文を新規作成',
+	'af.consent.peek.show': '内容を見る',
+	'af.consent.peek.hide': '内容を閉じる',
+	'af.consent.peek.failed': '同意文の内容を読み込めませんでした。',
+	'af.consent.new.open': '同意文を新しく作る',
+	'af.consent.new.title': '新しい同意文',
+	'af.consent.new.lead':
+		'作った同意文はすぐに公開され、このフローで選ばれます。ほかのフローでも使えます。設定の詳細や版の更新は、同意文のページで行います。',
+	'af.consent.new.publish': '公開して選ぶ',
+	'af.consent.new.created': '同意文を作って公開しました。',
+	'af.consent.new.noLanguage': '言語を 1 つ以上追加してください。',
+	'af.consent.new.unpublished':
+		'同意文は作られましたが、公開できませんでした。同意文のページで続きを行ってください。',
+	'af.consent.new.openUnfinished': '同意文のページを開く',
 	'af.consent.unavailable':
 		'このサインインフローは、フロー編集画面で作られた構成のため、ここでは同意を設定できません。フロー編集画面で同意の手順を設定してください。'
 } as const;

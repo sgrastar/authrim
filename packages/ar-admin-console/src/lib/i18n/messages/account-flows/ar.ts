@@ -377,7 +377,18 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.loadFailed': 'The statements could not be loaded.',
 	'af.consent.max': 'Up to {n} statements can be chosen.',
 	'af.consent.manage': 'Manage consent statements',
-	'af.consent.create': 'Create a consent statement',
+	'af.consent.peek.show': 'عرض النص',
+	'af.consent.peek.hide': 'إخفاء النص',
+	'af.consent.peek.failed': 'تعذر تحميل نص البيان.',
+	'af.consent.new.open': 'إنشاء بيان',
+	'af.consent.new.title': 'بيان جديد',
+	'af.consent.new.lead':
+		'يُنشر البيان فورًا ويُختار لهذا التدفق، ويمكن للتدفقات الأخرى استخدامه أيضًا. إعداداته الأخرى وإصداراته اللاحقة في صفحة البيان.',
+	'af.consent.new.publish': 'نشر واختيار',
+	'af.consent.new.created': 'تم إنشاء البيان ونشره.',
+	'af.consent.new.noLanguage': 'أضف لغة واحدة على الأقل.',
+	'af.consent.new.unpublished': 'تم إنشاء البيان لكن تعذر نشره. أكمله في صفحة البيان.',
+	'af.consent.new.openUnfinished': 'فتح صفحة البيان',
 	'af.consent.unavailable':
 		'This sign-in flow was built in the flow editor, so consent cannot be set here. Set the consent step in the flow editor.'
 };

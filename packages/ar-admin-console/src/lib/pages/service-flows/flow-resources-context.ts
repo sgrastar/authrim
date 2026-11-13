@@ -45,6 +45,11 @@ export interface FlowResources {
 	/** Whether a new sign-in method profile may be made from the flow. */
 	canCreateProfile: () => boolean;
 	/**
+	 * Whether a new consent statement may be made (and published) from the flow. Absent: as for a
+	 * profile (both are the tenant's settings).
+	 */
+	canCreateStatement?: () => boolean;
+	/**
 	 * The tenant's failed sign-in attempts that lock an account (shown in the sign-in flow); without
 	 * it the setting's default is shown.
 	 */
