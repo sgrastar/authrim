@@ -113,14 +113,18 @@ describe('routing', () => {
     expect(html).toContain('data-sitekey="site-key-1"');
     expect(html).toContain('action="/start"');
     expect(html).toContain('12');
-    expect(html).not.toMatch(/<style|style=|onclick=|<script>[^<]/i);
+    const lower = html.toLowerCase();
+    for (const inline of ['<style', 'style=', 'onclick=']) expect(lower).not.toContain(inline);
+    expect(lower.split('<script').length).toBe(lower.split('<script src=').length);
   });
 
   it('serves the wait page with no inline script and the console origin in a meta tag', async () => {
     const html = await (await get('/wait')).text();
     expect(html).toContain('<script src="/assets/wait.js" defer></script>');
     expect(html).toContain(`<meta name="console-origin" content="${CONSOLE}">`);
-    expect(html).not.toMatch(/<script>/);
+    // Every script element loads a file: none carries code of its own.
+    const lower = html.toLowerCase();
+    expect(lower.split('<script').length).toBe(lower.split('<script src=').length);
   });
 
   it('serves wait.js as JavaScript that checks the console origin before navigating', async () => {
