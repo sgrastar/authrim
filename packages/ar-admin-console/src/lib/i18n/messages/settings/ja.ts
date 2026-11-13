@@ -5,6 +5,23 @@
 export const jaSettings = {
 	'set.page.team': '管理者ユーザー',
 	'set.page.team.desc': '管理者がこのコンソールにログインする方法を決めます。',
+	'set.page.general': '全般',
+	'set.page.general.desc': 'このテナントの名前と、公開しているアドレスです。',
+	'set.section.environmentBanner': '環境バナー',
+	'set.section.environmentBanner.desc':
+		'ログイン画面と管理コンソールの上部に、この環境についての案内を表示します。全テナントに適用されます。変更できるのはプラットフォーム管理者だけです。',
+	'set.k.environment_banner.enabled': '環境バナーを表示する',
+	'set.k.environment_banner.enabled.desc':
+		'ログイン画面と管理コンソールの上部に、この環境についての案内を表示します。',
+	'set.k.environment_banner.text': 'バナーの文言',
+	'set.k.environment_banner.text.desc':
+		'バナーに表示する文章です。200 文字までのテキストで、HTML は使えません（例: ステージング環境です。）。言語ごとの文言がない言語では、これを表示します。',
+	'set.k.environment_banner.text_localizations': '言語ごとの文言',
+	'set.k.environment_banner.text_localizations.desc':
+		'言語ごとの文言を JSON テキストで指定します（例: {"ja": "ステージング環境です。", "en": "This is the staging environment."}）。16 言語まで、各 200 文字までで、必須の言語はありません。',
+	'set.k.environment_banner.noindex': '検索エンジンに載せない（ログイン画面）',
+	'set.k.environment_banner.noindex.desc':
+		'オンにすると、ログイン画面が検索エンジンに載らないようにします。バナーを表示するかどうかとは関係なく働きます。',
 	'set.section.adminSignIn': '管理者のログイン',
 	'set.section.adminSignIn.desc':
 		'このテナントの管理者が、ログインしたままでいられる時間と、操作の前に求める確認です。',

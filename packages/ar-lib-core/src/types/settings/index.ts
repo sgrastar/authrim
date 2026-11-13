@@ -50,6 +50,7 @@ export * from './identity-mapping';
 export * from './bulk-apply';
 export * from './tenant-capabilities';
 export * from './admin-invitations';
+export * from './environment-banner';
 export * from './institution';
 
 // Re-export SettingsManager types

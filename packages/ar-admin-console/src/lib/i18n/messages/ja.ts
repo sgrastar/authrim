@@ -250,6 +250,7 @@ export const ja = {
 	'wizard.stepCurrent': '現在の手順',
 
 	/* --- console --- */
+	'env.banner.label': '環境の案内',
 	'app.skip': '本文へ移動',
 	'app.brand': 'Authrim',
 	'theme.mode': '明るさ',

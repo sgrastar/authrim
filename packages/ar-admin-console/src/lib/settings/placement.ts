@@ -412,11 +412,39 @@ export const TEAM: SettingsPageDef = {
 	]
 };
 
+/**
+ * Settings → General, platform part: the environment banner (a notice band at the top of the Login
+ * UI and this console, and an optional noindex for the Login UI). Set for the whole deployment, so
+ * the section is read and saved at the platform and shown only to platform admins; the page's own
+ * content (what the tenant is called, its addresses) is not a setting and is built apart.
+ */
+export const GENERAL: SettingsPageDef = {
+	id: 'general',
+	nav: 'settings/general',
+	title: 'set.page.general',
+	description: 'set.page.general.desc',
+	sections: [
+		{
+			id: 'environment-banner',
+			title: 'set.section.environmentBanner',
+			description: 'set.section.environmentBanner.desc',
+			level: 'platform',
+			settings: [
+				{ key: 'environment_banner.enabled', depth: 'primary' },
+				{ key: 'environment_banner.text', depth: 'primary' },
+				{ key: 'environment_banner.text_localizations', depth: 'primary' },
+				{ key: 'environment_banner.noindex', depth: 'primary' }
+			]
+		}
+	]
+};
+
 export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
 	LOGOUT,
 	PROTECTION,
 	ENTERPRISE_SAML,
 	SIGNING_KEYS,
 	TOKENS,
-	TEAM
+	TEAM,
+	GENERAL
 ];

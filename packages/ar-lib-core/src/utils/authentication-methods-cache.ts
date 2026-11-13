@@ -16,9 +16,10 @@ const FALLBACK_REVISION = '0';
  * 1: the methods and the UI config; 2: `humanVerification` carries `required`, `requiredFor`,
  * `available` and `reason`; 3: the UI config gains the template, palette and theme parity fields
  * (`template`, `palette`, `themeFixed`, `formAreaColor`, `formFrame`, `headerName`, ...);
- * 4: the UI config gains `lite` (the lite Login UI mode and its logo).
+ * 4: the UI config gains `lite` (the lite Login UI mode and its logo);
+ * 5: the answer gains `environmentBanner` (the platform's banner text and noindex).
  */
-export const AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION = 4;
+export const AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION = 5;
 
 type SettingsEnv = Pick<Env, 'SETTINGS'>;
 

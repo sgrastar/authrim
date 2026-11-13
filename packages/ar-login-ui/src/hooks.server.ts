@@ -33,6 +33,7 @@ import { getAuthConfig } from '#lib/auth.js';
 import type { AuthenticationMethodsResponse } from '#lib/api/authentication-methods.js';
 import {
 	getCachedAuthenticationMethods,
+	peekCachedAuthenticationMethods,
 	resolveHumanVerificationProviderFromAuthenticationMethods,
 	type HumanVerificationProvider
 } from '#lib/server/authentication-methods-cache.js';
@@ -526,6 +527,22 @@ export async function getCachedAuthenticationMethodsForRequest(
 
 	return getCachedAuthenticationMethods(cacheKey, () =>
 		fetchAuthenticationMethodsForRequest(event, platformEnv, apiBackendUrl, forwardedHost)
+	);
+}
+
+/**
+ * Cache-only read of the request's authentication methods answer: never fetches, so a miss is
+ * null. For the plain sign-in entry, which skips the bootstrap for speed.
+ */
+export function peekCachedAuthenticationMethodsForRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): AuthenticationMethodsResponse | null {
+	return peekCachedAuthenticationMethods(
+		buildAuthenticationMethodsCacheKey(
+			getApiBackendUrl(platformEnv),
+			getForwardedHost(event, platformEnv)
+		)
 	);
 }
 
@@ -1154,7 +1171,7 @@ const accountCanonicalHostHandle: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
-const securityHeadersHandle: Handle = async ({ event, resolve }) => {
+export const securityHeadersHandle: Handle = async ({ event, resolve }) => {
 	const platformEnv = getPlatformEnv(event);
 	const response = await resolve(event);
 	const humanVerificationProvider = resolveHumanVerificationProviderForCsp(
@@ -1171,6 +1188,14 @@ const securityHeadersHandle: Handle = async ({ event, resolve }) => {
 	response.headers.set('Cross-Origin-Resource-Policy', 'same-origin');
 	response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
 	response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+	// The platform's noindex request (an environment that must stay out of search engines).
+	if (
+		(event.locals.authenticationMethods ?? event.locals.peekedAuthenticationMethods)
+			?.environmentBanner?.noindex === true &&
+		isHtmlDocumentResponse(response)
+	) {
+		response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+	}
 	return response;
 };
 
@@ -1229,7 +1254,7 @@ export function resolveAuthenticationMethodsClientId(
 		: null;
 }
 
-const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
+export const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
 	const platformEnv = getPlatformEnv(event);
 	if (shouldBootstrapLoginUIThemeForRequest(event, platformEnv)) {
 		const challengeTarget = shouldResolveLoginChallengeThemeTarget(event.url.pathname)
@@ -1254,6 +1279,13 @@ const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
 		if (accountPageInitial) {
 			event.locals.accountPageInitial = accountPageInitial;
 		}
+	} else if (shouldBootstrapLoginUITheme(event.url.pathname)) {
+		// The plain sign-in entry skips the bootstrap: only a cached answer can tell the banner
+		// (a miss shows none on the server; the page asks for itself after load).
+		event.locals.peekedAuthenticationMethods = peekCachedAuthenticationMethodsForRequest(
+			event,
+			platformEnv
+		);
 	}
 
 	return resolve(event);

@@ -5186,6 +5186,115 @@ describe('Settings API v2', () => {
     });
   });
 
+  describe('environment-banner (platform-only)', () => {
+    const URL = '/api/admin/platform/settings/environment-banner';
+    const patch = async (
+      fixture: ReturnType<typeof createTestApp>,
+      set: Record<string, unknown>
+    ) => {
+      const current = await (
+        await fixture.app.request(URL, { method: 'GET' }, fixture.mockEnv)
+      ).json<SettingsGetResult>();
+      return fixture.app.request(
+        URL,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ifMatch: current.version, set }),
+        },
+        fixture.mockEnv
+      );
+    };
+
+    it('is off by default and reads the environment', async () => {
+      const { app, mockEnv } = createTestApp({
+        kv: createMockKV(),
+        env: { ENVIRONMENT_BANNER_NOINDEX: 'true' },
+      });
+      const res = await app.request(URL, { method: 'GET' }, mockEnv);
+      const body = await res.json<SettingsGetResult>();
+      expect(body.values).toEqual({
+        'environment_banner.enabled': false,
+        'environment_banner.text': '',
+        'environment_banner.text_localizations': '{}',
+        'environment_banner.noindex': true,
+      });
+    });
+
+    it('saves valid values', async () => {
+      const fixture = createTestApp({ kv: createMockKV() });
+      const res = await patch(fixture, {
+        'environment_banner.enabled': true,
+        'environment_banner.text': 'This is the staging environment.',
+        'environment_banner.text_localizations': '{"fr":"Ceci est l\'environnement de test."}',
+      });
+      expect(res.status).toBe(200);
+      const after = await (
+        await fixture.app.request(URL, { method: 'GET' }, fixture.mockEnv)
+      ).json<SettingsGetResult>();
+      expect(after.values['environment_banner.enabled']).toBe(true);
+      expect(after.values['environment_banner.text']).toBe('This is the staging environment.');
+    });
+
+    it.each([
+      ['a text over 200 characters', { 'environment_banner.text': 'x'.repeat(201) }],
+      ['a text with a control character', { 'environment_banner.text': 'a\u0007b' }],
+      ['a text that is not a string', { 'environment_banner.text': 5 }],
+      ['a map that is not JSON', { 'environment_banner.text_localizations': 'nope' }],
+      ['a map that is an array', { 'environment_banner.text_localizations': '[]' }],
+      ['a map with a bad language tag', { 'environment_banner.text_localizations': '{"!":"x"}' }],
+      ['a map with an empty text', { 'environment_banner.text_localizations': '{"fr":""}' }],
+      [
+        'a map of more than 16 languages',
+        {
+          'environment_banner.text_localizations': JSON.stringify(
+            Object.fromEntries(
+              Array.from({ length: 17 }, (_, i) => [`l${String.fromCharCode(97 + i)}`, 'x'])
+            )
+          ),
+        },
+      ],
+      ['an unknown key', { 'environment_banner.colour': 'red' }],
+    ])('refuses %s', async (_name, set) => {
+      const fixture = createTestApp({ kv: createMockKV() });
+      expect((await patch(fixture, set)).status).toBe(400);
+    });
+
+    it('bumps the global authentication methods cache revision when saved', async () => {
+      const mockKV = createMockKV();
+      const fixture = createTestApp({ kv: mockKV });
+      expect(await mockKV.get('cache:authentication-methods:v1:revision:global')).toBeNull();
+      const res = await patch(fixture, { 'environment_banner.enabled': true });
+      expect(res.status).toBe(200);
+      await expect(mockKV.get('cache:authentication-methods:v1:revision:global')).resolves.toEqual(
+        expect.any(String)
+      );
+    });
+
+    it('cannot be read or changed by a tenant', async () => {
+      const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+      for (const method of ['GET', 'PATCH']) {
+        const res = await app.request(
+          '/api/admin/tenants/test_tenant/settings/environment-banner',
+          {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            ...(method === 'PATCH'
+              ? {
+                  body: JSON.stringify({
+                    ifMatch: 'x',
+                    set: { 'environment_banner.enabled': true },
+                  }),
+                }
+              : {}),
+          },
+          mockEnv
+        );
+        expect(res.status).toBe(400);
+      }
+    });
+  });
+
   describe('Single-tenant tenant guard', () => {
     it('should allow login-entry settings for the default tenant', async () => {
       const { app, mockEnv } = createTestApp({

@@ -1315,6 +1315,31 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     admin_invitations.code_handoff_enabled
   `,
     ],
+    [
+      'environment-banner',
+      'boolean',
+      'value',
+      `
+    environment_banner.enabled
+    environment_banner.noindex
+  `,
+    ],
+    [
+      'environment-banner',
+      'string',
+      'value',
+      `
+    environment_banner.text
+  `,
+    ],
+    [
+      'environment-banner',
+      'string',
+      'structured',
+      `
+    environment_banner.text_localizations
+  `,
+    ],
   ];
 
 export const TENANT_SETTING_FIELD_POLICIES: readonly TenantSettingFieldPolicy[] =

@@ -16,7 +16,8 @@ function readSource(path: string): string {
 describe('the shape version of the authentication methods response', () => {
   it('is past 1, the shape before humanVerification reported required and available', () => {
     expect(Number.isInteger(AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION)).toBe(true);
-    expect(AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION).toBeGreaterThanOrEqual(3);
+    expect(AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION).toBeGreaterThanOrEqual(5);
+    // 5: the answer gained `environmentBanner`; answers cached before it must not be served.
   });
 
   // The cache key builders are private to their workers, so the keys are checked where they are

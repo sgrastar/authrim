@@ -45,6 +45,8 @@ import type {
   LoginUITextLocalizations,
 } from '@authrim/ar-lib-core';
 import {
+  environmentBannerNotice,
+  readEnvironmentBanner,
   layerTenantSettingsDocument,
   isLoginUiPresetAssetPath,
   HUMAN_VERIFICATION_FLOWS,
@@ -390,9 +392,23 @@ interface AuthenticationMethodsMeta {
   revision: string;
 }
 
+/**
+ * The platform's environment banner (a notice, not a security control). `text` and
+ * `textLocalizations` are present only while the banner is enabled and has something to say;
+ * `noindex` asks the Login UI to keep itself out of search engines. The whole object is absent
+ * when neither applies.
+ */
+interface EnvironmentBannerAnswer {
+  text?: string;
+  textLocalizations?: Readonly<Record<string, string>>;
+  noindex: boolean;
+}
+
 interface AuthenticationMethodsResponse {
   methods: AuthenticationMethods;
   ui: UIConfig;
+  /** Platform-wide, never tenant-overridable. */
+  environmentBanner?: EnvironmentBannerAnswer;
   meta: AuthenticationMethodsMeta;
 }
 
@@ -3173,15 +3189,24 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     };
 
     // Resolve Login UI settings and cache TTL in parallel (tenant-aware)
-    const [loginUISettings, selfServiceUI, cacheTTL, liteRead] =
+    const [loginUISettings, selfServiceUI, cacheTTL, liteRead, banner] =
       await measureAuthenticationMethodsTiming(timing, 'ui_config', () =>
         samlDrAll([
           getLoginUISettings(env, tenantId, requestedClientId),
           resolveSelfServiceUIConfig(env, tenantId),
           resolveCacheTTL(env, tenantId),
           readLiteModeForResponse(env, tenantId),
+          // Unreadable settings read as off (a notice must never block sign-in). Read fresh: this
+          // answer is stored under the revision a save just moved, so an isolate's older copy of
+          // the setting must not end up there. Only a cache miss gets here.
+          readEnvironmentBanner(env, { fresh: true }),
         ])
       );
+    const bannerNotice = environmentBannerNotice(banner);
+    const environmentBanner: EnvironmentBannerAnswer | undefined =
+      bannerNotice || banner.noindex
+        ? { ...(bannerNotice ?? {}), noindex: banner.noindex }
+        : undefined;
     const liteMode = liteRead.mode;
     const ui = {
       ...buildUIConfig(loginUISettings, liteMode),
@@ -3196,6 +3221,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const response: AuthenticationMethodsResponse = {
       methods,
       ui,
+      ...(environmentBanner ? { environmentBanner } : {}),
       meta: {
         cacheTTL: uncacheable ? 0 : cacheTTL,
         revision: new Date().toISOString(),

@@ -320,7 +320,7 @@ describe('Admin Session Handlers', () => {
         signedInContext({ env: { SETTINGS: settings }, adminAuth: platformAdminAuth })
       );
       await expect(response.json()).resolves.toMatchObject({ disabled_capabilities: [] });
-      expect(settings.get).not.toHaveBeenCalled();
+      expect(settings.get).not.toHaveBeenCalledWith('settings:platform:tenant-capabilities');
     });
 
     it('is empty (and the session still answers) when the switches cannot be read', async () => {
@@ -333,6 +333,85 @@ describe('Admin Session Handlers', () => {
       );
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({ disabled_capabilities: [] });
+    });
+  });
+
+  describe('environment_banner', () => {
+    const bannerKv = (document: string | null, fail = false) =>
+      ({
+        get: vi.fn(async (key: string) => {
+          if (fail) throw new Error('kv down');
+          return key === 'settings:platform:environment-banner' ? document : null;
+        }),
+        put: vi.fn(),
+        delete: vi.fn(),
+        list: vi.fn(),
+        getWithMetadata: vi.fn(),
+      }) as unknown as KVNamespace;
+
+    const signIn = () => {
+      mockGetCookie.mockReturnValue('admin-session-123');
+      mockAdminSessionRepo.getSession.mockResolvedValue({
+        id: 'admin-session-123',
+        tenant_id: 'tenant-a',
+        admin_user_id: 'admin-user-1',
+        created_at: 100,
+        expires_at: 200,
+      });
+      mockAdminAdapter.query.mockResolvedValue([
+        {
+          id: 'role-ar_tenant_admin',
+          name: 'ar_tenant_admin',
+          permissions_json: '["*"]',
+          hierarchy_level: 100,
+          inherits_from: null,
+          scope_type: 'tenant',
+          scope_id: null,
+        },
+      ]);
+      mockAdminAdapter.queryOne.mockResolvedValue({
+        email: 'admin@example.com',
+        name: 'Admin User',
+        last_login_at: 1,
+        is_active: 1,
+        status: 'active',
+      });
+    };
+    const answer = async (settings: KVNamespace) => {
+      signIn();
+      const response = await adminSessionStatusHandler(
+        createMockContext({
+          env: { SETTINGS: settings },
+          adminAuth: { tenantScope: ['tenant-a'], roles: ['ar_tenant_admin'] },
+        }) as never
+      );
+      expect(response.status).toBe(200);
+      const body: { environment_banner: unknown } = await response.json();
+      return body;
+    };
+
+    it('is null while the banner is off', async () => {
+      expect((await answer(bannerKv(null))).environment_banner).toBeNull();
+    });
+
+    it('carries the text and its languages while enabled', async () => {
+      const body = await answer(
+        bannerKv(
+          JSON.stringify({
+            'environment_banner.enabled': true,
+            'environment_banner.text': 'This is the staging environment.',
+            'environment_banner.text_localizations': '{"ja":"ステージング環境です"}',
+          })
+        )
+      );
+      expect(body.environment_banner).toEqual({
+        text: 'This is the staging environment.',
+        text_localizations: { ja: 'ステージング環境です' },
+      });
+    });
+
+    it('is null (and the session still answers) when the settings cannot be read', async () => {
+      expect((await answer(bannerKv(null, true))).environment_banner).toBeNull();
     });
   });
 

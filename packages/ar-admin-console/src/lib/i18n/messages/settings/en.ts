@@ -3,6 +3,23 @@ import type { jaSettings } from './ja';
 export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.page.team': 'Administrators',
 	'set.page.team.desc': 'How administrators sign in to this console.',
+	'set.page.general': 'General',
+	'set.page.general.desc': 'What the tenant is called and the addresses it gives out.',
+	'set.section.environmentBanner': 'Environment banner',
+	'set.section.environmentBanner.desc':
+		'A notice about this environment at the top of the sign-in screens and this console. It applies to every tenant, and only platform administrators can change it.',
+	'set.k.environment_banner.enabled': 'Show the environment banner',
+	'set.k.environment_banner.enabled.desc':
+		'Shows a notice about this environment at the top of the sign-in screens and the admin console.',
+	'set.k.environment_banner.text': 'Banner text',
+	'set.k.environment_banner.text.desc':
+		'The sentence the banner shows: plain text of up to 200 characters, no HTML (for example: This is the staging environment.). Shown in every language that has no text of its own.',
+	'set.k.environment_banner.text_localizations': 'Text per language',
+	'set.k.environment_banner.text_localizations.desc':
+		'The text in each language, as JSON text (for example {"ja": "ステージング環境です。", "en": "This is the staging environment."}). Up to 16 languages, each up to 200 characters; no language is required.',
+	'set.k.environment_banner.noindex': 'Keep the sign-in screens out of search engines',
+	'set.k.environment_banner.noindex.desc':
+		'On: asks search engines not to index the sign-in screens. Works whether or not the banner is shown.',
 	'set.section.adminSignIn': 'Admin sign-in',
 	'set.section.adminSignIn.desc':
 		'How long this tenant’s administrators stay signed in, and the checks asked before an operation.',

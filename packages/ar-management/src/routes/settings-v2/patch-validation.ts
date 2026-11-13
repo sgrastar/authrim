@@ -10,6 +10,10 @@ import {
   ialAssuranceValuesProblem,
   ialMapProblem,
   idaProfileProblem,
+  environmentBannerTextLocalizationsProblem,
+  environmentBannerTextProblem,
+  ENVIRONMENT_BANNER_TEXT_KEY,
+  ENVIRONMENT_BANNER_TEXT_LOCALIZATIONS_KEY,
   institutionDisplayNamesProblem,
   institutionScopesProblem,
   INSTITUTION_DISPLAY_NAMES_KEY,
@@ -644,6 +648,25 @@ export function validateInstitutionPatch(body: SettingsPatchRequest): string | n
   return null;
 }
 
+/**
+ * The environment banner category: a plain text of at most 200 characters, and an optional JSON map
+ * of language tag to text (at most 16 languages, none required).
+ */
+export function validateEnvironmentBannerPatch(body: SettingsPatchRequest): string | null {
+  const unknown = validateKnownSettingKeys('environment-banner', 'environment banner', body);
+  if (unknown) return unknown;
+  for (const [key, problemOf] of [
+    [ENVIRONMENT_BANNER_TEXT_KEY, environmentBannerTextProblem],
+    [ENVIRONMENT_BANNER_TEXT_LOCALIZATIONS_KEY, environmentBannerTextLocalizationsProblem],
+  ] as const) {
+    if (body.set && key in body.set) {
+      const problem = problemOf(body.set[key]);
+      if (problem) return `${key} ${problem}`;
+    }
+  }
+  return null;
+}
+
 const OIDC_DEFAULT_SET_KEY = 'identity_mapping.oidc_default_set_id';
 
 /**
@@ -686,6 +709,7 @@ const CATEGORY_VALIDATION_KIND: Readonly<Record<string, ValidationKind>> = {
   'diagnostic-logging': 'value',
   'bulk-apply': 'value',
   'tenant-capabilities': 'value',
+  'environment-banner': 'value',
   institution: 'value',
   assurance: 'value',
   oauth: 'value',
@@ -718,6 +742,8 @@ export function validateCategoryPatch(
       return validateKnownSettingKeys('bulk-apply', 'bulk apply', body);
     case 'tenant-capabilities':
       return validateKnownSettingKeys('tenant-capabilities', 'tenant capabilities', body);
+    case 'environment-banner':
+      return validateEnvironmentBannerPatch(body);
     case 'institution':
       return validateInstitutionPatch(body);
     case 'tenant':

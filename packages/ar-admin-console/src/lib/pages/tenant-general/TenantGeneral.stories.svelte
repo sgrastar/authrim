@@ -1,8 +1,11 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, within } from 'storybook/test';
+	import { persona } from '#lib/access/personas.js';
+	import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
 	import { createFakeTenantInfo } from '#lib/api/fake/tenant-info-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { settingText } from '#lib/settings/setting-text.js';
 	import TenantGeneral from './TenantGeneral.svelte';
 
 	const { Story } = defineMeta({
@@ -144,5 +147,49 @@
 <Story name="Loading">
 	{#snippet template()}
 		<TenantGeneral info={createFakeTenantInfo({ delay: 60_000 })} tenantId={TENANT} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Platform admin: environment banner"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('Acme Corporation');
+		// The platform's banner settings are a section below the tenant's own information.
+		await canvas.findByText(t('set.section.environmentBanner'));
+		await canvas.findAllByText(t(settingText('environment_banner.enabled').label));
+		await canvas.findAllByText(t(settingText('environment_banner.text').label));
+		await canvas.findAllByText(t(settingText('environment_banner.text_localizations').label));
+		await canvas.findAllByText(t(settingText('environment_banner.noindex').label));
+	}}
+>
+	{#snippet template()}
+		{@const platform = persona('platform').access}
+		<TenantGeneral
+			info={createFakeTenantInfo()}
+			settings={createFakeSettings({ access: () => platform, latency: 200 })}
+			tenantId={TENANT}
+			access={platform}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Tenant admin: no environment banner"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('Acme Corporation');
+		// A deployment-wide setting: a tenant admin never sees it.
+		await expect(canvas.queryByText(t('set.section.environmentBanner'))).toBeNull();
+	}}
+>
+	{#snippet template()}
+		{@const admin = persona('tenant').access}
+		<TenantGeneral
+			info={createFakeTenantInfo()}
+			settings={createFakeSettings({ access: () => admin, latency: 200 })}
+			tenantId={TENANT}
+			access={admin}
+		/>
 	{/snippet}
 </Story>

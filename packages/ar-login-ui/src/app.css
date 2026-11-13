@@ -2372,6 +2372,23 @@ tr.expired {
 	margin: 0;
 }
 
+/* --- Environment banner (root layout; a notice, not a security control) ---
+   A flat full-width band above the page: warning tone for fill, border and text, an even bottom
+   border, no coloured edge. The root layout sits outside the themed boundary, so it reads the
+   document-level tokens (`:root` and `html[data-theme]`). The lite pages carry the same rule in
+   lib/lite/lite.css (their CSP allows only that stylesheet). */
+.environment-banner {
+	padding-block: 0.375rem;
+	padding-inline: 1rem;
+	background: var(--warning-light);
+	border-block-end: 1px solid var(--warning);
+	color: var(--warning-fg);
+	font-size: 0.8125rem;
+	line-height: 1.4;
+	text-align: center;
+	overflow-wrap: anywhere;
+}
+
 /* --- Code input (for the device flow user code, in groups of 4) --- */
 .auth-code-input {
 	width: 100%;

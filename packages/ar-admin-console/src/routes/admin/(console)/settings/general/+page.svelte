@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { httpSettings } from '#lib/api/settings.js';
 	import { httpTenantInfo } from '#lib/api/tenant-info.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -11,6 +12,6 @@
 
 {#if tenantScope.tenantId}
 	{#key tenantScope.tenantId}
-		<TenantGeneral info={httpTenantInfo} tenantId={tenantScope.tenantId} />
+		<TenantGeneral info={httpTenantInfo} settings={httpSettings} tenantId={tenantScope.tenantId} />
 	{/key}
 {/if}

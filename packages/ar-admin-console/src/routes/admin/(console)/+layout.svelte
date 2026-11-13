@@ -5,6 +5,7 @@
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AppShell from '#lib/shell/AppShell.svelte';
+	import EnvironmentBanner from '#lib/shell/EnvironmentBanner.svelte';
 	import StepUpDialog from '#lib/shell/StepUpDialog.svelte';
 	import { noticeInbox } from '#lib/shell/notice-inbox.js';
 	import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
@@ -51,6 +52,7 @@
 		return noticeInbox.start();
 	});
 
+	const environmentBanner = $derived(adminSession.current?.environment_banner ?? null);
 	const standalone = $derived(isStandalonePath(page.url.pathname));
 	const location = $derived(resolveNavPath(page.url.pathname) ?? resolveNavPath('/admin')!);
 
@@ -80,6 +82,15 @@
 	}
 </script>
 
+{#snippet banner()}
+	{#if environmentBanner}
+		<EnvironmentBanner
+			text={environmentBanner.text}
+			textLocalizations={environmentBanner.text_localizations}
+		/>
+	{/if}
+{/snippet}
+
 {#if !ready}
 	<LoadingState label={t('common.loading')} />
 {:else if adminSession.state === 'forbidden'}
@@ -106,6 +117,7 @@
 		{standalone}
 		notifications={noticeInbox.notifications}
 		ondismiss={(id) => noticeInbox.dismiss(id)}
+		banner={environmentBanner ? banner : undefined}
 	>
 		{@render children()}
 	</AppShell>
