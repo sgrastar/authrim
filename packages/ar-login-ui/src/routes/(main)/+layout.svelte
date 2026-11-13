@@ -9,6 +9,8 @@
 		type AuthenticationMethodsResponse
 	} from '#lib/api/authentication-methods.js';
 	import { page } from '$app/state';
+	import EnvironmentBanner from '#lib/components/EnvironmentBanner.svelte';
+	import { environmentBannerData, type EnvironmentBannerData } from '#lib/environment-banner.js';
 	import { onMount, untrack } from 'svelte';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
@@ -48,6 +50,18 @@
 	if (initialAuthenticationMethods) {
 		applyTenantBranding(initialAuthenticationMethods);
 	}
+	// The environment banner of an answer fetched in the browser: the plain sign-in entry has none
+	// on the server (no fetch there). Drawn here only when the page data has none, so never twice.
+	let clientBanner = $state<EnvironmentBannerData | null>(null);
+	// Read only once the browser has an answer (page data is not available to every SSR render).
+	const showClientBanner = $derived(
+		clientBanner !== null &&
+			(page.data as { environmentBanner?: unknown }).environmentBanner == null
+	);
+	function setClientBanner(answer: AuthenticationMethodsResponse) {
+		clientBanner = environmentBannerData(answer, getLocale());
+	}
+
 	// After the tenant's mode is known: a tenant that names none opens in the visitor's last mode.
 	themeStore.primeFromHint(untrack(() => data.themeHint));
 	// The colours of the mode the page opens in, from the first render (then kept in step below).
@@ -95,6 +109,7 @@
 				const { data: authenticationMethods } = await fetchAuthenticationMethods();
 				if (authenticationMethods) {
 					applyTenantBranding(authenticationMethods);
+					setClientBanner(authenticationMethods);
 				}
 				document.documentElement.setAttribute('data-branding-loaded', '');
 			} catch {
@@ -111,7 +126,19 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
+	{#if showClientBanner && clientBanner?.noindex}
+		<meta name="robots" content="noindex, nofollow" />
+	{/if}
 </svelte:head>
+
+{#if showClientBanner && clientBanner}
+	<EnvironmentBanner
+		text={clientBanner.text}
+		textLocalizations={clientBanner.textLocalizations}
+		locale={clientBanner.locale}
+		follow
+	/>
+{/if}
 
 <div
 	class="login-ui-theme-boundary"

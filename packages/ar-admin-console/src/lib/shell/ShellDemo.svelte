@@ -1,5 +1,6 @@
 <script lang="ts">
 	import AppShell from './AppShell.svelte';
+	import EnvironmentBanner from './EnvironmentBanner.svelte';
 	import { resolveNavPath } from './nav';
 	import PlaceholderPage from './PlaceholderPage.svelte';
 	import type { ScopeOption } from './ScopeSwitcher.svelte';
@@ -15,9 +16,16 @@
 		notifications?: readonly ShellNotification[];
 		/** An administrator of one tenant only: the header shows a plain scope, not a switcher. */
 		singleScope?: boolean;
+		/** The platform's environment notice, in the shell's banner slot (none by default). */
+		environmentBanner?: { text: string; textLocalizations?: Record<string, string> };
 	}
 
-	let { path = '/admin/users/all', notifications = [], singleScope = false }: Props = $props();
+	let {
+		path = '/admin/users/all',
+		notifications = [],
+		singleScope = false,
+		environmentBanner
+	}: Props = $props();
 
 	// Information is dismissed in place; the demo keeps what is left.
 	let dismissed = $state<string[]>([]);
@@ -45,6 +53,15 @@
 	}
 </script>
 
+{#snippet banner()}
+	{#if environmentBanner}
+		<EnvironmentBanner
+			text={environmentBanner.text}
+			textLocalizations={environmentBanner.textLocalizations}
+		/>
+	{/if}
+{/snippet}
+
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div onclick={intercept}>
 	<AppShell
@@ -62,6 +79,7 @@
 		onsignout={() => {}}
 		notifications={shown}
 		ondismiss={(id) => (dismissed = [...dismissed, id])}
+		banner={environmentBanner ? banner : undefined}
 	>
 		{#key current}<PlaceholderPage {location} />{/key}
 	</AppShell>

@@ -245,6 +245,7 @@ export const ar = {
 	'wizard.stepCurrent': 'الخطوة الحالية',
 
 	/* --- console --- */
+	'env.banner.label': 'تنبيه حول البيئة',
 	'app.skip': 'انتقل إلى المحتوى',
 	'app.brand': 'Authrim',
 	'theme.mode': 'المظهر',

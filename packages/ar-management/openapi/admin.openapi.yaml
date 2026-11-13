@@ -41,6 +41,14 @@ info:
     (`admin_invitation.code_handoff.enable`); a machine can never turn it on. Turning it off needs
     none.
 
+    The platform setting category `environment-banner` (platform scope only) holds the plain-text
+    notice band shown on the Login UI and the Admin Console (`environment_banner.enabled`, default
+    off; `environment_banner.text`, at most 200 characters; `environment_banner.text_localizations`,
+    a JSON map of language tag to text, at most 16 languages; `environment_banner.noindex`, default
+    off, which asks search engines not to index the Login UI). It is a notice, not a security
+    control. The console reads it from `GET /api/admin/me/session`; the Login UI from
+    `GET /api/auth/authentication-methods`.
+
     The platform can turn a named capability off for tenants (platform setting category
     `tenant-capabilities`: `webhooks`, `dynamic_client_registration`, `external_plugins`,
     `bulk_jobs`, `admin_sent_email`, `machine_credentials`, `email_provider_config`,
@@ -54890,6 +54898,25 @@ components:
               - directory_connectors
               - external_identity_providers
               - saml_metadata_url
+        environment_banner:
+          type:
+            - object
+            - 'null'
+          description: >-
+            The platform's environment banner for the console (a notice, not a security control):
+            null unless the banner is enabled with some text, or when the settings cannot be read.
+          additionalProperties: false
+          required: [text, text_localizations]
+          properties:
+            text:
+              type: string
+              maxLength: 200
+            text_localizations:
+              type: object
+              description: The text by language tag (at most 16); a viewer whose language is not listed sees `text`.
+              additionalProperties:
+                type: string
+                maxLength: 200
         expires_at:
           type: integer
           format: int64

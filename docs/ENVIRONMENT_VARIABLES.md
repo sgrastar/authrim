@@ -183,6 +183,24 @@ refuses.
 | ---------------------------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ADMIN_INVITATIONS_CODE_HANDOFF_ENABLED` | boolean | `false` | Deployment default of `admin_invitations.code_handoff_enabled`: hand an admin invitation's code over in the API response to a global machine principal holding `admin:admin_invitations:code_handoff` (see `docs/access-control.md`). A saved platform setting overrides it; turning the setting on needs a human step-up. |
 
+### Environment Banner
+
+| Variable                                | Type    | Default | Description                                                                                       |
+| --------------------------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `ENVIRONMENT_BANNER_ENABLED`            | boolean | `false` | Show a notice band at the top of the Login UI and the Admin Console                               |
+| `ENVIRONMENT_BANNER_TEXT`               | string  | empty   | The notice, plain text of at most 200 characters (for example `This is the staging environment.`) |
+| `ENVIRONMENT_BANNER_TEXT_LOCALIZATIONS` | string  | `{}`    | JSON text mapping a language tag to the notice in that language (at most 16 languages)            |
+| `ENVIRONMENT_BANNER_NOINDEX`            | boolean | `false` | Ask search engines not to index the Login UI (robots meta tag and `X-Robots-Tag` header)          |
+
+These are the deployment defaults of the platform settings `environment_banner.enabled`,
+`environment_banner.text`, `environment_banner.text_localizations` and `environment_banner.noindex`
+(Settings API, `environment-banner` category, platform scope only; a value saved there overrides the
+variable). The band is a notice, not a security control: tenant custom CSS can hide it, and pages
+produced directly by the protocol workers (authorization errors, SAML forms) do not carry it.
+Nothing is shown while the text is empty; an unreadable setting reads as off.
+
+On the plain sign-in entry (`/login` without a session or protocol context, which skips the tenant lookup for speed) the server only uses an answer that is already cached, so the noindex header is not guaranteed on the first request after a cold start (the page then adds the robots meta tag and the band after it loads). For a hard guarantee, add a Cloudflare or edge rule for `X-Robots-Tag` or a `robots.txt`.
+
 ### Tenant Capabilities
 
 | Variable                                          | Type    | Default | Description                                                            |

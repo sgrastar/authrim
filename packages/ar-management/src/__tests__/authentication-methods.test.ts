@@ -55,7 +55,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import { deriveEncryptionKey, encryptSecretFields } from '@authrim/ar-lib-plugin';
-import { externalSignupProviderIds } from '@authrim/ar-lib-core';
+import { externalSignupProviderIds, readEnvironmentBanner } from '@authrim/ar-lib-core';
 import { getAuthenticationMethodsHandler } from '../authentication-methods';
 
 /** The slice of the served `ui` object that the typed assertions below read. */
@@ -691,6 +691,87 @@ describe('Authentication Methods API', () => {
   // ===========================================================================
   // Method enable/disable via the tenant's settings
   // ===========================================================================
+
+  describe('environment banner (platform setting)', () => {
+    const get = async (kv: Record<string, string>, extraEnv: Record<string, unknown> = {}) => {
+      const { app, mockEnv } = createTestApp({ settingsKV: createMockKV(kv) });
+      const res = await app.request(
+        '/api/auth/authentication-methods',
+        { method: 'GET' },
+        Object.assign(mockEnv, extraEnv)
+      );
+      expect(res.status).toBe(200);
+      const body: { environmentBanner?: unknown } = await res.json();
+      return body;
+    };
+    const PLATFORM = 'settings:platform:environment-banner';
+
+    it('carries nothing while the banner is off', async () => {
+      const body = await get({});
+      expect(body).not.toHaveProperty('environmentBanner');
+    });
+
+    it('carries the text and its languages only while enabled', async () => {
+      const body = await get({
+        [PLATFORM]: JSON.stringify({
+          'environment_banner.enabled': true,
+          'environment_banner.text': 'This is the staging environment.',
+          'environment_banner.text_localizations': '{"ja":"ステージング環境です"}',
+        }),
+      });
+      expect(body.environmentBanner).toEqual({
+        text: 'This is the staging environment.',
+        textLocalizations: { ja: 'ステージング環境です' },
+        noindex: false,
+      });
+      const off = await get({
+        [PLATFORM]: JSON.stringify({
+          'environment_banner.enabled': false,
+          'environment_banner.text': 'This is the staging environment.',
+        }),
+      });
+      expect(off).not.toHaveProperty('environmentBanner');
+    });
+
+    it('carries noindex alone, without a notice', async () => {
+      const body = await get({}, { ENVIRONMENT_BANNER_NOINDEX: 'true' });
+      expect(body.environmentBanner).toEqual({ noindex: true });
+    });
+
+    it('is built from a fresh read: an isolate holding the old setting does not store it under the new revision', async () => {
+      const kv = createMockKV({
+        [PLATFORM]: JSON.stringify({
+          'environment_banner.enabled': true,
+          'environment_banner.text': 'Old text',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV: kv });
+      // The isolate has read the old document (its ~60 s settings cache now holds it).
+      expect((await readEnvironmentBanner(mockEnv)).text).toBe('Old text');
+      // A save writes the new document; the cached read would still say Old text.
+      await kv.put(
+        PLATFORM,
+        JSON.stringify({
+          'environment_banner.enabled': true,
+          'environment_banner.text': 'New text',
+        })
+      );
+      expect((await readEnvironmentBanner(mockEnv)).text).toBe('Old text');
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body: { environmentBanner?: { text?: string } } = await res.json();
+      expect(body.environmentBanner?.text).toBe('New text');
+    });
+
+    it('is not taken from a tenant document', async () => {
+      const body = await get({
+        'settings:tenant:default:environment-banner': JSON.stringify({
+          'environment_banner.enabled': true,
+          'environment_banner.text': 'Tenant text',
+        }),
+      });
+      expect(body).not.toHaveProperty('environmentBanner');
+    });
+  });
 
   describe('method toggling via SETTINGS KV', () => {
     it('should disable passkey when the tenant turns it off', async () => {

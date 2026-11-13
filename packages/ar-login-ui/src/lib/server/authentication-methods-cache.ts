@@ -22,6 +22,18 @@ function getCacheTtlMs(data: AuthenticationMethodsResponse): number {
 	return ttlSeconds * 1000;
 }
 
+/**
+ * The cached answer of a key if it is still fresh, else null. Never loads: for a path that must
+ * not wait for or make a request (the plain sign-in entry's environment banner).
+ */
+export function peekCachedAuthenticationMethods(
+	cacheKey: string,
+	now = Date.now()
+): AuthenticationMethodsResponse | null {
+	const cached = cache.get(cacheKey);
+	return cached && cached.expiresAt > now ? cached.data : null;
+}
+
 export async function getCachedAuthenticationMethods(
 	cacheKey: string,
 	loader: Loader,

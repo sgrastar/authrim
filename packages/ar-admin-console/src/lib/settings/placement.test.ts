@@ -335,6 +335,33 @@ describe('where settings live', () => {
 		});
 	});
 
+	it('places the environment banner once, as applied platform-only settings, in a platform section of Settings → General', () => {
+		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'general');
+		const section = page?.sections.find((candidate) => candidate.id === 'environment-banner');
+		expect(page?.nav).toBe('settings/general');
+		expect(section?.level).toBe('platform');
+		for (const [key, envKey] of [
+			['environment_banner.enabled', 'ENVIRONMENT_BANNER_ENABLED'],
+			['environment_banner.text', 'ENVIRONMENT_BANNER_TEXT'],
+			['environment_banner.text_localizations', 'ENVIRONMENT_BANNER_TEXT_LOCALIZATIONS'],
+			['environment_banner.noindex', 'ENVIRONMENT_BANNER_NOINDEX']
+		] as const) {
+			const meta = ALL_CATEGORY_META['environment-banner'].settings[key];
+			expect(categoryOf(key)).toBe('environment-banner');
+			expect(meta.status).toBeUndefined();
+			expect(NOT_APPLIED.has(key)).toBe(false);
+			// The platform's alone: a tenant can neither see nor change it.
+			expect(meta.scopes).toEqual(['platform']);
+			expect(CATEGORY_SCOPE_CONFIG['environment-banner'].allowedScopes).toEqual(['platform']);
+			expect(meta.envKey).toBe(envKey);
+			expect(drafted).not.toContain(key);
+			expect(section?.settings.filter((s) => s.key === key)).toEqual([{ key, depth: 'primary' }]);
+			// Named in every language the console has.
+			expect(hasMessage(settingText(key).label)).toBe(true);
+			expect(settingText(key).description).toBeDefined();
+		}
+	});
+
 	it('places the tenant capability switches once, as applied platform-only booleans on the capabilities page', () => {
 		for (const capability of [
 			'webhooks',

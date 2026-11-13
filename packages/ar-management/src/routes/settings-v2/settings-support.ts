@@ -36,6 +36,9 @@ export const AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES = new Set<CategoryNa
   // The platform's switches decide whether a tenant's own Default methods apply (a platform
   // change bumps every tenant's revision).
   'profiles',
+  // The platform's environment banner is part of the answer (a platform change bumps every
+  // tenant's revision).
+  'environment-banner',
 ]);
 export const AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES = new Set<CategoryName>(['login-ui']);
 export const DEFAULT_HUMAN_VERIFICATION_PROVIDER = 'human-verification-cloudflare-turnstile';

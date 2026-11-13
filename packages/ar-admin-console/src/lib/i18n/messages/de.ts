@@ -246,6 +246,7 @@ export const de = {
 	'wizard.stepCurrent': 'Aktueller Schritt',
 
 	/* --- console --- */
+	'env.banner.label': 'Hinweis zur Umgebung',
 	'app.skip': 'Zum Inhalt springen',
 	'app.brand': 'Authrim',
 	'theme.mode': 'Darstellung',

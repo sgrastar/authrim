@@ -48,6 +48,7 @@ import { IDENTITY_MAPPING_CATEGORY_META } from './identity-mapping';
 import { BULK_APPLY_CATEGORY_META } from './bulk-apply';
 import { TENANT_CAPABILITIES_CATEGORY_META } from './tenant-capabilities';
 import { ADMIN_INVITATIONS_CATEGORY_META } from './admin-invitations';
+import { ENVIRONMENT_BANNER_CATEGORY_META } from './environment-banner';
 import { INSTITUTION_CATEGORY_META } from './institution';
 
 /**
@@ -117,6 +118,8 @@ export const ALL_CATEGORY_META = {
   'tenant-capabilities': TENANT_CAPABILITIES_CATEGORY_META,
   // Handing an admin invitation's enrollment code over in the API response (platform)
   'admin-invitations': ADMIN_INVITATIONS_CATEGORY_META,
+  // The environment notice band and its noindex (platform)
+  'environment-banner': ENVIRONMENT_BANNER_CATEGORY_META,
   // The institution a tenant stands for: its scopes and name (the platform sets them)
   institution: INSTITUTION_CATEGORY_META,
 } as const;
@@ -297,6 +300,10 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   },
   // The admin invitation code handoff switch: the platform's alone.
   'admin-invitations': {
+    allowedScopes: ['platform'],
+  },
+  // The environment banner: the platform's alone.
+  'environment-banner': {
     allowedScopes: ['platform'],
   },
 

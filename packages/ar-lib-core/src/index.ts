@@ -34,6 +34,7 @@ export * from './services/legacy-settings-import';
 export * from './services/effective-settings';
 export * from './services/external-plugin-gate';
 export * from './services/tenant-capabilities';
+export * from './services/environment-banner';
 export * from './services/tenant-capability-access';
 export * from './services/assurance';
 export * from './services/assurance-session';
