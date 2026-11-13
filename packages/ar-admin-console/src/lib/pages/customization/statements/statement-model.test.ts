@@ -121,6 +121,10 @@ describe('texts', () => {
 
 	it('shows old HTML as text', () => {
 		expect(plainText('<p>One &amp; two</p><p>Three</p>')).toBe('One & two\nThree');
+		// No tag survives: encoded ones, nested ones, and ones a removal would form.
+		expect(plainText('&lt;script&gt;alert(1)&lt;/script&gt;')).toBe('alert(1)');
+		expect(plainText('<scr<script>ipt>x')).toBe('ipt>x');
+		expect(plainText('a < b')).toBe('a < b');
 	});
 });
 

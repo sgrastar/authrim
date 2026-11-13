@@ -276,14 +276,19 @@ export const languageName = (code: string): string =>
  * HTML (`<p>…</p>`); it is shown as the text it holds, never rendered.
  */
 export function plainText(content: string): string {
-	return content
+	let text = content
 		.replace(/<br\s*\/?>/giu, '\n')
 		.replace(/<\/(p|div|li|h[1-6])>/giu, '\n')
-		.replace(/<[^>]*>/gu, '')
 		.replace(/&nbsp;/gu, ' ')
 		.replace(/&lt;/gu, '<')
 		.replace(/&gt;/gu, '>')
-		.replace(/&quot;/gu, '"')
-		.replace(/&amp;/gu, '&')
-		.trim();
+		.replace(/&quot;/gu, '"');
+	// Entities are decoded before tags are removed, and removal repeats until nothing changes, so
+	// no tag (an encoded one or one formed by a removal) is left in what is returned.
+	let previous: string;
+	do {
+		previous = text;
+		text = text.replace(/<[^>]*>/gu, '');
+	} while (text !== previous);
+	return text.replace(/&amp;/gu, '&').trim();
 }
