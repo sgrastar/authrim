@@ -140,6 +140,12 @@ and a super admin can hand them to a principal through the machine access API (w
 | `admin:tenants:provision` | `POST /api/admin/tenants`, `GET /api/admin/tenants/{id}/provisioning`, `POST /api/admin/tenants/{id}/provisioning/retry`, `POST /api/admin/tenants/{id}/provisioning/cleanup` |
 | `admin:tenants:delete`    | `DELETE /api/admin/tenants/{id}`                                                                                                                                              |
 
+A global machine principal that holds `admin:settings:read` can also read platform settings
+(`GET /api/admin/platform/settings/{category}`) and use the returned `version` as `ifMatch` for a
+write; the write permission does not imply the read, and a token limited to some tenants is refused.
+Categories only a super admin may view (for example `encryption`) stay closed to such a token; it
+needs the global wildcard permission for them.
+
 What they do not allow: every other route under `/api/admin/tenants` (list, read, update,
 set-default, clone, lifecycle commands, jobs, placement migrations, runtime registry purge), and
 every other system-admin route (platform settings, plugins, initial access tokens, rate-limit
