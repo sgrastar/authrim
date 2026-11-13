@@ -50,6 +50,7 @@
 	import {
 		MAX_RUNTIME_AUTO_ADVANCE_STEPS,
 		runtimeAutoSubmitHandle,
+		runtimeStepWaitsForSignIn,
 		runtimeContinuationString,
 		runtimeSamlContinuationPath
 	} from '#lib/authrim/flow-runtime-steps.js';
@@ -1142,7 +1143,7 @@
 	async function advanceRuntimePastNonRenderedSteps(options: { stopAtCompletion?: boolean } = {}) {
 		let guard = 0;
 		while (runtimeFlow && runtimeFlowStep && guard < MAX_RUNTIME_AUTO_ADVANCE_STEPS) {
-			if (options.stopAtCompletion && runtimeFlowStep.component === 'completion') return;
+			if (options.stopAtCompletion && runtimeStepWaitsForSignIn(runtimeFlowStep)) return;
 			const autoSubmitHandle = runtimeAutoSubmitHandle(runtimeFlowStep);
 			if (autoSubmitHandle === null) return;
 			guard += 1;

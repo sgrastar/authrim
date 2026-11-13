@@ -3,8 +3,11 @@ import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
 import {
 	hasInteractiveAccountActionUi,
 	runtimeAutoSubmitHandle,
+	runtimeCodeSuccessHandle,
 	runtimeContinuationString,
-	runtimeSamlContinuationPath
+	runtimeSamlContinuationPath,
+	runtimeStepAsksOnlyForEmailCode,
+	runtimeStepWaitsForSignIn
 } from '../flow-runtime-steps.js';
 
 const step = (overrides: Partial<FlowRuntimeStep>): FlowRuntimeStep =>
@@ -70,5 +73,78 @@ describe('runtimeSamlContinuationPath', () => {
 		expect(runtimeSamlContinuationPath({ protocol: 'direct' }, { samlRequestId: 'r' })).toBeNull();
 		expect(runtimeSamlContinuationPath({ protocol: 'saml' }, { samlRequestId: 'r' })).toBeNull();
 		expect(runtimeSamlContinuationPath(undefined, {})).toBeNull();
+	});
+});
+
+describe('runtimeStepWaitsForSignIn', () => {
+	it.each(['completion', 'condition'] as const)('waits at a %s for the sign-in', (component) => {
+		expect(runtimeStepWaitsForSignIn(step({ component, render: false }))).toBe(true);
+	});
+
+	it.each(['screen', 'email_verification', 'consent_policy'] as const)(
+		'does not wait at a %s',
+		(component) => {
+			expect(runtimeStepWaitsForSignIn(step({ component }))).toBe(false);
+		}
+	);
+});
+
+describe('runtimeCodeSuccessHandle', () => {
+	const codeScreen = { fields: [{ block_type: 'code_input_widget' }] };
+
+	it('submits an email verification as verified', () => {
+		expect(runtimeCodeSuccessHandle(step({ component: 'email_verification' }))).toBe('verified');
+	});
+
+	it.each([{ config: { screen: codeScreen } }, { content: { screen: codeScreen } }])(
+		'submits a screen asking for the code as submitted (%o)',
+		(parts) => {
+			expect(runtimeCodeSuccessHandle(step({ component: 'screen', ...parts }))).toBe('submitted');
+		}
+	);
+
+	it('leaves any other step alone', () => {
+		expect(runtimeCodeSuccessHandle(step({ component: 'screen', config: {} }))).toBeNull();
+		expect(runtimeCodeSuccessHandle(step({ component: 'completion' }))).toBeNull();
+	});
+});
+
+describe('runtimeStepAsksOnlyForEmailCode', () => {
+	const screenOf = (fields: unknown[], content: Record<string, unknown> = {}) =>
+		step({ component: 'screen', config: { screen: { fields } }, content });
+
+	it.each([
+		[[{ block_type: 'code_input_widget' }]],
+		[[{ block_type: 'code_input_widget', code_input_mode: 'auto' }, { block_type: 'text' }]]
+	])('is true for a screen asking for the emailed code alone (%j)', (fields) => {
+		expect(runtimeStepAsksOnlyForEmailCode(screenOf(fields))).toBe(true);
+	});
+
+	it.each([
+		['an authenticator code', [{ block_type: 'code_input_widget', code_input_mode: 'totp' }]],
+		[
+			'an authenticator code by its method',
+			[{ block_type: 'code_input_widget', auth_method: 'totp' }]
+		],
+		[
+			'a part with no type (an identity field)',
+			[{ block_type: 'code_input_widget' }, { field: 'name', required: true }]
+		],
+		[
+			'another answer',
+			[{ block_type: 'code_input_widget' }, { block_type: 'checkbox', required: true }]
+		],
+		['another sign-in', [{ block_type: 'code_input_widget' }, { block_type: 'auth_widget' }]],
+		['no code input', [{ block_type: 'text' }]]
+	])('is false for a screen with %s', (_label, fields) => {
+		expect(runtimeStepAsksOnlyForEmailCode(screenOf(fields))).toBe(false);
+	});
+
+	it('is false for a screen that asks for consent', () => {
+		expect(
+			runtimeStepAsksOnlyForEmailCode(
+				screenOf([{ block_type: 'code_input_widget' }], { consent_policy: { id: 'p', items: [] } })
+			)
+		).toBe(false);
 	});
 });
