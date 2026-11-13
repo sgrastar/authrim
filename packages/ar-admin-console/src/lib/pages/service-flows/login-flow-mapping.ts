@@ -7,10 +7,12 @@
 import {
 	applyLoginFlowSpec,
 	buildLoginFlowEditor,
+	canSetSignInConsent,
 	readLoginFlowEditor,
 	type LoginFlowSpec
 } from '@authrim/ar-lib-core/types/login-flow-graph';
 import { initialState } from './account-flow-model';
+import { consentSpecOf, consentValueOf } from './consent-field-model';
 import { completionOf, setCompletion } from './completion-mapping';
 import type { AccountFlowState, AccountValue } from './flow-spec';
 
@@ -26,7 +28,8 @@ export function loginSpecOf(state: AccountFlowState): LoginFlowSpec {
 		sessionProfileRef: text(values['login.sessionProfile']) || 'default',
 		completion: completionOf(values, 'login'),
 		unregistered: values['login.unregistered'] === 'guide' ? 'guide' : 'generic',
-		onCancel: values['login.onCancel'] === 'error' ? 'error' : 'stay'
+		onCancel: values['login.onCancel'] === 'error' ? 'error' : 'stay',
+		consent: state.added.includes('consent') ? consentSpecOf(values['login.statements']) : []
 	};
 }
 
@@ -44,7 +47,11 @@ export function loginStateOf(
 	values['login.unregistered'] = spec.unregistered;
 	values['login.onCancel'] = spec.onCancel;
 	setCompletion(values, spec.completion, 'login');
+	if (spec.consent.length > 0) {
+		state.added.push('consent');
+		values['login.statements'] = consentValueOf(spec.consent);
+	}
 	return state;
 }
 
-export { applyLoginFlowSpec, buildLoginFlowEditor, readLoginFlowEditor };
+export { applyLoginFlowSpec, buildLoginFlowEditor, canSetSignInConsent, readLoginFlowEditor };

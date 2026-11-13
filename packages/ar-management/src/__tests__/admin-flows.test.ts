@@ -866,6 +866,7 @@ describe('admin Flow management handlers', () => {
       completion: { behavior: 'service_site', service_site_path: '/portal' },
       unregistered: 'generic',
       onCancel: 'stay',
+      consent: [],
     });
     const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
     const body = await readJson(response);

@@ -3030,6 +3030,115 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  it('looks through a consent step to its completion when picking the protocol branch', async () => {
+    // The console puts a consent step before each completion: the protocol is the completion's.
+    const consentStep = (completion: string) => ({
+      id: `sign-in-consent-${completion}:step`,
+      source_node_id: `sign-in-consent-${completion}`,
+      component: 'consent_policy' as const,
+      render: true,
+      config: { statements: [{ statement_id: 'tos', required: true }] },
+    });
+    const steps = mixedProtocolCompletionRuntime.ui.steps;
+    const runtimeSnapshot: FlowRuntimeContract = {
+      ...mixedProtocolCompletionRuntime,
+      ui: {
+        steps: [
+          steps[0],
+          consentStep('saml-complete'),
+          steps[1],
+          consentStep('oidc-complete'),
+          steps[2],
+        ],
+      },
+    };
+    const editorSnapshot = {
+      nodes: [
+        { id: 'session-check', type: 'session_check' },
+        { id: 'sign-in-consent-saml-complete', type: 'consent' },
+        { id: 'saml-complete', type: 'complete' },
+        { id: 'sign-in-consent-oidc-complete', type: 'consent' },
+        { id: 'oidc-complete', type: 'complete' },
+      ],
+      edges: [
+        {
+          id: 'edge_session_saml',
+          source: 'session-check',
+          target: 'sign-in-consent-saml-complete',
+          source_handle: 'continue',
+        },
+        {
+          id: 'edge_session_oidc',
+          source: 'session-check',
+          target: 'sign-in-consent-oidc-complete',
+          source_handle: 'continue',
+        },
+        {
+          id: 'sign-in-consent-saml-complete:accepted',
+          source: 'sign-in-consent-saml-complete',
+          target: 'saml-complete',
+          source_handle: 'accepted',
+        },
+        {
+          id: 'sign-in-consent-oidc-complete:accepted',
+          source: 'sign-in-consent-oidc-complete',
+          target: 'oidc-complete',
+          source_handle: 'accepted',
+        },
+      ],
+    };
+    const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'session-check',
+      currentStepId: 'session-check:step',
+      stepState: 'pending',
+      runtimeSnapshot,
+      editorSnapshot,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+      },
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'session-check:step',
+          node_id: 'session-check',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    // Nothing left to agree to here (the person has no open statements in this test), so the
+    // consent step goes on by itself: to the OIDC completion, not the SAML one listed first.
+    expect(response.status).toBe(200);
+    expect(data.completed).toBe(true);
+    expect(data.output).toMatchObject({
+      protocol_continuation: {
+        protocol: 'oidc',
+        completion_block: { id: 'oidc-authorization-completion', protocol: 'oidc' },
+      },
+    });
+  });
+
   it('records the answer in the account when a consent step is submitted', async () => {
     const { data: startData } = await startInteraction(
       {

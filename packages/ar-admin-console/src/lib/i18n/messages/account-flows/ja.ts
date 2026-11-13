@@ -51,7 +51,6 @@ export const jaAccountFlows = {
 	'af.part.reg-methods': '認証方式プロフィール',
 	'af.part.reg-verification': 'メールアドレスの確認',
 	'af.part.reg-statements': '同意文',
-	'af.part.reg-policy': '同意ポリシー',
 	'af.part.reg-result': '完了後の動作',
 	'af.part.login-methods': '認証方式プロフィール',
 	'af.part.login-validation': '認証の検証条件',
@@ -59,8 +58,6 @@ export const jaAccountFlows = {
 
 	'af.lead.reg-methods': '登録で使う認証方式を、認証方式プロフィールから選びます。',
 	'af.lead.reg-verification': '登録するメールアドレスを本人が受け取れるか、メールで確かめます。',
-	'af.lead.reg-statements': '利用規約など、登録のときに同意してもらう文面を選びます。',
-	'af.lead.reg-policy': '登録のときの同意を、いつ、どう求めるかを決めます。',
 	'af.lead.reg-result': '登録が終わったあと、どこへ移動するかを決めます。',
 	'af.lead.login-methods': 'ログインで使う認証方式を、認証方式プロフィールから選びます。',
 	'af.lead.login-validation':
@@ -84,10 +81,6 @@ export const jaAccountFlows = {
 	'af.info.failedSignInsLink': '攻撃からの保護で変更',
 	'af.lead.login-session': '必要な認証が済んだあとに、Authrim のセッションを作ります。',
 
-	'af.note.reg-statements':
-		'アプリへの情報提供の同意とは別です。それは各接続のフローで設定します。',
-	'af.note.reg-policy': '同意しなかった場合は、登録を確定しません。',
-
 	'af.field.reg.methodProfile': '使うプロフィール',
 	'af.profile.create': '新しく認証方式プロフィールを作成',
 	'af.profile.newTitle': '新しい認証方式プロフィール',
@@ -108,8 +101,6 @@ export const jaAccountFlows = {
 	'af.live.notConsole':
 		'この新規登録フローは、フロー編集画面で作られた手順を含むため、ここでは保存できません。',
 	'af.live.loadFailed': '新規登録フローを読み込めませんでした。',
-	'af.live.consentNotWired':
-		'同意（コンセント）はまだ保存できません。保存するには、同意の手順を外してください。',
 	'af.title.edit': 'タイトルを編集',
 	'af.title.label': 'タイトル',
 	'af.title.done': '完了',
@@ -184,8 +175,6 @@ export const jaAccountFlows = {
 		'メールで届くコードを入力してもらいます。メールアドレスを取得できなかったときは、本人に入力してもらったアドレスに送ります。確認が済むまで、アカウントは作りません。',
 	'af.hint.reg.expiry': 'メールで届くリンクやコードを使える時間です。',
 	'af.field.reg.expiry': '確認の有効期限',
-	'af.field.reg.statements': '登録のときに同意してもらう文面',
-	'af.field.reg.consentWhen': '同意を求めるとき',
 	'af.field.reg.after': '完了後の動作',
 
 	'af.field.reg.extraWhen': '外部プロバイダーから登録するとき、メールで確認する場合',
@@ -347,8 +336,6 @@ export const jaAccountFlows = {
 	'af.hint.reg.domains':
 		'example.com のように、カンマまたは空白で区切って入力します。サブドメインは別に書きます。',
 	'af.expiry.15m': '15 分',
-	'af.consentWhen.signup': '登録のときだけ',
-	'af.consentWhen.version': '登録のときと、文面が変わったとき',
 	'af.after.tenant': 'テナントの設定に従う',
 	'af.part.login-result': 'ログイン後の動作',
 	'af.lead.login-result': 'ログインが終わったあと、どこへ移動するかを決めます。',
@@ -357,5 +344,37 @@ export const jaAccountFlows = {
 	'af.hint.login.appClient':
 		'ログインが終わったら、選んだサービス（Client）にそのままログインします。Client 側で First Party App と App Login が有効になっている必要があります。',
 	'af.hint.login.samlSp':
-		'ログインが終わったら、選んだ SAML のサービス（SP）に IdP 起点の SSO でそのままログインします。SP 側が IdP 起点の SAML 応答を受け付ける設定になっている必要があります。'
+		'ログインが終わったら、選んだ SAML のサービス（SP）に IdP 起点の SSO でそのままログインします。SP 側が IdP 起点の SAML 応答を受け付ける設定になっている必要があります。',
+
+	'af.group.loginConsent': 'ログイン時の同意',
+	'af.part.login-statements': '同意文',
+	'af.lead.reg-statements':
+		'アカウントを作る直前に、同意の画面で求めます。答えはアカウントができたときに記録します。',
+	'af.note.reg-statements':
+		'サービスへの情報提供の同意とは別です。それは各接続のフローで設定します。同意文は、同意文の画面で作成・公開します。',
+	'af.lead.login-statements':
+		'サインインの完了前に、まだ同意していない同意文だけを求めます。必須の同意文は、すでにサインイン済みの人にもシングルサインオンの時に求めます。',
+	'af.note.login-statements': 'すべてに同意済みの人には、この手順は表示されません。',
+	'af.field.reg.statements': '同意を求める同意文',
+	'af.field.login.statements': '同意を求める同意文',
+	'af.live.consentNoPlace':
+		'このサインインフローには同意を挟める完了の手順がないため、ここでは同意を保存できません。フロー編集画面で設定してください。',
+	'af.consent.count': '{n} 件',
+	'af.consent.add': '同意文を追加',
+	'af.consent.addPlaceholder': '追加する同意文を選ぶ',
+	'af.consent.empty': 'まだ選ばれていません。',
+	'af.consent.none': '選べる同意文がありません。同意文を作成して公開してください。',
+	'af.consent.required': '必須',
+	'af.consent.moveUp': '上へ: {name}',
+	'af.consent.moveDown': '下へ: {name}',
+	'af.consent.remove': '外す: {name}',
+	'af.consent.unknown': '見つかりません（削除または廃止された同意文です）。外してください。',
+	'af.consent.unpublished':
+		'今は選べません（無効、または公開された版がありません）。公開時に保存できなくなるため、外すか公開してください。',
+	'af.consent.loadFailed': '同意文の一覧を読み込めませんでした。',
+	'af.consent.max': '同意文は {n} 件まで選べます。',
+	'af.consent.manage': '同意文を管理',
+	'af.consent.create': '同意文を新規作成',
+	'af.consent.unavailable':
+		'このサインインフローは、フロー編集画面で作られた構成のため、ここでは同意を設定できません。フロー編集画面で同意の手順を設定してください。'
 } as const;

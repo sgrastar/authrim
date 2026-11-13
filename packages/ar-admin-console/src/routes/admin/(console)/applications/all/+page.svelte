@@ -6,6 +6,7 @@
 	import { readAppliedThemeValues } from '#lib/api/login-ui-themes.js';
 	import { httpScreens } from '#lib/api/screens.js';
 	import { httpClients } from '#lib/api/clients.js';
+	import { httpConsentStatements } from '#lib/api/consent-statements.js';
 	import { httpFlows } from '#lib/api/flows.js';
 	import { httpSamlProviders } from '#lib/api/saml-providers.js';
 	import { httpSettings } from '#lib/api/settings.js';
@@ -22,6 +23,7 @@
 		clients: httpClients,
 		flows: httpFlows,
 		samlProviders: httpSamlProviders,
+		consentStatements: httpConsentStatements,
 		canCreateProfile: () => hasPermission(adminAccess.current, 'admin:settings:write'),
 		loadTheme: (signal) => readAppliedThemeValues(tenantScope.tenantId, signal),
 		failedSignInLimit: async (signal) => {

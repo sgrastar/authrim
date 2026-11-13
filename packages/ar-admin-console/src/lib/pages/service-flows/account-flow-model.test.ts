@@ -243,7 +243,7 @@ describe('account flows', () => {
 		const before = stillToDo('registration', state).length;
 		state.added = ['consent'];
 		const open = stillToDo('registration', state);
-		expect(open.length).toBe(before + 2);
+		expect(open.length).toBe(before + 1);
 		expect(open.find((part) => part.id === 'reg-statements')?.state).toBe('todo');
 		// An optional step left unset does not stop the flow from being ready.
 		const ready = sampleState('registration');
@@ -257,7 +257,16 @@ describe('account flows', () => {
 			'login.methodProfile'
 		]);
 		expect(partState('login-methods', 'login', state)).toBe('done');
-		expect(FLOWS.login.groups.map((group) => group.id)).toEqual(['authenticate', 'finish']);
+		expect(FLOWS.login.groups.map((group) => group.id)).toEqual([
+			'authenticate',
+			'consent',
+			'finish'
+		]);
+		// Consent is an optional step with the same list setting as sign-up's.
+		expect(FLOWS.login.groups[1]).toMatchObject({ optional: true, parts: ['login-statements'] });
+		expect(PARTS['login-statements'].fields[0]).toMatchObject({ kind: 'consent-statements' });
+		expect(PARTS['reg-statements'].fields[0]).toMatchObject({ kind: 'consent-statements' });
+		expect(PARTS).not.toHaveProperty('reg-policy');
 	});
 
 	it('leave a field unset in a sample when it is not shown, so choosing it later starts empty', () => {
