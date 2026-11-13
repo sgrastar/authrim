@@ -153,7 +153,10 @@ export const TENANT_TABLES_TO_DELETE = [
   'consent_statement_localizations',
   'consent_statement_versions',
   'consent_statements',
+  'oauth_client_consent_revocations',
   'oauth_client_consents',
+  'saml_sp_release_consent_revocations',
+  'saml_sp_release_consents',
   'sign_in_confirmation_policies',
   'user_consent_records',
   // Flow runtime resources

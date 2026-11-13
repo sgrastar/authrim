@@ -60,21 +60,6 @@ interface DestinationProfileRow {
   matching_profile_count?: number;
 }
 
-interface DestinationFieldConsentRow {
-  id: string;
-  released_claims_json: unknown;
-  released_attributes_json: unknown;
-  evidence_json: unknown;
-  created_at: number;
-}
-
-interface SelectedDestinationFields {
-  recordId: string;
-  fields: Set<string>;
-  evidence: Record<string, unknown>;
-  createdAt: number;
-}
-
 export const OIDC_PROTOCOL_ENVELOPE_CLAIMS = new Set([
   'iss',
   'aud',
@@ -580,77 +565,47 @@ export async function loadResourceServerDestinationProfileDescriptor(
   };
 }
 
-export async function filterSamlAttributesByDestinationConsent<T extends { name: string }>(input: {
-  coreAdapter: DatabaseAdapter;
+/**
+ * A SAML SP's attributes held to its Destination Profile: the attributes the profile names and
+ * does not hide, checked against the profile (types, release safety), with which are required
+ * (the SP's field policies: `required`) and what each is called. Which optional attributes are
+ * released is the person's information release decision (saml-release-consent.ts), applied by
+ * the caller; a required attribute that is missing refuses the release here.
+ */
+export async function filterSamlAttributesByDestinationProfile<T extends { name: string }>(input: {
   adminAdapter: DatabaseAdapter;
   tenantId: string;
-  subjectId: string;
-  samlSpId: string;
   profileId: string;
   fieldPolicies?: DestinationFieldReleasePolicies;
   releaseSafetyBinding?: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges'>;
   attributes: T[];
-}): Promise<T[]> {
-  return (await filterSamlAttributesByDestinationConsentWithStatus(input)).attributes;
-}
-
-export async function filterSamlAttributesByDestinationConsentWithStatus<
-  T extends { name: string },
->(input: {
-  coreAdapter: DatabaseAdapter;
-  adminAdapter: DatabaseAdapter;
-  tenantId: string;
-  subjectId: string;
-  samlSpId: string;
-  profileId: string;
-  fieldPolicies?: DestinationFieldReleasePolicies;
-  releaseSafetyBinding?: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges'>;
-  attributes: T[];
-}): Promise<{
-  attributes: T[];
-  consentApplied: boolean;
-  consentRecordId?: string;
-  consentEvidence?: Record<string, unknown>;
-  consentCreatedAt?: number;
-}> {
+}): Promise<SamlDestinationProfileRelease<T>> {
   const descriptor = await loadDestinationProfileConsentDescriptor(
     input.adminAdapter,
     input.tenantId,
     input.profileId
   );
-  return filterSamlAttributesByDestinationConsentDescriptorWithStatus({
-    coreAdapter: input.coreAdapter,
-    tenantId: input.tenantId,
-    subjectId: input.subjectId,
-    samlSpId: input.samlSpId,
-    profileId: input.profileId,
-    fieldPolicies: input.fieldPolicies,
-    releaseSafetyBinding: input.releaseSafetyBinding,
-    attributes: input.attributes,
-    descriptor,
-  });
+  return filterSamlAttributesByDestinationProfileDescriptor({ ...input, descriptor });
 }
 
-/** The same release gate with a profile descriptor imported from a verified Admin snapshot. */
-export async function filterSamlAttributesByDestinationConsentDescriptorWithStatus<
+export interface SamlDestinationProfileRelease<T> {
+  attributes: T[];
+  /** Names of the attributes the SP requires. */
+  required: Set<string>;
+  /** What each attribute is called on the profile. */
+  labels: Map<string, string>;
+}
+
+/** The same, with a profile descriptor imported from a verified Admin snapshot. */
+export function filterSamlAttributesByDestinationProfileDescriptor<
   T extends { name: string },
 >(input: {
-  coreAdapter: DatabaseAdapter;
-  tenantId: string;
-  subjectId: string;
-  samlSpId: string;
   profileId: string;
   fieldPolicies?: DestinationFieldReleasePolicies;
   releaseSafetyBinding?: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges'>;
   attributes: T[];
   descriptor: DestinationProfileConsentDescriptor | null;
-}): Promise<{
-  attributes: T[];
-  consentApplied: boolean;
-  consentRecordId?: string;
-  consentEvidence?: Record<string, unknown>;
-  consentCreatedAt?: number;
-}> {
+}): SamlDestinationProfileRelease<T> {
   const descriptor = input.descriptor;
   if (!descriptor) {
     throw new DestinationProfileReleaseValidationError(
@@ -699,91 +654,14 @@ export async function filterSamlAttributesByDestinationConsentDescriptorWithStat
       missingRequired[0]
     );
   }
-
-  const selected = await loadSelectedDestinationFields({
-    coreAdapter: input.coreAdapter,
-    tenantId: input.tenantId,
-    subjectId: input.subjectId,
-    protocol: 'saml',
-    recipientType: 'saml_sp',
-    recipientId: input.samlSpId,
-    profileId: descriptor.profileId,
-    profileVersionId: descriptor.profileVersionId,
-    consentVersion: resolveDestinationProfileConsentVersion(
-      descriptor.profileVersionId,
-      input.fieldPolicies
-    ),
-    jsonColumn: 'released_attributes_json',
-  });
-  const required = new Set(
-    Object.entries(input.fieldPolicies ?? {})
-      .filter(([, mode]) => mode === 'required')
-      .map(([key]) => key)
-  );
-  if (!selected) {
-    return {
-      attributes: visibleAttributes.filter((attribute) => required.has(attribute.name)),
-      consentApplied: false,
-    };
-  }
   return {
-    attributes: visibleAttributes.filter(
-      (attribute) => required.has(attribute.name) || selected.fields.has(attribute.name)
+    attributes: visibleAttributes,
+    required: new Set(
+      Object.entries(input.fieldPolicies ?? {})
+        .filter(([, mode]) => mode === 'required')
+        .map(([key]) => key)
     ),
-    consentApplied: true,
-    consentRecordId: selected.recordId,
-    consentEvidence: selected.evidence,
-    consentCreatedAt: selected.createdAt,
-  };
-}
-
-async function loadSelectedDestinationFields(input: {
-  coreAdapter: DatabaseAdapter;
-  tenantId: string;
-  subjectId: string;
-  protocol: DestinationProfileConsentType;
-  recipientType: 'oidc_client' | 'saml_sp';
-  recipientId: string;
-  profileId: string;
-  profileVersionId: string;
-  consentVersion?: string;
-  jsonColumn: 'released_claims_json' | 'released_attributes_json';
-}): Promise<SelectedDestinationFields | null> {
-  const row = await input.coreAdapter.queryOne<DestinationFieldConsentRow>(
-    `SELECT id, released_claims_json, released_attributes_json, evidence_json, created_at
-       FROM consent_records
-      WHERE tenant_id = ?
-        AND subject_user_id = ?
-        AND protocol = ?
-        AND recipient_type = ?
-        AND recipient_id = ?
-        AND binding_type = 'destination_field_mapping_set'
-        AND binding_key = ?
-        AND statement_id = ?
-        AND statement_version = ?
-        AND decision IN ('accepted', 'selected', 'once', 'always')
-        AND status = 'active'
-        AND (expires_at IS NULL OR expires_at > ?)
-      ORDER BY created_at DESC, id DESC
-      LIMIT 1`,
-    [
-      input.tenantId,
-      input.subjectId,
-      input.protocol,
-      input.recipientType,
-      input.recipientId,
-      input.profileId,
-      `destination_profile:${input.profileId}`,
-      input.consentVersion ?? input.profileVersionId,
-      Math.floor(Date.now() / 1000),
-    ]
-  );
-  if (!row) return null;
-  return {
-    recordId: row.id,
-    fields: new Set(parseJsonStringArray(row[input.jsonColumn])),
-    evidence: parseJsonRecord(row.evidence_json),
-    createdAt: row.created_at,
+    labels: new Map(descriptor.fields.map((field) => [field.key, field.label])),
   };
 }
 
@@ -884,23 +762,6 @@ function parseJsonRecord(value: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-function parseJsonStringArray(value: unknown): string[] {
-  const parsed = (() => {
-    if (Array.isArray(value)) return value;
-    if (typeof value !== 'string') return [];
-    try {
-      const result: unknown = JSON.parse(value);
-      return Array.isArray(result) ? result : [];
-    } catch {
-      return [];
-    }
-  })();
-  return parsed
-    .map(String)
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function readValueMultiplicity(value: unknown): 'single' | 'multi' | null {

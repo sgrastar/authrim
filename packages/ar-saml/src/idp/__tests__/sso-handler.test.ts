@@ -3,17 +3,20 @@ import { Hono } from 'hono';
 import { BINDING_URIS, SAML_NAMESPACES } from '../../common/constants';
 import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
 import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
+import { createChallengeStoreFake } from './helpers/challenge-store-fake';
 import { completeStoredAuthnRequest } from '../sso-stored-request';
 
 const store = createSamlRequestStoreFake();
+const challenges = createChallengeStoreFake();
 
 const mocks = vi.hoisted(() => ({
   sp: null as Record<string, unknown> | null,
   ui: undefined as { baseUrl: string; paths?: { login?: string } } | undefined,
-  loginPolicy: 'ui_base_url' as 'ui_base_url' | 'tenant_host',
+  loginPolicy: 'ui_base_url',
   storeFetch: vi.fn(
     async (_url?: string, _init?: { body?: string }) => new Response('{}', { status: 200 })
   ),
+  /** The challenges stored for the Login UI and the consent screen (see the challenge fake). */
   storeChallenge: vi.fn(async (_request?: unknown) => ({ success: true })),
   audit: vi.fn(),
   sessionId: undefined as string | undefined,
@@ -22,21 +25,26 @@ const mocks = vi.hoisted(() => ({
   sessionThrows: false,
   user: null as Record<string, unknown> | null,
   attributeError: null as Error | null,
-  consentError: null as Error | null,
-  destinationConsentApplied: false,
+  /** The attributes the mapping would release, and the ones the Destination Profile requires. */
+  attributes: [{ name: 'mail', values: ['user@example.test'] }] as Array<{
+    name: string;
+    values: string[];
+  }>,
+  requiredNames: null as string[] | null,
   authnContextError: null as Error | null,
   nameIdError: null as Error | null,
-  consentGrant: vi.fn(async () => undefined),
   pairwiseSecret: 'pairwise-secret' as string | undefined,
   pairwiseSecretForRef: 'referenced-secret' as string | undefined,
   persistentProfileRows: [] as Array<Record<string, unknown>>,
   targetedIdOptions: null as Record<string, unknown> | null,
-  buildResponse: vi.fn(() => '<saml-success-response/>'),
+  buildResponse: vi.fn((..._args: unknown[]) => '<saml-success-response/>'),
   buildErrorResponse: vi.fn((_options?: unknown) => '<saml-error-response/>'),
   federationSettings: null as Record<string, unknown> | null,
   assuranceSettings: null as Record<string, unknown> | null,
   runtimeEdges: [] as unknown[],
   evidenceAdapter: null as unknown,
+  /** The tenant's metadata database (trust policies, Flow assignments, statement versions). */
+  metadataAdapter: null as unknown,
   coreAdapterError: null as Error | null,
   getCoreAdapter: vi.fn(async () => {
     if (mocks.coreAdapterError) throw mocks.coreAdapterError;
@@ -63,7 +71,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       },
     })),
     isShardedSessionId: vi.fn(() => mocks.shardedSession),
-    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({})),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.metadataAdapter),
     requireAdminDatabaseAdapter: vi.fn(() => ({
       query: vi.fn(async () => mocks.persistentProfileRows),
     })),
@@ -81,24 +89,22 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       destinationProfileId: 'destination-profile-saml',
       destinationProfileIds: ['destination-profile-saml'],
     })),
-    filterSamlAttributesByDestinationConsentWithStatus: vi.fn(async (input) => ({
-      attributes: input.attributes,
-      consentApplied: mocks.destinationConsentApplied,
-      ...(mocks.destinationConsentApplied
-        ? {
-            consentRecordId: 'destination-consent-1',
-            consentEvidence: { saml_request_id: '_request' },
-          }
-        : {}),
-    })),
+    // The Destination Profile offers every attribute, and requires the ones the test names
+    // (all of them by default).
+    filterSamlAttributesByDestinationProfile: vi.fn(
+      async (input: { attributes: Array<{ name: string }> }) => ({
+        attributes: input.attributes,
+        required: new Set(
+          mocks.requiredNames ?? input.attributes.map((attribute) => attribute.name)
+        ),
+        labels: new Map<string, string>(),
+      })
+    ),
     getLocalization: vi.fn(async () => ({ locale: 'en', t: (key: string) => key })),
     getLogger: () => ({
       module: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
     }),
     createAuditLog: mocks.audit,
-    AttributeReleaseConsentRepository: class {
-      grant = mocks.consentGrant;
-    },
   };
 });
 
@@ -147,24 +153,26 @@ vi.mock('../attributes', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../attributes')>();
   return {
     ...actual,
-    buildSAMLAttributesForSPWithDiagnostics: vi.fn(() => {
-      if (mocks.attributeError) throw mocks.attributeError;
-      return {
-        attributes: [{ name: 'mail', values: ['user@example.test'] }],
-        optionalMissingAttributes: [],
-      };
-    }),
-  };
-});
-
-vi.mock('../attribute-release-consent', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../attribute-release-consent')>();
-  return {
-    ...actual,
-    enforceSAMLAttributeReleaseConsent: vi.fn(
-      async (input: { destinationFieldConsentConfirmed?: unknown }) => {
-        if (input.destinationFieldConsentConfirmed) return;
-        if (mocks.consentError) throw mocks.consentError;
+    buildSAMLAttributesForSPWithDiagnostics: vi.fn(
+      (
+        _subject: unknown,
+        config?: {
+          identityMapping?: { runtimeContext?: { saml?: { eduPersonTargetedIdOpaque?: string } } };
+        }
+      ) => {
+        if (mocks.attributeError) throw mocks.attributeError;
+        // A mapping that releases eduPersonTargetedID carries the identifier the release
+        // context holds: a placeholder until the release is approved, then the real one.
+        const targeted = config?.identityMapping?.runtimeContext?.saml?.eduPersonTargetedIdOpaque;
+        return {
+          attributes: [
+            ...mocks.attributes.map((attribute) => ({ ...attribute })),
+            ...(typeof targeted === 'string'
+              ? [{ name: 'eduPersonTargetedID', values: [targeted] }]
+              : []),
+          ],
+          optionalMissingAttributes: [],
+        };
       }
     ),
   };
@@ -218,18 +226,23 @@ vi.mock('../error-response', async (importOriginal) => {
   };
 });
 
-import { handleIdPAttributeReleaseConsent, handleIdPSSO } from '../sso';
+import { handleIdPSSO } from '../sso';
+import { samlAttributeItemKey, samlNameIdItemKey } from '../release-items';
+import { applySAMLErrorResponseOverride } from '../error-response';
 import {
   buildSAMLAttributesForSPWithDiagnostics,
   MissingRequiredSAMLAttributeError,
   SAMLIdentityMappingRuntimeError,
 } from '../attributes';
-import {
-  enforceSAMLAttributeReleaseConsent,
-  SAMLAttributeReleaseConsentRequiredError,
-} from '../attribute-release-consent';
 import { SAMLAuthnContextPolicyError } from '../authn-context';
-import { createSAMLSessionIndex, resolveSAMLNameIDValue, SAMLNameIDPolicyError } from '../subject';
+import {
+  createSAMLSessionIndex,
+  resolveSAMLEduPersonTargetedIDOpaque,
+  resolveSAMLNameIDValue,
+  resolveSAMLPersistentNameIDRegistryStore,
+  resolveSAMLTransientNameIDStore,
+  SAMLNameIDPolicyError,
+} from '../subject';
 import { getSamlUserInfoById } from '../../common/user-store';
 
 function sp(overrides: Record<string, unknown> = {}) {
@@ -241,6 +254,8 @@ function sp(overrides: Record<string, unknown> = {}) {
     authnRequestSignaturePolicy: 'optional',
     signResponses: true,
     signAssertions: false,
+    // The SP does not ask the person unless a test says so (see the consent tests below).
+    informationReleaseConsent: { enabled: false },
     ...overrides,
   };
 }
@@ -252,7 +267,6 @@ function app() {
     await next();
   });
   route.all('/sso', handleIdPSSO as never);
-  route.post('/consent', handleIdPAttributeReleaseConsent as never);
   return route;
 }
 
@@ -273,7 +287,7 @@ function environment() {
     },
     CHALLENGE_STORE: {
       idFromName: vi.fn((name: string) => ({ name })),
-      get: vi.fn(() => ({ storeChallengeRpc: mocks.storeChallenge })),
+      get: vi.fn(() => ({ ...challenges.stub, storeChallengeRpc: mocks.storeChallenge })),
     },
   };
 }
@@ -312,9 +326,32 @@ async function post(xml?: string, relayState?: string) {
   return app().fetch(
     new Request('https://tenant.example.test/sso', { method: 'POST', body: form }),
     environment(),
-    { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as never
+    { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} }
   );
 }
+
+// The tenant's databases: one real SQLite with the core schema serves as the account database
+// (release decisions and withdrawal generations, assurance evidence) and the metadata database
+// (trust policies, Flow assignments, consent statement versions).
+let consentDb: EvidenceDb;
+
+beforeAll(async () => {
+  consentDb = await createEvidenceDb('user-a');
+});
+
+beforeEach(() => {
+  consentDb.clearConsent();
+  consentDb.failEvidenceReads(null);
+  mocks.evidenceAdapter = consentDb.adapter;
+  mocks.metadataAdapter = consentDb.adapter;
+  mocks.coreAdapterError = null;
+  mocks.attributes = [{ name: 'mail', values: ['user@example.test'] }];
+  mocks.requiredNames = null;
+  mocks.ui = undefined;
+  // What the tests store and read back (the consent screen's challenges) is forgotten.
+  challenges.reset();
+  mocks.storeChallenge.mockImplementation(challenges.stub.storeChallengeRpc as never);
+});
 
 describe('IdP SSO handler policy boundaries', () => {
   beforeEach(() => {
@@ -331,8 +368,6 @@ describe('IdP SSO handler policy boundaries', () => {
     mocks.sessionThrows = false;
     mocks.user = null;
     mocks.attributeError = null;
-    mocks.consentError = null;
-    mocks.destinationConsentApplied = false;
     mocks.authnContextError = null;
     mocks.nameIdError = null;
     mocks.pairwiseSecret = 'pairwise-secret';
@@ -562,55 +597,11 @@ describe('IdP SSO handler policy boundaries', () => {
     expect(mocks.buildResponse).not.toHaveBeenCalled();
   });
 
-  it('renders an attribute consent challenge and stores its binding', async () => {
-    authenticateSession();
-    mocks.user = { id: 'user-a', email: 'user@example.test' };
-    mocks.consentError = new SAMLAttributeReleaseConsentRequiredError({
-      attributeSetHash: 'hash',
-      reasonCodes: ['consent.required'],
-      consentMode: 'once',
-      attributes: [{ name: 'mail', values: ['user@example.test'] }],
-    });
-    const response = await post(authnRequest());
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain('name="challenge_id"');
-    // Recorded as it arrived, then kept for the consent page with its challenge.
-    expect(store.calls).toEqual(['create', 'update']);
-    const stored = store.waiting.get('_request') as unknown as {
-      context: { attributeReleaseConsentChallenge: Record<string, unknown> };
-    };
-    expect(stored.context.attributeReleaseConsentChallenge).toMatchObject({
-      subjectId: 'user-a',
-      destinationType: 'saml_sp',
-      destinationId: 'https://sp.example.test/entity',
-      attributeSetHash: 'hash',
-      consentMode: 'once',
-    });
-  });
-
-  it('does not render the legacy confirmation after generic destination consent', async () => {
-    authenticateSession();
-    mocks.user = { id: 'user-a', email: 'user@example.test' };
-    mocks.destinationConsentApplied = true;
-    mocks.consentError = new SAMLAttributeReleaseConsentRequiredError({
-      attributeSetHash: 'hash',
-      reasonCodes: ['consent.required'],
-      consentMode: 'once',
-      attributes: [{ name: 'mail', values: ['user@example.test'] }],
-    });
-
-    const response = await post(authnRequest());
-
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain('SAMLResponse');
-    expect(mocks.buildResponse).toHaveBeenCalled();
-  });
-
   it('rejects GET redirect binding without a SAMLRequest', async () => {
     const response = await app().fetch(
       new Request('https://tenant.example.test/sso'),
       environment(),
-      { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as never
+      { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} }
     );
     expect(response.status).toBe(400);
   });
@@ -731,7 +722,7 @@ function authenticateSession(data: Record<string, unknown> = {}) {
   });
 }
 
-function storedConsentRequest(overrides: Record<string, unknown> = {}) {
+function storedRequest(context: Record<string, unknown> = {}) {
   return {
     type: 'authn_request',
     issuer: 'https://sp.example.test/entity',
@@ -744,41 +735,8 @@ function storedConsentRequest(overrides: Record<string, unknown> = {}) {
       issuer: 'https://sp.example.test/entity',
       assertionConsumerServiceURL: 'https://sp.example.test/acs',
     },
-    context: {
-      attributeReleaseConsentChallenge: {
-        challengeId: 'challenge-a',
-        subjectId: 'user-a',
-        destinationType: 'saml_sp',
-        destinationId: 'https://sp.example.test/entity',
-        attributeSetHash: 'hash-a',
-        createdAt: Date.now(),
-        consentMode: 'once',
-        attributeSummaries: [{ name: 'mail', valueCount: 1 }],
-        ...overrides,
-      },
-    },
+    context,
   };
-}
-
-async function postConsent(fields: Record<string, string> = {}) {
-  const form = new FormData();
-  for (const [key, value] of Object.entries(fields)) form.set(key, value);
-  return app().fetch(
-    new Request('https://tenant.example.test/consent', { method: 'POST', body: form }),
-    environment(),
-    { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as never
-  );
-}
-
-function validConsentFields(overrides: Record<string, string> = {}) {
-  return {
-    saml_request_id: '_request',
-    saml_sp_entity_id: 'https://sp.example.test/entity',
-    challenge_id: 'challenge-a',
-    attribute_set_hash: 'hash-a',
-    decision: 'approve_once',
-    ...overrides,
-  } as Record<string, string>;
 }
 
 describe('resuming a stored request after the Login UI', () => {
@@ -807,7 +765,7 @@ describe('resuming a stored request after the Login UI', () => {
     };
   };
   const serveStored = (context: Record<string, unknown>) => {
-    store.seed({ ...storedConsentRequest(), context } as never);
+    store.seed({ ...storedRequest(), context } as never);
   };
   beforeEach(() => {
     vi.clearAllMocks();
@@ -861,138 +819,6 @@ describe('resuming a stored request after the Login UI', () => {
     const location = new URL(response.headers.get('location') ?? '');
     expect(location.searchParams.has('saml_login_nonce')).toBe(false);
     expect(storedBody().context.loginNonceHash).toBeUndefined();
-  });
-});
-
-describe('IdP attribute-release consent callback', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.sp = sp();
-    mocks.sessionId = undefined;
-    mocks.shardedSession = true;
-    mocks.sessionResponse = new Response(null, { status: 404 });
-    mocks.federationSettings = null;
-    store.reset();
-    mocks.storeFetch.mockReset();
-    mocks.storeFetch.mockImplementation(store.fetch);
-    store.seed(storedConsentRequest() as never);
-  });
-
-  it('requires an authenticated session', async () => {
-    expect((await postConsent(validConsentFields())).status).toBe(400);
-    expect(mocks.storeFetch).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    {},
-    { saml_request_id: '_request' },
-    { saml_request_id: '_request', saml_sp_entity_id: 'https://sp.example.test/entity' },
-    {
-      saml_request_id: '_request',
-      saml_sp_entity_id: 'https://sp.example.test/entity',
-      challenge_id: 'challenge-a',
-    },
-    {
-      saml_request_id: '_request',
-      saml_sp_entity_id: 'https://sp.example.test/entity',
-      challenge_id: 'challenge-a',
-      attribute_set_hash: 'hash-a',
-    },
-  ])('rejects incomplete consent callback fields', async (fields) => {
-    authenticateSession();
-    expect((await postConsent(fields as Record<string, string>)).status).toBe(400);
-  });
-
-  it.each(['approve-later', '', 'APPROVE'])('rejects invalid decision %s', async (decision) => {
-    authenticateSession();
-    expect((await postConsent(validConsentFields({ decision }))).status).toBe(400);
-  });
-
-  it.each([
-    ['challengeId', 'other'],
-    ['subjectId', 'user-b'],
-    ['destinationType', 'oidc_client'],
-    ['destinationId', 'https://other-sp.example/entity'],
-    ['attributeSetHash', 'other-hash'],
-    ['createdAt', 0],
-  ])('rejects mismatched or expired challenge field %s', async (key, value) => {
-    authenticateSession();
-    store.seed(storedConsentRequest({ [key]: value }) as never);
-    expect((await postConsent(validConsentFields())).status).toBe(400);
-    // Checked before anything is used up: the request is still waiting.
-    expect(store.waiting.has('_request')).toBe(true);
-    expect(store.calls).toEqual(['read']);
-  });
-
-  it('rejects a stored request without a consent challenge or configured SP', async () => {
-    authenticateSession();
-    store.seed({ ...storedConsentRequest(), context: {} } as never);
-    expect((await postConsent(validConsentFields())).status).toBe(400);
-
-    mocks.sp = null;
-    expect((await postConsent(validConsentFields())).status).toBe(400);
-  });
-
-  it('returns a protocol denial response without persisting consent', async () => {
-    authenticateSession();
-    const response = await postConsent(validConsentFields({ decision: 'deny' }));
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain('SAMLResponse');
-    expect(mocks.consentGrant).not.toHaveBeenCalled();
-    // The request is completed (not waiting), at the revision it was read at, before the answer.
-    expect(store.waiting.size).toBe(0);
-    expect(store.calls).toEqual(['read', 'complete']);
-    const complete = mocks.storeFetch.mock.calls.find(
-      ([url]) => url === 'https://saml-request-store/authn/complete'
-    );
-    expect(JSON.parse(String(complete?.[1]?.body))).toMatchObject({ expectedRevision: 1 });
-  });
-
-  it.each([
-    ['approve_once', undefined, false],
-    ['approve', 'once', false],
-    ['approve', 'remember', true],
-    ['approve_remember', undefined, true],
-  ])('handles %s with scope %s', async (decision, releaseScope, persists) => {
-    authenticateSession();
-    const fields = validConsentFields({ decision });
-    if (releaseScope) fields.release_scope = releaseScope;
-    const response = await postConsent(fields);
-    expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toContain('saml_request_id=_request');
-    expect(mocks.consentGrant).toHaveBeenCalledTimes(persists ? 1 : 0);
-    // An approval updates the waiting request at the revision it was read at (not complete).
-    expect(store.calls).toEqual(['read', 'update']);
-    expect(store.waiting.get('_request')).toMatchObject({ revision: 2 });
-    expect(store.waiting.get('_request')?.context).toHaveProperty(
-      'attributeReleaseConsentConfirmed'
-    );
-  });
-
-  it('fails closed when consumed state cannot be read', async () => {
-    authenticateSession();
-    mocks.storeFetch.mockRejectedValue(new Error('state unavailable'));
-    expect((await postConsent(validConsentFields())).status).toBe(400);
-  });
-
-  describe('challenge age against the tenant request lifetime', () => {
-    function storeChallengeCreatedMinutesAgo(minutes: number) {
-      store.seed(storedConsentRequest({ createdAt: Date.now() - minutes * 60_000 }) as never);
-    }
-
-    it('accepts a challenge older than five minutes when the tenant allows ten', async () => {
-      authenticateSession();
-      mocks.federationSettings = { 'federation.saml_request_ttl': 600 };
-      storeChallengeCreatedMinutesAgo(8);
-      expect((await postConsent(validConsentFields())).status).toBe(302);
-    });
-
-    it('rejects a challenge older than the tenant request lifetime', async () => {
-      authenticateSession();
-      mocks.federationSettings = { 'federation.saml_request_ttl': 60 };
-      storeChallengeCreatedMinutesAgo(2);
-      expect((await postConsent(validConsentFields())).status).toBe(400);
-    });
   });
 });
 
@@ -1100,7 +926,6 @@ describe('SP minimum identity assurance (SP-initiated)', () => {
     mocks.sessionThrows = false;
     mocks.user = { id: 'user-a', email: 'user@example.test', name: 'User A' };
     mocks.attributeError = null;
-    mocks.consentError = null;
     mocks.federationSettings = null;
     mocks.targetedIdOptions = null;
     authenticateSession();
@@ -1144,24 +969,19 @@ describe('SP minimum identity assurance (SP-initiated)', () => {
   });
 
   it('refuses before the NameID, the attributes, the session index and the consent screen', async () => {
-    mocks.consentError = new SAMLAttributeReleaseConsentRequiredError({
-      attributeSetHash: 'hash',
-      reasonCodes: ['consent.required'],
-      consentMode: 'once',
-      attributes: [{ name: 'mail', values: ['user@example.test'] }],
-    });
+    // An SP that would ask the person: no screen is shown to someone who may not be answered.
+    mocks.sp = sp({ minimumIal: 'IAL2', informationReleaseConsent: { enabled: true } });
     const response = await post(authnRequest());
 
-    expect(await response.text()).not.toContain('challenge_id');
+    expect(response.headers.get('location')).toBeNull();
     expect(mocks.buildResponse).not.toHaveBeenCalled();
     expect(getSamlUserInfoById).not.toHaveBeenCalled();
     expect(resolveSAMLNameIDValue).not.toHaveBeenCalled();
     expect(createSAMLSessionIndex).not.toHaveBeenCalled();
-    expect(enforceSAMLAttributeReleaseConsent).not.toHaveBeenCalled();
     // No consent challenge was stored: the request was only recorded and used up by the refusal.
+    expect(challenges.consentChallenges()).toHaveLength(0);
     expect(store.calls).toEqual(['create', 'complete']);
     expect(store.waiting.size).toBe(0);
-    expect(mocks.consentGrant).not.toHaveBeenCalled();
   });
 
   it('issues the assertion to a person at the minimum', async () => {
@@ -1219,7 +1039,6 @@ describe('SP minimum identity assurance (SP-initiated)', () => {
     const response = await post(authnRequest(), 'relay-state');
     expect(response.status).toBe(200);
     expect(mocks.buildResponse).toHaveBeenCalledOnce();
-    expect(mocks.getCoreAdapter).not.toHaveBeenCalled();
     expect(evidence.evidenceReads()).toBe(0);
     expect(mocks.audit).not.toHaveBeenCalled();
   });
@@ -1270,13 +1089,13 @@ describe('SP minimum identity assurance (SP-initiated)', () => {
 
   it('judges the request that comes back from sign-in (stored request) too', async () => {
     evidence.addEvidence('ev-1', 'IAL1');
-    store.seed(storedConsentRequest() as never);
+    store.seed(storedRequest() as never);
     const response = await app().fetch(
       new Request(
         'https://tenant.example.test/sso?saml_request_id=_request&saml_sp_entity_id=https%3A%2F%2Fsp.example.test%2Fentity&return_to=saml_sso'
       ),
       environment(),
-      { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as never
+      { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} }
     );
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('SAMLResponse');
@@ -1317,6 +1136,7 @@ describe('assurance attributes in the SP-initiated assertion', () => {
     vi.clearAllMocks();
     evidence.clearEvidence();
     evidence.resetReads();
+    evidence.failEvidenceReads(null);
     mocks.evidenceAdapter = evidence.adapter;
     mocks.coreAdapterError = null;
     mocks.sp = sp();
@@ -1324,7 +1144,6 @@ describe('assurance attributes in the SP-initiated assertion', () => {
     mocks.sessionThrows = false;
     mocks.user = { id: 'user-a', email: 'user@example.test', name: 'User A' };
     mocks.attributeError = null;
-    mocks.consentError = null;
     mocks.federationSettings = null;
     mocks.assuranceSettings = {
       'assurance.enabled': true,
@@ -1387,7 +1206,6 @@ describe('assurance attributes in the SP-initiated assertion', () => {
     expect(mocks.buildResponse).toHaveBeenCalledOnce();
     expect(subjectGivenToAttributeRelease()).not.toHaveProperty('edu_person_assurance');
     expect(evidence.evidenceReads()).toBe(0);
-    expect(mocks.getCoreAdapter).not.toHaveBeenCalled();
   });
 
   it('reads nothing when the mapping releases no assurance source', async () => {
@@ -1399,7 +1217,8 @@ describe('assurance attributes in the SP-initiated assertion', () => {
   });
 
   it('issues the assertion without the attribute, and reports it, when the evidence cannot be read', async () => {
-    mocks.coreAdapterError = new Error('account_data_route_not_found');
+    // Only the evidence cannot be read (the rest of the account database answers).
+    evidence.failEvidenceReads(new Error('account_data_route_not_found'));
     const response = await post(authnRequest());
     expect(response.status).toBe(200);
     expect(mocks.buildResponse).toHaveBeenCalledOnce();
@@ -1419,8 +1238,6 @@ describe('the stored AuthnRequest lifecycle', () => {
     ).join('');
   const resume = (extra = '', ctx?: Record<string, unknown>) =>
     app().request(RESUME_URL + extra, undefined, environment(), ctx as never);
-  const errorOptions = () =>
-    mocks.buildErrorResponse.mock.calls.at(-1)?.[0] as Record<string, unknown>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1435,16 +1252,15 @@ describe('the stored AuthnRequest lifecycle', () => {
     mocks.sessionId = undefined;
     mocks.sessionResponse = new Response(null, { status: 404 });
     mocks.attributeError = null;
-    mocks.consentError = null;
     mocks.federationSettings = null;
     mocks.user = { id: 'user-a', email: 'user@example.test' };
-    store.seed({ ...storedConsentRequest(), context: {} } as never);
+    store.seed({ ...storedRequest(), context: {} } as never);
     authenticateSession();
   });
 
   it('never resumes a request recorded as refused on arrival, even if it was left waiting', async () => {
     store.reset();
-    store.seed({ ...storedConsentRequest(), context: { refusedOnArrival: true } } as never);
+    store.seed({ ...storedRequest(), context: { refusedOnArrival: true } } as never);
     const response = await resume();
     expect(await response.text()).not.toContain('SAMLResponse');
     expect(mocks.buildResponse).not.toHaveBeenCalled();
@@ -1536,37 +1352,10 @@ describe('the stored AuthnRequest lifecycle', () => {
     expect(store.waiting.size).toBe(0);
   });
 
-  it('leaves the request waiting after a consent post with the wrong challenge', async () => {
-    store.reset();
-    store.seed(storedConsentRequest() as never);
-    const response = await postConsent(validConsentFields({ challenge_id: 'wrong' }));
-    expect(response.status).toBe(400);
-    expect(store.calls).toEqual(['read']);
-    expect(store.waiting.get('_request')).toMatchObject({ revision: 1 });
-    expect(mocks.buildErrorResponse).not.toHaveBeenCalled();
-  });
-
-  it('completes the request on a deny and answers RequestDenied once', async () => {
-    store.reset();
-    store.seed(storedConsentRequest() as never);
-    const first = await postConsent(validConsentFields({ decision: 'deny' }));
-    expect(first.status).toBe(200);
-    expect(await first.text()).toContain('SAMLResponse');
-    expect(mocks.buildErrorResponse).toHaveBeenCalledOnce();
-    expect(errorOptions()).toMatchObject({
-      statusCode: 'urn:oasis:names:tc:SAML:2.0:status:Responder',
-      secondLevelStatusCode: 'urn:oasis:names:tc:SAML:2.0:status:RequestDenied',
-    });
-    expect(store.waiting.size).toBe(0);
-
-    // A second post (a double click, another tab) has nothing to answer.
-    const second = await postConsent(validConsentFields({ decision: 'deny' }));
-    expect(second.status).toBe(400);
-    expect(mocks.buildErrorResponse).toHaveBeenCalledOnce();
-  });
-
   it('keeps the login nonce hash through the consent page, so a login cancel can still complete it', async () => {
     store.reset();
+    // An SP that asks the person.
+    mocks.sp = sp({ informationReleaseConsent: { enabled: true, ask: 'once' } });
     // 1. Nobody is signed in: the request is stored and the person is sent to sign in.
     mocks.sessionId = undefined;
     mocks.sessionResponse = new Response(null, { status: 404 });
@@ -1575,38 +1364,35 @@ describe('the stored AuthnRequest lifecycle', () => {
     expect(nonce).toBeTruthy();
     const hash = await sha(nonce ?? '');
 
-    // 2. They come back signed in and the consent page is shown: the stored request is updated.
+    // 2. They come back signed in and are sent to the consent screen: the stored request is
+    // updated and waits for that challenge.
     authenticateSession();
     // (The sign-in Flow check of a returning session is not under test here.)
     delete (store.waiting.get('_request')?.context as { sentToSignInAt?: number }).sentToSignInAt;
-    mocks.consentError = new SAMLAttributeReleaseConsentRequiredError({
-      attributeSetHash: 'hash',
-      reasonCodes: ['consent.required'],
-      consentMode: 'once',
-      attributes: [{ name: 'mail', values: ['user@example.test'] }],
-    });
     const page = await resume(`&saml_login_nonce=${nonce}`, {
       waitUntil: vi.fn(),
       passThroughOnException: vi.fn(),
       props: {},
     });
-    expect(await page.text()).toContain('name="challenge_id"');
+    expect(page.status).toBe(302);
+    expect(new URL(page.headers.get('location') ?? '').pathname).toBe('/consent');
     expect(store.calls).toEqual(['create', 'update', 'read', 'update']);
     const challenged = store.waiting.get('_request');
     expect(challenged).toMatchObject({ revision: 3, context: { loginNonceHash: hash } });
-    const challenge = challenged?.context?.attributeReleaseConsentChallenge as {
-      challengeId: string;
-    };
+    const first = (challenged?.context as { releaseConsent?: { challengeId: string } })
+      .releaseConsent?.challengeId;
+    expect(first).toBeTruthy();
 
-    // 3. They approve: the request is updated again, still holding the hash.
-    const approved = await postConsent(
-      validConsentFields({ challenge_id: challenge.challengeId, attribute_set_hash: 'hash' })
-    );
-    expect(approved.status).toBe(302);
-    expect(store.waiting.get('_request')).toMatchObject({
-      revision: 4,
-      context: { loginNonceHash: hash },
-    });
+    // 3. They come back without having answered: asked again with a new challenge, the request
+    // updated again, still holding the hash.
+    const again = await resume();
+    expect(again.status).toBe(302);
+    const waiting = store.waiting.get('_request');
+    expect(waiting).toMatchObject({ revision: 4, context: { loginNonceHash: hash } });
+    const second = (waiting?.context as { releaseConsent?: { challengeId: string } }).releaseConsent
+      ?.challengeId;
+    expect(second).toBeTruthy();
+    expect(second).not.toBe(first);
 
     // 4. A login cancel (complete on the nonce hash) still finds it, and only with that hash.
     const env = environment() as never;
@@ -1620,5 +1406,451 @@ describe('the stored AuthnRequest lifecycle', () => {
       completeStoredAuthnRequest(env, 'tenant-a', '_request', SP, { loginNonceHash: hash })
     ).resolves.toMatchObject({ requestId: '_request' });
     expect(store.waiting.size).toBe(0);
+  });
+});
+
+describe('information release consent on the shared consent screen (SP-initiated)', () => {
+  const SP = 'https://sp.example.test/entity';
+  const EMAIL_FORMAT = 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress';
+  const NAMEID_KEY = samlNameIdItemKey(EMAIL_FORMAT);
+  const MAIL_KEY = samlAttributeItemKey({ name: 'mail' });
+  const NAME_KEY = samlAttributeItemKey({ name: 'displayName' });
+  const RESUME_URL = `https://tenant.example.test/sso?saml_request_id=_request&saml_sp_entity_id=${encodeURIComponent(
+    SP
+  )}&return_to=saml_sso`;
+  const asks = { enabled: true, ask: 'once', show_values: false };
+
+  const resume = () =>
+    app().request(RESUME_URL, undefined, environment(), {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    });
+  const errorOptions = () =>
+    mocks.buildErrorResponse.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+  const auditedKinds = () =>
+    mocks.audit.mock.calls.map(
+      ([, entry]) =>
+        (JSON.parse(String((entry as { metadata: string }).metadata)) as { failure_kind: string })
+          .failure_kind
+    );
+  const releasedNames = () =>
+    (
+      mocks.buildResponse.mock.calls.at(-1)?.[0] as { attributes: Array<{ name: string }> }
+    ).attributes.map((attribute) => attribute.name);
+  const storedChallengeId = () =>
+    (store.waiting.get('_request')?.context as { releaseConsent?: { challengeId: string } })
+      ?.releaseConsent?.challengeId;
+  /** The consent screen answered: the decision on the challenge, and the record it wrote. */
+  const answer = (
+    challengeId: string,
+    approvedItems: string[],
+    declinedItems: string[],
+    options: { revision?: number; record?: boolean } = {}
+  ) => {
+    const revision = options.revision ?? 1;
+    // The record the answer was written as (the screen writes it with the answer).
+    if (options.record !== false) {
+      consentDb.saveReleaseDecision({
+        spEntityId: SP,
+        presented: [NAMEID_KEY, MAIL_KEY, NAME_KEY],
+        approved: approvedItems,
+        declined: declinedItems,
+        revision,
+      });
+    }
+    challenges.decide(challengeId, {
+      approved: true,
+      approved_items: approvedItems,
+      declined_items: declinedItems,
+      decision_revision: revision,
+      decided_at: Date.now(),
+    });
+  };
+  const nothingMade = () => {
+    expect(resolveSAMLNameIDValue).not.toHaveBeenCalled();
+    expect(createSAMLSessionIndex).not.toHaveBeenCalled();
+    expect(resolveSAMLEduPersonTargetedIDOpaque).not.toHaveBeenCalled();
+    expect(resolveSAMLPersistentNameIDRegistryStore).not.toHaveBeenCalled();
+    expect(resolveSAMLTransientNameIDStore).not.toHaveBeenCalled();
+  };
+  /** The person is signed in and the SP asks: sent to the consent screen, with its challenge. */
+  async function sentToTheScreen() {
+    const response = await post(authnRequest(), 'relay-state');
+    expect(response.status).toBe(302);
+    const challengeId = storedChallengeId() as string;
+    expect(challengeId).toBeTruthy();
+    return { response, challengeId, challenge: challenges.challenges.get(challengeId) };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+    mocks.storeFetch.mockReset();
+    mocks.storeFetch.mockImplementation(store.fetch);
+    mocks.sp = sp({ informationReleaseConsent: asks });
+    mocks.ui = { baseUrl: 'https://ui.example.test' };
+    mocks.loginPolicy = 'ui_base_url';
+    mocks.shardedSession = true;
+    mocks.sessionThrows = false;
+    mocks.user = { id: 'user-a', email: 'user@example.test', name: 'User A' };
+    mocks.attributeError = null;
+    mocks.federationSettings = null;
+    mocks.attributes = [
+      { name: 'mail', values: ['user@example.test'] },
+      { name: 'displayName', values: ['User A'] },
+    ];
+    mocks.requiredNames = ['mail'];
+    authenticateSession();
+  });
+
+  it('sends a person nobody has asked to the consent screen, and makes no NameID or session index', async () => {
+    const { response, challengeId, challenge } = await sentToTheScreen();
+
+    const location = new URL(response.headers.get('location') ?? '');
+    expect(location.origin + location.pathname).toBe('https://ui.example.test/consent');
+    expect(location.searchParams.get('challenge_id')).toBe(challengeId);
+    expect(location.searchParams.get('tenant_hint')).toBe('tenant-a');
+
+    // The challenge is the SAML consent one, with the items the SP would be given.
+    expect(challenge).toMatchObject({
+      type: 'consent',
+      tenantId: 'tenant-a',
+      userId: 'user-a',
+      consumed: false,
+      metadata: {
+        protocol: 'saml',
+        purpose: 'saml_release_consent',
+        session_id: 'session-id',
+        saml_request_id: '_request',
+        saml_sp_entity_id: SP,
+        idp_initiated: false,
+        resume_path: `/saml/idp/sso?saml_request_id=_request&saml_sp_entity_id=${encodeURIComponent(
+          SP
+        )}&return_to=saml_sso`,
+        release: { ask: 'once', show_values: false, consent_generation: 0 },
+      },
+    });
+    const release = (
+      challenge?.metadata as {
+        release: {
+          items: Array<{ key: string; required: boolean; values?: string[] }>;
+          presentation_key: string;
+        };
+      }
+    ).release;
+    expect(release.items.map((item) => [item.key, item.required])).toEqual([
+      [samlNameIdItemKey(EMAIL_FORMAT), true],
+      [MAIL_KEY, true],
+      [NAME_KEY, false],
+    ]);
+    expect(release.presentation_key).toEqual(expect.any(String));
+    // The SP shows no values: none is put on the challenge.
+    expect(release.items.every((item) => item.values === undefined)).toBe(true);
+
+    // The request waits for that challenge, and nothing was made for the answer.
+    expect(store.calls).toEqual(['create', 'update']);
+    expect(store.waiting.get('_request')).toMatchObject({
+      revision: 2,
+      context: { releaseConsent: { challengeId } },
+    });
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(mocks.buildErrorResponse).not.toHaveBeenCalled();
+    nothingMade();
+    // The challenge never lives past the request itself.
+    expect(challenge?.notAfterMs).toBeLessThanOrEqual(Date.now() + 300_000);
+  });
+
+  it('ends the screen when the request ends, at the tenant request lifetime', async () => {
+    mocks.federationSettings = { 'federation.saml_request_ttl': 120 };
+    const { challenge } = await sentToTheScreen();
+    expect(challenge?.notAfterMs).toBeGreaterThan(Date.now());
+    expect(challenge?.notAfterMs).toBeLessThanOrEqual(Date.now() + 120_000);
+  });
+
+  it('shows the values only when the SP says so', async () => {
+    mocks.sp = sp({ informationReleaseConsent: { ...asks, show_values: true } });
+    const { challenge } = await sentToTheScreen();
+    const items = (
+      challenge?.metadata as { release: { items: Array<{ key: string; values?: string[] }> } }
+    ).release.items;
+    expect(items.find((item) => item.key === MAIL_KEY)?.values).toEqual(['user@example.test']);
+  });
+
+  it('answers IsPassive with NoPassive when the person would have to be asked', async () => {
+    const response = await post(authnRequest({ isPassive: true }), 'relay-state');
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('SAMLResponse');
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(errorOptions()).toMatchObject({
+      statusCode: 'urn:oasis:names:tc:SAML:2.0:status:Responder',
+      secondLevelStatusCode: 'urn:oasis:names:tc:SAML:2.0:status:NoPassive',
+    });
+    expect(auditedKinds()).toEqual(['release_consent_no_passive']);
+    expect(challenges.consentChallenges()).toHaveLength(0);
+    expect(store.calls).toEqual(['create', 'complete']);
+    expect(store.waiting.size).toBe(0);
+    nothingMade();
+  });
+
+  it('answers IsPassive with the assertion when nothing has to be asked', async () => {
+    mocks.sp = sp({ informationReleaseConsent: { enabled: false } });
+    const response = await post(authnRequest({ isPassive: true }), 'relay-state');
+    expect(response.status).toBe(200);
+    expect(mocks.buildResponse).toHaveBeenCalledOnce();
+    expect(mocks.buildErrorResponse).not.toHaveBeenCalled();
+  });
+
+  it('answers with only the approved items when the person comes back with an approved decision', async () => {
+    const { challengeId } = await sentToTheScreen();
+    // The person approves the NameID and the mail, and declines the display name.
+    answer(challengeId, [NAMEID_KEY, MAIL_KEY], [NAME_KEY]);
+
+    const response = await resume();
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('SAMLResponse');
+    expect(mocks.buildResponse).toHaveBeenCalledOnce();
+    expect(releasedNames()).toEqual(['mail']);
+    // The challenge is used up (and only a decided one), the request completed.
+    expect(challenges.stub.consumeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: challengeId,
+        tenantId: 'tenant-a',
+        type: 'consent',
+        requireDecided: true,
+      })
+    );
+    expect(challenges.challenges.get(challengeId)?.consumed).toBe(true);
+    expect(store.waiting.size).toBe(0);
+    // The NameID and the session index are made now, once.
+    expect(resolveSAMLNameIDValue).toHaveBeenCalledOnce();
+    expect(createSAMLSessionIndex).toHaveBeenCalledOnce();
+  });
+
+  it('answers RequestDenied and ends the request when the person refused', async () => {
+    const { challengeId } = await sentToTheScreen();
+    challenges.decide(challengeId, {
+      approved: false,
+      approved_items: [],
+      declined_items: [],
+      decided_at: Date.now(),
+    });
+
+    const response = await resume();
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('SAMLResponse');
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(errorOptions()).toMatchObject({
+      statusCode: 'urn:oasis:names:tc:SAML:2.0:status:Responder',
+      secondLevelStatusCode: 'urn:oasis:names:tc:SAML:2.0:status:RequestDenied',
+    });
+    expect(auditedKinds()).toEqual(['release_consent_refused']);
+    expect(challenges.challenges.get(challengeId)?.consumed).toBe(true);
+    expect(store.waiting.size).toBe(0);
+    nothingMade();
+
+    // The same resume again has nothing to answer.
+    expect((await resume()).status).toBe(400);
+    expect(mocks.buildErrorResponse).toHaveBeenCalledOnce();
+  });
+
+  it('asks again, with a new challenge, when the decision is not the current record', async () => {
+    const { challengeId } = await sentToTheScreen();
+    answer(challengeId, [NAMEID_KEY, MAIL_KEY, NAME_KEY], [], { revision: 1 });
+    // The person then refused in another tab: a later decision (revision 2) replaced the one this
+    // answer was written as (revision 1), and a refusal answers nothing.
+    consentDb.db.exec('DELETE FROM saml_sp_release_consents');
+    consentDb.saveReleaseDecision({
+      spEntityId: SP,
+      presented: [NAMEID_KEY, MAIL_KEY, NAME_KEY],
+      approved: [],
+      declined: [NAMEID_KEY, MAIL_KEY, NAME_KEY],
+      refused: true,
+      revision: 2,
+    });
+
+    const response = await resume();
+    expect(response.status).toBe(302);
+    expect(new URL(response.headers.get('location') ?? '').pathname).toBe('/consent');
+    const next = storedChallengeId();
+    expect(next).toBeTruthy();
+    expect(next).not.toBe(challengeId);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    // The challenge that was answered for another decision is not used up here.
+    expect(challenges.challenges.get(challengeId)?.consumed).toBe(false);
+    expect(challenges.consentChallenges()).toHaveLength(2);
+    nothingMade();
+  });
+
+  it('asks again when the answered challenge is not for this request', async () => {
+    const { challengeId } = await sentToTheScreen();
+    answer(challengeId, [NAMEID_KEY, MAIL_KEY, NAME_KEY], [], { record: false });
+    (
+      challenges.challenges.get(challengeId)?.metadata as { saml_request_id: string }
+    ).saml_request_id = '_another_request';
+
+    const response = await resume();
+    expect(response.status).toBe(302);
+    expect(storedChallengeId()).not.toBe(challengeId);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+  });
+
+  it('asks again, and does not answer, when the items changed since the person answered', async () => {
+    const { challengeId } = await sentToTheScreen();
+    answer(challengeId, [NAMEID_KEY, MAIL_KEY, NAME_KEY], []);
+    // The SP is now given one more attribute than the screen showed.
+    mocks.attributes = [...mocks.attributes, { name: 'affiliation', values: ['staff'] }];
+
+    const response = await resume();
+    expect(response.status).toBe(302);
+    expect(storedChallengeId()).not.toBe(challengeId);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+  });
+
+  it('issues nothing when the person withdrew between their decision and the answer', async () => {
+    const { challengeId } = await sentToTheScreen();
+    answer(challengeId, [NAMEID_KEY, MAIL_KEY, NAME_KEY], []);
+    // The withdrawal lands after the generation was read for this request, before it is answered.
+    const account = consentDb.adapter;
+    let reads = 0;
+    mocks.evidenceAdapter = {
+      ...account,
+      queryOne: async (sql: string, params?: unknown[], options?: unknown) => {
+        const row = await (account.queryOne as (...args: unknown[]) => Promise<unknown>)(
+          sql,
+          params,
+          options
+        );
+        if (sql.includes('saml_sp_release_consent_revocations') && (reads += 1) === 1) {
+          consentDb.setReleaseGeneration(SP, 1);
+        }
+        return row;
+      },
+    };
+
+    const response = await resume();
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('SAMLResponse');
+    // Built (the check is the last one, just before the answer) but not sent: the error response.
+    expect(errorOptions()).toMatchObject({
+      secondLevelStatusCode: 'urn:oasis:names:tc:SAML:2.0:status:RequestDenied',
+    });
+    // The answer to the SP carries the failure kind (what a tenant's error override keys on).
+    expect(applySAMLErrorResponseOverride).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ failureKind: 'release_consent_withdrawn' })
+    );
+    expect(reads).toBeGreaterThanOrEqual(2);
+    expect(store.waiting.size).toBe(0);
+    // The NameID was made for the approval the person gave (the response is built before the
+    // last check); what was built is not sent.
+  });
+
+  it('does not use a decision made before a withdrawal', async () => {
+    consentDb.saveReleaseDecision({
+      spEntityId: SP,
+      presented: [NAMEID_KEY, MAIL_KEY, NAME_KEY],
+      approved: [NAMEID_KEY, MAIL_KEY, NAME_KEY],
+      generation: 0,
+    });
+    consentDb.setReleaseGeneration(SP, 1);
+    const response = await post(authnRequest(), 'relay-state');
+    expect(response.status).toBe(302);
+    expect(challenges.consentChallenges()).toHaveLength(1);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+  });
+
+  it('answers without asking when the person’s earlier decision still answers today’s items', async () => {
+    consentDb.saveReleaseDecision({
+      spEntityId: SP,
+      presented: [NAMEID_KEY, MAIL_KEY, NAME_KEY],
+      approved: [NAMEID_KEY, MAIL_KEY],
+      declined: [NAME_KEY],
+    });
+    const response = await post(authnRequest(), 'relay-state');
+    expect(response.status).toBe(200);
+    expect(challenges.consentChallenges()).toHaveLength(0);
+    expect(releasedNames()).toEqual(['mail']);
+  });
+
+  it.each([
+    ['asks every time', { ...asks, ask: 'every_time' }, {}],
+    ['refused it', asks, { refused: true }],
+  ])(
+    'asks again though the person decided before when the SP %s',
+    async (_name, setting, extra) => {
+      mocks.sp = sp({ informationReleaseConsent: setting });
+      consentDb.saveReleaseDecision({
+        spEntityId: SP,
+        presented: [NAMEID_KEY, MAIL_KEY, NAME_KEY],
+        approved: [NAMEID_KEY, MAIL_KEY, NAME_KEY],
+        ...extra,
+      });
+      const response = await post(authnRequest(), 'relay-state');
+      expect(response.status).toBe(302);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+    }
+  );
+
+  it('releases only what the SP requires, without asking, when the SP does not ask', async () => {
+    mocks.sp = sp({ informationReleaseConsent: { enabled: false } });
+    const response = await post(authnRequest(), 'relay-state');
+    expect(response.status).toBe(200);
+    expect(challenges.consentChallenges()).toHaveLength(0);
+    expect(releasedNames()).toEqual(['mail']);
+  });
+
+  it('releases everything, without asking, to a trusted SP even if its setting asks', async () => {
+    consentDb.trustSP(SP, { trusted: true });
+    const response = await post(authnRequest(), 'relay-state');
+    expect(response.status).toBe(200);
+    expect(challenges.consentChallenges()).toHaveLength(0);
+    expect(releasedNames()).toEqual(['mail', 'displayName']);
+  });
+
+  it('refuses to release an attribute the SP requires when it was not approved', async () => {
+    const { challengeId } = await sentToTheScreen();
+    // The (altered) answer leaves the required mail out.
+    answer(challengeId, [NAMEID_KEY, NAME_KEY], [MAIL_KEY]);
+    const response = await resume();
+    expect(response.status).toBe(200);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(errorOptions()).toMatchObject({
+      secondLevelStatusCode: 'urn:oasis:names:tc:SAML:2.0:status:InvalidAttrNameOrValue',
+    });
+  });
+
+  it('shows a pairwise identifier as an item without making it, until it is approved', async () => {
+    mocks.sp = sp({ informationReleaseConsent: asks, identityMapping: targetedIdMapping() });
+    mocks.requiredNames = ['mail', 'eduPersonTargetedID'];
+    const { challengeId, challenge } = await sentToTheScreen();
+    const items = (
+      challenge?.metadata as { release: { items: Array<{ key: string; deferred?: boolean }> } }
+    ).release.items;
+    const targetedKey = samlAttributeItemKey({ name: 'eduPersonTargetedID' });
+    expect(items.find((item) => item.key === targetedKey)).toMatchObject({ deferred: true });
+    // Nothing was made for it while the person is asked.
+    expect(mocks.targetedIdOptions).toBeNull();
+    nothingMade();
+
+    answer(challengeId, [NAMEID_KEY, MAIL_KEY, NAME_KEY, targetedKey], []);
+    expect((await resume()).status).toBe(200);
+    // Approved: made once, and released with its real value.
+    expect(mocks.targetedIdOptions).toMatchObject({ tenantId: 'tenant-a', spEntityId: SP });
+    expect(releasedNames()).toContain('eduPersonTargetedID');
+    expect(
+      (
+        mocks.buildResponse.mock.calls.at(-1)?.[0] as { attributes: Array<{ values: string[] }> }
+      ).attributes.flatMap((attribute) => attribute.values)
+    ).not.toContain('authrim-deferred-identifier');
+  });
+
+  it('answers nothing when the consent state cannot be read', async () => {
+    mocks.coreAdapterError = new Error('account_data_route_not_found');
+    const response = await post(authnRequest(), 'relay-state');
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(challenges.consentChallenges()).toHaveLength(0);
+    nothingMade();
   });
 });

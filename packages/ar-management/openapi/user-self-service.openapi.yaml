@@ -661,14 +661,52 @@ paths:
       operationId: getApiAccountConsents
       summary: List current user's consent confirmations for the Account Page.
       description:
-        Returns OAuth consent records granted by the authenticated Account Page user using the
-        `authrim_session` cookie.
+        Returns the consent records of the authenticated Account Page user (statements, OAuth
+        clients and SAML service providers) using the `authrim_session` cookie.
       responses:
         '200':
           $ref: '#/components/responses/AccountConsents'
         '401':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  /api/account/consents/saml-sp:
+    delete:
+      tags:
+        - Account Page
+      operationId: deleteApiAccountConsentsSamlSp
+      summary: Withdraw the current user's information release decision on a SAML SP.
+      description:
+        Deletes the decision and moves the withdrawal generation on, so a sign-in in flight issues
+        nothing under it and the next sign-in to the SP asks again. Uses the `authrim_session`
+        cookie.
+      parameters:
+        - name: sp_entity_id
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 2048
+      responses:
+        '200':
+          description: Withdrawn.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - withdrawn
+                properties:
+                  withdrawn:
+                    type: boolean
+                    enum:
+                      - true
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
           $ref: '#/components/responses/Error'
       security: *accountSession
   /api/account/return:
@@ -2407,6 +2445,56 @@ components:
               type: string
               enum:
                 - oauth_client
+    AccountSamlSpConsent:
+      type: object
+      description:
+        A SAML service provider the person decided the information release for. Item names are
+        release item keys (a JSON array string, `["attribute", name, nameFormat]` or
+        `["nameid", format]`), never values.
+      required:
+        - kind
+        - id
+        - spEntityId
+        - decidedAt
+      properties:
+        kind:
+          type: string
+          enum:
+            - saml_sp
+        id:
+          type: string
+        spEntityId:
+          type: string
+        spName:
+          type: string
+        decidedAt:
+          type: integer
+        informationRelease:
+          type: object
+          required:
+            - basis
+            - approved
+            - declined
+            - decidedAt
+          properties:
+            basis:
+              type: string
+              enum:
+                - user
+                - trust
+                - not_asked
+            approved:
+              type: array
+              items:
+                type: string
+            declined:
+              type: array
+              items:
+                type: string
+            decidedAt:
+              type: integer
+            refused:
+              type: boolean
     AccountConsentsResponse:
       type: object
       required:
@@ -2419,6 +2507,7 @@ components:
             oneOf:
               - $ref: '#/components/schemas/AccountStatementConsent'
               - $ref: '#/components/schemas/AccountOAuthClientConsent'
+              - $ref: '#/components/schemas/AccountSamlSpConsent'
         total:
           type: integer
     AccountDevice:

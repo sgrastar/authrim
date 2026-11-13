@@ -110,8 +110,6 @@ test('browser API exposes only the approved routes and exact authentication pref
     'GET /saml/idp/metadata',
     'GET /saml/idp/sso',
     'POST /saml/idp/sso',
-    'GET /saml/idp/attribute-release-consent',
-    'POST /saml/idp/attribute-release-consent',
     'GET /idp/profile/SAML2/Redirect/SSO',
     'POST /idp/profile/SAML2/Redirect/SSO',
     'GET /idp/profile/SAML2/POST/SSO',

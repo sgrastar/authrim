@@ -849,3 +849,53 @@ describe('the lite consent page', () => {
 		expect(consentPosts()).toHaveLength(0);
 	});
 });
+
+describe('the lite consent of a SAML service provider', () => {
+	const KEY_NAMEID = '["nameid","urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"]';
+	const KEY_MAIL = `["attribute","urn:oid:0.9.2342.19200300.100.1.3",${JSON.stringify(
+		'urn:oasis:names:tc:SAML:2.0:attrname-format:uri'
+	)}]`;
+	const SAML = {
+		...CONSENT,
+		protocol: 'saml',
+		scopes: [],
+		information_release: {
+			items: [
+				{ name: KEY_NAMEID, kind: 'nameid', label: 'urn:x', required: true, deferred: true },
+				{ name: KEY_MAIL, kind: 'attribute', label: 'Email', required: false, value: 'a@b.edu' }
+			],
+			show_values: true,
+			presentation_key: 'pk-saml'
+		}
+	};
+
+	it('is read with its item keys and labels, and without scopes', () => {
+		const read = readLiteConsent(SAML)!;
+		expect(read.scopes).toEqual([]);
+		expect(read.release?.items).toEqual([
+			{
+				name: KEY_NAMEID,
+				kind: 'nameid',
+				label: 'urn:x',
+				required: true,
+				defaultChecked: false,
+				valueText: null
+			},
+			{
+				name: KEY_MAIL,
+				kind: 'attribute',
+				label: 'Email',
+				required: false,
+				defaultChecked: false,
+				valueText: 'a@b.edu'
+			}
+		]);
+	});
+
+	it('is not drawn when a SAML item has no label', () => {
+		const items = [{ name: KEY_MAIL, kind: 'attribute', required: true }];
+		expect(
+			readLiteConsent({ ...SAML, information_release: { ...SAML.information_release, items } })
+		).toBeNull();
+	});
+});

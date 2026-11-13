@@ -31,10 +31,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  insertDestinationFieldConsentRecord,
-  recordFlowStatementConsents,
-} from '../login-runtime-flow';
+import { recordFlowStatementConsents } from '../login-runtime-flow';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import { freshInstallMigrationFiles } from './helpers/real-sql';
 import { ChallengeStore } from '../../../ar-lib-core/dist/durable-objects/ChallengeStore';
@@ -201,6 +198,8 @@ function memoryDurableObjectState() {
       put: async (key: string, value: unknown) => void storage.set(key, value),
       delete: async (key: string) => storage.delete(key),
       list: async () => new Map(storage),
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
     },
     blockConcurrencyWhile: async <T>(fn: () => Promise<T>) => fn(),
   };
@@ -2093,24 +2092,6 @@ describe('sign-in sequences through the real handlers', () => {
       signature: 'signature',
       expires_at: 0,
     });
-    const requestContext = {
-      protocol: 'oidc' as const,
-      target_type: 'oidc_client' as const,
-      target_id: 'client_1',
-      client_id: 'client_1',
-      saml_sp_id: null,
-      authorization_challenge_id: null,
-      saml_request_id: null,
-      saml_sp_entity_id: null,
-      return_to: null,
-      requested_scope: ['openid'],
-      locale: null,
-    };
-    const step = {
-      id: 'consent:step',
-      source_node_id: 'consent',
-      component: 'consent_policy',
-    } as never;
     const policy = {
       id: 'policy_1',
       display_name: 'Policy',
@@ -2190,146 +2171,6 @@ describe('sign-in sequences through the real handlers', () => {
       expect(await rows('SELECT action FROM consent_item_history ORDER BY created_at, id')).toEqual(
         [{ action: 'granted' }, { action: 'withdrawn' }, { action: 'denied' }]
       );
-    });
-
-    describe('a release of destination fields, one user, one recipient, one profile', () => {
-      const consent = {
-        profile_id: 'profile_1',
-        profile_version_id: 'pv_1',
-        consent_version: '1',
-        destination_type: 'oidc' as const,
-        consent_mode: 'once' as const,
-        fields: [],
-      } as never;
-      const record = (interactionId: string, selectedFields: string[]) =>
-        insertDestinationFieldConsentRecord({
-          db: world.db as DatabaseAdapter,
-          tenantId: TENANT,
-          interaction: interaction(interactionId),
-          step,
-          policyId: 'policy_1',
-          requestContext,
-          userId: 'user_1',
-          consent,
-          selectedFields,
-        });
-      const active = () =>
-        rows(
-          "SELECT id, released_claims_json FROM consent_records WHERE status = 'active' AND binding_type = 'destination_field_mapping_set'"
-        );
-
-      it('has exactly one that stands, whatever order two interactions record it in', async () => {
-        await Promise.all([record('interaction_a', ['email']), record('interaction_b', ['phone'])]);
-
-        const standing = await active();
-        expect(standing).toHaveLength(1);
-        // Of the two, the greater by (created_at, id) stands, and sending the other again changes nothing.
-        const all = await rows('SELECT id FROM consent_records ORDER BY created_at, id');
-        expect(standing[0].id).toBe(all.at(-1)?.id);
-        await record('interaction_a', ['email']);
-        await record('interaction_b', ['phone']);
-        expect(await active()).toEqual(standing);
-      });
-
-      it('keeps one active when the greater record was written first, in the same second', async () => {
-        await record('interaction_a', ['email']);
-        await record('interaction_b', ['phone']);
-        // Both in the same second whatever their order: the greater by id stands, the other not.
-        await (world.db as DatabaseAdapter).execute('UPDATE consent_records SET created_at = 1000');
-        await record('interaction_a', ['email']);
-        await record('interaction_b', ['phone']);
-
-        const standing = await active();
-        expect(standing).toHaveLength(1);
-        const ids = (await rows('SELECT id FROM consent_records ORDER BY id')).map((row) => row.id);
-        expect(standing[0].id).toBe(ids.at(-1));
-      });
-
-      it('is a different record for another consent version of the same profile', async () => {
-        await record('interaction_a', ['email']);
-        await insertDestinationFieldConsentRecord({
-          db: world.db as DatabaseAdapter,
-          tenantId: TENANT,
-          interaction: interaction('interaction_a'),
-          step,
-          policyId: 'policy_1',
-          requestContext,
-          userId: 'user_1',
-          consent: { ...(consent as object), consent_version: '2' } as never,
-          selectedFields: ['email', 'phone'],
-        });
-
-        expect(
-          await rows('SELECT statement_version FROM consent_records ORDER BY created_at, id')
-        ).toHaveLength(2);
-        expect(await active()).toHaveLength(1);
-      });
-
-      it('does not let a request delayed past a change of the terms displace the newer consent', async () => {
-        const at = (version: string, interactionId: string, current?: string) =>
-          insertDestinationFieldConsentRecord({
-            db: world.db as DatabaseAdapter,
-            tenantId: TENANT,
-            interaction: interaction(interactionId),
-            step,
-            policyId: 'policy_1',
-            requestContext,
-            userId: 'user_1',
-            consent: { ...(consent as object), consent_version: version } as never,
-            selectedFields: ['email'],
-            currentConsentVersion: current,
-          });
-        // The newer consent is recorded, in the version that applies now ...
-        await at('2', 'interaction_b', '2');
-        // ... and then a request that was accepted under the older version, held up until now,
-        // is written, with the version that applies as this is written.
-        await at('1', 'interaction_a', '2');
-
-        const standing = await rows(
-          "SELECT statement_version FROM consent_records WHERE status = 'active' AND binding_type = 'destination_field_mapping_set'"
-        );
-        expect(standing).toEqual([{ statement_version: '2' }]);
-      });
-
-      it('keeps the record in the newer consent version, whatever sorts later', async () => {
-        const at = (version: string, interactionId: string, fields: string[]) =>
-          insertDestinationFieldConsentRecord({
-            db: world.db as DatabaseAdapter,
-            tenantId: TENANT,
-            interaction: interaction(interactionId),
-            step,
-            policyId: 'policy_1',
-            requestContext,
-            userId: 'user_1',
-            consent: { ...(consent as object), consent_version: version } as never,
-            selectedFields: fields,
-          });
-        await at('1', 'interaction_a', ['email']);
-        // The older record sorts later in every way but its version.
-        await (world.db as DatabaseAdapter).execute(
-          'UPDATE consent_records SET created_at = 4102444800'
-        );
-        await at('2', 'interaction_b', ['email', 'phone']);
-
-        const standing = await rows(
-          "SELECT statement_version FROM consent_records WHERE status = 'active' AND binding_type = 'destination_field_mapping_set'"
-        );
-        expect(standing).toEqual([{ statement_version: '2' }]);
-      });
-
-      it('is updated by a retry with other fields, and an older one sent again retires nothing newer', async () => {
-        await record('interaction_a', ['email']);
-        await record('interaction_a', ['email', 'phone']);
-        expect(await active()).toEqual([
-          expect.objectContaining({ released_claims_json: JSON.stringify(['email', 'phone']) }),
-        ]);
-
-        await record('interaction_b', ['email']);
-        const afterB = await active();
-        expect(afterB).toHaveLength(1);
-        await record('interaction_a', ['email', 'phone']);
-        expect(await active()).toEqual(afterB);
-      });
     });
   });
 

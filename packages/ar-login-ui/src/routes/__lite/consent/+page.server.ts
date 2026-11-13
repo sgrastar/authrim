@@ -20,7 +20,7 @@ import {
 	submitLiteConsent,
 	type LiteConsentOutcome
 } from '#lib/server/lite/consent.js';
-import { releaseClaimLabel } from '#lib/consent-release.js';
+import { releaseItemLabel } from '#lib/consent-release.js';
 import { forwardSetCookies } from '#lib/server/lite/cookies.js';
 import { cspHashSource } from '#lib/server/lite/csp.js';
 import { readLiteForm } from '#lib/server/lite/form.js';
@@ -152,10 +152,10 @@ export const load: PageServerLoad = async (event) => {
 				? {
 						required: view.release.items
 							.filter((item) => item.required)
-							.map((item) => ({ ...item, label: releaseClaimLabel(LL, item.name) })),
+							.map((item) => ({ ...item, label: releaseItemLabel(LL, item) })),
 						optional: view.release.items
 							.filter((item) => !item.required)
-							.map((item) => ({ ...item, label: releaseClaimLabel(LL, item.name) })),
+							.map((item) => ({ ...item, label: releaseItemLabel(LL, item) })),
 						purpose: view.release.purpose
 					}
 				: null,

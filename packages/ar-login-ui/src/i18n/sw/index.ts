@@ -177,6 +177,7 @@ const translation = {
 	account_operationPasskeyCreated: 'Passkey imeongezwa',
 	account_operationPasskeyUpdated: 'Jina la Passkey limebadilishwa',
 	account_operationPasskeyDeleted: 'Passkey ilifutwa',
+	account_operationConsentWithdrawn: 'Idhini kwa huduma imeondolewa',
 	account_operationSessionRevoked: 'Mkutano uliomalizika',
 	account_operationGuestCreated: 'Akaunti ya mgeni imeundwa',
 	account_operationGuestUpgradeFailed: 'Usajili wa mgeni umeshindwa',
@@ -215,6 +216,7 @@ const translation = {
 	account_consentNoExpiry: 'Hakuna tarehe ya kumalizika',
 	account_consentPolicyVersions: 'Toleo la sera',
 	account_consentInformationRelease: 'Taarifa zinazotolewa',
+	account_consentInformationRefused: 'Imekataliwa',
 	account_consentInformationDeclined: 'Hazitolewi',
 	account_consentInformationNone: 'Hakuna',
 	account_consentInformationTrusted: 'Kila kitu ambacho huduma inaomba (huduma inayoaminika)',
@@ -390,6 +392,9 @@ const translation = {
 	consent_item_processing_purpose: 'Kusudi la usindikaji',
 	consent_item_withdrawal_impact: 'Athari za kujiondoa',
 	consent_release_title: 'Taarifa zinazoshirikiwa na {clientName}',
+	consent_release_saml_nameid: 'Kitambulisho chako kwa huduma hii',
+	consent_release_saml_nameid_email:
+		'Anwani yako ya barua pepe (kama kitambulisho chako kwa huduma hii)',
 	consent_release_hint:
 		'Vipengee vilivyowekwa alama ya Lazima hushirikiwa kila wakati ukiruhusu. Ondoa tiki kwenye vipengee vya hiari usivyotaka kushiriki.',
 	consent_release_purpose: 'Madhumuni',

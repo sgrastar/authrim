@@ -384,6 +384,8 @@ export interface AccountInformationRelease {
    * it, and the next sign-in asks the person.
    */
   superseded?: boolean;
+  /** A SAML SP the person refused on the consent screen (nothing is released to it). */
+  refused?: boolean;
 }
 
 // =============================================================================
@@ -504,12 +506,29 @@ export interface ExportedUserData {
       termsOfService?: string;
     };
   }>;
+  /**
+   * Information release decisions on SAML service providers (item keys: the attribute name and
+   * NameFormat, or the NameID format; never values).
+   */
+  samlReleaseConsents?: Array<{
+    spEntityId: string;
+    approved: string[];
+    declined: string[];
+    refused: boolean;
+    mode: string;
+    basis: string;
+    decidedAt: string;
+  }>;
   /** Consent change history (audit log) */
   consentHistory?: Array<{
     action: string;
     clientId: string;
     scopesBefore?: string[];
     scopesAfter?: string[];
+    /** The information release decided with it (item names only). */
+    release?: Record<string, unknown>;
+    /** The protocol of a SAML SP's entry (`clientId` is then its entity ID). */
+    protocol?: string;
     timestamp: string;
   }>;
   /** Active sessions */
@@ -629,12 +648,25 @@ export interface ExtendedConsentScreenData extends ConsentScreenData {
   consent_language?: string;
   /** The information the app would be given about the user, to approve (release consent). */
   information_release?: ConsentInformationReleaseScreen;
+  /**
+   * The protocol of the request: a SAML SP's screen has no scopes, organisations or roles, and its
+   * `client` is the SP (client_id = its entity ID). Absent: OIDC.
+   */
+  protocol?: 'oidc' | 'saml';
 }
 
-/** One piece of information the app would be given (an OIDC claim). */
+/**
+ * One piece of information the app would be given: an OIDC claim, or a SAML SP's attribute or
+ * NameID.
+ */
 export interface ConsentInformationReleaseItem {
-  /** The claim name. */
+  /** The claim name; for a SAML SP, the item's key (saml-release-consent.ts). */
   name: string;
+  /** For a SAML SP: what the item is called, and whether it is an attribute or the NameID. */
+  label?: string;
+  kind?: 'attribute' | 'nameid';
+  /** For a SAML SP: the value is made only once approved (never shown). */
+  deferred?: boolean;
   /** Required by the app: approving the request releases it. Optional ones can be left out. */
   required: boolean;
   /** Whether the user approved it last time (optional items start from this). */

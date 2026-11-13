@@ -121,6 +121,12 @@ export type LiteAccountConsentItem =
 			title: string;
 			subtitle: string;
 			rows: Array<{ label: string; value: string }>;
+	  }
+	| {
+			kind: 'saml_sp';
+			title: string;
+			subtitle: string;
+			rows: Array<{ label: string; value: string }>;
 	  };
 
 export function liteAccountConsents(
@@ -135,6 +141,21 @@ export function liteAccountConsents(
 		typeof value === 'number' ? when(value) : LL.account_consentNoExpiry();
 	return rows.flatMap((raw): LiteAccountConsentItem[] => {
 		const row = record(raw);
+		if (row.kind === 'saml_sp') {
+			const spEntityId = text(row.spEntityId, 2048);
+			if (!spEntityId) return [];
+			return [
+				{
+					kind: 'saml_sp',
+					title: text(row.spName) ?? spEntityId,
+					subtitle: spEntityId,
+					rows: [
+						...accountReleaseRows(LL, row.informationRelease),
+						{ label: LL.account_consentGrantedAt(), value: when(row.decidedAt) }
+					]
+				}
+			];
+		}
 		if (row.kind === 'oauth_client') {
 			const clientId = text(row.clientId, 1024);
 			if (!clientId) return [];

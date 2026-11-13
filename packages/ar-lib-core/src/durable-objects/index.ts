@@ -74,6 +74,8 @@ export type {
   StoreChallengeRequest,
   ConsumeChallengeRequest,
   ConsumeChallengeResponse,
+  DecideChallengeRequest,
+  DecideChallengeOutcome,
 } from './ChallengeStore';
 
 export type {

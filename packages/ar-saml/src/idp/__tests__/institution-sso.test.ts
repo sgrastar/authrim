@@ -118,10 +118,6 @@ vi.mock('../assertion', async () => {
     },
   };
 });
-vi.mock('../attribute-release-consent', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../attribute-release-consent')>();
-  return { ...actual, enforceSAMLAttributeReleaseConsent: vi.fn(async () => undefined) };
-});
 vi.mock('../authn-context', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../authn-context')>();
   return { ...actual, resolveSAMLAuthnContextClassRef: vi.fn(() => 'urn:test:loa:1') };
@@ -152,8 +148,6 @@ vi.mock('../error-response', async (importOriginal) => {
 import { handleIdPSSO } from '../sso';
 import { handleIdPInitiated } from '../idp-initiated';
 import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
-
-const consentTransactionId = '12345678-1234-4234-8234-123456789abc';
 
 function authnRequest() {
   return `<samlp:AuthnRequest xmlns:samlp="${SAML_NAMESPACES.SAML2P}" xmlns:saml="${SAML_NAMESPACES.SAML2}" ID="_request" IssueInstant="${new Date().toISOString()}">
@@ -186,16 +180,19 @@ async function sso() {
 }
 
 function idpInitiated() {
+  // The person is signed in: the first request keeps the pending sign-in and goes on at once.
+  const requestStore = createSamlRequestStoreFake();
   return handleIdPInitiated({
-    env: { STATE_STORE: {} },
+    env: {
+      STATE_STORE: {},
+      SETTINGS: { get: vi.fn(async () => null) },
+      SAML_REQUEST_STORE: {
+        idFromName: vi.fn(() => ({})),
+        get: vi.fn(() => ({ fetch: requestStore.fetch })),
+      },
+    },
     req: {
-      query: vi.fn((name: string) =>
-        name === 'sp'
-          ? PRODUCTION_SP_ENTITY_ID
-          : name === 'consent_tx'
-            ? consentTransactionId
-            : undefined
-      ),
+      query: vi.fn((name: string) => (name === 'sp' ? PRODUCTION_SP_ENTITY_ID : undefined)),
       header: vi.fn((name: string) =>
         name.toLowerCase() === 'cookie' ? 'authrim_session=x' : undefined
       ),

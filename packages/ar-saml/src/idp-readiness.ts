@@ -39,10 +39,6 @@ export async function assertSAMLIdPProviderReadiness(input: {
     if (!config || config.entityId !== spEntityId) {
       throw new Error('saml_idp_runtime_provider_unavailable');
     }
-    if (config.attributeReleaseConsent?.enabled) {
-      // The first alternate runtime has no consent UI.
-      throw new Error('saml_idp_runtime_provider_policy_unsupported');
-    }
     const mapping = await resolveSAMLRuntimeIdentityMapping(
       env,
       tenantId,
@@ -72,8 +68,10 @@ export async function assertSAMLIdPProviderReadiness(input: {
     const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-idp-readiness', {
       tenantId,
     });
-    // This runtime cannot ask for attribute release consent, so an SP must be trusted (or skip
-    // the consent) explicitly: a missing trust row is not read as "nothing to ask".
+    // This runtime has no consent screen (yet), so an SP must be trusted (or skip the consent)
+    // explicitly: its trust approves the release whatever its information release setting says,
+    // and a missing trust row is not read as "nothing to ask". Consent documents the person has
+    // not agreed to refuse the request at run time (release-consent.ts).
     const trust = await core.queryOne<{
       trusted: number;
       skip_authorization_consent: number;

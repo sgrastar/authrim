@@ -61,7 +61,7 @@ import {
 
 // Import handlers (to be implemented)
 import { handleIdPMetadata } from './idp/metadata';
-import { handleIdPAttributeReleaseConsent, handleIdPSSO } from './idp/sso';
+import { handleIdPSSO } from './idp/sso';
 import { handleIdPLoginCancel } from './idp/login-cancel';
 import { handleIdPInitiated } from './idp/idp-initiated';
 import { handleIdPSLO } from './idp/slo';
@@ -170,7 +170,6 @@ app.post(GAKUNIN_SHIBBOLETH_SAML2_IDP_SSO_POST_PATH, handleIdPSSO);
  * Attribute release consent callback
  * Handles the user decision for SAML Attribute release before responding to the SP.
  */
-app.post('/saml/idp/attribute-release-consent', handleIdPAttributeReleaseConsent);
 
 /**
  * A sign-in the person stopped at the Login UI: answers the SP with a failure Response (once, for

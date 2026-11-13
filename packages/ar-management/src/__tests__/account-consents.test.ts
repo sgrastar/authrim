@@ -98,6 +98,9 @@ interface Data {
   clients: Row[];
   /** Active client trust policies (metadata) that skip the consent screen. */
   trustPolicies: Row[];
+  /** SAML SP information release decisions (account database) and SAML SPs (metadata). */
+  samlConsents: Row[];
+  providers: Row[];
 }
 
 function record(overrides: Row): Row {
@@ -136,11 +139,14 @@ function serve(data: Partial<Data>) {
     oauthConsents: [],
     clients: [],
     trustPolicies: [],
+    samlConsents: [],
+    providers: [],
     ...data,
   };
   mockAccountCoreAdapter.query.mockReset().mockImplementation(async (sql: string) => {
     if (sql.includes('FROM user_consent_records')) return all.records;
     if (sql.includes('FROM oauth_client_consents')) return all.oauthConsents;
+    if (sql.includes('FROM saml_sp_release_consents')) return all.samlConsents;
     throw new Error(`account database asked for a table it does not own: ${sql}`);
   });
   mockCoreAdapter.query.mockReset().mockImplementation(async (sql: string) => {
@@ -150,6 +156,7 @@ function serve(data: Partial<Data>) {
     if (sql.includes('FROM oauth_clients')) return all.clients;
     if (sql.includes('FROM client_trust_policies')) return all.trustPolicies;
     if (sql.includes('FROM sign_in_confirmation_policies')) return [];
+    if (sql.includes('FROM identity_providers')) return all.providers;
     throw new Error(`metadata database asked for a table it does not own: ${sql}`);
   });
 }
@@ -348,6 +355,42 @@ describe('Account Page consents API', () => {
         },
       ],
       total: 3,
+    });
+  });
+
+  it('lists a SAML SP the person decided for, with its name and the items by key', async () => {
+    const mail = '["attribute","mail",null]';
+    serve({
+      samlConsents: [
+        {
+          sp_entity_id: 'https://sp.example.edu/sp',
+          approved_json: JSON.stringify([mail]),
+          declined_json: '[]',
+          basis: 'user',
+          refused: 0,
+          decided_at: 1_777_200_000_000,
+          created_at: 1_777_200_000_000,
+        },
+      ],
+      providers: [
+        { name: 'Library', config_json: JSON.stringify({ entityId: 'https://sp.example.edu/sp' }) },
+      ],
+    });
+    const saml = (
+      await bodyOf(await listAccountConsentsHandler(createMockContext(COOKIE)))
+    ).consents.find((entry) => entry.kind === 'saml_sp');
+    expect(saml).toEqual({
+      kind: 'saml_sp',
+      id: 'https://sp.example.edu/sp',
+      spEntityId: 'https://sp.example.edu/sp',
+      spName: 'Library',
+      decidedAt: 1_777_200_000_000,
+      informationRelease: {
+        basis: 'user',
+        approved: [mail],
+        declined: [],
+        decidedAt: 1_777_200_000_000,
+      },
     });
   });
 

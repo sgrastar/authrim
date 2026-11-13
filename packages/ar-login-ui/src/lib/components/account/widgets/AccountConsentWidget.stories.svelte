@@ -84,6 +84,47 @@
 </Story>
 
 <Story
+	name="SAML service providers"
+	args={{
+		consents: [
+			{
+				kind: 'saml_sp',
+				id: 'https://sp.example.edu/shibboleth',
+				spEntityId: 'https://sp.example.edu/shibboleth',
+				spName: 'Library portal',
+				decidedAt: 1_754_000_000_000,
+				informationRelease: {
+					basis: 'user',
+					approved: [
+						'["nameid","urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"]',
+						'["attribute","mail","urn:oasis:names:tc:SAML:2.0:attrname-format:basic"]'
+					],
+					declined: [
+						'["attribute","eduPersonAffiliation","urn:oasis:names:tc:SAML:2.0:attrname-format:basic"]'
+					],
+					decidedAt: 1_754_000_000_000
+				}
+			},
+			{
+				kind: 'saml_sp',
+				id: 'https://lms.example.edu/sp',
+				spEntityId: 'https://lms.example.edu/sp',
+				decidedAt: 1_754_000_000_000,
+				informationRelease: {
+					basis: 'user',
+					approved: [],
+					declined: [],
+					decidedAt: 1_754_000_000_000,
+					refused: true
+				}
+			}
+		]
+	}}
+>
+	{#snippet template(args)}{@render widget(args)}{/snippet}
+</Story>
+
+<Story
 	name="Withdrawn statement"
 	args={{
 		consents: [statementConsent({ status: 'withdrawn', selectedValue: 'none' })]

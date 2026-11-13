@@ -62,6 +62,32 @@ const ALL_SECTIONS: DataExportSection[] = [
   'screen_responses',
 ];
 
+const CONSENT_HISTORY_EXPORT_PAGE_SIZE = 500;
+const CONSENT_HISTORY_EXPORT_MAX_PAGES = 200;
+
+function parseExportNames(value: string | null): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value ?? '[]');
+    return Array.isArray(parsed)
+      ? parsed.filter((name): name is string => typeof name === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseExportRecord(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 const DATA_EXPORT_DOWNLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 const DATA_EXPORT_PROCESS_BATCH_LIMIT = 3;
 const DATA_EXPORT_SHARD_PAGE_LIMIT = 25;
@@ -1523,6 +1549,40 @@ async function collectExportData(
     }));
   }
 
+  // Information release decisions on SAML SPs (kept with the person, item keys only)
+  if (sections.includes('consents')) {
+    const decisions = await coreAdapter.query<{
+      sp_entity_id: string;
+      approved_json: string;
+      declined_json: string;
+      refused: number | string | boolean;
+      mode: string;
+      basis: string;
+      decided_at: number | string;
+    }>(
+      `SELECT c.sp_entity_id, c.approved_json, c.declined_json, c.refused, c.mode, c.basis,
+              c.decided_at
+         FROM saml_sp_release_consents c
+        WHERE c.tenant_id = ? AND c.user_id = ?
+          AND c.consent_generation = COALESCE((
+            SELECT r.generation FROM saml_sp_release_consent_revocations r
+             WHERE r.tenant_id = c.tenant_id AND r.user_id = c.user_id
+               AND r.sp_entity_id = c.sp_entity_id
+          ), 0)
+        ORDER BY c.decided_at DESC`,
+      [tenantId, userId]
+    );
+    exportedData.samlReleaseConsents = decisions.map((row) => ({
+      spEntityId: row.sp_entity_id,
+      approved: parseExportNames(row.approved_json),
+      declined: parseExportNames(row.declined_json),
+      refused: row.refused === true || Number(row.refused) === 1,
+      mode: row.mode,
+      basis: row.basis,
+      decidedAt: toISOString(Number(row.decided_at)),
+    }));
+  }
+
   // Collect active sessions (without sensitive data)
   if (sections.includes('sessions')) {
     const indexed = await getSessionRevocationStore(env, tenantId, userId).listActiveSessionsRpc(
@@ -1545,30 +1605,53 @@ async function collectExportData(
     }));
   }
 
-  // Collect consent history (audit log)
+  // Collect consent history (audit log), page by page: the whole history, not only its latest
+  // entries, with the information release decided at each step (item names, never values).
   if (sections.includes('audit_log')) {
-    const history = await coreAdapter.query<{
+    const history: Array<{
+      id: string;
       client_id: string;
       action: string;
       scopes_before: string | null;
       scopes_after: string | null;
       created_at: number;
-    }>(
-      `SELECT client_id, action, scopes_before, scopes_after, created_at
-       FROM consent_history
-       WHERE tenant_id = ? AND user_id = ?
-       ORDER BY created_at DESC
-       LIMIT 100`,
-      [tenantId, userId]
-    );
+      metadata_json: string | null;
+    }> = [];
+    let cursor: { createdAt: number; id: string } | null = null;
+    for (let page = 0; page < CONSENT_HISTORY_EXPORT_MAX_PAGES; page++) {
+      const rows: typeof history = await coreAdapter.query(
+        `SELECT id, client_id, action, scopes_before, scopes_after, created_at, metadata_json
+           FROM consent_history
+          WHERE tenant_id = ? AND user_id = ?
+            ${cursor ? 'AND (created_at < ? OR (created_at = ? AND id < ?))' : ''}
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${CONSENT_HISTORY_EXPORT_PAGE_SIZE}`,
+        cursor
+          ? [tenantId, userId, cursor.createdAt, cursor.createdAt, cursor.id]
+          : [tenantId, userId]
+      );
+      history.push(...rows);
+      if (rows.length < CONSENT_HISTORY_EXPORT_PAGE_SIZE) break;
+      const last = rows[rows.length - 1];
+      cursor = { createdAt: Number(last.created_at), id: last.id };
+    }
 
-    exportedData.consentHistory = history.map((h) => ({
-      action: h.action,
-      clientId: h.client_id,
-      scopesBefore: h.scopes_before ? JSON.parse(h.scopes_before) : undefined,
-      scopesAfter: h.scopes_after ? JSON.parse(h.scopes_after) : undefined,
-      timestamp: toISOString(h.created_at),
-    }));
+    exportedData.consentHistory = history.map((h) => {
+      const metadata = parseExportRecord(h.metadata_json);
+      return {
+        action: h.action,
+        clientId: h.client_id,
+        scopesBefore: h.scopes_before ? JSON.parse(h.scopes_before) : undefined,
+        scopesAfter: h.scopes_after ? JSON.parse(h.scopes_after) : undefined,
+        ...(metadata && typeof metadata.release === 'object' && metadata.release
+          ? { release: metadata.release as Record<string, unknown> }
+          : {}),
+        ...(metadata && typeof metadata.protocol === 'string'
+          ? { protocol: metadata.protocol }
+          : {}),
+        timestamp: toISOString(Number(h.created_at)),
+      };
+    });
   }
 
   // Collect passkeys (minimal info for portability)

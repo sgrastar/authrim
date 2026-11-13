@@ -93,10 +93,6 @@ vi.mock('../signing', () => ({
   assertSAMLResponseSigningPolicy: vi.fn(),
 }));
 vi.mock('../assertion', () => ({ buildSAMLResponse: mocks.buildResponse }));
-vi.mock('../attribute-release-consent', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../attribute-release-consent')>();
-  return { ...actual, enforceSAMLAttributeReleaseConsent: vi.fn(async () => undefined) };
-});
 vi.mock('../authn-context', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../authn-context')>();
   return { ...actual, resolveSAMLAuthnContextClassRef: vi.fn(() => 'urn:test:loa:1') };
@@ -130,7 +126,6 @@ import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
 
 const IAL1_URI = 'https://example.org/assurance/IAL1';
 const IAL2_URI = 'https://example.org/assurance/IAL2';
-const consentTransactionId = '12345678-1234-4234-8234-123456789abc';
 
 function authnRequest() {
   return `<samlp:AuthnRequest xmlns:samlp="${SAML_NAMESPACES.SAML2P}" xmlns:saml="${SAML_NAMESPACES.SAML2}" ID="_request" IssueInstant="${new Date().toISOString()}">
@@ -163,16 +158,19 @@ async function sso() {
 }
 
 function idpInitiated() {
+  // The person is signed in: the first request keeps the pending sign-in and goes on at once.
+  const requestStore = createSamlRequestStoreFake();
   return handleIdPInitiated({
-    env: { STATE_STORE: {} },
+    env: {
+      STATE_STORE: {},
+      SETTINGS: { get: vi.fn(async () => null) },
+      SAML_REQUEST_STORE: {
+        idFromName: vi.fn(() => ({})),
+        get: vi.fn(() => ({ fetch: requestStore.fetch })),
+      },
+    },
     req: {
-      query: vi.fn((name: string) =>
-        name === 'sp'
-          ? PRODUCTION_SP_ENTITY_ID
-          : name === 'consent_tx'
-            ? consentTransactionId
-            : undefined
-      ),
+      query: vi.fn((name: string) => (name === 'sp' ? PRODUCTION_SP_ENTITY_ID : undefined)),
       header: vi.fn((name: string) =>
         name.toLowerCase() === 'cookie' ? 'authrim_session=x' : undefined
       ),
@@ -204,6 +202,7 @@ describe('attribute release for an SP with a deployed-tenant mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     evidence.clearEvidence();
+    evidence.clearConsent();
     evidence.resetReads();
     evidence.addEvidence('ev-1', 'IAL2');
     mocks.evidenceAdapter = evidence.adapter;
@@ -230,7 +229,7 @@ describe('attribute release for an SP with a deployed-tenant mapping', () => {
     ['SP-initiated SSO', sso],
     ['IdP-initiated SSO', idpInitiated],
   ] as const)('%s', (_name, run) => {
-    it('releases mail and the multi-valued eduPersonAssurance, and not the optional attribute nobody selected', async () => {
+    it('releases mail and the multi-valued eduPersonAssurance, and not the optional attribute, for an SP that does not ask', async () => {
       const response = await run();
       expect(response.status).toBe(200);
       expect(mocks.buildErrorResponse).not.toHaveBeenCalled();
@@ -238,6 +237,19 @@ describe('attribute release for an SP with a deployed-tenant mapping', () => {
         expect.objectContaining({ name: OID_MAIL, values: ['user@example.test'] }),
         expect.objectContaining({ name: OID_EDU_PERSON_ASSURANCE, values: [IAL1_URI, IAL2_URI] }),
       ]);
+    });
+
+    it('releases the optional attribute too for a trusted SP, even one whose setting asks', async () => {
+      mocks.core = evidence.adapter;
+      evidence.trustSP(PRODUCTION_SP_ENTITY_ID, { trusted: true });
+      mocks.sp = productionSpConfig(undefined, {
+        informationReleaseConsent: { enabled: true, ask: 'every_time' },
+      });
+      const response = await run();
+      expect(response.status).toBe(200);
+      expect(releasedAttributes().map((attribute) => attribute.name)).toEqual(
+        expect.arrayContaining([OID_MAIL, OID_EDU_PERSON_ASSURANCE, OID_SURNAME])
+      );
     });
 
     it('releases neither a hidden attribute nor a hidden assurance field, and reads no evidence for it', async () => {

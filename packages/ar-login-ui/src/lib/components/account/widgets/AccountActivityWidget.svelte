@@ -51,6 +51,7 @@
 			ll.account_operationTotpBackupCodesRegenerated(),
 		'account.totp.reauthenticated': (ll) => ll.account_operationTotpReauthenticated(),
 		'account.session.revoked': (ll) => ll.account_operationSessionRevoked(),
+		'account.consent.withdrawn': (ll) => ll.account_operationConsentWithdrawn(),
 		'account.social_account.linked': (ll) => ll.account_operationSocialLinked(),
 		'account.social_account.unlinked': (ll) => ll.account_operationSocialUnlinked()
 	};

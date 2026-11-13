@@ -112,7 +112,16 @@ function environment(options: { trusted?: boolean; consent?: boolean } = {}) {
           entityId: SP,
           acsUrl: 'https://sp.example.test/acs',
           identityMapping: SOURCE_SELECTOR,
-          ...(options.consent ? { attributeReleaseConsent: { enabled: true, mode: 'once' } } : {}),
+          ...(options.consent
+            ? {
+                informationReleaseConsent: {
+                  enabled: true,
+                  ask: 'once',
+                  show_values: true,
+                  purpose_statement_id: null,
+                },
+              }
+            : {}),
         }),
       },
     ];
@@ -180,11 +189,10 @@ describe('limited IdP provider readiness', () => {
     ).rejects.toThrow('saml_idp_runtime_consent_policy_unsupported');
   });
 
-  it('rejects a SP that requires a consent screen the runtime does not serve', async () => {
+  it('accepts a trusted SP whose information release setting asks: its trust approves', async () => {
     const fixture = environment({ trusted: true, consent: true });
     await expect(
       assertSAMLIdPProviderReadiness({ env: fixture.env, tenantId: TENANT_ID, spEntityIds: [SP] })
-    ).rejects.toThrow('saml_idp_runtime_provider_policy_unsupported');
-    expect(fixture.queryOne).not.toHaveBeenCalled();
+    ).resolves.toBeUndefined();
   });
 });

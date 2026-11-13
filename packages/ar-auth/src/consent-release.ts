@@ -75,25 +75,42 @@ async function purposeOf(
   language: string,
   defaultLanguage: string
 ): Promise<ConsentInformationReleaseScreen['purpose'] | undefined> {
-  if (!setting.purpose_statement_id) return undefined;
-  const metadata = createAuthContextFromHono(context.c, context.tenantId).coreAdapter;
+  return loadReleasePurpose(
+    context.c,
+    context.tenantId,
+    setting.purpose_statement_id,
+    language,
+    defaultLanguage
+  );
+}
+
+/** The current version of the statement explaining why a service is given the information. */
+export async function loadReleasePurpose(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  statementId: string | null,
+  language: string,
+  defaultLanguage: string
+): Promise<ConsentInformationReleaseScreen['purpose'] | undefined> {
+  if (!statementId) return undefined;
+  const metadata = createAuthContextFromHono(c, tenantId).coreAdapter;
   const version = await metadata.queryOne<{ id: string; version: string }>(
     `SELECT id, version FROM consent_statement_versions
       WHERE tenant_id = ? AND statement_id = ? AND is_current = 1`,
-    [context.tenantId, setting.purpose_statement_id]
+    [tenantId, statementId]
   );
   if (!version) return undefined;
   const localization = await getLocalization(
     metadata,
-    context.tenantId,
+    tenantId,
     version.id,
     language,
     defaultLanguage
   );
   return {
-    statement_id: setting.purpose_statement_id,
+    statement_id: statementId,
     version: version.version,
-    title: localization?.title || setting.purpose_statement_id,
+    title: localization?.title || statementId,
     ...(localization?.description ? { description: localization.description } : {}),
     document_url: localization?.document_url ?? null,
     inline_content: localization?.inline_content ?? null,

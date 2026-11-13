@@ -84,6 +84,8 @@ const completion = {
 	consent_item_processing_purpose: 'Verarbeitungszweck',
 	consent_item_withdrawal_impact: 'Auswirkungen des Widerrufs',
 	consent_release_title: 'Weitergegebene Informationen an {clientName}',
+	consent_release_saml_nameid: 'Ihre Kennung für diesen Dienst',
+	consent_release_saml_nameid_email: 'Ihre E-Mail-Adresse (als Ihre Kennung für diesen Dienst)',
 	consent_release_hint:
 		'Als „Erforderlich“ gekennzeichnete Angaben werden bei Zustimmung immer weitergegeben. Deaktivieren Sie optionale Angaben, die Sie nicht weitergeben möchten.',
 	consent_release_purpose: 'Zweck',

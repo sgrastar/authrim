@@ -97,7 +97,39 @@ export interface Challenge {
   consumed: boolean;
   /** The operation that consumed it, when the consume named one (see ConsumeChallengeRequest). */
   consumedBy?: string;
+  /**
+   * The decision taken on it, when it waits for a decision before it is used up (a SAML consent:
+   * pending until the consent screen's answer, decided until the SAML request resumes).
+   */
+  decision?: Record<string, unknown>;
+  /** The operation that decided it (a re-sent decision of the same operation is the same one). */
+  decidedBy?: string;
 }
+
+/**
+ * Decide a challenge: pending → decided, once. The same operation deciding again gets the same
+ * result; any other decision on a decided challenge is refused.
+ */
+export interface DecideChallengeRequest {
+  id: string;
+  tenantId: string;
+  type: ChallengeType;
+  operationId: string;
+  decision: Record<string, unknown>;
+  /**
+   * Replace the decision this operation made before (what it claimed, now completed). Refused
+   * for a decision another operation made.
+   */
+  replaceOwn?: boolean;
+}
+
+export type DecideChallengeOutcome =
+  /** Decided now, or already by this operation. */
+  | { outcome: 'decided'; decision: Record<string, unknown> }
+  /** Decided by another operation: its decision stands. */
+  | { outcome: 'conflict'; decision: Record<string, unknown> }
+  /** Missing, expired, used up, or not this tenant's or type's. */
+  | { outcome: 'gone' };
 
 /**
  * Store challenge request
@@ -139,6 +171,11 @@ export interface ConsumeChallengeRequest {
    * operation whose answer was lost can recognise its own consume.
    */
   operationId?: string;
+  /**
+   * Only a decided challenge (see DecideChallengeRequest) is used up. Without it, a decided one is
+   * refused: its decision is used up only by the step that waits for it.
+   */
+  requireDecided?: boolean;
 }
 
 /**
@@ -152,6 +189,8 @@ export interface ConsumeChallengeResponse {
   metadata?: Record<string, unknown>;
   /** When the challenge was stored (milliseconds). */
   createdAt?: number;
+  /** The decision it was used up with (a decided challenge). */
+  decision?: Record<string, unknown>;
 }
 
 /**
@@ -172,7 +211,7 @@ const CHALLENGE_KEY_PREFIX = 'challenge:';
  */
 export class ChallengeStore extends DurableObject<Env> {
   private challengeCache: Map<string, Challenge> = new Map();
-  private cleanupInterval: number | null = null;
+  private alarmScheduled = false;
   private readonly log: Logger = createLogger().module('ChallengeStore');
 
   // Configuration
@@ -180,9 +219,6 @@ export class ChallengeStore extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-
-    // Start periodic cleanup
-    this.startCleanup();
   }
 
   /**
@@ -255,6 +291,34 @@ export class ChallengeStore extends DurableObject<Env> {
   }
 
   /**
+   * RPC: Decide a challenge (pending → decided), atomically within the DO. See
+   * DecideChallengeRequest.
+   */
+  async decideChallengeRpc(request: DecideChallengeRequest): Promise<DecideChallengeOutcome> {
+    assertValidTenantId(request.tenantId);
+    const challenge = await this.getChallenge(request.id);
+    if (
+      !challenge ||
+      challenge.consumed ||
+      challenge.type !== request.type ||
+      challenge.tenantId !== request.tenantId
+    ) {
+      return { outcome: 'gone' };
+    }
+    if (challenge.decision) {
+      if (challenge.decidedBy !== request.operationId) {
+        return { outcome: 'conflict', decision: challenge.decision };
+      }
+      if (!request.replaceOwn) return { outcome: 'decided', decision: challenge.decision };
+    }
+    challenge.decision = request.decision;
+    challenge.decidedBy = request.operationId;
+    this.challengeCache.set(request.id, challenge);
+    await this.ctx.storage.put(this.buildChallengeKey(request.id), challenge);
+    return { outcome: 'decided', decision: challenge.decision };
+  }
+
+  /**
    * RPC: Delete a challenge
    */
   async deleteChallengeRpc(id: string): Promise<{ deleted: boolean }> {
@@ -314,13 +378,26 @@ export class ChallengeStore extends DurableObject<Env> {
   }
 
   /**
-   * Start periodic cleanup of expired challenges
+   * Make sure a cleanup alarm is set while challenges are stored: what a challenge holds (a
+   * consent screen's values among them) is deleted once it expires even if nothing reads the
+   * object again or it restarts, which an in-memory timer would not do.
    */
-  private startCleanup(): void {
-    if (this.cleanupInterval === null) {
-      this.cleanupInterval = setInterval(() => {
-        void this.cleanupExpiredChallenges();
-      }, this.CLEANUP_INTERVAL) as unknown as number;
+  private async ensureCleanupAlarm(): Promise<void> {
+    if (this.alarmScheduled) return;
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(Date.now() + this.CLEANUP_INTERVAL);
+    }
+    this.alarmScheduled = true;
+  }
+
+  /** Delete what expired or was used up, and run again while anything is left. */
+  async alarm(): Promise<void> {
+    this.alarmScheduled = false;
+    await this.cleanupExpiredChallenges();
+    const left = await this.ctx.storage.list<Challenge>({ prefix: CHALLENGE_KEY_PREFIX, limit: 1 });
+    if (left.size > 0) {
+      await this.ctx.storage.setAlarm(Date.now() + this.CLEANUP_INTERVAL);
+      this.alarmScheduled = true;
     }
   }
 
@@ -387,6 +464,7 @@ export class ChallengeStore extends DurableObject<Env> {
 
     // 2. Persist to Durable Storage (individual key - O(1))
     await this.ctx.storage.put(this.buildChallengeKey(request.id), challenge);
+    await this.ensureCleanupAlarm();
   }
 
   /**
@@ -451,6 +529,12 @@ export class ChallengeStore extends DurableObject<Env> {
       throw new Error('Challenge value mismatch');
     }
 
+    // A challenge that waits for a decision is used up only once decided, by the step waiting for
+    // it; a decided one is not used up by anything else.
+    if (request.requireDecided ? !challenge.decision : challenge.decision) {
+      throw new Error(request.requireDecided ? 'Challenge not decided' : 'Challenge decided');
+    }
+
     // ATOMIC: Mark as consumed (prevents parallel replay)
     challenge.consumed = true;
     if (request.operationId) challenge.consumedBy = request.operationId;
@@ -465,6 +549,7 @@ export class ChallengeStore extends DurableObject<Env> {
       redirectUri: challenge.redirectUri,
       metadata: challenge.metadata,
       createdAt: challenge.createdAt,
+      ...(challenge.decision ? { decision: challenge.decision } : {}),
     };
   }
 

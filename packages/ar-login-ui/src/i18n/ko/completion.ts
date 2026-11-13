@@ -79,6 +79,8 @@ const completion = {
 	consent_item_processing_purpose: '처리 목적',
 	consent_item_withdrawal_impact: '철회 시 영향',
 	consent_release_title: '{clientName}에 공유되는 정보',
+	consent_release_saml_nameid: '이 서비스용 식별자',
+	consent_release_saml_nameid_email: '이메일 주소(이 서비스에서의 식별자)',
 	consent_release_hint:
 		'필수로 표시된 항목은 허용하면 항상 공유됩니다. 공유하고 싶지 않은 선택 항목은 체크를 해제하세요.',
 	consent_release_purpose: '목적',

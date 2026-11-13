@@ -68,7 +68,6 @@ describe('the tenant SAML switch on the SAML worker', () => {
         '/saml/idp/sso',
         '/saml/idp/init',
         '/saml/idp/slo',
-        '/saml/idp/attribute-release-consent',
         '/saml/metadata',
         '/saml/sp/metadata',
         '/saml/sp/login',
