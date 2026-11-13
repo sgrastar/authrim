@@ -12,6 +12,7 @@ import { Hono } from 'hono';
 import { SAML_NAMESPACES, STATUS_CODES } from '../../common/constants';
 import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
 import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
+import { samlNameIdItemKey, samlAttributeItemKey } from '../release-items';
 
 const store = createSamlRequestStoreFake();
 
@@ -22,6 +23,9 @@ interface StoredChallenge {
   userId: string;
   ttl: number;
   metadata: Record<string, unknown>;
+  consumed?: boolean;
+  /** The consent screen's answer (`decideChallengeRpc`). */
+  decision?: Record<string, unknown>;
 }
 
 interface FakeSession {
@@ -44,7 +48,6 @@ const mocks = vi.hoisted(() => ({
   assuranceSettings: null as Record<string, unknown> | null,
   settingsReads: 0,
   settingsError: null as Error | null,
-  consentError: null as Error | null,
   evidenceAdapter: null as unknown,
   buildResponse: vi.fn((_options?: unknown) => '<saml-success-response/>'),
   buildErrorResponse: vi.fn((_options?: unknown) => '<saml-error-response/>'),
@@ -95,7 +98,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: vi.fn(() => ({ stub: fakeSessionStore() })),
     isShardedSessionId: vi.fn((id: string) => id.startsWith('s')),
     // No sign-in Flow is assigned: a session the sign-in made answers the request it was sent for.
-    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({ queryOne: async () => null })),
+    // Nor a trust policy, a consent document requirement or a decision of the person.
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({
+      query: async () => [],
+      queryOne: async () => null,
+    })),
     requireAdminDatabaseAdapter: vi.fn(() => ({ query: vi.fn(async () => []) })),
     resolveRuntimeIdentityMappingBinding: vi.fn(async () => ({
       id: 'binding',
@@ -111,10 +118,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       destinationProfileId: 'destination-profile-saml',
       destinationProfileIds: ['destination-profile-saml'],
     })),
-    filterSamlAttributesByDestinationConsentWithStatus: vi.fn(
-      async (input: { attributes: unknown[] }) => ({
+    // The profile requires every attribute it is given.
+    filterSamlAttributesByDestinationProfile: vi.fn(
+      async (input: { attributes: Array<{ name: string }> }) => ({
         attributes: input.attributes,
-        consentApplied: false,
+        required: new Set(input.attributes.map((attribute) => attribute.name)),
+        labels: new Map<string, string>(),
       })
     ),
     getLocalization: vi.fn(async () => ({ locale: 'en', t: (key: string) => key })),
@@ -169,17 +178,6 @@ vi.mock('../attributes', async (importOriginal) => {
   };
 });
 
-vi.mock('../attribute-release-consent', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../attribute-release-consent')>();
-  return {
-    ...actual,
-    enforceSAMLAttributeReleaseConsent: vi.fn(async (input: { confirmedRelease?: unknown }) => {
-      if (input.confirmedRelease) return;
-      if (mocks.consentError) throw mocks.consentError;
-    }),
-  };
-});
-
 vi.mock('../subject', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../subject')>();
   return {
@@ -206,8 +204,7 @@ vi.mock('../error-response', async (importOriginal) => {
   };
 });
 
-import { handleIdPAttributeReleaseConsent, handleIdPSSO } from '../sso';
-import { SAMLAttributeReleaseConsentRequiredError } from '../attribute-release-consent';
+import { handleIdPSSO } from '../sso';
 
 const SP_ENTITY = 'https://sp.example.test/entity';
 const AAL1_REF = 'https://example.org/profile/AAL1';
@@ -227,6 +224,8 @@ function sp(overrides: Record<string, unknown> = {}) {
     authnRequestSignaturePolicy: 'optional',
     signResponses: true,
     signAssertions: false,
+    // The SP does not ask the person (these tests are about the sign-in, not the release).
+    informationReleaseConsent: { enabled: false },
     ...overrides,
   };
 }
@@ -256,7 +255,6 @@ function app() {
     await next();
   });
   route.all('/sso', handleIdPSSO as never);
-  route.post('/consent', handleIdPAttributeReleaseConsent as never);
   return route;
 }
 
@@ -279,6 +277,17 @@ function environment() {
           if (mocks.challengeError) throw mocks.challengeError;
           mocks.challenges.set(request.id, request);
           return { success: true };
+        },
+        getChallengeRpc: async (id: string) => {
+          const challenge = mocks.challenges.get(id);
+          return challenge ? { ...challenge, consumed: challenge.consumed === true } : null;
+        },
+        consumeChallengeRpc: async (request: { id: string; requireDecided?: boolean }) => {
+          const challenge = mocks.challenges.get(request.id);
+          if (!challenge || challenge.consumed) throw new Error('Challenge not found or consumed');
+          if (request.requireDecided && !challenge.decision) throw new Error('not decided');
+          challenge.consumed = true;
+          return challenge;
         },
       })),
     },
@@ -366,7 +375,7 @@ interface StoredContext {
     requiredAal: string;
     completed?: { sessionId: string; aal: string };
   };
-  attributeReleaseConsentChallenge?: { challengeId: string };
+  releaseConsent?: { challengeId: string };
 }
 
 const storedContext = (): StoredContext | undefined =>
@@ -423,9 +432,9 @@ describe('SAML IdP SSO and authentication assurance', () => {
     mocks.assuranceSettings = null;
     mocks.settingsReads = 0;
     mocks.settingsError = null;
-    mocks.consentError = null;
     mocks.evidenceAdapter = evidence.adapter;
     evidence.clearEvidence();
+    evidence.clearConsent();
     evidence.resetReads();
   });
 
@@ -890,24 +899,22 @@ describe('SAML IdP SSO and authentication assurance', () => {
     });
   });
 
-  describe('attribute release consent after a step-up', () => {
+  describe('information release consent after a step-up', () => {
     it('is not judged again on the session that holds the combined evidence', async () => {
-      mocks.sp = sp({ minimumAal: 'AAL2' });
-      mocks.consentError = new SAMLAttributeReleaseConsentRequiredError({
-        attributeSetHash: 'hash',
-        reasonCodes: ['consent.required'],
-        consentMode: 'once',
-        attributes: [{ name: 'mail', values: ['user@example.test'] }],
+      mocks.sp = sp({
+        minimumAal: 'AAL2',
+        informationReleaseConsent: { enabled: true, ask: 'once' },
       });
       setSession('s-1', { amr: ['pwd'], proven_at: LONG_AGO });
       await post(authnRequestXml(), 's-1');
       const issuedAt = stepUpOf().issuedAt;
       setSession('s-2', { amr: ['totp'], proven_at: issuedAt + 10 });
 
-      // Back from the step-up: combined (AAL2), then the consent screen stores the request.
+      // Back from the step-up: combined (AAL2), then the consent screen is asked for.
       const consentScreen = await resume('s-2');
-      expect(consentScreen.status).toBe(200);
-      expect(await consentScreen.text()).toContain('name="challenge_id"');
+      expect(consentScreen.status).toBe(302);
+      const consentUrl = new URL(consentScreen.headers.get('location') ?? '');
+      expect(consentUrl.origin + consentUrl.pathname).toBe('https://ui.example.test/consent');
       expect(stepUpOf().completed).toEqual({
         sessionId: 's-2',
         aal: 'AAL2',
@@ -915,28 +922,43 @@ describe('SAML IdP SSO and authentication assurance', () => {
       // The session now records the combined factors, as old as the oldest proof.
       expect(sessionData('s-2')).toMatchObject({ amr: ['pwd', 'totp'], proven_at: LONG_AGO });
 
-      // The person approves; the request comes back with that session and is answered.
-      const challengeId = storedContext()?.attributeReleaseConsentChallenge?.challengeId ?? '';
-      const form = new FormData();
-      form.set('saml_request_id', '_request');
-      form.set('saml_sp_entity_id', SP_ENTITY);
-      form.set('challenge_id', challengeId);
-      form.set('attribute_set_hash', 'hash');
-      form.set('decision', 'approve_once');
-      mocks.sessionId = 's-2';
-      const approved = await send(
-        new Request('https://tenant.example.test/consent', {
-          method: 'POST',
-          body: form,
-          headers: { Cookie: 'authrim_session=s-2' },
-        })
-      );
-      expect(approved.status).toBe(302);
-      expect(stepUpOf().completed).toEqual({ sessionId: 's-2', aal: 'AAL2' });
-      mocks.consentError = null;
+      // The request waits for that consent challenge, with the step-up it was answered under.
+      const challengeId = storedContext()?.releaseConsent?.challengeId ?? '';
+      expect(consentUrl.searchParams.get('challenge_id')).toBe(challengeId);
+      const challenge = mocks.challenges.get(challengeId);
+      expect(challenge).toMatchObject({
+        type: 'consent',
+        userId: 'user-a',
+        metadata: { protocol: 'saml', session_id: 's-2', saml_request_id: '_request' },
+      });
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+
+      // The person approves (the screen records the decision and answers the challenge); the
+      // request comes back with that session and is answered, with no second step-up.
+      const items = (
+        challenge?.metadata as { release: { items: Array<{ key: string }> } }
+      ).release.items.map((item) => item.key);
+      expect(items).toEqual([
+        samlNameIdItemKey('urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'),
+        samlAttributeItemKey({ name: 'mail' }),
+      ]);
+      evidence.saveReleaseDecision({
+        spEntityId: SP_ENTITY,
+        presented: items,
+        approved: items,
+      });
+      (challenge as StoredChallenge).decision = {
+        approved: true,
+        approved_items: items,
+        declined_items: [],
+        decision_revision: 1,
+        decided_at: Date.now(),
+      };
       const answered = await resume('s-2');
       expect(answered.status).toBe(200);
       expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(challenge?.consumed).toBe(true);
+      expect(store.waiting.size).toBe(0);
     });
   });
 

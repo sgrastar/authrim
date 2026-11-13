@@ -31,7 +31,7 @@ overrides:
   'vite': '>=8.3.5 <9'
   '@sveltejs/kit': '>=3.1.1'
   'rollup': '>=4.59.0'
-  'hono': '4.13.12'
+  'hono': '4.13.18'
   '@hono/node-server': '2.1.6'
   'fast-uri': '3.1.9'
   'body-parser@<1.20.9': '1.20.9'

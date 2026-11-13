@@ -529,9 +529,7 @@
 			<ul>
 				{#each data.widgets.consents as consent, index (index)}
 					<li>
-						<span class="icon" aria-hidden="true"
-							>{consent.kind === 'oauth_client' ? 'A' : 'C'}</span
-						>
+						<span class="icon" aria-hidden="true">{consent.kind === 'statement' ? 'C' : 'A'}</span>
 						<strong>{consent.title}</strong>
 						<p class="muted">{consent.subtitle}</p>
 						<dl>

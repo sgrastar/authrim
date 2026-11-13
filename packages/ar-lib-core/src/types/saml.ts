@@ -5,7 +5,7 @@
  * Includes types for both IdP (Identity Provider) and SP (Service Provider) roles.
  */
 
-import type { AttributeReleaseConsentPolicy } from '../services/identity-release-consent';
+import type { InformationReleaseConsentSetting } from '../services/information-release-consent';
 import type { AAL, IAL } from './settings/assurance-levels';
 
 /**
@@ -565,6 +565,8 @@ export interface SAMLSPConfig {
   iconName?: string;
   /** SP Entity ID */
   entityId: string;
+  /** The provider's name, from its record when it is read for a sign-in (never stored here). */
+  displayName?: string;
   /** Assertion Consumer Service URL */
   acsUrl: string;
   /** Additional allowed Assertion Consumer Service URLs from metadata */
@@ -629,10 +631,12 @@ export interface SAMLSPConfig {
   attributeMapping: Record<string, string>;
   /** Policy-based SAML attribute release rules */
   attributeReleasePolicy?: SAMLAttributeReleasePolicy;
-  /** User-facing attribute release consent policy. Protocol-neutral shape for OIDC reuse. */
-  attributeReleaseConsent?: AttributeReleaseConsentPolicy;
-  /** User-facing presentation settings for SAML attribute release confirmation screens. */
-  attributeReleaseConfirmation?: SAMLAttributeReleaseConfirmationSettings;
+  /**
+   * Information release consent (the same setting as an OIDC service's): whether the person is
+   * asked on the consent screen before attributes are released, when they are asked again, and
+   * whether the screen shows values. Absent: the default (asked once, values shown).
+   */
+  informationReleaseConsent?: InformationReleaseConsentSetting;
   /** Runtime identity mapping policy selector for SAML attribute release */
   identityMapping?: SAMLIdentityMappingFieldMappingSelector;
   /** Built-in attribute preset used as the clone/edit source for the current release policy */
@@ -686,19 +690,6 @@ export interface SAMLSPConfig {
   metadataLastFetched?: number;
   /** Aggregate metadata import/verification snapshot when imported from federation metadata */
   aggregateImport?: SAMLMetadataAggregateImportSnapshot;
-}
-
-export type SAMLAttributeReleaseConfirmationCompatibility = 'uapprove' | 'custom';
-export type SAMLAttributeReleaseConfirmationValueDisplay =
-  | 'names'
-  | 'masked_values'
-  | 'full_values';
-
-export interface SAMLAttributeReleaseConfirmationSettings {
-  compatibilityMode?: SAMLAttributeReleaseConfirmationCompatibility;
-  valueDisplay?: SAMLAttributeReleaseConfirmationValueDisplay;
-  templateStatementId?: string;
-  buttonLabel?: string;
 }
 
 export interface SAMLIdentityMappingAttributeDescriptor {
@@ -938,22 +929,16 @@ export interface SAMLRequestContext {
     providerId: string;
     providerIds: string[];
   };
-  attributeReleaseConsentChallenge?: {
-    challengeId: string;
-    subjectId: string;
-    destinationType: 'saml_sp' | string;
-    destinationId: string;
-    attributeSetHash: string;
-    consentMode: AttributeReleaseConsentPolicy['mode'];
-    createdAt: number;
-  };
-  attributeReleaseConsentConfirmed?: {
-    subjectId: string;
-    destinationType: 'saml_sp' | string;
-    destinationId: string;
-    attributeSetHash: string;
-    confirmedAt: number;
-  };
+  /**
+   * The information release consent this request waits for: the consent challenge it sent the
+   * person to (only that one is taken when the request resumes; asking again replaces it).
+   */
+  releaseConsent?: { challengeId: string };
+  /**
+   * A pending IdP-initiated sign-in (idp-initiated.ts), never an SP's AuthnRequest: resumed only
+   * at the IdP-initiated endpoint.
+   */
+  idpInitiated?: true;
 }
 
 /**

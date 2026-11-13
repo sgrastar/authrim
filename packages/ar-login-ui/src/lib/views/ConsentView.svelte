@@ -97,6 +97,8 @@
 		consent_language?: string;
 		/** The information the app would be given, for the user to approve (optional items). */
 		information_release?: ReleaseData;
+		/** A SAML SP's screen has no scopes; absent: OIDC. */
+		protocol?: 'oidc' | 'saml';
 	}
 </script>
 
@@ -110,7 +112,7 @@
 	import { isValidImageUrl, isValidLinkUrl } from '#lib/utils/url-validation.js';
 	import {
 		formatReleaseValue,
-		releaseClaimLabel,
+		releaseItemLabel,
 		releaseDefaultChecked
 	} from '#lib/consent-release.js';
 
@@ -514,7 +516,7 @@
 							<div class="flex-1 min-w-0">
 								<div class="flex items-center gap-2 flex-wrap">
 									<span class="text-sm font-medium" style="color: var(--text-primary);">
-										{releaseClaimLabel($LL, item.name)}
+										{releaseItemLabel($LL, item)}
 									</span>
 									<span
 										class="px-1.5 py-0.5 rounded text-xs"
@@ -556,7 +558,7 @@
 										class="text-sm font-medium"
 										style="color: var(--text-primary);"
 									>
-										{releaseClaimLabel($LL, item.name)}
+										{releaseItemLabel($LL, item)}
 									</label>
 									<span
 										class="px-1.5 py-0.5 rounded text-xs"
@@ -613,19 +615,21 @@
 				</div>
 			{/if}
 
-			<!-- Scopes -->
-			<h3 class="text-sm font-medium mb-4" style="color: var(--text-primary);">
-				{$LL.consent_scopesTitle()}
-			</h3>
+			<!-- Scopes (a SAML SP's screen has none) -->
+			{#if consentData.scopes?.length}
+				<h3 class="text-sm font-medium mb-4" style="color: var(--text-primary);">
+					{$LL.consent_scopesTitle()}
+				</h3>
 
-			<ul class="auth-scopes-list mb-6">
-				{#each consentData.scopes as scope (scope.name)}
-					<li>
-						<div class="i-ph-check-circle h-5 w-5 auth-scopes-list__icon"></div>
-						<span>{getScopeLabel(scope.name)}</span>
-					</li>
-				{/each}
-			</ul>
+				<ul class="auth-scopes-list mb-6">
+					{#each consentData.scopes as scope (scope.name)}
+						<li>
+							<div class="i-ph-check-circle h-5 w-5 auth-scopes-list__icon"></div>
+							<span>{getScopeLabel(scope.name)}</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
 
 			<!-- User Info -->
 			<div class="auth-info-box">

@@ -1,3 +1,4 @@
+import type { InformationReleaseConsentSetting } from '#lib/api/admin-clients.js';
 import { adminFetch } from '#lib/api/admin-request.js';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -125,12 +126,6 @@ export interface SAMLAttributeReleaseRule {
 }
 
 export type SAMLJitEmailLinkingPolicy = 'email_linking' | 'jit_create_only' | 'disabled';
-export type AttributeReleaseConsentMode = 'once' | 'every_time' | 'until_attributes_change';
-export type SAMLAttributeReleaseConfirmationCompatibility = 'uapprove' | 'custom';
-export type SAMLAttributeReleaseConfirmationValueDisplay =
-	| 'names'
-	| 'masked_values'
-	| 'full_values';
 export type SAMLDestinationFieldReleaseMode = 'required' | 'optional' | 'hidden';
 
 export type SAMLMinimumIal = 'IAL1' | 'IAL2' | 'IAL3';
@@ -179,16 +174,8 @@ export interface SAMLProviderConfig {
 	attributeReleasePolicy?: {
 		attributes: SAMLAttributeReleaseRule[];
 	};
-	attributeReleaseConsent?: {
-		enabled: boolean;
-		mode: AttributeReleaseConsentMode;
-	};
-	attributeReleaseConfirmation?: {
-		compatibilityMode?: SAMLAttributeReleaseConfirmationCompatibility;
-		valueDisplay?: SAMLAttributeReleaseConfirmationValueDisplay;
-		templateStatementId?: string;
-		buttonLabel?: string;
-	};
+	/** Shared consent screen setting; absent = ask once, show values. */
+	informationReleaseConsent?: InformationReleaseConsentSetting;
 	identityMapping?: {
 		fieldMappingSetId?: string;
 		fieldMappingVersionId?: string;

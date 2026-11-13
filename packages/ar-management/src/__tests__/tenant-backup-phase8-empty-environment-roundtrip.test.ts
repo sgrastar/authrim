@@ -98,7 +98,11 @@ function freshDatabase(family: Family) {
         ]
       : []),
     ...(family === 'core'
-      ? ['007_account_registration_pending.sql', '009_consent_policies_removed.sql']
+      ? [
+          '007_account_registration_pending.sql',
+          '009_consent_policies_removed.sql',
+          '011_saml_sp_release_consent.sql',
+        ]
       : []),
     ...(family === 'pii'
       ? ['003_screen_responses.sql', '004_account_pii_erasure_markers.sql']

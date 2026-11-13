@@ -196,7 +196,28 @@ export type AccountStatementConsent = {
 	selectedValue?: string;
 };
 
-export type AccountConsent = AccountOAuthClientConsent | AccountStatementConsent;
+/** A SAML service provider the person decided the information release for. */
+export type AccountSamlSpConsent = {
+	kind: 'saml_sp';
+	id: string;
+	spEntityId: string;
+	spName?: string;
+	decidedAt: number;
+	/** Item names are the SP's item keys (attribute name and format, or the NameID format). */
+	informationRelease?: {
+		basis: 'user' | 'trust' | 'not_asked';
+		approved: string[];
+		declined: string[];
+		decidedAt: number;
+		/** The person refused the SP on the consent screen. */
+		refused?: boolean;
+	};
+};
+
+export type AccountConsent =
+	| AccountOAuthClientConsent
+	| AccountStatementConsent
+	| AccountSamlSpConsent;
 
 export type AccountPageScreenField = {
 	field: string;

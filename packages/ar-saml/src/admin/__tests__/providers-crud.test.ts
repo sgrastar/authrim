@@ -648,7 +648,12 @@ describe('SAML provider CRUD boundaries', () => {
           config: {
             entityId: 'https://sp.example.test',
             acsUrl: 'https://sp.example.test/acs',
-            attributeReleaseConsent: { enabled: true, mode: 'every_time' },
+            informationReleaseConsent: {
+              enabled: true,
+              ask: 'every_time',
+              show_values: false,
+              purpose_statement_id: 'purpose-1',
+            },
             identityMapping: {
               fieldMappingSetId: 'saml-sp',
               destinationProfileId: 'stale-destination-profile',
@@ -667,7 +672,12 @@ describe('SAML provider CRUD boundaries', () => {
     const executeArguments = mocks.adapter!.execute.mock.calls[0]?.[1] as unknown[];
     const persistedConfig = JSON.parse(String(executeArguments[4]));
     expect(persistedConfig).toMatchObject({
-      attributeReleaseConsent: { enabled: true, mode: 'every_time' },
+      informationReleaseConsent: {
+        enabled: true,
+        ask: 'every_time',
+        show_values: false,
+        purpose_statement_id: 'purpose-1',
+      },
       identityMapping: {
         destinationFieldPolicies: {
           mail: 'required',
@@ -748,7 +758,7 @@ describe('SAML provider CRUD boundaries', () => {
     });
   });
 
-  it('rejects an unsupported attribute release consent mode', async () => {
+  it('rejects an invalid information release consent setting', async () => {
     const response = await handleCreateProvider(
       context({
         body: {
@@ -757,7 +767,7 @@ describe('SAML provider CRUD boundaries', () => {
           config: {
             entityId: 'https://sp.example.test',
             acsUrl: 'https://sp.example.test/acs',
-            attributeReleaseConsent: { enabled: true, mode: 'unsupported' },
+            informationReleaseConsent: { enabled: true, ask: 'unsupported' },
             identityMapping: {
               fieldMappingSetId: 'saml-sp',
               destinationFieldPolicies: {
@@ -772,6 +782,7 @@ describe('SAML provider CRUD boundaries', () => {
     );
 
     expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_request' });
     expect(mocks.adapter!.execute).not.toHaveBeenCalled();
   });
 

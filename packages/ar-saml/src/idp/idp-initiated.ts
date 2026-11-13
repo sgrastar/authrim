@@ -2,15 +2,19 @@
  * IdP-Initiated SSO Endpoint
  *
  * Allows the IdP to initiate SSO without receiving an AuthnRequest from the SP.
- * GET /saml/idp/init?sp=<sp_entity_id>
+ * GET /saml/idp/init?sp=<sp_entity_id>[&relay_state=...]
+ *
+ * The first request keeps a pending sign-in on the server (in the SAML request store, as an
+ * SP-initiated AuthnRequest is kept): the SP, the RelayState and its own end. The person signs in
+ * if they have to and answers the consent screen if it is asked, coming back with the pending
+ * sign-in's ID (`pending`); it is answered once (completed before the response is sent), and
+ * never through the SP-initiated endpoint.
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, SAMLAuthnRequest, SAMLRequestData } from '@authrim/ar-lib-core';
 import type { SAMLSPConfig } from '@authrim/ar-lib-core';
 import {
-  getSessionStoreBySessionId,
-  isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
@@ -18,10 +22,8 @@ import {
   createConfigurationError,
   usesNakedDomainIssuer,
   getLogger,
-  resolveAuthCorePersistenceAdapterFromEnv,
-  requireAdminDatabaseAdapter,
-  filterSamlAttributesByDestinationConsentWithStatus,
   resolveSamlAssertionTtlSeconds,
+  resolveSamlRequestTtlSeconds,
   RuntimeIdentityMappingReleaseSafetyError,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
@@ -29,14 +31,10 @@ import { base64Encode, generateSAMLId } from '../common/xml-utils';
 import { NAMEID_FORMATS, DEFAULTS } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
-import { getSamlUserInfoById, type SAMLUserInfo } from '../common/user-store';
+import { getSamlUserInfoById } from '../common/user-store';
 import { getSAMLIdPSigningMaterial } from '../common/idp-signing';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
-import {
-  resolveSAMLIdentityMappingFieldMappingBinding,
-  MissingRequiredSAMLAttributeError,
-  SAMLIdentityMappingRuntimeError,
-} from './attributes';
+import { MissingRequiredSAMLAttributeError, SAMLIdentityMappingRuntimeError } from './attributes';
 import { applySAMLResponseSigningPolicy } from './signing';
 import {
   createSAMLSessionIndex,
@@ -46,32 +44,34 @@ import {
   resolveSAMLTransientNameIDStore,
 } from './subject';
 import { buildSAMLAssertionTiming, resolveSAMLAuthnInstant } from './assertion-timing';
-import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { SAMLAuthnContextPolicyError } from './authn-context';
-import { chooseSAMLAuthnContextClassRef, type SAMLClassRefGuard } from './authn-context-assurance';
+import { chooseSAMLAuthnContextClassRef } from './authn-context-assurance';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
-import {
-  enforceSAMLAttributeReleaseConsent,
-  SAMLAttributeReleaseConsentRequiredError,
-} from './attribute-release-consent';
-import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
-import { resolveSAMLRuntimeIdentityMapping } from './runtime-identity-mapping';
+import { checkSAMLIdentityAssurance } from './identity-assurance';
 import { checkSAMLAuthnAssurance } from './authn-assurance';
 import { scheduleSAMLAttributeWithheldAudit, scheduleSAMLPolicyFailureAudit } from './audit';
-import { releaseSAMLAttributesWithInstitution } from './institution-release';
-import type { SAMLWithheldScopedValues } from './institution-scope';
+import { checkUserAuthentication } from './sso';
+import {
+  completeStoredAuthnRequest,
+  readStoredAuthnRequest,
+  saveStoredAuthnRequest,
+} from './sso-stored-request';
+import { resolveSAMLReleaseConsent, samlReleaseConsentStillCurrent } from './release-consent';
+import {
+  applySAMLReleaseApproval,
+  computeSAMLAttributeRelease,
+  samlApprovalNeedsIdentifiers,
+} from './release-items';
 
-interface AuthenticatedSAMLSession {
-  userId: string;
-  sessionId: string;
-  acr?: string;
-  amr?: string[];
-  /** The session's data: what it records of the authentication (assurance evidence included). */
-  data?: Record<string, unknown>;
-  /** When the session was created (milliseconds), the last resort for the time of the sign-in. */
-  createdAt?: number;
+/** The ID a pending IdP-initiated sign-in is kept under (never an SP's AuthnRequest ID). */
+const PENDING_ID =
+  /^_idpinit_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
+function resumePathOf(spEntityId: string, pendingId: string): string {
+  const params = new URLSearchParams({ sp: spEntityId, pending: pendingId });
+  return `/saml/idp/init?${params.toString()}`;
 }
 
 /**
@@ -84,8 +84,6 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
   try {
     // Get SP entity ID from query parameter
     const spEntityId = c.req.query('sp');
-    const relayState = c.req.query('relay_state');
-    assertSAMLRelayStateSize(relayState);
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
@@ -101,40 +99,80 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    // The pending sign-in: kept now (a first request), or the one the person comes back with.
+    const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
+    const presentedPending = c.req.query('pending');
+    let pending: SAMLRequestData;
+    if (presentedPending === undefined) {
+      const relayState = c.req.query('relay_state');
+      assertSAMLRelayStateSize(relayState);
+      pending = await saveStoredAuthnRequest(env, tenantId, {
+        authnRequest: {
+          id: `_idpinit_${crypto.randomUUID()}`,
+          issueInstant: new Date().toISOString(),
+          issuer: spConfig.entityId,
+          forceAuthn: false,
+          isPassive: false,
+        },
+        relayState,
+        context: { idpInitiated: true },
+        requestTtlSeconds,
+      });
+    } else {
+      if (!PENDING_ID.test(presentedPending)) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'pending', reason: 'invalid' },
+        });
+      }
+      pending = await readStoredAuthnRequest(env, tenantId, presentedPending, spConfig.entityId);
+      if (pending.context?.idpInitiated !== true) {
+        throw new Error('Stored SAML request is not an IdP-initiated sign-in');
+      }
+    }
+    const authnRequest = pending.data as SAMLAuthnRequest;
+    const relayState = pending.relayState;
+    const pendingRevision = pending.revision as number;
+    const resumePath = resumePathOf(spConfig.entityId, authnRequest.id);
+
     // Check user authentication
     const authenticatedSession = await checkUserAuthentication(c, env);
-    const consentTransactionId = readConsentTransactionId(c.req.query('consent_tx'));
-    const consentRetry = c.req.query('consent_retry') === '1';
-
-    // The SP's minimum identity assurance level. No sign-in or consent step can raise a person's
-    // IAL, so a session that is already there is judged before it is sent through the consent
-    // flow, and again (it is the same check on the same session) before the assertion is built.
-    // Without a session the person is not yet known: they are judged when they come back.
-    if (authenticatedSession) {
-      const refused = await refuseBelowMinimumIdentityAssurance(c, {
-        tenantId,
-        spConfig,
-        userId: authenticatedSession.userId,
-        requestId: consentTransactionId ?? 'idp_initiated',
-        log,
-      });
-      if (refused) return refused;
-    }
-
-    if (!authenticatedSession || !consentTransactionId) {
-      return redirectToIdPInitiatedConsentFlow(c, {
+    if (!authenticatedSession) {
+      return redirectToIdPInitiatedLogin(c, {
         issuerUrl,
         tenantId,
-        spEntityId,
-        relayState,
-        consentTransactionId: consentTransactionId ?? crypto.randomUUID(),
+        spEntityId: spConfig.entityId,
+        pendingId: authnRequest.id,
+        resumePath,
       });
+    }
+
+    // Answering the pending sign-in without an assertion uses it up too (it is not answered again).
+    const refuse = async (code: (typeof AR_ERROR_CODES)[keyof typeof AR_ERROR_CODES]) => {
+      await completeStoredAuthnRequest(env, tenantId, authnRequest.id, spConfig.entityId, {
+        expectedRevision: pendingRevision,
+      });
+      return createErrorResponse(c, code);
+    };
+
+    // The SP's minimum identity assurance level. No sign-in or consent step can raise a person's
+    // IAL, so it is judged before anything is released or asked.
+    const refused = await refuseBelowMinimumIdentityAssurance(c, {
+      tenantId,
+      spConfig,
+      userId: authenticatedSession.userId,
+      requestId: authnRequest.id,
+      log,
+    });
+    if (refused) {
+      await completeStoredAuthnRequest(env, tenantId, authnRequest.id, spConfig.entityId, {
+        expectedRevision: pendingRevision,
+      });
+      return refused;
     }
 
     // The SP's minimum authentication assurance level. An IdP-initiated sign-in has no AuthnRequest
     // to store a step-up in, nor to answer with NoAuthnContext, so a session below the minimum gets
-    // the error page and no assertion is built. Judged here, where the assertion would be built,
-    // not before the consent flow, which sends the person to sign in again anyway.
+    // the error page and no assertion is built.
     const authnAssurance = await checkSAMLAuthnAssurance({
       env,
       tenantId,
@@ -162,7 +200,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
       scheduleSAMLPolicyFailureAudit(c, {
         tenantId,
         spEntityId: spConfig.entityId,
-        authnRequestId: consentTransactionId,
+        authnRequestId: authnRequest.id,
         failureKind: unavailable ? 'authn_assurance_unavailable' : 'authn_assurance_insufficient',
         policyDetails: unavailable
           ? {}
@@ -172,41 +210,123 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
             },
       });
       // The page says neither the level the sign-in reached nor the one the SP requires.
-      return createErrorResponse(
-        c,
+      return refuse(
         unavailable ? AR_ERROR_CODES.INTERNAL_ERROR : AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS
       );
     }
 
     // Get user information
-    const userInfo = await getUserInfo(env, tenantId, authenticatedSession.userId);
+    const userInfo = await getSamlUserInfoById(env, tenantId, authenticatedSession.userId);
     if (!userInfo) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      return refuse(AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    // Generate SAML Response (no InResponseTo since this is IdP-initiated)
     let responseXml: string;
     try {
-      responseXml = await generateIdPInitiatedResponse(
-        issuerUrl,
+      const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
+      const releaseInput = {
+        env,
+        tenantId,
+        idpEntityId,
+        spConfig,
+        userInfo,
+        userId: authenticatedSession.userId,
+        requestScope: c,
+        onError: (message: string, error: unknown) =>
+          log.error(
+            message,
+            { tenantId, spEntityId: spConfig.entityId },
+            error instanceof Error ? error : new Error(String(error))
+          ),
+      };
+      const release = await computeSAMLAttributeRelease({
+        ...releaseInput,
+        identifiers: 'deferred',
+      });
+      const consent = await resolveSAMLReleaseConsent({
+        c,
+        env,
+        tenantId,
+        spConfig,
+        userInfo,
+        session: authenticatedSession,
+        release,
+        nameIdFormat,
+        isPassive: false,
+        requestId: authnRequest.id,
+        idpInitiated: true,
+        resumePath,
+        ...(pending.context?.releaseConsent
+          ? { pendingChallengeId: pending.context.releaseConsent.challengeId }
+          : {}),
+        notAfterMs: pending.expiresAt,
+        operationId: crypto.randomUUID(),
+      });
+      if (consent.kind === 'ask') {
+        await saveStoredAuthnRequest(env, tenantId, {
+          authnRequest,
+          relayState,
+          context: { idpInitiated: true, releaseConsent: { challengeId: consent.challengeId } },
+          storedRevision: pendingRevision,
+          requestTtlSeconds,
+        });
+        return c.redirect(consent.consentUrl);
+      }
+      if (consent.kind !== 'issue') {
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          failureKind: `release_consent_${consent.kind}` as const,
+        });
+        return refuse(AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      }
+      const finalRelease = samlApprovalNeedsIdentifiers(release, consent.approval)
+        ? await computeSAMLAttributeRelease({ ...releaseInput, identifiers: 'made' })
+        : release;
+      if (finalRelease.withheldScopedValues.length > 0) {
+        scheduleSAMLAttributeWithheldAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          withheld: finalRelease.withheldScopedValues,
+        });
+      }
+      const approved = applySAMLReleaseApproval(finalRelease, consent.approval, nameIdFormat);
+      if (!approved.ok) {
+        throw new MissingRequiredSAMLAttributeError(
+          approved.missing.map((name: string) => ({ name, source: 'identity_mapping' as const }))
+        );
+      }
+      responseXml = await generateIdPInitiatedResponse({
         idpEntityId,
         env,
         spConfig,
         userInfo,
         tenantId,
-        authenticatedSession,
-        consentTransactionId,
-        c,
+        authSession: authenticatedSession,
+        attributes: approved.attributes,
+        nameIdFormat,
         log,
-        authnAssurance.outcome === 'met' ? authnAssurance : undefined,
-        (withheld) =>
-          scheduleSAMLAttributeWithheldAudit(c, {
-            tenantId,
-            spEntityId: spConfig.entityId,
-            authnRequestId: consentTransactionId,
-            withheld,
-          })
-      );
+        assurance: authnAssurance.outcome === 'met' ? authnAssurance : undefined,
+      });
+      // The last check, once the response is built and just before the sign-in is completed.
+      if (
+        !(await samlReleaseConsentStillCurrent(env, {
+          tenantId,
+          userId: authenticatedSession.userId,
+          spEntityId: spConfig.entityId,
+          consentGeneration: consent.consentGeneration,
+        }))
+      ) {
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: authnRequest.id,
+          failureKind: 'release_consent_withdrawn',
+        });
+        return refuse(AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      }
     } catch (error) {
       if (error instanceof SAMLAuthnContextPolicyError) {
         // The AuthnContext to issue is above what the sign-in reached: no assertion.
@@ -217,11 +337,11 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         scheduleSAMLPolicyFailureAudit(c, {
           tenantId,
           spEntityId: spConfig.entityId,
-          authnRequestId: consentTransactionId,
+          authnRequestId: authnRequest.id,
           failureKind: 'authn_assurance_insufficient',
           policyDetails: { reason: 'no_class_ref' },
         });
-        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+        return refuse(AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
       }
       if (error instanceof MissingRequiredSAMLAttributeError) {
         // No assertion without a required attribute (there is no SAML error answer to an
@@ -235,14 +355,14 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         scheduleSAMLPolicyFailureAudit(c, {
           tenantId,
           spEntityId: spConfig.entityId,
-          authnRequestId: consentTransactionId,
+          authnRequestId: authnRequest.id,
           failureKind: 'required_attribute_missing',
           missingAttributes: error.missingAttributes,
           ...(error.withheldScopedValues.length > 0
             ? { policyDetails: { withheld: error.withheldScopedValues } }
             : {}),
         });
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+        return refuse(AR_ERROR_CODES.INTERNAL_ERROR);
       }
       if (
         error instanceof SAMLIdentityMappingRuntimeError ||
@@ -265,7 +385,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         scheduleSAMLPolicyFailureAudit(c, {
           tenantId,
           spEntityId: spConfig.entityId,
-          authnRequestId: consentTransactionId,
+          authnRequestId: authnRequest.id,
           failureKind: 'identity_mapping_failed',
           policyDetails: {
             reason_codes: reasonCodes,
@@ -274,24 +394,15 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
               : {}),
           },
         });
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+        return refuse(AR_ERROR_CODES.INTERNAL_ERROR);
       }
-      if (!(error instanceof SAMLAttributeReleaseConsentRequiredError)) throw error;
-      if (consentRetry) {
-        return c.json(createConfigurationError(), 500);
-      }
-      await supersedeIdPInitiatedDestinationConsents(env, tenantId, userInfo.id, spConfig.entityId);
-      return redirectToIdPInitiatedConsentFlow(c, {
-        issuerUrl,
-        tenantId,
-        spEntityId,
-        relayState,
-        consentTransactionId: crypto.randomUUID(),
-        consentRetry: true,
-      });
+      throw error;
     }
 
-    // Return auto-submit form
+    // Used up before it is sent: the pending sign-in is answered once.
+    await completeStoredAuthnRequest(env, tenantId, authnRequest.id, spConfig.entityId, {
+      expectedRevision: pendingRevision,
+    });
     return sendSAMLResponse(spConfig, responseXml, relayState);
   } catch (error) {
     if (error instanceof SAMLRelayStateTooLargeError) {
@@ -364,35 +475,19 @@ async function refuseBelowMinimumIdentityAssurance(
   );
 }
 
-function readConsentTransactionId(value: string | undefined): string | null {
-  if (
-    !value ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
-  ) {
-    return null;
-  }
-  return value;
-}
-
-async function redirectToIdPInitiatedConsentFlow(
+async function redirectToIdPInitiatedLogin(
   c: Context<{ Bindings: Env }>,
   input: {
     issuerUrl: string;
     tenantId: string;
     spEntityId: string;
-    relayState?: string;
-    consentTransactionId: string;
-    consentRetry?: boolean;
+    pendingId: string;
+    resumePath: string;
   }
 ): Promise<Response> {
-  const returnUrl = new URL('/saml/idp/init', input.issuerUrl);
-  returnUrl.searchParams.set('sp', input.spEntityId);
-  if (input.relayState) returnUrl.searchParams.set('relay_state', input.relayState);
-  returnUrl.searchParams.set('consent_tx', input.consentTransactionId);
-  if (input.consentRetry) returnUrl.searchParams.set('consent_retry', '1');
   const loginParameters = {
-    return_to: returnUrl.toString(),
-    saml_request_id: input.consentTransactionId,
+    return_to: new URL(input.resumePath, input.issuerUrl).toString(),
+    saml_request_id: input.pendingId,
     saml_sp_entity_id: input.spEntityId,
   };
 
@@ -415,123 +510,29 @@ async function redirectToIdPInitiatedConsentFlow(
   );
 }
 
-async function supersedeIdPInitiatedDestinationConsents(
-  env: Env,
-  tenantId: string,
-  subjectId: string,
-  spEntityId: string
-): Promise<void> {
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'saml-idp-initiated-consent-refresh',
-    { tenantId }
-  );
-  const now = Math.floor(Date.now() / 1000);
-  await adapter.execute(
-    `UPDATE consent_records
-        SET status = 'superseded', updated_at = ?
-      WHERE tenant_id = ?
-        AND subject_user_id = ?
-        AND protocol = 'saml'
-        AND recipient_type = 'saml_sp'
-        AND recipient_id = ?
-        AND binding_type = 'destination_field_mapping_set'
-        AND status = 'active'`,
-    [now, tenantId, subjectId, spEntityId]
-  );
-}
-
 /**
- * Check if user is authenticated (sharded)
+ * Generate SAML Response for IdP-initiated SSO, with the attributes approved for release. The
+ * NameID and the session index are made only now.
  */
-async function checkUserAuthentication(
-  c: Context<{ Bindings: Env }>,
-  env: Env
-): Promise<AuthenticatedSAMLSession | null> {
-  const sessionId = extractAuthrimSessionIdFromCookieHeader(c.req.header('Cookie'));
-
-  if (!sessionId) {
-    return null;
-  }
-
-  // Verify session with SessionStore (sharded)
-  if (!isShardedSessionId(sessionId)) {
-    return null;
-  }
-
-  try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(
-      env,
-      sessionId,
-      resolveSAMLTenantIdFromContext(c)
-    );
-    const response = await sessionStore.fetch(`https://session-store/session/${sessionId}`, {
-      method: 'GET',
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const session = await response.json<{
-      userId?: string;
-      createdAt?: number;
-      data?: Record<string, unknown>;
-    }>();
-    const data =
-      session.data && typeof session.data === 'object' && !Array.isArray(session.data)
-        ? session.data
-        : undefined;
-    return session.userId
-      ? {
-          userId: session.userId,
-          sessionId,
-          acr: typeof data?.acr === 'string' ? data.acr : undefined,
-          amr: Array.isArray(data?.amr)
-            ? data.amr.filter((value): value is string => typeof value === 'string')
-            : undefined,
-          data,
-          createdAt: typeof session.createdAt === 'number' ? session.createdAt : undefined,
-        }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Get user information from database
- */
-async function getUserInfo(
-  env: Env,
-  tenantId: string,
-  userId: string
-): Promise<SAMLUserInfo | null> {
-  return getSamlUserInfoById(env, tenantId, userId);
-}
-
-/**
- * Generate SAML Response for IdP-initiated SSO
- */
-async function generateIdPInitiatedResponse(
-  issuerUrl: string,
-  idpEntityId: string,
-  env: Env,
-  spConfig: SAMLSPConfig,
-  userInfo: SAMLUserInfo,
-  tenantId: string,
-  authSession: AuthenticatedSAMLSession,
-  consentTransactionId: string,
-  requestScope: object,
-  log: {
-    debug?(message: string, context?: Record<string, unknown>): void;
-    error(message: string, context?: Record<string, unknown>, error?: Error): void;
-  },
-  /** The class reference chosen for the AAL reached, and what the one issued is checked against. */
-  assurance?: { classRef?: string; guard: SAMLClassRefGuard },
-  /** Told what scoped values the tenant's institution scopes kept out of the assertion. */
-  onScopedValuesWithheld?: (withheld: SAMLWithheldScopedValues[]) => void
-): Promise<string> {
+async function generateIdPInitiatedResponse(input: {
+  idpEntityId: string;
+  env: Env;
+  spConfig: SAMLSPConfig;
+  userInfo: NonNullable<Awaited<ReturnType<typeof getSamlUserInfoById>>>;
+  tenantId: string;
+  authSession: {
+    sessionId: string;
+    acr?: string;
+    amr?: string[];
+    data?: Record<string, unknown>;
+    createdAt?: number;
+  };
+  attributes: Awaited<ReturnType<typeof computeSAMLAttributeRelease>>['attributes'];
+  nameIdFormat: SAMLSPConfig['nameIdFormat'];
+  log: { debug?(message: string, context?: Record<string, unknown>): void };
+  assurance?: Parameters<typeof chooseSAMLAuthnContextClassRef>[2];
+}): Promise<string> {
+  const { env, spConfig, tenantId, authSession } = input;
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
     counterpartyEntityId: spConfig.entityId,
@@ -544,8 +545,7 @@ async function generateIdPInitiatedResponse(
     tenantId,
     spConfig.assertionValiditySeconds
   );
-  const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
-  const nameIdValue = await resolveSAMLNameIDValue(userInfo, nameIdFormat, {
+  const nameIdValue = await resolveSAMLNameIDValue(input.userInfo, input.nameIdFormat, {
     tenantId,
     spEntityId: spConfig.entityId,
     pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
@@ -556,96 +556,6 @@ async function generateIdPInitiatedResponse(
     sessionId: authSession.sessionId,
   });
 
-  // Build attributes from mapping
-  const identityMapping = await resolveSAMLRuntimeIdentityMapping(
-    env,
-    tenantId,
-    idpEntityId,
-    spConfig
-  );
-  const mappingContext = {
-    role: 'idp' as const,
-    tenantId,
-    localEntityId: idpEntityId,
-    partnerEntityId: spConfig.entityId,
-  };
-  const onReadError = (message: string, error: unknown) =>
-    log.error(
-      message,
-      { tenantId, spEntityId: spConfig.entityId },
-      error instanceof Error ? error : new Error(String(error))
-    );
-  // The assurance values a mapping releases come from the person's evidence, read only when
-  // one is released. The tenant's institution (the scopes the scoped attributes must be under,
-  // and the attributes a mapping may release about it) is applied when the mapping has a use for it.
-  const release = await releaseSAMLAttributesWithInstitution({
-    env,
-    tenantId,
-    subject: await withSAMLAssuranceAttributes(userInfo, {
-      requestScope,
-      env,
-      tenantId,
-      userId: authSession.userId,
-      identityMapping,
-      mappingContext,
-      onError: onReadError,
-    }),
-    releaseConfig: {
-      ...spConfig,
-      tenantId,
-      localEntityId: idpEntityId,
-      identityMapping,
-    },
-    onError: onReadError,
-  });
-  if (release.withheldScopedValues?.length) onScopedValuesWithheld?.(release.withheldScopedValues);
-  let attributes = release.attributes;
-  let destinationFieldConsentConfirmed: { consentRecordId: string } | undefined;
-  if (identityMapping?.destinationProfileId) {
-    const destinationRelease = (await filterSamlAttributesByDestinationConsentWithStatus({
-      coreAdapter: await resolveAuthCorePersistenceAdapterFromEnv(
-        env,
-        'saml-idp-initiated-destination-consent',
-        { tenantId }
-      ),
-      adminAdapter: requireAdminDatabaseAdapter(env, 'saml-idp-initiated-destination-consent'),
-      tenantId,
-      subjectId: userInfo.id,
-      samlSpId: spConfig.entityId,
-      profileId: identityMapping.destinationProfileId,
-      fieldPolicies: identityMapping.destinationFieldPolicies,
-      releaseSafetyBinding: resolveSAMLIdentityMappingFieldMappingBinding(identityMapping, {
-        role: 'idp',
-        tenantId,
-        localEntityId: idpEntityId,
-        partnerEntityId: spConfig.entityId,
-      }),
-      attributes,
-    })) as {
-      attributes: typeof attributes;
-      consentApplied: boolean;
-      consentRecordId?: string;
-      consentEvidence?: Record<string, unknown>;
-    };
-    attributes = destinationRelease.attributes;
-    if (
-      destinationRelease.consentApplied &&
-      destinationRelease.consentRecordId &&
-      destinationRelease.consentEvidence?.saml_request_id === consentTransactionId
-    ) {
-      destinationFieldConsentConfirmed = {
-        consentRecordId: destinationRelease.consentRecordId,
-      };
-    }
-  }
-  await enforceSAMLAttributeReleaseConsent({
-    env,
-    tenantId,
-    subjectId: userInfo.id,
-    spConfig,
-    attributes,
-    destinationFieldConsentConfirmed,
-  });
   // AuthnInstant is when the person authenticated (a session reused for single sign-on keeps the
   // time of its sign-in), not the instant the assertion is issued.
   const issuedAt = new Date();
@@ -654,10 +564,13 @@ async function generateIdPInitiatedResponse(
     nowMs: issuedAt.getTime(),
   });
   if (authnInstant.source === 'unknown') {
-    log.debug?.('SAML authentication time unknown, using the issue instant for AuthnInstant', {
-      tenantId,
-      spEntityId: spConfig.entityId,
-    });
+    input.log.debug?.(
+      'SAML authentication time unknown, using the issue instant for AuthnInstant',
+      {
+        tenantId,
+        spEntityId: spConfig.entityId,
+      }
+    );
   }
   const timing = buildSAMLAssertionTiming({
     now: issuedAt,
@@ -671,13 +584,13 @@ async function generateIdPInitiatedResponse(
     responseId,
     assertionId: generateSAMLId(),
     issueInstant: timing.issueInstant,
-    issuer: idpEntityId,
+    issuer: input.idpEntityId,
     destination: spConfig.acsUrl,
     // No inResponseTo for IdP-initiated
     recipientUrl: spConfig.acsUrl,
     audienceRestriction: spConfig.entityId,
     nameId: nameIdValue,
-    nameIdFormat,
+    nameIdFormat: input.nameIdFormat,
     authnInstant: timing.authnInstant,
     sessionIndex: await createSAMLSessionIndex(env.STATE_STORE, {
       tenantId,
@@ -697,52 +610,15 @@ async function generateIdPInitiatedResponse(
         spConfig,
         session: authSession,
       },
-      assurance
+      input.assurance
     ),
-    attributes,
+    attributes: input.attributes,
   });
 
-  const finalResponseXml = applySAMLResponseSigningPolicy(responseXml, spConfig, {
+  return applySAMLResponseSigningPolicy(responseXml, spConfig, {
     privateKeyPem,
     certificate,
   });
-  if (
-    destinationFieldConsentConfirmed &&
-    spConfig.attributeReleaseConsent?.enabled === true &&
-    spConfig.attributeReleaseConsent.mode === 'every_time'
-  ) {
-    await consumeIdPInitiatedDestinationConsent(
-      env,
-      tenantId,
-      userInfo.id,
-      destinationFieldConsentConfirmed.consentRecordId
-    );
-  }
-  return finalResponseXml;
-}
-
-async function consumeIdPInitiatedDestinationConsent(
-  env: Env,
-  tenantId: string,
-  subjectId: string,
-  consentRecordId: string
-): Promise<void> {
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'saml-idp-initiated-consent-consume',
-    { tenantId }
-  );
-  await adapter.execute(
-    `UPDATE consent_records
-        SET status = 'superseded', updated_at = ?
-      WHERE id = ?
-        AND tenant_id = ?
-        AND subject_user_id = ?
-        AND protocol = 'saml'
-        AND binding_type = 'destination_field_mapping_set'
-        AND status = 'active'`,
-    [Math.floor(Date.now() / 1000), consentRecordId, tenantId, subjectId]
-  );
 }
 
 /**

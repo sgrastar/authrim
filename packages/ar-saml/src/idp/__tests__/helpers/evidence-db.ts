@@ -43,7 +43,33 @@ export interface EvidenceDb {
   /** How many times the evidence table was queried since the last reset. */
   evidenceReads(): number;
   resetReads(): void;
+  /** Make every read of the evidence table fail with this error (null: stop failing). */
+  failEvidenceReads(error: Error | null): void;
   clearEvidence(): void;
+  /** Delete the SP trust rows, the release consent records and the withdrawal generations. */
+  clearConsent(): void;
+  /** Mark an SP trusted (or skipping authorization consent) in the tenant's trust policies. */
+  trustSP(
+    spEntityId: string,
+    flags?: { trusted?: boolean; skipAuthorizationConsent?: boolean }
+  ): void;
+  /** A person's current release decision on an SP, as the consent screen would have written it. */
+  saveReleaseDecision(input: {
+    spEntityId: string;
+    userId?: string;
+    presented: string[];
+    approved: string[];
+    declined?: string[];
+    mode?: 'once' | 'every_time' | 'when_items_change';
+    basis?: 'user' | 'trust' | 'not_asked';
+    refused?: boolean;
+    revision?: number;
+    generation?: number;
+  }): void;
+  /** Withdraw: the person's generation for an SP (what a withdrawal moves). */
+  setReleaseGeneration(spEntityId: string, generation: number, userId?: string): void;
+  /** The current decision row (or null). */
+  releaseDecision(spEntityId: string, userId?: string): { decision_revision: number } | null;
   addEvidence(
     id: string,
     level: string,
@@ -61,17 +87,24 @@ export async function createEvidenceDb(userId: string = EVIDENCE_USER): Promise<
     DatabaseSync: new (path: string) => SqliteDatabase;
   };
   const db = new DatabaseSync(':memory:');
-  for (const file of ['001_0_5_0_core_baseline.sql']) {
+  for (const file of ['001_0_5_0_core_baseline.sql', '011_saml_sp_release_consent.sql']) {
     db.exec(renderForSqlite(readFileSync(new URL(file, MIGRATIONS), 'utf8')));
   }
   let reads = 0;
+  let evidenceError: Error | null = null;
   const adapter = {
     async query(sql: string, params?: unknown[]) {
-      if (sql.includes('assurance_evidence')) reads += 1;
+      if (sql.includes('assurance_evidence')) {
+        reads += 1;
+        if (evidenceError) throw evidenceError;
+      }
       return db.prepare(sql).all(...values(params));
     },
     async queryOne(sql: string, params?: unknown[]) {
-      if (sql.includes('assurance_evidence')) reads += 1;
+      if (sql.includes('assurance_evidence')) {
+        reads += 1;
+        if (evidenceError) throw evidenceError;
+      }
       return db.prepare(sql).get(...values(params)) ?? null;
     },
     async execute(sql: string, params?: unknown[]) {
@@ -99,8 +132,74 @@ export async function createEvidenceDb(userId: string = EVIDENCE_USER): Promise<
     resetReads: () => {
       reads = 0;
     },
+    failEvidenceReads: (error) => {
+      evidenceError = error;
+    },
     clearEvidence: () => {
       db.exec('DELETE FROM assurance_evidence');
+    },
+    clearConsent: () => {
+      db.exec(
+        'DELETE FROM client_trust_policies; DELETE FROM saml_sp_release_consents; DELETE FROM saml_sp_release_consent_revocations;'
+      );
+    },
+    trustSP(spEntityId, flags = {}) {
+      db.prepare(
+        `INSERT INTO client_trust_policies
+           (id, tenant_id, name, display_name, target_type, target_id, first_party, trusted,
+            skip_authorization_consent, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'saml_sp', ?, 0, ?, ?, 1, 1, 1)`
+      ).run(
+        `trust:${spEntityId}`,
+        EVIDENCE_TENANT,
+        `trust:${spEntityId}`,
+        'Trust',
+        spEntityId,
+        flags.trusted ? 1 : 0,
+        flags.skipAuthorizationConsent ? 1 : 0
+      );
+    },
+    saveReleaseDecision(input) {
+      const json = (names: string[]) => JSON.stringify([...names].sort());
+      db.prepare(
+        `INSERT INTO saml_sp_release_consents
+           (tenant_id, user_id, sp_entity_id, presented_json, approved_json, declined_json, mode,
+            basis, refused, decision_revision, consent_generation, decided_at, created_at,
+            updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1)`
+      ).run(
+        EVIDENCE_TENANT,
+        input.userId ?? userId,
+        input.spEntityId,
+        json(input.presented),
+        json(input.approved),
+        json(input.declined ?? []),
+        input.mode ?? 'once',
+        input.basis ?? 'user',
+        input.refused ? 1 : 0,
+        input.revision ?? 1,
+        input.generation ?? 0
+      );
+    },
+    setReleaseGeneration(spEntityId, generation, forUser) {
+      db.prepare(
+        `INSERT INTO saml_sp_release_consent_revocations
+           (tenant_id, user_id, sp_entity_id, generation, revoked_at)
+         VALUES (?, ?, ?, ?, 1)
+         ON CONFLICT (tenant_id, user_id, sp_entity_id) DO UPDATE SET generation = excluded.generation`
+      ).run(EVIDENCE_TENANT, forUser ?? userId, spEntityId, generation);
+    },
+    releaseDecision(spEntityId, forUser) {
+      return (
+        (db
+          .prepare(
+            `SELECT decision_revision FROM saml_sp_release_consents
+              WHERE tenant_id = ? AND user_id = ? AND sp_entity_id = ?`
+          )
+          .get(EVIDENCE_TENANT, forUser ?? userId, spEntityId) as
+          | { decision_revision: number }
+          | undefined) ?? null
+      );
     },
     addEvidence(id, level, overrides = {}) {
       const row = {

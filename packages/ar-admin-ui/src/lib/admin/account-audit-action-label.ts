@@ -40,6 +40,10 @@ const ACCOUNT_AUDIT_ACTION_LABELS = {
 		en: 'Account Page: Device unlinked',
 		ja: 'アカウントページ: 端末解除'
 	},
+	'account.consent.withdrawn': {
+		en: 'Account Page: Service consent withdrawn',
+		ja: 'アカウントページ: サービスへの同意を撤回'
+	},
 	'account.session.revoked': {
 		en: 'Account Page: Session logged out',
 		ja: 'アカウントページ: セッションログアウト'

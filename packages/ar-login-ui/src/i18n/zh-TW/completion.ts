@@ -77,6 +77,8 @@ const completion = {
 	consent_item_processing_purpose: '處理目的',
 	consent_item_withdrawal_impact: '撤回影響',
 	consent_release_title: '與 {clientName} 分享的資訊',
+	consent_release_saml_nameid: '你在此服務中的識別碼',
+	consent_release_saml_nameid_email: '你的電子郵件地址（作為你在此服務中的識別碼）',
 	consent_release_hint: '標示為必填的項目在您允許後一律會被分享。請取消勾選您不想分享的選填項目。',
 	consent_release_purpose: '用途',
 	consent_claim_sub: '帳戶識別碼',

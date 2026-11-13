@@ -77,6 +77,8 @@ const completion = {
 	consent_item_processing_purpose: '处理目的',
 	consent_item_withdrawal_impact: '撤回影响',
 	consent_release_title: '与 {clientName} 共享的信息',
+	consent_release_saml_nameid: '你在此服务中的标识符',
+	consent_release_saml_nameid_email: '你的电子邮件地址（作为你在此服务中的标识符）',
 	consent_release_hint: '标记为必填的项目在您允许后始终会被共享。请取消勾选您不想共享的可选项目。',
 	consent_release_purpose: '用途',
 	consent_claim_sub: '账户标识符',

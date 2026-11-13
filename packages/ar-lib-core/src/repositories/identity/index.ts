@@ -80,10 +80,3 @@ export {
   type CanonicalRuntimeUserCreateInput,
   type CanonicalRuntimeUserStoreOptions,
 } from './canonical-runtime-user-store';
-
-export {
-  AttributeReleaseConsentRepository,
-  type AttributeReleaseConsentRow,
-  type AttributeReleaseConsentState,
-  type GrantAttributeReleaseConsentInput,
-} from './attribute-release-consent';

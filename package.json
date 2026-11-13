@@ -142,7 +142,7 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "hono": "4.13.12",
+    "hono": "4.13.18",
     "jose": "^6.2.13"
   },
   "devDependencies": {
@@ -202,7 +202,7 @@
       "vite": ">=8.3.5 <9",
       "@sveltejs/kit": ">=3.1.1",
       "rollup": ">=4.59.0",
-      "hono": "4.13.12",
+      "hono": "4.13.18",
       "jose": "6.2.13",
       "@hono/node-server": "2.1.6",
       "fast-uri": "3.1.9",

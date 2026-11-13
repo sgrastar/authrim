@@ -680,6 +680,10 @@ type RootTranslation = {
 	 */
 	account_operationPasskeyDeleted: string;
 	/**
+	 * C​o​n​s​e​n​t​ ​t​o​ ​a​ ​s​e​r​v​i​c​e​ ​w​i​t​h​d​r​a​w​n
+	 */
+	account_operationConsentWithdrawn: string;
+	/**
 	 * S​e​s​s​i​o​n​ ​e​n​d​e​d
 	 */
 	account_operationSessionRevoked: string;
@@ -831,6 +835,10 @@ type RootTranslation = {
 	 * I​n​f​o​r​m​a​t​i​o​n​ ​p​r​o​v​i​d​e​d
 	 */
 	account_consentInformationRelease: string;
+	/**
+	 * R​e​f​u​s​e​d
+	 */
+	account_consentInformationRefused: string;
 	/**
 	 * N​o​t​ ​p​r​o​v​i​d​e​d
 	 */
@@ -1482,6 +1490,14 @@ type RootTranslation = {
 	 * @param {string} clientName
 	 */
 	consent_release_title: RequiredParams<'clientName'>;
+	/**
+	 * Y​o​u​r​ ​i​d​e​n​t​i​f​i​e​r​ ​f​o​r​ ​t​h​i​s​ ​s​e​r​v​i​c​e
+	 */
+	consent_release_saml_nameid: string;
+	/**
+	 * Y​o​u​r​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​ ​(​a​s​ ​y​o​u​r​ ​i​d​e​n​t​i​f​i​e​r​ ​f​o​r​ ​t​h​i​s​ ​s​e​r​v​i​c​e​)
+	 */
+	consent_release_saml_nameid_email: string;
 	/**
 	 * I​t​e​m​s​ ​m​a​r​k​e​d​ ​R​e​q​u​i​r​e​d​ ​a​r​e​ ​a​l​w​a​y​s​ ​s​h​a​r​e​d​ ​i​f​ ​y​o​u​ ​a​l​l​o​w​.​ ​U​n​t​i​c​k​ ​a​n​y​ ​o​p​t​i​o​n​a​l​ ​i​t​e​m​ ​y​o​u​ ​d​o​ ​n​o​t​ ​w​a​n​t​ ​t​o​ ​s​h​a​r​e​.
 	 */
@@ -2648,6 +2664,10 @@ export type TranslationFunctions = {
 	 */
 	account_operationPasskeyDeleted: () => LocalizedString;
 	/**
+	 * Consent to a service withdrawn
+	 */
+	account_operationConsentWithdrawn: () => LocalizedString;
+	/**
 	 * Session ended
 	 */
 	account_operationSessionRevoked: () => LocalizedString;
@@ -2799,6 +2819,10 @@ export type TranslationFunctions = {
 	 * Information provided
 	 */
 	account_consentInformationRelease: () => LocalizedString;
+	/**
+	 * Refused
+	 */
+	account_consentInformationRefused: () => LocalizedString;
 	/**
 	 * Not provided
 	 */
@@ -3442,6 +3466,14 @@ export type TranslationFunctions = {
 	 * Information shared with {clientName}
 	 */
 	consent_release_title: (arg: { clientName: string }) => LocalizedString;
+	/**
+	 * Your identifier for this service
+	 */
+	consent_release_saml_nameid: () => LocalizedString;
+	/**
+	 * Your email address (as your identifier for this service)
+	 */
+	consent_release_saml_nameid_email: () => LocalizedString;
 	/**
 	 * Items marked Required are always shared if you allow. Untick any optional item you do not want to share.
 	 */

@@ -13,7 +13,7 @@ describe('SAML IdP-only app', () => {
     expect(routes).toContain('GET /saml/idp/metadata');
     expect(routes).toContain('GET /saml/idp/sso');
     expect(routes).toContain('POST /saml/idp/sso');
-    expect(routes).toContain('POST /saml/idp/attribute-release-consent');
+    expect(routes).not.toContain('POST /saml/idp/attribute-release-consent');
     expect(routes).not.toContain('GET /saml/idp/slo');
     expect(routes).not.toContain('POST /saml/idp/slo');
     expect(routes).toContain('GET /saml/health');

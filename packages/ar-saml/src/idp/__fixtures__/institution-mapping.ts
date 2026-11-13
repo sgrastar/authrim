@@ -5,6 +5,7 @@
  */
 import {
   OID_MAIL,
+  PRODUCTION_SP_ENTITY_ID,
   productionBinding,
   productionSpConfig,
   PRODUCTION_EDGES,
@@ -100,28 +101,24 @@ export function institutionBinding(edges: readonly object[]) {
 }
 
 /**
- * A core adapter that holds the person's selection of every attribute of the destination profile
- * (an optional attribute reaches the SP only when the person selected it).
+ * The tenant's databases for an SP the tenant trusts: a trusted SP is released everything it is
+ * offered without asking (an optional attribute reaches it too), and no withdrawal has been made.
  */
 export function institutionCoreAdapter() {
-  const selected = [
-    OID_MAIL,
-    OID_EPSA,
-    OID_EPPN,
-    OID_SCHAC_HOME_ORGANIZATION,
-    OID_ORGANIZATION_NAME,
-  ];
   return {
-    query: async () => [],
-    queryOne: async (sql: string) =>
-      sql.includes('consent_records')
-        ? {
-            id: 'consent-selection',
-            released_attributes_json: JSON.stringify(selected),
-            evidence_json: '{}',
-            created_at: 1,
-          }
-        : null,
+    query: async (sql: string) =>
+      sql.includes('client_trust_policies')
+        ? [
+            {
+              target_type: 'saml_sp',
+              target_id: PRODUCTION_SP_ENTITY_ID,
+              first_party: 0,
+              trusted: 1,
+              skip_authorization_consent: 0,
+            },
+          ]
+        : [],
+    queryOne: async () => null,
     execute: async () => ({ rowsAffected: 0 }),
   };
 }

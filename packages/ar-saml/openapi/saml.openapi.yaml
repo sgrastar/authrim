@@ -777,23 +777,6 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/SAMLDRBundleImport'
       security: *a1
-  /saml/idp/attribute-release-consent:
-    post:
-      tags:
-        - SAML IdP
-      operationId: postSamlIdpAttributeReleaseConsent
-      summary: Submit SAML attribute release consent.
-      description:
-        Processes the browser form submitted from the SAML attribute release consent challenge.
-        Approval stores consent and redirects back to the SSO resume URL; denial returns a SAML
-        protocol error response to the Service Provider.
-      responses:
-        '200':
-          $ref: '#/components/responses/Html'
-        '302':
-          $ref: '#/components/responses/Redirect'
-      requestBody:
-        $ref: '#/components/requestBodies/SAMLAttributeReleaseConsentForm'
   /saml/idp/login-cancel:
     get:
       tags:
@@ -1028,29 +1011,6 @@ components:
             bundle:
               version: saml-local-signing-dr-bundle-v1
             passphrase: correct horse battery staple
-    SAMLAttributeReleaseConsent:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/SAMLAttributeReleaseConsentRequest'
-          example:
-            requestId: consent_123
-            decision: approve
-            releasedAttributes:
-              - email
-    SAMLAttributeReleaseConsentForm:
-      required: true
-      content:
-        application/x-www-form-urlencoded:
-          schema:
-            $ref: '#/components/schemas/SAMLAttributeReleaseConsentForm'
-          example:
-            saml_request_id: saml_req_123
-            saml_sp_entity_id: https://sp.example.com/metadata
-            challenge_id: challenge_123
-            attribute_set_hash: sha256:abcdef
-            decision: approve
   responses:
     CapabilityDisabled:
       description: >-
@@ -1370,16 +1330,6 @@ components:
               iv: base64-iv
             payload: base64-ciphertext
             payloadEncoding: base64
-    SAMLAttributeReleaseConsent:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/SAMLAttributeReleaseConsentResponse'
-          example:
-            success: true
-            status: approved
-            redirectUrl: https://sp.example.com/acs
     Success:
       description: Successful JSON response.
       content:
@@ -1614,18 +1564,35 @@ components:
             - 'null'
           items:
             type: string
-        attributeReleaseConsent:
+        informationReleaseConsent:
           type: object
+          description: >-
+            The shared consent screen setting for this Service Provider (same shape as an OIDC
+            client's information_release_consent). Absent means the default: enabled, ask once,
+            show values, no purpose statement. An invalid value is refused with 400.
           additionalProperties: false
           properties:
             enabled:
               type: boolean
-            mode:
+              default: true
+              description: Ask the person before releasing their information to this SP.
+            ask:
               type: string
+              default: once
               enum:
                 - once
                 - every_time
-                - until_attributes_change
+                - when_items_change
+            show_values:
+              type: boolean
+              default: true
+              description: Show the values being released, not only the item names.
+            purpose_statement_id:
+              type:
+                - string
+                - 'null'
+              default: null
+              description: Optional consent statement shown to explain why the SP is given the information.
     SAMLMetadataRefreshPolicy:
       type: object
       additionalProperties: false
@@ -2277,34 +2244,6 @@ components:
           type: string
           enum:
             - base64
-    SAMLAttributeReleaseConsentRequest:
-      type: object
-      required:
-        - requestId
-        - decision
-      properties:
-        requestId:
-          type: string
-        decision:
-          type: string
-          enum:
-            - approve
-            - deny
-        releasedAttributes:
-          type: array
-          items:
-            type: string
-    SAMLAttributeReleaseConsentResponse:
-      type: object
-      additionalProperties: true
-      properties:
-        success:
-          type: boolean
-        redirectUrl:
-          type: string
-          format: uri
-        status:
-          type: string
     SuccessResponse:
       type: object
       required:
@@ -2422,28 +2361,6 @@ components:
           type: boolean
           enum:
             - true
-    SAMLAttributeReleaseConsentForm:
-      type: object
-      required:
-        - saml_request_id
-        - saml_sp_entity_id
-        - challenge_id
-        - attribute_set_hash
-        - decision
-      properties:
-        saml_request_id:
-          type: string
-        saml_sp_entity_id:
-          type: string
-        challenge_id:
-          type: string
-        attribute_set_hash:
-          type: string
-        decision:
-          type: string
-          enum:
-            - approve
-            - deny
     RedirectResponse:
       type: string
       description: Redirect response with a Location header.

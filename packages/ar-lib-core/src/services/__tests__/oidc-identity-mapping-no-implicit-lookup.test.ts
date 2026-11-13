@@ -114,21 +114,13 @@ describe('the lookup of an activation by its scope (no Mapping Set named)', () =
     'ar-lib-core/src/services/identity-mapping-resolution.ts',
     'ar-lib-core/src/services/identity-mapping-selection.ts',
     'ar-auth/src/authorize.ts',
+    // The sign-in Flow no longer works out a SAML SP's fields (asked on the consent screen).
+    'ar-auth/src/login-runtime-flow.ts',
     'ar-token/src/token.ts',
     'ar-userinfo/src/userinfo.ts',
   ])('is not reached from %s at all', (file) => {
     const source = withoutComments(readFileSync(join(PACKAGES_DIR, file), 'utf8'));
 
     expect(source).not.toContain(FUNCTION_NAME);
-  });
-
-  it('is reached from the sign-in flow only for SAML, with a Mapping Set', () => {
-    const sites = callSites().filter((site) => site.file === 'ar-auth/src/login-runtime-flow.ts');
-
-    expect(sites.length).toBeGreaterThan(0);
-    for (const site of sites) {
-      expect(site.context).toMatch(/protocol:\s*'saml'/);
-      expect(hasSetId(site.context)).toBe(true);
-    }
   });
 });

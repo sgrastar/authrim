@@ -26,6 +26,8 @@ import {
   seededCanonicalEntries,
 } from '../__fixtures__/production-shaped-mapping';
 
+const EMAIL_FORMAT = NAMEID_FORMATS.EMAIL;
+
 const mocks = vi.hoisted(() => ({
   binding: null as unknown,
   admin: null as unknown,
@@ -48,7 +50,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 vi.mock('../../common/user-store', () => ({ getSamlUserCoreAdapter: mocks.getAdapter }));
 
-import { filterSamlAttributesByDestinationConsentWithStatus } from '@authrim/ar-lib-core';
+import {
+  filterSamlAttributesByDestinationProfile,
+  RELEASE_APPROVE_ALL,
+  RELEASE_APPROVE_REQUIRED,
+} from '@authrim/ar-lib-core';
+import { NAMEID_FORMATS } from '../../common/constants';
+import { applySAMLReleaseApproval, type SAMLAttributeRelease } from '../release-items';
 import {
   buildSAMLAttributesForSPWithDiagnostics,
   resolveSAMLIdentityMappingFieldMappingBinding,
@@ -368,6 +376,10 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
     ).toBe(imported.binding);
   });
 
+  /** The last release the helper below made (its attributes, and which of them the SP requires). */
+  let lastRelease: Awaited<ReturnType<typeof filterSamlAttributesByDestinationProfile>> | null =
+    null;
+
   /** What the SSO endpoints do from the resolved mapping to the attributes released. */
   async function release(
     spConfig = productionSpConfig(),
@@ -399,12 +411,9 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
       localEntityId: 'https://idp.example.test',
       identityMapping,
     } as never);
-    const filtered = await filterSamlAttributesByDestinationConsentWithStatus({
-      coreAdapter: emptyCoreAdapter() as never,
+    const filtered = await filterSamlAttributesByDestinationProfile({
       adminAdapter: mocks.admin as never,
       tenantId: 'tenant-a',
-      subjectId: 'user-a',
-      samlSpId: PRODUCTION_SP_ENTITY_ID,
       profileId: identityMapping!.destinationProfileId!,
       fieldPolicies: identityMapping!.destinationFieldPolicies,
       releaseSafetyBinding: resolveSAMLIdentityMappingFieldMappingBinding(identityMapping!, {
@@ -415,6 +424,7 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
       }),
       attributes: built.attributes,
     });
+    lastRelease = filtered;
     return filtered.attributes;
   }
 
@@ -460,10 +470,34 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
     });
   });
 
-  it('drops an attribute the SP’s policy makes optional when the person has selected nothing, as before', async () => {
+  it('offers an attribute the SP’s policy makes optional as an optional item: required-only approval leaves it out, an approval of everything releases it', async () => {
     evidence.addEvidence('ev-1', 'IAL2');
     const names = (await release()).map((attribute) => attribute.name);
-    expect(names).not.toContain(OID_SURNAME);
+    // The release no longer drops it on its own: the person's (or the SP's trust's) approval does.
+    expect(names).toContain(OID_SURNAME);
+    expect(lastRelease?.required.has(OID_SURNAME)).toBe(false);
+    expect(lastRelease?.required.has(OID_MAIL)).toBe(true);
+
+    const offered: SAMLAttributeRelease = {
+      attributes: (lastRelease?.attributes ?? []) as SAMLAttributeRelease['attributes'],
+      required: lastRelease?.required ?? new Set<string>(),
+      labels: lastRelease?.labels ?? new Map<string, string>(),
+      deferred: new Set<string>(),
+      withheldScopedValues: [],
+      optionalMissingAttributes: [],
+    };
+    const requiredOnly = applySAMLReleaseApproval(
+      offered,
+      [RELEASE_APPROVE_REQUIRED],
+      EMAIL_FORMAT
+    );
+    expect(requiredOnly.ok).toBe(true);
+    const requiredNames = requiredOnly.ok ? requiredOnly.attributes.map((a) => a.name) : [];
+    expect(requiredNames).not.toContain(OID_SURNAME);
+    expect(requiredNames).toContain(OID_MAIL);
+
+    const everything = applySAMLReleaseApproval(offered, [RELEASE_APPROVE_ALL], EMAIL_FORMAT);
+    expect(everything.ok && everything.attributes.map((a) => a.name)).toContain(OID_SURNAME);
   });
 
   it('does not release a hidden attribute, and does not read the evidence for a hidden assurance field', async () => {
@@ -476,7 +510,9 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
         [OID_ENTITLEMENT]: 'optional',
       })
     );
-    expect(attributes).toEqual([]);
+    // Only the optional attribute that has a value is offered; nothing is required.
+    expect(attributes.map((attribute) => attribute.name)).toEqual([OID_SURNAME]);
+    expect(lastRelease?.required.size).toBe(0);
     expect(evidence.evidenceReads()).toBe(0);
   });
 

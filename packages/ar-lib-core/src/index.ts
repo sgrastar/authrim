@@ -232,6 +232,8 @@ export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
 export * from './services/introspection-identity-mapping';
 export * from './services/information-release-consent';
+export * from './services/saml-release-consent';
+export * from './services/saml-release-consent-store';
 export * from './services/oidc-id-token-release';
 export * from './services/persistent-identifiers';
 export * from './utils/ui-config';
@@ -326,7 +328,6 @@ export * from './services/object-catalog';
 export * from './services/sensitive-detail-chunk-store';
 export * from './services/identity-identifier-bridge';
 export * from './services/identity-resolution';
-export * from './services/identity-release-consent';
 export * from './services/logging-runtime-policy';
 export * from './services/logging-runtime-emitter';
 export * from './services/pii-compensation-policy';
@@ -659,6 +660,8 @@ export type {
   StoreChallengeRequest,
   ConsumeChallengeRequest,
   ConsumeChallengeResponse,
+  DecideChallengeRequest,
+  DecideChallengeOutcome,
 } from './durable-objects/ChallengeStore';
 export { DeviceCodeStore } from './durable-objects/DeviceCodeStore';
 export { CIBARequestStore } from './durable-objects/CIBARequestStore';

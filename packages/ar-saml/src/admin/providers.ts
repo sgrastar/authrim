@@ -67,6 +67,7 @@ import {
   tenantCapabilityRefusal,
   carriesMetadataUrl,
   sameMetadataUrlValue,
+  parseInformationReleaseConsentSetting,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -81,7 +82,6 @@ import {
   SAML_BUILTIN_ATTRIBUTE_PRESETS,
   applySAMLAttributePresetToSPConfig,
 } from '../idp/attribute-presets';
-import { normalizeAttributeReleaseConsentPolicy } from '../idp/attribute-release-consent';
 import { SAMLMetadataValidationError } from './errors';
 import { applySAMLSPProfileDefaults, SAML_SP_PROFILE_DEFAULTS } from './profile-defaults';
 import { fillSAMLProviderProvisioningDefaults } from './provisioning-defaults';
@@ -374,24 +374,27 @@ function normalizeSAMLSPConfigFields(
         };
       })()
     : undefined;
-  if (config.attributeReleaseConsent === undefined) {
-    return {
-      ...signingConfig,
-      ...(normalizedIdentityMapping ? { identityMapping: normalizedIdentityMapping } : {}),
-    };
-  }
-
-  const attributeReleaseConsent = normalizeAttributeReleaseConsentPolicy(
-    config.attributeReleaseConsent
-  );
-  if (!attributeReleaseConsent) {
-    return { field: 'attributeReleaseConsent.mode' };
+  // Settings of the removed SAML release page, and the read-only name, are never stored.
+  const {
+    attributeReleaseConsent: _removedConsent,
+    attributeReleaseConfirmation: _removedConfirmation,
+    displayName: _displayName,
+    ...stored
+  } = signingConfig as SAMLSPConfig & {
+    attributeReleaseConsent?: unknown;
+    attributeReleaseConfirmation?: unknown;
+  };
+  let informationReleaseConsent: SAMLSPConfig['informationReleaseConsent'];
+  if (config.informationReleaseConsent !== undefined) {
+    const parsed = parseInformationReleaseConsentSetting(config.informationReleaseConsent);
+    if (!parsed.ok) return { field: 'informationReleaseConsent' };
+    informationReleaseConsent = parsed.setting;
   }
 
   return {
-    ...signingConfig,
+    ...stored,
     ...(normalizedIdentityMapping ? { identityMapping: normalizedIdentityMapping } : {}),
-    attributeReleaseConsent,
+    ...(informationReleaseConsent ? { informationReleaseConsent } : {}),
   };
 }
 
@@ -5061,8 +5064,8 @@ export async function getSPConfig(
     return null;
   }
   const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
-  const result = await coreAdapter.query<{ config_json: string; enabled: number }>(
-    `SELECT config_json, enabled FROM identity_providers
+  const result = await coreAdapter.query<{ config_json: string; enabled: number; name?: string }>(
+    `SELECT config_json, enabled, name FROM identity_providers
      WHERE tenant_id = ? AND provider_type = 'saml_sp'`,
     [tenantId]
   );
@@ -5089,7 +5092,12 @@ export async function getSPConfig(
     }
     if (!(await isFederationLinkedProviderSourceActive(env, tenantId, match.config))) return null;
     // Also protect configurations persisted before signing flags were normalized on write.
-    return applySafeSAMLSPSigningDefaults(match.config);
+    const config = applySafeSAMLSPSigningDefaults(match.config);
+    // The provider's name (what the consent screen calls it), never a stored config field.
+    delete config.displayName;
+    return typeof match.row.name === 'string' && match.row.name
+      ? { ...config, displayName: match.row.name }
+      : config;
   }
 
   // The AWS DR slice accepts only imported, explicitly configured SPs. Aggregate

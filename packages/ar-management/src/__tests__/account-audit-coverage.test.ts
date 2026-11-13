@@ -7,6 +7,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const AUDITED_MUTATION_ROUTES = [
   'POST /api/account/guest-upgrade/start',
   'POST /api/account/guest-upgrade/complete',
+  'DELETE /api/account/consents/saml-sp',
   'DELETE /api/account/devices/:id',
   'DELETE /api/account/passkeys/:id',
   'DELETE /api/account/sessions/:id',
@@ -43,6 +44,7 @@ const ACCOUNT_AUDIT_ACTIONS = [
   'account.guest.upgrade_failed',
   'account.guest.upgrade_started',
   'account.guest.upgraded',
+  'account.consent.withdrawn',
   'account.device.unlinked',
   'account.device.updated',
   'account.email.added',
@@ -65,6 +67,7 @@ const ACCOUNT_AUDIT_ACTIONS = [
 const AUDIT_PRODUCER_FILES = [
   'packages/ar-auth/src/guest-login.ts',
   'packages/ar-management/src/account-guest-upgrade.ts',
+  'packages/ar-management/src/account-consents.ts',
   'packages/ar-management/src/account-page.ts',
   'packages/ar-management/src/account-identifier-replacement.ts',
   'packages/ar-management/src/account-passkeys.ts',

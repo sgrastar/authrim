@@ -28,7 +28,6 @@ export interface AwsSamlRuntimeOptions {
 const PROTOCOL_PATHS = new Set([
   '/saml/idp/metadata',
   '/saml/idp/sso',
-  '/saml/idp/attribute-release-consent',
   // Answers the SP for a sign-in the person cancelled (handed over by the Flow cancel).
   SAML_LOGIN_CANCEL_PATH,
   '/idp/profile/SAML2/Redirect/SSO',

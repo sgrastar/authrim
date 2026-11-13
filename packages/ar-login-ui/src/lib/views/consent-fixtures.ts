@@ -101,3 +101,46 @@ export const informationRelease: ConsentInformationRelease = {
 		inline_content: '<b>not bold</b>'
 	}
 };
+
+/** A SAML service provider's screen: no scopes, its attributes and NameID by key, with labels. */
+export const samlConsent: ConsentScreenData = {
+	...consentBase,
+	protocol: 'saml',
+	client: { client_id: 'https://sp.example.edu/shibboleth', client_name: 'Library portal' },
+	scopes: [],
+	information_release: {
+		items: [
+			{
+				name: '["nameid","urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"]',
+				kind: 'nameid',
+				label: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+				required: true,
+				deferred: true
+			},
+			{
+				name: '["attribute","urn:oid:0.9.2342.19200300.100.1.3","urn:oasis:names:tc:SAML:2.0:attrname-format:uri"]',
+				kind: 'attribute',
+				label: 'Email address',
+				required: true,
+				value: 'ada.release@example.edu'
+			},
+			{
+				name: '["attribute","urn:oid:1.3.6.1.4.1.5923.1.1.1.10","urn:oasis:names:tc:SAML:2.0:attrname-format:uri"]',
+				kind: 'attribute',
+				label: 'eduPersonTargetedID',
+				required: false,
+				deferred: true
+			},
+			{
+				name: '["attribute","urn:oid:1.3.6.1.4.1.5923.1.1.1.9","urn:oasis:names:tc:SAML:2.0:attrname-format:uri"]',
+				kind: 'attribute',
+				label: 'Affiliation',
+				required: false,
+				previously_approved: true,
+				value: ['member@example.edu', 'student@example.edu']
+			}
+		],
+		show_values: true,
+		presentation_key: 'saml-key-1'
+	}
+};

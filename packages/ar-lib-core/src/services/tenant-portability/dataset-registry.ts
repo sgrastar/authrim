@@ -56,7 +56,7 @@ const TABLE_GROUPS: Partial<
     `,
     users: `
       account_creation_operations account_legal_hold_states account_lifecycle_event_outbox account_registration_pending account_webhook_outbox
-      assurance_evidence attribute_release_consents attribute_verifications consent_records
+      assurance_evidence attribute_verifications consent_records
       contact_points contact_verifications delegations device_installations
       device_secrets directory_auth_migration_transactions directory_auth_migration_user_states directory_identity_links
       directory_jit_pending_users entitlements external_lifecycle_signal_decisions group_memberships
@@ -64,6 +64,7 @@ const TABLE_GROUPS: Partial<
       idempotency_keys identity_accounts identity_bindings identity_resolution_candidates
       identity_subjects issued_credentials launcher_favorites legal_holds
       notification_delivery_intents oauth_client_consent_revocations oauth_client_consents passkeys
+      saml_sp_release_consent_revocations saml_sp_release_consents
       plugin_account_metadata
       plugin_account_metadata_mutations plugin_hook_outbox profile_attribute_values
       profiles provisioning_assignment_ownership provisioning_revocation_receipts relationships role_assignments

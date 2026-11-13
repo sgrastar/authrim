@@ -13,10 +13,19 @@ class Storage {
   async delete(key: string): Promise<boolean> {
     return this.data.delete(key);
   }
-  async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
+  async list<T>(options?: { prefix?: string; limit?: number }): Promise<Map<string, T>> {
     return new Map(
-      [...this.data.entries()].filter(([key]) => key.startsWith(options?.prefix ?? ''))
+      [...this.data.entries()]
+        .filter(([key]) => key.startsWith(options?.prefix ?? ''))
+        .slice(0, options?.limit ?? Infinity)
     ) as Map<string, T>;
+  }
+  alarmAt: number | null = null;
+  async getAlarm(): Promise<number | null> {
+    return this.alarmAt;
+  }
+  async setAlarm(at: number): Promise<void> {
+    this.alarmAt = at;
   }
 }
 
@@ -295,6 +304,99 @@ describe('ChallengeStore leases', () => {
 
     await expect(restarted.claimChallengeRpc({ ...lease, challenge: 'owner-b' })).resolves.toEqual({
       claimed: false,
+    });
+  });
+
+  describe('a challenge that waits for a decision', () => {
+    const consent = { ...challenge, id: 'consent-1', type: 'consent' as const, metadata: {} };
+    const decide = (store: ChallengeStore, operationId: string, approved: boolean) =>
+      store.decideChallengeRpc({
+        id: 'consent-1',
+        tenantId: 'tenant-a',
+        type: 'consent',
+        operationId,
+        decision: { approved },
+      });
+
+    it('is decided once: the same operation gets the same result, another one does not', async () => {
+      const { store } = createStore();
+      await store.storeChallenge(consent);
+      await expect(decide(store, 'op-1', true)).resolves.toEqual({
+        outcome: 'decided',
+        decision: { approved: true },
+      });
+      await expect(decide(store, 'op-1', true)).resolves.toMatchObject({ outcome: 'decided' });
+      await expect(decide(store, 'op-2', false)).resolves.toEqual({
+        outcome: 'conflict',
+        decision: { approved: true },
+      });
+    });
+
+    it('lets the operation that claimed it complete its decision, and no other one', async () => {
+      const { store } = createStore();
+      await store.storeChallenge(consent);
+      await decide(store, 'op-1', true);
+      const complete = (operationId: string) =>
+        store.decideChallengeRpc({
+          id: 'consent-1',
+          tenantId: 'tenant-a',
+          type: 'consent',
+          operationId,
+          decision: { approved: true, revision: 2 },
+          replaceOwn: true,
+        });
+      await expect(complete('op-2')).resolves.toEqual({
+        outcome: 'conflict',
+        decision: { approved: true },
+      });
+      await expect(complete('op-1')).resolves.toEqual({
+        outcome: 'decided',
+        decision: { approved: true, revision: 2 },
+      });
+    });
+
+    it('is used up only once decided, and only by the step waiting for it', async () => {
+      const { store } = createStore();
+      await store.storeChallenge(consent);
+      const consume = (requireDecided?: boolean) =>
+        store.consumeChallengeRpc({
+          id: 'consent-1',
+          tenantId: 'tenant-a',
+          type: 'consent',
+          ...(requireDecided ? { requireDecided } : {}),
+        });
+      await expect(consume(true)).rejects.toThrow('Challenge not decided');
+      await decide(store, 'op-1', false);
+      await expect(consume()).rejects.toThrow('Challenge decided');
+      await expect(consume(true)).resolves.toMatchObject({ decision: { approved: false } });
+      await expect(consume(true)).rejects.toThrow('already consumed');
+      await expect(decide(store, 'op-1', false)).resolves.toEqual({ outcome: 'gone' });
+    });
+
+    it('is not decided for another tenant or type, nor once expired', async () => {
+      const { store } = createStore();
+      await store.storeChallenge({ ...consent, ttl: 1 });
+      await expect(
+        store.decideChallengeRpc({
+          id: 'consent-1',
+          tenantId: 'tenant-b',
+          type: 'consent',
+          operationId: 'op',
+          decision: {},
+        })
+      ).resolves.toEqual({ outcome: 'gone' });
+      vi.advanceTimersByTime(1001);
+      await expect(decide(store, 'op', true)).resolves.toEqual({ outcome: 'gone' });
+    });
+
+    it('is deleted by the cleanup alarm once it expires, even with nothing reading it', async () => {
+      const storage = new Storage();
+      const { store } = createStore(storage);
+      await store.storeChallenge({ ...consent, ttl: 1 });
+      expect(storage.alarmAt).not.toBeNull();
+      vi.advanceTimersByTime(1001);
+      await store.alarm();
+      expect(storage.data.has('challenge:consent-1')).toBe(false);
     });
   });
 });
