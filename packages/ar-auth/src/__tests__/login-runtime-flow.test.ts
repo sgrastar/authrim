@@ -2930,6 +2930,172 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  describe('a condition that reads the person, after a method chosen before its sign-in', () => {
+    // Sign in → a condition on the person → an extra screen for some, then the completion.
+    const heldRuntime: FlowRuntimeContract = {
+      flow_kind: 'login',
+      ui: {
+        steps: [
+          {
+            id: 'auth:step',
+            source_node_id: 'auth',
+            component: 'authentication_method_selector',
+            render: true,
+          },
+          {
+            id: 'who:step',
+            source_node_id: 'who',
+            component: 'condition',
+            render: false,
+            config: {
+              conditions: {
+                rows: [
+                  {
+                    id: 'show',
+                    condition: { type: 'user.attribute', attribute: 'nationality', value: 'US' },
+                    output_handle: 'show',
+                  },
+                ],
+                otherwise: { output_handle: 'skip' },
+              },
+            },
+          },
+          { id: 'extra:step', source_node_id: 'extra', component: 'screen', render: true },
+          {
+            id: 'complete:step',
+            source_node_id: 'complete',
+            component: 'completion',
+            render: true,
+          },
+        ],
+      },
+    };
+    const heldEditor = {
+      nodes: [
+        { id: 'auth', type: 'authentication' },
+        { id: 'who', type: 'condition' },
+        { id: 'extra', type: 'screen' },
+        { id: 'complete', type: 'complete' },
+      ],
+      edges: [
+        { id: 'e_auth', source: 'auth', target: 'who', source_handle: 'mail_otp' },
+        { id: 'e_show', source: 'who', target: 'extra', source_handle: 'show' },
+        { id: 'e_skip', source: 'who', target: 'complete', source_handle: 'skip' },
+        { id: 'e_extra', source: 'extra', target: 'complete' },
+      ],
+    };
+    const account = {
+      query: vi.fn(async () => []),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+      batch: vi.fn(),
+      transaction: vi.fn(),
+      isHealthy: vi.fn(),
+      getType: () => 'mock',
+      close: vi.fn(),
+    };
+
+    async function submit(input: {
+      step: 'auth' | 'who';
+      /** The method selection this run completed before (what a held condition waits after). */
+      methodChosen?: boolean;
+      signedIn?: boolean;
+    }) {
+      const { data: startData } = await startInteraction({ flow_kind: 'login' }, heldRuntime);
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: input.step,
+        currentStepId: `${input.step}:step`,
+        stepState: input.step === 'auth' ? 'waiting_input' : 'pending',
+        runtimeSnapshot: heldRuntime,
+        editorSnapshot: heldEditor,
+      });
+      mocks.coreAdapter.query.mockResolvedValue([]);
+      // The run's method selection, as the held condition asks it (after the submit's own reads).
+      const readRows = mocks.coreAdapter.queryOne.getMockImplementation();
+      mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, ...rest: unknown[]) =>
+        sql.includes('SELECT 1 AS found')
+          ? input.methodChosen
+            ? { found: 1 }
+            : null
+          : (readRows?.(sql, ...rest) as unknown)
+      );
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(
+        input.signedIn
+          ? {
+              userId: 'user_1',
+              expiresAt: Date.now() + 60_000,
+              createdAt: 1_700_000_000_000,
+              data: { authTime: 1_700_000_123 },
+            }
+          : null
+      );
+      mocks.resolveAccountCoreDataContext.mockResolvedValue({ coreDb: account });
+      mocks.readConditionAttributes.mockResolvedValue({ nationality: 'US' });
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: input.signedIn ? { Cookie: 'authrim_session=sess_runtime_1' } : {},
+          body: {
+            step_id: `${input.step}:step`,
+            node_id: input.step,
+            ...(input.step === 'auth' ? { selected_handle: 'mail_otp' } : {}),
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    it('holds the condition when the method is chosen before anyone is signed in', async () => {
+      const { response, data } = await submit({ step: 'auth' });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(false);
+      // Not judged for nobody (which would skip the screen): it waits as the current step.
+      expect(data.step).toMatchObject({ id: 'who:step', component: 'condition' });
+      expect(mocks.readConditionAttributes).not.toHaveBeenCalled();
+    });
+
+    it('asks for the sign-in when the held condition is submitted before it', async () => {
+      const { response, data } = await submit({ step: 'who', methodChosen: true });
+
+      expect(response.status).toBe(401);
+      expect(data).toMatchObject({ error: 'authentication_required' });
+      expect(JSON.stringify(data)).toContain('AR_FLOW_CONDITION_AUTH_REQUIRED');
+    });
+
+    it('judges the held condition for the person signed in since', async () => {
+      const { response, data } = await submit({ step: 'who', methodChosen: true, signedIn: true });
+
+      expect(response.status).toBe(200);
+      expect(mocks.readConditionAttributes).toHaveBeenCalledWith(['nationality']);
+      expect(data.step).toMatchObject({ id: 'extra:step' });
+      // The interaction is now theirs.
+      expect(
+        mocks.coreAdapter.execute.mock.calls.some(
+          ([sql, params]) =>
+            typeof sql === 'string' &&
+            sql.includes('SET user_id = ?') &&
+            Array.isArray(params) &&
+            params[0] === 'user_1'
+        )
+      ).toBe(true);
+    });
+
+    it('judges a condition as before when no method was chosen yet', async () => {
+      const { response, data } = await submit({ step: 'who' });
+
+      expect(response.status).toBe(200);
+      // For nobody, as a condition before the sign-in always was: the screen is skipped.
+      expect(data.step).toMatchObject({ id: 'complete:step' });
+    });
+  });
+
   it('routes a session check node to authentication when no active session exists', async () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
     resetAdapter();
