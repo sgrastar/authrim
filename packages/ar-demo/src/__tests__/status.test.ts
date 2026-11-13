@@ -67,6 +67,51 @@ describe('HEAD /status', () => {
   });
 });
 
+describe('ticket lifetime', () => {
+  const created = () => Number(allRows(testDb)[0].created_at);
+  const setNow = (seconds: number) => {
+    upstream.clock.now = seconds * 1000;
+  };
+
+  it('still polls one second before the limit', async () => {
+    setNow(created() + 1799);
+    upstream.on(K.provisioning, () => json({ status: 'running' }));
+    expect(await (await poll()).json()).toEqual({ state: 'provisioning' });
+    expect(upstream.count(K.provisioning)).toBe(1);
+  });
+
+  it('fails the row at the limit without calling the Admin API', async () => {
+    setNow(created() + 1800);
+    const response = await poll();
+    expect(await response.json()).toEqual({ state: 'failed' });
+    expect(response.headers.get('Set-Cookie')).toMatch(/Max-Age=0/);
+    expect(state()).toBe('failed');
+    expect(upstream.count(K.provisioning)).toBe(0);
+    expect(upstream.count(K.invite)).toBe(0);
+  });
+
+  it('fails a row past expires_at', async () => {
+    testDb.sqlite.exec('UPDATE demo_tenants SET expires_at = created_at + 100');
+    setNow(created() + 100);
+    expect(await (await poll()).json()).toEqual({ state: 'failed' });
+    expect(state()).toBe('failed');
+    expect(upstream.count(K.provisioning)).toBe(0);
+  });
+
+  it('answers failed for an inviting row past the limit without changing it', async () => {
+    testDb.sqlite.exec("UPDATE demo_tenants SET state = 'inviting'");
+    setNow(created() + 1800);
+    expect(await (await poll()).json()).toEqual({ state: 'failed' });
+    expect(state()).toBe('inviting');
+  });
+
+  it('keeps answering handed_off past the limit', async () => {
+    testDb.sqlite.exec("UPDATE demo_tenants SET state = 'handed_off'");
+    setNow(created() + 5000);
+    expect(await (await poll()).json()).toEqual({ state: 'handed_off' });
+  });
+});
+
 describe('GET /status', () => {
   it('answers 404 JSON without a cookie, with a malformed one or an unknown ticket', async () => {
     for (const t of [null, 'short', 'A'.repeat(43)]) {

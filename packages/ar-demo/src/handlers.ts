@@ -15,7 +15,7 @@ import { verifyTurnstile } from './turnstile';
 import type { Deps, Env } from './types';
 
 export const COOKIE_NAME = '__Host-demo_ticket';
-const COOKIE_MAX_AGE_SECONDS = 1800;
+const TICKET_LIFETIME_SECONDS = 1800;
 const MAX_FORM_BYTES = 8192;
 const ID_ATTEMPTS = 3;
 
@@ -172,7 +172,7 @@ export async function handleStart(
     status: 303,
     headers: {
       Location: '/wait',
-      'Set-Cookie': ticketCookie(ticket, COOKIE_MAX_AGE_SECONDS),
+      'Set-Cookie': ticketCookie(ticket, TICKET_LIFETIME_SECONDS),
     },
   });
 }
@@ -213,6 +213,22 @@ export async function handleStatus(
   if (!ticket) return jsonResponse({ error: 'not_found' }, 404);
   const row = await registry.findByTicketHash(env.DB, await sha256Hex(ticket));
   if (!row) return jsonResponse({ error: 'not_found' }, 404);
+
+  // The cookie's Max-Age is only a hint the client controls: the lifetime is enforced here.
+  const currentSeconds = Math.floor(deps.now() / 1000);
+  if (
+    row.state !== 'handed_off' &&
+    (currentSeconds >= row.created_at + TICKET_LIFETIME_SECONDS || currentSeconds >= row.expires_at)
+  ) {
+    if (row.state === 'provisioning') {
+      try {
+        await registry.transition(env.DB, row.id, ['provisioning'], 'failed', currentSeconds);
+      } catch {
+        logError('registry_update_failed', { tenantId: row.id, op: 'ticket_expired' });
+      }
+    }
+    return jsonResponse({ state: 'failed' }, 200, { 'Set-Cookie': clearCookie() });
+  }
 
   switch (row.state) {
     case 'handed_off':
