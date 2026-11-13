@@ -9,6 +9,7 @@ import {
 	FLOW,
 	FLOW_GROUPS,
 	GENERAL_PARTS,
+	OPEN_SETTINGS_PARTS,
 	groupState,
 	httpsUrlProblem,
 	isPristine,
@@ -96,11 +97,12 @@ describe('the flow of a connection', () => {
 		expect(KINDS_OF.in).toEqual(['op', 'idp']);
 	});
 
-	it('has every part the wizard asks, and ends with activating', () => {
+	it('has every part the wizard asks, and no "activate" step (it is in the general settings)', () => {
 		for (const kind of KINDS) {
-			// The settings that are not a step (what the other side is) are shown at the top.
-			const flow = [...GENERAL_PARTS[kind], ...FLOW[kind]];
-			expect(FLOW[kind].at(-1)).toBe('activate');
+			// The settings that are not a step (what the other side is) are shown at the top, and
+			// a service's sign-in response among its connection details.
+			const flow = [...GENERAL_PARTS[kind], ...OPEN_SETTINGS_PARTS[kind], ...FLOW[kind]];
+			expect(FLOW[kind]).not.toContain('activate');
 			const direction = KINDS_OF.out.includes(kind) ? 'out' : 'in';
 			for (const id of ids({ direction, kind }).slice(2))
 				expect(flow, `${kind} ${id}`).toContain(id);
@@ -221,20 +223,25 @@ describe('the parts of a flow, after the wizard', () => {
 		const rp = sampleAnswers('rp', 'wizard');
 		expect(partState('rp-app', rp)).toBe('done');
 		expect(partState('rp-redirect', rp)).toBe('required');
-		expect(missingParts(rp)).toEqual(['Redirect URIs']);
+		// An app gets what its mapping gives it, so the mapping is required as well.
+		expect(missingParts(rp)).toEqual(['Redirect URIs', 'Input and output schemas', 'Mapping sets']);
 		const sp = sampleAnswers('sp', 'wizard');
 		// A service cannot work without a mapping (schemas and a set), which the wizard did not ask.
 		expect(missingParts(sp)).toEqual(['Input and output schemas', 'Mapping sets']);
 		// Nothing of a provider was asked, so its details are the first thing still required.
 		const op = sampleAnswers('op', 'wizard');
 		expect(partState('op-details', op)).toBe('required');
-		expect(missingParts(op)).toEqual(['The provider’s details']);
+		expect(missingParts(op)).toEqual([
+			'The provider’s details',
+			'Input and output schemas',
+			'Mapping sets'
+		]);
 		expect(canActivate(op)).toBe(false);
 	});
 
 	it('count a sign-in method or a matching rule as set from the start', () => {
 		const a = emptyAnswers();
-		for (const id of ['rp-signin', 'sp-attrs', 'op-attrs', 'op-link', 'idp-link'])
+		for (const id of ['rp-signin', 'sp-attrs', 'op-link', 'idp-link'])
 			expect(partState(id, a), id).toBe('done');
 	});
 
@@ -242,6 +249,10 @@ describe('the parts of a flow, after the wizard', () => {
 		const rp = sampleAnswers('rp', 'wizard');
 		expect(canActivate(rp)).toBe(false);
 		rp.rp.redirectUris = ['https://reading.example.com/cb'];
+		expect(canActivate(rp)).toBe(false);
+		rp.extras.inputSchema = 'authrim';
+		rp.extras.outputSchema = 'standard';
+		rp.extras.mappingSet = 'tenant-default';
 		expect(canActivate(rp)).toBe(true);
 		// The wizard never tests: a service cannot go live until the test is run in the flow.
 		const sp = sampleAnswers('sp', 'wizard');
@@ -259,12 +270,11 @@ describe('the parts of a flow, after the wizard', () => {
 
 describe('the sign-up flow of a connection', () => {
 	it('is an optional step for the kinds that can bring someone without an account', () => {
-		for (const kind of ['rp', 'op', 'idp'] as const) {
+		for (const kind of KINDS) {
 			const group = FLOW_GROUPS[kind].find((candidate) => candidate.id === 'signup');
 			expect(group?.optional, kind).toBe(true);
 			expect(group?.parts).toEqual(['signup-flow']);
 		}
-		expect(FLOW_GROUPS.sp.some((group) => group.id === 'signup')).toBe(false);
 	});
 
 	it('is not there until added, is still to do (not required) once added, and is listed when chosen', () => {
@@ -319,10 +329,9 @@ describe('names and review', () => {
 });
 
 describe('the steps of a flow', () => {
-	it('hold every part once, in groups, and end with going live', () => {
+	it('hold every part once, in groups', () => {
 		for (const kind of KINDS) {
 			const groups = FLOW_GROUPS[kind];
-			expect(groups.at(-1)?.parts).toEqual(['activate']);
 			const parts = groups.flatMap((group) => group.parts);
 			expect(new Set(parts).size).toBe(parts.length);
 			expect(parts).toEqual([...FLOW[kind]]);
@@ -333,12 +342,12 @@ describe('the steps of a flow', () => {
 		const a = sampleAnswers('rp', 'wizard');
 		// The redirect URIs are missing: that holds the connection back, though it is not a step.
 		expect(partState('rp-redirect', a)).toBe('required');
-		expect(missingParts(a)).toEqual(['Redirect URIs']);
+		expect(missingParts(a)).toContain('Redirect URIs');
 		a.rp.redirectUris = ['https://portal.example.com/cb'];
-		expect(missingParts(a)).toEqual([]);
-		const sp = sampleAnswers('sp', 'wizard');
-		// Nothing has been checked yet: the last step is not done.
-		expect(groupState(FLOW_GROUPS.sp.at(-1)!, sp)).toBe('todo');
+		expect(missingParts(a)).not.toContain('Redirect URIs');
+		// The mapping is not chosen yet: its step is required.
+		const mapping = FLOW_GROUPS.rp.find((group) => group.id === 'mapping')!;
+		expect(groupState(mapping, a)).toBe('required');
 	});
 });
 
@@ -375,35 +384,49 @@ describe('the processing steps of a flow', () => {
 	it('start with a mapping only where a connection cannot work without one', () => {
 		expect(ids(sampleAnswers('sp'))).toContain('mapping');
 		expect(ids(sampleAnswers('idp'))).toContain('mapping');
-		expect(ids(sampleAnswers('rp'))).not.toContain('mapping');
-		expect(ids(sampleAnswers('op'))).not.toContain('mapping');
+		expect(ids(sampleAnswers('rp'))).toContain('mapping');
+		expect(ids(sampleAnswers('op'))).toContain('mapping');
 	});
 
 	it('are added with the "+": sign-up, consent, role, and for providers additional input', () => {
 		const optional = (kind: ConnectionKind) =>
 			FLOW_GROUPS[kind].filter((group) => group.optional).map((group) => group.id);
-		expect(optional('rp')).toEqual(['signup', 'mapping', 'consent', 'role']);
-		expect(optional('sp')).toEqual(['consent', 'role']);
-		expect(optional('op')).toEqual(['signup', 'mapping', 'additional', 'consent', 'role']);
+		expect(optional('rp')).toEqual(['signup', 'role', 'consent']);
+		expect(optional('sp')).toEqual(['signup', 'consent', 'role']);
+		expect(optional('op')).toEqual(['signup', 'additional', 'consent', 'role']);
 		expect(optional('idp')).toEqual(['signup', 'additional', 'consent', 'role']);
 	});
 
 	it('keep the settings an app needs: redirect URIs, sign-in method, and the rest', () => {
 		expect(GENERAL_PARTS.rp).toEqual(['rp-app', 'rp-redirect', 'rp-signin']);
-		expect(FLOW.rp).toEqual(expect.arrayContaining(['rp-info']));
-		expect(GENERAL_PARTS.sp).toEqual(['sp-import']);
-		expect(FLOW.sp).toEqual(expect.arrayContaining(['sp-attrs', 'sp-test']));
+		// What an app receives is the mapping's: there is no separate step for it.
+		expect(FLOW.rp).not.toContain('rp-info');
+		// A provider's test is a general setting too, and what it sends is the mapping's to take.
+		expect(GENERAL_PARTS.op).toEqual(['op-details', 'op-test']);
+		expect(GENERAL_PARTS.idp).toEqual(['idp-import', 'idp-test']);
+		expect(FLOW.op).not.toContain('op-attrs');
+		expect(FLOW.idp).not.toContain('idp-attrs');
+		// A service's test is a general setting, its sign-in response an open connection detail.
+		expect(GENERAL_PARTS.sp).toEqual(['sp-import', 'sp-test']);
+		expect(OPEN_SETTINGS_PARTS.sp).toEqual(['sp-attrs']);
+		expect(FLOW.sp).not.toContain('sp-attrs');
 		// What the other side is does not belong to the flow.
 		for (const kind of KINDS)
 			for (const id of GENERAL_PARTS[kind]) expect(FLOW[kind], `${kind} ${id}`).not.toContain(id);
 	});
 
-	it('sit before checking and going live, in the order of the earlier mock', () => {
-		const order = FLOW_GROUPS.idp.map((group) => group.id);
-		expect(order.indexOf('mapping')).toBeLessThan(order.indexOf('additional'));
-		expect(order.indexOf('additional')).toBeLessThan(order.indexOf('consent'));
-		expect(order.indexOf('consent')).toBeLessThan(order.indexOf('role'));
-		expect(order.indexOf('role')).toBeLessThan(order.indexOf('check'));
+	it('run in the agreed order', () => {
+		const order = (kind: ConnectionKind) => FLOW_GROUPS[kind].map((group) => group.id);
+		expect(order('rp')).toEqual(['signup', 'role', 'consent', 'mapping']);
+		for (const kind of ['op', 'idp'] as const)
+			expect(order(kind)).toEqual([
+				'mapping',
+				'accounts',
+				'signup',
+				'additional',
+				'consent',
+				'role'
+			]);
 	});
 
 	it('are only counted once they are in the flow', () => {
@@ -411,7 +434,7 @@ describe('the processing steps of a flow', () => {
 		expect(ids(a)).not.toContain('consent');
 		a.added = ['consent', 'role'];
 		expect(ids(a)).toContain('consent');
-		expect(ids(a).at(-1)).toBe('live');
+		expect(ids(a).at(-1)).toBe('mapping');
 	});
 
 	it('make a mapping set required for a service and a SAML provider', () => {
@@ -425,12 +448,11 @@ describe('the processing steps of a flow', () => {
 		expect(missingParts(sp)).toEqual([]);
 	});
 
-	it('leave a mapping set optional for an app and an OpenID Connect provider', () => {
-		const rp = sampleAnswers('rp');
-		rp.added = ['mapping'];
-		rp.extras.mappingSet = '';
-		expect(partState('mapping-sets', rp)).toBe('todo');
-		expect(missingParts(rp)).toEqual([]);
+	it('make a mapping set required for every kind, an OpenID Connect provider included', () => {
+		const op = sampleAnswers('op', 'complete');
+		op.extras.mappingSet = '';
+		expect(partState('mapping-sets', op)).toBe('required');
+		expect(missingParts(op)).toEqual(['Mapping sets']);
 	});
 
 	it('are set when they have what they need', () => {
@@ -495,12 +517,8 @@ describe('the schemas of a mapping', () => {
 	});
 
 	it('wait for a choice: required where the flow cannot work without one, otherwise to do', () => {
-		for (const kind of ['sp', 'idp'] as const) {
+		for (const kind of KINDS) {
 			expect(partState('mapping-schemas', sampleAnswers(kind, 'wizard'))).toBe('required');
-			expect(partState('mapping-schemas', sampleAnswers(kind, 'complete'))).toBe('done');
-		}
-		for (const kind of ['rp', 'op'] as const) {
-			expect(partState('mapping-schemas', sampleAnswers(kind, 'wizard'))).toBe('todo');
 			expect(partState('mapping-schemas', sampleAnswers(kind, 'complete'))).toBe('done');
 		}
 	});
@@ -509,7 +527,7 @@ describe('the schemas of a mapping', () => {
 		const a = sampleAnswers('rp', 'wizard');
 		a.extras.inputSchema = 'standard'; // only offered coming in
 		a.extras.outputSchema = 'standard';
-		expect(partState('mapping-schemas', a)).toBe('todo');
+		expect(partState('mapping-schemas', a)).toBe('required');
 	});
 
 	it('leave an app without a mapping set until one is picked', () => {

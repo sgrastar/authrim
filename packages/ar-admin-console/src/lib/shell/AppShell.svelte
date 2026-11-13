@@ -48,6 +48,11 @@
 		 * insets the page (Frosted) does not pull it away from the categories.
 		 */
 		banner?: Snippet;
+		/**
+		 * Whether the page at an address has been built. Items whose page has not are marked as under
+		 * construction in the left nav. Not given: nothing is marked.
+		 */
+		built?: (href: string) => boolean;
 		children: Snippet;
 	}
 
@@ -63,6 +68,7 @@
 		notifications,
 		ondismiss,
 		banner,
+		built,
 		children
 	}: Props = $props();
 
@@ -72,7 +78,9 @@
 
 	const entries = $derived(topNavEntries(location.kind, t));
 	const rows = $derived(
-		showsSubNav(location, standalone) ? subNavRows(location, t, adminAccess.current) : []
+		(showsSubNav(location, standalone) ? subNavRows(location, t, adminAccess.current) : []).map(
+			(row) => (row.type === 'item' && built && !built(row.href) ? { ...row, wip: true } : row)
+		)
 	);
 	const sections = $derived(drawerSections(location, t, adminAccess.current));
 	const menus = $derived(topNavMenus(location, t, adminAccess.current));

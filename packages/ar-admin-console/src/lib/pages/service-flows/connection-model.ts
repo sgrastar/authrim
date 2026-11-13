@@ -1,5 +1,13 @@
 import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 import type { WizardStep } from '#lib/ui/patterns/WizardSteps.svelte';
+import {
+	emptySettings,
+	SETTINGS_LABELS,
+	SETTINGS_PARTS,
+	settingsFromImport,
+	settingsState,
+	type ConnectionSettings
+} from './connection-settings';
 
 /**
  * What "Add connection" asks, what the connection's detail screen lays out, and when each lets
@@ -40,6 +48,8 @@ export interface ImportForm {
 	metadataUrl: string;
 	/** The metadata at the URL has been read (dummy). */
 	fetched: boolean;
+	/** How many times metadata was read (from the address or a file): each read is an event. */
+	reads?: number;
 	fileName: string;
 	entityId: string;
 	/** The partner's sign-in address: the ACS of a service, the SSO address of a provider. */
@@ -97,6 +107,8 @@ export interface Answers {
 	added: string[];
 	/** The settings of the optional steps. */
 	extras: ExtrasForm;
+	/** How the connection itself behaves (tokens, logout, signing…): see `connection-settings`. */
+	settings: ConnectionSettings;
 }
 
 /** The consent statements the tenant keeps (dummy). */
@@ -158,6 +170,7 @@ export function emptyAnswers(): Answers {
 		kind: '',
 		active: false,
 		added: [],
+		settings: emptySettings(),
 		extras: {
 			inputSchema: '',
 			outputSchema: '',
@@ -266,26 +279,22 @@ export interface FlowGroup {
 
 /** Every step of a connection's flow, with its settings, in the order the flow draws them. */
 export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
+	// A connection is put into service from its general settings (under its test, if it has one),
+	// so no flow ends in an "activate" step; what the other side receives is the mapping's.
 	rp: [
 		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
-		{ id: 'receives', label: 'sf.group.receives', parts: ['rp-info'] },
-		{
-			id: 'mapping',
-			label: 'sf.group.mapping',
-			parts: ['mapping-schemas', 'mapping-sets'],
-			optional: true
-		},
+		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true },
 		{
 			id: 'consent',
 			label: 'sf.group.consent',
 			parts: ['consent-statements', 'consent-policies'],
 			optional: true
 		},
-		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true },
-		{ id: 'live', label: 'sf.group.live', parts: ['activate'] }
+		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] }
 	],
+	// The sign-in response is a connection setting and the test a general one (see below).
 	sp: [
-		{ id: 'response', label: 'sf.group.response', parts: ['sp-attrs'] },
+		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
 		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] },
 		{
 			id: 'consent',
@@ -293,19 +302,16 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 			parts: ['consent-statements', 'consent-policies'],
 			optional: true
 		},
-		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true },
-		{ id: 'check', label: 'sf.group.check', parts: ['sp-test'] },
-		{ id: 'live', label: 'sf.group.live', parts: ['activate'] }
+		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true }
 	],
+	// Coming in, in the order a person is handled: what the provider sends is first taken into
+	// Authrim's profile (mapping), then matched, signed up, asked for what is missing, asked to
+	// consent, and given a role last (on settled attributes, never without consent). The test is
+	// a general setting.
 	op: [
-		{ id: 'accounts', label: 'sf.group.accounts', parts: ['op-attrs', 'op-link'] },
+		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] },
+		{ id: 'accounts', label: 'sf.group.accounts', parts: ['op-link'] },
 		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
-		{
-			id: 'mapping',
-			label: 'sf.group.mapping',
-			parts: ['mapping-schemas', 'mapping-sets'],
-			optional: true
-		},
 		{ id: 'additional', label: 'sf.group.additional', parts: ['additional'], optional: true },
 		{
 			id: 'consent',
@@ -313,14 +319,12 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 			parts: ['consent-statements', 'consent-policies'],
 			optional: true
 		},
-		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true },
-		{ id: 'check', label: 'sf.group.check', parts: ['op-test'] },
-		{ id: 'live', label: 'sf.group.live', parts: ['activate'] }
+		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true }
 	],
 	idp: [
-		{ id: 'accounts', label: 'sf.group.accounts', parts: ['idp-attrs', 'idp-link'] },
-		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
 		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] },
+		{ id: 'accounts', label: 'sf.group.accounts', parts: ['idp-link'] },
+		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
 		{ id: 'additional', label: 'sf.group.additional', parts: ['additional'], optional: true },
 		{
 			id: 'consent',
@@ -328,9 +332,7 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 			parts: ['consent-statements', 'consent-policies'],
 			optional: true
 		},
-		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true },
-		{ id: 'check', label: 'sf.group.check', parts: ['idp-test'] },
-		{ id: 'live', label: 'sf.group.live', parts: ['activate'] }
+		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true }
 	]
 };
 
@@ -355,9 +357,20 @@ export const SHARE_PART: Record<ConnectionKind, string> = {
  */
 export const GENERAL_PARTS: Record<ConnectionKind, readonly string[]> = {
 	rp: ['rp-app', 'rp-redirect', 'rp-signin'],
-	sp: ['sp-import'],
-	op: ['op-details'],
-	idp: ['idp-import']
+	sp: ['sp-import', 'sp-test'],
+	op: ['op-details', 'op-test'],
+	idp: ['idp-import', 'idp-test']
+};
+
+/**
+ * Connection settings shown open, at the top of the connection's detailed settings, rather than
+ * folded away in a section of their own.
+ */
+export const OPEN_SETTINGS_PARTS: Record<ConnectionKind, readonly string[]> = {
+	rp: [],
+	sp: ['sp-attrs'],
+	op: [],
+	idp: []
 };
 
 /** The name of a step of the flow, in the current language. */
@@ -434,7 +447,7 @@ export const KIND_MARK: Record<ConnectionKind, string> = {
 };
 
 export function labelOf(stepId: string): string {
-	const key = LABELS[stepId];
+	const key = LABELS[stepId] ?? SETTINGS_LABELS[stepId];
 	return key ? t(key) : stepId;
 }
 
@@ -495,10 +508,14 @@ export function importReady(form: ImportForm): boolean {
 	return !entityIdProblem(form.entityId) && !httpsUrlProblem(form.acsUrl);
 }
 
-function opReady(f: OpForm): boolean {
-	return (
-		!httpsUrlProblem(f.issuer) && f.discovered && f.clientId.trim() !== '' && f.clientSecret !== ''
-	);
+function opReady(a: Answers): boolean {
+	const f = a.op;
+	// With FAPI 2.0 Authrim proves itself with its key (private_key_jwt), not a secret.
+	const credentials = f.clientId.trim() !== '' && (a.settings.op.fapi2 || f.clientSecret !== '');
+	// An OAuth 2.0 provider has no discovery: its own addresses are what Authrim needs, and they
+	// are checked where they are entered (`op-endpoints`).
+	if (a.settings.op.protocol === 'oauth2') return credentials;
+	return !httpsUrlProblem(f.issuer) && f.discovered && credentials;
 }
 
 /** Whether the person may leave this step of the wizard. */
@@ -515,7 +532,7 @@ export function canProceed(stepId: string, a: Answers): boolean {
 		case 'sp-test':
 			return a.sp.tested;
 		case 'op-details':
-			return opReady(a.op);
+			return opReady(a);
 		case 'op-test':
 			return a.op.tested;
 		case 'idp-import':
@@ -573,8 +590,8 @@ export function validSchema(stored: string, options: readonly SchemaOption[]): s
 	return options.some((option) => option.value === stored) ? stored : '';
 }
 
-/** Kinds whose flow always has a mapping, and cannot be used without a mapping set. */
-const MAPPING_REQUIRED: readonly ConnectionKind[] = ['sp', 'idp'];
+/** Every kind's flow has a mapping and cannot be used without a mapping set: what is sent or taken is the mapping's. */
+const MAPPING_REQUIRED: readonly ConnectionKind[] = ['rp', 'sp', 'op', 'idp'];
 
 /** How far a part of the flow has got, as the detail screen shows it. */
 export type PartState = 'done' | 'required' | 'todo';
@@ -594,7 +611,7 @@ export function partState(stepId: string, a: Answers): PartState {
 		case 'sp-test':
 			return a.sp.tested ? 'done' : 'todo';
 		case 'op-details':
-			return opReady(a.op) ? 'done' : 'required';
+			return opReady(a) ? 'done' : 'required';
 		case 'op-test':
 			return a.op.tested ? 'done' : 'todo';
 		case 'idp-import':
@@ -631,8 +648,9 @@ export function partState(stepId: string, a: Answers): PartState {
 		case 'activate':
 			return a.active ? 'done' : 'todo';
 		default:
-			// sign-in method, attributes, matching: they start with a sensible default.
-			return 'done';
+			// Sign-in method, attributes, matching and the connection settings start with a
+			// sensible default; a setting is required only when a choice in it needs more.
+			return settingsState(stepId, a.settings, a.rp.appType);
 	}
 }
 
@@ -648,6 +666,8 @@ function visibleParts(a: Answers): string[] {
 	const kind = kindOf(a);
 	return [
 		...(kind ? GENERAL_PARTS[kind] : []),
+		...(kind ? OPEN_SETTINGS_PARTS[kind] : []),
+		...(kind ? SETTINGS_PARTS[kind] : []),
 		...visibleGroups(a).flatMap((group) => group.parts)
 	];
 }
@@ -895,6 +915,7 @@ export function sampleAnswers(
 			metadataUrl: 'https://idp.corp.example/saml/metadata',
 			fetched: true
 		});
+		settingsFromImport(a.settings, a.idp.importMode);
 		a.idp.tested = full;
 	}
 	// A mapping set is the one thing a service and a SAML provider cannot do without.

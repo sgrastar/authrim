@@ -49,7 +49,7 @@
 				checked={selected.includes(option.value)}
 				description={option.description}
 				value={option.value}
-				{disabled}
+				disabled={disabled || option.disabled}
 				onchange={(event) => set(option.value, event.currentTarget.checked)}
 			>
 				{option.label}
