@@ -54,8 +54,13 @@ import {
 } from '@authrim/ar-lib-core';
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import { requireAdminStepUp } from './admin-step-up-gate';
-import { activeTenantDeleteJobGuard } from './tenant-deletion-job-predicate';
+import {
+  activeTenantDeleteJobGuard,
+  TENANT_DELETION_CANCELLED_ERROR,
+} from './tenant-deletion-job-predicate';
 import { resolveTenantDeletionChainOperationId } from './tenant-deletion-chain';
+import { failedTenantDeletionNeedsCancel } from './tenant-deletion-reactivation-guard';
+import { cancelTenantDeletion } from './tenant-deletion-cancel';
 import { getAdminActorAuditMetadata } from './admin-shared';
 import { createOpaqueTenantKey } from './logging-tenant-key';
 import { materializeDisabledTenantEmailProviderOrder } from './notification-provider-projection';
@@ -1923,6 +1928,41 @@ async function executeTenantLifecycleCommand(
   // while the tenant has an active deletion job: that job is working it out of service.
   const reactivates =
     command === 'resume' || command === 'unfreeze' || command === 'restore-validate';
+  if (reactivates) {
+    // A tenant left suspended by a failed deletion whose route is still quarantined or disabled
+    // is brought back by cancelling that deletion (it reactivates the route; resume would not).
+    // The jobs and the route are in different databases, so this is a code check; a route that
+    // cannot be read refuses.
+    let needsCancel: boolean;
+    try {
+      needsCancel = await failedTenantDeletionNeedsCancel(
+        adapter,
+        requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-deletion-chain'),
+        id
+      );
+    } catch (error) {
+      getLogger(c)
+        .module('ADMIN-TENANTS')
+        .error('Tenant route state unreadable for a reactivation', { id, command }, error as Error);
+      return c.json(
+        {
+          error: 'tenant_route_state_unavailable',
+          error_description: 'The tenant route state could not be read; nothing was changed',
+        },
+        503
+      );
+    }
+    if (needsCancel) {
+      return c.json(
+        {
+          error: 'tenant_deletion_failed_use_cancel',
+          error_description:
+            'The last deletion of this tenant failed and left its route out of service; cancel it with POST /api/admin/tenants/{id}/deletion/cancel before reactivating the tenant',
+        },
+        409
+      );
+    }
+  }
   const activeDeletion = activeTenantDeleteJobGuard(id, nowTs);
   const update = await adapter.execute(
     `UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ? AND updated_at = ?${
@@ -2521,13 +2561,36 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
     } catch {
       chainOperationId = null;
     }
+    // The adoption was read above, before this batch. Re-verified inside it: a failed deletion job
+    // of this tenant that is NOT cancel-marked must still own the adopted id, so a cancel that
+    // marked it meanwhile makes this batch not apply (409 below). And a cancel in progress (job
+    // marked `cancelling`, route not yet confirmed active) refuses a new deletion outright: the
+    // cancel is completed by repeating it. Both serialise with the cancel on this database.
+    const adoptionGuardSql = chainOperationId
+      ? `AND EXISTS (SELECT 1 FROM admin_jobs
+                      WHERE job_type = 'tenants/delete' AND status = 'failed'
+                        AND (error_message IS NULL OR error_message <> ?)
+                        AND json_extract(config, '$.tenant_id') = ?
+                        AND (id = ? OR json_extract(config, '$.operation_id') = ?))`
+      : '';
+    const adoptionGuardParams = chainOperationId
+      ? [TENANT_DELETION_CANCELLED_ERROR, id, chainOperationId, chainOperationId]
+      : [];
+    const cancellingJobSql = `SELECT 1 FROM admin_jobs
+                      WHERE job_type = 'tenants/delete' AND error_message = ?
+                        AND json_extract(config, '$.tenant_id') = ?
+                        AND (json_extract(progress, '$.stage') IS NULL
+                             OR json_extract(progress, '$.stage') <> 'cancelled')`;
+    const cancellingJobParams = [TENANT_DELETION_CANCELLED_ERROR, id];
     const [started, queued] = await adapter.batch([
       {
         sql: `UPDATE tenants SET lifecycle_state = 'deleting', updated_at = ?
                WHERE id = ? AND is_default = 0 AND default_tenant_guard IS NULL
                  AND lifecycle_state IN (${TENANT_OPERATOR_MUTABLE_LIFECYCLE_STATES.map((state) => `'${state}'`).join(', ')})
-                 AND NOT EXISTS (${activeJob.sql})`,
-        params: [nowTs, id, ...activeJob.params],
+                 AND NOT EXISTS (${activeJob.sql})
+                 ${adoptionGuardSql}
+                 AND NOT EXISTS (${cancellingJobSql})`,
+        params: [nowTs, id, ...activeJob.params, ...adoptionGuardParams, ...cancellingJobParams],
       },
       {
         sql: `INSERT INTO admin_jobs (
@@ -2544,7 +2607,9 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
           'pending',
           JSON.stringify({ stage: 'queued' }),
           JSON.stringify(
-            chainOperationId ? { tenant_id: id, operation_id: chainOperationId } : { tenant_id: id }
+            chainOperationId
+              ? { tenant_id: id, operation_id: chainOperationId, marker_aware: true }
+              : { tenant_id: id, marker_aware: true }
           ),
           createdBy,
           nowTs,
@@ -2593,6 +2658,13 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
+
+/**
+ * POST /api/admin/tenants/:id/deletion/cancel
+ * Cancel a failed deletion that has not passed its point of no return (see tenant-deletion-cancel).
+ */
+export const adminTenantDeletionCancelHandler = (c: Context<{ Bindings: Env }>) =>
+  cancelTenantDeletion(c);
 
 /**
  * POST /api/admin/tenants/:id/set-default

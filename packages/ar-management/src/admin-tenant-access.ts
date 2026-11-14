@@ -142,8 +142,8 @@ export async function requirePlatformTenantManagementAuthority(
 }
 
 /**
- * The handler-level check of the six routes an automation machine principal runs on its own
- * permission (create, follow and clean up a provisioning, delete): the platform role through a
+ * The handler-level check of the seven routes an automation machine principal runs on its own
+ * permission (create, follow and clean up a provisioning, delete, cancel a failed deletion): the platform role through a
  * global assignment, or a machine token with a global scope holding `requiredPermission` (`*` and
  * `admin:*` carry it). Unlike `hasPlatformTenantManagementAuthority` without a permission, a
  * global machine token does not pass for holding anything at all; and a human needs the role.

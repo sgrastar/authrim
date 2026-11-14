@@ -657,6 +657,7 @@ import {
   adminTenantGetHandler,
   adminTenantUpdateHandler,
   adminTenantDeleteHandler,
+  adminTenantDeletionCancelHandler,
   adminTenantSetDefaultHandler,
   adminTenantProvisioningCleanupHandler,
   adminTenantProvisioningRetryHandler,
@@ -1801,11 +1802,12 @@ app.delete(
 // - GET    /api/admin/tenants/:id      - Get tenant
 // - PATCH  /api/admin/tenants/:id      - Update tenant
 // - DELETE /api/admin/tenants/:id      - Delete tenant (default not allowed)
+// - POST   /api/admin/tenants/:id/deletion/cancel - Cancel a failed deletion (before its point of no return)
 // - POST   /api/admin/tenants/:id/set-default - Set as default tenant
 // - POST   /api/admin/tenants/:id/clone       - Clone tenant settings
 // Note: /set-default and /clone must be registered BEFORE :id routes to avoid conflicts
 const tenantManagementSystemAdminGuard = requireSystemAdmin();
-// The six provisioning, read and deletion routes also admit a machine token with a global scope that
+// The seven provisioning, read, deletion and deletion-cancel routes also admit a machine token with a global scope that
 // holds the route's own permission (`admin:tenants:provision` / `admin:tenants:delete`). Humans and
 // every other route under /api/admin/tenants keep the system-admin guard. The route is told by the
 // router's own path (`c.req.path`) against the declared rule table, never by the raw URL.
@@ -1936,6 +1938,7 @@ app.post(
 app.get('/api/admin/tenants/:id', adminTenantGetHandler);
 app.patch('/api/admin/tenants/:id', adminTenantUpdateHandler);
 app.delete('/api/admin/tenants/:id', adminTenantDeleteHandler);
+app.post('/api/admin/tenants/:id/deletion/cancel', adminTenantDeletionCancelHandler);
 
 // Tenant Invitations API
 // - POST   /api/admin/tenants/:id/invitations          - Create invitation

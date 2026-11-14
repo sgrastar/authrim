@@ -1,4 +1,4 @@
-import type { ControlTenantDeletionInventory, DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   ensureDatabaseAdapter,
   listEnvironmentTenantDefaultStores,
@@ -7,6 +7,7 @@ import {
 import { purgeTenantAuthoritativeShards } from './tenant-deletion-authoritative-purge';
 import { tenantBackupObjectKeyPrefixes } from './admin-job-executor';
 import { disableTenantLookupDirectory } from './tenant-deletion-lookup-cleanup';
+import { getTenantDeletionInventory } from './tenant-deletion-control-inventory';
 import { readTenantRouteStateReading } from './tenant-deletion-chain';
 import { publishTenantRuntimeRegistryRouteState } from './tenant-runtime-registry-route-state';
 import { deleteTenantPublicAssets } from './r2-storage-maintenance';
@@ -41,6 +42,10 @@ interface TenantDeletionJobConfig {
    * the Control calls and the backup. Set by the server only; absent means the job's own id.
    */
   operation_id?: string;
+  /** Set by the server: the job queues with code that writes `destructive_started_at`. */
+  marker_aware?: boolean;
+  /** Epoch seconds the job persisted, right before the lookup disable (the point of no return). */
+  destructive_started_at?: number;
 }
 
 interface TenantDeletionBackupJobRow {
@@ -130,6 +135,13 @@ function parseTenantDeletionJobConfig(config: string): TenantDeletionJobConfig {
       Number.isSafeInteger(parsed.quarantine_started_at) &&
       parsed.quarantine_started_at > 0
         ? parsed.quarantine_started_at
+        : undefined,
+    marker_aware: parsed.marker_aware === true ? true : undefined,
+    destructive_started_at:
+      typeof parsed.destructive_started_at === 'number' &&
+      Number.isSafeInteger(parsed.destructive_started_at) &&
+      parsed.destructive_started_at > 0
+        ? parsed.destructive_started_at
         : undefined,
   };
 }
@@ -375,48 +387,6 @@ export async function updateTenantDatabaseLifecycleState(
         SET status = ?, updated_at = ?, updated_by = ?, metadata_json = ?
       WHERE tenant_id = ? AND status <> 'deleted'`,
     [status, now, currentJobId, metadata, targetTenantId]
-  );
-}
-
-function validateTenantDeletionInventory(
-  value: ControlTenantDeletionInventory,
-  environmentId: string,
-  tenantId: string,
-  operationId: string
-): ControlTenantDeletionInventory {
-  if (
-    !value ||
-    value.environmentId !== environmentId ||
-    value.tenantId !== tenantId ||
-    value.operationId !== operationId ||
-    (value.state !== 'ready' && value.state !== 'finalized') ||
-    !Array.isArray(value.lookupShards) ||
-    !Array.isArray(value.tenantShards) ||
-    (value.state === 'finalized' &&
-      (value.lookupShards.length !== 0 || value.tenantShards.length !== 0))
-  ) {
-    throw new Error('tenant_deletion_control_inventory_invalid');
-  }
-  return value;
-}
-
-async function getTenantDeletionInventory(
-  env: Env,
-  tenantId: string,
-  operationId: string
-): Promise<ControlTenantDeletionInventory> {
-  const environmentId = env.AUTHRIM_ENVIRONMENT_NAME;
-  if (!environmentId || !SAFE_ID.test(environmentId)) {
-    throw new Error('tenant_deletion_control_environment_invalid');
-  }
-  if (!env.CONTROL?.getTenantDeletionInventory) {
-    throw new Error('tenant_deletion_control_unavailable');
-  }
-  return validateTenantDeletionInventory(
-    await env.CONTROL.getTenantDeletionInventory({ tenantId, operationId }),
-    environmentId,
-    tenantId,
-    operationId
   );
 }
 
@@ -806,6 +776,26 @@ async function processPendingTenantDeletionJobsInStore(
         });
 
         await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
+        // The point of no return is the lookup disable. Persist that this job is about to cross
+        // it BEFORE doing so (the cancel of a failed deletion reads this marker, never the job's
+        // progress, which a retry overwrites). If the write does not apply the job stops here,
+        // retryable, and the destructive step does not run. Idempotent on retry.
+        if (config.destructive_started_at === undefined) {
+          const marked = await coreAdapter.execute(
+            'UPDATE admin_jobs SET config = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+            [
+              JSON.stringify({
+                ...config,
+                marker_aware: true,
+                destructive_started_at: Math.floor(Date.now() / 1000),
+              }),
+              Math.floor(Date.now() / 1000),
+              job.id,
+              jobTenantId,
+            ]
+          );
+          if (marked.rowsAffected !== 1) throw new Error('tenant_deletion_marker_write_failed');
+        }
         await disableTenantLookupDirectory(env, inventory.lookupShards, deletionTargetTenantId);
         await coreAdapter.execute(
           'UPDATE admin_jobs SET progress = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',

@@ -7,6 +7,7 @@ import {
   type TenantDatabaseRegistryRow,
   type TenantDatabaseRole,
 } from '@authrim/ar-lib-core';
+import { readTenantRouteStateReading } from './tenant-route-state-reading';
 
 export interface TenantDatabaseHealthRefreshSummary {
   scanned: number;
@@ -105,6 +106,33 @@ async function listActiveRowsForHealth(
   return rows;
 }
 
+/**
+ * A tenant whose runtime route is not `active` (quarantining, quarantined, disabled) is in the
+ * middle of deletion, disaster recovery or an operator hold; its stores may already be purged or
+ * unreachable by design, so the probe would only produce a false `failed` verdict that later
+ * blocks registry-snapshot publication. Such tenants are not judged at all.
+ *
+ * Fail-safe direction: a missing route-state row means normal service, and an unreadable one
+ * keeps the previous behaviour (probe the tenant) so a broken read can never silently disable
+ * health checking for every tenant.
+ */
+async function isTenantRouteInNormalService(
+  adapter: Parameters<typeof readTenantRouteStateReading>[0],
+  tenantId: string,
+  logger: TenantDatabaseHealthLogger
+): Promise<boolean> {
+  try {
+    const state = await readTenantRouteStateReading(adapter, tenantId);
+    return !state || state.routeStatus === 'active';
+  } catch (error) {
+    logger.warn('Tenant database health route-state read failed; probing the tenant anyway', {
+      tenant_id: tenantId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return true;
+  }
+}
+
 export async function refreshTenantDatabaseHealth(
   env: Env,
   logger: TenantDatabaseHealthLogger,
@@ -116,9 +144,10 @@ export async function refreshTenantDatabaseHealth(
     return summary;
   }
 
-  const repository = new TenantDatabaseRegistryRepository(
-    ensureDatabaseAdapter(env.DB_ADMIN, 'tenant-database-health-control')
-  );
+  const adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'tenant-database-health-control');
+  const repository = new TenantDatabaseRegistryRepository(adminAdapter);
+  // Route state is per tenant; read it once and reuse it for every row of that tenant.
+  const normalServiceByTenant = new Map<string, boolean>();
   const checkedAt = options.checkedAt ?? new Date().toISOString();
   const roles = options.roles ?? DEFAULT_HEALTH_ROLES;
   const limit = options.limitPerRole ?? DEFAULT_HEALTH_LIMIT_PER_ROLE;
@@ -134,6 +163,15 @@ export async function refreshTenantDatabaseHealth(
     });
     for (const row of rows) {
       summary.scanned += 1;
+      let inService = normalServiceByTenant.get(row.tenant_id);
+      if (inService === undefined) {
+        inService = await isTenantRouteInNormalService(adminAdapter, row.tenant_id, logger);
+        normalServiceByTenant.set(row.tenant_id, inService);
+      }
+      if (!inService) {
+        summary.skipped += 1;
+        continue;
+      }
       try {
         const resolved = await resolveTenantDatabaseSourceFromControlRegistry(
           env,
