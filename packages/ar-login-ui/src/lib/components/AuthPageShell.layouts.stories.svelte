@@ -7,6 +7,19 @@
 	import type { LoginUIOverrides } from '#lib/storybook/config.js';
 	import { THEME_TEMPLATES, THEME_TEMPLATE_LABELS } from '#lib/storybook/globals.svelte.js';
 
+	// A gallery story renders several whole pages side by side, so the page landmarks repeat (the
+	// meta's three rules) and so does `main`. A story's rules replace the meta's, hence all four.
+	const GALLERY_A11Y = {
+		config: {
+			rules: [
+				{ id: 'landmark-no-duplicate-banner', enabled: false },
+				{ id: 'landmark-no-duplicate-contentinfo', enabled: false },
+				{ id: 'landmark-no-duplicate-main', enabled: false },
+				{ id: 'landmark-unique', enabled: false }
+			]
+		}
+	};
+
 	const { Story } = defineMeta({
 		title: 'Page shell/Themes and layouts',
 		parameters: {
@@ -37,7 +50,7 @@
 	});
 </script>
 
-<Story name="All themes (light)">
+<Story name="All themes (light)" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -51,7 +64,7 @@
 	{/snippet}
 </Story>
 
-<Story name="All themes (dark)">
+<Story name="All themes (dark)" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -65,7 +78,7 @@
 	{/snippet}
 </Story>
 
-<Story name="All themes (signup)">
+<Story name="All themes (signup)" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -79,7 +92,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Layouts">
+<Story name="Layouts" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={3}
@@ -130,7 +143,7 @@
 
 <!-- Clear glass over a picture: the header, the link under the form and the footer bar take no
      pane of their own (the form card is the pane, the footer is a square bar). -->
-<Story name="Split panel: clear glass over a picture">
+<Story name="Split panel: clear glass over a picture" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -151,7 +164,7 @@
 
 <!-- Filters on the page picture (hue 200°, blur 4px): the picture changes, the form does not. Each box
      that paints the picture filters it: the page, the framed split's frame, the brand panel. -->
-<Story name="Page picture filters">
+<Story name="Page picture filters" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={3}
@@ -190,7 +203,7 @@
      writes them): the brand in the middle of the header, the choices at its end, the footer's text
      at its end, each bar with its own colours. Dark mode takes the dark colours set for it; one not
      set (the link here) follows the palette's dark colour. -->
-<Story name="Header and footer bars">
+<Story name="Header and footer bars" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={1}
@@ -230,7 +243,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Split panel: background modes">
+<Story name="Split panel: background modes" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={3}
@@ -252,7 +265,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Split panel: brand content">
+<Story name="Split panel: brand content" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={3}
@@ -289,12 +302,12 @@
 	{/snippet}
 </Story>
 
-<Story name="Full-bleed glass: accent colour">
+<Story name="Full-bleed glass: accent colour" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={3}
 			height={520}
-			cells={['#e8623f', '#2563eb', '#16a34a'].map((accentColor) => ({
+			cells={['#e8623f', '#2563eb', '#15803d'].map((accentColor) => ({
 				label: `accent ${accentColor}`,
 				theme: 'fullbleed-glass' as const,
 				ui: {
@@ -306,7 +319,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Right-to-left (Arabic)" globals={{ locale: 'ar' }}>
+<Story name="Right-to-left (Arabic)" parameters={{ a11y: GALLERY_A11Y }} globals={{ locale: 'ar' }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
