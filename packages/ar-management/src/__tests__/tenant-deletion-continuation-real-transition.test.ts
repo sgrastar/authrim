@@ -874,6 +874,46 @@ describe('cancelling a failed tenant deletion', () => {
     });
   });
 
+  it('a failed job of the tenant OUTSIDE the chain that carries the marker refuses the whole cancel (the set verified is the set marked)', async () => {
+    seedRoute(admin, 'quarantined');
+    const before = routeJson();
+    core
+      .prepare(
+        `INSERT INTO admin_jobs (id, tenant_id, job_type, status, config, created_at, updated_at)
+         VALUES ('eeeeeeee-2222-4333-8444-555555555555', 'operator-tenant', 'tenants/delete', 'failed', ?, 5, 5)`
+      )
+      .run(
+        JSON.stringify({
+          tenant_id: TENANT,
+          marker_aware: true,
+          destructive_started_at: 1700000000,
+        })
+      );
+    expect(await cancel()).toMatchObject({
+      status: 409,
+      body: { error: 'tenant_deletion_past_point_of_no_return', stage: 'destructive_started' },
+    });
+    expect(routeJson()).toEqual(before);
+    expect(oldJob().error_message).not.toBe('tenant_deletion_cancelled');
+    expect(
+      core.prepare('SELECT COUNT(*) AS n FROM admin_jobs WHERE error_message IS NOT NULL').get()
+    ).toMatchObject({ n: 1 });
+    expect(hooks.audit).toEqual([]);
+    expect(hooks.publishes).toEqual([]);
+  });
+
+  it('a pre-marker job outside the chain brings the legacy identifier probe into play', async () => {
+    seedRoute(admin, 'quarantined');
+    core
+      .prepare(
+        `INSERT INTO admin_jobs (id, tenant_id, job_type, status, config, created_at, updated_at)
+         VALUES ('ffffffff-2222-4333-8444-555555555555', 'operator-tenant', 'tenants/delete', 'failed', ?, 5, 5)`
+      )
+      .run(JSON.stringify({ tenant_id: TENANT }));
+    hooks.lookupTouched = async () => true;
+    expect(await cancel()).toMatchObject({ status: 409, body: { stage: 'lookup_disabled' } });
+  });
+
   it('an alias row disabled by an ordinary operation (a deleted client) does not block a job that never started the destructive step', async () => {
     // The probe is not consulted for a marker-aware job: its absence of the marker is the proof.
     seedRoute(admin, 'quarantined');

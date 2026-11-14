@@ -134,14 +134,15 @@ async function disableTenantRowsOnShard(
 }
 
 /**
- * Disables every runtime-discoverable row before authoritative tenant data is purged.
- * The control inventory includes migration mirrors that may not be present in the active snapshot.
+ * The Control inventory's lookup shards, checked against the verified lookup bucket assignment:
+ * every active range must name a shard of the inventory with the same binding. Shared by the
+ * disable step and the cancel's read-only evidence, so both act on the same verified set.
  */
-export async function disableTenantLookupDirectory(
+async function verifiedLookupShardRows(
   env: Env,
   inventoryRows: ControlTenantDeletionLookupShardTarget[],
   tenantId: string
-): Promise<void> {
+): Promise<ControlTenantDeletionLookupShardTarget[]> {
   const environmentId = env.AUTHRIM_ENVIRONMENT_NAME;
   if (
     !environmentId ||
@@ -166,6 +167,19 @@ export async function disableTenantLookupDirectory(
       throw new Error('tenant_deletion_lookup_registry_inventory_mismatch');
     }
   }
+  return rows;
+}
+
+/**
+ * Disables every runtime-discoverable row before authoritative tenant data is purged.
+ * The control inventory includes migration mirrors that may not be present in the active snapshot.
+ */
+export async function disableTenantLookupDirectory(
+  env: Env,
+  inventoryRows: ControlTenantDeletionLookupShardTarget[],
+  tenantId: string
+): Promise<void> {
+  const rows = await verifiedLookupShardRows(env, inventoryRows, tenantId);
 
   const sessions = rows.map((row) => primarySession(env, row.bindingRef));
   const now = Math.floor(Date.now() / 1000);
@@ -192,8 +206,7 @@ export async function tenantLookupIdentifierDisableEvidence(
   inventoryRows: ControlTenantDeletionLookupShardTarget[],
   tenantId: string
 ): Promise<{ identifierRows: number; disabledIdentifierRows: number }> {
-  if (!SAFE_ID.test(tenantId)) throw new Error('tenant_deletion_lookup_cleanup_unavailable');
-  const rows = strictShardRows(inventoryRows);
+  const rows = await verifiedLookupShardRows(env, inventoryRows, tenantId);
   const sessions = rows.map((row) => primarySession(env, row.bindingRef));
   let identifierRows = 0;
   let disabledIdentifierRows = 0;

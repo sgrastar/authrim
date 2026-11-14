@@ -1,6 +1,13 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import type { ControlTenantDeletionLookupShardTarget, Env } from '@authrim/ar-lib-core';
-import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  buildLookupShardRegistryGenerationKey,
+  buildLookupShardRegistrySnapshotKey,
+  signLookupShardRegistry,
+  type ControlTenantDeletionLookupShardTarget,
+  type Env,
+} from '@authrim/ar-lib-core';
+import { exportJWK, generateKeyPair, type JWK } from 'jose';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DatabaseSync, type SQLInputValue, type SQLiteDatabase } from './test-sqlite';
 import { tenantLookupIdentifierDisableEvidence } from '../tenant-deletion-lookup-cleanup';
 
@@ -46,14 +53,57 @@ function lookupDatabase(): SQLiteDatabase {
 describe('tenantLookupIdentifierDisableEvidence', () => {
   let first: SQLiteDatabase;
   let second: SQLiteDatabase;
+  let privateJwk: JWK;
+  let publicJwk: JWK;
+  let registry: Map<string, string>;
 
-  beforeEach(() => {
+  beforeAll(async () => {
+    const pair = await generateKeyPair('EdDSA', { extractable: true });
+    privateJwk = { ...(await exportJWK(pair.privateKey)), kid: 'lookup-probe-a', alg: 'EdDSA' };
+    publicJwk = { ...(await exportJWK(pair.publicKey)), kid: 'lookup-probe-a', alg: 'EdDSA' };
+  });
+
+  beforeEach(async () => {
     first = lookupDatabase();
     second = lookupDatabase();
+    // The verified bucket assignment the disable step checks the inventory against.
+    const now = Math.floor(Date.now() / 1000);
+    const token = await signLookupShardRegistry({
+      registry: {
+        environmentId: 'test',
+        generation: 3,
+        issuedAt: now - 1,
+        expiresAt: now + 3600,
+        ranges: [
+          {
+            startBucket: 0,
+            endBucket: 2047,
+            assignmentGeneration: 3,
+            lookupShardId: 'lookup-one',
+            bindingRef: 'LOOKUP_ONE',
+          },
+          {
+            startBucket: 2048,
+            endBucket: 4095,
+            assignmentGeneration: 3,
+            lookupShardId: 'lookup-two',
+            bindingRef: 'LOOKUP_TWO',
+          },
+        ],
+      },
+      privateJwk,
+    });
+    registry = new Map([
+      [buildLookupShardRegistrySnapshotKey('test'), token],
+      [buildLookupShardRegistryGenerationKey('test'), '3'],
+    ]);
   });
 
   const env = (overrides: Record<string, unknown> = {}) =>
     ({
+      AUTHRIM_ENVIRONMENT_NAME: 'test',
+      TENANT_RUNTIME_REGISTRY: { get: async (key: string) => registry.get(key) ?? null },
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
       LOOKUP_ONE: d1(first),
       LOOKUP_TWO: d1(second),
       ...overrides,
@@ -105,6 +155,28 @@ describe('tenantLookupIdentifierDisableEvidence', () => {
         .prepare("SELECT COUNT(*) AS n FROM lookup_identifiers WHERE lifecycle_state <> 'active'")
         .get()
     ).toEqual({ n: 0 });
+  });
+
+  it('throws instead of reporting "no disable seen" when the inventory disagrees with the verified assignment', async () => {
+    const mismatched: ControlTenantDeletionLookupShardTarget[] = [
+      { lookupShardId: 'lookup-one', bindingRef: 'LOOKUP_TWO', status: 'active' },
+      { lookupShardId: 'lookup-two', bindingRef: 'LOOKUP_ONE', status: 'draining' },
+    ];
+    await expect(
+      tenantLookupIdentifierDisableEvidence(env(), mismatched, 'tenant-a')
+    ).rejects.toThrow('tenant_deletion_lookup_registry_inventory_mismatch');
+    // A shard the assignment uses but the inventory lacks is the same inconsistency.
+    await expect(
+      tenantLookupIdentifierDisableEvidence(env(), [shards[0]], 'tenant-a')
+    ).rejects.toThrow('tenant_deletion_lookup_registry_inventory_mismatch');
+    // No registry at all: unavailable, not "clean".
+    await expect(
+      tenantLookupIdentifierDisableEvidence(
+        env({ TENANT_RUNTIME_REGISTRY: undefined }),
+        shards,
+        'tenant-a'
+      )
+    ).rejects.toThrow('tenant_deletion_lookup_cleanup_unavailable');
   });
 
   it('throws (the caller refuses) when a binding, the shard list or the tenant id is unusable', async () => {

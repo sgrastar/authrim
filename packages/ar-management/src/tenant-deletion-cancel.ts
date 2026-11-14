@@ -311,8 +311,10 @@ export async function cancelTenantDeletion(c: Ctx): Promise<Response> {
       route.quarantineDenyGeneration >= 1;
 
     // The point of no return, from persisted state only; every error refuses (fail closed).
-    // 1. The durable marker the deletion job writes right before the lookup disable.
-    if (chainJobs.some((job) => tenantDeleteJobDestructiveStarted(job))) {
+    // 1. The durable marker the deletion job writes right before the lookup disable. Checked over
+    //    exactly the set the batch below will mark (every failed, not-yet-cancelled deletion job of
+    //    the tenant), not only the chain that owns the route.
+    if (pending.some((job) => tenantDeleteJobDestructiveStarted(job))) {
       return pastPointOfNoReturn(c, 'destructive_started');
     }
     if (quarantined) {
@@ -322,7 +324,7 @@ export async function cancelTenantDeletion(c: Ctx): Promise<Response> {
         if (control.passed) return pastPointOfNoReturn(c, 'control_finalized');
         // 3. A job that predates the marker may have crossed the line unrecorded. The identifier
         //    table is the one unambiguous evidence; no rows at all is no evidence, so refused.
-        if (chainJobs.some((job) => !tenantDeleteJobMarkerAware(job))) {
+        if (pending.some((job) => !tenantDeleteJobMarkerAware(job))) {
           const evidence = await tenantLookupIdentifierDisableEvidence(
             c.env,
             control.inventory.lookupShards,
