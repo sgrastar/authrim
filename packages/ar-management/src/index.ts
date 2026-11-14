@@ -1805,7 +1805,7 @@ app.delete(
 // - POST   /api/admin/tenants/:id/clone       - Clone tenant settings
 // Note: /set-default and /clone must be registered BEFORE :id routes to avoid conflicts
 const tenantManagementSystemAdminGuard = requireSystemAdmin();
-// The five provisioning and deletion routes also admit a machine token with a global scope that
+// The six provisioning, read and deletion routes also admit a machine token with a global scope that
 // holds the route's own permission (`admin:tenants:provision` / `admin:tenants:delete`). Humans and
 // every other route under /api/admin/tenants keep the system-admin guard. The route is told by the
 // router's own path (`c.req.path`) against the declared rule table, never by the raw URL.

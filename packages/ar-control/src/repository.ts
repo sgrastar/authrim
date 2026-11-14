@@ -167,6 +167,7 @@ interface PendingPlanRow {
   binding_ref: string;
   ownership_fingerprint: string;
   provider_create_state: 'not_started' | 'issued' | 'identified';
+  provider_create_updated_at?: number | null;
   provider_resource_id: string | null;
   provider_identity_checkpointed_at: number | null;
   jurisdiction: 'eu' | 'fedramp' | null;
@@ -375,8 +376,18 @@ export interface ControlRepository {
   markD1CreateDefinitelyRejected(
     lease: ProvisioningLease,
     plan: TenantShardPlan,
-    now: number
+    now: number,
+    expectedIssuedAt?: number
   ): Promise<void>;
+  /** Reads the create checkpoint under the lease (owner and fencing token in the WHERE). */
+  readD1CreateCheckpoint(
+    lease: ProvisioningLease,
+    plan: TenantShardPlan
+  ): Promise<{
+    providerCreateState: 'not_started' | 'issued' | 'identified';
+    providerResourceId: string | null;
+    providerCreateIssuedAt: number;
+  } | null>;
   checkpointD1ProviderIdentity(
     lease: ProvisioningLease,
     plan: TenantShardPlan,
@@ -523,6 +534,7 @@ function planFromPendingRow(row: PendingPlanRow): TenantShardPlan {
     bindingRef: row.binding_ref,
     ownershipFingerprint: row.ownership_fingerprint,
     providerCreateState: row.provider_create_state,
+    providerCreateIssuedAt: row.provider_create_updated_at ?? null,
     providerResourceId: row.provider_resource_id,
     providerIdentityCheckpointedAt: row.provider_identity_checkpointed_at,
     allocationScope: row.allocation_scope,
@@ -3601,7 +3613,7 @@ export class D1ControlRepository implements ControlRepository {
          SELECT o.operation_id, o.environment_id, o.idempotency_key,
                 d.desired_resource_id, d.logical_shard_id, d.deterministic_name,
                 d.ownership_fingerprint, d.provider_create_state, d.provider_resource_id,
-                d.provider_identity_checkpointed_at,
+                d.provider_identity_checkpointed_at, d.updated_at AS provider_create_updated_at,
                 s.shard_id, s.data_role, s.residency_policy_id,
                 s.residency_partition, s.binding_ref, s.jurisdiction, s.location_hint,
                 s.read_replication_mode, s.allocation_scope, s.owner_tenant_id,
@@ -4072,7 +4084,7 @@ export class D1ControlRepository implements ControlRepository {
         .prepare(
           `UPDATE control_desired_resources
               SET provisioning_state = 'creating', create_started_at = COALESCE(create_started_at, ?), updated_at = ?
-            WHERE origin_operation_id = ? AND EXISTS (
+            WHERE origin_operation_id = ? AND provisioning_state <> 'creating' AND EXISTS (
               SELECT 1 FROM control_operations
                WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
             )`
@@ -4227,7 +4239,8 @@ export class D1ControlRepository implements ControlRepository {
   async markD1CreateDefinitelyRejected(
     lease: ProvisioningLease,
     plan: TenantShardPlan,
-    now: number
+    now: number,
+    expectedIssuedAt?: number
   ): Promise<void> {
     const result = await this.db
       .prepare(
@@ -4236,6 +4249,7 @@ export class D1ControlRepository implements ControlRepository {
           WHERE desired_resource_id = ? AND environment_id = ? AND origin_operation_id = ?
             AND provider_create_state = 'issued' AND provider_resource_id IS NULL
             AND provider_identity_checkpointed_at IS NULL
+            AND (? IS NULL OR updated_at = ?)
             AND EXISTS (
               SELECT 1 FROM control_operations operation
                WHERE operation.operation_id = ? AND operation.environment_id = ?
@@ -4248,6 +4262,8 @@ export class D1ControlRepository implements ControlRepository {
         plan.desiredResourceId,
         plan.environmentId,
         plan.operationId,
+        expectedIssuedAt ?? null,
+        expectedIssuedAt ?? null,
         plan.operationId,
         plan.environmentId,
         lease.ownerId,
@@ -4255,8 +4271,53 @@ export class D1ControlRepository implements ControlRepository {
       )
       .run();
     if (Number(result.meta.changes ?? 0) !== 1) {
-      throw new Error('control_d1_create_rejection_checkpoint_failed');
+      // A conditional release that lost the race means a concurrent attempt re-issued the create.
+      throw new Error(
+        expectedIssuedAt === undefined
+          ? 'control_d1_create_rejection_checkpoint_failed'
+          : 'cloudflare_d1_create_outcome_pending'
+      );
     }
+  }
+
+  async readD1CreateCheckpoint(
+    lease: ProvisioningLease,
+    plan: TenantShardPlan
+  ): Promise<{
+    providerCreateState: 'not_started' | 'issued' | 'identified';
+    providerResourceId: string | null;
+    providerCreateIssuedAt: number;
+  } | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT desired.provider_create_state, desired.provider_resource_id, desired.updated_at
+           FROM control_desired_resources desired
+           JOIN control_operations operation
+             ON operation.operation_id = desired.origin_operation_id
+          WHERE desired.desired_resource_id = ? AND desired.environment_id = ?
+            AND desired.origin_operation_id = ?
+            AND operation.lock_owner = ? AND operation.fencing_token = ?
+            AND operation.status = 'running'`
+      )
+      .bind(
+        plan.desiredResourceId,
+        plan.environmentId,
+        plan.operationId,
+        lease.ownerId,
+        lease.fencingToken
+      )
+      .first<{
+        provider_create_state: 'not_started' | 'issued' | 'identified';
+        provider_resource_id: string | null;
+        updated_at: number;
+      }>();
+    return row
+      ? {
+          providerCreateState: row.provider_create_state,
+          providerResourceId: row.provider_resource_id,
+          providerCreateIssuedAt: row.updated_at,
+        }
+      : null;
   }
 
   async checkpointD1ProviderIdentity(

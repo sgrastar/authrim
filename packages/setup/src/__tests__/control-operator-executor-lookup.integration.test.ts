@@ -353,6 +353,49 @@ describe('setup operator on a lookup shard', () => {
     expect(stepStatus('create_d1')).toEqual({ status: 'succeeded' });
   });
 
+  it('recreates an issued create only after the safety delay, never while pending', async () => {
+    control.exec(`
+      UPDATE control_operations SET status = 'running', last_error_code = NULL,
+        lock_owner = 'setup:previous', lock_expires_at = 50, attempt_count = 1,
+        fencing_token = 1, updated_at = 12
+       WHERE operation_id = '${OPERATION}';
+      UPDATE control_operation_steps SET status = 'running', last_error_code = NULL
+       WHERE operation_id = '${OPERATION}' AND step_key = 'create_d1';
+      UPDATE control_desired_resources SET provisioning_state = 'creating',
+        provider_create_state = 'issued', create_started_at = 12, updated_at = 12
+       WHERE desired_resource_id = '${DESIRED}';
+    `);
+    const early = client(control, lookup);
+    const first = await pending();
+    await expect(
+      executeSetupControlOperatorCreate({
+        controlDatabaseId: 'control-db',
+        operation: first!,
+        client: early,
+        now: () => 100,
+      })
+    ).resolves.toMatchObject({
+      state: 'retry_required',
+      errorCode: 'cloudflare_d1_create_outcome_pending',
+    });
+    expect(early.created).toEqual([]);
+    // The claim of the next attempt must not move the issue time.
+    control.exec(
+      `UPDATE control_operations SET next_attempt_at = NULL WHERE operation_id = '${OPERATION}'`
+    );
+    const late = client(control, lookup);
+    await expect(
+      executeSetupControlOperatorCreate({
+        controlDatabaseId: 'control-db',
+        operation: (await pending())!,
+        client: late,
+        now: () => 12 + 600,
+      })
+    ).resolves.toMatchObject({ operationId: OPERATION });
+    expect(late.created).toEqual([DATABASE_NAME]);
+    expect(stepStatus('create_d1')).toEqual({ status: 'succeeded' });
+  });
+
   it('takes over a migration whose operator lease expired while applying', async () => {
     const operator = client(control, lookup);
     await create(operator);

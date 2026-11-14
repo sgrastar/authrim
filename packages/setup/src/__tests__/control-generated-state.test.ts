@@ -165,18 +165,21 @@ describe('Control generated D1 state', () => {
         environmentId: 'env-test',
         query,
       })
-    ).resolves.toEqual([
-      {
-        binding: 'TEST_TDB_LOOKUP_ED83F354_LOOKUP',
-        name: 'authrim-test-lookup-default-ed83f354',
-        id: '11234567-89ab-cdef-0123-456789abcdef',
-      },
-      {
-        binding: 'TEST_TDB_USERS_AABBCCDD_CORE',
-        name: 'authrim-test-users-jp-aabbccdd',
-        id: '01234567-89ab-cdef-0123-456789abcdef',
-      },
-    ]);
+    ).resolves.toEqual({
+      bindings: [
+        {
+          binding: 'TEST_TDB_LOOKUP_ED83F354_LOOKUP',
+          name: 'authrim-test-lookup-default-ed83f354',
+          id: '11234567-89ab-cdef-0123-456789abcdef',
+        },
+        {
+          binding: 'TEST_TDB_USERS_AABBCCDD_CORE',
+          name: 'authrim-test-users-jp-aabbccdd',
+          id: '01234567-89ab-cdef-0123-456789abcdef',
+        },
+      ],
+      pending: [],
+    });
     expect(query.mock.calls[0]?.[1]).toContain("b.environment_id = 'env-test'");
   });
 
@@ -187,7 +190,7 @@ describe('Control generated D1 state', () => {
         deterministic_name: 'authrim-test-users-jp-aabbccdd',
         provider_resource_id: null,
         observed_state: null,
-        provisioning_state: 'requested',
+        provisioning_state: 'ready',
       },
     ]);
     await expect(
@@ -277,6 +280,94 @@ describe('Control generated D1 state', () => {
         },
       ])
     ).toThrow('control_generated_d1_binding_retarget_requires_approval:TEST_TDB_SLOT_0001_CORE');
+  });
+});
+
+describe('Control generated D1 state with shards still being created', () => {
+  const READY = {
+    binding_name: 'TEST_TDB_USERS_AABBCCDD_CORE',
+    deterministic_name: 'authrim-test-users-jp-aabbccdd',
+    provider_resource_id: '01234567-89ab-cdef-0123-456789abcdef',
+    observed_state: 'present',
+    provisioning_state: 'ready',
+  };
+  const creating = (state: string, binding = 'TEST_TDB_USERS_11223344_CORE') => ({
+    binding_name: binding,
+    deterministic_name: 'authrim-test-users-jp-11223344',
+    provider_resource_id: null,
+    observed_state: null,
+    provisioning_state: state,
+  });
+  const load = (rows: unknown[]) =>
+    loadControlGeneratedD1Bindings({
+      controlDatabaseName: 'test-control',
+      environmentId: 'env-test',
+      query: vi.fn(async () => rows) as never,
+    });
+
+  it('skips requested/creating rows without an observed resource and reports them as pending', async () => {
+    for (const state of ['requested', 'creating']) {
+      const result = await load([READY, creating(state)]);
+      expect(result.pending).toEqual(['TEST_TDB_USERS_11223344_CORE']);
+      expect(result.bindings.map((binding) => binding.binding)).toEqual([
+        'TEST_TDB_USERS_AABBCCDD_CORE',
+      ]);
+    }
+  });
+
+  it('still throws for ready/active rows without an observed resource', async () => {
+    for (const state of ['ready', 'active', 'degraded', 'failed']) {
+      await expect(load([creating(state)])).rejects.toThrow(
+        'control_generated_d1_binding_not_ready'
+      );
+    }
+  });
+
+  it('still throws when a creating row carries an invalid binding or database name', async () => {
+    await expect(load([creating('creating', 'NOT_A_TENANT_BINDING')])).rejects.toThrow(
+      'control_generated_d1_invalid_binding'
+    );
+    await expect(
+      load([{ ...creating('creating'), deterministic_name: 'bad name!' }])
+    ).rejects.toThrow('control_generated_d1_invalid_name');
+  });
+
+  it('refresh exposes pending names and does not report the skip as removed', async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce([creating('creating')])
+      .mockResolvedValueOnce(keyRows());
+    const result = await refreshLockFromControlGeneratedState({
+      lock: lock(false),
+      environmentId: 'env-test',
+      query,
+    });
+    expect(result.pending).toEqual(['TEST_TDB_USERS_11223344_CORE']);
+    expect(result.removed).toEqual([]);
+    expect(result.added).toEqual([]);
+  });
+
+  it('keeps a deployed binding in the lock when a pending sibling is skipped', async () => {
+    const deployed = projectControlGeneratedD1Bindings(lock(false), [
+      {
+        binding: READY.binding_name,
+        name: READY.deterministic_name,
+        id: READY.provider_resource_id,
+      },
+    ]).lock;
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce([READY, creating('creating')])
+      .mockResolvedValueOnce(keyRows());
+    const result = await refreshLockFromControlGeneratedState({
+      lock: deployed,
+      environmentId: 'env-test',
+      query,
+    });
+    expect(result.pending).toEqual(['TEST_TDB_USERS_11223344_CORE']);
+    expect(result.removed).toEqual([]);
+    expect(Object.keys(result.lock.d1)).toContain(READY.binding_name);
+    expect(Object.keys(result.lock.d1)).not.toContain('TEST_TDB_USERS_11223344_CORE');
   });
 });
 

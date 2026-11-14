@@ -178,6 +178,8 @@ export interface TenantShardPlan {
   bindingRef: string;
   ownershipFingerprint: string;
   providerCreateState: 'not_started' | 'issued' | 'identified';
+  /** desired resource updated_at: when the create checkpoint last moved (to `issued`). */
+  providerCreateIssuedAt?: number | null;
   providerResourceId: string | null;
   providerIdentityCheckpointedAt: number | null;
   allocationScope: ControlTenantShardAllocationScope;

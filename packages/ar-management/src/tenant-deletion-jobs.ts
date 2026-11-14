@@ -7,6 +7,7 @@ import {
 import { purgeTenantAuthoritativeShards } from './tenant-deletion-authoritative-purge';
 import { tenantBackupObjectKeyPrefixes } from './admin-job-executor';
 import { disableTenantLookupDirectory } from './tenant-deletion-lookup-cleanup';
+import { readTenantRouteStateReading } from './tenant-deletion-chain';
 import { publishTenantRuntimeRegistryRouteState } from './tenant-runtime-registry-route-state';
 import { deleteTenantPublicAssets } from './r2-storage-maintenance';
 import {
@@ -35,6 +36,11 @@ interface TenantDeletionJobConfig {
   backup_job_id?: string;
   skip_backup?: boolean;
   quarantine_started_at?: number;
+  /**
+   * Chain id of a deletion that continues a failed one: the operation id of the route state,
+   * the Control calls and the backup. Set by the server only; absent means the job's own id.
+   */
+  operation_id?: string;
 }
 
 interface TenantDeletionBackupJobRow {
@@ -44,6 +50,7 @@ interface TenantDeletionBackupJobRow {
   config: string;
 }
 
+const OPERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const TENANT_DELETION_QUARANTINE_DRAIN_SECONDS = 30 * 60;
 const TENANT_DELETION_DEFAULT_MAX_ATTEMPTS = 3;
@@ -101,8 +108,15 @@ function parseTenantDeletionJobConfig(config: string): TenantDeletionJobConfig {
   if (typeof parsed.tenant_id !== 'string' || !SAFE_ID.test(parsed.tenant_id)) {
     throw new Error('tenant_deletion_job_config_invalid');
   }
+  if (
+    parsed.operation_id !== undefined &&
+    (typeof parsed.operation_id !== 'string' || !OPERATION_ID_PATTERN.test(parsed.operation_id))
+  ) {
+    throw new Error('tenant_deletion_job_config_invalid');
+  }
   return {
     tenant_id: parsed.tenant_id,
+    operation_id: parsed.operation_id,
     backup_policy:
       parsed.backup_policy === 'manual' ||
       parsed.backup_policy === 'scheduled_periodic' ||
@@ -137,7 +151,7 @@ async function waitForTenantDeletionQuarantineDrain(
 
   const nextConfig = { ...config, quarantine_started_at: quarantineStartedAt };
   await adapter.execute(
-    "UPDATE admin_jobs SET status = 'pending', progress = ?, config = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+    "UPDATE admin_jobs SET status = 'pending', progress = ?, config = ?, next_run_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
     [
       JSON.stringify({
         stage: 'quarantine_draining',
@@ -145,6 +159,8 @@ async function waitForTenantDeletionQuarantineDrain(
         drain_ready_at: drainReadyAt,
       }),
       JSON.stringify(nextConfig),
+      // Not selected again before the drain is over, so waiting jobs do not fill the batch.
+      drainReadyAt,
       now,
       job.id,
       job.tenant_id,
@@ -168,14 +184,14 @@ function expectedBackupConfig(jobId: string): Record<string, string> {
   };
 }
 
-function validateBackupJob(row: TenantDeletionBackupJobRow | null, job: TenantDeletionJobRow) {
-  if (!row || row.job_type !== 'tenant-database/export' || row.created_by !== job.id) {
+function validateBackupJob(row: TenantDeletionBackupJobRow | null, operationId: string) {
+  if (!row || row.job_type !== 'tenant-database/export' || row.created_by !== operationId) {
     throw new Error('tenant_deletion_backup_job_invalid');
   }
   try {
     if (row.config.length > 16_384) throw new Error('tenant_deletion_backup_job_invalid');
     const config = JSON.parse(row.config) as unknown;
-    const expected = expectedBackupConfig(job.id);
+    const expected = expectedBackupConfig(operationId);
     if (
       !config ||
       typeof config !== 'object' ||
@@ -235,7 +251,8 @@ async function ensureDeletionBackupCompleted(
   if (!jobsAdapter) throw new Error('tenant_deletion_control_unavailable');
 
   const nowTs = Math.floor(Date.now() / 1000);
-  const expectedJobId = backupJobId(job.id);
+  const operationId = config.operation_id ?? job.id;
+  const expectedJobId = backupJobId(operationId);
   if (config.backup_job_id && config.backup_job_id !== expectedJobId) {
     throw new Error('tenant_deletion_backup_job_invalid');
   }
@@ -258,14 +275,14 @@ async function ensureDeletionBackupCompleted(
         config.tenant_id,
         'tenant-database/export',
         JSON.stringify({ stage: 'pending', policy: 'deletion_before_purge' }),
-        JSON.stringify(expectedBackupConfig(job.id)),
-        job.id,
+        JSON.stringify(expectedBackupConfig(operationId)),
+        operationId,
         nowTs,
         nowTs,
       ]
     );
     if (legacy) {
-      validateBackupJob(legacy, job);
+      validateBackupJob(legacy, operationId);
       await adapter.execute(
         `DELETE FROM admin_jobs
           WHERE id = ? AND tenant_id = ? AND job_type = 'tenant-database/export'
@@ -281,7 +298,7 @@ async function ensureDeletionBackupCompleted(
         'SELECT status, job_type, created_by, config FROM admin_jobs WHERE id = ? AND tenant_id = ?',
         [expectedJobId, config.tenant_id]
       ),
-      job
+      operationId
     );
     await adapter.execute(
       "UPDATE admin_jobs SET status = 'pending', progress = ?, config = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
@@ -301,7 +318,7 @@ async function ensureDeletionBackupCompleted(
       'SELECT status, job_type, created_by, config FROM admin_jobs WHERE id = ? AND tenant_id = ?',
       [config.backup_job_id, config.tenant_id]
     ),
-    job
+    operationId
   );
   if (backup.status === 'completed') {
     return { completed: true, backupJobId: config.backup_job_id };
@@ -326,7 +343,7 @@ async function ensureDeletionBackupCompleted(
   return { completed: false, backupJobId: config.backup_job_id };
 }
 
-async function updateTenantDatabaseLifecycleState(
+export async function updateTenantDatabaseLifecycleState(
   adapter: Pick<DatabaseAdapter, 'execute'> | null,
   targetTenantId: string,
   currentJobId: string,
@@ -337,13 +354,11 @@ async function updateTenantDatabaseLifecycleState(
   const now = new Date().toISOString();
   const metadata = buildTenantDatabaseLifecycleMetadata(currentJobId, status);
 
-  await adapter.execute(
-    `UPDATE tenant_database_registry
-        SET status = ?, updated_at = ?, updated_by = ?, metadata_json = ?
-      WHERE tenant_id = ? AND status <> 'deleted'`,
-    [status, now, currentJobId, metadata, targetTenantId]
-  );
-
+  // Pointers first, registry second (two statements, no shared transaction across adapters). The
+  // snapshot publisher only loads ACTIVE pointers, so "pointers disabled + registry still active"
+  // publishes zero stores and a retry converges, whereas "registry deleting + pointers active" is
+  // refused as `inactive_registry_row` and could never reach this step again. Idempotent: a
+  // repeated call changes no generation.
   await adapter.execute(
     `UPDATE tenant_database_active_pointers
         SET status = 'disabled',
@@ -351,8 +366,15 @@ async function updateTenantDatabaseLifecycleState(
             updated_at = ?,
             updated_by = ?,
             metadata_json = ?
-      WHERE tenant_id = ?`,
+      WHERE tenant_id = ? AND status <> 'disabled'`,
     [now, currentJobId, metadata, targetTenantId]
+  );
+
+  await adapter.execute(
+    `UPDATE tenant_database_registry
+        SET status = ?, updated_at = ?, updated_by = ?, metadata_json = ?
+      WHERE tenant_id = ? AND status <> 'deleted'`,
+    [status, now, currentJobId, metadata, targetTenantId]
   );
 }
 
@@ -610,6 +632,22 @@ async function assertDeletionTargetNotDefault(
   }
 }
 
+/**
+ * Marks the tenant's row in the platform database (`env.DB`, the one the tenant read and list APIs
+ * report) as deleted once its data is purged. The purge marks the row only in the tenant's own
+ * stores, which may be another database, so without this the platform row would stay in its
+ * deleting or suspended state and a second delete would still be accepted. Idempotent, and a
+ * no-op when the platform database is a store the purge already marked.
+ */
+async function markPlatformTenantDeleted(env: Env, targetTenantId: string): Promise<void> {
+  if (!env.DB) return;
+  await ensureDatabaseAdapter(env.DB, 'tenant-deletion-platform').execute(
+    // Never the default tenant, and never a row that is already deleted.
+    "UPDATE tenants SET lifecycle_state = 'deleted', updated_at = ? WHERE id = ? AND lifecycle_state <> 'deleted' AND is_default = 0 AND default_tenant_guard IS NULL",
+    [Math.floor(Date.now() / 1000), targetTenantId]
+  );
+}
+
 async function processPendingTenantDeletionJobsInStore(
   env: Env,
   log: TenantDeletionJobLogger,
@@ -624,6 +662,7 @@ async function processPendingTenantDeletionJobsInStore(
       WHERE job_type = 'tenants/delete'
         AND status = 'pending'
         AND (next_run_at IS NULL OR next_run_at <= ?)
+      ORDER BY updated_at ASC, created_at ASC, id ASC
       LIMIT 5`,
     [Math.floor(Date.now() / 1000)]
   );
@@ -661,15 +700,34 @@ async function processPendingTenantDeletionJobsInStore(
       }
 
       if (!adminAdapter) throw new Error('tenant_deletion_control_unavailable');
+      const operationId = config.operation_id ?? job.id;
       const preserveJobIds = backup.backupJobId ? [job.id, backup.backupJobId] : [job.id];
-      const inventory = await getTenantDeletionInventory(env, deletionTargetTenantId, job.id);
+      const inventory = await getTenantDeletionInventory(env, deletionTargetTenantId, operationId);
 
       if (inventory.state === 'finalized') {
         await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
+        // A predecessor that already published `disabled` under this operation id may have left
+        // its pointers active over registry rows another job has since marked non-active (the
+        // publisher refuses that pair). Disabling the pointers first lets the publish succeed
+        // with no stores; the step is idempotent. Any other state keeps the order below.
+        if (config.operation_id) {
+          const routeState = await readTenantRouteStateReading(
+            adminAdapter,
+            deletionTargetTenantId
+          );
+          if (routeState?.routeStatus === 'disabled' && routeState.operationId === operationId) {
+            await updateTenantDatabaseLifecycleState(
+              adminAdapter,
+              deletionTargetTenantId,
+              job.id,
+              'deleting'
+            );
+          }
+        }
         await publishTenantRuntimeRegistryRouteState(env, {
           tenantId: deletionTargetTenantId,
           routeStatus: 'disabled',
-          operationId: job.id,
+          operationId,
           actorId: job.id,
         });
         await deleteTenantAdminJobs(env, adminAdapter, deletionTargetTenantId, preserveJobIds);
@@ -690,6 +748,7 @@ async function processPendingTenantDeletionJobsInStore(
           job.id,
           'deleted'
         );
+        await markPlatformTenantDeleted(env, deletionTargetTenantId);
       } else {
         const suspended = await suspendTenantAfterDeletionFailure(
           coreAdapter,
@@ -699,35 +758,50 @@ async function processPendingTenantDeletionJobsInStore(
         // (a tenant that is already deleted simply has nothing left to suspend).
         if (suspended === 0)
           await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
-        const quarantining = config.quarantine_started_at
-          ? {
-              publishedAt: new Date(config.quarantine_started_at * 1000).toISOString(),
-            }
-          : await publishTenantRuntimeRegistryRouteState(env, {
-              tenantId: deletionTargetTenantId,
-              routeStatus: 'quarantining',
-              operationId: job.id,
-              actorId: job.id,
-            });
-        if (
-          await waitForTenantDeletionQuarantineDrain(
-            coreAdapter,
-            job,
-            config,
-            quarantining.publishedAt
-          )
-        ) {
-          log.info('Tenant deletion job waiting for runtime quarantine drain', {
-            job_id: job.id,
-            tenant_id: deletionTargetTenantId,
-          });
-          continue;
+        // A continued job whose predecessor already reached `quarantined` under the same
+        // operation id has drained: the forward-only transition cannot go back to `quarantining`.
+        // Any other state (including a foreign operation) takes the normal path and conflicts there.
+        let resumeAtQuarantined = false;
+        if (config.operation_id && !config.quarantine_started_at) {
+          const routeState = await readTenantRouteStateReading(
+            adminAdapter,
+            deletionTargetTenantId
+          );
+          resumeAtQuarantined =
+            routeState?.routeStatus === 'quarantined' && routeState.operationId === operationId;
         }
+        if (!resumeAtQuarantined) {
+          const quarantining = config.quarantine_started_at
+            ? {
+                publishedAt: new Date(config.quarantine_started_at * 1000).toISOString(),
+              }
+            : await publishTenantRuntimeRegistryRouteState(env, {
+                tenantId: deletionTargetTenantId,
+                routeStatus: 'quarantining',
+                operationId,
+                actorId: job.id,
+              });
+          if (
+            await waitForTenantDeletionQuarantineDrain(
+              coreAdapter,
+              job,
+              config,
+              quarantining.publishedAt
+            )
+          ) {
+            log.info('Tenant deletion job waiting for runtime quarantine drain', {
+              job_id: job.id,
+              tenant_id: deletionTargetTenantId,
+            });
+            continue;
+          }
+        }
+
         await assertDeletionTargetNotDefault(coreAdapter, deletionTargetTenantId);
         await publishTenantRuntimeRegistryRouteState(env, {
           tenantId: deletionTargetTenantId,
           routeStatus: 'quarantined',
-          operationId: job.id,
+          operationId,
           actorId: job.id,
         });
 
@@ -750,11 +824,11 @@ async function processPendingTenantDeletionJobsInStore(
           deletionTargetTenantId,
           preserveJobIds
         );
-        await finalizeTenantDeletionControlState(env, deletionTargetTenantId, job.id);
+        await finalizeTenantDeletionControlState(env, deletionTargetTenantId, operationId);
         await publishTenantRuntimeRegistryRouteState(env, {
           tenantId: deletionTargetTenantId,
           routeStatus: 'disabled',
-          operationId: job.id,
+          operationId,
           actorId: job.id,
         });
         await updateTenantDatabaseLifecycleState(
@@ -781,6 +855,7 @@ async function processPendingTenantDeletionJobsInStore(
           job.id,
           'deleted'
         );
+        await markPlatformTenantDeleted(env, deletionTargetTenantId);
       }
 
       const deletedPublicAssets = await deleteTenantPublicAssets(env, deletionTargetTenantId);
@@ -878,19 +953,40 @@ export async function processPendingTenantDeletionJobs(
 ): Promise<void> {
   if (!env.AUTHRIM_CONFIG) throw new Error('tenant_deletion_tenant_directory_unavailable');
 
+  // The delete route queues its job in the platform database (`env.DB`), which is not necessarily
+  // any tenant's default store, so it is scanned on its own, before the tenant stores.
+  let selectedCount = 0;
+  if (env.DB) {
+    try {
+      selectedCount += await processPendingTenantDeletionJobsInStore(
+        env,
+        log,
+        ensureDatabaseAdapter(env.DB, 'tenant-deletion-jobs:platform')
+      );
+    } catch (error) {
+      log.error('Tenant deletion platform job scan failed', {}, error as Error);
+    }
+  }
+  // The budget is spent: leave the tenant cursor exactly where it is for the next run.
+  if (selectedCount >= 5) return;
+
   const cursorKey = 'jobs:tenant-deletion:tenant-cursor';
   const afterTenantId = (await env.AUTHRIM_CONFIG.get(cursorKey))?.trim() || undefined;
   const tenants = await listEnvironmentTenantDefaultStores(env, {
     limit: 8,
     afterTenantId,
     concurrency: 4,
+    // A job can live in a tenant's own store (for example when the platform database is itself a
+    // tenant's default store), and that tenant may already be deleting or suspended.
+    includeInactive: true,
   });
 
-  let selectedCount = 0;
   let lastScannedTenantId = '';
   let stoppedEarly = false;
   for (const tenant of tenants) {
     lastScannedTenantId = tenant.tenantId;
+    // Already scanned above as the platform database.
+    if (env.DB && tenant.store.source === env.DB) continue;
     const adapter = ensureDatabaseAdapter(
       tenant.store.source,
       `tenant-deletion-jobs:${tenant.store.bindingRef}`

@@ -117,7 +117,11 @@ export async function publishTenantRuntimeRegistryRouteState(
     'default';
   const publication = await publishTenantRuntimeRegistrySnapshot({
     tenantId: options.tenantId,
-    placement: await resolveTenantRuntimePlacementSnapshot(env, options.tenantId),
+    // Tenant deletion retires the Control policy (finalisation) before the route is published as
+    // `disabled`; only that route status may be published against a retired policy.
+    placement: await resolveTenantRuntimePlacementSnapshot(env, options.tenantId, {
+      allowRetired: options.routeStatus === 'disabled',
+    }),
     repository,
     snapshotStore: env.TENANT_RUNTIME_REGISTRY,
     deploymentTarget,

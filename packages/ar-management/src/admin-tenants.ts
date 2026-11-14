@@ -55,6 +55,7 @@ import {
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import { requireAdminStepUp } from './admin-step-up-gate';
 import { activeTenantDeleteJobGuard } from './tenant-deletion-job-predicate';
+import { resolveTenantDeletionChainOperationId } from './tenant-deletion-chain';
 import { getAdminActorAuditMetadata } from './admin-shared';
 import { createOpaqueTenantKey } from './logging-tenant-key';
 import { materializeDisabledTenantEmailProviderOrder } from './notification-provider-projection';
@@ -108,6 +109,7 @@ import {
   hasPlatformTenantManagementAuthority,
   requirePlatformTenantManagementAuthority,
   requireTenantProvisioningAuthority,
+  requireTenantReadAuthority,
 } from './admin-tenant-access';
 
 // =============================================================================
@@ -1598,10 +1600,11 @@ export async function adminTenantProvisioningStatusHandler(c: Context<{ Bindings
 
 /**
  * GET /api/admin/tenants/:id
- * Get a single tenant
+ * Get a single tenant (id, code, name, description, isolation policy, lifecycle state).
+ * Also open to a global machine token holding `admin:tenants:provision`.
  */
 export async function adminTenantGetHandler(c: Context<{ Bindings: Env }>) {
-  const platformError = await requirePlatformTenantManagementAuthority(c);
+  const platformError = await requireTenantReadAuthority(c);
   if (platformError) {
     return platformError;
   }
@@ -2507,6 +2510,17 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
     //  2. the job row is inserted only for a tenant now `deleting` without such a job, which
     //     statement 1 having matched guarantees. Either both happen or neither: no compensation.
     const activeJob = activeTenantDeleteJobGuard(id, nowTs);
+    // Server-decided only: continues a failed deletion's route state, Control state and backup.
+    let chainOperationId: string | null = null;
+    try {
+      chainOperationId = await resolveTenantDeletionChainOperationId(
+        adapter,
+        requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-deletion-chain'),
+        id
+      );
+    } catch {
+      chainOperationId = null;
+    }
     const [started, queued] = await adapter.batch([
       {
         sql: `UPDATE tenants SET lifecycle_state = 'deleting', updated_at = ?
@@ -2529,7 +2543,9 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
           'tenants/delete',
           'pending',
           JSON.stringify({ stage: 'queued' }),
-          JSON.stringify({ tenant_id: id }),
+          JSON.stringify(
+            chainOperationId ? { tenant_id: id, operation_id: chainOperationId } : { tenant_id: id }
+          ),
           createdBy,
           nowTs,
           nowTs,

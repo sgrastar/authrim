@@ -3435,7 +3435,8 @@ paths:
           $ref: '#/components/responses/TenantInventory'
       description: >-
         Get a tenant by path ID. The path parameter identifies the target tenant, so X-Tenant-Id is
-        not required.
+        not required. Machine callers need `admin:*` or `admin:tenants:provision` on a global tenant
+        scope; a human needs the global `ar_super_admin` role.
       security:
         - adminBearer: []
         - adminSessionCookie: []

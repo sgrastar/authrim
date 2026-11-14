@@ -86,6 +86,11 @@ function openDatabase(lifecycle = 'active'): SQLiteDatabase {
       created_at INTEGER DEFAULT 1, updated_at INTEGER DEFAULT 1
     );
     CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(default_tenant_guard);
+    CREATE TABLE tenant_runtime_cache_generations (
+      tenant_id TEXT NOT NULL, cache_namespace TEXT NOT NULL, generation INTEGER NOT NULL,
+      updated_at TEXT, updated_by TEXT, metadata_json TEXT,
+      PRIMARY KEY (tenant_id, cache_namespace)
+    );
     CREATE TABLE admin_jobs (
       id TEXT PRIMARY KEY, tenant_id TEXT, job_type TEXT, status TEXT, progress TEXT, config TEXT,
       created_by TEXT, created_at INTEGER, updated_at INTEGER, estimated_completion INTEGER,
@@ -359,5 +364,134 @@ describe('set-default and delete on the same tenant', () => {
       expect(active('%').found).toBe(0);
       expect(active('demo-_0').found).toBe(0);
     });
+  });
+});
+
+describe('delete of a tenant whose previous deletion failed', () => {
+  const PREDECESSOR = '11111111-2222-4333-8444-555555555555';
+  const OTHER = '99999999-2222-4333-8444-555555555555';
+
+  function seed(options: {
+    routeStatus?: string | null;
+    routeOperationId?: string;
+    predecessorConfig?: Record<string, unknown>;
+    predecessorStatus?: string;
+  }): SQLiteDatabase {
+    const db = openDatabase('suspended');
+    if (options.predecessorStatus !== null) {
+      db.prepare(
+        "INSERT INTO admin_jobs (id, tenant_id, job_type, status, config, created_at, updated_at) VALUES (?, 'default', 'tenants/delete', ?, ?, 10, 10)"
+      ).run(
+        PREDECESSOR,
+        options.predecessorStatus ?? 'failed',
+        JSON.stringify({ tenant_id: 'second', ...(options.predecessorConfig ?? {}) })
+      );
+    }
+    if (options.routeStatus) {
+      db.prepare(
+        "INSERT INTO tenant_runtime_cache_generations (tenant_id, cache_namespace, generation, metadata_json) VALUES ('second', 'runtime_registry', 2, ?)"
+      ).run(
+        JSON.stringify({
+          route_status: options.routeStatus,
+          quarantine_deny_generation: 1,
+          route_state_operation_id: options.routeOperationId ?? PREDECESSOR,
+        })
+      );
+    }
+    hooks.db = db;
+    return db;
+  }
+
+  const newJobConfig = (db: SQLiteDatabase) =>
+    JSON.parse(
+      (
+        db
+          .prepare(
+            "SELECT config FROM admin_jobs WHERE status = 'pending' AND job_type = 'tenants/delete'"
+          )
+          .get() as { config: string }
+      ).config
+    ) as Record<string, unknown>;
+
+  it.each(['quarantining', 'quarantined', 'disabled'])(
+    'adopts the failed predecessor chain while the route is %s under its id',
+    async (routeStatus) => {
+      const db = seed({ routeStatus });
+      expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+      expect(newJobConfig(db)).toEqual({ tenant_id: 'second', operation_id: PREDECESSOR });
+    }
+  );
+
+  it('keeps the original chain id when the predecessor was itself a continuation', async () => {
+    const db = seed({
+      routeStatus: 'quarantined',
+      routeOperationId: OTHER,
+      predecessorConfig: { operation_id: OTHER },
+    });
+    expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+    expect(newJobConfig(db)).toEqual({ tenant_id: 'second', operation_id: OTHER });
+  });
+
+  it('adopts the older failed job that owns the route state when a newer failed job is unrelated', async () => {
+    const db = seed({ routeStatus: 'quarantined' });
+    db.prepare(
+      "INSERT INTO admin_jobs (id, tenant_id, job_type, status, config, created_at, updated_at) VALUES (?, 'default', 'tenants/delete', 'failed', ?, 20, 20)"
+    ).run(OTHER, JSON.stringify({ tenant_id: 'second' }));
+    expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+    expect(newJobConfig(db)).toEqual({ tenant_id: 'second', operation_id: PREDECESSOR });
+  });
+
+  it('does not adopt when the route is active', async () => {
+    const db = seed({ routeStatus: 'active' });
+    expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+    expect(newJobConfig(db)).toEqual({ tenant_id: 'second' });
+  });
+
+  it('does not adopt when there is no route state row', async () => {
+    const db = seed({ routeStatus: null });
+    expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+    expect(newJobConfig(db)).toEqual({ tenant_id: 'second' });
+  });
+
+  it('does not adopt another operation’s quarantine', async () => {
+    const db = seed({ routeStatus: 'quarantined', routeOperationId: OTHER });
+    expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+    expect(newJobConfig(db)).toEqual({ tenant_id: 'second' });
+  });
+
+  it('does not adopt without a failed predecessor', async () => {
+    const none = seed({ routeStatus: 'quarantined', predecessorStatus: null as never });
+    expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+    expect(newJobConfig(none)).toEqual({ tenant_id: 'second' });
+
+    const completed = seed({ routeStatus: 'quarantined', predecessorStatus: 'completed' });
+    expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+    expect(newJobConfig(completed)).toEqual({ tenant_id: 'second' });
+  });
+
+  it('does not adopt a predecessor id that is not a UUID', async () => {
+    const db = seed({
+      routeStatus: 'quarantined',
+      routeOperationId: 'not-a-uuid',
+      predecessorConfig: { operation_id: 'not-a-uuid' },
+    });
+    expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+    expect(newJobConfig(db)).toEqual({ tenant_id: 'second' });
+  });
+
+  it('does not adopt when the route state cannot be read', async () => {
+    const db = seed({ routeStatus: 'quarantined' });
+    db.exec("UPDATE tenant_runtime_cache_generations SET metadata_json = '{not json'");
+    expect((await call('DELETE', DELETE_PATH)).status).toBe(202);
+    expect(newJobConfig(db)).toEqual({ tenant_id: 'second' });
+  });
+
+  it('never takes an operation id from the request', async () => {
+    const db = seed({ routeStatus: 'active' });
+    expect(
+      (await call('DELETE', DELETE_PATH, { operation_id: OTHER, config: { operation_id: OTHER } }))
+        .status
+    ).toBe(202);
+    expect(newJobConfig(db)).toEqual({ tenant_id: 'second' });
   });
 });

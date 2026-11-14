@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
+  ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
   createErrorResponse,
   getTenantIdFromContext,
@@ -141,7 +142,7 @@ export async function requirePlatformTenantManagementAuthority(
 }
 
 /**
- * The handler-level check of the five routes an automation machine principal runs on its own
+ * The handler-level check of the six routes an automation machine principal runs on its own
  * permission (create, follow and clean up a provisioning, delete): the platform role through a
  * global assignment, or a machine token with a global scope holding `requiredPermission` (`*` and
  * `admin:*` carry it). Unlike `hasPlatformTenantManagementAuthority` without a permission, a
@@ -171,6 +172,36 @@ export async function requireTenantProvisioningAuthority(
       required_scope: 'platform',
       required_permission: requiredPermission,
       reason: 'Tenant provisioning requires platform administrator authority',
+    },
+  });
+}
+
+/**
+ * The handler-level check of `GET /api/admin/tenants/:id`. What passed before still passes: a
+ * platform role through a global assignment, and for any other caller exactly what
+ * `hasPlatformTenantManagementAuthority` admits. A machine token is the one narrowing: it must
+ * hold `admin:tenants:provision` with a global scope (`*` and `admin:*` carry it, so every machine
+ * the Worker guard let through before still passes), because a global machine token passes the
+ * check without a permission for holding anything at all.
+ */
+export function hasTenantReadAuthority(adminAuth: AdminAuthContext | undefined): boolean {
+  if (!adminAuth) return false;
+  if (hasGlobalAdminRole(adminAuth, [...PLATFORM_TENANT_MANAGEMENT_ROLES])) return true;
+  if (adminAuth.authMethod === 'machine_access_token') {
+    return hasGlobalMachinePermission(adminAuth, ADMIN_PERMISSIONS.TENANT_PROVISION);
+  }
+  return hasPlatformTenantManagementAuthority(adminAuth);
+}
+
+export async function requireTenantReadAuthority(
+  c: Context<{ Bindings: Env }>
+): Promise<Response | null> {
+  if (hasTenantReadAuthority(getAdminAuth(c))) return null;
+  return await createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
+    variables: {
+      required_scope: 'platform',
+      required_permission: ADMIN_PERMISSIONS.TENANT_PROVISION,
+      reason: 'Tenant management requires platform administrator authority',
     },
   });
 }

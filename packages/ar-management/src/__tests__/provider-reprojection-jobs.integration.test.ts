@@ -261,6 +261,10 @@ describe('provider reprojection jobs', () => {
       'environment_tenant_directory_unavailable'
     );
     expect(configureHumanVerificationInstallation).not.toHaveBeenCalled();
+    expect(listEnvironmentTenantDefaultStoresMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ unservableTenants: 'throw' })
+    );
   });
 
   it('does not create an enabled CAPTCHA installation for a provider nobody enabled', async () => {
