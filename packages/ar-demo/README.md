@@ -125,10 +125,10 @@ exemption) stops the run and is logged as `cleanup_config_error`.
 
 ## Operational notes
 
-Apply migration `0002` before the portal creates its first tenant. Rows that already exist when it
-is applied have no acceptance record, so the cleanup treats them by the name-and-description rule
-above: a tenant whose administrator renamed it would be released as not the portal's and left in
-the core for an operator to delete.
+Apply migration `0002` before the portal creates its first tenant. It records the acceptance for
+rows that already reached the invitation step. Rows that were still `provisioning`, `failed` or
+`deleting` when it is applied have no acceptance record, so the cleanup treats them by the
+name-and-description rule above.
 
 Calls to the Admin API are subrequests of the visitor's request. When the portal and the API are on
 the same Cloudflare zone, the core records the visitor's address in its own audit trail and in its

@@ -175,6 +175,19 @@ export async function handleStart(
   }
   if (!accepted) {
     logError('registry_update_failed', { tenantId, op: 'create_accepted' });
+    // Same as a failed creation: the row is reclaimed after the short `failed` grace. If this write
+    // fails too, the row stays `provisioning` and the cleanup takes it as abandoned later.
+    try {
+      await registry.transition(
+        env.DB,
+        tenantId,
+        ['provisioning'],
+        'failed',
+        Math.floor(deps.now() / 1000)
+      );
+    } catch {
+      // the abandoned-row rule covers it
+    }
     return errorResponse(lang, 'failed', 502);
   }
   logEvent('tenant_requested', { tenantId });
