@@ -11,7 +11,7 @@ import {
 
 /**
  * Drives the real management app (routing, declared route access, the tenant system-admin guard)
- * for the five tenant routes an automation machine principal may run on its own permission, and
+ * for the six tenant routes an automation machine principal may run on its own permission, and
  * for every other tenant route and system-admin route around them. Only the request context
  * (which names the caller) and the tenant handlers (stubs that answer 200) are replaced; the
  * handler-level checks have their own tests.
@@ -202,11 +202,11 @@ const TARGETS = [
     permission: PROVISION,
   },
   { name: 'delete', method: 'DELETE', path: '/api/admin/tenants/tenant-x', permission: DELETE },
+  { name: 'read', method: 'GET', path: '/api/admin/tenants/tenant-x', permission: PROVISION },
 ] as const;
 
 const OTHER_TENANT_ROUTES = [
   ['GET', '/api/admin/tenants'],
-  ['GET', '/api/admin/tenants/tenant-x'],
   ['PATCH', '/api/admin/tenants/tenant-x'],
   ['POST', '/api/admin/tenants/tenant-x/set-default'],
   ['POST', '/api/admin/tenants/tenant-x/clone'],
@@ -231,14 +231,14 @@ const OTHER_SYSTEM_ADMIN_ROUTES = [
 
 const GUARD_REFUSAL = { status: 403, body: { error: 'access_denied' } };
 
-describe('the five tenant provisioning and deletion routes', () => {
+describe('the six tenant provisioning, read and deletion routes', () => {
   const ALLOWED: Record<string, string[]> = {
-    provisionOnly: ['create', 'status', 'retry', 'cleanup'],
+    provisionOnly: ['create', 'status', 'retry', 'cleanup', 'read'],
     deleteOnly: ['delete'],
-    both: ['create', 'status', 'retry', 'cleanup', 'delete'],
-    broadWithNew: ['create', 'status', 'retry', 'cleanup', 'delete'],
-    adminStar: ['create', 'status', 'retry', 'cleanup', 'delete'],
-    superAdmin: ['create', 'status', 'retry', 'cleanup', 'delete'],
+    both: ['create', 'status', 'retry', 'cleanup', 'delete', 'read'],
+    broadWithNew: ['create', 'status', 'retry', 'cleanup', 'delete', 'read'],
+    adminStar: ['create', 'status', 'retry', 'cleanup', 'delete', 'read'],
+    superAdmin: ['create', 'status', 'retry', 'cleanup', 'delete', 'read'],
     // Passes the declared rule through its settings permission and is stopped by the guard.
     broadWithoutNew: [],
     settingsOnly: [],
@@ -355,12 +355,13 @@ describe('path strictness', () => {
     ['POST', '/api/admin/tenants/tenant-x/provisioning%2Fretry'],
     ['POST', '/api/admin/tenants/tenant-x%2Fprovisioning/retry'],
     ['POST', '/api/admin/tenants/tenant-x/provisioning%252Fretry'],
-    ['GET', '/api/admin/tenants/tenant-x%2Fprovisioning'],
+    // ('GET /api/admin/tenants/tenant-x%2Fprovisioning' is one path segment, so it is the read
+    // route for an id that does not exist: the same authority, nothing wider.)
     ['POST', '/api/admin/Tenants'],
     ['POST', '/api/admin/tenants/tenant-x/provisioning/retry%00'],
   ] as const;
 
-  it('never gives a spelling other than the five exact routes the machine treatment', async () => {
+  it('never gives a spelling other than the six exact routes the machine treatment', async () => {
     for (const persona of ['both', 'broadWithNew']) {
       for (const [method, path] of ODD) {
         const result = await call(persona, method, path);
@@ -374,7 +375,7 @@ describe('path strictness', () => {
     }
   });
 
-  it('classifies only the five exact method and path pairs', () => {
+  it('classifies only the six exact method and path pairs', () => {
     for (const target of TARGETS) {
       expect(tenantProvisioningRoutePermission(target.method, target.path)).toBe(target.permission);
     }
@@ -392,13 +393,14 @@ describe('path strictness', () => {
 });
 
 describe('declared rule decisions', () => {
-  // The table as it was before the five rules: they are told apart by their descriptions.
+  // The table as it was before the six rules: they are told apart by their descriptions.
   const NEW_DESCRIPTIONS = new Set([
     'tenant administration create',
     'tenant provisioning status',
     'tenant provisioning retry',
     'tenant provisioning cleanup',
     'tenant deletion',
+    'tenant read',
   ]);
   const before = ADMIN_ROUTE_ACCESS_RULES.filter((rule) => !NEW_DESCRIPTIONS.has(rule.description));
 
@@ -447,6 +449,7 @@ describe('declared rule decisions', () => {
     ['DELETE', '/api/admin/tenants'],
     ['PUT', '/api/admin/tenants/tenant-x'],
     ['POST', '/api/admin/tenants/tenant-x'],
+    ['HEAD', '/api/admin/tenants/tenant-x'],
     ['GET', '/api/admin/tenants/tenant-x/provisioning/retry'],
     ['GET', '/api/admin/tenants/tenant-x/provisioning/cleanup'],
     ['DELETE', '/api/admin/tenants/tenant-x/provisioning'],
@@ -458,7 +461,7 @@ describe('declared rule decisions', () => {
     ['DELETE', '/api/admin/users/u1'],
   ];
 
-  it('decides every route other than the five as before, for every caller', () => {
+  it('decides every route other than the six as before, for every caller', () => {
     for (const [method, path] of samples) {
       for (const [name, auth] of Object.entries(callers)) {
         const old = decides(auth, lookup(before, method, path));
@@ -472,7 +475,7 @@ describe('declared rule decisions', () => {
     }
   });
 
-  it('admits on the five routes whoever was admitted before, and the holder of the new permission', () => {
+  it('admits on the six routes whoever was admitted before, and the holder of the new permission', () => {
     for (const target of TARGETS) {
       for (const [name, auth] of Object.entries(callers)) {
         const old = decides(auth, lookup(before, target.method, target.path));

@@ -2423,6 +2423,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       workingLock = projected.lock;
       await saveLockFile(workingLock, lockPath);
       wranglerSpinner.text = `Loaded Control DB bindings (+${projected.added.length} ~${projected.changed.length} -${projected.removed.length})`;
+      if (projected.pending.length > 0) {
+        console.warn(
+          chalk.yellow(
+            `  Skipped ${projected.pending.length} shard database(s) still being created: ${projected.pending.join(', ')}`
+          )
+        );
+      }
     } catch (error) {
       wranglerSpinner.fail('Control DB generated-state projection failed');
       console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));

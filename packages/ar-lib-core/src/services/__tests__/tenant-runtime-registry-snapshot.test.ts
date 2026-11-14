@@ -115,6 +115,7 @@ function createRepository(options: {
       );
     }),
     updateActivePointerStatus: vi.fn(async () => undefined),
+    raiseActivePointerRuntimeGeneration: vi.fn(async () => 0),
     updateRegistryStatusAndMetadata: vi.fn(async () => undefined),
     getRuntimeCacheGeneration: vi.fn(async () => {
       if (options.runtimeCacheGeneration === undefined) return null;

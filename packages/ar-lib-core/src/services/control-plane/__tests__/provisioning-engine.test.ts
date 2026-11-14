@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyControlProvisioningFailure,
+  CONTROL_D1_CREATE_OUTCOME_SAFETY_DELAY_SECONDS,
   controlProvisioningRetryDelaySeconds,
   decideControlProvisioningFailure,
   ensureControlProvisioningD1,
@@ -53,6 +54,7 @@ describe('shared Control provisioning failure policy', () => {
           },
           provider,
           checkpoint: { state: 'not_started', providerResourceId: null },
+          now: () => 10_000,
           reserveCreate: async () => {
             calls.push('reserve');
             return true;
@@ -105,6 +107,7 @@ describe('shared Control provisioning failure policy', () => {
           }),
         },
         checkpoint: { state: 'not_started', providerResourceId: null },
+        now: () => 10_000,
         reserveCreate: async () => {
           reserved = true;
           return true;
@@ -142,6 +145,7 @@ describe('shared Control provisioning failure policy', () => {
           },
         },
         checkpoint: { state: 'identified', providerResourceId: 'database-id' },
+        now: () => 10_000,
         reserveCreate: async () => {
           throw new Error('unexpected_reserve');
         },
@@ -159,32 +163,223 @@ describe('shared Control provisioning failure policy', () => {
     expect(calls).toEqual(['get:database-id', 'get:database-id']);
   });
 
-  it('does not reissue a create whose response may have been lost', async () => {
-    let creates = 0;
-    await expect(
-      ensureControlProvisioningD1({
+  describe('an issued create whose outcome is unknown', () => {
+    const issuedAt = 10_000;
+    async function run(options: { existing: boolean; now: number; delay?: number }) {
+      const calls: string[] = [];
+      const result = await ensureControlProvisioningD1({
         plan: { databaseName: 'authrim-test-shard', readReplicationMode: 'disabled' },
         provider: {
-          listD1Databases: async () => [],
+          listD1Databases: async () =>
+            options.existing ? [{ uuid: 'db-existing', name: 'authrim-test-shard' }] : [],
           createD1Database: async () => {
-            creates += 1;
-            throw new Error('unexpected_create');
+            calls.push('create');
+            return {
+              uuid: 'db-new',
+              name: 'authrim-test-shard',
+              read_replication: { mode: 'disabled' },
+            };
           },
           updateD1Database: async () => {
             throw new Error('unexpected_update');
           },
-          getD1Database: async () => {
-            throw new Error('unexpected_get');
-          },
+          getD1Database: async () => ({
+            uuid: 'db-new',
+            name: 'authrim-test-shard',
+            read_replication: { mode: 'disabled' },
+          }),
         },
-        checkpoint: { state: 'issued', providerResourceId: null },
-        reserveCreate: async () => true,
-        markCreateIssued: async () => undefined,
-        markCreateDefinitelyRejected: async () => undefined,
-        checkpointProviderIdentity: async () => undefined,
-      })
-    ).rejects.toThrow('cloudflare_d1_create_outcome_ambiguous');
-    expect(creates).toBe(0);
+        checkpoint: { state: 'issued', providerResourceId: null, issuedAt },
+        now: () => options.now,
+        safetyDelaySeconds: options.delay,
+        reserveCreate: async () => {
+          calls.push('reserve');
+          return true;
+        },
+        markCreateIssued: async () => {
+          calls.push('issued');
+        },
+        markCreateDefinitelyRejected: async () => {
+          calls.push('rejected');
+        },
+        checkpointProviderIdentity: async () => {
+          calls.push('checkpoint');
+        },
+      });
+      return { result, calls };
+    }
+
+    it('stays blocked when a database with the deterministic name exists', async () => {
+      const calls: string[] = [];
+      await expect(
+        ensureControlProvisioningD1({
+          plan: { databaseName: 'authrim-test-shard', readReplicationMode: 'disabled' },
+          provider: {
+            listD1Databases: async () => [{ uuid: 'db-existing', name: 'authrim-test-shard' }],
+            createD1Database: async () => {
+              calls.push('create');
+              throw new Error('unexpected_create');
+            },
+            updateD1Database: async () => {
+              throw new Error('unexpected_update');
+            },
+            getD1Database: async () => {
+              throw new Error('unexpected_get');
+            },
+          },
+          checkpoint: { state: 'issued', providerResourceId: null, issuedAt },
+          now: () => issuedAt + 100_000,
+          reserveCreate: async () => true,
+          markCreateIssued: async () => undefined,
+          markCreateDefinitelyRejected: async () => {
+            calls.push('rejected');
+          },
+          checkpointProviderIdentity: async () => undefined,
+        })
+      ).rejects.toThrow('cloudflare_d1_create_outcome_ambiguous');
+      expect(calls).toEqual([]);
+    });
+
+    it('stays blocked when the issue time is unknown', async () => {
+      await expect(
+        ensureControlProvisioningD1({
+          plan: { databaseName: 'authrim-test-shard', readReplicationMode: 'disabled' },
+          provider: {
+            listD1Databases: async () => [],
+            createD1Database: async () => {
+              throw new Error('unexpected_create');
+            },
+            updateD1Database: async () => {
+              throw new Error('unexpected_update');
+            },
+            getD1Database: async () => {
+              throw new Error('unexpected_get');
+            },
+          },
+          checkpoint: { state: 'issued', providerResourceId: null },
+          now: () => issuedAt + 100_000,
+          reserveCreate: async () => true,
+          markCreateIssued: async () => undefined,
+          markCreateDefinitelyRejected: async () => undefined,
+          checkpointProviderIdentity: async () => undefined,
+        })
+      ).rejects.toThrow('cloudflare_d1_create_outcome_ambiguous');
+    });
+
+    it('does not list or release when the clock crosses the delay only during the list', async () => {
+      const calls: string[] = [];
+      const readings = [issuedAt + 590, issuedAt + 601];
+      await expect(
+        ensureControlProvisioningD1({
+          plan: { databaseName: 'authrim-test-shard', readReplicationMode: 'disabled' },
+          provider: {
+            listD1Databases: async () => {
+              calls.push('list');
+              return [];
+            },
+            createD1Database: async () => {
+              calls.push('create');
+              throw new Error('unexpected_create');
+            },
+            updateD1Database: async () => {
+              throw new Error('unexpected_update');
+            },
+            getD1Database: async () => {
+              throw new Error('unexpected_get');
+            },
+          },
+          checkpoint: { state: 'issued', providerResourceId: null, issuedAt },
+          now: () => readings.shift() ?? issuedAt + 601,
+          reserveCreate: async () => true,
+          markCreateIssued: async () => undefined,
+          markCreateDefinitelyRejected: async () => {
+            calls.push('rejected');
+          },
+          checkpointProviderIdentity: async () => undefined,
+        })
+      ).rejects.toThrow('cloudflare_d1_create_outcome_pending');
+      expect(calls).toEqual([]);
+    });
+
+    it('is pending without listing when a same-named database exists inside the window', async () => {
+      const calls: string[] = [];
+      await expect(
+        ensureControlProvisioningD1({
+          plan: { databaseName: 'authrim-test-shard', readReplicationMode: 'disabled' },
+          provider: {
+            listD1Databases: async () => {
+              calls.push('list');
+              return [{ uuid: 'db-existing', name: 'authrim-test-shard' }];
+            },
+            createD1Database: async () => {
+              throw new Error('unexpected_create');
+            },
+            updateD1Database: async () => {
+              throw new Error('unexpected_update');
+            },
+            getD1Database: async () => {
+              throw new Error('unexpected_get');
+            },
+          },
+          checkpoint: { state: 'issued', providerResourceId: null, issuedAt },
+          now: () => issuedAt + 10,
+          reserveCreate: async () => true,
+          markCreateIssued: async () => undefined,
+          markCreateDefinitelyRejected: async () => {
+            calls.push('rejected');
+          },
+          checkpointProviderIdentity: async () => undefined,
+        })
+      ).rejects.toThrow('cloudflare_d1_create_outcome_pending');
+      expect(calls).toEqual([]);
+    });
+
+    it('waits (retryable) while the safety delay has not elapsed', async () => {
+      await expect(
+        run({
+          existing: false,
+          now: issuedAt + CONTROL_D1_CREATE_OUTCOME_SAFETY_DELAY_SECONDS - 1,
+        })
+      ).rejects.toThrow('cloudflare_d1_create_outcome_pending');
+    });
+
+    it('releases the checkpoint and recreates once after the safety delay', async () => {
+      const { result, calls } = await run({
+        existing: false,
+        now: issuedAt + CONTROL_D1_CREATE_OUTCOME_SAFETY_DELAY_SECONDS,
+      });
+      expect(result).toBe('db-new');
+      expect(calls).toEqual(['rejected', 'reserve', 'issued', 'create', 'checkpoint']);
+    });
+
+    it('honours an injected safety delay', async () => {
+      await expect(run({ existing: false, now: issuedAt + 59, delay: 60 })).rejects.toThrow(
+        'cloudflare_d1_create_outcome_pending'
+      );
+      const { calls } = await run({ existing: false, now: issuedAt + 60, delay: 60 });
+      expect(calls.filter((call) => call === 'create')).toHaveLength(1);
+    });
+
+    it('classifies pending as retry and ambiguous as blocked', () => {
+      const base = { effect: 'create_d1' as const, operation, failedAt: 1_100 };
+      expect(
+        decideControlProvisioningFailure({
+          ...base,
+          error: new Error('cloudflare_d1_create_outcome_pending'),
+        })
+      ).toEqual({
+        code: 'cloudflare_d1_create_outcome_pending',
+        permanent: false,
+        disposition: 'retry',
+        nextAttemptAt: 1_100 + controlProvisioningRetryDelaySeconds(operation),
+      });
+      expect(
+        decideControlProvisioningFailure({
+          ...base,
+          error: new Error('cloudflare_d1_create_outcome_ambiguous'),
+        })
+      ).toMatchObject({ disposition: 'blocked', permanent: true });
+    });
   });
 
   it('checkpoints the UUID before any post-create provider operation', async () => {
@@ -215,6 +410,7 @@ describe('shared Control provisioning failure policy', () => {
           },
         },
         checkpoint: { state: 'not_started', providerResourceId: null },
+        now: () => 10_000,
         reserveCreate: async () => {
           calls.push('reserve');
           return true;
@@ -250,6 +446,7 @@ describe('shared Control provisioning failure policy', () => {
           },
         },
         checkpoint: { state: 'not_started', providerResourceId: null },
+        now: () => 10_000,
         reserveCreate: async () => true,
         markCreateIssued: async () => {
           calls.push('issued');
@@ -284,6 +481,7 @@ describe('shared Control provisioning failure policy', () => {
           }),
         },
         checkpoint: { state: 'not_started', providerResourceId: null },
+        now: () => 10_000,
         reserveCreate: async () => true,
         markCreateIssued: async () => undefined,
         markCreateDefinitelyRejected: async () => undefined,

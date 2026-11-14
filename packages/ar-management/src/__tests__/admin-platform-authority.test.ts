@@ -11,6 +11,7 @@ import {
   canAccessTenantResource,
   hasPlatformTenantManagementAuthority,
   hasTenantProvisioningAuthority,
+  hasTenantReadAuthority,
 } from '../admin-tenant-access';
 import { requireInternalVersionManagerAuthority } from '../internal-version-access';
 import { enforceDeclaredAdminRouteAccess } from '../admin-route-access';
@@ -287,7 +288,7 @@ describe('acting on tenants other than the request tenant', () => {
   });
 });
 
-describe('tenant provisioning authority (the five routes an automation machine runs on its own permission)', () => {
+describe('tenant provisioning authority (the six routes an automation machine runs on its own permission)', () => {
   const machine = (permissions: string[], tenantScope = ['*']): AdminAuthContext => ({
     userId: 'machine',
     authMethod: 'machine_access_token',
@@ -317,6 +318,39 @@ describe('tenant provisioning authority (the five routes an automation machine r
       )
     ).toBe(false);
     expect(hasTenantProvisioningAuthority(undefined, 'admin:tenants:provision')).toBe(false);
+  });
+
+  it('tenant read: a global machine needs the provision permission; everyone else is as before', () => {
+    expect(hasTenantReadAuthority(machine(['admin:tenants:provision']))).toBe(true);
+    expect(hasTenantReadAuthority(machine(['admin:*']))).toBe(true);
+    expect(hasTenantReadAuthority(machine(['*']))).toBe(true);
+    // Refused: only the settings read, only delete, nothing, or a token limited to some tenants.
+    expect(hasTenantReadAuthority(machine(['admin:settings:read']))).toBe(false);
+    expect(hasTenantReadAuthority(machine(['admin:tenants:delete']))).toBe(false);
+    expect(hasTenantReadAuthority(machine([]))).toBe(false);
+    expect(hasTenantReadAuthority(machine(['admin:tenants:provision'], ['tenant-a']))).toBe(false);
+    expect(hasTenantReadAuthority(undefined)).toBe(false);
+    // Humans keep exactly what the permission-agnostic helper admits.
+    const human = (overrides: Partial<AdminAuthContext>): AdminAuthContext => ({
+      userId: 'human',
+      authMethod: 'session',
+      roles: [],
+      tenantScope: ['*'],
+      ...overrides,
+    });
+    for (const auth of [
+      human({ roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'] }),
+      human({ roles: ['ar_super_admin'], tenantScope: ['tenant-a'] }),
+      human({ roles: ['custom'], globalRoles: ['custom'], globalPermissions: ['*'] }),
+      human({
+        roles: ['custom'],
+        globalRoles: ['custom'],
+        globalPermissions: ['admin:tenants:provision'],
+      }),
+      human({ roles: ['ar_tenant_admin'], tenantScope: ['tenant-a'] }),
+    ]) {
+      expect(hasTenantReadAuthority(auth)).toBe(hasPlatformTenantManagementAuthority(auth));
+    }
   });
 
   it('gives a human nothing for the permission, only for the global platform role', () => {

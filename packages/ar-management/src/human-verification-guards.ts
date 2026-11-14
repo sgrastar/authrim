@@ -160,11 +160,19 @@ export async function checkGlobalHumanVerificationDisable(
       const limit = Math.min(TENANT_PAGE_SIZE, remaining + 1);
       const page = await listEnvironmentTenantDefaultStores(env, {
         limit,
+        // A tenant that cannot be checked must not count as "not using it".
+        unservableTenants: 'throw',
+        // Suspended / frozen tenants can be reactivated, so they are still checked (see below).
+        includeInactive: true,
         ...(after ? { afterTenantId: after } : {}),
       });
       if (page.length > remaining) return { outcome: 'scope_too_large' };
-      for (const { tenantId } of page) {
+      for (const { tenantId, lifecycleState } of page) {
         checked += 1;
+        // Only `deleted` is final. A failed deletion job moves `deleting` back to `suspended`
+        // (suspendTenantAfterDeletionFailure), which an operator can resume, so `deleting` is still
+        // checked.
+        if (lifecycleState === 'deleted') continue;
         if ((await kv.get(`plugins:enabled:${pluginId}:tenant:${tenantId}`)) !== null) continue;
         const settings = await humanVerificationSettingsRequiring(env, tenantId, pluginId);
         if (settings.length > 0) using.push({ tenantId, settings });

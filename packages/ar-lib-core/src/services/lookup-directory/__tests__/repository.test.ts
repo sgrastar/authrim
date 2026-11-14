@@ -1,6 +1,7 @@
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import { describe, expect, it, vi } from 'vitest';
 import type { ResolvedLookupMembership } from '../repository';
+import { sqliteAliasD1 } from './sqlite-alias-d1';
 import { LookupDirectoryRepository, mergeRotatingLookupMemberships } from '../repository';
 
 const INDEX = {
@@ -176,6 +177,60 @@ describe('LookupDirectoryRepository', () => {
         db(session([aliasRow(), aliasRow({ tenant_id: 'tenant-b' })], 'replica'))
       ).findActiveAlias(ALIAS_INDEX)
     ).rejects.toThrow('lookup_alias_not_unique');
+  });
+
+  describe('alias enumeration over a real SQLite table', () => {
+    const tenants = (count: number) =>
+      Array.from({ length: count }, (_, i) => `tenant-${String(i).padStart(2, '0')}`);
+    const repositoryOf = (ids: string[]) =>
+      new LookupDirectoryRepository(
+        sqliteAliasD1(
+          [...ids].reverse().map((tenantId) => ({
+            tenantId,
+            virtualBucket: ALIAS_INDEX.virtualBucket,
+            aliasKind: ALIAS_INDEX.aliasKind,
+            digest: ALIAS_INDEX.digest,
+            projectionJson: JSON.stringify(ALIAS_PROJECTION),
+          }))
+        )
+      );
+    const ids = (result: { aliases: Array<{ tenantId: string }> }) =>
+      result.aliases.map((alias) => alias.tenantId);
+
+    it('returns exactly maximumResults rows when that many exist', async () => {
+      const result = await repositoryOf(tenants(4)).findActiveAliases(
+        ALIAS_INDEX,
+        4,
+        undefined,
+        undefined,
+        { paginated: true }
+      );
+      expect(ids(result)).toEqual(tenants(4));
+    });
+
+    it('returns a full page when more rows exist and the cursor continues without skips or duplicates', async () => {
+      const repository = repositoryOf(tenants(9));
+      const seen: string[] = [];
+      let after: string | undefined;
+      const sizes: number[] = [];
+      for (;;) {
+        const page = ids(
+          await repository.findActiveAliases(ALIAS_INDEX, 4, undefined, after, { paginated: true })
+        );
+        sizes.push(page.length);
+        seen.push(...page);
+        if (page.length < 4) break;
+        after = page[page.length - 1];
+      }
+      expect(sizes).toEqual([4, 4, 1]);
+      expect(seen).toEqual(tenants(9));
+    });
+
+    it('still fails closed for a bounded set larger than the limit', async () => {
+      await expect(repositoryOf(tenants(5)).findActiveAliases(ALIAS_INDEX, 4)).rejects.toThrow(
+        'lookup_alias_result_limit_exceeded'
+      );
+    });
   });
 
   it('uses a validated tenant cursor for bounded alias pagination', async () => {

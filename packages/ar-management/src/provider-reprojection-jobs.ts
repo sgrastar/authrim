@@ -375,6 +375,8 @@ export async function processProviderReprojectionJobs(
       afterTenantId: job.cursor_tenant_id ?? undefined,
       limit: JOB_BATCH_SIZE + 1,
       concurrency: 4,
+      // One pass per revision: a tenant that cannot be reached now must fail the run, not be missed.
+      unservableTenants: 'throw',
     });
     const batch = tenants.slice(0, JOB_BATCH_SIZE);
     let cursor = job.cursor_tenant_id;
