@@ -59,6 +59,7 @@ import {
   listR2Buckets,
   assertR2BucketOwnershipIdentity,
   assertR2BucketOwnershipForUse,
+  readD1AppliedMigrationHistory,
 } from '../../core/cloudflare.js';
 import { runEphemeralSetupMachineAccess } from '../../core/setup-machine-access-lifecycle.js';
 import { CORE_WORKER_COMPONENTS, getWorkerName, type WorkerComponent } from '../../core/naming.js';
@@ -133,6 +134,7 @@ import {
   verifyDraftAppendDatabaseEvidence,
 } from '../../core/release-draft-append-evidence.js';
 import { resolveSameVersionDraftAppend } from '../../core/release-draft-append.js';
+import { adoptControlGeneratedSchemaTargets } from '../../core/control-generated-schema-adoption.js';
 import {
   applyReleaseSchemaUpdatePlan,
   buildReleaseSchemaUpdatePlan,
@@ -1247,6 +1249,23 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
   }
   const manifestChecksum = calculateReleaseManifestChecksum(targetManifestResult.manifest);
   const physicalTargets = resolveReleaseMigrationTargets({ lock: workingLock, config });
+  // Databases Control created after the last schema plan reach the lock without schema evidence.
+  // Adopt their own recorded history (in memory only; the lock is saved later in the normal flow).
+  const controlGeneratedAdoption = await adoptControlGeneratedSchemaTargets({
+    lock: workingLock,
+    targets: physicalTargets,
+    manifest: targetManifestResult.manifest,
+    manifestChecksum,
+    readHistory: readD1AppliedMigrationHistory,
+  });
+  if (controlGeneratedAdoption.adopted.length > 0) {
+    workingLock = controlGeneratedAdoption.lock;
+    console.log(
+      chalk.gray(
+        `  Recorded migration evidence from ${controlGeneratedAdoption.adopted.length} Control-created database(s): ${controlGeneratedAdoption.adopted.map((entry) => `${entry.binding} (${entry.fileCount} files)`).join(', ')}`
+      )
+    );
+  }
   try {
     assertReleaseDatabaseCompatibility({
       manifest: targetManifestResult.manifest,
@@ -1832,6 +1851,17 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       }
       if (recorded.recordedTargetIds.length === 0) return;
       workingLock = recorded.lock;
+      // The append records Control's databases against the pending-only manifest. A database the
+      // lock had no evidence for would get a pending-only (or empty) list; replace it with its own
+      // recorded history, checked against the full stream.
+      const repaired = await adoptControlGeneratedSchemaTargets({
+        lock: workingLock,
+        targets: physicalTargets,
+        manifest: targetManifestResult.manifest,
+        manifestChecksum,
+        readHistory: readD1AppliedMigrationHistory,
+      });
+      workingLock = repaired.lock;
       await saveLockFile(workingLock, lockPath);
     };
     const baseAppliedTargetIds = [
