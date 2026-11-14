@@ -32,7 +32,9 @@ export type SAMLScopedAttributeKind =
   | 'eduPersonScopedAffiliation'
   | 'eduPersonPrincipalName'
   | 'schacHomeOrganization'
-  | 'organizationName';
+  | 'organizationName'
+  | 'pairwiseId'
+  | 'subjectId';
 
 /** Why a scoped value was not released. */
 export type SAMLScopedValueWithholdReason =
@@ -97,6 +99,20 @@ const SCOPED_ATTRIBUTE_HINTS: Record<
     shortForms: ['eppn'],
     exact: ['urn:mace:dir:attribute-def:edupersonprincipalname'],
     oid: /(^|[^0-9.])1\.3\.6\.1\.4\.1\.5923\.1\.1\.1\.6($|[^0-9.])/,
+  },
+  // OASIS SAML subject identifiers: scoped as eduPersonPrincipalName is, so a value can only
+  // name a scope the tenant registered.
+  pairwiseId: {
+    names: ['samlpairwiseid'],
+    shortForms: ['pairwiseid'],
+    exact: ['urn:oasis:names:tc:saml:attribute:pairwise-id'],
+    oid: /(?!)/,
+  },
+  subjectId: {
+    names: ['samlsubjectid'],
+    shortForms: ['subjectid'],
+    exact: ['urn:oasis:names:tc:saml:attribute:subject-id'],
+    oid: /(?!)/,
   },
   schacHomeOrganization: {
     names: ['schachomeorganization'],

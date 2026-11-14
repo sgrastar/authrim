@@ -5338,6 +5338,7 @@ async function idTokenHintNamesUser(
       tenantId,
       clientId,
       sectorIdentifier: clientMetadata.sector_identifier_uri,
+      redirectUris: clientMetadata.redirect_uris,
       selector: clientMetadata.identity_mapping,
       destinationSurface: 'id_token',
       grantedScopes: scope?.split(' ').filter(Boolean),

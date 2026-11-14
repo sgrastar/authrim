@@ -10,6 +10,7 @@
  *    one; then held to the approval (`applySAMLReleaseApproval`). The NameID and the session index
  *    are made only after that, when the response is built.
  */
+import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type {
   Env,
   NameIDFormat,
@@ -18,7 +19,11 @@ import type {
   SamlReleaseItem,
 } from '@authrim/ar-lib-core';
 import {
+  DEFAULT_IDENTIFIER_SALT_REF,
   filterSamlAttributesByDestinationProfile,
+  createStoredIdentifierLookup,
+  prepareMappedIdentifiers,
+  readImportedIdentifierSalt,
   filterSamlAttributesByDestinationProfileDescriptor,
   requireAdminDatabaseAdapter,
   RELEASE_APPROVE_ALL,
@@ -28,7 +33,11 @@ import {
 import { NAMEID_FORMATS } from '../common/constants';
 import type { SAMLUserInfo } from '../common/user-store';
 import {
+  buildIdentityMappingSourceValues,
   resolveSAMLIdentityMappingFieldMappingBinding,
+  type SAMLAttributeSubject,
+  type SAMLIdentityMappingFieldMappingBinding,
+  type SAMLIdentityMappingRuntimeContext,
   type SAMLIdentityMappingReleaseConfig,
   SAMLIdentityMappingRuntimeError,
 } from './attributes';
@@ -52,6 +61,10 @@ import {
  * whose value is made only once approved.
  */
 const DEFERRED_IDENTIFIER = 'authrim-deferred-identifier';
+const EMPTY_CATALOG = {
+  identity: { id: 'saml.nameid', version: '1', contentHash: 'none', compatibilityRange: '*' },
+  entries: [],
+};
 
 export interface SAMLAttributeRelease {
   attributes: SAMLAttribute[];
@@ -89,6 +102,16 @@ export async function computeSAMLAttributeRelease(input: {
     idpEntityId,
     spConfig
   );
+  // Refused before anything is made: the old transform would write the NameID registry first.
+  if (mixesMappedNameIDWithOldTargetedID(identityMapping)) {
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.persistent_identifier_unavailable',
+        severity: 'critical',
+      },
+    ]);
+  }
   const runtimeContext = await buildSAMLIdentityMappingRuntimeContext({
     env,
     tenantId,
@@ -124,6 +147,19 @@ export async function computeSAMLAttributeRelease(input: {
       identityMapping: identityMapping ? { ...identityMapping, runtimeContext } : undefined,
     },
     onError: input.onError,
+    prepareIdentifiers: identityMapping
+      ? (subject) =>
+          prepareSAMLMappedIdentifiers({
+            env,
+            tenantId,
+            idpEntityId,
+            spEntityId: spConfig.entityId,
+            subject,
+            identityMapping,
+            mappingContext,
+            deferIdentifiers: input.identifiers === 'deferred',
+          })
+      : undefined,
   });
   let attributes = release.attributes;
   let required: Set<string> | 'all' = 'all';
@@ -339,6 +375,57 @@ async function buildSAMLIdentityMappingRuntimeContext(input: {
   return { saml: samlContext };
 }
 
+/**
+ * The `persistent_identifier` steps' values for the binding the release uses, made from the
+ * subject as released. Before consent they are placeholders: nothing is made for a release that
+ * may not happen. A step that cannot be made is left out, which fails the release.
+ */
+async function prepareSAMLMappedIdentifiers(input: {
+  env: Env;
+  tenantId: string;
+  idpEntityId: string;
+  spEntityId: string;
+  subject: SAMLAttributeSubject;
+  identityMapping: SAMLIdentityMappingReleaseConfig;
+  mappingContext: SAMLIdentityMappingRuntimeContext;
+  deferIdentifiers: boolean;
+}): Promise<Record<string, string>> {
+  let binding: SAMLIdentityMappingFieldMappingBinding;
+  try {
+    binding = resolveSAMLIdentityMappingFieldMappingBinding(
+      input.identityMapping,
+      input.mappingContext
+    );
+  } catch {
+    // No binding applies: the release refuses for that reason, not for an identifier.
+    return {};
+  }
+  if (!binding.transforms?.some((step) => step.operation === 'persistent_identifier')) return {};
+  const edges = binding.edges ?? [];
+  const prepared = await prepareMappedIdentifiers({
+    transforms: binding.transforms,
+    edges,
+    sourceValues: buildIdentityMappingSourceValues(input.subject, edges),
+    recipient: { protocol: 'saml', spEntityId: input.spEntityId, idpEntityId: input.idpEntityId },
+    loadDefaultSalt: async () =>
+      (await resolveSAMLPairwiseSecretForRef(
+        input.env,
+        input.tenantId,
+        DEFAULT_IDENTIFIER_SALT_REF
+      )) ?? null,
+    // Read only, never made: an imported salt that is not there stops the release.
+    loadImportedSalt: (name) =>
+      readImportedIdentifierSalt(input.env.KEY_MANAGER, input.tenantId, name),
+    lookupStoredIdentifier: (store, audience, sourceHash) =>
+      createStoredIdentifierLookup(
+        requireAdminDatabaseAdapter(input.env, 'saml-mapped-identifier-store'),
+        input.tenantId
+      )(store, audience, sourceHash),
+    placeholder: input.deferIdentifiers ? DEFERRED_IDENTIFIER : null,
+  });
+  return prepared.identifiers;
+}
+
 interface SAMLPersistentIdentifierProfile {
   id: string;
   secretRef?: string;
@@ -439,6 +526,103 @@ function usesSAMLEduPersonTargetedIDTransform(
     ...(identityMapping?.bindings ?? []),
   ];
   return bindings.some((binding) =>
+    binding?.transforms?.some((transform) => transform.operation === 'saml_edu_person_targeted_id')
+  );
+}
+
+/**
+ * The persistent NameID the SP's mapping makes, if it makes one: a persistent_identifier step
+ * (plain format) into `saml.nameid`. Undefined when it makes none, so Authrim's own NameID is
+ * used. Anything else (two steps, other settings, an identifier that cannot be made) stops the
+ * response: no other NameID is sent in its place.
+ */
+export async function resolveSAMLMappedNameID(input: {
+  env: Env;
+  tenantId: string;
+  idpEntityId: string;
+  spConfig: SAMLSPConfig;
+  userInfo: SAMLUserInfo;
+}): Promise<(() => Promise<{ value: string; kept: boolean }>) | undefined> {
+  const identityMapping = await resolveSAMLRuntimeIdentityMapping(
+    input.env,
+    input.tenantId,
+    input.idpEntityId,
+    input.spConfig
+  );
+  const graph = identityMapping?.nameId;
+  if (!graph || graph.transforms.length === 0) return undefined;
+  const refuse = (): never => {
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.persistent_identifier_unavailable',
+        severity: 'critical',
+      },
+    ]);
+  };
+  const [step, ...others] = graph.transforms;
+  if (
+    mixesMappedNameIDWithOldTargetedID(identityMapping) ||
+    others.length > 0 ||
+    step.operation !== 'persistent_identifier' ||
+    step.parameters?.format !== 'plain'
+  ) {
+    refuse();
+  }
+  return async () => {
+    const sourceValues = buildIdentityMappingSourceValues(input.userInfo, graph.edges);
+    const prepared = await prepareMappedIdentifiers({
+      transforms: [step],
+      edges: graph.edges,
+      sourceValues,
+      recipient: {
+        protocol: 'saml',
+        spEntityId: input.spConfig.entityId,
+        idpEntityId: input.idpEntityId,
+      },
+      loadDefaultSalt: async () =>
+        (await resolveSAMLPairwiseSecretForRef(
+          input.env,
+          input.tenantId,
+          DEFAULT_IDENTIFIER_SALT_REF
+        )) ?? null,
+      loadImportedSalt: (name) =>
+        readImportedIdentifierSalt(input.env.KEY_MANAGER, input.tenantId, name),
+      lookupStoredIdentifier: (store, audience, sourceHash) =>
+        createStoredIdentifierLookup(
+          requireAdminDatabaseAdapter(input.env, 'saml-mapped-identifier-store'),
+          input.tenantId
+        )(store, audience, sourceHash),
+    });
+    const value = prepared.identifiers[step.id];
+    if (!value) return refuse();
+    // The mapping's own checks on what it is made from, as for any other value it releases.
+    const checked = executeRuntimeMapping({
+      catalog: identityMapping.catalog?.identity ? identityMapping.catalog : EMPTY_CATALOG,
+      sourceValues,
+      edges: graph.edges,
+      transforms: [step],
+      validationRules: graph.validationRules,
+      runtimeContext: { identifiers: prepared.identifiers },
+    });
+    if (checked.status === 'failed') return refuse();
+    return { value, kept: prepared.kept[step.id] === true };
+  };
+}
+
+/**
+ * The old eduPersonTargetedID transform shares the NameID registry: whichever is made first
+ * would decide both. It is not used together with a NameID the mapping makes.
+ */
+function mixesMappedNameIDWithOldTargetedID(
+  identityMapping: SAMLIdentityMappingReleaseConfig | undefined
+): boolean {
+  if (!identityMapping?.nameId?.transforms.length) return false;
+  return [
+    identityMapping,
+    identityMapping.defaultBinding,
+    ...(identityMapping.bindings ?? []),
+  ].some((binding) =>
     binding?.transforms?.some((transform) => transform.operation === 'saml_edu_person_targeted_id')
   );
 }

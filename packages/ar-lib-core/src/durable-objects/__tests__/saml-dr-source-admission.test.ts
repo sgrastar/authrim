@@ -162,6 +162,36 @@ describe('SAML DR authoritative DO admission', () => {
     expect(await keys.getExistingSecretRpc(secretRef)).toBeNull();
   });
 
+  it('imports a salt only under an admitted operation, and never keeps one that was not saved', async () => {
+    const f = fixture(seededKeys());
+    const keys = new KeyManager(f.context, f.env);
+    const secretRef = 'identifier-salt:import:shibboleth';
+    const before = structuredClone(f.data.get('state'));
+    // During a hold (not admitted) the live state is not written.
+    await expect(keys.importSecretRpc({ secretRef, value: 'c2FsdA==' })).rejects.toThrow();
+    expect(f.data.get('state')).toEqual(before);
+    expect(f.put).not.toHaveBeenCalled();
+    // A save that fails leaves no salt behind, here or after a restart.
+    f.acquire.mockResolvedValue({ admitted: true });
+    f.put.mockRejectedValueOnce(new Error('storage_failed'));
+    await expect(keys.importSecretRpc({ secretRef, value: 'c2FsdA==' })).rejects.toThrow(
+      'storage_failed'
+    );
+    expect(await keys.getExistingSecretRpc(secretRef)).toBeNull();
+    // Once admitted, it is kept, and the same salt again changes nothing.
+    await expect(keys.importSecretRpc({ secretRef, value: 'c2FsdA==' })).resolves.toMatchObject({
+      outcome: 'created',
+    });
+    await expect(keys.importSecretRpc({ secretRef, value: 'c2FsdA==' })).resolves.toMatchObject({
+      outcome: 'unchanged',
+    });
+    expect(
+      (f.data.get('state') as { secrets: Record<string, { active: { value: string } }> }).secrets[
+        secretRef
+      ].active.value
+    ).toBe('c2FsdA==');
+  });
+
   it('initializes only inside admitted normal operations and keeps nested calls under one permit', async () => {
     const f = fixture();
     f.acquire.mockResolvedValue({ admitted: true });

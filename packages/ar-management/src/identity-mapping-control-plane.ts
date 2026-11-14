@@ -64,7 +64,9 @@ import {
 } from './identity-provisioning-assignment';
 import {
   parseCsvSourceProfile,
+  persistentIdentifierSettingsProblem,
   validateCatalogBundle,
+  validateTransformStep,
 } from '@authrim/ar-lib-field-mapping/authoring';
 import type { CsvSourceProfileParserOptions } from '@authrim/ar-lib-field-mapping/authoring';
 import type { FieldCatalogEntry } from '@authrim/ar-lib-field-mapping/contract';
@@ -119,6 +121,7 @@ const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
   'affix_text',
   'oidc_pairwise_sub',
   'saml_edu_person_targeted_id',
+  'persistent_identifier',
   'text_to_boolean',
   'json_build',
   'json_extract_text',
@@ -10289,6 +10292,72 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
       (!Number.isInteger(transform.edgeIndex) || transform.edgeIndex < 0)
     ) {
       throw badRequest(`${path}.transforms[${index}].edgeIndex must be a non-negative integer`);
+    }
+    if (transform.operation === 'persistent_identifier') {
+      // Made from exactly one input, which is not released and no other step reads; its settings
+      // are checked as the runtime checks them, so a set that could never make one is not saved.
+      const edgeCount = rule.edges?.length ?? 0;
+      if (transform.edgeIndex === undefined || transform.edgeIndex >= edgeCount) {
+        throw badRequest(`${path}.transforms[${index}] needs the input it is made from`);
+      }
+      const shared = rule.transforms?.some(
+        (other, otherIndex) => otherIndex !== index && other.edgeIndex === transform.edgeIndex
+      );
+      if (shared) {
+        throw badRequest(
+          `${path}.transforms[${index}] input is read by another step and would be released`
+        );
+      }
+      const checked = validateTransformStep({
+        id: `${path}.transforms[${index}]`,
+        operation: 'persistent_identifier',
+        inputEdgeIds: ['input'],
+        parameters: transform.parameters ?? undefined,
+        outputTargetRef: { side: 'destination', namespace: 'check', path: 'check' },
+      });
+      if (
+        checked.reasons.length > 0 ||
+        persistentIdentifierSettingsProblem(transform.parameters ?? undefined) !== null
+      ) {
+        throw badRequest(`${path}.transforms[${index}].parameters are not valid`);
+      }
+      // Where it goes says the protocol, and with it what the settings may be.
+      const target = rule.edges?.[transform.edgeIndex]?.targetRef;
+      // No other edge may release into the identifier's own output.
+      const sameOutput = rule.edges?.some(
+        (edge, edgeIndex) =>
+          edgeIndex !== transform.edgeIndex &&
+          edge.targetRef?.namespace === target?.namespace &&
+          edge.targetRef?.path === target?.path
+      );
+      if (sameOutput) {
+        throw badRequest(
+          `${path}.transforms[${index}] output is also written by another edge and would carry it`
+        );
+      }
+      const namespace = typeof target?.namespace === 'string' ? target.namespace : '';
+      const parameters = transform.parameters ?? {};
+      // The output must say it is a destination: without a side the runtime reads a source.
+      if (target?.side !== 'destination') {
+        throw badRequest(`${path}.transforms[${index}] output must be a destination field`);
+      }
+      const oidc = namespace.startsWith('oidc.');
+      const saml = namespace.startsWith('saml.');
+      if (
+        (!oidc && !saml) ||
+        (oidc &&
+          (parameters.format !== 'plain' ||
+            parameters.audience === 'sp_entity_id' ||
+            // SimpleSAMLphp's identifiers are SAML ones (made with the IdP's entity ID).
+            String(parameters.algorithm).startsWith('simplesamlphp_'))) ||
+        (saml && parameters.audience === 'sector') ||
+        // The NameID is the identifier itself, framed by the assertion.
+        (namespace === 'saml.nameid' && parameters.format !== 'plain')
+      ) {
+        throw badRequest(
+          `${path}.transforms[${index}].parameters do not fit where the identifier goes`
+        );
+      }
     }
   });
 

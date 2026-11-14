@@ -320,6 +320,8 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
       expect.objectContaining({
         runtimeContext: {
           oidc: expect.objectContaining({ clientId: 'client-a', pairwiseSubject: 'user-1' }),
+          // No persistent_identifier step: nothing was made.
+          identifiers: {},
         },
       })
     );

@@ -21,8 +21,12 @@ describe('public field-mapping entrypoints', () => {
   it('keeps the contract runtime-empty and the hot-path surface narrow', () => {
     expect(Object.keys(contractPublic)).toEqual([]);
     expect(Object.keys(runtimePublic).sort()).toEqual([
+      'PERSISTENT_IDENTIFIER_ALGORITHMS',
+      'PERSISTENT_IDENTIFIER_FORMATS',
       'executeRuntimeMapping',
       'findCatalogEntry',
+      'findSourceValue',
+      'persistentIdentifierSettingsProblem',
     ]);
     expect(authoringPublic).not.toHaveProperty('executeRuntimeMapping');
     expect(authoringPublic).not.toHaveProperty('findCatalogEntry');
