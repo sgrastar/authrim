@@ -35,7 +35,11 @@ export type ConnectionKind = 'rp' | 'sp' | 'op' | 'idp';
 export type AppType = 'web' | 'spa' | 'native';
 export type ImportMode = 'url' | 'file' | 'manual';
 /** How a person who signs in through an upstream provider is matched to an Authrim account. */
-export type LinkRule = 'verified-email' | 'ask' | 'new';
+/**
+ * How someone not linked yet is matched to an existing account: by a verified email address, or
+ * not automatically (they link the provider from their account page, after signing in).
+ */
+export type LinkRule = 'verified-email' | 'manual';
 
 export const KINDS_OF: Record<Direction, readonly ConnectionKind[]> = {
 	out: ['rp', 'sp'],
@@ -741,8 +745,7 @@ export const APP_TYPES: Record<AppType, MessageKey> = {
 
 const LINKS: Record<LinkRule, MessageKey> = {
 	'verified-email': 'sf.link.verified-email',
-	ask: 'sf.link.ask',
-	new: 'sf.link.new'
+	manual: 'sf.link.manual'
 };
 
 /** The text of a stored choice, in the language on screen; an id with no text stands for itself. */

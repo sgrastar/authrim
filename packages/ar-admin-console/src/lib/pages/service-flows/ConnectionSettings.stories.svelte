@@ -21,6 +21,8 @@
 		}
 	});
 
+	const inFlow = (root: HTMLElement, name: RegExp) =>
+		within(root.querySelector<HTMLElement>('.detail__flow')!).getByRole('button', { name });
 	/** The headings of the closed sections in the connection settings card. */
 	const summaries = (root: HTMLElement) => [
 		...root.querySelectorAll<HTMLElement>('.detail__settings summary')
@@ -302,17 +304,25 @@
 
 <!-- Trusting the provider's addresses is warned about while people are matched by verified email. -->
 <Story
-	name="OP: accounts"
+	name="OP: accounts and matching"
 	args={{ prefill: 'op', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await section(canvasElement, /^Account creation/);
-		// Matching people stays a step of the flow: it is not asked again here.
-		await expect(canvas.queryByRole('switch', { name: /verified email/ })).toBeNull();
-		await userEvent.click(
-			canvas.getByRole('switch', { name: 'Treat the provider’s email addresses as verified' })
-		);
+		// How people are matched, and whose "verified" counts, are the flow's matching step.
+		await expect(
+			canvas.queryByRole('switch', { name: 'Treat the provider’s email addresses as verified' })
+		).toBeNull();
+		await userEvent.click(inFlow(canvasElement, /^Matching people/));
+		const cards = canvas.getAllByRole('radio');
+		await expect(cards).toHaveLength(2);
+		const trust = () =>
+			canvas.queryByRole('switch', { name: 'Treat the provider’s email addresses as verified' });
+		await userEvent.click(trust()!);
 		await expect(await canvas.findByText(/someone else’s account/)).toBeInTheDocument();
+		// Not linked automatically: there is no email to trust, so the switch goes.
+		await userEvent.click(canvas.getByRole('radio', { name: /^Do not link automatically/ }));
+		await waitFor(() => expect(trust()).toBeNull());
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

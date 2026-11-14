@@ -29,6 +29,7 @@
 		peekFlowRuntimeState,
 		persistFlowRuntimeState
 	} from '#lib/authrim/flow-runtime-state.js';
+	import { runtimeStepAsksOnlyForEmailCode } from '#lib/authrim/flow-runtime-steps.js';
 	import { cancelRuntimeInteraction } from '#lib/authrim/runtime-cancel.js';
 	import { buildAuthSwitchHref } from '#lib/authrim/auth-switch-url.js';
 	import { completionRedirect } from '#lib/authrim/completion-redirect.js';
@@ -325,6 +326,7 @@
 
 		let flow: FlowRuntimeStartResponse = resumedFlow;
 		let guard = 0;
+		let emailCodeScreenSubmitted = false;
 		while (guard < 10) {
 			guard += 1;
 			if (flow.interaction.state === 'completed') {
@@ -338,12 +340,18 @@
 			}
 
 			// The completion waits for this sign-in (the method was chosen before the code was
-			// sent): the session exists now, so it is submitted here rather than at another page.
-			if (
-				step.render !== false &&
-				step.component !== 'email_verification' &&
-				step.component !== 'completion'
-			) {
+			// sent): the session exists now, so it is submitted here rather than at another page. So
+			// is a condition held for it, and, once, a screen asking for nothing but the code just
+			// checked (reached past that condition: the code was asked here instead). Any other
+			// screen is drawn on its page.
+			const codeHandle =
+				step.component === 'email_verification'
+					? 'verified'
+					: !emailCodeScreenSubmitted && runtimeStepAsksOnlyForEmailCode(step)
+						? 'submitted'
+						: null;
+			if (codeHandle === 'submitted') emailCodeScreenSubmitted = true;
+			if (step.render !== false && !codeHandle && step.component !== 'completion') {
 				if (!persistFlowRuntimeState(flow, { postAuthRedirect })) {
 					throw loginUiDisplayError($LL.error_invalid_request());
 				}
@@ -358,11 +366,7 @@
 					step_id: step.id,
 					node_id: step.source_node_id,
 					selected_handle:
-						step.component === 'email_verification'
-							? 'verified'
-							: step.component === 'completion'
-								? 'completed'
-								: undefined,
+						codeHandle ?? (step.component === 'completion' ? 'completed' : undefined),
 					contract_hash: flow.contract_hash,
 					signature: flow.signature
 				}

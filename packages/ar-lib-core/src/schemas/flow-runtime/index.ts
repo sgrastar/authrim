@@ -1616,14 +1616,46 @@ export function conditionUserAttributeKeys(conditions: readonly unknown[]): stri
   return [...keys];
 }
 
+/** Condition types that read the person signed in (their account, roles, groups, organisations). */
+const SIGNED_IN_USER_CONDITION_TYPES: ReadonlySet<string> = new Set([
+  'user.attribute',
+  'user.group',
+  'user.role',
+  'user.age',
+  'organization_membership',
+  'policy_rule',
+  'policy_evaluation',
+]);
+
+/**
+ * Whether any of these conditions reads the person signed in: judged before anyone is, it would
+ * be judged for nobody. A run that is waiting for the sign-in (the method chosen, the proof still
+ * to come) holds such a condition until then.
+ */
+export function conditionsReadSignedInUser(conditions: readonly unknown[]): boolean {
+  const reads = (condition: unknown): boolean => {
+    if (!isRecord(condition)) return false;
+    if (typeof condition.type === 'string' && SIGNED_IN_USER_CONDITION_TYPES.has(condition.type)) {
+      return true;
+    }
+    return condition.type === 'all' && Array.isArray(condition.all) && condition.all.some(reads);
+  };
+  return conditions.some(reads);
+}
+
+/** The conditions of one condition step (its rows'). */
+export function stepConditionExpressions(
+  step: Pick<FlowRuntimeStep, 'component' | 'config'>
+): unknown[] {
+  if (step.component !== 'condition' || !isRecord(step.config)) return [];
+  const conditions = step.config.conditions;
+  if (!isRecord(conditions) || !Array.isArray(conditions.rows)) return [];
+  return conditions.rows.flatMap((row) => (isRecord(row) ? [row.condition] : []));
+}
+
 /** The conditions of every condition step of a contract (to know what a run will read). */
 export function runtimeConditionExpressions(runtime: Pick<FlowRuntimeContract, 'ui'>): unknown[] {
-  return runtime.ui.steps.flatMap((step) => {
-    if (step.component !== 'condition' || !isRecord(step.config)) return [];
-    const conditions = step.config.conditions;
-    if (!isRecord(conditions) || !Array.isArray(conditions.rows)) return [];
-    return conditions.rows.flatMap((row) => (isRecord(row) ? [row.condition] : []));
-  });
+  return runtime.ui.steps.flatMap(stepConditionExpressions);
 }
 
 function validateRuntimeContract(runtime: Record<string, unknown>): FlowValidationIssue[] {
