@@ -48,7 +48,7 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
     );
   }
 
-  if (sharesConsumedInput(input.transforms)) {
+  if (sharesConsumedInput(input.transforms, input.edges)) {
     // What an identifier is made from would leave through the other step: nothing goes out.
     transformReasons.push(reason('transform.identifier_unavailable'));
   }

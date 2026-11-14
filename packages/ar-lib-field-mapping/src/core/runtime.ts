@@ -57,7 +57,7 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
     );
   }
 
-  const sharedInput = sharesConsumedInput(input.transforms);
+  const sharedInput = sharesConsumedInput(input.transforms, input.edges);
   if (sharedInput) {
     // What an identifier is made from would leave through the other step: nothing goes out.
     transformReasons.push(reason('transform.identifier_unavailable'));

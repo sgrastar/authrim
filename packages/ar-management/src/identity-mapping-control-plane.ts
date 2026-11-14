@@ -10323,8 +10323,24 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
       }
       // Where it goes says the protocol, and with it what the settings may be.
       const target = rule.edges?.[transform.edgeIndex]?.targetRef;
+      // No other edge may release into the identifier's own output.
+      const sameOutput = rule.edges?.some(
+        (edge, edgeIndex) =>
+          edgeIndex !== transform.edgeIndex &&
+          edge.targetRef?.namespace === target?.namespace &&
+          edge.targetRef?.path === target?.path
+      );
+      if (sameOutput) {
+        throw badRequest(
+          `${path}.transforms[${index}] output is also written by another edge and would carry it`
+        );
+      }
       const namespace = typeof target?.namespace === 'string' ? target.namespace : '';
       const parameters = transform.parameters ?? {};
+      // The output must say it is a destination: without a side the runtime reads a source.
+      if (target?.side !== 'destination') {
+        throw badRequest(`${path}.transforms[${index}] output must be a destination field`);
+      }
       const oidc = namespace.startsWith('oidc.');
       const saml = namespace.startsWith('saml.');
       if (
@@ -10334,7 +10350,9 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
             parameters.audience === 'sp_entity_id' ||
             // SimpleSAMLphp's identifiers are SAML ones (made with the IdP's entity ID).
             String(parameters.algorithm).startsWith('simplesamlphp_'))) ||
-        (saml && parameters.audience === 'sector')
+        (saml && parameters.audience === 'sector') ||
+        // The NameID is the identifier itself, framed by the assertion.
+        (namespace === 'saml.nameid' && parameters.format !== 'plain')
       ) {
         throw badRequest(
           `${path}.transforms[${index}].parameters do not fit where the identifier goes`

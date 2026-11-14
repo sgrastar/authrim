@@ -134,6 +134,10 @@
             {
               "path": "016_admin_invitation_code_delivery.sql",
               "checksum": "e9c464dfe4eeea88496a56844db53a0ec642e958c87151f8ad4db543a07164db"
+            },
+            {
+              "path": "017_mapped_identifier_values.sql",
+              "checksum": "b9531378e524a0d69b98a788e7cb1fd209f37fe05a3115631425491b73d5d88c"
             }
           ]
         },
@@ -361,6 +365,10 @@
         {
           "path": "016_admin_invitation_code_delivery.sql",
           "checksum": "e9c464dfe4eeea88496a56844db53a0ec642e958c87151f8ad4db543a07164db"
+        },
+        {
+          "path": "017_mapped_identifier_values.sql",
+          "checksum": "b9531378e524a0d69b98a788e7cb1fd209f37fe05a3115631425491b73d5d88c"
         }
       ]
     },

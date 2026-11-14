@@ -239,6 +239,7 @@ export * from './services/oidc-id-token-release';
 export * from './services/persistent-identifiers';
 export * from './services/identifier-algorithms';
 export * from './services/mapped-identifiers';
+export * from './services/identifier-salt-refs';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';
 export * from './utils/custom-redirect';

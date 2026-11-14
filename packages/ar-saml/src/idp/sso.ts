@@ -43,7 +43,7 @@ import {
   inflateRedirectBindingMessage,
   parsePostBindingFormDataWithLimit,
 } from '../common/message-limits';
-import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
+import { NAMEID_FORMATS, SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig } from '../admin/providers';
 import { getSamlUserInfoById, type SAMLUserInfo } from '../common/user-store';
@@ -96,6 +96,7 @@ import { resolveSAMLReleaseConsent, samlReleaseConsentStillCurrent } from './rel
 import {
   applySAMLReleaseApproval,
   computeSAMLAttributeRelease,
+  resolveSAMLMappedNameID,
   samlApprovalNeedsIdentifiers,
 } from './release-items';
 import { scheduleSAMLAttributeWithheldAudit, scheduleSAMLPolicyFailureAudit } from './audit';
@@ -1230,6 +1231,11 @@ async function generateSAMLResponse(
   const nameIdValue = await resolveSAMLNameIDValue(userInfo, nameIdFormat, {
     tenantId,
     spEntityId: spConfig.entityId,
+    // The NameID the SP's mapping makes, if it makes one (e.g. the one an earlier IdP issued).
+    mappedNameID:
+      nameIdFormat === NAMEID_FORMATS.PERSISTENT
+        ? await resolveSAMLMappedNameID({ env, tenantId, idpEntityId, spConfig, userInfo })
+        : undefined,
     pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
     persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
     allowCreate: authnRequest.nameIdPolicy?.allowCreate ?? true,

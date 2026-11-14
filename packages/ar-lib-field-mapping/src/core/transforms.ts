@@ -2,6 +2,8 @@ import { buildTraceEntry } from './trace';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
 import type {
+  FieldRef,
+  MappingRuleEdge,
   MappingTransformStep,
   ReasonCode,
   SourceValueEnvelope,
@@ -30,6 +32,9 @@ export const PERSISTENT_IDENTIFIER_ALGORITHMS = [
   'simplesamlphp_subject_id',
 ] as const;
 
+/** The name an imported salt is kept under (identifier-salt:import:<name>). */
+export const IDENTIFIER_SALT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
+
 const IDENTIFIER_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{0,126}$/u;
 
 /**
@@ -55,8 +60,29 @@ export function persistentIdentifierSettingsProblem(
   ) {
     return 'algorithm';
   }
-  // A named (imported) salt is not available yet: only the tenant's own.
-  if (p.salt !== undefined) return 'salt';
+  // A salt brought from another identity provider, by the name it was imported under.
+  if (p.salt !== undefined && (typeof p.salt !== 'string' || !IDENTIFIER_SALT_NAME.test(p.salt))) {
+    return 'salt';
+  }
+  // What each algorithm makes: an identifier per recipient, or one for every recipient.
+  const fits: Record<string, readonly string[]> = {
+    authrim_sha256: ['plain', 'saml_targeted_id', 'saml_pairwise_id'],
+    shibboleth: ['plain', 'saml_targeted_id', 'saml_pairwise_id'],
+    keycloak_sha256: ['plain'],
+    simplesamlphp_targeted_id: ['plain', 'saml_targeted_id'],
+    simplesamlphp_persistent_nameid: ['plain', 'saml_targeted_id'],
+    simplesamlphp_pairwise_id: ['saml_pairwise_id'],
+    // The same for every recipient: never released as a per-recipient identifier.
+    simplesamlphp_subject_id: ['saml_subject_id'],
+  };
+  if (!fits[algorithm]?.includes(format)) return 'format_algorithm';
+  const stored = p.stored ?? 'off';
+  if (
+    (stored !== 'off' && (typeof p.store !== 'string' || !IDENTIFIER_SALT_NAME.test(p.store))) ||
+    (p.store !== undefined && stored === 'off')
+  ) {
+    return 'store';
+  }
   if ((p.digest !== undefined || p.encoding !== undefined) && algorithm !== 'shibboleth') {
     return 'digest_or_encoding';
   }
@@ -79,8 +105,24 @@ export function persistentIdentifierSettingsProblem(
  * A persistent identifier's input read by any other step: its value would go out through that
  * step (or a second identifier), next to or in place of the identifier.
  */
-export function sharesConsumedInput(transforms: readonly MappingTransformStep[] = []): boolean {
+export function sharesConsumedInput(
+  transforms: readonly MappingTransformStep[] = [],
+  edges: readonly MappingRuleEdge[] = []
+): boolean {
   const consumed = consumedEdgeIds(transforms);
+  // Another edge into the identifier's own output would release its value there as well.
+  const identifierTargets = transforms
+    .filter((step) => step.operation === 'persistent_identifier')
+    .map((step) => step.outputTargetRef);
+  if (
+    edges.some(
+      (edge) =>
+        !consumed.has(edge.id) &&
+        identifierTargets.some((target) => sameTarget(target, edge.targetRef))
+    )
+  ) {
+    return true;
+  }
   const readers = new Map<string, number>();
   for (const step of transforms) {
     for (const edgeId of new Set(step.inputEdgeIds)) {
@@ -88,6 +130,15 @@ export function sharesConsumedInput(transforms: readonly MappingTransformStep[] 
     }
   }
   return [...readers.values()].some((count) => count > 1);
+}
+
+function sameTarget(a: FieldRef, b: FieldRef): boolean {
+  if (a.catalogEntryId && b.catalogEntryId) return a.catalogEntryId === b.catalogEntryId;
+  return (
+    (a.side ?? 'source') === (b.side ?? 'source') &&
+    a.namespace === b.namespace &&
+    a.path === b.path
+  );
 }
 
 /**
@@ -183,6 +234,14 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
       },
       { name: 'scope', kind: 'string', required: false },
       { name: 'salt', kind: 'string', required: false },
+      // Identifiers kept from another IdP: used first (prefer), or only (require).
+      {
+        name: 'stored',
+        kind: 'enum',
+        required: false,
+        allowedValues: ['off', 'prefer', 'require'],
+      },
+      { name: 'store', kind: 'string', required: false },
       { name: 'sourceMetadataSet', kind: 'string', required: false },
       { name: 'destinationMetadataSet', kind: 'string', required: false },
     ],

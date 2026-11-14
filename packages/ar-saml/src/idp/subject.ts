@@ -48,6 +48,12 @@ export interface SAMLNameIDContext {
   transientStore?: SAMLTransientNameIDStore;
   transientTtlSeconds?: number;
   sessionId?: string;
+  /**
+   * The persistent NameID the SP's mapping makes (a persistent_identifier step into
+   * `saml.nameid`), when it has one: used instead of Authrim's own. `kept` says it is an
+   * identifier the person already had (imported), which AllowCreate=false accepts.
+   */
+  mappedNameID?: () => Promise<{ value: string; kept: boolean }>;
 }
 
 export type SAMLPersistentIdentifierAlgorithm = PersistentIdentifierAlgorithm;
@@ -277,10 +283,14 @@ async function resolvePersistentNameID(
   subject: SAMLSubjectInfo,
   context?: SAMLNameIDContext
 ): Promise<string> {
-  if (!context?.pairwiseSalt) {
+  if (!context) {
+    throw new Error('PAIRWISE_SALT is required for persistent SAML NameID');
+  }
+  if (!context.mappedNameID && !context.pairwiseSalt) {
     throw new Error('PAIRWISE_SALT is required for persistent SAML NameID');
   }
 
+  // A NameID issued before stays the NameID: a persistent identifier never changes for the SP.
   const registryKey =
     context.tenantId && context.spEntityId
       ? buildSAMLPersistentNameIDRegistryKey(context.tenantId, context.spEntityId, subject.id)
@@ -294,7 +304,8 @@ async function resolvePersistentNameID(
     }
   }
 
-  if (context.allowCreate === false) {
+  const mapped = context.mappedNameID ? await context.mappedNameID() : undefined;
+  if (context.allowCreate === false && !mapped?.kept) {
     throw new SAMLNameIDPolicyError(
       'AuthnRequest NameIDPolicy AllowCreate=false is not satisfied',
       {
@@ -306,12 +317,14 @@ async function resolvePersistentNameID(
   }
 
   const audience = buildSAMLPairwiseSectorIdentifier(context.tenantId, context.spEntityId);
-  const nameId = await generateSAMLPersistentIdentifier(
-    subject.id,
-    audience,
-    context.pairwiseSalt,
-    context.pairwiseAlgorithm
-  );
+  const nameId = mapped
+    ? mapped.value
+    : await generateSAMLPersistentIdentifier(
+        subject.id,
+        audience,
+        requirePairwiseSalt(context.pairwiseSalt),
+        context.pairwiseAlgorithm
+      );
   if (context.persistentRegistry && registryKey) {
     await context.persistentRegistry.put(
       registryKey,
@@ -327,6 +340,11 @@ async function resolvePersistentNameID(
   }
 
   return nameId;
+}
+
+function requirePairwiseSalt(salt: string | undefined): string {
+  if (!salt) throw new Error('PAIRWISE_SALT is required for persistent SAML NameID');
+  return salt;
 }
 
 export async function generateSAMLPersistentIdentifier(

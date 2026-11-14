@@ -1,10 +1,11 @@
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { FieldRef, SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import {
-  DEFAULT_IDENTIFIER_SALT_REF,
+  createStoredIdentifierLookup,
   prepareMappedIdentifiers,
   resolvePairwiseSector,
 } from './mapped-identifiers';
+import { DEFAULT_IDENTIFIER_SALT_REF, readImportedIdentifierSalt } from './identifier-salt-refs';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
@@ -322,6 +323,13 @@ export async function applyOIDCIdentityMapping(
       }),
     },
     loadDefaultSalt: () => loadDefaultIdentifierSalt(input.env, input.tenantId),
+    loadImportedSalt: (name) =>
+      readImportedIdentifierSalt(input.env.KEY_MANAGER, input.tenantId, name),
+    lookupStoredIdentifier: (store, audience, sourceHash) =>
+      createStoredIdentifierLookup(
+        requireDedicatedAdminDatabaseAdapter(input.env, 'mapped-identifier-store'),
+        input.tenantId
+      )(store, audience, sourceHash),
     placeholder,
   });
   const runtimeResult = executeRuntimeMapping({
@@ -342,7 +350,28 @@ export async function applyOIDCIdentityMapping(
   });
   // An identifier that could not be made stops the sub as well as the claims: no other value
   // (the user's id) may stand in for it.
+  // Every identifier the mapping makes must be among what it released, where it said: an
+  // identifier dropped on the way (a target the catalog lacks, another namespace) would leave the
+  // user's id in its place.
+  const identifierMissing = (binding.transforms ?? []).some((step) => {
+    if (step.operation !== 'persistent_identifier') return false;
+    const made = mappedIdentifiers.identifiers[step.id];
+    return (
+      !made ||
+      // A target without its side is read as a source by the runtime: never a release.
+      step.outputTargetRef.side !== 'destination' ||
+      step.outputTargetRef.namespace !== destinationNamespace ||
+      !(runtimeResult.values ?? []).some(
+        (value) =>
+          value.value === made &&
+          value.sourceRef.side === 'destination' &&
+          value.sourceRef.namespace === step.outputTargetRef.namespace &&
+          value.sourceRef.path === step.outputTargetRef.path
+      )
+    );
+  });
   if (
+    identifierMissing ||
     (runtimeResult.reasons ?? []).some(
       (reason) => reason.code === 'transform.identifier_unavailable'
     )

@@ -72,7 +72,11 @@ describe('persistent_identifier', () => {
     for (const parameters of [
       { algorithm: 'authrim_sha256' },
       { format: 'plain', algorithm: 'md5' },
-      { format: 'plain', algorithm: 'authrim_sha256', salt: 'imported' },
+      { format: 'plain', algorithm: 'authrim_sha256', salt: 'Bad Name' },
+      // An identifier that is the same for every recipient, released as a per-recipient one.
+      { format: 'saml_pairwise_id', algorithm: 'simplesamlphp_subject_id', scope: 'example.org' },
+      { format: 'saml_subject_id', algorithm: 'shibboleth', scope: 'example.org' },
+      { format: 'plain', algorithm: 'authrim_sha256', stored: 'prefer' },
       { format: 'saml_pairwise_id', algorithm: 'shibboleth' },
     ]) {
       const result = executeRuntimeMapping(
@@ -100,6 +104,15 @@ describe('persistent_identifier', () => {
     expect(result.status).toBe('failed');
     expect(result.values).toEqual([]);
     expect(JSON.stringify(result.values)).not.toContain('jdoe@example.test');
+  });
+
+  it("releases nothing when another edge writes into the identifier's output", () => {
+    const input = withIdentifier({ 'step.identifier': 'PAIRWISE-1' });
+    const [edge] = input.edges;
+    input.edges = [...input.edges, { ...edge, id: 'edge.raw' }];
+    const result = executeRuntimeMapping(input);
+    expect(result.status).toBe('failed');
+    expect(result.values).toEqual([]);
   });
 
   it('keeps the input out of a dry run as well', () => {

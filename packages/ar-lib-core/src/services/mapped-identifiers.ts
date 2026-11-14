@@ -27,9 +27,6 @@ import {
  * leaves this module.
  */
 
-/** The tenant's own salt for identifiers Authrim makes (created on first use). */
-export const DEFAULT_IDENTIFIER_SALT_REF = 'identifier-salt:default';
-
 export type IdentifierRecipient =
   | {
       protocol: 'oidc';
@@ -46,6 +43,20 @@ export interface PrepareMappedIdentifiersInput {
   recipient: IdentifierRecipient;
   /** Reads the tenant's default salt; null when it cannot be had. */
   loadDefaultSalt: () => Promise<string | null>;
+  /**
+   * Reads a salt imported from another identity provider, base64 of its bytes; null when there
+   * is none by that name (it is never made up).
+   */
+  loadImportedSalt?: (name: string) => Promise<string | null>;
+  /**
+   * Looks up an identifier kept from another IdP (by store, audience and the SHA-256 of the
+   * source value); null when there is none. A failed lookup throws: nothing is made instead.
+   */
+  lookupStoredIdentifier?: (
+    store: string,
+    audience: string,
+    sourceHash: string
+  ) => Promise<string | null>;
   /** For a test user or before consent: what every identifier is instead of being made. */
   placeholder?: string | null;
 }
@@ -54,6 +65,8 @@ export interface PreparedMappedIdentifiers {
   identifiers: Record<string, string>;
   /** Why a step has no identifier (codes only, never values). */
   failures: Record<string, string>;
+  /** The steps whose identifier is one the person already had (from the store). */
+  kept: Record<string, true>;
 }
 
 export function usesMappedIdentifiers(transforms?: readonly MappingTransformStep[]): boolean {
@@ -65,10 +78,11 @@ export async function prepareMappedIdentifiers(
 ): Promise<PreparedMappedIdentifiers> {
   const identifiers: Record<string, string> = {};
   const failures: Record<string, string> = {};
+  const kept: Record<string, true> = {};
   const steps = (input.transforms ?? []).filter(
     (step) => step.operation === 'persistent_identifier'
   );
-  if (steps.length === 0) return { identifiers, failures };
+  if (steps.length === 0) return { identifiers, failures, kept };
 
   let salt: Promise<string | null> | undefined;
   for (const step of steps) {
@@ -79,16 +93,43 @@ export async function prepareMappedIdentifiers(
       }
       const settings = readSettings(step);
       const value = readInput(step, input.edges, input.sourceValues);
-      salt ??= input.loadDefaultSalt();
-      const saltText = await salt;
-      if (!saltText) throw new IdentifierComputationError('identifier.salt_missing');
       const target = resolveTarget(settings, input.recipient);
+      if (settings.stored !== 'off' && settings.store) {
+        let found: string | null;
+        try {
+          found = input.lookupStoredIdentifier
+            ? await input.lookupStoredIdentifier(
+                settings.store,
+                target.audience,
+                await sha256Hex(value)
+              )
+            : null;
+        } catch {
+          throw new IdentifierComputationError('identifier.stored_unavailable');
+        }
+        if (found) {
+          identifiers[step.id] = frame(settings, found, input.recipient);
+          kept[step.id] = true;
+          continue;
+        }
+        if (settings.stored === 'require') {
+          throw new IdentifierComputationError('identifier.stored_missing');
+        }
+      }
+      const saltBytes = settings.salt
+        ? decodeImportedSalt(await (input.loadImportedSalt?.(settings.salt) ?? null))
+        : await (async () => {
+            salt ??= input.loadDefaultSalt();
+            const text = await salt;
+            return text ? new TextEncoder().encode(text) : null;
+          })();
+      if (!saltBytes) throw new IdentifierComputationError('identifier.salt_missing');
       const opaque = await computeIdentifier({
         algorithm: settings.algorithm,
         value,
         audience: target.audience,
         issuer: target.issuer,
-        salt: new TextEncoder().encode(saltText),
+        salt: saltBytes,
         digest: settings.digest,
         encoding: settings.encoding,
         scope: settings.scope,
@@ -101,7 +142,7 @@ export async function prepareMappedIdentifiers(
         error instanceof IdentifierComputationError ? error.code : 'identifier.unavailable';
     }
   }
-  return { identifiers, failures };
+  return { identifiers, failures, kept };
 }
 
 interface IdentifierSettings {
@@ -111,12 +152,17 @@ interface IdentifierSettings {
   encoding?: ShibbolethEncoding;
   audience: 'auto' | 'sector' | 'sp_entity_id';
   scope?: string;
+  /** An imported salt's name; the tenant's own salt when absent. */
+  salt?: string;
+  stored: 'off' | 'prefer' | 'require';
+  store?: string;
   sourceMetadataSet?: string;
   destinationMetadataSet?: string;
 }
 
 const FORMATS = ['plain', 'saml_targeted_id', 'saml_pairwise_id', 'saml_subject_id'] as const;
 const AUDIENCES = ['auto', 'sector', 'sp_entity_id'] as const;
+const STORED = ['off', 'prefer', 'require'] as const;
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
   return typeof value === 'string' && (allowed as readonly string[]).includes(value)
@@ -133,7 +179,9 @@ function readSettings(step: MappingTransformStep): IdentifierSettings {
   const parameters = step.parameters ?? {};
   // The same check the admin API runs before saving.
   const problem = persistentIdentifierSettingsProblem(parameters);
-  if (problem === 'salt') throw new IdentifierComputationError('identifier.salt_missing');
+  if (problem === 'salt' || problem === 'store') {
+    throw new IdentifierComputationError('identifier.invalid_settings');
+  }
   if (problem === 'scope') {
     throw new IdentifierComputationError(
       parameters.scope === undefined ? 'identifier.scope_missing' : 'identifier.invalid_scope'
@@ -151,6 +199,9 @@ function readSettings(step: MappingTransformStep): IdentifierSettings {
     digest: oneOf(parameters.digest, SHIBBOLETH_DIGESTS),
     encoding: oneOf(parameters.encoding, SHIBBOLETH_ENCODINGS),
     scope: optionalText(parameters.scope),
+    salt: optionalText(parameters.salt),
+    stored: oneOf(parameters.stored, STORED) ?? 'off',
+    store: optionalText(parameters.store),
     sourceMetadataSet: optionalText(parameters.sourceMetadataSet),
     destinationMetadataSet: optionalText(parameters.destinationMetadataSet),
   };
@@ -233,6 +284,42 @@ function frame(
       }
       return scoped;
     }
+  }
+}
+
+/** SHA-256 of a source value, lower-case hex: how stored identifiers are keyed. */
+export async function sha256Hex(value: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Looks identifiers up in the tenant's admin database (mapped_identifier_values). */
+export function createStoredIdentifierLookup(
+  adapter: { queryOne<T>(sql: string, params: unknown[]): Promise<T | null> },
+  tenantId: string
+): (store: string, audience: string, sourceHash: string) => Promise<string | null> {
+  return async (store, audience, sourceHash) => {
+    const row = await adapter.queryOne<{ identifier: string }>(
+      `SELECT identifier FROM mapped_identifier_values
+        WHERE tenant_id = ? AND store_name = ? AND audience = ? AND source_hash = ?`,
+      [tenantId, store, audience, sourceHash]
+    );
+    return row?.identifier ?? null;
+  };
+}
+
+/** An imported salt's bytes (it is kept base64-encoded); null when missing or not base64. */
+function decodeImportedSalt(value: string | null): Uint8Array | null {
+  if (!value) return null;
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.length > 0 ? bytes : null;
+  } catch {
+    return null;
   }
 }
 
