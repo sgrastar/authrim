@@ -114,6 +114,34 @@
 	{#snippet template(args)}{@render frame(args)}{/snippet}
 </Story>
 
+<!-- Each service flow has one mapping, in its own direction: a social login (OP) takes its claims
+     into Authrim's attributes; what Authrim passes on to apps is set in their flows. -->
+<Story
+	name="OP: its one mapping, into Authrim"
+	args={{ prefill: 'op', filled: 'complete', review: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('heading', { name: t('sf.maps.in.title') })).toBeInTheDocument();
+		await expect(canvas.getByText(t('sf.maps.in.label'))).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { name: t('sf.maps.out.title') })).toBeNull();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- An app's flow has the other direction: Authrim's attributes into what the app receives. -->
+<Story
+	name="RP: its one mapping, to the app"
+	args={{ prefill: 'rp', filled: 'complete', review: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('heading', { name: t('sf.maps.out.title') })).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { name: t('sf.maps.in.title') })).toBeNull();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
 <!-- The flow is the hub: each of its settings opens its own screen on the right. -->
 <Story
 	name="Every setting opens from the flow"
