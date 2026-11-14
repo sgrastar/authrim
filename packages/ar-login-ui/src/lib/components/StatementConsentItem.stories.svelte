@@ -1,6 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, userEvent, within } from 'storybook/test';
+	import { getLocale } from '$i18n/i18n-svelte';
 	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import StatementConsentItem from './StatementConsentItem.svelte';
 
@@ -42,11 +43,12 @@
 		const canvas = within(canvasElement);
 		await expect(canvas.getByTitle('Terms of Service')).toHaveAttribute(
 			'src',
-			'/statements/terms/embed?version=20261113'
+			// The frame and the link carry the language the step is drawn in.
+			`/statements/terms/embed?version=20261113&lang=${getLocale()}`
 		);
 		await expect(canvas.getByRole('link')).toHaveAttribute(
 			'href',
-			'/statements/terms?version=20261113'
+			`/statements/terms?version=20261113&lang=${getLocale()}`
 		);
 		await userEvent.click(canvas.getByRole('checkbox'));
 		await expect(args.onchange).toHaveBeenCalledWith(true);
