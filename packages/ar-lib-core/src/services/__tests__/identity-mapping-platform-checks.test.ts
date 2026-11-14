@@ -94,6 +94,10 @@ describe('findPlatformMappingVersionViolation', () => {
     for (const transform of [
       { operation: 'oidc_pairwise_sub' },
       { operation: 'saml_edu_person_targeted_id' },
+      {
+        operation: 'persistent_identifier',
+        parameters: { format: 'plain', algorithm: 'authrim_sha256' },
+      },
       { operation: 'copy', parameters: { persistentIdentifierProfileId: 'pip-1' } },
     ]) {
       expect(

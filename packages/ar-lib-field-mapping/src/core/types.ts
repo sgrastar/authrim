@@ -19,6 +19,7 @@ export type TransformOperation =
   | 'first'
   | 'oidc_pairwise_sub'
   | 'saml_edu_person_targeted_id'
+  | 'persistent_identifier'
   | 'affix_text'
   | 'concat'
   | 'fallback'

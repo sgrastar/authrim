@@ -19,6 +19,8 @@ export { buildTraceEntry } from './core/trace';
 export {
   TRANSFORM_OPERATION_SCHEMAS,
   executeTransformStep,
+  persistentIdentifierSettingsProblem,
+  sharesConsumedInput,
   validateTransformRegistry,
   validateTransformStep,
 } from './core/transforms';

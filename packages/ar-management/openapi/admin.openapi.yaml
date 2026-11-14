@@ -13746,6 +13746,220 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/field-mapping/identifier-salts:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminFieldMappingIdentifierSalts
+      summary: List imported identifier salts.
+      description: >-
+        Lists the salts imported from other identity providers for persistent_identifier steps, by
+        name with a fingerprint (the first 16 hex characters of a SHA-256). Salt values are never
+        returned.
+      responses:
+        '200':
+          description: Imported salts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [salts]
+                properties:
+                  salts:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, fingerprint, updatedAt]
+                      properties:
+                        name:
+                          type: string
+                        fingerprint:
+                          type: string
+                        updatedAt:
+                          type: integer
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/field-mapping/identifier-salts/{name}':
+    put:
+      tags:
+        - Field Mapping
+      operationId: putApiAdminFieldMappingIdentifierSaltsByName
+      summary: Import an identifier salt.
+      description: >-
+        Imports a salt from another identity provider (Shibboleth idp.persistentId.salt or
+        encodedSalt, Keycloak's pairwise mapper salt, SimpleSAMLphp secretsalt) under a name a
+        persistent_identifier step refers to. `utf8` takes the text as the IdP held it; `base64`
+        takes bytes. Putting the same salt again changes nothing; a different one replaces the
+        current salt only with its fingerprint in replaceFingerprint (otherwise 409). The value is
+        never returned or logged; the audit log records the fingerprint.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The name persistent_identifier steps refer to (`salt`).
+          schema:
+            type: string
+            pattern: '^[a-z0-9][a-z0-9_-]{0,62}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value, encoding]
+              additionalProperties: false
+              properties:
+                value:
+                  type: string
+                  minLength: 1
+                encoding:
+                  type: string
+                  enum: [utf8, base64]
+                replaceFingerprint:
+                  type: string
+                  pattern: '^[0-9a-f]{16}$'
+      responses:
+        '200':
+          description: The salt was kept (or was already kept).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name, fingerprint, outcome]
+                properties:
+                  name:
+                    type: string
+                  fingerprint:
+                    type: string
+                  outcome:
+                    type: string
+                    enum: [created, unchanged, replaced]
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/field-mapping/identifier-stores:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminFieldMappingIdentifierStores
+      summary: List identifier stores.
+      description: >-
+        Lists the stores of identifiers imported from other identity providers, with how many
+        identifiers each holds. No identifier is returned.
+      responses:
+        '200':
+          description: Identifier stores.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stores]
+                properties:
+                  stores:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, count, updatedAt]
+                      properties:
+                        name:
+                          type: string
+                        count:
+                          type: integer
+                        updatedAt:
+                          type: integer
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/field-mapping/identifier-stores/{name}/import':
+    post:
+      tags:
+        - Field Mapping
+      operationId: postApiAdminFieldMappingIdentifierStoresByNameImport
+      summary: Import identifiers into a store.
+      description: >-
+        Imports identifiers people already have at another identity provider, for
+        persistent_identifier steps with `stored` (prefer or require). The CSV header is
+        `audience,source_value,identifier`; at most 5000 rows and 2 MiB. The source value is kept
+        only as its SHA-256. All rows are written or none: another identifier for a person already
+        in the store needs replace=true, and an identifier that belongs to someone else for the
+        same audience refuses the import (409). Nothing imported is echoed back.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The store persistent_identifier steps refer to (`store`).
+          schema:
+            type: string
+            pattern: '^[a-z0-9][a-z0-9_-]{0,62}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csv]
+              additionalProperties: false
+              properties:
+                csv:
+                  type: string
+                  minLength: 1
+                replace:
+                  type: boolean
+      responses:
+        '200':
+          description: The identifiers were imported.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [store, created, replaced, unchanged]
+                properties:
+                  store:
+                    type: string
+                  created:
+                    type: integer
+                  replaced:
+                    type: integer
+                  unchanged:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/field-mapping/persistent-identifier-profiles:
     get:
       tags:

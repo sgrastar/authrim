@@ -139,6 +139,13 @@ export interface SAMLIdentityMappingFieldMappingBinding {
 export interface SAMLIdentityMappingReleaseConfig extends Partial<SAMLIdentityMappingFieldMappingBinding> {
   defaultBinding?: SAMLIdentityMappingFieldMappingBinding;
   bindings?: SAMLIdentityMappingFieldMappingBinding[];
+  /** The part of the mapping that makes the persistent NameID (output into `saml.nameid`). */
+  nameId?: {
+    edges: MappingRuleEdge[];
+    transforms: MappingTransformStep[];
+    /** The mapping's checks on what the NameID is made from. */
+    validationRules?: SAMLIdentityMappingFieldMappingBinding['validationRules'];
+  };
 }
 
 export class MissingRequiredSAMLAttributeError extends Error {
@@ -482,7 +489,7 @@ function bindingSpecificity(binding: SAMLIdentityMappingFieldMappingBinding): nu
   );
 }
 
-function buildIdentityMappingSourceValues(
+export function buildIdentityMappingSourceValues(
   subject: SAMLAttributeSubject,
   edges: MappingRuleEdge[]
 ): SourceValueEnvelope[] {

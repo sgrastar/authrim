@@ -84,16 +84,32 @@ export async function releaseSAMLAttributesWithInstitution(input: {
   /** The release config, without the institution. */
   releaseConfig: SAMLAttributeReleaseConfig;
   onError: (message: string, error: unknown) => void;
+  /**
+   * The persistent identifiers of the mapping, made from the subject as it is released (with the
+   * institution's values): the same values the mapping reads.
+   */
+  prepareIdentifiers?: (subject: SAMLAttributeSubject) => Promise<Record<string, string>>;
 }): Promise<SAMLAttributeReleaseResult> {
   const institution = await loadSAMLInstitutionRelease(input.env, input.tenantId, input.onError);
-  return buildSAMLAttributesForSPWithDiagnostics(
-    withSAMLInstitutionAttributes(input.subject, institution),
-    {
-      ...input.releaseConfig,
-      institutionScope: institution.scopePolicy,
-      institutionNames: institution.registeredNames,
-    }
-  );
+  const subject = withSAMLInstitutionAttributes(input.subject, institution);
+  const identityMapping = input.releaseConfig.identityMapping;
+  const identifiers =
+    identityMapping && input.prepareIdentifiers
+      ? await input.prepareIdentifiers(subject)
+      : undefined;
+  return buildSAMLAttributesForSPWithDiagnostics(subject, {
+    ...input.releaseConfig,
+    ...(identityMapping && identifiers
+      ? {
+          identityMapping: {
+            ...identityMapping,
+            runtimeContext: { ...identityMapping.runtimeContext, identifiers },
+          },
+        }
+      : {}),
+    institutionScope: institution.scopePolicy,
+    institutionNames: institution.registeredNames,
+  });
 }
 
 /**
