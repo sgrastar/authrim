@@ -158,11 +158,23 @@ export async function handleStart(
     return perIp ? errorResponse(lang, 'ip_limit', 429) : errorResponse(lang, 'capacity', 503);
   }
 
-  // f. Create the tenant. A failed row stays (and counts) until the cleanup removes the tenant.
+  // f. Create the tenant. A failed row stays (and counts) until the cleanup deals with it. The
+  // cleanup deletes a tenant only when the core accepted this creation (recorded below) or the
+  // tenant still carries the portal's own name and description.
   try {
     await createTenant(config, deps, tenantId);
   } catch (error) {
     await failRow(env, deps, tenantId, ['provisioning'], 'create_tenant', error);
+    return errorResponse(lang, 'failed', 502);
+  }
+  let accepted = false;
+  try {
+    accepted = await registry.markCreateAccepted(env.DB, tenantId, Math.floor(deps.now() / 1000));
+  } catch {
+    // handled below
+  }
+  if (!accepted) {
+    logError('registry_update_failed', { tenantId, op: 'create_accepted' });
     return errorResponse(lang, 'failed', 502);
   }
   logEvent('tenant_requested', { tenantId });
@@ -242,6 +254,9 @@ export async function handleStatus(
     default:
       break;
   }
+
+  // A row the core never confirmed is not asked about: it is not known to be this portal's tenant.
+  if (row.create_accepted_at === null) return jsonResponse({ state: 'failed' });
 
   const nowSeconds = Math.floor(deps.now() / 1000);
   // At most one question to the Admin API per interval and row.

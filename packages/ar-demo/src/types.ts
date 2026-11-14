@@ -11,6 +11,7 @@ export interface DemoStatement {
   bind(...values: unknown[]): DemoStatement;
   run(): Promise<DemoRunResult>;
   first<T = Record<string, unknown>>(): Promise<T | null>;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
 }
 
 export interface DemoDatabase {
@@ -63,4 +64,7 @@ export interface RegistryRow {
   expires_at: number;
   last_polled_at: number | null;
   updated_at: number;
+  delete_attempted_at: number | null;
+  delete_attempts: number;
+  create_accepted_at: number | null;
 }

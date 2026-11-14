@@ -131,6 +131,21 @@ describe('token minting', () => {
     expect(bearers).toEqual(['Bearer token-1', 'Bearer token-1', 'Bearer token-2']);
   });
 
+  it('still caches a token whose lifetime is 60 seconds or less', async () => {
+    upstream.on(K.token, (call) =>
+      json({
+        access_token: `short-${upstream.count(K.token)}`,
+        token_type: 'Bearer',
+        expires_in: 60,
+        scope: new URLSearchParams(call.body).get('scope') ?? SCOPES,
+      })
+    );
+    await createTenant(config, upstream.deps, 'demo-aaaaaaaaaa');
+    upstream.clock.now += 20 * 1000;
+    await createTenant(config, upstream.deps, 'demo-bbbbbbbbbb');
+    expect(upstream.count(K.token)).toBe(1);
+  });
+
   it('mints once for concurrent callers', async () => {
     await Promise.all([
       createTenant(config, upstream.deps, 'demo-aaaaaaaaaa'),

@@ -7,6 +7,8 @@
   "compatibility_date": "2026-07-01",
   "workers_dev": false,
   "observability": { "enabled": true },
+  // Cleanup of expired tenants (see src/cleanup.ts).
+  "triggers": { "crons": ["*/10 * * * *"] },
   "vars": {
     // Origin of the Authrim API (token endpoint and Admin API). https, no path.
     "ADMIN_API_ORIGIN": "https://api.example.invalid",
@@ -16,9 +18,9 @@
     "PORTAL_ORIGIN": "https://start.example.invalid",
     // Cloudflare Turnstile site key (public).
     "TURNSTILE_SITE_KEY": "0x0000000000000000000000",
-    "MAX_ACTIVE_TENANTS": "50",
+    "MAX_ACTIVE_TENANTS": "75",
     "MAX_STARTS_PER_IP_PER_DAY": "3",
-    "TENANT_TTL_HOURS": "12",
+    "TENANT_TTL_HOURS": "24",
     "ENVIRONMENT": "production",
   },
   "d1_databases": [
