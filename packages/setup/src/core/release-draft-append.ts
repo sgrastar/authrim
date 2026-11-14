@@ -40,6 +40,13 @@ export function resolveSameVersionDraftAppend(input: {
     release.targetVersion === productVersion &&
     release.manifestChecksum === input.manifestChecksum
   ) {
+    // A target recorded after this release finished with a shorter run of its stream (a
+    // Control-created database adopted from its own history) is still behind. The release's
+    // Control rollout is already complete under the same operation, so it cannot be appended
+    // here; stop instead of reporting the release as current.
+    if (!everyTargetRecordsWholeStream(input)) {
+      throw new Error(`draft_append_rejected:${productVersion}:verified_release_target_behind`);
+    }
     return undefined;
   }
 
@@ -65,4 +72,18 @@ export function resolveSameVersionDraftAppend(input: {
     ...(input.allowFetch === false ? { allowFetch: false } : {}),
   });
   return evaluation;
+}
+
+/** True when every target with a stream records that whole stream. */
+function everyTargetRecordsWholeStream(input: {
+  manifest: ReleaseMigrationManifest;
+  lock: AuthrimLock;
+  targets: readonly ReleaseMigrationPhysicalTarget[];
+}): boolean {
+  return input.targets.every((target) => {
+    if (!target.streamId) return true;
+    const stream = input.manifest.streams.find((candidate) => candidate.id === target.streamId);
+    const files = input.lock.schemaTargets?.[target.id]?.files;
+    return !stream || files?.length === stream.files.length;
+  });
 }
