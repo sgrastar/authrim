@@ -1,5 +1,10 @@
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { FieldRef, SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
+import {
+  DEFAULT_IDENTIFIER_SALT_REF,
+  prepareMappedIdentifiers,
+  resolvePairwiseSector,
+} from './mapped-identifiers';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
@@ -55,6 +60,8 @@ export interface ApplyOIDCIdentityMappingInput {
   tenantId: string;
   clientId: string;
   sectorIdentifier?: string | null;
+  /** The client's registered redirect URIs: the pairwise sector when it has no sector URI. */
+  redirectUris?: readonly string[] | null;
   /**
    * The app's `identity_mapping`: its own Mapping Set, `{ mode: 'none' }`, or nothing (the tenant's
    * default, else the platform's, else no mapping). What it does not name is never looked up by
@@ -301,9 +308,25 @@ export async function applyOIDCIdentityMapping(
   const sourceClaims = await loadMappedCustomClaimSources(input, binding);
   const placeholder = input.fixture ? fixturePersistentIdentifier() : null;
   const persistentIdentifiers = await resolveOIDCPersistentIdentifiers(input, binding, placeholder);
+  const sourceValues = toOIDCSourceValues(sourceClaims, binding);
+  const mappedIdentifiers = await prepareMappedIdentifiers({
+    transforms: binding.transforms,
+    edges: binding.edges,
+    sourceValues,
+    recipient: {
+      protocol: 'oidc',
+      clientId: input.clientId,
+      sector: resolvePairwiseSector({
+        sectorIdentifierUri: input.sectorIdentifier,
+        redirectUris: input.redirectUris,
+      }),
+    },
+    loadDefaultSalt: () => loadDefaultIdentifierSalt(input.env, input.tenantId),
+    placeholder,
+  });
   const runtimeResult = executeRuntimeMapping({
     catalog: binding.catalog,
-    sourceValues: toOIDCSourceValues(sourceClaims, binding),
+    sourceValues,
     edges: binding.edges,
     transforms: binding.transforms,
     validationRules: binding.validationRules,
@@ -314,8 +337,23 @@ export async function applyOIDCIdentityMapping(
         pairwiseSubject: typeof input.claims.sub === 'string' ? input.claims.sub : undefined,
         persistentIdentifiers,
       },
+      identifiers: mappedIdentifiers.identifiers,
     },
   });
+  // An identifier that could not be made stops the sub as well as the claims: no other value
+  // (the user's id) may stand in for it.
+  if (
+    (runtimeResult.reasons ?? []).some(
+      (reason) => reason.code === 'transform.identifier_unavailable'
+    )
+  ) {
+    throw new OIDCIdentityMappingRuntimeError('OIDC persistent identifier could not be made', {
+      code: 'policy.persistent_identifier_unavailable',
+      fieldMappingSetId: binding.fieldMappingSetId,
+      fieldMappingVersionId: binding.fieldMappingVersionId,
+      clientId: input.clientId,
+    });
+  }
 
   if (input.subjectOnly) {
     // The last value wins, as issuance overwrites edge outputs with transform results.
@@ -703,6 +741,15 @@ async function loadOIDCPersistentIdentifierProfile(
     [tenantId, profileId]
   );
   return rows[0] ?? null;
+}
+
+/** The tenant's own identifier salt, from its key manager (made on first use). */
+async function loadDefaultIdentifierSalt(
+  env: Partial<Env>,
+  tenantId: string
+): Promise<string | null> {
+  if (!env.KEY_MANAGER) return null;
+  return getPersistentIdentifierSecret(env.KEY_MANAGER, tenantId, DEFAULT_IDENTIFIER_SALT_REF);
 }
 
 async function getPersistentIdentifierSecret(

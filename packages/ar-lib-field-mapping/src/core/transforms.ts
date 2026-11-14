@@ -12,6 +12,98 @@ import type {
   ValidationResult,
 } from './types';
 
+/** How a persistent identifier is framed for its protocol. */
+export const PERSISTENT_IDENTIFIER_FORMATS = [
+  'plain',
+  'saml_targeted_id',
+  'saml_pairwise_id',
+  'saml_subject_id',
+] as const;
+/** Kept in step with IDENTIFIER_ALGORITHMS in @authrim/ar-lib-core (identifier-algorithms.ts). */
+export const PERSISTENT_IDENTIFIER_ALGORITHMS = [
+  'authrim_sha256',
+  'shibboleth',
+  'keycloak_sha256',
+  'simplesamlphp_targeted_id',
+  'simplesamlphp_persistent_nameid',
+  'simplesamlphp_pairwise_id',
+  'simplesamlphp_subject_id',
+] as const;
+
+const IDENTIFIER_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{0,126}$/u;
+
+/**
+ * What is wrong with a persistent_identifier step's settings, or null. Shared by saving (the
+ * admin API) and running, so a set that could never make an identifier is neither saved nor run.
+ * Which protocol it is for is checked where the identifier is made.
+ */
+export function persistentIdentifierSettingsProblem(
+  parameters: Record<string, unknown> | undefined
+): string | null {
+  const p = parameters ?? {};
+  const format = p.format;
+  const algorithm = p.algorithm;
+  if (
+    typeof format !== 'string' ||
+    !(PERSISTENT_IDENTIFIER_FORMATS as readonly string[]).includes(format)
+  ) {
+    return 'format';
+  }
+  if (
+    typeof algorithm !== 'string' ||
+    !(PERSISTENT_IDENTIFIER_ALGORITHMS as readonly string[]).includes(algorithm)
+  ) {
+    return 'algorithm';
+  }
+  // A named (imported) salt is not available yet: only the tenant's own.
+  if (p.salt !== undefined) return 'salt';
+  if ((p.digest !== undefined || p.encoding !== undefined) && algorithm !== 'shibboleth') {
+    return 'digest_or_encoding';
+  }
+  const scoped =
+    format === 'saml_pairwise_id' ||
+    format === 'saml_subject_id' ||
+    algorithm === 'simplesamlphp_pairwise_id' ||
+    algorithm === 'simplesamlphp_subject_id';
+  if (
+    p.scope !== undefined &&
+    (typeof p.scope !== 'string' || !IDENTIFIER_SCOPE_PATTERN.test(p.scope))
+  ) {
+    return 'scope';
+  }
+  if (scoped && p.scope === undefined) return 'scope';
+  return null;
+}
+
+/**
+ * A persistent identifier's input read by any other step: its value would go out through that
+ * step (or a second identifier), next to or in place of the identifier.
+ */
+export function sharesConsumedInput(transforms: readonly MappingTransformStep[] = []): boolean {
+  const consumed = consumedEdgeIds(transforms);
+  const readers = new Map<string, number>();
+  for (const step of transforms) {
+    for (const edgeId of new Set(step.inputEdgeIds)) {
+      if (consumed.has(edgeId)) readers.set(edgeId, (readers.get(edgeId) ?? 0) + 1);
+    }
+  }
+  return [...readers.values()].some((count) => count > 1);
+}
+
+/**
+ * The input edges a step reads without releasing them: what a persistent identifier is made
+ * from (a migrated user name, the account ID) must not go out next to the identifier.
+ */
+export function consumedEdgeIds(transforms: readonly MappingTransformStep[] = []): Set<string> {
+  const ids = new Set<string>();
+  for (const step of transforms) {
+    if (step.operation === 'persistent_identifier') {
+      for (const edgeId of step.inputEdgeIds) ids.add(edgeId);
+    }
+  }
+  return ids;
+}
+
 export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   { operation: 'copy', parameters: [] },
   {
@@ -55,6 +147,45 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   {
     operation: 'oidc_pairwise_sub',
     parameters: [{ name: 'persistentIdentifierProfileId', kind: 'string', required: false }],
+    outputValueType: 'string',
+    outputCardinality: 'single',
+  },
+  {
+    // Made before the mapping runs (it needs a salt and hashing, which are asynchronous): the
+    // step only takes the value prepared for it, by its id, from runtimeContext.identifiers. Its
+    // one input is what the identifier is made from, and is never released itself.
+    operation: 'persistent_identifier',
+    parameters: [
+      {
+        name: 'format',
+        kind: 'enum',
+        required: true,
+        allowedValues: [...PERSISTENT_IDENTIFIER_FORMATS],
+      },
+      {
+        name: 'algorithm',
+        kind: 'enum',
+        required: true,
+        allowedValues: [...PERSISTENT_IDENTIFIER_ALGORITHMS],
+      },
+      {
+        name: 'digest',
+        kind: 'enum',
+        required: false,
+        allowedValues: ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'],
+      },
+      { name: 'encoding', kind: 'enum', required: false, allowedValues: ['base64', 'base32'] },
+      {
+        name: 'audience',
+        kind: 'enum',
+        required: false,
+        allowedValues: ['auto', 'sector', 'sp_entity_id'],
+      },
+      { name: 'scope', kind: 'string', required: false },
+      { name: 'salt', kind: 'string', required: false },
+      { name: 'sourceMetadataSet', kind: 'string', required: false },
+      { name: 'destinationMetadataSet', kind: 'string', required: false },
+    ],
     outputValueType: 'string',
     outputCardinality: 'single',
   },
@@ -210,11 +341,31 @@ export function executeTransformStep(input: TransformExecutionInput): TransformE
   const validation = validateTransformStep(input.step);
   const reasons: ReasonCode[] = [...validation.reasons];
 
+  if (
+    input.step.operation === 'persistent_identifier' &&
+    (hasBlockingTransformIssue(reasons) ||
+      persistentIdentifierSettingsProblem(input.step.parameters) !== null)
+  ) {
+    // Settings that cannot make an identifier stop the release, like a missing identifier.
+    reasons.push(reason('transform.identifier_unavailable'));
+    return transformResult(input, reasons);
+  }
+
   if (hasBlockingTransformIssue(reasons)) {
     return transformResult(input, reasons);
   }
 
   const values = input.step.inputEdgeIds.map((edgeId) => input.edgeValues.get(edgeId));
+
+  if (input.step.operation === 'persistent_identifier') {
+    // One input, and the value made for this step: anything else stops the release rather
+    // than letting it go out without the identifier (or with something else in its place).
+    const made = readPreparedIdentifier(input.step, input.runtimeContext);
+    if (input.step.inputEdgeIds.length !== 1 || values.some((value) => !value) || !made) {
+      reasons.push(reason('transform.identifier_unavailable'));
+      return transformResult(input, reasons);
+    }
+  }
 
   if (values.some((value) => !value)) {
     reasons.push(reason('transform.missing_input'));
@@ -303,6 +454,8 @@ function executeOperation(
       return buildOIDCPairwiseSub(runtimeContext, step.parameters);
     case 'saml_edu_person_targeted_id':
       return buildSAMLEduPersonTargetedID(runtimeContext);
+    case 'persistent_identifier':
+      return readPreparedIdentifier(step, runtimeContext);
     case 'affix_text':
       return affixText(rawValues[0], step.parameters);
     case 'concat':
@@ -332,6 +485,18 @@ function executeOperation(
 
 function delimiter(step: MappingTransformStep, fallback = ''): string {
   return typeof step.parameters?.delimiter === 'string' ? step.parameters.delimiter : fallback;
+}
+
+/** The identifier prepared for this step before the mapping ran, if there is one. */
+function readPreparedIdentifier(
+  step: MappingTransformStep,
+  runtimeContext?: Record<string, unknown>
+): string | undefined {
+  const identifiers = isRecord(runtimeContext?.identifiers)
+    ? runtimeContext.identifiers
+    : undefined;
+  const value = identifiers ? identifiers[step.id] : undefined;
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function buildOIDCPairwiseSub(

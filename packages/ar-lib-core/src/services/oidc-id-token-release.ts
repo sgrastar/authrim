@@ -138,6 +138,7 @@ export async function mapIDTokenClaims(
       clientId,
       failureContext,
       sectorIdentifier: ctx.clientMetadata.sector_identifier_uri,
+      redirectUris: ctx.clientMetadata.redirect_uris,
       selector: ctx.clientMetadata.identity_mapping,
       destinationSurface: 'id_token',
       grantedScopes,

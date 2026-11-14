@@ -18,7 +18,9 @@ import type {
   SamlReleaseItem,
 } from '@authrim/ar-lib-core';
 import {
+  DEFAULT_IDENTIFIER_SALT_REF,
   filterSamlAttributesByDestinationProfile,
+  prepareMappedIdentifiers,
   filterSamlAttributesByDestinationProfileDescriptor,
   requireAdminDatabaseAdapter,
   RELEASE_APPROVE_ALL,
@@ -28,7 +30,11 @@ import {
 import { NAMEID_FORMATS } from '../common/constants';
 import type { SAMLUserInfo } from '../common/user-store';
 import {
+  buildIdentityMappingSourceValues,
   resolveSAMLIdentityMappingFieldMappingBinding,
+  type SAMLAttributeSubject,
+  type SAMLIdentityMappingFieldMappingBinding,
+  type SAMLIdentityMappingRuntimeContext,
   type SAMLIdentityMappingReleaseConfig,
   SAMLIdentityMappingRuntimeError,
 } from './attributes';
@@ -124,6 +130,19 @@ export async function computeSAMLAttributeRelease(input: {
       identityMapping: identityMapping ? { ...identityMapping, runtimeContext } : undefined,
     },
     onError: input.onError,
+    prepareIdentifiers: identityMapping
+      ? (subject) =>
+          prepareSAMLMappedIdentifiers({
+            env,
+            tenantId,
+            idpEntityId,
+            spEntityId: spConfig.entityId,
+            subject,
+            identityMapping,
+            mappingContext,
+            deferIdentifiers: input.identifiers === 'deferred',
+          })
+      : undefined,
   });
   let attributes = release.attributes;
   let required: Set<string> | 'all' = 'all';
@@ -337,6 +356,49 @@ async function buildSAMLIdentityMappingRuntimeContext(input: {
   }
 
   return { saml: samlContext };
+}
+
+/**
+ * The `persistent_identifier` steps' values for the binding the release uses, made from the
+ * subject as released. Before consent they are placeholders: nothing is made for a release that
+ * may not happen. A step that cannot be made is left out, which fails the release.
+ */
+async function prepareSAMLMappedIdentifiers(input: {
+  env: Env;
+  tenantId: string;
+  idpEntityId: string;
+  spEntityId: string;
+  subject: SAMLAttributeSubject;
+  identityMapping: SAMLIdentityMappingReleaseConfig;
+  mappingContext: SAMLIdentityMappingRuntimeContext;
+  deferIdentifiers: boolean;
+}): Promise<Record<string, string>> {
+  let binding: SAMLIdentityMappingFieldMappingBinding;
+  try {
+    binding = resolveSAMLIdentityMappingFieldMappingBinding(
+      input.identityMapping,
+      input.mappingContext
+    );
+  } catch {
+    // No binding applies: the release refuses for that reason, not for an identifier.
+    return {};
+  }
+  if (!binding.transforms?.some((step) => step.operation === 'persistent_identifier')) return {};
+  const edges = binding.edges ?? [];
+  const prepared = await prepareMappedIdentifiers({
+    transforms: binding.transforms,
+    edges,
+    sourceValues: buildIdentityMappingSourceValues(input.subject, edges),
+    recipient: { protocol: 'saml', spEntityId: input.spEntityId, idpEntityId: input.idpEntityId },
+    loadDefaultSalt: async () =>
+      (await resolveSAMLPairwiseSecretForRef(
+        input.env,
+        input.tenantId,
+        DEFAULT_IDENTIFIER_SALT_REF
+      )) ?? null,
+    placeholder: input.deferIdentifiers ? DEFERRED_IDENTIFIER : null,
+  });
+  return prepared.identifiers;
 }
 
 interface SAMLPersistentIdentifierProfile {

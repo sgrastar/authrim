@@ -136,9 +136,11 @@ export function assertSAMLImportedSPRelease(
     !Array.isArray(profile.fields) ||
     profile.fields.some((field) => !field.key || !CLASSIFICATIONS.has(field.classification)) ||
     new Set(profile.fields.map((field) => field.key)).size !== profile.fields.length ||
-    binding.transforms.some(
-      (transform) => record(transform)?.operation === 'saml_edu_person_targeted_id'
-    ) ||
+    binding.transforms.some((transform) => {
+      // An imported release has no tenant salt to make identifiers from.
+      const operation = record(transform)?.operation;
+      return operation === 'saml_edu_person_targeted_id' || operation === 'persistent_identifier';
+    }) ||
     (context.sourceSelector?.fieldMappingSetId !== undefined &&
       context.sourceSelector.fieldMappingSetId !== sourceRef.fieldMappingSetId) ||
     (context.sourceSelector?.fieldMappingVersionId !== undefined &&

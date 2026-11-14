@@ -482,7 +482,7 @@ function bindingSpecificity(binding: SAMLIdentityMappingFieldMappingBinding): nu
   );
 }
 
-function buildIdentityMappingSourceValues(
+export function buildIdentityMappingSourceValues(
   subject: SAMLAttributeSubject,
   edges: MappingRuleEdge[]
 ): SourceValueEnvelope[] {

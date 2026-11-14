@@ -37,6 +37,7 @@ export interface PlatformCheckedRule {
 const PERSISTENT_IDENTIFIER_OPERATIONS: ReadonlySet<string> = new Set([
   'oidc_pairwise_sub',
   'saml_edu_person_targeted_id',
+  'persistent_identifier',
 ]);
 
 /**

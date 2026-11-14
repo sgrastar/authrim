@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
   nameIdError: null as Error | null,
   pairwiseSecret: 'pairwise-secret' as string | undefined,
   pairwiseSecretForRef: 'referenced-secret' as string | undefined,
+  /** The runtime contexts the attribute releases were given, in order. */
+  runtimeContexts: [] as Array<Record<string, unknown> | undefined>,
   persistentProfileRows: [] as Array<Record<string, unknown>>,
   targetedIdOptions: null as Record<string, unknown> | null,
   buildResponse: vi.fn((..._args: unknown[]) => '<saml-success-response/>'),
@@ -161,6 +163,10 @@ vi.mock('../attributes', async (importOriginal) => {
         }
       ) => {
         if (mocks.attributeError) throw mocks.attributeError;
+        mocks.runtimeContexts.push(
+          (config?.identityMapping as { runtimeContext?: Record<string, unknown> } | undefined)
+            ?.runtimeContext
+        );
         // A mapping that releases eduPersonTargetedID carries the identifier the release
         // context holds: a placeholder until the release is approved, then the real one.
         const targeted = config?.identityMapping?.runtimeContext?.saml?.eduPersonTargetedIdOpaque;
@@ -170,6 +176,11 @@ vi.mock('../attributes', async (importOriginal) => {
             ...(typeof targeted === 'string'
               ? [{ name: 'eduPersonTargetedID', values: [targeted] }]
               : []),
+            // A persistent_identifier step's value goes out the same way.
+            ...Object.values(
+              ((config?.identityMapping as { runtimeContext?: { identifiers?: object } })
+                ?.runtimeContext?.identifiers ?? {}) as Record<string, string>
+            ).map((value) => ({ name: 'pairwise-id', values: [value] })),
           ],
           optionalMissingAttributes: [],
         };
@@ -242,8 +253,10 @@ import {
   resolveSAMLPersistentNameIDRegistryStore,
   resolveSAMLTransientNameIDStore,
   SAMLNameIDPolicyError,
+  resolveSAMLPairwiseSecretForRef,
 } from '../subject';
 import { getSamlUserInfoById } from '../../common/user-store';
+import { computeIdentifier } from '@authrim/ar-lib-core';
 
 function sp(overrides: Record<string, unknown> = {}) {
   return {
@@ -618,6 +631,61 @@ describe('IdP SSO handler policy boundaries', () => {
       spEntityId: 'https://sp.example.test/entity',
       pairwiseSalt: 'pairwise-secret',
     });
+  });
+
+  it('makes a persistent_identifier step from the account ID with the tenant salt', async () => {
+    authenticateSession();
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.pairwiseSecretForRef = 'tenant-identifier-salt';
+    mocks.runtimeContexts = [];
+    const target = {
+      side: 'destination',
+      namespace: 'saml.attribute',
+      path: 'urn:oasis:names:tc:SAML:attribute:pairwise-id',
+    };
+    mocks.sp = sp({
+      identityMapping: {
+        catalog: { entries: [] },
+        edges: [
+          {
+            id: 'edge-uid',
+            sourceRef: { side: 'source', namespace: 'authrim.system', path: 'uid' },
+            targetRef: target,
+          },
+        ],
+        transforms: [
+          {
+            id: 'step-pairwise',
+            operation: 'persistent_identifier',
+            inputEdgeIds: ['edge-uid'],
+            parameters: {
+              format: 'saml_pairwise_id',
+              algorithm: 'shibboleth',
+              encoding: 'base32',
+              scope: 'example.test',
+            },
+            outputTargetRef: target,
+          },
+        ],
+      },
+    });
+    expect((await post(authnRequest())).status).toBe(200);
+    const made = await computeIdentifier({
+      algorithm: 'shibboleth',
+      value: 'user-a',
+      audience: 'https://sp.example.test/entity',
+      salt: new TextEncoder().encode('tenant-identifier-salt'),
+      encoding: 'base32',
+    });
+    const identifiers = mocks.runtimeContexts.map((context) => context?.identifiers);
+    // Before consent a placeholder stands for it; the assertion carries the identifier made.
+    expect(identifiers).toContainEqual({ 'step-pairwise': `${made}@example.test` });
+    expect(JSON.stringify(identifiers)).not.toContain('user-a');
+    expect(resolveSAMLPairwiseSecretForRef).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-a',
+      'identifier-salt:default'
+    );
   });
 
   it.each([

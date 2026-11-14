@@ -2,7 +2,14 @@ import { findCatalogEntry } from './catalog';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
 import { buildTraceEntry } from './trace';
-import { executeTransformStep } from './transforms';
+import { consumedEdgeIds, executeTransformStep, sharesConsumedInput } from './transforms';
+
+// What the hot path needs about persistent identifiers, through the runtime entrypoint.
+export {
+  PERSISTENT_IDENTIFIER_ALGORITHMS,
+  PERSISTENT_IDENTIFIER_FORMATS,
+  persistentIdentifierSettingsProblem,
+} from './transforms';
 import { validateMappingInput } from './validation';
 import type {
   MappingInput,
@@ -27,6 +34,7 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
   const transformTrace: RuleTraceEntry[] = [];
   const mappingTrace: RuleTraceEntry[] = [];
 
+  const consumed = consumedEdgeIds(input.transforms);
   for (const edge of input.edges) {
     const sourceValue = findSourceValue(input.sourceValues, edge);
     if (!sourceValue) {
@@ -37,6 +45,7 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
       sourceRef: edge.targetRef,
     };
     edgeValues.set(edge.id, targetValue);
+    if (consumed.has(edge.id)) continue;
     mappedValues.push(targetValue);
     mappingTrace.push(
       buildTraceEntry({
@@ -48,6 +57,11 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
     );
   }
 
+  const sharedInput = sharesConsumedInput(input.transforms);
+  if (sharedInput) {
+    // What an identifier is made from would leave through the other step: nothing goes out.
+    transformReasons.push(reason('transform.identifier_unavailable'));
+  }
   for (const step of input.transforms ?? []) {
     const result = executeTransformStep({ step, edgeValues, runtimeContext: input.runtimeContext });
     transformReasons.push(...result.reasons);
@@ -62,11 +76,14 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
     status: statusFromReasons(reasons),
     reasons,
     ruleTrace: [...validation.trace, ...mappingTrace, ...transformTrace],
-    values: mappedValues.filter((value) => findCatalogEntry(input.catalog, value.sourceRef)),
+    values: sharedInput
+      ? []
+      : mappedValues.filter((value) => findCatalogEntry(input.catalog, value.sourceRef)),
   };
 }
 
-function findSourceValue(
+/** The source value an edge reads: by catalog entry where both name one, else by place. */
+export function findSourceValue(
   sourceValues: SourceValueEnvelope[],
   edge: MappingInput['edges'][number]
 ): SourceValueEnvelope | undefined {

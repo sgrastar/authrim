@@ -113,6 +113,7 @@ export async function computeReleaseCandidates(
           tenantId,
           clientId,
           sectorIdentifier: clientMetadata.sector_identifier_uri,
+          redirectUris: clientMetadata.redirect_uris,
           selector: clientMetadata.identity_mapping,
           destinationSurface: target,
           grantedScopes: input.scopes,

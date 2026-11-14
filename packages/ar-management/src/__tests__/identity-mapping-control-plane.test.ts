@@ -3151,6 +3151,99 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
+  it('accepts a persistent identifier only with its input and valid settings', async () => {
+    const attempt = (transform: Record<string, unknown>) => {
+      const adapter = createAdapter({});
+      const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+      return {
+        adapter,
+        saved: repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+          versionLabel: 'v1',
+          rules: [
+            {
+              ruleKey: 'pairwise',
+              ruleKind: 'mapping',
+              action: 'allow',
+              edges: [
+                {
+                  sourceRef: { namespace: 'oidc.claim', path: 'sub' },
+                  targetRef: { namespace: 'oidc.claim', path: 'sub' },
+                },
+              ],
+              transforms: [{ operation: 'persistent_identifier', ...transform }],
+            },
+          ],
+        }),
+      };
+    };
+    for (const transform of [
+      // No input to make it from.
+      { parameters: { format: 'plain', algorithm: 'authrim_sha256' } },
+      // An algorithm that does not exist, a missing format, a setting it does not have.
+      { edgeIndex: 0, parameters: { format: 'plain', algorithm: 'md5' } },
+      { edgeIndex: 0, parameters: { algorithm: 'shibboleth' } },
+      { edgeIndex: 0, parameters: { format: 'plain', algorithm: 'shibboleth', secret: 'x' } },
+      // An input that is not there; settings that pass one by one but not together.
+      { edgeIndex: 1, parameters: { format: 'plain', algorithm: 'authrim_sha256' } },
+      { edgeIndex: 0, parameters: { format: 'plain', algorithm: 'authrim_sha256', salt: 'x' } },
+      { edgeIndex: 0, parameters: { format: 'saml_pairwise_id', algorithm: 'shibboleth' } },
+      {
+        edgeIndex: 0,
+        parameters: { format: 'plain', algorithm: 'authrim_sha256', encoding: 'base32' },
+      },
+      // Settings for SAML on an OIDC claim.
+      { edgeIndex: 0, parameters: { format: 'saml_targeted_id', algorithm: 'shibboleth' } },
+      {
+        edgeIndex: 0,
+        parameters: { format: 'plain', algorithm: 'shibboleth', audience: 'sp_entity_id' },
+      },
+      { edgeIndex: 0, parameters: { format: 'plain', algorithm: 'simplesamlphp_targeted_id' } },
+    ]) {
+      const { adapter, saved } = attempt(transform);
+      await expect(saved).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+      expect(adapter.executes).toHaveLength(0);
+    }
+    // Its input read by another step as well.
+    const adapter = createAdapter({});
+    await expect(
+      new IdentityMappingControlPlaneRepository(adapter, () => 1000).createFieldMappingVersion(
+        'tenant_a',
+        'policy_1',
+        {
+          versionLabel: 'v1',
+          rules: [
+            {
+              ruleKey: 'pairwise',
+              ruleKind: 'mapping',
+              action: 'allow',
+              edges: [
+                {
+                  sourceRef: { namespace: 'oidc.claim', path: 'sub' },
+                  targetRef: { namespace: 'oidc.claim', path: 'sub' },
+                },
+              ],
+              transforms: [
+                {
+                  edgeIndex: 0,
+                  operation: 'persistent_identifier',
+                  parameters: { format: 'plain', algorithm: 'authrim_sha256' },
+                },
+                { edgeIndex: 0, operation: 'trim', parameters: {} },
+              ],
+            },
+          ],
+        }
+      )
+    ).rejects.toMatchObject({ status: 400 });
+    expect(adapter.executes).toHaveLength(0);
+    const { saved } = attempt({
+      edgeIndex: 0,
+      parameters: { format: 'plain', algorithm: 'keycloak_sha256', audience: 'sector' },
+    });
+    // Past the checks: what stops it now is only that this test has no set to add it to.
+    await expect(saved).rejects.toMatchObject({ status: 404, code: 'not_found' });
+  });
+
   it('rejects duplicate field mapping rule keys before persistence', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
