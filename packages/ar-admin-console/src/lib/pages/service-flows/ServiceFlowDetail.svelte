@@ -49,6 +49,8 @@
 	} from './connection-settings';
 	import ExtraSteps from './ExtraSteps.svelte';
 	import SettingsPart from './SettingsPart.svelte';
+	import ConnectionMapping from './ConnectionMapping.svelte';
+	import { sampleMapping } from './connection-mapping.sample';
 	import InSteps from './InSteps.svelte';
 	import RpSteps from './RpSteps.svelte';
 	import SpSteps from './SpSteps.svelte';
@@ -97,6 +99,9 @@
 	const groups = $derived(visibleGroups(draft.value));
 	const incoming = $derived(KINDS_OF.in.includes(kind));
 	const name = $derived(nameOf(draft.value));
+
+	/** The connection's one mapping, in its own direction (sample data, not saved yet). */
+	let mapping = $state(untrack(() => sampleMapping(draft.value.kind as ConnectionKind)));
 
 	/** The setting shown on the right; empty is the overview. */
 	let current = $state('');
@@ -359,6 +364,7 @@
 					</div>
 				</Card>
 				{@render share()}
+				<ConnectionMapping bind:mapping />
 			{:else}
 				<section class="detail__panel" bind:this={panel} aria-label={labelOf(current)}>
 					<PanelHeader title={labelOf(current)}>
