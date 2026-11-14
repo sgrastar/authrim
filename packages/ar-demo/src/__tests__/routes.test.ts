@@ -236,7 +236,7 @@ describe('configuration', () => {
     });
     expect(loadConfig(bare)).toMatchObject({
       ok: true,
-      config: { maxActiveTenants: 50, maxStartsPerIpPerDay: 3, tenantTtlHours: 12 },
+      config: { maxActiveTenants: 75, maxStartsPerIpPerDay: 3, tenantTtlHours: 24 },
     });
   });
 
