@@ -1,9 +1,12 @@
-import {
-  getTenantRuntimeRegistryRouteState,
-  TenantDatabaseRegistryRepository,
-  type DatabaseAdapter,
-  type TenantRuntimeRegistryRouteStatus,
-} from '@authrim/ar-lib-core';
+import { type DatabaseAdapter } from '@authrim/ar-lib-core';
+import { readTenantRouteStateReading } from './tenant-route-state-reading';
+import { TENANT_DELETION_CANCELLED_ERROR } from './tenant-deletion-job-predicate';
+
+// Re-exported for existing importers; the reader lives in a neutral module.
+export {
+  readTenantRouteStateReading,
+  type TenantRouteStateReading,
+} from './tenant-route-state-reading';
 
 /**
  * A deletion that failed part-way leaves the runtime route state under its operation id, and the
@@ -14,42 +17,10 @@ import {
  * Adoption is decided from state, never from the request. The route state comes first: it must
  * be non-active and carry a UUID-shaped operation id (the candidate). The candidate is adopted
  * only if a failed deletion job of this tenant owns it (its id, or its `operation_id`, equals
- * the candidate); any later unrelated failed job does not matter. Anything else (active route,
+ * the candidate); any later unrelated failed job does not matter. A job an operator cancelled is never adopted. Anything else (active route,
  * another operation's quarantine such as a disaster-recovery one, no owning failed job,
  * unreadable state, an error) returns null and the job keeps its own id as before.
  */
-const OPERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
-
-function isOperationId(value: unknown): value is string {
-  return typeof value === 'string' && OPERATION_ID_PATTERN.test(value);
-}
-
-export interface TenantRouteStateReading {
-  routeStatus: TenantRuntimeRegistryRouteStatus;
-  /** `route_state_operation_id` of the row, null when absent or not UUID-shaped. */
-  operationId: string | null;
-}
-
-/** The tenant's runtime-registry route state and the operation id it carries; null without a row. */
-export async function readTenantRouteStateReading(
-  registryAdapter: DatabaseAdapter,
-  tenantId: string
-): Promise<TenantRouteStateReading | null> {
-  const row = await new TenantDatabaseRegistryRepository(registryAdapter).getRuntimeCacheGeneration(
-    tenantId,
-    'runtime_registry'
-  );
-  if (!row?.metadata_json) return null;
-  const { routeStatus } = getTenantRuntimeRegistryRouteState(row);
-  const metadata = JSON.parse(row.metadata_json) as { route_state_operation_id?: unknown };
-  return {
-    routeStatus,
-    operationId: isOperationId(metadata.route_state_operation_id)
-      ? metadata.route_state_operation_id
-      : null,
-  };
-}
-
 export async function resolveTenantDeletionChainOperationId(
   jobsAdapter: Pick<DatabaseAdapter, 'queryOne'>,
   registryAdapter: DatabaseAdapter,
@@ -65,10 +36,11 @@ export async function resolveTenantDeletionChainOperationId(
       `SELECT id FROM admin_jobs
         WHERE job_type = 'tenants/delete'
           AND status = 'failed'
+          AND (error_message IS NULL OR error_message <> ?)
           AND json_extract(config, '$.tenant_id') = ?
           AND (id = ? OR json_extract(config, '$.operation_id') = ?)
         LIMIT 1`,
-      [targetTenantId, candidate, candidate]
+      [TENANT_DELETION_CANCELLED_ERROR, targetTenantId, candidate, candidate]
     );
     return owner ? candidate : null;
   } catch {

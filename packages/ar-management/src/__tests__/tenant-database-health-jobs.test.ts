@@ -10,6 +10,7 @@ const {
   const repository = {
     listActiveRegistryRowsForRole: vi.fn(),
     listActiveRegistryRowsForTenantRole: vi.fn(),
+    getRuntimeCacheGeneration: vi.fn(),
     updateRegistryStatus: vi.fn(),
     updateRegistryStatusAndMetadata: vi.fn(),
   };
@@ -52,6 +53,7 @@ describe('tenant database health jobs', () => {
     vi.clearAllMocks();
     mockRepository.listActiveRegistryRowsForRole.mockResolvedValue([]);
     mockRepository.listActiveRegistryRowsForTenantRole.mockResolvedValue([]);
+    mockRepository.getRuntimeCacheGeneration.mockResolvedValue(null);
     mockRepository.updateRegistryStatus.mockResolvedValue(undefined);
     mockRepository.updateRegistryStatusAndMetadata.mockResolvedValue(undefined);
     mockResolveTenantDatabaseSourceFromControlRegistry.mockResolvedValue({
@@ -135,6 +137,112 @@ describe('tenant database health jobs', () => {
       expect.stringContaining('"last_schema_drift":"behind_registry"'),
       'tenant-database-health'
     );
+  });
+
+  describe('tenants outside normal service', () => {
+    const rowFor = (tenantId: string, role: string) => ({
+      tenant_id: tenantId,
+      role,
+      generation: 1,
+      shard_group: 'default',
+      shard_index: 0,
+    });
+    const routeRow = (routeStatus: string) => ({
+      metadata_json: JSON.stringify({
+        route_status: routeStatus,
+        quarantine_deny_generation: routeStatus === 'active' ? 0 : 1,
+      }),
+    });
+    const failingProbe = () =>
+      mockCheckResolvedTenantDatabaseDeepHealth.mockResolvedValue({
+        severity: 'failed',
+        schemaDrift: 'none',
+        error: 'probe_failed',
+      });
+
+    it.each(['quarantining', 'quarantined', 'disabled'])(
+      'does not probe or write status for a %s route and counts it as skipped',
+      async (routeStatus) => {
+        mockRepository.listActiveRegistryRowsForRole.mockImplementation(async (role: string) => [
+          rowFor('tenant-x', role),
+        ]);
+        mockRepository.getRuntimeCacheGeneration.mockResolvedValue(routeRow(routeStatus));
+        failingProbe();
+
+        const summary = await refreshTenantDatabaseHealth(
+          { DB_ADMIN: 'control-db' } as never,
+          logger,
+          { checkedAt: '2026-05-16T00:00:00.000Z', failureThreshold: 1 }
+        );
+
+        expect(summary).toEqual({ scanned: 2, healthy: 0, degraded: 0, failed: 0, skipped: 2 });
+        expect(mockCheckResolvedTenantDatabaseDeepHealth).not.toHaveBeenCalled();
+        expect(mockResolveTenantDatabaseSourceFromControlRegistry).not.toHaveBeenCalled();
+        expect(mockRepository.updateRegistryStatus).not.toHaveBeenCalled();
+        expect(mockRepository.updateRegistryStatusAndMetadata).not.toHaveBeenCalled();
+        // One route-state read per tenant, shared by both roles.
+        expect(mockRepository.getRuntimeCacheGeneration).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('still marks an active tenant failed when its probe fails', async () => {
+      mockRepository.listActiveRegistryRowsForRole.mockImplementation(async (role: string) => [
+        rowFor('tenant-a', role),
+      ]);
+      mockRepository.getRuntimeCacheGeneration.mockResolvedValue(routeRow('active'));
+      failingProbe();
+
+      const summary = await refreshTenantDatabaseHealth(
+        { DB_ADMIN: 'control-db' } as never,
+        logger,
+        {
+          failureThreshold: 1,
+        }
+      );
+
+      expect(summary).toEqual({ scanned: 2, healthy: 0, degraded: 0, failed: 2, skipped: 0 });
+      expect(mockRepository.updateRegistryStatusAndMetadata).toHaveBeenCalledTimes(2);
+    });
+
+    it('treats a tenant without a route-state row as in normal service', async () => {
+      mockRepository.listActiveRegistryRowsForRole.mockImplementation(async (role: string) => [
+        rowFor('tenant-a', role),
+      ]);
+      failingProbe();
+
+      const summary = await refreshTenantDatabaseHealth(
+        { DB_ADMIN: 'control-db' } as never,
+        logger,
+        {
+          failureThreshold: 1,
+        }
+      );
+
+      expect(summary.skipped).toBe(0);
+      expect(summary.failed).toBe(2);
+    });
+
+    it('probes the tenant as before when the route state cannot be read', async () => {
+      mockRepository.listActiveRegistryRowsForRole.mockImplementation(async (role: string) => [
+        rowFor('tenant-a', role),
+      ]);
+      mockRepository.getRuntimeCacheGeneration.mockRejectedValue(new Error('control_db_down'));
+      failingProbe();
+
+      const summary = await refreshTenantDatabaseHealth(
+        { DB_ADMIN: 'control-db' } as never,
+        logger,
+        {
+          failureThreshold: 1,
+        }
+      );
+
+      expect(summary).toEqual({ scanned: 2, healthy: 0, degraded: 0, failed: 2, skipped: 0 });
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Tenant database health route-state read failed; probing the tenant anyway',
+        expect.objectContaining({ tenant_id: 'tenant-a', error: 'control_db_down' })
+      );
+    });
   });
 
   it('keeps transient health failures degraded until the configured threshold', async () => {

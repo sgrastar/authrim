@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ADMIN_PERMISSIONS,
   adminAuthMiddleware,
   requireSystemAdmin,
   type AdminAuthContext,
@@ -288,7 +289,7 @@ describe('acting on tenants other than the request tenant', () => {
   });
 });
 
-describe('tenant provisioning authority (the six routes an automation machine runs on its own permission)', () => {
+describe('tenant provisioning authority (the seven routes an automation machine runs on its own permission)', () => {
   const machine = (permissions: string[], tenantScope = ['*']): AdminAuthContext => ({
     userId: 'machine',
     authMethod: 'machine_access_token',
@@ -318,6 +319,37 @@ describe('tenant provisioning authority (the six routes an automation machine ru
       )
     ).toBe(false);
     expect(hasTenantProvisioningAuthority(undefined, 'admin:tenants:provision')).toBe(false);
+  });
+
+  it('cancelling a failed deletion is on the deletion permission: the lifecycle permissions and a tenant scope do not open it', () => {
+    // The handler asks the same helper as deletion does, with the deletion permission.
+    const del = 'admin:tenants:delete';
+    expect(hasTenantProvisioningAuthority(machine([del]), del)).toBe(true);
+    expect(hasTenantProvisioningAuthority(machine(['admin:*']), del)).toBe(true);
+    expect(
+      hasTenantProvisioningAuthority(
+        machine([
+          ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD,
+          ADMIN_PERMISSIONS.TENANT_LIFECYCLE_RECOVERY,
+        ]),
+        del
+      )
+    ).toBe(false);
+    expect(hasTenantProvisioningAuthority(machine(['admin:tenants:provision']), del)).toBe(false);
+    expect(hasTenantProvisioningAuthority(machine([del], ['tenant-a']), del)).toBe(false);
+    // A tenant-scoped human admin (no global platform role) is refused.
+    expect(
+      hasTenantProvisioningAuthority(
+        {
+          userId: 'human',
+          authMethod: 'session',
+          roles: ['ar_tenant_admin'],
+          tenantScope: ['tenant-a'],
+          permissions: [del],
+        },
+        del
+      )
+    ).toBe(false);
   });
 
   it('tenant read: a global machine needs the provision permission; everyone else is as before', () => {

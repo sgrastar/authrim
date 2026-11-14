@@ -129,7 +129,7 @@ unrelated to the roles of the service's own users below. They are defined once, 
 
 #### Provisioning automation (a machine principal without `admin:*`)
 
-Creating and deleting tenants takes the global `ar_super_admin` role, or, for a machine principal,
+Creating and deleting tenants (and cancelling a failed deletion) takes the global `ar_super_admin` role, or, for a machine principal,
 `admin:*`. A dedicated automation principal can instead hold two narrower permissions. They are
 ordinary permissions: `*`, `admin:*` and `admin:tenants:*` carry them, no built-in role lists them,
 and a super admin can hand them to a principal through the machine access API (which asks for the
@@ -138,7 +138,7 @@ and a super admin can hand them to a principal through the machine access API (w
 | Permission                | Opens (exactly these method and path pairs)                                                                                                                                                                                                                                           |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `admin:tenants:provision` | `POST /api/admin/tenants`, `GET /api/admin/tenants/{id}` (id, code, name, description, isolation policy and lifecycle state only), `GET /api/admin/tenants/{id}/provisioning`, `POST /api/admin/tenants/{id}/provisioning/retry`, `POST /api/admin/tenants/{id}/provisioning/cleanup` |
-| `admin:tenants:delete`    | `DELETE /api/admin/tenants/{id}`                                                                                                                                                                                                                                                      |
+| `admin:tenants:delete`    | `DELETE /api/admin/tenants/{id}`, `POST /api/admin/tenants/{id}/deletion/cancel` (cancels a failed deletion before its point of no return; the same step-up as the deletion)                                                                                                          |
 
 A global machine principal that holds `admin:settings:read` can also read platform settings
 (`GET /api/admin/platform/settings/{category}`) and use the returned `version` as `ifMatch` for a
@@ -171,6 +171,23 @@ custom global role).
   - `tenant_deletion_in_progress` on set-default and on resume, unfreeze and restore-validate:
     the tenant has a deletion queued or running. Wait for that job to fail or complete (a
     `processing` job untouched for 6 hours stops counting), then decide again.
+  - `tenant_deletion_failed_use_cancel` on resume, unfreeze and restore-validate: the tenant's
+    last deletion failed and its route is still quarantining, quarantined or disabled, or its
+    cancellation is incomplete (resume would flip the tenant row but leave the route out of
+    service; repeat the cancel to complete it). Cancel the deletion first with
+    `POST /api/admin/tenants/{id}/deletion/cancel` (body `{ "reason": "..." }`; needs the
+    deletion permission and the same step-up as deletion); it reactivates the route, marks the
+    failed job cancelled and leaves the tenant `suspended`, and `resume` then works. Cancel
+    works on all the tenant's failed deletion jobs together, takes a 120 second lease on its
+    mark (`409 tenant_deletion_cancel_in_progress` for a repeat inside it), and answers
+    `409 tenant_deletion_past_point_of_no_return` once the route is disabled, a job of the chain
+    wrote its destructive-step marker, Control has finalised the deletion, or (for a job from
+    before the marker) the Lookup identifier table shows the disable or cannot show anything (the
+    deletion has to finish),
+    `409 tenant_route_owned_by_other_operation` for a route held by another operation (for
+    example a disaster recovery), `409 tenant_deletion_not_failed` /
+    `tenant_deletion_in_progress` / `tenant_state_changed`, and `503` when the route, Control, the
+    Lookup directory or the audit write cannot be read or written (nothing is changed).
   - `tenant_provisioning_cleanup_conflict` on cleanup: the operation is running, finished, or at
     Lookup activation, or moved while cleanup started. Once activation has begun, retry
     provisioning instead of cleaning up.

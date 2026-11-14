@@ -173,3 +173,43 @@ export async function disableTenantLookupDirectory(
     await disableTenantRowsOnShard(session, tenantId, now);
   }
 }
+
+/**
+ * Read-only evidence for a deletion job that predates the durable `destructive_started_at`
+ * marker: how many identifier rows of the tenant the Lookup shards hold, and how many of them
+ * `disableTenantLookupDirectory` has already disabled (`tenant_lifecycle_state = 'disabled'`).
+ *
+ * Only `lookup_identifiers` is read. The alias table is NOT evidence: ordinary operations write
+ * `tenant_lifecycle_state = 'disabled'` there through the alias directory (client deletion,
+ * invitation cancel, custom-domain removal, provisioning cleanup), so a live tenant has such rows.
+ * In `lookup_identifiers` that value is written only by the deletion cleanup above (the
+ * placement, replacement, reindex and removal code write or copy `active`, or copy a row as it
+ * is). Zero identifier rows means the probe has no evidence either way.
+ * Any error (binding missing, shard list invalid, query failed) throws: the caller must refuse.
+ */
+export async function tenantLookupIdentifierDisableEvidence(
+  env: Env,
+  inventoryRows: ControlTenantDeletionLookupShardTarget[],
+  tenantId: string
+): Promise<{ identifierRows: number; disabledIdentifierRows: number }> {
+  if (!SAFE_ID.test(tenantId)) throw new Error('tenant_deletion_lookup_cleanup_unavailable');
+  const rows = strictShardRows(inventoryRows);
+  const sessions = rows.map((row) => primarySession(env, row.bindingRef));
+  let identifierRows = 0;
+  let disabledIdentifierRows = 0;
+  for (const session of sessions) {
+    const counts = await session
+      .prepare(
+        `SELECT COUNT(*) AS identifier_rows,
+                COALESCE(SUM(CASE WHEN tenant_lifecycle_state = 'disabled' THEN 1 ELSE 0 END), 0)
+                  AS disabled_rows
+           FROM lookup_identifiers WHERE tenant_id = ?`
+      )
+      .bind(tenantId)
+      .first<{ identifier_rows: number; disabled_rows: number }>();
+    if (!counts) throw new Error('tenant_deletion_lookup_probe_failed');
+    identifierRows += Number(counts.identifier_rows);
+    disabledIdentifierRows += Number(counts.disabled_rows);
+  }
+  return { identifierRows, disabledIdentifierRows };
+}

@@ -3497,6 +3497,125 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/tenants/{id}/deletion/cancel':
+    post:
+      tags: [Tenants]
+      summary: Cancel a failed tenant deletion.
+      description: >-
+        Cancels the latest deletion of a tenant that failed before its point of no return. The
+        point of no return is the lookup directory disable inside the deletion job; before it the
+        deletion only changed the runtime route state. The route (`quarantining` or `quarantined`)
+        is reactivated with the function disaster recovery uses, the failed job is marked
+        cancelled (it keeps `status` `failed`; `error_message` is `tenant_deletion_cancelled`), and
+        the tenant stays `suspended`: bringing it back to `active` is the `resume` lifecycle
+        command. The pre-deletion backup is left alone. A deletion started later gets a new
+        operation id. The cancellation is two-phase: first the job is marked (`cancelling`) in one
+        guarded write that also refuses it if a deletion was queued meanwhile, then the route is
+        reactivated and its signed snapshot published, and only then is the job marked
+        `cancelled`. If the publication fails the request answers 503 and the cancel stays
+        incomplete (resume stays refused, a new deletion is refused); repeating the request
+        completes it, replaying the publication even though the database route is already
+        active. Each request, a repeat included, passes step-up and writes an audit entry. A
+        repeat after completion answers 200 with `already_cancelled: true`.
+        The cancellation applies to the tenant's failed deletion jobs as a set: every failed,
+        unmarked `tenants/delete` job is marked together and finalised together. The chain to
+        reactivate is the one that owns the route's operation id. Whether the point of no return
+        has passed is decided from persisted state, never from the job's progress: the durable
+        `destructive_started_at` marker the deletion job writes right before its lookup disable
+        (on any job of the chain), Control's deletion finalisation, and a `disabled` route. For a
+        job that predates the marker, the Lookup identifier table is read as evidence (a disabled
+        identifier row, or no identifier rows at all, refuses); if that cannot be read, nothing is
+        changed (503). A cancel mark carries a 120 second lease: a repeat inside it answers 409
+        `tenant_deletion_cancel_in_progress`. Authorization and step-up are those of tenant
+        deletion: a machine needs `admin:*` or `admin:tenants:delete` on a global scope and the
+        exact-name `admin:step_up_exempt:tenant.delete` while step-up is enforced; a human needs
+        the global `ar_super_admin` role. The primary and the default tenant are refused.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 3
+                  maxLength: 1000
+      responses:
+        '200':
+          description: The deletion was cancelled (or had already been).
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - tenant_id
+                  - lifecycle_state
+                  - cancelled_job_id
+                  - operation_id
+                  - route_status_before
+                  - route_reactivated
+                properties:
+                  tenant_id:
+                    type: string
+                  lifecycle_state:
+                    type: string
+                    enum: [suspended]
+                  cancelled_job_id:
+                    type: string
+                  operation_id:
+                    type: string
+                    description: The deletion's chain id (the route state's operation id).
+                  route_status_before:
+                    type: string
+                    enum: [active, quarantining, quarantined]
+                  route_reactivated:
+                    type: boolean
+                  already_cancelled:
+                    type: boolean
+                    description: Present and true on an idempotent repeat.
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: >-
+            `tenant_deletion_not_failed`: the tenant is not `suspended`, or its latest deletion job
+            did not fail (or no deletion job exists). `tenant_deletion_in_progress`: the tenant is
+            `deleting` or has a pending or running deletion job. `tenant_deletion_past_point_of_no_return`:
+            the route is `disabled`, a job of the chain wrote its destructive-step marker, Control has
+            finalised the deletion, or (for a job that predates the marker) the Lookup identifier
+            table shows the disable or cannot show anything; the response carries `stage`
+            (`route_disabled`, `destructive_started`, `control_finalized`, `lookup_disabled` or
+            `legacy_unverifiable`) and the deletion has to finish.
+            `tenant_deletion_cancel_in_progress`: another cancellation of this deletion holds the
+            mark inside its 120 second lease; repeat later, nothing was changed.
+            `tenant_route_owned_by_other_operation`: the route is held by another operation (for
+            example a disaster recovery) and is not touched. `tenant_state_changed`: the tenant or
+            its deletion changed while the request was processed (a deletion was queued, the state
+            moved, or the route changed); read it again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: >-
+            `tenant_route_state_unavailable`, `tenant_deletion_state_unverifiable` (Control or the
+            Lookup directory could not be read), `audit_unavailable` (the audit entry could not be
+            written; nothing is changed) or `tenant_route_reactivation_failed` (repeat the request).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/tenants/{id}/provisioning':
     get:
       tags: [Tenants]
@@ -3676,14 +3795,23 @@ paths:
             reactivated now. Retrying helps only after the deletion job has failed or completed, or
             its stale window has passed. Also `lifecycle_conflict` (the tenant's state or version
             changed; read it again and resend with the new `expected_updated_at`) and
-            `invalid_lifecycle_transition`. A validation job accepted earlier yields to a
+            `invalid_lifecycle_transition`. `tenant_deletion_failed_use_cancel`: the tenant's last
+            deletion failed and was not cancelled while its route is still `quarantining`,
+            `quarantined` or `disabled`, or its cancellation is incomplete (the route publication
+            is not confirmed; repeat the cancel), or a completed cancel left the route
+            non-active, so resuming would flip the tenant row while the route stays
+            out of service; cancel the deletion with `POST /api/admin/tenants/{id}/deletion/cancel`
+            first (a failed deletion that never reached quarantine does not block). A route that
+            cannot be read answers 503 `tenant_route_state_unavailable`. A validation job accepted earlier yields to a
             deletion and activates nothing, ending as `partial_failure` in one of two ways: if the
             tenant is already `deleting` when the job starts, the common lifecycle gate ends it
             (stage `blocked_by_tenant_lifecycle`, error `tenant_lifecycle_blocked:deleting`); if the
             a deletion was accepted after the command (even if it has failed since and left the
             tenant in the job's source state, or is still pending or running), or the tenant's
             state changed, the reactivating statement matches nothing and the job ends with stage
-            `tenant_lifecycle_validation_superseded`. Send a new command if the tenant should
+            `tenant_lifecycle_validation_superseded` (also with reason
+            `tenant_deletion_failed_use_cancel` when the deletion failed after the command was
+            accepted and left the route out of service). Send a new command if the tenant should
             still be reactivated.
           content:
             application/json:
@@ -3732,14 +3860,23 @@ paths:
             reactivated now. Retrying helps only after the deletion job has failed or completed, or
             its stale window has passed. Also `lifecycle_conflict` (the tenant's state or version
             changed; read it again and resend with the new `expected_updated_at`) and
-            `invalid_lifecycle_transition`. A validation job accepted earlier yields to a
+            `invalid_lifecycle_transition`. `tenant_deletion_failed_use_cancel`: the tenant's last
+            deletion failed and was not cancelled while its route is still `quarantining`,
+            `quarantined` or `disabled`, or its cancellation is incomplete (the route publication
+            is not confirmed; repeat the cancel), or a completed cancel left the route
+            non-active, so resuming would flip the tenant row while the route stays
+            out of service; cancel the deletion with `POST /api/admin/tenants/{id}/deletion/cancel`
+            first (a failed deletion that never reached quarantine does not block). A route that
+            cannot be read answers 503 `tenant_route_state_unavailable`. A validation job accepted earlier yields to a
             deletion and activates nothing, ending as `partial_failure` in one of two ways: if the
             tenant is already `deleting` when the job starts, the common lifecycle gate ends it
             (stage `blocked_by_tenant_lifecycle`, error `tenant_lifecycle_blocked:deleting`); if the
             a deletion was accepted after the command (even if it has failed since and left the
             tenant in the job's source state, or is still pending or running), or the tenant's
             state changed, the reactivating statement matches nothing and the job ends with stage
-            `tenant_lifecycle_validation_superseded`. Send a new command if the tenant should
+            `tenant_lifecycle_validation_superseded` (also with reason
+            `tenant_deletion_failed_use_cancel` when the deletion failed after the command was
+            accepted and left the route out of service). Send a new command if the tenant should
             still be reactivated.
           content:
             application/json:
@@ -3769,14 +3906,23 @@ paths:
             reactivated now. Retrying helps only after the deletion job has failed or completed, or
             its stale window has passed. Also `lifecycle_conflict` (the tenant's state or version
             changed; read it again and resend with the new `expected_updated_at`) and
-            `invalid_lifecycle_transition`. A validation job accepted earlier yields to a
+            `invalid_lifecycle_transition`. `tenant_deletion_failed_use_cancel`: the tenant's last
+            deletion failed and was not cancelled while its route is still `quarantining`,
+            `quarantined` or `disabled`, or its cancellation is incomplete (the route publication
+            is not confirmed; repeat the cancel), or a completed cancel left the route
+            non-active, so resuming would flip the tenant row while the route stays
+            out of service; cancel the deletion with `POST /api/admin/tenants/{id}/deletion/cancel`
+            first (a failed deletion that never reached quarantine does not block). A route that
+            cannot be read answers 503 `tenant_route_state_unavailable`. A validation job accepted earlier yields to a
             deletion and activates nothing, ending as `partial_failure` in one of two ways: if the
             tenant is already `deleting` when the job starts, the common lifecycle gate ends it
             (stage `blocked_by_tenant_lifecycle`, error `tenant_lifecycle_blocked:deleting`); if the
             a deletion was accepted after the command (even if it has failed since and left the
             tenant in the job's source state, or is still pending or running), or the tenant's
             state changed, the reactivating statement matches nothing and the job ends with stage
-            `tenant_lifecycle_validation_superseded`. Send a new command if the tenant should
+            `tenant_lifecycle_validation_superseded` (also with reason
+            `tenant_deletion_failed_use_cancel` when the deletion failed after the command was
+            accepted and left the route out of service). Send a new command if the tenant should
             still be reactivated.
           content:
             application/json:
