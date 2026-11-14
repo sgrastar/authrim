@@ -1,3 +1,4 @@
+import { IMPORTED_IDENTIFIER_SALT_PREFIX } from '../services/identifier-salt-refs';
 import { runSamlDrCoveredOperation } from '../services/tenant-portability/saml-dr-writer';
 /**
  * KeyManager Durable Object
@@ -234,6 +235,19 @@ function isEncryptionPublicKey(value: unknown): boolean {
 export interface SignStatusListCredentialResult {
   token: string;
   kid: string;
+}
+
+/** Salts imported from other identity providers a tenant may keep. */
+const MAX_IMPORTED_SALTS = 32;
+/** What a portable key manager state carries at most (key-manager-portability MAX_SECRETS). */
+const MAX_PORTABLE_SECRETS = 256;
+
+/** A short, stable fingerprint of a secret value (SHA-256, first 16 hex characters). */
+async function secretFingerprint(value: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  );
+  return Array.from(digest.slice(0, 8), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 interface StoredSecretVersion {
@@ -495,6 +509,7 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
     'getConfig',
     'getOrCreateSecretRpc',
     'rotateSecretRpc',
+    'importSecretRpc',
     'storeCertificateForKey',
     'importKey',
     'generateNewECKey',
@@ -511,7 +526,12 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
     'releaseTenantBackupSnapshotRpc',
     'assertTenantBackupSnapshotReleasedRpc',
   ],
-  readonly: ['exportTenantBackupStateRpc', 'verifyTenantBackupStateRpc', 'getExistingSecretRpc'],
+  readonly: [
+    'exportTenantBackupStateRpc',
+    'verifyTenantBackupStateRpc',
+    'getExistingSecretRpc',
+    'listImportedSecretsRpc',
+  ],
 } as const;
 
 const TOKEN_STATUS_LIST_CLAIMS = new Set(['iss', 'sub', 'iat', 'exp', 'ttl', 'status_list']);
@@ -2121,6 +2141,103 @@ export class KeyManager extends DurableObject<Env> {
           | undefined)
       : undefined;
     return existing ? structuredClone(existing) : null;
+  }
+
+  /**
+   * Put a salt brought from another identity provider under `identifier-salt:import:<name>`
+   * (the only refs this writes). The value is the salt's bytes, base64-encoded. Putting the same
+   * value again changes nothing; a different value replaces the current one only when the caller
+   * names the current one's fingerprint, so a salt in use is never replaced by mistake. The value
+   * is never returned.
+   */
+  async importSecretRpc(input: {
+    secretRef: string;
+    value: string;
+    replaceFingerprint?: string;
+  }): Promise<{ fingerprint: string; outcome: 'created' | 'unchanged' | 'replaced' }> {
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      validateSecretRef(input.secretRef);
+      if (!input.secretRef.startsWith(IMPORTED_IDENTIFIER_SALT_PREFIX)) {
+        throw new Error('imported_secret_ref_not_allowed');
+      }
+      if (typeof input.value !== 'string' || input.value.length === 0) {
+        throw new Error('imported_secret_value_invalid');
+      }
+      await this.#initializeState();
+      const state = this.#getState();
+      state.secrets ??= {};
+      const fingerprint = await secretFingerprint(input.value);
+      const existing = Object.getOwnPropertyDescriptor(state.secrets, input.secretRef)?.value as
+        | StoredSecret
+        | undefined;
+      if (existing) {
+        const current = await secretFingerprint(existing.active.value);
+        if (current === fingerprint) return { fingerprint, outcome: 'unchanged' };
+        if (input.replaceFingerprint !== current) {
+          throw new Error('imported_secret_replace_mismatch');
+        }
+      }
+      if (!existing) {
+        // One more secret must still fit what a backup of this key manager can carry.
+        const refs = Object.keys(state.secrets);
+        const imported = refs.filter((ref) => ref.startsWith(IMPORTED_IDENTIFIER_SALT_PREFIX));
+        if (imported.length >= MAX_IMPORTED_SALTS || refs.length >= MAX_PORTABLE_SECRETS) {
+          throw new Error('imported_secret_limit');
+        }
+      }
+      const now = Date.now();
+      const secret: StoredSecret = {
+        secretRef: input.secretRef,
+        active: { kid: `secret-${now}-${crypto.randomUUID()}`, value: input.value, createdAt: now },
+        // The replaced salt is not kept: identifiers made with it are not made again.
+        updatedAt: now,
+      };
+      Object.defineProperty(state.secrets, input.secretRef, {
+        value: secret,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      try {
+        await this.#saveState();
+      } catch (error) {
+        // Not saved: the salt in use stays the one that is stored, here as after a restart.
+        if (existing) {
+          Object.defineProperty(state.secrets, input.secretRef, {
+            value: existing,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        } else {
+          delete state.secrets[input.secretRef];
+        }
+        throw error;
+      }
+      return { fingerprint, outcome: existing ? 'replaced' : 'created' };
+    });
+  }
+
+  /** The imported salts by name, with fingerprints only (never values). */
+  async listImportedSecretsRpc(): Promise<
+    Array<{ secretRef: string; fingerprint: string; updatedAt: number }>
+  > {
+    await this.initialization;
+    if (this.env.ENABLE_SAML_DR_EXPORT === 'true') await this.#assertSnapshotAuthority();
+    const state =
+      this.env.ENABLE_SAML_DR_EXPORT === 'true'
+        ? await this.ctx.storage.get<KeyManagerState>('state')
+        : this.keyManagerState;
+    const out: Array<{ secretRef: string; fingerprint: string; updatedAt: number }> = [];
+    for (const [secretRef, secret] of Object.entries(state?.secrets ?? {})) {
+      if (!secretRef.startsWith(IMPORTED_IDENTIFIER_SALT_PREFIX)) continue;
+      out.push({
+        secretRef,
+        fingerprint: await secretFingerprint(secret.active.value),
+        updatedAt: secret.updatedAt,
+      });
+    }
+    return out.sort((a, b) => a.secretRef.localeCompare(b.secretRef));
   }
 
   async rotateSecretRpc(secretRef: string): Promise<StoredSecret> {

@@ -7,6 +7,7 @@ import type {
 import { computeIdentifier } from '../identifier-algorithms';
 import {
   prepareMappedIdentifiers,
+  sha256Hex,
   resolvePairwiseSector,
   type IdentifierRecipient,
 } from '../mapped-identifiers';
@@ -158,13 +159,19 @@ describe('prepareMappedIdentifiers', () => {
         oidc,
         'identifier.invalid_settings',
       ],
+      // The same identifier for every SP must not go out as a per-SP one.
+      [
+        { format: 'saml_pairwise_id', algorithm: 'simplesamlphp_subject_id', scope: 'example.org' },
+        saml,
+        'identifier.invalid_settings',
+      ],
       [
         { format: 'saml_pairwise_id', algorithm: 'shibboleth', encoding: 'base32' },
         saml,
         'identifier.scope_missing',
       ],
       [
-        { format: 'saml_subject_id', algorithm: 'shibboleth', scope: '-bad' },
+        { format: 'saml_pairwise_id', algorithm: 'shibboleth', scope: '-bad' },
         saml,
         'identifier.invalid_scope',
       ],
@@ -193,6 +200,69 @@ describe('prepareMappedIdentifiers', () => {
       { inputEdgeIds: [] }
     );
     expect(noInput.failures['step.id']).toBe('identifier.input_missing');
+  });
+
+  it('makes a migrated identifier with an imported salt, read as bytes, never made up', async () => {
+    const run = (name: string, stored: string | null) =>
+      prepareMappedIdentifiers({
+        transforms: [step({ format: 'plain', algorithm: 'shibboleth', salt: name })],
+        edges: [edge],
+        sourceValues: source('jdoe'),
+        recipient: { ...oidc, clientId: 'https://sp.example.org/shibboleth' },
+        loadDefaultSalt: async () => 'tenant-salt',
+        loadImportedSalt: async (requested) => (requested === name ? stored : null),
+      });
+    // The salt's bytes: base64 of "0123456789abcdef-salt".
+    const imported = await run('shib', btoa('0123456789abcdef-salt'));
+    expect(imported.identifiers['step.id']).toBe('iXw0A3ZJeWL04PK1adRXebjDCVI=');
+    const missing = await run('shib', null);
+    expect(missing.failures['step.id']).toBe('identifier.salt_missing');
+    const broken = await run('shib', '***');
+    expect(broken.failures['step.id']).toBe('identifier.salt_missing');
+    const badName = await run('Bad Name', btoa('x'));
+    expect(badName.failures['step.id']).toBe('identifier.invalid_settings');
+  });
+
+  it('releases a kept identifier first, and never computes one when the lookup fails', async () => {
+    const lookups: Array<[string, string, string]> = [];
+    const run = (stored: string, lookup: () => Promise<string | null>) =>
+      prepareMappedIdentifiers({
+        transforms: [
+          step({
+            format: 'saml_pairwise_id',
+            algorithm: 'shibboleth',
+            encoding: 'base32',
+            scope: 'example.org',
+            stored,
+            store: 'shibpid',
+          }),
+        ],
+        edges: [edge],
+        sourceValues: source('jdoe'),
+        recipient: saml,
+        loadDefaultSalt: async () => 'tenant-salt',
+        lookupStoredIdentifier: async (store, audience, hash) => {
+          lookups.push([store, audience, hash]);
+          return lookup();
+        },
+      });
+    const kept = await run('prefer', async () => 'KEPTVALUE');
+    expect(kept.identifiers['step.id']).toBe('KEPTVALUE@example.org');
+    expect(lookups[0]).toEqual([
+      'shibpid',
+      'https://sp.example.org',
+      // The SHA-256 of "jdoe": the source value itself is not looked up.
+      await sha256Hex('jdoe'),
+    ]);
+    const computed = await run('prefer', async () => null);
+    expect(computed.identifiers['step.id']).toMatch(/^[A-Z2-7]+=*@example\.org$/);
+    const required = await run('require', async () => null);
+    expect(required.failures['step.id']).toBe('identifier.stored_missing');
+    const broken = await run('prefer', async () => {
+      throw new Error('database down');
+    });
+    expect(broken.identifiers).toEqual({});
+    expect(broken.failures['step.id']).toBe('identifier.stored_unavailable');
   });
 
   it('makes nothing without the salt, and reads no salt for a placeholder', async () => {

@@ -128,6 +128,30 @@ describe('OIDC persistent_identifier', () => {
     expect(claims.sub).toBe(await expected('app.example'));
   });
 
+  it('refuses when the identifier is made but dropped before release', async () => {
+    // A catalog without the sub entry drops the identifier: the user id must not go out instead.
+    const dropped = binding({ format: 'plain', algorithm: 'authrim_sha256' });
+    dropped.catalog.entries = [];
+    resolveBinding.mockResolvedValue(dropped);
+    const failure = { details: { code: 'policy.persistent_identifier_unavailable' } };
+    await expect(
+      applyOIDCIdentityMapping(input({ KEY_MANAGER: keyManager }))
+    ).rejects.toMatchObject(failure);
+    await expect(deriveOIDCSubject(input({ KEY_MANAGER: keyManager }))).rejects.toMatchObject(
+      failure
+    );
+    // A target that does not say it is a destination is never a release either.
+    const sideless = binding({ format: 'plain', algorithm: 'authrim_sha256' });
+    sideless.transforms[0].outputTargetRef = {
+      namespace: 'oidc.claim',
+      path: 'sub',
+    } as unknown as (typeof sideless.transforms)[0]['outputTargetRef'];
+    resolveBinding.mockResolvedValue(sideless);
+    await expect(deriveOIDCSubject(input({ KEY_MANAGER: keyManager }))).rejects.toMatchObject(
+      failure
+    );
+  });
+
   it('refuses rather than issue the user id when the identifier cannot be made', async () => {
     const failure = { details: { code: 'policy.persistent_identifier_unavailable' } };
     await expect(applyOIDCIdentityMapping(input({}))).rejects.toMatchObject(failure);

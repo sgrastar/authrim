@@ -60,6 +60,7 @@ export function freshDatabase(family: Family) {
           '013_authentication_method_profiles.sql',
           '014_session_profiles.sql',
           '015_platform_profiles.sql',
+          '017_mapped_identifier_values.sql',
         ]
       : []),
     ...(family === 'core'

@@ -3167,7 +3167,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
               edges: [
                 {
                   sourceRef: { namespace: 'oidc.claim', path: 'sub' },
-                  targetRef: { namespace: 'oidc.claim', path: 'sub' },
+                  targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
                 },
               ],
               transforms: [{ operation: 'persistent_identifier', ...transform }],
@@ -3185,7 +3185,10 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       { edgeIndex: 0, parameters: { format: 'plain', algorithm: 'shibboleth', secret: 'x' } },
       // An input that is not there; settings that pass one by one but not together.
       { edgeIndex: 1, parameters: { format: 'plain', algorithm: 'authrim_sha256' } },
-      { edgeIndex: 0, parameters: { format: 'plain', algorithm: 'authrim_sha256', salt: 'x' } },
+      {
+        edgeIndex: 0,
+        parameters: { format: 'plain', algorithm: 'authrim_sha256', salt: 'Bad Name' },
+      },
       { edgeIndex: 0, parameters: { format: 'saml_pairwise_id', algorithm: 'shibboleth' } },
       {
         edgeIndex: 0,
@@ -3203,6 +3206,42 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       await expect(saved).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
       expect(adapter.executes).toHaveLength(0);
     }
+    // Another edge writing into the identifier's output.
+    const sameOutput = createAdapter({});
+    await expect(
+      new IdentityMappingControlPlaneRepository(sameOutput, () => 1000).createFieldMappingVersion(
+        'tenant_a',
+        'policy_1',
+        {
+          versionLabel: 'v1',
+          rules: [
+            {
+              ruleKey: 'pairwise',
+              ruleKind: 'mapping',
+              action: 'allow',
+              edges: [
+                {
+                  sourceRef: { namespace: 'oidc.claim', path: 'sub' },
+                  targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+                },
+                {
+                  sourceRef: { namespace: 'oidc.claim', path: 'email' },
+                  targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+                },
+              ],
+              transforms: [
+                {
+                  edgeIndex: 0,
+                  operation: 'persistent_identifier',
+                  parameters: { format: 'plain', algorithm: 'authrim_sha256' },
+                },
+              ],
+            },
+          ],
+        }
+      )
+    ).rejects.toMatchObject({ status: 400 });
+    expect(sameOutput.executes).toHaveLength(0);
     // Its input read by another step as well.
     const adapter = createAdapter({});
     await expect(
@@ -3219,7 +3258,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
               edges: [
                 {
                   sourceRef: { namespace: 'oidc.claim', path: 'sub' },
-                  targetRef: { namespace: 'oidc.claim', path: 'sub' },
+                  targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
                 },
               ],
               transforms: [

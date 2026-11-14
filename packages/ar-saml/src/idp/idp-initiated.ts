@@ -62,6 +62,7 @@ import { resolveSAMLReleaseConsent, samlReleaseConsentStillCurrent } from './rel
 import {
   applySAMLReleaseApproval,
   computeSAMLAttributeRelease,
+  resolveSAMLMappedNameID,
   samlApprovalNeedsIdentifiers,
 } from './release-items';
 
@@ -548,6 +549,17 @@ async function generateIdPInitiatedResponse(input: {
   const nameIdValue = await resolveSAMLNameIDValue(input.userInfo, input.nameIdFormat, {
     tenantId,
     spEntityId: spConfig.entityId,
+    // The NameID the SP's mapping makes, if it makes one (e.g. the one an earlier IdP issued).
+    mappedNameID:
+      input.nameIdFormat === NAMEID_FORMATS.PERSISTENT
+        ? await resolveSAMLMappedNameID({
+            env,
+            tenantId,
+            idpEntityId: input.idpEntityId,
+            spConfig,
+            userInfo: input.userInfo,
+          })
+        : undefined,
     pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
     persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
     allowCreate: true,

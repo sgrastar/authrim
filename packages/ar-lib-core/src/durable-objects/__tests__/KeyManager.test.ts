@@ -249,6 +249,53 @@ describe('KeyManager Durable Object', () => {
     ).rejects.toThrow('backup_key_manager_target_not_empty');
   });
 
+  it('imports a salt under its own refs only, and never replaces one by mistake', async () => {
+    const ref = 'identifier-salt:import:shibboleth';
+    const created = await keyManager.importSecretRpc({ secretRef: ref, value: 'c2FsdC0x' });
+    expect(created.outcome).toBe('created');
+    // The same value again changes nothing.
+    await expect(
+      keyManager.importSecretRpc({ secretRef: ref, value: 'c2FsdC0x' })
+    ).resolves.toMatchObject({ outcome: 'unchanged', fingerprint: created.fingerprint });
+    // Another value needs the current one's fingerprint.
+    await expect(keyManager.importSecretRpc({ secretRef: ref, value: 'c2FsdC0y' })).rejects.toThrow(
+      'imported_secret_replace_mismatch'
+    );
+    await expect(
+      keyManager.importSecretRpc({
+        secretRef: ref,
+        value: 'c2FsdC0y',
+        replaceFingerprint: created.fingerprint,
+      })
+    ).resolves.toMatchObject({ outcome: 'replaced' });
+    // Nothing else can be written through it.
+    await expect(
+      keyManager.importSecretRpc({ secretRef: 'identifier-salt:default', value: 'x' })
+    ).rejects.toThrow('imported_secret_ref_not_allowed');
+    const listed = await keyManager.listImportedSecretsRpc();
+    expect(listed.map((item) => item.secretRef)).toEqual([ref]);
+    expect(JSON.stringify(listed)).not.toContain('c2FsdC0');
+    await expect(keyManager.getExistingSecretRpc(ref)).resolves.toMatchObject({
+      active: { value: 'c2FsdC0y' },
+    });
+  });
+
+  it('keeps at most 32 imported salts', async () => {
+    for (let i = 0; i < 32; i++) {
+      await keyManager.importSecretRpc({
+        secretRef: `identifier-salt:import:s${i}`,
+        value: `v${i}`,
+      });
+    }
+    await expect(
+      keyManager.importSecretRpc({ secretRef: 'identifier-salt:import:s32', value: 'v' })
+    ).rejects.toThrow('imported_secret_limit');
+    // Replacing one that is there is not a new one.
+    await expect(
+      keyManager.importSecretRpc({ secretRef: 'identifier-salt:import:s0', value: 'v0' })
+    ).resolves.toMatchObject({ outcome: 'unchanged' });
+  });
+
   it('keeps an operation snapshot stable until explicit release', async () => {
     const snapshotId = 'ab'.repeat(32);
     await keyManager.startTenantBackupSnapshotRpc(snapshotId);
