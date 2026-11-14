@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { t } from '#lib/i18n/i18n.svelte.js';
-	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 
@@ -15,18 +14,25 @@
 		/** One thing worth a look, shown as a note. */
 		note?: string;
 		tested: boolean;
+		/**
+		 * What the test runs against. A result that comes in after it changed is for settings that
+		 * no longer hold, so it is dropped (the settings stay open beside the test).
+		 */
+		basis?: string;
 	}
 
-	let { lead, checks, note, tested = $bindable() }: Props = $props();
+	let { lead, checks, note, tested = $bindable(), basis }: Props = $props();
+	let startedWith: string | undefined;
 
 	let testing = $state(false);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	function run() {
 		testing = true;
+		startedWith = basis;
 		clearTimeout(timer);
 		timer = setTimeout(() => {
-			tested = true;
+			if (basis === startedWith) tested = true;
 			testing = false;
 		}, 700);
 	}
@@ -48,8 +54,6 @@
 		{/each}
 		{#if note}<li><Badge tone="warning" dot>{t('sf.test.note')}</Badge> {note}</li>{/if}
 	</ul>
-{:else}
-	<Callout tone="info">{t('sf.test.toGoOn')}</Callout>
 {/if}
 
 <style>

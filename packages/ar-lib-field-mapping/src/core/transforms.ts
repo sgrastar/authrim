@@ -2,6 +2,8 @@ import { buildTraceEntry } from './trace';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
 import type {
+  FieldRef,
+  MappingRuleEdge,
   MappingTransformStep,
   ReasonCode,
   SourceValueEnvelope,
@@ -11,6 +13,147 @@ import type {
   TransformOperationSchema,
   ValidationResult,
 } from './types';
+
+/** How a persistent identifier is framed for its protocol. */
+export const PERSISTENT_IDENTIFIER_FORMATS = [
+  'plain',
+  'saml_targeted_id',
+  'saml_pairwise_id',
+  'saml_subject_id',
+] as const;
+/** Kept in step with IDENTIFIER_ALGORITHMS in @authrim/ar-lib-core (identifier-algorithms.ts). */
+export const PERSISTENT_IDENTIFIER_ALGORITHMS = [
+  'authrim_sha256',
+  'shibboleth',
+  'keycloak_sha256',
+  'simplesamlphp_targeted_id',
+  'simplesamlphp_persistent_nameid',
+  'simplesamlphp_pairwise_id',
+  'simplesamlphp_subject_id',
+] as const;
+
+/** The name an imported salt is kept under (identifier-salt:import:<name>). */
+export const IDENTIFIER_SALT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
+
+const IDENTIFIER_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{0,126}$/u;
+
+/**
+ * What is wrong with a persistent_identifier step's settings, or null. Shared by saving (the
+ * admin API) and running, so a set that could never make an identifier is neither saved nor run.
+ * Which protocol it is for is checked where the identifier is made.
+ */
+export function persistentIdentifierSettingsProblem(
+  parameters: Record<string, unknown> | undefined
+): string | null {
+  const p = parameters ?? {};
+  const format = p.format;
+  const algorithm = p.algorithm;
+  if (
+    typeof format !== 'string' ||
+    !(PERSISTENT_IDENTIFIER_FORMATS as readonly string[]).includes(format)
+  ) {
+    return 'format';
+  }
+  if (
+    typeof algorithm !== 'string' ||
+    !(PERSISTENT_IDENTIFIER_ALGORITHMS as readonly string[]).includes(algorithm)
+  ) {
+    return 'algorithm';
+  }
+  // A salt brought from another identity provider, by the name it was imported under.
+  if (p.salt !== undefined && (typeof p.salt !== 'string' || !IDENTIFIER_SALT_NAME.test(p.salt))) {
+    return 'salt';
+  }
+  // What each algorithm makes: an identifier per recipient, or one for every recipient.
+  const fits: Record<string, readonly string[]> = {
+    authrim_sha256: ['plain', 'saml_targeted_id', 'saml_pairwise_id'],
+    shibboleth: ['plain', 'saml_targeted_id', 'saml_pairwise_id'],
+    keycloak_sha256: ['plain'],
+    simplesamlphp_targeted_id: ['plain', 'saml_targeted_id'],
+    simplesamlphp_persistent_nameid: ['plain', 'saml_targeted_id'],
+    simplesamlphp_pairwise_id: ['saml_pairwise_id'],
+    // The same for every recipient: never released as a per-recipient identifier.
+    simplesamlphp_subject_id: ['saml_subject_id'],
+  };
+  if (!fits[algorithm]?.includes(format)) return 'format_algorithm';
+  const stored = p.stored ?? 'off';
+  if (
+    (stored !== 'off' && (typeof p.store !== 'string' || !IDENTIFIER_SALT_NAME.test(p.store))) ||
+    (p.store !== undefined && stored === 'off')
+  ) {
+    return 'store';
+  }
+  if ((p.digest !== undefined || p.encoding !== undefined) && algorithm !== 'shibboleth') {
+    return 'digest_or_encoding';
+  }
+  const scoped =
+    format === 'saml_pairwise_id' ||
+    format === 'saml_subject_id' ||
+    algorithm === 'simplesamlphp_pairwise_id' ||
+    algorithm === 'simplesamlphp_subject_id';
+  if (
+    p.scope !== undefined &&
+    (typeof p.scope !== 'string' || !IDENTIFIER_SCOPE_PATTERN.test(p.scope))
+  ) {
+    return 'scope';
+  }
+  if (scoped && p.scope === undefined) return 'scope';
+  return null;
+}
+
+/**
+ * A persistent identifier's input read by any other step: its value would go out through that
+ * step (or a second identifier), next to or in place of the identifier.
+ */
+export function sharesConsumedInput(
+  transforms: readonly MappingTransformStep[] = [],
+  edges: readonly MappingRuleEdge[] = []
+): boolean {
+  const consumed = consumedEdgeIds(transforms);
+  // Another edge into the identifier's own output would release its value there as well.
+  const identifierTargets = transforms
+    .filter((step) => step.operation === 'persistent_identifier')
+    .map((step) => step.outputTargetRef);
+  if (
+    edges.some(
+      (edge) =>
+        !consumed.has(edge.id) &&
+        identifierTargets.some((target) => sameTarget(target, edge.targetRef))
+    )
+  ) {
+    return true;
+  }
+  const readers = new Map<string, number>();
+  for (const step of transforms) {
+    for (const edgeId of new Set(step.inputEdgeIds)) {
+      if (consumed.has(edgeId)) readers.set(edgeId, (readers.get(edgeId) ?? 0) + 1);
+    }
+  }
+  return [...readers.values()].some((count) => count > 1);
+}
+
+function sameTarget(a: FieldRef, b: FieldRef): boolean {
+  if (a.catalogEntryId && b.catalogEntryId) return a.catalogEntryId === b.catalogEntryId;
+  return (
+    (a.side ?? 'source') === (b.side ?? 'source') &&
+    a.namespace === b.namespace &&
+    a.path === b.path
+  );
+}
+
+/**
+ * The input edges a step reads without releasing them: what a persistent identifier is made
+ * from (a migrated user name, the account ID) must not go out next to the identifier.
+ */
+export function consumedEdgeIds(transforms: readonly MappingTransformStep[] = []): Set<string> {
+  const ids = new Set<string>();
+  for (const step of transforms) {
+    if (step.operation === 'persistent_identifier') {
+      for (const edgeId of step.inputEdgeIds) ids.add(edgeId);
+    }
+  }
+  return ids;
+}
 
 export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   { operation: 'copy', parameters: [] },
@@ -55,6 +198,53 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   {
     operation: 'oidc_pairwise_sub',
     parameters: [{ name: 'persistentIdentifierProfileId', kind: 'string', required: false }],
+    outputValueType: 'string',
+    outputCardinality: 'single',
+  },
+  {
+    // Made before the mapping runs (it needs a salt and hashing, which are asynchronous): the
+    // step only takes the value prepared for it, by its id, from runtimeContext.identifiers. Its
+    // one input is what the identifier is made from, and is never released itself.
+    operation: 'persistent_identifier',
+    parameters: [
+      {
+        name: 'format',
+        kind: 'enum',
+        required: true,
+        allowedValues: [...PERSISTENT_IDENTIFIER_FORMATS],
+      },
+      {
+        name: 'algorithm',
+        kind: 'enum',
+        required: true,
+        allowedValues: [...PERSISTENT_IDENTIFIER_ALGORITHMS],
+      },
+      {
+        name: 'digest',
+        kind: 'enum',
+        required: false,
+        allowedValues: ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'],
+      },
+      { name: 'encoding', kind: 'enum', required: false, allowedValues: ['base64', 'base32'] },
+      {
+        name: 'audience',
+        kind: 'enum',
+        required: false,
+        allowedValues: ['auto', 'sector', 'sp_entity_id'],
+      },
+      { name: 'scope', kind: 'string', required: false },
+      { name: 'salt', kind: 'string', required: false },
+      // Identifiers kept from another IdP: used first (prefer), or only (require).
+      {
+        name: 'stored',
+        kind: 'enum',
+        required: false,
+        allowedValues: ['off', 'prefer', 'require'],
+      },
+      { name: 'store', kind: 'string', required: false },
+      { name: 'sourceMetadataSet', kind: 'string', required: false },
+      { name: 'destinationMetadataSet', kind: 'string', required: false },
+    ],
     outputValueType: 'string',
     outputCardinality: 'single',
   },
@@ -210,11 +400,31 @@ export function executeTransformStep(input: TransformExecutionInput): TransformE
   const validation = validateTransformStep(input.step);
   const reasons: ReasonCode[] = [...validation.reasons];
 
+  if (
+    input.step.operation === 'persistent_identifier' &&
+    (hasBlockingTransformIssue(reasons) ||
+      persistentIdentifierSettingsProblem(input.step.parameters) !== null)
+  ) {
+    // Settings that cannot make an identifier stop the release, like a missing identifier.
+    reasons.push(reason('transform.identifier_unavailable'));
+    return transformResult(input, reasons);
+  }
+
   if (hasBlockingTransformIssue(reasons)) {
     return transformResult(input, reasons);
   }
 
   const values = input.step.inputEdgeIds.map((edgeId) => input.edgeValues.get(edgeId));
+
+  if (input.step.operation === 'persistent_identifier') {
+    // One input, and the value made for this step: anything else stops the release rather
+    // than letting it go out without the identifier (or with something else in its place).
+    const made = readPreparedIdentifier(input.step, input.runtimeContext);
+    if (input.step.inputEdgeIds.length !== 1 || values.some((value) => !value) || !made) {
+      reasons.push(reason('transform.identifier_unavailable'));
+      return transformResult(input, reasons);
+    }
+  }
 
   if (values.some((value) => !value)) {
     reasons.push(reason('transform.missing_input'));
@@ -303,6 +513,8 @@ function executeOperation(
       return buildOIDCPairwiseSub(runtimeContext, step.parameters);
     case 'saml_edu_person_targeted_id':
       return buildSAMLEduPersonTargetedID(runtimeContext);
+    case 'persistent_identifier':
+      return readPreparedIdentifier(step, runtimeContext);
     case 'affix_text':
       return affixText(rawValues[0], step.parameters);
     case 'concat':
@@ -332,6 +544,18 @@ function executeOperation(
 
 function delimiter(step: MappingTransformStep, fallback = ''): string {
   return typeof step.parameters?.delimiter === 'string' ? step.parameters.delimiter : fallback;
+}
+
+/** The identifier prepared for this step before the mapping ran, if there is one. */
+function readPreparedIdentifier(
+  step: MappingTransformStep,
+  runtimeContext?: Record<string, unknown>
+): string | undefined {
+  const identifiers = isRecord(runtimeContext?.identifiers)
+    ? runtimeContext.identifiers
+    : undefined;
+  const value = identifiers ? identifiers[step.id] : undefined;
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function buildOIDCPairwiseSub(

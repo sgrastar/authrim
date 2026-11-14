@@ -3,6 +3,7 @@ import { arSettings } from './settings/ar';
 import { arCompliance } from './compliance/ar';
 import { arMappingConsole } from './mapping-console/ar';
 import { arServiceFlows } from './service-flows/ar';
+import { arConnectionSettings } from './connection-settings/ar';
 import { arAccountFlows } from './account-flows/ar';
 import { arSchemaSetting } from './schema-setting/ar';
 import { arTenantGeneral } from './tenant-general/ar';
@@ -28,6 +29,7 @@ export const ar = {
 	...arCompliance,
 	...arMappingConsole,
 	...arServiceFlows,
+	...arConnectionSettings,
 	...arAccountFlows,
 	...arSchemaSetting,
 	...arTenantGeneral,
@@ -56,6 +58,7 @@ export const ar = {
 	'nav.cluster.operate': 'التشغيل',
 	'nav.cluster.platform': 'المنصة',
 	'nav.overview': 'نظرة عامة',
+	'nav.wip': 'Under construction',
 	'nav.users': 'المستخدمون',
 	'nav.access': 'التحكم في الوصول',
 	'nav.applications': 'مسارات الخدمة',
@@ -573,6 +576,7 @@ export const ar = {
 	'cond.problem.noValue': 'أدخل قيمة.',
 	'cond.problem.notNumber': 'أدخل رقمًا.',
 	'cond.problem.badPattern': 'ليس تعبيرًا نمطيًا صالحًا.',
+	'cond.problem.invalidValue': 'لا يمكن استخدام هذه القيمة هنا.',
 	'color.pick': 'اختيار {name}',
 	'color.opacity': 'عتامة {name}',
 	'color.invalid': 'أدخل اللون بصيغة #RRGGBB.',

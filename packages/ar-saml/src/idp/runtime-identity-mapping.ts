@@ -136,9 +136,11 @@ export function assertSAMLImportedSPRelease(
     !Array.isArray(profile.fields) ||
     profile.fields.some((field) => !field.key || !CLASSIFICATIONS.has(field.classification)) ||
     new Set(profile.fields.map((field) => field.key)).size !== profile.fields.length ||
-    binding.transforms.some(
-      (transform) => record(transform)?.operation === 'saml_edu_person_targeted_id'
-    ) ||
+    binding.transforms.some((transform) => {
+      // An imported release has no tenant salt to make identifiers from.
+      const operation = record(transform)?.operation;
+      return operation === 'saml_edu_person_targeted_id' || operation === 'persistent_identifier';
+    }) ||
     (context.sourceSelector?.fieldMappingSetId !== undefined &&
       context.sourceSelector.fieldMappingSetId !== sourceRef.fieldMappingSetId) ||
     (context.sourceSelector?.fieldMappingVersionId !== undefined &&
@@ -250,6 +252,9 @@ export async function resolveSAMLRuntimeIdentityMapping(
   return compiled.runtime;
 }
 
+/** Where a mapping writes the persistent NameID it makes. */
+export const SAML_NAMEID_NAMESPACE = 'saml.nameid';
+
 /** Reuses the CF issuance compiler against an isolated, verified Admin snapshot. */
 async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
   adminAdapter: DatabaseAdapter;
@@ -300,6 +305,14 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
     transforms: binding.transforms,
     validationRules: binding.validationRules,
     destinationNamespace: destinationNamespace ?? DEFAULT_DESTINATION_NAMESPACE,
+  });
+
+  // The persistent NameID, when the mapping makes it: its own cut, never released as an attribute.
+  const nameIdGraph = sliceOutputGraph({
+    edges: binding.edges,
+    transforms: binding.transforms,
+    validationRules: binding.validationRules,
+    destinationNamespace: SAML_NAMEID_NAMESPACE,
   });
 
   const renamed = findRenamedAttributeDescriptors(
@@ -369,6 +382,15 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
     fieldMappingVersionId: binding.fieldMappingVersionId,
     sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
     destinationProfileId: binding.destinationProfileId ?? configured?.destinationProfileId,
+    ...(nameIdGraph.transforms.length > 0
+      ? {
+          nameId: {
+            edges: nameIdGraph.edges,
+            transforms: nameIdGraph.transforms,
+            validationRules: nameIdGraph.validationRules,
+          },
+        }
+      : {}),
   };
   return { runtime, sourceBinding: binding };
 }

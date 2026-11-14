@@ -157,7 +157,7 @@ describe('account flows', () => {
 			'identity',
 			'screen',
 			'extra-screen:1',
-			'consent',
+			'consent:1',
 			'complete'
 		]);
 		// Added twice: two steps, the next one offered after them.
@@ -241,13 +241,13 @@ describe('account flows', () => {
 	it('keep an optional step out of the way until it is added, and then only ask it, not require it', () => {
 		const state = emptyFlowState();
 		const before = stillToDo('registration', state).length;
-		state.added = ['consent'];
+		state.added = ['consent:1'];
 		const open = stillToDo('registration', state);
 		expect(open.length).toBe(before + 1);
-		expect(open.find((part) => part.id === 'reg-statements')?.state).toBe('todo');
+		expect(open.find((part) => part.id === 'reg-statements:1')?.state).toBe('todo');
 		// An optional step left unset does not stop the flow from being ready.
 		const ready = sampleState('registration');
-		ready.added = ['consent'];
+		ready.added = ['consent:1'];
 		expect(isReady('registration', ready)).toBe(true);
 	});
 

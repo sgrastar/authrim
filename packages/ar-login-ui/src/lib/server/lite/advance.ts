@@ -7,7 +7,8 @@
 import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
 import {
 	MAX_RUNTIME_AUTO_ADVANCE_STEPS,
-	runtimeAutoSubmitHandle
+	runtimeAutoSubmitHandle,
+	runtimeStepWaitsForSignIn
 } from '#lib/authrim/flow-runtime-steps.js';
 import { LITE_FLOW_COMPONENTS } from '@authrim/ar-lib-core/services/lite-compatibility';
 import type { LiteBackendClient } from './backend-client';
@@ -19,7 +20,8 @@ export type LiteAdvanceResult =
 	| { kind: 'completed'; output: Record<string, unknown> | null }
 	/** A step the person must see (the step itself): the page draws it. */
 	| { kind: 'draw'; step: FlowRuntimeStep }
-	/** A completion reached without a signed-in session: nothing more can happen here. */
+	/** A completion (or a held condition) reached without a signed-in session: nothing more can
+	 * happen here. */
 	| { kind: 'sign_in_required' }
 	| { kind: 'failed'; error: string };
 
@@ -52,7 +54,8 @@ export async function advanceLiteFlow(
 		}
 		const handle = runtimeAutoSubmitHandle(step);
 		if (handle === null) return { kind: 'draw', step };
-		if (step.component === 'completion' && !options.signedIn) return { kind: 'sign_in_required' };
+		// The completion, or a condition held for the sign-in (it reads the person), waits for one.
+		if (runtimeStepWaitsForSignIn(step) && !options.signedIn) return { kind: 'sign_in_required' };
 		const input = options.consentInput
 			? await options.consentInput(step)
 			: readLiteFlowConsent(step) === null

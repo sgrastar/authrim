@@ -80,6 +80,7 @@ import {
   // Consent Management
   resolveStatementRequirements,
   ssoConsentStatementsForTarget,
+  flowConditionAttributeReader,
   checkUserConsentSatisfaction,
   resolveClientTrustPolicy,
   resolveSignInConfirmationPolicy,
@@ -4476,10 +4477,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           resolveStatementRequirements(
             authCtx.coreAdapter,
             tenantId,
-            await ssoConsentStatementsForTarget(authCtx.coreAdapter, tenantId, {
-              type: 'oidc_client',
-              id: validClientId,
-            })
+            await ssoConsentStatementsForTarget(
+              authCtx.coreAdapter,
+              tenantId,
+              { type: 'oidc_client', id: validClientId },
+              flowConditionAttributeReader(c.env, tenantId, sub)
+            )
           )
       );
 
@@ -5335,6 +5338,7 @@ async function idTokenHintNamesUser(
       tenantId,
       clientId,
       sectorIdentifier: clientMetadata.sector_identifier_uri,
+      redirectUris: clientMetadata.redirect_uris,
       selector: clientMetadata.identity_mapping,
       destinationSurface: 'id_token',
       grantedScopes: scope?.split(' ').filter(Boolean),

@@ -18,6 +18,14 @@
 
 	let { children } = $props();
 
+	// The pages built so far (every other address in the navigation shows a placeholder): the
+	// left nav marks the rest as under construction.
+	const builtPages = new Set(
+		Object.keys(import.meta.glob('./**/+page.svelte'))
+			.filter((file) => !file.includes('['))
+			.map((file) => `/admin${file.slice(1).replace(/\/\+page\.svelte$/, '')}`)
+	);
+
 	let ready = $state(false);
 
 	$effect(() => {
@@ -114,6 +122,7 @@
 			initials: adminSession.initials
 		}}
 		onsignout={() => adminSession.signOut()}
+		built={(href) => builtPages.has(href)}
 		{standalone}
 		notifications={noticeInbox.notifications}
 		ondismiss={(id) => noticeInbox.dismiss(id)}

@@ -14,6 +14,7 @@
 		aboutState,
 		FLOWS,
 		flowName,
+		hasIncompleteConditions,
 		isReady,
 		type AccountFlowId,
 		type AccountFlowState
@@ -30,6 +31,7 @@
 	import {
 		isConsoleShaped,
 		registrationSpecOf,
+		registrationSpecFitsForm,
 		registrationStateOf
 	} from './registration-flow-mapping';
 	import {
@@ -37,6 +39,7 @@
 		canSetSignInConsent,
 		buildLoginFlowEditor,
 		loginSpecOf,
+		loginSpecFitsForm,
 		loginStateOf,
 		readLoginFlowEditor
 	} from './login-flow-mapping';
@@ -113,10 +116,10 @@
 			const spec = isConsoleShaped(record.editor)
 				? readRegistrationFlowEditor(record.editor)
 				: null;
-			state = spec ? registrationStateOf(spec, about) : null;
+			state = spec && registrationSpecFitsForm(spec) ? registrationStateOf(spec, about) : null;
 		} else {
 			const spec = readLoginFlowEditor(record.editor);
-			state = spec ? loginStateOf(spec, about) : null;
+			state = spec && loginSpecFitsForm(spec) ? loginStateOf(spec, about) : null;
 		}
 		flowStates[flow] = state ?? aboutState(flow, about.name, about.scope);
 		saved[flow] = {
@@ -150,12 +153,14 @@
 		if (!flows) return;
 		if (!saved[flow].loaded) throw new Error(t('af.live.loadFailed'));
 		if (!saved[flow].editable) throw new Error(t('af.live.notConsole'));
+		// A rule of who a step is shown to, not finished, would show the step to everyone.
+		if (hasIncompleteConditions(flow, state)) throw new Error(t('af.live.whenIncomplete'));
 		const spec = flow === 'login' ? loginSpecOf(state) : null;
 		// Consent needs a completion to sit before; a Flow without one keeps its other settings
 		// but cannot take consent (the apply below would give nothing back).
 		if (
 			spec &&
-			spec.consent.length > 0 &&
+			spec.consents.length > 0 &&
 			saved[flow].id &&
 			!canSetSignInConsent(saved[flow].editor)
 		) {

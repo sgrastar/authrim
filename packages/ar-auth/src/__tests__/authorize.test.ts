@@ -2199,7 +2199,7 @@ describe('Authorization Handler', () => {
         });
         // The statements are those of the client's own sign-in Flow.
         expect(ssoStatementFixture.asked).toEqual([
-          ['default', { type: 'oidc_client', id: 'test-client' }],
+          ['default', { type: 'oidc_client', id: 'test-client' }, expect.any(Function)],
         ]);
         expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
       });

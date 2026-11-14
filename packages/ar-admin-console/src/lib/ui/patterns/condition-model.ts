@@ -16,6 +16,10 @@ export interface ConditionField {
 	type: FieldType;
 	/** enum: the values to choose from. */
 	options?: readonly { value: string; label: string }[];
+	/** The ways it can be compared, when not all its type has (what the API behind it takes). */
+	operators?: readonly Operator[];
+	/** Whether a value it is compared with can be used (a whole number in a range, a date). */
+	accepts?: (value: string | number) => boolean;
 }
 
 export type Operator =
@@ -63,6 +67,11 @@ export const OPERATORS_BY_TYPE: Record<FieldType, readonly Operator[]> = {
 	enum: ['eq', 'ne', 'in', 'not_in']
 };
 
+/** The ways a field can be compared: its own, or all its type has. */
+export function operatorsOf(field: ConditionField): readonly Operator[] {
+	return field.operators ?? OPERATORS_BY_TYPE[field.type];
+}
+
 export const takesList = (operator: Operator) => operator === 'in' || operator === 'not_in';
 export const takesNoValue = (operator: Operator) =>
 	operator === 'exists' || operator === 'not_exists';
@@ -84,7 +93,7 @@ export const nextId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-
 
 export function newRule(fields: readonly ConditionField[]): ConditionRule {
 	const field = fields[0];
-	const operator = field ? OPERATORS_BY_TYPE[field.type][0] : 'eq';
+	const operator = field ? operatorsOf(field)[0] : 'eq';
 	return {
 		id: nextId('rule'),
 		kind: 'rule',
@@ -103,7 +112,7 @@ export function newGroup(
 
 /** Another field: keep the operator when it still applies, otherwise start over. */
 export function changeField(rule: ConditionRule, field: ConditionField): ConditionRule {
-	const allowed = OPERATORS_BY_TYPE[field.type];
+	const allowed = operatorsOf(field);
 	const operator = allowed.includes(rule.operator) ? rule.operator : allowed[0];
 	return { ...rule, field: field.key, operator, value: defaultValue(field, operator) };
 }
@@ -124,12 +133,19 @@ export function changeOperator(
 				: [String(value)];
 		return { ...rule, operator, value: list };
 	}
-	if (Array.isArray(value))
-		return { ...rule, operator, value: value[0] ?? defaultValue(field, operator) };
+	if (Array.isArray(value)) {
+		const first = value[0];
+		// A number field's list holds its numbers as text: one again is a number.
+		const one =
+			first !== undefined && field?.type === 'number' && /^-?\d+(\.\d+)?$/u.test(first.trim())
+				? Number(first)
+				: first;
+		return { ...rule, operator, value: one ?? defaultValue(field, operator) };
+	}
 	return { ...rule, operator, value: value ?? defaultValue(field, operator) };
 }
 
-export type RuleProblem = 'noField' | 'noValue' | 'notNumber' | 'badPattern';
+export type RuleProblem = 'noField' | 'noValue' | 'notNumber' | 'badPattern' | 'invalidValue';
 
 export function ruleProblem(
 	rule: ConditionRule,
@@ -139,9 +155,18 @@ export function ruleProblem(
 	if (!field) return 'noField';
 	if (takesNoValue(rule.operator) || field.type === 'boolean') return null;
 	const value = rule.value;
-	if (takesList(rule.operator)) return Array.isArray(value) && value.length > 0 ? null : 'noValue';
-	if (value === null || value === '') return 'noValue';
-	if (field.type === 'number' && typeof value !== 'number') return 'notNumber';
+	if (takesList(rule.operator)) {
+		if (!Array.isArray(value) || value.length === 0) return 'noValue';
+	} else {
+		if (value === null || value === '') return 'noValue';
+		if (field.type === 'number' && typeof value !== 'number') return 'notNumber';
+	}
+	if (field.accepts) {
+		const items = Array.isArray(value) ? value : [value];
+		if (items.some((item) => typeof item === 'boolean' || !field.accepts?.(item))) {
+			return 'invalidValue';
+		}
+	}
 	if (rule.operator === 'regex') {
 		try {
 			new RegExp(String(value));

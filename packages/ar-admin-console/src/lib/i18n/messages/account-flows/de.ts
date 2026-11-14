@@ -52,7 +52,7 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.part.reg-general': 'Annahme von Registrierungen',
 	'af.part.reg-methods': 'Profil für Anmeldeverfahren',
 	'af.part.reg-verification': 'Bestätigung der E-Mail-Adresse',
-	'af.part.reg-statements': 'Einwilligungserklärungen',
+	'af.part.reg-statements': 'Einwilligungserklärungen {n}',
 	'af.part.reg-result': 'Nach dem Abschluss',
 	'af.part.login-methods': 'Anmeldeverfahren-Profil',
 	'af.part.login-validation': 'Prüfregeln',
@@ -364,7 +364,7 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'Nach der Anmeldung wird die Person per IdP-initiiertem SSO direkt beim gewählten SAML-Dienst (SP) angemeldet. Der SP muss IdP-initiierte SAML-Antworten annehmen.',
 
 	'af.group.loginConsent': 'Einwilligung bei der Anmeldung',
-	'af.part.login-statements': 'Einwilligungserklärungen',
+	'af.part.login-statements': 'Einwilligungserklärungen {n}',
 	'af.lead.reg-statements':
 		'Die Einwilligung wird auf einem eigenen Bildschirm abgefragt, direkt bevor das Konto angelegt wird. Die Antworten werden gespeichert, sobald das Konto besteht.',
 	'af.note.reg-statements':
@@ -393,7 +393,39 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.loadFailed': 'Die Erklärungen konnten nicht geladen werden.',
 	'af.consent.max': 'Es können bis zu {n} Erklärungen gewählt werden.',
 	'af.consent.manage': 'Einwilligungserklärungen verwalten',
-	'af.consent.create': 'Einwilligungserklärung erstellen',
+	'af.consent.peek.show': 'Text anzeigen',
+	'af.consent.peek.hide': 'Text ausblenden',
+	'af.consent.peek.failed': 'Der Text der Erklärung konnte nicht geladen werden.',
+	'af.consent.new.open': 'Erklärung erstellen',
+	'af.consent.new.title': 'Neue Erklärung',
+	'af.consent.new.lead':
+		'Die Erklärung wird sofort veröffentlicht und für diesen Ablauf ausgewählt. Andere Abläufe können sie ebenfalls verwenden. Weitere Einstellungen und neue Versionen finden Sie auf der Seite der Erklärung.',
+	'af.consent.new.publish': 'Veröffentlichen und auswählen',
+	'af.consent.new.created': 'Die Erklärung wurde erstellt und veröffentlicht.',
+	'af.consent.new.noLanguage': 'Fügen Sie mindestens eine Sprache hinzu.',
+	'af.consent.new.unpublished':
+		'Die Erklärung wurde erstellt, konnte aber nicht veröffentlicht werden. Schließen Sie sie auf der Seite der Erklärung ab.',
+	'af.consent.new.openUnfinished': 'Seite der Erklärung öffnen',
 	'af.consent.unavailable':
-		'Dieser Anmelde-Flow wurde im Flow-Editor aufgebaut; die Einwilligung kann hier nicht festgelegt werden. Legen Sie den Einwilligungsschritt im Flow-Editor fest.'
+		'Dieser Anmelde-Flow wurde im Flow-Editor aufgebaut; die Einwilligung kann hier nicht festgelegt werden. Legen Sie den Einwilligungsschritt im Flow-Editor fest.',
+	'af.field.when': 'Angezeigt für',
+	'af.hint.when':
+		'Ohne Bedingung sehen alle diesen Schritt. Mit Bedingungen nur, wer alle erfüllt. Soll er für alle gelten, die eine davon erfüllen, teilen Sie ihn in Schritte auf.',
+	'af.when.everyone': 'Wird allen angezeigt.',
+	'af.when.count': '{n} Bedingungen',
+	'af.when.loadFailed':
+		'Die Auswahlmöglichkeiten für Bedingungen konnten nicht geladen werden, daher lassen sich die Bedingungen nicht ändern. Gespeicherte Bedingungen bleiben erhalten.',
+	'af.when.source.attribute': 'Attribut',
+	'af.when.source.age': 'Alter',
+	'af.when.source.answer': 'Antwort auf einem Bildschirm',
+	'af.when.source.app': 'App',
+	'af.when.source.locale': 'Anzeigesprache',
+	'af.when.attr.birthdate': 'Geburtsdatum',
+	'af.when.attr.gender': 'Geschlecht',
+	'af.when.attr.locale': 'Sprache (Profil)',
+	'af.when.attr.zoneinfo': 'Zeitzone',
+	'af.when.attr.address.country': 'Land (Adresse)',
+	'af.when.attr.address.region': 'Region (Adresse)',
+	'af.live.whenIncomplete':
+		'Eine Bedingung unter „Angezeigt für“ ist unvollständig. Vervollständigen oder entfernen Sie sie.'
 };

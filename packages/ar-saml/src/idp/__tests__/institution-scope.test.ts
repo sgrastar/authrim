@@ -148,6 +148,28 @@ describe('a tenant with registered scopes', () => {
     ]);
   });
 
+  it('holds pairwise-id and subject-id to the registered scopes too', () => {
+    const PAIRWISE = 'urn:oasis:names:tc:SAML:attribute:pairwise-id';
+    const SUBJECT = 'urn:oasis:names:tc:SAML:attribute:subject-id';
+    const result = applySAMLInstitutionScopePolicy(
+      [
+        attribute(PAIRWISE, ['ABCDEF@example.ac.jp']),
+        attribute(SUBJECT, ['0123abcd@other.example']),
+      ],
+      policy
+    );
+    expect(result.attributes).toEqual([attribute(PAIRWISE, ['ABCDEF@example.ac.jp'])]);
+    expect(result.withheld).toEqual([
+      {
+        attribute: 'subjectId',
+        name: SUBJECT,
+        reason: 'scope_not_registered',
+        scope: 'other.example',
+        count: 1,
+      },
+    ]);
+  });
+
   it('does not take a registered scope as the suffix of another (no substring match)', () => {
     const result = applySAMLInstitutionScopePolicy(
       [

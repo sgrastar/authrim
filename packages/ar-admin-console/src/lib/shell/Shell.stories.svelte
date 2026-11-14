@@ -100,6 +100,21 @@
 	}}
 />
 
+<!-- Pages not built yet carry a barricade at the end of their name in the left nav. -->
+<Story
+	name="Pages under construction"
+	args={{ path: '/admin/users/all', built: ['/admin/users/all'] }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const built = canvas.getByRole('link', { name: 'All users' });
+		await expect(within(built).queryByText('Under construction')).toBeNull();
+		const unbuilt = canvas.getByRole('link', { name: /Agents/ });
+		await expect(within(unbuilt).getByText('Under construction')).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}<ShellDemo {...args} />{/snippet}
+</Story>
+
 <Story
 	name="Platform scope"
 	args={{ path: '/admin/platform/users/all' }}

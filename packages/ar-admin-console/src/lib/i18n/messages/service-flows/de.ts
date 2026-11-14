@@ -105,18 +105,20 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.appType.native.desc':
 		'Auf einem Smartphone oder Computer installiert; kann kein Geheimnis bewahren.',
 
-	'sf.link.verified-email': 'Über bestätigte E-Mail-Adresse',
-	'sf.link.ask': 'Person zur Verknüpfung auffordern',
-	'sf.link.new': 'Immer ein neues Konto anlegen',
-	'sf.link.option.verified-email': 'Über bestätigte E-Mail-Adresse',
+	'sf.link.verified-email': 'Automatisch über bestätigte E-Mail-Adresse verknüpft',
+	'sf.link.manual': 'Nicht automatisch verknüpft',
+	'sf.link.option.verified-email': 'Automatisch über bestätigte E-Mail verknüpfen',
 	'sf.link.option.verified-email.desc':
-		'Bürgt der Anbieter für die Adresse, erfolgt die Anmeldung am Konto, das diese Adresse hat.',
-	'sf.link.option.ask': 'Person fragen',
-	'sf.link.option.ask.desc':
-		'Zeigt eine Seite, auf der die Person sich mit einem bereits vorhandenen Konto verknüpfen kann.',
-	'sf.link.option.new': 'Immer ein neues Konto',
-	'sf.link.option.new.desc':
-		'Es wird nie zugeordnet; jede Anmeldung über den Anbieter ergibt ein eigenes Konto.',
+		'Meldet der Anbieter die Adresse als bestätigt und hat ein Konto sie, meldet sich die Person an diesem Konto an.',
+	'sf.link.option.manual': 'Nicht automatisch verknüpfen',
+	'sf.link.option.manual.desc':
+		'Personen, deren E-Mail-Adresse bereits ein Konto hat, werden gebeten, sich wie gewohnt anzumelden und den Anbieter auf ihrer Kontoseite zu verknüpfen.',
+	'sf.link.lead':
+		'Ein einmal verknüpftes Anbieterkonto findet seine Person über diese Verknüpfung. Hier wird festgelegt, wie noch nicht verknüpfte Personen einem bestehenden Konto zugeordnet werden.',
+	'sf.link.idpSource':
+		'Für die Zuordnung wird die per Mapping übernommene E-Mail-Adresse verwendet.',
+	'sf.link.trustWarn':
+		'Auch unbestätigte Adressen werden mit bestehenden Konten verknüpft – Personen können so mit fremden Konten verknüpft werden.',
 	'sf.link.label': 'Wie Personen Konten zugeordnet werden',
 
 	'sf.schema.authrim': 'Authrim-Benutzer',
@@ -360,6 +362,14 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.mock.status.active': 'Aktiv',
 	'sf.mock.status.paused': 'Pausiert',
 	'sf.mock.status.suspended': 'Gesperrt',
+	'sf.maps.in.label': 'Zuordnung der übernommenen Attribute',
+	'sf.maps.out.label': 'Zuordnung der weitergegebenen Attribute',
+	'sf.maps.in.title': 'Übernahme vom Anbieter',
+	'sf.maps.in.description':
+		'Macht aus den Attributen, die der Anbieter sendet, die Attribute von Authrim.',
+	'sf.maps.out.title': 'Weitergabe an die App',
+	'sf.maps.out.description':
+		'Bildet aus den Attributen von Authrim die Attribute, die die App erhält.',
 	'sf.mock.users.title': 'Alle Benutzer',
 	'sf.mock.users.description': 'Beispielseite der Mock-App. Die Daten sind erfunden.',
 	'sf.mock.users.card': 'Benutzer',

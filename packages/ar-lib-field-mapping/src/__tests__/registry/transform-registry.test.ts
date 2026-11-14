@@ -47,6 +47,7 @@ describe('transform registry', () => {
       'json_extract_text',
       'normalize',
       'oidc_pairwise_sub',
+      'persistent_identifier',
       'saml_edu_person_targeted_id',
       'split',
       'text_to_boolean',

@@ -266,7 +266,10 @@
 					>
 						{#snippet step(id, { exiting })}
 							{@const group = groupDef(flow, id)!}
-							{@const named = group.parts.length === 1 && partDef(group.parts[0]).renamable}
+							<!-- One of several of a kind (a screen, a consent step) goes by its setting's name too. -->
+							{@const named =
+								group.parts.length === 1 &&
+								(partDef(group.parts[0]).renamable || group.repeatable !== undefined)}
 							<FlowStepGroup
 								name={groupLabel(group)}
 								label={named

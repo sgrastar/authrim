@@ -47,8 +47,9 @@ export interface AccountField {
 	/**
 	 * `profile`: one of the tenant's sign-in method profiles, by id; `session-profile`: one of its
 	 * session profiles, by id; `consent-statements`: an ordered list of the tenant's consent statements
-	 * (`<id>:required` / `<id>:optional`, see `consent-field-model.ts`); `screen`: one of its screens of `screenKinds`, by id. Their choices
-	 * are loaded, not listed here.
+	 * (`<id>:required` / `<id>:optional`, see `consent-field-model.ts`); `screen`: one of its screens of `screenKinds`, by id;
+	 * `step-conditions`: who the step is shown to (rows, see `step-condition-model.ts`). Their
+	 * choices are loaded, not listed here.
 	 */
 	kind:
 		| 'select'
@@ -61,6 +62,7 @@ export interface AccountField {
 		| 'client-redirect'
 		| 'saml-sp'
 		| 'consent-statements'
+		| 'step-conditions'
 		| 'unregistered';
 	screenKinds?: readonly ScreenKind[];
 	/** A `client-redirect` field: the key of the `client` field whose redirect URIs it offers. */
@@ -92,6 +94,11 @@ export interface AccountPart {
 	fields: readonly AccountField[];
 	/** Its title can be changed (kept as `titleKey(id)` among the flow's values). */
 	renamable?: boolean;
+	/**
+	 * A step of a repeatable group is named by its number plus this (1, the default: the first more
+	 * screen is the second screen; 0: the first consent step is the first).
+	 */
+	numberOffset?: number;
 }
 
 export interface AccountGroup {

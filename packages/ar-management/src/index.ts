@@ -980,6 +980,11 @@ import {
   adminOidcReleasePreviewHandler,
   adminSamlReleasePreviewHandler,
 } from './identity-mapping-preview';
+import { adminIdentifierSaltPutHandler, adminIdentifierSaltsListHandler } from './identifier-salts';
+import {
+  adminIdentifierStoreImportHandler,
+  adminIdentifierStoresListHandler,
+} from './identifier-stores';
 import {
   adminPersistentIdentifierProfileCreateHandler,
   adminPersistentIdentifierProfileDeleteHandler,
@@ -3031,6 +3036,26 @@ app.delete(
   '/api/admin/field-mapping/oidc-scopes/:id',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminOidcScopeDeleteHandler
+);
+app.get(
+  '/api/admin/field-mapping/identifier-stores',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentifierStoresListHandler
+);
+app.post(
+  '/api/admin/field-mapping/identifier-stores/:name/import',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentifierStoreImportHandler
+);
+app.get(
+  '/api/admin/field-mapping/identifier-salts',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentifierSaltsListHandler
+);
+app.put(
+  '/api/admin/field-mapping/identifier-salts/:name',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentifierSaltPutHandler
 );
 app.get(
   '/api/admin/field-mapping/persistent-identifier-profiles',

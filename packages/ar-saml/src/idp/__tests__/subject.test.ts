@@ -147,6 +147,99 @@ describe('resolveSAMLNameIDValue', () => {
     });
   });
 
+  describe('a NameID the mapping makes', () => {
+    const memory = () => {
+      const writes = new Map<string, string>();
+      const registry: SAMLPersistentNameIDRegistryStore = {
+        async put(key, value) {
+          writes.set(key, value);
+        },
+        async get(key) {
+          return writes.get(key) ?? null;
+        },
+      };
+      return { writes, registry };
+    };
+    const context = (
+      registry: SAMLPersistentNameIDRegistryStore,
+      mapped: { value: string; kept: boolean },
+      allowCreate = true
+    ) => ({
+      tenantId: 'tenant-a',
+      spEntityId: 'https://sp.example.com/saml',
+      // No Authrim salt needed: the mapping makes it.
+      persistentRegistry: registry,
+      allowCreate,
+      mappedNameID: async () => mapped,
+    });
+
+    it('issues it and records it, so logout finds the same NameID', async () => {
+      const { writes, registry } = memory();
+      await expect(
+        resolveSAMLNameIDValue(
+          subject,
+          NAMEID_FORMATS.PERSISTENT,
+          context(registry, { value: 'iXw0A3ZJeWL04PK1adRXebjDCVI=', kept: false })
+        )
+      ).resolves.toBe('iXw0A3ZJeWL04PK1adRXebjDCVI=');
+      // Logout asks without creating, and gets what was issued.
+      await expect(
+        resolveSAMLNameIDValue(subject, NAMEID_FORMATS.PERSISTENT, {
+          tenantId: 'tenant-a',
+          spEntityId: 'https://sp.example.com/saml',
+          persistentRegistry: registry,
+          allowCreate: false,
+          pairwiseSalt: 'unused',
+        })
+      ).resolves.toBe('iXw0A3ZJeWL04PK1adRXebjDCVI=');
+      expect(writes.size).toBe(1);
+    });
+
+    it('keeps a NameID issued before, even if the mapping now makes another', async () => {
+      const { registry } = memory();
+      await resolveSAMLNameIDValue(
+        subject,
+        NAMEID_FORMATS.PERSISTENT,
+        context(registry, { value: 'FIRST', kept: false })
+      );
+      await expect(
+        resolveSAMLNameIDValue(
+          subject,
+          NAMEID_FORMATS.PERSISTENT,
+          context(registry, { value: 'SECOND', kept: false })
+        )
+      ).resolves.toBe('FIRST');
+    });
+
+    it('takes AllowCreate=false only for an identifier the person already had', async () => {
+      await expect(
+        resolveSAMLNameIDValue(
+          subject,
+          NAMEID_FORMATS.PERSISTENT,
+          context(memory().registry, { value: 'NEW', kept: false }, false)
+        )
+      ).rejects.toThrow(SAMLNameIDPolicyError);
+      await expect(
+        resolveSAMLNameIDValue(
+          subject,
+          NAMEID_FORMATS.PERSISTENT,
+          context(memory().registry, { value: 'IMPORTED', kept: true }, false)
+        )
+      ).resolves.toBe('IMPORTED');
+    });
+
+    it('stops when the mapping cannot make it', async () => {
+      await expect(
+        resolveSAMLNameIDValue(subject, NAMEID_FORMATS.PERSISTENT, {
+          ...context(memory().registry, { value: 'x', kept: false }),
+          mappedNameID: async () => {
+            throw new Error('policy.persistent_identifier_unavailable');
+          },
+        })
+      ).rejects.toThrow('policy.persistent_identifier_unavailable');
+    });
+  });
+
   it('uses existing persistent NameID registry values when AllowCreate=false', async () => {
     const registry: SAMLPersistentNameIDRegistryStore = {
       async put() {

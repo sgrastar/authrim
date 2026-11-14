@@ -3,7 +3,7 @@ import { createDeterministicId } from './ids';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
 import { buildTraceEntry } from './trace';
-import { executeTransformStep } from './transforms';
+import { consumedEdgeIds, executeTransformStep, sharesConsumedInput } from './transforms';
 import { validateMappingInput } from './validation';
 import type {
   BatchDryRunResult,
@@ -25,6 +25,7 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
   const transformTrace: RuleTraceEntry[] = [];
   const mappingTrace: RuleTraceEntry[] = [];
 
+  const consumed = consumedEdgeIds(input.transforms);
   for (const edge of input.edges) {
     const sourceValue = findSourceValue(input.sourceValues, edge);
     if (!sourceValue) {
@@ -35,6 +36,7 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
       sourceRef: edge.targetRef,
     };
     edgeValues.set(edge.id, targetValue);
+    if (consumed.has(edge.id)) continue;
     mappedValues.push(targetValue);
     mappingTrace.push(
       buildTraceEntry({
@@ -46,6 +48,10 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
     );
   }
 
+  if (sharesConsumedInput(input.transforms, input.edges)) {
+    // What an identifier is made from would leave through the other step: nothing goes out.
+    transformReasons.push(reason('transform.identifier_unavailable'));
+  }
   for (const step of input.transforms ?? []) {
     const result = executeTransformStep({ step, edgeValues, runtimeContext: input.runtimeContext });
     transformReasons.push(...result.reasons);

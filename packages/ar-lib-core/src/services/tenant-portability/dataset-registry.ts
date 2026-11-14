@@ -163,7 +163,8 @@ const TABLE_GROUPS: Partial<
     `,
     // Anonymous deletion denial is business state, independent of log selection.
     // The restore adapter discards source physical cursors and starts target GC anew.
-    users: 'log_iceberg_subject_erasures',
+    // Per-person identifiers kept from another IdP: user data, never in a settings-only backup.
+    users: 'log_iceberg_subject_erasures mapped_identifier_values',
     settings: `
       identity_mapping_level_history
       admin_destination_capabilities admin_destinations admin_ip_allowlist admin_logging_critical_policies

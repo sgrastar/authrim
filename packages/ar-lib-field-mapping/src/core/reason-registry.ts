@@ -107,6 +107,14 @@ export const REASON_REGISTRY: ReasonRegistryEntry[] = [
     description: 'Transform step was evaluated during dry-run.',
   },
   {
+    code: 'transform.identifier_unavailable',
+    category: 'transform',
+    severity: 'critical',
+    stability: 'stable',
+    description:
+      'A persistent identifier could not be made (no single input value, no salt, or no stored value); nothing is released in its place.',
+  },
+  {
     code: 'transform.invalid_output',
     category: 'transform',
     severity: 'error',

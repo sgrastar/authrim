@@ -48,7 +48,7 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.part.reg-general': 'Accepting sign-ups',
 	'af.part.reg-methods': 'Sign-in method profile',
 	'af.part.reg-verification': 'Verifying the email address',
-	'af.part.reg-statements': 'Consent statements',
+	'af.part.reg-statements': 'Consent statements {n}',
 	'af.part.reg-result': 'After completion',
 	'af.part.login-methods': 'Sign-in method profile',
 	'af.part.login-validation': 'Validation rules',
@@ -347,7 +347,7 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'Once signed in, the person is signed in to the chosen SAML service (SP) straight away by IdP-initiated SSO. The SP must accept IdP-initiated SAML responses.',
 
 	'af.group.loginConsent': 'Consent at sign-in',
-	'af.part.login-statements': 'Consent statements',
+	'af.part.login-statements': 'Consent statements {n}',
 	'af.lead.reg-statements':
 		'Consent is asked for on its own screen, right before the account is made. The answers are recorded once the account exists.',
 	'af.note.reg-statements':
@@ -374,7 +374,38 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.loadFailed': 'The statements could not be loaded.',
 	'af.consent.max': 'Up to {n} statements can be chosen.',
 	'af.consent.manage': 'Manage consent statements',
-	'af.consent.create': 'Create a consent statement',
+	'af.consent.peek.show': 'Show the text',
+	'af.consent.peek.hide': 'Hide the text',
+	'af.consent.peek.failed': 'The statement text could not be loaded.',
+	'af.consent.new.open': 'Create a statement',
+	'af.consent.new.title': 'New statement',
+	'af.consent.new.lead':
+		'The statement is published at once and chosen for this flow. Other flows can use it too. Its other settings and later versions are on the statement page.',
+	'af.consent.new.publish': 'Publish and choose',
+	'af.consent.new.created': 'The statement was created and published.',
+	'af.consent.new.noLanguage': 'Add at least one language.',
+	'af.consent.new.unpublished':
+		'The statement was created but could not be published. Finish it on the statement page.',
+	'af.consent.new.openUnfinished': 'Open the statement page',
 	'af.consent.unavailable':
-		'This sign-in flow was built in the flow editor, so consent cannot be set here. Set the consent step in the flow editor.'
+		'This sign-in flow was built in the flow editor, so consent cannot be set here. Set the consent step in the flow editor.',
+	'af.field.when': 'Shown to',
+	'af.hint.when':
+		'With no condition, everyone sees this step. With conditions, only people who meet all of them do. To show it to people who meet any one of them, split it into steps.',
+	'af.when.everyone': 'Shown to everyone.',
+	'af.when.count': '{n} conditions',
+	'af.when.loadFailed':
+		'The choices for conditions could not be loaded, so the conditions cannot be changed. Saved conditions are kept as they are.',
+	'af.when.source.attribute': 'Attribute',
+	'af.when.source.age': 'Age',
+	'af.when.source.answer': 'Screen answer',
+	'af.when.source.app': 'App',
+	'af.when.source.locale': 'Display language',
+	'af.when.attr.birthdate': 'Date of birth',
+	'af.when.attr.gender': 'Gender',
+	'af.when.attr.locale': 'Language (profile)',
+	'af.when.attr.zoneinfo': 'Time zone',
+	'af.when.attr.address.country': 'Country (address)',
+	'af.when.attr.address.region': 'Region (address)',
+	'af.live.whenIncomplete': 'A condition under “Shown to” is not finished. Finish it or remove it.'
 };

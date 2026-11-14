@@ -9,6 +9,7 @@ import type { FlowEditorState, FlowRuntimeContract } from '../schemas/flow-runti
 import {
   ssoRequiredConsentStatementIds,
   type FlowConsentStatement,
+  type FlowSsoContext,
 } from './flow-consent-statements';
 
 /** The app an authorization request is for. */
@@ -67,17 +68,25 @@ async function assignedSignInVersion(
 export async function ssoConsentStatementsForTarget(
   db: DatabaseAdapter,
   tenantId: string,
-  target: FlowSsoConsentTarget
+  target: FlowSsoConsentTarget,
+  /**
+   * Reads the signed-in person's attributes, so a step shown only to some (by a user attribute or
+   * an age) requires its statements only of them. Without it such a step's statements are
+   * required of everyone.
+   */
+  userAttributes?: FlowSsoContext['user_attributes']
 ): Promise<FlowConsentStatement[]> {
   const version = await assignedSignInVersion(db, tenantId, target);
   const runtime = parse<FlowRuntimeContract>(version?.runtime_snapshot_json ?? null);
   if (!runtime?.ui || !Array.isArray(runtime.ui.steps)) return [];
   const editor = parse<FlowEditorState>(version?.editor_snapshot_json ?? null);
   const usableEditor = editor && Array.isArray(editor.edges) ? editor : null;
-  const context =
-    target.type === 'saml_sp'
+  const context: FlowSsoContext = {
+    ...(target.type === 'saml_sp'
       ? { protocol: 'saml' as const, saml_sp_id: target.id }
-      : { protocol: 'oidc' as const, client_id: target.id };
+      : { protocol: 'oidc' as const, client_id: target.id }),
+    ...(userAttributes ? { user_attributes: userAttributes } : {}),
+  };
   const ids = await ssoRequiredConsentStatementIds(runtime, usableEditor, context);
   return ids.map((statement_id) => ({ statement_id, required: true }));
 }

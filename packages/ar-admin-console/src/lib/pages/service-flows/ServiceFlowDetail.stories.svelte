@@ -16,7 +16,7 @@
 			docs: {
 				description: {
 					component:
-						'A connection’s service flow: the hub of its settings, and the screen the Add connection wizard hands over to. The wizard only helped with the first input, so it opens on the **overview**: what was entered and what is still to do. On the left the parts of the flow, top to bottom (the other side of the connection at one end, Authrim’s own steps between, each with its settings and how far it has got); choosing one opens that setting on the right. The flow can grow: the “+” between steps adds an optional one (consent, an extra sign-in) and its × takes it away. The stories open the detail directly, with what the wizard leaves behind (“after the wizard”) or with everything set.'
+						'A connection’s service flow: the hub of its settings, and the screen the Add connection wizard hands over to. The wizard only helped with the first input, so it opens on its **general settings**: what the other side is, the test and putting the connection into service (there is no overview). On the left the parts of the flow, top to bottom (the other side of the connection at one end, Authrim’s own steps between, each with its settings and how far it has got); choosing one opens that setting on the right. The flow can grow: the “+” between steps adds an optional one (consent, an extra sign-in) and its × takes it away. The stories open the detail directly, with what the wizard leaves behind (“after the wizard”) or with everything set.'
 				}
 			}
 		}
@@ -26,7 +26,7 @@
 		within(root.querySelector<HTMLElement>('.detail__flow')!).getByRole('button', { name });
 	/** The page header, where the connection's own status is (the flow shows its steps' too). */
 	const inHeader = (root: HTMLElement) => within(root.querySelector<HTMLElement>('.page-head')!);
-	/** The panel on the right, where the back-to-overview button is. */
+	/** The panel on the right, where the back-to-general-settings button is. */
 	const inPanel = (root: HTMLElement) => within(root.querySelector<HTMLElement>('.detail__panel')!);
 </script>
 
@@ -36,41 +36,30 @@
 	</Page>
 {/snippet}
 
-<!-- Right after the wizard: what it did not ask is still to do, and the overview says so. -->
+<!-- Right after the wizard: what it did not ask is still required, and activating says so. -->
 <Story
 	name="RP, right after the wizard"
 	args={{ prefill: 'rp', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByRole('heading', { name: 'Overview', level: 2 })).toBeInTheDocument();
-		// What was entered, with what was not entered said so.
-		const entered = within(
-			canvas.getByRole('heading', { name: 'What you entered' }).parentElement!
-		);
-		await expect(entered.getByText('Employee portal')).toBeInTheDocument();
-		// The redirect URIs and the mapping set are both unset: nothing is filled in on its own.
-		await expect(entered.getAllByText('Not set')).toHaveLength(2);
-		// What is still to do, as a list that leads to each setting.
-		const todo = within(canvas.getByRole('heading', { name: 'Still to do' }).parentElement!);
-		await expect(todo.getByText('Required')).toBeInTheDocument();
-		// The list leads to the setting. It is not a step of the flow: it is in the general
-		// settings above the overview, and focus goes to it.
-		await userEvent.click(todo.getByRole('button', { name: 'Redirect URIs' }));
-		await waitFor(() =>
-			expect(canvasElement.querySelector('[data-part="rp-redirect"]')).toContainElement(
-				canvasElement.ownerDocument.activeElement as HTMLElement
-			)
-		);
+		// No overview: the connection opens on its general settings.
 		await expect(canvas.getByRole('heading', { name: 'General settings' })).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { name: 'Overview', level: 2 })).toBeNull();
+		// The redirect URIs are a general setting, not a step of the flow.
+		await expect(canvasElement.querySelector('[data-part="rp-redirect"]')).toBeInTheDocument();
 		await expect(
 			within(canvasElement.querySelector<HTMLElement>('.detail__flow')!).queryByRole('button', {
 				name: /^Redirect URIs/
 			})
 		).toBeNull();
-		// The steps of the flow are what Authrim does with the people who pass through.
-		await expect(inFlow(canvasElement, /^User information.*Configured/)).toBeInTheDocument();
-		// Not ready: activating says what is missing and waits.
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
+		// What the app receives is the mapping's, which an app cannot do without.
+		await expect(
+			inFlow(canvasElement, /^Input and output schemas.*Required.*Not set yet/)
+		).toBeInTheDocument();
+		await expect(
+			canvas.queryByRole('button', { name: t('flow.remove', { name: 'Mapping' }) })
+		).toBeNull();
+		// Not ready: activating, at the end of the general settings, says what is missing and waits.
 		await expect(canvas.getByText(/Still required: Redirect URIs/)).toBeInTheDocument();
 		await expect(canvas.getByRole('button', { name: 'Activate' })).toBeDisabled();
 	}}
@@ -82,17 +71,16 @@
 	{#snippet template(args)}{@render frame(args)}{/snippet}
 </Story>
 
-<!-- A provider asked nothing in the wizard: the overview leads with its details. -->
+<!-- A provider asked nothing in the wizard: its details lead the general settings, with the test. -->
 <Story
 	name="OP, right after the wizard"
 	args={{ prefill: 'op', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		const todo = within(canvas.getByRole('heading', { name: 'Still to do' }).parentElement!);
-		const first = todo.getAllByRole('button')[0];
-		await expect(first).toHaveTextContent('The provider’s details');
 		await expect(canvas.getByRole('heading', { name: 'General settings' })).toBeInTheDocument();
-		await expect(canvas.getByText('Accounts')).toBeInTheDocument();
+		await expect(canvas.getByText(/Still required: The provider’s details/)).toBeInTheDocument();
+		// The test is a general setting too, above activating.
+		await expect(canvas.getByRole('button', { name: 'Run the test' })).toBeInTheDocument();
 		await expect(inFlow(canvasElement, /^Matching people.*Configured/)).toBeInTheDocument();
 	}}
 >
@@ -108,8 +96,6 @@
 	args={{ prefill: 'rp', filled: 'complete', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByText(/Everything is set/)).toBeInTheDocument();
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
 		await expect(canvas.getByRole('button', { name: 'Activate' })).toBeEnabled();
 	}}
 >
@@ -128,6 +114,34 @@
 	{#snippet template(args)}{@render frame(args)}{/snippet}
 </Story>
 
+<!-- Each service flow has one mapping, in its own direction: a social login (OP) takes its claims
+     into Authrim's attributes; what Authrim passes on to apps is set in their flows. -->
+<Story
+	name="OP: its one mapping, into Authrim"
+	args={{ prefill: 'op', filled: 'complete', review: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('heading', { name: t('sf.maps.in.title') })).toBeInTheDocument();
+		await expect(canvas.getByText(t('sf.maps.in.label'))).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { name: t('sf.maps.out.title') })).toBeNull();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- An app's flow has the other direction: Authrim's attributes into what the app receives. -->
+<Story
+	name="RP: its one mapping, to the app"
+	args={{ prefill: 'rp', filled: 'complete', review: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('heading', { name: t('sf.maps.out.title') })).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { name: t('sf.maps.in.title') })).toBeNull();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
 <!-- The flow is the hub: each of its settings opens its own screen on the right. -->
 <Story
 	name="Every setting opens from the flow"
@@ -138,13 +152,13 @@
 		for (const label of ['App details', 'Redirect URIs', 'Sign-in method']) {
 			await expect(canvas.getByRole('heading', { name: label, level: 3 })).toBeInTheDocument();
 		}
-		for (const label of ['User information']) {
+		for (const label of ['Mapping sets']) {
 			await userEvent.click(inFlow(canvasElement, new RegExp(`^${label}`)));
 			await expect(canvas.getByRole('heading', { name: label, level: 2 })).toBeInTheDocument();
 		}
-		// The end of the flow that is the connection itself leads back to the overview.
-		await userEvent.click(inFlow(canvasElement, 'Overview'));
-		await expect(canvas.getByRole('heading', { name: 'Overview', level: 2 })).toBeInTheDocument();
+		// The end of the flow that is the connection itself leads back to the general settings.
+		await userEvent.click(inFlow(canvasElement, 'General settings'));
+		await expect(canvas.getByRole('heading', { name: 'General settings' })).toBeInTheDocument();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -157,11 +171,12 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(canvas.queryByRole('button', { name: /^Consent statements/ })).toBeNull();
-		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[1]);
-		// The first "+" offers the sign-up flow (see the story below); the next one the processing steps.
-		// An app can have a mapping, consent and a role assignment; it has none of them to start with.
-		await expect(await canvas.findByRole('button', { name: 'Mapping' })).toBeInTheDocument();
-		await expect(canvas.getByRole('button', { name: 'Role assignment' })).toBeInTheDocument();
+		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[0]);
+		// An app can have a role assignment and consent; its mapping is always there, so not offered.
+		await expect(
+			await canvas.findByRole('button', { name: 'Role assignment' })
+		).toBeInTheDocument();
+		await expect(canvas.queryByRole('button', { name: 'Mapping' })).toBeNull();
 		await userEvent.click(canvas.getByRole('button', { name: 'Consent' }));
 		// The new step opens on its first setting, which has two: statements and policies.
 		await expect(
@@ -172,9 +187,7 @@
 		await waitFor(() =>
 			expect(inFlow(canvasElement, /^Consent statements.*Configured/)).toBeInTheDocument()
 		);
-		// It shows in what was entered, then goes again with its ×.
-		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'Overview' }));
-		await expect(canvas.getByText('Terms of use (v3)')).toBeInTheDocument();
+		// It goes again with its ×.
 		await userEvent.click(
 			canvas.getByRole('button', { name: t('flow.remove', { name: 'Consent' }) })
 		);
@@ -183,7 +196,6 @@
 			() => expect(canvas.queryByRole('button', { name: /^Consent statements/ })).toBeNull(),
 			{ timeout: 3000 }
 		);
-		await expect(canvas.queryByText('Terms of use (v3)')).toBeNull();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -210,8 +222,31 @@
 		await waitFor(() =>
 			expect(inFlow(canvasElement, /^Sign-up flow to use.*Configured/)).toBeInTheDocument()
 		);
-		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'Overview' }));
-		await expect(canvas.getByText('Partner portal sign-up')).toBeInTheDocument();
+		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'General settings' }));
+		await expect(canvas.getByRole('heading', { name: 'General settings' })).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- A service can bring someone without an account too: it chooses a sign-up flow, as an app does. -->
+<Story
+	name="Choosing a sign-up flow for a service"
+	args={{ prefill: 'sp', filled: 'complete', review: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[0]);
+		await userEvent.click(await canvas.findByRole('button', { name: 'Sign-up' }));
+		await expect(
+			await canvas.findByRole('heading', { name: 'Sign-up flow to use', level: 2 })
+		).toBeInTheDocument();
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: 'Sign-up flow' }),
+			'partner-portal'
+		);
+		await waitFor(() =>
+			expect(inFlow(canvasElement, /^Sign-up flow to use.*Configured/)).toBeInTheDocument()
+		);
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -231,9 +266,6 @@
 		await expect(
 			canvas.queryByRole('button', { name: t('flow.remove', { name: 'Mapping' }) })
 		).toBeNull();
-		// The schemas and the set are what is still required, and activating waits for them.
-		const todo = within(canvas.getByRole('heading', { name: 'Still to do' }).parentElement!);
-		await expect(todo.getAllByRole('button')[0]).toHaveTextContent('Input and output schemas');
 		await userEvent.click(inFlow(canvasElement, /^Input and output schemas/));
 		const input = canvas.getByRole('combobox', { name: 'Input schema' });
 		const output = canvas.getByRole('combobox', { name: 'Output schema' });
@@ -300,11 +332,8 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(canvas.getByText('People sign in elsewhere')).toBeInTheDocument();
-		// Its issuer is its own and comes with its configuration; it is not shown as missing.
-		const entered = within(
-			canvas.getByRole('heading', { name: 'What you entered' }).parentElement!
-		);
-		await expect(entered.getByText('Read from the provider’s configuration')).toBeInTheDocument();
+		// Its issuer is its own: it is entered in the general settings.
+		await expect(canvas.getByRole('textbox', { name: 'Issuer address' })).toBeInTheDocument();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -316,7 +345,7 @@
 	args={{ prefill: 'rp', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		// It is not a step of the flow: a frame of its own below the overview.
+		// It is not a step of the flow: a frame of its own below the general settings.
 		await expect(
 			within(canvasElement.querySelector<HTMLElement>('.detail__flow')!).queryByRole('button', {
 				name: /^Authrim’s details for the app/
@@ -342,10 +371,9 @@
 <!-- Taking back something required takes the connection out of service. -->
 <Story
 	name="Undoing a required setting makes it a draft again"
-	args={{ prefill: 'sp', filled: 'complete', review: true }}
+	args={{ prefill: 'idp', filled: 'complete', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
 		await userEvent.click(canvas.getByRole('button', { name: 'Activate' }));
 		await expect(
 			await inHeader(canvasElement).findByText('Active', { selector: '.badge' })
@@ -369,8 +397,10 @@
 	globals={{ locale: 'ja' }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByRole('heading', { name: '概要', level: 2 })).toBeInTheDocument();
-		await expect(canvas.getByRole('heading', { name: '入力した内容' })).toBeInTheDocument();
+		// A service has no overview: its general settings, what it is given and its details instead.
+		await expect(canvas.getByRole('heading', { name: '一般設定' })).toBeInTheDocument();
+		await expect(canvas.getByRole('heading', { name: '接続詳細設定' })).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { name: '概要', level: 2 })).toBeNull();
 		await expect(canvas.getByText('Authrim でサインイン')).toBeInTheDocument();
 		await expect(canvas.getByText('下書き')).toBeInTheDocument();
 		// The steps of the flow and their settings, with how far each has got.
@@ -389,21 +419,20 @@
 	args={{ prefill: 'op', filled: 'complete', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(inFlow(canvasElement, /^Test the connection.*Configured/)).toBeInTheDocument();
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
+		// The test is a general setting: its result is listed there.
+		await expect(canvas.getByRole('list', { name: 'Test results' })).toBeInTheDocument();
 		await userEvent.click(canvas.getByRole('button', { name: 'Activate' }));
 		await expect(
 			await inHeader(canvasElement).findByText('Active', { selector: '.badge' })
 		).toBeInTheDocument();
-		// The provider's details are at the top of the settings: back on the overview they are there.
-		await userEvent.click(inFlow(canvasElement, 'Overview'));
+		// The provider's details are in the same general settings.
 		const issuer = canvas.getByRole('textbox', { name: 'Issuer address' });
 		await userEvent.clear(issuer);
 		await userEvent.type(issuer, 'https://login.other.example');
 		await userEvent.click(canvas.getByRole('button', { name: 'Read the configuration' }));
 		await waitFor(() => expect(canvas.getByText(/What was found/)).toBeInTheDocument());
 		// The new provider has not been tested, however well the old one did.
-		await expect(inFlow(canvasElement, /^Test the connection.*Not set yet/)).toBeInTheDocument();
+		await expect(canvas.queryByRole('list', { name: 'Test results' })).toBeNull();
 		// And it is a draft again until it has been tested and activated once more.
 		await expect(
 			await inHeader(canvasElement).findByText('Draft', { selector: '.badge' })
@@ -420,12 +449,10 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const bar = () => canvasElement.querySelector<HTMLElement>('.save-bar')!;
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
 		await userEvent.click(canvas.getByRole('button', { name: 'Activate' }));
 		await expect(
 			await inHeader(canvasElement).findByText('Active', { selector: '.badge' })
 		).toBeInTheDocument();
-		await userEvent.click(inFlow(canvasElement, 'Overview'));
 		// An edit of the provider's address takes it out of service in the draft, and raises the bar.
 		const issuer = canvas.getByRole('textbox', { name: 'Issuer address' });
 		await userEvent.clear(issuer);
@@ -443,7 +470,7 @@
 		await expect(canvas.getByRole('textbox', { name: 'Issuer address' })).toHaveValue(
 			'https://login.acme.example'
 		);
-		await expect(inFlow(canvasElement, /^Test the connection.*Configured/)).toBeInTheDocument();
+		await expect(canvas.getByRole('list', { name: 'Test results' })).toBeInTheDocument();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -460,7 +487,6 @@
 			canvas.getAllByRole('textbox', { name: /Redirect URIs/ }).at(-1)!,
 			'https://portal.example.com/second'
 		);
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
 		await expect(canvas.getByText(/Save your changes before activating/)).toBeInTheDocument();
 		await expect(canvas.getByRole('button', { name: 'Activate' })).toBeDisabled();
 		await userEvent.click(canvas.getByRole('button', { name: 'Save changes' }));

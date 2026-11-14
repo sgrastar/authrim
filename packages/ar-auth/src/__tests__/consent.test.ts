@@ -497,6 +497,8 @@ describe('Consent Handlers', () => {
         expect(vi.mocked(ssoConsentStatementsForTarget).mock.calls[0].slice(1)).toEqual([
           expect.any(String),
           { type: 'oidc_client', id: 'test-client' },
+          // The signed-in person's attributes are read for a condition on them.
+          expect.any(Function),
         ]);
         expect(vi.mocked(resolveStatementRequirements).mock.calls[0][2]).toEqual(required);
         // The screen shows what those requirements resolve to, with the user's answers.

@@ -286,31 +286,37 @@
 		// The last step ends in Continue to settings, not Add.
 		await expect(canvas.queryByRole('button', { name: /Add connection/ })).toBeNull();
 		await userEvent.click(button(canvas, t('sf.wizard.finish')));
-		// The service flow opens on its overview: what was entered, and what is still to do.
+		// The service flow opens on its general settings (there is no overview).
 		await expect(
-			await canvas.findByRole('heading', { name: 'Overview', level: 2 })
+			await canvas.findByRole('heading', { name: 'General settings' })
 		).toBeInTheDocument();
 		const title = canvas.getByRole('heading', { name: 'Employee portal', level: 1 });
 		await expect(title).toBeInTheDocument();
 		// The wizard is gone, so focus goes to the title instead of dropping to the page.
 		await waitFor(() => expect(title).toHaveFocus());
-		// What was entered is listed, and the app type is chosen in the general settings above.
-		await expect(
-			within(canvas.getByRole('heading', { name: 'What you entered' }).parentElement!).getByText(
-				'Single-page app'
-			)
-		).toBeInTheDocument();
-		// The to-do list leads to the setting, which is in the general settings above the overview.
-		await userEvent.click(button(canvas, 'Redirect URIs'));
-		await expect(canvas.getByRole('heading', { name: 'General settings' })).toBeInTheDocument();
+		// The redirect URIs are entered in the general settings.
 		await userEvent.click(button(canvas, 'Add redirect URI'));
 		await userEvent.type(
 			canvas.getByRole('textbox', { name: /Redirect URIs/ }),
 			'https://reading.example.com/cb'
 		);
-		// Now the connection can be activated.
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
-		// Only what is saved is put into service: Save, then activate.
+		// An app gets what its mapping gives it: the mapping is required.
+		await userEvent.click(inFlow(canvasElement, /^Input and output schemas.*Required/));
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: 'Input schema' }),
+			'authrim'
+		);
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: 'Output schema' }),
+			'standard'
+		);
+		await userEvent.click(inFlow(canvasElement, /^Mapping sets.*Required/));
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: 'Mapping set' }),
+			'tenant-default'
+		);
+		// Activating is at the end of the general settings: Save, then activate.
+		await userEvent.click(canvas.getAllByRole('button', { name: 'General settings' })[0]);
 		await userEvent.click(button(canvas, 'Save changes'));
 		await waitFor(() => expect(button(canvas, 'Activate')).toBeEnabled());
 		await userEvent.click(button(canvas, 'Activate'));
@@ -337,18 +343,29 @@
 		await expect(canvas.queryByText('Test the connection')).toBeNull();
 		await expect(canvas.queryByText('Your details for them')).toBeNull();
 		await userEvent.click(button(canvas, t('sf.wizard.finish')));
+		// A service has no overview: it opens on its general settings, the test among them.
 		await expect(
-			await canvas.findByRole('heading', { level: 2, name: 'Overview' })
+			await canvas.findByRole('heading', { name: 'General settings' })
 		).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { level: 2, name: 'Overview' })).toBeNull();
 		await expect(canvas.getByRole('heading', { level: 1, name: 'hr.example' })).toBeInTheDocument();
-		// What is left: copy values for the service (a frame below the overview), then run the test.
+		// What is left: copy values for the service (a frame below the general settings), then run the test.
 		await expect(
 			canvas.getByRole('heading', { level: 2, name: 'Your details for them' })
 		).toBeInTheDocument();
 		await expect(canvas.getAllByRole('button', { name: /^Copy / }).length).toBeGreaterThan(2);
-		// Nothing to switch on: the values are copied, and the test shows whether it worked.
-		await expect(canvas.queryByRole('switch')).toBeNull();
-		await userEvent.click(inFlow(canvasElement, /^Test the connection/));
+		// Nothing to switch on: the values are copied, and the test shows whether it worked. (The
+		// connection settings below have switches of their own, in closed sections.)
+		await expect(
+			canvas.queryAllByRole('switch').filter((el) => !el.closest('.detail__settings'))
+		).toHaveLength(0);
+		// The test is a general setting, not a step of the flow, and it asks nothing to go on.
+		await expect(
+			within(canvasElement.querySelector<HTMLElement>('.detail__flow')!).queryByRole('button', {
+				name: /^Test the connection/
+			})
+		).toBeNull();
+		await expect(canvas.queryByText(/To go on, run the test/)).toBeNull();
 		await userEvent.click(button(canvas, 'Run the test'));
 		await expect(await canvas.findByRole('list', { name: 'Test results' })).toBeInTheDocument();
 		// A service cannot work without a mapping set: it is a setting of the flow from the start.
@@ -366,8 +383,15 @@
 			canvas.getByRole('combobox', { name: 'Mapping set' }),
 			'tenant-default'
 		);
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
-		// Only what is saved is put into service: Save, then activate.
+		// No "Review and activate" step in a service's flow.
+		await expect(
+			within(canvasElement.querySelector<HTMLElement>('.detail__flow')!).queryByRole('button', {
+				name: /^Review and activate/
+			})
+		).toBeNull();
+		// It is put into service under its test, in the general settings: Save, then activate.
+		await userEvent.click(canvas.getAllByRole('button', { name: 'General settings' })[0]);
+		await expect(button(canvas, 'Activate')).toBeDisabled();
 		await userEvent.click(button(canvas, 'Save changes'));
 		await waitFor(() => expect(button(canvas, 'Activate')).toBeEnabled());
 		await userEvent.click(button(canvas, 'Activate'));
@@ -389,9 +413,8 @@
 		await expect(
 			await canvas.findByRole('heading', { level: 1, name: 'New provider' })
 		).toBeInTheDocument();
-		await expect(canvas.getByRole('heading', { level: 2, name: 'Overview' })).toBeInTheDocument();
-		// Its details, and the rest, are settings of the flow; the first one still required is first in the list.
-		await userEvent.click(button(canvas, 'The provider’s details'));
+		// It opens on its general settings: its details first, then the test and activating.
+		await expect(canvas.getByRole('heading', { name: 'General settings' })).toBeInTheDocument();
 		await userEvent.type(canvas.getByRole('textbox', { name: 'Name' }), 'Acme Directory');
 		await userEvent.type(
 			canvas.getByRole('textbox', { name: 'Issuer address' }),
@@ -406,21 +429,36 @@
 		).toBeInTheDocument();
 		// Matching people has a sensible choice already; Authrim gives the provider a redirect address.
 		await userEvent.click(inFlow(canvasElement, /^Matching people/));
-		await expect(canvas.getByRole('radio', { name: /^By verified email/ })).toBeChecked();
-		// What Authrim gives the provider is below the overview, not a step of the flow.
+		await expect(
+			canvas.getByRole('radio', { name: /^Link automatically by verified email/ })
+		).toBeChecked();
+		// What Authrim gives the provider is below the general settings, not a step of the flow.
 		await userEvent.click(
 			within(canvasElement.querySelector<HTMLElement>('.detail__panel')!).getByRole('button', {
-				name: 'Overview'
+				name: 'General settings'
 			})
 		);
 		await expect(canvas.getByText('Redirect URI')).toBeInTheDocument();
-		// Activating waits for the test.
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
+		// What the provider sends is the mapping's to take: it is required.
+		await userEvent.click(inFlow(canvasElement, /^Input and output schemas.*Required/));
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: 'Input schema' }),
+			'standard'
+		);
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: 'Output schema' }),
+			'authrim'
+		);
+		await userEvent.click(inFlow(canvasElement, /^Mapping sets.*Required/));
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: 'Mapping set' }),
+			'tenant-default'
+		);
+		await userEvent.click(canvas.getAllByRole('button', { name: 'General settings' })[0]);
+		// Activating waits for the test, which is right above it.
 		await expect(button(canvas, 'Activate')).toBeDisabled();
-		await userEvent.click(inFlow(canvasElement, /^Test the connection/));
 		await userEvent.click(button(canvas, 'Run the test'));
 		await expect(await canvas.findByRole('list', { name: 'Test results' })).toBeInTheDocument();
-		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
 		// Only what is saved is put into service: Save, then activate.
 		await userEvent.click(button(canvas, 'Save changes'));
 		await waitFor(() => expect(button(canvas, 'Activate')).toBeEnabled());
@@ -451,7 +489,9 @@
 			await canvas.findByRole('heading', { level: 1, name: 'Corporate sign-in' })
 		).toBeInTheDocument();
 		await userEvent.click(inFlow(canvasElement, /^Matching people/));
-		await expect(canvas.getByRole('radio', { name: /^By verified email/ })).toBeChecked();
+		await expect(
+			canvas.getByRole('radio', { name: /^Link automatically by verified email/ })
+		).toBeChecked();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -502,10 +542,8 @@
 		await userEvent.type(canvas.getByRole('textbox', { name: '名称' }), 'Employee portal');
 		await next(canvas);
 		await userEvent.click(button(canvas, '設定に進む'));
-		await expect(
-			await canvas.findByRole('heading', { level: 2, name: '概要' })
-		).toBeInTheDocument();
-		await expect(canvas.getByRole('heading', { name: '残りの設定' })).toBeInTheDocument();
+		await expect(await canvas.findByRole('heading', { name: '一般設定' })).toBeInTheDocument();
+		await expect(canvas.getByRole('heading', { name: '接続詳細設定' })).toBeInTheDocument();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

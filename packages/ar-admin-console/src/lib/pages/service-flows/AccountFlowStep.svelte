@@ -9,6 +9,7 @@
 	import FailedSignInsNote from './FailedSignInsNote.svelte';
 	import MethodProfileField from './MethodProfileField.svelte';
 	import SessionProfileField from './SessionProfileField.svelte';
+	import StepConditionsField from './StepConditionsField.svelte';
 	import ScreenField from './ScreenField.svelte';
 	import UnregisteredField from './UnregisteredField.svelte';
 	import {
@@ -64,6 +65,24 @@
 		};
 	}
 
+	const EXTRA_SCREEN = /^reg\.extraScreen:(\d+)$/u;
+	const SHOWN_TO_SCREEN = /^reg\.extraScreenWhen:(\d+)$/u;
+
+	/**
+	 * The screens whose answers a step's "shown to" can compare: the more screens before it in the
+	 * sign-up (numbered before it); every more screen, for consent. Not the first sign-up screen:
+	 * the Flow keeps the answers of a screen step only, not of the sign-up step that shows it.
+	 */
+	function answerScreensFor(fieldKey: string): string[] {
+		const before = SHOWN_TO_SCREEN.exec(fieldKey);
+		const limit = before ? Number(before[1]) : Infinity;
+		return Object.entries(form.values).flatMap(([key, value]) => {
+			if (typeof value !== 'string' || !value) return [];
+			const extra = EXTRA_SCREEN.exec(key);
+			return extra && Number(extra[1]) < limit ? [value] : [];
+		});
+	}
+
 	function chosen(key: string): string[] {
 		const value = form.values[key];
 		return Array.isArray(value) ? value : [];
@@ -117,6 +136,17 @@
 			value={chosen(field.key)}
 			onchange={(value) => (form.values[field.key] = value)}
 			unavailable={consentUnavailable}
+		/>
+	{:else if field.kind === 'step-conditions'}
+		<StepConditionsField
+			label={t(field.label)}
+			hint={field.hint ? t(field.hint) : undefined}
+			value={chosen(field.key)}
+			onchange={(value) => {
+				if (value.length > 0) form.values[field.key] = value;
+				else delete form.values[field.key];
+			}}
+			answerScreens={answerScreensFor(field.key)}
 		/>
 	{:else if field.kind === 'saml-sp'}
 		<ClientField

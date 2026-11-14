@@ -30,6 +30,12 @@
 		invalid?: boolean;
 		field?: string;
 		changed?: boolean;
+		/** How groups may combine their members (one: said, not chosen). All three when absent. */
+		matches?: readonly ConditionGroup['match'][];
+		/** The most rules the outermost group takes. */
+		maxRules?: number;
+		/** Said in place of the rules when there are none. */
+		emptyText?: string;
 	}
 
 	let {
@@ -39,7 +45,10 @@
 		maxDepth = MAX_DEPTH,
 		invalid = $bindable(false),
 		field,
-		changed
+		changed,
+		matches,
+		maxRules,
+		emptyText
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -93,6 +102,9 @@
 	</p>
 	<p class="sr-only" id="{uid}-summary">{describe(value, fields, words)}</p>
 	<div class="builder__body">
+		{#if emptyText && value.children.length === 0}
+			<p class="builder__empty">{emptyText}</p>
+		{/if}
 		<ConditionGroupEditor
 			group={value}
 			{fields}
@@ -100,6 +112,8 @@
 			{maxDepth}
 			{problems}
 			{fresh}
+			{matches}
+			maxMembers={maxRules}
 			onchange={(next, added) => {
 				value = next;
 				fresh = added ?? null;
@@ -120,6 +134,11 @@
 		color: var(--text-secondary);
 		font-size: var(--fs-label);
 		font-weight: var(--fw-semibold);
+	}
+
+	.builder__empty {
+		margin: 0 0 4px;
+		color: var(--text-secondary);
 	}
 
 	.builder__body {

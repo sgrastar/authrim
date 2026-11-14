@@ -237,6 +237,9 @@ export * from './services/saml-release-consent';
 export * from './services/saml-release-consent-store';
 export * from './services/oidc-id-token-release';
 export * from './services/persistent-identifiers';
+export * from './services/identifier-algorithms';
+export * from './services/mapped-identifiers';
+export * from './services/identifier-salt-refs';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';
 export * from './utils/custom-redirect';
@@ -291,6 +294,7 @@ export * from './utils/consent-statements';
 export * from './utils/consent-history';
 export * from './services/flow-consent-statements';
 export * from './services/flow-sso-consent';
+export * from './services/flow-condition-user-attributes';
 
 // Initial Setup (Admin Account Setup)
 export * from './utils/setup-token';
