@@ -226,13 +226,31 @@ describe('same-version draft append planning', () => {
     expect(resolve({ lock: { ...lockAt(installedTargets()), productVersion: '0.9.0' } })).toBe(
       undefined
     );
-    // The same draft that was already verified has nothing to append.
+    // The same draft that was already verified, with every target recording its whole stream,
+    // has nothing to append.
+    const verifiedTargets = {
+      [pii.id]: state('pii-d1', [PII_BASELINE], targetChecksum),
+      [sharedCore.id]: state('core-d1', [BASELINE, SECOND, APPENDED], targetChecksum),
+      [tenantCore.id]: state('core-d1', [BASELINE, SECOND, APPENDED], targetChecksum),
+    };
     expect(
       resolve({
-        lock: lockAt(installedTargets(), { manifestChecksum: targetChecksum }),
+        lock: lockAt(verifiedTargets, { manifestChecksum: targetChecksum }),
         manifestChecksum: targetChecksum,
       })
     ).toBeUndefined();
+    // A target recorded later with a shorter run (a Control-created database adopted from its own
+    // history) is still behind; the verified release neither skips it nor re-runs the finished
+    // rollout.
+    expect(() =>
+      resolve({
+        lock: lockAt(
+          { ...verifiedTargets, [tenantCore.id]: state('core-d1', [BASELINE, SECOND]) },
+          { manifestChecksum: targetChecksum }
+        ),
+        manifestChecksum: targetChecksum,
+      })
+    ).toThrow(`draft_append_rejected:${VERSION}:verified_release_target_behind`);
   });
 
   it('only builds a Control artifact for the same version from a draft append', () => {
