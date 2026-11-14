@@ -1030,6 +1030,7 @@ describe('Control Plane tenant management', () => {
     let tenantRow = createTenantRow('second', { lifecycle_state: 'active', updated_at: 10 });
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
       if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'query' && sql.includes('FROM admin_jobs')) return [];
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) return tenantRow;
       if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
         tenantRow = {
@@ -1070,6 +1071,7 @@ describe('Control Plane tenant management', () => {
     let tenantRow = createTenantRow('second', { lifecycle_state: 'suspended', updated_at: 10 });
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
       if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'query' && sql.includes('FROM admin_jobs')) return [];
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) return tenantRow;
       if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
         tenantRow = { ...tenantRow, updated_at: Number(params[1]) };
@@ -1108,6 +1110,7 @@ describe('Control Plane tenant management', () => {
     let tenantRow = createTenantRow('second', { lifecycle_state: 'active', updated_at: 10 });
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
       if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'query' && sql.includes('FROM admin_jobs')) return [];
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) return tenantRow;
       if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
         // The command's move; then another command freezes the tenant before the move back.
@@ -1380,7 +1383,11 @@ describe('Control Plane tenant management', () => {
     expect(statements[0].params.slice(0, 2)).toEqual([expect.any(Number), 'second']);
     expect(statements[1].sql).toContain('INSERT INTO admin_jobs');
     expect(statements[1].params).toEqual(
-      expect.arrayContaining(['tenants/delete', 'pending', JSON.stringify({ tenant_id: 'second' })])
+      expect.arrayContaining([
+        'tenants/delete',
+        'pending',
+        JSON.stringify({ tenant_id: 'second', marker_aware: true }),
+      ])
     );
   });
 
