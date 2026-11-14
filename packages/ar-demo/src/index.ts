@@ -1,3 +1,4 @@
+import { handleScheduled } from './cleanup';
 import { loadConfig } from './config';
 import { handleStart, handleStartPage, handleStatus, handleWaitPage, langOf } from './handlers';
 import { SITE_CSS, WAIT_JS } from './html';
@@ -73,4 +74,7 @@ export async function handleRequest(
 
 export default {
   fetch: (request: Request, env: Env): Promise<Response> => handleRequest(request, env),
+  scheduled: async (_controller: unknown, env: Env): Promise<void> => {
+    await handleScheduled(env, defaultDeps);
+  },
 };

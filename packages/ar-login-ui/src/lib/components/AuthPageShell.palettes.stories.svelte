@@ -8,6 +8,19 @@
 	import { PALETTE_IDS, TEMPLATE_IDS, layoutFor } from '#lib/palettes.js';
 	import type { PaletteId, TemplateId } from '#lib/palettes.js';
 
+	// A gallery story renders several whole pages side by side, so the page landmarks repeat (the
+	// meta's three rules) and so does `main`. A story's rules replace the meta's, hence all four.
+	const GALLERY_A11Y = {
+		config: {
+			rules: [
+				{ id: 'landmark-no-duplicate-banner', enabled: false },
+				{ id: 'landmark-no-duplicate-contentinfo', enabled: false },
+				{ id: 'landmark-no-duplicate-main', enabled: false },
+				{ id: 'landmark-unique', enabled: false }
+			]
+		}
+	};
+
 	const { Story } = defineMeta({
 		title: 'Page shell/Palettes and templates',
 		parameters: {
@@ -58,13 +71,13 @@
 		);
 </script>
 
-<Story name="Every template and palette (light)">
+<Story name="Every template and palette (light)" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery columns={3} height={460} cells={cells('light')} />
 	{/snippet}
 </Story>
 
-<Story name="Every template and palette (dark)">
+<Story name="Every template and palette (dark)" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery columns={3} height={460} cells={cells('dark')} />
 	{/snippet}
@@ -76,7 +89,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Split: form frame, full and card">
+<Story name="Split: form frame, full and card" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -137,7 +150,10 @@
 	{/snippet}
 </Story>
 
-<Story name="Split card: the two glasses over the brand picture">
+<Story
+	name="Split card: the two glasses over the brand picture"
+	parameters={{ a11y: GALLERY_A11Y }}
+>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -157,7 +173,10 @@
 	{/snippet}
 </Story>
 
-<Story name="Clear glass with a tenant accent: no reflection behind the label">
+<Story
+	name="Clear glass with a tenant accent: no reflection behind the label"
+	parameters={{ a11y: GALLERY_A11Y }}
+>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -171,7 +190,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Form area colour">
+<Story name="Form area colour" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -202,7 +221,7 @@
 
 <!-- The tenant's input field and secondary button colours, with the label each picks to read on
      it (black or white). Clear glass keeps its sheen over the button colour. -->
-<Story name="Input field and secondary button colours">
+<Story name="Input field and secondary button colours" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={3}
@@ -217,7 +236,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Background image at 35% opacity">
+<Story name="Background image at 35% opacity" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -240,7 +259,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Brand panel picture and logo display">
+<Story name="Brand panel picture and logo display" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -289,7 +308,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Split: switches in the form row">
+<Story name="Split: switches in the form row" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={3}

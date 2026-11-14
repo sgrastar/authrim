@@ -243,7 +243,7 @@
 				<div class="flex items-start gap-3">
 					<div
 						class="i-ph-warning h-5 w-5 flex-shrink-0 mt-0.5"
-						style="color: var(--warning);"
+						style="color: var(--warning-fg, var(--warning));"
 					></div>
 					<div>
 						<h3 class="auth-warning-banner__title">
@@ -360,14 +360,14 @@
 									</span>
 									<span
 										class="px-1.5 py-0.5 rounded text-xs"
-										style="background: var(--danger-light, #fef2f2); color: var(--danger);"
+										style="background: var(--danger-light, #fef2f2); color: var(--danger-fg, var(--danger));"
 									>
 										{$LL.consent_item_required_badge()}
 									</span>
 									{#if item.needs_version_upgrade && item.current_version}
 										<span
 											class="px-1.5 py-0.5 rounded text-xs"
-											style="background: var(--warning-light, #fffbeb); color: var(--warning);"
+											style="background: var(--warning-light, #fffbeb); color: var(--warning-fg, var(--warning));"
 										>
 											{$LL.consent_item_version_updated({
 												oldVersion: item.current_version,
@@ -446,7 +446,7 @@
 									{#if item.needs_version_upgrade && item.current_version}
 										<span
 											class="px-1.5 py-0.5 rounded text-xs"
-											style="background: var(--warning-light, #fffbeb); color: var(--warning);"
+											style="background: var(--warning-light, #fffbeb); color: var(--warning-fg, var(--warning));"
 										>
 											{$LL.consent_item_version_updated({
 												oldVersion: item.current_version,
@@ -712,7 +712,7 @@
 						target="_blank"
 						rel="noopener noreferrer"
 						class="text-xs"
-						style="color: var(--danger);"
+						style="color: var(--danger-fg, var(--danger));"
 					>
 						{$LL.consent_delete_account_link()}
 					</a>
@@ -756,6 +756,6 @@
 {:else}
 	<!-- Error State -->
 	<Card class="text-center py-12">
-		<p style="color: var(--danger);">{error || $LL.error_unknown()}</p>
+		<p style="color: var(--danger-fg, var(--danger));">{error || $LL.error_unknown()}</p>
 	</Card>
 {/if}

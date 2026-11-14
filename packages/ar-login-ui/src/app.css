@@ -430,12 +430,14 @@ html[dir='rtl'] .form-select {
 [data-theme='light'] {
 	--danger-bg: #b91c1c;
 	--danger-fg: #991b1b;
+	--success-fg: #047857;
 	--warning-fg: #92400e;
 }
 
 [data-theme='dark'] {
 	--danger-bg: #dc2626;
 	--danger-fg: #fca5a5;
+	--success-fg: #6ee7b7;
 	--warning-fg: #fcd34d;
 }
 
@@ -2031,7 +2033,7 @@ tr.expired {
 	padding: 2px 10px;
 	border-radius: var(--radius-full);
 	background: var(--success-light);
-	color: var(--success);
+	color: var(--success-fg, var(--success));
 	font-size: 0.75rem;
 	font-weight: 500;
 }
@@ -2905,7 +2907,7 @@ tr.expired {
 	--border-glass: rgba(17, 24, 39, 0.12);
 	--text-primary: #111827;
 	--text-secondary: #374151;
-	--text-muted: #6b7280;
+	--text-muted: #636b78;
 	--radius-sm: 6px;
 	--radius-md: 8px;
 	--radius-lg: 8px;
