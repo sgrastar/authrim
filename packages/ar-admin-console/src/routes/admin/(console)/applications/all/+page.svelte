@@ -14,6 +14,8 @@
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AccountServiceFlowsPage from '#lib/pages/service-flows/AccountServiceFlowsPage.svelte';
 	import { provideFlowResources } from '#lib/pages/service-flows/flow-resources-context.js';
+	import { httpSchemaSetting } from '#lib/api/schema-setting.js';
+	import { loadSchemas } from '#lib/pages/customization/screens/schema-choices.svelte.js';
 
 	// The flows choose from the tenant's screens and sign-in method profiles, and can add profiles.
 	provideFlowResources({
@@ -27,6 +29,11 @@
 		canCreateProfile: () => hasPermission(adminAccess.current, 'admin:settings:write'),
 		canCreateStatement: () => hasPermission(adminAccess.current, 'admin:settings:write'),
 		loadTheme: (signal) => readAppliedThemeValues(tenantScope.tenantId, signal),
+		userAttributes: (signal) => {
+			const tenantId = tenantScope.tenantId;
+			if (!tenantId) return Promise.reject(new Error('tenant_unknown'));
+			return loadSchemas(httpSchemaSetting, tenantId, signal);
+		},
 		failedSignInLimit: async (signal) => {
 			const tenantId = tenantScope.tenantId;
 			if (!tenantId) throw new Error('tenant_unknown');

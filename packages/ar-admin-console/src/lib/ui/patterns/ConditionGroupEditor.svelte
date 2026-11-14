@@ -32,6 +32,10 @@
 		onchange: (group: ConditionGroup, added?: string) => void;
 		/** Nested groups can be removed; the outermost cannot. */
 		onremove?: () => void;
+		/** How its members may combine (one: said, not chosen). All three when absent. */
+		matches?: readonly ConditionGroup['match'][];
+		/** The most members it takes (no more can be added then). */
+		maxMembers?: number;
 	}
 
 	let {
@@ -42,7 +46,9 @@
 		problems,
 		fresh = null,
 		onchange,
-		onremove
+		onremove,
+		matches = ['all', 'any', 'none'],
+		maxMembers = Infinity
 	}: Props = $props();
 
 	const busy = useBusy();
@@ -76,18 +82,18 @@
 >
 	<div class="cgroup__head">
 		<span>{t('cond.head.before')}</span>
-		<SelectMenu
-			label={t('cond.match')}
-			hideLabel
-			variant="inline"
-			value={group.match}
-			options={[
-				{ value: 'all', label: t('cond.match.all') },
-				{ value: 'any', label: t('cond.match.any') },
-				{ value: 'none', label: t('cond.match.none') }
-			]}
-			onchange={(match) => onchange({ ...group, match: match as ConditionGroup['match'] })}
-		/>
+		{#if matches.length === 1}
+			<strong class="cgroup__match">{t(`cond.match.${matches[0]}`)}</strong>
+		{:else}
+			<SelectMenu
+				label={t('cond.match')}
+				hideLabel
+				variant="inline"
+				value={group.match}
+				options={matches.map((match) => ({ value: match, label: t(`cond.match.${match}`) }))}
+				onchange={(match) => onchange({ ...group, match: match as ConditionGroup['match'] })}
+			/>
+		{/if}
 		{#if after}<span>{after}</span>{/if}
 		{#if onremove}
 			<span class="cgroup__remove">
@@ -114,6 +120,7 @@
 						{fresh}
 						onchange={(next, added) => replace(index, next, added)}
 						onremove={() => remove(index)}
+						{matches}
 					/>
 				{:else}
 					<ConditionRuleEditor
@@ -130,10 +137,12 @@
 		{/each}
 	</ol>
 	<div class="cgroup__add">
-		<button type="button" class="cgroup__action" disabled={busy()} onclick={addRule}>
-			<Icon name="plus" />{t('cond.addRule')}
-		</button>
-		{#if depth < maxDepth}
+		{#if group.children.length < maxMembers}
+			<button type="button" class="cgroup__action" disabled={busy()} onclick={addRule}>
+				<Icon name="plus" />{t('cond.addRule')}
+			</button>
+		{/if}
+		{#if depth < maxDepth && group.children.length < maxMembers}
 			<button type="button" class="cgroup__action" disabled={busy()} onclick={addGroup}>
 				<Icon name="plus" />{t('cond.addGroup')}
 			</button>
@@ -163,6 +172,12 @@
 		gap: 2px;
 		color: var(--text-secondary);
 		font-size: var(--fs-body);
+	}
+
+	.cgroup__match {
+		padding-inline: 4px;
+		color: var(--text-primary);
+		font-weight: var(--fw-semibold);
 	}
 
 	.cgroup__head :global(.select-menu__button) {

@@ -1,6 +1,8 @@
 import { t } from '#lib/i18n/i18n.svelte.js';
 import type { WizardStep } from '#lib/ui/patterns/WizardSteps.svelte';
+import { MAX_FLOW_CONSENT_STEPS } from '@authrim/ar-lib-core/types/flow-step-condition';
 import { consentEntries } from './consent-field-model';
+import { hasIncompleteRule, rulesOf } from './step-condition-model';
 import {
 	aboutFields,
 	choices,
@@ -227,6 +229,13 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 				label: 'af.field.reg.extraScreen',
 				options: () => [],
 				required: true
+			},
+			{
+				key: 'reg.extraScreenWhen',
+				kind: 'step-conditions',
+				label: 'af.field.when',
+				hint: 'af.hint.when',
+				options: () => []
 			}
 		]
 	},
@@ -300,8 +309,16 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 				label: 'af.field.reg.statements',
 				options: () => [],
 				required: true
+			},
+			{
+				key: 'reg.statementsWhen',
+				kind: 'step-conditions',
+				label: 'af.field.when',
+				hint: 'af.hint.when',
+				options: () => []
 			}
-		]
+		],
+		numberOffset: 0
 	},
 	'login-statements': {
 		id: 'login-statements',
@@ -315,8 +332,16 @@ const ACCOUNT_PARTS: Record<string, AccountPart> = {
 				label: 'af.field.login.statements',
 				options: () => [],
 				required: true
+			},
+			{
+				key: 'login.statementsWhen',
+				kind: 'step-conditions',
+				label: 'af.field.when',
+				hint: 'af.hint.when',
+				options: () => []
 			}
-		]
+		],
+		numberOffset: 0
 	},
 	'reg-result': {
 		id: 'reg-result',
@@ -438,7 +463,9 @@ export const FLOWS: Record<FlowId, AccountFlowDef> = {
 				id: 'consent',
 				label: 'af.group.regConsent',
 				parts: ['reg-statements'],
-				optional: true
+				optional: true,
+				// Asked of everyone, and more of some people only (each step shown on its conditions).
+				repeatable: MAX_FLOW_CONSENT_STEPS
 			},
 			{ id: 'complete', label: 'af.group.complete', parts: ['reg-result'] }
 		]
@@ -458,7 +485,9 @@ export const FLOWS: Record<FlowId, AccountFlowDef> = {
 				id: 'consent',
 				label: 'af.group.loginConsent',
 				parts: ['login-statements'],
-				optional: true
+				optional: true,
+				// Asked of everyone, and more of some people only (each step shown on its conditions).
+				repeatable: MAX_FLOW_CONSENT_STEPS
 			},
 			{ id: 'finish', label: 'af.group.finish', parts: ['login-session', 'login-result'] }
 		]
@@ -542,7 +571,8 @@ export function stepOrder(flow: FlowId, state: AccountFlowState): string[] {
  */
 export function partLabel(partId: string): string {
 	const instance = instanceOf(partId);
-	return t(partDef(partId).label, instance ? { n: instance.n + 1 } : undefined);
+	const offset = partDef(partId).numberOffset ?? 1;
+	return t(partDef(partId).label, instance ? { n: instance.n + offset } : undefined);
 }
 
 /** Where a setting's own title is kept among the flow's values. */
@@ -602,9 +632,13 @@ export type PartState = 'done' | 'required' | 'todo';
  * the flow cannot do without, and otherwise just still to do.
  */
 export function partState(partId: string, flow: FlowId, state: AccountFlowState): PartState {
-	const complete = shownFields(partId, state)
-		.filter((field) => field.required)
-		.every((field) => hasValue(state.values[field.key]));
+	const fields = shownFields(partId, state);
+	const complete =
+		fields.filter((field) => field.required).every((field) => hasValue(state.values[field.key])) &&
+		// Who the step is shown to: no row is everyone, but a row still being written is not done.
+		fields
+			.filter((field) => field.kind === 'step-conditions')
+			.every((field) => !hasIncompleteRule(state.values[field.key]));
 	if (complete) return 'done';
 	const group = FLOWS[flow].groups.find(
 		(candidate) =>
@@ -641,6 +675,16 @@ export function stillToDo(
 	];
 }
 
+/** Whether a step of the flow has a "shown to" rule still being written (it cannot be saved). */
+export function hasIncompleteConditions(flow: FlowId, state: AccountFlowState): boolean {
+	return visibleGroups(flow, state)
+		.flatMap((group) => group.parts)
+		.flatMap((partId) => shownFields(partId, state))
+		.some(
+			(field) => field.kind === 'step-conditions' && hasIncompleteRule(state.values[field.key])
+		);
+}
+
 /** The flow can be used once none of its settings is still required. */
 export function isReady(flow: FlowId, state: AccountFlowState): boolean {
 	return stillToDo(flow, state).every((part) => part.state !== 'required');
@@ -657,6 +701,13 @@ export function summaryRows(flow: FlowId, state: AccountFlowState): SummaryRow[]
 		.flatMap((partId) => shownFields(partId, state))
 		.map((field) => {
 			const chosen = state.values[field.key];
+			if (field.kind === 'step-conditions') {
+				const n = rulesOf(chosen).length;
+				return {
+					label: t(field.label),
+					value: n > 0 ? t('af.when.count', { n }) : t('af.when.everyone')
+				};
+			}
 			if (field.kind === 'consent-statements') {
 				const n = consentEntries(chosen).length;
 				return {

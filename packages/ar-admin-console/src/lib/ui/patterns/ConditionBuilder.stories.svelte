@@ -127,3 +127,49 @@
 		</div>
 	{/snippet}
 </Story>
+
+<!--
+	One way of combining, said rather than chosen, and a cap on the rules: what a flow step's
+	"shown to" uses (any-of is another step). A field may compare fewer ways than its type has, and
+	say which values it takes (an age is a whole number up to 150).
+-->
+<Story
+	name="All of these, said not chosen"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.queryByRole('button', { name: t('cond.match') })).toBeNull();
+		await expect(canvas.getByText(t('cond.match.all'))).toBeInTheDocument();
+		await expect(canvas.queryByRole('button', { name: t('cond.addGroup') })).toBeNull();
+		await expect(await canvas.findByText(t('cond.problem.invalidValue'))).toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<div style="max-width:760px">
+			<ConditionBuilder
+				label={localized(['表示する人', 'Shown to', 'Angezeigt für', 'يُعرض لـ'])}
+				fields={fields().map((field) =>
+					field.key === 'age'
+						? {
+								...field,
+								operators: ['gte', 'lt'],
+								accepts: (value: string | number) =>
+									typeof value === 'number' && Number.isInteger(value) && value <= 150
+							}
+						: field
+				)}
+				value={{
+					id: 'root',
+					kind: 'group',
+					match: 'all',
+					children: [
+						{ id: 'a', kind: 'rule', field: 'country', operator: 'not_in', value: ['JP'] },
+						{ id: 'b', kind: 'rule', field: 'age', operator: 'gte', value: 200 }
+					]
+				}}
+				maxDepth={1}
+				matches={['all']}
+				maxRules={3}
+			/>
+		</div>
+	{/snippet}
+</Story>

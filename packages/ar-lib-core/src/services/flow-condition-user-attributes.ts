@@ -11,18 +11,13 @@ import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-ru
 import type { FlowConditionEvaluationUser } from '../schemas/flow-runtime';
 import type { CustomClaimSchema } from './custom-claims/resolver';
 import { UserCustomDataFetcher } from './custom-claims/data-fetcher';
+import { FLOW_CONDITION_PROFILE_ATTRIBUTES } from '../types/flow-step-condition';
 
 export type FlowConditionUserAttributes = NonNullable<FlowConditionEvaluationUser['attributes']>;
 
-/** The standard profile claims a condition may compare (the address by its parts). */
-export const FLOW_CONDITION_PROFILE_ATTRIBUTES = [
-  'birthdate',
-  'gender',
-  'locale',
-  'zoneinfo',
-  'address.country',
-  'address.region',
-] as const;
+// The standard profile claims a condition may compare (kept with the step conditions, which the
+// admin console reads without this module's database code).
+export { FLOW_CONDITION_PROFILE_ATTRIBUTES };
 
 const PROFILE_KEYS: ReadonlySet<string> = new Set(FLOW_CONDITION_PROFILE_ATTRIBUTES);
 

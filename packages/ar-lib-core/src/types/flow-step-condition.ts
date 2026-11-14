@@ -7,15 +7,41 @@
  * it, when they do not (`skip`). Every way into the step goes through the node, so no way shows it
  * to someone the condition leaves out.
  */
-import type {
-  FlowConditionExpression,
-  FlowEditorNode,
-  FlowRuntimeJsonObject,
+import {
+  MAX_FLOW_CONDITION_AGE,
+  MAX_FLOW_CONDITION_ALL,
+  MAX_SCREEN_ANSWER_CONDITION_KEY_LENGTH,
+  MAX_USER_ATTRIBUTE_CONDITION_KEY_LENGTH,
+  type FlowConditionExpression,
+  type FlowConditionOperator,
+  type FlowEditorNode,
+  type FlowRuntimeJsonObject,
 } from '../schemas/flow-runtime';
+import { isOrderableConditionValue } from '../schemas/flow-runtime/condition-operators';
 import {
   readFlowConsentStatements,
   type FlowConsentStatement,
 } from '../services/flow-consent-statements';
+
+// What the admin console needs to build a step's conditions, from this one module.
+export type { FlowConditionExpression, FlowConditionOperator };
+export {
+  isOrderableConditionValue,
+  MAX_FLOW_CONDITION_AGE,
+  MAX_FLOW_CONDITION_ALL,
+  MAX_SCREEN_ANSWER_CONDITION_KEY_LENGTH,
+  MAX_USER_ATTRIBUTE_CONDITION_KEY_LENGTH,
+};
+
+/** The standard profile claims a condition may compare (the address by its parts). */
+export const FLOW_CONDITION_PROFILE_ATTRIBUTES = [
+  'birthdate',
+  'gender',
+  'locale',
+  'zoneinfo',
+  'address.country',
+  'address.region',
+] as const;
 
 /** The conditions a step is shown on, all of which must hold (empty or absent: everyone). */
 export type FlowStepWhen = FlowConditionExpression[];

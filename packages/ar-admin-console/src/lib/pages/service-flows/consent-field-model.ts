@@ -8,7 +8,9 @@ import {
 	statementName,
 	statementStatus
 } from '#lib/pages/customization/statements/statement-model.js';
-import type { AccountValue } from './flow-spec';
+import type { FlowConsentStep } from '@authrim/ar-lib-core/types/flow-step-condition';
+import type { AccountFlowState, AccountValue } from './flow-spec';
+import { valueOfWhen, whenOf } from './step-condition-model';
 
 /** The most statements one step can ask (`MAX_FLOW_CONSENT_STATEMENTS` in ar-lib-core). */
 export const MAX_CONSENT_STATEMENTS = 50;
@@ -51,16 +53,53 @@ export function consentSpecOf(
 	});
 }
 
+const CONSENT_STEP = /^consent:([1-9][0-9]*)$/u;
+
+/** The consent steps a flow has (`consent:<n>`), in order of their number. */
+export function consentStepNumbers(added: readonly string[]): number[] {
+	return added
+		.flatMap((id) => {
+			const match = CONSENT_STEP.exec(id);
+			return match ? [Number(match[1])] : [];
+		})
+		.sort((a, b) => a - b);
+}
+
 /**
- * The consent steps a flow asks: the one step the console sets, with the statements chosen
- * (none when the step was not added, or nothing is chosen in it).
+ * The consent steps a flow asks, in order: each added step with the statements chosen in it and
+ * who it is shown to (a step with nothing chosen asks nothing, and is left out).
  */
 export function consentStepsOf(
-	added: boolean,
-	value: AccountValue | undefined
-): { statements: { statement_id: string; required: boolean }[] }[] {
-	const statements = added ? consentSpecOf(value) : [];
-	return statements.length > 0 ? [{ statements }] : [];
+	state: AccountFlowState,
+	prefix: 'reg' | 'login'
+): FlowConsentStep[] {
+	return consentStepNumbers(state.added).flatMap((n) => {
+		const statements = consentSpecOf(state.values[`${prefix}.statements:${n}`]);
+		if (statements.length === 0) return [];
+		const when = whenOf(state.values[`${prefix}.statementsWhen:${n}`]);
+		return [when.length > 0 ? { statements, when } : { statements }];
+	});
+}
+
+/**
+ * Sets a spec's consent steps in the flow (`consent:1`, `consent:2`, …); false when one is shown
+ * on conditions the form cannot show (the flow is then shown, not saved).
+ */
+export function setConsentSteps(
+	state: AccountFlowState,
+	prefix: 'reg' | 'login',
+	steps: readonly FlowConsentStep[]
+): boolean {
+	let fits = true;
+	steps.forEach((step, index) => {
+		const n = index + 1;
+		state.added.push(`consent:${n}`);
+		state.values[`${prefix}.statements:${n}`] = consentValueOf(step.statements);
+		const when = valueOfWhen(step.when);
+		if (when === null) fits = false;
+		else if (when.length > 0) state.values[`${prefix}.statementsWhen:${n}`] = when;
+	});
+	return fits;
 }
 
 /** The flow value for a spec's statements. */

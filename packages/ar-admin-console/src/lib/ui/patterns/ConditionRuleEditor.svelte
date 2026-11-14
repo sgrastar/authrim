@@ -8,7 +8,7 @@
 	import SelectMenu from '../primitives/SelectMenu.svelte';
 	import { parseNumberInput } from '../primitives/number-input';
 	import {
-		OPERATORS_BY_TYPE,
+		operatorsOf,
 		changeField,
 		changeOperator,
 		takesList,
@@ -50,7 +50,7 @@
 
 	const field = $derived(fields.find((f) => f.key === rule.field));
 	const name = $derived(t('cond.rule', { n }));
-	const operators = $derived(field ? OPERATORS_BY_TYPE[field.type] : []);
+	const operators = $derived(field ? operatorsOf(field) : []);
 	const list = $derived(Array.isArray(rule.value) ? rule.value : []);
 	const labelOf = (value: string) => field?.options?.find((o) => o.value === value)?.label ?? value;
 	const showProblem = $derived(touched && !!problem);
@@ -79,7 +79,8 @@
 		noField: 'cond.problem.noField',
 		noValue: 'cond.problem.noValue',
 		notNumber: 'cond.problem.notNumber',
-		badPattern: 'cond.problem.badPattern'
+		badPattern: 'cond.problem.badPattern',
+		invalidValue: 'cond.problem.invalidValue'
 	};
 	const text = $derived(rule.value === null || Array.isArray(rule.value) ? '' : String(rule.value));
 </script>
@@ -134,7 +135,7 @@
 						label="{t('cond.value')} — {name}"
 						hideLabel
 						variant="inline"
-						value={rule.value === false ? 'false' : 'true'}
+						value={rule.value === false || rule.value === 'false' ? 'false' : 'true'}
 						options={[
 							{ value: 'true', label: t('cond.yes') },
 							{ value: 'false', label: t('cond.no') }

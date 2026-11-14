@@ -339,7 +339,7 @@
 		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[0]);
 		await userEvent.click(await canvas.findByRole('button', { name: 'Consent at sign-up' }));
 		await expect(
-			await canvas.findByRole('heading', { name: 'Consent statements', level: 2 })
+			await canvas.findByRole('heading', { name: 'Consent statements 1', level: 2 })
 		).toBeInTheDocument();
 		await expect(inFlow(canvasElement, /^Consent statements.*Not set yet/)).toBeInTheDocument();
 		// Added but not set: still ready, and the step is listed as still to do.
@@ -360,6 +360,29 @@
 			() => expect(canvas.queryByRole('button', { name: /^Consent statements/ })).toBeNull(),
 			{ timeout: 3000 }
 		);
+	}}
+></Story>
+
+<!--
+	More consent of some people: a second consent step, each with who it is shown to (everyone until a
+	rule is added). A more screen has the same field.
+-->
+<Story
+	name="Sign-up asks more consent of some people"
+	args={{ flow: 'registration', filled: 'required' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[0]);
+		await userEvent.click(await canvas.findByRole('button', { name: 'Consent at sign-up' }));
+		// The next one is offered right after it.
+		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') }).at(-1)!);
+		await userEvent.click(await canvas.findByRole('button', { name: 'Consent at sign-up' }));
+		await expect(
+			await canvas.findByRole('heading', { name: 'Consent statements 2', level: 2 })
+		).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^Consent statements 1/)).toBeInTheDocument();
+		await expect(inPanel(canvasElement).getByText(t('af.field.when'))).toBeInTheDocument();
+		await expect(inPanel(canvasElement).getByText(t('af.when.everyone'))).toBeInTheDocument();
 	}}
 ></Story>
 

@@ -65,10 +65,10 @@ describe('the sign-up flow saved as a Flow', () => {
 	it('saves the statements asked before the account is made, in order, and reads them back', () => {
 		const state = aboutState('registration', 'Sign-up', 'default-ui');
 		// Not added: nothing is asked, whatever was chosen before.
-		state.values['reg.statements'] = ['stmt_terms:required'];
+		state.values['reg.statements:1'] = ['stmt_terms:required'];
 		expect(registrationSpecOf(state).consents).toEqual([]);
-		state.added.push('consent');
-		state.values['reg.statements'] = ['stmt_privacy:optional', 'stmt_terms:required'];
+		state.added.push('consent:1');
+		state.values['reg.statements:1'] = ['stmt_privacy:optional', 'stmt_terms:required'];
 		const spec = registrationSpecOf(state);
 		expect(spec.consents).toEqual([
 			{
@@ -84,8 +84,11 @@ describe('the sign-up flow saved as a Flow', () => {
 			name: 'Sign-up',
 			scope: 'default-ui'
 		});
-		expect(back.added).toContain('consent');
-		expect(back.values['reg.statements']).toEqual(['stmt_privacy:optional', 'stmt_terms:required']);
+		expect(back.added).toContain('consent:1');
+		expect(back.values['reg.statements:1']).toEqual([
+			'stmt_privacy:optional',
+			'stmt_terms:required'
+		]);
 	});
 
 	it('reads the domains as typed, however separated', () => {
@@ -144,25 +147,70 @@ describe('the sign-up flow saved as a Flow', () => {
 });
 
 describe('a sign-up the form cannot hold', () => {
-	it('is shown, not saved: a step shown to some people, or more than one consent step', () => {
+	it('is shown, not saved: more consent steps than it builds, or a condition it cannot show', () => {
 		const spec = registrationSpecOf(aboutState('registration', 'Sign-up', 'default-ui'));
 		const terms = [{ statement_id: 'stmt_terms', required: true }];
 		const when = [{ type: 'locale' as const, value: 'ja' }];
+		const role = [{ type: 'user.role' as const, value: 'admin' }];
 		expect(registrationSpecFitsForm(spec)).toBe(true);
 		expect(
 			registrationSpecFitsForm({
 				...spec,
-				screens: [{ n: 1, screenKey: 'profile', exits: {}, when }]
+				screens: [{ n: 1, screenKey: 'profile', exits: {}, when }],
+				consents: [{ statements: terms }, { statements: terms, when }]
+			})
+		).toBe(true);
+		expect(
+			registrationSpecFitsForm({
+				...spec,
+				screens: [{ n: 1, screenKey: 'profile', exits: {}, when: role }]
 			})
 		).toBe(false);
 		expect(
 			registrationSpecFitsForm({
 				...spec,
-				consents: [{ statements: terms }, { statements: terms }]
+				consents: Array.from({ length: 6 }, () => ({ statements: terms }))
 			})
 		).toBe(false);
-		expect(registrationSpecFitsForm({ ...spec, consents: [{ statements: terms, when }] })).toBe(
-			false
+		expect(
+			registrationSpecFitsForm({ ...spec, consents: [{ statements: terms, when: role }] })
+		).toBe(false);
+	});
+});
+
+describe('a sign-up with steps for some people', () => {
+	it('saves each step with who it is shown to, as the console’s own, and reads it back', () => {
+		const state = aboutState('registration', 'Sign-up', 'default-ui');
+		state.added.push('extra-screen:1', 'consent:1', 'consent:2');
+		state.values['reg.extraScreen:1'] = 'guardian';
+		state.values['reg.extraScreenWhen:1'] = [
+			JSON.stringify({ id: 'r1', field: 'age', operator: 'lt', value: 18 })
+		];
+		state.values['reg.statements:1'] = ['stmt_terms:required'];
+		state.values['reg.statements:2'] = ['stmt_local_law:required'];
+		state.values['reg.statementsWhen:2'] = [
+			JSON.stringify({
+				id: 'r2',
+				field: 'attribute:nationality',
+				operator: 'not_in',
+				value: ['JP']
+			}),
+			JSON.stringify({ id: 'r3', field: 'locale', operator: 'eq', value: 'en' })
+		];
+		const spec = registrationSpecOf(state);
+		expect(spec.screens[0].when).toEqual([{ type: 'user.age', operator: 'lt', value: 18 }]);
+		expect(spec.consents[1].when).toEqual([
+			{ type: 'user.attribute', attribute: 'nationality', operator: 'not_in', values: ['JP'] },
+			{ type: 'locale', operator: 'eq', value: 'en' }
+		]);
+		const editor = buildRegistrationFlowEditor(spec);
+		expect(isConsoleShaped(editor)).toBe(true);
+		const read = readRegistrationFlowEditor(editor)!;
+		expect(registrationSpecFitsForm(read)).toBe(true);
+		const back = registrationStateOf(read, { name: 'Sign-up', scope: 'default-ui' });
+		expect(registrationSpecOf(back)).toEqual(spec);
+		expect(back.added).toEqual(
+			expect.arrayContaining(['extra-screen:1', 'consent:1', 'consent:2'])
 		);
 	});
 });

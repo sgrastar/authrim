@@ -14,6 +14,7 @@
 		aboutState,
 		FLOWS,
 		flowName,
+		hasIncompleteConditions,
 		isReady,
 		type AccountFlowId,
 		type AccountFlowState
@@ -152,6 +153,8 @@
 		if (!flows) return;
 		if (!saved[flow].loaded) throw new Error(t('af.live.loadFailed'));
 		if (!saved[flow].editable) throw new Error(t('af.live.notConsole'));
+		// A rule of who a step is shown to, not finished, would show the step to everyone.
+		if (hasIncompleteConditions(flow, state)) throw new Error(t('af.live.whenIncomplete'));
 		const spec = flow === 'login' ? loginSpecOf(state) : null;
 		// Consent needs a completion to sit before; a Flow without one keeps its other settings
 		// but cannot take consent (the apply below would give nothing back).

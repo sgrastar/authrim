@@ -578,6 +578,7 @@ export const en = {
 	'cond.problem.noValue': 'Enter a value.',
 	'cond.problem.notNumber': 'Enter a number.',
 	'cond.problem.badPattern': 'This is not a valid regular expression.',
+	'cond.problem.invalidValue': 'This value cannot be used here.',
 	'color.pick': 'Pick {name}',
 	'color.opacity': 'Opacity of {name}',
 	'color.invalid': 'Enter a colour as #RRGGBB.',
