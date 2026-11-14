@@ -224,8 +224,6 @@ export const arConnectionSettings: Record<keyof typeof jaConnectionSettings, str
 	'cs.warn.ccPublic': 'This kind of app cannot use client credentials. Clear it.',
 	'cs.warn.unsigned': 'With neither signed, the service cannot trust what it receives.',
 	'cs.warn.legacyEncryption': 'Use legacy algorithms only for services that need them.',
-	'cs.warn.trustUnverified':
-		'With this on, unverified addresses are linked to existing accounts too, which can link a person to someone else’s account.',
 	'cert.active': 'In use',
 	'cert.next': 'Next',
 	'cert.expired': 'Expired',

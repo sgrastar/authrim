@@ -10,8 +10,10 @@
 	import SecretField from '#lib/ui/primitives/SecretField.svelte';
 	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
 	import TextRow from '#lib/ui/patterns/TextRow.svelte';
+	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import ConnectionTest from './ConnectionTest.svelte';
 	import { httpsUrlProblem, type IdpForm, type LinkRule, type OpForm } from './connection-model';
+	import type { OpSettings } from './connection-settings';
 	import MetadataImport from './MetadataImport.svelte';
 	import OurDetails from './OurDetails.svelte';
 
@@ -27,9 +29,17 @@
 		idp: IdpForm;
 		/** What the test runs against (see `testBasis`). */
 		basis?: string;
+		/** The provider's connection settings: matching by email says whose "verified" counts. */
+		opSettings?: OpSettings;
 	}
 
-	let { step, op = $bindable(), idp = $bindable(), basis }: Props = $props();
+	let {
+		step,
+		op = $bindable(),
+		idp = $bindable(),
+		basis,
+		opSettings = $bindable()
+	}: Props = $props();
 
 	let reading = $state(false);
 
@@ -85,14 +95,9 @@
 			description: t('sf.link.option.verified-email.desc')
 		},
 		{
-			value: 'ask',
-			label: t('sf.link.option.ask'),
-			description: t('sf.link.option.ask.desc')
-		},
-		{
-			value: 'new',
-			label: t('sf.link.option.new'),
-			description: t('sf.link.option.new.desc')
+			value: 'manual',
+			label: t('sf.link.option.manual'),
+			description: t('sf.link.option.manual.desc')
 		}
 	]);
 
@@ -117,9 +122,10 @@
 </script>
 
 {#snippet matching(value: LinkRule, change: (rule: LinkRule) => void)}
+	<p class="lead">{t('sf.link.lead')}</p>
 	<ChoiceCards
 		label={t('sf.link.label')}
-		columns={3}
+		columns={2}
 		{value}
 		onchange={(rule) => change(rule as LinkRule)}
 		options={linkOptions}
@@ -178,6 +184,17 @@
 	/>
 {:else if step === 'op-link'}
 	{@render matching(op.link, (rule) => (op.link = rule))}
+	{#if op.link === 'verified-email' && opSettings}
+		<!-- Whose word "verified" is: only here, where it decides which account someone reaches. -->
+		<ToggleRow
+			label={t('cs.row.trustEmail')}
+			description={t('cs.desc.trustEmail')}
+			bind:checked={opSettings.trustEmail}
+		/>
+		{#if opSettings.trustEmail}
+			<Callout tone="warning" live>{t('sf.link.trustWarn')}</Callout>
+		{/if}
+	{/if}
 {:else if step === 'op-test'}
 	<ConnectionTest
 		lead={t('sf.in.testLead')}
@@ -205,6 +222,9 @@
 	/>
 {:else if step === 'idp-link'}
 	{@render matching(idp.link, (rule) => (idp.link = rule))}
+	{#if idp.link === 'verified-email'}
+		<p class="lead">{t('sf.link.idpSource')}</p>
+	{/if}
 {:else if step === 'idp-test'}
 	<ConnectionTest
 		lead={t('sf.in.testLead')}
@@ -214,3 +234,10 @@
 		bind:tested={idp.tested}
 	/>
 {/if}
+
+<style>
+	.lead {
+		margin: 0;
+		color: var(--text-secondary);
+	}
+</style>

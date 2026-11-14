@@ -765,7 +765,7 @@ export const SETTINGS_FIELDS: Record<string, readonly string[]> = {
 		'scopes',
 		'tokenAuth'
 	],
-	'op-accounts': ['handoffSso', 'jit', 'profileUpdate', 'trustEmail'],
+	'op-accounts': ['handoffSso', 'jit', 'profileUpdate'],
 	'op-button': ['buttonColor', 'buttonText', 'priority'],
 	'idp-endpoints': ['bindings', 'providerName', 'sloUrl', 'ssoUrl'],
 	'idp-certs': ['certificates', 'legacyAlgorithms', 'logoutRequestSignature'],

@@ -106,16 +106,19 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.appType.spa.desc': 'Runs in the browser; cannot keep a secret.',
 	'sf.appType.native.desc': 'Installed on a phone or computer; cannot keep a secret.',
 
-	'sf.link.verified-email': 'By verified email address',
-	'sf.link.ask': 'Ask the person to link',
-	'sf.link.new': 'Always create a new account',
-	'sf.link.option.verified-email': 'By verified email',
+	'sf.link.verified-email': 'Linked automatically by verified email address',
+	'sf.link.manual': 'Not linked automatically',
+	'sf.link.option.verified-email': 'Link automatically by verified email',
 	'sf.link.option.verified-email.desc':
-		'If the provider vouches for the address, sign in to the account that has it.',
-	'sf.link.option.ask': 'Ask the person',
-	'sf.link.option.ask.desc': 'Show a page that lets them link to an account they already have.',
-	'sf.link.option.new': 'Always a new account',
-	'sf.link.option.new.desc': 'Never match; every provider sign-in is its own account.',
+		'If the provider says the address is verified and an account has it, the person signs in to that account.',
+	'sf.link.option.manual': 'Do not link automatically',
+	'sf.link.option.manual.desc':
+		'People whose email address an account already has are told to sign in as usual and link the provider from their account page.',
+	'sf.link.lead':
+		'Once linked, a provider account finds its person by that link. This decides how someone not linked yet is matched to an existing account.',
+	'sf.link.idpSource': 'Matching uses the email address taken in by the mapping.',
+	'sf.link.trustWarn':
+		'Unverified addresses link to existing accounts too, which can link a person to someone else’s account.',
 	'sf.link.label': 'How people are matched to accounts',
 
 	'sf.schema.authrim': 'Authrim user',

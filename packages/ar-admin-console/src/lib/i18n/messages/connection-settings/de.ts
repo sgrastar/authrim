@@ -224,8 +224,6 @@ export const deConnectionSettings: Record<keyof typeof jaConnectionSettings, str
 	'cs.warn.ccPublic': 'Diese App-Art kann keine Client Credentials nutzen. Bitte abwählen.',
 	'cs.warn.unsigned': 'Ohne Signatur kann der Dienst dem Empfangenen nicht vertrauen.',
 	'cs.warn.legacyEncryption': 'Veraltete Verfahren nur für Dienste verwenden, die sie benötigen.',
-	'cs.warn.trustUnverified':
-		'Damit werden auch unbestätigte Adressen mit bestehenden Konten verknüpft – Personen können so mit fremden Konten verknüpft werden.',
 	'cert.active': 'In Verwendung',
 	'cert.next': 'Nächstes',
 	'cert.expired': 'Abgelaufen',
