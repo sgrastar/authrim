@@ -8,6 +8,7 @@ import {
   hasGlobalAdminPermission,
   hasGlobalAdminRole,
   hasGlobalMachinePermission,
+  isTenantAdminOpenPath,
   ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 
@@ -92,19 +93,14 @@ export function getTenantInventoryScope(adminAuth: AdminAuthContext | undefined)
   return [...scopedTenantIds];
 }
 
+/**
+ * The routes under `/api/admin/tenants/{id}/` that skip the platform guard: their handlers check
+ * the caller's own tenant. The table lives in ar-lib-core, next to the request classification, so
+ * the tenant a request runs in cannot drift from what is opened. Pass the router's own path
+ * (`c.req.path`), never one taken from the raw URL.
+ */
 export function isTenantScopedAdminPath(pathname: string): boolean {
-  return (
-    /^\/api\/admin\/tenants\/[^/]+\/directory-(?:auth|connectors)(?:\/|$)/.test(pathname) ||
-    /^\/api\/admin\/tenants\/[^/]+\/settings(?:\/|$)/.test(pathname) ||
-    // The handler checks the caller's own tenant scope; the page lists issuer and endpoint URLs.
-    /^\/api\/admin\/tenants\/[^/]+\/info\/?$/.test(pathname) ||
-    // These handlers check the caller's own tenant scope too, and each one acts on that tenant
-    // only: its sign-up invitations, the order of its email providers, and (read only) the
-    // audit and residency profiles it ends up with. Editing profiles stays under /runtime-profiles.
-    /^\/api\/admin\/tenants\/[^/]+\/invitations(?:\/[^/]+)?\/?$/.test(pathname) ||
-    /^\/api\/admin\/tenants\/[^/]+\/email-settings\/?$/.test(pathname) ||
-    /^\/api\/admin\/tenants\/[^/]+\/runtime-profiles\/?$/.test(pathname)
-  );
+  return isTenantAdminOpenPath(pathname);
 }
 
 export async function requireTenantResourceAccess(

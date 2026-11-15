@@ -4,6 +4,24 @@ const TENANT_SCOPED_PATH_TENANT_ID_PATTERNS = [
   /^\/api\/admin\/tenants\/([^/]+)\/.*$/,
   /^\/api\/admin\/settings\/logging\/tenant\/([^/]+)(?:\/.*)?$/,
 ] as const;
+/**
+ * The routes under `/api/admin/tenants/{id}/` that a tenant administrator may open for their own
+ * tenant (the handlers check the caller's own scope). This is the one table both the Admin API
+ * guard and the request context read, so what is opened and where the request runs cannot drift.
+ * Group 1 is the tenant id of the path.
+ */
+const TENANT_ADMIN_OPEN_PATH_PATTERNS: readonly RegExp[] = [
+  /^\/api\/admin\/tenants\/([^/]+)\/directory-(?:auth|connectors)(?:\/|$)/,
+  /^\/api\/admin\/tenants\/([^/]+)\/settings(?:\/|$)/,
+  // The page lists issuer and endpoint URLs.
+  /^\/api\/admin\/tenants\/([^/]+)\/info\/?$/,
+  // Each of these acts on that tenant only: its sign-up invitations, the order of its email
+  // providers, and (read only) the audit and residency profiles it ends up with. Editing
+  // profiles stays under /runtime-profiles.
+  /^\/api\/admin\/tenants\/([^/]+)\/invitations(?:\/[^/]+)?\/?$/,
+  /^\/api\/admin\/tenants\/([^/]+)\/email-settings\/?$/,
+  /^\/api\/admin\/tenants\/([^/]+)\/runtime-profiles\/?$/,
+];
 const SETTINGS_METADATA_PATH =
   /^\/api\/admin\/settings\/(?:schema|diff|validate|meta(?:\/.*)?)\/?$/;
 const SETTINGS_PLATFORM_PATH = /^\/api\/admin\/settings\/cache-mode(?:\/info)?\/?$/;
@@ -111,6 +129,37 @@ export function isTenantScopedAdminPath(path?: string | null): boolean {
 
 export function isAdminTenantHeaderRequired(path?: string | null): boolean {
   return classifyTenantRequestPath(path) === 'tenant_scoped_admin';
+}
+
+/**
+ * The tenant id of a route a tenant administrator may open for their own tenant, or null for any
+ * other path. Decide on the router's own path (`c.req.path`), never on the raw URL.
+ */
+export function extractTenantAdminOpenPathTenantId(path?: string | null): string | null {
+  const normalizedPath = path || '';
+  for (const pattern of TENANT_ADMIN_OPEN_PATH_PATTERNS) {
+    const match = normalizedPath.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+export function isTenantAdminOpenPath(path?: string | null): boolean {
+  return extractTenantAdminOpenPathTenantId(path) !== null;
+}
+
+/**
+ * A tenant-admin-open route that is classified as tenant inventory (`info`, `invitations`,
+ * `runtime-profiles`). It sends no tenant header, so the request runs in the tenant the path names
+ * (the caller's roles are worked out for that tenant); every other tenant-admin-open route is
+ * `tenant_scoped_admin` and runs in the tenant of its `X-Tenant-Id` header.
+ */
+export function isTenantAdminOpenInventoryPath(path?: string | null): boolean {
+  return (
+    classifyTenantRequestPath(path) === 'tenant_inventory_admin' && isTenantAdminOpenPath(path)
+  );
 }
 
 export function isValidTenantIdentifier(value: string): boolean {
