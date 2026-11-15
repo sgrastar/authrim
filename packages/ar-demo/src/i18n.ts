@@ -61,6 +61,18 @@ export interface Copy extends GateTexts {
   back: string;
 }
 
+/**
+ * Japanese strings carry their allowed line-break points as '|' in the source; this turns each into
+ * a ZERO WIDTH SPACE (U+200B), the one phrase-wrapping technique that works in every browser
+ * (word-break: auto-phrase is Chromium-only). The stylesheet forbids every other break.
+ */
+const p = (text: string): string => text.replaceAll('|', '\u200b');
+
+/** Text without the break marks: for <title> and attributes. */
+export function plain(text: string): string {
+  return text.replaceAll('\u200b', '');
+}
+
 /** Arabic count words: 1, 2, 3-10 and the rest take different forms. */
 function arabicHours(hours: number): string {
   if (hours === 1) return 'ساعة واحدة';
@@ -76,53 +88,64 @@ export const COPY: Record<Lang, Copy> = {
     turnstile: 'ja',
     languageLabel: '言語',
     title: 'Authrim デモ環境',
-    intro1:
-      'Authrim のエンドユーザー向けログインと管理者向けの画面を、実際に操作して試せるデモ環境です。',
-    intro2:
-      '「開始する」を押すと、あなた専用のテナントが作成され、設定を自由に変更できます（一部、変更できない項目があります）。',
+    intro1: p(
+      'Authrim の|エンドユーザー向け|ログインと|管理者向けの|画面を、|実際に|操作して|試せる|デモ環境です。'
+    ),
+    intro2: p(
+      '「開始する」を|押すと、|あなた専用の|テナントが|作成され、|設定を|自由に|変更できます|（一部、|変更できない|項目が|あります）。'
+    ),
     noticeTitle: '注意',
     notices: (hours) => [
-      'これは動作確認のためのデモ環境です。',
-      '実際の個人情報や本物の認証情報は入力しないでください。',
-      `作成したものはすべて、約${hours}時間後に自動で削除されます。`,
+      p('これは|動作確認のための|デモ環境です。'),
+      p('実際の|個人情報や|本物の|認証情報は|入力しないでください。'),
+      p(`作成した|ものは|すべて、|約${hours}時間後に|自動で|削除されます。`),
     ],
     start: '開始する',
-    gateTitle: 'デモ環境を準備しています',
-    gateTitleReady: 'デモ環境の準備ができました',
-    gateChecking: '受付を確認しています',
-    gateAccepted: '環境を作成しています',
-    gateInviting: '管理者の招待を準備しています',
-    gateSlow: '時間がかかっています。このままお待ちください',
-    gateUnstable: '通信が不安定です。確認を続けています',
-    gateOpening: '管理コンソールへ移動します',
-    gateArriving: '準備ができました。まもなくボタンが表示されます。',
-    gateReady: '準備ができました。下のボタンで管理コンソールを開きます。',
+    gateTitle: p('デモ環境を|準備しています'),
+    gateTitleReady: p('デモ環境の|準備が|できました'),
+    gateChecking: p('受付を|確認しています'),
+    gateAccepted: p('環境を|作成しています'),
+    gateInviting: p('管理者の|招待を|準備しています'),
+    gateSlow: p('時間が|かかっています。|このまま|お待ちください'),
+    gateUnstable: p('通信が|不安定です。|確認を|続けています'),
+    gateOpening: p('管理コンソールへ|移動します'),
+    gateArriving: p('準備が|できました。|まもなく|ボタンが|表示されます。'),
+    gateReady: p('準備が|できました。|下の|ボタンで|管理コンソールを|開きます。'),
     skipLabel: '演出を省略',
     sealLabel: '管理コンソールを開く',
-    gateLastMinute:
-      'このリンクはあと約1分で使えなくなります。今すぐ管理コンソールを開いてください。',
-    gateExpired: '管理コンソールを開く時間が過ぎました。最初からやり直してください。',
-    timeout: '時間がかかりすぎています。最初からやり直してください。',
-    failed: 'デモ環境を作成できませんでした。もう一度お試しください。',
-    handedOff: 'この環境はすでに開かれています。ページを閉じた場合は、最初からやり直してください。',
-    lost: 'このセッションが見つかりません。最初からやり直してください。',
-    retry: '最初からやり直す',
-    noscript:
-      'このページでは、準備の進み具合を確認して管理コンソールを開くために JavaScript が必要です。',
-    errorTitle: '続行できません',
+    gateLastMinute: p(
+      'このリンクは|あと約1分で|使えなくなります。|今すぐ|管理コンソールを|開いてください。'
+    ),
+    gateExpired: p('管理コンソールを|開く|時間が|過ぎました。|最初から|やり直してください。'),
+    timeout: p('時間が|かかりすぎています。|最初から|やり直してください。'),
+    failed: p('デモ環境を|作成できませんでした。|もう一度|お試しください。'),
+    handedOff: p(
+      'この環境は|すでに|開かれています。|ページを|閉じた場合は、|最初から|やり直してください。'
+    ),
+    lost: p('この|セッションが|見つかりません。|最初から|やり直してください。'),
+    retry: p('最初から|やり直す'),
+    noscript: p(
+      'このページでは、|準備の|進み具合を|確認して|管理コンソールを|開くために|JavaScript が|必要です。'
+    ),
+    errorTitle: p('続行できません'),
     errors: {
-      forbidden:
-        'リクエストは受け付けられませんでした。開始ページを開き、そこからもう一度お試しください。',
-      bad_request: 'リクエストを読み取れませんでした。開始ページに戻って、もう一度お試しください。',
-      verification: '確認に失敗しました。前の画面に戻って、もう一度お試しください。',
-      ip_limit: '1日に作成できるデモ環境の上限に達しました。明日もう一度お試しください。',
-      capacity: '現在、デモ環境は満員です。しばらくしてからもう一度お試しください。',
-      failed: 'デモ環境を作成できませんでした。しばらくしてからもう一度お試しください。',
-      config: '現在、デモ環境をご利用いただけません。しばらくしてからもう一度お試しください。',
-      not_found: 'ページが見つかりません。開始ページに戻ってください。',
-      method: 'ここではこのメソッドは使えません。開始ページに戻ってください。',
+      forbidden: p(
+        'リクエストは|受け付けられませんでした。|開始ページを|開き、|そこから|もう一度|お試しください。'
+      ),
+      bad_request: p(
+        'リクエストを|読み取れませんでした。|開始ページに|戻って、|もう一度|お試しください。'
+      ),
+      verification: p('確認に|失敗しました。|前の画面に|戻って、|もう一度|お試しください。'),
+      ip_limit: p('1日に|作成できる|デモ環境の|上限に|達しました。|明日|もう一度|お試しください。'),
+      capacity: p('現在、|デモ環境は|満員です。|しばらくしてから|もう一度|お試しください。'),
+      failed: p('デモ環境を|作成できませんでした。|しばらくしてから|もう一度|お試しください。'),
+      config: p(
+        '現在、|デモ環境を|ご利用|いただけません。|しばらくしてから|もう一度|お試しください。'
+      ),
+      not_found: p('ページが|見つかりません。|開始ページに|戻ってください。'),
+      method: p('ここでは|この|メソッドは|使えません。|開始ページに|戻ってください。'),
     },
-    back: '開始ページへ戻る',
+    back: p('開始ページへ|戻る'),
   },
   en: {
     name: 'English',

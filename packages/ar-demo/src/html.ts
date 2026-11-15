@@ -1,6 +1,6 @@
 import type { Config } from './config';
 import { GATE_ASSETS } from './gate-assets';
-import { COPY, LANGS, type Copy, type ErrorKind, type GateTexts, type Lang } from './i18n';
+import { COPY, LANGS, plain, type Copy, type ErrorKind, type GateTexts, type Lang } from './i18n';
 
 export { SITE_CSS } from './site-css';
 export { WAIT_JS } from './gate-client';
@@ -54,7 +54,7 @@ function langNav(current: Lang, path: string, hidden = false): string {
     const mark = code === current ? ' aria-current="true"' : '';
     return `<li><a href="${path}?lang=${code}" lang="${COPY[code].htmlLang}"${mark}>${esc(label)}</a></li>`;
   }).join('\n');
-  return `<nav class="lang" aria-label="${esc(COPY[current].languageLabel)}"${hidden ? ' hidden' : ''}>
+  return `<nav class="lang" aria-label="${esc(plain(COPY[current].languageLabel))}"${hidden ? ' hidden' : ''}>
 <ul>
 ${items}
 </ul>
@@ -78,7 +78,7 @@ function layout(
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#05070b">
-<title>${esc(title)}</title>
+<title>${esc(plain(title))}</title>
 <link rel="stylesheet" href="/assets/site.css">
 ${head}</head>
 <body class="${bodyClass}">

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { COOKIE_NAME } from '../handlers';
 import { errorPage, gatePage, LANGS, SITE_CSS, startPage, WAIT_JS, type ErrorKind } from '../html';
-import { COPY, chooseLang, pickLang } from '../i18n';
+import { COPY, chooseLang, pickLang, plain } from '../i18n';
 import { handleRequest } from '../index';
 import { CSP } from '../respond';
 import { loadConfig } from '../config';
@@ -239,19 +239,54 @@ describe('every language renders every page', () => {
     expect(COPY.en.sealLabel).toBe('Open the admin console');
     expect(COPY.en.skipLabel).toBe('Skip the animation');
     expect(COPY.ja.title).toBe('Authrim デモ環境');
-    expect(COPY.ja.noticeTitle).toBe('注意');
-    expect(COPY.ja.start).toBe('開始する');
-    expect(COPY.ja.gateTitle).toBe('デモ環境を準備しています');
-    expect(COPY.ja.gateTitleReady).toBe('デモ環境の準備ができました');
-    expect(COPY.ja.gateReady).toBe('準備ができました。下のボタンで管理コンソールを開きます。');
-    expect(COPY.ja.sealLabel).toBe('管理コンソールを開く');
-    expect(COPY.ja.skipLabel).toBe('演出を省略');
-    expect(COPY.ja.retry).toBe('最初からやり直す');
-    expect(COPY.ja.notices(3)).toEqual([
+    expect(plain(COPY.ja.noticeTitle)).toBe('注意');
+    expect(plain(COPY.ja.start)).toBe('開始する');
+    expect(plain(COPY.ja.gateTitle)).toBe('デモ環境を準備しています');
+    expect(plain(COPY.ja.gateTitleReady)).toBe('デモ環境の準備ができました');
+    expect(plain(COPY.ja.gateReady)).toBe(
+      '準備ができました。下のボタンで管理コンソールを開きます。'
+    );
+    expect(plain(COPY.ja.sealLabel)).toBe('管理コンソールを開く');
+    expect(plain(COPY.ja.skipLabel)).toBe('演出を省略');
+    expect(plain(COPY.ja.retry)).toBe('最初からやり直す');
+    expect(COPY.ja.notices(3).map(plain)).toEqual([
       'これは動作確認のためのデモ環境です。',
       '実際の個人情報や本物の認証情報は入力しないでください。',
       '作成したものはすべて、約3時間後に自動で削除されます。',
     ]);
+  });
+
+  it('marks Japanese phrase boundaries with zero width spaces, not inside words or numbers', () => {
+    const ja = COPY.ja;
+    const strings: string[] = [...ja.notices(24), ...Object.values(ja.errors)];
+    for (const value of Object.values(ja)) if (typeof value === 'string') strings.push(value);
+    for (const text of strings) {
+      if (plain(text).length > 12 && !/ /.test(text)) {
+        expect(text, text).toContain('\u200b');
+      }
+      // never inside an ASCII word, never between a number and its unit
+      expect(text, text).not.toMatch(/[A-Za-z0-9]\u200b[A-Za-z0-9]/);
+      expect(text, text).not.toMatch(/[0-9]\u200b[時分日]/);
+      // never at the very start or end, never doubled
+      expect(text, text).not.toMatch(/^\u200b|\u200b$|\u200b\u200b/);
+    }
+    // the lifetime keeps its unit: "約24時間後に" stays in one piece
+    expect(ja.notices(24)[2]).toContain('約24時間後に');
+    // other languages carry no marks
+    for (const lang of LANGS.filter((code) => code !== 'ja')) {
+      expect(JSON.stringify(COPY[lang].notices(2))).not.toContain('\u200b');
+      expect(COPY[lang].intro1).not.toContain('\u200b');
+    }
+  });
+
+  it('keeps the marks out of <title> and attribute values but lets them through in the body', async () => {
+    const config = await configFor(24);
+    const gate = gatePage('ja', config);
+    expect(/<title>([^<]*)<\/title>/.exec(gate)?.[1]).toBe(plain(COPY.ja.gateTitle));
+    expect(gate).toContain(COPY.ja.gateTitle); // the h1 keeps its break point
+    const start = startPage('ja', config);
+    expect(start).toContain('\u200b');
+    for (const [, value] of start.matchAll(/="([^"]*)"/g)) expect(value).not.toContain('\u200b');
   });
 
   it('says demo environment everywhere, never trial', () => {
