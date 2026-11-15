@@ -207,10 +207,26 @@ function sqlString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+/**
+ * provisioning_state values (control_desired_resources CHECK, migrations/control/d1/
+ * 001_0_5_0_control_baseline.sql) that mean "the shard D1 is not created yet": 'requested' is the
+ * default at insert and 'creating' is set by ar-control's create_d1 step; 'ready' is only set
+ * after the D1 exists and its migrations ran. Such a binding is not on any deployed Worker yet
+ * (reconcile_worker_bindings attaches it later), so it is left out rather than failing the update.
+ */
+const PRE_CREATION_PROVISIONING_STATES = ['requested', 'creating'];
+
+export interface ControlGeneratedD1Result {
+  bindings: ControlGeneratedD1Binding[];
+  /** Binding names skipped because their shard D1 is still being created. */
+  pending: string[];
+}
+
 function parseControlGeneratedD1Rows(
   rows: readonly ControlGeneratedD1Row[]
-): ControlGeneratedD1Binding[] {
+): ControlGeneratedD1Result {
   const bindings = new Map<string, ControlGeneratedD1Binding>();
+  const pending = new Set<string>();
   for (const row of rows) {
     if (
       typeof row.binding_name !== 'string' ||
@@ -223,6 +239,14 @@ function parseControlGeneratedD1Rows(
       !SAFE_DATABASE_NAME.test(row.deterministic_name)
     ) {
       throw new Error(`control_generated_d1_invalid_name:${row.binding_name}`);
+    }
+    if (
+      (row.observed_state === null || row.observed_state === undefined) &&
+      (row.provider_resource_id === null || row.provider_resource_id === undefined) &&
+      PRE_CREATION_PROVISIONING_STATES.includes(String(row.provisioning_state))
+    ) {
+      pending.add(row.binding_name);
+      continue;
     }
     if (
       row.observed_state !== 'present' ||
@@ -245,14 +269,23 @@ function parseControlGeneratedD1Rows(
     }
     bindings.set(binding.binding, binding);
   }
-  return [...bindings.values()].sort((left, right) => left.binding.localeCompare(right.binding));
+  for (const name of pending) {
+    // A binding that has a ready row elsewhere is not pending; never hide a real conflict.
+    if (bindings.has(name)) pending.delete(name);
+  }
+  return {
+    bindings: [...bindings.values()].sort((left, right) =>
+      left.binding.localeCompare(right.binding)
+    ),
+    pending: [...pending].sort(),
+  };
 }
 
 export async function loadControlGeneratedD1Bindings(input: {
   controlDatabaseName: string;
   environmentId: string;
   query?: typeof queryD1Rows;
-}): Promise<ControlGeneratedD1Binding[]> {
+}): Promise<ControlGeneratedD1Result> {
   if (!input.controlDatabaseName.trim()) throw new Error('control_database_name_required');
   if (!SAFE_ENVIRONMENT_ID.test(input.environmentId)) {
     throw new Error('invalid_control_generated_environment_id');
@@ -513,10 +546,11 @@ export async function refreshLockFromControlGeneratedState(input: {
   removed: string[];
   changed: string[];
   keyStateChanged: boolean;
+  pending: string[];
 }> {
   const controlDatabaseId = input.lock.d1.CONTROL_DB?.id;
   if (!controlDatabaseId) throw new Error('control_database_id_required');
-  const bindings = await loadControlGeneratedD1Bindings({
+  const { bindings, pending } = await loadControlGeneratedD1Bindings({
     controlDatabaseName: controlDatabaseId,
     environmentId: input.environmentId,
     query: input.query,
@@ -532,5 +566,6 @@ export async function refreshLockFromControlGeneratedState(input: {
     ...projected,
     lock: keyProjection.lock,
     keyStateChanged: keyProjection.changed,
+    pending,
   };
 }

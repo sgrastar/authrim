@@ -128,6 +128,52 @@ describe('tenant runtime registry route state', () => {
     expect(mockVerifyTenantRuntimeRegistrySnapshotSignature).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ['quarantining', false],
+    ['quarantined', false],
+    ['disabled', true],
+  ] as const)(
+    'resolves the placement with allowRetired=%s only for the disabled route (%s)',
+    async (routeStatus, expected) => {
+      mockTransitionTenantRuntimeRegistryRouteState.mockResolvedValue({
+        runtimeGeneration: 8,
+        routeStatus,
+        quarantineDenyGeneration: 1,
+        changed: true,
+      });
+      mockPublishTenantRuntimeRegistrySnapshot.mockResolvedValue({
+        snapshot: { ...snapshot, routeStatus },
+        snapshotKey: 'snapshot-key',
+        generationKey: 'generation-key',
+      });
+      const store = {
+        get: vi.fn(async (key: string) =>
+          key.includes(':generation:')
+            ? JSON.stringify({
+                runtimeGeneration: 8,
+                routeStatus,
+                quarantineDenyGeneration: 1,
+              })
+            : JSON.stringify({ ...snapshot, routeStatus })
+        ),
+      };
+      await publishTenantRuntimeRegistryRouteState(
+        {
+          DB_ADMIN: {},
+          TENANT_RUNTIME_REGISTRY: store,
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+          AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+        } as never,
+        { tenantId: 'tenant-a', routeStatus, operationId: 'job-1', actorId: 'job-1', now }
+      );
+      expect(mockResolveTenantRuntimePlacementSnapshot).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-a',
+        { allowRetired: expected }
+      );
+    }
+  );
+
   it('fails closed when KV read-back does not expose the expected deny generation', async () => {
     const store = {
       get: vi.fn(async (key: string) =>

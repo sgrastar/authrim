@@ -1311,6 +1311,13 @@ describe('D1ControlRepository lease and budget integration', () => {
         )
         .get()
     ).toEqual({ policy_state: 'retired' });
+    // ar-management publishes the `disabled` runtime route AFTER this finalisation and reads the
+    // placement from this very row (resolveTenantRuntimePlacementSnapshot, allowRetired). The row
+    // must stay readable with a valid isolation policy and generation, or deletion jobs get stuck.
+    const retainedPolicy = await repository.getTenantPlacementPolicy('env-test', 'tenant-delete');
+    expect(retainedPolicy).toMatchObject({ tenantId: 'tenant-delete', state: 'retired' });
+    expect(['shared_pool', 'tenant_exclusive']).toContain(retainedPolicy?.isolationPolicy);
+    expect(retainedPolicy?.policyGeneration).toBeGreaterThanOrEqual(1);
     expect(
       database
         .prepare(
@@ -1777,6 +1784,160 @@ describe('D1ControlRepository lease and budget integration', () => {
         501
       )
     ).rejects.toThrow('control_operation_retry_conflict');
+  });
+
+  it('restarts a retried create after the provider create was issued without aborting on the identity trigger', async () => {
+    const shardPlan = plan('retry-after-issued');
+    await repository.createShardPlan(shardPlan, 100, 'admin');
+    const first = required(
+      await repository.tryStartProvisioning(shardPlan.operationId, 'owner-1', 100)
+    );
+    await repository.markD1CreateIssued(first, shardPlan, 101);
+    await repository.markOperationRetry(first, 'cloudflare_d1_transient', 160, 102);
+
+    const second = await repository.tryStartProvisioning(shardPlan.operationId, 'owner-2', 160);
+    expect(second).not.toBeNull();
+    expect(
+      database
+        .prepare(`SELECT attempt_count, status FROM control_operations WHERE operation_id = ?`)
+        .get(shardPlan.operationId)
+    ).toEqual({ attempt_count: 2, status: 'running' });
+    expect(
+      database
+        .prepare(
+          `SELECT provider_create_state, provisioning_state
+             FROM control_desired_resources WHERE origin_operation_id = ?`
+        )
+        .get(shardPlan.operationId)
+    ).toEqual({ provider_create_state: 'issued', provisioning_state: 'creating' });
+
+    // The ambiguous-outcome path blocks the operation; that write must not hit the trigger either.
+    await repository.markOperationBlocked(
+      required(second),
+      'cloudflare_d1_create_outcome_ambiguous',
+      161
+    );
+    expect(
+      database
+        .prepare(`SELECT status FROM control_operations WHERE operation_id = ?`)
+        .get(shardPlan.operationId)
+    ).toEqual({ status: 'blocked' });
+  });
+
+  it('recreates after an issued create is released, without tripping the identity trigger', async () => {
+    const shardPlan = plan('reissue-after-release');
+    await repository.createShardPlan(shardPlan, 100, 'admin');
+    const first = required(
+      await repository.tryStartProvisioning(shardPlan.operationId, 'owner-1', 100)
+    );
+    expect(await repository.reserveD1CreateBudget(first, 100)).toBe(true);
+    await repository.markD1CreateIssued(first, shardPlan, 101);
+    await repository.markOperationRetry(first, 'cloudflare_d1_request_failed', 160, 102);
+
+    const second = required(
+      await repository.tryStartProvisioning(shardPlan.operationId, 'owner-2', 160)
+    );
+    // The issue time survives the retry claim (only markD1CreateIssued moves updated_at).
+    expect((await repository.listPendingShardPlans(10))[0]).toMatchObject({
+      providerCreateState: 'issued',
+      providerCreateIssuedAt: 101,
+    });
+    await repository.markD1CreateDefinitelyRejected(second, shardPlan, 700);
+    // Not charged again: one reservation per operation, and nothing refunds it.
+    expect(await repository.reserveD1CreateBudget(second, 700)).toBe(true);
+    expect(
+      database.prepare(`SELECT COUNT(*) AS count FROM control_d1_create_budget_reservations`).get()
+    ).toEqual({ count: 1 });
+    await repository.markD1CreateIssued(second, shardPlan, 701);
+    expect(
+      database
+        .prepare(
+          `SELECT provider_create_state, provider_resource_id, updated_at
+             FROM control_desired_resources WHERE origin_operation_id = ?`
+        )
+        .get(shardPlan.operationId)
+    ).toEqual({ provider_create_state: 'issued', provider_resource_id: null, updated_at: 701 });
+    await repository.checkpointD1ProviderIdentity(second, shardPlan, 'db-recreated', 702);
+    expect(
+      database
+        .prepare(
+          `SELECT provider_create_state, provider_resource_id
+             FROM control_desired_resources WHERE origin_operation_id = ?`
+        )
+        .get(shardPlan.operationId)
+    ).toEqual({ provider_create_state: 'identified', provider_resource_id: 'db-recreated' });
+  });
+
+  it('releases an issued checkpoint only while it still carries the judged issue time', async () => {
+    const shardPlan = plan('conditional-release');
+    await repository.createShardPlan(shardPlan, 100, 'admin');
+    const first = required(
+      await repository.tryStartProvisioning(shardPlan.operationId, 'owner-1', 100)
+    );
+    await repository.markD1CreateIssued(first, shardPlan, 101);
+    await repository.markOperationRetry(first, 'cloudflare_d1_request_failed', 160, 102);
+    const second = required(
+      await repository.tryStartProvisioning(shardPlan.operationId, 'owner-2', 160)
+    );
+    expect(await repository.readD1CreateCheckpoint(second, shardPlan)).toEqual({
+      providerCreateState: 'issued',
+      providerResourceId: null,
+      providerCreateIssuedAt: 101,
+    });
+    const state = () =>
+      database
+        .prepare(
+          `SELECT provider_create_state, updated_at FROM control_desired_resources
+            WHERE origin_operation_id = ?`
+        )
+        .get(shardPlan.operationId);
+
+    await expect(
+      repository.markD1CreateDefinitelyRejected(second, shardPlan, 700, 50)
+    ).rejects.toThrow('cloudflare_d1_create_outcome_pending');
+    expect(state()).toEqual({ provider_create_state: 'issued', updated_at: 101 });
+
+    await repository.markD1CreateDefinitelyRejected(second, shardPlan, 700, 101);
+    expect(state()).toEqual({ provider_create_state: 'not_started', updated_at: 700 });
+    // A stale lease holder cannot read the checkpoint.
+    expect(await repository.readD1CreateCheckpoint(first, shardPlan)).toBeNull();
+  });
+
+  it('reaches the create effect with an issued checkpoint after an operator retry of an ambiguous block', async () => {
+    const shardPlan = plan('retry-step-after-ambiguous');
+    await repository.createShardPlan(shardPlan, 100, 'admin');
+    const first = required(
+      await repository.tryStartProvisioning(shardPlan.operationId, 'owner-1', 100)
+    );
+    await repository.markD1CreateIssued(first, shardPlan, 101);
+    await repository.markOperationBlocked(first, 'cloudflare_d1_create_outcome_ambiguous', 102);
+
+    await repository.retryProvisioningOperationStep(
+      {
+        operationId: shardPlan.operationId,
+        stepKey: 'create_d1',
+        requestedById: 'admin-1',
+        reasonCode: 'operator_retry',
+        idempotencyKey: 'retry-step-after-ambiguous-1',
+      },
+      'env-test',
+      500
+    );
+    expect((await repository.listPendingShardPlans(10))[0]).toMatchObject({
+      operationId: shardPlan.operationId,
+      providerCreateState: 'issued',
+      providerCreateIssuedAt: 101,
+    });
+    const restarted = await repository.tryStartProvisioning(shardPlan.operationId, 'owner-2', 500);
+    expect(restarted).not.toBeNull();
+    expect(
+      database
+        .prepare(
+          `SELECT provider_create_state, updated_at FROM control_desired_resources
+            WHERE origin_operation_id = ?`
+        )
+        .get(shardPlan.operationId)
+    ).toEqual({ provider_create_state: 'issued', updated_at: 101 });
   });
 
   it('retries only a settings request rejected before a Worker version was created', async () => {

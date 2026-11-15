@@ -2,6 +2,7 @@ import {
   activeTenantDeleteJobGuard,
   tenantDeleteAcceptedSinceGuard,
 } from './tenant-deletion-job-predicate';
+import { failedTenantDeletionNeedsCancel } from './tenant-deletion-reactivation-guard';
 import { prepareLogIcebergRowWrite } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 import {
   adminAuditReceiptStatement,
@@ -556,6 +557,12 @@ async function processTenantLifecycleValidationJob(
       ? config.accepted_at
       : Number(job.created_at) - 1;
   const deletedSince = tenantDeleteAcceptedSinceGuard(job.tenant_id, acceptedAt);
+  // A failed deletion that left the route quarantined or disabled is cancelled, not resumed: this
+  // activation would not touch the route (kept in DB_ADMIN, so it cannot be part of the UPDATE
+  // below). A route that cannot be read throws: the job fails and is retried, nothing activated.
+  if (await failedTenantDeletionNeedsCancel(adapter, stores.jobs, job.tenant_id)) {
+    return supersededLifecycleValidation('tenant_deletion_failed_use_cancel');
+  }
   const update = await adapter.execute(
     `UPDATE tenants SET lifecycle_state = ?, updated_at = ?
       WHERE id = ? AND lifecycle_state = ?

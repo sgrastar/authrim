@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 
@@ -550,7 +551,7 @@ describe('tenant deletion jobs', () => {
     await processPendingTenantDeletionJobs(controlEnvironment(), logger);
 
     expect(mockAdapter.execute).toHaveBeenCalledWith(
-      "UPDATE admin_jobs SET status = 'pending', progress = ?, config = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+      "UPDATE admin_jobs SET status = 'pending', progress = ?, config = ?, next_run_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
       [
         JSON.stringify({
           stage: 'quarantine_draining',
@@ -558,6 +559,7 @@ describe('tenant deletion jobs', () => {
           drain_ready_at: quarantineStartedAt + 30 * 60,
         }),
         expect.any(String),
+        quarantineStartedAt + 30 * 60,
         expect.any(Number),
         'job-drain',
         'operator-tenant',
@@ -601,6 +603,105 @@ describe('tenant deletion jobs', () => {
       expect.objectContaining({ routeStatus: 'disabled' })
     );
     expect(mockFinalizeTenantDeletionControlState).toHaveBeenCalledTimes(1);
+  });
+
+  describe('quarantine drain scheduling against a real SQLite table', () => {
+    // The mocks above cannot evaluate the selection SQL, so the job table is a real in-memory
+    // SQLite database and the adapter runs the statements the code issues against it.
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): {
+          all(...p: unknown[]): Record<string, unknown>[];
+          run(...p: unknown[]): { changes: number | bigint };
+        };
+      };
+    };
+    const t0 = Math.floor(new Date('2026-05-16T00:00:00.000Z').getTime() / 1000);
+    let db: InstanceType<typeof DatabaseSync>;
+
+    function insertJob(id: string, createdAt: number): void {
+      db.prepare(
+        `INSERT INTO admin_jobs (id, tenant_id, job_type, status, config, attempt_count, max_attempts,
+                                 created_at, updated_at)
+         VALUES (?, 'operator-tenant', 'tenants/delete', 'pending', ?, 0, 3, ?, ?)`
+      ).run(
+        id,
+        JSON.stringify({ tenant_id: `target-${id}`, skip_backup: true, quarantine_started_at: t0 }),
+        createdAt,
+        createdAt
+      );
+    }
+    function row(id: string): Record<string, unknown> {
+      return db.prepare('SELECT * FROM admin_jobs WHERE id = ?').all(id)[0];
+    }
+    async function runAt(seconds: number): Promise<void> {
+      vi.setSystemTime(new Date(seconds * 1000));
+      await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      db = new DatabaseSync(':memory:');
+      db.exec(`CREATE TABLE admin_jobs (
+        id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, job_type TEXT NOT NULL, status TEXT NOT NULL,
+        progress TEXT, config TEXT, attempt_count INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3, next_run_at INTEGER, started_at INTEGER,
+        completed_at INTEGER, error_message TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      )`);
+      mockAdapter.query.mockImplementation((sql: string, params: unknown[] = []) =>
+        Promise.resolve(/FROM admin_jobs/.test(sql) ? db.prepare(sql).all(...params) : [])
+      );
+      mockAdapter.execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (!/^\s*UPDATE admin_jobs/.test(sql)) return { rowsAffected: 1, success: true };
+        const result = db.prepare(sql).run(...params);
+        return { rowsAffected: Number(result.changes), success: true };
+      });
+      // The route state is published at the current (fake) time, as in production.
+      mockPublishTenantRuntimeRegistryRouteState.mockImplementation(
+        async (_env: unknown, options: { routeStatus: string }) => ({
+          runtimeGeneration: 2,
+          routeStatus: options.routeStatus,
+          quarantineDenyGeneration: 1,
+          changed: true,
+          publishedAt: new Date(t0 * 1000).toISOString(),
+        })
+      );
+    });
+
+    it('schedules a drain-deferred job for the drain-ready time and runs it only from then on', async () => {
+      insertJob('job-a', t0);
+
+      await runAt(t0 + 60);
+      expect(row('job-a').status).toBe('pending');
+      expect(row('job-a').next_run_at).toBe(t0 + 30 * 60);
+      expect(row('job-a').started_at).toBe(t0 + 60);
+
+      // A run before the drain is over does not even select it.
+      await runAt(t0 + 10 * 60);
+      expect(row('job-a').started_at).toBe(t0 + 60);
+      expect(row('job-a').status).toBe('pending');
+
+      // At the drain-ready time it is selected and completes.
+      await runAt(t0 + 30 * 60);
+      expect(row('job-a').status).toBe('completed');
+      expect(mockFinalizeTenantDeletionControlState).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts the sixth job on the next run when five jobs are still draining', async () => {
+      for (let i = 1; i <= 5; i += 1) insertJob(`job-${i}`, t0 + i);
+      insertJob('job-6', t0 + 6);
+
+      await runAt(t0 + 60);
+      for (let i = 1; i <= 5; i += 1) expect(row(`job-${i}`).next_run_at).toBe(t0 + 30 * 60);
+      expect(row('job-6').started_at).toBeNull();
+
+      await runAt(t0 + 5 * 60);
+      expect(row('job-6').started_at).not.toBeNull();
+      expect(row('job-6').next_run_at).toBe(t0 + 30 * 60);
+      // The five waiting jobs were not claimed again.
+      expect(row('job-1').started_at).toBe(t0 + 60);
+    });
   });
 
   it('skips a job when another worker claimed it first', async () => {
@@ -1029,5 +1130,280 @@ describe('tenant deletion jobs', () => {
         'operator-tenant',
       ]
     );
+  });
+
+  it('runs a continued deletion under its chain id: route state, Control calls and backup', async () => {
+    const chainId = '11111111-2222-4333-8444-555555555555';
+    const backupId = `tenant-delete-backup:${chainId}`;
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-continued',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({
+          tenant_id: 'target-tenant',
+          operation_id: chainId,
+          backup_job_id: backupId,
+          quarantine_started_at: 1,
+        }),
+      },
+    ]);
+    mockAdapter.queryOne.mockResolvedValue(null);
+    mockControlAdapter.queryOne.mockResolvedValue({
+      status: 'completed',
+      job_type: 'tenant-database/export',
+      created_by: chainId,
+      config: JSON.stringify({
+        policy: 'deletion_before_purge',
+        consistency: 'maintenance_read_only',
+        reason: `pre-purge backup for tenant deletion job ${chainId}`,
+      }),
+    });
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(mockGetTenantDeletionInventory).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: chainId })
+    );
+    expect(mockFinalizeTenantDeletionControlState).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: chainId })
+    );
+    const publishes = mockPublishTenantRuntimeRegistryRouteState.mock.calls.map(
+      (call) => call[1] as { operationId: string }
+    );
+    expect(publishes.length).toBeGreaterThan(0);
+    expect(publishes.every((options) => options.operationId === chainId)).toBe(true);
+    // The chain's backup survives the cleanup of the tenant's admin jobs.
+    expect(mockControlAdapter.execute).toHaveBeenCalledWith(
+      'DELETE FROM admin_jobs WHERE tenant_id = ? AND id NOT IN (?, ?)',
+      ['target-tenant', 'job-continued', backupId]
+    );
+    expect(mockPurgeTenantAuthoritativeShards.mock.calls[0]?.[3]).toEqual([
+      'job-continued',
+      backupId,
+    ]);
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'completed'"),
+      expect.arrayContaining(['job-continued'])
+    );
+  });
+
+  it('refuses a backup created by the continued job itself instead of its chain', async () => {
+    const chainId = '11111111-2222-4333-8444-555555555555';
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-continued',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({
+          tenant_id: 'target-tenant',
+          operation_id: chainId,
+          backup_job_id: `tenant-delete-backup:${chainId}`,
+        }),
+      },
+    ]);
+    mockAdapter.queryOne.mockResolvedValue(null);
+    mockControlAdapter.queryOne.mockResolvedValue({
+      status: 'completed',
+      job_type: 'tenant-database/export',
+      created_by: 'job-continued',
+      config: JSON.stringify({
+        policy: 'deletion_before_purge',
+        consistency: 'maintenance_read_only',
+        reason: 'pre-purge backup for tenant deletion job job-continued',
+      }),
+    });
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(mockGetTenantDeletionInventory).not.toHaveBeenCalled();
+    expect(mockPublishTenantRuntimeRegistryRouteState).not.toHaveBeenCalled();
+  });
+
+  it('fails a job whose operation id is not a UUID without touching the tenant', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-bad-chain',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant', operation_id: 'other-op' }),
+      },
+    ]);
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(mockPublishTenantRuntimeRegistryRouteState).not.toHaveBeenCalled();
+    expect(mockGetTenantDeletionInventory).not.toHaveBeenCalled();
+  });
+
+  describe('continued job whose predecessor already quarantined the route', () => {
+    const chainId = '11111111-2222-4333-8444-555555555555';
+
+    function arrange(routeOperationId: string) {
+      mockAdapter.query.mockResolvedValue([
+        {
+          id: 'job-continued',
+          tenant_id: 'operator-tenant',
+          config: JSON.stringify({
+            tenant_id: 'target-tenant',
+            operation_id: chainId,
+            skip_backup: true,
+          }),
+        },
+      ]);
+      mockAdapter.queryOne.mockResolvedValue(null);
+      mockControlAdapter.queryOne.mockImplementation(async (sql: string) =>
+        sql.includes('tenant_runtime_cache_generations')
+          ? {
+              tenant_id: 'target-tenant',
+              cache_namespace: 'runtime_registry',
+              generation: 3,
+              updated_at: 'x',
+              updated_by: 'x',
+              metadata_json: JSON.stringify({
+                route_status: 'quarantined',
+                quarantine_deny_generation: 1,
+                route_state_operation_id: routeOperationId,
+              }),
+            }
+          : null
+      );
+    }
+
+    it('skips the quarantining publish and the drain wait when the route is quarantined under its chain id', async () => {
+      arrange(chainId);
+
+      await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+      const statuses = mockPublishTenantRuntimeRegistryRouteState.mock.calls.map(
+        (call) => (call[1] as { routeStatus: string }).routeStatus
+      );
+      expect(statuses).toEqual(['quarantined', 'disabled']);
+      expect(mockPurgeTenantAuthoritativeShards).toHaveBeenCalled();
+      expect(logger.info).not.toHaveBeenCalledWith(
+        'Tenant deletion job waiting for runtime quarantine drain',
+        expect.anything()
+      );
+    });
+
+    it('still publishes quarantining when the quarantined route belongs to another operation', async () => {
+      arrange('99999999-2222-4333-8444-555555555555');
+
+      await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+      expect(mockPublishTenantRuntimeRegistryRouteState.mock.calls[0]?.[1]).toMatchObject({
+        routeStatus: 'quarantining',
+        operationId: chainId,
+      });
+    });
+
+    it('reads no route state for a job without an operation id', async () => {
+      mockAdapter.query.mockResolvedValue([
+        {
+          id: 'job-plain',
+          tenant_id: 'operator-tenant',
+          config: JSON.stringify({ tenant_id: 'target-tenant', skip_backup: true }),
+        },
+      ]);
+
+      await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+      expect(
+        mockControlAdapter.queryOne.mock.calls.some((call) =>
+          String(call[0]).includes('tenant_runtime_cache_generations')
+        )
+      ).toBe(false);
+    });
+  });
+
+  describe('finalized continued job and the pointer-disable step', () => {
+    const chainId = '11111111-2222-4333-8444-555555555555';
+
+    function arrange(options: { operationId?: string; route: string | null; routeOp: string }) {
+      mockAdapter.query.mockResolvedValue([
+        {
+          id: 'job-continued',
+          tenant_id: 'operator-tenant',
+          config: JSON.stringify({
+            tenant_id: 'target-tenant',
+            skip_backup: true,
+            ...(options.operationId ? { operation_id: options.operationId } : {}),
+          }),
+        },
+      ]);
+      mockAdapter.queryOne.mockResolvedValue(null);
+      mockControlAdapter.queryOne.mockImplementation(async (sql: string) =>
+        sql.includes('tenant_runtime_cache_generations') && options.route
+          ? {
+              tenant_id: 'target-tenant',
+              cache_namespace: 'runtime_registry',
+              generation: 3,
+              updated_at: 'x',
+              updated_by: 'x',
+              metadata_json: JSON.stringify({
+                route_status: options.route,
+                quarantine_deny_generation: 1,
+                route_state_operation_id: options.routeOp,
+              }),
+            }
+          : null
+      );
+      mockGetTenantDeletionInventory.mockImplementation(
+        async ({ tenantId, operationId }: { tenantId: string; operationId: string }) => ({
+          environmentId: 'test',
+          tenantId,
+          operationId,
+          state: 'finalized',
+          lookupShards: [],
+          tenantShards: [],
+        })
+      );
+    }
+
+    /** Order of the first "deleting" pointer write and the first publish. */
+    function order() {
+      const deleting = mockControlAdapter.execute.mock.calls.findIndex((call) =>
+        String(call[0]).includes('tenant_database_active_pointers')
+      );
+      const deletingAt =
+        deleting < 0 ? Infinity : mockControlAdapter.execute.mock.invocationCallOrder[deleting];
+      const publishAt = mockPublishTenantRuntimeRegistryRouteState.mock.invocationCallOrder[0];
+      return { deletingAt, publishAt };
+    }
+
+    it('disables the pointers before re-publishing disabled when the route is already disabled under its id', async () => {
+      arrange({ operationId: chainId, route: 'disabled', routeOp: chainId });
+      await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+      const { deletingAt, publishAt } = order();
+      expect(deletingAt).toBeLessThan(publishAt);
+      expect(
+        mockControlAdapter.execute.mock.calls.some(
+          (call) =>
+            String(call[0]).includes('UPDATE tenant_database_registry') &&
+            (call[1] as unknown[] | undefined)?.[0] === 'deleting'
+        )
+      ).toBe(true);
+    });
+
+    it.each([
+      ['the route is not disabled yet', { route: 'quarantined', routeOp: chainId }],
+      [
+        'the disabled route belongs to another operation',
+        { route: 'disabled', routeOp: '99999999-2222-4333-8444-555555555555' },
+      ],
+      ['there is no route row', { route: null, routeOp: chainId }],
+    ])('keeps the order when %s', async (_name, state) => {
+      arrange({ operationId: chainId, ...state });
+      await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+      const { deletingAt, publishAt } = order();
+      expect(publishAt).toBeLessThan(deletingAt);
+    });
+
+    it('reads no route state for a job without an operation id', async () => {
+      arrange({ route: 'disabled', routeOp: chainId });
+      await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+      expect(
+        mockControlAdapter.queryOne.mock.calls.some((call) =>
+          String(call[0]).includes('tenant_runtime_cache_generations')
+        )
+      ).toBe(false);
+    });
   });
 });

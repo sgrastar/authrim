@@ -444,6 +444,32 @@ export class TenantDatabaseRegistryRepository {
     );
   }
 
+  /**
+   * Raises the runtime generation of every pointer that is published as a snapshot store
+   * (`active` / `degraded_pending_snapshot`, the same set as `listActivePointersForTenant`) to at
+   * least `minimumGeneration`. Monotonic and idempotent: a pointer that is already at or above the
+   * value is never touched, so this can never lower a generation. A single statement, so it is
+   * atomic. Returns the number of pointers raised.
+   */
+  async raiseActivePointerRuntimeGeneration(
+    tenantId: string,
+    minimumGeneration: number,
+    actorId: string | null = null
+  ): Promise<number> {
+    if (!Number.isSafeInteger(minimumGeneration) || minimumGeneration < 1) {
+      throw new Error('tenant_database_active_pointer_runtime_generation_invalid');
+    }
+    const result = await this.adapter.execute(
+      `UPDATE tenant_database_active_pointers
+          SET runtime_generation = ?, updated_at = ?, updated_by = ?
+        WHERE tenant_id = ?
+          AND status IN ('active', 'degraded_pending_snapshot')
+          AND runtime_generation < ?`,
+      [minimumGeneration, nowIso(), actorId, tenantId, minimumGeneration]
+    );
+    return result.rowsAffected;
+  }
+
   async setActivePointer(
     input: TenantDatabaseActivePointerInput
   ): Promise<TenantDatabaseActivePointer> {

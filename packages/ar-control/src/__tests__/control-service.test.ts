@@ -319,22 +319,42 @@ class FakeRepository implements ControlRepository {
     now: number
   ): Promise<void> {
     plan.providerCreateState = 'issued';
+    plan.providerCreateIssuedAt = now;
     plan.providerResourceId = null;
     plan.providerIdentityCheckpointedAt = null;
     const stored = this.plans.get(plan.operationId);
     if (stored && stored !== plan) {
       stored.providerCreateState = 'issued';
+      stored.providerCreateIssuedAt = now;
       stored.providerResourceId = null;
       stored.providerIdentityCheckpointedAt = null;
     }
-    void now;
+  }
+
+  freshCheckpoint: {
+    providerCreateState: 'not_started' | 'issued' | 'identified';
+    providerResourceId: string | null;
+    providerCreateIssuedAt: number;
+  } | null = null;
+  releases = 0;
+
+  async readD1CreateCheckpoint(_lease: ProvisioningLease, plan: TenantShardPlan) {
+    return (
+      this.freshCheckpoint ?? {
+        providerCreateState: plan.providerCreateState,
+        providerResourceId: plan.providerResourceId,
+        providerCreateIssuedAt: plan.providerCreateIssuedAt ?? 0,
+      }
+    );
   }
 
   async markD1CreateDefinitelyRejected(
     _lease: ProvisioningLease,
     plan: TenantShardPlan,
-    now: number
+    now: number,
+    _expectedIssuedAt?: number
   ): Promise<void> {
+    this.releases += 1;
     plan.providerCreateState = 'not_started';
     plan.providerResourceId = null;
     plan.providerIdentityCheckpointedAt = null;
@@ -2136,6 +2156,111 @@ describe('ControlService tenant shard provisioning', () => {
       expect.objectContaining({ totalFiles: 2, lastFilename: '002_index.sql' }),
       NOW
     );
+  });
+
+  describe('reconciling an issued create of unknown outcome', () => {
+    async function setup(input: { issuedAgoSeconds: number; existing: boolean }) {
+      const repository = new FakeRepository();
+      const planningService = new ControlService({ repository, env: env(), now: () => NOW });
+      const planned = await planningService.requestTenantShard(request({ dryRun: true }));
+      planned.plan.providerCreateState = 'issued';
+      planned.plan.providerCreateIssuedAt = NOW - input.issuedAgoSeconds;
+      repository.operations.set(planned.plan.operationId, {
+        ...operation(planned.plan),
+        status: 'waiting_retry',
+      });
+      repository.pending = [planned.plan];
+      const createD1Database = vi.fn(async (create: { name: string }) => ({
+        uuid: 'db-recreated',
+        name: create.name,
+        read_replication: { mode: 'disabled' as const },
+      }));
+      const service = new ControlService({
+        repository,
+        env: env(),
+        now: () => NOW,
+        createApiClient: () =>
+          controlApi({
+            listD1Databases: async () =>
+              input.existing ? [{ uuid: 'db-existing', name: planned.plan.databaseName }] : [],
+            createD1Database,
+          }),
+      });
+      return { repository, planned, service, createD1Database };
+    }
+
+    it('recreates once the safety delay has elapsed and the database is absent', async () => {
+      const { repository, planned, service, createD1Database } = await setup({
+        issuedAgoSeconds: 10 * 60,
+        existing: false,
+      });
+      await service.reconcilePending();
+      expect(createD1Database).toHaveBeenCalledTimes(1);
+      expect(planned.plan.providerResourceId).toBe('db-recreated');
+      expect(repository.operations.get(planned.plan.operationId)?.status).not.toBe('blocked');
+    });
+
+    it('keeps waiting before the safety delay and never creates', async () => {
+      const { repository, planned, service, createD1Database } = await setup({
+        issuedAgoSeconds: 60,
+        existing: false,
+      });
+      await service.reconcilePending();
+      expect(createD1Database).not.toHaveBeenCalled();
+      expect(repository.operations.get(planned.plan.operationId)).toMatchObject({
+        status: 'waiting_retry',
+        lastErrorCode: 'cloudflare_d1_create_outcome_pending',
+      });
+    });
+
+    it('judges the checkpoint read under the lease, not the stale listing', async () => {
+      const { repository, planned, service, createD1Database } = await setup({
+        issuedAgoSeconds: 3600,
+        existing: false,
+      });
+      // Another reconcile re-issued the create after the listing was read.
+      repository.freshCheckpoint = {
+        providerCreateState: 'issued',
+        providerResourceId: null,
+        providerCreateIssuedAt: NOW - 5,
+      };
+      await service.reconcilePending();
+      expect(repository.releases).toBe(0);
+      expect(createD1Database).not.toHaveBeenCalled();
+      expect(repository.operations.get(planned.plan.operationId)).toMatchObject({
+        status: 'waiting_retry',
+        lastErrorCode: 'cloudflare_d1_create_outcome_pending',
+      });
+    });
+
+    it('blocks when a database with the deterministic name exists', async () => {
+      const { repository, planned, service, createD1Database } = await setup({
+        issuedAgoSeconds: 10 * 60,
+        existing: true,
+      });
+      await service.reconcilePending();
+      expect(createD1Database).not.toHaveBeenCalled();
+      expect(repository.operations.get(planned.plan.operationId)).toMatchObject({
+        status: 'blocked',
+        lastErrorCode: 'cloudflare_d1_create_outcome_ambiguous',
+      });
+    });
+  });
+
+  it('counts a throwing provisioning plan as failed without aborting the reconcile', async () => {
+    const repository = new FakeRepository();
+    const planningService = new ControlService({ repository, env: env(), now: () => NOW });
+    const planned = await planningService.requestTenantShard(request({ dryRun: true }));
+    repository.pending = [planned.plan];
+    repository.tryStartProvisioning = vi.fn().mockRejectedValue(new Error('lease store down'));
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    await expect(service.reconcilePending()).resolves.toEqual({
+      attempted: 1,
+      succeeded: 0,
+      failed: 1,
+    });
+    expect(repository.tryStartProvisioning).toHaveBeenCalledTimes(1);
   });
 
   it('blocks a permanently invalid pinned migration artifact without retrying it', async () => {

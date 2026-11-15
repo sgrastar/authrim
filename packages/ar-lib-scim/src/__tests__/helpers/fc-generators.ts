@@ -204,13 +204,15 @@ export const optionalIsoDateArb = fc.oneof(
 );
 
 /**
- * Valid name string
+ * Valid name string (never blank: a name of only spaces is not a valid name)
  */
-export const nameArb = fc.string({
-  unit: fc.constantFrom(...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '.split('')),
-  minLength: 2,
-  maxLength: 30,
-});
+export const nameArb = fc
+  .string({
+    unit: fc.constantFrom(...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '.split('')),
+    minLength: 2,
+    maxLength: 30,
+  })
+  .filter((name) => name.trim().length > 0);
 
 /**
  * Internal User generator

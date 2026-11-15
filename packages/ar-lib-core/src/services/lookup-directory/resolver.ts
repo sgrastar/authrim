@@ -281,6 +281,11 @@ export class LookupRouteResolver {
     index: LookupAliasIndex;
     maximumResults: number;
     afterTenantId?: string;
+    /**
+     * Enumeration by cursor: a full page is a normal result. Without it the call is a bounded set,
+     * and more than `maximumResults` aliases fail closed.
+     */
+    paginated?: boolean;
     consistency?: D1ConsistencyRequest;
   }): Promise<ResolvedLookupAlias[]> {
     const assignment = strictAssignment(
@@ -293,7 +298,8 @@ export class LookupRouteResolver {
       input.index,
       input.maximumResults,
       input.consistency ?? createD1ConsistencyRequest('replica_eligible'),
-      input.afterTenantId
+      input.afterTenantId,
+      { paginated: input.paginated }
     );
     return cloneAliases(result.aliases);
   }

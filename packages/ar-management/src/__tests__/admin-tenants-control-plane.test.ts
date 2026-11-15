@@ -1030,6 +1030,7 @@ describe('Control Plane tenant management', () => {
     let tenantRow = createTenantRow('second', { lifecycle_state: 'active', updated_at: 10 });
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
       if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'query' && sql.includes('FROM admin_jobs')) return [];
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) return tenantRow;
       if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
         tenantRow = {
@@ -1070,6 +1071,7 @@ describe('Control Plane tenant management', () => {
     let tenantRow = createTenantRow('second', { lifecycle_state: 'suspended', updated_at: 10 });
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
       if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'query' && sql.includes('FROM admin_jobs')) return [];
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) return tenantRow;
       if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
         tenantRow = { ...tenantRow, updated_at: Number(params[1]) };
@@ -1108,6 +1110,7 @@ describe('Control Plane tenant management', () => {
     let tenantRow = createTenantRow('second', { lifecycle_state: 'active', updated_at: 10 });
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
       if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'query' && sql.includes('FROM admin_jobs')) return [];
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) return tenantRow;
       if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
         // The command's move; then another command freezes the tenant before the move back.
@@ -1380,7 +1383,11 @@ describe('Control Plane tenant management', () => {
     expect(statements[0].params.slice(0, 2)).toEqual([expect.any(Number), 'second']);
     expect(statements[1].sql).toContain('INSERT INTO admin_jobs');
     expect(statements[1].params).toEqual(
-      expect.arrayContaining(['tenants/delete', 'pending', JSON.stringify({ tenant_id: 'second' })])
+      expect.arrayContaining([
+        'tenants/delete',
+        'pending',
+        JSON.stringify({ tenant_id: 'second', marker_aware: true }),
+      ])
     );
   });
 
@@ -1616,6 +1623,7 @@ describe('Control Plane tenant management', () => {
         'admin:tenants:provision',
       ],
       ['delete', adminTenantDeleteHandler, { id: 'second' }, 'admin:tenants:delete'],
+      ['read', adminTenantGetHandler, { id: 'second' }, 'admin:tenants:provision'],
     ] as const;
 
     type HandlerContext = Parameters<typeof adminTenantDeleteHandler>[0];
@@ -1661,43 +1669,75 @@ describe('Control Plane tenant management', () => {
         ).toBe(false);
       });
 
-      it(`${name}: a human needs the global super admin role, not a permission`, async () => {
-        const run = (auth: Record<string, unknown>) => passesAuthority(handler, params, auth);
-        const base = { userId: 'human-1', authMethod: 'session', actorType: 'human', roles: [] };
-        expect(
-          await run({
-            ...base,
-            roles: ['ar_super_admin'],
-            globalRoles: ['ar_super_admin'],
-            tenantScope: ['*'],
-          })
-        ).toBe(true);
-        expect(
-          await run({
-            ...base,
-            roles: ['custom'],
-            globalRoles: ['custom'],
-            tenantScope: ['*'],
-            permissions: [permission, '*'],
-            globalPermissions: [permission, '*'],
-          })
-        ).toBe(false);
-        expect(await run({ ...base, roles: ['ar_super_admin'], tenantScope: ['tenant-a'] })).toBe(
-          false
-        );
-        expect(await run({ ...base, roles: ['ar_tenant_admin'], tenantScope: ['tenant-a'] })).toBe(
-          false
-        );
-      });
+      // The read route keeps what its handler admitted before for humans (its own test is in
+      // admin-platform-authority.test.ts); the other five ask a human for the role alone.
+      it.skipIf(name === 'read')(
+        `${name}: a human needs the global super admin role, not a permission`,
+        async () => {
+          const run = (auth: Record<string, unknown>) => passesAuthority(handler, params, auth);
+          const base = { userId: 'human-1', authMethod: 'session', actorType: 'human', roles: [] };
+          expect(
+            await run({
+              ...base,
+              roles: ['ar_super_admin'],
+              globalRoles: ['ar_super_admin'],
+              tenantScope: ['*'],
+            })
+          ).toBe(true);
+          expect(
+            await run({
+              ...base,
+              roles: ['custom'],
+              globalRoles: ['custom'],
+              tenantScope: ['*'],
+              permissions: [permission, '*'],
+              globalPermissions: [permission, '*'],
+            })
+          ).toBe(false);
+          expect(await run({ ...base, roles: ['ar_super_admin'], tenantScope: ['tenant-a'] })).toBe(
+            false
+          );
+          expect(
+            await run({ ...base, roles: ['ar_tenant_admin'], tenantScope: ['tenant-a'] })
+          ).toBe(false);
+        }
+      );
     }
 
     it('keeps the permission-agnostic helper behaviour for the other handlers', async () => {
       // A global machine holding nothing relevant still passes the helper without a permission:
       // the other tenant routes are held back by the Worker guard, which this test does not run.
-      const response = await adminTenantGetHandler(
+      const response = await adminTenantSetDefaultHandler(
         contextFor({}, { id: 'second' }, globalMachine(['admin:settings:write']))
       ).catch(() => null);
       expect(response?.status).not.toBe(403);
+    });
+
+    it('read: a global machine with the provision permission gets the row, and 404 for a missing tenant', async () => {
+      const row = {
+        id: 'second',
+        tenant_code: 'second',
+        name: 'Second Tenant',
+        description: 'd',
+        isolation_policy: 'shared_pool',
+        lifecycle_state: 'active',
+        is_default: 0,
+        created_at: 1,
+        updated_at: 2,
+      };
+      adapters.defaultAdapter = createAdapter((_sql, _params, op) =>
+        op === 'queryOne' ? row : null
+      );
+      const found = await adminTenantGetHandler(
+        contextFor({}, { id: 'second' }, globalMachine(['admin:tenants:provision']))
+      );
+      expect(found.status).toBe(200);
+      expect(await found.json()).toMatchObject({ id: 'second', lifecycle_state: 'active' });
+      adapters.defaultAdapter = createAdapter(() => null);
+      const missing = await adminTenantGetHandler(
+        contextFor({}, { id: 'gone' }, globalMachine(['admin:tenants:provision']))
+      );
+      expect(missing.status).toBe(404);
     });
 
     it('records the real actor on a created tenant and in the audit entry', async () => {

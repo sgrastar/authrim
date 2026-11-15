@@ -42,7 +42,10 @@
 		).toBeInTheDocument();
 		await expect(canvas.getByText('Docs')).toBeVisible();
 		await expect(canvas.getByText('openid, profile, email')).toBeVisible();
-		await expect(canvas.getByText('Full name, Email address')).toBeVisible();
+		// The released claims are labelled in the story's locale, not always English.
+		await expect(
+			canvas.getByText(`${get(LL).consent_claim_name()}, ${get(LL).consent_claim_email()}`)
+		).toBeVisible();
 		await expect(canvas.getByText(get(LL).account_consentSelectedAlways())).toBeVisible();
 	}}
 >

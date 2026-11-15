@@ -125,6 +125,7 @@ describe('tenant request path classification', () => {
     '/api/admin/tenants/fapi2/lifecycle/jobs',
     '/api/admin/tenants/fapi2/lifecycle/jobs/job-1/retry',
     '/api/admin/tenants/fapi2/lifecycle/suspend',
+    '/api/admin/tenants/fapi2/deletion/cancel',
   ])('keeps platform-owned tenant lifecycle routes in tenant inventory: %s', (path) => {
     expect(classifyTenantRequestPath(path)).toBe('tenant_inventory_admin');
     expect(extractTenantScopedPathTenantId(path)).toBe('fapi2');

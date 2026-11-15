@@ -31,6 +31,12 @@ export interface ControlProvisioningD1Plan {
 export interface ControlProvisioningD1CreateCheckpoint {
   state: 'not_started' | 'issued' | 'identified';
   providerResourceId: string | null;
+  /**
+   * Epoch seconds at which the checkpoint last moved to `issued` (the desired resource's
+   * `updated_at`, which markCreateIssued stamps and nothing else touches while `issued`).
+   * Needed to resolve an `issued` create; `null`/absent keeps the ambiguity blocked.
+   */
+  issuedAt?: number | null;
 }
 
 export interface ControlProvisioningOperationState {
@@ -63,6 +69,12 @@ export interface ControlProvisioningEffectExecution<TResult, TState> {
 
 export const CONTROL_PROVISIONING_RETRY_BUDGET_SECONDS = 2 * 60 * 60;
 const MAX_RETRY_DELAY_SECONDS = 60 * 60;
+/**
+ * How long after a D1 create request was issued (and then failed ambiguously) its absence from
+ * the provider's database list is trusted enough to create again. Covers provider-side lag
+ * between accepting a create and listing it.
+ */
+export const CONTROL_D1_CREATE_OUTCOME_SAFETY_DELAY_SECONDS = 10 * 60;
 
 function errorStatus(error: unknown): number | null {
   if (!error || typeof error !== 'object' || Array.isArray(error)) return null;
@@ -97,7 +109,10 @@ export function classifyControlProvisioningFailure(
     };
   }
   if (effect === 'create_d1') {
-    if (code === 'control_daily_d1_budget_exhausted') {
+    if (
+      code === 'control_daily_d1_budget_exhausted' ||
+      code === 'cloudflare_d1_create_outcome_pending'
+    ) {
       return { code, permanent: false };
     }
     if (
@@ -220,8 +235,16 @@ export async function ensureControlProvisioningD1(input: {
   checkpoint: ControlProvisioningD1CreateCheckpoint;
   reserveCreate: () => Promise<boolean>;
   markCreateIssued: () => Promise<void>;
-  markCreateDefinitelyRejected: () => Promise<void>;
+  /**
+   * `expectedIssuedAt` is passed only when releasing an unresolved `issued` checkpoint: the
+   * release must then apply only if the checkpoint still carries that issue time, and must throw
+   * `cloudflare_d1_create_outcome_pending` otherwise so a concurrent re-issue is never undone.
+   */
+  markCreateDefinitelyRejected: (expectedIssuedAt?: number) => Promise<void>;
   checkpointProviderIdentity: (databaseId: string) => Promise<void>;
+  /** Injected clock (epoch seconds); used only to age an `issued` checkpoint. */
+  now: () => number;
+  safetyDelaySeconds?: number;
 }): Promise<string> {
   if (
     (input.checkpoint.state === 'identified') !== Boolean(input.checkpoint.providerResourceId) ||
@@ -240,14 +263,27 @@ export async function ensureControlProvisioningD1(input: {
       throw new Error('cloudflare_d1_provider_identity_mismatch');
     }
   } else {
+    let issuedAt: number | null = null;
     if (input.checkpoint.state === 'issued') {
-      throw new Error('cloudflare_d1_create_outcome_ambiguous');
+      // A create request was sent and its outcome is unknown. The age is judged from one clock
+      // reading taken BEFORE listing, so an "absent" observed inside the safety window can never
+      // release the checkpoint, however long the list takes.
+      issuedAt = input.checkpoint.issuedAt ?? null;
+      if (issuedAt === null) throw new Error('cloudflare_d1_create_outcome_ambiguous');
+      const delay = input.safetyDelaySeconds ?? CONTROL_D1_CREATE_OUTCOME_SAFETY_DELAY_SECONDS;
+      if (input.now() - issuedAt < delay) {
+        throw new Error('cloudflare_d1_create_outcome_pending');
+      }
     }
-    if (
-      (await input.provider.listD1Databases()).some(
-        (candidate) => candidate.name === input.plan.databaseName
-      )
-    ) {
+    const databases = await input.provider.listD1Databases();
+    const exists = databases.some((candidate) => candidate.name === input.plan.databaseName);
+    if (issuedAt !== null) {
+      // A database with the deterministic name may be the unresolved create: a human decides
+      // (never adopted automatically). Absence after the window releases the checkpoint, and the
+      // normal create path below runs.
+      if (exists) throw new Error('cloudflare_d1_create_outcome_ambiguous');
+      await input.markCreateDefinitelyRejected(issuedAt);
+    } else if (exists) {
       throw new Error('cloudflare_d1_name_conflict');
     }
     if (!(await input.reserveCreate())) {

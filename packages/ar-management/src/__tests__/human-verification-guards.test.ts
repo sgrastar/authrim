@@ -129,13 +129,17 @@ describe('checkGlobalHumanVerificationDisable', () => {
   const ids = (count: number) =>
     Array.from({ length: count }, (_, index) => `t${String(index).padStart(3, '0')}`);
 
-  function directory(tenantIds: string[]) {
+  function directory(tenantIds: string[], states: Record<string, string> = {}) {
     listTenants.mockImplementation(
       async (_env: unknown, options: { limit: number; afterTenantId?: string }) =>
         tenantIds
           .filter((tenantId) => tenantId > (options.afterTenantId ?? ''))
           .slice(0, options.limit)
-          .map((tenantId) => ({ tenantId, store: {} }))
+          .map((tenantId) => ({
+            tenantId,
+            store: {},
+            lifecycleState: states[tenantId] ?? 'active',
+          }))
     );
   }
   const on = { [`plugins:enabled:${TURNSTILE}`]: 'true' };
@@ -148,6 +152,31 @@ describe('checkGlobalHumanVerificationDisable', () => {
     await expect(checkGlobalHumanVerificationDisable(env({ ...on }), TURNSTILE)).resolves.toEqual({
       outcome: 'in_use',
       tenants: [{ tenantId: 'b', settings: [LOGIN] }],
+    });
+  });
+
+  it.each(['suspended', 'frozen', 'deleting'])('still checks a %s tenant', async (state) => {
+    directory(['a', 'b'], { b: state });
+    loadCanonical.mockImplementation(async (_category: string, scope: { id: string }) =>
+      scope.id === 'b' ? { data: { [LOGIN]: true }, version: 'v' } : null
+    );
+    await expect(checkGlobalHumanVerificationDisable(env({ ...on }), TURNSTILE)).resolves.toEqual({
+      outcome: 'in_use',
+      tenants: [{ tenantId: 'b', settings: [LOGIN] }],
+    });
+    expect(listTenants).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ includeInactive: true, unservableTenants: 'throw' })
+    );
+  });
+
+  it('ignores a deleted tenant', async () => {
+    const state = 'deleted';
+    directory(['a', 'b'], { b: state });
+    loadCanonical.mockImplementation(async () => ({ data: { [LOGIN]: true }, version: 'v' }));
+    await expect(checkGlobalHumanVerificationDisable(env({ ...on }), TURNSTILE)).resolves.toEqual({
+      outcome: 'in_use',
+      tenants: [{ tenantId: 'a', settings: [LOGIN] }],
     });
   });
 
@@ -182,6 +211,20 @@ describe('checkGlobalHumanVerificationDisable', () => {
     await expect(checkGlobalHumanVerificationDisable(env({ ...on }), TURNSTILE)).resolves.toEqual({
       outcome: 'scope_unavailable',
     });
+  });
+
+  it('refuses when a tenant route is not servable, and asks the directory to throw', async () => {
+    const { TenantDatabaseResolverError } = await import('@authrim/ar-lib-core');
+    listTenants.mockRejectedValue(
+      new TenantDatabaseResolverError('quarantined_route', 'Tenant database route is unavailable')
+    );
+    await expect(checkGlobalHumanVerificationDisable(env({ ...on }), TURNSTILE)).resolves.toEqual({
+      outcome: 'scope_unavailable',
+    });
+    expect(listTenants).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ unservableTenants: 'throw' })
+    );
   });
 
   it('refuses on the safe side when a tenant settings read fails', async () => {

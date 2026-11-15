@@ -11,6 +11,15 @@ export const REQUIRED_SCOPES = [
   'admin:admin_invitations:code_handoff',
 ] as const;
 
+/** The cleanup holds these and nothing of the web path's scopes beyond the provisioning one. */
+export const CLEANUP_SCOPES = [
+  'admin:tenants:delete',
+  'admin:step_up_exempt:tenant.delete',
+  'admin:tenants:provision',
+] as const;
+
+type ScopeSet = readonly string[];
+
 const ADMIN_AUDIENCE = 'authrim:admin-api';
 const ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 const ASSERTION_LIFETIME_SECONDS = 120;
@@ -19,6 +28,12 @@ const TOKEN_EARLY_EXPIRY_MS = 60_000;
 const MAX_BODY_CHARS = 64 * 1024;
 const TENANT_ADMIN_ROLE_ID = 'role_ar_tenant_admin';
 const INVITATION_MINUTES = 15;
+
+/** What the portal sends on creation; the cleanup recognises an unconfirmed tenant by exactly these. */
+export const TENANT_DESCRIPTION = 'Temporary tenant of the public demo environment';
+export function tenantDisplayName(tenantId: string): string {
+  return `Demo ${tenantId}`;
+}
 
 export type AdminApiErrorKind = 'config' | 'upstream' | 'redirect' | 'timeout' | 'invalid_response';
 
@@ -34,18 +49,18 @@ export class AdminApiError extends Error {
 }
 
 interface CachedToken {
-  key: string;
   token: string;
   expiresAtMs: number;
 }
 
-let cachedToken: CachedToken | null = null;
-let inflight: { key: string; promise: Promise<string> } | null = null;
+// One cache entry per (client, key, scope set): a token minted for one path is never used by the other.
+const tokenCache = new Map<string, CachedToken>();
+const inflight = new Map<string, Promise<string>>();
 
 /** For the tests. */
 export function resetAdminTokenCache(): void {
-  cachedToken = null;
-  inflight = null;
+  tokenCache.clear();
+  inflight.clear();
 }
 
 function shortCode(body: unknown): string | undefined {
@@ -132,14 +147,18 @@ async function signAssertion(config: Config, now: number): Promise<string> {
   return `${input}.${base64Url(new Uint8Array(signature))}`;
 }
 
-async function mintToken(config: Config, deps: Deps): Promise<{ token: string; ttlMs: number }> {
+async function mintToken(
+  config: Config,
+  deps: Deps,
+  scopes: ScopeSet
+): Promise<{ token: string; ttlMs: number }> {
   const assertion = await signAssertion(config, deps.now());
   const form = new URLSearchParams({
     grant_type: 'client_credentials',
     client_assertion_type: ASSERTION_TYPE,
     client_assertion: assertion,
     audience: ADMIN_AUDIENCE,
-    scope: REQUIRED_SCOPES.join(' '),
+    scope: scopes.join(' '),
   });
   const { status, body } = await request(deps, `${config.adminApiOrigin}/token`, {
     method: 'POST',
@@ -169,7 +188,7 @@ async function mintToken(config: Config, deps: Deps): Promise<{ token: string; t
   // The server grants the intersection of the request and what the principal holds: a missing
   // scope means the principal is set up wrongly, and the portal must not run half-privileged.
   const granted = new Set(data.scope.split(/\s+/).filter(Boolean));
-  const missing = REQUIRED_SCOPES.filter((scope) => !granted.has(scope));
+  const missing = scopes.filter((scope) => !granted.has(scope));
   if (missing.length > 0) {
     logError('admin_token_scope_missing', { detail: missing.join(' ') });
     throw new AdminApiError('config', status, 'scope_missing');
@@ -177,22 +196,24 @@ async function mintToken(config: Config, deps: Deps): Promise<{ token: string; t
   return { token: data.access_token, ttlMs: data.expires_in * 1000 };
 }
 
-async function getToken(config: Config, deps: Deps): Promise<string> {
-  const key = `${config.adminApiOrigin}|${config.machineClientId}|${config.machineKeyId}`;
-  const now = deps.now();
-  if (cachedToken && cachedToken.key === key && cachedToken.expiresAtMs > now) {
-    return cachedToken.token;
-  }
-  if (inflight && inflight.key === key) return inflight.promise;
-  const promise = mintToken(config, deps)
+async function getToken(config: Config, deps: Deps, scopes: ScopeSet): Promise<string> {
+  const key = `${config.adminApiOrigin}|${config.machineClientId}|${config.machineKeyId}|${[...scopes].sort().join(' ')}`;
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresAtMs > deps.now()) return cached.token;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const promise = mintToken(config, deps, scopes)
     .then(({ token, ttlMs }) => {
-      cachedToken = { key, token, expiresAtMs: deps.now() + ttlMs - TOKEN_EARLY_EXPIRY_MS };
+      tokenCache.set(key, {
+        token,
+        expiresAtMs: deps.now() + ttlMs - Math.min(TOKEN_EARLY_EXPIRY_MS, ttlMs / 2),
+      });
       return token;
     })
     .finally(() => {
-      if (inflight?.promise === promise) inflight = null;
+      if (inflight.get(key) === promise) inflight.delete(key);
     });
-  inflight = { key, promise };
+  inflight.set(key, promise);
   return promise;
 }
 
@@ -200,9 +221,10 @@ async function call(
   config: Config,
   deps: Deps,
   path: string,
-  init: { method: string; headers?: Record<string, string>; json?: unknown }
+  init: { method: string; headers?: Record<string, string>; json?: unknown },
+  scopes: ScopeSet = REQUIRED_SCOPES
 ): Promise<{ status: number; body: unknown }> {
-  const token = await getToken(config, deps);
+  const token = await getToken(config, deps, scopes);
   return request(deps, `${config.adminApiOrigin}${path}`, {
     method: init.method,
     headers: {
@@ -221,9 +243,9 @@ export async function createTenant(config: Config, deps: Deps, tenantId: string)
     headers: { 'Idempotency-Key': tenantId },
     json: {
       id: tenantId,
-      name: `Demo ${tenantId}`,
+      name: tenantDisplayName(tenantId),
       isolation_policy: 'shared_pool',
-      description: 'Temporary tenant of the public demo environment',
+      description: TENANT_DESCRIPTION,
     },
   });
   if (status !== 202) throw new AdminApiError('upstream', status, shortCode(body));
@@ -324,4 +346,145 @@ export function buildJoinLink(
     return null;
   }
   return `${config.consoleOrigin}/admin/join#code=${encodeURIComponent(invitation.code)}&email=${encodeURIComponent(invitation.email)}`;
+}
+
+export type TenantLifecycle =
+  | { kind: 'absent' }
+  | { kind: 'found'; lifecycle: string; name: unknown; description: unknown };
+
+/** The error code of "resource not found" (ADMIN_RESOURCE_NOT_FOUND), in both error body formats. */
+const NOT_FOUND_CODE = 'AR060004';
+
+/** A 404 counts as "the tenant does not exist" only with that error code in the body. */
+function isNotFound(status: number, body: unknown): boolean {
+  return (
+    status === 404 &&
+    body !== null &&
+    typeof body === 'object' &&
+    (body as { error_code?: unknown }).error_code === NOT_FOUND_CODE
+  );
+}
+
+function refusedAsConfig(status: number, body: unknown): AdminApiError | null {
+  return status === 401 || status === 403
+    ? new AdminApiError('config', status, shortCode(body) ?? 'refused')
+    : null;
+}
+
+/** Reads the tenant's lifecycle state. Only a 404 carrying the not-found error code counts as "absent". */
+export async function getTenantLifecycle(
+  config: Config,
+  deps: Deps,
+  tenantId: string
+): Promise<TenantLifecycle> {
+  const { status, body } = await call(
+    config,
+    deps,
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}`,
+    { method: 'GET' },
+    CLEANUP_SCOPES
+  );
+  if (isNotFound(status, body)) return { kind: 'absent' };
+  const refused = refusedAsConfig(status, body);
+  if (refused) throw refused;
+  const lifecycle =
+    status === 200 && body !== null && typeof body === 'object'
+      ? (body as { lifecycle_state?: unknown }).lifecycle_state
+      : null;
+  if (typeof lifecycle !== 'string') throw new AdminApiError('upstream', status, shortCode(body));
+  const { name, description } = body as { name?: unknown; description?: unknown };
+  return { kind: 'found', lifecycle, name, description };
+}
+
+export type DeleteResult = 'accepted' | 'absent' | 'active_job' | 'not_deletable';
+
+/**
+ * Asks for the tenant's deletion (202 queued). 404 with the not-found code: absent. 409: a deletion is
+ * already queued or the state changed. 400: the state is not one an operator may delete from.
+ * 401 and 403 (token or exemption) are configuration errors.
+ */
+export async function deleteTenant(
+  config: Config,
+  deps: Deps,
+  tenantId: string
+): Promise<DeleteResult> {
+  const { status, body } = await call(
+    config,
+    deps,
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}`,
+    { method: 'DELETE' },
+    CLEANUP_SCOPES
+  );
+  if (status === 202) return 'accepted';
+  if (isNotFound(status, body)) return 'absent';
+  if (status === 409) return 'active_job';
+  if (status === 400) return 'not_deletable';
+  const refused = refusedAsConfig(status, body);
+  if (refused) throw refused;
+  throw new AdminApiError('upstream', status, shortCode(body));
+}
+
+export type CleanupResult =
+  | { kind: 'cleaned' }
+  | { kind: 'conflict'; status?: string; currentStep?: string }
+  | { kind: 'absent' };
+
+/** Removes a tenant that never finished provisioning (200 cleaned; 409 while it runs or has finished). */
+export async function cleanupProvisioning(
+  config: Config,
+  deps: Deps,
+  tenantId: string
+): Promise<CleanupResult> {
+  const { status, body } = await call(
+    config,
+    deps,
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}/provisioning/cleanup`,
+    { method: 'POST' },
+    CLEANUP_SCOPES
+  );
+  if (status === 200) return { kind: 'cleaned' };
+  if (status === 409) {
+    // The conflict body carries `provisioning: { status, current_step, ... }`.
+    const operation =
+      body && typeof body === 'object'
+        ? (body as { provisioning?: { status?: unknown; current_step?: unknown } }).provisioning
+        : undefined;
+    return {
+      kind: 'conflict',
+      ...(typeof operation?.status === 'string' ? { status: operation.status } : {}),
+      ...(typeof operation?.current_step === 'string'
+        ? { currentStep: operation.current_step }
+        : {}),
+    };
+  }
+  if (isNotFound(status, body)) return { kind: 'absent' };
+  const refused = refusedAsConfig(status, body);
+  if (refused) throw refused;
+  throw new AdminApiError('upstream', status, shortCode(body));
+}
+
+export type RetryResult = 'accepted' | 'not_blocked' | 'absent';
+
+/**
+ * Retries a provisioning that is waiting for an administrator (status `blocked`): 202 accepted;
+ * 409 when it is not blocked. No body or special header is needed.
+ */
+export async function retryProvisioning(
+  config: Config,
+  deps: Deps,
+  tenantId: string
+): Promise<RetryResult> {
+  const { status, body } = await call(
+    config,
+    deps,
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}/provisioning/retry`,
+    { method: 'POST' },
+    CLEANUP_SCOPES
+  );
+  if (status === 202) return 'accepted';
+  if (status === 409) return 'not_blocked';
+  if (isNotFound(status, body)) return 'absent';
+  const refused = refusedAsConfig(status, body);
+  if (refused) throw refused;
+  throw new AdminApiError('upstream', status, shortCode(body));
 }

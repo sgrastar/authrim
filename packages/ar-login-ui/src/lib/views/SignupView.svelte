@@ -735,7 +735,7 @@
 
 	.custom-field-error {
 		font-size: 0.8125rem;
-		color: var(--danger);
+		color: var(--danger-fg, var(--danger));
 		margin-top: 6px;
 	}
 
