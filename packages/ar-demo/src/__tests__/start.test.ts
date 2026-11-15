@@ -37,6 +37,20 @@ describe('POST /start: origin and content type', () => {
     expect(allRows(testDb)).toHaveLength(0);
   });
 
+  // Browsers send `Origin: null` on a same-origin form post when the page's referrer policy is
+  // `no-referrer`; that is why the portal uses `same-origin`. The check itself stays strict.
+  it('refuses the literal Origin "null" a browser sends under no-referrer', async () => {
+    const response = await start(env, upstream, { origin: 'null' });
+    expect(response.status).toBe(403);
+    expect(upstream.calls).toHaveLength(0);
+    expect(allRows(testDb)).toHaveLength(0);
+  });
+
+  it('passes the origin check with the portal origin a browser sends under same-origin', async () => {
+    const response = await start(env, upstream, { origin: 'https://start.demo-test.example' });
+    expect(response.status).not.toBe(403);
+  });
+
   it('refuses a body that is not form-encoded', async () => {
     const response = await start(env, upstream, {
       contentType: 'application/json',

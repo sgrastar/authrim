@@ -250,8 +250,8 @@ describe('Admin API calls', () => {
 
   it('times out after 10 seconds', async () => {
     await createTenant(config, upstream.deps, 'demo-aaaaaaaaaa'); // warms the token cache
-    const original = upstream.deps.fetch;
-    upstream.deps.fetch = (input, init) =>
+    const original = upstream.deps.authrimFetch;
+    upstream.deps.authrimFetch = (input, init) =>
       input.includes('/provisioning')
         ? new Promise<Response>((_resolve, reject) => {
             init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
@@ -266,6 +266,31 @@ describe('Admin API calls', () => {
         settled = true;
       });
       await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expect((await pending).kind).toBe('timeout');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts tenant creation after 90 seconds, not after 10', async () => {
+    await createTenant(config, upstream.deps, 'demo-aaaaaaaaaa'); // warms the token cache
+    const original = upstream.deps.authrimFetch;
+    upstream.deps.authrimFetch = (input, init) =>
+      input.endsWith('/api/admin/tenants')
+        ? new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          })
+        : original(input, init);
+    vi.useFakeTimers();
+    try {
+      const pending = rejection(createTenant(config, upstream.deps, 'demo-bbbbbbbbbb'));
+      let settled = false;
+      void pending.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(89_999);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(2);
       expect((await pending).kind).toBe('timeout');

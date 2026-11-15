@@ -17,7 +17,11 @@ export function withSecurityHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set('Content-Security-Policy', CSP);
   headers.set('X-Content-Type-Options', 'nosniff');
-  headers.set('Referrer-Policy', 'no-referrer');
+  // `same-origin`, not `no-referrer`: under the Fetch standard a browser serialises the Origin
+  // header of a non-GET same-origin request as the string "null" when the referrer policy is
+  // `no-referrer`, so the start form's POST /start would always fail the strict Origin check.
+  // `same-origin` sends the real Origin to ourselves and still sends no Referer anywhere else.
+  headers.set('Referrer-Policy', 'same-origin');
   headers.set('X-Robots-Tag', 'noindex, nofollow');
   headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
   if (!headers.has('Cache-Control')) headers.set('Cache-Control', 'no-store');

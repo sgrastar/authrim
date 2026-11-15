@@ -33,7 +33,7 @@ const get = (path: string, init: RequestInit = {}) =>
 const REQUIRED_HEADERS: Record<string, string> = {
   'content-security-policy': CSP,
   'x-content-type-options': 'nosniff',
-  'referrer-policy': 'no-referrer',
+  'referrer-policy': 'same-origin',
   'x-robots-tag': 'noindex, nofollow',
 };
 
