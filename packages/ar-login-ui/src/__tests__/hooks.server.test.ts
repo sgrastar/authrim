@@ -205,6 +205,26 @@ describe('Login UI proxy hooks', () => {
 		expect(event.locals).toMatchObject({ locale: 'de' });
 	});
 
+	it('picks ja for a Japanese browser header that also lists en and fr', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		for (const header of ['ja', 'ja,en-US;q=0.9,fr;q=0.1', 'ja-JP,ja;q=0.9,fr;q=0.8']) {
+			const url = new URL('https://t1.example.com/error?error=invalid_request');
+			const event = {
+				request: new Request(url, { headers: { 'Accept-Language': header } }),
+				url,
+				locals: {},
+				cookies: { get: () => undefined, set: vi.fn() }
+			};
+
+			await localeHandle({
+				event: event as never,
+				resolve: async () => new Response('ok')
+			});
+
+			expect(event.locals, header).toMatchObject({ locale: 'ja' });
+		}
+	});
+
 	it('does not read the removed legacy lang cookie', async () => {
 		const { localeHandle } = await import('../hooks.server');
 		const url = new URL('https://login.example.com/login');

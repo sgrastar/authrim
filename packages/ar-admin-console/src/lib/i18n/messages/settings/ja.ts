@@ -22,6 +22,22 @@ export const jaSettings = {
 	'set.k.environment_banner.noindex': '検索エンジンに載せない（ログイン画面）',
 	'set.k.environment_banner.noindex.desc':
 		'オンにすると、ログイン画面が検索エンジンに載らないようにします。バナーを表示するかどうかとは関係なく働きます。',
+	'set.section.loginEntryPlatform': 'テナント自身のアドレスを開いたとき',
+	'set.section.loginEntryPlatform.desc':
+		'テナント自身のアドレスを開いた人に、最初にテナントを探す画面を見せるかどうかです。全テナントに適用されます。変更できるのはプラットフォーム管理者だけです。',
+	'set.k.login-entry.mode': 'ログイン画面の入口',
+	'set.k.login-entry.mode.desc':
+		'「テナントのアドレスだけ」にすると、テナント探しをやめます。あとから作ったテナントも含め、どのテナントのアドレスでも、そのテナントのログイン画面がそのまま開きます。共通のログインアドレスには、テナント探しの画面が残ります。変更は数分以内にログイン画面へ届きます。',
+	'set.k.login-entry.mode.tenant_only': 'テナントのアドレスだけ',
+	'set.k.login-entry.mode.discovery_optional': 'テナント探しを使えるようにする',
+	'set.k.login-entry.mode.discovery_required': 'テナント探しを必須にする',
+	'set.k.login-entry.require_common_discovery_before_login': '先にテナントを探させる',
+	'set.k.login-entry.require_common_discovery_before_login.desc':
+		'オンにすると、テナントのログイン画面を開いた人を、先に共通のテナント探しの画面へ送ります。入口が「テナントのアドレスだけ」のときは働きません。',
+	'set.k.login-entry.redirect_tenant_discover_to_common_entry':
+		'テナント探しの画面を共通のものにする',
+	'set.k.login-entry.redirect_tenant_discover_to_common_entry.desc':
+		'オンにすると、テナント自身のアドレスで開いたテナント探しの画面を、共通のログインアドレスへ移します。入口が「テナントのアドレスだけ」のときは働きません。',
 	'set.section.adminSignIn': '管理者のログイン',
 	'set.section.adminSignIn.desc':
 		'このテナントの管理者が、ログインしたままでいられる時間と、操作の前に求める確認です。',
