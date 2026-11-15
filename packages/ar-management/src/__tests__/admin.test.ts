@@ -173,6 +173,7 @@ async function expectedTombstoneEmailIndex(email: string): Promise<string> {
   return createTombstoneEmailIndex(email, TOMBSTONE_TEST_KEY);
 }
 
+const disableAliasIfPublished = vi.hoisted(() => vi.fn());
 vi.mock('../tenant-alias-directory', () => ({
   resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
     ...input,
@@ -191,6 +192,7 @@ vi.mock('../tenant-alias-directory', () => ({
   })),
   ensureActiveTenantDiscoveryAliasDirectory: vi.fn().mockResolvedValue(undefined),
   disableTenantDiscoveryAliasDirectory: vi.fn().mockResolvedValue(undefined),
+  disableTenantDiscoveryAliasDirectoryIfPublished: disableAliasIfPublished,
 }));
 
 vi.mock('../cross-shard-account-list', () => ({
@@ -6343,6 +6345,23 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('ignores a client_id in the body: the server generates it', async () => {
+      const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_id: 'caller-chosen-id',
+          client_name: 'Chosen Id Client',
+          redirect_uris: ['https://example.com/callback'],
+        },
+        db: mockDB,
+      }) as never;
+
+      const response = await adminClientCreateHandler(c);
+
+      expect(await response.text()).not.toContain('caller-chosen-id');
+    });
+
     it('validates and persists the selected OIDC Mapping Set on create', async () => {
       const mockDB = createMockDB({
         firstResult: null,
@@ -8318,6 +8337,27 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminClientDeleteHandler', () => {
+    it('deactivates the discovery alias before deleting, and stops when that fails', async () => {
+      disableAliasIfPublished.mockReset();
+      disableAliasIfPublished.mockRejectedValueOnce(new Error('tenant_alias_already_owned'));
+      const mockDB = createMockDB({
+        firstResult: { client_id: 'client-with-alias', client_name: 'Aliased' },
+        runResult: { success: true, meta: { changes: 1 } },
+      });
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: 'client-with-alias' },
+        db: mockDB,
+        envOverrides: { ENVIRONMENT: 'dev' },
+      }) as never;
+
+      const response = await adminClientDeleteHandler(c);
+
+      expect(disableAliasIfPublished).toHaveBeenCalledTimes(1);
+      expect(response.status).toBe(500);
+      expect(mockDB.batch).not.toHaveBeenCalled();
+    });
+
     it('should delete client successfully', async () => {
       const clientId = 'client-to-delete';
       const settings = createMockKVNamespace({

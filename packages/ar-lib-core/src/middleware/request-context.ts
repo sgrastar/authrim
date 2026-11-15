@@ -362,7 +362,7 @@ function getPrimaryTenantIssuerHostname(env: Partial<Env>): string | null {
   return `${tenantId.toLowerCase()}.${baseDomain}`;
 }
 
-function isReservedUiHost(env: Partial<Env>, requestHost: string | undefined): boolean {
+export function isReservedUiHost(env: Partial<Env>, requestHost: string | undefined): boolean {
   if (!requestHost) {
     return false;
   }

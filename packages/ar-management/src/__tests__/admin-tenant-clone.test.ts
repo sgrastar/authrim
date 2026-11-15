@@ -139,6 +139,7 @@ async function adminTenantCloneHandler(c: Parameters<typeof publicAdminTenantClo
     return publicAdminTenantCloneHandler(c);
   }
   const env = c.env as unknown as Record<string, unknown>;
+  env.LOGIN_UI_CLIENT_ID ??= 'login-ui-test';
   env.KEY_MANAGER ??= {
     idFromName: vi.fn((name: string) => name),
     get: vi.fn(() => ({ rotateKeysRpc: vi.fn(async () => undefined) })),
@@ -1232,6 +1233,45 @@ describe('admin tenant clone', () => {
     expect(clientRead?.[0]).toContain('NULL AS logout_webhook_secret_encrypted');
     expect(clientRead?.[0]).toContain('agent_access_registration_mode IS NULL');
     expect(webhookRead?.[0]).toContain('NULL AS secret_encrypted, NULL AS headers');
+  });
+
+  it("never copies the source's Login UI client, with its source origin and redirect URIs", async () => {
+    mocks.source.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM oauth_clients')) {
+        return [
+          {
+            client_id: 'login-ui-test',
+            client_name: 'Login UI',
+            redirect_uris: '["https://source.idp.example.test/callback"]',
+          },
+          { client_id: 'client-one', client_name: 'Client One' },
+        ];
+      }
+      if (sql.includes('FROM web_origin_registry')) {
+        return [
+          { client_id: 'login-ui-test', origin: 'https://source.idp.example.test' },
+          { client_id: 'client-one', origin: 'https://app.example.test' },
+        ];
+      }
+      return [];
+    });
+
+    const response = await adminTenantCloneHandler(
+      context(
+        { id: 'destination', name: 'Destination', copy: { clients: true } },
+        { SETTINGS: kvNamespace(), AUTHRIM_CONFIG: kvNamespace(), ENVIRONMENT: 'test' }
+      )
+    );
+
+    expect(response.status).toBe(201);
+    const clientInserts = mocks.target.execute.mock.calls.filter(([sql]) =>
+      String(sql).includes('INSERT INTO oauth_clients')
+    );
+    expect(clientInserts).toHaveLength(1);
+    expect(clientInserts[0]?.[1]).toContain('client-one');
+    expect(JSON.stringify(mocks.target.execute.mock.calls)).not.toContain(
+      'source.idp.example.test'
+    );
   });
 
   it('reads and copies client and webhook credentials only when explicitly selected', async () => {

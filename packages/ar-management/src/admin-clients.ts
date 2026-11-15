@@ -52,7 +52,7 @@ import {
   toMilliseconds,
 } from './admin-shared';
 import {
-  disableTenantDiscoveryAliasDirectory,
+  disableTenantDiscoveryAliasDirectoryIfPublished,
   ensureActiveTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
@@ -171,7 +171,7 @@ async function deleteClientAndOwnedPolicy(
   const authCtx = createAuthContextFromHono(c, tenantId);
   if (!(await authCtx.repositories.client.exists(clientId))) return false;
 
-  await disableTenantDiscoveryAliasDirectory(
+  await disableTenantDiscoveryAliasDirectoryIfPublished(
     c.env,
     await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
       tenantId,

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => {
     queryOne: vi.fn(),
     execute: vi.fn(),
     transaction: vi.fn(),
+    batch: vi.fn(),
   };
   return {
     db,
@@ -383,6 +384,15 @@ function installDbMock() {
   mocks.db.transaction.mockImplementation(async (fn: (tx: typeof mocks.db) => Promise<unknown>) => {
     return fn(mocks.db);
   });
+  mocks.db.batch.mockImplementation(
+    async (statements: Array<{ sql: string; params?: unknown[] }>) => {
+      const results: unknown[] = [];
+      for (const statement of statements) {
+        results.push(await mocks.db.execute(statement.sql, statement.params));
+      }
+      return results;
+    }
+  );
 }
 
 function seedFlow(overrides: Partial<TestFlowRow> = {}) {
