@@ -10,6 +10,8 @@ import type {
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
+  ADMIN_ROLES,
+  ADMIN_STEP_UP_ALWAYS_ENFORCED,
   AR_ERROR_CODES,
   AdminMachineAccessRepository,
   AdminMachineConflictError,
@@ -19,6 +21,8 @@ import {
   hasAdminPermission,
   isExactMatchOnlyAdminPermission,
   hasGlobalAdminPermission,
+  hasGlobalAdminRole,
+  isAdminStepUpOperation,
   intersectMachinePermissionSets,
   requireDedicatedAdminDatabaseAdapter,
   resolveMachineTenantScope,
@@ -329,8 +333,61 @@ function reachOfScopes(scopes: AdminMachineTenantScope[]): string[] {
   return reach;
 }
 
-function permissionsWithin(held: string[] | undefined, permissions: readonly string[]): boolean {
-  return permissions.every((permission) => hasAdminPermission(held ?? [], permission));
+/**
+ * Whether the actor is a signed-in human with the `ar_super_admin` role through a global
+ * assignment. A session is what marks a human (a machine token says `machine_access_token` and
+ * `machine`), and anything else, or an actor type that is not human, counts as not human. The
+ * role is read from `globalRoles` (never `roles` or `permissions`, which a tenant admin can fill
+ * with a custom role of any name) and needs the global tenant scope.
+ */
+function isGlobalSuperAdminHuman(auth: AdminAuthContext): boolean {
+  return (
+    auth.authMethod === 'session' &&
+    (auth.actorType === undefined || auth.actorType === 'human') &&
+    hasGlobalAdminRole(auth, [ADMIN_ROLES.SUPER_ADMIN])
+  );
+}
+
+/**
+ * Whether `permission` is one a global super admin hands out without holding it by name: a step-up
+ * exemption or the invitation code hand-off. No wildcard carries these, so the super admin's `*`
+ * never covers them, yet nobody else could ever hand them out. The break-glass permissions and
+ * the last-resort recovery are not here: only an actor that holds them by name hands them out.
+ */
+function isSuperAdminGrantable(permission: string): boolean {
+  if (permission === ADMIN_PERMISSIONS.ADMIN_INVITATION_CODE_HANDOFF) {
+    return true;
+  }
+  if (!permission.startsWith(STEP_UP_EXEMPT_PREFIX)) {
+    return false;
+  }
+  // Only an exemption that names an operation and can take effect. The exemption from this very
+  // step-up is left out: a machine holding it could change what machines may do with no human
+  // looking, which is what the step-up on these routes is for.
+  const operation = permission.slice(STEP_UP_EXEMPT_PREFIX.length);
+  return (
+    isAdminStepUpOperation(operation) &&
+    !ADMIN_STEP_UP_ALWAYS_ENFORCED.has(operation) &&
+    operation !== 'machine.permission.grant'
+  );
+}
+
+/**
+ * Whether the actor may hand out `permissions`, given the list `held` it holds them through: each
+ * is held (as `hasAdminPermission` reads it), or is one a global super admin human may hand out
+ * although it holds it by no wildcard. What the actor itself holds does not change.
+ */
+function permissionsWithin(
+  auth: AdminAuthContext,
+  held: string[] | undefined,
+  permissions: readonly string[]
+): boolean {
+  const superAdmin = isGlobalSuperAdminHuman(auth);
+  return permissions.every(
+    (permission) =>
+      hasAdminPermission(held ?? [], permission) ||
+      (superAdmin && isSuperAdminGrantable(permission))
+  );
 }
 
 /**
@@ -350,15 +407,15 @@ function actorMayGrant(
   // A platform principal is never the tenant's own, whichever tenants it is limited to.
   const reach = platform ? ['*', ...reachGiven] : reachGiven;
   if (reach.length === 0) {
-    return permissionsWithin(auth.permissions, requested);
+    return permissionsWithin(auth, auth.permissions, requested);
   }
   const local = localTenantIds(c);
   if (reach.every((tenant) => tenant !== '*' && local.has(tenant))) {
-    return permissionsWithin(auth.permissions, permissions);
+    return permissionsWithin(auth, auth.permissions, permissions);
   }
   return (
     hasGlobalAdminPermission(auth, authorityPermission) &&
-    permissionsWithin(auth.globalPermissions, permissions)
+    permissionsWithin(auth, auth.globalPermissions, permissions)
   );
 }
 
@@ -690,7 +747,7 @@ machineAccessRouter.post('/principals', async (c) => {
       clientId === 'authrim-setup') &&
     !(
       hasGlobalAdminPermission(getAuth(c), ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE) &&
-      permissionsWithin(getAuth(c).globalPermissions, permissions)
+      permissionsWithin(getAuth(c), getAuth(c).globalPermissions, permissions)
     )
   ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);

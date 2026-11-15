@@ -162,8 +162,12 @@ custom global role).
   (`security.admin_step_up_enforced` false), the shared gate lets a machine through before it looks
   at the exemption, and the deletion permission alone is enough: a platform that relies on the
   exemption as a second barrier must keep step-up enforced. Exact-name permissions are not implied by `*`, `admin:*` or any
-  wildcard, and an actor can hand out only what its own permissions hold, so a human super admin
-  cannot grant that exemption through the Admin API today: it is provisioned by the setup tooling.
+  wildcard, so nobody holds the exemption through a wildcard. A signed-in human with the global
+  `ar_super_admin` role hands it (`admin:step_up_exempt:<operation>`) to a machine principal or
+  credential through the machine access API, with the `machine.permission.grant` L2 step-up; any
+  other actor can hand out only an exemption it holds by exact name. The super admin's addition
+  covers an exemption for a known operation only, and neither one the step-up gate always enforces
+  (the exemption has no effect there) nor `machine.permission.grant` itself.
 - **Refusals an automation should expect (all 409, nothing changed):**
   - `tenant_state_changed` on delete or set-default: the tenant became the default, left an
     allowed state, or already has a deletion queued. Read the tenant and decide again; do not
@@ -213,8 +217,9 @@ e-mailed. It is off, and unreachable for everyone else, unless all of this holds
 
 - **Who.** A machine access token with a **global tenant scope** holding the exact-name permission
   `admin:admin_invitations:code_handoff`. No wildcard (`*`, `admin:*`, `admin:admin_invitations:*`)
-  carries it, no built-in role lists it, and a super admin hands it to a principal through the
-  machine access API, which asks for the `machine.permission.grant` step-up. **A human can never
+  carries it, no built-in role lists it, and a human with the global `ar_super_admin` role hands
+  it to a principal through the machine access API, which asks for the `machine.permission.grant`
+  L2 step-up. Any other actor can hand it out only if it holds it by exact name. **A human can never
   use it, whatever their role.** A token limited to some tenants is refused. The write pair
   (`admin:admin_users:write` and `admin:admin_roles:write`) is still required; the handoff
   permission replaces only the rank comparison (a machine ranks 0) and the `admin.role.grant`
