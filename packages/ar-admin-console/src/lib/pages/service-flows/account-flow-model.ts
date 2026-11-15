@@ -69,7 +69,7 @@ function completionFields(p: 'reg' | 'login'): AccountField[] {
 				'service_site'
 			]),
 			required: true,
-			initial: p === 'login' ? 'tenant' : 'account'
+			initial: 'account'
 		},
 		{
 			key: `${p}.redirectUrl`,

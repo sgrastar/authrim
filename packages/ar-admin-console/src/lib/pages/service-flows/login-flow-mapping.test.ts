@@ -12,11 +12,11 @@ import {
 import { SEEDED_LOGIN_EDITOR } from './seeded-login-flow.fixture';
 
 describe('the sign-in flow saved as a Flow', () => {
-	it('starts from the tenant’s methods, session and destination', () => {
+	it('starts from the tenant’s methods, session and the account page', () => {
 		expect(loginSpecOf(initialState('login'))).toEqual({
 			profileRef: 'default',
 			sessionProfileRef: 'default',
-			completion: null,
+			completion: { behavior: 'account' },
 			unregistered: 'generic',
 			onCancel: 'stay',
 			consents: []

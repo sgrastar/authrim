@@ -279,7 +279,7 @@
 		await expect(canvas.getByRole('heading', { name: 'Sign-in', level: 1 })).toBeInTheDocument();
 		// The method profile starts on Default.
 		await expect(inFlow(canvasElement, /^Sign-in method profile Configured/)).toBeInTheDocument();
-		// The session profile starts on Default, and where to go afterwards on the tenant's own.
+		// The session profile starts on Default, and where to go afterwards on the account page.
 		await expect(inFlow(canvasElement, /^Establishing the session Configured/)).toBeInTheDocument();
 		await expect(inFlow(canvasElement, /^After sign-in Configured/)).toBeInTheDocument();
 	}}
@@ -434,7 +434,7 @@
 	}}
 />
 
-<!-- Sign-in makes its session by a session profile (shown as it is, changed on its own page), and goes on where the tenant sends people unless the flow says otherwise. -->
+<!-- Sign-in makes its session by a session profile (shown as it is, changed on its own page), and goes on to the account page unless the flow says otherwise. -->
 <Story
 	name="Sign-in chooses a session profile and where to go"
 	args={{ flow: 'login', filled: 'none' }}
@@ -449,7 +449,7 @@
 		);
 		await userEvent.click(inFlow(canvasElement, /^After sign-in/));
 		const after = await canvas.findByRole('combobox', { name: /After completion/ });
-		await expect(after).toHaveValue('tenant');
+		await expect(after).toHaveValue('account');
 		await userEvent.selectOptions(after, 'custom_url');
 		await expect(await canvas.findByRole('textbox', { name: /URL to go to/ })).toBeInTheDocument();
 	}}
