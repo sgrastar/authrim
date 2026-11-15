@@ -24,6 +24,10 @@ const ADMIN_AUDIENCE = 'authrim:admin-api';
 const ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 const ASSERTION_LIFETIME_SECONDS = 120;
 const REQUEST_TIMEOUT_MS = 10_000;
+// POST /api/admin/tenants answers 202 only after the core has finished the deferred work of the
+// request (observed: roughly 15-45 s), so it needs a much longer budget than every other call. The
+// request is idempotent by tenant id (Idempotency-Key), so a retry after a timeout is safe.
+const CREATE_TENANT_TIMEOUT_MS = 90_000;
 const TOKEN_EARLY_EXPIRY_MS = 60_000;
 const MAX_BODY_CHARS = 64 * 1024;
 const TENANT_ADMIN_ROLE_ID = 'role_ar_tenant_admin';
@@ -74,12 +78,13 @@ function shortCode(body: unknown): string | undefined {
 async function request(
   deps: Deps,
   url: string,
-  init: RequestInit
+  init: RequestInit,
+  timeoutMs: number = REQUEST_TIMEOUT_MS
 ): Promise<{ status: number; body: unknown }> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await deps.fetch(url, {
+    const response = await deps.authrimFetch(url, {
       ...init,
       redirect: 'manual',
       signal: controller.signal,
@@ -222,32 +227,45 @@ async function call(
   deps: Deps,
   path: string,
   init: { method: string; headers?: Record<string, string>; json?: unknown },
-  scopes: ScopeSet = REQUIRED_SCOPES
+  scopes: ScopeSet = REQUIRED_SCOPES,
+  timeoutMs?: number
 ): Promise<{ status: number; body: unknown }> {
   const token = await getToken(config, deps, scopes);
-  return request(deps, `${config.adminApiOrigin}${path}`, {
-    method: init.method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
-      ...(init.json !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      ...init.headers,
+  return request(
+    deps,
+    `${config.adminApiOrigin}${path}`,
+    {
+      method: init.method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        ...(init.json !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...init.headers,
+      },
+      ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
     },
-    ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
-  });
+    timeoutMs
+  );
 }
 
 export async function createTenant(config: Config, deps: Deps, tenantId: string): Promise<void> {
-  const { status, body } = await call(config, deps, '/api/admin/tenants', {
-    method: 'POST',
-    headers: { 'Idempotency-Key': tenantId },
-    json: {
-      id: tenantId,
-      name: tenantDisplayName(tenantId),
-      isolation_policy: 'shared_pool',
-      description: TENANT_DESCRIPTION,
+  const { status, body } = await call(
+    config,
+    deps,
+    '/api/admin/tenants',
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': tenantId },
+      json: {
+        id: tenantId,
+        name: tenantDisplayName(tenantId),
+        isolation_policy: 'shared_pool',
+        description: TENANT_DESCRIPTION,
+      },
     },
-  });
+    REQUIRED_SCOPES,
+    CREATE_TENANT_TIMEOUT_MS
+  );
   if (status !== 202) throw new AdminApiError('upstream', status, shortCode(body));
 }
 

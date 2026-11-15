@@ -196,6 +196,7 @@ export function createUpstream(): Upstream {
     clock,
     deps: {
       now: () => clock.now,
+      authrimFetch: (input, init) => upstream.deps.fetch(input, init),
       fetch: async (input, init) => {
         const headers: Record<string, string> = {};
         new Headers(init.headers).forEach((value, name) => {

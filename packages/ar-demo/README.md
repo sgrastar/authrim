@@ -20,6 +20,9 @@ below.
    the Turnstile token (fails closed); then ONE `INSERT ... SELECT ... WHERE` statement that decides
    the per-IP limit and the capacity together. It then asks the Admin API to create the tenant
    (`shared_pool`) and answers `303 /wait` with the cookie `__Host-demo_ticket` (HttpOnly, 30 min).
+   The core answers the creation call only after it has finished the deferred work of that request
+   (roughly 15-45 s), so `POST /start` can take a while; the portal waits up to 90 seconds for it
+   (every other Admin API call is aborted after 10 seconds).
 3. `GET /wait` loads `/assets/wait.js`, which polls `GET /status` every 2 seconds for up to about
    3 minutes.
 4. `GET /status` looks the row up by the SHA-256 of the ticket. When provisioning has succeeded,
@@ -42,20 +45,46 @@ their tenant.
 
 `wrangler.jsonc` vars (validated together by `loadConfig`; an invalid configuration answers 503):
 
-| Name                        | Meaning                                                                                                                                  | Default / range       |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| `ADMIN_API_ORIGIN`          | Origin of the Authrim API (token endpoint and Admin API). Must equal the issuer origin the token endpoint expects as assertion audience. | https, no path        |
-| `CONSOLE_ORIGIN`            | Origin of the admin console. The join link must be on it.                                                                                | https, no path        |
-| `PORTAL_ORIGIN`             | Origin of this portal.                                                                                                                   | https, no path        |
-| `TURNSTILE_SITE_KEY`        | Public Turnstile key.                                                                                                                    |                       |
-| `MAX_ACTIVE_TENANTS`        | Rows not `deleted`.                                                                                                                      | 75, clamped to 1..500 |
-| `MAX_STARTS_PER_IP_PER_DAY` | Rows per address hash in 24 hours.                                                                                                       | 3, clamped to 1..20   |
-| `TENANT_TTL_HOURS`          | `expires_at` of a row; also shown on the start page.                                                                                     | 24, clamped to 1..24  |
-| `ENVIRONMENT`               | `development` allows loopback http origins and a missing client address.                                                                 |                       |
+| Name                        | Meaning                                                                                                                                  | Default / range  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `ADMIN_API_ORIGIN`          | Origin of the Authrim API (token endpoint and Admin API). Must equal the issuer origin the token endpoint expects as assertion audience. | https, no path   |
+| `CONSOLE_ORIGIN`            | Origin of the admin console. The join link must be on it.                                                                                | https, no path   |
+| `PORTAL_ORIGIN`             | Origin of this portal.                                                                                                                   | https, no path   |
+| `TURNSTILE_SITE_KEY`        | Public Turnstile key.                                                                                                                    |                  |
+| `MAX_ACTIVE_TENANTS`        | Rows not `deleted`.                                                                                                                      | 75, range 1..500 |
+| `MAX_STARTS_PER_IP_PER_DAY` | Rows per address hash in 24 hours.                                                                                                       | 3, range 1..20   |
+| `TENANT_TTL_HOURS`          | `expires_at` of a row; also shown on the start page.                                                                                     | 24, range 1..24  |
+| `ENVIRONMENT`               | `development` allows loopback http origins and a missing client address.                                                                 |                  |
+
+Values of `MAX_ACTIVE_TENANTS`, `MAX_STARTS_PER_IP_PER_DAY` and `TENANT_TTL_HOURS` outside their
+range are not rejected: they are clamped to the nearest limit (for example, 30 starts per address
+becomes 20). A value that is not an integer makes the portal refuse to run (HTTP 503).
 
 Secrets (`wrangler secret put`): `TURNSTILE_SECRET_KEY`, `MACHINE_CLIENT_ID`, `MACHINE_KEY_ID`,
 `MACHINE_PRIVATE_JWK` (the private ES256 key as JSON; other key types are refused), `IP_HASH_SECRET`
 (at least 16 characters).
+
+## Service binding to the Authrim router
+
+When the portal Worker and the Authrim router Worker are in the same Cloudflare zone and the router
+is bound to the tenant hostnames by zone routes (a wildcard such as `*.<base-domain>/*`), a plain
+`fetch()` from the portal to a hostname of its own zone does not run the router's route. It goes to
+the DNS origin of that hostname and the portal gets HTTP 522. Add an optional service binding to the
+router and the portal sends every Authrim API request (token endpoint and Admin API, including the
+cleanup cron's calls) through it:
+
+```jsonc
+"services": [{ "binding": "AUTHRIM_API", "service": "<env>-ar-router" }]
+```
+
+The request keeps the same absolute URL, so the router still resolves the tenant from the host and
+the client assertion's `aud` stays the token endpoint URL. Without the binding the portal uses a
+plain `fetch()`. Turnstile verification never uses the binding, and the binding only accepts URLs
+whose origin equals `ADMIN_API_ORIGIN`.
+
+In a multi-tenant deployment without a naked domain, `ADMIN_API_ORIGIN` must be the tenant issuer
+host (for example `https://<tenant>.<base-domain>`): the token endpoint lives on the tenant host and
+the bare base domain answers "Tenant not found".
 
 ## Manual operator steps
 
@@ -79,6 +108,13 @@ Secrets (`wrangler secret put`): `TURNSTILE_SECRET_KEY`, `MACHINE_CLIENT_ID`, `M
 4. **Turnstile.** Create a Turnstile widget for the portal's hostname.
 5. **Secrets and vars.** Set the secrets and replace the placeholder vars.
 6. **Deploy.** `wrangler deploy` from this directory, then route the portal's hostname to it.
+
+   If the portal's hostname is in the same zone as an Authrim deployment whose router owns a
+   wildcard route (`*.<base-domain>/*`), a custom domain is not enough: the wildcard route is
+   matched first. Bind the portal with a zone route for its exact host instead, which is more
+   specific and wins:
+   `{ "pattern": "<portal-host>/*", "zone_name": "<zone>" }` (for example
+   `start.example.invalid/*` in zone `example.invalid`).
 
 ## Cleanup
 
