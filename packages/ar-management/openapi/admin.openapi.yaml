@@ -32861,6 +32861,7 @@ paths:
       summary: Create a machine access principal
       description: >-
         Create a machine principal with explicit permissions, tenant scopes, and token TTL.
+        The caller can hand out only permissions it holds, with one addition: a signed-in human with the global `ar_super_admin` role may also hand out `admin:step_up_exempt:<operation>` and `admin:admin_invitations:code_handoff`, which no wildcard carries. Any other caller hands these out only if it holds them by exact name. The addition covers an exemption for a known operation only, and not one the step-up always enforces or `machine.permission.grant` itself; break-glass and last-resort recovery permissions are never covered. Handing out permissions needs the `machine.permission.grant` step-up.
         While the platform has the `machine_credentials` capability off, issuing a credential (and changing what an existing one may do) answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Credentials already issued keep working.
       x-authrim-route-coverage: inferred-from-source
       responses:
