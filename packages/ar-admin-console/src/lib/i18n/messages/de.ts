@@ -17,6 +17,7 @@ import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 import { deUserAudit } from './user-audit/de';
 import { deTeam } from './team/de';
+import { deMachineAccess } from './machine-access/de';
 import { deAuthMethods } from './auth-methods/de';
 import { deSessionProfiles } from './session-profiles/de';
 import { deProfileLayer } from './profile-layer/de';
@@ -43,6 +44,7 @@ export const de = {
 	...deAdminAudit,
 	...deUserAudit,
 	...deTeam,
+	...deMachineAccess,
 	...deAuthMethods,
 	...deSessionProfiles,
 	...deProfileLayer,

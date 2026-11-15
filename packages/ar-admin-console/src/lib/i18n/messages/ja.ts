@@ -16,6 +16,7 @@ import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
 import { jaUserAudit } from './user-audit/ja';
 import { jaTeam } from './team/ja';
+import { jaMachineAccess } from './machine-access/ja';
 import { jaAuthMethods } from './auth-methods/ja';
 import { jaSessionProfiles } from './session-profiles/ja';
 import { jaProfileLayer } from './profile-layer/ja';
@@ -46,6 +47,7 @@ export const ja = {
 	...jaAdminAudit,
 	...jaUserAudit,
 	...jaTeam,
+	...jaMachineAccess,
 	...jaAuthMethods,
 	...jaSessionProfiles,
 	...jaProfileLayer,

@@ -17,6 +17,7 @@ import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
 import { enUserAudit } from './user-audit/en';
 import { enTeam } from './team/en';
+import { enMachineAccess } from './machine-access/en';
 import { enAuthMethods } from './auth-methods/en';
 import { enSessionProfiles } from './session-profiles/en';
 import { enProfileLayer } from './profile-layer/en';
@@ -43,6 +44,7 @@ export const en = {
 	...enAdminAudit,
 	...enUserAudit,
 	...enTeam,
+	...enMachineAccess,
 	...enAuthMethods,
 	...enSessionProfiles,
 	...enProfileLayer,
