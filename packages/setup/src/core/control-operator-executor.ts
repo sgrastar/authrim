@@ -371,6 +371,7 @@ async function claimCreate(input: {
                    create_started_at = COALESCE(create_started_at, ?), updated_at = ?
              WHERE desired_resource_id = ? AND environment_id = ?
                AND origin_operation_id = ?
+               AND provisioning_state <> 'creating'
                AND EXISTS (
                  SELECT 1 FROM control_operations operation
                   WHERE operation.operation_id = ? AND operation.lock_owner = ?
@@ -410,7 +411,8 @@ async function claimCreate(input: {
                    operation.lock_owner, operation.fencing_token,
                    step.status AS step_status,
                    desired.provisioning_state, desired.provider_create_state,
-                   desired.provider_resource_id, shard.status AS shard_status
+                   desired.provider_resource_id, desired.updated_at AS desired_updated_at,
+                   shard.status AS shard_status
               FROM control_operations operation
               JOIN control_operation_steps step
                 ON step.operation_id = operation.operation_id AND step.step_key = 'create_d1'
@@ -460,6 +462,9 @@ async function claimCreate(input: {
   // create resumes from the state read under the new lease, not from the listing.
   const createState = reflected.provider_create_state;
   const providerResourceId = reflected.provider_resource_id ?? null;
+  const desiredUpdatedAt = Number.isSafeInteger(reflected.desired_updated_at)
+    ? (reflected.desired_updated_at as number)
+    : null;
   if (
     (createState !== 'not_started' && createState !== 'issued' && createState !== 'identified') ||
     (createState === 'identified') !==
@@ -476,7 +481,11 @@ async function claimCreate(input: {
     attemptCount: row.attempt_count,
     createdAt: row.created_at,
     retryBudgetStartedAt: row.retry_budget_started_at ?? row.created_at,
-    checkpoint: { state: createState, providerResourceId: providerResourceId as string | null },
+    checkpoint: {
+      state: createState,
+      providerResourceId: providerResourceId as string | null,
+      issuedAt: createState === 'issued' ? desiredUpdatedAt : null,
+    },
   };
 }
 
@@ -570,6 +579,7 @@ async function markCreateDefinitelyRejected(input: {
   operation: PendingControlOperatorOperation;
   lease: SetupOperatorLease;
   now: number;
+  expectedIssuedAt?: number;
 }): Promise<void> {
   const results = await input.client.queryD1Batch(input.controlDatabaseId, [
     {
@@ -578,6 +588,7 @@ async function markCreateDefinitelyRejected(input: {
              WHERE desired_resource_id = ? AND environment_id = ? AND origin_operation_id = ?
                AND provider_create_state = 'issued' AND provider_resource_id IS NULL
                AND provider_identity_checkpointed_at IS NULL
+               AND (? IS NULL OR updated_at = ?)
                AND EXISTS (
                  SELECT 1 FROM control_operations operation
                   WHERE operation.operation_id = ? AND operation.environment_id = ?
@@ -589,6 +600,8 @@ async function markCreateDefinitelyRejected(input: {
         input.operation.desiredResourceId,
         input.operation.environmentId,
         input.operation.operationId,
+        input.expectedIssuedAt ?? null,
+        input.expectedIssuedAt ?? null,
         input.operation.operationId,
         input.operation.environmentId,
         input.lease.ownerId,
@@ -598,7 +611,12 @@ async function markCreateDefinitelyRejected(input: {
   ]);
   assertBatch(results, 1);
   if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
-    throw new Error('control_d1_create_rejection_checkpoint_failed');
+    // A conditional release that lost the race means a concurrent attempt re-issued the create.
+    throw new Error(
+      input.expectedIssuedAt === undefined
+        ? 'control_d1_create_rejection_checkpoint_failed'
+        : 'cloudflare_d1_create_outcome_pending'
+    );
   }
 }
 
@@ -3060,6 +3078,7 @@ export async function executeSetupControlOperatorCreate(input: {
         },
         provider: client,
         checkpoint: lease.checkpoint,
+        now,
         reserveCreate: () =>
           reserveCreate({
             client,
@@ -3075,13 +3094,14 @@ export async function executeSetupControlOperatorCreate(input: {
             lease,
             now: now(),
           }),
-        markCreateDefinitelyRejected: () =>
+        markCreateDefinitelyRejected: (expectedIssuedAt) =>
           markCreateDefinitelyRejected({
             client,
             controlDatabaseId: input.controlDatabaseId,
             operation: input.operation,
             lease,
             now: now(),
+            expectedIssuedAt,
           }),
         checkpointProviderIdentity: (databaseId) =>
           checkpointProviderIdentity({

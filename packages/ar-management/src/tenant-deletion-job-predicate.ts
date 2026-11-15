@@ -16,10 +16,25 @@
  *
  * Active is `pending` (queued or waiting for its retry), or `processing` and touched within
  * `TENANT_DELETE_JOB_STALE_SECONDS`: a job whose worker died stays `processing` for good, and a
- * `failed` or `completed` job is not active, so an operator abandons a stuck deletion by waiting
- * for its attempts to run out (`failed`) or for the stale window, after which the tenant can be
- * resumed again.
+ * `failed` or `completed` job is not active. A stuck deletion is abandoned by waiting for its
+ * attempts to run out (`failed`) or for the stale window, and then cancelling it
+ * (`POST /api/admin/tenants/:id/deletion/cancel`): while its route is still quarantined, resume
+ * refuses (`tenant_deletion_failed_use_cancel`), because resume never touches the route.
  */
+/**
+ * `error_message` of a failed deletion job that an operator cancelled. The status stays `failed`
+ * (no new status value); the cancelled job is never adopted by a later deletion and no longer
+ * blocks the tenant's reactivation.
+ */
+export const TENANT_DELETION_CANCELLED_ERROR = 'tenant_deletion_cancelled';
+
+/**
+ * A cancel marks its jobs `cancelling` with a `cancelling_at` lease. A repeat may take the mark
+ * over only once that is older than this (longer than a request can live), so a slow request and
+ * its repeat never run the route publication at the same time.
+ */
+export const TENANT_DELETION_CANCEL_LEASE_SECONDS = 120;
+
 export const TENANT_DELETE_JOB_STALE_SECONDS = 6 * 60 * 60;
 
 export interface ActiveTenantDeleteJobGuard {

@@ -83,7 +83,7 @@ function setup() {
     );
     CREATE TABLE admin_jobs (
       id TEXT PRIMARY KEY, tenant_id TEXT, job_type TEXT, status TEXT, config TEXT,
-      created_at INTEGER, updated_at INTEGER
+      error_message TEXT, progress TEXT, created_at INTEGER, updated_at INTEGER
     );
   `);
   inventory
@@ -244,7 +244,7 @@ describe('accepted reactivation vs a deletion', () => {
     expect(kv.put).not.toHaveBeenCalled();
   });
 
-  it('a finished deletion job does not block it', async () => {
+  it('a finished deletion job does not block it (a failed one that never quarantined the route: no route row)', async () => {
     const { inventory, env } = setup();
     inventory
       .prepare(
@@ -253,5 +253,102 @@ describe('accepted reactivation vs a deletion', () => {
       .run(ACCEPTED_AT - 100, Math.floor(Date.now() / 1000));
     await processGenericAdminJobNow(env, logger, 'tenant-a', 'val-1');
     expect(tenant(inventory)).toEqual({ lifecycle_state: 'active' });
+  });
+
+  describe('a failed deletion whose route is still out of service', () => {
+    const seedFailedDeletion = (
+      inventory: SQLiteDatabase,
+      admin: SQLiteDatabase,
+      options: { routeStatus: string | null; error?: string | null; progress?: string | null }
+    ) => {
+      inventory
+        .prepare(
+          "INSERT INTO admin_jobs (id, tenant_id, job_type, status, config, error_message, progress, created_at, updated_at) VALUES ('del-1', 'default', 'tenants/delete', 'failed', '{\"tenant_id\":\"tenant-a\"}', ?, ?, ?, ?)"
+        )
+        .run(options.error ?? null, options.progress ?? null, ACCEPTED_AT - 100, ACCEPTED_AT - 50);
+      if (options.routeStatus) {
+        admin
+          .prepare(
+            "INSERT INTO tenant_runtime_cache_generations (tenant_id, cache_namespace, generation, metadata_json) VALUES ('tenant-a', 'runtime_registry', 2, ?)"
+          )
+          .run(
+            JSON.stringify({
+              route_status: options.routeStatus,
+              quarantine_deny_generation: 1,
+              route_state_operation_id: '11111111-2222-4333-8444-555555555555',
+            })
+          );
+      }
+    };
+
+    it.each(['quarantining', 'quarantined', 'disabled'])(
+      'does not activate the tenant while the route is %s: the job ends superseded, nothing cached',
+      async (routeStatus) => {
+        const { inventory, admin, kv, env } = setup();
+        seedFailedDeletion(inventory, admin, { routeStatus });
+        await processGenericAdminJobNow(env, logger, 'tenant-a', 'val-1');
+        expect(tenant(inventory)).toEqual({ lifecycle_state: 'suspended' });
+        expect(job(admin).status).toBe('partial_failure');
+        expect(job(admin).progress).toContain('tenant_lifecycle_validation_superseded');
+        expect(job(admin).progress).toContain('tenant_deletion_failed_use_cancel');
+        expect(kv.put).not.toHaveBeenCalled();
+      }
+    );
+
+    it('fails closed when the route cannot be read: nothing is activated', async () => {
+      const { inventory, admin, kv, env } = setup();
+      seedFailedDeletion(inventory, admin, { routeStatus: 'bogus' });
+      await processGenericAdminJobNow(env, logger, 'tenant-a', 'val-1');
+      expect(tenant(inventory)).toEqual({ lifecycle_state: 'suspended' });
+      expect(job(admin).status).not.toBe('completed');
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('activates after the deletion was cancelled (job marked, route active)', async () => {
+      const { inventory, admin, kv, env } = setup();
+      seedFailedDeletion(inventory, admin, {
+        routeStatus: 'active',
+        error: 'tenant_deletion_cancelled',
+        progress: '{"stage":"cancelled"}',
+      });
+      await processGenericAdminJobNow(env, logger, 'tenant-a', 'val-1');
+      expect(tenant(inventory)).toEqual({ lifecycle_state: 'active' });
+      expect(job(admin).status).toBe('completed');
+      expect(kv.put).toHaveBeenCalled();
+    });
+
+    it('does not activate while the cancel is incomplete, whatever the database route says', async () => {
+      for (const routeStatus of ['active', 'quarantined', null]) {
+        const { inventory, admin, kv, env } = setup();
+        seedFailedDeletion(inventory, admin, {
+          routeStatus,
+          error: 'tenant_deletion_cancelled',
+          progress: '{"stage":"cancelling"}',
+        });
+        await processGenericAdminJobNow(env, logger, 'tenant-a', 'val-1');
+        expect(tenant(inventory)).toEqual({ lifecycle_state: 'suspended' });
+        expect(job(admin).progress).toContain('tenant_deletion_failed_use_cancel');
+        expect(kv.put).not.toHaveBeenCalled();
+      }
+    });
+
+    it('does not activate a completed cancel whose route is non-active', async () => {
+      const { inventory, admin, kv, env } = setup();
+      seedFailedDeletion(inventory, admin, {
+        routeStatus: 'quarantined',
+        error: 'tenant_deletion_cancelled',
+        progress: '{"stage":"cancelled"}',
+      });
+      await processGenericAdminJobNow(env, logger, 'tenant-a', 'val-1');
+      expect(tenant(inventory)).toEqual({ lifecycle_state: 'suspended' });
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('activates when the failed deletion left the route active', async () => {
+      const { inventory, admin, env } = setup();
+      seedFailedDeletion(inventory, admin, { routeStatus: 'active' });
+      await processGenericAdminJobNow(env, logger, 'tenant-a', 'val-1');
+      expect(tenant(inventory)).toEqual({ lifecycle_state: 'active' });
+    });
   });
 });

@@ -7,6 +7,7 @@ vi.mock('@simplewebauthn/browser', () => ({
 }));
 
 import { httpCompliance } from './compliance';
+import { httpMachineAccess } from './machine-access';
 import { myPasskeysAPI, PasskeyError } from './my-passkeys';
 import { httpNoticeDelivery } from './notice-delivery';
 import { httpSettings } from './settings';
@@ -79,6 +80,38 @@ describe('protected calls meet step-up and repeat once with the receipt', () => 
 			challenge_id: 'ch'
 		});
 		await myPasskeysAPI.getRegistrationOptions('example.com');
+		expect(calls.map(receiptOf)).toEqual([null, 'rcpt-1']);
+	});
+
+	it('machine principal create', async () => {
+		const calls = stubStepUp('/api/admin/machine-access/principals', { principal: { id: 'p1' } });
+		await httpMachineAccess('t1').create({
+			clientId: 'ci',
+			displayName: 'CI',
+			principalType: 'ci',
+			tokenTtlSeconds: 600,
+			permissions: ['admin:users:read'],
+			reach: { mode: 'none' }
+		});
+		expect(calls.map(receiptOf)).toEqual([null, 'rcpt-1']);
+		expect(calls[1].body).toBe(calls[0].body);
+	});
+
+	it('machine key add', async () => {
+		const calls = stubStepUp('/principals/p1/credentials', { credential: { id: 'k1' } });
+		await httpMachineAccess('t1').addKey('p1', {
+			kid: 'k',
+			displayName: 'k',
+			alg: 'ES256',
+			publicJwk: { kty: 'EC', crv: 'P-256', x: 'a', y: 'b' }
+		});
+		expect(calls.map(receiptOf)).toEqual([null, 'rcpt-1']);
+		expect(calls[1].body).toBe(calls[0].body);
+	});
+
+	it('machine principal enable', async () => {
+		const calls = stubStepUp('/principals/p1/enable', { principal: {} });
+		await httpMachineAccess('t1').enable('p1');
 		expect(calls.map(receiptOf)).toEqual([null, 'rcpt-1']);
 	});
 

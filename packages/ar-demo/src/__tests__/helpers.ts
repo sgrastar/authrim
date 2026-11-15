@@ -29,12 +29,11 @@ export interface TestDb {
 /** A tiny D1-like adapter over real SQLite, with the migration applied. */
 export function createTestDb(): TestDb {
   const sqlite = new DatabaseSync(':memory:');
-  sqlite.exec(
-    readFileSync(
-      fileURLToPath(new URL('../../migrations/0001_tenant_registry.sql', import.meta.url)),
-      'utf8'
-    )
-  );
+  for (const file of ['0001_tenant_registry.sql', '0002_cleanup.sql', '0003_deferred_create.sql']) {
+    sqlite.exec(
+      readFileSync(fileURLToPath(new URL(`../../migrations/${file}`, import.meta.url)), 'utf8')
+    );
+  }
   const beforeStatement: TestDb['beforeStatement'] = { current: null };
   const statements: string[] = [];
   const db: DemoDatabase = {
@@ -51,6 +50,12 @@ export function createTestDb(): TestDb {
           await beforeStatement.current?.(sql);
           const result = sqlite.prepare(sql).run(...params);
           return { meta: { changes: Number(result.changes) } };
+        },
+        async all<T>() {
+          statements.push(sql);
+          await Promise.resolve();
+          await beforeStatement.current?.(sql);
+          return { results: sqlite.prepare(sql).all(...params) as T[] };
         },
         async first<T>() {
           statements.push(sql);
@@ -143,12 +148,12 @@ export function createUpstream(): Upstream {
   handlers.set('POST challenges.cloudflare.com/turnstile/v0/siteverify', () =>
     json({ success: true, hostname: new URL(PORTAL).hostname })
   );
-  handlers.set(`POST ${new URL(API).host}/token`, () =>
+  handlers.set(`POST ${new URL(API).host}/token`, (call) =>
     json({
       access_token: `token-${(tokenCounter += 1)}`,
       token_type: 'Bearer',
       expires_in: 900,
-      scope: SCOPES,
+      scope: new URLSearchParams(call.body).get('scope') ?? SCOPES,
     })
   );
   handlers.set(`POST ${new URL(API).host}/api/admin/tenants`, () => json({ id: 'x' }, 202));
@@ -173,10 +178,17 @@ export function createUpstream(): Upstream {
 
   const keyOf = (call: Call): string[] => {
     const url = new URL(call.url);
-    const path = url.pathname.replace(
-      /^\/api\/admin\/tenants\/[^/]+\/provisioning$/,
-      '/api/admin/tenants/*/provisioning'
-    );
+    const path = url.pathname
+      .replace(/^\/api\/admin\/tenants\/[^/]+\/provisioning$/, '/api/admin/tenants/*/provisioning')
+      .replace(
+        /^\/api\/admin\/tenants\/[^/]+\/provisioning\/cleanup$/,
+        '/api/admin/tenants/*/provisioning/cleanup'
+      )
+      .replace(
+        /^\/api\/admin\/tenants\/[^/]+\/provisioning\/retry$/,
+        '/api/admin/tenants/*/provisioning/retry'
+      )
+      .replace(/^\/api\/admin\/tenants\/(?!\*)[^/]+$/, '/api/admin/tenants/*');
     return [`${call.method} ${url.host}${path}`];
   };
   const upstream: Upstream = {
@@ -184,6 +196,7 @@ export function createUpstream(): Upstream {
     clock,
     deps: {
       now: () => clock.now,
+      authrimFetch: (input, init) => upstream.deps.fetch(input, init),
       fetch: async (input, init) => {
         const headers: Record<string, string> = {};
         new Headers(init.headers).forEach((value, name) => {
@@ -220,6 +233,10 @@ export const K = {
   create: `POST ${new URL(API).host}/api/admin/tenants`,
   provisioning: `GET ${new URL(API).host}/api/admin/tenants/*/provisioning`,
   invite: `POST ${new URL(API).host}/api/admin/admin-invitations`,
+  getTenant: `GET ${new URL(API).host}/api/admin/tenants/*`,
+  deleteTenant: `DELETE ${new URL(API).host}/api/admin/tenants/*`,
+  cleanup: `POST ${new URL(API).host}/api/admin/tenants/*/provisioning/cleanup`,
+  retry: `POST ${new URL(API).host}/api/admin/tenants/*/provisioning/retry`,
 };
 
 export function startRequest(
@@ -269,4 +286,20 @@ export function allRows(testDb: TestDb): Array<Record<string, unknown>> {
   return testDb.sqlite.prepare('SELECT * FROM demo_tenants').all() as Array<
     Record<string, unknown>
   >;
+}
+
+/**
+ * A start followed by the first /status request, which is the one that creates the tenant. Returns
+ * both responses; `ticket` is the visitor's cookie value (null when the start was refused).
+ */
+export async function startAndCreate(
+  env: Env,
+  upstream: Upstream,
+  options: Parameters<typeof startRequest>[0] = {}
+): Promise<{ started: Response; status: Response | null; ticket: string | null }> {
+  const started = await start(env, upstream, options);
+  const ticket = cookieOf(started);
+  if (!ticket) return { started, status: null, ticket };
+  const status = await handleRequest(statusRequest(ticket), env, upstream.deps);
+  return { started, status, ticket };
 }

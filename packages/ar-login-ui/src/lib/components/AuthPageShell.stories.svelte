@@ -7,6 +7,19 @@
 	import { SAMPLE_BACKGROUND_URL, SAMPLE_LOGO_URL } from '#lib/storybook/config.js';
 	import type { LoginUIOverrides } from '#lib/storybook/config.js';
 
+	// A gallery story renders several whole pages side by side, so the page landmarks repeat (the
+	// meta's three rules) and so does `main`. A story's rules replace the meta's, hence all four.
+	const GALLERY_A11Y = {
+		config: {
+			rules: [
+				{ id: 'landmark-no-duplicate-banner', enabled: false },
+				{ id: 'landmark-no-duplicate-contentinfo', enabled: false },
+				{ id: 'landmark-no-duplicate-main', enabled: false },
+				{ id: 'landmark-unique', enabled: false }
+			]
+		}
+	};
+
 	const { Story } = defineMeta({
 		title: 'Page shell/Settings',
 		tags: ['autodocs'],
@@ -119,7 +132,7 @@
 	{#snippet template()}{@render full(page({ logoLayout: 'row' }))}{/snippet}
 </Story>
 
-<Story name="Logo display">
+<Story name="Logo display" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={2}
@@ -140,6 +153,7 @@
 
 <Story
 	name="Dark mode keeps the pictures and the logo, darkening the pictures"
+	parameters={{ a11y: GALLERY_A11Y }}
 	play={async ({ canvasElement }) => {
 		const figures = within(canvasElement).getAllByRole('figure');
 		const [light, dark] = figures;
@@ -180,6 +194,7 @@
 
 <Story
 	name="Form area image on standard and split layouts"
+	parameters={{ a11y: GALLERY_A11Y }}
 	play={async ({ canvasElement }) => {
 		const [standard, splitFull, splitCard, minimal] = within(canvasElement).getAllByRole('figure');
 		const cardImage = standard.querySelector<HTMLElement>('.card-background-image');
@@ -259,7 +274,7 @@
 	{/snippet}
 </Story>
 
-<Story name="Top bar position">
+<Story name="Top bar position" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={3}
@@ -294,7 +309,7 @@
 	{#snippet template()}{@render full(page({ authSwitchLinkEnabled: false }))}{/snippet}
 </Story>
 
-<Story name="Fonts and density">
+<Story name="Fonts and density" parameters={{ a11y: GALLERY_A11Y }}>
 	{#snippet template()}
 		<ShellGallery
 			columns={3}
@@ -313,7 +328,7 @@
 	{#snippet template()}
 		{@render full({
 			...page({
-				accentColor: '#16a34a',
+				accentColor: '#15803d',
 				titleColor: '#ffffff',
 				copyColor: '#e2e8f0',
 				textColor: '#ffffff'
@@ -327,7 +342,7 @@
 	{#snippet template()}
 		{@render full({
 			...page({
-				accentColor: '#16a34a',
+				accentColor: '#15803d',
 				titleColor: '#ffffff',
 				copyColor: '#e2e8f0',
 				textColor: '#ffffff'

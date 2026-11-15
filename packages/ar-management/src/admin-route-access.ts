@@ -123,8 +123,9 @@ function writeOnly(pattern: string, permission: string, description: string): Ad
 }
 
 /**
- * The five tenant routes an automation machine principal may run on its own permission, without
- * `admin:*`: create, follow and clean up a provisioning, and delete. Each is admitted by what it
+ * The seven tenant routes an automation machine principal may run on its own permission, without
+ * `admin:*`: create, read one tenant, follow and clean up a provisioning, delete, and cancel a
+ * failed deletion (on the deletion permission). Each is admitted by what it
  * accepted before (the settings permission, or the platform role) or by its own permission; no
  * other method or path under `/api/admin/tenants` is touched. They sit ahead of the tenant
  * catch-alls (first match wins), and the Worker's system-admin guard asks the same table which
@@ -159,6 +160,13 @@ const TENANT_PROVISIONING_RULES: AdminRouteAccessRule[] = [
     'tenant administration create'
   ),
   tenantProvisioningRule(
+    '/api/admin/tenants/:tenantId',
+    'GET',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.TENANT_PROVISION,
+    'tenant read'
+  ),
+  tenantProvisioningRule(
     '/api/admin/tenants/:tenantId/provisioning',
     'GET',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -185,6 +193,13 @@ const TENANT_PROVISIONING_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.TENANT_DELETE,
     'tenant deletion'
+  ),
+  tenantProvisioningRule(
+    '/api/admin/tenants/:tenantId/deletion/cancel',
+    'POST',
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.TENANT_DELETE,
+    'tenant deletion cancel'
   ),
 ];
 
@@ -2500,7 +2515,7 @@ export function findAdminRouteAccessRule(
 }
 
 /**
- * The permission a request runs on when it is one of the five tenant provisioning and deletion
+ * The permission a request runs on when it is one of the seven tenant provisioning and deletion
  * routes, otherwise null. `pathname` is the router's own path (`c.req.path`), matched by the same
  * compiled patterns as the declared gate: an escaped, longer or trailing-slash spelling, or
  * another method, is not one of them.

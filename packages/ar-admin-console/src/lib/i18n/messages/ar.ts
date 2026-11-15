@@ -18,6 +18,7 @@ import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
 import { arTeam } from './team/ar';
+import { arMachineAccess } from './machine-access/ar';
 import { arAuthMethods } from './auth-methods/ar';
 import { arSessionProfiles } from './session-profiles/ar';
 import { arProfileLayer } from './profile-layer/ar';
@@ -45,6 +46,7 @@ export const ar = {
 	...arAdminAudit,
 	...arUserAudit,
 	...arTeam,
+	...arMachineAccess,
 	...arAuthMethods,
 	...arSessionProfiles,
 	...arProfileLayer,

@@ -246,3 +246,25 @@ export function userDetailAccess(access: AdminAccess): UserDetailAccess {
 		revokeSessions: sessions && hasPermission(access, 'admin:sessions:revoke')
 	};
 }
+
+/**
+ * What the admin can do on the machine access pages (Platform → Administrators → Machine
+ * access), as the Admin API checks it. Only platform administrators open the screen.
+ */
+export interface MachineAccess {
+	/** See the principals and their keys (`admin:machine_access:read`). */
+	read: boolean;
+	/** Create, change, enable them and add keys (`admin:machine_access:write`). */
+	write: boolean;
+	/** Disable a principal and revoke a key (`admin:machine_access:delete`). */
+	remove: boolean;
+}
+
+export function machineAccess(access: AdminAccess): MachineAccess {
+	const read = access.platform && hasPermission(access, 'admin:machine_access:read');
+	return {
+		read,
+		write: read && hasPermission(access, 'admin:machine_access:write'),
+		remove: read && hasPermission(access, 'admin:machine_access:delete')
+	};
+}

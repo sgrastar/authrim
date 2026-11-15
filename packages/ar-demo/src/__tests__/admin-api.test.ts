@@ -131,6 +131,21 @@ describe('token minting', () => {
     expect(bearers).toEqual(['Bearer token-1', 'Bearer token-1', 'Bearer token-2']);
   });
 
+  it('still caches a token whose lifetime is 60 seconds or less', async () => {
+    upstream.on(K.token, (call) =>
+      json({
+        access_token: `short-${upstream.count(K.token)}`,
+        token_type: 'Bearer',
+        expires_in: 60,
+        scope: new URLSearchParams(call.body).get('scope') ?? SCOPES,
+      })
+    );
+    await createTenant(config, upstream.deps, 'demo-aaaaaaaaaa');
+    upstream.clock.now += 20 * 1000;
+    await createTenant(config, upstream.deps, 'demo-bbbbbbbbbb');
+    expect(upstream.count(K.token)).toBe(1);
+  });
+
   it('mints once for concurrent callers', async () => {
     await Promise.all([
       createTenant(config, upstream.deps, 'demo-aaaaaaaaaa'),
@@ -235,8 +250,8 @@ describe('Admin API calls', () => {
 
   it('times out after 10 seconds', async () => {
     await createTenant(config, upstream.deps, 'demo-aaaaaaaaaa'); // warms the token cache
-    const original = upstream.deps.fetch;
-    upstream.deps.fetch = (input, init) =>
+    const original = upstream.deps.authrimFetch;
+    upstream.deps.authrimFetch = (input, init) =>
       input.includes('/provisioning')
         ? new Promise<Response>((_resolve, reject) => {
             init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
@@ -251,6 +266,31 @@ describe('Admin API calls', () => {
         settled = true;
       });
       await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expect((await pending).kind).toBe('timeout');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts tenant creation after 90 seconds, not after 10', async () => {
+    await createTenant(config, upstream.deps, 'demo-aaaaaaaaaa'); // warms the token cache
+    const original = upstream.deps.authrimFetch;
+    upstream.deps.authrimFetch = (input, init) =>
+      input.endsWith('/api/admin/tenants')
+        ? new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          })
+        : original(input, init);
+    vi.useFakeTimers();
+    try {
+      const pending = rejection(createTenant(config, upstream.deps, 'demo-bbbbbbbbbb'));
+      let settled = false;
+      void pending.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(89_999);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(2);
       expect((await pending).kind).toBe('timeout');

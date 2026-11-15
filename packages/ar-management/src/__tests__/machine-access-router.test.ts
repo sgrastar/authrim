@@ -44,20 +44,32 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     adminAuthMiddleware: vi.fn(
       (options?: { requirePermissions?: string[] }) =>
         async (c: any, next: () => Promise<void>) => {
-          const permissions = (c.req.header('X-Admin-Permissions') || '')
-            .split(',')
-            .map((entry: string) => entry.trim())
-            .filter(Boolean);
-          const tenantScope = (c.req.header('X-Admin-Tenant-Scope') || 'tenant-a')
-            .split(',')
-            .map((entry: string) => entry.trim())
-            .filter(Boolean);
+          const listOf = (name: string, fallback = ''): string[] =>
+            ((c.req.header(name) as string | undefined) || fallback)
+              .split(',')
+              .map((entry) => entry.trim())
+              .filter(Boolean);
+          const permissions = listOf('X-Admin-Permissions');
+          const tenantScope = listOf('X-Admin-Tenant-Scope', 'tenant-a');
+          // X-Admin-Machine marks a machine access token; otherwise a human session. Roles and
+          // global roles are separate headers, as `roles` also holds roles given for one tenant.
+          const machine = listOf('X-Admin-Machine').includes('1');
+          // Either field can be set on its own ('none' leaves it out, as a real session does for
+          // the actor type), so that a test can take away one condition at a time.
+          const override = (name: string, fallback: string): string | undefined => {
+            const value = (c.req.header(name) as string | undefined) ?? fallback;
+            return value === 'none' ? undefined : value;
+          };
           c.set('adminAuth', {
             userId: 'admin-1',
-            authMethod: 'session',
-            actorType: 'human',
+            authMethod: override(
+              'X-Admin-Auth-Method',
+              machine ? 'machine_access_token' : 'session'
+            ),
+            actorType: override('X-Admin-Actor-Type', machine ? 'machine' : 'human'),
             actorId: 'admin-1',
-            roles: [],
+            roles: listOf('X-Admin-Roles'),
+            globalRoles: listOf('X-Admin-Global-Roles'),
             permissions,
             // A global scope here stands for a global assignment that gives these permissions.
             globalPermissions: tenantScope.includes('*') ? permissions : [],
@@ -543,6 +555,253 @@ describe('machineAccessRouter', () => {
       mockRepo.createCredentialWithGrant.mockResolvedValue({ id: 'amk_new' });
       mockRepo.updateCredentialWithGrant.mockResolvedValue({ id: 'amk_old' });
       mockRepo.rotateCredential.mockResolvedValue({ id: 'amk_new' });
+    });
+
+    describe('handing out exact-name permissions (global super admin)', () => {
+      const exempt = 'admin:step_up_exempt:tenant.delete';
+      const handoff = 'admin:admin_invitations:code_handoff';
+      // `*` is held, so every ordinary permission is within it; the two below are carried by no
+      // wildcard.
+      const superAdmin = {
+        'X-Admin-Permissions': '*',
+        'X-Admin-Tenant-Scope': '*',
+        'X-Admin-Global-Roles': 'ar_super_admin',
+      };
+      const as = (extra: Record<string, string>, method: string, path: string, body: unknown) =>
+        createApp().request(
+          `/api/admin/machine-access${path}`,
+          {
+            method,
+            headers: { 'Content-Type': 'application/json', ...extra },
+            body: JSON.stringify(body),
+          },
+          mockEnv
+        );
+      const create = (extra: Record<string, string>, permissions: string[]) =>
+        as(extra, 'POST', '/principals', {
+          client_id: 'portal',
+          display_name: 'Portal',
+          principal_type: 'mcp_server',
+          permissions,
+          tenant_scopes: [{ scope_mode: 'all' }],
+        });
+
+      it('principal create: reaches the step-up, refused without it and created with it', async () => {
+        const permissions = ['admin:agent_grants:*', exempt, handoff];
+        mockRequireAdminStepUp.mockResolvedValue(refusal());
+        const refused = await create(superAdmin, permissions);
+        expect(refused.status).toBe(403);
+        expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+        expect(mockRepo.createPrincipalWithGrant).not.toHaveBeenCalled();
+
+        mockRequireAdminStepUp.mockResolvedValue(null);
+        const created = await create(superAdmin, permissions);
+        expect(created.status).toBe(201);
+        expect(mockRepo.createPrincipalWithGrant).toHaveBeenCalledTimes(1);
+      });
+
+      it('credential create and principal PATCH: past the grant check, the step-up is demanded', async () => {
+        // The principal holds them, so the key would really carry them (an empty intersection
+        // would pass the grant check whatever the rule says).
+        mockRepo.getPrincipalPermissions.mockResolvedValue([
+          'admin:agent_grants:*',
+          exempt,
+          handoff,
+        ]);
+        mockRequireAdminStepUp.mockResolvedValue(refusal());
+        const credential = await as(superAdmin, 'POST', '/principals/amp_mcp/credentials', {
+          kid: 'k1',
+          display_name: 'Key',
+          alg: 'ES256',
+          public_jwk: jwk,
+          permissions: [exempt, handoff],
+          tenant_scopes: [{ scope_mode: 'all' }],
+        });
+        expect(credential.status).toBe(403);
+        expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+
+        mockRequireAdminStepUp.mockClear();
+        // For the PATCH the principal does not hold them yet: they are what the request adds.
+        mockRepo.getPrincipalPermissions.mockResolvedValue(['admin:agent_grants:*']);
+        const patch = await as(superAdmin, 'PATCH', '/principals/amp_mcp', {
+          permissions: ['admin:agent_grants:*', exempt, handoff],
+        });
+        expect(patch.status).toBe(403);
+        expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+        expect(mockRepo.updatePrincipalWithGrant).not.toHaveBeenCalled();
+      });
+
+      it('credential PATCH and rotate: allowed past the grant check, step-up demanded', async () => {
+        mockRepo.getPrincipalPermissions.mockResolvedValue([
+          'admin:agent_grants:*',
+          exempt,
+          handoff,
+        ]);
+        mockRepo.getCredentialPermissions.mockResolvedValue([]);
+        mockRequireAdminStepUp.mockResolvedValue(refusal());
+        const patch = await as(superAdmin, 'PATCH', '/principals/amp_mcp/credentials/amk_old', {
+          permissions: [exempt, handoff],
+        });
+        expect(patch.status).toBe(403);
+        expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+
+        mockRequireAdminStepUp.mockClear();
+        const rotate = await as(
+          superAdmin,
+          'POST',
+          '/principals/amp_mcp/credentials/amk_old/rotate',
+          { kid: 'k2', display_name: 'Key', alg: 'ES256', public_jwk: jwk, permissions: [exempt] }
+        );
+        expect(rotate.status).toBe(403);
+        expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+        expect(mockRepo.rotateCredential).not.toHaveBeenCalled();
+      });
+
+      it('a key for a principal that holds them is refused to an actor without the role', async () => {
+        mockRepo.getPrincipalPermissions.mockResolvedValue([
+          'admin:agent_grants:*',
+          exempt,
+          handoff,
+        ]);
+        mockRepo.getCredentialPermissions.mockResolvedValue([]);
+        const actor = { 'X-Admin-Permissions': '*', 'X-Admin-Tenant-Scope': '*' };
+        const key = { kid: 'k1', display_name: 'Key', alg: 'ES256', public_jwk: jwk };
+        const scopes = { tenant_scopes: [{ scope_mode: 'all' }] };
+        const responses = [
+          await as(actor, 'POST', '/principals/amp_mcp/credentials', {
+            ...key,
+            ...scopes,
+            permissions: [exempt, handoff],
+          }),
+          await as(actor, 'PATCH', '/principals/amp_mcp/credentials/amk_old', {
+            permissions: [exempt, handoff],
+          }),
+          await as(actor, 'POST', '/principals/amp_mcp/credentials/amk_old/rotate', {
+            ...key,
+            kid: 'k2',
+            permissions: [exempt],
+          }),
+        ];
+        expect(responses.map((res) => res.status)).toEqual([400, 400, 400]);
+        expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+        expect(mockRepo.createCredentialWithGrant).not.toHaveBeenCalled();
+        expect(mockRepo.updateCredentialWithGrant).not.toHaveBeenCalled();
+        expect(mockRepo.rotateCredential).not.toHaveBeenCalled();
+      });
+
+      it('a session without an actor type is a human; another auth method or actor type is not', async () => {
+        const session = await create({ ...superAdmin, 'X-Admin-Actor-Type': 'none' }, [exempt]);
+        expect(session.status).toBe(201);
+        mockRepo.createPrincipalWithGrant.mockClear();
+        mockRequireAdminStepUp.mockClear();
+
+        const overrides: Record<string, string>[] = [
+          { 'X-Admin-Auth-Method': 'bearer' },
+          { 'X-Admin-Auth-Method': 'none' },
+          { 'X-Admin-Auth-Method': 'machine_access_token' },
+          { 'X-Admin-Actor-Type': 'machine' },
+        ];
+        for (const override of overrides) {
+          const res = await create({ ...superAdmin, ...override }, [exempt]);
+          expect(res.status).toBe(400);
+        }
+        expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+        expect(mockRepo.createPrincipalWithGrant).not.toHaveBeenCalled();
+      });
+
+      it('the last-resort recovery and the break-glass permissions stay out of reach', async () => {
+        for (const permission of [
+          'admin:last_resort_recovery',
+          'admin:support_ops:break_glass:x',
+        ]) {
+          const res = await create(superAdmin, ['admin:agent_grants:*', permission]);
+          expect(res.status).toBe(400);
+        }
+        expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+        expect(mockRepo.createPrincipalWithGrant).not.toHaveBeenCalled();
+      });
+
+      it('an exemption that names no real operation, cannot take effect, or covers this step-up stays out of reach', async () => {
+        for (const permission of [
+          'admin:step_up_exempt:',
+          'admin:step_up_exempt:no.such.operation',
+          'admin:step_up_exempt:admin.second_factor.remove',
+          'admin:step_up_exempt:machine.permission.grant',
+        ]) {
+          const res = await create(superAdmin, ['admin:agent_grants:*', permission]);
+          expect(res.status).toBe(400);
+        }
+        expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+        expect(mockRepo.createPrincipalWithGrant).not.toHaveBeenCalled();
+      });
+
+      it('a platform principal type is covered the same way', async () => {
+        const res = await as(superAdmin, 'POST', '/principals', {
+          client_id: 'portal',
+          display_name: 'Portal',
+          principal_type: 'setup_tool',
+          permissions: [exempt],
+          tenant_scopes: [{ scope_mode: 'all' }],
+        });
+        expect(res.status).toBe(201);
+        expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      });
+
+      it.each([
+        ['no global role at all', { 'X-Admin-Roles': 'ar_super_admin' }],
+        ['a custom global role', { 'X-Admin-Global-Roles': 'tenant_custom' }],
+        [
+          'the role for one tenant only (no global scope)',
+          { 'X-Admin-Tenant-Scope': 'tenant-a', 'X-Admin-Global-Roles': 'ar_super_admin' },
+        ],
+        [
+          'a machine token with the role names present',
+          { 'X-Admin-Machine': '1', 'X-Admin-Roles': 'ar_super_admin' },
+        ],
+      ])('refused for %s', async (_name, override) => {
+        const actor = {
+          'X-Admin-Permissions': '*',
+          'X-Admin-Tenant-Scope': '*',
+          ...override,
+        };
+        const withGlobalRoleToo = { 'X-Admin-Global-Roles': 'ar_super_admin', ...actor };
+        for (const headersOf of [
+          actor,
+          ...(_name.startsWith('a machine') ? [withGlobalRoleToo] : []),
+        ]) {
+          const res = await create(headersOf, [exempt]);
+          expect(res.status).toBe(400);
+        }
+        const handoffRes = await create(actor, [handoff]);
+        expect(handoffRes.status).toBe(400);
+        expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+        expect(mockRepo.createPrincipalWithGrant).not.toHaveBeenCalled();
+      });
+
+      it('an actor that holds the exact permission by name can still hand it out', async () => {
+        const res = await create(
+          {
+            'X-Admin-Permissions': `admin:machine_access:*,admin:agent_grants:*,${exempt},${handoff}`,
+            'X-Admin-Tenant-Scope': '*',
+          },
+          [exempt, handoff]
+        );
+        expect(res.status).toBe(201);
+        expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      });
+
+      it('the non-exact permissions of the request must still be within what the actor holds', async () => {
+        const res = await create(
+          {
+            'X-Admin-Permissions': 'admin:machine_access:*',
+            'X-Admin-Tenant-Scope': '*',
+            'X-Admin-Global-Roles': 'ar_super_admin',
+          },
+          ['admin:agent_grants:*', exempt]
+        );
+        expect(res.status).toBe(400);
+        expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+      });
     });
 
     it('principal create with permissions: refused without step-up, nothing written', async () => {

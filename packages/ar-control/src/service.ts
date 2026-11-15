@@ -27,6 +27,7 @@ import {
   getTenantDatabaseResourcePrefix,
   migrationStreamIdForControlDataRole,
 } from '@authrim/ar-lib-core/control-plane';
+import { createLogger } from '@authrim/ar-lib-core';
 import type { ControlRepository } from './repository';
 import type { LookupScaleOutCapacityRequest } from './lookup-scale-out-forecast';
 import type { AccountScaleOutCapacityRequest } from './account-scale-out-forecast';
@@ -55,6 +56,14 @@ const TENANT_DATA_ROLES = new Set<TenantShardDataRole>([
 ]);
 const PROVISIONED_DATA_ROLES = new Set<ProvisionedD1DataRole>([...TENANT_DATA_ROLES, 'lookup']);
 const MAX_RECONCILE_OPERATIONS = 5;
+const log = createLogger().module('CONTROL_RECONCILE');
+
+function reconcileErrorFields(error: unknown): { errorName: string; errorMessage: string } {
+  return {
+    errorName: error instanceof Error ? error.name : 'NonErrorThrow',
+    errorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+  };
+}
 export interface ControlServiceDependencies {
   repository: ControlRepository;
   env: ControlEnv;
@@ -1492,7 +1501,13 @@ export class ControlService {
         const operation = await this.provisionPlan(plan);
         if (operation.status === 'blocked' || operation.lastErrorCode) failed += 1;
         else succeeded += 1;
-      } catch {
+      } catch (error) {
+        log.error('Control reconcile item failed', {
+          kind: 'provision_shard',
+          operationId: plan.operationId,
+          environmentId: plan.environmentId,
+          ...reconcileErrorFields(error),
+        });
         failed += 1;
       }
     }
@@ -1514,7 +1529,13 @@ export class ControlService {
         const operation = await this.migratePlan(plan);
         if (operation.status === 'blocked' || operation.lastErrorCode) failed += 1;
         else succeeded += 1;
-      } catch {
+      } catch (error) {
+        log.error('Control reconcile item failed', {
+          kind: 'migration',
+          operationId: plan.operationId,
+          environmentId: plan.environmentId,
+          ...reconcileErrorFields(error),
+        });
         failed += 1;
       }
     }
@@ -1567,7 +1588,13 @@ export class ControlService {
           );
         }
         planned += 1;
-      } catch {
+      } catch (error) {
+        log.error('Control reconcile item failed', {
+          kind: 'low_watermark',
+          environmentId: request.environmentId,
+          dataRole: request.dataRole,
+          ...reconcileErrorFields(error),
+        });
         failed += 1;
       }
     }
@@ -1597,25 +1624,32 @@ export class ControlService {
       executor: 'control',
       effect: 'create_d1',
       operation: lease.operation,
-      execute: () => {
+      execute: async () => {
         const api =
           this.dependencies.createApiClient?.(this.dependencies.env) ??
           createControlApiClients(this.dependencies.env).d1;
+        // The listing read predates the lease: another reconcile may have released or re-issued
+        // the create since. Decide only from the checkpoint read under this lease.
+        const fresh = await this.dependencies.repository.readD1CreateCheckpoint(lease, plan);
+        if (!fresh) throw new Error('control_d1_create_checkpoint_unreadable');
         return ensureControlProvisioningD1({
           plan,
           provider: api,
           checkpoint: {
-            state: plan.providerCreateState,
-            providerResourceId: plan.providerResourceId,
+            state: fresh.providerCreateState,
+            providerResourceId: fresh.providerResourceId,
+            issuedAt: fresh.providerCreateIssuedAt,
           },
+          now: this.dependencies.now,
           reserveCreate: () => this.dependencies.repository.reserveD1CreateBudget(lease, now),
           markCreateIssued: () =>
             this.dependencies.repository.markD1CreateIssued(lease, plan, this.dependencies.now()),
-          markCreateDefinitelyRejected: () =>
+          markCreateDefinitelyRejected: (expectedIssuedAt) =>
             this.dependencies.repository.markD1CreateDefinitelyRejected(
               lease,
               plan,
-              this.dependencies.now()
+              this.dependencies.now(),
+              expectedIssuedAt
             ),
           checkpointProviderIdentity: (databaseId) =>
             this.dependencies.repository.checkpointD1ProviderIdentity(

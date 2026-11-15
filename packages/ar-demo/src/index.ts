@@ -1,9 +1,10 @@
+import { handleScheduled } from './cleanup';
 import { loadConfig } from './config';
 import { handleStart, handleStartPage, handleStatus, handleWaitPage, langOf } from './handlers';
 import { SITE_CSS, WAIT_JS } from './html';
 import { logError } from './log';
 import { assetResponse, errorResponse, withSecurityHeaders } from './respond';
-import { defaultDeps, type Deps, type Env } from './types';
+import { createDeps, type Deps, type Env } from './types';
 
 const ROUTES: Record<string, string[]> = {
   '/': ['GET', 'HEAD'],
@@ -56,7 +57,7 @@ async function route(request: Request, env: Env, deps: Deps): Promise<Response> 
 export async function handleRequest(
   request: Request,
   env: Env,
-  deps: Deps = defaultDeps
+  deps: Deps = createDeps(env)
 ): Promise<Response> {
   let response: Response;
   try {
@@ -73,4 +74,7 @@ export async function handleRequest(
 
 export default {
   fetch: (request: Request, env: Env): Promise<Response> => handleRequest(request, env),
+  scheduled: async (_controller: unknown, env: Env): Promise<void> => {
+    await handleScheduled(env, createDeps(env));
+  },
 };

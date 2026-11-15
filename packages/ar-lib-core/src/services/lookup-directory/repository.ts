@@ -261,7 +261,8 @@ export class LookupDirectoryRepository {
     index: LookupAliasIndex,
     maximumResults: number,
     consistency: D1ConsistencyRequest = createD1ConsistencyRequest('replica_eligible'),
-    afterTenantId?: string
+    afterTenantId?: string,
+    options: { paginated?: boolean } = {}
   ): Promise<{ aliases: ResolvedLookupAlias[]; primaryRechecked: boolean }> {
     if (
       !Number.isSafeInteger(maximumResults) ||
@@ -276,7 +277,9 @@ export class LookupDirectoryRepository {
     const cursorClause = afterTenantId === undefined ? '' : 'AND tenant_id > ?';
     const params = [index.virtualBucket, index.aliasKind, index.digest];
     if (afterTenantId !== undefined) params.push(afterTenantId);
-    params.push(maximumResults + 1);
+    // A bounded set (not paginated) reads one row past the limit so that more rows than the limit
+    // fail closed; a page of an enumeration is the first `maximumResults` rows, however many follow.
+    params.push(options.paginated ? maximumResults : maximumResults + 1);
     const result = await this.sessions.query<LookupAliasRow>({
       sql: `SELECT virtual_bucket, alias_kind, alias_sha256_digest, tenant_id,
                    route_schema_version, route_projection_json, tenant_lifecycle_state,

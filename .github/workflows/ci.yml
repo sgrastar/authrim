@@ -337,11 +337,15 @@ jobs:
       - name: Run UI tests
         run: pnpm run test:ui
 
-      - name: Install Playwright Chromium for admin console stories
+      # Both packages pin the same Playwright, so one browser install serves both story suites.
+      - name: Install Playwright Chromium for the story tests
         run: pnpm --filter=@authrim/ar-admin-console exec playwright install --with-deps chromium
 
       - name: Run admin console story tests (interactions + accessibility)
         run: pnpm --filter=@authrim/ar-admin-console test:stories
+
+      - name: Run login UI story tests (interactions + accessibility)
+        run: pnpm --filter=@authrim/ar-login-ui test:stories
 
   control-plane-tests:
     name: Tenant D1 Control Plane Tests

@@ -362,6 +362,14 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.mock.status.active': 'Aktiv',
 	'sf.mock.status.paused': 'Pausiert',
 	'sf.mock.status.suspended': 'Gesperrt',
+	'sf.maps.in.label': 'Zuordnung der übernommenen Attribute',
+	'sf.maps.out.label': 'Zuordnung der weitergegebenen Attribute',
+	'sf.maps.in.title': 'Übernahme vom Anbieter',
+	'sf.maps.in.description':
+		'Macht aus den Attributen, die der Anbieter sendet, die Attribute von Authrim.',
+	'sf.maps.out.title': 'Weitergabe an die App',
+	'sf.maps.out.description':
+		'Bildet aus den Attributen von Authrim die Attribute, die die App erhält.',
 	'sf.mock.users.title': 'Alle Benutzer',
 	'sf.mock.users.description': 'Beispielseite der Mock-App. Die Daten sind erfunden.',
 	'sf.mock.users.card': 'Benutzer',

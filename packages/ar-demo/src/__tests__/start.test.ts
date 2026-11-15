@@ -10,6 +10,7 @@ import {
   K,
   makeEnv,
   start,
+  startAndCreate,
   type TestDb,
   type Upstream,
 } from './helpers';
@@ -35,6 +36,20 @@ describe('POST /start: origin and content type', () => {
     expect(response.status).toBe(403);
     expect(upstream.calls).toHaveLength(0);
     expect(allRows(testDb)).toHaveLength(0);
+  });
+
+  // Browsers send `Origin: null` on a same-origin form post when the page's referrer policy is
+  // `no-referrer`; that is why the portal uses `same-origin`. The check itself stays strict.
+  it('refuses the literal Origin "null" a browser sends under no-referrer', async () => {
+    const response = await start(env, upstream, { origin: 'null' });
+    expect(response.status).toBe(403);
+    expect(upstream.calls).toHaveLength(0);
+    expect(allRows(testDb)).toHaveLength(0);
+  });
+
+  it('passes the origin check with the portal origin a browser sends under same-origin', async () => {
+    const response = await start(env, upstream, { origin: 'https://start.demo-test.example' });
+    expect(response.status).not.toBe(403);
   });
 
   it('refuses a body that is not form-encoded', async () => {
@@ -234,8 +249,8 @@ describe('POST /start: limits', () => {
   it('refuses at capacity with 503, and failed rows count toward it', async () => {
     env = await makeEnv(testDb, { MAX_ACTIVE_TENANTS: '2', MAX_STARTS_PER_IP_PER_DAY: '20' });
     upstream.on(K.create, () => json({ error: 'boom' }, 500));
-    const failed = await start(env, upstream, { ip: '198.51.100.1' });
-    expect(failed.status).toBe(502);
+    const failed = await startAndCreate(env, upstream, { ip: '198.51.100.1' });
+    expect(await failed.status?.json()).toEqual({ state: 'failed' });
     expect(allRows(testDb)[0].state).toBe('failed');
     upstream.on(K.create, () => json({}, 202));
     expect((await start(env, upstream, { ip: '198.51.100.2' })).status).toBe(303);
@@ -311,9 +326,31 @@ describe('POST /start: what is generated and stored', () => {
     expect(dump).not.toContain('203.0.113.99');
   });
 
-  it('creates the tenant with the specified request', async () => {
+  it('makes no call to the core and redirects at once; the row is queued', async () => {
     const response = await start(env, upstream);
     expect(response.status).toBe(303);
+    expect(response.headers.get('Location')).toBe('/wait');
+    // Turnstile is the only outside call: nothing goes to the Admin API (not even a token).
+    expect(upstream.calls.map((c) => new URL(c.url).host)).toEqual(['challenges.cloudflare.com']);
+    const [row] = allRows(testDb);
+    expect(row).toMatchObject({
+      state: 'provisioning',
+      create_started_at: null,
+      create_attempts: 0,
+      create_accepted_at: null,
+    });
+  });
+
+  it('does not wait for a core that is slow: /start answers while no creation was asked for', async () => {
+    upstream.on(K.create, () => new Promise<Response>(() => undefined)); // would never answer
+    const response = await start(env, upstream);
+    expect(response.status).toBe(303);
+    expect(upstream.count(K.create)).toBe(0);
+  });
+
+  it('creates the tenant, from the first /status, with the specified request', async () => {
+    const { started } = await startAndCreate(env, upstream);
+    expect(started.status).toBe(303);
     const call = upstream.calls.find((c) => c.url.endsWith('/api/admin/tenants'));
     const id = allRows(testDb)[0].id;
     expect(call?.headers['idempotency-key']).toBe(id);
@@ -326,11 +363,10 @@ describe('POST /start: what is generated and stored', () => {
 
   it('keeps a failed row, shows a generic error and echoes no upstream body', async () => {
     upstream.on(K.create, () => json({ error: 'internal_secret_detail', trace: 'stack...' }, 500));
-    const response = await start(env, upstream);
-    expect(response.status).toBe(502);
-    const text = await response.text();
+    const { status } = await startAndCreate(env, upstream);
+    const text = await (status as Response).text();
+    expect(JSON.parse(text)).toEqual({ state: 'failed' });
     expect(text).not.toContain('internal_secret_detail');
-    expect(cookieOf(response)).toBeNull();
     expect(allRows(testDb)[0].state).toBe('failed');
   });
 
@@ -339,8 +375,8 @@ describe('POST /start: what is generated and stored', () => {
       K.create,
       () => new Response(null, { status: 302, headers: { Location: 'https://evil.example/' } })
     );
-    const response = await start(env, upstream);
-    expect(response.status).toBe(502);
+    const { status } = await startAndCreate(env, upstream);
+    expect(await status?.json()).toEqual({ state: 'failed' });
     expect(allRows(testDb)[0].state).toBe('failed');
   });
 

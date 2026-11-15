@@ -129,16 +129,16 @@ unrelated to the roles of the service's own users below. They are defined once, 
 
 #### Provisioning automation (a machine principal without `admin:*`)
 
-Creating and deleting tenants takes the global `ar_super_admin` role, or, for a machine principal,
+Creating and deleting tenants (and cancelling a failed deletion) takes the global `ar_super_admin` role, or, for a machine principal,
 `admin:*`. A dedicated automation principal can instead hold two narrower permissions. They are
 ordinary permissions: `*`, `admin:*` and `admin:tenants:*` carry them, no built-in role lists them,
 and a super admin can hand them to a principal through the machine access API (which asks for the
 `machine.permission.grant` step-up).
 
-| Permission                | Opens (exactly these method and path pairs)                                                                                                                                   |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `admin:tenants:provision` | `POST /api/admin/tenants`, `GET /api/admin/tenants/{id}/provisioning`, `POST /api/admin/tenants/{id}/provisioning/retry`, `POST /api/admin/tenants/{id}/provisioning/cleanup` |
-| `admin:tenants:delete`    | `DELETE /api/admin/tenants/{id}`                                                                                                                                              |
+| Permission                | Opens (exactly these method and path pairs)                                                                                                                                                                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admin:tenants:provision` | `POST /api/admin/tenants`, `GET /api/admin/tenants/{id}` (id, code, name, description, isolation policy and lifecycle state only), `GET /api/admin/tenants/{id}/provisioning`, `POST /api/admin/tenants/{id}/provisioning/retry`, `POST /api/admin/tenants/{id}/provisioning/cleanup` |
+| `admin:tenants:delete`    | `DELETE /api/admin/tenants/{id}`, `POST /api/admin/tenants/{id}/deletion/cancel` (cancels a failed deletion before its point of no return; the same step-up as the deletion)                                                                                                          |
 
 A global machine principal that holds `admin:settings:read` can also read platform settings
 (`GET /api/admin/platform/settings/{category}`) and use the returned `version` as `ifMatch` for a
@@ -146,7 +146,7 @@ write; the write permission does not imply the read, and a token limited to some
 Categories only a super admin may view (for example `encryption`) stay closed to such a token; it
 needs the global wildcard permission for them.
 
-What they do not allow: every other route under `/api/admin/tenants` (list, read, update,
+What they do not allow: every other route under `/api/admin/tenants` (list, update,
 set-default, clone, lifecycle commands, jobs, placement migrations, runtime registry purge), and
 every other system-admin route (platform settings, plugins, initial access tokens, rate-limit
 overrides). A **human** is not helped by either permission: a human still needs the global
@@ -162,8 +162,12 @@ custom global role).
   (`security.admin_step_up_enforced` false), the shared gate lets a machine through before it looks
   at the exemption, and the deletion permission alone is enough: a platform that relies on the
   exemption as a second barrier must keep step-up enforced. Exact-name permissions are not implied by `*`, `admin:*` or any
-  wildcard, and an actor can hand out only what its own permissions hold, so a human super admin
-  cannot grant that exemption through the Admin API today: it is provisioned by the setup tooling.
+  wildcard, so nobody holds the exemption through a wildcard. A signed-in human with the global
+  `ar_super_admin` role hands it (`admin:step_up_exempt:<operation>`) to a machine principal or
+  credential through the machine access API, with the `machine.permission.grant` L2 step-up; any
+  other actor can hand out only an exemption it holds by exact name. The super admin's addition
+  covers an exemption for a known operation only, and neither one the step-up gate always enforces
+  (the exemption has no effect there) nor `machine.permission.grant` itself.
 - **Refusals an automation should expect (all 409, nothing changed):**
   - `tenant_state_changed` on delete or set-default: the tenant became the default, left an
     allowed state, or already has a deletion queued. Read the tenant and decide again; do not
@@ -171,6 +175,23 @@ custom global role).
   - `tenant_deletion_in_progress` on set-default and on resume, unfreeze and restore-validate:
     the tenant has a deletion queued or running. Wait for that job to fail or complete (a
     `processing` job untouched for 6 hours stops counting), then decide again.
+  - `tenant_deletion_failed_use_cancel` on resume, unfreeze and restore-validate: the tenant's
+    last deletion failed and its route is still quarantining, quarantined or disabled, or its
+    cancellation is incomplete (resume would flip the tenant row but leave the route out of
+    service; repeat the cancel to complete it). Cancel the deletion first with
+    `POST /api/admin/tenants/{id}/deletion/cancel` (body `{ "reason": "..." }`; needs the
+    deletion permission and the same step-up as deletion); it reactivates the route, marks the
+    failed job cancelled and leaves the tenant `suspended`, and `resume` then works. Cancel
+    works on all the tenant's failed deletion jobs together, takes a 120 second lease on its
+    mark (`409 tenant_deletion_cancel_in_progress` for a repeat inside it), and answers
+    `409 tenant_deletion_past_point_of_no_return` once the route is disabled, a job of the chain
+    wrote its destructive-step marker, Control has finalised the deletion, or (for a job from
+    before the marker) the Lookup identifier table shows the disable or cannot show anything (the
+    deletion has to finish),
+    `409 tenant_route_owned_by_other_operation` for a route held by another operation (for
+    example a disaster recovery), `409 tenant_deletion_not_failed` /
+    `tenant_deletion_in_progress` / `tenant_state_changed`, and `503` when the route, Control, the
+    Lookup directory or the audit write cannot be read or written (nothing is changed).
   - `tenant_provisioning_cleanup_conflict` on cleanup: the operation is running, finished, or at
     Lookup activation, or moved while cleanup started. Once activation has begun, retry
     provisioning instead of cleaning up.
@@ -196,8 +217,9 @@ e-mailed. It is off, and unreachable for everyone else, unless all of this holds
 
 - **Who.** A machine access token with a **global tenant scope** holding the exact-name permission
   `admin:admin_invitations:code_handoff`. No wildcard (`*`, `admin:*`, `admin:admin_invitations:*`)
-  carries it, no built-in role lists it, and a super admin hands it to a principal through the
-  machine access API, which asks for the `machine.permission.grant` step-up. **A human can never
+  carries it, no built-in role lists it, and a human with the global `ar_super_admin` role hands
+  it to a principal through the machine access API, which asks for the `machine.permission.grant`
+  L2 step-up. Any other actor can hand it out only if it holds it by exact name. **A human can never
   use it, whatever their role.** A token limited to some tenants is refused. The write pair
   (`admin:admin_users:write` and `admin:admin_roles:write`) is still required; the handoff
   permission replaces only the rank comparison (a machine ranks 0) and the `admin.role.grant`

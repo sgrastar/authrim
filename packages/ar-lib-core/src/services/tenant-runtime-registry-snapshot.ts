@@ -349,6 +349,23 @@ function canTransitionRuntimeRegistryRouteState(
   );
 }
 
+/**
+ * The snapshot publisher and the runtime resolver require every published store's runtime
+ * generation to equal the snapshot generation, which is max(pointer generations, cache generation).
+ * A route-state change bumps only the cache generation, so the active pointers must follow it.
+ * This lives in the transition functions (not in their callers) so no caller can forget it, and it
+ * runs on the no-op (retry) branches too so a partially applied earlier attempt converges.
+ * It is monotonic and idempotent and never lowers a pointer generation.
+ */
+async function alignActivePointersWithRouteStateGeneration(
+  repository: TenantDatabaseRegistryRepository,
+  tenantId: string,
+  runtimeGeneration: number,
+  actorId: string
+): Promise<void> {
+  await repository.raiseActivePointerRuntimeGeneration(tenantId, runtimeGeneration, actorId);
+}
+
 export async function transitionTenantRuntimeRegistryRouteState(
   repository: TenantDatabaseRegistryRepository,
   options: TransitionTenantRuntimeRegistryRouteStateOptions
@@ -372,9 +389,16 @@ export async function transitionTenantRuntimeRegistryRouteState(
       if (currentMetadata.route_state_operation_id !== options.operationId) {
         throw new Error('runtime_registry_route_state_operation_conflict');
       }
+      const unchangedGeneration = currentRow?.generation ?? 1;
+      await alignActivePointersWithRouteStateGeneration(
+        repository,
+        options.tenantId,
+        unchangedGeneration,
+        options.actorId
+      );
       return {
         ...currentState,
-        runtimeGeneration: currentRow?.generation ?? 1,
+        runtimeGeneration: unchangedGeneration,
         changed: false,
       };
     }
@@ -399,6 +423,12 @@ export async function transitionTenantRuntimeRegistryRouteState(
       currentRow
     );
     if (committed) {
+      await alignActivePointersWithRouteStateGeneration(
+        repository,
+        options.tenantId,
+        runtimeGeneration,
+        options.actorId
+      );
       return {
         routeStatus: options.routeStatus,
         quarantineDenyGeneration,
@@ -441,10 +471,17 @@ export async function reactivateTenantRuntimeRegistryRouteState(
       currentMetadata.route_state_operation_id === options.operationId &&
       typeof currentMetadata.route_state_reactivated_at === 'string'
     ) {
+      const unchangedGeneration = currentRow?.generation ?? 1;
+      await alignActivePointersWithRouteStateGeneration(
+        repository,
+        options.tenantId,
+        unchangedGeneration,
+        options.actorId
+      );
       return {
         routeStatus: 'active',
         quarantineDenyGeneration: currentState.quarantineDenyGeneration,
-        runtimeGeneration: currentRow?.generation ?? 1,
+        runtimeGeneration: unchangedGeneration,
         changed: false,
       };
     }
@@ -474,6 +511,12 @@ export async function reactivateTenantRuntimeRegistryRouteState(
       currentRow
     );
     if (committed) {
+      await alignActivePointersWithRouteStateGeneration(
+        repository,
+        options.tenantId,
+        runtimeGeneration,
+        options.actorId
+      );
       return {
         routeStatus: 'active',
         quarantineDenyGeneration: currentState.quarantineDenyGeneration,

@@ -8,6 +8,12 @@ export interface LogFields {
   error?: string;
   op?: string;
   detail?: string;
+  count?: number;
+  claimed?: number;
+  deleted?: number;
+  foreign?: number;
+  deleting?: number;
+  errors?: number;
 }
 
 export function logEvent(event: string, fields: LogFields = {}): void {

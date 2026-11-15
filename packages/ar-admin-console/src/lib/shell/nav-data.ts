@@ -611,6 +611,7 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 				id: 'machine',
 				label: 'nav.pa.machine',
 				icon: 'robot',
+				details: true,
 				legacyRoutes: ['/admin/machine-access']
 			},
 			{

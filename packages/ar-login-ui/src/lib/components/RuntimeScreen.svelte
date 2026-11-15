@@ -1423,7 +1423,7 @@
 	}
 
 	.runtime-screen-field small.runtime-screen-error {
-		color: var(--danger, #ef4444);
+		color: var(--danger-fg, var(--danger, #ef4444));
 	}
 
 	.runtime-screen-heading h2 {
@@ -1529,7 +1529,7 @@
 	}
 
 	.runtime-code-input-widget > .runtime-screen-error {
-		color: var(--danger, #ef4444);
+		color: var(--danger-fg, var(--danger, #ef4444));
 		font-size: var(--auth-copy-size, 0.875rem);
 	}
 

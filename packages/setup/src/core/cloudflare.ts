@@ -5095,6 +5095,14 @@ export function findUnsatisfiedRequiredMigrationFiles(
     .map((file) => file.path);
 }
 
+/** Read a database's migration history with SELECT only (no table is created or repaired). */
+export async function readD1AppliedMigrationHistory(
+  dbName: string
+): Promise<Array<{ filename: string; checksum: string | null }>> {
+  const rows = await readAppliedMigrationRows(dbName);
+  return rows.map((row) => ({ filename: row.filename, checksum: row.checksum ?? null }));
+}
+
 /**
  * Verify, without changing anything, that a database records every given migration with the
  * expected checksum. Only SELECTs are issued, so it is safe in a dry run and before any lock is
