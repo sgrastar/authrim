@@ -36,6 +36,7 @@ import {
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
   resolvePlatformSettingsWithSources,
+  filterTenantsReachableByMachine,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { sendLastResortNotices } from './last-resort-recovery-notice';
@@ -172,7 +173,13 @@ adminLastResortRecoveryRouter.post('/second-factors', async (c) => {
 
   try {
     const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
-    const targets = await findTargets(adapter, email, tenantId);
+    // An all-tenants machine of a non-platform principal does not find an administrator of a
+    // tenant the platform excludes from that scope (the answer is the one for no such email).
+    const targets = await filterTenantsReachableByMachine(
+      c as never,
+      await findTargets(adapter, email, tenantId),
+      (target) => target.tenant_id
+    );
     const [target] = targets;
     if (!target) {
       return refuse(c, 404, 'not_found', 'No administrator has this email');

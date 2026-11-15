@@ -42,6 +42,7 @@ import {
   type DestinationProfileConsentField,
   type IdentityMappingTier,
   type TenantDatabaseRequestCache,
+  refuseMachineOnExcludedTenant,
 } from '@authrim/ar-lib-core';
 import {
   claimShapes,
@@ -374,6 +375,12 @@ export async function adminIdentityMappingSetChangePreviewHandler(c: AdminContex
     const tenantParam = c.req.query('tenant_id');
     if (tenantParam !== undefined && (!platformSet || !TENANT_ID_PATTERN.test(tenantParam))) {
       throw badRequest('tenant_id is for a platform set, and must be a tenant ID');
+    }
+    if (
+      tenantParam !== undefined &&
+      (await refuseMachineOnExcludedTenant(c as never, tenantParam))
+    ) {
+      throw forbidden('This machine credential is not valid for this tenant');
     }
 
     const state = await repository.findFieldMappingSetState(ownerTenantId, setId);

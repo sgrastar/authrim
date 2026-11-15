@@ -31,6 +31,7 @@ import {
   type IdentityMappingChainEntry,
   type IdentityMappingSelection,
   type TenantDatabaseRequestCache,
+  machineTenantSqlCondition,
 } from '@authrim/ar-lib-core';
 import {
   countClientIdentityMappingChoices,
@@ -184,6 +185,14 @@ export async function adminPlatformIdentityMappingTenantsHandler(c: TenantsConte
     if (isSingleTenantMode(c.env)) {
       filters.push('id = ?');
       params.push(getSingleTenantId(c.env));
+    }
+    // A machine token for every tenant of a non-platform principal does not see the tenants the
+    // platform excludes from that scope. Filtered in the query, so the pages and the cursor stay
+    // correct (a page is never short because of what was removed from it).
+    const hide = await machineTenantSqlCondition(c as never, 'id');
+    if (hide) {
+      filters.push(hide.sql);
+      params.push(...hide.params);
     }
     if (after !== null) {
       filters.push('id > ?');

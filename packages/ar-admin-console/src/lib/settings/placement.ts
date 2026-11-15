@@ -408,6 +408,14 @@ export const TEAM: SettingsPageDef = {
 			description: 'set.section.adminInvitationsPlatform.desc',
 			level: 'platform',
 			settings: [{ key: 'admin_invitations.code_handoff_enabled', depth: 'primary' }]
+		},
+		{
+			// Next to the invitation code handoff: both are about what a machine credential may do.
+			id: 'machine-access-platform',
+			title: 'set.section.machineAccessPlatform',
+			description: 'set.section.machineAccessPlatform.desc',
+			level: 'platform',
+			settings: [{ key: 'machine_access.all_scope_excluded_tenants', depth: 'primary' }]
 		}
 	]
 };

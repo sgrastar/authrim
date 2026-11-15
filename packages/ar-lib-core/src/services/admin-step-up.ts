@@ -80,6 +80,12 @@ export const ADMIN_STEP_UP_OPERATIONS = {
   // Turning on the platform switch that lets a machine principal receive an admin invitation's
   // enrollment code in the API response instead of by e-mail.
   'admin_invitation.code_handoff.enable': 'L2',
+  // Taking a tenant off the platform's list of tenants an all-tenants machine scope does not
+  // include (`machine_access.all_scope_excluded_tenants`), or emptying the list.
+  'machine_access.excluded_tenants.relax': 'L2',
+  // Naming a protected tenant (one a machine's all-tenants scope does not include) in a machine
+  // principal's or credential's tenant scope, and creating or changing a platform principal.
+  'machine.protected_grant': 'L2',
 } as const satisfies Record<string, Exclude<AdminStepUpLevel, 'L0'>>;
 
 /**
@@ -93,6 +99,10 @@ export const ADMIN_STEP_UP_ALWAYS_ENFORCED: ReadonlySet<AdminStepUpOperation> = 
   'admin.second_factor.remove',
   // A machine can never switch the code handoff on, exemption or not.
   'admin_invitation.code_handoff.enable',
+  // A machine can never lift the protection of a tenant, exemption or not.
+  'machine_access.excluded_tenants.relax',
+  // Never switched off, never exempt: these grants are made by a signed-in platform admin only.
+  'machine.protected_grant',
 ]);
 
 /** The platform setting that turns route enforcement on (default) or, during a migration, off. */

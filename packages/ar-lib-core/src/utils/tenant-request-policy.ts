@@ -176,3 +176,49 @@ export function extractTenantScopedPathTenantId(path?: string | null): string | 
   }
   return null;
 }
+
+const ADMIN_PATH_TARGET_TENANT_PATTERNS: readonly RegExp[] = [
+  // Every route under a tenant of the inventory (including the ones a tenant administrator may
+  // open for their own tenant): the tenant is the first segment after `/tenants/`.
+  /^\/api\/admin\/tenants\/([^/]+)(?:\/|$)/i,
+  /^\/api\/admin\/settings\/logging\/tenant\/([^/]+)(?:\/|$)/i,
+];
+
+/**
+ * The tenant an Admin API path names as its target, normalised for comparison: percent-decoded
+ * (more than once, as a handler's own parameter decoding may decode again), NFKC-normalised,
+ * trimmed and lowercased.
+ *
+ * - `{ kind: 'none' }`: the path names no tenant.
+ * - `{ kind: 'tenant', tenantId }`: it names that tenant.
+ * - `{ kind: 'unresolvable' }`: it names one, but the segment cannot be read as a tenant ID
+ *   (malformed or nested percent-encoding). A decision that protects tenants must treat that as
+ *   naming any of them.
+ *
+ * Pass the router's own path (`c.req.path`), never one taken from the raw URL.
+ */
+export type AdminPathTargetTenant =
+  | { kind: 'none' }
+  | { kind: 'tenant'; tenantId: string }
+  | { kind: 'unresolvable' };
+
+export function resolveAdminPathTargetTenant(path?: string | null): AdminPathTargetTenant {
+  const normalizedPath = path || '';
+  for (const pattern of ADMIN_PATH_TARGET_TENANT_PATTERNS) {
+    const match = normalizedPath.match(pattern);
+    if (!match?.[1]) continue;
+    let segment = match[1];
+    for (let round = 0; round < 3 && segment.includes('%'); round += 1) {
+      try {
+        const decoded = decodeURIComponent(segment);
+        if (decoded === segment) break;
+        segment = decoded;
+      } catch {
+        return { kind: 'unresolvable' };
+      }
+    }
+    if (segment.includes('%')) return { kind: 'unresolvable' };
+    return { kind: 'tenant', tenantId: segment.normalize('NFKC').trim().toLowerCase() };
+  }
+  return { kind: 'none' };
+}

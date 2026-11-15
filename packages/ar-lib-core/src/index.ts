@@ -32,6 +32,7 @@ export * from './services/notification-intent-routing';
 export * from './services/legacy-settings';
 export * from './services/legacy-settings-import';
 export * from './services/effective-settings';
+export * from './services/machine-excluded-tenants';
 export * from './services/external-plugin-gate';
 export * from './services/tenant-capabilities';
 export * from './services/environment-banner';

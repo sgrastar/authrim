@@ -362,6 +362,31 @@ describe('where settings live', () => {
 		}
 	});
 
+	it('places the machine access exclusion once, as an applied platform-only setting, in a platform section of the team settings', () => {
+		const key = 'machine_access.all_scope_excluded_tenants';
+		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'team');
+		const section = page?.sections.find((candidate) => candidate.id === 'machine-access-platform');
+		expect(section?.level).toBe('platform');
+		const meta = ALL_CATEGORY_META['machine-access'].settings[key];
+		expect(categoryOf(key)).toBe('machine-access');
+		expect(meta.status).toBeUndefined();
+		expect(NOT_APPLIED.has(key)).toBe(false);
+		// The platform's alone: a tenant can neither see nor change it.
+		expect(meta.scopes).toEqual(['platform']);
+		expect(CATEGORY_SCOPE_CONFIG['machine-access'].allowedScopes).toEqual(['platform']);
+		expect(meta.envKey).toBe('MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS');
+		expect(meta.default).toBe('');
+		expect(drafted).not.toContain(key);
+		expect(section?.settings).toEqual([{ key, depth: 'primary' }]);
+		expect(hasMessage(settingText(key).label)).toBe(true);
+		expect(settingText(key).description).toBeDefined();
+		// The team page's navigation entry opens for this category too.
+		const team = [...TENANT_AREAS, ...PLATFORM_AREAS]
+			.flatMap((area) => area.children)
+			.find((item) => item.id === 'team');
+		expect(team?.requires?.settings).toContain('machine-access');
+	});
+
 	it('places the login entry mode and its two switches once, in a platform section of Settings → General', () => {
 		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'general');
 		const section = page?.sections.find((candidate) => candidate.id === 'login-entry-platform');

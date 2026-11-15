@@ -16,7 +16,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
@@ -31,6 +31,9 @@ import {
   verifyDomainDnsTxt,
   calculateVerificationExpiry,
   isVerificationExpired,
+  refuseMachineOnExcludedTenant,
+  machineTenantSqlCondition,
+  isAllScopeNonPlatformMachine,
 } from '@authrim/ar-lib-core';
 import { z } from './zod';
 
@@ -164,6 +167,29 @@ async function requireDomainOfMapping(
   return { domain };
 }
 
+/**
+ * A mapping decides which tenant a sign-in domain belongs to, so it is judged by the tenant it
+ * belongs to, as stored: an all-tenants machine token of a non-platform principal does not read or
+ * change a mapping of a tenant the platform excludes from that scope. Null when it may go ahead
+ * (also when the mapping does not exist: the handler answers not found as it did).
+ */
+async function refuseOnStoredMappingTenant(
+  c: Context<{ Bindings: Env }>,
+  adapter: ReturnType<typeof getCoreAdapter>,
+  id: string
+): Promise<Response | null> {
+  // Only an all-tenants machine of a non-platform principal is limited: no extra read for others.
+  const caller = (c as unknown as { get(key: string): AdminAuthContext | undefined }).get(
+    'adminAuth'
+  );
+  if (!isAllScopeNonPlatformMachine(caller)) return null;
+  const row = await adapter.queryOne<{ tenant_id: string }>(
+    'SELECT tenant_id FROM tenant_domain_mappings WHERE id = ?',
+    [id]
+  );
+  return row ? refuseMachineOnExcludedTenant(c as never, row.tenant_id) : null;
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -191,6 +217,14 @@ export async function listTenantDomainMappingsHandler(c: Context<{ Bindings: Env
     if (verified !== undefined) {
       query += ` AND verified = ?`;
       params.push(verified === 'true' ? 1 : 0);
+    }
+
+    // A machine token of a non-platform principal does not see (or count) the mappings of a tenant
+    // the platform excludes from its all-tenants scope: the same condition for the total and the page.
+    const hide = await machineTenantSqlCondition(c as never, 'tenant_id');
+    if (hide) {
+      query += ` AND ${hide.sql}`;
+      params.push(...hide.params);
     }
 
     const countQuery = query.replace('SELECT *', 'SELECT COUNT(*) as count');
@@ -242,6 +276,11 @@ export async function createTenantDomainMappingHandler(c: Context<{ Bindings: En
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'domain', reason: domainValidation.error! },
       });
+    }
+
+    {
+      const refused = await refuseMachineOnExcludedTenant(c as never, tenant_id);
+      if (refused) return refused;
     }
 
     const adapter = getCoreAdapter(c);
@@ -333,6 +372,10 @@ export async function getTenantDomainMappingHandler(c: Context<{ Bindings: Env }
   const id = c.req.param('id')!;
 
   try {
+    {
+      const refused = await refuseOnStoredMappingTenant(c, getCoreAdapter(c), id);
+      if (refused) return refused;
+    }
     const adapter = getCoreAdapter(c);
     const row = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
@@ -361,6 +404,10 @@ export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: En
   const id = c.req.param('id')!;
 
   try {
+    {
+      const refused = await refuseOnStoredMappingTenant(c, getCoreAdapter(c), id);
+      if (refused) return refused;
+    }
     const body = await c.req.json<unknown>();
     const parseResult = UpdateSchema.safeParse(body);
 
@@ -461,6 +508,10 @@ export async function deleteTenantDomainMappingHandler(c: Context<{ Bindings: En
   const id = c.req.param('id')!;
 
   try {
+    {
+      const refused = await refuseOnStoredMappingTenant(c, getCoreAdapter(c), id);
+      if (refused) return refused;
+    }
     const adapter = getCoreAdapter(c);
 
     const existing = await adapter.queryOne<{ id: string }>(
@@ -509,6 +560,10 @@ export async function initiateTenantDomainVerificationHandler(c: Context<{ Bindi
     }
 
     const adapter = getCoreAdapter(c);
+    {
+      const refused = await refuseOnStoredMappingTenant(c, adapter, body.id);
+      if (refused) return refused;
+    }
     const existing = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
       [body.id]
@@ -571,6 +626,10 @@ export async function confirmTenantDomainVerificationHandler(c: Context<{ Bindin
     }
 
     const adapter = getCoreAdapter(c);
+    {
+      const refused = await refuseOnStoredMappingTenant(c, adapter, body.id);
+      if (refused) return refused;
+    }
     const existing = await adapter.queryOne<TenantDomainMappingRow>(
       'SELECT * FROM tenant_domain_mappings WHERE id = ?',
       [body.id]

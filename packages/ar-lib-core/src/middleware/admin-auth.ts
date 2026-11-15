@@ -32,10 +32,30 @@ import { parseTokenHeader, verifyToken } from '../utils/jwt';
 import { AdminMachineAccessRepository } from '../repositories/admin/admin-machine-access';
 import {
   intersectMachinePermissionSets,
+  isPlatformMachinePrincipal,
+  PLATFORM_MACHINE_PRINCIPAL_TYPES,
+  resolveMachineExplicitTenantScope,
   resolveMachineTenantScope,
 } from '../repositories/admin/admin-machine-grant';
+import {
+  classifyTenantRequestPath,
+  resolveAdminPathTargetTenant,
+} from '../utils/tenant-request-policy';
+import {
+  allScopeExcludesTenant,
+  isAllScopeNonPlatformMachine,
+  machineExcludedTenantsOf,
+  machineTenantRefusal,
+  type MachineExclusionContext,
+} from '../services/machine-excluded-tenants';
 
-export { intersectMachinePermissionSets, resolveMachineTenantScope };
+export {
+  intersectMachinePermissionSets,
+  isPlatformMachinePrincipal,
+  PLATFORM_MACHINE_PRINCIPAL_TYPES,
+  resolveMachineExplicitTenantScope,
+  resolveMachineTenantScope,
+};
 import { importJWK, type CryptoKey, type JWK, type JWTPayload } from 'jose';
 
 const log = createLogger().module('ADMIN-AUTH');
@@ -191,16 +211,50 @@ export function adminAuthContextHasTenantScope(
 }
 
 /**
+ * Whether `permission` is an exact name (no pattern) in the caller's CURRENT STORED grant, as
+ * authentication read it: the principal's permissions narrowed by the credential's own. Not what
+ * the token's scope says: asked for a name a stored wildcard covers, the token endpoint puts that
+ * exact name in the scope. A caller with no stored set (anything that is not a machine token read
+ * from a stored grant) holds nothing by exact name.
+ */
+export function holdsStoredExactPermission(
+  authContext: AdminAuthContext | undefined,
+  permission: string
+): boolean {
+  return (
+    authContext !== undefined &&
+    !permission.includes('*') &&
+    (authContext.storedExactPermissions ?? []).includes(permission)
+  );
+}
+
+/**
  * Whether the caller holds `permission` for every tenant: a global tenant scope, and the
  * permission among what the global assignments (or a global token) give. `authContext.permissions`
  * adds up every assignment that applies to the request, so a permission held only for this tenant
  * is in it too; an operation that takes effect across tenants (granting a global role, say) must
  * not be allowed on that sum.
+ *
+ * While the platform excludes tenants from an all-tenants machine scope
+ * (`machine_access.all_scope_excluded_tenants`) and the caller is a non-platform all-tenants
+ * machine (`tenantExclusionActive`, set by `adminAuthMiddleware`), a wildcard (`*`, `admin:*`,
+ * `x:*`) does not count here: only the permission held by its exact name. This is the one place
+ * every platform-authority check goes through (`hasGlobalMachinePermission`,
+ * `hasGlobalPlatformAuthority`, `hasSystemAdminAuthority`, the handlers' own wrappers).
  */
 export function hasGlobalAdminPermission(
   authContext: AdminAuthContext | undefined,
   permission: string
 ): boolean {
+  if (authContext?.tenantExclusionActive === true) {
+    // While tenants are excluded from an all-tenants machine scope, such a caller gets no
+    // cross-tenant authority from a wildcard: only a permission it holds by its exact name.
+    return (
+      (authContext.tenantScope ?? []).includes('*') &&
+      holdsStoredExactPermission(authContext, permission) &&
+      (authContext.globalPermissions ?? []).includes(permission)
+    );
+  }
   return (
     authContext !== undefined &&
     (authContext.tenantScope ?? []).includes('*') &&
@@ -417,6 +471,10 @@ async function authenticateMachineAccessToken(
         payload.credential_strength === 'asymmetric_key' ? 'asymmetric_key' : undefined,
       senderConstrained: payload.sender_constrained === true,
       tenantScope,
+      // Read from the stored grant on every use, not from the token: a tenant named (or no longer
+      // named) after the token was issued counts from the next request.
+      tenantScopeExplicit: tenantScope.includes('*') ? snapshot.explicitTenantScope : tenantScope,
+      storedExactPermissions: snapshot.permissions.filter((entry) => !entry.includes('*')),
     };
   } catch (error) {
     log.debug('Admin machine access token authentication failed', {
@@ -862,6 +920,177 @@ function isPlatformAdminSessionPath(path: string): boolean {
 }
 
 /**
+ * Refuses an all-tenants machine token on a tenant the platform excludes from that scope
+ * (`machine_access.all_scope_excluded_tenants`), unless the principal and credential name the
+ * tenant in their own allow-lists. Two tenants are judged, by the router's own path
+ * (`c.req.path`, never the raw URL):
+ * - the tenant a tenant-scoped Admin API route runs in (its `X-Tenant-Id`), so every route
+ *   that works on a tenant's data, an admin invitation and its code hand-off included, is covered;
+ * - the tenant a path names as its target (`/api/admin/tenants/{id}/...`), whatever the class of
+ *   the route, so a tenant inventory operation (delete, provisioning clean-up, lifecycle) on a
+ *   protected tenant is refused too. Inventory and platform operations that name no excluded
+ *   tenant (creating a tenant, reading another one, platform settings) are not affected.
+ * The refusal is the one a tenant scope that does not include the tenant gives, so it says nothing
+ * more than that. A human session, an agent token, a token limited to named tenants and the
+ * platform principal types (setup tool, Admin console relay, internal service) never get here.
+ */
+async function refuseExcludedAllScopeMachine(
+  c: Context<{ Bindings: Env }>,
+  authContext: AdminAuthContext,
+  requestTenantId: string | null
+): Promise<Response | null> {
+  if (!isAllScopeNonPlatformMachine(authContext)) return null;
+  // The decision is made on the context, so the handlers that call the shared helper afterwards
+  // reuse this read (one per request).
+  const ctx = c as unknown as MachineExclusionContext;
+  if (!ctx.get('adminAuth')) ctx.set('adminAuth', authContext);
+  const excluded = await machineExcludedTenantsOf(ctx);
+  if (excluded.kind === 'none') return null;
+  // From here the exclusion is in force for this caller (see `hasGlobalAdminPermission`).
+  authContext.tenantExclusionActive = true;
+
+  const path = c.req.path;
+  const requestClass = classifyTenantRequestPath(path);
+  const target = resolveAdminPathTargetTenant(path);
+  const judged: Array<string | null> = [];
+  if (target.kind === 'tenant') judged.push(target.tenantId);
+  if (target.kind === 'unresolvable') judged.push(null);
+  // The request tenant is judged wherever the request runs in a tenant. Platform and tenant
+  // inventory operations run on the host's tenant without being about it (creating a tenant,
+  // reading another tenant's provisioning, platform settings): they are judged on what they
+  // name, below.
+  if (requestClass === 'tenant_scoped_admin' || requestClass === 'public_protocol_or_rest') {
+    judged.push(requestTenantId ?? authContext.tenantId ?? null);
+  }
+  // A platform route may take its tenant from the X-Tenant-Id header (plugin configuration does).
+  if (requestClass === 'platform_admin') {
+    const header = c.req.header('X-Tenant-Id')?.trim();
+    if (header) judged.push(header);
+  }
+  // Tenants the request names in its query string or its JSON body, whatever its class.
+  const named = await namedTenantsOfRequest(c);
+  if (named === 'unreadable') judged.push(null);
+  else judged.push(...named);
+
+  if (!judged.some((tenantId) => allScopeExcludesTenant(authContext, excluded, tenantId))) {
+    return null;
+  }
+  log.warn('Admin all-tenants machine token refused: tenant excluded from the all-tenants scope', {
+    actorId: authContext.actorId,
+    credentialId: authContext.credentialId,
+    method: c.req.method,
+    requestTenantId,
+    unreadableSetting: excluded.kind === 'all',
+  });
+  return machineTenantRefusal(ctx);
+}
+
+/**
+ * Reads a clone of the request body as text, counting BYTES, and stops as soon as the limit is
+ * passed (the rest is never read or buffered here; the original body is untouched, so the handler
+ * still reads all of it when it is within the limit). `too_large` when the limit was passed, null
+ * when there is no body or it cannot be read.
+ */
+async function readBodyUpTo(
+  request: Request,
+  limit: number
+): Promise<{ text: string } | 'too_large' | null> {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    reader = request.clone().body?.getReader();
+  } catch {
+    return null;
+  }
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        // Not awaited: the cancel of one branch of a cloned body settles only when the other
+        // branch is cancelled too.
+        void reader.cancel().catch(() => undefined);
+        return 'too_large';
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { text: new TextDecoder().decode(bytes) };
+}
+
+const QUERY_TENANT_KEYS = ['tenant_id', 'tenantId', 'filter[tenant_id]', 'tenant'] as const;
+const BODY_TENANT_KEYS = ['tenant_id', 'tenantId'] as const;
+const BODY_TENANT_LIST_KEYS = ['tenant_ids', 'tenantIds'] as const;
+/** The most of a JSON body read to find the tenants it names. A larger one is not read: refused. */
+const MAX_PEEKED_BODY_BYTES = 1024 * 1024;
+
+/** Splits query values that are lists ("a,b") into tenant IDs. */
+function splitTenantValues(values: string[]): string[] {
+  return values.flatMap((value) => value.split(',')).map((value) => value.trim());
+}
+
+/**
+ * The tenant IDs a request names outside its path: well-known query keys, and top-level
+ * `tenant_id` / `tenantId` / `tenant_ids` / `tenantIds` of a JSON body. `unreadable` when a body
+ * that would have to be read is too large (a padded body must not hide a tenant). Only called for
+ * the callers the exclusion applies to.
+ */
+async function namedTenantsOfRequest(
+  c: Context<{ Bindings: Env }>
+): Promise<string[] | 'unreadable'> {
+  const tenants: string[] = [];
+  let params: URLSearchParams;
+  try {
+    params = new URL(c.req.url).searchParams;
+  } catch {
+    return 'unreadable';
+  }
+  for (const key of QUERY_TENANT_KEYS) tenants.push(...splitTenantValues(params.getAll(key)));
+
+  const method = c.req.method.toUpperCase();
+  // Whatever the Content-Type says: a handler's `c.req.json()` parses any body as JSON.
+  if (method === 'GET' || method === 'HEAD') {
+    return tenants.filter((tenant) => tenant !== '');
+  }
+  const declared = Number(c.req.header('Content-Length') ?? '0');
+  if (Number.isFinite(declared) && declared > MAX_PEEKED_BODY_BYTES) return 'unreadable';
+  const read = await readBodyUpTo(c.req.raw, MAX_PEEKED_BODY_BYTES);
+  if (read === 'too_large') return 'unreadable';
+  if (read === null) return tenants.filter((tenant) => tenant !== '');
+  const text = read.text;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return tenants.filter((tenant) => tenant !== '');
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const body = parsed as Record<string, unknown>;
+    for (const key of BODY_TENANT_KEYS) {
+      if (typeof body[key] === 'string') tenants.push(body[key]);
+    }
+    for (const key of BODY_TENANT_LIST_KEYS) {
+      const list = body[key];
+      if (Array.isArray(list)) {
+        for (const item of list) if (typeof item === 'string') tenants.push(item);
+      }
+    }
+  }
+  return tenants.map((tenant) => tenant.trim()).filter((tenant) => tenant !== '');
+}
+
+/**
  * Admin authentication middleware
  *
  * Supports Admin UI session authentication:
@@ -1105,6 +1334,15 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
         );
       }
     }
+
+    // Platform setting `machine_access.all_scope_excluded_tenants`: a machine token whose scope is
+    // all tenants does not reach the listed tenants unless its principal and credential name them.
+    const exclusionRefusal = await refuseExcludedAllScopeMachine(
+      c,
+      authContext,
+      requestTenantIdForSession ?? resolveAdminRequestTenantId(c)
+    );
+    if (exclusionRefusal) return exclusionRefusal;
 
     // Check IP allowlist (unless skipped)
     if (!options.skipIpCheck && authContext.authMethod === 'session') {

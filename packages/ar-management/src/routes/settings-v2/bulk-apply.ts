@@ -19,8 +19,12 @@ import {
   createAuditLogFromContext,
   createLogger,
   ensureDatabaseAdapter,
+  allScopeExcludesTenant,
   hasGlobalMachinePermission,
+  isAllScopeNonPlatformMachine,
+  machineExcludedTenantsOf,
   type AdminAuthContext,
+  type MachineExcludedTenants,
   type CategoryName,
   type Env,
   type SettingScope,
@@ -69,12 +73,41 @@ export function hasGlobalBulkApplyAuthority(adminAuth: AdminAuthContext | undefi
   return hasGlobalPlatformSettingsEdit(adminAuth, 'bulk-apply');
 }
 
+/** Where the handler keeps what the platform excludes from an all-tenants machine scope. */
+const MACHINE_EXCLUDED_TENANTS = 'bulkMachineExcludedTenants';
+
+/**
+ * Reads, once per request, the tenants the platform excludes from an all-tenants machine scope
+ * (`machine_access.all_scope_excluded_tenants`), for the caller it can apply to. The bulk apply
+ * names its target tenants in the body, so the Admin API authentication (which judges the request
+ * tenant and the path) cannot see them: each target is judged here, by `canReachTenant`.
+ */
+async function loadMachineExcludedTenants(c: BulkContext): Promise<void> {
+  if (!isAllScopeNonPlatformMachine(c.get('adminAuth'))) return;
+  (c as unknown as { set(name: string, value: unknown): void }).set(
+    MACHINE_EXCLUDED_TENANTS,
+    await machineExcludedTenantsOf(c)
+  );
+}
+
 /**
  * The tenant access check of a bulk write. The caller already holds the platform's authority, so
  * a machine token for every tenant reaches tenants other than the one the request arrived on
  * (`canAccessTenant` ties a machine to the request's tenant); a person is judged as on a PATCH.
+ * A tenant the platform excludes from an all-tenants machine scope is not reached that way, and
+ * an exclusion that was not read for a caller it applies to refuses (fail closed).
  */
-function canReachTenant(adminAuth: AdminAuthContext | undefined, tenantId: string): boolean {
+function canReachTenant(
+  adminAuth: AdminAuthContext | undefined,
+  tenantId: string,
+  c: BulkContext
+): boolean {
+  if (adminAuth && isAllScopeNonPlatformMachine(adminAuth)) {
+    const excluded = (c as unknown as { get(name: string): unknown }).get(
+      MACHINE_EXCLUDED_TENANTS
+    ) as MachineExcludedTenants | undefined;
+    if (!excluded || allScopeExcludesTenant(adminAuth, excluded, tenantId)) return false;
+  }
   if (canAccessTenant(adminAuth, tenantId)) return true;
   return (
     adminAuth?.authMethod === 'machine_access_token' &&
@@ -220,7 +253,7 @@ async function planCategory(
   // The caller's own authority over this tenant's category, as the PATCH route would judge it.
   if (
     !hasTenantSettingsPermission(adminAuth, change.category as CategoryName, 'edit', tenantId) ||
-    !canReachTenant(adminAuth, tenantId)
+    !canReachTenant(adminAuth, tenantId, c)
   ) {
     for (const entry of eligible) reject(entry, 'forbidden');
     return plan;
@@ -313,7 +346,7 @@ async function runSharedSave(
         ...(Object.keys(input.set).length > 0 ? { set: input.set } : {}),
         ...(input.clear.length > 0 ? { clear: input.clear } : {}),
       }),
-      canAccess: canReachTenant,
+      canAccess: (auth, tenantId) => canReachTenant(auth, tenantId, c),
       // The request arrived on another tenant's database: route by this tenant instead.
       tenantCoreDb: null,
       ...(input.bulkId
@@ -782,6 +815,7 @@ export async function bulkApplyHandler(c: BulkContext): Promise<Response> {
     );
   }
   const { request } = parsed;
+  await loadMachineExcludedTenants(c);
 
   let directory: TenantDirectory;
   try {

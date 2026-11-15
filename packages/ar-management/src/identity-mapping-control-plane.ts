@@ -9325,12 +9325,14 @@ export function hasPlatformOwnerScopeAuthority(c: AdminContext): boolean {
         globalRoles?: string[];
         globalPermissions?: string[];
         tenantScope?: string[];
+        tenantExclusionActive?: boolean;
       }
     | undefined;
   const globalRoles = auth?.globalRoles ?? [];
   const globalPermissions = auth?.globalPermissions ?? [];
   const hasPlatformRole =
-    globalRoles.includes(ADMIN_ROLES.SUPER_ADMIN) || globalPermissions.includes('*');
+    globalRoles.includes(ADMIN_ROLES.SUPER_ADMIN) ||
+    (globalPermissions.includes('*') && auth?.tenantExclusionActive !== true);
   const hasGlobalScope = Array.isArray(auth?.tenantScope) && auth.tenantScope.includes('*');
   return hasPlatformRole && hasGlobalScope;
 }

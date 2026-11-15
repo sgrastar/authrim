@@ -48,6 +48,7 @@ import {
   isExternalPluginExecutionAllowed,
   humanVerificationConfigValid,
   getTenantCapabilityState,
+  refuseMachineOnExcludedTenant,
 } from '@authrim/ar-lib-core';
 import {
   maskSensitiveFieldsRecursive,
@@ -1046,6 +1047,10 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
   const tenantId = getRequestTenantId(c);
+  {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
 
   // Lazy initialization: Ensure builtin plugins are registered
   // This runs once per Worker isolate and is a no-op if already registered
@@ -1132,6 +1137,10 @@ export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
   const pluginId = c.req.param('id')!;
   const kv = getPluginKV(c.env);
   const tenantId = getRequestTenantId(c);
+  {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
 
   if (!kv) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1216,6 +1225,10 @@ export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
 export async function getPluginConfigHandler(c: Context<{ Bindings: Env }>) {
   const pluginId = c.req.param('id')!;
   const tenantId = getRequestTenantId(c);
+  {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   const kv = getPluginKV(c.env);
 
   if (!kv) {
@@ -1268,6 +1281,10 @@ export async function resetPluginConfigHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('PluginAdminAPI');
   const pluginId = c.req.param('id')!;
   const tenantId = getRequestTenantId(c);
+  {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   const kv = getPluginKV(c.env);
 
   if (!kv || !tenantId) {
@@ -1363,6 +1380,10 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
 
   // Get existing config for audit logging
   const tenantId = getRequestTenantId(c, body.tenant_id);
+  {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   const entry = registry[pluginId];
   if (entry.backendKind === 'dynamic_worker') {
     const capabilityRefused = await externalPluginCapabilityRefusal(c);
@@ -1553,6 +1574,10 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
     enableInput = { tenantId: undefined, resourceSelections: [] };
   }
   const tenantId = getRequestTenantId(c, enableInput.tenantId);
+  {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
 
   const entry = registry[pluginId];
   if (entry.backendKind === 'dynamic_worker') {
@@ -1763,6 +1788,10 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
     tenantId = getRequestTenantId(c, body.tenant_id);
   } catch {
     tenantId = getRequestTenantId(c);
+  }
+  {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
   }
 
   const entry = registry[pluginId];
@@ -2004,6 +2033,10 @@ export async function uninstallPluginHandler(c: Context<{ Bindings: Env }>) {
     c,
     typeof body.tenant_id === 'string' ? body.tenant_id : undefined
   );
+  {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   if (!tenantId) return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
 
   const preparation = await getDynamicPluginResourcePreparationForDisable(c.env, {
@@ -2108,6 +2141,10 @@ export async function sendPluginTestEmailHandler(c: Context<{ Bindings: Env }>) 
   }
 
   const tenantId = getRequestTenantId(c, body?.tenant_id);
+  {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   const enabled = await isPluginEnabled(kv, pluginId, tenantId);
   if (!enabled) {
     return c.json(

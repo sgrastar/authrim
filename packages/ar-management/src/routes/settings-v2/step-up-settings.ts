@@ -10,6 +10,10 @@
  *   (or unset, with the environment variable and default off) to on. Turning it off is free. A
  *   machine can never do it (the operation is always enforced and needs a signed-in human).
  *
+ * - `machine_access.excluded_tenants.relax`: `machine_access.all_scope_excluded_tenants` stops
+ *   listing a tenant it listed (removed, cleared, or the whole value replaced). Adding a tenant
+ *   is free. Always enforced: a machine can never lift the protection.
+ *
  * - `tenant.jurisdiction.update`: the `tenant` category's `tenant.residency_profile_id` changes which
  *   residency profile applies and the jurisdiction differs (an unknown profile counts as differing).
  * - `audit.retention.shorten` also covers `tenant.audit_profile_id` switching to an audit profile
@@ -28,6 +32,8 @@ import {
   ADMIN_STEP_UP_ENFORCED_KEY,
   ADMIN_STEP_UP_OVERRIDES_KEY,
   ADMIN_INVITATION_CODE_HANDOFF_KEY,
+  MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY,
+  readMachineExcludedTenants,
   CHECK_API_AUDIT_DEFAULTS,
   DISABLED_MARKER,
   settingsParentScopes,
@@ -65,6 +71,7 @@ export const TENANT_PROFILE_KEYS = [
 ] as const;
 const POLICY_KEYS = [ADMIN_STEP_UP_OVERRIDES_KEY, ADMIN_STEP_UP_ENFORCED_KEY] as const;
 const HANDOFF_KEYS = [ADMIN_INVITATION_CODE_HANDOFF_KEY] as const;
+const MACHINE_EXCLUSION_KEYS = [MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY] as const;
 const LEVEL_RANK: Record<string, number> = { L1: 1, L2: 2 };
 
 type Doc = Record<string, unknown>;
@@ -93,7 +100,8 @@ export type StepUpSettingsDecision =
       operation:
         | 'admin_step_up.policy.relax'
         | 'audit.retention.shorten'
-        | 'admin_invitation.code_handoff.enable';
+        | 'admin_invitation.code_handoff.enable'
+        | 'machine_access.excluded_tenants.relax';
       params: Record<string, unknown>;
     };
 
@@ -102,6 +110,7 @@ export function patchTouchesStepUpSettings(body: SettingsPatchRequest): boolean 
   const guarded: readonly string[] = [
     ...POLICY_KEYS,
     ...HANDOFF_KEYS,
+    ...MACHINE_EXCLUSION_KEYS,
     ...RETENTION_SETTING_KEYS,
     ...TENANT_PROFILE_KEYS,
   ];
@@ -161,7 +170,36 @@ export function decideStepUpSettings(input: {
     effective(doc, inherited, ADMIN_INVITATION_CODE_HANDOFF_KEY) === true;
   const handoffEnabled = !handoffOn(before) && handoffOn(after);
 
+  // The tenants an all-tenants machine scope does not include: only lifting the protection needs
+  // a human step-up (a tenant dropped from the list, the list emptied or replaced by something
+  // that is not a valid list). An unset value is what the scope inherits (environment variable,
+  // else the empty default). A value that is not valid reads as every tenant excluded.
+  const excludedBefore = readMachineExcludedTenants(
+    effective(before, inherited, MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY)
+  );
+  const excludedAfter = readMachineExcludedTenants(
+    effective(after, inherited, MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY)
+  );
+  const excludedRelaxed =
+    excludedBefore.kind === 'all'
+      ? excludedAfter.kind !== 'all'
+      : excludedBefore.kind === 'list' &&
+        (excludedAfter.kind === 'none' ||
+          (excludedAfter.kind === 'list' &&
+            [...excludedBefore.tenants].some((tenantId) => !excludedAfter.tenants.has(tenantId))));
+
   if (relax) return { kind: 'gate', operation: 'admin_step_up.policy.relax', params };
+  if (excludedRelaxed) {
+    return {
+      kind: 'gate',
+      operation: 'machine_access.excluded_tenants.relax',
+      params: {
+        ...params,
+        [MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY]:
+          effective(after, inherited, MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY) ?? '',
+      },
+    };
+  }
   if (handoffEnabled) {
     return {
       kind: 'gate',
@@ -177,6 +215,7 @@ type StepUpNeed = {
   operation:
     | 'admin_step_up.policy.relax'
     | 'admin_invitation.code_handoff.enable'
+    | 'machine_access.excluded_tenants.relax'
     | 'tenant.jurisdiction.update'
     | 'webhook.destination.update'
     | 'audit.retention.shorten';

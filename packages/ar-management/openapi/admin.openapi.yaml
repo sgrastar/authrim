@@ -41,6 +41,46 @@ info:
     (`admin_invitation.code_handoff.enable`); a machine can never turn it on. Turning it off needs
     none.
 
+    The platform setting category `machine-access` (platform scope only) holds
+    `machine_access.all_scope_excluded_tenants` (env `MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS`),
+    a comma-separated list of at most 50 lowercase tenant IDs; default empty, which changes nothing.
+    For a listed tenant, a machine access token whose tenant scope is all tenants is refused with
+    HTTP 403 `access_denied` ("Admin machine credential is not valid for this tenant.", the same
+    answer as a tenant outside the token's scope) unless its principal and credential also name
+    that tenant in their own `allow` scope entries. It is judged on the tenant a route runs in
+    (`X-Tenant-Id`; every route that runs in a tenant, protocol-style routes with the Admin API
+    authentication included), on a tenant the router's path names as the target
+    (`/api/admin/tenants/{tenantId}/...`, `/api/admin/settings/logging/tenant/{tenantId}/...`), and on
+    the tenants a request names in the query keys `tenant_id`, `tenantId`, `filter[tenant_id]` and
+    `tenant`, in the `X-Tenant-Id` header of a platform route, and in the top-level `tenant_id`,
+    `tenantId`, `tenant_ids` and `tenantIds` of a JSON body (over 1 MiB: refused for such a token).
+    Each is normalised (percent-decoded, case-folded). Handlers that take a tenant from a stored row
+    or a cross-tenant list judge it too (domain mappings, tombstones, plugin configuration, last-resort
+    recovery, the list of every tenant's mapping settings, bulk apply, agent baselines and bulk plans).
+    Operations that name no listed tenant (creating a tenant, reading or deleting another tenant)
+    are not affected. While the list is in force (not empty, or unreadable) a non-platform
+    all-tenants machine gets no platform or cross-tenant authority from a wildcard permission (`*`,
+    `admin:*`, `x:*`): only a permission it holds by its exact name counts, so it is confined to the
+    request's tenant unless the route names an exact permission it holds. A body is read whatever its
+    Content-Type (up to 1 MiB) to find the tenants it names. A non-platform
+    all-tenants machine also cannot see, change or hand out machine access that reaches a listed
+    tenant or every tenant, and never sees or changes a platform principal, from the moment a tenant
+    is listed (while the list is empty, machine access management is unchanged). Only a request that
+    grants or widens access to a listed tenant (as authentication will read it: the principal's
+    scope narrowed by the credential's, plus tenants named next to `all`) or creates, enables or
+    widens a platform principal needs a signed-in platform administrator with an L2 step-up
+    (`machine.protected_grant`, never exempt, not switchable off), on the same single receipt as the
+    grant's `machine.permission.grant`; renaming, narrowing, disabling, revoking and deleting never
+    do. While the setting cannot be read, a human's grant needs that step-up (never an outright
+    refusal) and a human's other operations are unaffected. An operation that names no tenant is
+    not judged. Human sessions, agent tokens, tokens limited to named tenants, and the platform
+    principal types (`setup_tool`, `admin_ui_bff`, `internal_service`) are never affected. The value is
+    read without the cache, once per request; a value that is not valid, a stored `null`, or a store
+    that cannot be read counts as every tenant listed (even when no list was saved). Removing a
+    tenant from the list, or emptying it, through any settings write path needs a signed-in human
+    with an L2 step-up (`machine_access.excluded_tenants.relax`, never exempt for a machine); adding
+    one does not.
+
     The platform setting category `environment-banner` (platform scope only) holds the plain-text
     notice band shown on the Login UI and the Admin Console (`environment_banner.enabled`, default
     off; `environment_banner.text`, at most 200 characters; `environment_banner.text_localizations`,

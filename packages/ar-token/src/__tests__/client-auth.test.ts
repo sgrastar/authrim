@@ -7519,6 +7519,61 @@ describe('Client Authentication Tests', () => {
       );
     });
 
+    it('puts the exact requested name in the scope of a token for a stored wildcard', async () => {
+      // The token endpoint expands what the principal holds by a wildcard into the name asked for:
+      // the token's scope is not "what the principal holds by exact name" (the Admin API
+      // authentication reads the stored grant for that).
+      mockAdminMachineAccess({
+        principalType: 'automation',
+        principalId: 'amp_auto',
+        clientId: 'auto-client',
+        credentialId: 'amk_auto',
+        credentialKid: 'auto-kid',
+        principalPermissions: ['*'],
+        principalTenantScopes: [{ scope_mode: 'all', tenant_id: null }],
+      });
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'auto-client',
+        sub: 'auto-client',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-wild',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'auto-kid' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({
+        valid: true,
+        client_id: 'auto-client',
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'auto-client',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:control_plane:read',
+          },
+          env: { ...mockEnv, ENABLE_CLIENT_CREDENTIALS: 'true' },
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actor_id: 'amp_auto',
+          scope: 'admin:control_plane:read',
+          tenant_scope: ['*'],
+        }),
+        expect.anything(),
+        expect.any(String),
+        expect.any(Number),
+        expect.any(String)
+      );
+    });
+
     it('signs a token from one consistent state when the principal changes while it is read', async () => {
       // L: the wildcard for one tenant. G: a global scope with only a narrow permission. Each is a
       // state the Admin could have stored; the pair "L's permissions with G's scope" never was.

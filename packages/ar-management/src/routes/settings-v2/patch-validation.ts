@@ -15,6 +15,8 @@ import {
   ENVIRONMENT_BANNER_TEXT_KEY,
   ENVIRONMENT_BANNER_TEXT_LOCALIZATIONS_KEY,
   institutionDisplayNamesProblem,
+  machineExcludedTenantsProblem,
+  MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY,
   institutionScopesProblem,
   INSTITUTION_DISPLAY_NAMES_KEY,
   INSTITUTION_SCOPES_KEY,
@@ -667,6 +669,27 @@ export function validateEnvironmentBannerPatch(body: SettingsPatchRequest): stri
   return null;
 }
 
+/**
+ * The machine-access category: the excluded tenants are a comma-separated list of distinct
+ * lowercase tenant IDs (see services/machine-excluded-tenants.ts). The value cannot be disabled:
+ * "none" is a cleared key or an empty list, never a marker the reader would turn into something
+ * else.
+ */
+export function validateMachineAccessPatch(body: SettingsPatchRequest): string | null {
+  const unknown = validateKnownSettingKeys('machine-access', 'machine access', body);
+  if (unknown) return unknown;
+  if ((body.disable ?? []).length > 0) {
+    return 'machine access settings cannot be disabled; clear them to have none';
+  }
+  if (body.set && MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY in body.set) {
+    const problem = machineExcludedTenantsProblem(
+      body.set[MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY]
+    );
+    if (problem) return `${MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY} ${problem}`;
+  }
+  return null;
+}
+
 const OIDC_DEFAULT_SET_KEY = 'identity_mapping.oidc_default_set_id';
 
 /**
@@ -710,6 +733,7 @@ const CATEGORY_VALIDATION_KIND: Readonly<Record<string, ValidationKind>> = {
   'bulk-apply': 'value',
   'tenant-capabilities': 'value',
   'environment-banner': 'value',
+  'machine-access': 'value',
   institution: 'value',
   assurance: 'value',
   oauth: 'value',
@@ -744,6 +768,8 @@ export function validateCategoryPatch(
       return validateKnownSettingKeys('tenant-capabilities', 'tenant capabilities', body);
     case 'environment-banner':
       return validateEnvironmentBannerPatch(body);
+    case 'machine-access':
+      return validateMachineAccessPatch(body);
     case 'institution':
       return validateInstitutionPatch(body);
     case 'tenant':

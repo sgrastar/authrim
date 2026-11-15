@@ -86,6 +86,25 @@ export interface AdminAuthContext {
   correlationId?: string;
   /** Tenant scope carried by a machine access token */
   tenantScope?: string[];
+  /**
+   * For a machine access token whose `tenantScope` is `['*']`: the tenants its principal and
+   * credential also name one by one (an `allow` entry next to the `all` one), read from the
+   * stored grant when the token is used. Absent or empty means none.
+   */
+  tenantScopeExplicit?: string[];
+  /**
+   * Set by the Admin API authentication for a non-platform machine with an all-tenants scope while
+   * tenants are excluded from that scope (or the setting cannot be read): a wildcard permission then
+   * gives it no cross-tenant authority (see `hasGlobalAdminPermission`).
+   */
+  tenantExclusionActive?: boolean;
+  /**
+   * For such a caller: the permissions of the CURRENT STORED grant (the principal's, narrowed by
+   * the credential's own, as authentication computes it) that are held by an exact name, no
+   * pattern. The token's scope is not this: the token endpoint expands a wildcard into the exact
+   * name that was requested.
+   */
+  storedExactPermissions?: string[];
   /** User roles (e.g., ['ar_tenant_admin']) */
   roles: string[];
   /**
