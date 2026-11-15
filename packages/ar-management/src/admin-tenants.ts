@@ -63,6 +63,7 @@ import { failedTenantDeletionNeedsCancel } from './tenant-deletion-reactivation-
 import { cancelTenantDeletion } from './tenant-deletion-cancel';
 import { getAdminActorAuditMetadata } from './admin-shared';
 import { createOpaqueTenantKey } from './logging-tenant-key';
+import { ensureTenantLoginUiClient } from './tenant-login-ui-client';
 import { materializeDisabledTenantEmailProviderOrder } from './notification-provider-projection';
 import {
   activateTenantAliasDirectory,
@@ -1014,6 +1015,8 @@ function tenantProvisioningDependencies(
       await ensureDefaultScreensIn(tenantAdapter, operation.tenantId);
       await seedDefaultRegistrationFlow(tenantAdapter, operation.tenantId, now);
       await initTenantKeyManager(env.KEY_MANAGER, operation.tenantId);
+      // The client the Login UI signs people in with, so the tenant's own sign-in page works.
+      await ensureTenantLoginUiClient(env, tenantAdapter, operation.tenantId);
     },
     publishRegistry(operation, route) {
       return publishProvisionedTenantRegistry(env, adminAdapter, operation, route);
@@ -2402,6 +2405,14 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
         const tenantAdapter = createD1Adapter(
           tenantDefaultDatabase(c.env, route),
           `tenant-provisioning-cleanup:${id}`
+        );
+        // The Login UI client the seed step made (its web origins go with it); the tenant row
+        // still says provisioning, so only a draft's own client is removed.
+        await tenantAdapter.execute(
+          `DELETE FROM oauth_clients
+            WHERE tenant_id = ?
+              AND EXISTS (SELECT 1 FROM tenants WHERE id = ? AND lifecycle_state = 'provisioning')`,
+          [id, id]
         );
         await tenantAdapter.execute(
           "DELETE FROM tenants WHERE id = ? AND lifecycle_state = 'provisioning'",

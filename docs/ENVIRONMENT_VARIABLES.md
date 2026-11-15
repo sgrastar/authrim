@@ -222,6 +222,27 @@ shows its tenant finder; only tenant hosts skip discovery. With `@authrim/setup`
 in `.authrim/{env}/config.json` to write `LOGIN_ENTRY_MODE` into ar-management's `wrangler.toml` on the next
 `setup update`.
 
+### Login UI client of tenants made through the Admin API
+
+| Variable             | Type   | Default                                               | Description                                                                                                 |
+| -------------------- | ------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `LOGIN_UI_CLIENT_ID` | string | the initial tenant's Login UI client, else `login-ui` | The client id the deployed Login UI sends (`PUBLIC_LOGIN_UI_CLIENT_ID` at its build). Read by ar-management |
+
+`@authrim/setup` registers the Login UI client for the initial tenant, and the server generates its
+id. A tenant created through the Admin API gets its own Login UI client under the same id, with
+redirect URIs and web origins that are exactly that tenant's host (`https://<tenant>.<BASE_DOMAIN>`),
+so its own sign-in page works. Resolution order: the variable; else the one `Login UI` client of the
+initial tenant; else `login-ui`, only when that lookup worked and found none. It fails (provisioning and
+clone stop and are retried) rather than guess: an invalid variable (`login_ui_client_id_invalid`), an
+initial tenant store that cannot be read (`login_ui_client_id_lookup_failed`), and two or more `Login UI`
+clients in the initial tenant (`login_ui_client_id_ambiguous`; set the variable). Set the variable when
+the Login UI was built with a `PUBLIC_LOGIN_UI_CLIENT_ID`, which is the safest choice. There is no
+platform setting for it. A deployment without `BASE_DOMAIN` has no tenant hosts, and no client is
+created. A tenant whose host is the common Login UI (`UI_URL`), the Admin UI (`ADMIN_UI_URL`) or the
+issuer host is refused (`tenant_login_ui_host_reserved`). If the tenant already has a client with that
+id that differs from the definition, provisioning stops with `tenant_login_ui_client_conflict` and
+nothing is overwritten. A cloned tenant never receives the source's Login UI client; it gets its own.
+
 ### Tenant Capabilities
 
 | Variable                                          | Type    | Default | Description                                                            |
