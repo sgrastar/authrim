@@ -82,6 +82,64 @@ export async function transition(
   return result.meta.changes === 1;
 }
 
+/**
+ * The creation call is made by the /status request that wins the claim below. The lease is longer
+ * than the create call's own 90 s timeout, so a claimant that is still alive has given up (or been
+ * cancelled) by the time another request may take over.
+ */
+export const CREATE_LEASE_SECONDS = 120;
+export const MAX_CREATE_ATTEMPTS = 2;
+
+/**
+ * A row that is `provisioning` with no `create_started_at` is "queued": no creation was attempted,
+ * so no tenant exists for it.
+ *
+ * The claim is ONE guarded UPDATE, so exactly one request wins it (true). It wins when the row is
+ * queued, or when the previous claimant left no acceptance record for longer than the lease and
+ * fewer than MAX_CREATE_ATTEMPTS were made. Repeating the call is safe: the Admin API creates a
+ * tenant at most once per `Idempotency-Key` (the tenant id), so a second call after a claimant
+ * that died mid-call returns the first call's outcome instead of making a second tenant.
+ */
+export async function claimCreate(
+  db: DemoDatabase,
+  id: string,
+  nowSeconds: number
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE demo_tenants
+          SET create_started_at = ?1, create_attempts = create_attempts + 1, updated_at = ?1
+        WHERE id = ?2 AND state = 'provisioning' AND create_accepted_at IS NULL
+          AND (create_started_at IS NULL
+               OR (create_started_at <= ?3 AND create_attempts < ?4))`
+    )
+    .bind(nowSeconds, id, nowSeconds - CREATE_LEASE_SECONDS, MAX_CREATE_ATTEMPTS)
+    .run();
+  return result.meta.changes === 1;
+}
+
+/**
+ * Fails a row whose creation was attempted the maximum number of times and never recorded as
+ * accepted, once the last lease ran out. Guarded in SQL, so a row that was accepted or is still
+ * inside its lease is left alone. True only for the caller that made the change.
+ */
+export async function failExhaustedCreate(
+  db: DemoDatabase,
+  id: string,
+  nowSeconds: number
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE demo_tenants SET state = 'failed', updated_at = ?1
+        WHERE id = ?2 AND state = 'provisioning' AND create_accepted_at IS NULL
+          AND create_started_at IS NOT NULL AND create_started_at <= ?3
+          AND create_attempts >= ?4`
+    )
+    .bind(nowSeconds, id, nowSeconds - CREATE_LEASE_SECONDS, MAX_CREATE_ATTEMPTS)
+    .run();
+  return result.meta.changes === 1;
+}
+
 /** Takes the right to ask the Admin API about a row, at most once per interval. */
 export async function acquirePoll(
   db: DemoDatabase,
@@ -91,7 +149,7 @@ export async function acquirePoll(
   const result = await db
     .prepare(
       `UPDATE demo_tenants SET last_polled_at = ?1
-        WHERE id = ?2 AND state = 'provisioning'
+        WHERE id = ?2 AND state = 'provisioning' AND create_accepted_at IS NOT NULL
           AND (last_polled_at IS NULL OR last_polled_at <= ?3)`
     )
     .bind(nowSeconds, id, nowSeconds - POLL_INTERVAL_SECONDS)

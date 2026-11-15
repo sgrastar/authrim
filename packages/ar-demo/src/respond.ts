@@ -36,6 +36,8 @@ export function htmlResponse(body: string, status = 200, extra: HeadersInit = {}
   const headers = new Headers(extra);
   headers.set('Content-Type', 'text/html; charset=utf-8');
   headers.set('Cache-Control', 'no-store');
+  // The language comes from the query, a cookie or Accept-Language.
+  headers.set('Vary', 'Accept-Language, Cookie');
   return new Response(body, { status, headers });
 }
 

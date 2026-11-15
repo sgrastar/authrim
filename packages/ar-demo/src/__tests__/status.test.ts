@@ -76,7 +76,7 @@ describe('ticket lifetime', () => {
   it('still polls one second before the limit', async () => {
     setNow(created() + 1799);
     upstream.on(K.provisioning, () => json({ status: 'running' }));
-    expect(await (await poll()).json()).toEqual({ state: 'provisioning' });
+    expect(await (await poll()).json()).toEqual({ state: 'provisioning', stage: 'provisioning' });
     expect(upstream.count(K.provisioning)).toBe(1);
   });
 
@@ -127,7 +127,7 @@ describe('GET /status', () => {
       tick();
       upstream.on(K.provisioning, () => json({ status }));
       const response = await poll();
-      expect(await response.json()).toEqual({ state: 'provisioning' });
+      expect(await response.json()).toEqual({ state: 'provisioning', stage: 'provisioning' });
       expect(state()).toBe('provisioning');
     }
     expect(upstream.count(K.invite)).toBe(0);
@@ -144,10 +144,10 @@ describe('GET /status', () => {
 
   it('treats an unreachable or odd provisioning answer as temporary', async () => {
     upstream.on(K.provisioning, () => json({ error: 'x' }, 503));
-    expect(await (await poll()).json()).toEqual({ state: 'provisioning' });
+    expect(await (await poll()).json()).toEqual({ state: 'provisioning', stage: 'provisioning' });
     tick();
     upstream.on(K.provisioning, () => json({ nope: true }));
-    expect(await (await poll()).json()).toEqual({ state: 'provisioning' });
+    expect(await (await poll()).json()).toEqual({ state: 'provisioning', stage: 'provisioning' });
     expect(state()).toBe('provisioning');
   });
 
@@ -156,7 +156,7 @@ describe('GET /status', () => {
       K.provisioning,
       () => new Response(null, { status: 307, headers: { Location: 'https://evil.example' } })
     );
-    expect(await (await poll()).json()).toEqual({ state: 'provisioning' });
+    expect(await (await poll()).json()).toEqual({ state: 'provisioning', stage: 'provisioning' });
     expect(
       upstream.calls
         .filter((c) => c.url.startsWith('https://api.'))
@@ -185,8 +185,14 @@ describe('GET /status', () => {
     const cookie = response.headers.get('Set-Cookie') ?? '';
     expect(cookie).toMatch(/Max-Age=0/);
     expect(cookie).toMatch(/Secure; HttpOnly; SameSite=Strict/);
-    const body = await response.json<{ state: string; join: string }>();
+    const body = await response.json<{
+      state: string;
+      stage: string;
+      join: string;
+      join_expires_in: number;
+    }>();
     expect(body.state).toBe('ready');
+    expect(body.stage).toBe('ready');
     expect(body.join).toBe(
       `https://console.demo-test.example/admin/join#code=SECRET-CODE-123&email=${encodeURIComponent(`${tenantId}@demo.invalid`)}`
     );
@@ -250,14 +256,16 @@ describe('GET /status', () => {
     )) as Array<{ state: string; join?: string }>;
     expect(arrived).toBe(2);
     expect(bodies.filter((b) => b.state === 'ready')).toHaveLength(1);
-    expect(bodies.filter((b) => b.state === 'provisioning')).toHaveLength(1);
+    expect(bodies.filter((b) => b.state === 'provisioning')).toEqual([
+      { state: 'provisioning', stage: 'inviting' },
+    ]);
     expect(upstream.count(K.invite)).toBe(1);
     expect(state()).toBe('handed_off');
   });
 
   it('answers provisioning to a caller that finds the row already claimed', async () => {
     testDb.sqlite.exec("UPDATE demo_tenants SET state = 'inviting'");
-    expect(await (await poll()).json()).toEqual({ state: 'provisioning' });
+    expect(await (await poll()).json()).toEqual({ state: 'provisioning', stage: 'inviting' });
     expect(upstream.count(K.invite)).toBe(0);
     expect(upstream.count(K.provisioning)).toBe(0);
   });

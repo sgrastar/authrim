@@ -111,4 +111,6 @@ export interface RegistryRow {
   delete_attempted_at: number | null;
   delete_attempts: number;
   create_accepted_at: number | null;
+  create_started_at: number | null;
+  create_attempts: number;
 }

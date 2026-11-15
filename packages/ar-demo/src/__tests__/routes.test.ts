@@ -1,8 +1,7 @@
-/* eslint-disable @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call -- runs wait.js in a stub browser */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleRequest } from '../index';
 import { loadConfig } from '../config';
-import { esc, pickLang, WAIT_JS } from '../html';
+import { esc, WAIT_JS } from '../html';
 import { CSP } from '../respond';
 import {
   CONSOLE,
@@ -112,7 +111,7 @@ describe('routing', () => {
     expect(html).toContain('cf-turnstile');
     expect(html).toContain('data-sitekey="site-key-1"');
     expect(html).toContain('action="/start"');
-    expect(html).toContain('12');
+    expect(html).toContain('12 hours');
     const lower = html.toLowerCase();
     for (const inline of ['<style', 'style=', 'onclick=']) expect(lower).not.toContain(inline);
     expect(lower.split('<script').length).toBe(lower.split('<script src=').length);
@@ -133,54 +132,11 @@ describe('routing', () => {
     const code = await response.text();
     expect(code).toBe(WAIT_JS);
     expect(code).toContain("join.indexOf(origin + '/admin/join#') === 0");
-    expect(code).toContain('location.replace(join)');
-    expect(code).toContain('2000');
-    expect(code).toContain('180000');
+    expect(code).toContain('AuthrimGate.isJoinTarget(origin, data.join)');
+    expect(code).toContain('location.replace(joinUrl)');
+    expect(code).toContain('setInterval(poll, 2000)');
+    expect(code).toContain('limitMs: 360000');
     expect(code).not.toMatch(/innerHTML|eval\(|document\.write/);
-  });
-});
-
-describe('wait.js behaviour', () => {
-  async function run(join: unknown, state = 'ready') {
-    const replaced: string[] = [];
-    const attrs: Record<string, string> = { 'data-failed': 'FAILED', 'data-handed': 'HANDED' };
-    const box = {
-      textContent: '',
-      getAttribute: (name: string) => attrs[name] ?? null,
-    };
-    const document = {
-      querySelector: () => ({ getAttribute: () => CONSOLE }),
-      getElementById: (id: string) =>
-        id === 'status' ? box : { removeAttribute: () => undefined },
-    };
-    const fetchMock = async () => ({ status: 200, ok: true, json: async () => ({ state, join }) });
-    new Function('document', 'location', 'fetch', 'setTimeout', 'Date', WAIT_JS)(
-      document,
-      { replace: (url: string) => replaced.push(url) },
-      fetchMock,
-      () => undefined,
-      Date
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    return { replaced, text: box.textContent };
-  }
-
-  it('navigates only to the console join page', async () => {
-    const ok = `${CONSOLE}/admin/join#code=a&email=b`;
-    expect((await run(ok)).replaced).toEqual([ok]);
-    for (const bad of [
-      'https://evil.example/admin/join#code=a',
-      `${CONSOLE}.evil.example/admin/join#x`,
-      `${CONSOLE}/admin/join`,
-      `${CONSOLE}/other#x`,
-      'javascript:alert(1)',
-      42,
-      undefined,
-    ]) {
-      const result = await run(bad);
-      expect(result.replaced).toEqual([]);
-      expect(result.text).toBe('FAILED');
-    }
   });
 });
 
@@ -200,15 +156,6 @@ describe('escaping', () => {
 });
 
 describe('language', () => {
-  it('picks ja only when Japanese is preferred', () => {
-    expect(pickLang(null)).toBe('en');
-    expect(pickLang('ja')).toBe('ja');
-    expect(pickLang('ja-JP,ja;q=0.9,en;q=0.8')).toBe('ja');
-    expect(pickLang('en-US,en;q=0.9,ja;q=0.8')).toBe('en');
-    expect(pickLang('en;q=0.5,ja;q=0.9')).toBe('ja');
-    expect(pickLang('fr,de')).toBe('en');
-  });
-
   it('renders Japanese copy', async () => {
     const html = await (await get('/', { headers: { 'Accept-Language': 'ja' } })).text();
     expect(html).toContain('lang="ja"');

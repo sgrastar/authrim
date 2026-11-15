@@ -310,6 +310,23 @@ export interface Invitation {
   code: string;
   email: string;
   joinUrl: string | null;
+  /** The core's `expires_at` (epoch milliseconds), when it sent a usable one. */
+  expiresAtMs: number | null;
+}
+
+/**
+ * Seconds the join link stays usable. The core answers the invitation with `expires_at` in epoch
+ * milliseconds (ar-management admin-invitations.ts: `expiresAt = now + ttl`, returned in the 201
+ * body); the ttl is the requested `expires_in_minutes` (default 15, at most 60:
+ * admin-invitation-code-handoff.ts resolveHandoffTtlMs). The core's answer wins; without a usable
+ * one (missing, in the past, or beyond the core's 60 minute maximum, which would mean clock skew)
+ * the number of minutes this portal asked for is used.
+ */
+export function joinExpiresInSeconds(invitation: Invitation, nowMs: number): number {
+  const asked = INVITATION_MINUTES * 60;
+  if (invitation.expiresAtMs === null) return asked;
+  const left = Math.round((invitation.expiresAtMs - nowMs) / 1000);
+  return left > 0 && left <= 60 * 60 ? left : asked;
 }
 
 /** The code is returned to the caller and nowhere else. */
@@ -332,7 +349,12 @@ export async function createInvitation(
     },
   });
   if (status !== 201) throw new AdminApiError('upstream', status, shortCode(body));
-  const data = (body ?? {}) as { code?: unknown; join_url?: unknown; email?: unknown };
+  const data = (body ?? {}) as {
+    code?: unknown;
+    join_url?: unknown;
+    email?: unknown;
+    expires_at?: unknown;
+  };
   if (typeof data.code !== 'string' || data.code.length === 0 || data.code.length > 512) {
     throw new AdminApiError('invalid_response', status);
   }
@@ -340,6 +362,10 @@ export async function createInvitation(
     code: data.code,
     email: typeof data.email === 'string' && data.email.length > 0 ? data.email : email,
     joinUrl: typeof data.join_url === 'string' ? data.join_url : null,
+    expiresAtMs:
+      typeof data.expires_at === 'number' && Number.isFinite(data.expires_at)
+        ? data.expires_at
+        : null,
   };
 }
 

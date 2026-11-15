@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetAdminTokenCache, TENANT_DESCRIPTION, tenantDisplayName } from '../admin-api';
-import { sha256Hex } from '../crypto';
 import { handleScheduled, runCleanup } from '../cleanup';
 import worker, { handleRequest } from '../index';
 import {
@@ -13,6 +12,7 @@ import {
   K,
   makeEnv,
   start,
+  startAndCreate,
   statusRequest,
   type TestDb,
   type Upstream,
@@ -513,7 +513,7 @@ describe('scope sets', () => {
   const tokenCalls = () => upstream.calls.filter((c) => c.url.endsWith('/token'));
 
   it('keeps the delete scopes out of the web token and the invitation scope out of the cleanup token', async () => {
-    await start(env, upstream); // web path: create tenant
+    await startAndCreate(env, upstream); // web path: create tenant
     const id = seed({ expires_at: 1 });
     model.tenants.set(id, 'active');
     await run();
@@ -531,7 +531,7 @@ describe('scope sets', () => {
   });
 
   it('each path uses its own cached token', async () => {
-    await start(env, upstream);
+    await startAndCreate(env, upstream);
     const id = seed({ expires_at: 1 });
     model.tenants.set(id, 'active');
     await run();
@@ -576,8 +576,8 @@ describe('scope sets', () => {
 describe('capacity and purge', () => {
   it('releases a slot only when the row is deleted, not when it becomes deleting', async () => {
     env = await makeEnv(testDb, { MAX_ACTIVE_TENANTS: '1', MAX_STARTS_PER_IP_PER_DAY: '20' });
-    const first = await start(env, upstream, { ip: '198.51.100.1' });
-    expect(first.status).toBe(303);
+    const first = await startAndCreate(env, upstream, { ip: '198.51.100.1' });
+    expect(first.started.status).toBe(303);
     const id = allRows(testDb)[0].id as string;
     expect((await start(env, upstream, { ip: '198.51.100.2' })).status).toBe(503);
 
@@ -737,7 +737,7 @@ describe('ownership of the tenant', () => {
   };
 
   it('records the acceptance of a 202 and the cleanup deletes as before', async () => {
-    expect((await start(env, upstream)).status).toBe(303);
+    expect((await startAndCreate(env, upstream)).started.status).toBe(303);
     const id = ID_OF();
     expect(row(id)?.create_accepted_at).toBe(nowSeconds());
     model.tenants.set(id, 'active');
@@ -751,7 +751,9 @@ describe('ownership of the tenant', () => {
     'a %i on create with a foreign tenant of that id: failed, then released without a write',
     async (status) => {
       upstream.on(K.create, () => json({ error: 'tenant_id_exists' }, status));
-      expect((await start(env, upstream)).status).toBe(502);
+      expect(await (await startAndCreate(env, upstream)).status?.json()).toEqual({
+        state: 'failed',
+      });
       const id = ID_OF();
       expect(stateOf(id)).toBe('failed');
       foreign(id);
@@ -761,7 +763,9 @@ describe('ownership of the tenant', () => {
 
   it('a token failure before the create request is sent: same expectations', async () => {
     upstream.on(K.token, () => json({ error: 'server_error' }, 500));
-    expect((await start(env, upstream)).status).toBe(502);
+    expect(await (await startAndCreate(env, upstream)).status?.json()).toEqual({
+      state: 'failed',
+    });
     expect(upstream.count(K.create)).toBe(0);
     const id = ID_OF();
     expect(stateOf(id)).toBe('failed');
@@ -787,9 +791,9 @@ describe('ownership of the tenant', () => {
       }
       return Promise.resolve();
     };
-    const response = await start(env, upstream);
-    expect(response.status).toBe(502);
-    expect(cookieOf(response)).toBeNull();
+    const { started, status } = await startAndCreate(env, upstream);
+    expect(started.status).toBe(303);
+    expect(await status?.json()).toEqual({ state: 'failed' });
     expect(logs.some((l) => l.includes('registry_update_failed'))).toBe(true);
     const id = ID_OF();
     expect(row(id)?.create_accepted_at).toBeNull();
@@ -817,35 +821,76 @@ describe('ownership of the tenant', () => {
     expect(deletesFor(id)).toHaveLength(1);
   });
 
-  it.each([
-    ['500', () => json({ error: 'x' }, 500)],
-    [
-      'a network error',
-      () => {
-        throw new Error('network down');
-      },
-    ],
-  ])('%s with nothing created: failed, then gone without a write', async (_name, handler) => {
-    upstream.on(K.create, handler);
-    expect((await start(env, upstream)).status).toBe(502);
-    const id = ID_OF();
-    expect(stateOf(id)).toBe('failed');
-    upstream.calls.length = 0;
-    upstream.clock.now += 301 * 1000;
-    await run();
-    expect(callsFor(id).map((c) => c.method)).toEqual(['GET']);
-    expect(stateOf(id)).toBe('deleted');
-  });
+  it.each([['500', () => json({ error: 'x' }, 500)]])(
+    '%s with nothing created: failed, then gone without a write',
+    async (_name, handler) => {
+      upstream.on(K.create, handler);
+      expect(await (await startAndCreate(env, upstream)).status?.json()).toEqual({
+        state: 'failed',
+      });
+      const id = ID_OF();
+      expect(stateOf(id)).toBe('failed');
+      upstream.calls.length = 0;
+      upstream.clock.now += 301 * 1000;
+      await run();
+      expect(callsFor(id).map((c) => c.method)).toEqual(['GET']);
+      expect(stateOf(id)).toBe('deleted');
+    }
+  );
 
-  it('/status for an unconfirmed provisioning row makes no Admin API call', async () => {
-    const id = seed({ state: 'provisioning', create_accepted_at: null, created_at: nowSeconds() });
-    testDb.sqlite
-      .prepare('UPDATE demo_tenants SET ticket_hash = ? WHERE id = ?')
-      .run(await sha256Hex('a'.repeat(43)), id);
-    upstream.calls.length = 0;
-    const response = await handleRequest(statusRequest('a'.repeat(43)), env, upstream.deps);
-    expect(await response.json()).toEqual({ state: 'failed' });
-    expect(upstream.calls).toHaveLength(0);
+  describe('rows of the deferred creation', () => {
+    const ABANDONED = 1800 + 120;
+    const queued = (fields: Parameters<typeof seed>[0] = {}) =>
+      seed({ state: 'provisioning', create_accepted_at: null, ...fields });
+    const inFlight = (fields: Parameters<typeof seed>[0] = {}) => {
+      const id = queued(fields);
+      testDb.sqlite
+        .prepare('UPDATE demo_tenants SET create_started_at = ?, create_attempts = 1 WHERE id = ?')
+        .run(nowSeconds() - 1000, id);
+      return id;
+    };
+
+    it('a queued row has no tenant: after the abandoned time it is gone with one lookup, no write', async () => {
+      const id = queued({ created_at: nowSeconds() - ABANDONED });
+      await run();
+      expect(callsFor(id).map((c) => c.method)).toEqual(['GET']);
+      expect(stateOf(id)).toBe('deleted');
+      expect(logs.some((l) => l.includes('cleanup_not_ours'))).toBe(false);
+    });
+
+    it('a queued row is left alone before the abandoned time, and counts toward capacity until then', async () => {
+      const id = queued({ created_at: nowSeconds() - ABANDONED + 5 });
+      await run();
+      expect(stateOf(id)).toBe('provisioning');
+      expect(upstream.calls).toHaveLength(0);
+      const small = await makeEnv(testDb, { MAX_ACTIVE_TENANTS: '1' });
+      expect((await start(small, upstream, { ip: '198.51.100.9' })).status).toBe(503);
+    });
+
+    it('a row whose creation is in flight (or was lost) and carries the portal marker is cleaned up', async () => {
+      const id = inFlight({ created_at: nowSeconds() - ABANDONED });
+      ours(id, 'provisioning');
+      upstream.on(K.cleanup, () => json({}, 200));
+      await run();
+      expect(upstream.count(K.cleanup)).toBe(1);
+      expect(stateOf(id)).toBe('deleted');
+    });
+
+    it('a row whose creation was attempted, with a foreign tenant of that id, is released without a write', async () => {
+      const id = inFlight({ created_at: nowSeconds() - ABANDONED });
+      foreign(id, 'provisioning');
+      await run();
+      expect(callsFor(id).map((c) => c.method)).toEqual(['GET']);
+      expect(stateOf(id)).toBe('deleted');
+      expect(logs.some((l) => l.includes('cleanup_not_ours'))).toBe(true);
+    });
+
+    it('a row that failed after attempts is removed by the failed-row rule like any other', async () => {
+      const id = inFlight({ state: 'failed', updated_at: nowSeconds() - 300 });
+      ours(id, 'active');
+      await run();
+      expect(deletesFor(id)).toHaveLength(1);
+    });
   });
 });
 

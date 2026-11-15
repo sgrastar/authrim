@@ -4,15 +4,17 @@ import {
   createInvitation,
   createTenant,
   getProvisioningStatus,
+  joinExpiresInSeconds,
 } from './admin-api';
 import type { Config } from './config';
 import { hmacSha256Hex, newTenantId, newTicket, sha256Hex, TICKET_PATTERN } from './crypto';
-import { startPage, waitPage, pickLang, type Lang } from './html';
+import { gatePage, startPage, type Lang } from './html';
+import { chooseLang, langCookie } from './i18n';
 import { logError, logEvent } from './log';
 import * as registry from './registry';
 import { errorResponse, htmlResponse, jsonResponse } from './respond';
 import { verifyTurnstile } from './turnstile';
-import type { Deps, Env } from './types';
+import type { Deps, Env, RegistryRow } from './types';
 
 export const COOKIE_NAME = '__Host-demo_ticket';
 const TICKET_LIFETIME_SECONDS = 1800;
@@ -65,15 +67,28 @@ async function readBoundedText(request: Request, maxBytes: number): Promise<stri
 }
 
 export function langOf(request: Request): Lang {
-  return pickLang(request.headers.get('Accept-Language'));
+  return chooseLang(request).lang;
+}
+
+/** A page in the chosen language; a valid `?lang=` is remembered in a cookie of its own. */
+function localizedPage(
+  request: Request,
+  config: Config,
+  render: (lang: Lang, config: Config) => string
+): Response {
+  const { lang, remember } = chooseLang(request);
+  const extra: HeadersInit = remember
+    ? { 'Set-Cookie': langCookie(lang, !config.development) }
+    : {};
+  return htmlResponse(render(lang, config), 200, extra);
 }
 
 export function handleStartPage(request: Request, config: Config): Response {
-  return htmlResponse(startPage(langOf(request), config));
+  return localizedPage(request, config, startPage);
 }
 
 export function handleWaitPage(request: Request, config: Config): Response {
-  return htmlResponse(waitPage(langOf(request), config));
+  return localizedPage(request, config, gatePage);
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -158,39 +173,10 @@ export async function handleStart(
     return perIp ? errorResponse(lang, 'ip_limit', 429) : errorResponse(lang, 'capacity', 503);
   }
 
-  // f. Create the tenant. A failed row stays (and counts) until the cleanup deals with it. The
-  // cleanup deletes a tenant only when the core accepted this creation (recorded below) or the
-  // tenant still carries the portal's own name and description.
-  try {
-    await createTenant(config, deps, tenantId);
-  } catch (error) {
-    await failRow(env, deps, tenantId, ['provisioning'], 'create_tenant', error);
-    return errorResponse(lang, 'failed', 502);
-  }
-  let accepted = false;
-  try {
-    accepted = await registry.markCreateAccepted(env.DB, tenantId, Math.floor(deps.now() / 1000));
-  } catch {
-    // handled below
-  }
-  if (!accepted) {
-    logError('registry_update_failed', { tenantId, op: 'create_accepted' });
-    // Same as a failed creation: the row is reclaimed after the short `failed` grace. If this write
-    // fails too, the row stays `provisioning` and the cleanup takes it as abandoned later.
-    try {
-      await registry.transition(
-        env.DB,
-        tenantId,
-        ['provisioning'],
-        'failed',
-        Math.floor(deps.now() / 1000)
-      );
-    } catch {
-      // the abandoned-row rule covers it
-    }
-    return errorResponse(lang, 'failed', 502);
-  }
-  logEvent('tenant_requested', { tenantId });
+  // f. Nothing is sent to the core here: the row is queued, and the first GET /status creates the
+  // tenant (the core answers the creation only after its deferred provisioning work, about 16 s,
+  // which the visitor now spends on the waiting page instead of a frozen start page).
+  logEvent('start_queued', { tenantId });
 
   // g.
   return new Response(null, {
@@ -228,6 +214,75 @@ async function failRow(
   }
 }
 
+/** The visitor-facing progress of a row that is not finished: `state` stays `provisioning`. */
+function progress(stage: 'provisioning' | 'inviting'): Response {
+  return jsonResponse({ state: 'provisioning', stage });
+}
+
+/**
+ * A creation call that ended without any answer from the core (it timed out or the connection
+ * broke): the tenant may or may not exist, so the row is neither failed nor accepted. Once the
+ * lease has run out, a later request repeats the same idempotent call.
+ */
+function outcomeUnknown(error: unknown): boolean {
+  return (
+    error instanceof AdminApiError &&
+    error.status === undefined &&
+    (error.kind === 'timeout' || error.kind === 'upstream')
+  );
+}
+
+/**
+ * The request that won the creation claim makes the (long) creation call, then records the
+ * acceptance. 'failed': the row was failed. 'unknown': no answer, the row waits for its lease.
+ */
+async function createFor(
+  env: Env,
+  config: Config,
+  deps: Deps,
+  row: RegistryRow
+): Promise<'accepted' | 'failed' | 'unknown'> {
+  // A failed row stays (and counts) until the cleanup deals with it. The cleanup deletes a tenant
+  // only when the core accepted this creation (recorded below) or the tenant still carries the
+  // portal's own name and description.
+  if (row.create_started_at !== null) logEvent('create_reclaimed', { tenantId: row.id });
+  try {
+    await createTenant(config, deps, row.id);
+  } catch (error) {
+    if (outcomeUnknown(error)) {
+      logError('upstream_failure', { tenantId: row.id, op: 'create_tenant', ...describe(error) });
+      return 'unknown';
+    }
+    await failRow(env, deps, row.id, ['provisioning'], 'create_tenant', error);
+    return 'failed';
+  }
+  let accepted = false;
+  try {
+    accepted = await registry.markCreateAccepted(env.DB, row.id, Math.floor(deps.now() / 1000));
+  } catch {
+    // handled below
+  }
+  if (!accepted) {
+    logError('registry_update_failed', { tenantId: row.id, op: 'create_accepted' });
+    // Same as a failed creation: the row is reclaimed after the short `failed` grace. If this write
+    // fails too, the row stays `provisioning` and a later request repeats the idempotent call.
+    try {
+      await registry.transition(
+        env.DB,
+        row.id,
+        ['provisioning'],
+        'failed',
+        Math.floor(deps.now() / 1000)
+      );
+    } catch {
+      // the lease and the abandoned-row rule cover it
+    }
+    return 'failed';
+  }
+  logEvent('tenant_requested', { tenantId: row.id });
+  return 'accepted';
+}
+
 export async function handleStatus(
   request: Request,
   env: Env,
@@ -263,18 +318,32 @@ export async function handleStatus(
     case 'deleted':
       return jsonResponse({ state: 'failed' });
     case 'inviting':
-      return jsonResponse({ state: 'provisioning' });
+      return progress('inviting');
     default:
       break;
   }
 
-  // A row the core never confirmed is not asked about: it is not known to be this portal's tenant.
-  if (row.create_accepted_at === null) return jsonResponse({ state: 'failed' });
-
   const nowSeconds = Math.floor(deps.now() / 1000);
+
+  // Not yet confirmed by the core: either nobody tried (queued) or the creation is in flight or its
+  // claimant died. Exactly one request wins the claim and makes the call; every other request just
+  // reports the stage at once (it never waits for the claimant).
+  if (row.create_accepted_at === null) {
+    if (!(await registry.claimCreate(env.DB, row.id, nowSeconds))) {
+      if (await registry.failExhaustedCreate(env.DB, row.id, nowSeconds)) {
+        logError('create_exhausted', { tenantId: row.id });
+        return jsonResponse({ state: 'failed' });
+      }
+      return progress('provisioning');
+    }
+    const created = await createFor(env, config, deps, row);
+    if (created === 'failed') return jsonResponse({ state: 'failed' });
+    if (created === 'unknown') return progress('provisioning');
+  }
+
   // At most one question to the Admin API per interval and row.
-  if (!(await registry.acquirePoll(env.DB, row.id, nowSeconds))) {
-    return jsonResponse({ state: 'provisioning' });
+  if (!(await registry.acquirePoll(env.DB, row.id, Math.floor(deps.now() / 1000)))) {
+    return progress('provisioning');
   }
 
   let status;
@@ -287,7 +356,7 @@ export async function handleStatus(
     }
     // Anything else is treated as temporary: the visitor's page asks again.
     logError('poll_failed', { tenantId: row.id, ...describe(error) });
-    return jsonResponse({ state: 'provisioning' });
+    return progress('provisioning');
   }
 
   if (status === 'blocked' || status === 'canceled') {
@@ -301,7 +370,7 @@ export async function handleStatus(
     );
     return jsonResponse({ state: 'failed' });
   }
-  if (status !== 'succeeded') return jsonResponse({ state: 'provisioning' });
+  if (status !== 'succeeded') return progress('provisioning');
 
   // The hand-off: only the caller that moves provisioning -> inviting continues.
   const claimed = await registry.transition(
@@ -309,13 +378,15 @@ export async function handleStatus(
     row.id,
     ['provisioning'],
     'inviting',
-    nowSeconds
+    Math.floor(deps.now() / 1000)
   );
-  if (!claimed) return jsonResponse({ state: 'provisioning' });
+  if (!claimed) return progress('inviting');
 
   let join: string | null;
+  let joinExpiresIn: number;
   try {
     const invitation = await createInvitation(config, deps, row.id);
+    joinExpiresIn = joinExpiresInSeconds(invitation, deps.now());
     join = buildJoinLink(config, invitation);
     if (!join) {
       await failRow(
@@ -334,11 +405,21 @@ export async function handleStatus(
   }
 
   try {
-    await registry.transition(env.DB, row.id, ['inviting'], 'handed_off', nowSeconds);
+    await registry.transition(
+      env.DB,
+      row.id,
+      ['inviting'],
+      'handed_off',
+      Math.floor(deps.now() / 1000)
+    );
   } catch {
     // The code exists only in this response: the visitor still gets it.
     logError('registry_update_failed', { tenantId: row.id, op: 'handed_off' });
   }
   logEvent('handed_off', { tenantId: row.id });
-  return jsonResponse({ state: 'ready', join }, 200, { 'Set-Cookie': clearCookie() });
+  return jsonResponse(
+    { state: 'ready', stage: 'ready', join, join_expires_in: joinExpiresIn },
+    200,
+    { 'Set-Cookie': clearCookie() }
+  );
 }
