@@ -148,7 +148,7 @@ is never magnified beyond 53 % visible width, so the fires stay in view and its 
 fade out; at the door the near view always covers the screen. Typefaces are system serif stacks only
 (Trajan Pro, Cinzel, Palatino and similar for Latin headings; Hiragino Mincho and Yu Mincho for
 Japanese; Geeza Pro and Noto Naskh Arabic for Arabic); capitals with wide letter-spacing only for
-en/de (set per `lang`). Japanese uses `line-break: strict` and `word-break: auto-phrase`; headings
+en/de (set per `lang`). Japanese breaks only at hand-marked phrase boundaries (a zero width space, written `|` in `src/i18n.ts`) with `word-break: keep-all`, `overflow-wrap: anywhere` and `line-break: strict` (works in every browser, unlike `auto-phrase`); headings
 and status lines use `text-wrap: balance`, paragraphs `text-wrap: pretty`. One gold focus ring for
 the whole site.
 
