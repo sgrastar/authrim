@@ -1,34 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import type {
-  MappingRuleEdge,
-  MappingTransformStep,
-  SourceValueEnvelope,
-} from '@authrim/ar-lib-field-mapping/contract';
+import type { MappingTransformStep } from '@authrim/ar-lib-field-mapping/contract';
 import { computeIdentifier } from '../identifier-algorithms';
 import {
+  createIdentifierSourceReader,
+  createStoredIdentifierLookup,
   prepareMappedIdentifiers,
-  sha256Hex,
   resolvePairwiseSector,
   type IdentifierRecipient,
 } from '../mapped-identifiers';
 
-const edge: MappingRuleEdge = {
-  id: 'edge.uid',
-  sourceRef: { side: 'source', namespace: 'oidc.claim', path: 'sub' },
-  targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
-};
-const source = (value: unknown): SourceValueEnvelope[] => [
-  { value, sourceRef: { side: 'source', namespace: 'oidc.claim', path: 'sub' } },
-];
+const target = { side: 'destination', namespace: 'oidc.claim', path: 'sub' } as const;
+/** A step takes no input edge: it is made from the account ID or an identifier source. */
 const step = (
   parameters: Record<string, unknown>,
-  inputEdgeIds = ['edge.uid']
+  inputEdgeIds: string[] = []
 ): MappingTransformStep => ({
   id: 'step.id',
   operation: 'persistent_identifier',
   inputEdgeIds,
-  parameters,
-  outputTargetRef: edge.targetRef,
+  parameters: { input: 'account', ...parameters },
+  outputTargetRef: target,
 });
 const oidc: IdentifierRecipient = { protocol: 'oidc', clientId: 'client-1', sector: 'app.example' };
 const saml: IdentifierRecipient = {
@@ -40,7 +31,8 @@ const saml: IdentifierRecipient = {
 async function prepare(
   parameters: Record<string, unknown>,
   options: {
-    value?: unknown;
+    accountId?: string | null;
+    sourceValue?: string | null | (() => Promise<string | null>);
     recipient?: IdentifierRecipient;
     salt?: string | null;
     placeholder?: string;
@@ -50,8 +42,14 @@ async function prepare(
   let saltReads = 0;
   const result = await prepareMappedIdentifiers({
     transforms: [step(parameters, options.inputEdgeIds)],
-    edges: [edge],
-    sourceValues: source('value' in options ? options.value : 'usr_1'),
+    accountId: 'accountId' in options ? (options.accountId ?? null) : 'usr_1',
+    lookupSourceValue:
+      options.sourceValue === undefined
+        ? undefined
+        : async () =>
+            typeof options.sourceValue === 'function'
+              ? options.sourceValue()
+              : (options.sourceValue ?? null),
     recipient: options.recipient ?? oidc,
     loadDefaultSalt: async () => {
       saltReads++;
@@ -63,7 +61,7 @@ async function prepare(
 }
 
 describe('prepareMappedIdentifiers', () => {
-  it('makes an OIDC pairwise sub for the client from the input', async () => {
+  it('makes an OIDC pairwise sub for the client from the account ID', async () => {
     const { identifiers, failures } = await prepare({
       format: 'plain',
       algorithm: 'authrim_sha256',
@@ -129,7 +127,7 @@ describe('prepareMappedIdentifiers', () => {
   it('refuses a pairwise-id that breaks the OASIS grammar (base64 with "+" or "/")', async () => {
     const result = await prepare(
       { format: 'saml_pairwise_id', algorithm: 'shibboleth', scope: 'example.org' },
-      { recipient: saml, value: 'someone-whose-base64-has-a-slash' }
+      { recipient: saml, accountId: 'someone-whose-base64-has-a-slash' }
     );
     // Base64 may or may not hold "+" or "/" for a given value; when it does, it is refused.
     const made = result.identifiers['step.id'];
@@ -188,26 +186,88 @@ describe('prepareMappedIdentifiers', () => {
     }
   });
 
-  it('makes nothing from a missing, empty or several-valued input', async () => {
-    for (const value of [undefined, '', ['a', 'b'], { a: 1 }]) {
-      const result = await prepare({ format: 'plain', algorithm: 'authrim_sha256' }, { value });
+  it('makes nothing without an account ID, or from a step that still has an input edge', async () => {
+    for (const accountId of [null, '']) {
+      const result = await prepare({ format: 'plain', algorithm: 'authrim_sha256' }, { accountId });
       expect(result.identifiers).toEqual({});
+      expect(result.failures['step.id']).toBe('identifier.account_missing');
     }
-    const one = await prepare({ format: 'plain', algorithm: 'authrim_sha256' }, { value: ['a'] });
-    expect(one.identifiers['step.id']).toBeDefined();
-    const noInput = await prepare(
+    const withEdge = await prepare(
       { format: 'plain', algorithm: 'authrim_sha256' },
-      { inputEdgeIds: [] }
+      { inputEdgeIds: ['edge.uid'] }
     );
-    expect(noInput.failures['step.id']).toBe('identifier.input_missing');
+    expect(withEdge.identifiers).toEqual({});
+    expect(withEdge.failures['step.id']).toBe('identifier.input_edge_not_allowed');
+  });
+
+  it('makes the identifier from the identifier source, never from the account ID', async () => {
+    const parameters = {
+      format: 'plain',
+      algorithm: 'authrim_sha256',
+      input: 'source',
+      source: 'staff',
+    };
+    const fromSource = await prepare(parameters, { sourceValue: 'E-1001' });
+    expect(fromSource.failures).toEqual({});
+    expect(fromSource.identifiers['step.id']).toBe(
+      await computeIdentifier({
+        algorithm: 'authrim_sha256',
+        value: 'E-1001',
+        audience: 'client-1',
+        salt: new TextEncoder().encode('tenant-salt'),
+      })
+    );
+    // No row for the account: the step fails, and the account ID does not stand in for it.
+    const none = await prepare(parameters, { sourceValue: null });
+    expect(none.identifiers).toEqual({});
+    expect(none.failures['step.id']).toBe('identifier.source_missing');
+    const empty = await prepare(parameters, { sourceValue: '' });
+    expect(empty.failures['step.id']).toBe('identifier.source_missing');
+    const broken = await prepare(parameters, {
+      sourceValue: async () => {
+        throw new Error('database down');
+      },
+    });
+    expect(broken.failures['step.id']).toBe('identifier.source_unavailable');
+    // No reader at all.
+    const unreadable = await prepare(parameters, {});
+    expect(unreadable.failures['step.id']).toBe('identifier.source_unavailable');
+    // The source is asked for by its name and the account.
+    const asked: Array<[string, string]> = [];
+    await prepareMappedIdentifiers({
+      transforms: [step(parameters)],
+      accountId: 'acct-7',
+      recipient: oidc,
+      loadDefaultSalt: async () => 'tenant-salt',
+      lookupSourceValue: async (name, account) => {
+        asked.push([name, account]);
+        return 'E-1';
+      },
+    });
+    expect(asked).toEqual([['staff', 'acct-7']]);
+  });
+
+  it('reads a source value and a stored identifier by tenant, name and account only', async () => {
+    const calls: Array<[string, unknown[]]> = [];
+    const adapter = {
+      async queryOne<T>(sql: string, params: unknown[]): Promise<T | null> {
+        calls.push([sql, params]);
+        return null;
+      },
+    };
+    await createIdentifierSourceReader(adapter, 'tenant-a')('staff', 'acct-1');
+    await createStoredIdentifierLookup(adapter, 'tenant-a')('shibpid', 'https://sp', 'acct-1');
+    expect(calls[0][1]).toEqual(['tenant-a', 'staff', 'acct-1']);
+    expect(calls[0][0]).toMatch(/identifier_source_values[\s\S]*account_id = \?/);
+    expect(calls[1][1]).toEqual(['tenant-a', 'shibpid', 'https://sp', 'acct-1']);
+    expect(calls[1][0]).toMatch(/mapped_identifier_values[\s\S]*account_id = \?/);
   });
 
   it('makes a migrated identifier with an imported salt, read as bytes, never made up', async () => {
     const run = (name: string, stored: string | null) =>
       prepareMappedIdentifiers({
         transforms: [step({ format: 'plain', algorithm: 'shibboleth', salt: name })],
-        edges: [edge],
-        sourceValues: source('jdoe'),
+        accountId: 'jdoe',
         recipient: { ...oidc, clientId: 'https://sp.example.org/shibboleth' },
         loadDefaultSalt: async () => 'tenant-salt',
         loadImportedSalt: async (requested) => (requested === name ? stored : null),
@@ -237,23 +297,18 @@ describe('prepareMappedIdentifiers', () => {
             store: 'shibpid',
           }),
         ],
-        edges: [edge],
-        sourceValues: source('jdoe'),
+        accountId: 'jdoe',
         recipient: saml,
         loadDefaultSalt: async () => 'tenant-salt',
-        lookupStoredIdentifier: async (store, audience, hash) => {
-          lookups.push([store, audience, hash]);
+        lookupStoredIdentifier: async (store, audience, account) => {
+          lookups.push([store, audience, account]);
           return lookup();
         },
       });
     const kept = await run('prefer', async () => 'KEPTVALUE');
     expect(kept.identifiers['step.id']).toBe('KEPTVALUE@example.org');
-    expect(lookups[0]).toEqual([
-      'shibpid',
-      'https://sp.example.org',
-      // The SHA-256 of "jdoe": the source value itself is not looked up.
-      await sha256Hex('jdoe'),
-    ]);
+    // By the account the identifier was imported for.
+    expect(lookups[0]).toEqual(['shibpid', 'https://sp.example.org', 'jdoe']);
     const computed = await run('prefer', async () => null);
     expect(computed.identifiers['step.id']).toMatch(/^[A-Z2-7]+=*@example\.org$/);
     const required = await run('require', async () => null);
@@ -279,7 +334,7 @@ describe('prepareMappedIdentifiers', () => {
   it('never puts the salt or the input into a failure', async () => {
     const result = await prepare(
       { format: 'saml_targeted_id', algorithm: 'shibboleth' },
-      { value: 'secret-user', salt: 'secret-salt' }
+      { accountId: 'secret-user', salt: 'secret-salt' }
     );
     expect(JSON.stringify(result.failures)).not.toMatch(/secret-(user|salt)/);
   });

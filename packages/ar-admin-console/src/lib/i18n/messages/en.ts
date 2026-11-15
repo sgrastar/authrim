@@ -1,3 +1,4 @@
+import { enIdentifierStep } from './identifier-step/en';
 import type { Messages } from './ja';
 import { enSettings } from './settings/en';
 import { enCompliance } from './compliance/en';
@@ -29,6 +30,7 @@ export const en = {
 	...enSettings,
 	...enCompliance,
 	...enMappingConsole,
+	...enIdentifierStep,
 	...enServiceFlows,
 	...enConnectionSettings,
 	...enAccountFlows,
@@ -136,7 +138,6 @@ export const en = {
 	'nav.custom.statements': 'Consent statements',
 	'nav.data.profiles': 'Source / Destination',
 	'nav.data.mappingSets': 'Mapping sets',
-	'nav.data.identifiers': 'Persistent identifiers',
 	'nav.data.federationTrust': 'Federation trust',
 	'nav.data.readiness': 'Schema readiness',
 	'nav.mon.adminLogging': 'Admin logging',
@@ -690,8 +691,6 @@ export const en = {
 	'map.c.identifier': 'Identifiers',
 	'map.c.json': 'JSON',
 	'map.t.normalize': 'Normalise spaces or characters',
-	'map.t.oidc_pairwise_sub': 'OIDC pairwise ID',
-	'map.t.saml_edu_person_targeted_id': 'SAML eduPersonTargetedID',
 	'map.t.json_build': 'Build JSON',
 	'map.t.json_extract_text': 'Text from JSON',
 	'map.t.json_extract_boolean': 'True or false from JSON',
@@ -709,8 +708,6 @@ export const en = {
 	'map.d.first': 'Uses only the first of several values.',
 	'map.d.concat': 'Joins the values of several attributes into one text.',
 	'map.d.fallback': 'Uses the first attribute, from the top, that has a value.',
-	'map.d.oidc_pairwise_sub': 'Uses the pairwise subject identifier (sub) for this app.',
-	'map.d.saml_edu_person_targeted_id': 'Builds the eduPersonTargetedID for this SP.',
 	'map.d.json_build':
 		'Puts attribute values into a JSON object, or reads a value that is JSON text.',
 	'map.d.json_extract_text': 'Takes a value out of JSON as text.',
@@ -722,8 +719,6 @@ export const en = {
 	'map.p.omitEmpty': 'Leave out empty values',
 	'map.p.unique': 'Leave out repeats',
 	'map.p.nullValues': 'Values that count as no value',
-	'map.p.persistentIdentifierProfileId': 'Identifier profile',
-	'map.p.profileHint': 'Empty: the tenant default.',
 	'map.p.keyMap': 'Key names',
 	'map.p.keyMapHint': 'Written as JSON, e.g. {"mail": "email"}',
 	'map.p.nullHandling': 'Attributes without a value',

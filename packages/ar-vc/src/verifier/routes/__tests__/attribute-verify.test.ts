@@ -43,6 +43,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     resolveRuntimeIdentityMappingBinding: mocks.resolveMapping,
     introspectTokenFromContext: mocks.introspectToken,
+    // The token's client (the real read needs a request cache).
+    introspectedTokenClient: async () => ({ subject_type: 'public' }),
     getActiveAccessTokenProtectedResourceContext: mocks.protectedContext,
     executeServerFlow: mocks.executeServerFlow,
     AttributeVerificationRepository: class {
@@ -284,6 +286,27 @@ describe('attribute verification initiation', () => {
       );
       expect(response.status).toBe(401);
     }
+  });
+
+  it('acts for the account a pairwise app’s token is for, never the sub it was given', async () => {
+    mocks.introspectToken.mockResolvedValue({
+      ...validTokenResult({ sub: 'sub-the-app-was-given', authrim_subject_ref: 'sr1.a.b' }),
+      accountUserId: 'user-real',
+    });
+    const stub = createRequestStub();
+    mocks.getNewStore.mockResolvedValue({ stub, requestId: REQUEST_ID });
+
+    const response = await initiateAttributeVerification(
+      createContext({ json: { credential_profile_id: 'profile-1' } })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.introspectToken).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ allowSubjectReference: true })
+    );
+    const stored = (await stub.fetch.mock.calls[0]?.[0].clone().json()) as VPRequestState;
+    expect(stored.userId).toBe('user-real');
   });
 
   it('requires an explicitly selected credential profile', async () => {
@@ -844,6 +867,33 @@ describe('verified attribute reads', () => {
     );
     expect(mocks.invalidateVerification).toHaveBeenCalledTimes(1);
   });
+
+  it.each([[0], [1]])(
+    'names the user by the sub a pairwise app’s token carries, never the internal id (%s attributes)',
+    async (count) => {
+      mocks.introspectToken.mockResolvedValue({
+        ...validTokenResult({ sub: 'sub-the-app-was-given', authrim_subject_ref: 'sr1.a.b' }),
+        accountUserId: 'user-real',
+      });
+      mocks.findVerificationsByUser.mockResolvedValue({ items: [] });
+      mocks.getUserVerifiedAttributes.mockResolvedValue(
+        count === 0 ? [] : [{ name: 'age_over_18', value: 'true', expiresAt: Date.now() + 60_000 }]
+      );
+
+      const response = await getAttributes(createContext());
+      const body = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(JSON.parse(body)).toMatchObject({ user_id: 'sub-the-app-was-given' });
+      expect(body).not.toContain('user-real');
+      // Looked up by the account.
+      expect(mocks.invalidateStaleForUser).toHaveBeenCalledWith(
+        'tenant-1',
+        'user-real',
+        expect.any(Number)
+      );
+    }
+  );
 
   it('fails closed when evidence storage is unavailable', async () => {
     mocks.findVerificationsByUser.mockRejectedValue(new Error('database unavailable'));

@@ -106,6 +106,7 @@ describe('identity mapping release is bound by the request scopes', () => {
     surface: 'id_token' | 'userinfo' = 'id_token'
   ) =>
     applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter: database(claims),
       env: { DB_ADMIN: database(claims) as never },
       tenantId: 'tenant-a',
@@ -164,6 +165,7 @@ describe('identity mapping release is bound by the request scopes', () => {
       flags: { claimsAuthorizedByRequest?: boolean; userInfoClaimsInIdToken?: boolean }
     ) =>
       applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter: database(profile),
         env: { DB_ADMIN: database(profile) as never },
         tenantId: 'tenant-a',
@@ -256,6 +258,7 @@ describe('identity mapping release is bound by the request scopes', () => {
         fieldMappingSet: {},
       });
       const result = await applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter: database(addressProfile),
         env: { DB_ADMIN: database(addressProfile) as never },
         tenantId: 'tenant-a',
@@ -275,6 +278,7 @@ describe('identity mapping release is bound by the request scopes', () => {
       const custom = [sub, { claimName: 'email', requiredScopes: ['directory'] }];
       await expect(
         applyOIDCIdentityMapping({
+          subjectType: 'public',
           adapter: database(custom),
           env: { DB_ADMIN: database(custom) as never },
           tenantId: 'tenant-a',

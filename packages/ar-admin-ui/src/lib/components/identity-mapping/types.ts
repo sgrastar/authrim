@@ -7,8 +7,6 @@ export type TransformOperation =
 	| 'split'
 	| 'join'
 	| 'first'
-	| 'oidc_pairwise_sub'
-	| 'saml_edu_person_targeted_id'
 	| 'affix_text'
 	| 'concat'
 	| 'fallback'

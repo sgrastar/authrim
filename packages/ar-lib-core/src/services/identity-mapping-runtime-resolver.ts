@@ -330,8 +330,13 @@ export async function resolveRuntimeIdentityMappingBinding(
     selected = undefined;
     for (const candidate of rankedRows) {
       const edges = await loadEdges(adapter, ownerTenantId, candidate.field_mapping_version_id);
+      const stepTargets = await loadTransforms(
+        adapter,
+        ownerTenantId,
+        candidate.field_mapping_version_id
+      );
       if (
-        uniqueDestinationProfileIds(edges).some((profileId) =>
+        uniqueDestinationProfileIds(edges, stepTargets).some((profileId) =>
           destinationProfileReferencesMatch(profileId, context.destinationProfileId as string)
         )
       ) {
@@ -382,7 +387,13 @@ export async function resolveRuntimeIdentityMappingBinding(
       : ref;
   const activationScope = parseJsonObject(selected.activation_scope_json);
   const destinationProfileIds = runtimeDestinationProfileIds(
-    edges.map((edge) => parseJsonObject(edge.target_ref_json)),
+    [
+      ...edges.map((edge) => parseJsonObject(edge.target_ref_json)),
+      // A step with no input edge names its own output target.
+      ...transforms.flatMap((step) =>
+        step.target_ref_json ? [parseJsonObject(step.target_ref_json)] : []
+      ),
+    ],
     activationScope
   );
   const scopedDestinationProfileId = readString(activationScope.destinationProfileId);
@@ -464,8 +475,17 @@ export function runtimeDestinationProfileIds(
   return ids;
 }
 
-function uniqueDestinationProfileIds(edges: EdgeRow[]): string[] {
-  return mappingDestinationProfileIds(edges.map((edge) => parseJsonObject(edge.target_ref_json)));
+/**
+ * The Destination Profiles a version releases into: those its edges name and those a step with no
+ * input edge (a persistent identifier) names as its own output target.
+ */
+function uniqueDestinationProfileIds(edges: EdgeRow[], transforms: TransformRow[] = []): string[] {
+  return mappingDestinationProfileIds([
+    ...edges.map((edge) => parseJsonObject(edge.target_ref_json)),
+    ...transforms.flatMap((step) =>
+      step.target_ref_json ? [parseJsonObject(step.target_ref_json)] : []
+    ),
+  ]);
 }
 
 async function loadActiveActivationRows(
@@ -743,7 +763,8 @@ async function loadTransforms(
   fieldMappingVersionId: string
 ): Promise<TransformRow[]> {
   return adapter.query<TransformRow>(
-    `SELECT t.id, t.edge_id, t.step_order, t.operation, t.parameters_json, e.target_ref_json
+    `SELECT t.id, t.edge_id, t.step_order, t.operation, t.parameters_json,
+            COALESCE(t.target_ref_json, e.target_ref_json) AS target_ref_json
        FROM mapping_rules r
        JOIN mapping_transform_steps t
          ON t.tenant_id = r.tenant_id

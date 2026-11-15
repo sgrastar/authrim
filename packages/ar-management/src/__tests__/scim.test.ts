@@ -231,6 +231,11 @@ vi.mock('../cross-shard-account-list', () => ({
   },
 }));
 
+// The Admin database is not part of these tests: the identifier material it holds is erased
+// through this one call, asserted in account-deletion.test.ts.
+vi.mock('../account-identifier-erasure', () => ({
+  eraseAccountIdentifierValues: vi.fn(async () => undefined),
+}));
 vi.mock('../account-directory-removal-producer', () => ({
   prepareAccountDirectoryRemoval: accountRemovalState.prepare,
   markAccountDirectoryRemovalsReady: accountRemovalState.ready,

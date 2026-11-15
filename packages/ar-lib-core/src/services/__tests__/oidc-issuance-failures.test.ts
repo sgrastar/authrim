@@ -177,6 +177,7 @@ describe('issuance failure counters on the real Admin boundary', () => {
     const failure: IdentityMappingFailureContext = {};
     await expect(
       applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter: store.adapter,
         env: ctx.env,
         tenantId: 'tenant-a',

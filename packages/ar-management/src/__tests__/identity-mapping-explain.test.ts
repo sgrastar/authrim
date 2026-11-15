@@ -658,6 +658,7 @@ describe('an explanation', () => {
       // grant's approval: with no consent given, its required ones only.
       const optional = new Set<string>();
       const mapped = await applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter: sqliteAdapter(t.core),
         env: { DB_ADMIN: t.adapter, SETTINGS: t.settings.namespace } as never,
         tenantId: TENANT,

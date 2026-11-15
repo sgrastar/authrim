@@ -86,42 +86,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profiles_create_destination: 'Destination profileを作成',
 	admin_identity_mapping_profiles_no_source: 'Source profileはありません。',
 	admin_identity_mapping_profiles_no_destination: 'Destination profileはありません。',
-	admin_identity_mapping_persistent_head_title: 'Persistent Identifiers - Authrim Admin',
-	admin_identity_mapping_persistent_title: 'Persistent Identifiers',
-	admin_identity_mapping_persistent_description:
-		'SAML eduPersonTargetedID、SAML persistent NameID、OIDC pairwise subで共有する識別子生成profileを管理します。',
-	admin_identity_mapping_persistent_inventory: 'Profile inventory',
-	admin_identity_mapping_persistent_loading: 'persistent identifier profileを読み込み中です。',
-	admin_identity_mapping_persistent_empty:
-		'Persistent Identifier Profileはまだ登録されていません。',
-	admin_identity_mapping_persistent_load_failed:
-		'persistent identifier profileの読み込みに失敗しました',
-	admin_identity_mapping_persistent_create: 'Persistent Identifierを作成',
-	admin_identity_mapping_persistent_usage_empty: 'usageは未設定です',
-	admin_identity_mapping_persistent_algorithm: 'Algorithm',
-	admin_identity_mapping_persistent_scope: 'Scope',
-	admin_identity_mapping_persistent_audience: 'Audience',
-	admin_identity_mapping_persistent_secret: 'Secret',
-	admin_identity_mapping_persistent_create_title: 'Persistent Identifierを作成',
-	admin_identity_mapping_persistent_edit_title: 'Persistent Identifierを編集',
-	admin_identity_mapping_persistent_display_name: '表示名',
-	admin_identity_mapping_persistent_profile_key: 'Profile key',
-	admin_identity_mapping_persistent_description_label: '説明',
-	admin_identity_mapping_persistent_mode: 'Mode',
-	admin_identity_mapping_persistent_protocol_scope: 'Protocol scope',
-	admin_identity_mapping_persistent_usage: 'Usage',
-	admin_identity_mapping_persistent_issuer: 'Issuer entity ID',
-	admin_identity_mapping_persistent_secret_ref: 'Secret ref',
-	admin_identity_mapping_persistent_save: '保存',
-	admin_identity_mapping_persistent_saving: '保存中...',
-	admin_identity_mapping_persistent_delete: '削除',
-	admin_identity_mapping_persistent_saved: 'Persistent identifier profileを保存しました。',
-	admin_identity_mapping_persistent_save_failed:
-		'persistent identifier profileの保存に失敗しました',
-	admin_identity_mapping_persistent_delete_failed:
-		'persistent identifier profileの削除に失敗しました',
-	admin_identity_mapping_persistent_delete_confirm:
-		'このpersistent identifier profileを削除しますか？',
 
 	admin_identity_mapping_profile_edit_head_title: 'Profile編集 - Authrim Admin',
 	admin_identity_mapping_policies_head_title: 'Field Mapping Sets - Authrim Admin',
@@ -591,13 +555,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_transform_join_desc: 'multi-value配列を1つのテキスト値に結合します。',
 	admin_identity_mapping_flow_transform_first_label: '先頭値',
 	admin_identity_mapping_flow_transform_first_desc: 'multi-value配列から先頭の値を使います。',
-	admin_identity_mapping_flow_transform_oidc_pairwise_sub_label: 'OIDC pairwise sub',
-	admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc:
-		'現在のOIDC client向けpairwise subject identifierを使います。',
-	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label:
-		'SAML eduPersonTargetedID',
-	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc:
-		'現在のSAML SP contextからIdP!SP!opaque形式のtargeted IDを構築します。',
 	admin_identity_mapping_flow_transform_affix_text_label: 'prefix/suffixを追加',
 	admin_identity_mapping_flow_transform_affix_text_desc: '入力値の前後に固定テキストを追加します。',
 	admin_identity_mapping_flow_transform_trim_label: 'トリム',
@@ -633,11 +590,8 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_transform_param_trim_items: '各値をトリム',
 	admin_identity_mapping_flow_transform_param_omit_empty: '空値を除去',
 	admin_identity_mapping_flow_transform_param_unique: '重複を除去',
-	admin_identity_mapping_flow_transform_param_persistent_identifier_profile:
-		'Persistent Identifier Profile',
 	admin_identity_mapping_flow_transform_param_prefix: 'Prefix',
 	admin_identity_mapping_flow_transform_param_suffix: 'Suffix',
-	admin_identity_mapping_flow_transform_tenant_default_profile: 'Tenant default',
 	admin_identity_mapping_flow_transform_param_true_values: 'true値',
 	admin_identity_mapping_flow_transform_param_false_values: 'false値',
 	admin_identity_mapping_flow_transform_param_null_values: 'null値',

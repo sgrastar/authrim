@@ -41,6 +41,10 @@ import {
   externalSubjectIssuer,
   SUBJECT_REFERENCE_CLAIM,
   openSubjectReference,
+  resolveIssuedTokenAccount,
+  pairwiseTokenLacksReference,
+  deriveIssuedSubject,
+  getClientCached,
   type DatabaseAdapter,
   type OAuthClientConsentRevocationState,
 } from '@authrim/ar-lib-core';
@@ -373,6 +377,42 @@ function namesNonAccountSubject(tokenPayload: Record<string, unknown>): boolean 
   );
 }
 
+/**
+ * Whether the device secret's owner may be named by the user's id to its requester: the requester
+ * is the app the secret was issued to, and that app's own sub for the user is the user's id (a
+ * pairwise app, or one whose mapping issues another sub, is not). A client or a derivation that
+ * cannot be read gives no.
+ */
+async function deviceSecretSubjectIsUserId(
+  c: Context<{ Bindings: Env }>,
+  input: { tenantId: string; requesterId: string; issuerId: string; userId: string }
+): Promise<boolean> {
+  if (input.requesterId !== input.issuerId) return false;
+  try {
+    const client = await getClientCached(c, c.env, input.issuerId);
+    if (!client) return false;
+    const derived = await deriveIssuedSubject(
+      {
+        env: c.env,
+        adapter: createAuthContextFromHono(c, input.tenantId).coreAdapter,
+        tenantId: input.tenantId,
+        clientId: input.issuerId,
+        clientMetadata: client,
+        // A mapping that reads the user's attributes (a sub copied from one) cannot be judged here:
+        // reading them fails the derivation, and no sub is named.
+        loadUserAttributes: async () => {
+          throw new Error('user_attributes_not_available');
+        },
+        log: getLogger(c).module('INTROSPECT'),
+      },
+      input.userId
+    );
+    return derived.ok && derived.sub === input.userId;
+  } catch {
+    return false;
+  }
+}
+
 /** The answer when the token's account cannot be read: refuse rather than answer active=true. */
 function accountStateUnavailableResponse(c: Context<{ Bindings: Env }>): Response {
   return c.json({ error: 'server_error', error_description: 'Account state is unavailable' }, 503);
@@ -573,7 +613,14 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
       active: true,
       token_type: 'device_secret',
       client_id: targetClientId,
-      sub: deviceSecret.user_id,
+      // The user's id is given only to the app the secret was issued to, and only when that app's own
+      // sub for the user is the user's id (never to a pairwise app or another app of its group).
+      ...((await deviceSecretSubjectIsUserId(c, {
+        tenantId,
+        requesterId: client_id,
+        issuerId: targetClientId,
+        userId: deviceSecret.user_id,
+      })) && { sub: deviceSecret.user_id }),
       iss: issuerUrl,
       jti: deviceSecret.id,
       exp: Math.floor(deviceSecret.expires_at / 1000),
@@ -772,11 +819,49 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // token_use, RFC 7662's advisory token_type_hint selects the compatible lookup path after the
   // complete OAuth token shape has been validated above.
 
+  // An app that is given pairwise subjects: its user tokens carry the sealed account reference, and
+  // one without (issued before they did) is not active.
+  const tokenClient = tokenClientId
+    ? await authCtx.repositories.client.findByClientId(tokenClientId)
+    : null;
+  // A client that cannot be read (deleted) is not known to be given the user's id: judged as if pairwise.
+  if (
+    pairwiseTokenLacksReference(
+      tokenPayload,
+      tokenClient ?? (tokenClientId ? { subject_type: 'pairwise' } : null)
+    )
+  ) {
+    return c.json<IntrospectionResponse>({
+      active: false,
+    });
+  }
+
   let refreshFamily: { consentGeneration?: number; createdAt?: number } | null = null;
   if (introspectedTokenUse === 'refresh') {
     // Refresh tokens are active only while their authoritative family entry exists. token_type_hint
-    // is advisory; a signed token_use claim takes precedence when present.
-    const refreshTokenData = await getRefreshToken(c.env, sub, rtv, tokenClientId!, jti, tenantId);
+    // is advisory; a signed token_use claim takes precedence when present. The family is kept by
+    // the account's id: a refresh token's sub may be the one its app was given, so the account is
+    // opened from its sealed reference (verified above) before the family is looked up.
+    const refreshAccount = await resolveIssuedTokenAccount(
+      c.env,
+      tenantId,
+      tokenClientId!,
+      tokenPayload,
+      false
+    );
+    if (!refreshAccount.ok) {
+      return refreshAccount.reason === 'unavailable'
+        ? accountStateUnavailableResponse(c)
+        : c.json<IntrospectionResponse>({ active: false });
+    }
+    const refreshTokenData = await getRefreshToken(
+      c.env,
+      refreshAccount.userId,
+      rtv,
+      tokenClientId!,
+      jti,
+      tenantId
+    );
     if (!refreshTokenData) {
       return c.json<IntrospectionResponse>({
         active: false,
@@ -934,6 +1019,8 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // that time. An access token (or a mapping) never states them, so introspection never repeats
   // them, whatever an older token carries.
   for (const claim of AUTHORIZATION_SERVER_ASSURANCE_CLAIMS) delete response[claim];
+  // The sub is the one recorded in the token: a mapping of the response does not replace it.
+  if (response.sub !== undefined) response.sub = sub;
 
   // Publish introspection event (non-blocking)
   // Only for active tokens - inactive responses don't need events
@@ -943,7 +1030,8 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     data: {
       jti,
       clientId: client_id, // Requesting client (not token's client_id)
-      userId: sub || undefined,
+      // The account the token is for (opened from its reference), never the sub an app was given.
+      userId: nonAccountSubject ? undefined : accountUserId || undefined,
       scopes: scope ? scope.split(' ') : undefined,
     } satisfies TokenEventData,
   }).catch((err: unknown) => {

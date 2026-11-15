@@ -64,6 +64,10 @@ vi.mock('../account-operation-log', () => ({
   recordAccountOperation: mockRecordAccountOperation,
 }));
 
+const mockTokenClient = vi.hoisted(() =>
+  vi.fn(async () => null as { subject_type?: string } | null)
+);
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -75,6 +79,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       return mockInstallationRepo;
     }),
     introspectTokenFromContext: mockIntrospectTokenFromContext,
+    // No registration of the token's client is read here (the real lookup needs a request cache).
+    introspectedTokenClient: mockTokenClient,
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     getDeviceSecretInstallationId: (device: { id: string; installation_id?: string }) =>
@@ -227,6 +233,7 @@ const targetInstallation = {
 describe('/me/devices handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTokenClient.mockResolvedValue({ subject_type: 'public' });
     mockResolveAccountDataContextFromHono.mockResolvedValue({});
     mockIntrospectTokenFromContext.mockResolvedValue({
       valid: true,
@@ -307,6 +314,50 @@ describe('/me/devices handlers', () => {
     });
     expect(secondBody.devices[0].fallback_display_name).toBeUndefined();
     expect(secondBody.next_cursor).toBeUndefined();
+  });
+
+  it('lists the devices of the account a pairwise app’s token is for, and names the caller by the sub it was given in the cursor', async () => {
+    mockIntrospectTokenFromContext.mockResolvedValue({
+      valid: true,
+      claims: { ...accessClaims, sub: 'sub-the-app-was-given', authrim_subject_ref: 'sr1.a.b' },
+      accountUserId: 'user-001',
+    });
+
+    const response = await listMyDevicesHandler(
+      createMockContext({ query: { limit: '1' } }) as never
+    );
+    const body = await response.json<{ next_cursor?: string }>();
+
+    expect(response.status).toBe(200);
+    expect(mockIntrospectTokenFromContext).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ allowSubjectReference: true })
+    );
+    // Looked up by the account, whatever sub the app was given.
+    expect(mockRepo.findByUserId.mock.calls[0]?.[0]).toBe('user-001');
+    // The cursor the client holds names the sub it was given, never the account.
+    const payload = atob(
+      (body.next_cursor ?? '')
+        .slice('cur_'.length)
+        .split('.')[0]
+        .replace(/-/g, '+')
+        .replace(/_/g, '/')
+    );
+    expect(payload).toContain('sub-the-app-was-given');
+    expect(payload).not.toContain('user-001');
+  });
+
+  it('refuses a pairwise app’s token that carries no account reference (issued before tokens did)', async () => {
+    mockTokenClient.mockResolvedValue({ subject_type: 'pairwise' });
+    mockIntrospectTokenFromContext.mockResolvedValue({
+      valid: true,
+      claims: { ...accessClaims, token_use: 'access', jti: 'jti-1' },
+    });
+
+    const response = await listMyDevicesHandler(createMockContext({}) as never);
+
+    expect(response.status).toBe(401);
+    expect(mockRepo.findByUserId).not.toHaveBeenCalled();
   });
 
   it('lists devices with an Account Page cookie session', async () => {

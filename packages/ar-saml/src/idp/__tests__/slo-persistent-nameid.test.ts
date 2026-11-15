@@ -49,7 +49,8 @@ describe('resolveIdPLogoutNameID', () => {
         'user-without-email',
         spConfig()
       )
-    ).rejects.toThrow('AllowCreate=false');
+    ).resolves.toBeNull();
+    // Nothing to name: the SP is skipped by the logout, and no new NameID is made for it.
     expect(registry.put).not.toHaveBeenCalled();
   });
 });

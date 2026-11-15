@@ -136,11 +136,12 @@ export function assertSAMLImportedSPRelease(
     !Array.isArray(profile.fields) ||
     profile.fields.some((field) => !field.key || !CLASSIFICATIONS.has(field.classification)) ||
     new Set(profile.fields.map((field) => field.key)).size !== profile.fields.length ||
-    binding.transforms.some((transform) => {
-      // An imported release has no tenant salt to make identifiers from.
-      const operation = record(transform)?.operation;
-      return operation === 'saml_edu_person_targeted_id' || operation === 'persistent_identifier';
-    }) ||
+    // An imported release has no tenant salt or identifier tables to make identifiers from: no
+    // persistent_identifier step in any graph the binding holds (its own, the NameID's, or any
+    // other separately stored one).
+    bindingGraphs(binding).some((graph) =>
+      graph.some((transform) => record(transform)?.operation === 'persistent_identifier')
+    ) ||
     (context.sourceSelector?.fieldMappingSetId !== undefined &&
       context.sourceSelector.fieldMappingSetId !== sourceRef.fieldMappingSetId) ||
     (context.sourceSelector?.fieldMappingVersionId !== undefined &&
@@ -217,6 +218,19 @@ export function destinationCatalogEntries(input: {
 }
 
 export { findRenamedAttributeDescriptors };
+
+/** Every list of transform steps the binding holds: its own and those of nested graphs. */
+function bindingGraphs(binding: unknown): unknown[][] {
+  const root = record(binding);
+  if (!root) return [];
+  const graphs: unknown[][] = [];
+  if (Array.isArray(root.transforms)) graphs.push(root.transforms);
+  for (const value of Object.values(root)) {
+    const nested = record(value);
+    if (nested && Array.isArray(nested.transforms)) graphs.push(nested.transforms);
+  }
+  return graphs;
+}
 
 export async function resolveSAMLRuntimeIdentityMapping(
   env: Env,

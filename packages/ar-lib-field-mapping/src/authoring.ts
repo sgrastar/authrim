@@ -17,6 +17,7 @@ export {
 } from './core/reason-registry';
 export { buildTraceEntry } from './core/trace';
 export {
+  IDENTIFIER_SALT_NAME,
   TRANSFORM_OPERATION_SCHEMAS,
   executeTransformStep,
   persistentIdentifierSettingsProblem,

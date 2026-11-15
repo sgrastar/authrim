@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   attempt: vi.fn(),
   transition: vi.fn(),
   deleteRuntimeUser: vi.fn(),
+  eraseIdentifiers: vi.fn(),
 }));
 
 vi.mock('../account-legal-hold-guard', () => ({ findActiveAccountLegalHold: mocks.hold }));
@@ -33,6 +34,9 @@ vi.mock('../account-directory-removal-producer', () => ({
   attemptImmediateAccountDirectoryRemovals: mocks.attempt,
 }));
 vi.mock('../session-end-logout', () => ({ transitionEndingSessions: mocks.transition }));
+vi.mock('../account-identifier-erasure', () => ({
+  eraseAccountIdentifierValues: mocks.eraseIdentifiers,
+}));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -82,6 +86,7 @@ beforeEach(() => {
     ['fence', mocks.fence],
     ['tombstone_write', mocks.writeTombstone],
     ['erase', mocks.erase],
+    ['erase_identifiers', mocks.eraseIdentifiers],
     ['runtime_user_delete', mocks.deleteRuntimeUser],
     ['removal_ready', mocks.ready],
     ['removal_attempt', mocks.attempt],
@@ -109,6 +114,8 @@ describe('the shared account deletion', () => {
       'fence',
       'tombstone_write',
       'erase',
+      // The stored identifiers and identifier-source values imported for the account.
+      'erase_identifiers',
       'runtime_user_delete',
       'auth_deleted',
       'removal_ready',
@@ -127,6 +134,7 @@ describe('the shared account deletion', () => {
     );
     // No erasure time given: the producer's own (two arguments, as the administrator's delete).
     expect(mocks.erase).toHaveBeenCalledWith(pii, { tenantId: 't1', userId: 'u1', core });
+    expect(mocks.eraseIdentifiers).toHaveBeenCalledWith(env, { tenantId: 't1', userId: 'u1' });
   });
 
   it('refuses a held account before anything changes', async () => {

@@ -12,6 +12,7 @@
  * - DELETE /clients/:client_id - Delete client registration
  */
 
+import { validatePairwiseClientMetadata } from './pairwise-client-validation';
 import { runLiteGuardedWrite } from './lite-mode-guard';
 import type { Context } from 'hono';
 import { dynamicClientRegistrationRefusal, type Env } from '@authrim/ar-lib-core';
@@ -756,6 +757,30 @@ async function clientConfigUpdateUnguarded(c: Context<{ Bindings: Env }>): Promi
         },
         404
       );
+    }
+    // OIDC Core 8.1, as at registration: the pairwise configuration the client would have after
+    // this update (what the body leaves out is what it has now).
+    {
+      const effectiveRedirectUris = Array.isArray(body.redirect_uris)
+        ? body.redirect_uris
+        : Array.isArray(existingClient.redirect_uris)
+          ? existingClient.redirect_uris
+          : [];
+      // As the update stores them: a value the body leaves out or sets to null stays as it is.
+      const effectiveSectorUri =
+        body.sector_identifier_uri ?? existingClient.sector_identifier_uri ?? null;
+      const pairwiseError = await validatePairwiseClientMetadata({
+        subjectType: body.subject_type ?? existingClient.subject_type ?? 'public',
+        redirectUris: effectiveRedirectUris,
+        sectorIdentifierUri: effectiveSectorUri,
+        // Whenever the subject type, the sector URI or the redirect URIs are in the update, the
+        // sector document is fetched and checked against the effective values.
+        checkSectorContent:
+          body.subject_type !== undefined ||
+          body.sector_identifier_uri != null ||
+          Array.isArray(body.redirect_uris),
+      });
+      if (pairwiseError) return c.json(pairwiseError, 400);
     }
     // The tenant's redirect URI policy, as at registration and authorize.
     if (Array.isArray(body.redirect_uris)) {

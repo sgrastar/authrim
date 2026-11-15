@@ -17,6 +17,8 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   evaluateClaimsForTarget,
+  claimsRequestRestrictsSub,
+  deriveOIDCSubject,
   mergeReleaseCandidates,
   releaseCandidatesOf,
   resolveAssuranceClaims,
@@ -87,8 +89,32 @@ export async function computeReleaseCandidates(
       getAdapter: () => piiCtx.coreAdapter,
       onError: () => undefined,
     });
+    // A `sub` the claims request names (or an ASC rule on /sub) is the sub the app receives
+    // (a pairwise app's), as at issuance, never the account's id.
+    let subjectValue: string | undefined;
+    if (claimsRequestRestrictsSub(input.claimsRequest, target)) {
+      try {
+        subjectValue = await deriveOIDCSubject({
+          adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+          env: c.env,
+          tenantId,
+          clientId,
+          subjectType: clientMetadata.subject_type ?? 'public',
+          sectorIdentifier: clientMetadata.sector_identifier_uri,
+          redirectUris: clientMetadata.redirect_uris,
+          selector: clientMetadata.identity_mapping,
+          destinationSurface: target,
+          grantedScopes: input.scopes,
+          claims: { sub: userId },
+          sourceAttributes: userData,
+        });
+      } catch (error) {
+        throw new ReleaseCandidatesUnavailableError(error);
+      }
+    }
     const evaluated = evaluateClaimsForTarget({
       target,
+      ...(subjectValue !== undefined ? { subjectValue } : {}),
       claimsRequest: input.claimsRequest,
       initialClaims: { sub: userId },
       availableClaims: {
@@ -112,6 +138,7 @@ export async function computeReleaseCandidates(
           env: c.env,
           tenantId,
           clientId,
+          subjectType: clientMetadata.subject_type ?? 'public',
           sectorIdentifier: clientMetadata.sector_identifier_uri,
           redirectUris: clientMetadata.redirect_uris,
           selector: clientMetadata.identity_mapping,

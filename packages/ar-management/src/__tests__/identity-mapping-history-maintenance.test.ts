@@ -135,6 +135,12 @@ describe('identity mapping history maintenance', () => {
         '001_0_5_0_admin_baseline.sql'
       )
     );
+    admin.exec(
+      readRenderedMigrationSql(
+        new URL('../../../../migrations/admin/d1/', import.meta.url),
+        '021_mapping_transform_step_target.sql'
+      )
+    );
     core = new DatabaseSync(':memory:');
     core.exec(`CREATE TABLE oauth_clients (tenant_id TEXT,client_id TEXT,updated_at INTEGER);
       CREATE TABLE idempotency_keys (id TEXT PRIMARY KEY,tenant_id TEXT,actor_id TEXT,method TEXT,

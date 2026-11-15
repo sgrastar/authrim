@@ -1,4 +1,5 @@
 import { runLiteGuardedWrite } from './lite-mode-guard';
+import { validatePairwiseClientMetadata } from './pairwise-client-validation';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
@@ -1521,6 +1522,18 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         identityMappingError.status
       );
     }
+    // OIDC Core 8.1, as at registration (DCR): one sector for a pairwise client.
+    const pairwiseError = await validatePairwiseClientMetadata({
+      subjectType: body.subject_type,
+      redirectUris: validatedRedirectUris,
+      sectorIdentifierUri: body.sector_identifier_uri,
+    });
+    if (pairwiseError) {
+      return c.json(
+        { error: 'invalid_request', error_description: pairwiseError.error_description },
+        400
+      );
+    }
     const isPublicClient = tokenEndpointAuthMethodValidation.value === 'none';
     const clientSecret = isPublicClient
       ? undefined
@@ -2107,6 +2120,9 @@ async function executeAdminClientUpdate(
       id_token_signed_response_alg,
       userinfo_signed_response_alg,
     } = body;
+    const pairwiseFields = body as Record<string, unknown>;
+    const subject_type = pairwiseFields.subject_type;
+    const sector_identifier_uri = pairwiseFields.sector_identifier_uri;
 
     const idTokenSigningAlgorithmValidation = validateOptionalEnumField(
       id_token_signed_response_alg,
@@ -2238,6 +2254,54 @@ async function executeAdminClientUpdate(
         clientId,
       });
       if (updateRedirectPolicy) return updateRedirectPolicy;
+    }
+
+    // OIDC Core 8.1: the pairwise configuration the client will have, checked as at registration
+    // (a change of the subject type, the sector URI or the redirect URIs re-checks it: the sector
+    // URI must still list every redirect URI).
+    if (
+      subject_type !== undefined ||
+      sector_identifier_uri !== undefined ||
+      redirect_uris !== undefined
+    ) {
+      if (subject_type !== undefined && subject_type !== 'public' && subject_type !== 'pairwise') {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'subject_type must be one of: public, pairwise',
+          },
+          400
+        );
+      }
+      if (
+        sector_identifier_uri !== undefined &&
+        sector_identifier_uri !== null &&
+        typeof sector_identifier_uri !== 'string'
+      ) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'sector_identifier_uri must be a string or null',
+          },
+          400
+        );
+      }
+      const effectiveSectorUri =
+        sector_identifier_uri !== undefined
+          ? sector_identifier_uri
+          : (existingClient.sector_identifier_uri ?? null);
+      const pairwiseError = await validatePairwiseClientMetadata({
+        subjectType: subject_type ?? existingClient.subject_type ?? 'public',
+        redirectUris:
+          redirectUrisValidation.value ?? parseClientStringArray(existingClient.redirect_uris, []),
+        sectorIdentifierUri: effectiveSectorUri || null,
+      });
+      if (pairwiseError) {
+        return c.json(
+          { error: 'invalid_request', error_description: pairwiseError.error_description },
+          400
+        );
+      }
     }
 
     const grantTypesValidation = validateGrantTypes(grant_types, 'grant_types');
@@ -2758,6 +2822,8 @@ async function executeAdminClientUpdate(
       default_resource,
       id_token_signed_response_alg,
       userinfo_signed_response_alg,
+      subject_type,
+      sector_identifier_uri,
     ].some((v) => v !== undefined);
     const hasRegistryUpdate = webOriginRegistryPayload !== undefined;
     const hasUpdates = hasClientUpdates || hasRegistryUpdate;
@@ -2914,6 +2980,8 @@ async function executeAdminClientUpdate(
               default_resource: defaultResourceValidation.value,
               id_token_signed_response_alg: idTokenSigningAlgorithmValidation.value,
               userinfo_signed_response_alg: userInfoSigningAlgorithmValidation.value,
+              subject_type,
+              sector_identifier_uri,
             },
             expectedUpdatedAt === undefined
               ? undefined

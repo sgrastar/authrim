@@ -37,8 +37,7 @@ const mocks = vi.hoisted(() => ({
   pairwiseSecretForRef: 'referenced-secret' as string | undefined,
   /** The runtime contexts the attribute releases were given, in order. */
   runtimeContexts: [] as Array<Record<string, unknown> | undefined>,
-  persistentProfileRows: [] as Array<Record<string, unknown>>,
-  targetedIdOptions: null as Record<string, unknown> | null,
+  exceptionRows: [] as Array<Record<string, unknown>>,
   buildResponse: vi.fn((..._args: unknown[]) => '<saml-success-response/>'),
   buildErrorResponse: vi.fn((_options?: unknown) => '<saml-error-response/>'),
   federationSettings: null as Record<string, unknown> | null,
@@ -75,7 +74,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isShardedSessionId: vi.fn(() => mocks.shardedSession),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.metadataAdapter),
     requireAdminDatabaseAdapter: vi.fn(() => ({
-      query: vi.fn(async () => mocks.persistentProfileRows),
+      query: vi.fn(async (sql: string) =>
+        sql.includes('mapped_identifier_exceptions') ? mocks.exceptionRows : []
+      ),
     })),
     resolveRuntimeIdentityMappingBinding: vi.fn(async () => ({
       id: 'binding',
@@ -158,24 +159,16 @@ vi.mock('../attributes', async (importOriginal) => {
     buildSAMLAttributesForSPWithDiagnostics: vi.fn(
       (
         _subject: unknown,
-        config?: {
-          identityMapping?: { runtimeContext?: { saml?: { eduPersonTargetedIdOpaque?: string } } };
-        }
+        config?: { identityMapping?: { runtimeContext?: Record<string, unknown> } }
       ) => {
         if (mocks.attributeError) throw mocks.attributeError;
         mocks.runtimeContexts.push(
           (config?.identityMapping as { runtimeContext?: Record<string, unknown> } | undefined)
             ?.runtimeContext
         );
-        // A mapping that releases eduPersonTargetedID carries the identifier the release
-        // context holds: a placeholder until the release is approved, then the real one.
-        const targeted = config?.identityMapping?.runtimeContext?.saml?.eduPersonTargetedIdOpaque;
         return {
           attributes: [
             ...mocks.attributes.map((attribute) => ({ ...attribute })),
-            ...(typeof targeted === 'string'
-              ? [{ name: 'eduPersonTargetedID', values: [targeted] }]
-              : []),
             // A persistent_identifier step's value goes out the same way.
             ...Object.values(
               ((config?.identityMapping as { runtimeContext?: { identifiers?: object } })
@@ -210,12 +203,6 @@ vi.mock('../subject', async (importOriginal) => {
       return 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress';
     }),
     resolveSAMLNameIDValue: vi.fn(async () => 'user@example.test'),
-    resolveSAMLEduPersonTargetedIDOpaque: vi.fn(
-      async (_user: unknown, options: Record<string, unknown>) => {
-        mocks.targetedIdOptions = options;
-        return 'targeted-id';
-      }
-    ),
     resolveSAMLPairwiseSecret: vi.fn(async () => mocks.pairwiseSecret),
     resolveSAMLPairwiseSecretForRef: vi.fn(async () => mocks.pairwiseSecretForRef),
     resolveSAMLPersistentNameIDRegistryStore: vi.fn(() => undefined),
@@ -248,7 +235,6 @@ import {
 import { SAMLAuthnContextPolicyError } from '../authn-context';
 import {
   createSAMLSessionIndex,
-  resolveSAMLEduPersonTargetedIDOpaque,
   resolveSAMLNameIDValue,
   resolveSAMLPersistentNameIDRegistryStore,
   resolveSAMLTransientNameIDStore,
@@ -385,8 +371,6 @@ describe('IdP SSO handler policy boundaries', () => {
     mocks.nameIdError = null;
     mocks.pairwiseSecret = 'pairwise-secret';
     mocks.pairwiseSecretForRef = 'referenced-secret';
-    mocks.persistentProfileRows = [];
-    mocks.targetedIdOptions = null;
     mocks.federationSettings = null;
     mocks.assuranceSettings = null;
     mocks.runtimeEdges = [];
@@ -619,20 +603,6 @@ describe('IdP SSO handler policy boundaries', () => {
     expect(response.status).toBe(400);
   });
 
-  it('builds eduPersonTargetedID runtime context from the tenant pairwise secret', async () => {
-    authenticateSession();
-    mocks.user = { id: 'user-a', email: 'user@example.test' };
-    mocks.sp = sp({
-      identityMapping: targetedIdMapping(),
-    });
-    expect((await post(authnRequest())).status).toBe(200);
-    expect(mocks.targetedIdOptions).toMatchObject({
-      tenantId: 'tenant-a',
-      spEntityId: 'https://sp.example.test/entity',
-      pairwiseSalt: 'pairwise-secret',
-    });
-  });
-
   it('makes a persistent_identifier step from the account ID with the tenant salt', async () => {
     authenticateSession();
     mocks.user = { id: 'user-a', email: 'user@example.test' };
@@ -646,19 +616,15 @@ describe('IdP SSO handler policy boundaries', () => {
     mocks.sp = sp({
       identityMapping: {
         catalog: { entries: [] },
-        edges: [
-          {
-            id: 'edge-uid',
-            sourceRef: { side: 'source', namespace: 'authrim.system', path: 'uid' },
-            targetRef: target,
-          },
-        ],
+        // The step takes no input edge: it is made from the account ID.
+        edges: [],
         transforms: [
           {
             id: 'step-pairwise',
             operation: 'persistent_identifier',
-            inputEdgeIds: ['edge-uid'],
+            inputEdgeIds: [],
             parameters: {
+              input: 'account',
               format: 'saml_pairwise_id',
               algorithm: 'shibboleth',
               encoding: 'base32',
@@ -687,95 +653,56 @@ describe('IdP SSO handler policy boundaries', () => {
       'identifier-salt:default'
     );
   });
-
-  it.each([
-    [[], 'policy.persistent_identifier_profile_not_found'],
-    [
-      [{ id: 'profile-a', mode: 'stored', protocol_scope: 'saml', algorithm: 'sha256' }],
-      'policy.persistent_identifier_profile_unsupported_mode',
-    ],
-    [
-      [{ id: 'profile-a', mode: 'computed', protocol_scope: 'oidc', algorithm: 'sha256' }],
-      'policy.persistent_identifier_profile_unsupported_mode',
-    ],
-  ])('fails closed for unusable persistent identifier profile %#', async (rows) => {
+  it('hands the runtime the steps an exception suppressed, and no identifier for them', async () => {
     authenticateSession();
     mocks.user = { id: 'user-a', email: 'user@example.test' };
-    mocks.sp = sp({ identityMapping: targetedIdMapping('profile-a') });
-    mocks.persistentProfileRows = rows;
-    const response = await post(authnRequest());
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain('SAMLResponse');
-    expect(mocks.targetedIdOptions).toBeNull();
-    expect(mocks.buildErrorResponse).toHaveBeenCalled();
-    expect(mocks.buildResponse).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [targetedIdMapping(), undefined, [], undefined],
-    [
-      targetedIdMapping('profile-a'),
-      'pairwise-secret',
-      [
-        {
-          id: 'profile-a',
-          mode: 'computed',
-          protocol_scope: 'saml',
-          algorithm: 'sha256',
-          secret_ref: 'secret-ref',
-        },
-      ],
-      undefined,
-    ],
-  ])(
-    'fails closed when targeted identifier secret is unavailable %#',
-    async (identityMapping, baseSecret, rows, refSecret) => {
-      authenticateSession();
-      mocks.user = { id: 'user-a', email: 'user@example.test' };
-      mocks.sp = sp({ identityMapping });
-      mocks.pairwiseSecret = baseSecret;
-      mocks.pairwiseSecretForRef = refSecret;
-      mocks.persistentProfileRows = rows;
-      expect((await post(authnRequest())).status).toBe(200);
-      expect(mocks.targetedIdOptions).toBeNull();
-      expect(mocks.buildErrorResponse).toHaveBeenCalled();
-      expect(mocks.buildResponse).not.toHaveBeenCalled();
-    }
-  );
-
-  it('applies a complete computed persistent identifier profile', async () => {
-    authenticateSession();
-    mocks.user = { id: 'user-a', email: 'user@example.test' };
-    mocks.sp = sp({ identityMapping: targetedIdMapping('profile-a') });
-    mocks.persistentProfileRows = [
+    mocks.pairwiseSecretForRef = 'tenant-identifier-salt';
+    mocks.runtimeContexts = [];
+    mocks.exceptionRows = [
       {
-        id: 'profile-a',
-        mode: 'computed',
-        protocol_scope: 'generic',
-        algorithm: 'shibboleth_sha1_base64',
-        secret_ref: 'secret-ref',
-        issuer_entity_id: 'https://persistent.example.test/idp',
-        audience_mode: 'saml_sp_entity_id',
+        account_id: 'user-a',
+        audience: 'https://sp.example.test/entity',
+        action: 'block',
+        salt_name: null,
       },
     ];
+    const mapping = pairwiseIdMapping();
+    mapping.transforms[0].parameters = {
+      ...mapping.transforms[0].parameters,
+      exceptions: 'list-a',
+    };
+    mocks.sp = sp({ identityMapping: mapping });
+
     expect((await post(authnRequest())).status).toBe(200);
-    expect(mocks.targetedIdOptions).toMatchObject({
-      pairwiseSalt: 'referenced-secret',
-      pairwiseAlgorithm: 'shibboleth_sha1_base64',
-      pairwiseAudienceMode: 'saml_sp_entity_id',
-      persistentProfileId: 'profile-a',
-    });
+
+    // The pass that makes identifiers (the first only stands a placeholder in, before consent).
+    const made = mocks.runtimeContexts.at(-1);
+    expect(made?.suppressedIdentifiers).toEqual({ 'step-pairwise': true });
+    expect(made?.identifiers).toEqual({});
+    mocks.exceptionRows = [];
   });
 });
 
-function targetedIdMapping(profileId?: string) {
+function pairwiseIdMapping() {
+  const target = {
+    side: 'destination',
+    namespace: 'saml.attribute',
+    path: 'pairwise-id',
+  };
   return {
     catalog: { entries: [] },
     edges: [],
     transforms: [
       {
-        operation: 'saml_edu_person_targeted_id',
-        parameters: profileId ? { persistentIdentifierProfileId: profileId } : {},
+        id: 'step-pairwise',
+        operation: 'persistent_identifier',
+        inputEdgeIds: [],
+        parameters: {
+          input: 'account',
+          format: 'plain',
+          algorithm: 'shibboleth',
+        } as Record<string, unknown>,
+        outputTargetRef: target,
       },
     ],
   };
@@ -995,7 +922,6 @@ describe('SP minimum identity assurance (SP-initiated)', () => {
     mocks.user = { id: 'user-a', email: 'user@example.test', name: 'User A' };
     mocks.attributeError = null;
     mocks.federationSettings = null;
-    mocks.targetedIdOptions = null;
     authenticateSession();
   });
 
@@ -1538,7 +1464,6 @@ describe('information release consent on the shared consent screen (SP-initiated
   const nothingMade = () => {
     expect(resolveSAMLNameIDValue).not.toHaveBeenCalled();
     expect(createSAMLSessionIndex).not.toHaveBeenCalled();
-    expect(resolveSAMLEduPersonTargetedIDOpaque).not.toHaveBeenCalled();
     expect(resolveSAMLPersistentNameIDRegistryStore).not.toHaveBeenCalled();
     expect(resolveSAMLTransientNameIDStore).not.toHaveBeenCalled();
   };
@@ -1889,23 +1814,22 @@ describe('information release consent on the shared consent screen (SP-initiated
   });
 
   it('shows a pairwise identifier as an item without making it, until it is approved', async () => {
-    mocks.sp = sp({ informationReleaseConsent: asks, identityMapping: targetedIdMapping() });
-    mocks.requiredNames = ['mail', 'eduPersonTargetedID'];
+    mocks.sp = sp({ informationReleaseConsent: asks, identityMapping: pairwiseIdMapping() });
+    mocks.requiredNames = ['mail', 'pairwise-id'];
+    mocks.pairwiseSecretForRef = 'tenant-identifier-salt';
     const { challengeId, challenge } = await sentToTheScreen();
     const items = (
       challenge?.metadata as { release: { items: Array<{ key: string; deferred?: boolean }> } }
     ).release.items;
-    const targetedKey = samlAttributeItemKey({ name: 'eduPersonTargetedID' });
-    expect(items.find((item) => item.key === targetedKey)).toMatchObject({ deferred: true });
+    const pairwiseKey = samlAttributeItemKey({ name: 'pairwise-id' });
+    expect(items.find((item) => item.key === pairwiseKey)).toMatchObject({ deferred: true });
     // Nothing was made for it while the person is asked.
-    expect(mocks.targetedIdOptions).toBeNull();
     nothingMade();
 
-    answer(challengeId, [NAMEID_KEY, MAIL_KEY, NAME_KEY, targetedKey], []);
+    answer(challengeId, [NAMEID_KEY, MAIL_KEY, NAME_KEY, pairwiseKey], []);
     expect((await resume()).status).toBe(200);
-    // Approved: made once, and released with its real value.
-    expect(mocks.targetedIdOptions).toMatchObject({ tenantId: 'tenant-a', spEntityId: SP });
-    expect(releasedNames()).toContain('eduPersonTargetedID');
+    // Approved: made, and released with its real value.
+    expect(releasedNames()).toContain('pairwise-id');
     expect(
       (
         mocks.buildResponse.mock.calls.at(-1)?.[0] as { attributes: Array<{ values: string[] }> }

@@ -19,7 +19,7 @@ every tenant can read them. This page says what that means for operating an envi
   Profile that the platform owns.
 - Its activation is stored with an empty scope, so it applies to whichever tenant resolves it.
 - It cannot contain anything that only one tenant has: custom claims, custom fields,
-  attributes, persistent identifiers (`oidc_pairwise_sub`), a Source Profile, or a Destination
+  attributes, persistent identifiers (a `persistent_identifier` step), a Source Profile, or a Destination
   Profile a tenant owns. These are refused when the version is saved, compiled or activated.
 
 Creating and activating a platform Mapping Set changes nothing by itself: an app is bound to a

@@ -363,8 +363,13 @@ export interface ResourcePermissionRow extends Omit<
 export interface TokenClaimEvaluationContext {
   /** Tenant ID */
   tenant_id: string;
-  /** User ID (subject) */
+  /** User ID (subject): the account the conditions are evaluated for */
   subject_id: string;
+  /**
+   * The sub the client receives for this user (a pairwise app's): what `{{subject_id}}` in a claim
+   * template outputs, so the account's id is never put in a token the client reads.
+   */
+  issued_subject_id?: string;
   /** Client ID */
   client_id: string;
   /** Requested scope (space-separated) */

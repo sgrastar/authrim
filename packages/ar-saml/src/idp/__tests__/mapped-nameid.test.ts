@@ -2,7 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   mapping: undefined as Record<string, unknown> | undefined,
-  targetedIdMade: 0,
+  exceptionRows: [] as Array<Record<string, unknown>>,
+  exceptionsFail: false,
+}));
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  // The Admin database: only the exceptions are read here.
+  requireAdminDatabaseAdapter: () => ({
+    query: async (sql: string) => {
+      if (!sql.includes('mapped_identifier_exceptions')) return [];
+      if (state.exceptionsFail) throw new Error('admin database down');
+      return state.exceptionRows;
+    },
+    queryOne: async () => null,
+  }),
 }));
 vi.mock('../runtime-identity-mapping', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../runtime-identity-mapping')>()),
@@ -11,16 +24,10 @@ vi.mock('../runtime-identity-mapping', async (importOriginal) => ({
 vi.mock('../subject', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../subject')>()),
   resolveSAMLPairwiseSecretForRef: async () => 'tenant-identifier-salt',
-  resolveSAMLPairwiseSecret: async () => 'tenant-pairwise-salt',
-  // The old transform's identifier, which writes the NameID registry.
-  resolveSAMLEduPersonTargetedIDOpaque: async () => {
-    state.targetedIdMade++;
-    return 'old-opaque';
-  },
 }));
 
 import { computeIdentifier } from '@authrim/ar-lib-core';
-import { computeSAMLAttributeRelease, resolveSAMLMappedNameID } from '../release-items';
+import { resolveSAMLMappedNameID } from '../release-items';
 
 const SP = 'https://sp.example.org/shibboleth';
 const IDP = 'https://idp.example.org';
@@ -29,8 +36,9 @@ const nameid = { side: 'destination', namespace: 'saml.nameid', path: 'persisten
 const step = (parameters: Record<string, unknown>, id = 'step-nameid') => ({
   id,
   operation: 'persistent_identifier',
-  inputEdgeIds: ['edge-uid'],
-  parameters,
+  // No input edge: made from the account ID, which the runtime supplies.
+  inputEdgeIds: [],
+  parameters: { input: 'account', ...parameters },
   outputTargetRef: nameid,
 });
 const mapping = (transforms: unknown[], extra: Record<string, unknown> = {}) => ({
@@ -38,15 +46,26 @@ const mapping = (transforms: unknown[], extra: Record<string, unknown> = {}) => 
   edges: [],
   transforms: [],
   nameId: {
-    edges: [{ id: 'edge-uid', sourceRef: uid, targetRef: nameid }],
+    edges: [],
     transforms,
     validationRules: [],
   },
   ...extra,
 });
-const resolve = () =>
+const keyManager = (salts: Record<string, string> = {}) => ({
+  idFromName: (name: string) => name,
+  get: () => ({
+    getExistingSecretRpc: async (ref: string) => {
+      const name = ref.replace('identifier-salt:import:', '');
+      return ref.startsWith('identifier-salt:import:') && salts[name]
+        ? { active: { value: btoa(salts[name]) } }
+        : null;
+    },
+  }),
+});
+const resolve = (salts: Record<string, string> = {}) =>
   resolveSAMLMappedNameID({
-    env: {} as never,
+    env: { KEY_MANAGER: keyManager(salts) } as never,
     tenantId: 'tenant-a',
     idpEntityId: IDP,
     spConfig: { entityId: SP } as never,
@@ -56,6 +75,8 @@ const resolve = () =>
 describe('a persistent NameID the mapping makes', () => {
   beforeEach(() => {
     state.mapping = undefined;
+    state.exceptionRows = [];
+    state.exceptionsFail = false;
   });
 
   it('is none when the mapping makes no NameID', async () => {
@@ -77,19 +98,15 @@ describe('a persistent NameID the mapping makes', () => {
     });
   });
 
-  it('refuses two steps, other formats, or the old eduPersonTargetedID beside it', async () => {
+  it('refuses two steps or other formats', async () => {
     for (const refused of [
       mapping([
         step({ format: 'plain', algorithm: 'shibboleth' }),
         step({ format: 'plain', algorithm: 'shibboleth' }, 'second'),
       ]),
       mapping([step({ format: 'saml_targeted_id', algorithm: 'shibboleth' })]),
-      mapping([step({ format: 'plain', algorithm: 'shibboleth' })], {
-        transforms: [{ operation: 'saml_edu_person_targeted_id' }],
-      }),
     ]) {
       state.mapping = refused;
-      // Refused as soon as it is asked for: before any registry is read.
       await expect(resolve()).rejects.toThrow('persistent_identifier_unavailable');
     }
   });
@@ -108,26 +125,56 @@ describe('a persistent NameID the mapping makes', () => {
     await expect(make?.()).rejects.toThrow('persistent_identifier_unavailable');
   });
 
-  it('refuses the release itself, before the old transform writes the NameID registry', async () => {
-    state.targetedIdMade = 0;
-    state.mapping = mapping([step({ format: 'plain', algorithm: 'shibboleth' })], {
-      transforms: [{ id: 'old', operation: 'saml_edu_person_targeted_id', inputEdgeIds: [] }],
+  describe('with a list of exceptions', () => {
+    const withList = () =>
+      mapping([step({ format: 'plain', algorithm: 'shibboleth', exceptions: 'list-a' })]);
+    const nameIdWith = (salt: string) =>
+      computeIdentifier({
+        algorithm: 'shibboleth',
+        value: 'user-a',
+        audience: SP,
+        salt: new TextEncoder().encode(salt),
+      });
+
+    it('is made with the salt an exception names (the recipient is the SP’s entity ID)', async () => {
+      state.mapping = withList();
+      state.exceptionRows = [
+        { account_id: 'user-a', audience: SP, action: 'salt', salt_name: 'old-idp' },
+      ];
+      const make = await resolve({ 'old-idp': 'override-salt' });
+      await expect(make?.()).resolves.toEqual({
+        value: await nameIdWith('override-salt'),
+        kept: false,
+      });
     });
-    for (const identifiers of ['deferred', 'made'] as const) {
-      await expect(
-        computeSAMLAttributeRelease({
-          env: {} as never,
-          tenantId: 'tenant-a',
-          idpEntityId: IDP,
-          spConfig: { entityId: SP } as never,
-          userInfo: { id: 'user-a', email: 'a@example.test' },
-          userId: 'user-a',
-          requestScope: {},
-          identifiers,
-          onError: () => undefined,
-        })
-      ).rejects.toThrow('persistent_identifier_unavailable');
-    }
-    expect(state.targetedIdMade).toBe(0);
+
+    it('is the default one when nothing applies', async () => {
+      state.mapping = withList();
+      state.exceptionRows = [
+        { account_id: 'user-b', audience: SP, action: 'block', salt_name: null },
+      ];
+      const make = await resolve();
+      await expect(make?.()).resolves.toEqual({
+        value: await nameIdWith('tenant-identifier-salt'),
+        kept: false,
+      });
+    });
+
+    it.each<[string, Record<string, unknown>]>([
+      ['a block (the NameID is required)', { action: 'block', salt_name: null }],
+      ['an override salt that is not there', { action: 'salt', salt_name: 'gone' }],
+    ])('is refused on %s', async (_name, entry) => {
+      state.mapping = withList();
+      state.exceptionRows = [{ account_id: '*', audience: '*', ...entry }];
+      const make = await resolve();
+      await expect(make?.()).rejects.toThrow('persistent_identifier_unavailable');
+    });
+
+    it('is refused (not suppressed) when the exceptions cannot be read', async () => {
+      state.mapping = withList();
+      state.exceptionsFail = true;
+      const make = await resolve();
+      await expect(make?.()).rejects.toThrow('persistent_identifier_unavailable');
+    });
   });
 });

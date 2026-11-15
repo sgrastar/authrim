@@ -20,7 +20,7 @@ import {
  *
  * Steps run as the console orders them (see mapping-model): until a combining step, on each
  * source attribute's value; the combining step makes one value of them; later steps work on
- * that. Identifier steps (pairwise sub, eduPersonTargetedID) depend on the app and the user
+ * that. Persistent identifier steps depend on the account, the app and the salt
  * at sign-in, so from there the sample says so instead of guessing.
  *
  * TODO(runtime): fixed values (constant_*) and the steps in LOCAL_STEPS are computed here
@@ -328,8 +328,8 @@ const LOCAL_STEPS = new Set([
 	'json_extract_or',
 	'default_if_empty'
 ]);
-/** Decided when the mapping runs: by the app and the user, or by the tenant's key. */
-const AT_RUN_TIME = new Set(['oidc_pairwise_sub', 'saml_edu_person_targeted_id', 'hash']);
+/** Decided when the mapping runs: by the app and the user, the tenant's key, or the account and the salt. */
+const AT_RUN_TIME = new Set(['hash', 'persistent_identifier']);
 
 /** Null when there is nothing to show: no source has a sample and no step makes a value. */
 export function previewMapping(

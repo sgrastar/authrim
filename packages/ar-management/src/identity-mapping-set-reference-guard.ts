@@ -3,8 +3,8 @@
  * settings name (a default, an app, a credential profile): the shared reference search
  * (`findMappingSetReferences`) wired to this request's databases, and the refusal it produces.
  *
- * The refusal is a 409 `conflict` carrying `references`, in the form of the persistent identifier
- * profiles' (persistent-identifier-profiles.ts) with the count and the first few references. What
+ * The refusal is a 409 `conflict` carrying `references`, with the count and the first few
+ * references. What
  * of another tenant's references the caller sees is decided here, once: only a caller with global
  * authority is given their tenant and app IDs; the others are given how many.
  */
@@ -351,7 +351,12 @@ export async function checkDestinationProfileUnreferenced(
        JOIN field_mapping_sets s ON s.tenant_id = a.tenant_id AND s.id = a.field_mapping_set_id
        LEFT JOIN mapping_rules r
          ON r.tenant_id = a.tenant_id AND r.field_mapping_version_id = a.field_mapping_version_id
-       LEFT JOIN mapping_rule_edges e ON e.tenant_id = r.tenant_id AND e.rule_id = r.id
+       LEFT JOIN (
+         SELECT tenant_id, rule_id, target_ref_json FROM mapping_rule_edges
+         UNION ALL
+         SELECT tenant_id, rule_id, target_ref_json FROM mapping_transform_steps
+          WHERE target_ref_json IS NOT NULL
+       ) e ON e.tenant_id = r.tenant_id AND e.rule_id = r.id
       WHERE a.lifecycle_state = 'active'
         AND EXISTS (
           SELECT 1 FROM compiled_mapping_snapshots n

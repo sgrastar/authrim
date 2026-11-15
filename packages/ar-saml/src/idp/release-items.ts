@@ -21,8 +21,10 @@ import type {
 import {
   DEFAULT_IDENTIFIER_SALT_REF,
   filterSamlAttributesByDestinationProfile,
+  createIdentifierSourceReader,
   createStoredIdentifierLookup,
   prepareMappedIdentifiers,
+  createIdentifierExceptionReader,
   readImportedIdentifierSalt,
   filterSamlAttributesByDestinationProfileDescriptor,
   requireAdminDatabaseAdapter,
@@ -48,13 +50,7 @@ import {
   assertSAMLImportedSPRelease,
   resolveSAMLRuntimeIdentityMapping,
 } from './runtime-identity-mapping';
-import {
-  resolveSAMLEduPersonTargetedIDOpaque,
-  resolveSAMLPairwiseSecret,
-  resolveSAMLPairwiseSecretForRef,
-  resolveSAMLPersistentNameIDRegistryStore,
-  type SAMLPersistentIdentifierAlgorithm,
-} from './subject';
+import { resolveSAMLPairwiseSecretForRef } from './subject';
 
 /**
  * What stands for a pairwise identifier before it is made. An attribute carrying it is an item
@@ -102,25 +98,9 @@ export async function computeSAMLAttributeRelease(input: {
     idpEntityId,
     spConfig
   );
-  // Refused before anything is made: the old transform would write the NameID registry first.
-  if (mixesMappedNameIDWithOldTargetedID(identityMapping)) {
-    throw new SAMLIdentityMappingRuntimeError([
-      {
-        category: 'policy',
-        code: 'policy.persistent_identifier_unavailable',
-        severity: 'critical',
-      },
-    ]);
-  }
-  const runtimeContext = await buildSAMLIdentityMappingRuntimeContext({
-    env,
-    tenantId,
-    idpEntityId,
-    spEntityId: spConfig.entityId,
-    userInfo,
-    identityMapping,
-    deferIdentifiers: input.identifiers === 'deferred',
-  });
+  const runtimeContext = {
+    saml: { localEntityId: idpEntityId, partnerEntityId: spConfig.entityId },
+  };
   const mappingContext = {
     role: 'idp' as const,
     tenantId,
@@ -317,64 +297,6 @@ export function applySAMLReleaseApproval(
   return missing.length > 0 ? { ok: false, missing } : { ok: true, attributes };
 }
 
-async function buildSAMLIdentityMappingRuntimeContext(input: {
-  env: Env;
-  tenantId: string;
-  idpEntityId: string;
-  spEntityId: string;
-  userInfo: SAMLUserInfo;
-  identityMapping?: SAMLIdentityMappingReleaseConfig;
-  /** Leave pairwise identifiers unmade (a placeholder stands for them). */
-  deferIdentifiers: boolean;
-}): Promise<Record<string, unknown>> {
-  const samlContext: Record<string, unknown> = {
-    localEntityId: input.idpEntityId,
-    partnerEntityId: input.spEntityId,
-  };
-
-  if (usesSAMLEduPersonTargetedIDTransform(input.identityMapping) && input.deferIdentifiers) {
-    samlContext.eduPersonTargetedIdOpaque = DEFERRED_IDENTIFIER;
-  } else if (usesSAMLEduPersonTargetedIDTransform(input.identityMapping)) {
-    const pairwiseSecretDefault = await resolveSAMLPairwiseSecret(input.env, input.tenantId);
-    const persistentRegistry = resolveSAMLPersistentNameIDRegistryStore(input.env);
-    const profileId = findSAMLPersistentIdentifierProfileId(input.identityMapping);
-    const profile = profileId
-      ? await loadSAMLPersistentIdentifierProfile(input.env, input.tenantId, profileId)
-      : null;
-    const pairwiseSecret = profile?.secretRef
-      ? await resolveSAMLPairwiseSecretForRef(input.env, input.tenantId, profile.secretRef)
-      : pairwiseSecretDefault;
-    if (profile?.issuerEntityId) {
-      samlContext.localEntityId = profile.issuerEntityId;
-    }
-    if (!pairwiseSecret) {
-      throw new SAMLIdentityMappingRuntimeError([
-        {
-          category: 'policy',
-          code: profile
-            ? 'policy.persistent_identifier_secret_missing'
-            : 'policy.identity_mapping_pairwise_secret_missing',
-          severity: 'critical',
-        },
-      ]);
-    }
-    samlContext.eduPersonTargetedIdOpaque = await resolveSAMLEduPersonTargetedIDOpaque(
-      input.userInfo,
-      {
-        tenantId: input.tenantId,
-        spEntityId: input.spEntityId,
-        pairwiseSalt: pairwiseSecret,
-        pairwiseAlgorithm: profile?.algorithm,
-        pairwiseAudienceMode: profile?.audienceMode,
-        persistentProfileId: profile?.id,
-        persistentRegistry,
-      }
-    );
-  }
-
-  return { saml: samlContext };
-}
-
 /**
  * The `persistent_identifier` steps' values for the binding the release uses, made from the
  * subject as released. Before consent they are placeholders: nothing is made for a release that
@@ -389,7 +311,7 @@ async function prepareSAMLMappedIdentifiers(input: {
   identityMapping: SAMLIdentityMappingReleaseConfig;
   mappingContext: SAMLIdentityMappingRuntimeContext;
   deferIdentifiers: boolean;
-}): Promise<Record<string, string>> {
+}): Promise<{ identifiers: Record<string, string>; suppressed: Record<string, true> }> {
   let binding: SAMLIdentityMappingFieldMappingBinding;
   try {
     binding = resolveSAMLIdentityMappingFieldMappingBinding(
@@ -398,14 +320,16 @@ async function prepareSAMLMappedIdentifiers(input: {
     );
   } catch {
     // No binding applies: the release refuses for that reason, not for an identifier.
-    return {};
+    return { identifiers: {}, suppressed: {} };
   }
-  if (!binding.transforms?.some((step) => step.operation === 'persistent_identifier')) return {};
-  const edges = binding.edges ?? [];
+  if (!binding.transforms?.some((step) => step.operation === 'persistent_identifier')) {
+    return { identifiers: {}, suppressed: {} };
+  }
   const prepared = await prepareMappedIdentifiers({
     transforms: binding.transforms,
-    edges,
-    sourceValues: buildIdentityMappingSourceValues(input.subject, edges),
+    // The account's ID as the runtime holds it (the user ID), supplied directly: never read from
+    // the subject's attributes or custom claims.
+    accountId: input.subject.id || null,
     recipient: { protocol: 'saml', spEntityId: input.spEntityId, idpEntityId: input.idpEntityId },
     loadDefaultSalt: async () =>
       (await resolveSAMLPairwiseSecretForRef(
@@ -416,118 +340,24 @@ async function prepareSAMLMappedIdentifiers(input: {
     // Read only, never made: an imported salt that is not there stops the release.
     loadImportedSalt: (name) =>
       readImportedIdentifierSalt(input.env.KEY_MANAGER, input.tenantId, name),
-    lookupStoredIdentifier: (store, audience, sourceHash) =>
+    lookupStoredIdentifier: (store, audience, accountId) =>
       createStoredIdentifierLookup(
         requireAdminDatabaseAdapter(input.env, 'saml-mapped-identifier-store'),
         input.tenantId
-      )(store, audience, sourceHash),
+      )(store, audience, accountId),
+    lookupSourceValue: (source, accountId) =>
+      createIdentifierSourceReader(
+        requireAdminDatabaseAdapter(input.env, 'saml-identifier-source-values'),
+        input.tenantId
+      )(source, accountId),
+    lookupException: (list, accountId, audience) =>
+      createIdentifierExceptionReader(
+        requireAdminDatabaseAdapter(input.env, 'saml-identifier-exceptions'),
+        input.tenantId
+      )(list, accountId, audience),
     placeholder: input.deferIdentifiers ? DEFERRED_IDENTIFIER : null,
   });
-  return prepared.identifiers;
-}
-
-interface SAMLPersistentIdentifierProfile {
-  id: string;
-  secretRef?: string;
-  issuerEntityId?: string;
-  algorithm?: SAMLPersistentIdentifierAlgorithm;
-  audienceMode?: 'runtime' | 'saml_sp_entity_id' | 'oidc_sector_identifier';
-}
-
-interface SAMLPersistentIdentifierProfileRow {
-  id: string;
-  mode: string;
-  algorithm: string;
-  protocol_scope: string;
-  secret_ref: string | null;
-  issuer_entity_id: string | null;
-  audience_mode: string | null;
-}
-
-function findSAMLPersistentIdentifierProfileId(
-  identityMapping?: SAMLIdentityMappingReleaseConfig
-): string | undefined {
-  const bindings = [
-    identityMapping,
-    identityMapping?.defaultBinding,
-    ...(identityMapping?.bindings ?? []),
-  ];
-  for (const binding of bindings) {
-    const transform = binding?.transforms?.find(
-      (item) => item.operation === 'saml_edu_person_targeted_id'
-    );
-    const profileId = readString(transform?.parameters?.persistentIdentifierProfileId);
-    if (profileId) {
-      return profileId;
-    }
-  }
-  return undefined;
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-async function loadSAMLPersistentIdentifierProfile(
-  env: Env,
-  tenantId: string,
-  profileId: string
-): Promise<SAMLPersistentIdentifierProfile | null> {
-  const adapter = requireAdminDatabaseAdapter(env, 'saml-persistent-identifier-profile');
-  const rows = await adapter.query<SAMLPersistentIdentifierProfileRow>(
-    `SELECT id, mode, algorithm, protocol_scope, secret_ref, issuer_entity_id, audience_mode
-       FROM persistent_identifier_profiles
-      WHERE tenant_id = ? AND id = ? AND lifecycle_state = 'active'
-      LIMIT 1`,
-    [tenantId, profileId]
-  );
-  const row = rows[0];
-  if (!row) {
-    throw new SAMLIdentityMappingRuntimeError([
-      {
-        category: 'policy',
-        code: 'policy.persistent_identifier_profile_not_found',
-        severity: 'critical',
-      },
-    ]);
-  }
-  if (row.mode !== 'computed' || !['any', 'saml', 'generic'].includes(row.protocol_scope)) {
-    throw new SAMLIdentityMappingRuntimeError([
-      {
-        category: 'policy',
-        code: 'policy.persistent_identifier_profile_unsupported_mode',
-        severity: 'critical',
-      },
-    ]);
-  }
-  return {
-    id: row.id,
-    secretRef: row.secret_ref ?? undefined,
-    issuerEntityId: row.issuer_entity_id ?? undefined,
-    algorithm: row.algorithm === 'shibboleth_sha1_base64' ? 'shibboleth_sha1_base64' : undefined,
-    audienceMode: isSAMLPersistentIdentifierAudienceMode(row.audience_mode)
-      ? row.audience_mode
-      : undefined,
-  };
-}
-
-function isSAMLPersistentIdentifierAudienceMode(
-  value: string | null
-): value is 'runtime' | 'saml_sp_entity_id' | 'oidc_sector_identifier' {
-  return value === 'runtime' || value === 'saml_sp_entity_id' || value === 'oidc_sector_identifier';
-}
-
-function usesSAMLEduPersonTargetedIDTransform(
-  identityMapping?: SAMLIdentityMappingReleaseConfig
-): boolean {
-  const bindings = [
-    identityMapping,
-    identityMapping?.defaultBinding,
-    ...(identityMapping?.bindings ?? []),
-  ];
-  return bindings.some((binding) =>
-    binding?.transforms?.some((transform) => transform.operation === 'saml_edu_person_targeted_id')
-  );
+  return { identifiers: prepared.identifiers, suppressed: prepared.suppressed };
 }
 
 /**
@@ -562,7 +392,6 @@ export async function resolveSAMLMappedNameID(input: {
   };
   const [step, ...others] = graph.transforms;
   if (
-    mixesMappedNameIDWithOldTargetedID(identityMapping) ||
     others.length > 0 ||
     step.operation !== 'persistent_identifier' ||
     step.parameters?.format !== 'plain'
@@ -573,8 +402,7 @@ export async function resolveSAMLMappedNameID(input: {
     const sourceValues = buildIdentityMappingSourceValues(input.userInfo, graph.edges);
     const prepared = await prepareMappedIdentifiers({
       transforms: [step],
-      edges: graph.edges,
-      sourceValues,
+      accountId: input.userInfo.id || null,
       recipient: {
         protocol: 'saml',
         spEntityId: input.spConfig.entityId,
@@ -588,12 +416,23 @@ export async function resolveSAMLMappedNameID(input: {
         )) ?? null,
       loadImportedSalt: (name) =>
         readImportedIdentifierSalt(input.env.KEY_MANAGER, input.tenantId, name),
-      lookupStoredIdentifier: (store, audience, sourceHash) =>
+      lookupStoredIdentifier: (store, audience, accountId) =>
         createStoredIdentifierLookup(
           requireAdminDatabaseAdapter(input.env, 'saml-mapped-identifier-store'),
           input.tenantId
-        )(store, audience, sourceHash),
+        )(store, audience, accountId),
+      lookupSourceValue: (source, accountId) =>
+        createIdentifierSourceReader(
+          requireAdminDatabaseAdapter(input.env, 'saml-identifier-source-values'),
+          input.tenantId
+        )(source, accountId),
+      lookupException: (list, accountId, audience) =>
+        createIdentifierExceptionReader(
+          requireAdminDatabaseAdapter(input.env, 'saml-identifier-exceptions'),
+          input.tenantId
+        )(list, accountId, audience),
     });
+    // A suppressed NameID is no NameID: required, so refused like one that cannot be made.
     const value = prepared.identifiers[step.id];
     if (!value) return refuse();
     // The mapping's own checks on what it is made from, as for any other value it releases.
@@ -608,21 +447,4 @@ export async function resolveSAMLMappedNameID(input: {
     if (checked.status === 'failed') return refuse();
     return { value, kept: prepared.kept[step.id] === true };
   };
-}
-
-/**
- * The old eduPersonTargetedID transform shares the NameID registry: whichever is made first
- * would decide both. It is not used together with a NameID the mapping makes.
- */
-function mixesMappedNameIDWithOldTargetedID(
-  identityMapping: SAMLIdentityMappingReleaseConfig | undefined
-): boolean {
-  if (!identityMapping?.nameId?.transforms.length) return false;
-  return [
-    identityMapping,
-    identityMapping.defaultBinding,
-    ...(identityMapping.bindings ?? []),
-  ].some((binding) =>
-    binding?.transforms?.some((transform) => transform.operation === 'saml_edu_person_targeted_id')
-  );
 }

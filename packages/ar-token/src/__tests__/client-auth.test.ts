@@ -10,7 +10,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { RELEASE_APPROVAL_CLAIM, sealSubjectReference, type Env } from '@authrim/ar-lib-core';
+import {
+  computeIdentifier,
+  openSubjectReference,
+  RELEASE_APPROVAL_CLAIM,
+  sealSubjectReference,
+  type Env,
+} from '@authrim/ar-lib-core';
 import { AuthorizationCodeStore } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   createMockEnv,
@@ -1820,6 +1826,55 @@ describe('Client Authentication Tests', () => {
       expect(paths).not.toContain('/delete');
     });
 
+    it('gives a pairwise app the same pairwise sub in the access and refresh tokens, with the account reference', async () => {
+      const rootKey = 'ab'.repeat(32);
+      const salt = 'tenant-pairwise-salt';
+      (mockEnv as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = rootKey;
+      Object.assign(
+        mockEnv.KEY_MANAGER.get(mockEnv.KEY_MANAGER.idFromName('default-v3')) as unknown as Record<
+          string,
+          unknown
+        >,
+        { getOrCreateSecretRpc: vi.fn().mockResolvedValue({ active: { value: salt } }) }
+      );
+      const client = createCIBAClient({
+        client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+        subject_type: 'pairwise',
+        redirect_uris: ['https://app.example.com/callback'],
+      });
+      configureCIBARequest(
+        client,
+        baseCIBAMetadata(client, {
+          status: 'approved',
+          sub: 'user-123',
+          scope: 'openid offline_access',
+        })
+      );
+
+      const { response } = await requestCIBAToken(client);
+
+      expect(response.status).toBe(200);
+      const expected = await computeIdentifier({
+        algorithm: 'authrim_sha256',
+        value: 'user-123',
+        audience: 'app.example.com',
+        salt: new TextEncoder().encode(salt),
+      });
+      const access = mocks.mockCreateAccessToken.mock.calls[0][0] as Record<string, unknown>;
+      const refresh = mocks.mockCreateRefreshToken.mock.calls[0][0] as Record<string, unknown>;
+      for (const claims of [access, refresh]) {
+        expect(claims.sub).toBe(expected);
+        expect(JSON.stringify(claims)).not.toContain('user-123');
+        await expect(
+          openSubjectReference(
+            { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+            { tenantId: 'default', clientId: client.client_id },
+            claims.authrim_subject_ref as string
+          )
+        ).resolves.toBe('user-123');
+      }
+    });
+
     describe('identity assurance (IAL)', () => {
       const approved = (client: TestClientMetadata, scope = 'openid profile') =>
         baseCIBAMetadata(client, { status: 'approved', sub: 'user-123', scope });
@@ -2345,6 +2400,71 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockCreateAccessToken).toHaveBeenCalledTimes(1);
       expect(mocks.mockCreateIDToken).toHaveBeenCalledTimes(1);
       expect(mocks.mockCreateRefreshToken).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives a pairwise app the same pairwise sub in the ID, access and refresh tokens, with the account reference', async () => {
+      const rootKey = 'ab'.repeat(32);
+      const salt = 'tenant-pairwise-salt';
+      (mockEnv as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = rootKey;
+      Object.assign(
+        mockEnv.KEY_MANAGER.get(mockEnv.KEY_MANAGER.idFromName('default-v3')) as unknown as Record<
+          string,
+          unknown
+        >,
+        { getOrCreateSecretRpc: vi.fn().mockResolvedValue({ active: { value: salt } }) }
+      );
+      const createFamilyRpc = vi.fn(async () => ({
+        version: 1,
+        newJti: 'rt-jti-001',
+        expiresIn: 2592000,
+        allowedScope: 'openid offline_access',
+      }));
+      mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ createFamilyRpc });
+      mocks.mockGetClientCached.mockResolvedValue(
+        createPublicClient({
+          client_id: clientId,
+          default_resource: 'https://api.example.com',
+          subject_type: 'pairwise',
+          redirect_uris: ['https://app.example.com/callback'],
+        })
+      );
+      configureDeviceCode(
+        baseDeviceMetadata({
+          status: 'approved',
+          sub: 'user-123',
+          scope: 'openid offline_access',
+        })
+      );
+
+      const { response } = await requestDeviceToken();
+
+      expect(response.status).toBe(200);
+      const expected = await computeIdentifier({
+        algorithm: 'authrim_sha256',
+        value: 'user-123',
+        audience: 'app.example.com',
+        salt: new TextEncoder().encode(salt),
+      });
+      const access = mocks.mockCreateAccessToken.mock.calls[0][0] as Record<string, unknown>;
+      const refresh = mocks.mockCreateRefreshToken.mock.calls[0][0] as Record<string, unknown>;
+      for (const claims of [access, refresh]) {
+        expect(claims.sub).toBe(expected);
+        expect(JSON.stringify(claims)).not.toContain('user-123');
+        await expect(
+          openSubjectReference(
+            { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+            { tenantId: 'default', clientId },
+            claims.authrim_subject_ref as string
+          )
+        ).resolves.toBe('user-123');
+      }
+      // The refresh token verifies on refresh as the other grants' do: issuer and audience.
+      expect(typeof refresh.iss).toBe('string');
+      expect(refresh.aud).toBe(clientId);
+      // The family is kept by the account id, and records the sub the app was given.
+      expect(createFamilyRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-123', issuedSubject: expected })
+      );
     });
 
     describe('the target of an app registered without one of its own', () => {
@@ -3855,6 +3975,51 @@ describe('Client Authentication Tests', () => {
           expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
         }
       );
+
+      it('gives a pairwise app its own pairwise sub in the access and refresh tokens, with the account reference', async () => {
+        const salt = 'tenant-pairwise-salt';
+        Object.assign(
+          mockEnv.KEY_MANAGER.get(
+            mockEnv.KEY_MANAGER.idFromName('default-v3')
+          ) as unknown as Record<string, unknown>,
+          { getOrCreateSecretRpc: vi.fn().mockResolvedValue({ active: { value: salt } }) }
+        );
+        const client = setupNativeSSOValidationTest(
+          { sub: 'user-001' },
+          { subject_type: 'pairwise', redirect_uris: ['https://native.example.com/callback'] }
+        );
+        useRootKey(ROOT_KEY);
+
+        const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+
+        expect(response.status).toBe(200);
+        const expected = await computeIdentifier({
+          algorithm: 'authrim_sha256',
+          value: 'user-001',
+          audience: 'native.example.com',
+          salt: new TextEncoder().encode(salt),
+        });
+        const access = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<
+          string,
+          unknown
+        >;
+        expect(access.sub).toBe(expected);
+        expect(JSON.stringify(access)).not.toContain('user-001');
+        await expect(
+          openSubjectReference(
+            { OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY },
+            { tenantId: 'default', clientId: client.client_id },
+            access.authrim_subject_ref as string
+          )
+        ).resolves.toBe('user-001');
+        const refresh = mocks.mockCreateRefreshToken.mock.calls.at(-1)?.[0] as
+          | Record<string, unknown>
+          | undefined;
+        if (refresh) {
+          expect(refresh.sub).toBe(expected);
+          expect(JSON.stringify(refresh)).not.toContain('user-001');
+        }
+      });
 
       it('still exchanges an ID token whose sub is the user, with no reference', async () => {
         const client = setupNativeSSOValidationTest({ sub: 'user-001' });

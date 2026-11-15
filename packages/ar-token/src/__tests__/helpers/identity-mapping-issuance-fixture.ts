@@ -20,7 +20,7 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
 /** Protocol-local dedicated Admin database; no production test exports are required. */
 export function issuanceFailureDatabase() {
   const db = new DatabaseSync(':memory:');
-  for (const file of ['001_0_5_0_admin_baseline.sql']) {
+  for (const file of ['001_0_5_0_admin_baseline.sql', '021_mapping_transform_step_target.sql']) {
     db.exec(
       readRenderedMigrationSql(
         new URL(`../../../../../migrations/admin/d1/`, import.meta.url),

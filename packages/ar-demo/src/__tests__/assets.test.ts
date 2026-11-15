@@ -68,10 +68,17 @@ describe('/assets/ routing', () => {
   it('keeps public/ free of anything that would shadow a Worker route', () => {
     const files = walk(PUBLIC).map((file) => relative(PUBLIC, file));
     for (const file of files) {
-      expect(file === '_headers' || file.startsWith('assets/gate/'), file).toBe(true);
+      expect(
+        file === '_headers' || file === 'robots.txt' || file.startsWith('assets/gate/'),
+        file
+      ).toBe(true);
     }
     expect(existsSync(join(PUBLIC, 'assets/site.css'))).toBe(false);
     expect(existsSync(join(PUBLIC, 'assets/wait.js'))).toBe(false);
+  });
+
+  it('asks crawlers to stay away from the whole portal', () => {
+    expect(readFileSync(join(PUBLIC, 'robots.txt'), 'utf8')).toBe('User-agent: *\nDisallow: /\n');
   });
 
   it('declares the static assets directory in the Worker config', () => {

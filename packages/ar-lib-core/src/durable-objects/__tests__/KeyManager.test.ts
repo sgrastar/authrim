@@ -280,6 +280,188 @@ describe('KeyManager Durable Object', () => {
     });
   });
 
+  describe('imported salt fingerprints', () => {
+    const FINGERPRINT_KEY = 'identifier-salt:fingerprint-key';
+    const sha256First16 = async (bytes: Uint8Array) =>
+      Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)).slice(0, 8), (b) =>
+        b.toString(16).padStart(2, '0')
+      ).join('');
+
+    it('makes one fingerprint key for imports that begin together', async () => {
+      const results = await Promise.all(
+        ['one', 'two', 'three'].map((name) =>
+          keyManager.importSecretRpc({
+            secretRef: `identifier-salt:import:${name}`,
+            value: btoa(`salt-${name}`),
+          })
+        )
+      );
+      const listed = await keyManager.listImportedSecretsRpc();
+      expect(listed).toHaveLength(3);
+      for (const [index, name] of ['one', 'two', 'three'].entries()) {
+        const entry = listed.find((item) => item.secretRef === `identifier-salt:import:${name}`);
+        expect(entry?.fingerprint).toBe(results[index].fingerprint);
+      }
+    });
+
+    it('is an HMAC under a key of the key manager, not a bare SHA-256 of the salt', async () => {
+      const bytes = new TextEncoder().encode('weak-salt');
+      const value = btoa('weak-salt');
+      const { fingerprint } = await keyManager.importSecretRpc({
+        secretRef: 'identifier-salt:import:weak',
+        value,
+      });
+      expect(fingerprint).toMatch(/^[0-9a-f]{16}$/);
+      // Neither of the bare hashes an attacker could compute from a guessed salt.
+      expect(fingerprint).not.toBe(await sha256First16(bytes));
+      expect(fingerprint).not.toBe(await sha256First16(new TextEncoder().encode(value)));
+      // Stable: the list and a repeated import give the same.
+      const listed = await keyManager.listImportedSecretsRpc();
+      expect(listed[0].fingerprint).toBe(fingerprint);
+      await expect(
+        keyManager.importSecretRpc({ secretRef: 'identifier-salt:import:weak', value })
+      ).resolves.toMatchObject({ outcome: 'unchanged', fingerprint });
+      // Replacing by the fingerprint keeps working.
+      await expect(
+        keyManager.importSecretRpc({
+          secretRef: 'identifier-salt:import:weak',
+          value: btoa('another-salt'),
+          replaceFingerprint: fingerprint,
+        })
+      ).resolves.toMatchObject({ outcome: 'replaced' });
+    });
+
+    it('differs between key managers for the same salt', async () => {
+      const value = btoa('shared-salt');
+      const first = await keyManager.importSecretRpc({
+        secretRef: 'identifier-salt:import:s',
+        value,
+      });
+      const other = new KeyManager(
+        new MockDurableObjectState() as unknown as DurableObjectState,
+        env
+      );
+      const second = await other.importSecretRpc({ secretRef: 'identifier-salt:import:s', value });
+      expect(second.fingerprint).not.toBe(first.fingerprint);
+    });
+
+    it('makes the key with the first import only, never when listing', async () => {
+      await expect(keyManager.listImportedSecretsRpc()).resolves.toEqual([]);
+      await expect(keyManager.getExistingSecretRpc(FINGERPRINT_KEY)).resolves.toBeNull();
+      await keyManager.importSecretRpc({
+        secretRef: 'identifier-salt:import:a',
+        value: btoa('a'),
+      });
+      const key = await keyManager.getExistingSecretRpc(FINGERPRINT_KEY);
+      expect(key?.active.value).toBeTruthy();
+      await keyManager.importSecretRpc({
+        secretRef: 'identifier-salt:import:b',
+        value: btoa('b'),
+      });
+      // The same key stays.
+      await expect(keyManager.getExistingSecretRpc(FINGERPRINT_KEY)).resolves.toEqual(key);
+    });
+  });
+
+  describe('HMACs of retired identifier values', () => {
+    const create = { create: true };
+
+    it('are keyed per key manager, stable, and carry a key id', async () => {
+      const first = await keyManager.identifierValueHmacsRpc(['stored\ns\nAAAA', 'x'], create);
+      expect(first.hmacs).toHaveLength(2);
+      expect(first.hmacs[0]).toMatch(/^[0-9a-f]{64}$/);
+      expect(first.keyId).toMatch(/^[0-9a-f]{16}$/);
+      // Not a bare hash of the value, and stable.
+      const plain = Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest('SHA-256', new TextEncoder().encode('stored\ns\nAAAA'))
+        ),
+        (b) => b.toString(16).padStart(2, '0')
+      ).join('');
+      expect(first.hmacs[0]).not.toBe(plain);
+      await expect(keyManager.identifierValueHmacsRpc(['stored\ns\nAAAA'])).resolves.toEqual({
+        keyId: first.keyId,
+        hmacs: [first.hmacs[0]],
+      });
+      const other = new KeyManager(
+        new MockDurableObjectState() as unknown as DurableObjectState,
+        env
+      );
+      const second = await other.identifierValueHmacsRpc(['stored\ns\nAAAA'], create);
+      expect(second.hmacs[0]).not.toBe(first.hmacs[0]);
+      expect(second.keyId).not.toBe(first.keyId);
+      // The key is a secret of the key manager (carried by a backup), never made by the private path.
+      await expect(
+        keyManager.getExistingSecretRpc('identifier-salt:value-hmac-key')
+      ).resolves.not.toBeNull();
+      await expect(
+        keyManager.getOrCreateSecretRpc('identifier-salt:value-hmac-key')
+      ).rejects.toThrow('Invalid secret');
+      await expect(keyManager.rotateSecretRpc('identifier-salt:value-hmac-key')).rejects.toThrow(
+        'Invalid secret'
+      );
+    });
+
+    it('never makes a key unless asked to: a missing key is refused', async () => {
+      await expect(keyManager.identifierValueHmacsRpc(['x'])).rejects.toThrow(
+        'identifier_value_key_missing'
+      );
+      await expect(
+        keyManager.getExistingSecretRpc('identifier-salt:value-hmac-key')
+      ).resolves.toBeNull();
+    });
+
+    it('refuses input that is not a short list of text', async () => {
+      await expect(keyManager.identifierValueHmacsRpc([1 as never], create)).rejects.toThrow(
+        'identifier_value_hmac_input_invalid'
+      );
+    });
+  });
+
+  describe('refs the private create and rotate paths refuse', () => {
+    const refused = ['identifier-salt:import:shibboleth', 'identifier-salt:fingerprint-key'];
+
+    it('refuses them in the RPC methods, so a made-up secret cannot stand in for a salt', async () => {
+      for (const ref of refused) {
+        await expect(keyManager.getOrCreateSecretRpc(ref)).rejects.toThrow('Invalid secret');
+        await expect(keyManager.rotateSecretRpc(ref)).rejects.toThrow('Invalid secret');
+      }
+      await expect(
+        keyManager.getExistingSecretRpc('identifier-salt:import:shibboleth')
+      ).resolves.toBeNull();
+      // An imported salt is not rotated away by the private path either.
+      await keyManager.importSecretRpc({
+        secretRef: 'identifier-salt:import:kept',
+        value: btoa('kept'),
+      });
+      await expect(keyManager.rotateSecretRpc('identifier-salt:import:kept')).rejects.toThrow(
+        'Invalid secret'
+      );
+      await expect(
+        keyManager.getExistingSecretRpc('identifier-salt:import:kept')
+      ).resolves.toMatchObject({
+        active: { value: btoa('kept') },
+      });
+      // The tenant's own salt is still made on first use.
+      await expect(
+        keyManager.getOrCreateSecretRpc('identifier-salt:default')
+      ).resolves.toMatchObject({
+        secretRef: 'identifier-salt:default',
+      });
+    });
+
+    it('refuses them on the internal HTTP routes', async () => {
+      const call = (path: string, method: string) =>
+        keyManager.fetch(createRequest(path, method, 'test-secret-token'));
+      for (const ref of refused) {
+        const encoded = encodeURIComponent(ref);
+        expect((await call(`/internal/secrets/${encoded}`, 'GET')).status).toBe(400);
+        expect((await call(`/internal/secrets/${encoded}/rotate`, 'POST')).status).toBe(400);
+      }
+      expect((await call('/internal/secrets/identifier-salt%3Adefault', 'GET')).status).toBe(200);
+    });
+  });
+
   it('keeps at most 32 imported salts', async () => {
     for (let i = 0; i < 32; i++) {
       await keyManager.importSecretRpc({

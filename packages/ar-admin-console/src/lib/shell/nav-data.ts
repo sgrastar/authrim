@@ -156,13 +156,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				legacyRoutes: ['/admin/field-mapping/field-mapping-sets', '/admin/field-mapping/edit']
 			},
 			{
-				id: 'identifiers',
-				label: 'nav.data.identifiers',
-				icon: 'fingerprint',
-				platform: 'template',
-				legacyRoutes: ['/admin/field-mapping/persistent-identifiers']
-			},
-			{
 				id: 'simulator',
 				label: 'nav.access.simulator',
 				icon: 'map',

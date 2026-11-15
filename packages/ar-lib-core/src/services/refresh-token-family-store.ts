@@ -56,6 +56,8 @@ export interface CreateRefreshTokenFamilyInput {
   consentGeneration?: number;
   /** The claim names the grant's information release was approved for. */
   releaseApproval?: string[];
+  /** The sub the grant's ID token carried (after the app's identity mapping): kept so a refresh gives the same one. */
+  issuedSubject?: string;
 }
 
 export interface CreateRefreshTokenFamilyResult {
@@ -148,6 +150,7 @@ export async function createRefreshTokenFamily(
     ...(input.authContext && { authContext: input.authContext }),
     ...(input.consentGeneration !== undefined && { consentGeneration: input.consentGeneration }),
     ...(input.releaseApproval !== undefined && { releaseApproval: input.releaseApproval }),
+    ...(input.issuedSubject !== undefined && { issuedSubject: input.issuedSubject }),
     generation: shardConfig.currentGeneration,
     shardIndex,
   });

@@ -18,7 +18,11 @@ import type { DatabaseAdapter } from '../db/adapter';
 import type { ClientMetadata } from '../types/oidc';
 import type { Env } from '../types/env';
 import type { Logger } from '../utils/logger';
-import { applyOIDCIdentityMapping, OIDCIdentityMappingRuntimeError } from './oidc-identity-mapping';
+import {
+  applyOIDCIdentityMapping,
+  deriveOIDCSubject,
+  OIDCIdentityMappingRuntimeError,
+} from './oidc-identity-mapping';
 import {
   scheduleIdentityMappingFailure,
   type IdentityMappingFailureContext,
@@ -56,6 +60,8 @@ export interface IDTokenReleaseFailure {
   error: 'invalid_client' | 'consent_required' | 'server_error';
   description: string;
   status: 400 | 500;
+  /** An invalid_mapping whose cause is the infrastructure (a salt, key or lookup), not the mapping. */
+  infrastructure?: boolean;
 }
 
 export type IDTokenReleaseResult =
@@ -137,6 +143,7 @@ export async function mapIDTokenClaims(
       tenantId: ctx.tenantId,
       clientId,
       failureContext,
+      subjectType: ctx.clientMetadata.subject_type ?? 'public',
       sectorIdentifier: ctx.clientMetadata.sector_identifier_uri,
       redirectUris: ctx.clientMetadata.redirect_uris,
       selector: ctx.clientMetadata.identity_mapping,
@@ -153,45 +160,76 @@ export async function mapIDTokenClaims(
     });
     return { ok: true, claims: mapped.claims, optional };
   } catch (error) {
-    failureContext.code ??=
-      error instanceof OIDCIdentityMappingRuntimeError ? error.details.code : 'mapping_failed';
-    try {
-      scheduleIdentityMappingFailure({
-        env: ctx.env,
-        tenantId: ctx.tenantId,
-        clientId,
-        failure: failureContext,
-        waitUntil: ctx.waitUntil,
-      });
-    } catch {
-      // Recording a failure must preserve the issuance error even if scheduling itself throws.
-    }
-    ctx.log.error(
-      'Failed to apply OIDC identity mapping for ID token',
-      { clientId },
-      error as Error
-    );
-    if (error instanceof OIDCIdentityMappingRuntimeError) {
-      return {
-        ok: false,
-        failure: {
-          kind: 'invalid_mapping',
-          error: 'invalid_client',
-          description: 'Client identity mapping configuration is invalid',
-          status: 400,
-        },
-      };
-    }
+    return { ok: false, failure: idTokenMappingFailure(ctx, error, failureContext) };
+  }
+}
+
+/**
+ * The failure of an identity mapping for an app's tokens: the scalar failure is recorded (once)
+ * and the request answered with the mapping's error (invalid_client for a configuration that
+ * cannot be used, server_error otherwise).
+ */
+function idTokenMappingFailure(
+  ctx: IDTokenReleaseContext,
+  error: unknown,
+  failureContext: IdentityMappingFailureContext
+): IDTokenReleaseFailure {
+  const { clientId } = ctx;
+  failureContext.code ??=
+    error instanceof OIDCIdentityMappingRuntimeError ? error.details.code : 'mapping_failed';
+  try {
+    scheduleIdentityMappingFailure({
+      env: ctx.env,
+      tenantId: ctx.tenantId,
+      clientId,
+      failure: failureContext,
+      waitUntil: ctx.waitUntil,
+    });
+  } catch {
+    // Recording a failure must preserve the issuance error even if scheduling itself throws.
+  }
+  ctx.log.error('Failed to apply OIDC identity mapping for ID token', { clientId }, error as Error);
+  if (error instanceof OIDCIdentityMappingRuntimeError) {
     return {
-      ok: false,
-      failure: {
-        kind: 'mapping_failed',
-        error: 'server_error',
-        description: 'Failed to apply identity mapping',
-        status: 500,
-      },
+      kind: 'invalid_mapping',
+      error: 'invalid_client',
+      description: 'Client identity mapping configuration is invalid',
+      status: 400,
+      ...(error.details.infrastructure ? { infrastructure: true } : {}),
     };
   }
+  return {
+    kind: 'mapping_failed',
+    error: 'server_error',
+    description: 'Failed to apply identity mapping',
+    status: 500,
+  };
+}
+
+/**
+ * The sub this app's ID tokens carry for the user (their id, a pairwise sub, or what its identity
+ * mapping issues), for checking a claims parameter's `sub` constraint before the ID token's claims
+ * are made. Throws when it cannot be derived (the caller fails the request).
+ */
+export async function deriveIDTokenSubject(
+  ctx: IDTokenReleaseContext,
+  userId: string,
+  failureContext?: IdentityMappingFailureContext
+): Promise<string> {
+  return deriveOIDCSubject({
+    ...(failureContext ? { failureContext } : {}),
+    adapter: ctx.adapter,
+    env: ctx.env,
+    tenantId: ctx.tenantId,
+    clientId: ctx.clientId,
+    subjectType: ctx.clientMetadata.subject_type ?? 'public',
+    sectorIdentifier: ctx.clientMetadata.sector_identifier_uri,
+    redirectUris: ctx.clientMetadata.redirect_uris,
+    selector: ctx.clientMetadata.identity_mapping,
+    destinationSurface: 'id_token',
+    claims: { sub: userId },
+    sourceAttributes: (names) => ctx.loadUserAttributes(userId, names),
+  });
 }
 
 /**
@@ -271,6 +309,29 @@ export async function idTokenGrantClaims(
 }
 
 /**
+ * The subject claims of an access or refresh token the app receives: the sub its ID tokens carry
+ * (`issuedSub`: pairwise, or what its identity mapping issues), and, when that is not the user's
+ * id, the sealed reference to the account (the same one an ID token carries) so only this server
+ * can tell which account the token is for. The reference is bound to the tenant and `clientId`
+ * (the client whose consent the token is granted under). `{ sub: userId }` alone when the app is
+ * given the user's id. Throws IDTokenSubjectReferenceUnavailableError when a reference is needed
+ * and cannot be sealed: the token is not issued with the user's id in its place.
+ */
+export async function issuedSubjectClaims(
+  env: Env,
+  binding: { tenantId: string; clientId: string },
+  issuedSub: string,
+  accountUserId: string
+): Promise<{ sub: string; authrim_subject_ref?: string }> {
+  if (issuedSub === accountUserId) return { sub: accountUserId };
+  if (!isSubjectReferenceAvailable(env)) throw new IDTokenSubjectReferenceUnavailableError();
+  return {
+    sub: issuedSub,
+    [SUBJECT_REFERENCE_CLAIM]: await sealSubjectReference(env, binding, accountUserId),
+  };
+}
+
+/**
  * Everything an ID token issued from the front channel carries beyond its protocol claims: the
  * identity mapping, the attribute release consent and the grant claims, in the token endpoint's
  * order. `claims` is the ID token as built from the grant (its sub is the user's id).
@@ -318,4 +379,43 @@ export async function releaseIDTokenClaims(
     };
   }
   return { ok: true, claims: { ...released.claims, ...grantClaims } };
+}
+
+/**
+ * The sub the app receives for the user in every token (no openid scope needed), derived once
+ * before any token is signed. A failure is recorded as a mapping failure (once) and answered as
+ * the ID token's mapping failures are; no token carries the user's id in its place.
+ */
+export async function deriveIssuedSubject(
+  ctx: IDTokenReleaseContext,
+  userId: string
+): Promise<{ ok: true; sub: string } | { ok: false; failure: IDTokenReleaseFailure }> {
+  const failureContext: IdentityMappingFailureContext = {};
+  try {
+    return { ok: true, sub: await deriveIDTokenSubject(ctx, userId, failureContext) };
+  } catch (error) {
+    return { ok: false, failure: idTokenMappingFailure(ctx, error, failureContext) };
+  }
+}
+
+type AttributeRead = Promise<Record<string, unknown> | null>;
+const attributeReads = new WeakMap<object, Map<string, AttributeRead>>();
+
+/**
+ * Reads of the user's attributes an identity mapping needs, made once for a request: the sub the
+ * tokens carry is derived before they are signed and the ID token's mapping reads the same
+ * attributes again. `requestKey` is the request object; `scope` tells the apps and users apart.
+ */
+export function readAttributesOncePerRequest(
+  requestKey: object,
+  scope: string,
+  read: () => Promise<Record<string, unknown> | null>
+): Promise<Record<string, unknown> | null> {
+  const reads = attributeReads.get(requestKey) ?? new Map<string, AttributeRead>();
+  attributeReads.set(requestKey, reads);
+  const known = reads.get(scope);
+  if (known) return known;
+  const started = read();
+  reads.set(scope, started);
+  return started;
 }

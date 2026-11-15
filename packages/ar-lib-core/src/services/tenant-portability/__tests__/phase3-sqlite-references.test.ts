@@ -165,6 +165,30 @@ describe('Phase 3 installed SQL reference graph', () => {
     ).toThrow('backup_phase3_reference_null');
   });
 
+  it('accepts a transform step that reads no edge, and still checks one that does', () => {
+    const identity = {
+      module: 'identity-mapping',
+      collection: 'admin.mapping_transform_steps',
+      id: 'step',
+      tenantId: 'tenant-a',
+    };
+    const targets = (edgeId: string | null) =>
+      inspectPhase3SqliteReferences(
+        identity.collection,
+        row({
+          tenant_id: 'tenant-a',
+          edge_id: edgeId,
+          rule_id: 'rule-1',
+          target_ref_json: null,
+        }),
+        identity
+      ).map(({ to }) => to.collection);
+    // A persistent identifier step stores no edge: nothing to resolve, no failure.
+    expect(targets(null)).not.toContain('admin.mapping_rule_edges');
+    expect(targets(null)).toContain('admin.mapping_rules');
+    expect(targets('edge-1')).toContain('admin.mapping_rule_edges');
+  });
+
   it('accepts only the bundle-only form of an OAuth client environment secret', () => {
     const identity = {
       module: 'applications' as const,
@@ -422,7 +446,7 @@ describe('Phase 3 installed SQL reference graph', () => {
     ).toThrow('backup_phase3_structured_json');
   });
 
-  it('validates logical-key and persistent-identifier JSON without inventing record IDs', () => {
+  it('validates logical-key JSON without inventing record IDs', () => {
     const groupIdentity = {
       module: 'mapping' as const,
       collection: 'admin.attribute_group_registry',
@@ -441,23 +465,6 @@ describe('Phase 3 installed SQL reference graph', () => {
         groupIdentity.collection,
         row({ tenant_id: 'tenant-a', field_keys_json: '{"field":"email"}' }),
         groupIdentity
-      )
-    ).toThrow('backup_phase3_structured_json');
-
-    const profileIdentity = {
-      ...groupIdentity,
-      collection: 'admin.persistent_identifier_profiles',
-    };
-    expect(() =>
-      inspectPhase3SqliteReferences(
-        profileIdentity.collection,
-        row({
-          tenant_id: 'tenant-a',
-          source_ref_json: '[]',
-          usage_json: '[]',
-          format_json: '{}',
-        }),
-        profileIdentity
       )
     ).toThrow('backup_phase3_structured_json');
   });

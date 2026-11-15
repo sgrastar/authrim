@@ -309,6 +309,7 @@ describe('UserInfo Endpoint', () => {
 
       expect(introspectTokenFromContext).toHaveBeenCalledWith(c, {
         audience: ['https://op.example.com', 'https://op.example.com/userinfo'],
+        allowSubjectReference: true,
       });
       expect(c.header).toHaveBeenCalledWith('x-fapi-interaction-id', 'fapi-interaction-123');
 
@@ -1235,8 +1236,10 @@ describe('UserInfo Endpoint', () => {
 
       await userinfoHandler(c);
 
+      // The response names the user as the token does (its recorded sub), whatever the mapping
+      // derives now.
       expect(c.json).toHaveBeenCalledWith({
-        sub: 'pairwise-subject',
+        sub: 'user-123',
         department: 'security',
       });
     });
@@ -1255,6 +1258,111 @@ describe('UserInfo Endpoint', () => {
       expect(input.sourceAttributes).toHaveProperty('email');
       // What is released is still only what the scopes and consent allow.
       expect(input.claims).not.toBe(input.sourceAttributes);
+    });
+
+    describe("a pairwise app's UserInfo: the token carries the sub the app was given and the sealed account reference", () => {
+      let mappingInputSub: unknown;
+      function pairwiseRequest(
+        options: { claims?: string; reference?: boolean; tokenUse?: string | undefined } = {}
+      ) {
+        const c = prepareClientBoundRequest() as never;
+        vi.mocked(introspectTokenFromContext).mockResolvedValue({
+          valid: true,
+          claims: {
+            authrim_release: ['*'],
+            sub: 'pairwise-subject',
+            ...(options.tokenUse === undefined && 'tokenUse' in options
+              ? {}
+              : { token_use: options.tokenUse ?? 'access' }),
+            jti: 'jti-1',
+            scope: 'openid profile email',
+            client_id: 'client-123',
+            ...(options.reference === false ? {} : { authrim_subject_ref: 'sr1.sealed.value' }),
+            ...(options.claims ? { claims: options.claims } : {}),
+          },
+          ...(options.reference === false ? {} : { accountUserId: 'user-123' }),
+        });
+        vi.mocked(getClient).mockResolvedValue({
+          client_id: 'client-123',
+          subject_type: 'pairwise',
+        } as never);
+        mockApplyOIDCIdentityMapping.mockImplementation(
+          async (input: { claims: Record<string, unknown> }) => {
+            // What the mapping is given at the call (its input object is reused for the answer).
+            mappingInputSub = input.claims.sub;
+            // The mapping derives the sub from the account id the claims carry.
+            return { claims: { ...input.claims, sub: 'sub-derived-from-today-config' } };
+          }
+        );
+        return c;
+      }
+
+      it('is told the app accepts a sealed subject reference', async () => {
+        const c = pairwiseRequest();
+        await userinfoHandler(c);
+        expect(introspectTokenFromContext).toHaveBeenCalledWith(
+          c,
+          expect.objectContaining({ allowSubjectReference: true })
+        );
+      });
+
+      it('looks the user up by the account id, tells the mapping the subject type, and answers with the recorded sub', async () => {
+        const c = pairwiseRequest();
+
+        await userinfoHandler(c);
+
+        expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-123');
+        const input = mockApplyOIDCIdentityMapping.mock.calls.at(-1)?.[0] as {
+          subjectType: string;
+          claims: Record<string, unknown>;
+        };
+        expect(input.subjectType).toBe('pairwise');
+        // The recorded sub is handed over, so the mapping derives nothing for it.
+        expect((input as { fixedSubject?: string }).fixedSubject).toBe('pairwise-subject');
+        // The mapping is given the account (never the pairwise sub, which it would pair again)...
+        expect(mappingInputSub).toBe('user-123');
+        // ...and the response keeps the sub recorded at issuance, not the one derived now.
+        expect((c as { json: unknown }).json).toHaveBeenCalledWith(
+          expect.objectContaining({ sub: 'pairwise-subject' })
+        );
+      });
+
+      it.each([['value'], ['values']])(
+        'holds a claims parameter sub %s to the recorded sub: accepts it, refuses the account id',
+        async (kind) => {
+          const constraint = (sub: string) =>
+            JSON.stringify({
+              userinfo: { sub: kind === 'values' ? { values: [sub] } : { value: sub } },
+            });
+          const accepted = pairwiseRequest({ claims: constraint('pairwise-subject') });
+          await userinfoHandler(accepted);
+          expect((accepted as { json: unknown }).json).toHaveBeenCalledWith(
+            expect.objectContaining({ sub: 'pairwise-subject' })
+          );
+
+          for (const refused of ['user-123', 'sub-derived-from-today-config']) {
+            const c = pairwiseRequest({ claims: constraint(refused) });
+            await userinfoHandler(c);
+            expect((c as { json: unknown }).json).toHaveBeenCalledWith(
+              expect.objectContaining({ error: 'invalid_request' }),
+              400
+            );
+          }
+        }
+      );
+
+      it.each([['access'], [undefined]])(
+        'refuses a token without the reference (issued before tokens carried one), token_use %s',
+        async (tokenUse) => {
+          const c = pairwiseRequest({ reference: false, tokenUse });
+          await userinfoHandler(c);
+          expect((c as { json: unknown }).json).toHaveBeenCalledWith(
+            expect.objectContaining({ error: 'invalid_token' }),
+            401
+          );
+          expect(mockApplyOIDCIdentityMapping).not.toHaveBeenCalled();
+        }
+      );
     });
 
     it.each([
@@ -1360,14 +1468,16 @@ describe('UserInfo Endpoint', () => {
         expect(c.json).toHaveBeenCalledWith({ sub: 'user-123' });
       });
 
-      it('releases no user claim when the app has no metadata (only the protocol claims)', async () => {
+      it('answers 401 invalid_token when the app has no metadata (never unmapped claims)', async () => {
         const c = requestWith({ authrim_release: ['*'] });
         mockGetClientCached.mockResolvedValueOnce(null);
 
         await userinfoHandler(c);
 
-        const body = vi.mocked(c.json).mock.calls[0][0] as Record<string, unknown>;
-        expect(body).toEqual({ sub: 'user-123' });
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'invalid_token' }),
+          401
+        );
       });
     });
 

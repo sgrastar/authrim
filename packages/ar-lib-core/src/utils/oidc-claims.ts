@@ -62,6 +62,26 @@ export interface EvaluateClaimsOptions {
   includeScopeClaims?: boolean;
   requestIntegrityProtected?: boolean;
   applySAO?: boolean;
+  /**
+   * The sub the client will receive (after its identity mapping: a pairwise app's sub). A `sub`
+   * value or values constraint in the claims request is checked against it, never against the
+   * account ID `availableClaims.sub` holds (which stays the account the claims are looked up for).
+   * Unset: the constraint is checked against `availableClaims.sub`.
+   */
+  subjectValue?: string;
+}
+
+/** Whether a claims request puts a value or values constraint on `sub` for the target. */
+export function claimsRequestRestrictsSub(
+  claimsRequest: ParsedClaimsRequest | undefined,
+  target: ClaimsTarget
+): boolean {
+  const request = claimsRequest?.[target]?.sub;
+  if (request && ('value' in request || 'values' in request)) return true;
+  // An ASC SAO rule on /sub compares the sub too.
+  return (claimsRequest?._asc?.sao?.[target] ?? []).some(
+    (rule) => rule.loc === '/sub' || rule.loc.startsWith('/sub/')
+  );
 }
 
 export type ClaimsEvaluationResult =
@@ -428,7 +448,9 @@ export function evaluateClaimsForTarget(options: EvaluateClaimsOptions): ClaimsE
       continue;
     }
 
-    if (!ignoreValueRestrictions && claimRequest && !matchesClaimRequest(value, claimRequest)) {
+    const checked =
+      claimName === 'sub' && options.subjectValue !== undefined ? options.subjectValue : value;
+    if (!ignoreValueRestrictions && claimRequest && !matchesClaimRequest(checked, claimRequest)) {
       if (claimName === 'sub') {
         return {
           ok: false,
@@ -451,8 +473,14 @@ export function evaluateClaimsForTarget(options: EvaluateClaimsOptions): ClaimsE
 
   if (options.applySAO !== false && saoApplies) {
     const sao = options.claimsRequest?._asc?.sao?.[options.target] ?? [];
+    // The rules compare the sub the app receives, while `output` keeps the account's id (which
+    // the identity mapping needs): swap it in for the rules, and back unless a rule removed it.
+    const accountId = output.sub;
+    const swap = options.subjectValue !== undefined && 'sub' in output;
+    if (swap) output.sub = options.subjectValue;
     const saoResult = applySAORules(output, sao);
     if (!saoResult.ok) return saoResult;
+    if (swap && output.sub === options.subjectValue) output.sub = accountId;
   }
 
   return { ok: true, claims: output };

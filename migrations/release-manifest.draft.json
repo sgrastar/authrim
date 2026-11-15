@@ -138,6 +138,26 @@
             {
               "path": "017_mapped_identifier_values.sql",
               "checksum": "b9531378e524a0d69b98a788e7cb1fd209f37fe05a3115631425491b73d5d88c"
+            },
+            {
+              "path": "018_drop_persistent_identifier_profiles.sql",
+              "checksum": "3d87949350184181d2199ebc8e1cb0045a8d6fc107b68a032df7af5a1981083b"
+            },
+            {
+              "path": "019_mapped_identifier_values_account_binding.sql",
+              "checksum": "59a1871fb6080e01108afcb966e5610a497c9e3125490ee9f748803b359b0e2d"
+            },
+            {
+              "path": "020_identifier_source_values.sql",
+              "checksum": "c380e35c9685f84ddf4e3f75c254f5ad7ea5c234431a61d2a50a204b2506c26c"
+            },
+            {
+              "path": "021_mapping_transform_step_target.sql",
+              "checksum": "1586c263c77a7d80646e4115992732f8b43aabe20396b00113e19fac27115234"
+            },
+            {
+              "path": "022_mapped_identifier_exceptions.sql",
+              "checksum": "cb74b772581fc4c69f693fb64678c7ef42c483be9efa8a57b61cc9e6170fcdff"
             }
           ]
         },
@@ -369,6 +389,26 @@
         {
           "path": "017_mapped_identifier_values.sql",
           "checksum": "b9531378e524a0d69b98a788e7cb1fd209f37fe05a3115631425491b73d5d88c"
+        },
+        {
+          "path": "018_drop_persistent_identifier_profiles.sql",
+          "checksum": "3d87949350184181d2199ebc8e1cb0045a8d6fc107b68a032df7af5a1981083b"
+        },
+        {
+          "path": "019_mapped_identifier_values_account_binding.sql",
+          "checksum": "59a1871fb6080e01108afcb966e5610a497c9e3125490ee9f748803b359b0e2d"
+        },
+        {
+          "path": "020_identifier_source_values.sql",
+          "checksum": "c380e35c9685f84ddf4e3f75c254f5ad7ea5c234431a61d2a50a204b2506c26c"
+        },
+        {
+          "path": "021_mapping_transform_step_target.sql",
+          "checksum": "1586c263c77a7d80646e4115992732f8b43aabe20396b00113e19fac27115234"
+        },
+        {
+          "path": "022_mapped_identifier_exceptions.sql",
+          "checksum": "cb74b772581fc4c69f693fb64678c7ef42c483be9efa8a57b61cc9e6170fcdff"
         }
       ]
     },

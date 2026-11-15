@@ -22,6 +22,8 @@ import {
   publishEvent,
   CONSENT_EVENTS,
   introspectTokenFromContext,
+  introspectedTokenClient,
+  resolveIntrospectedAccountUserId,
   type ExtendedConsentEventData,
   getLogger,
 } from '@authrim/ar-lib-core';
@@ -40,10 +42,13 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
   // 1. Try Bearer token authentication first
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const introspection = await introspectTokenFromContext(c);
-    if (introspection.valid && introspection.claims?.sub) {
-      return introspection.claims.sub;
-    }
+    const introspection = await introspectTokenFromContext(c, { allowSubjectReference: true });
+    // The account the token is for (opened from a pairwise app's reference), never its sub.
+    const userId = resolveIntrospectedAccountUserId(
+      introspection,
+      await introspectedTokenClient(c, introspection)
+    );
+    if (userId) return userId;
     // Token present but invalid - don't fall through to session
     return null;
   }

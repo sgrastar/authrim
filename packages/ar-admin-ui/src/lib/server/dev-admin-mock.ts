@@ -7480,13 +7480,6 @@ async function handleIdentityMapping(
 	const mutableFieldMappingVersions = fieldMappingVersions as unknown as Array<
 		Record<string, unknown>
 	>;
-	if (
-		segments[0] === 'persistent-identifier-profiles' &&
-		segments.length === 1 &&
-		method === 'GET'
-	) {
-		return json({ profiles: [] });
-	}
 	if (segments[0] === 'field-mapping-sets' && method === 'GET' && segments.length === 1) {
 		return json({ fieldMappingSets });
 	}

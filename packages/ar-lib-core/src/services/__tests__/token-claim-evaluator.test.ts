@@ -371,6 +371,37 @@ describe('Token Claim Evaluator Service', () => {
       });
     });
 
+    it('puts the sub the app receives, never the account id, where {{subject_id}} is used', async () => {
+      const ruleRow = {
+        id: 'rule-template',
+        tenant_id: 'default',
+        name: 'Template Claim Rule',
+        token_type: 'access',
+        conditions_json: JSON.stringify({ field: 'has_role', operator: 'eq', value: 'admin' }),
+        actions_json: JSON.stringify([
+          {
+            type: 'add_claim_template',
+            claim_name: 'user_info',
+            template: 'User {{subject_id}} from org {{org_id}}',
+          },
+        ]),
+        priority: 100,
+        is_active: 1,
+        stop_processing: 0,
+        created_at: 1700000000,
+        updated_at: 1700000000,
+      };
+      mockD1.all.mockResolvedValue({ results: [ruleRow] });
+
+      const result = await evaluator.evaluate(
+        { ...baseContext, issued_subject_id: 'pairwise-sub' },
+        'access'
+      );
+
+      expect(result.claims_to_add).toEqual({ user_info: 'User pairwise-sub from org org_456' });
+      expect(JSON.stringify(result.claims_to_add)).not.toContain('user_123');
+    });
+
     it('should handle copy_from_context action', async () => {
       const ruleRow = {
         id: 'rule-copy',

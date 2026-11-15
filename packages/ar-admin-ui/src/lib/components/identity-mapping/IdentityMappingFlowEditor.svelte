@@ -2,10 +2,6 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import {
-		adminIdentityMappingAPI,
-		type PersistentIdentifierProfileSummary
-	} from '#lib/api/admin-identity-mapping.js';
 	import { suggestAutoMapConnections } from './auto-map-candidates';
 	import {
 		missingMappingRequiredSourceNodes,
@@ -85,7 +81,7 @@
 		description: string;
 		parameters: TransformParameterSchema[];
 	};
-	type TransformOperationCategoryId = 'basic' | 'array' | 'text' | 'identifier' | 'json';
+	type TransformOperationCategoryId = 'basic' | 'array' | 'text' | 'json';
 	type TransformOperationCategory = {
 		id: TransformOperationCategoryId;
 		operations: TransformOperation[];
@@ -156,34 +152,6 @@
 			parameters: [
 				{ name: 'trimItems', label: 'Trim items', kind: 'boolean', required: false },
 				{ name: 'omitEmpty', label: 'Omit empty values', kind: 'boolean', required: false }
-			]
-		},
-		{
-			operation: 'oidc_pairwise_sub',
-			label: 'OIDC pairwise sub',
-			description: 'Use the current OIDC client pairwise subject identifier.',
-			parameters: [
-				{
-					name: 'persistentIdentifierProfileId',
-					label: 'Persistent Identifier Profile',
-					kind: 'string',
-					required: false,
-					placeholder: 'profile id'
-				}
-			]
-		},
-		{
-			operation: 'saml_edu_person_targeted_id',
-			label: 'SAML eduPersonTargetedID',
-			description: 'Build IdP!SP!opaque targeted ID from the current SAML SP context.',
-			parameters: [
-				{
-					name: 'persistentIdentifierProfileId',
-					label: 'Persistent Identifier Profile',
-					kind: 'string',
-					required: false,
-					placeholder: 'profile id'
-				}
 			]
 		},
 		{
@@ -378,11 +346,6 @@
 		},
 
 		{
-			id: 'identifier',
-			operations: ['oidc_pairwise_sub', 'saml_edu_person_targeted_id']
-		},
-
-		{
 			id: 'json',
 			operations: [
 				'json_build',
@@ -506,7 +469,6 @@
 	let activeDraftResetKey = $state<number | null>(null);
 	let draftSubmitStatus = $state<'idle' | 'saving' | 'saved' | 'info' | 'error'>('idle');
 	let draftSubmitMessage = $state<string | null>(null);
-	let persistentIdentifierProfiles = $state<PersistentIdentifierProfileSummary[]>([]);
 	let dryRunResults = $state<
 		Record<string, Pick<RuleDetail, 'dryrunStatus' | 'dryrunTone' | 'input' | 'output' | 'trace'>>
 	>({});
@@ -858,7 +820,6 @@
 	});
 
 	onMount(() => {
-		void loadPersistentIdentifierProfiles();
 		const resize = () => {
 			const rect = canvas?.getBoundingClientRect();
 			if (!rect) return;
@@ -882,17 +843,6 @@
 			window.removeEventListener('beforeunload', beforeUnload);
 		};
 	});
-
-	async function loadPersistentIdentifierProfiles() {
-		try {
-			const response = await adminIdentityMappingAPI.listPersistentIdentifierProfiles();
-			persistentIdentifierProfiles = response.profiles.filter(
-				(profile) => profile.lifecycleState === 'active'
-			);
-		} catch {
-			persistentIdentifierProfiles = [];
-		}
-	}
 
 	function activateSample(next: MappingSample) {
 		activeSampleRef = next;
@@ -2189,37 +2139,6 @@
 		return fromAllowed.some((value) => !toAllowedValues.has(value.toLowerCase()));
 	}
 
-	function requiredTransformOperationForNode(node: MappingNode): TransformOperation | null {
-		const fieldRef = node.fieldRef;
-		if (!fieldRef) return null;
-		const namespace = fieldRef.namespace.toLowerCase();
-		const identifiers = [
-			fieldRef.path,
-			fieldRef.catalogEntryId,
-			node.label,
-			node.caption,
-			node.storageTarget
-		]
-			.filter(Boolean)
-			.map((value) => String(value).toLowerCase());
-		if (
-			namespace === 'oidc.claim' &&
-			identifiers.some((value) => value === 'sub' || value.endsWith('.sub'))
-		) {
-			return 'oidc_pairwise_sub';
-		}
-		if (
-			(namespace === 'saml.attribute' || node.adapter === 'SAML') &&
-			identifiers.some(
-				(value) =>
-					value.includes('edupersontargetedid') || value.includes('1.3.6.1.4.1.5923.1.1.1.10')
-			)
-		) {
-			return 'saml_edu_person_targeted_id';
-		}
-		return null;
-	}
-
 	function isConnectionCardinalityMismatch(edge: MappingEdge): boolean {
 		const toNode = nodeById(edge.to);
 		if (!toNode) return false;
@@ -2271,8 +2190,6 @@
 				fromType
 			);
 		}
-		if (operation === 'oidc_pairwise_sub') return true;
-		if (operation === 'saml_edu_person_targeted_id') return true;
 		if (operation === 'text_to_boolean') {
 			return ['text', 'email', 'phone', 'identifier', 'enum', 'locale', 'boolean'].includes(
 				fromType
@@ -2347,9 +2264,7 @@
 			operation === 'json_extract_text' ||
 			operation === 'concat' ||
 			operation === 'join' ||
-			operation === 'affix_text' ||
-			operation === 'oidc_pairwise_sub' ||
-			operation === 'saml_edu_person_targeted_id'
+			operation === 'affix_text'
 		)
 			return 'text';
 		if (operation === 'json_build') return 'json';
@@ -2720,7 +2635,7 @@
 		const insertPoint = pointBetween(edgePoint(fromNode, 'from'), edgePoint(toNode, 'to'), 0.5);
 		const nodeId = `transform-node-${customCounter}`;
 		const ruleId = `transform-rule-${customCounter}`;
-		const operation: TransformOperation = requiredTransformOperationForNode(toNode) ?? 'copy';
+		const operation: TransformOperation = 'copy';
 		const parameters = defaultTransformParameters(operation);
 		const transformNode: MappingNode = {
 			id: nodeId,
@@ -3063,8 +2978,6 @@
 				return ja ? '配列' : 'Array';
 			case 'text':
 				return ja ? 'テキスト' : 'Text';
-			case 'identifier':
-				return ja ? '識別子' : 'Identifier';
 			case 'json':
 				return 'JSON';
 		}
@@ -3092,10 +3005,6 @@
 				return $LL.admin_identity_mapping_flow_transform_join_label();
 			case 'first':
 				return $LL.admin_identity_mapping_flow_transform_first_label();
-			case 'oidc_pairwise_sub':
-				return $LL.admin_identity_mapping_flow_transform_oidc_pairwise_sub_label();
-			case 'saml_edu_person_targeted_id':
-				return $LL.admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label();
 			case 'affix_text':
 				return $LL.admin_identity_mapping_flow_transform_affix_text_label();
 			case 'trim':
@@ -3133,10 +3042,6 @@
 				return $LL.admin_identity_mapping_flow_transform_join_desc();
 			case 'first':
 				return $LL.admin_identity_mapping_flow_transform_first_desc();
-			case 'oidc_pairwise_sub':
-				return $LL.admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc();
-			case 'saml_edu_person_targeted_id':
-				return $LL.admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc();
 			case 'affix_text':
 				return $LL.admin_identity_mapping_flow_transform_affix_text_desc();
 			case 'trim':
@@ -3174,8 +3079,6 @@
 				return $LL.admin_identity_mapping_flow_transform_param_omit_empty();
 			case 'unique':
 				return $LL.admin_identity_mapping_flow_transform_param_unique();
-			case 'persistentIdentifierProfileId':
-				return $LL.admin_identity_mapping_flow_transform_param_persistent_identifier_profile();
 			case 'prefix':
 				return $LL.admin_identity_mapping_flow_transform_param_prefix();
 			case 'suffix':
@@ -3195,27 +3098,6 @@
 			default:
 				return parameter.label;
 		}
-	}
-
-	function persistentIdentifierProfileOptions(operation: TransformOperation) {
-		const usage =
-			operation === 'oidc_pairwise_sub'
-				? 'oidc_pairwise_sub'
-				: operation === 'saml_edu_person_targeted_id'
-					? 'saml_edu_person_targeted_id'
-					: null;
-		const protocol =
-			operation === 'oidc_pairwise_sub'
-				? 'oidc'
-				: operation === 'saml_edu_person_targeted_id'
-					? 'saml'
-					: null;
-		return persistentIdentifierProfiles.filter((profile) => {
-			const usageMatches = !usage || profile.usage.length === 0 || profile.usage.includes(usage);
-			const protocolMatches =
-				!protocol || profile.protocolScope === 'any' || profile.protocolScope === protocol;
-			return usageMatches && protocolMatches;
-		});
 	}
 
 	function transformOptionLabel(parameterName: string, value: string, fallback: string): string {
@@ -3245,9 +3127,6 @@
 		if (operation === 'join')
 			return { delimiter: ',', trimItems: true, omitEmpty: true, unique: false };
 		if (operation === 'first') return { trimItems: true, omitEmpty: true };
-		if (operation === 'oidc_pairwise_sub' || operation === 'saml_edu_person_targeted_id') {
-			return { persistentIdentifierProfileId: '' };
-		}
 		if (operation === 'affix_text') return { prefix: '', suffix: '' };
 		if (operation === 'normalize') return { mode: 'whitespace' };
 		if (operation === 'case') return { mode: 'lower' };
@@ -3931,10 +3810,6 @@
 			case 'json_extract_boolean':
 			case 'json_extract_integer':
 				return jsonExtractDryRun(input, String(params.path ?? ''), activeTransformOperation(node));
-			case 'oidc_pairwise_sub':
-				return `pairwise:${input}`;
-			case 'saml_edu_person_targeted_id':
-				return `https://idp.example.edu/idp/shibboleth!https://sp.example.org!${input}`;
 			default:
 				return input;
 		}
@@ -4756,25 +4631,6 @@
 											/>
 											<span>{transformParameterLabel(parameter)}</span>
 										</span>
-									{:else if parameter.name === 'persistentIdentifierProfileId'}
-										<select
-											id={`transform-${selectedTransformNode.id}-${parameter.name}`}
-											value={transformParameterTextValue(selectedTransformNode, parameter.name)}
-											disabled={!editable}
-											onchange={(event) =>
-												updateTransformParameter(
-													selectedTransformNode,
-													parameter.name,
-													(event.currentTarget as HTMLSelectElement).value
-												)}
-										>
-											<option value="">
-												{$LL.admin_identity_mapping_flow_transform_tenant_default_profile()}
-											</option>
-											{#each persistentIdentifierProfileOptions(activeTransformOperation(selectedTransformNode)) as profile (profile.id)}
-												<option value={profile.id}>{profile.displayName}</option>
-											{/each}
-										</select>
 									{:else}
 										<input
 											id={`transform-${selectedTransformNode.id}-${parameter.name}`}

@@ -67,10 +67,10 @@ const binding = {
   edges: [edge('e-aff', 'affiliation', 'affiliation'), edge('e-sub', 'sub', 'sub')],
   transforms: [
     {
-      id: 'pairwise',
+      id: 'pid-1',
       inputEdgeIds: ['e-sub'],
-      operation: 'oidc_pairwise_sub',
-      parameters: { persistentIdentifierProfileId: 'pid-1' },
+      operation: 'persistent_identifier',
+      parameters: { format: 'plain', algorithm: 'authrim_sha256' },
       outputTargetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
     },
   ],
@@ -80,6 +80,7 @@ const binding = {
 
 const run = (overrides: Record<string, unknown> = {}) =>
   applyOIDCIdentityMapping({
+    subjectType: 'public',
     adapter,
     // No KEY_MANAGER: an account's pairwise sub could not be derived here.
     env: { DB_ADMIN: adminAdapter as never },
@@ -97,7 +98,7 @@ beforeEach(() => {
   resolveBinding.mockResolvedValue(binding);
   loadDescriptor.mockResolvedValue({ destinationType: 'oidc', fields: [] });
   executeMapping.mockImplementation(
-    (input: { runtimeContext: { oidc: { persistentIdentifiers: Record<string, string> } } }) => ({
+    (input: { runtimeContext: { identifiers: Record<string, string> } }) => ({
       status: 'success',
       values: [
         {
@@ -106,7 +107,7 @@ beforeEach(() => {
         },
         {
           sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
-          value: input.runtimeContext.oidc.persistentIdentifiers['pid-1'],
+          value: input.runtimeContext.identifiers['pid-1'],
         },
       ],
     })
@@ -132,12 +133,12 @@ describe('the release for a test user', () => {
 
   it('judges a value a later step wrote over the placeholder as usual', async () => {
     executeMapping.mockImplementation(
-      (input: { runtimeContext: { oidc: { persistentIdentifiers: Record<string, string> } } }) => ({
+      (input: { runtimeContext: { identifiers: Record<string, string> } }) => ({
         status: 'success',
         values: [
           {
             sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
-            value: input.runtimeContext.oidc.persistentIdentifiers['pid-1'],
+            value: input.runtimeContext.identifiers['pid-1'],
           },
           {
             sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
@@ -161,8 +162,8 @@ describe('the release for a test user', () => {
   it('takes no attribute for the placeholder, whatever it holds', async () => {
     const placeholders: string[] = [];
     executeMapping.mockImplementation(
-      (input: { runtimeContext: { oidc: { persistentIdentifiers: Record<string, string> } } }) => {
-        placeholders.push(input.runtimeContext.oidc.persistentIdentifiers['pid-1']);
+      (input: { runtimeContext: { identifiers: Record<string, string> } }) => {
+        placeholders.push(input.runtimeContext.identifiers['pid-1']);
         return {
           status: 'success',
           values: [
@@ -170,6 +171,10 @@ describe('the release for a test user', () => {
               sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'affiliation' },
               // What a test user could type, guessing the placeholder of an earlier call.
               value: placeholders[0],
+            },
+            {
+              sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+              value: placeholders[placeholders.length - 1],
             },
           ],
         };
@@ -180,12 +185,15 @@ describe('the release for a test user', () => {
     await run({ fixture: { consent: 'all' } });
 
     expect(placeholders[0]).not.toBe(placeholders[1]);
-    expect(filterClaims.mock.calls.at(-1)?.[0]).toMatchObject({ unevaluatedClaims: new Set() });
+    // Only the claim the placeholder stands for, not the attribute that holds an earlier one.
+    expect(filterClaims.mock.calls.at(-1)?.[0]).toMatchObject({
+      unevaluatedClaims: new Set(['sub']),
+    });
   });
 
   it('fails for an account without the persistent identifier’s key, as before', async () => {
     await expect(run()).rejects.toMatchObject({
-      details: { code: 'policy.persistent_identifier_profile_not_found' },
+      details: { code: 'policy.persistent_identifier_unavailable' },
     });
   });
 

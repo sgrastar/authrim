@@ -119,8 +119,6 @@ const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
   'case',
   'trim',
   'affix_text',
-  'oidc_pairwise_sub',
-  'saml_edu_person_targeted_id',
   'persistent_identifier',
   'text_to_boolean',
   'json_build',
@@ -515,6 +513,7 @@ interface FieldMappingTransformSummaryRow {
   step_order: number;
   operation: string;
   parameters_json: string | null;
+  target_ref_json: string | null;
 }
 
 interface FieldMappingValidationSummaryRow {
@@ -947,6 +946,11 @@ export interface FieldMappingVersionRuleInput {
   }>;
   transforms?: Array<{
     edgeIndex?: number;
+    /**
+     * Where a step that takes no input edge (the persistent_identifier step) writes its value;
+     * every other step writes where its edge does.
+     */
+    targetRef?: Record<string, unknown>;
     operation: string;
     parameters?: Record<string, unknown>;
   }>;
@@ -3975,7 +3979,8 @@ export class IdentityMappingControlPlaneRepository {
               t.edge_id,
               t.step_order,
               t.operation,
-              t.parameters_json
+              t.parameters_json,
+              t.target_ref_json
          FROM field_mapping_versions v
          JOIN mapping_rules r
            ON r.tenant_id = v.tenant_id
@@ -4072,6 +4077,8 @@ export class IdentityMappingControlPlaneRepository {
             transforms: Array<{
               id: string;
               edgeId: string | null;
+              /** The step's own output target (a step with no input edge), else null. */
+              targetRef: Record<string, unknown> | null;
               stepOrder: number;
               operation: string;
               parameters: Record<string, unknown>;
@@ -4169,9 +4176,20 @@ export class IdentityMappingControlPlaneRepository {
       const summary = summariesByVersion.get(row.field_mapping_version_id);
       const rule = summary?.rules.get(row.rule_id);
       if (!summary || !rule) continue;
+      // A step with no input edge names its own output target, and so the profile it releases into.
+      for (const profileId of profileIdsFromFieldMappingRefs(null, row.target_ref_json ?? null)) {
+        if (
+          profileId.startsWith('destination-profile-') ||
+          profileId.startsWith('destination_profile_') ||
+          profileId.startsWith('protocol-destination-')
+        ) {
+          summary.destinationProfileIds.add(normalizeDestinationProfileReference(profileId));
+        }
+      }
       rule.transforms.push({
         id: row.transform_id,
         edgeId: row.edge_id,
+        targetRef: row.target_ref_json ? parseJsonObject(row.target_ref_json, {}) : null,
         stepOrder: row.step_order,
         operation: row.operation,
         parameters: parseJsonObject(row.parameters_json ?? '{}', {}),
@@ -8242,8 +8260,9 @@ export class IdentityMappingControlPlaneRepository {
     for (const [index, transform] of (rule.transforms ?? []).entries()) {
       await executor.execute(
         `INSERT INTO mapping_transform_steps (
-          id, tenant_id, rule_id, edge_id, step_order, operation, parameters_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, tenant_id, rule_id, edge_id, step_order, operation, parameters_json, target_ref_json,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           createId('mapping_transform'),
           tenantId,
@@ -8252,6 +8271,7 @@ export class IdentityMappingControlPlaneRepository {
           index,
           transform.operation,
           stableJson(transform.parameters ?? {}),
+          transform.targetRef ? stableJson(transform.targetRef) : null,
           now,
           now,
         ]
@@ -10241,6 +10261,34 @@ function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRe
     }
     ruleKeys.add(rule.ruleKey);
   });
+  // A persistent identifier's target is written by that step alone, across the rules of the set as
+  // well: another rule writing it would put a second value there, which goes out when the
+  // identifier is suppressed, or stands next to it.
+  const key = (target: { namespace?: unknown; path?: unknown } | undefined) =>
+    `${String(target?.namespace)}\u0000${String(target?.path)}`;
+  const writers = new Map<string, number>();
+  input.rules.forEach((rule) => {
+    for (const edge of rule.edges ?? []) {
+      writers.set(key(edge.targetRef), (writers.get(key(edge.targetRef)) ?? 0) + 1);
+    }
+    for (const transform of rule.transforms ?? []) {
+      if (transform.targetRef) {
+        writers.set(key(transform.targetRef), (writers.get(key(transform.targetRef)) ?? 0) + 1);
+      }
+    }
+  });
+  input.rules.forEach((rule, ruleIndex) => {
+    rule.transforms?.forEach((transform, index) => {
+      if (
+        transform.operation === 'persistent_identifier' &&
+        (writers.get(key(transform.targetRef)) ?? 0) > 1
+      ) {
+        throw badRequest(
+          `rules[${ruleIndex}].transforms[${index}] output is also written by another edge or step of the set`
+        );
+      }
+    });
+  });
 }
 
 function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: string): void {
@@ -10293,25 +10341,38 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
     ) {
       throw badRequest(`${path}.transforms[${index}].edgeIndex must be a non-negative integer`);
     }
+    if (transform.operation !== 'persistent_identifier' && transform.targetRef !== undefined) {
+      throw badRequest(`${path}.transforms[${index}].targetRef is only for persistent_identifier`);
+    }
     if (transform.operation === 'persistent_identifier') {
-      // Made from exactly one input, which is not released and no other step reads; its settings
-      // are checked as the runtime checks them, so a set that could never make one is not saved.
-      const edgeCount = rule.edges?.length ?? 0;
-      if (transform.edgeIndex === undefined || transform.edgeIndex >= edgeCount) {
-        throw badRequest(`${path}.transforms[${index}] needs the input it is made from`);
+      // Takes no input edge: it is made from the account's ID or an identifier source, which the
+      // runtime reads. It says itself where its value goes, and its settings are checked as the
+      // runtime checks them, so a set that could never make an identifier is not saved.
+      if (transform.edgeIndex !== undefined) {
+        throw badRequest(`${path}.transforms[${index}] takes no input edge`);
       }
-      const shared = rule.transforms?.some(
-        (other, otherIndex) => otherIndex !== index && other.edgeIndex === transform.edgeIndex
+      const target = transform.targetRef;
+      if (!target || typeof target !== 'object' || Array.isArray(target)) {
+        throw badRequest(`${path}.transforms[${index}].targetRef is required`);
+      }
+      assertNonEmptyRecord(target, `${path}.transforms[${index}].targetRef`);
+      const targetNamespace = readStringValue(target.namespace) ?? 'unknown';
+      const targetNames = [target.path, target.fieldKey, target.nodeId].flatMap(
+        (name) => readStringValue(name) ?? []
       );
-      if (shared) {
+      if (
+        targetNames.some((name) =>
+          isProtectedIdentityMappingDestinationClaim(targetNamespace, name)
+        )
+      ) {
         throw badRequest(
-          `${path}.transforms[${index}] input is read by another step and would be released`
+          `${path}.transforms[${index}].targetRef targets a claim reserved by the protocol envelope`
         );
       }
       const checked = validateTransformStep({
         id: `${path}.transforms[${index}]`,
         operation: 'persistent_identifier',
-        inputEdgeIds: ['input'],
+        inputEdgeIds: [],
         parameters: transform.parameters ?? undefined,
         outputTargetRef: { side: 'destination', namespace: 'check', path: 'check' },
       });
@@ -10321,24 +10382,27 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
       ) {
         throw badRequest(`${path}.transforms[${index}].parameters are not valid`);
       }
-      // Where it goes says the protocol, and with it what the settings may be.
-      const target = rule.edges?.[transform.edgeIndex]?.targetRef;
-      // No other edge may release into the identifier's own output.
-      const sameOutput = rule.edges?.some(
-        (edge, edgeIndex) =>
-          edgeIndex !== transform.edgeIndex &&
-          edge.targetRef?.namespace === target?.namespace &&
-          edge.targetRef?.path === target?.path
-      );
+      // No other edge or identifier step may write into the identifier's own output.
+      const sameOutput =
+        rule.edges?.some(
+          (edge) =>
+            edge.targetRef?.namespace === target.namespace && edge.targetRef?.path === target.path
+        ) ||
+        rule.transforms?.some(
+          (other, otherIndex) =>
+            otherIndex !== index &&
+            other.targetRef?.namespace === target.namespace &&
+            other.targetRef?.path === target.path
+        );
       if (sameOutput) {
         throw badRequest(
-          `${path}.transforms[${index}] output is also written by another edge and would carry it`
+          `${path}.transforms[${index}] output is also written by another edge or step`
         );
       }
-      const namespace = typeof target?.namespace === 'string' ? target.namespace : '';
+      const namespace = typeof target.namespace === 'string' ? target.namespace : '';
       const parameters = transform.parameters ?? {};
       // The output must say it is a destination: without a side the runtime reads a source.
-      if (target?.side !== 'destination') {
+      if (target.side !== 'destination') {
         throw badRequest(`${path}.transforms[${index}] output must be a destination field`);
       }
       const oidc = namespace.startsWith('oidc.');

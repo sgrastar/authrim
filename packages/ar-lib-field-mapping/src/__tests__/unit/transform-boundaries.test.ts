@@ -64,15 +64,16 @@ describe('transform failures and output boundaries', () => {
     expect(result.trace.every((item) => item.action !== 'transformed')).toBe(true);
   });
 
-  it.each([
-    ['oidc_pairwise_sub', { oidc: { subject: '' } }],
-    ['saml_edu_person_targeted_id', { saml: { localEntityId: 'https://idp.test' } }],
-  ] as const)('rejects incomplete persistent identifiers for %s', (operation, runtimeContext) => {
-    const result = run(operation, ['ignored'], undefined, runtimeContext);
+  it.each(['oidc_pairwise_sub', 'saml_edu_person_targeted_id'])(
+    'fails the step for the removed operation %s, so nothing is released as a raw value',
+    (operation) => {
+      const result = run(operation as TransformOperation, ['subject-1']);
 
-    expect(result.value).toBeUndefined();
-    expect(result.reasons.map((item) => item.code)).toContain('transform.invalid_output');
-  });
+      expect(result.value).toBeUndefined();
+      expect(result.status).toBe('failed');
+      expect(result.reasons.map((item) => item.code)).toEqual(['transform.unsupported_operation']);
+    }
+  );
 
   it('keeps transformed provenance and classification while excluding raw values from the trace', () => {
     const original = sourceValue('csv', 'email', 'secret@example.test', 'pii');

@@ -222,8 +222,13 @@ export async function findMappingVersionSwapViolation(
       `SELECT e.target_ref_json
          FROM mapping_rules r
          JOIN mapping_rule_edges e ON e.tenant_id = r.tenant_id AND e.rule_id = r.id
-        WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?`,
-      [ownerTenantId, versionId]
+        WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?
+       UNION ALL
+       SELECT t.target_ref_json
+         FROM mapping_rules r
+         JOIN mapping_transform_steps t ON t.tenant_id = r.tenant_id AND t.rule_id = r.id
+        WHERE r.tenant_id = ? AND r.field_mapping_version_id = ? AND t.target_ref_json IS NOT NULL`,
+      [ownerTenantId, versionId, ownerTenantId, versionId]
     );
     const targetRefs = edges.map((edge) => parseObject(edge.target_ref_json));
     // The set the runtime counts: the profiles the edges name and the one the scope names.

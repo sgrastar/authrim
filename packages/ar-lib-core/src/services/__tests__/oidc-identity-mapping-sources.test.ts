@@ -96,6 +96,7 @@ describe('a mapping whose only source reference is a validation rule', () => {
     sourceAttributes?: Record<string, unknown> | (() => Promise<Record<string, unknown> | null>)
   ) =>
     applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       env: { DB_ADMIN: adminAdapter as never },
       tenantId: 'tenant-a',
@@ -132,6 +133,7 @@ describe('a mapping whose only source reference is a validation rule', () => {
   it('derives the subject the same way', async () => {
     await expect(
       deriveOIDCSubject({
+        subjectType: 'public',
         adapter,
         env: { DB_ADMIN: adminAdapter as never },
         tenantId: 'tenant-a',

@@ -20,6 +20,13 @@ export function openAdminDatabase(): DatabaseSync {
       'sqlite'
     )
   );
+  // The step's own output target (a step with no input edge), added after the baseline.
+  db.exec(
+    readMigrationSource(
+      new URL('../../../../../migrations/admin/d1/', import.meta.url),
+      '021_mapping_transform_step_target.sql'
+    )
+  );
   return db;
 }
 

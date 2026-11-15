@@ -112,6 +112,7 @@ export interface TokenFamilyV2 {
   first_jti?: string; // The JWT ID the family was issued with: its row in the relational family index
   consent_generation?: number; // The consent withdrawal generation the family was granted under
   release_approval?: string[]; // Claim names the information release was approved for
+  issued_subject?: string; // The sub the grant's ID token carried (OIDC Core 12.2: a refresh keeps it)
   user_id: string; // For tenant boundary enforcement
   client_id: string; // For scope validation
   allowed_scope: string; // Prevent scope amplification
@@ -126,6 +127,11 @@ function isReleaseApprovalList(value: unknown): value is string[] {
     value.length <= 256 &&
     value.every((name) => typeof name === 'string' && name.length <= 256)
   );
+}
+
+/** A stored sub: a non-empty, bounded string. */
+function isIssuedSubject(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512;
 }
 
 /**
@@ -144,6 +150,8 @@ export interface CreateFamilyRequestV2 {
   consentGeneration?: number;
   /** The claim names the grant's information release was approved for (kept across rotations). */
   releaseApproval?: string[];
+  /** The sub the grant's ID token carried, kept across rotations. */
+  issuedSubject?: string;
 }
 
 /**
@@ -521,7 +529,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
         (typeof family.first_jti !== 'string' || !family.first_jti)) ||
       (family.consent_generation !== undefined &&
         (!Number.isSafeInteger(family.consent_generation) || family.consent_generation < 0)) ||
-      (family.release_approval !== undefined && !isReleaseApprovalList(family.release_approval))
+      (family.release_approval !== undefined && !isReleaseApprovalList(family.release_approval)) ||
+      (family.issued_subject !== undefined && !isIssuedSubject(family.issued_subject))
     ) {
       throw new Error('refresh_token_family_storage_invalid');
     }
@@ -633,7 +642,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       request.ttl < 1 ||
       (request.consentGeneration !== undefined &&
         (!Number.isSafeInteger(request.consentGeneration) || request.consentGeneration < 0)) ||
-      (request.releaseApproval !== undefined && !isReleaseApprovalList(request.releaseApproval))
+      (request.releaseApproval !== undefined && !isReleaseApprovalList(request.releaseApproval)) ||
+      (request.issuedSubject !== undefined && !isIssuedSubject(request.issuedSubject))
     ) {
       throw new Error('invalid_request: Invalid refresh token family input');
     }
@@ -691,6 +701,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       ...(request.releaseApproval !== undefined && {
         release_approval: [...request.releaseApproval],
       }),
+      ...(request.issuedSubject !== undefined && { issued_subject: request.issuedSubject }),
     };
 
     const writes: Record<string, unknown> = {
@@ -1200,6 +1211,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
             resourceAudience: body.resourceAudience,
           }),
           ...(body.authContext !== undefined && { authContext: body.authContext }),
+          // The ID token's sub at the original authentication (validated by createFamily).
+          ...(body.issuedSubject !== undefined && { issuedSubject: body.issuedSubject }),
           ...(body.generation !== undefined &&
             body.shardIndex !== undefined && {
               generation: body.generation,

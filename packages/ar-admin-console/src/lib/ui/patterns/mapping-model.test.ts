@@ -3,7 +3,10 @@ import {
 	TRANSFORMS,
 	TRANSFORM_CATEGORIES,
 	generatorFor,
+	identifierRuntimeParams,
 	newStep,
+	paramApplies,
+	transformDef,
 	fixesFor,
 	mappingProblems,
 	unmappedRequired,
@@ -95,7 +98,7 @@ describe('mappingProblems', () => {
 
 describe('operations', () => {
 	it('offers every runtime operation but copy, and fixed values, each in a category', () => {
-		expect(TRANSFORMS).toHaveLength(40);
+		expect(TRANSFORMS).toHaveLength(39);
 		for (const def of TRANSFORMS) expect(TRANSFORM_CATEGORIES).toContain(def.category);
 	});
 
@@ -213,5 +216,79 @@ describe('coverage', () => {
 			'active',
 			'profile'
 		]);
+	});
+});
+
+describe('persistent_identifier', () => {
+	const pid = (params: Record<string, string | boolean> = {}): Mapping => ({
+		id: 'm',
+		target: 'sub',
+		sources: [],
+		steps: [
+			{
+				...newStep('persistent_identifier', 's1'),
+				params: { ...newStep('persistent_identifier', 'x').params, ...params }
+			}
+		]
+	});
+	const subTargets: MappingField[] = [{ key: 'sub', type: 'string' }];
+	const applying = (params: Record<string, string | boolean>) =>
+		transformDef('persistent_identifier')
+			.params.filter((param) => paramApplies(param, params))
+			.map((param) => param.key);
+
+	it('takes its choices from the runtime and needs no source attribute', () => {
+		const options = (key: string) =>
+			transformDef('persistent_identifier').params.find((p) => p.key === key)?.options;
+		expect(options('input')).toEqual(['account', 'source']);
+		expect(options('algorithm')).toContain('shibboleth');
+		expect(options('format')).toContain('saml_subject_id');
+		expect(mappingProblems(pid(), [], subTargets)).toEqual([]);
+	});
+
+	it('shows each setting only while it applies', () => {
+		const base = newStep('persistent_identifier', 'x').params;
+		expect(applying(base)).not.toEqual(
+			expect.arrayContaining(['source', 'digest', 'encoding', 'scope', 'store'])
+		);
+		expect(applying({ ...base, input: 'source' })).toContain('source');
+		expect(applying({ ...base, algorithm: 'shibboleth' })).toEqual(
+			expect.arrayContaining(['digest', 'encoding'])
+		);
+		expect(applying({ ...base, format: 'saml_pairwise_id' })).toContain('scope');
+		expect(applying({ ...base, algorithm: 'simplesamlphp_subject_id' })).toContain('scope');
+		expect(applying({ ...base, stored: 'require' })).toContain('store');
+	});
+
+	it('sends only the settings that apply, and none that were left empty', () => {
+		const sent = identifierRuntimeParams({
+			...newStep('persistent_identifier', 'x').params,
+			digest: 'SHA-256',
+			scope: 'example.edu',
+			source: 'employee-number',
+			store: 'legacy-ids',
+			salt: ''
+		});
+		expect(sent).toEqual({
+			input: 'account',
+			format: 'plain',
+			algorithm: 'authrim_sha256',
+			audience: 'auto',
+			stored: 'off'
+		});
+	});
+
+	it('reports what the runtime would refuse, and a source beside the step', () => {
+		const kinds = (mapping: Mapping) =>
+			mappingProblems(mapping, [{ key: 'mail', type: 'string' }], subTargets).map((p) =>
+				p.kind === 'identifierSettings' ? p.reason : p.kind
+			);
+		expect(kinds(pid({ input: 'source' }))).toEqual(['source']);
+		expect(kinds(pid({ stored: 'prefer' }))).toEqual(['store']);
+		expect(kinds(pid({ format: 'saml_pairwise_id' }))).toEqual(['scope']);
+		expect(kinds(pid({ algorithm: 'keycloak_sha256', format: 'saml_targeted_id' }))).toEqual([
+			'format_algorithm'
+		]);
+		expect(kinds({ ...pid(), sources: ['mail'] })).toEqual(['identifierWithSource']);
 	});
 });

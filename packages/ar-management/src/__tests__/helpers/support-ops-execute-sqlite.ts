@@ -85,7 +85,7 @@ class ReceiptStorage {
 function openAdminStore(): { db: SQLiteDatabase; adapter: DatabaseAdapter } {
   const db = new DatabaseSync(':memory:');
   const directory = new URL('../../../../../migrations/admin/d1/', import.meta.url);
-  for (const file of ['001_0_5_0_admin_baseline.sql'])
+  for (const file of ['001_0_5_0_admin_baseline.sql', '021_mapping_transform_step_target.sql'])
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, directory), 'utf8'), 'sqlite'));
   db.exec('PRAGMA foreign_keys=ON');
   const values = (params: unknown[] = []) =>

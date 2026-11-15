@@ -89,6 +89,7 @@ import {
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
 import { deleteAccount } from './account-deletion';
+import { eraseAccountIdentifierValues } from './account-identifier-erasure';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 import { isInactiveAccountRouteError } from './account-route-errors';
 import {
@@ -2114,6 +2115,9 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
           forgetCachedAnonymizedUserId(tenantId, userId);
         }
 
+        // The identifier material imported for the account (stored identifiers, identifier
+        // sources), as the routed deletion erases it.
+        await eraseAccountIdentifierValues(c.env, { tenantId, userId });
         await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
         await transitionEndingSessions(c.env, ended, {
           tenantId,
@@ -2506,6 +2510,9 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     // tokens, the custom attributes and the screen response records (the tombstone written above
     // keeps a later screen from recording new ones). The sign-in identifiers stay.
     await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
+    // The identifiers and identifier-source values imported for the account (the account stays;
+    // a step that needs one then has none).
+    await eraseAccountIdentifierValues(c.env, { tenantId, userId });
     // An operation started since the check above keeps its values until it has finished: the
     // deletion is not reported done (running it again then erases them). One that finished in
     // the meantime is erased by a second pass (the erasure is idempotent).
@@ -2524,6 +2531,7 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
         revocationLog
       );
       await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
+      await eraseAccountIdentifierValues(c.env, { tenantId, userId });
     }
     const upstreamTokenRevocation = mergeUpstreamTokenRevocationSummaries(
       firstRevocation,

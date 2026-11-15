@@ -8,6 +8,7 @@ import {
   resolvePresentedTokenAccount,
   tokenNamesAccountSubject,
   tokenRecordsUserGrant,
+  pairwiseTokenLacksReference,
 } from '../subject-reference';
 
 const env = { OBJECT_ENCRYPTION_ROOT_KEY: 'ef'.repeat(32) };
@@ -345,5 +346,32 @@ describe('tokenSubjectAccountSource', () => {
       })
     ).toBe('unproven');
     expect(tokenSubjectAccountSource({ sub: 'user-2', jti: 'j' })).toBe('unproven');
+  });
+});
+
+describe('pairwiseTokenLacksReference', () => {
+  const pairwise = { subject_type: 'pairwise' };
+  const base = { sub: 'user-1', jti: 'jti-1', client_id: 'app' };
+
+  it('refuses a pairwise app’s access or refresh token without a reference, with or without token_use', () => {
+    for (const token_use of ['access', 'refresh', undefined]) {
+      expect(pairwiseTokenLacksReference({ ...base, token_use }, pairwise)).toBe(true);
+    }
+  });
+
+  it('accepts one with a reference, an ID token (no JWT ID), and any token of a public app', () => {
+    expect(
+      pairwiseTokenLacksReference(
+        { ...base, token_use: 'access', authrim_subject_ref: 'sr1.a.b' },
+        pairwise
+      )
+    ).toBe(false);
+    expect(pairwiseTokenLacksReference({ sub: 'user-1', aud: 'app' }, pairwise)).toBe(false);
+    expect(
+      pairwiseTokenLacksReference({ ...base, token_use: 'access' }, { subject_type: 'public' })
+    ).toBe(false);
+    expect(
+      pairwiseTokenLacksReference({ ...base, token_use: 'access', sub: 'client:app' }, pairwise)
+    ).toBe(false);
   });
 });

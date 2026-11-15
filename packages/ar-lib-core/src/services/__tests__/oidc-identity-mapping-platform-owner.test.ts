@@ -89,6 +89,7 @@ const binding = {
 };
 
 const base = {
+  subjectType: 'public' as const,
   adapter,
   env: { DB_ADMIN: adminAdapter as never },
   tenantId: 'tenant-a',

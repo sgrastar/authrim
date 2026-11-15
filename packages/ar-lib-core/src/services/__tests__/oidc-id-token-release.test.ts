@@ -140,6 +140,21 @@ describe('ID token release', () => {
         scheduled.mockRestore();
       }
     });
+    it("passes the app's subject type to the mapping (a pairwise app's sub is always pairwise)", async () => {
+      const { ctx } = context();
+      ctx.clientMetadata = { ...ctx.clientMetadata, subject_type: 'pairwise' };
+      mockApplyOIDCIdentityMapping.mockResolvedValue({
+        claims: { ...baseClaims, sub: 'pairwise' },
+        binding: null,
+      });
+
+      await mapIDTokenClaims(ctx, baseClaims, ['openid']);
+
+      expect(mockApplyOIDCIdentityMapping).toHaveBeenCalledWith(
+        expect.objectContaining({ subjectType: 'pairwise' })
+      );
+    });
+
     it("applies the app's identity mapping for the ID token surface", async () => {
       const { ctx, loadUserAttributes } = context();
       mockApplyOIDCIdentityMapping.mockResolvedValue({
@@ -160,6 +175,7 @@ describe('ID token release', () => {
         tenantId: 'tenant-a',
         clientId: 'client-a',
         failureContext: {},
+        subjectType: 'public',
         sectorIdentifier: 'https://sector.example.com/uris.json',
         selector: { fieldMappingSetId: 'set-1' },
         destinationSurface: 'id_token',

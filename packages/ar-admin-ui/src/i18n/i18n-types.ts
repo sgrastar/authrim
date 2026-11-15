@@ -472,10 +472,6 @@ type RootTranslation = {
 	 */
 	admin_nav_source_destination: string;
 	/**
-	 * P​e​r​s​i​s​t​e​n​t​ ​I​d​e​n​t​i​f​i​e​r​s
-	 */
-	admin_nav_persistent_identifiers: string;
-	/**
 	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
 	 */
 	admin_nav_mapping_policies: string;
@@ -26383,126 +26379,6 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profiles_no_destination: string;
 	/**
-	 * P​e​r​s​i​s​t​e​n​t​ ​I​d​e​n​t​i​f​i​e​r​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
-	 */
-	admin_identity_mapping_persistent_head_title: string;
-	/**
-	 * P​e​r​s​i​s​t​e​n​t​ ​I​d​e​n​t​i​f​i​e​r​s
-	 */
-	admin_identity_mapping_persistent_title: string;
-	/**
-	 * M​a​n​a​g​e​ ​i​d​e​n​t​i​f​i​e​r​ ​g​e​n​e​r​a​t​i​o​n​ ​p​r​o​f​i​l​e​s​ ​s​h​a​r​e​d​ ​b​y​ ​S​A​M​L​ ​e​d​u​P​e​r​s​o​n​T​a​r​g​e​t​e​d​I​D​,​ ​S​A​M​L​ ​p​e​r​s​i​s​t​e​n​t​ ​N​a​m​e​I​D​,​ ​a​n​d​ ​O​I​D​C​ ​p​a​i​r​w​i​s​e​ ​s​u​b​.
-	 */
-	admin_identity_mapping_persistent_description: string;
-	/**
-	 * P​r​o​f​i​l​e​ ​i​n​v​e​n​t​o​r​y
-	 */
-	admin_identity_mapping_persistent_inventory: string;
-	/**
-	 * L​o​a​d​i​n​g​ ​p​e​r​s​i​s​t​e​n​t​ ​i​d​e​n​t​i​f​i​e​r​ ​p​r​o​f​i​l​e​s​.
-	 */
-	admin_identity_mapping_persistent_loading: string;
-	/**
-	 * N​o​ ​p​e​r​s​i​s​t​e​n​t​ ​i​d​e​n​t​i​f​i​e​r​ ​p​r​o​f​i​l​e​s​ ​h​a​v​e​ ​b​e​e​n​ ​r​e​g​i​s​t​e​r​e​d​ ​y​e​t​.
-	 */
-	admin_identity_mapping_persistent_empty: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​p​e​r​s​i​s​t​e​n​t​ ​i​d​e​n​t​i​f​i​e​r​ ​p​r​o​f​i​l​e​s
-	 */
-	admin_identity_mapping_persistent_load_failed: string;
-	/**
-	 * C​r​e​a​t​e​ ​P​e​r​s​i​s​t​e​n​t​ ​I​d​e​n​t​i​f​i​e​r
-	 */
-	admin_identity_mapping_persistent_create: string;
-	/**
-	 * N​o​ ​u​s​a​g​e​s​ ​c​o​n​f​i​g​u​r​e​d
-	 */
-	admin_identity_mapping_persistent_usage_empty: string;
-	/**
-	 * A​l​g​o​r​i​t​h​m
-	 */
-	admin_identity_mapping_persistent_algorithm: string;
-	/**
-	 * S​c​o​p​e
-	 */
-	admin_identity_mapping_persistent_scope: string;
-	/**
-	 * A​u​d​i​e​n​c​e
-	 */
-	admin_identity_mapping_persistent_audience: string;
-	/**
-	 * S​e​c​r​e​t
-	 */
-	admin_identity_mapping_persistent_secret: string;
-	/**
-	 * C​r​e​a​t​e​ ​P​e​r​s​i​s​t​e​n​t​ ​I​d​e​n​t​i​f​i​e​r
-	 */
-	admin_identity_mapping_persistent_create_title: string;
-	/**
-	 * E​d​i​t​ ​P​e​r​s​i​s​t​e​n​t​ ​I​d​e​n​t​i​f​i​e​r
-	 */
-	admin_identity_mapping_persistent_edit_title: string;
-	/**
-	 * D​i​s​p​l​a​y​ ​n​a​m​e
-	 */
-	admin_identity_mapping_persistent_display_name: string;
-	/**
-	 * P​r​o​f​i​l​e​ ​k​e​y
-	 */
-	admin_identity_mapping_persistent_profile_key: string;
-	/**
-	 * D​e​s​c​r​i​p​t​i​o​n
-	 */
-	admin_identity_mapping_persistent_description_label: string;
-	/**
-	 * M​o​d​e
-	 */
-	admin_identity_mapping_persistent_mode: string;
-	/**
-	 * P​r​o​t​o​c​o​l​ ​s​c​o​p​e
-	 */
-	admin_identity_mapping_persistent_protocol_scope: string;
-	/**
-	 * U​s​a​g​e
-	 */
-	admin_identity_mapping_persistent_usage: string;
-	/**
-	 * I​s​s​u​e​r​ ​e​n​t​i​t​y​ ​I​D
-	 */
-	admin_identity_mapping_persistent_issuer: string;
-	/**
-	 * S​e​c​r​e​t​ ​r​e​f
-	 */
-	admin_identity_mapping_persistent_secret_ref: string;
-	/**
-	 * S​a​v​e
-	 */
-	admin_identity_mapping_persistent_save: string;
-	/**
-	 * S​a​v​i​n​g​.​.​.
-	 */
-	admin_identity_mapping_persistent_saving: string;
-	/**
-	 * D​e​l​e​t​e
-	 */
-	admin_identity_mapping_persistent_delete: string;
-	/**
-	 * P​e​r​s​i​s​t​e​n​t​ ​i​d​e​n​t​i​f​i​e​r​ ​p​r​o​f​i​l​e​ ​s​a​v​e​d​.
-	 */
-	admin_identity_mapping_persistent_saved: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​p​e​r​s​i​s​t​e​n​t​ ​i​d​e​n​t​i​f​i​e​r​ ​p​r​o​f​i​l​e
-	 */
-	admin_identity_mapping_persistent_save_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​d​e​l​e​t​e​ ​p​e​r​s​i​s​t​e​n​t​ ​i​d​e​n​t​i​f​i​e​r​ ​p​r​o​f​i​l​e
-	 */
-	admin_identity_mapping_persistent_delete_failed: string;
-	/**
-	 * D​e​l​e​t​e​ ​t​h​i​s​ ​p​e​r​s​i​s​t​e​n​t​ ​i​d​e​n​t​i​f​i​e​r​ ​p​r​o​f​i​l​e​?
-	 */
-	admin_identity_mapping_persistent_delete_confirm: string;
-	/**
 	 * E​d​i​t​ ​P​r​o​f​i​l​e​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
 	admin_identity_mapping_profile_edit_head_title: string;
@@ -28105,22 +27981,6 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_transform_first_desc: string;
 	/**
-	 * O​I​D​C​ ​p​a​i​r​w​i​s​e​ ​s​u​b
-	 */
-	admin_identity_mapping_flow_transform_oidc_pairwise_sub_label: string;
-	/**
-	 * U​s​e​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​O​I​D​C​ ​c​l​i​e​n​t​ ​p​a​i​r​w​i​s​e​ ​s​u​b​j​e​c​t​ ​i​d​e​n​t​i​f​i​e​r​.
-	 */
-	admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc: string;
-	/**
-	 * S​A​M​L​ ​e​d​u​P​e​r​s​o​n​T​a​r​g​e​t​e​d​I​D
-	 */
-	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label: string;
-	/**
-	 * B​u​i​l​d​ ​I​d​P​!​S​P​!​o​p​a​q​u​e​ ​t​a​r​g​e​t​e​d​ ​I​D​ ​f​r​o​m​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​S​A​M​L​ ​S​P​ ​c​o​n​t​e​x​t​.
-	 */
-	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc: string;
-	/**
 	 * A​d​d​ ​p​r​e​f​i​x​/​s​u​f​f​i​x
 	 */
 	admin_identity_mapping_flow_transform_affix_text_label: string;
@@ -28229,10 +28089,6 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_transform_param_unique: string;
 	/**
-	 * P​e​r​s​i​s​t​e​n​t​ ​I​d​e​n​t​i​f​i​e​r​ ​P​r​o​f​i​l​e
-	 */
-	admin_identity_mapping_flow_transform_param_persistent_identifier_profile: string;
-	/**
 	 * P​r​e​f​i​x
 	 */
 	admin_identity_mapping_flow_transform_param_prefix: string;
@@ -28240,10 +28096,6 @@ type RootTranslation = {
 	 * S​u​f​f​i​x
 	 */
 	admin_identity_mapping_flow_transform_param_suffix: string;
-	/**
-	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t
-	 */
-	admin_identity_mapping_flow_transform_tenant_default_profile: string;
 	/**
 	 * T​r​u​e​ ​v​a​l​u​e​s
 	 */
@@ -34312,10 +34164,6 @@ export type TranslationFunctions = {
 	 * Source & Destination
 	 */
 	admin_nav_source_destination: () => LocalizedString;
-	/**
-	 * Persistent Identifiers
-	 */
-	admin_nav_persistent_identifiers: () => LocalizedString;
 	/**
 	 * Field Mapping Sets
 	 */
@@ -59918,126 +59766,6 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profiles_no_destination: () => LocalizedString;
 	/**
-	 * Persistent Identifiers - Authrim Admin
-	 */
-	admin_identity_mapping_persistent_head_title: () => LocalizedString;
-	/**
-	 * Persistent Identifiers
-	 */
-	admin_identity_mapping_persistent_title: () => LocalizedString;
-	/**
-	 * Manage identifier generation profiles shared by SAML eduPersonTargetedID, SAML persistent NameID, and OIDC pairwise sub.
-	 */
-	admin_identity_mapping_persistent_description: () => LocalizedString;
-	/**
-	 * Profile inventory
-	 */
-	admin_identity_mapping_persistent_inventory: () => LocalizedString;
-	/**
-	 * Loading persistent identifier profiles.
-	 */
-	admin_identity_mapping_persistent_loading: () => LocalizedString;
-	/**
-	 * No persistent identifier profiles have been registered yet.
-	 */
-	admin_identity_mapping_persistent_empty: () => LocalizedString;
-	/**
-	 * Failed to load persistent identifier profiles
-	 */
-	admin_identity_mapping_persistent_load_failed: () => LocalizedString;
-	/**
-	 * Create Persistent Identifier
-	 */
-	admin_identity_mapping_persistent_create: () => LocalizedString;
-	/**
-	 * No usages configured
-	 */
-	admin_identity_mapping_persistent_usage_empty: () => LocalizedString;
-	/**
-	 * Algorithm
-	 */
-	admin_identity_mapping_persistent_algorithm: () => LocalizedString;
-	/**
-	 * Scope
-	 */
-	admin_identity_mapping_persistent_scope: () => LocalizedString;
-	/**
-	 * Audience
-	 */
-	admin_identity_mapping_persistent_audience: () => LocalizedString;
-	/**
-	 * Secret
-	 */
-	admin_identity_mapping_persistent_secret: () => LocalizedString;
-	/**
-	 * Create Persistent Identifier
-	 */
-	admin_identity_mapping_persistent_create_title: () => LocalizedString;
-	/**
-	 * Edit Persistent Identifier
-	 */
-	admin_identity_mapping_persistent_edit_title: () => LocalizedString;
-	/**
-	 * Display name
-	 */
-	admin_identity_mapping_persistent_display_name: () => LocalizedString;
-	/**
-	 * Profile key
-	 */
-	admin_identity_mapping_persistent_profile_key: () => LocalizedString;
-	/**
-	 * Description
-	 */
-	admin_identity_mapping_persistent_description_label: () => LocalizedString;
-	/**
-	 * Mode
-	 */
-	admin_identity_mapping_persistent_mode: () => LocalizedString;
-	/**
-	 * Protocol scope
-	 */
-	admin_identity_mapping_persistent_protocol_scope: () => LocalizedString;
-	/**
-	 * Usage
-	 */
-	admin_identity_mapping_persistent_usage: () => LocalizedString;
-	/**
-	 * Issuer entity ID
-	 */
-	admin_identity_mapping_persistent_issuer: () => LocalizedString;
-	/**
-	 * Secret ref
-	 */
-	admin_identity_mapping_persistent_secret_ref: () => LocalizedString;
-	/**
-	 * Save
-	 */
-	admin_identity_mapping_persistent_save: () => LocalizedString;
-	/**
-	 * Saving...
-	 */
-	admin_identity_mapping_persistent_saving: () => LocalizedString;
-	/**
-	 * Delete
-	 */
-	admin_identity_mapping_persistent_delete: () => LocalizedString;
-	/**
-	 * Persistent identifier profile saved.
-	 */
-	admin_identity_mapping_persistent_saved: () => LocalizedString;
-	/**
-	 * Failed to save persistent identifier profile
-	 */
-	admin_identity_mapping_persistent_save_failed: () => LocalizedString;
-	/**
-	 * Failed to delete persistent identifier profile
-	 */
-	admin_identity_mapping_persistent_delete_failed: () => LocalizedString;
-	/**
-	 * Delete this persistent identifier profile?
-	 */
-	admin_identity_mapping_persistent_delete_confirm: () => LocalizedString;
-	/**
 	 * Edit Profile - Authrim Admin
 	 */
 	admin_identity_mapping_profile_edit_head_title: () => LocalizedString;
@@ -61634,22 +61362,6 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_transform_first_desc: () => LocalizedString;
 	/**
-	 * OIDC pairwise sub
-	 */
-	admin_identity_mapping_flow_transform_oidc_pairwise_sub_label: () => LocalizedString;
-	/**
-	 * Use the current OIDC client pairwise subject identifier.
-	 */
-	admin_identity_mapping_flow_transform_oidc_pairwise_sub_desc: () => LocalizedString;
-	/**
-	 * SAML eduPersonTargetedID
-	 */
-	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_label: () => LocalizedString;
-	/**
-	 * Build IdP!SP!opaque targeted ID from the current SAML SP context.
-	 */
-	admin_identity_mapping_flow_transform_saml_edu_person_targeted_id_desc: () => LocalizedString;
-	/**
 	 * Add prefix/suffix
 	 */
 	admin_identity_mapping_flow_transform_affix_text_label: () => LocalizedString;
@@ -61758,10 +61470,6 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_transform_param_unique: () => LocalizedString;
 	/**
-	 * Persistent Identifier Profile
-	 */
-	admin_identity_mapping_flow_transform_param_persistent_identifier_profile: () => LocalizedString;
-	/**
 	 * Prefix
 	 */
 	admin_identity_mapping_flow_transform_param_prefix: () => LocalizedString;
@@ -61769,10 +61477,6 @@ Remove this role from {email}?
 	 * Suffix
 	 */
 	admin_identity_mapping_flow_transform_param_suffix: () => LocalizedString;
-	/**
-	 * Tenant default
-	 */
-	admin_identity_mapping_flow_transform_tenant_default_profile: () => LocalizedString;
 	/**
 	 * True values
 	 */
