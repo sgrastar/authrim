@@ -2107,8 +2107,11 @@ describe('downstream elevation grant token exchange', () => {
           });
 
           securityRegressionIt(
-            'is exchanged for the user its sealed reference names, keeping the reference',
+            'is refused across apps even with its sealed reference, and never taken for that user',
             async () => {
+              // The reference names user-1, but the token is app-client's: exchanging it for
+              // service-client-1 would hand that app's identifier for the user to another app,
+              // so a user token carrying a reference is exchanged only by the app it was issued to.
               const actual =
                 await vi.importActual<typeof import('@authrim/ar-lib-core')>(
                   '@authrim/ar-lib-core'
@@ -2129,30 +2132,17 @@ describe('downstream elevation grant token exchange', () => {
                 authrim_subject_ref: reference,
               });
 
-              const response = await request({}, env);
-
-              expect(response.status).toBe(200);
-              expect(mocks.mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
-                expect.anything(),
-                'user-1'
+              await expectOAuthError(
+                request({}, env),
+                400,
+                'invalid_grant',
+                'Subject token is invalid or revoked'
               );
               expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalledWith(
                 expect.anything(),
                 'user-2'
               );
-              expect(mocks.mockFindOAuthClientConsentRevocation).toHaveBeenCalledWith(
-                expect.anything(),
-                { tenantId: 'tenant-a', userId: 'user-1', clientId: 'app-client' }
-              );
-              // The exchanged token keeps the public sub and the reference, so a resource that
-              // keys on sub cannot take it for user-2.
-              expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
-                expect.objectContaining({ sub: 'user-2', authrim_subject_ref: reference }),
-                expect.anything(),
-                expect.any(String),
-                expect.any(Number),
-                'region-jti-1'
-              );
+              expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
             }
           );
 
