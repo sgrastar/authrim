@@ -474,7 +474,7 @@ export class TokenClaimEvaluator {
       .replace(/\{\{org_id\}\}/g, context.org_id ?? '')
       .replace(/\{\{org_type\}\}/g, context.org_type ?? '')
       .replace(/\{\{client_id\}\}/g, context.client_id)
-      .replace(/\{\{subject_id\}\}/g, context.subject_id);
+      .replace(/\{\{subject_id\}\}/g, context.issued_subject_id ?? context.subject_id);
   }
 
   /**
@@ -726,7 +726,7 @@ function substituteTemplateStandalone(
     .replace(/\{\{org_id\}\}/g, context.org_id ?? '')
     .replace(/\{\{org_type\}\}/g, context.org_type ?? '')
     .replace(/\{\{client_id\}\}/g, context.client_id)
-    .replace(/\{\{subject_id\}\}/g, context.subject_id);
+    .replace(/\{\{subject_id\}\}/g, context.issued_subject_id ?? context.subject_id);
 }
 
 /**

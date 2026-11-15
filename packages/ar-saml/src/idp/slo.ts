@@ -12,7 +12,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, SAMLSPConfig } from '@authrim/ar-lib-core';
+import type { Env, NameIDFormat, SAMLSPConfig } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
   isShardedSessionId,
@@ -60,9 +60,11 @@ import {
 import { requireSAMLTenantId, resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   resolveSAMLPersistentNameIDRegistryStore,
+  readSAMLSessionIndexNameID,
   resolveSAMLNameIDValue,
   resolveSAMLPairwiseSecret,
   resolveSAMLSessionIndexToSessionId,
+  SAMLNameIDPolicyError,
 } from './subject';
 import {
   SAMLLogoutRequestSignatureValidationError,
@@ -125,6 +127,11 @@ export interface IdPLogoutBindingResponseOptions {
 
 export interface IdPMultiSPLogoutBindingResponseOptions extends IdPLogoutBindingResponseOptions {
   transactionId?: string;
+  /**
+   * Each SP's own session index, by SP entity ID: every sign-in to an SP gets its own, and the
+   * NameID it issued is found by it. `sessionIndex` is used for an SP missing here.
+   */
+  sessionIndexes?: Readonly<Record<string, string>>;
 }
 
 interface BuiltIdPLogoutRequest {
@@ -1245,18 +1252,40 @@ export async function initiateIdPMultiSPLogoutBindingResponse(
     relayState: options.relayState,
     transactionId: options.transactionId,
     targets: targets.map((spConfig) => spConfig.entityId),
+    ...(options.sessionIndexes ? { targetSessionIndexes: options.sessionIndexes } : {}),
     ttlSeconds: await resolveSamlRequestTtlSeconds(env, tenantId),
   });
 
-  const response = await sendIdPLogoutRequestForTransactionTarget(env, {
-    tenantId,
-    transaction,
-    spConfig: targets[0],
-    binding: options.binding ?? resolveIdPInitiatedLogoutBinding(targets[0]),
-    relayState: options.relayState,
-  });
-
-  return { transactionId: transaction.transactionId, response };
+  // The first SP whose NameID can be named gets the request; one that cannot is marked failed
+  // and the next is tried, so it never stops the others' logout.
+  for (const target of targets) {
+    try {
+      const response = await sendIdPLogoutRequestForTransactionTarget(env, {
+        tenantId,
+        transaction,
+        spConfig: target,
+        binding: options.binding ?? resolveIdPInitiatedLogoutBinding(target),
+        relayState: options.relayState,
+      });
+      return { transactionId: transaction.transactionId, response };
+    } catch (error) {
+      if (!(error instanceof SAMLLogoutNameIDUnavailableError)) throw error;
+      createLogger()
+        .module('SAML-IDP-SLO')
+        .warn('Skipping SP without a nameable NameID during IdP-initiated multi-SP SLO', {
+          transactionId: transaction.transactionId,
+          spEntityId: target.entityId,
+        });
+      await markSAMLIdPLogoutFanoutTargetCompleted(env.STATE_STORE, {
+        tenantId,
+        transactionId: transaction.transactionId,
+        spEntityId: target.entityId,
+        status: 'failed',
+        failureReason: 'nameid_unavailable',
+      });
+    }
+  }
+  throw new SAMLLogoutNameIDUnavailableError();
 }
 
 export function resolveIdPInitiatedLogoutBinding(spConfig: SAMLSPConfig): 'post' | 'redirect' {
@@ -1267,6 +1296,14 @@ export function resolveIdPInitiatedLogoutBinding(spConfig: SAMLSPConfig): 'post'
   return spConfig.samlProfile === 'legacy' ? 'post' : 'redirect';
 }
 
+/** The SP's NameID for this session cannot be named: the logout request is not sent to it. */
+export class SAMLLogoutNameIDUnavailableError extends Error {
+  constructor() {
+    super('Logout request could not be processed');
+    this.name = 'SAMLLogoutNameIDUnavailableError';
+  }
+}
+
 async function buildIdPLogoutRequest(
   env: Env,
   userId: string,
@@ -1274,13 +1311,35 @@ async function buildIdPLogoutRequest(
   sessionIndex: string | undefined,
   tenantId: string
 ): Promise<BuiltIdPLogoutRequest> {
-  const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
-  const nameId = await resolveIdPLogoutNameID(env, tenantId, userId, spConfig);
+  const issuer = (await getSAMLLocalEntityIds(env, tenantId)).idpEntityId;
+  // The format and value the sign-in issued, as recorded with its session index: the SP's mapping
+  // or the request's NameIDPolicy may have differed from the SP's settings, and the logout must
+  // name the NameID the SP was given. Without a record (no session index, an expired record, a
+  // session from before records were kept) the issued format is unknown: the SP is not named.
+  const recorded =
+    sessionIndex && env.STATE_STORE
+      ? await readSAMLSessionIndexNameID(env.STATE_STORE, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          sessionIndex,
+        })
+      : null;
+  if (!recorded) {
+    throw new SAMLLogoutNameIDUnavailableError();
+  }
+  const nameIdFormat = recorded.format as NameIDFormat;
+  // The recorded value for any format that has one (persistent, transient). Other formats name the
+  // account's email, as the sign-in did. A persistent or transient NameID with no value recorded
+  // sends nothing in its place: never the email.
+  const nameId =
+    recorded.value ??
+    (recorded.format === NAMEID_FORMATS.PERSISTENT || recorded.format === NAMEID_FORMATS.TRANSIENT
+      ? null
+      : await resolveIdPLogoutNameID(env, tenantId, userId, spConfig, nameIdFormat));
 
   if (!nameId) {
-    throw new Error('Logout request could not be processed');
+    throw new SAMLLogoutNameIDUnavailableError();
   }
-  const issuer = (await getSAMLLocalEntityIds(env, tenantId)).idpEntityId;
   const destination = spConfig.sloUrl || spConfig.acsUrl;
 
   const logoutRequestId = generateSAMLId();
@@ -1301,9 +1360,13 @@ export async function resolveIdPLogoutNameID(
   env: Env,
   tenantId: string,
   userId: string,
-  spConfig: Pick<SAMLSPConfig, 'entityId' | 'nameIdFormat'>
+  spConfig: Pick<SAMLSPConfig, 'entityId' | 'nameIdFormat'>,
+  /** The format the sign-in issued, when it is not the SP's configured one (a mapped NameID). */
+  issuedNameIdFormat?: NameIDFormat
 ): Promise<string | null> {
-  const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
+  const nameIdFormat = issuedNameIdFormat ?? (spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL);
+  // A transient NameID exists only in the session's record: never the email in its place.
+  if (nameIdFormat === NAMEID_FORMATS.TRANSIENT) return null;
   if (nameIdFormat !== NAMEID_FORMATS.PERSISTENT) {
     return getSamlUserNameIdById(env, tenantId, userId);
   }
@@ -1312,13 +1375,19 @@ export async function resolveIdPLogoutNameID(
   if (!userInfo) {
     return null;
   }
-  return resolveSAMLNameIDValue(userInfo, nameIdFormat, {
-    tenantId,
-    spEntityId: spConfig.entityId,
-    pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
-    persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
-    allowCreate: false,
-  });
+  try {
+    return await resolveSAMLNameIDValue(userInfo, nameIdFormat, {
+      tenantId,
+      spEntityId: spConfig.entityId,
+      pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
+      persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
+      allowCreate: false,
+    });
+  } catch (error) {
+    // No persistent NameID was ever issued to this SP (allowCreate is off): nothing to name.
+    if (error instanceof SAMLNameIDPolicyError) return null;
+    throw error;
+  }
 }
 
 async function sendNextIdPMultiSPLogoutRequest(
@@ -1362,13 +1431,29 @@ async function sendNextIdPMultiSPLogoutRequest(
       continue;
     }
 
-    return sendIdPLogoutRequestForTransactionTarget(env, {
-      tenantId: options.tenantId,
-      transaction,
-      spConfig,
-      binding: resolveIdPInitiatedLogoutBinding(spConfig),
-      relayState: options.relayState ?? transaction.relayState,
-    });
+    try {
+      return await sendIdPLogoutRequestForTransactionTarget(env, {
+        tenantId: options.tenantId,
+        transaction,
+        spConfig,
+        binding: resolveIdPInitiatedLogoutBinding(spConfig),
+        relayState: options.relayState ?? transaction.relayState,
+      });
+    } catch (error) {
+      if (!(error instanceof SAMLLogoutNameIDUnavailableError)) throw error;
+      // One SP whose NameID cannot be named must not stop the other SPs' logout.
+      log.warn('Skipping SP without a nameable NameID during IdP-initiated multi-SP SLO', {
+        transactionId: options.transactionId,
+        spEntityId: nextTarget.spEntityId,
+      });
+      await markSAMLIdPLogoutFanoutTargetCompleted(env.STATE_STORE, {
+        tenantId: options.tenantId,
+        transactionId: options.transactionId,
+        spEntityId: nextTarget.spEntityId,
+        status: 'failed',
+        failureReason: 'nameid_unavailable',
+      });
+    }
   }
 }
 
@@ -1382,11 +1467,14 @@ async function sendIdPLogoutRequestForTransactionTarget(
     relayState?: string;
   }
 ): Promise<Response> {
+  const target = options.transaction.targets.find(
+    (candidate) => candidate.spEntityId === options.spConfig.entityId
+  );
   const built = await buildIdPLogoutRequest(
     env,
     options.transaction.userId,
     options.spConfig,
-    options.transaction.sessionIndex,
+    target?.sessionIndex ?? options.transaction.sessionIndex,
     options.tenantId
   );
 

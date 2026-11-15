@@ -90,6 +90,13 @@ import {
   hasAdminPermission,
   parseClaimsRequest,
   evaluateClaimsForTarget,
+  claimsRequestRestrictsSub,
+  deriveIDTokenSubject,
+  readAttributesOncePerRequest,
+  deriveIssuedSubject as deriveIssuedSubjectCore,
+  issuedSubjectClaims,
+  IDTokenSubjectReferenceUnavailableError,
+  resolveIssuedTokenAccount,
   buildStandardUserClaims,
   standardUserAttributeNames,
   canonicalProjectionToOIDCClaimsUser,
@@ -981,16 +988,22 @@ function idTokenReleaseContext(
     loadUserAttributes: async (userId, names) => {
       const claimNames = standardUserAttributeNames(names);
       if (claimNames.length === 0) return null;
-      const user = await loadOIDCClaimsUser(
-        c,
-        tenantId,
-        userId,
-        createPIIContextFromHono(c, tenantId),
-        claimNames
+      return readAttributesOncePerRequest(
+        c.req.raw,
+        `${tenantId}\u0000${userId}\u0000${claimNames.join(',')}`,
+        async () => {
+          const user = await loadOIDCClaimsUser(
+            c,
+            tenantId,
+            userId,
+            createPIIContextFromHono(c, tenantId),
+            claimNames
+          );
+          if (!user) return null;
+          const claims = buildStandardUserClaims(user);
+          return Object.fromEntries(claimNames.map((name) => [name, claims[name]]));
+        }
       );
-      if (!user) return null;
-      const claims = buildStandardUserClaims(user);
-      return Object.fromEntries(claimNames.map((name) => [name, claims[name]]));
     },
     log: getLogger(c).module('TOKEN'),
   };
@@ -1003,6 +1016,136 @@ function idTokenReleaseFailureResponse(
   return oauthError(c, failure.error, failure.description, failure.status);
 }
 
+/**
+ * The answer to a refresh whose identity mapping failed: a mapping that now refuses to issue the
+ * sub (a block, a setting, a mismatch) ends the grant (the user authenticates again), while a
+ * failure of the infrastructure (a salt, key or lookup) stays the server's. Any other failure is
+ * answered as it is.
+ */
+function refreshMappingFailureResponse(
+  c: Context<{ Bindings: Env }>,
+  failure: IDTokenReleaseFailure,
+  response: Response
+): Response {
+  if (failure.kind !== 'invalid_mapping') return response;
+  return failure.infrastructure
+    ? oauthError(c, 'server_error', 'The subject of the tokens could not be derived', 500)
+    : oauthError(
+        c,
+        'invalid_grant',
+        'The subject of the tokens can no longer be issued; the user must authenticate again',
+        400
+      );
+}
+
+/**
+ * The sub the app receives for the user in its ID, access and refresh tokens (a pairwise app's, or
+ * what its identity mapping issues), with no openid scope needed. A failure (no sector, no salt,
+ * an unusable mapping) is the server's: no token is issued with the user's id in its place.
+ */
+async function deriveIssuedSubject(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId: string,
+  clientMetadata: ClientMetadata,
+  accountUserId: string
+): Promise<
+  { ok: true; sub: string } | { ok: false; response: Response; failure: IDTokenReleaseFailure }
+> {
+  const derived = await deriveIssuedSubjectCore(
+    idTokenReleaseContext(c, tenantId, clientId, clientMetadata),
+    accountUserId
+  );
+  return derived.ok
+    ? derived
+    : {
+        ok: false,
+        response: idTokenReleaseFailureResponse(c, derived.failure),
+        failure: derived.failure,
+      };
+}
+
+/**
+ * Whether a user token (a subject or actor token of a Token Exchange) is refused for the requesting
+ * app, because exchanging it would hand over an identifier the requester must not have:
+ * - a token issued to a pairwise app carries the sealed account reference, and one without (issued
+ *   before it did) has the user's id as its sub: refused, whoever presents it;
+ * - a token issued to another app is that app's identifier for the user (when it carries the
+ *   reference), or the user's id: refused when the requester is pairwise, when the token carries
+ *   a reference, or when the requester would be given a sub other than the user's id.
+ * A token issued to another app that cannot be read (deleted) is refused: whether its tokens carried
+ * a reference is not known.
+ */
+async function userTokenRefusedForRequester(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    requester: ClientMetadata;
+    requesterId: string;
+    issuerClientId: string | undefined;
+    hasReference: boolean;
+    accountUserId: string;
+  }
+): Promise<boolean> {
+  const { requester, requesterId, hasReference, accountUserId } = input;
+  const issuerClientId = input.issuerClientId ?? requesterId;
+  const sameApp = issuerClientId === requesterId;
+  const issuer = sameApp ? requester : await getClientCached(c, c.env, issuerClientId);
+  // Another app that cannot be read (deleted): whether its tokens carry a reference is unknown.
+  if (!issuer) return true;
+  if (!hasReference && issuer.subject_type === 'pairwise') return true;
+  if (sameApp) return false;
+  if (hasReference || requester.subject_type === 'pairwise') return true;
+  const requesterSub = await deriveIssuedSubject(
+    c,
+    getTenantIdFromContext(c),
+    requesterId,
+    requester,
+    accountUserId
+  );
+  return !requesterSub.ok || requesterSub.sub !== accountUserId;
+}
+
+/**
+ * The sub and sealed account reference an access or refresh token carries (issuedSubjectClaims).
+ * The reference is bound to `consentClientId`, the client whose consent the token is granted under.
+ */
+async function sealedTokenSubject(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  consentClientId: string,
+  issuedSub: string,
+  accountUserId: string
+): Promise<
+  | { ok: true; claims: { sub: string; authrim_subject_ref?: string } }
+  | { ok: false; response: Response }
+> {
+  try {
+    return {
+      ok: true,
+      claims: await issuedSubjectClaims(
+        c.env,
+        { tenantId, clientId: consentClientId },
+        issuedSub,
+        accountUserId
+      ),
+    };
+  } catch (error) {
+    getLogger(c)
+      .module('TOKEN')
+      .error(
+        error instanceof IDTokenSubjectReferenceUnavailableError
+          ? 'The token subject is not the user id but its account reference cannot be sealed'
+          : 'Failed to seal the token subject reference',
+        { clientId: consentClientId },
+        error as Error
+      );
+    return {
+      ok: false,
+      response: oauthError(c, 'server_error', 'Failed to issue the token', 500),
+    };
+  }
+}
+
 async function applyOIDCIdentityMappingToIDTokenClaims(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -1013,7 +1156,7 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
   carries?: IDTokenClaimsCarried
 ): Promise<
   | { ok: true; claims: Record<string, unknown>; optional: Set<string> }
-  | { ok: false; response: Response }
+  | { ok: false; response: Response; failure: IDTokenReleaseFailure }
 > {
   const mapped = await mapIDTokenClaims(
     idTokenReleaseContext(c, tenantId, clientId, clientMetadata),
@@ -1023,7 +1166,11 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
   );
   return mapped.ok
     ? { ok: true, claims: mapped.claims, optional: mapped.optional }
-    : { ok: false, response: idTokenReleaseFailureResponse(c, mapped.failure) };
+    : {
+        ok: false,
+        response: idTokenReleaseFailureResponse(c, mapped.failure),
+        failure: mapped.failure,
+      };
 }
 
 /**
@@ -2918,6 +3065,18 @@ async function handleAuthorizationCodeGrant(
     log.error('Failed to evaluate ID-level permissions', {}, idLevelError as Error);
   }
 
+  // The sub the app receives in every token of this grant (an access token needs no openid scope
+  // for it), derived before the access token is signed: the ID token below needs its at_hash.
+  const issuedSubject = await deriveIssuedSubject(
+    c,
+    tenantId,
+    client_id,
+    clientMetadata,
+    authCodeData.sub
+  );
+  if (!issuedSubject.ok) return issuedSubject.response;
+  const issuedSub = issuedSubject.sub;
+
   // Phase 8.2: Custom Claims Evaluation
   let customClaims: Record<string, unknown> = {};
   try {
@@ -2935,6 +3094,8 @@ async function handleAuthorizationCodeGrant(
       const claimContext: TokenClaimEvaluationContext = {
         tenant_id: getTenantIdFromContext(c),
         subject_id: authCodeData.sub,
+        // A template that outputs the subject gives the app's, never the account's id.
+        issued_subject_id: issuedSub,
         client_id: client_id,
         scope: authCodeData.scope || '',
         roles: accessTokenRBACClaims.authrim_roles || [],
@@ -3051,6 +3212,18 @@ async function handleAuthorizationCodeGrant(
       log.warn('Failed to parse authorization_details for access token', { action: 'RAR' });
     }
   }
+
+  const accessTokenSubject = await sealedTokenSubject(
+    c,
+    tenantId,
+    client_id,
+    issuedSub,
+    authCodeData.sub
+  );
+  if (!accessTokenSubject.ok) return accessTokenSubject.response;
+  // After every other claim: the sub the app receives and, when it is not the user's id, the sealed
+  // account reference (accessTokenConsentClaims leaves it unset).
+  Object.assign(accessTokenClaims, accessTokenSubject.claims);
 
   let accessToken: string;
   let tokenJti: string;
@@ -3301,8 +3474,17 @@ async function handleAuthorizationCodeGrant(
         getAdapter: () => piiCtx.coreAdapter,
         onError: (message, error) => log.error(message, { clientId: client_id }, error as Error),
       });
+      // A `sub` value the claims request names is the sub the app receives (a pairwise app's),
+      // never the account's id.
+      const subjectValue = claimsRequestRestrictsSub(parsedClaimsRequest.request, 'id_token')
+        ? await deriveIDTokenSubject(
+            idTokenReleaseContext(c, tenantId, client_id, clientMetadata),
+            authCodeData.sub
+          )
+        : undefined;
       const requestedIdTokenClaims = evaluateClaimsForTarget({
         target: 'id_token',
+        ...(subjectValue !== undefined ? { subjectValue } : {}),
         claimsRequest: parsedClaimsRequest.request,
         initialClaims: idTokenClaims,
         availableClaims: {
@@ -3498,10 +3680,20 @@ async function handleAuthorizationCodeGrant(
       return oauthError(c, 'server_error', 'Failed to load token configuration', 500);
     }
     const refreshTokenTtl = refreshTokenExpiresIn;
+    const refreshTokenSubject = await sealedTokenSubject(
+      c,
+      tenantId,
+      client_id,
+      issuedSub,
+      authCodeData.sub
+    );
+    if (!refreshTokenSubject.ok) return refreshTokenSubject.response;
     try {
       const refreshTokenClaims = {
         iss: getRequestIssuer(c),
-        sub: authCodeData.sub,
+        // The sub the app receives and the sealed account reference (the rotator below keeps the
+        // account's id).
+        ...refreshTokenSubject.claims,
         aud: client_id,
         scope: authCodeData.scope,
         client_id: client_id,
@@ -3559,6 +3751,8 @@ async function handleAuthorizationCodeGrant(
               consentGeneration: consentWithdrawal.generation,
               // Kept by the family, so its refreshes release what the authorization approved.
               releaseApproval: authCodeData.release_approval ?? [],
+              // The sub the ID token carries for this app, which every refresh must give again.
+              issuedSubject: issuedSub,
             })
           );
           refreshTokenJti = familyResult.jti;
@@ -4107,13 +4301,24 @@ async function handleRefreshTokenGrant(
     return oauthError(c, 'invalid_grant', 'Refresh token missing JTI', 400);
   }
 
-  // V2: Extract userId (sub) and version (rtv) from the verified JWT for validation
-  const userId = refreshTokenPayload.sub as string;
-  const version = typeof refreshTokenPayload.rtv === 'number' ? refreshTokenPayload.rtv : 1;
-
-  if (!userId) {
-    return oauthError(c, 'invalid_grant', 'Refresh token missing subject', 400);
+  // V2: Extract the account (from the verified JWT's sub, or its sealed account reference when the
+  // sub is the one the app receives) and the version (rtv) for validation. The reference is opened
+  // only now, after the signature, issuer, audience and client checks above; a pairwise app's
+  // refresh token without one (issued before it carried one) is refused.
+  const presentedSubject = await resolveIssuedTokenAccount(
+    c.env,
+    getTenantIdFromContext(c),
+    client_id,
+    refreshTokenPayload,
+    typedClient.subject_type === 'pairwise'
+  );
+  if (!presentedSubject.ok) {
+    return presentedSubject.reason === 'unavailable'
+      ? oauthError(c, 'temporarily_unavailable', 'Account data is unavailable', 503)
+      : oauthError(c, 'invalid_grant', 'Refresh token is invalid or expired', 400);
   }
+  const userId = presentedSubject.userId;
+  const version = typeof refreshTokenPayload.rtv === 'number' ? refreshTokenPayload.rtv : 1;
 
   // Retrieve refresh token metadata from RefreshTokenRotator DO (V2) only after verification.
   const refreshTokenData = await getRefreshToken(
@@ -4228,6 +4433,47 @@ async function handleRefreshTokenGrant(
     onUnavailable: 'retry',
   });
   if (refreshIalError) return refreshIalError;
+
+  // The sub the app receives: the one the family recorded at the original authentication (OIDC
+  // Core 12.2), which must still be the one the app's configuration derives (a pairwise app whose
+  // sector changed is not served: the user authenticates again). A pairwise app's family without
+  // one (issued before it was recorded) is refused.
+  const storedIssuedSub = refreshTokenData.family_issued_subject;
+  if (typedClient.subject_type === 'pairwise' && storedIssuedSub === undefined) {
+    return oauthError(c, 'invalid_grant', 'Refresh token is invalid or expired', 400);
+  }
+  const issuedSub = storedIssuedSub ?? refreshTokenData.sub;
+  {
+    // Always derived now (whatever the scope, and whether or not an ID token is issued): a mapping
+    // bound since the family began, or an identifier an exception now suppresses, stops the refresh
+    // rather than a new access token naming the user by their id.
+    const derived = await deriveIssuedSubject(
+      c,
+      tenantId,
+      client_id,
+      typedClient,
+      refreshTokenData.sub
+    );
+    if (!derived.ok) {
+      return refreshMappingFailureResponse(c, derived.failure, derived.response);
+    }
+    if (derived.sub !== issuedSub) {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'The subject of the tokens changed; the user must authenticate again',
+        400
+      );
+    }
+  }
+  const refreshedTokenSubject = await sealedTokenSubject(
+    c,
+    tenantId,
+    client_id,
+    issuedSub,
+    refreshTokenData.sub
+  );
+  if (!refreshedTokenSubject.ok) return refreshedTokenSubject.response;
 
   // Phase 2 RBAC: Fetch fresh RBAC claims for token refresh
   // User's roles/organization may have changed since the original token was issued
@@ -4461,6 +4707,9 @@ async function handleRefreshTokenGrant(
       }
     }
 
+    // The sub the app receives, and the sealed account reference when it is not the user's id.
+    Object.assign(accessTokenClaims, refreshedTokenSubject.claims);
+
     // Generate region-aware JTI for token revocation sharding
     const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
@@ -4510,9 +4759,31 @@ async function handleRefreshTokenGrant(
         splitScope(grantedScope)
       );
       if (!mappedIdTokenClaims.ok) {
-        return mappedIdTokenClaims.response;
+        return refreshMappingFailureResponse(
+          c,
+          mappedIdTokenClaims.failure,
+          mappedIdTokenClaims.response
+        );
       }
       idTokenClaims = mappedIdTokenClaims.claims;
+
+      // OIDC Core 12.2: the refreshed ID token names the same End-User as the first one: the sub
+      // the grant's ID token carried. A sub the app's configuration now derives differently (a
+      // pairwise app whose sector changed) is not issued: the user authenticates again. A pairwise
+      // app's family must carry it.
+      const storedSubject = refreshTokenData.family_issued_subject;
+      if (
+        storedSubject !== undefined
+          ? idTokenClaims.sub !== storedSubject
+          : clientMetadata.subject_type === 'pairwise'
+      ) {
+        return oauthError(
+          c,
+          'invalid_grant',
+          'The subject of the ID token changed; the user must authenticate again',
+          400
+        );
+      }
 
       const idTokenConsent = enforceOIDCAttributeReleaseConsentForIDTokenClaims(
         c,
@@ -4644,7 +4915,7 @@ async function handleRefreshTokenGrant(
       // Create JWT with new version (rtv claim)
       const refreshTokenClaims = {
         iss: getRequestIssuer(c),
-        sub: refreshTokenData.sub,
+        ...refreshedTokenSubject.claims,
         aud: client_id,
         scope: grantedScope,
         client_id: client_id,
@@ -5515,6 +5786,17 @@ async function handleDeviceCodeGrant(
     return oauthError(c, 'temporarily_unavailable', 'Consent state is unavailable', 503);
   }
 
+  // The sub the app receives in every token of this grant (no openid scope needed).
+  const issuedSubject = await deriveIssuedSubject(
+    c,
+    getTenantIdFromContext(c),
+    client_id,
+    clientMetadata,
+    metadata.sub
+  );
+  if (!issuedSubject.ok) return issuedSubject.response;
+  const issuedSub = issuedSubject.sub;
+
   // Generate ID Token
   const deviceAuthTime = Math.floor(Date.now() / 1000);
   let idTokenClaims: Record<string, unknown> = {
@@ -5604,6 +5886,16 @@ async function handleDeviceCodeGrant(
     }),
     [RELEASE_APPROVAL_CLAIM]: deviceReleaseApproval ?? [],
   };
+  // The sub the app receives, and the sealed account reference when it is not the user's id.
+  const accessTokenSubject = await sealedTokenSubject(
+    c,
+    getTenantIdFromContext(c),
+    client_id,
+    issuedSub,
+    metadata.sub
+  );
+  if (!accessTokenSubject.ok) return accessTokenSubject.response;
+  Object.assign(accessTokenClaims, accessTokenSubject.claims);
 
   // Phase 2 Policy Embedding: Add evaluated permissions
   if (policyEmbeddingPermissions.length > 0) {
@@ -5657,6 +5949,7 @@ async function handleDeviceCodeGrant(
           authContext: { auth_time: deviceAuthTime },
           consentGeneration: deviceConsentWithdrawal.generation,
           releaseApproval: deviceReleaseApproval ?? [],
+          issuedSubject: issuedSub,
         });
         refreshJti = familyResult.jti;
         const familyWithdrawn = familyConsentGenerationError(
@@ -5685,8 +5978,19 @@ async function handleDeviceCodeGrant(
         refreshJti = `rt_${crypto.randomUUID()}`;
       }
 
+      const refreshTokenSubject = await sealedTokenSubject(
+        c,
+        getTenantIdFromContext(c),
+        client_id,
+        issuedSub,
+        metadata.sub
+      );
+      if (!refreshTokenSubject.ok) return refreshTokenSubject.response;
+      // iss and aud as every other grant's refresh token has them: a refresh verifies both.
       const refreshTokenClaims = {
-        sub: metadata.sub,
+        iss: getRequestIssuer(c),
+        ...refreshTokenSubject.claims,
+        aud: client_id,
         scope: metadata.scope,
         client_id,
         ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
@@ -6215,6 +6519,17 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     log.error('Failed to evaluate policy permissions for CIBA flow', {}, policyError as Error);
   }
 
+  // The sub the app receives in every token of this grant (no openid scope needed).
+  const issuedSubject = await deriveIssuedSubject(
+    c,
+    tenantId,
+    client_id,
+    clientMetadata,
+    metadata.sub
+  );
+  if (!issuedSubject.ok) return issuedSubject.response;
+  const issuedSub = issuedSubject.sub;
+
   // Create Access Token FIRST (needed for at_hash in ID token)
   const accessTokenClaims: {
     iss: string;
@@ -6247,6 +6562,16 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     }),
     [RELEASE_APPROVAL_CLAIM]: cibaReleaseApproval ?? [],
   };
+  // The sub the app receives, and the sealed account reference when it is not the user's id.
+  const accessTokenSubject = await sealedTokenSubject(
+    c,
+    tenantId,
+    client_id,
+    issuedSub,
+    metadata.sub
+  );
+  if (!accessTokenSubject.ok) return accessTokenSubject.response;
+  Object.assign(accessTokenClaims, accessTokenSubject.claims);
 
   // Phase 2 Policy Embedding: Add evaluated permissions
   if (policyEmbeddingPermissions.length > 0) {
@@ -6378,6 +6703,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         ...(metadata.authenticated_acr ? { authContext: { acr: metadata.authenticated_acr } } : {}),
         consentGeneration: cibaConsentWithdrawal.generation,
         releaseApproval: cibaReleaseApproval ?? [],
+        issuedSubject: issuedSub,
       });
       refreshTokenJti = cibaFamilyResult.jti;
       const familyWithdrawn = familyConsentGenerationError(
@@ -6406,9 +6732,17 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       refreshTokenJti = `rt_${crypto.randomUUID()}`;
     }
 
+    const refreshTokenSubject = await sealedTokenSubject(
+      c,
+      tenantId,
+      client_id,
+      issuedSub,
+      metadata.sub
+    );
+    if (!refreshTokenSubject.ok) return refreshTokenSubject.response;
     const refreshTokenClaims = {
       iss: getRequestIssuer(c),
-      sub: metadata.sub,
+      ...refreshTokenSubject.claims,
       aud: metadata.client_id,
       client_id: metadata.client_id,
       scope: metadata.scope,
@@ -7063,6 +7397,18 @@ async function handleTokenExchangeGrant(
 
   // ID-JAG specific validations (draft-ietf-oauth-identity-assertion-authz-grant)
   if (isIdJagTokenRequest) {
+    // The assertion's sub is chosen for the resource authorization server it is for, not for the
+    // requesting app: a pairwise app's sub cannot be made from an external subject, so the input
+    // cannot be bound to an Authrim account for it and is refused (deriving the target's sub is
+    // for a later change).
+    if (typedClient.subject_type === 'pairwise') {
+      return oauthError(
+        c,
+        'invalid_request',
+        'ID-JAG is not available to a client that uses pairwise subject identifiers',
+        400
+      );
+    }
     // §3.1: subject_token_type MUST be id_token, jwt, or saml2
     if (!isValidIdJagSubjectTokenType(subject_token_type)) {
       return oauthError(
@@ -7375,6 +7721,25 @@ async function handleTokenExchangeGrant(
       return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
     }
     const accountUserId = presentedAccount.userId;
+    // The sub an app is given is its own (pairwise, or what its identity mapping issues), so a user
+    // token is exchanged only by the app it was issued to: another app would be handed this
+    // app's identifier for the user, or the user's id for a pairwise one. An app that is
+    // given a pairwise sub never accepts a user token without the reference its tokens carry.
+    if (
+      !subjectExternalIssuer &&
+      (await userTokenRefusedForRequester(c, {
+        requester: typedClient,
+        requesterId: client_id,
+        issuerClientId: subjectConsent.clientId,
+        hasReference: typeof subjectReference === 'string',
+        accountUserId,
+      }))
+    ) {
+      log.warn('Token exchange of a user token across apps is refused', {
+        action: 'TokenExchange',
+      });
+      return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
+    }
     let subjectHasAccount = true;
     try {
       await resolveAccountDataContextFromHono(c, accountUserId);
@@ -7735,6 +8100,36 @@ async function handleTokenExchangeGrant(
         );
       }
 
+      // An actor token that is a user's token names the user by the sub its own app was given
+      // (never the same for another app): it is the requesting app's, with the reference its
+      // tokens carry when it is not the user's id. Another app's would put that app's identifier
+      // for the user (or the user's id) in act.sub.
+      if (
+        tokenNamesAccountSubject(actorTokenPayload) &&
+        nonAccountPrincipalKind(actorTokenPayload) === null &&
+        externalSubjectIssuer(actorTokenPayload) === undefined
+      ) {
+        const actorConsent = accessTokenConsentGrant(actorTokenPayload);
+        const actorReference = actorTokenPayload[SUBJECT_REFERENCE_CLAIM];
+        // The account is needed only for a token without a reference (its sub is the user's id);
+        // one with a reference is refused across apps without opening it.
+        const actorAccountUserId =
+          typeof actorTokenPayload.sub === 'string' ? actorTokenPayload.sub : undefined;
+        if (
+          !actorConsent.clientId ||
+          !actorAccountUserId ||
+          (await userTokenRefusedForRequester(c, {
+            requester: typedClient,
+            requesterId: client_id,
+            issuerClientId: actorConsent.clientId,
+            hasReference: actorReference !== undefined,
+            accountUserId: actorAccountUserId,
+          }))
+        ) {
+          return oauthError(c, 'invalid_grant', 'Actor token is invalid or revoked', 400);
+        }
+      }
+
       // Build act claim with potential nesting (max 2 levels)
       const existingAct = subjectTokenPayload.act as ActClaim | undefined;
 
@@ -7897,6 +8292,8 @@ async function handleTokenExchangeGrant(
     clientId: client_id,
     subjectTokenType: tokenTypeShortName[subject_token_type] || subject_token_type,
     subjectSub,
+    // The account the subject token names (internal; never the sub an app was given).
+    accountUserId: subjectAccountUserId ?? undefined,
     delegationMode,
     hasActorToken: !!actor_token,
     actorSub: actClaim?.sub,
@@ -7927,7 +8324,8 @@ async function handleTokenExchangeGrant(
       data: {
         jti: accessTokenJti,
         clientId: client_id,
-        userId: subjectSub,
+        // The account (opened from the token's reference), never the sub an app was given.
+        userId: subjectAccountUserId ?? subjectSub,
         scopes: grantedScope.split(' '),
         expiresAt: nowEpoch + effectiveExpiresIn,
         grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
@@ -8648,6 +9046,26 @@ async function handleNativeSSOTokenExchange(
   const expiresIn = await lifetimes.access();
   const refreshTokenExpiresIn = await lifetimes.refresh();
 
+  // The sub the requesting app receives in every token of this exchange (derived for this app: the
+  // presented ID token's own sub is another app's, or the user's id).
+  const issuedSubject = await deriveIssuedSubject(
+    c,
+    tenantId,
+    clientId,
+    clientMetadata,
+    idTokenUserId
+  );
+  if (!issuedSubject.ok) return issuedSubject.response;
+  const issuedSub = issuedSubject.sub;
+  const accessTokenSubject = await sealedTokenSubject(
+    c,
+    tenantId,
+    clientId,
+    issuedSub,
+    idTokenUserId
+  );
+  if (!accessTokenSubject.ok) return accessTokenSubject.response;
+
   // Build access token claims
   const accessTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
@@ -8669,6 +9087,8 @@ async function handleNativeSSOTokenExchange(
     }),
     [RELEASE_APPROVAL_CLAIM]: nativeSSOReleaseApproval ?? [],
   };
+  // The sub the app receives, and the sealed account reference when it is not the user's id.
+  Object.assign(accessTokenClaims, accessTokenSubject.claims);
 
   let accessToken: string;
   let accessTokenJti: string;
@@ -8813,7 +9233,7 @@ async function handleNativeSSOTokenExchange(
     if (tenantProfile.allows_refresh_token !== false) {
       const refreshTokenClaims = {
         iss: getRequestIssuer(c),
-        sub: idTokenUserId,
+        ...accessTokenSubject.claims,
         aud: clientId,
         scope: grantedScope,
         client_id: clientId,
@@ -8839,6 +9259,7 @@ async function handleNativeSSOTokenExchange(
           },
           consentGeneration: nativeSSOConsentWithdrawal.generation,
           releaseApproval: nativeSSOReleaseApproval ?? [],
+          issuedSubject: issuedSub,
         });
         refreshTokenJti = familyResult.jti;
         rtv = familyResult.family.version;

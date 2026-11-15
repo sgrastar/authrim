@@ -276,13 +276,17 @@ export const API_GROUPS: readonly ApiGroup[] = [
 	},
 	{
 		id: 'persistent-identifiers',
-		name: 'Persistent identifiers and their keys',
+		name: 'Persistent identifier keys and imports',
 		kind: 'records',
-		page: 'access/identifiers',
+		page: 'access/mapping-sets',
 		paths: [
-			`${A}/field-mapping/persistent-identifier-profiles`,
-			`${A}/field-mapping/key-registries`
-		]
+			`${A}/field-mapping/key-registries`,
+			`${A}/field-mapping/identifier-salts`,
+			`${A}/field-mapping/identifier-sources`,
+			`${A}/field-mapping/identifier-stores`,
+			`${A}/field-mapping/identifier-exceptions`
+		],
+		note: 'No page of its own: persistent identifiers are set up in a mapping step.'
 	},
 	{
 		id: 'access-trace',

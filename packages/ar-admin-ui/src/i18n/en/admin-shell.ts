@@ -52,7 +52,6 @@ const adminShell = {
 	admin_nav_scim_tokens: 'SCIM Tokens',
 	admin_nav_identity_mapping: 'Field Mapping',
 	admin_nav_source_destination: 'Source & Destination',
-	admin_nav_persistent_identifiers: 'Persistent Identifiers',
 	admin_nav_mapping_policies: 'Field Mapping Sets',
 	admin_nav_resolution_center: 'Resolution Center',
 	admin_nav_login_methods: 'Authentication Methods',

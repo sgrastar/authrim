@@ -441,7 +441,7 @@ describe('validateOidcMappingSetReference', () => {
       ],
       [
         'makes a persistent identifier',
-        "UPDATE mapping_transform_steps SET operation = 'oidc_pairwise_sub'",
+        "UPDATE mapping_transform_steps SET operation = 'persistent_identifier'",
         /persistent identifier/,
       ],
       [

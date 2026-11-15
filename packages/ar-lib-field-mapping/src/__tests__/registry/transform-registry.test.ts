@@ -46,9 +46,7 @@ describe('transform registry', () => {
       'json_extract_integer',
       'json_extract_text',
       'normalize',
-      'oidc_pairwise_sub',
       'persistent_identifier',
-      'saml_edu_person_targeted_id',
       'split',
       'text_to_boolean',
       'trim',
@@ -100,58 +98,6 @@ describe('transform registry', () => {
         edgeValues,
       }).value?.value
     ).toBe('mailto:USER@EXAMPLE.TEST');
-  });
-
-  it('builds persistent identifier transform outputs from runtime context', () => {
-    const sourceRef = fieldRef('csv', 'subject');
-    const oidcTargetRef = { side: 'destination' as const, namespace: 'oidc.claim', path: 'sub' };
-    const oidcEdge = edge(sourceRef, oidcTargetRef);
-    const oidcStep: MappingTransformStep = {
-      id: 'transform.oidc.pairwise',
-      inputEdgeIds: [oidcEdge.id],
-      operation: 'oidc_pairwise_sub',
-      parameters: { persistentIdentifierProfileId: 'profile-a' },
-      outputTargetRef: oidcTargetRef,
-    };
-
-    expect(
-      executeTransformStep({
-        step: oidcStep,
-        edgeValues: new Map([[oidcEdge.id, sourceValue('csv', 'subject', 'ignored')]]),
-        runtimeContext: {
-          oidc: {
-            persistentIdentifiers: {
-              'profile-a': 'pairwise-sub-123',
-            },
-          },
-        },
-      }).value?.value
-    ).toBe('pairwise-sub-123');
-
-    const samlTargetRef = {
-      side: 'destination' as const,
-      namespace: 'saml.attribute',
-      path: 'eduPersonTargetedID',
-    };
-    const samlEdge = edge(sourceRef, samlTargetRef);
-    expect(
-      executeTransformStep({
-        step: {
-          id: 'transform.saml.targeted-id',
-          inputEdgeIds: [samlEdge.id],
-          operation: 'saml_edu_person_targeted_id',
-          outputTargetRef: samlTargetRef,
-        },
-        edgeValues: new Map([[samlEdge.id, sourceValue('csv', 'subject', 'ignored')]]),
-        runtimeContext: {
-          saml: {
-            localEntityId: 'https://idp.example.test',
-            partnerEntityId: 'https://sp.example.test',
-            eduPersonTargetedIdOpaque: 'opaque-123',
-          },
-        },
-      }).value?.value
-    ).toBe('https://idp.example.test!https://sp.example.test!opaque-123');
   });
 
   it('converts configured text tokens to nullable booleans', () => {

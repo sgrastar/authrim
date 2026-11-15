@@ -25,6 +25,7 @@ import {
   type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
+import { eraseAccountIdentifierValues } from './account-identifier-erasure';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 import {
   attemptImmediateAccountDirectoryRemovals,
@@ -120,6 +121,8 @@ export async function deleteAccount(
         input.erasedAtSeconds
       );
     }
+    // The identifier material imported for the account (stored identifiers, identifier sources).
+    await eraseAccountIdentifierValues(env, { tenantId, userId });
     await new CanonicalRuntimeUserWriter(
       new CanonicalIdentityRepository(core, tenantId),
       pii

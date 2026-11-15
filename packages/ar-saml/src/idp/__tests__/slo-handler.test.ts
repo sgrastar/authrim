@@ -4,6 +4,11 @@ import { NAMEID_FORMATS, SAML_NAMESPACES, STATUS_CODES } from '../../common/cons
 
 const mocks = vi.hoisted(() => ({
   sp: null as Record<string, unknown> | null,
+  NameIDPolicyError: class extends Error {},
+  // The sign-in's record: an emailAddress NameID unless a test says otherwise.
+  readNameId: vi.fn<(...args: unknown[]) => Promise<{ format: string; value?: string } | null>>(
+    async () => ({ format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress' })
+  ),
   ui: undefined as { baseUrl: string } | undefined,
   sessionDelete: new Response(null, { status: 204 }),
   sessionThrows: false,
@@ -49,7 +54,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: () => ({
       module: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
     }),
-    createLogger: () => ({ module: () => ({ error: vi.fn() }) }),
+    createLogger: () => ({ module: () => ({ error: vi.fn(), warn: vi.fn() }) }),
   };
 });
 
@@ -90,11 +95,23 @@ vi.mock('../../common/user-store', () => ({
   getSamlUserNameIdById: vi.fn(async () => mocks.userNameId),
 }));
 
+// The SP's mapping is read from the Admin database, which these tests do not have: no SP here
+// has a mapped NameID.
+vi.mock('../release-items', () => ({ resolveSAMLMappedNameID: vi.fn(async () => undefined) }));
 vi.mock('../subject', () => ({
+  readSAMLSessionIndexNameID: (...args: unknown[]) => mocks.readNameId(...args),
+  resolveEffectiveSAMLNameIDFormat: (input: {
+    spConfig: { nameIdFormat?: string };
+    mappedNameID: boolean;
+  }) =>
+    input.mappedNameID
+      ? 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent'
+      : input.spConfig.nameIdFormat || 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
   resolveSAMLPersistentNameIDRegistryStore: vi.fn(() => undefined),
   resolveSAMLNameIDValue: vi.fn(async () => 'persistent-name-id'),
   resolveSAMLPairwiseSecret: vi.fn(async () => 'pairwise-secret'),
   resolveSAMLSessionIndexToSessionId: vi.fn(async () => mocks.resolvedSessionId),
+  SAMLNameIDPolicyError: mocks.NameIDPolicyError,
 }));
 
 vi.mock('../slo-state', async (importOriginal) => {
@@ -121,6 +138,7 @@ vi.mock('../slo-state', async (importOriginal) => {
           sessionIndex?: string;
           relayState?: string;
           targets: string[];
+          targetSessionIndexes?: Record<string, string>;
           ttlSeconds?: number;
         }
       ) => (
@@ -130,7 +148,13 @@ vi.mock('../slo-state', async (importOriginal) => {
           userId: input.userId,
           sessionIndex: input.sessionIndex,
           relayState: input.relayState,
-          targets: input.targets.map((spEntityId) => ({ spEntityId, status: 'pending' })),
+          targets: input.targets.map((spEntityId) => ({
+            spEntityId,
+            ...(input.targetSessionIndexes?.[spEntityId]
+              ? { sessionIndex: input.targetSessionIndexes[spEntityId] }
+              : {}),
+            status: 'pending',
+          })),
         }
       )
     ),
@@ -466,11 +490,109 @@ describe('IdP SLO handler policy boundaries', () => {
     );
   });
 
+  it('names the NameID the sign-in issued, also when the SP mapping has no NameID step any more', async () => {
+    // Signed in with a mapped persistent NameID; the SP now has a version without the step (the
+    // mapping reads none) and is configured for emailAddress: the logout must not send the email.
+    mocks.userNameId = 'user@example.test';
+    mocks.readNameId.mockResolvedValueOnce({
+      format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+      value: 'issued-persistent-id',
+    });
+    const result = await initiateIdPLogout(
+      environment() as never,
+      'user-a',
+      sp({ nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress' }) as never,
+      'session-index',
+      'tenant-a'
+    );
+    expect(result.logoutRequestXml).toContain('issued-persistent-id');
+    expect(result.logoutRequestXml).toContain('nameid-format:persistent');
+    expect(result.logoutRequestXml).not.toContain('user@example.test');
+    // Without a record the issued format is unknown (the request may have asked for transient
+    // while the SP is configured for emailAddress): the SP is not named, never sent the email.
+    mocks.readNameId.mockResolvedValueOnce(null);
+    await expect(
+      initiateIdPLogout(
+        environment() as never,
+        'user-a',
+        sp({ nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress' }) as never,
+        'session-index',
+        'tenant-a'
+      )
+    ).rejects.toThrow('could not be processed');
+  });
+
+  it('names the transient NameID the sign-in issued, never the email, and sends nothing without it', async () => {
+    mocks.userNameId = 'user@example.test';
+    const transient = 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient';
+    const spConfig = sp({ nameIdFormat: transient }) as never;
+    mocks.readNameId.mockResolvedValueOnce({ format: transient, value: 'trn_issued' });
+    const result = await initiateIdPLogout(
+      environment() as never,
+      'user-a',
+      spConfig,
+      'session-index',
+      'tenant-a'
+    );
+    expect(result.logoutRequestXml).toContain('trn_issued');
+    expect(result.logoutRequestXml).not.toContain('user@example.test');
+    // A format that needs a value and has none recorded: the email is not sent in its place.
+    mocks.readNameId.mockResolvedValueOnce({ format: transient });
+    await expect(
+      initiateIdPLogout(environment() as never, 'user-a', spConfig, 'session-index', 'tenant-a')
+    ).rejects.toThrow('could not be processed');
+  });
+
+  it('never sends the email for a transient SP without a record of the issued NameID', async () => {
+    mocks.userNameId = 'user@example.test';
+    const transient = 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient';
+    // No record at all (no session index, an expired record, a session from before).
+    mocks.readNameId.mockResolvedValueOnce(null);
+    await expect(
+      initiateIdPLogout(
+        environment() as never,
+        'user-a',
+        sp({ nameIdFormat: transient }) as never,
+        'session-index',
+        'tenant-a'
+      )
+    ).rejects.toThrow('could not be processed');
+    await expect(
+      initiateIdPLogout(
+        environment() as never,
+        'user-a',
+        sp({ nameIdFormat: transient }) as never,
+        undefined,
+        'tenant-a'
+      )
+    ).rejects.toThrow('could not be processed');
+  });
+
+  it('treats a persistent NameID that was never issued as unnameable', async () => {
+    mocks.userInfo = { id: 'user-a', email: 'user@example.test' };
+    const { resolveSAMLNameIDValue } = await import('../subject');
+    vi.mocked(resolveSAMLNameIDValue).mockRejectedValueOnce(
+      new mocks.NameIDPolicyError('no persistent NameID')
+    );
+    expect(
+      await resolveIdPLogoutNameID(environment() as never, 'tenant-a', 'user-a', {
+        entityId: 'sp',
+        nameIdFormat: NAMEID_FORMATS.PERSISTENT,
+      })
+    ).toBeNull();
+  });
+
   it('propagates signing failure without storing an outbound request', async () => {
     mocks.userNameId = 'user@example.test';
     mocks.signingError = true;
     await expect(
-      initiateIdPLogout(environment() as never, 'user-a', sp() as never, undefined, 'tenant-a')
+      initiateIdPLogout(
+        environment() as never,
+        'user-a',
+        sp() as never,
+        'session-index',
+        'tenant-a'
+      )
     ).rejects.toThrow('signing unavailable');
     expect(mocks.storeOutbound).not.toHaveBeenCalled();
   });
@@ -506,7 +628,7 @@ describe('IdP SLO handler policy boundaries', () => {
       environment() as never,
       'user-a',
       sp({ samlProfile: 'legacy', sloBinding: undefined }) as never,
-      { tenantId: 'tenant-a' }
+      { tenantId: 'tenant-a', sessionIndex: 'session-index' }
     );
     expect(response.status).toBe(200);
   });
@@ -517,7 +639,13 @@ describe('IdP SLO handler policy boundaries', () => {
   ])('keeps an outbound LogoutRequest for %s', async (_label, federation, seconds) => {
     mocks.federation = federation;
     mocks.userNameId = 'user@example.test';
-    await initiateIdPLogout(environment() as never, 'user-a', sp() as never, undefined, 'tenant-a');
+    await initiateIdPLogout(
+      environment() as never,
+      'user-a',
+      sp() as never,
+      'session-index',
+      'tenant-a'
+    );
     expect(mocks.storeOutbound).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ ttlSeconds: seconds })
@@ -533,6 +661,7 @@ describe('IdP SLO handler policy boundaries', () => {
       [sp() as never],
       {
         tenantId: 'tenant-a',
+        sessionIndex: 'session-index',
         binding: 'post',
       }
     );
@@ -552,6 +681,7 @@ describe('IdP SLO handler policy boundaries', () => {
       [target, target],
       {
         tenantId: 'tenant-a',
+        sessionIndex: 'session-index',
         transactionId: 'transaction-custom',
         binding: 'post',
         relayState: 'relay',
@@ -560,6 +690,85 @@ describe('IdP SLO handler policy boundaries', () => {
     expect(result.transactionId).toBe('transaction-custom');
     expect(result.response.status).toBe(200);
     expect(mocks.markSent).toHaveBeenCalled();
+  });
+
+  it('skips an SP whose NameID cannot be named and logs the next one out', async () => {
+    mocks.userNameId = 'user@example.test';
+    const transient = 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient';
+    // The first SP signed in with a transient NameID that was not recorded: it is skipped, never
+    // sent the email, and the second SP still gets its request.
+    mocks.readNameId.mockResolvedValueOnce({ format: transient });
+    const first = sp({ entityId: 'https://first.example.test/entity', nameIdFormat: transient });
+    const second = sp({ entityId: 'https://second.example.test/entity' });
+    const result = await initiateIdPMultiSPLogoutBindingResponse(
+      environment() as never,
+      'user-a',
+      [first as never, second as never],
+      { tenantId: 'tenant-a', binding: 'post', sessionIndex: 'session-index' }
+    );
+    expect(result.response.status).toBe(200);
+    expect(mocks.markCompleted).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        spEntityId: 'https://first.example.test/entity',
+        status: 'failed',
+        failureReason: 'nameid_unavailable',
+      })
+    );
+    expect(mocks.markSent).toHaveBeenCalled();
+
+    // When no SP can be named, the logout request is refused as before.
+    mocks.readNameId.mockResolvedValueOnce({ format: transient });
+    await expect(
+      initiateIdPMultiSPLogoutBindingResponse(environment() as never, 'user-a', [first as never], {
+        tenantId: 'tenant-a',
+        sessionIndex: 'session-index',
+      })
+    ).rejects.toThrow('could not be processed');
+  });
+
+  it('looks each SP up by its own session index', async () => {
+    mocks.userNameId = 'user@example.test';
+    // Only the second SP's own index has a record: with one shared index it could not be named.
+    mocks.readNameId.mockImplementation(async (...args: unknown[]) => {
+      const key = args[1] as { sessionIndex: string };
+      return key.sessionIndex === 'sidx-second'
+        ? { format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress' }
+        : null;
+    });
+    const first = sp({ entityId: 'https://first.example.test/entity' });
+    const second = sp({ entityId: 'https://second.example.test/entity' });
+    const result = await initiateIdPMultiSPLogoutBindingResponse(
+      environment() as never,
+      'user-a',
+      [first as never, second as never],
+      {
+        tenantId: 'tenant-a',
+        binding: 'post',
+        sessionIndex: 'sidx-shared',
+        sessionIndexes: { 'https://second.example.test/entity': 'sidx-second' },
+      }
+    );
+    expect(result.response.status).toBe(200);
+    expect(mocks.readNameId).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        spEntityId: 'https://second.example.test/entity',
+        sessionIndex: 'sidx-second',
+      })
+    );
+    // The first SP has no index of its own: the shared one is used, and it has no record.
+    expect(mocks.readNameId).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        spEntityId: 'https://first.example.test/entity',
+        sessionIndex: 'sidx-shared',
+      })
+    );
+    mocks.readNameId.mockReset();
+    mocks.readNameId.mockImplementation(async () => ({
+      format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    }));
   });
 
   it('rejects an empty multi-SP fanout and records target send failure', async () => {
@@ -574,6 +783,7 @@ describe('IdP SLO handler policy boundaries', () => {
     await expect(
       initiateIdPMultiSPLogoutBindingResponse(environment() as never, 'user-a', [sp() as never], {
         tenantId: 'tenant-a',
+        sessionIndex: 'session-index',
       })
     ).rejects.toThrow('signing unavailable');
     expect(mocks.markCompleted).toHaveBeenCalledWith(

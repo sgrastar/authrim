@@ -1,3 +1,4 @@
+import { arIdentifierStep } from './identifier-step/ar';
 import type { Messages } from './ja';
 import { arSettings } from './settings/ar';
 import { arCompliance } from './compliance/ar';
@@ -28,6 +29,7 @@ export const ar = {
 	...arSettings,
 	...arCompliance,
 	...arMappingConsole,
+	...arIdentifierStep,
 	...arServiceFlows,
 	...arConnectionSettings,
 	...arAccountFlows,
@@ -134,7 +136,6 @@ export const ar = {
 	'nav.custom.statements': 'نصوص الموافقة',
 	'nav.data.profiles': 'المصدر / الوجهة',
 	'nav.data.mappingSets': 'مجموعات الربط',
-	'nav.data.identifiers': 'المعرفات الدائمة',
 	'nav.data.federationTrust': 'ثقة الاتحاد',
 	'nav.data.readiness': 'جاهزية المخطط',
 	'nav.mon.adminLogging': 'تسجيل عمليات المسؤولين',
@@ -685,8 +686,6 @@ export const ar = {
 	'map.c.identifier': 'المعرّفات',
 	'map.c.json': 'JSON',
 	'map.t.normalize': 'توحيد المسافات أو الأحرف',
-	'map.t.oidc_pairwise_sub': 'معرّف OIDC الزوجي',
-	'map.t.saml_edu_person_targeted_id': 'eduPersonTargetedID في SAML',
 	'map.t.json_build': 'إنشاء JSON',
 	'map.t.json_extract_text': 'نص من JSON',
 	'map.t.json_extract_boolean': 'true/false من JSON',
@@ -702,8 +701,6 @@ export const ar = {
 	'map.d.first': 'يستخدم القيمة الأولى فقط من بين عدة قيم.',
 	'map.d.concat': 'يجمع قيم عدة سمات في نص واحد.',
 	'map.d.fallback': 'يستخدم أول سمة من الأعلى لها قيمة.',
-	'map.d.oidc_pairwise_sub': 'يستخدم المعرّف الزوجي (sub) لهذا التطبيق.',
-	'map.d.saml_edu_person_targeted_id': 'ينشئ eduPersonTargetedID لمزوّد الخدمة هذا.',
 	'map.d.json_build': 'يضع قيم السمات في كائن JSON، أو يقرأ قيمة هي نص JSON.',
 	'map.d.json_extract_text': 'يستخرج قيمة من JSON كنص.',
 	'map.d.json_extract_boolean': 'يستخرج قيمة من JSON كـ true أو false.',
@@ -714,8 +711,6 @@ export const ar = {
 	'map.p.omitEmpty': 'حذف القيم الفارغة',
 	'map.p.unique': 'حذف التكرار',
 	'map.p.nullValues': 'قيم تُعد بلا قيمة',
-	'map.p.persistentIdentifierProfileId': 'ملف المعرّف',
-	'map.p.profileHint': 'فارغ: الإعداد الافتراضي للمستأجر.',
 	'map.p.keyMap': 'أسماء المفاتيح',
 	'map.p.keyMapHint': 'بصيغة JSON، مثل {"mail": "email"}',
 	'map.p.nullHandling': 'السمات بلا قيمة',

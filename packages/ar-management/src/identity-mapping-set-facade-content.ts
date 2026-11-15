@@ -243,6 +243,7 @@ export interface StoredVersionForContent {
     }>;
     transforms: Array<{
       edgeId: string | null;
+      targetRef?: Record<string, unknown> | null;
       operation: string;
       parameters: Record<string, unknown>;
     }>;
@@ -308,6 +309,7 @@ export function contentFromStoredVersion(version: StoredVersionForContent): Mapp
               : -1;
             return {
               ...(edgeIndex >= 0 ? { edgeIndex } : {}),
+              ...(transform.targetRef ? { targetRef: transform.targetRef } : {}),
               operation: transform.operation,
               ...(nonEmpty(transform.parameters) ? { parameters: transform.parameters } : {}),
             };

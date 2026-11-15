@@ -90,6 +90,10 @@ import {
   OAUTH_CATEGORY_META,
   parseClaimsRequest,
   evaluateClaimsForTarget,
+  claimsRequestRestrictsSub,
+  deriveIDTokenSubject,
+  readAttributesOncePerRequest,
+  issuedSubjectClaims,
   buildStandardUserClaims,
   standardUserAttributeNames,
   canonicalProjectionToOIDCClaimsUser,
@@ -263,6 +267,20 @@ async function loadOIDCClaimsUser(
     claimNames ? { claimNames } : undefined
   );
   return projection ? canonicalProjectionToOIDCClaimsUser(projection) : null;
+}
+
+/** The same read, made once for this request (the sub is derived before the tokens are signed). */
+function loadUserAttributesOnce(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string,
+  names: readonly string[]
+): Promise<Record<string, unknown> | null> {
+  return readAttributesOncePerRequest(
+    c.req.raw,
+    `${tenantId}\u0000${userId}\u0000${[...names].sort().join(',')}`,
+    () => loadUserAttributesForMapping(c, tenantId, userId, names)
+  );
 }
 
 /**
@@ -4931,10 +4949,30 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         getTenantIdFromContext(c)
       );
 
+      // The sub the app receives (a pairwise app's, or what its identity mapping issues), and the
+      // sealed account reference when it is not the user's id: the access token names no account
+      // by its sub. A failure is the server's: never the user's id in its place.
+      const accessTokenSubject = await issuedSubjectClaims(
+        c.env,
+        { tenantId: getTenantIdFromContext(c), clientId: validClientId },
+        await deriveIDTokenSubject(
+          {
+            env: c.env,
+            adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+            tenantId,
+            clientId: validClientId,
+            clientMetadata,
+            loadUserAttributes: (userId, names) =>
+              loadUserAttributesOnce(c, tenantId, userId, names),
+            log,
+          },
+          sub
+        ),
+        sub
+      );
       const tokenResult = await createAccessToken(
         {
           iss: issuer,
-          sub,
           aud: issuer, // Access token audience should be issuer (resource server), not client_id
           scope: validScope,
           client_id: validClientId,
@@ -4949,6 +4987,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           }),
           // The information release this authorization was approved for (UserInfo holds to it).
           [RELEASE_APPROVAL_CLAIM]: releaseApproval ?? [],
+          // The sub the app receives and, when it is not the user's id, the account reference.
+          ...accessTokenSubject,
           // Assurance (include_in_access_token): how the user authenticated, as RFC 9068 has it.
           ...(assuranceEnabled && assuranceSettings['assurance.include_in_access_token'] === true
             ? {
@@ -5079,8 +5119,26 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             log.error(message, { clientId: validClientId }, error as Error),
         });
 
+        // A `sub` value the claims request names is the sub the app receives (a pairwise app's),
+        // never the account's id.
+        const subjectValue = claimsRequestRestrictsSub(parsedClaimsRequest.request, 'id_token')
+          ? await deriveIDTokenSubject(
+              {
+                env: c.env,
+                adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+                tenantId,
+                clientId: validClientId,
+                clientMetadata,
+                loadUserAttributes: (userId, names) =>
+                  loadUserAttributesOnce(c, tenantId, userId, names),
+                log,
+              },
+              sub
+            )
+          : undefined;
         const requestedClaims = evaluateClaimsForTarget({
           target: 'id_token',
+          ...(subjectValue !== undefined ? { subjectValue } : {}),
           claimsRequest: parsedClaimsRequest.request,
           initialClaims: idTokenClaims,
           availableClaims: {
@@ -5104,7 +5162,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // claims), its claim release consent, and the grant claims (the consent generation this
       // request was checked against, so a Token Exchange of the ID token is held to the consent
       // as its access token is, and the sealed account reference when the sub is not the user's
-      // id). The access token above keeps the user's id as its sub, as the token endpoint's does.
+      // id). The access token above carries the same sub and the account reference.
       const released = await releaseIDTokenClaims(
         {
           env: c.env,
@@ -5113,8 +5171,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           clientId: validClientId,
           clientMetadata,
           waitUntil: getWaitUntilFromContext(c),
-          loadUserAttributes: (userId, names) =>
-            loadUserAttributesForMapping(c, tenantId, userId, names),
+          loadUserAttributes: (userId, names) => loadUserAttributesOnce(c, tenantId, userId, names),
           log,
         },
         {
@@ -5315,9 +5372,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * Whether an id_token_hint's sub names this user: the user's id, or the sub this app's ID tokens
- * carry for them when its identity mapping issues another one (pairwise or persistent
- * identifiers). A mapping that cannot be applied names no one.
+ * Whether an id_token_hint's sub names this user: the sub this app's ID tokens carry for them
+ * (their id, a pairwise sub, or what its identity mapping issues). Only that value matches, never
+ * the user's raw id: an app that is given another sub (a pairwise one above all) is not told the
+ * id by an id_token_hint that carries it. A sub that cannot be derived names no one.
  */
 async function idTokenHintNamesUser(
   c: Context<{ Bindings: Env }>,
@@ -5328,7 +5386,6 @@ async function idTokenHintNamesUser(
   hintSubject: string,
   userId: string
 ): Promise<boolean> {
-  if (hintSubject === userId) return true;
   try {
     // A mapping may derive sub from the user's attributes, which are read only if it does. Without
     // them the sub is derived from the id alone (a mismatch at worst, never a match).
@@ -5337,6 +5394,7 @@ async function idTokenHintNamesUser(
       env: c.env,
       tenantId,
       clientId,
+      subjectType: clientMetadata.subject_type ?? 'public',
       sectorIdentifier: clientMetadata.sector_identifier_uri,
       redirectUris: clientMetadata.redirect_uris,
       selector: clientMetadata.identity_mapping,

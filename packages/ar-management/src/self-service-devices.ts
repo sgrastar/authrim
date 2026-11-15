@@ -13,6 +13,8 @@ import {
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   introspectTokenFromContext,
+  introspectedTokenClient,
+  resolveIntrospectedAccountUserId,
   isShardedSessionId,
   resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
@@ -24,7 +26,13 @@ const MAX_DISPLAY_NAME_LENGTH = 64;
 const CURSOR_PREFIX = 'cur_';
 
 type SelfServiceAccess = {
+  /** The account (the user's id): every lookup is by it. */
   sub: string;
+  /**
+   * What names the caller in a cursor the client sees: the sub the token carries (the one its app
+   * was given), never the account's id when that is another. Unset: the account's id (a session).
+   */
+  presentedSub?: string;
   clientId?: string;
   sessionId?: string;
   currentInstallationId?: string;
@@ -169,7 +177,7 @@ async function requireSelfServiceAccess(
     return bearerTokenRequired(c);
   }
 
-  const introspection = await introspectTokenFromContext(c);
+  const introspection = await introspectTokenFromContext(c, { allowSubjectReference: true });
   if (!introspection.valid || !introspection.claims) {
     const error = introspection.error;
     if (error) {
@@ -187,8 +195,13 @@ async function requireSelfServiceAccess(
     return c.json({ error: 'invalid_token', error_description: 'Access token is invalid' }, 401);
   }
 
-  const sub = introspection.claims.sub;
-  if (typeof sub !== 'string' || sub.length === 0) {
+  // The account the token is for (opened from a pairwise app's sealed reference), never its sub.
+  const sub = resolveIntrospectedAccountUserId(
+    introspection,
+    await introspectedTokenClient(c, introspection)
+  );
+  const presentedSub = introspection.claims.sub;
+  if (!sub || typeof presentedSub !== 'string' || presentedSub.length === 0) {
     return c.json(
       { error: 'invalid_token', error_description: 'Access token subject is missing' },
       401
@@ -197,6 +210,7 @@ async function requireSelfServiceAccess(
 
   return {
     sub,
+    presentedSub,
     clientId:
       typeof introspection.claims.client_id === 'string'
         ? introspection.claims.client_id
@@ -528,7 +542,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
   const cursor = await parseCursor(
     c.req.query('cursor'),
     c.env.LOGGING_CURSOR_HMAC_SECRET,
-    access.sub,
+    access.presentedSub ?? access.sub,
     tenantId
   );
   if (!cursor) {
@@ -590,7 +604,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
   const nextCursor =
     nextOffset < devices.length
       ? await buildCursor(
-          { offset: nextOffset, sub: access.sub, tenant_id: tenantId },
+          { offset: nextOffset, sub: access.presentedSub ?? access.sub, tenant_id: tenantId },
           c.env.LOGGING_CURSOR_HMAC_SECRET
         )
       : undefined;

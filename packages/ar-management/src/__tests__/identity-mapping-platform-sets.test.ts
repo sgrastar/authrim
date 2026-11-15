@@ -55,7 +55,11 @@ const PLATFORM_CATALOG_VERSION = 'platform_default_canonical_catalog_v1';
 
 function openAdminDatabase(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
-  for (const file of ['001_0_5_0_admin_baseline.sql', '012_admin_groups.sql']) {
+  for (const file of [
+    '001_0_5_0_admin_baseline.sql',
+    '012_admin_groups.sql',
+    '021_mapping_transform_step_target.sql',
+  ]) {
     db.exec(readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/admin/d1/'), file));
   }
 
@@ -747,10 +751,14 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
     });
 
     it.each([
-      ['an oidc_pairwise_sub transform', { operation: 'oidc_pairwise_sub', parameters: {} }],
       [
-        'a transform naming a persistent identifier profile',
-        { operation: 'copy', parameters: { persistentIdentifierProfileId: 'pip-1' } },
+        'a persistent_identifier transform',
+        {
+          operation: 'persistent_identifier',
+          // It takes no input edge, and names where its value goes.
+          targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+          parameters: { input: 'account', format: 'plain', algorithm: 'authrim_sha256' },
+        },
       ],
     ])('rejects %s', async (_name, transform) => {
       const { api, platformProfile, createPlatformSet } = await setup();
@@ -758,7 +766,7 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
 
       const response = await api.call(PLATFORM_ADMIN, 'POST', `/${setId}/versions`, {
         versionLabel: 'v1',
-        rules: [emailRule(platformProfile, { transforms: [{ edgeIndex: 0, ...transform }] })],
+        rules: [emailRule(platformProfile, { transforms: [transform] })],
       });
 
       expect(response.status).toBe(400);
@@ -1827,6 +1835,7 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
         } as never;
         for (const destinationSurface of ['id_token', 'userinfo'] as const) {
           const result = await applyOIDCIdentityMapping({
+            subjectType: 'public',
             adapter: core,
             env,
             tenantId: 'tenant-b',

@@ -145,6 +145,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
 
     await expect(
       applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -165,6 +166,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     const selector = { fieldMappingSetId: 'set-1' };
 
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -187,6 +189,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     } as unknown as DatabaseAdapter;
 
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter: core,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -203,6 +206,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
 
     await expect(
       applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -213,6 +217,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
 
   it('exposes neutral display and picture aliases only to the mapping runtime', async () => {
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -252,6 +257,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
 
     await expect(
       applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -273,6 +279,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
 
     await expect(
       applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -282,6 +289,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
 
     await expect(
       applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -308,6 +316,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     });
 
     const result = await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -319,9 +328,10 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     expect(executeMapping).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeContext: {
-          oidc: expect.objectContaining({ clientId: 'client-a', pairwiseSubject: 'user-1' }),
+          oidc: expect.objectContaining({ clientId: 'client-a' }),
           // No persistent_identifier step: nothing was made.
           identifiers: {},
+          suppressedIdentifiers: {},
         },
       })
     );
@@ -363,6 +373,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     });
 
     const result = await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -413,6 +424,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     });
 
     const result = await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -437,6 +449,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
 
     await expect(
       applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -483,6 +496,7 @@ describe('applyOIDCIdentityMapping source attributes', () => {
     }));
 
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -511,6 +525,7 @@ describe('applyOIDCIdentityMapping source attributes', () => {
     const attributes = { preferred_username: 'alice' };
 
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -521,6 +536,7 @@ describe('applyOIDCIdentityMapping source attributes', () => {
       (source) => source.sourceRef.path === 'preferred_username'
     );
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -539,6 +555,7 @@ describe('applyOIDCIdentityMapping source attributes', () => {
     const sourceAttributes = vi.fn(async () => ({ preferred_username: 'other' }));
 
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -560,6 +577,7 @@ describe('applyOIDCIdentityMapping source attributes', () => {
     resolveBinding.mockResolvedValue({ ...binding, edges: [] });
 
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -568,6 +586,7 @@ describe('applyOIDCIdentityMapping source attributes', () => {
     });
     resolveBinding.mockResolvedValue(null);
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -580,6 +599,7 @@ describe('applyOIDCIdentityMapping source attributes', () => {
 
   it('never copies a source attribute into the output unless the mapping maps it', async () => {
     const result = await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -605,6 +625,7 @@ describe('applyOIDCIdentityMapping source attributes', () => {
 
     await expect(
       deriveOIDCSubject({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -677,6 +698,7 @@ describe('applyOIDCIdentityMapping validation-rule sources', () => {
     }));
 
     await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -745,6 +767,7 @@ describe('deriveOIDCSubject', () => {
 
     await expect(
       deriveOIDCSubject({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -769,6 +792,7 @@ describe('deriveOIDCSubject', () => {
       ],
     });
     const issued = await applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -776,6 +800,7 @@ describe('deriveOIDCSubject', () => {
     });
     await expect(
       deriveOIDCSubject({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -788,6 +813,7 @@ describe('deriveOIDCSubject', () => {
   it("maps from the user's claims it is given, as issuance does", async () => {
     executeMapping.mockReturnValue({ status: 'success', values: [] });
     await deriveOIDCSubject({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -804,6 +830,7 @@ describe('deriveOIDCSubject', () => {
     executeMapping.mockReturnValue({ status: 'success', values: [] });
     await expect(
       deriveOIDCSubject({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -814,6 +841,7 @@ describe('deriveOIDCSubject', () => {
     resolveBinding.mockResolvedValue(null);
     await expect(
       deriveOIDCSubject({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',
@@ -831,6 +859,7 @@ describe('when the identity mapping cannot be resolved', () => {
 
   const apply = (selector?: { fieldMappingSetId: string }) =>
     applyOIDCIdentityMapping({
+      subjectType: 'public',
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
@@ -860,6 +889,7 @@ describe('when the identity mapping cannot be resolved', () => {
 
     await expect(
       deriveOIDCSubject({
+        subjectType: 'public',
         adapter,
         tenantId: 'tenant-a',
         clientId: 'client-a',

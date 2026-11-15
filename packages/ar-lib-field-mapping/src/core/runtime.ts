@@ -2,7 +2,7 @@ import { findCatalogEntry } from './catalog';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
 import { buildTraceEntry } from './trace';
-import { consumedEdgeIds, executeTransformStep, sharesConsumedInput } from './transforms';
+import { dropSuppressedTargets, executeTransformStep, sharesConsumedInput } from './transforms';
 
 // What the hot path needs about persistent identifiers, through the runtime entrypoint.
 export {
@@ -34,7 +34,6 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
   const transformTrace: RuleTraceEntry[] = [];
   const mappingTrace: RuleTraceEntry[] = [];
 
-  const consumed = consumedEdgeIds(input.transforms);
   for (const edge of input.edges) {
     const sourceValue = findSourceValue(input.sourceValues, edge);
     if (!sourceValue) {
@@ -45,7 +44,6 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
       sourceRef: edge.targetRef,
     };
     edgeValues.set(edge.id, targetValue);
-    if (consumed.has(edge.id)) continue;
     mappedValues.push(targetValue);
     mappingTrace.push(
       buildTraceEntry({
@@ -71,6 +69,8 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
     }
   }
 
+  const remaining = dropSuppressedTargets(mappedValues, input.transforms, input.runtimeContext);
+
   const reasons = [...validation.reasons, ...transformReasons];
   return {
     status: statusFromReasons(reasons),
@@ -78,7 +78,7 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
     ruleTrace: [...validation.trace, ...mappingTrace, ...transformTrace],
     values: sharedInput
       ? []
-      : mappedValues.filter((value) => findCatalogEntry(input.catalog, value.sourceRef)),
+      : remaining.filter((value) => findCatalogEntry(input.catalog, value.sourceRef)),
   };
 }
 

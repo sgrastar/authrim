@@ -3,7 +3,7 @@ import { createDeterministicId } from './ids';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
 import { buildTraceEntry } from './trace';
-import { consumedEdgeIds, executeTransformStep, sharesConsumedInput } from './transforms';
+import { dropSuppressedTargets, executeTransformStep, sharesConsumedInput } from './transforms';
 import { validateMappingInput } from './validation';
 import type {
   BatchDryRunResult,
@@ -25,7 +25,6 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
   const transformTrace: RuleTraceEntry[] = [];
   const mappingTrace: RuleTraceEntry[] = [];
 
-  const consumed = consumedEdgeIds(input.transforms);
   for (const edge of input.edges) {
     const sourceValue = findSourceValue(input.sourceValues, edge);
     if (!sourceValue) {
@@ -36,7 +35,6 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
       sourceRef: edge.targetRef,
     };
     edgeValues.set(edge.id, targetValue);
-    if (consumed.has(edge.id)) continue;
     mappedValues.push(targetValue);
     mappingTrace.push(
       buildTraceEntry({
@@ -61,8 +59,11 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
     }
   }
 
+  // What an exception suppressed leaves no value, in a dry run as at runtime.
+  const finalValues = dropSuppressedTargets(mappedValues, input.transforms, input.runtimeContext);
+
   const reasons = [...validation.reasons, ...transformReasons];
-  const redactedValueSummaries = [...input.sourceValues, ...mappedValues].map((value) =>
+  const redactedValueSummaries = [...input.sourceValues, ...finalValues].map((value) =>
     toRedactedValueSummary(input, value)
   );
   const rejectedCount = reasons.filter(
@@ -73,7 +74,7 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
     status: statusFromReasons(reasons),
     summary: {
       inputCount: input.sourceValues.length,
-      mappedCount: mappedValues.length,
+      mappedCount: finalValues.length,
       omittedCount: 0,
       rejectedCount,
       warningCount: reasons.filter((item) => item.severity === 'warning').length,

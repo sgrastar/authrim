@@ -1,7 +1,12 @@
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { FieldRef, SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import {
+  computeBuiltInPairwiseSubject,
+  mappedPairwiseSubject,
+  createIdentifierExceptionReader,
+  createIdentifierSourceReader,
   createStoredIdentifierLookup,
+  isInfrastructureIdentifierFailure,
   prepareMappedIdentifiers,
   resolvePairwiseSector,
 } from './mapped-identifiers';
@@ -41,12 +46,6 @@ import {
   assertRuntimeIdentityMappingReleaseSafety,
   type RuntimeIdentityMappingBinding,
 } from './identity-mapping-runtime-resolver';
-import {
-  generatePersistentIdentifier,
-  resolveOIDCPairwiseAudience,
-  type PersistentIdentifierAlgorithm,
-  type PersistentIdentifierAudienceMode,
-} from './persistent-identifiers';
 
 export interface ApplyOIDCIdentityMappingInput {
   /** The tenant Core database: the user's consent and attributes. Never read for a mapping. */
@@ -60,6 +59,17 @@ export interface ApplyOIDCIdentityMappingInput {
   /** The tenant the request is for. Consent, custom fields and identifiers stay with it. */
   tenantId: string;
   clientId: string;
+  /**
+   * The app's registered `subject_type`. Required, so a caller that holds the client cannot forget
+   * it: a pairwise app's sub is always pairwise (see `pairwiseSubject`), whatever its mapping does.
+   */
+  subjectType: 'public' | 'pairwise';
+  /**
+   * The sub the response must carry, already recorded (the sub of the access token UserInfo
+   * answers for): it is not derived again (no salt, sector or sub step is read), and the account
+   * the claims name is still the one every lookup uses. A mapping that writes sub does not change it.
+   */
+  fixedSubject?: string;
   sectorIdentifier?: string | null;
   /** The client's registered redirect URIs: the pairwise sector when it has no sector URI. */
   redirectUris?: readonly string[] | null;
@@ -197,6 +207,28 @@ export async function deriveOIDCSubject(input: ApplyOIDCIdentityMappingInput): P
   return typeof claims.sub === 'string' ? claims.sub : userId;
 }
 
+/**
+ * The built-in pairwise sub of a pairwise app (OIDC Core §8.1): `authrim_sha256` over the sector
+ * and the user's id with the tenant's default salt, as a `persistent_identifier` step with those
+ * settings makes it. A test user (an explanation) gets the placeholder, reported as not evaluated.
+ * Throws when it cannot be made: the user's id is never released instead.
+ */
+async function builtInPairwiseSubject(
+  input: ApplyOIDCIdentityMappingInput,
+  placeholder: string | null
+): Promise<string> {
+  if (placeholder) return placeholder;
+  return computeBuiltInPairwiseSubject({
+    accountId: typeof input.claims.sub === 'string' && input.claims.sub ? input.claims.sub : null,
+    clientId: input.clientId,
+    sector: resolvePairwiseSector({
+      sectorIdentifierUri: input.sectorIdentifier,
+      redirectUris: input.redirectUris,
+    }),
+    loadDefaultSalt: () => loadDefaultIdentifierSalt(input.env, input.tenantId),
+  });
+}
+
 export async function applyOIDCIdentityMapping(
   input: ApplyOIDCIdentityMappingInput & { subjectOnly?: boolean }
 ): Promise<ApplyOIDCIdentityMappingResult> {
@@ -254,13 +286,25 @@ export async function applyOIDCIdentityMapping(
   }
 
   if (!binding) {
-    if (input.subjectOnly) return { claims: input.claims, binding: null };
+    const noMappingPlaceholder = input.fixture ? fixturePersistentIdentifier() : null;
+    const baseClaims =
+      input.fixedSubject !== undefined
+        ? { ...input.claims, sub: input.fixedSubject }
+        : input.subjectType === 'pairwise'
+          ? { ...input.claims, sub: await builtInPairwiseSubject(input, noMappingPlaceholder) }
+          : input.claims;
+    if (input.subjectOnly) return { claims: baseClaims, binding: null };
     if (input.trace) {
       input.trace.mapping = [];
-      input.trace.beforeRelease = tracePresence(input.claims);
+      input.trace.beforeRelease = tracePresence(baseClaims);
     }
     return {
-      claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
+      claims: await applyOIDCDestinationFieldConsent(
+        input,
+        baseClaims,
+        null,
+        noMappingPlaceholder && input.subjectType === 'pairwise' ? new Set(['sub']) : undefined
+      ),
       binding: null,
     };
   }
@@ -308,12 +352,22 @@ export async function applyOIDCIdentityMapping(
     'oidc.claim';
   const sourceClaims = await loadMappedCustomClaimSources(input, binding);
   const placeholder = input.fixture ? fixturePersistentIdentifier() : null;
-  const persistentIdentifiers = await resolveOIDCPersistentIdentifiers(input, binding, placeholder);
   const sourceValues = toOIDCSourceValues(sourceClaims, binding);
+  // With a recorded sub, the steps that make the sub are not run: they take the recorded one.
+  const isSubjectStep = (step: { operation: string; outputTargetRef: FieldRef }) =>
+    step.operation === 'persistent_identifier' &&
+    step.outputTargetRef.side === 'destination' &&
+    step.outputTargetRef.namespace === destinationNamespace &&
+    step.outputTargetRef.path === 'sub';
+  const preparedTransforms =
+    input.fixedSubject !== undefined
+      ? (binding.transforms ?? []).filter((step) => !isSubjectStep(step))
+      : binding.transforms;
   const mappedIdentifiers = await prepareMappedIdentifiers({
-    transforms: binding.transforms,
-    edges: binding.edges,
-    sourceValues,
+    transforms: preparedTransforms,
+    // The authenticated account's ID as the runtime holds it (the user ID: `claims.sub` before
+    // any mapping), supplied here directly, never read through the mapping's custom claims.
+    accountId: typeof input.claims.sub === 'string' && input.claims.sub ? input.claims.sub : null,
     recipient: {
       protocol: 'oidc',
       clientId: input.clientId,
@@ -325,13 +379,28 @@ export async function applyOIDCIdentityMapping(
     loadDefaultSalt: () => loadDefaultIdentifierSalt(input.env, input.tenantId),
     loadImportedSalt: (name) =>
       readImportedIdentifierSalt(input.env.KEY_MANAGER, input.tenantId, name),
-    lookupStoredIdentifier: (store, audience, sourceHash) =>
+    lookupStoredIdentifier: (store, audience, accountId) =>
       createStoredIdentifierLookup(
         requireDedicatedAdminDatabaseAdapter(input.env, 'mapped-identifier-store'),
         input.tenantId
-      )(store, audience, sourceHash),
+      )(store, audience, accountId),
+    lookupSourceValue: (source, accountId) =>
+      createIdentifierSourceReader(
+        requireDedicatedAdminDatabaseAdapter(input.env, 'identifier-source-values'),
+        input.tenantId
+      )(source, accountId),
+    lookupException: (list, accountId, audience) =>
+      createIdentifierExceptionReader(
+        requireDedicatedAdminDatabaseAdapter(input.env, 'identifier-exceptions'),
+        input.tenantId
+      )(list, accountId, audience),
     placeholder,
   });
+  if (input.fixedSubject !== undefined) {
+    for (const step of binding.transforms ?? []) {
+      if (isSubjectStep(step)) mappedIdentifiers.identifiers[step.id] = input.fixedSubject;
+    }
+  }
   const runtimeResult = executeRuntimeMapping({
     catalog: binding.catalog,
     sourceValues,
@@ -342,10 +411,9 @@ export async function applyOIDCIdentityMapping(
     runtimeContext: {
       oidc: {
         clientId: input.clientId,
-        pairwiseSubject: typeof input.claims.sub === 'string' ? input.claims.sub : undefined,
-        persistentIdentifiers,
       },
       identifiers: mappedIdentifiers.identifiers,
+      suppressedIdentifiers: mappedIdentifiers.suppressed,
     },
   });
   // An identifier that could not be made stops the sub as well as the claims: no other value
@@ -355,6 +423,8 @@ export async function applyOIDCIdentityMapping(
   // user's id in its place.
   const identifierMissing = (binding.transforms ?? []).some((step) => {
     if (step.operation !== 'persistent_identifier') return false;
+    // Suppressed by an exception: no identifier, and no value in its place (checked below).
+    if (mappedIdentifiers.suppressed[step.id]) return false;
     const made = mappedIdentifiers.identifiers[step.id];
     return (
       !made ||
@@ -381,6 +451,46 @@ export async function applyOIDCIdentityMapping(
       fieldMappingSetId: binding.fieldMappingSetId,
       fieldMappingVersionId: binding.fieldMappingVersionId,
       clientId: input.clientId,
+      // The salt, a key or a lookup failed (not a block or a setting): a fault of the
+      // infrastructure, which a caller that tells the two apart answers as the server's.
+      ...(Object.values(mappedIdentifiers.failures).some(isInfrastructureIdentifierFailure)
+        ? { infrastructure: true }
+        : {}),
+    });
+  }
+
+  // A suppressed identifier is not made, and its target holds no value: the sub is required (a
+  // block on the step that makes it fails the mapping), any other claim is left out below.
+  const suppressedTargets = (binding.transforms ?? []).filter(
+    (step) =>
+      step.operation === 'persistent_identifier' &&
+      mappedIdentifiers.suppressed[step.id] &&
+      step.outputTargetRef.side === 'destination' &&
+      step.outputTargetRef.namespace === destinationNamespace
+  );
+  if (suppressedTargets.some((step) => step.outputTargetRef.path === 'sub')) {
+    throw new OIDCIdentityMappingRuntimeError('OIDC persistent identifier could not be made', {
+      code: 'policy.persistent_identifier_unavailable',
+      fieldMappingSetId: binding.fieldMappingSetId,
+      fieldMappingVersionId: binding.fieldMappingVersionId,
+      clientId: input.clientId,
+    });
+  }
+
+  // A step that cannot run (an operation that no longer exists, a saved version from an older
+  // release) fails the mapping for the subject alone as well (id_token_hint matching): other
+  // fields failing validation do not.
+  if (
+    input.subjectOnly &&
+    (runtimeResult.reasons ?? []).some(
+      (reason) => reason.category === 'transform' && reason.severity === 'critical'
+    )
+  ) {
+    throw new OIDCIdentityMappingRuntimeError('OIDC identity mapping failed', {
+      code: 'policy.identity_mapping_failed',
+      fieldMappingSetId: binding.fieldMappingSetId,
+      fieldMappingVersionId: binding.fieldMappingVersionId,
+      clientId: input.clientId,
     });
   }
 
@@ -395,6 +505,17 @@ export async function applyOIDCIdentityMapping(
       ) {
         subject = value.value;
       }
+    }
+    if (input.fixedSubject !== undefined) {
+      subject = input.fixedSubject;
+    } else if (input.subjectType === 'pairwise') {
+      subject =
+        mappedPairwiseSubject({
+          transforms: binding.transforms,
+          identifiers: mappedIdentifiers.identifiers,
+          destinationNamespace,
+          finalSubject: subject,
+        }) ?? (await builtInPairwiseSubject(input, placeholder));
     }
     assertMappedSubjectNotReserved(input, binding, subject);
     return { claims: { sub: subject }, binding };
@@ -423,6 +544,27 @@ export async function applyOIDCIdentityMapping(
     }
     mappedClaims[value.sourceRef.path] = value.value;
     produced.add(value.sourceRef.path);
+  }
+  // What an exception suppressed has no value: not the claim the request began with either.
+  for (const step of suppressedTargets) {
+    delete mappedClaims[step.outputTargetRef.path];
+    produced.delete(step.outputTargetRef.path);
+  }
+  if (input.fixedSubject !== undefined) {
+    mappedClaims.sub = input.fixedSubject;
+    produced.add('sub');
+  } else if (input.subjectType === 'pairwise') {
+    // The mapping's own sub stands only when one sector-audience persistent identifier step made
+    // it and nothing wrote over it; every other value (a copy of the user's id, other steps) is
+    // replaced by the built-in pairwise value.
+    mappedClaims.sub =
+      mappedPairwiseSubject({
+        transforms: binding.transforms,
+        identifiers: mappedIdentifiers.identifiers,
+        destinationNamespace,
+        finalSubject: mappedClaims.sub,
+      }) ?? (await builtInPairwiseSubject(input, placeholder));
+    produced.add('sub');
   }
   // For a test user, the claims whose final value is still the placeholder of a persistent
   // identifier (a later step that wrote another value over it is judged as usual).
@@ -611,167 +753,6 @@ function claimValuesEqual(left: unknown, right: unknown): boolean {
   return false;
 }
 
-interface OIDCPersistentIdentifierProfileRow {
-  id: string;
-  mode: string;
-  algorithm: string;
-  protocol_scope: string;
-  secret_ref: string | null;
-  audience_mode: string | null;
-  lifecycle_state: string;
-}
-
-async function resolveOIDCPersistentIdentifiers(
-  input: ApplyOIDCIdentityMappingInput,
-  binding: RuntimeIdentityMappingBinding,
-  /** For a test user: the value every identifier takes instead of being derived. */
-  placeholder: string | null
-): Promise<Record<string, string>> {
-  const profileIds = findPersistentIdentifierProfileIds(binding, 'oidc_pairwise_sub');
-  if (profileIds.length === 0) {
-    return {};
-  }
-  // Not derived for a test user: no secret is read or created for it.
-  if (placeholder !== null) {
-    return Object.fromEntries(profileIds.map((id) => [id, placeholder]));
-  }
-
-  if (!input.env?.DB_ADMIN || !input.env.KEY_MANAGER) {
-    throw new OIDCIdentityMappingRuntimeError(
-      'OIDC persistent identifier profile is not available',
-      {
-        code: 'policy.persistent_identifier_profile_not_found',
-        fieldMappingSetId: binding.fieldMappingSetId,
-        fieldMappingVersionId: binding.fieldMappingVersionId,
-        clientId: input.clientId,
-      }
-    );
-  }
-
-  const adminAdapter = requireDedicatedAdminDatabaseAdapter(
-    input.env,
-    'oidc-persistent-identifier'
-  );
-  const output: Record<string, string> = {};
-
-  for (const profileId of profileIds) {
-    const profile = await loadOIDCPersistentIdentifierProfile(
-      adminAdapter,
-      input.tenantId,
-      profileId
-    );
-    if (!profile) {
-      throw new OIDCIdentityMappingRuntimeError(
-        'OIDC persistent identifier profile was not found',
-        {
-          code: 'policy.persistent_identifier_profile_not_found',
-          fieldMappingSetId: binding.fieldMappingSetId,
-          fieldMappingVersionId: binding.fieldMappingVersionId,
-          clientId: input.clientId,
-        }
-      );
-    }
-
-    if (
-      profile.mode !== 'computed' ||
-      !isComputedAlgorithm(profile.algorithm) ||
-      !['any', 'oidc', 'generic'].includes(profile.protocol_scope)
-    ) {
-      throw new OIDCIdentityMappingRuntimeError(
-        'OIDC persistent identifier profile mode is not supported',
-        {
-          code: 'policy.persistent_identifier_profile_unsupported_mode',
-          fieldMappingSetId: binding.fieldMappingSetId,
-          fieldMappingVersionId: binding.fieldMappingVersionId,
-          clientId: input.clientId,
-        }
-      );
-    }
-
-    if (!profile.secret_ref) {
-      throw new OIDCIdentityMappingRuntimeError(
-        'OIDC persistent identifier profile secret is not configured',
-        {
-          code: 'policy.persistent_identifier_secret_missing',
-          fieldMappingSetId: binding.fieldMappingSetId,
-          fieldMappingVersionId: binding.fieldMappingVersionId,
-          clientId: input.clientId,
-        }
-      );
-    }
-
-    const secret = await getPersistentIdentifierSecret(
-      input.env.KEY_MANAGER,
-      input.tenantId,
-      profile.secret_ref
-    );
-    if (!secret) {
-      throw new OIDCIdentityMappingRuntimeError(
-        'OIDC persistent identifier profile secret is not available',
-        {
-          code: 'policy.persistent_identifier_secret_missing',
-          fieldMappingSetId: binding.fieldMappingSetId,
-          fieldMappingVersionId: binding.fieldMappingVersionId,
-          clientId: input.clientId,
-        }
-      );
-    }
-
-    const subject = typeof input.claims.sub === 'string' ? input.claims.sub : undefined;
-    if (!subject) {
-      throw new OIDCIdentityMappingRuntimeError('OIDC subject is required for pairwise transform', {
-        code: 'policy.identity_mapping_failed',
-        fieldMappingSetId: binding.fieldMappingSetId,
-        fieldMappingVersionId: binding.fieldMappingVersionId,
-        clientId: input.clientId,
-      });
-    }
-
-    output[profile.id] = await generatePersistentIdentifier({
-      algorithm: profile.algorithm,
-      subject,
-      audience: resolveOIDCPairwiseAudience({
-        clientId: input.clientId,
-        sectorIdentifier: input.sectorIdentifier,
-        audienceMode: isAudienceMode(profile.audience_mode) ? profile.audience_mode : undefined,
-      }),
-      secret,
-    });
-  }
-
-  return output;
-}
-
-function findPersistentIdentifierProfileIds(
-  binding: RuntimeIdentityMappingBinding,
-  operation: string
-): string[] {
-  const ids = new Set<string>();
-  for (const transform of binding.transforms ?? []) {
-    if (transform.operation !== operation) continue;
-    const profileId = transform.parameters?.persistentIdentifierProfileId;
-    if (typeof profileId === 'string' && profileId.length > 0) {
-      ids.add(profileId);
-    }
-  }
-  return Array.from(ids);
-}
-
-async function loadOIDCPersistentIdentifierProfile(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  profileId: string
-): Promise<OIDCPersistentIdentifierProfileRow | null> {
-  const rows = await adapter.query<OIDCPersistentIdentifierProfileRow>(
-    `SELECT id, mode, algorithm, protocol_scope, secret_ref, audience_mode, lifecycle_state
-       FROM persistent_identifier_profiles
-      WHERE tenant_id = ? AND id = ? AND lifecycle_state = 'active'
-      LIMIT 1`,
-    [tenantId, profileId]
-  );
-  return rows[0] ?? null;
-}
-
 /** The tenant's own identifier salt, from its key manager (made on first use). */
 async function loadDefaultIdentifierSalt(
   env: Partial<Env>,
@@ -792,14 +773,6 @@ async function getPersistentIdentifierSecret(
   };
   const secret = await keyManager.getOrCreateSecretRpc(secretRef);
   return typeof secret?.active?.value === 'string' ? secret.active.value : null;
-}
-
-function isComputedAlgorithm(value: string): value is PersistentIdentifierAlgorithm {
-  return value === 'authrim_sha256_base64url' || value === 'shibboleth_sha1_base64';
-}
-
-function isAudienceMode(value: string | null): value is PersistentIdentifierAudienceMode {
-  return value === 'runtime' || value === 'saml_sp_entity_id' || value === 'oidc_sector_identifier';
 }
 
 /** Which claims have a value and which an empty one (null, '' or []); never the value. */
@@ -995,6 +968,8 @@ export class OIDCIdentityMappingRuntimeError extends Error {
       fieldMappingSetId?: string;
       fieldMappingVersionId?: string;
       clientId?: string;
+      /** The cause is a fault of the infrastructure (a salt, key or lookup), not of the mapping. */
+      infrastructure?: boolean;
     }
   ) {
     super(message);

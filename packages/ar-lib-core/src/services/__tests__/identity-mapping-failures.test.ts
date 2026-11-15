@@ -172,8 +172,6 @@ describe('atomic failure aggregation', () => {
     'policy.invalid_destination_profile_binding',
     'policy.identity_mapping_failed',
     'policy.missing_destination_subject',
-    'policy.persistent_identifier_profile_not_found',
-    'policy.persistent_identifier_profile_unsupported_mode',
     'policy.persistent_identifier_secret_missing',
     'policy.identity_mapping_reserved_subject',
     'policy.missing_identity_mapping_binding',

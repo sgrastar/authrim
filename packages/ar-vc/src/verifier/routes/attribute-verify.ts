@@ -25,6 +25,8 @@ import {
   getTenantIdFromContext,
   resolveAuthCorePersistenceAdapterFromEnv,
   introspectTokenFromContext,
+  introspectedTokenClient,
+  resolveIntrospectedAccountUserId,
   requireDedicatedAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
   executeServerFlow,
@@ -728,7 +730,8 @@ export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Resp
     );
 
     return c.json({
-      user_id: userInfo.userId,
+      // The sub the token carries (the one the app was given), never the account's internal id.
+      user_id: userInfo.presentedSub,
       attributes,
     });
   } catch (error) {
@@ -754,22 +757,33 @@ export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Resp
 async function validateAccessToken(
   c: Context<{ Bindings: Env }>,
   forceOnlineCheck = false
-): Promise<{ userId: string; tenantId: string } | null> {
+): Promise<{ userId: string; presentedSub: string; tenantId: string } | null> {
   try {
     if (!forceOnlineCheck) {
       const protectedContext = getActiveAccessTokenProtectedResourceContext(c);
       if (protectedContext) {
-        return { userId: protectedContext.subject, tenantId: protectedContext.tenantId };
+        const presented = protectedContext.claims.sub;
+        return {
+          userId: protectedContext.subject,
+          presentedSub: typeof presented === 'string' ? presented : protectedContext.subject,
+          tenantId: protectedContext.tenantId,
+        };
       }
     }
-    const result = await introspectTokenFromContext(
-      c as unknown as Parameters<typeof introspectTokenFromContext>[0]
-    );
+    const introspectionContext = c as unknown as Parameters<typeof introspectTokenFromContext>[0];
+    const result = await introspectTokenFromContext(introspectionContext, {
+      allowSubjectReference: true,
+    });
     if (!result.valid || !result.claims) {
       return null;
     }
     const payload = result.claims as Record<string, unknown>;
-    const subject = typeof payload.sub === 'string' ? payload.sub : '';
+    // The account the token is for: opened from the reference of a pairwise app's token.
+    const subject =
+      resolveIntrospectedAccountUserId(
+        result,
+        await introspectedTokenClient(introspectionContext, result)
+      ) ?? '';
     const tenantId = typeof payload.tenant_id === 'string' ? payload.tenant_id : '';
     if (!subject || tenantId !== getTenantIdFromContext(c)) return null;
     const expectedAudience =
@@ -778,7 +792,7 @@ async function validateAccessToken(
     if (!audiences.includes(expectedAudience)) return null;
     const scopes = typeof payload.scope === 'string' ? payload.scope.split(/\s+/u) : [];
     if (!scopes.includes('vc.attribute')) return null;
-    return { userId: subject, tenantId };
+    return { userId: subject, presentedSub: String(payload.sub), tenantId };
   } catch (e) {
     standaloneLog.error('Access token validation failed', {}, e as Error);
     return null;

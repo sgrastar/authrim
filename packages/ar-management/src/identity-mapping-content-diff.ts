@@ -182,14 +182,12 @@ export function claimShapes(
       a.edgeIndex - b.edgeIndex ||
       a.ruleIndex - b.ruleIndex
   );
-  // Where each edge is among its claim's edges, so a step is told by the edge it is on.
-  const placeOf = new Map<unknown, { key: string; place: number }>();
-  for (const { edge } of edges) {
-    const claim = mappingReferencePath(edge.targetRef);
-    if (!claim) continue;
-    const namespace = namespaceOf(edge.targetRef);
+  const shapeFor = (targetRef: Record<string, unknown>) => {
+    const claim = mappingReferencePath(targetRef);
+    if (!claim) return null;
+    const namespace = namespaceOf(targetRef);
     const key = claimKey(namespace, claim);
-    const profile = mappingReferenceProfileId(edge.targetRef);
+    const profile = mappingReferenceProfileId(targetRef);
     let shape = shapes.get(key);
     if (!shape) {
       shape = {
@@ -203,6 +201,14 @@ export function claimShapes(
       };
       shapes.set(key, shape);
     }
+    return { key, shape };
+  };
+  // Where each edge is among its claim's edges, so a step is told by the edge it is on.
+  const placeOf = new Map<unknown, { key: string; place: number }>();
+  for (const { edge } of edges) {
+    const found = shapeFor(edge.targetRef);
+    if (!found) continue;
+    const { key, shape } = found;
     const source = sourceKey(edge.sourceRef, catalog);
     if (source) shape.sources.add(source);
     placeOf.set(edge, { key, place: shape.order.length });
@@ -222,6 +228,15 @@ export function claimShapes(
       a.ruleIndex - b.ruleIndex
   );
   for (const { rule, step } of steps) {
+    // A step with no input edge (a persistent identifier) fills the claim it names itself: the
+    // claim has no source, and the step's settings are what changes.
+    if (step.targetRef) {
+      const own = shapeFor(step.targetRef);
+      own?.shape.transforms.push(
+        stable({ at: -1, operation: step.operation, parameters: step.parameters ?? {} })
+      );
+      continue;
+    }
     const edge = step.edgeIndex === undefined ? undefined : (rule.edges ?? [])[step.edgeIndex];
     const at = edge ? placeOf.get(edge) : undefined;
     if (!at) continue;

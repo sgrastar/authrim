@@ -7,7 +7,6 @@ import {
   buildSAMLPairwiseSecretRef,
   buildSAMLPairwiseSectorIdentifier,
   createSAMLSessionIndex,
-  resolveSAMLEduPersonTargetedIDOpaque,
   resolveSAMLNameIDFormat,
   resolveSAMLNameIDValue,
   resolveSAMLPairwiseSalt,
@@ -69,19 +68,6 @@ describe('resolveSAMLNameIDValue', () => {
         attribute_present: false,
       },
     });
-  });
-
-  it('generates eduPersonTargetedID opaque values without an email address', async () => {
-    await expect(
-      resolveSAMLEduPersonTargetedIDOpaque(
-        { id: 'user-without-email' },
-        {
-          tenantId: 'tenant-a',
-          spEntityId: 'https://sp.example.com/saml',
-          pairwiseSalt: 'test-pairwise-salt',
-        }
-      )
-    ).resolves.toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
   it('changes persistent NameID across tenants and SPs', async () => {

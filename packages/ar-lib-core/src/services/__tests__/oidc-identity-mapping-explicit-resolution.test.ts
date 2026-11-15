@@ -117,6 +117,13 @@ function adminDatabase(): DatabaseAdapter {
         },
       ];
     }
+    // The transform steps' query also joins the edges, but it has no steps to answer with. (An
+    // edge row answered as a step has no operation, which fails the mapping.)
+    if (
+      sql.includes('FROM mapping_transform_steps') ||
+      sql.includes('JOIN mapping_transform_steps')
+    )
+      return [];
     if (sql.includes('JOIN mapping_rule_edges')) {
       return [
         {
@@ -262,6 +269,7 @@ function apply(
   core = coreDatabase().adapter
 ) {
   return applyOIDCIdentityMapping({
+    subjectType: 'public',
     adapter: core,
     env,
     tenantId: 'tenant-a',

@@ -107,6 +107,8 @@ const MINIMUM_COLUMNS = {
     'step_order',
     'operation',
     'parameters_json',
+    // The step's own output target (a step with no input edge); null for a backup made before it.
+    'target_ref_json',
   ],
   mapping_validation_rules: [
     'id',

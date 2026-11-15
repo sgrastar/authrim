@@ -993,6 +993,106 @@ describe('pairwise subject reference', () => {
     }
   );
 
+  it('finds the family of a refresh token by the account its reference opens, not by its sub', async () => {
+    mocks.getRefreshToken.mockResolvedValue({
+      sub: 'user-1',
+      client_id: 'client-a',
+      family_consent_generation: 0,
+      family_created_at: Date.now(),
+    });
+    const { body } = await introspectToken(
+      refreshTokenPayload({
+        sub: 'pairwise-abc',
+        authrim_subject_ref: await sealedFor('client-a'),
+      }),
+      { token_type_hint: 'refresh_token' },
+      { OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY }
+    );
+    expect(body).toMatchObject({ active: true, sub: 'pairwise-abc' });
+    expect(mocks.getRefreshToken).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-1',
+      1,
+      'client-a',
+      'rt-jti-1',
+      'tenant-a'
+    );
+    expect(JSON.stringify(body)).not.toContain('user-1');
+  });
+
+  it('answers inactive for a refresh token whose reference does not open, without reading the family', async () => {
+    const { body } = await introspectToken(
+      refreshTokenPayload({
+        sub: 'pairwise-abc',
+        authrim_subject_ref: await sealedFor('client-b'),
+      }),
+      { token_type_hint: 'refresh_token' },
+      { OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY }
+    );
+    expect(body).toEqual({ active: false });
+    expect(mocks.getRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['access', accessTokenPayload],
+    ['refresh', refreshTokenPayload],
+    // An older token has no token_use: its shape alone says what it is.
+    [
+      'legacy access',
+      (o: Record<string, unknown>) => accessTokenPayload({ ...o, token_use: undefined }),
+    ],
+    [
+      'legacy refresh',
+      (o: Record<string, unknown>) => refreshTokenPayload({ ...o, token_use: undefined }),
+    ],
+  ])(
+    'answers inactive for a pairwise app’s %s token that carries no reference',
+    async (_use, make) => {
+      metadataDb.clients.set('client-a', {
+        client_id: 'client-a',
+        client_secret_hash: 'hash_secret-a',
+        subject_type: 'pairwise',
+      });
+      mocks.getRefreshToken.mockResolvedValue({ sub: 'user-1', client_id: 'client-a' });
+      const { body } = await introspectToken(make({ sub: 'user-1' }), {});
+      expect(body).toEqual({ active: false });
+    }
+  );
+
+  it('answers inactive for a reference-less user token whose issuing client no longer exists', async () => {
+    // The issuer was deleted (it may have been pairwise): another resource server must not be
+    // handed the internal user id as the sub.
+    metadataDb.clients.set('client-rs', {
+      client_id: 'client-rs',
+      client_secret_hash: 'hash_secret-rs',
+    });
+    metadataDb.clients.delete('client-a');
+    const { body } = await introspectToken(
+      accessTokenPayload({ sub: 'user-1', aud: 'client-rs' }),
+      {
+        client_id: 'client-rs',
+        client_secret: 'secret-rs',
+      }
+    );
+    expect(body).toEqual({ active: false });
+  });
+
+  it('keeps the recorded sub when a mapping of the response would give another', async () => {
+    mocks.requireDedicatedAdminDatabaseAdapter.mockReturnValue({});
+    mocks.applyIntrospectionIdentityMapping.mockImplementation(
+      async (input: { claims: Record<string, unknown> }) => ({
+        active: true,
+        sub: `${String(input.claims.sub)}-moved`,
+      })
+    );
+    const { body } = await introspectToken(
+      accessTokenPayload({ sub: 'pairwise-abc', authrim_subject_ref: await sealedFor('client-a') }),
+      {},
+      { OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY }
+    );
+    expect(body).toMatchObject({ active: true, sub: 'pairwise-abc' });
+  });
+
   it('answers inactive for a reference sealed for another client', async () => {
     const { body } = await introspectToken(
       accessTokenPayload({ sub: 'pairwise-abc', authrim_subject_ref: await sealedFor('client-b') }),

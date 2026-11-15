@@ -23,19 +23,16 @@ import type {
 } from '@authrim/ar-lib-core';
 import {
   generateSecureRandomString,
-  validateExternalUrl,
   createAuthContextFromHono,
   createErrorResponse,
   createCompatibilityErrorResponse,
   AR_ERROR_CODES,
   getLogger,
-  createLogger,
   type Logger,
   // Custom Redirect URIs (Authrim Extension)
   validateAllowedOrigins,
   // Simple Logout Webhook (Authrim Extension)
   validateWebhookUrl,
-  safeFetchJson,
   encryptValue,
   // RFC 7592: Token hashing for registration_access_token
   arrayBufferToBase64Url,
@@ -63,6 +60,7 @@ import {
   isOIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { readIDTokenSigningPolicy } from './id-token-signing-policy';
+import { validatePairwiseClientMetadata } from './pairwise-client-validation';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 import {
   ensureActiveTenantDiscoveryAliasDirectory,
@@ -117,72 +115,6 @@ function formatOutboundCallbackUriError(fieldName: string, error?: string): stri
     return `Invalid ${fieldName}`;
   }
   return `${fieldName} cannot point to internal addresses`;
-}
-
-/**
- * Validate sector_identifier_uri content (OIDC Core 8.1)
- * Fetches the URI and verifies that all redirect_uris are included in the returned JSON array
- */
-async function validateSectorIdentifierContent(
-  sectorUri: string,
-  redirectUris: string[]
-): Promise<{ valid: boolean; error?: OAuthErrorResponse }> {
-  try {
-    // SSRF protection: Validate URL before fetching
-    const ssrfError = validateExternalUrl(sectorUri, {
-      requireHttps: true,
-      allowLocalhost: false,
-      errorType: 'invalid_client_metadata',
-      fieldName: 'sector_identifier_uri',
-    });
-    if (ssrfError) {
-      return { valid: false, error: ssrfError };
-    }
-
-    const content = await safeFetchJson<unknown>(sectorUri, {
-      headers: {
-        Accept: 'application/json',
-      },
-      timeoutMs: 5000,
-      maxResponseSize: 64 * 1024,
-    });
-
-    if (!Array.isArray(content)) {
-      return {
-        valid: false,
-        error: {
-          error: 'invalid_client_metadata',
-          error_description: 'sector_identifier_uri must return a JSON array of redirect_uris',
-        },
-      };
-    }
-
-    // Verify all redirect_uris are included in the sector_identifier_uri content
-    for (const uri of redirectUris) {
-      if (!content.includes(uri)) {
-        // SECURITY: Do not expose which redirect_uri failed to prevent enumeration
-        return {
-          valid: false,
-          error: {
-            error: 'invalid_client_metadata',
-            error_description: 'One or more redirect_uris are not valid for sector_identifier_uri',
-          },
-        };
-      }
-    }
-
-    return { valid: true };
-  } catch (error) {
-    const log = createLogger().module('DCR');
-    log.error('sector_identifier_uri validation error', { sectorUri }, error as Error);
-    return {
-      valid: false,
-      error: {
-        error: 'invalid_client_metadata',
-        error_description: 'Failed to validate sector_identifier_uri content',
-      },
-    };
-  }
 }
 
 /**
@@ -1744,39 +1676,15 @@ async function handleRegistration(
       );
     }
 
-    // OIDC Core 8.1: Validate pairwise subject type configuration
-    // If pairwise subject type is used with multiple redirect URIs that have different hosts,
-    // a sector_identifier_uri MUST be provided
+    // OIDC Core 8.1: a pairwise client needs one sector (one redirect host, or a sector_identifier_uri
+    // that lists all its redirect URIs).
     const subjectType = request.subject_type || 'public'; // Default to 'public'
-    if (subjectType === 'pairwise' && request.redirect_uris.length > 1) {
-      // Import pairwise utilities dynamically (to avoid circular dependencies)
-      const { validateSectorIdentifierConsistency } =
-        await import('@authrim/ar-lib-core/utils/pairwise');
-
-      const hasSameSector = validateSectorIdentifierConsistency(request.redirect_uris);
-      if (!hasSameSector && !request.sector_identifier_uri) {
-        return c.json(
-          {
-            error: 'invalid_client_metadata',
-            error_description:
-              'sector_identifier_uri is required when using pairwise subject type with multiple redirect URIs from different hosts',
-          },
-          400
-        );
-      }
-    }
-
-    // OIDC Core 8.1: Validate sector_identifier_uri content
-    // Fetch the URI and verify that all redirect_uris are included
-    if (request.sector_identifier_uri) {
-      const sectorValidation = await validateSectorIdentifierContent(
-        request.sector_identifier_uri,
-        request.redirect_uris
-      );
-      if (!sectorValidation.valid) {
-        return c.json(sectorValidation.error, 400);
-      }
-    }
+    const pairwiseError = await validatePairwiseClientMetadata({
+      subjectType,
+      redirectUris: request.redirect_uris,
+      sectorIdentifierUri: request.sector_identifier_uri,
+    });
+    if (pairwiseError) return c.json(pairwiseError, 400);
 
     // ==========================================================================
     // RFC 7591: software_id Duplicate Check

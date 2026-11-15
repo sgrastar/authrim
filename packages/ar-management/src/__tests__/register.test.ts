@@ -188,6 +188,49 @@ describe('Dynamic Client Registration Handler', () => {
     mockEnv.CLIENTS_CACHE = createMockKV();
   });
 
+  describe('pairwise subject type (OIDC Core 8.1)', () => {
+    const register = (body: Record<string, unknown>) =>
+      app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        mockEnv
+      );
+
+    it.each([
+      [
+        'redirect URIs on several hosts without a sector_identifier_uri',
+        {
+          redirect_uris: ['https://a.example/cb', 'https://b.example/cb'],
+          subject_type: 'pairwise',
+        },
+      ],
+      [
+        'a sector_identifier_uri that is not HTTPS',
+        {
+          redirect_uris: ['https://a.example/cb'],
+          subject_type: 'pairwise',
+          sector_identifier_uri: 'http://a.example/sector.json',
+        },
+      ],
+    ])('rejects %s', async (_name, body) => {
+      const res = await register(body);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: 'invalid_client_metadata' });
+    });
+
+    it('does not count the port as another host', async () => {
+      const res = await register({
+        redirect_uris: ['https://a.example/cb', 'https://a.example:8443/cb'],
+        subject_type: 'pairwise',
+      });
+      expect(res.status).toBe(201);
+    });
+  });
+
   describe('Successful Registration', () => {
     it('does not create a browser test user for certification client credentials registration', async () => {
       const syncUser = vi.spyOn(CanonicalRuntimeUserStore.prototype, 'syncUser');

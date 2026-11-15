@@ -92,25 +92,15 @@ describe('findPlatformMappingVersionViolation', () => {
   it('refuses persistent identifiers however they are asked for', () => {
     const plain = { sourceRef: source(), targetRef: destination() };
     for (const transform of [
-      { operation: 'oidc_pairwise_sub' },
-      { operation: 'saml_edu_person_targeted_id' },
       {
         operation: 'persistent_identifier',
         parameters: { format: 'plain', algorithm: 'authrim_sha256' },
       },
-      { operation: 'copy', parameters: { persistentIdentifierProfileId: 'pip-1' } },
     ]) {
       expect(
         findPlatformMappingVersionViolation([rule(plain, { transforms: [transform] })])
       ).toMatch(/persistent identifier/);
     }
-    expect(
-      findPlatformMappingVersionViolation([
-        rule(plain, {
-          transforms: [{ operation: 'trim', parameters: { persistentIdentifierProfileId: ' ' } }],
-        }),
-      ])
-    ).toBeNull();
   });
 
   it('refuses a source profile', () => {
@@ -348,7 +338,7 @@ describe('findPlatformMappingCompileViolation', () => {
   it('refuses again what the save-time check refuses', () => {
     expect(
       findPlatformMappingCompileViolation(
-        mapping({ transforms: [{ operation: 'oidc_pairwise_sub', parameters: {} }] }),
+        mapping({ transforms: [{ operation: 'persistent_identifier', parameters: {} }] }),
         [entry()]
       )
     ).toMatch(/persistent identifier/);

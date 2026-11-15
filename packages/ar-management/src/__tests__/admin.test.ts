@@ -6206,6 +6206,65 @@ describe('Admin API Handlers', () => {
     });
   });
 
+  describe('pairwise clients (OIDC Core 8.1)', () => {
+    it.each([
+      [
+        'redirect URIs on several hosts without a sector_identifier_uri',
+        {
+          subject_type: 'pairwise',
+          redirect_uris: ['https://a.example/cb', 'https://b.example/cb'],
+        },
+      ],
+      [
+        'a sector_identifier_uri that is not HTTPS',
+        {
+          subject_type: 'pairwise',
+          redirect_uris: ['https://a.example/cb'],
+          sector_identifier_uri: 'http://a.example/sector.json',
+        },
+      ],
+    ])('is refused on create with %s', async (_name, extra) => {
+      const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });
+      const c = createMockContext({
+        method: 'POST',
+        body: { client_name: 'Pairwise Client', ...extra },
+        db: mockDB,
+      }) as never;
+      const response = await adminClientCreateHandler(c);
+      expect(response.status).toBe(400);
+      expect(mockDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('INSERT'));
+    });
+
+    it.each([
+      [
+        'a change to pairwise on several hosts',
+        {
+          subject_type: 'pairwise',
+          redirect_uris: ['https://a.example/cb', 'https://b.example/cb'],
+        },
+      ],
+      [
+        'a sector_identifier_uri that is not HTTPS',
+        { subject_type: 'pairwise', sector_identifier_uri: 'http://a.example/sector.json' },
+      ],
+      ['an unknown subject_type', { subject_type: 'ephemeral' }],
+    ])('is refused on update with %s', async (_name, body) => {
+      const updateDB = createMockDB({
+        firstResult: createOAuthClientRow('pairwise-client'),
+        runResult: { success: true, meta: { changes: 1 } },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'pairwise-client' },
+        body,
+        db: updateDB,
+      }) as never;
+      const response = await adminClientUpdateHandler(c);
+      expect(response.status).toBe(400);
+      expect(updateDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
+    });
+  });
+
   describe('adminClientCreateHandler', () => {
     it('should require redirect_uris', async () => {
       const mockDB = createMockDB({});

@@ -814,10 +814,10 @@ describe('findMappingVersionSwapViolation', () => {
       snapshot: { ...snapshot, catalogVersionId: 'catalog-plat' },
     };
     expect(await check(platform, asPlatform)).toBeNull();
-    platform.exec("UPDATE mapping_transform_steps SET operation = 'oidc_pairwise_sub'");
+    platform.exec("UPDATE mapping_transform_steps SET operation = 'persistent_identifier'");
     expect(await check(platform, asPlatform)).toMatchObject({ code: 'platform_set_unsafe' });
     const tenant = seeded();
-    tenant.exec("UPDATE mapping_transform_steps SET operation = 'oidc_pairwise_sub'");
+    tenant.exec("UPDATE mapping_transform_steps SET operation = 'persistent_identifier'");
     expect(await check(tenant)).toBeNull();
   });
 

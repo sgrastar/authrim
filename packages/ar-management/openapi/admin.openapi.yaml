@@ -13906,10 +13906,16 @@ paths:
       description: >-
         Imports identifiers people already have at another identity provider, for
         persistent_identifier steps with `stored` (prefer or require). The CSV header is
-        `audience,source_value,identifier`; at most 5000 rows and 2 MiB. The source value is kept
-        only as its SHA-256. All rows are written or none: another identifier for a person already
-        in the store needs replace=true, and an identifier that belongs to someone else for the
-        same audience refuses the import (409). Nothing imported is echoed back.
+        `audience,account,identifier`; at most 5000 rows and 2 MiB. `account` is the Authrim
+        account's ID as the Admin API shows it (`id`); the account must exist in the tenant, and the
+        identifier is bound to it. No cell may hold a control character or begin or end with
+        whitespace; the identifier holds no whitespace at all. Rows with errors (an unknown account,
+        a bad cell) are reported as `row_errors` (row, column, code; never a value) and nothing is
+        written. All rows are written or none: another identifier for an account already in the
+        store needs replace=true, and an identifier that belongs to another account for the same
+        audience refuses the import (409). An identifier that was given to an account and then replaced
+        or erased with it stays reserved (kept only as an HMAC) and is refused as `value_retired`.
+        Nothing imported is echoed back. Rows are erased with the account.
       parameters:
         - name: name
           in: path
@@ -13960,186 +13966,221 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/persistent-identifier-profiles:
+  /api/admin/field-mapping/identifier-sources:
     get:
       tags:
         - Field Mapping
-      operationId: getApiAdminFieldMappingPersistentIdentifierProfiles
-      summary: List persistent identifier profiles.
+      operationId: getApiAdminFieldMappingIdentifierSources
+      summary: List identifier sources.
       description: >-
-        Lists persistent identifier profiles for the tenant, including algorithm, protocol scope,
-        audience handling, lifecycle state, and timestamps.
+        Lists the identifier sources (values imported for accounts that persistent_identifier steps
+        with `input: source` make their identifiers from), with how many values each holds. No
+        value is returned.
       responses:
         '200':
-          $ref: '#/components/responses/PersistentIdentifierProfileList'
+          description: Identifier sources.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, count, updatedAt]
+                      properties:
+                        name:
+                          type: string
+                        count:
+                          type: integer
+                        updatedAt:
+                          type: integer
         '400':
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/field-mapping/identifier-sources/{name}/import':
     post:
       tags:
         - Field Mapping
-      operationId: postApiAdminFieldMappingPersistentIdentifierProfiles
-      summary: Create a persistent identifier profile.
+      operationId: postApiAdminFieldMappingIdentifierSourcesByNameImport
+      summary: Import values into an identifier source.
       description: >-
-        Creates a persistent identifier profile used to derive SAML NameID values, OIDC pairwise
-        subjects, or generic opaque identifiers. The response is wrapped as { result }.
-      responses:
-        '200':
-          $ref: '#/components/responses/PersistentIdentifierProfileMutation'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/PersistentIdentifierProfileUpsert'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/field-mapping/persistent-identifier-profiles/{profileId}':
-    delete:
-      tags:
-        - Field Mapping
-      operationId: deleteApiAdminFieldMappingPersistentIdentifierProfilesByProfileId
-      summary: Delete a persistent identifier profile.
-      description: >-
-        Deletes the selected persistent identifier profile for the tenant and returns { result: {
-        deleted, id } }. The implementation validates tenant ownership before deleting.
-      responses:
-        '200':
-          $ref: '#/components/responses/PersistentIdentifierProfileDelete'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
+        Imports the values a persistent_identifier step with `input: source` makes its identifier
+        from (an employee number, a student ID, an old user name). Not a profile attribute: only
+        this import writes one. The CSV header is `account,value`; at most 5000 rows and 2 MiB.
+        `account` is the Authrim account's ID as the Admin API shows it (`id`) and must exist in
+        the tenant; `value` is plain text. No cell may hold a control character or begin or end
+        with whitespace. Rows with errors (an unknown account, a bad cell, two values for one
+        account or one value for two accounts in the file) are reported as `row_errors` (row,
+        column, code; never a value) and nothing is written. All rows are written or none: another
+        value for an account already in the source needs replace=true, and a value another account
+        holds refuses the import (409). A value that was given to an account and then replaced or
+        erased with it stays reserved (kept only as an HMAC) and is refused as `value_retired`. An
+        account deleted during the import loses what it was given, and its rows are reported as
+        `unknown_account` (400). Nothing imported is echoed back and the audit log holds counts
+        only. Values are erased with the account.
       parameters:
-        - name: profileId
+        - name: name
           in: path
           required: true
+          description: The source persistent_identifier steps refer to (`source`).
           schema:
             type: string
+            pattern: '^[a-z0-9][a-z0-9_-]{0,62}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csv]
+              additionalProperties: false
+              properties:
+                csv:
+                  type: string
+                  minLength: 1
+                replace:
+                  type: boolean
+      responses:
+        '200':
+          description: The values were imported.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [source, created, replaced, unchanged]
+                properties:
+                  source:
+                    type: string
+                  created:
+                    type: integer
+                  replaced:
+                    type: integer
+                  unchanged:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/field-mapping/identifier-exceptions:
     get:
       tags:
         - Field Mapping
-      operationId: getApiAdminFieldMappingPersistentIdentifierProfilesByProfileId
-      summary: Get a persistent identifier profile.
+      operationId: getApiAdminFieldMappingIdentifierExceptions
+      summary: List identifier exception lists.
       description: >-
-        Fetches one persistent identifier profile by id for the current tenant and returns it as {
-        result }. A missing profile is reported by the control-plane error response.
+        Lists the lists of exceptions (per account and recipient: another imported salt, or no
+        identifier at all) that persistent_identifier steps read through their `exceptions`
+        parameter, with how many entries each holds. No account or salt is returned.
       responses:
         '200':
-          $ref: '#/components/responses/PersistentIdentifierProfileResult'
+          description: Identifier exception lists.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lists]
+                properties:
+                  lists:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, count, updatedAt]
+                      properties:
+                        name:
+                          type: string
+                        count:
+                          type: integer
+                        updatedAt:
+                          type: integer
         '400':
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: profileId
-          in: path
-          required: true
-          schema:
-            type: string
       security:
         - adminBearer: []
         - adminSessionCookie: []
-    put:
-      tags:
-        - Field Mapping
-      operationId: putApiAdminFieldMappingPersistentIdentifierProfilesByProfileId
-      summary: Replace a persistent identifier profile.
-      description: >-
-        Replaces mutable persistent identifier profile settings for the selected profile id. The
-        response returns the updated profile in a result envelope.
-      responses:
-        '200':
-          $ref: '#/components/responses/PersistentIdentifierProfileMutation'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: profileId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: '#/components/requestBodies/PersistentIdentifierProfileUpsert'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/field-mapping/persistent-identifier-profiles/preview:
+  '/api/admin/field-mapping/identifier-exceptions/{name}/import':
     post:
       tags:
         - Field Mapping
-      operationId: postApiAdminFieldMappingPersistentIdentifierProfilesPreview
-      summary: Preview a persistent identifier value.
+      operationId: postApiAdminFieldMappingIdentifierExceptionsByNameImport
+      summary: Replace an identifier exception list.
       description: >-
-        Computes a non-persisted preview for a persistent identifier profile, subject, and audience.
-        The response includes protocol-specific values and whether secret material was included.
+        Replaces the whole list a persistent_identifier step reads through `exceptions`, as
+        Shibboleth's exception map is read: the account's own entry (else the `*` account's), and
+        inside it the recipient's own entry (else the `*` recipient's); an entry that matches
+        neither leaves the default salt, and the `*` account's entries are then not consulted. The
+        CSV header is `account,audience,action,salt`; at most 5000 rows and 2 MiB. `account` is
+        the Authrim account's ID (`id`), which must exist in the tenant, or `*`; `audience` is the
+        recipient (the OIDC sector, or the SAML SP's entity ID) or `*`; `action` is `salt` (then
+        `salt` names a salt imported with identifier-salts, which must exist) or `block` (then
+        `salt` is empty: no identifier is made, and a required target fails). One entry per
+        account and audience. Rows with errors are reported as `row_errors` (row, column, code;
+        never a value) and nothing is written. The list is replaced all at once or not at all. An
+        account's entries are erased with the account. The audit log holds counts only.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The list persistent_identifier steps refer to (`exceptions`).
+          schema:
+            type: string
+            pattern: '^[a-z0-9][a-z0-9_-]{0,62}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csv]
+              additionalProperties: false
+              properties:
+                csv:
+                  type: string
+                  minLength: 1
       responses:
         '200':
-          $ref: '#/components/responses/PersistentIdentifierPreview'
+          description: The list was replaced.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [list, rows, salts, blocks]
+                properties:
+                  list:
+                    type: string
+                  rows:
+                    type: integer
+                  salts:
+                    type: integer
+                  blocks:
+                    type: integer
         '400':
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/PersistentIdentifierPreviewRequest'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -42204,7 +42245,7 @@ components:
           example:
             keyPurpose: persistent_identifier
             scope:
-              profileId: persistent_identifier_profile_123
+              profileId: key_scope_123
             algorithm: HKDF-SHA256
             backendType: key_manager
             materialRef: 'tenant:default:saml:pairwise-nameid'
@@ -42263,28 +42304,6 @@ components:
             $ref: '#/components/schemas/FieldMappingOperationalNotificationTransitionRequest'
           example:
             assignedTo: admin@example.com
-    PersistentIdentifierProfileUpsert:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/PersistentIdentifierProfileUpsertRequest'
-          example:
-            profileKey: saml-persistent-id
-            displayName: SAML persistent NameID
-            protocolScope: saml
-            algorithm: shibboleth_sha1_base64
-            audienceMode: saml_sp_entity_id
-    PersistentIdentifierPreviewRequest:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/PersistentIdentifierPreviewRequest'
-          example:
-            profileId: persistent_identifier_profile_123
-            subject: subject_123
-            audience: 'https://sp.example.com/metadata'
     FieldMappingCsvPreviewRequest:
       required: true
       content:
@@ -45647,36 +45666,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/FieldMappingOperationalNotificationTransitionResponse'
-    PersistentIdentifierProfileList:
-      description: Persistent identifier profile list response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/PersistentIdentifierProfileListResponse'
-    PersistentIdentifierProfileResult:
-      description: Persistent identifier profile detail response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/PersistentIdentifierProfileResultResponse'
-    PersistentIdentifierProfileMutation:
-      description: Persistent identifier profile mutation response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/PersistentIdentifierProfileMutationResponse'
-    PersistentIdentifierProfileDelete:
-      description: Persistent identifier profile delete response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/PersistentIdentifierProfileDeleteResponse'
-    PersistentIdentifierPreview:
-      description: Persistent identifier preview response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/PersistentIdentifierPreviewResponse'
     FieldMappingCsvPreview:
       description: CSV field mapping preview response.
       content:
@@ -55551,8 +55540,12 @@ components:
           enum:
             - public
             - pairwise
+          description: A pairwise client always receives a pairwise sub (OIDC Core 8.1). Its redirect URIs must share one host (the port is not part of it) unless sector_identifier_uri names the sector. Checked on create and update (a change of the redirect URIs re-checks it).
         sector_identifier_uri:
-          $ref: '#/components/schemas/UriString'
+          oneOf:
+            - $ref: '#/components/schemas/UriString'
+            - type: 'null'
+          description: HTTPS URL that lists every redirect URI of the client as a JSON array; fetched and checked when set, and again when the redirect URIs change. Null clears it.
         is_trusted:
           type: boolean
         skip_consent:
@@ -67173,7 +67166,8 @@ components:
           description: >-
             Rules with `ruleKey`, `ruleKind`, `action`, `priority`, `scope`, `condition`,
             `metadata`, `edges` (`sourceRef`, `targetRef`, `edgeKind`), `transforms` (`edgeIndex`,
-            `operation`, `parameters`), `validationRules`, `releaseRules` and `conflictRules`, as
+            `operation`, `parameters`; a `persistent_identifier` step takes no `edgeIndex` and names
+            where its value goes in `targetRef`), `validationRules`, `releaseRules` and `conflictRules`, as
             in `FieldMappingVersionCreateRequest`. The rules release into exactly one OIDC
             Destination Profile (named by `targetRef.profileId`).
           items:
@@ -68762,229 +68756,6 @@ components:
             state:
               type: string
             idempotent:
-              type: boolean
-    PersistentIdentifierProfileUpsertRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - displayName
-      properties:
-        profileKey:
-          type: string
-        displayName:
-          type: string
-        description:
-          type:
-            - string
-            - 'null'
-        mode:
-          type: string
-          enum:
-            - computed
-            - stored
-            - imported
-        algorithm:
-          type: string
-          enum:
-            - authrim_sha256_base64url
-            - shibboleth_sha1_base64
-            - stored
-            - imported
-        protocolScope:
-          type: string
-          enum:
-            - any
-            - saml
-            - oidc
-            - generic
-        usage:
-          type: array
-          items:
-            type: string
-        sourceRef:
-          type: object
-          additionalProperties: true
-        secretRef:
-          type: string
-        issuerEntityId:
-          type:
-            - string
-            - 'null'
-        audienceMode:
-          type: string
-          enum:
-            - runtime
-            - saml_sp_entity_id
-            - oidc_sector_identifier
-        format:
-          type: object
-          additionalProperties: true
-        lifecycleState:
-          type: string
-    PersistentIdentifierProfile:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - tenantId
-        - profileKey
-        - displayName
-        - mode
-        - algorithm
-        - protocolScope
-        - usage
-        - audienceMode
-        - format
-        - lifecycleState
-        - createdAt
-        - updatedAt
-      properties:
-        id:
-          type: string
-        tenantId:
-          type: string
-        profileKey:
-          type: string
-        displayName:
-          type: string
-        description:
-          type:
-            - string
-            - 'null'
-        mode:
-          type: string
-        algorithm:
-          type: string
-        protocolScope:
-          type: string
-        usage:
-          type: array
-          items:
-            type: string
-        sourceRef:
-          type:
-            - object
-            - 'null'
-          additionalProperties: true
-        secretRef:
-          type:
-            - string
-            - 'null'
-        issuerEntityId:
-          type:
-            - string
-            - 'null'
-        audienceMode:
-          type: string
-        format:
-          type: object
-          additionalProperties: true
-        lifecycleState:
-          type: string
-        createdAt:
-          type: integer
-        updatedAt:
-          type: integer
-    PersistentIdentifierProfileListResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - profiles
-      properties:
-        profiles:
-          type: array
-          items:
-            $ref: '#/components/schemas/PersistentIdentifierProfile'
-    PersistentIdentifierProfileResultResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - result
-      properties:
-        result:
-          $ref: '#/components/schemas/PersistentIdentifierProfile'
-    PersistentIdentifierProfileMutationResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - result
-      properties:
-        result:
-          $ref: '#/components/schemas/PersistentIdentifierProfile'
-    PersistentIdentifierProfileDeleteResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - result
-      properties:
-        result:
-          type: object
-          additionalProperties: false
-          required:
-            - deleted
-            - id
-          properties:
-            deleted:
-              type: boolean
-            id:
-              type: string
-    PersistentIdentifierPreviewRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - profileId
-        - subject
-        - audience
-      properties:
-        profileId:
-          type: string
-        subject:
-          type: string
-        audience:
-          type: string
-        issuerEntityId:
-          type: string
-    PersistentIdentifierPreviewResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - result
-      properties:
-        result:
-          type: object
-          additionalProperties: false
-          required:
-            - profileId
-            - algorithm
-            - subject
-            - audience
-            - opaque
-            - samlAttributeValue
-            - oidcPairwiseSub
-            - secretRef
-            - secretMaterialIncluded
-          properties:
-            profileId:
-              type: string
-            algorithm:
-              type: string
-            subject:
-              type: string
-            audience:
-              type: string
-            opaque:
-              type: string
-            samlAttributeValue:
-              type:
-                - string
-                - 'null'
-            oidcPairwiseSub:
-              type: string
-            secretRef:
-              type:
-                - string
-                - 'null'
-            secretMaterialIncluded:
               type: boolean
     FieldMappingCsvPreviewRequest:
       type: object

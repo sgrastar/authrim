@@ -30,6 +30,7 @@ export function openAdminDatabase(): SQLiteDatabase {
     '006_admin_notices.sql',
     '007_admin_notice_indexes.sql',
     '012_admin_groups.sql',
+    '021_mapping_transform_step_target.sql',
   ]) {
     db.exec(readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/admin/d1/'), file));
   }

@@ -407,6 +407,7 @@ export async function adminIdentityMappingExplainHandler(c: ExplainContext) {
         env: c.env,
         tenantId,
         clientId: request.clientId,
+        subjectType: client.subject_type ?? 'public',
         sectorIdentifier: client.sector_identifier_uri,
         redirectUris: client.redirect_uris,
         selector: client.identity_mapping,

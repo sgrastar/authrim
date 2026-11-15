@@ -152,9 +152,11 @@ export const REASON_REGISTRY: ReasonRegistryEntry[] = [
   {
     code: 'transform.unsupported_operation',
     category: 'transform',
-    severity: 'error',
+    // Critical: a step whose operation is not known (a removed one, a saved version from an older
+    // release) fails the whole mapping, so nothing is released as if it had run.
+    severity: 'critical',
     stability: 'stable',
-    description: 'Transform operation is not supported by PR1.',
+    description: 'Transform operation is not supported.',
   },
   {
     code: 'validation.cardinality_mismatch',

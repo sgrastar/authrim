@@ -629,6 +629,7 @@ describe('mapping selection history, restore and committed evidence', () => {
       const id = String(f.historyRows()[1].id);
       const issue = async (destinationNamespace?: string) =>
         applyOIDCIdentityMapping({
+          subjectType: 'public',
           adapter: f.coreAdapter,
           env: { DB_ADMIN: f.adapter } as unknown as Partial<Env>,
           tenantId: TENANT,

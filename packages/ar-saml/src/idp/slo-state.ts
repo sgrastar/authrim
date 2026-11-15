@@ -33,6 +33,8 @@ export type SAMLIdPLogoutFanoutTargetStatus =
 
 export interface SAMLIdPLogoutFanoutTargetRecord {
   spEntityId: string;
+  /** This SP's own session index: each sign-in gets its own, so the shared one cannot name it. */
+  sessionIndex?: string;
   status: SAMLIdPLogoutFanoutTargetStatus;
   requestId?: string;
   sentAt?: number;
@@ -185,6 +187,8 @@ export async function createSAMLIdPLogoutFanoutTransaction(
     targets: string[];
     transactionId?: string;
     sessionIndex?: string;
+    /** Each SP's own session index, by SP entity ID. */
+    targetSessionIndexes?: Readonly<Record<string, string>>;
     relayState?: string;
     ttlSeconds?: number;
   }
@@ -199,10 +203,10 @@ export async function createSAMLIdPLogoutFanoutTransaction(
     relayState: options.relayState,
     issuedAt,
     expiresAt: issuedAt + ttlSeconds * 1000,
-    targets: Array.from(new Set(options.targets)).map((spEntityId) => ({
-      spEntityId,
-      status: 'pending',
-    })),
+    targets: Array.from(new Set(options.targets)).map((spEntityId) => {
+      const sessionIndex = options.targetSessionIndexes?.[spEntityId];
+      return { spEntityId, ...(sessionIndex ? { sessionIndex } : {}), status: 'pending' as const };
+    }),
   };
 
   await putSAMLIdPLogoutFanoutTransaction(store, transaction);
@@ -513,6 +517,7 @@ function parseSAMLIdPLogoutFanoutTargetRecord(
 
   return {
     spEntityId: parsed.spEntityId,
+    ...(typeof parsed.sessionIndex === 'string' ? { sessionIndex: parsed.sessionIndex } : {}),
     status: parsed.status,
     requestId: typeof parsed.requestId === 'string' ? parsed.requestId : undefined,
     sentAt: typeof parsed.sentAt === 'number' ? parsed.sentAt : undefined,

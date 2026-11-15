@@ -310,6 +310,46 @@ describe('Batch Revocation Handler', () => {
     expect(json.summary!.revoked).toBe(0);
   });
 
+  it('finds the family of a refresh token without a hint by the account its sealed reference opens', async () => {
+    const { deleteRefreshToken, getRefreshToken, parseToken, sealSubjectReference } =
+      await import('@authrim/ar-lib-core');
+    const rootKey = 'ab'.repeat(32);
+    const reference = await sealSubjectReference(
+      { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+      { tenantId: 'default', clientId: 'test-client-id' },
+      'real-account-id'
+    );
+    (parseToken as Mock).mockReturnValue({
+      jti: 'refresh-jti',
+      client_id: 'test-client-id',
+      sub: 'sub-the-app-was-given',
+      authrim_subject_ref: reference,
+      token_use: 'refresh',
+      aud: 'test-audience',
+      rtv: 1,
+    });
+    (getRefreshToken as Mock).mockClear();
+    (deleteRefreshToken as Mock).mockClear();
+    (getRefreshToken as Mock).mockResolvedValue({ familyId: 'test-family' });
+
+    const res = await app.request(
+      '/revoke/batch',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Basic ' + btoa('test-client-id:test-secret'),
+        },
+        body: JSON.stringify({ tokens: [{ token: 'eyJhbGciOiJSUzI1NiJ9.refresh-token' }] }),
+      },
+      { ...mockEnv, OBJECT_ENCRYPTION_ROOT_KEY: rootKey }
+    );
+
+    expect(res.status).toBe(200);
+    expect((getRefreshToken as Mock).mock.calls[0]?.[1]).toBe('real-account-id');
+    expect(deleteRefreshToken).toHaveBeenCalled();
+  });
+
   it('should handle refresh token with cascade revocation', async () => {
     const { deleteRefreshToken, revokeToken, getRefreshToken, parseToken } =
       await import('@authrim/ar-lib-core');

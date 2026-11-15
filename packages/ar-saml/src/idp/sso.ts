@@ -43,7 +43,7 @@ import {
   inflateRedirectBindingMessage,
   parsePostBindingFormDataWithLimit,
 } from '../common/message-limits';
-import { NAMEID_FORMATS, SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
+import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS, NAMEID_FORMATS } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig } from '../admin/providers';
 import { getSamlUserInfoById, type SAMLUserInfo } from '../common/user-store';
@@ -559,7 +559,18 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
             failureKind
           )
         );
-      const nameIdFormat = resolveSAMLNameIDFormat(authnRequest, spConfig);
+      // An SP whose mapping makes its NameID is always given that one (persistent): the NameID
+      // policy cannot ask for another format (see resolveEffectiveSAMLNameIDFormat).
+      const mappedNameID = await resolveSAMLMappedNameID({
+        env,
+        tenantId,
+        idpEntityId,
+        spConfig,
+        userInfo,
+      });
+      const nameIdFormat = resolveSAMLNameIDFormat(authnRequest, spConfig, {
+        mappedNameID: Boolean(mappedNameID),
+      });
       const releaseInput = {
         env,
         tenantId,
@@ -680,7 +691,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
         userInfo,
         tenantId,
         authnInteraction.session,
-        { attributes: approved.attributes, nameIdFormat },
+        { attributes: approved.attributes, nameIdFormat, mappedNameID },
         log,
         authnAssurance.outcome === 'met' ? authnAssurance : undefined
       );
@@ -1205,8 +1216,15 @@ async function generateSAMLResponse(
   userInfo: SAMLUserInfo,
   tenantId: string,
   authSession: AuthenticatedSAMLSession,
-  /** The attributes approved for release, and the NameID format chosen for the request. */
-  release: { attributes: SAMLAttribute[]; nameIdFormat: NameIDFormat },
+  /**
+   * The attributes approved for release, the NameID format chosen for the request, and the
+   * NameID the SP's mapping makes (when it makes one).
+   */
+  release: {
+    attributes: SAMLAttribute[];
+    nameIdFormat: NameIDFormat;
+    mappedNameID?: Awaited<ReturnType<typeof resolveSAMLMappedNameID>>;
+  },
   log?: {
     debug(message: string, context?: Record<string, unknown>): void;
     error(message: string, context?: Record<string, unknown>, error?: Error): void;
@@ -1232,10 +1250,7 @@ async function generateSAMLResponse(
     tenantId,
     spEntityId: spConfig.entityId,
     // The NameID the SP's mapping makes, if it makes one (e.g. the one an earlier IdP issued).
-    mappedNameID:
-      nameIdFormat === NAMEID_FORMATS.PERSISTENT
-        ? await resolveSAMLMappedNameID({ env, tenantId, idpEntityId, spConfig, userInfo })
-        : undefined,
+    mappedNameID: release.mappedNameID,
     pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
     persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
     allowCreate: authnRequest.nameIdPolicy?.allowCreate ?? true,
@@ -1296,6 +1311,12 @@ async function generateSAMLResponse(
       spEntityId: spConfig.entityId,
       sessionId: authSession.sessionId,
       ttlSeconds: DEFAULTS.SESSION_VALIDITY_SECONDS,
+      nameId: {
+        format: nameIdFormat,
+        ...(nameIdFormat !== NAMEID_FORMATS.EMAIL && nameIdFormat !== NAMEID_FORMATS.UNSPECIFIED
+          ? { value: nameIdValue }
+          : {}),
+      },
     }),
     notBefore: timing.notBefore,
     notOnOrAfter: timing.notOnOrAfter,

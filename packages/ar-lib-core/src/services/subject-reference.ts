@@ -10,6 +10,7 @@
 
 import type { Env } from '../types/env';
 import { isNonAccountSubject } from '../utils/id';
+import { ACCESS_TOKEN_SUBJECT_ISSUER_CLAIM } from '../utils/jwt-bearer';
 import {
   ACCESS_TOKEN_CONSENT_GENERATION_CLAIM,
   accessTokenConsentGrant,
@@ -290,4 +291,60 @@ export function tokenNamesAccountSubject(payload: Record<string, unknown>): bool
     payload.sub.length > 0 &&
     !tokenNamesNonAccountPrincipal(payload)
   );
+}
+
+/**
+ * The account an access or refresh token this server issued to `clientId` is for, read only after
+ * the caller has verified its signature, issuer, audience and client. The sealed reference opens
+ * for (tenant, client); a token without one carries the user's id as its sub, except for a
+ * pairwise app (`requireReference`): its tokens always carry one, so one without is refused.
+ */
+export async function resolveIssuedTokenAccount(
+  env: SubjectReferenceEnv,
+  tenantId: string,
+  clientId: string,
+  payload: Record<string, unknown>,
+  requireReference: boolean
+): Promise<PresentedTokenAccount> {
+  const sub = payload.sub;
+  if (typeof sub !== 'string' || sub.length === 0) return { ok: false, reason: 'invalid' };
+  const reference = payload[SUBJECT_REFERENCE_CLAIM];
+  if (reference === undefined) {
+    if (requireReference) return { ok: false, reason: 'invalid' };
+    // An access or refresh token (a JWT ID, which no ID token has) names the account by its sub.
+    const isIssuedToken = typeof payload.jti === 'string' && payload.jti.length > 0;
+    return isIssuedToken || tokenSubjectAccountSource(payload) === 'sub'
+      ? { ok: true, userId: sub }
+      : { ok: false, reason: 'invalid' };
+  }
+  if (typeof reference !== 'string') return { ok: false, reason: 'invalid' };
+  try {
+    const opened = await openSubjectReference(env, { tenantId, clientId }, reference);
+    return opened ? { ok: true, userId: opened } : { ok: false, reason: 'invalid' };
+  } catch {
+    return { ok: false, reason: 'unavailable' };
+  }
+}
+
+/**
+ * Whether a token is a user's access or refresh token an app that is given pairwise subjects must
+ * not accept: it carries no sealed account reference, so its sub is the user's id (issued before
+ * tokens carried one). Client and admin principals, external subjects and elevation tokens have
+ * their own rules and are not refused here.
+ */
+export function pairwiseTokenLacksReference(
+  payload: Record<string, unknown>,
+  client: { subject_type?: string } | null | undefined
+): boolean {
+  if (client?.subject_type !== 'pairwise') return false;
+  if (payload[SUBJECT_REFERENCE_CLAIM] !== undefined) return false;
+  // An access or refresh token: a token_use, or (an older token) the JWT ID no ID token has.
+  const isIssuedToken =
+    typeof payload.token_use === 'string' ||
+    (typeof payload.jti === 'string' && payload.jti !== '');
+  if (!isIssuedToken) return false;
+  if (!tokenNamesAccountSubject(payload) || nonAccountPrincipalKind(payload) !== null) return false;
+  if (payload[ACCESS_TOKEN_SUBJECT_ISSUER_CLAIM] !== undefined) return false;
+  const elevation = payload.authrim_elevation;
+  return typeof elevation !== 'object' || elevation === null;
 }

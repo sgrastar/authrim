@@ -27,10 +27,16 @@ const adapter = {} as DatabaseAdapter;
 const adminAdapter = {
   query: vi.fn(async () => []),
   queryOne: vi.fn(),
+  execute: vi.fn(),
+  transaction: vi.fn(),
+  batch: vi.fn(),
+  isHealthy: vi.fn(),
+  getType: vi.fn(),
+  close: vi.fn(),
 } as unknown as DatabaseAdapter;
 const subRef = (side: 'source' | 'destination') => ({ side, namespace: 'oidc.claim', path: 'sub' });
 
-/** sub → (pairwise identifier) → sub, as the console saves "make a persistent identifier". */
+/** A persistent identifier written to sub, as the console saves "make a persistent identifier". */
 function binding(parameters: Record<string, unknown>) {
   return {
     id: 'binding-1',
@@ -52,12 +58,13 @@ function binding(parameters: Record<string, unknown>) {
         },
       ],
     },
-    edges: [{ id: 'edge-sub', sourceRef: subRef('source'), targetRef: subRef('destination') }],
+    // The step takes no input edge: it is made from the account ID the runtime supplies.
+    edges: [],
     transforms: [
       {
         id: 'step-pairwise',
         operation: 'persistent_identifier',
-        inputEdgeIds: ['edge-sub'],
+        inputEdgeIds: [],
         parameters,
         outputTargetRef: subRef('destination'),
       },
@@ -83,6 +90,7 @@ const keyManager = {
 };
 
 const input = (env: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+  subjectType: 'public' as const,
   adapter,
   env: { DB_ADMIN: adminAdapter as never, ...env },
   tenantId: 'tenant-a',
@@ -102,7 +110,9 @@ const expected = (audience: string) =>
 describe('OIDC persistent_identifier', () => {
   beforeEach(() => {
     secretReads.length = 0;
-    resolveBinding.mockResolvedValue(binding({ format: 'plain', algorithm: 'authrim_sha256' }));
+    resolveBinding.mockResolvedValue(
+      binding({ input: 'account', format: 'plain', algorithm: 'authrim_sha256' })
+    );
   });
 
   it('issues the pairwise sub in place of the user id, made with the tenant salt', async () => {
@@ -117,7 +127,12 @@ describe('OIDC persistent_identifier', () => {
 
   it('uses the sector shared by the redirect URIs', async () => {
     resolveBinding.mockResolvedValue(
-      binding({ format: 'plain', algorithm: 'authrim_sha256', audience: 'sector' })
+      binding({
+        input: 'account',
+        format: 'plain',
+        algorithm: 'authrim_sha256',
+        audience: 'sector',
+      })
     );
     const { claims } = await applyOIDCIdentityMapping(
       input(
@@ -130,7 +145,7 @@ describe('OIDC persistent_identifier', () => {
 
   it('refuses when the identifier is made but dropped before release', async () => {
     // A catalog without the sub entry drops the identifier: the user id must not go out instead.
-    const dropped = binding({ format: 'plain', algorithm: 'authrim_sha256' });
+    const dropped = binding({ input: 'account', format: 'plain', algorithm: 'authrim_sha256' });
     dropped.catalog.entries = [];
     resolveBinding.mockResolvedValue(dropped);
     const failure = { details: { code: 'policy.persistent_identifier_unavailable' } };
@@ -141,7 +156,7 @@ describe('OIDC persistent_identifier', () => {
       failure
     );
     // A target that does not say it is a destination is never a release either.
-    const sideless = binding({ format: 'plain', algorithm: 'authrim_sha256' });
+    const sideless = binding({ input: 'account', format: 'plain', algorithm: 'authrim_sha256' });
     sideless.transforms[0].outputTargetRef = {
       namespace: 'oidc.claim',
       path: 'sub',
@@ -158,7 +173,12 @@ describe('OIDC persistent_identifier', () => {
     // The subject alone (id_token_hint matching) is refused the same way.
     await expect(deriveOIDCSubject(input({}))).rejects.toMatchObject(failure);
     resolveBinding.mockResolvedValue(
-      binding({ format: 'plain', algorithm: 'authrim_sha256', audience: 'sector' })
+      binding({
+        input: 'account',
+        format: 'plain',
+        algorithm: 'authrim_sha256',
+        audience: 'sector',
+      })
     );
     await expect(
       applyOIDCIdentityMapping(
@@ -168,5 +188,62 @@ describe('OIDC persistent_identifier', () => {
         )
       )
     ).rejects.toMatchObject(failure);
+  });
+
+  it('makes the sub from the value imported for the account into an identifier source', async () => {
+    resolveBinding.mockResolvedValue(
+      binding({ input: 'source', source: 'staff', format: 'plain', algorithm: 'authrim_sha256' })
+    );
+    const queryOne = vi.mocked(adminAdapter.queryOne);
+    queryOne.mockImplementation((async (sql: string, params: unknown[]) =>
+      sql.includes('identifier_source_values') &&
+      params[0] === 'tenant-a' &&
+      params[1] === 'staff' &&
+      params[2] === 'usr_1'
+        ? { value: 'E-1001' }
+        : null) as never);
+    const { claims } = await applyOIDCIdentityMapping(input({ KEY_MANAGER: keyManager }));
+    expect(claims.sub).toBe(
+      await computeIdentifier({
+        algorithm: 'authrim_sha256',
+        value: 'E-1001',
+        audience: 'client-a',
+        salt: new TextEncoder().encode('tenant-salt'),
+      })
+    );
+    // Made from the value, not from the account ID.
+    expect(claims.sub).not.toBe(await expected('client-a'));
+    // An account the source holds no value for gets no sub (never the user ID, never one made
+    // from the account ID).
+    queryOne.mockResolvedValue(null);
+    await expect(
+      applyOIDCIdentityMapping(input({ KEY_MANAGER: keyManager }))
+    ).rejects.toMatchObject({ details: { code: 'policy.persistent_identifier_unavailable' } });
+  });
+
+  it('looks a kept identifier up by the account, and never computes one when the lookup fails', async () => {
+    resolveBinding.mockResolvedValue(
+      binding({
+        input: 'account',
+        format: 'plain',
+        algorithm: 'authrim_sha256',
+        stored: 'prefer',
+        store: 'kept',
+      })
+    );
+    const queryOne = vi.mocked(adminAdapter.queryOne);
+    // Another account's row is never returned: the lookup is bound to this account's ID.
+    queryOne.mockImplementation((async (sql: string, params: unknown[]) =>
+      sql.includes('mapped_identifier_values') && params[3] === 'usr_1'
+        ? { identifier: 'KEPT-FOR-USR-1' }
+        : null) as never);
+    const { claims } = await applyOIDCIdentityMapping(input({ KEY_MANAGER: keyManager }));
+    expect(claims.sub).toBe('KEPT-FOR-USR-1');
+    expect(queryOne.mock.calls.at(-1)?.[1]).toEqual(['tenant-a', 'kept', 'client-a', 'usr_1']);
+    // A failed lookup stops the sign-in: the identifier is not made from the ID instead.
+    queryOne.mockRejectedValue(new Error('database down'));
+    await expect(
+      applyOIDCIdentityMapping(input({ KEY_MANAGER: keyManager }))
+    ).rejects.toMatchObject({ details: { code: 'policy.persistent_identifier_unavailable' } });
   });
 });

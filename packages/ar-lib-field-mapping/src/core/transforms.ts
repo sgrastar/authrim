@@ -32,8 +32,20 @@ export const PERSISTENT_IDENTIFIER_ALGORITHMS = [
   'simplesamlphp_subject_id',
 ] as const;
 
-/** The name an imported salt is kept under (identifier-salt:import:<name>). */
+/**
+ * The name an imported salt is kept under (identifier-salt:import:<name>); also the names of the
+ * stores of stored identifiers and of the identifier sources.
+ */
 export const IDENTIFIER_SALT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
+
+/**
+ * The algorithms that make an identifier with a salt (all of them today): the ones a per-account
+ * salt override (the `exceptions` list) can apply to.
+ */
+const SALTED_ALGORITHMS: readonly string[] = PERSISTENT_IDENTIFIER_ALGORITHMS;
+
+/** What a persistent identifier is made from: the account ID, or a dedicated identifier source. */
+export const PERSISTENT_IDENTIFIER_INPUTS = ['account', 'source'] as const;
 
 const IDENTIFIER_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{0,126}$/u;
 
@@ -60,9 +72,34 @@ export function persistentIdentifierSettingsProblem(
   ) {
     return 'algorithm';
   }
+  // What it is made from: the account's ID, or a value an administrator imported for the account
+  // (an identifier source, by name). Never a value read from the person's own attributes.
+  if (
+    typeof p.input !== 'string' ||
+    !(PERSISTENT_IDENTIFIER_INPUTS as readonly string[]).includes(p.input)
+  ) {
+    return 'input';
+  }
+  if (
+    p.input === 'source'
+      ? typeof p.source !== 'string' || !IDENTIFIER_SALT_NAME.test(p.source)
+      : p.source !== undefined
+  ) {
+    return 'source';
+  }
   // A salt brought from another identity provider, by the name it was imported under.
   if (p.salt !== undefined && (typeof p.salt !== 'string' || !IDENTIFIER_SALT_NAME.test(p.salt))) {
     return 'salt';
+  }
+  // The exceptions list (a per-account salt override, or no identifier at all) by name: only for an
+  // algorithm that takes a salt.
+  if (
+    p.exceptions !== undefined &&
+    (typeof p.exceptions !== 'string' ||
+      !IDENTIFIER_SALT_NAME.test(p.exceptions) ||
+      !SALTED_ALGORITHMS.includes(algorithm))
+  ) {
+    return 'exceptions';
   }
   // What each algorithm makes: an identifier per recipient, or one for every recipient.
   const fits: Record<string, readonly string[]> = {
@@ -102,34 +139,20 @@ export function persistentIdentifierSettingsProblem(
 }
 
 /**
- * A persistent identifier's input read by any other step: its value would go out through that
- * step (or a second identifier), next to or in place of the identifier.
+ * Another edge into a persistent identifier's own output: its value would go out there as well,
+ * next to or in place of the identifier. (The step takes no input edge; it is made from the
+ * account ID or an identifier source, which the runtime supplies.)
  */
 export function sharesConsumedInput(
   transforms: readonly MappingTransformStep[] = [],
   edges: readonly MappingRuleEdge[] = []
 ): boolean {
-  const consumed = consumedEdgeIds(transforms);
-  // Another edge into the identifier's own output would release its value there as well.
   const identifierTargets = transforms
     .filter((step) => step.operation === 'persistent_identifier')
     .map((step) => step.outputTargetRef);
-  if (
-    edges.some(
-      (edge) =>
-        !consumed.has(edge.id) &&
-        identifierTargets.some((target) => sameTarget(target, edge.targetRef))
-    )
-  ) {
-    return true;
-  }
-  const readers = new Map<string, number>();
-  for (const step of transforms) {
-    for (const edgeId of new Set(step.inputEdgeIds)) {
-      if (consumed.has(edgeId)) readers.set(edgeId, (readers.get(edgeId) ?? 0) + 1);
-    }
-  }
-  return [...readers.values()].some((count) => count > 1);
+  return edges.some((edge) =>
+    identifierTargets.some((target) => sameTarget(target, edge.targetRef))
+  );
 }
 
 function sameTarget(a: FieldRef, b: FieldRef): boolean {
@@ -139,20 +162,6 @@ function sameTarget(a: FieldRef, b: FieldRef): boolean {
     a.namespace === b.namespace &&
     a.path === b.path
   );
-}
-
-/**
- * The input edges a step reads without releasing them: what a persistent identifier is made
- * from (a migrated user name, the account ID) must not go out next to the identifier.
- */
-export function consumedEdgeIds(transforms: readonly MappingTransformStep[] = []): Set<string> {
-  const ids = new Set<string>();
-  for (const step of transforms) {
-    if (step.operation === 'persistent_identifier') {
-      for (const edgeId of step.inputEdgeIds) ids.add(edgeId);
-    }
-  }
-  return ids;
 }
 
 export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
@@ -196,17 +205,19 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
     outputCardinality: 'single',
   },
   {
-    operation: 'oidc_pairwise_sub',
-    parameters: [{ name: 'persistentIdentifierProfileId', kind: 'string', required: false }],
-    outputValueType: 'string',
-    outputCardinality: 'single',
-  },
-  {
     // Made before the mapping runs (it needs a salt and hashing, which are asynchronous): the
-    // step only takes the value prepared for it, by its id, from runtimeContext.identifiers. Its
-    // one input is what the identifier is made from, and is never released itself.
+    // step only takes the value prepared for it, by its id, from runtimeContext.identifiers. It
+    // takes no input edge: it is made from the account's ID, or from a value an administrator
+    // imported for the account (`input` and `source`), which the runtime reads, not the mapping.
     operation: 'persistent_identifier',
     parameters: [
+      {
+        name: 'input',
+        kind: 'enum',
+        required: true,
+        allowedValues: [...PERSISTENT_IDENTIFIER_INPUTS],
+      },
+      { name: 'source', kind: 'string', required: false },
       {
         name: 'format',
         kind: 'enum',
@@ -234,6 +245,8 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
       },
       { name: 'scope', kind: 'string', required: false },
       { name: 'salt', kind: 'string', required: false },
+      // The list of exceptions (per account and recipient: another imported salt, or no identifier).
+      { name: 'exceptions', kind: 'string', required: false },
       // Identifiers kept from another IdP: used first (prefer), or only (require).
       {
         name: 'stored',
@@ -245,12 +258,6 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
       { name: 'sourceMetadataSet', kind: 'string', required: false },
       { name: 'destinationMetadataSet', kind: 'string', required: false },
     ],
-    outputValueType: 'string',
-    outputCardinality: 'single',
-  },
-  {
-    operation: 'saml_edu_person_targeted_id',
-    parameters: [{ name: 'persistentIdentifierProfileId', kind: 'string', required: false }],
     outputValueType: 'string',
     outputCardinality: 'single',
   },
@@ -417,10 +424,19 @@ export function executeTransformStep(input: TransformExecutionInput): TransformE
   const values = input.step.inputEdgeIds.map((edgeId) => input.edgeValues.get(edgeId));
 
   if (input.step.operation === 'persistent_identifier') {
-    // One input, and the value made for this step: anything else stops the release rather
-    // than letting it go out without the identifier (or with something else in its place).
+    // No input edge (a saved version that has one is refused), and the value made for this
+    // step: anything else stops the release rather than letting it go out without the identifier
+    // (or with something else in its place).
+    if (
+      input.step.inputEdgeIds.length === 0 &&
+      isSuppressedIdentifier(input.step, input.runtimeContext)
+    ) {
+      // An exception says no identifier is made for this account and recipient: the target gets no
+      // value (the caller drops any other one it holds, and refuses when the target is required).
+      return transformResult(input, reasons);
+    }
     const made = readPreparedIdentifier(input.step, input.runtimeContext);
-    if (input.step.inputEdgeIds.length !== 1 || values.some((value) => !value) || !made) {
+    if (input.step.inputEdgeIds.length !== 0 || !made) {
       reasons.push(reason('transform.identifier_unavailable'));
       return transformResult(input, reasons);
     }
@@ -509,10 +525,6 @@ function executeOperation(
       return normalizeArrayValue(rawValues, step.parameters).join(delimiter(step, ','));
     case 'first':
       return normalizeArrayValue(rawValues, step.parameters)[0] ?? null;
-    case 'oidc_pairwise_sub':
-      return buildOIDCPairwiseSub(runtimeContext, step.parameters);
-    case 'saml_edu_person_targeted_id':
-      return buildSAMLEduPersonTargetedID(runtimeContext);
     case 'persistent_identifier':
       return readPreparedIdentifier(step, runtimeContext);
     case 'affix_text':
@@ -546,6 +558,17 @@ function delimiter(step: MappingTransformStep, fallback = ''): string {
   return typeof step.parameters?.delimiter === 'string' ? step.parameters.delimiter : fallback;
 }
 
+/** Whether the runtime suppressed this step's identifier (an exception says none is made). */
+function isSuppressedIdentifier(
+  step: MappingTransformStep,
+  runtimeContext?: Record<string, unknown>
+): boolean {
+  const suppressed = isRecord(runtimeContext?.suppressedIdentifiers)
+    ? runtimeContext.suppressedIdentifiers
+    : undefined;
+  return suppressed?.[step.id] === true;
+}
+
 /** The identifier prepared for this step before the mapping ran, if there is one. */
 function readPreparedIdentifier(
   step: MappingTransformStep,
@@ -555,38 +578,6 @@ function readPreparedIdentifier(
     ? runtimeContext.identifiers
     : undefined;
   const value = identifiers ? identifiers[step.id] : undefined;
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function buildOIDCPairwiseSub(
-  runtimeContext?: Record<string, unknown>,
-  parameters?: Record<string, unknown>
-): string | undefined {
-  const oidcContext = isRecord(runtimeContext?.oidc) ? runtimeContext.oidc : runtimeContext;
-  const profileId = readString(parameters?.persistentIdentifierProfileId);
-  const persistentIdentifiers = isRecord(oidcContext?.persistentIdentifiers)
-    ? oidcContext.persistentIdentifiers
-    : undefined;
-  if (profileId) {
-    return readString(persistentIdentifiers?.[profileId]);
-  }
-  return readString(oidcContext?.pairwiseSubject) ?? readString(oidcContext?.subject);
-}
-
-function buildSAMLEduPersonTargetedID(
-  runtimeContext?: Record<string, unknown>
-): string | undefined {
-  const samlContext = isRecord(runtimeContext?.saml) ? runtimeContext.saml : runtimeContext;
-  const localEntityId = readString(samlContext?.localEntityId);
-  const partnerEntityId = readString(samlContext?.partnerEntityId);
-  const opaqueId = readString(samlContext?.eduPersonTargetedIdOpaque);
-  if (!localEntityId || !partnerEntityId || !opaqueId) {
-    return undefined;
-  }
-  return `${localEntityId}!${partnerEntityId}!${opaqueId}`;
-}
-
-function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
@@ -1054,4 +1045,33 @@ function isJsonWithinBudget(value: unknown): boolean {
 function jsonByteLength(value: unknown): number {
   const text = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
   return new TextEncoder().encode(text).length;
+}
+
+/**
+ * The mapped values without any made for the target of a suppressed persistent_identifier step (an
+ * exception says no identifier is made): another rule's step or edge writing the same target goes
+ * with it, so nothing is released where the identifier was refused. Shared by the runtime and the
+ * dry run, so the two report the same.
+ */
+export function dropSuppressedTargets(
+  values: SourceValueEnvelope[],
+  transforms: readonly MappingTransformStep[] | undefined,
+  runtimeContext: Record<string, unknown> | undefined
+): SourceValueEnvelope[] {
+  const suppressed = runtimeContext?.suppressedIdentifiers;
+  if (typeof suppressed !== 'object' || suppressed === null) return values;
+  const flags = suppressed as Record<string, unknown>;
+  const targets = (transforms ?? []).filter(
+    (step) => step.operation === 'persistent_identifier' && flags[step.id] === true
+  );
+  if (targets.length === 0) return values;
+  return values.filter(
+    (value) =>
+      !targets.some(
+        (step) =>
+          step.outputTargetRef.side === value.sourceRef.side &&
+          step.outputTargetRef.namespace === value.sourceRef.namespace &&
+          step.outputTargetRef.path === value.sourceRef.path
+      )
+  );
 }

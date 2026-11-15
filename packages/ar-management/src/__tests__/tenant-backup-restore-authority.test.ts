@@ -53,6 +53,11 @@ function freshDatabase(family: 'core' | 'pii' | 'admin') {
           '014_session_profiles.sql',
           '015_platform_profiles.sql',
           '017_mapped_identifier_values.sql',
+          '018_drop_persistent_identifier_profiles.sql',
+          '019_mapped_identifier_values_account_binding.sql',
+          '020_identifier_source_values.sql',
+          '021_mapping_transform_step_target.sql',
+          '022_mapped_identifier_exceptions.sql',
         ]
       : []),
     ...(family === 'core'

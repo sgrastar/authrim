@@ -6,11 +6,6 @@ import {
   type SAMLAuthnRequest,
   type SAMLSPConfig,
 } from '@authrim/ar-lib-core';
-import {
-  generatePersistentIdentifier,
-  type PersistentIdentifierAlgorithm,
-  type PersistentIdentifierAudienceMode,
-} from '@authrim/ar-lib-core/services/persistent-identifiers';
 import { DEFAULTS, NAMEID_FORMATS } from '../common/constants';
 import { getKeyManagerSecret } from '../common/key-utils';
 
@@ -40,9 +35,6 @@ export interface SAMLNameIDContext {
   tenantId: string;
   spEntityId: string;
   pairwiseSalt?: string;
-  pairwiseAlgorithm?: SAMLPersistentIdentifierAlgorithm;
-  pairwiseAudienceMode?: PersistentIdentifierAudienceMode;
-  persistentProfileId?: string;
   persistentRegistry?: SAMLPersistentNameIDRegistryStore;
   allowCreate?: boolean;
   transientStore?: SAMLTransientNameIDStore;
@@ -55,8 +47,6 @@ export interface SAMLNameIDContext {
    */
   mappedNameID?: () => Promise<{ value: string; kept: boolean }>;
 }
-
-export type SAMLPersistentIdentifierAlgorithm = PersistentIdentifierAlgorithm;
 
 export interface SAMLPairwiseSaltSource {
   PAIRWISE_SALT?: string;
@@ -82,9 +72,54 @@ export class SAMLNameIDPolicyError extends Error {
   }
 }
 
+export interface SAMLEffectiveNameIDFormatInput {
+  /** The Format the AuthnRequest's NameIDPolicy asks for; none for an IdP-initiated sign-in. */
+  requestedFormat?: string;
+  spConfig: Pick<SAMLSPConfig, 'nameIdFormat'>;
+  /** Whether the SP's mapping makes its NameID (a persistent_identifier step into saml.nameid). */
+  mappedNameID: boolean;
+}
+
+/**
+ * The one place the NameID format of a sign-in is decided (SP-initiated, IdP-initiated, the
+ * consent screen, logout):
+ *
+ * - An SP whose mapping makes its NameID is always given a persistent one: no format, or
+ *   `unspecified`, means persistent, and any other requested format is refused (an SP could
+ *   otherwise ask for emailAddress and bypass the mapped identifier).
+ * - Any other SP: the requested format, else the SP's configured one, else emailAddress.
+ */
+export function resolveEffectiveSAMLNameIDFormat(
+  input: SAMLEffectiveNameIDFormatInput
+): NameIDFormat {
+  const requested = input.requestedFormat || undefined;
+  if (input.mappedNameID) {
+    if (
+      requested &&
+      requested !== NAMEID_FORMATS.PERSISTENT &&
+      requested !== NAMEID_FORMATS.UNSPECIFIED
+    ) {
+      throw new SAMLNameIDPolicyError(
+        'AuthnRequest NameIDPolicy Format is not allowed for this service provider',
+        { requested_format: requested, required_format: NAMEID_FORMATS.PERSISTENT }
+      );
+    }
+    return NAMEID_FORMATS.PERSISTENT;
+  }
+  const format = requested || input.spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
+  if (!isSupportedSAMLNameIDFormat(format)) {
+    throw new SAMLNameIDPolicyError('AuthnRequest NameIDPolicy Format is not supported', {
+      requested_format: format,
+      supported_formats: SUPPORTED_SAML_NAMEID_FORMATS,
+    });
+  }
+  return format;
+}
+
 export function resolveSAMLNameIDFormat(
   authnRequest: SAMLAuthnRequest,
-  spConfig: Pick<SAMLSPConfig, 'entityId' | 'nameIdFormat'>
+  spConfig: Pick<SAMLSPConfig, 'entityId' | 'nameIdFormat'>,
+  options: { mappedNameID?: boolean } = {}
 ): NameIDFormat {
   const spNameQualifier = authnRequest.nameIdPolicy?.spNameQualifier;
   if (spNameQualifier && spNameQualifier !== spConfig.entityId) {
@@ -93,16 +128,11 @@ export function resolveSAMLNameIDFormat(
       sp_entity_id: spConfig.entityId,
     });
   }
-
-  const format = authnRequest.nameIdPolicy?.format || spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
-  if (!isSupportedSAMLNameIDFormat(format)) {
-    throw new SAMLNameIDPolicyError('AuthnRequest NameIDPolicy Format is not supported', {
-      requested_format: format,
-      supported_formats: SUPPORTED_SAML_NAMEID_FORMATS,
-    });
-  }
-
-  return format;
+  return resolveEffectiveSAMLNameIDFormat({
+    requestedFormat: authnRequest.nameIdPolicy?.format,
+    spConfig,
+    mappedNameID: options.mappedNameID === true,
+  });
 }
 
 export async function resolveSAMLNameIDValue(
@@ -132,16 +162,6 @@ function requireSAMLSubjectEmail(subject: SAMLSubjectInfo, nameIdFormat: NameIDF
     });
   }
   return email;
-}
-
-export async function resolveSAMLEduPersonTargetedIDOpaque(
-  subject: SAMLSubjectInfo,
-  context: SAMLNameIDContext
-): Promise<string> {
-  return resolvePersistentNameID(subject, {
-    ...context,
-    allowCreate: true,
-  });
 }
 
 export function resolveSAMLPairwiseSalt(env: SAMLPairwiseSaltSource): string | undefined {
@@ -230,6 +250,13 @@ export async function createSAMLSessionIndex(
     spEntityId: string;
     sessionId: string;
     ttlSeconds?: number;
+    /**
+     * The NameID format this sign-in issued, and its value unless it is an email address or
+     * `unspecified` (read from the account's current email as before; an email address is not
+     * copied into the store). A persistent or transient value is not personal data. So a later
+     * logout names the same NameID whatever the SP's mapping has become since.
+     */
+    nameId?: { format: string; value?: string };
   }
 ): Promise<string> {
   const sessionIndex = generateSAMLSessionIndex();
@@ -243,6 +270,7 @@ export async function createSAMLSessionIndex(
       tenantId: options.tenantId,
       spEntityId: options.spEntityId,
       sessionId: options.sessionId,
+      ...(options.nameId ? { nameId: options.nameId } : {}),
       issuedAt,
       expiresAt: issuedAt + ttlSeconds * 1000,
     }),
@@ -250,6 +278,40 @@ export async function createSAMLSessionIndex(
   );
 
   return sessionIndex;
+}
+
+/**
+ * The NameID format (and persistent value) the sign-in of a session index issued; null for a
+ * session index made before it was recorded, or one that is gone or not this SP's.
+ */
+export async function readSAMLSessionIndexNameID(
+  store: Pick<SAMLSessionIndexStore, 'get'>,
+  options: { tenantId: string; spEntityId: string; sessionIndex: string }
+): Promise<{ format: string; value?: string } | null> {
+  const stored = await store.get(
+    buildSAMLSessionIndexKey(options.tenantId, options.spEntityId, options.sessionIndex)
+  );
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored) as Record<string, unknown>;
+    const nameId = parsed.nameId as Record<string, unknown> | undefined;
+    if (
+      parsed.tenantId !== options.tenantId ||
+      parsed.spEntityId !== options.spEntityId ||
+      typeof parsed.expiresAt !== 'number' ||
+      parsed.expiresAt <= Date.now() ||
+      !nameId ||
+      typeof nameId.format !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      format: nameId.format,
+      ...(typeof nameId.value === 'string' ? { value: nameId.value } : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function resolveSAMLSessionIndexToSessionId(
@@ -290,6 +352,11 @@ async function resolvePersistentNameID(
     throw new Error('PAIRWISE_SALT is required for persistent SAML NameID');
   }
 
+  // The SP's mapping is evaluated on every sign-in, also when a NameID was issued before: a
+  // failure (an identifier that cannot be made, one the store does not hold for this account)
+  // stops the sign-in.
+  const mapped = context.mappedNameID ? await context.mappedNameID() : undefined;
+
   // A NameID issued before stays the NameID: a persistent identifier never changes for the SP.
   const registryKey =
     context.tenantId && context.spEntityId
@@ -304,7 +371,6 @@ async function resolvePersistentNameID(
     }
   }
 
-  const mapped = context.mappedNameID ? await context.mappedNameID() : undefined;
   if (context.allowCreate === false && !mapped?.kept) {
     throw new SAMLNameIDPolicyError(
       'AuthnRequest NameIDPolicy AllowCreate=false is not satisfied',
@@ -322,8 +388,7 @@ async function resolvePersistentNameID(
     : await generateSAMLPersistentIdentifier(
         subject.id,
         audience,
-        requirePairwiseSalt(context.pairwiseSalt),
-        context.pairwiseAlgorithm
+        requirePairwiseSalt(context.pairwiseSalt)
       );
   if (context.persistentRegistry && registryKey) {
     await context.persistentRegistry.put(
@@ -350,13 +415,9 @@ function requirePairwiseSalt(salt: string | undefined): string {
 export async function generateSAMLPersistentIdentifier(
   subjectId: string,
   audience: string,
-  secret: string,
-  algorithm: SAMLPersistentIdentifierAlgorithm = 'authrim_sha256_base64url'
+  secret: string
 ): Promise<string> {
-  if (algorithm === 'authrim_sha256_base64url') {
-    return generatePairwiseSubject(subjectId, audience, secret);
-  }
-  return generatePersistentIdentifier({ algorithm, subject: subjectId, audience, secret });
+  return generatePairwiseSubject(subjectId, audience, secret);
 }
 
 async function resolveTransientNameID(

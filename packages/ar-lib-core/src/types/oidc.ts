@@ -676,6 +676,8 @@ export interface RefreshTokenData {
   family_consent_generation?: number;
   /** The claim names the family's information release was approved for. */
   family_release_approval?: string[];
+  /** The sub the grant's ID token carried; a refresh must give the same one (OIDC Core 12.2). */
+  family_issued_subject?: string;
 }
 
 /**

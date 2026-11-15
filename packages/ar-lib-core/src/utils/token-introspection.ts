@@ -23,7 +23,12 @@ import { buildIssuerUrl } from './issuer';
 import { createLogger } from './logger';
 import { getTenantIdFromContext } from '../middleware/request-context';
 import { getPresentedClientCertificateThumbprint } from './mtls';
-import { tokenSubjectAccountSource } from '../services/subject-reference';
+import {
+  pairwiseTokenLacksReference,
+  resolveIssuedTokenAccount,
+  tokenSubjectAccountSource,
+} from '../services/subject-reference';
+import { getClientCached } from './request-cache';
 
 const log = createLogger().module('TOKEN_INTROSPECTION');
 
@@ -35,6 +40,11 @@ export interface TokenIntrospectionResult {
   valid: boolean;
   /** Token claims (if valid) */
   claims?: JWTPayload;
+  /**
+   * The account a token with a sealed subject reference is for (only when the caller allowed one):
+   * its sub is the one the app was given, never to be read as a user's id.
+   */
+  accountUserId?: string;
   /** Error information (if invalid) */
   error?: {
     /** OAuth 2.0 error code */
@@ -72,11 +82,20 @@ export interface TokenValidationRequest {
    * Defaults to the issuer URL for backwards compatibility with issuer-scoped endpoints.
    */
   audience?: string | string[];
+  /**
+   * Accept a token whose sub is the one its app was given (it carries the sealed account
+   * reference): the account is opened from the reference after the signature, issuer, audience and
+   * client checks and returned as `accountUserId`. Unset, such a token is refused (this resource
+   * acts on the account its token's sub names, and that sub is not one).
+   */
+  allowSubjectReference?: boolean;
 }
 
 export interface TokenIntrospectionContextOptions {
   /** Expected access-token audience for this protected resource. */
   audience?: string | string[];
+  /** See TokenValidationRequest.allowSubjectReference. */
+  allowSubjectReference?: boolean;
 }
 
 // ===== Key Caching for Performance Optimization =====
@@ -492,7 +511,35 @@ export async function introspectToken(
   // persistent sub (a token carrying the sealed account reference, which only the authorization
   // server can open) is not that account's id, nor is the sub of an ID token that does not show
   // it is the user's id: either may equal another user's id.
-  if (typeof tokenClaims.sub === 'string' && tokenSubjectAccountSource(tokenClaims) !== 'sub') {
+  let referencedAccountUserId: string | undefined;
+  if (
+    request.allowSubjectReference === true &&
+    typeof tokenClaims.sub === 'string' &&
+    tokenSubjectAccountSource(tokenClaims) === 'reference'
+  ) {
+    const clientId = typeof tokenClaims.client_id === 'string' ? tokenClaims.client_id : '';
+    const account = clientId
+      ? await resolveIssuedTokenAccount(request.env, tenantId, clientId, tokenClaims, false)
+      : ({ ok: false, reason: 'invalid' } as const);
+    if (!account.ok) {
+      return {
+        valid: false,
+        error: {
+          error: account.reason === 'unavailable' ? 'temporarily_unavailable' : 'invalid_token',
+          error_description:
+            account.reason === 'unavailable'
+              ? 'Account data is unavailable'
+              : 'Invalid or expired token',
+          wwwAuthenticate: isDPoP ? 'DPoP error="invalid_token"' : 'Bearer error="invalid_token"',
+          statusCode: account.reason === 'unavailable' ? 503 : 401,
+        },
+      };
+    }
+    referencedAccountUserId = account.userId;
+  } else if (
+    typeof tokenClaims.sub === 'string' &&
+    tokenSubjectAccountSource(tokenClaims) !== 'sub'
+  ) {
     log.warn('Token subject is not an account id this resource can act on');
     return {
       valid: false,
@@ -631,6 +678,7 @@ export async function introspectToken(
   return {
     valid: true,
     claims: tokenClaims,
+    ...(referencedAccountUserId !== undefined && { accountUserId: referencedAccountUserId }),
   };
 }
 
@@ -684,5 +732,47 @@ export async function introspectTokenFromContext(
     body,
     tenantId: getTenantIdFromContext(c),
     audience: options.audience,
+    allowSubjectReference: options.allowSubjectReference,
   });
+}
+
+/**
+ * The account an introspected access token is for, for a resource that acts on the user (call
+ * `introspectTokenFromContext` with `allowSubjectReference: true`): the account its sealed
+ * reference opens, else its sub (the user's id). null for a token that is not valid, has no sub, or
+ * is a token without the reference whose client is not known to be given the user's id (a pairwise
+ * app's token issued before its tokens carried one, or a client that cannot be read): pass the
+ * token's client (read when the result carries no reference). The token's own sub is the one the
+ * app was given: never to be used as the account, nor returned as if it were.
+ */
+export function resolveIntrospectedAccountUserId(
+  result: TokenIntrospectionResult,
+  client?: { subject_type?: string } | null
+): string | null {
+  const claims = result.claims;
+  if (!result.valid || !claims) return null;
+  const sub = claims.sub;
+  if (typeof sub !== 'string' || sub.length === 0) return null;
+  if (result.accountUserId) return result.accountUserId;
+  // A reference that was not opened is not an account: its sub is never the user's id.
+  if (claims.authrim_subject_ref !== undefined) return null;
+  // A token with no reference names the user by its sub only for an app that is known not to be
+  // given pairwise subjects: a client that could not be read (deleted, unknown) is not trusted.
+  if (!client || pairwiseTokenLacksReference(claims, client)) return null;
+  return sub;
+}
+
+/**
+ * The client of an introspected token, to judge it by (resolveIntrospectedAccountUserId): only read
+ * for a token that carries no reference (a pairwise app's token that does is judged by the reference).
+ */
+export async function introspectedTokenClient(
+  c: Context<{ Bindings: Env }>,
+  result: TokenIntrospectionResult
+): Promise<{ subject_type?: string } | null> {
+  const clientId = result.claims?.client_id;
+  if (!result.valid || result.accountUserId || typeof clientId !== 'string' || !clientId) {
+    return null;
+  }
+  return getClientCached(c, c.env, clientId);
 }

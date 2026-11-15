@@ -236,7 +236,6 @@ export * from './services/information-release-consent';
 export * from './services/saml-release-consent';
 export * from './services/saml-release-consent-store';
 export * from './services/oidc-id-token-release';
-export * from './services/persistent-identifiers';
 export * from './services/identifier-algorithms';
 export * from './services/mapped-identifiers';
 export * from './services/identifier-salt-refs';

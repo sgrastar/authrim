@@ -25,7 +25,7 @@ This file is the reviewed docs snapshot for the PR1 reason code registry.
 | `transform.invalid_parameter`         | transform  | error    | stable    | Transform parameter has an invalid type or value.                            |
 | `transform.missing_parameter`         | transform  | error    | stable    | Required transform parameter is missing.                                     |
 | `transform.unknown_parameter`         | transform  | warning  | stable    | Transform parameter is not defined by the operation schema.                  |
-| `transform.unsupported_operation`     | transform  | error    | stable    | Transform operation is not supported by PR1.                                 |
+| `transform.unsupported_operation`     | transform  | critical | stable    | Transform operation is not supported.                                        |
 | `validation.cardinality_mismatch`     | validation | error    | stable    | Value cardinality does not match the catalog or validation rule.             |
 | `validation.format_mismatch`          | validation | warning  | stable    | Value does not match the requested format.                                   |
 | `validation.required_missing`         | validation | critical | stable    | Required input or target value is missing.                                   |

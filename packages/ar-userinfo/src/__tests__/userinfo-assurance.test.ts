@@ -225,45 +225,24 @@ describe('UserInfo identity assurance claims', () => {
   });
 
   describe('for an access token whose client no longer exists', () => {
-    it('does not release it, by scope or by claims parameter, and reads no evidence', async () => {
+    it.each([
+      ['by scope', { scope: 'openid eduperson_assurance' }],
+      [
+        'by claims parameter',
+        { scope: 'openid', claims: { userinfo: { eduperson_assurance: null } } },
+      ],
+      ['for a request that asks for nothing about assurance', { scope: 'openid profile' }],
+    ])('answers invalid_token and reads no evidence (%s)', async (_name, request) => {
       evidence = [evidenceRow('IAL2')];
       mockGetClientCached.mockResolvedValue(null);
 
-      const byScope = await userinfo({ scope: 'openid eduperson_assurance' });
-      expect(byScope.status).toBe(200);
-      expect(byScope.body).toEqual({ sub: 'user-123' });
-      expect(byScope.logger.warn).toHaveBeenCalled();
+      const { body, status } = await userinfo(request);
 
-      const byClaims = await userinfo({
-        scope: 'openid eduperson_assurance',
-        claims: { userinfo: { eduperson_assurance: null } },
-      });
-      expect(byClaims.body).not.toHaveProperty('eduperson_assurance');
+      // The app's identity mapping (a pairwise app's sub above all) cannot be applied, so the
+      // token is not answered with unmapped claims.
+      expect(status).toBe(401);
+      expect(body).toMatchObject({ error: 'invalid_token' });
       expect(evidenceReads).toBe(0);
-    });
-
-    it('says so in the log for a claims parameter request that has no assurance scope', async () => {
-      evidence = [evidenceRow('IAL2')];
-      mockGetClientCached.mockResolvedValue(null);
-
-      const { body, status, logger } = await userinfo({
-        scope: 'openid',
-        claims: { userinfo: { eduperson_assurance: null } },
-      });
-
-      expect(status).toBe(200);
-      expect(body).not.toHaveProperty('eduperson_assurance');
-      expect(logger.warn).toHaveBeenCalled();
-      expect(evidenceReads).toBe(0);
-    });
-
-    it('releases no user claim for a request that asks for nothing about assurance', async () => {
-      mockGetClientCached.mockResolvedValue(null);
-      const { body, status, logger } = await userinfo({ scope: 'openid profile' });
-      expect(status).toBe(200);
-      // Without the app's metadata nothing about the person is released, only the protocol claims.
-      expect(body).toEqual({ sub: 'user-123' });
-      expect(logger.warn).not.toHaveBeenCalled();
     });
   });
 

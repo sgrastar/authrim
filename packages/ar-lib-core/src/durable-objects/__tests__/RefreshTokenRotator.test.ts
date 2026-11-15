@@ -456,6 +456,28 @@ describe('RefreshTokenRotator V2', () => {
       expect(body.expiresIn).toBeGreaterThan(0);
     });
 
+    it('keeps the issued subject when a family is created over HTTP', async () => {
+      const response = await rotator.fetch(
+        new Request('http://localhost/family', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jti: 'http-subject-jti',
+            userId: 'user_http_subject',
+            clientId: 'client_1',
+            tenantId: 'default',
+            scope: 'openid',
+            ttl: 2592000,
+            issuedSubject: 'pairwise-sub-value',
+          }),
+        })
+      );
+      expect(response.status).toBe(201);
+      await expect(rotator.getFamilyRpc('user_http_subject')).resolves.toMatchObject({
+        issued_subject: 'pairwise-sub-value',
+      });
+    });
+
     it('should reject family creation without required fields', async () => {
       const request = new Request('http://localhost/family', {
         method: 'POST',

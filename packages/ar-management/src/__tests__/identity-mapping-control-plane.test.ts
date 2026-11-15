@@ -3151,8 +3151,42 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
-  it('accepts a persistent identifier only with its input and valid settings', async () => {
-    const attempt = (transform: Record<string, unknown>) => {
+  it.each(['oidc_pairwise_sub', 'saml_edu_person_targeted_id'])(
+    'refuses to save a version that uses the removed operation %s',
+    async (operation) => {
+      const adapter = createAdapter({});
+      const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+      await expect(
+        repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+          versionLabel: 'v1',
+          rules: [
+            {
+              ruleKey: 'removed-operation',
+              ruleKind: 'mapping',
+              action: 'allow',
+              edges: [
+                {
+                  sourceRef: { namespace: 'csv', path: 'email' },
+                  targetRef: { namespace: 'authrim.profile', path: 'email' },
+                },
+              ],
+              transforms: [{ edgeIndex: 0, operation, parameters: {} }],
+            },
+          ],
+        })
+      ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+      expect(adapter.executes).toHaveLength(0);
+    }
+  );
+
+  it('accepts a persistent identifier only with no input edge, its own target and valid settings', async () => {
+    const target = { side: 'destination', namespace: 'oidc.claim', path: 'sub' };
+    const base = { input: 'account', format: 'plain', algorithm: 'authrim_sha256' };
+    const attempt = (
+      transform: Record<string, unknown>,
+      edges: Array<Record<string, unknown>> = []
+    ) => {
       const adapter = createAdapter({});
       const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
       return {
@@ -3164,52 +3198,64 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
               ruleKey: 'pairwise',
               ruleKind: 'mapping',
               action: 'allow',
-              edges: [
-                {
-                  sourceRef: { namespace: 'oidc.claim', path: 'sub' },
-                  targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
-                },
-              ],
+              edges: edges as never,
               transforms: [{ operation: 'persistent_identifier', ...transform }],
             },
           ],
         }),
       };
     };
-    for (const transform of [
-      // No input to make it from.
-      { parameters: { format: 'plain', algorithm: 'authrim_sha256' } },
+    const email = {
+      sourceRef: { namespace: 'oidc.claim', path: 'email' },
+      targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
+    };
+    for (const [transform, edges] of [
+      // No place to write.
+      [{ parameters: base }, [email]],
+      // An input edge (the old form).
+      [{ edgeIndex: 0, targetRef: target, parameters: base }, [email]],
+      // A target that is not a destination, not OIDC / SAML, or a reserved claim.
+      [{ targetRef: { ...target, side: 'source' }, parameters: base }, []],
+      [{ targetRef: { ...target, namespace: 'authrim.profile' }, parameters: base }, []],
+      [{ targetRef: { ...target, path: 'iss' }, parameters: base }, []],
+      // What it is made from: missing, another value, a source without a name.
+      [{ targetRef: target, parameters: { format: 'plain', algorithm: 'authrim_sha256' } }, []],
+      [{ targetRef: target, parameters: { ...base, input: 'email' } }, []],
+      [{ targetRef: target, parameters: { ...base, input: 'source' } }, []],
+      [{ targetRef: target, parameters: { ...base, input: 'source', source: 'Bad Name' } }, []],
+      [{ targetRef: target, parameters: { ...base, source: 'staff' } }, []],
       // An algorithm that does not exist, a missing format, a setting it does not have.
-      { edgeIndex: 0, parameters: { format: 'plain', algorithm: 'md5' } },
-      { edgeIndex: 0, parameters: { algorithm: 'shibboleth' } },
-      { edgeIndex: 0, parameters: { format: 'plain', algorithm: 'shibboleth', secret: 'x' } },
-      // An input that is not there; settings that pass one by one but not together.
-      { edgeIndex: 1, parameters: { format: 'plain', algorithm: 'authrim_sha256' } },
-      {
-        edgeIndex: 0,
-        parameters: { format: 'plain', algorithm: 'authrim_sha256', salt: 'Bad Name' },
-      },
-      { edgeIndex: 0, parameters: { format: 'saml_pairwise_id', algorithm: 'shibboleth' } },
-      {
-        edgeIndex: 0,
-        parameters: { format: 'plain', algorithm: 'authrim_sha256', encoding: 'base32' },
-      },
+      [{ targetRef: target, parameters: { ...base, algorithm: 'md5' } }, []],
+      [{ targetRef: target, parameters: { input: 'account', algorithm: 'shibboleth' } }, []],
+      [{ targetRef: target, parameters: { ...base, algorithm: 'shibboleth', secret: 'x' } }, []],
+      // Settings that pass one by one but not together.
+      [{ targetRef: target, parameters: { ...base, salt: 'Bad Name' } }, []],
+      [{ targetRef: target, parameters: { ...base, format: 'saml_pairwise_id' } }, []],
+      [{ targetRef: target, parameters: { ...base, encoding: 'base32' } }, []],
       // Settings for SAML on an OIDC claim.
-      { edgeIndex: 0, parameters: { format: 'saml_targeted_id', algorithm: 'shibboleth' } },
-      {
-        edgeIndex: 0,
-        parameters: { format: 'plain', algorithm: 'shibboleth', audience: 'sp_entity_id' },
-      },
-      { edgeIndex: 0, parameters: { format: 'plain', algorithm: 'simplesamlphp_targeted_id' } },
-    ]) {
-      const { adapter, saved } = attempt(transform);
-      await expect(saved).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+      [{ targetRef: target, parameters: { ...base, format: 'saml_targeted_id' } }, []],
+      [{ targetRef: target, parameters: { ...base, audience: 'sp_entity_id' } }, []],
+      [{ targetRef: target, parameters: { ...base, algorithm: 'simplesamlphp_targeted_id' } }, []],
+      // Another edge writing into the identifier's output.
+      [
+        { targetRef: target, parameters: base },
+        [{ sourceRef: { namespace: 'oidc.claim', path: 'email' }, targetRef: target }],
+      ],
+    ] as Array<[Record<string, unknown>, Array<Record<string, unknown>>]>) {
+      const { adapter, saved } = attempt(transform, edges);
+      await expect(saved, JSON.stringify(transform)).rejects.toMatchObject({
+        status: 400,
+        code: 'invalid_request',
+      });
       expect(adapter.executes).toHaveLength(0);
     }
-    // Another edge writing into the identifier's output.
-    const sameOutput = createAdapter({});
+    // A targetRef on any other step.
+    const other = attempt({ operation: 'trim', edgeIndex: 0, targetRef: target }, [email]);
+    await expect(other.saved).rejects.toMatchObject({ status: 400 });
+    // Two identifier steps into one target.
+    const twice = createAdapter({});
     await expect(
-      new IdentityMappingControlPlaneRepository(sameOutput, () => 1000).createFieldMappingVersion(
+      new IdentityMappingControlPlaneRepository(twice, () => 1000).createFieldMappingVersion(
         'tenant_a',
         'policy_1',
         {
@@ -3219,68 +3265,63 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
               ruleKey: 'pairwise',
               ruleKind: 'mapping',
               action: 'allow',
-              edges: [
-                {
-                  sourceRef: { namespace: 'oidc.claim', path: 'sub' },
-                  targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
-                },
-                {
-                  sourceRef: { namespace: 'oidc.claim', path: 'email' },
-                  targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
-                },
-              ],
               transforms: [
-                {
-                  edgeIndex: 0,
-                  operation: 'persistent_identifier',
-                  parameters: { format: 'plain', algorithm: 'authrim_sha256' },
-                },
+                { operation: 'persistent_identifier', targetRef: target, parameters: base },
+                { operation: 'persistent_identifier', targetRef: target, parameters: base },
               ],
             },
           ],
         }
       )
     ).rejects.toMatchObject({ status: 400 });
-    expect(sameOutput.executes).toHaveLength(0);
-    // Its input read by another step as well.
-    const adapter = createAdapter({});
-    await expect(
-      new IdentityMappingControlPlaneRepository(adapter, () => 1000).createFieldMappingVersion(
-        'tenant_a',
-        'policy_1',
-        {
-          versionLabel: 'v1',
-          rules: [
-            {
-              ruleKey: 'pairwise',
-              ruleKind: 'mapping',
-              action: 'allow',
-              edges: [
-                {
-                  sourceRef: { namespace: 'oidc.claim', path: 'sub' },
-                  targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
-                },
-              ],
-              transforms: [
-                {
-                  edgeIndex: 0,
-                  operation: 'persistent_identifier',
-                  parameters: { format: 'plain', algorithm: 'authrim_sha256' },
-                },
-                { edgeIndex: 0, operation: 'trim', parameters: {} },
-              ],
-            },
-          ],
-        }
-      )
-    ).rejects.toMatchObject({ status: 400 });
-    expect(adapter.executes).toHaveLength(0);
-    const { saved } = attempt({
-      edgeIndex: 0,
-      parameters: { format: 'plain', algorithm: 'keycloak_sha256', audience: 'sector' },
-    });
-    // Past the checks: what stops it now is only that this test has no set to add it to.
-    await expect(saved).rejects.toMatchObject({ status: 404, code: 'not_found' });
+    expect(twice.executes).toHaveLength(0);
+    // Two identifier steps into one target in different rules (one suppressed by an exception
+    // must not leave the other's value there), or another rule's edge writing it.
+    for (const other of [
+      {
+        ruleKey: 'second',
+        ruleKind: 'mapping',
+        action: 'allow',
+        transforms: [{ operation: 'persistent_identifier', targetRef: target, parameters: base }],
+      },
+      {
+        ruleKey: 'second',
+        ruleKind: 'mapping',
+        action: 'allow',
+        edges: [{ sourceRef: { namespace: 'oidc.claim', path: 'email' }, targetRef: target }],
+      },
+    ]) {
+      const crossRule = createAdapter({});
+      await expect(
+        new IdentityMappingControlPlaneRepository(crossRule, () => 1000).createFieldMappingVersion(
+          'tenant_a',
+          'policy_1',
+          {
+            versionLabel: 'v1',
+            rules: [
+              {
+                ruleKey: 'pairwise',
+                ruleKind: 'mapping',
+                action: 'allow',
+                transforms: [
+                  { operation: 'persistent_identifier', targetRef: target, parameters: base },
+                ],
+              },
+              other as never,
+            ],
+          }
+        )
+      ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+      expect(crossRule.executes).toHaveLength(0);
+    }
+    for (const parameters of [
+      { ...base, algorithm: 'keycloak_sha256', audience: 'sector' },
+      { ...base, input: 'source', source: 'staff' },
+    ]) {
+      const { saved } = attempt({ targetRef: target, parameters });
+      // Past the checks: what stops it now is only that this test has no set to add it to.
+      await expect(saved).rejects.toMatchObject({ status: 404, code: 'not_found' });
+    }
   });
 
   it('rejects duplicate field mapping rule keys before persistence', async () => {

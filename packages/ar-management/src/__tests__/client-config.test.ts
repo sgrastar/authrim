@@ -13,6 +13,7 @@ const mocked = vi.hoisted(() => ({
   publishEvent: vi.fn(),
   buildKVKey: vi.fn(),
   getTenantIdFromContext: vi.fn(),
+  safeFetchJson: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -31,6 +32,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     publishEvent: mocked.publishEvent,
     buildKVKey: mocked.buildKVKey,
     getTenantIdFromContext: mocked.getTenantIdFromContext,
+    safeFetchJson: mocked.safeFetchJson,
   };
 });
 
@@ -146,6 +148,111 @@ describe('client-config update handler', () => {
 
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_redirect_uri');
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'redirect URIs on several hosts and no sector_identifier_uri',
+      {
+        subject_type: 'pairwise',
+        redirect_uris: ['https://a.example/cb', 'https://b.example/cb'],
+      },
+    ],
+    [
+      'a sector_identifier_uri that is not HTTPS',
+      {
+        subject_type: 'pairwise',
+        redirect_uris: ['https://a.example/cb'],
+        sector_identifier_uri: 'http://a.example/sector.json',
+      },
+    ],
+    ['an unknown subject_type', { subject_type: 'ephemeral' }],
+  ])('refuses a pairwise update with %s', async (_name, extra) => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    });
+
+    const res = await clientConfigUpdateHandler(
+      createMockContext({
+        body: {
+          client_id: 'client-123',
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          ...extra,
+        },
+      }) as never
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_client_metadata' });
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('fetches and checks the stored sector_identifier_uri when only subject_type changes to pairwise', async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    // The stored sector document lists only one of the two redirect URIs.
+    mocked.safeFetchJson.mockResolvedValue(['https://a.example/cb']);
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      subject_type: 'public',
+      redirect_uris: ['https://a.example/cb', 'https://b.example/cb'],
+      sector_identifier_uri: 'https://sector.example/uris.json',
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    });
+
+    const res = await clientConfigUpdateHandler(
+      createMockContext({
+        body: {
+          client_id: 'client-123',
+          subject_type: 'pairwise',
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+        },
+      }) as never
+    );
+
+    expect(mocked.safeFetchJson).toHaveBeenCalled();
+    expect(res.status).toBe(400);
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('re-checks an existing pairwise client when its redirect URIs change to another host', async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      subject_type: 'pairwise',
+      redirect_uris: ['https://a.example/cb'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    });
+
+    const res = await clientConfigUpdateHandler(
+      createMockContext({
+        body: {
+          client_id: 'client-123',
+          redirect_uris: ['https://a.example/cb', 'https://b.example/cb'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+        },
+      }) as never
+    );
+
+    expect(res.status).toBe(400);
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 

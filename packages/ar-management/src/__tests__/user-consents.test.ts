@@ -71,6 +71,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     introspectTokenFromContext: mockIntrospectTokenFromContext,
+    // The token's client (the real read needs a request cache).
+    introspectedTokenClient: async () => ({ subject_type: 'public' }),
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
@@ -312,6 +314,27 @@ describe('User Consents API', () => {
       const response = await userConsentsListHandler(c);
       expect(response.status).toBe(200);
       expect(mockIntrospectTokenFromContext).toHaveBeenCalled();
+    });
+
+    it('acts for the account a pairwise app’s token is for, never the sub it was given', async () => {
+      mockIntrospectTokenFromContext.mockResolvedValue({
+        valid: true,
+        claims: { sub: 'sub-the-app-was-given', authrim_subject_ref: 'sr1.a.b' },
+        accountUserId: 'user-real',
+      });
+      mockCoreAdapter.query.mockResolvedValue([]);
+      const c = createMockContext({
+        headers: { Authorization: 'Bearer valid-token' },
+      }) as never;
+
+      const response = await userConsentsListHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(mockIntrospectTokenFromContext).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ allowSubjectReference: true })
+      );
+      expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-real');
     });
 
     it('should authenticate with the authrim_session cookie', async () => {
