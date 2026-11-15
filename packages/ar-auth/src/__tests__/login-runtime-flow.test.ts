@@ -2565,7 +2565,8 @@ describe('LoginUI runtime Flow handlers', () => {
 
     async function submitWithSession(
       runtimeSnapshot: FlowRuntimeContract,
-      session: { createdOffsetMs: number; data: Record<string, unknown> }
+      session: { createdOffsetMs: number; data: Record<string, unknown> },
+      extra: { env?: Partial<Env>; context?: Record<string, unknown> } = {}
     ) {
       const startedAt = Date.UTC(2026, 10, 11);
       const clock = vi.spyOn(Date, 'now').mockReturnValue(startedAt);
@@ -2582,7 +2583,12 @@ describe('LoginUI runtime Flow handlers', () => {
           stepState: 'waiting_input',
           runtimeSnapshot,
           editorSnapshot: branchingEditor,
-          context: { protocol: 'direct', target_type: 'tenant', started_at_ms: startedAt },
+          context: {
+            protocol: 'direct',
+            target_type: 'tenant',
+            started_at_ms: startedAt,
+            ...extra.context,
+          },
         });
         mocks.sessionStore.getSessionRpc.mockResolvedValue({
           userId: 'user_1',
@@ -2594,6 +2600,7 @@ describe('LoginUI runtime Flow handlers', () => {
           createContext({
             params: { interaction_id: 'interaction_1' },
             headers: { Cookie: 'authrim_session=sess_runtime_1' },
+            env: extra.env,
             body: {
               step_id: 'auth:step',
               node_id: 'auth',
@@ -2608,6 +2615,68 @@ describe('LoginUI runtime Flow handlers', () => {
         clock.mockRestore();
       }
     }
+
+    function settingsEnv(settings: Record<string, Record<string, unknown>>): Partial<Env> {
+      return {
+        SETTINGS: {
+          get: async (key: string) => {
+            const group = key.split(':').pop() ?? '';
+            return settings[group] ? JSON.stringify(settings[group]) : null;
+          },
+        },
+      } as unknown as Partial<Env>;
+    }
+
+    describe('where a sign-in of the Login UI itself goes', () => {
+      const done = { createdOffsetMs: -1000, data: {} };
+
+      it('is the account page when the tenant sends people there and it is enabled', async () => {
+        const { data } = await submitWithSession(branchingRuntime, done, {
+          env: settingsEnv({
+            'login-entry': { 'login-entry.post_login_behavior': 'account' },
+            'self-service': {
+              'self-service.account_page_enabled': true,
+              'self-service.account_page_path': '/my-account',
+            },
+          }),
+        });
+        expect(data.completed).toBe(true);
+        expect(data.output).toMatchObject({ action: 'complete', redirect_url: '/my-account' });
+      });
+
+      it('is the home page when the account page is disabled', async () => {
+        const { data } = await submitWithSession(branchingRuntime, done, {
+          env: settingsEnv({
+            'login-entry': { 'login-entry.post_login_behavior': 'account' },
+            'self-service': { 'self-service.account_page_enabled': false },
+          }),
+        });
+        expect(data.output).toMatchObject({ action: 'complete', redirect_url: '/' });
+      });
+
+      it('follows the tenant setting for home too', async () => {
+        const { data } = await submitWithSession(branchingRuntime, done, {
+          env: settingsEnv({ 'login-entry': { 'login-entry.post_login_behavior': 'home' } }),
+        });
+        expect(data.output).toMatchObject({ redirect_url: '/' });
+      });
+
+      it('gives no destination of its own to an application sign-in', async () => {
+        const { data } = await submitWithSession(branchingRuntime, done, {
+          env: settingsEnv({
+            'login-entry': { 'login-entry.post_login_behavior': 'account' },
+            'self-service': { 'self-service.account_page_enabled': true },
+          }),
+          context: {
+            protocol: 'oidc',
+            target_type: 'oidc_client',
+            target_id: 'client_1',
+            client_id: 'client_1',
+          },
+        });
+        expect(data.output).not.toHaveProperty('redirect_url');
+      });
+    });
 
     it('completes the Flow when it was made in this interaction', async () => {
       const { response, data } = await submitWithSession(profiledRuntime, {

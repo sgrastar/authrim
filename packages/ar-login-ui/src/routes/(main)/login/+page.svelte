@@ -1378,6 +1378,12 @@
 			redirect_url?: string;
 		} | null
 	): Promise<string | null> {
+		const isDirect =
+			runtimeContinuationString(output?.protocol_continuation, 'protocol') === 'direct' ||
+			output?.action === 'complete';
+		// A sign-in of this page's own: the server's destination comes after what this page holds
+		// (a SAML or account return, a return target), and before the home page.
+		if (isDirect) return buildPostAuthRedirect(output?.redirect_url);
 		if (output?.redirect_url && isValidRedirectUrl(output.redirect_url)) {
 			return output.redirect_url;
 		}

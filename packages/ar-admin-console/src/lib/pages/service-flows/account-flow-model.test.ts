@@ -134,7 +134,7 @@ describe('account flows', () => {
 		expect(initialState('login').values).toEqual({
 			'login.methodProfile': 'default',
 			'login.sessionProfile': 'default',
-			'login.after': 'tenant',
+			'login.after': 'account',
 			'login.appScope': 'openid profile email',
 			// The safe answers until set: the same reply for everyone, and staying on the page.
 			'login.unregistered': 'generic',
@@ -289,10 +289,10 @@ describe('account flows', () => {
 		);
 	});
 
-	it('sign in with a session profile, and leave where to go to the tenant unless set', () => {
+	it('sign in with a session profile, and go to the account page unless set', () => {
 		const state = initialState('login');
 		expect(state.values['login.sessionProfile']).toBe('default');
-		expect(state.values['login.after']).toBe('tenant');
+		expect(state.values['login.after']).toBe('account');
 		expect(partState('login-session', 'login', state)).toBe('done');
 		expect(partState('login-result', 'login', state)).toBe('done');
 		expect(FLOWS.login.groups.find((group) => group.id === 'finish')?.parts).toEqual([

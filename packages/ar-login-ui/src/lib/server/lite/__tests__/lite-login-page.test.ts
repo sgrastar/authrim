@@ -631,6 +631,35 @@ describe('round 6 review regressions', () => {
 	});
 });
 
+describe('where a direct sign-in goes', () => {
+	it('prefers the checked return target, then the server destination, then the session one', async () => {
+		const { liteCompletionDestination } = await import('../completion');
+		const bound = { publicOrigin: 'https://id.example', returnTo: null as string | null };
+		const direct = { action: 'complete', redirect_url: '/account' };
+		expect(liteCompletionDestination(direct, bound)).toBe('https://id.example/account');
+		expect(liteCompletionDestination(direct, { ...bound, returnTo: '/somewhere' })).toBe(
+			'https://id.example/somewhere'
+		);
+		expect(
+			liteCompletionDestination({ action: 'complete' }, { ...bound, fallback: '/account' })
+		).toBe('https://id.example/account');
+		// Another origin is never used.
+		expect(
+			liteCompletionDestination(
+				{ action: 'complete', redirect_url: 'https://evil.example/' },
+				bound
+			)
+		).toBe('https://id.example/');
+		// An application's continuation keeps its own order.
+		expect(
+			liteCompletionDestination(
+				{ action: 'continue_protocol', redirect_url: '/authorize?x=1' },
+				{ ...bound, returnTo: '/somewhere' }
+			)
+		).toBe('https://id.example/authorize?x=1');
+	});
+});
+
 describe('security review regressions', () => {
 	it('draws no proof-guarded form without a challenge', async () => {
 		routes['/api/auth/human-verification/pow-challenge'] = () => json({}, 404);

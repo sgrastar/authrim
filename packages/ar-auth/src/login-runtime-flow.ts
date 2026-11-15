@@ -12,8 +12,10 @@ import {
   reauthProofFromRecord,
 } from './direct-auth';
 import { checkSAMLChallengeForFlow } from './saml-authorization-challenge';
+import { flowCompletionRedirect } from './registration-policy-gate';
 import {
   getTenantSettingsDocument,
+  resolvePostLoginRedirectUrl,
   readSettingsFlag,
   FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
   FLOW_RUNTIME_INTERACTION_TTL_SECONDS,
@@ -3065,6 +3067,19 @@ async function resolveCompletedProtocolRedirect(input: {
   /** The session the challenge accepts as proof, if any (see resolveSessionForChallenge). */
   session: Session | null;
 }): Promise<{ redirectUrl?: string; response?: Response }> {
+  // A sign-in made on the Login UI itself (no application, no SAML request): it goes where the
+  // Flow's completion says, else where the tenant sends people. Resolved here, by the server,
+  // with the same checks as the authentication API's own destination.
+  if (
+    input.requestContext.protocol === 'direct' &&
+    !input.requestContext.authorization_challenge_id &&
+    !input.requestContext.return_to
+  ) {
+    const redirectUrl =
+      (await flowCompletionRedirect(input.c, input.tenantId, input.interaction.id)) ??
+      (await resolvePostLoginRedirectUrl(input.c.env, input.tenantId)).redirectUrl;
+    return redirectUrl ? { redirectUrl } : {};
+  }
   if (
     (input.requestContext.protocol !== 'oidc' && input.requestContext.protocol !== 'saml') ||
     !input.requestContext.authorization_challenge_id
