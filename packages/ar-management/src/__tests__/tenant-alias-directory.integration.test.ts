@@ -15,6 +15,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   activateTenantAliasDirectory,
   activateTenantDiscoveryAliasDirectory,
+  disableTenantDiscoveryAliasDirectoryIfPublished,
   ensureActiveTenantDiscoveryAliasDirectory,
   prepareTenantAliasDirectory,
   prepareTenantDiscoveryAliasDirectory,
@@ -146,6 +147,12 @@ function projection(generation = 3): TenantAliasRouteProjection {
       requiredBindingRouteGeneration: generation,
     },
   };
+}
+
+function clientAliasStates(database: unknown): unknown[] {
+  return (database as { prepare(sql: string): { all(): unknown[] } })
+    .prepare(`SELECT lifecycle_state FROM lookup_tenant_aliases WHERE alias_kind = 'client_id'`)
+    .all();
 }
 
 describe('tenant alias directory', () => {
@@ -424,6 +431,50 @@ describe('tenant alias directory', () => {
         )
         .all()
     ).toEqual([{ tenant_id: 'tenant-a', lifecycle_state: 'active' }]);
+  });
+
+  it('deactivates a published client alias on delete, and treats a missing one as nothing to do', async () => {
+    const env = await environment();
+    const published = {
+      tenantId: 'tenant-a',
+      aliasKind: 'client_id' as const,
+      aliasValue: 'published-client',
+      routeProjection: projection(),
+      now: 100,
+    };
+    await ensureActiveTenantDiscoveryAliasDirectory(env, published);
+
+    await disableTenantDiscoveryAliasDirectoryIfPublished(env, { ...published, now: 101 });
+    // A client that was never published (the seeded Login UI client) has no row to deactivate.
+    await disableTenantDiscoveryAliasDirectoryIfPublished(env, {
+      ...published,
+      aliasValue: 'never-published-client',
+      now: 102,
+    });
+
+    expect(clientAliasStates(lookup)).toEqual([{ lifecycle_state: 'disabled' }]);
+  });
+
+  it('still fails the delete on any other alias directory failure', async () => {
+    const env = await environment();
+    const published = {
+      tenantId: 'tenant-a',
+      aliasKind: 'client_id' as const,
+      aliasValue: 'published-client',
+      routeProjection: projection(),
+      now: 100,
+    };
+    await ensureActiveTenantDiscoveryAliasDirectory(env, published);
+    const changed = projection(4);
+
+    await expect(
+      disableTenantDiscoveryAliasDirectoryIfPublished(env, {
+        ...published,
+        routeProjection: changed,
+        now: 101,
+      })
+    ).rejects.toThrow('tenant_alias_projection_changed_during_activation');
+    expect(clientAliasStates(lookup)).toEqual([{ lifecycle_state: 'active' }]);
   });
 
   it('does not rewrite a pending projection without a newer route generation', async () => {

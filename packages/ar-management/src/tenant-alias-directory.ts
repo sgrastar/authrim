@@ -478,3 +478,21 @@ export function disableTenantDiscoveryAliasDirectory(
 ): Promise<void> {
   return writeTenantDiscoveryAlias(env, input, 'disabled');
 }
+
+/**
+ * Deactivates a discovery alias for deletion of its destination. A tenant that has no alias row
+ * for the value (the seeded Login UI client is never published to discovery) has nothing to
+ * deactivate: that is a normal end. Every other failure (ownership, projection, signature,
+ * unreadable directory) still fails.
+ */
+export async function disableTenantDiscoveryAliasDirectoryIfPublished(
+  env: Env,
+  input: TenantDiscoveryAliasDirectoryInput
+): Promise<void> {
+  try {
+    await disableTenantDiscoveryAliasDirectory(env, input);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'tenant_alias_not_prepared') return;
+    throw error;
+  }
+}

@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import { TenantDatabaseResolverError } from '@authrim/ar-lib-core';
 
 const mocked = vi.hoisted(() => {
   const state = {
+    failPresentationFor: null as string | null,
     tenants: [
       { id: 'default', tenant_code: 'default', name: 'Default Tenant', lifecycle_state: 'active' },
       { id: 'acme', tenant_code: 'acme', name: 'Acme Tenant', lifecycle_state: 'active' },
@@ -152,6 +154,12 @@ vi.mock('@authrim/ar-lib-core', async () => {
       async resolveAliases(input: unknown) {
         return mocked.tenantAliasesResolveManyMock(input);
       }
+    },
+    getTenantSettingsDocument: (...args: unknown[]) => {
+      if (mocked.state.failPresentationFor === args[1]) {
+        throw new Error('presentation_unavailable');
+      }
+      return (actual.getTenantSettingsDocument as (...a: unknown[]) => unknown)(...args);
     },
     resolveTenantDatabaseSourceFromRegistry: mocked.tenantStoreResolveMock,
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
@@ -825,6 +833,212 @@ describe('discovery API', () => {
       tenant_id: 'acme',
       display_name: 'Acme Tenant',
       source: 'wayf',
+    });
+  });
+
+  describe('common entry with tenants that cannot be resolved', () => {
+    function failStoreFor(tenantIds: string[], quarantined = false) {
+      const healthy = mocked.tenantStoreResolveMock.getMockImplementation() as (
+        env: Env,
+        input: { tenantId: string }
+      ) => Promise<unknown>;
+      mocked.tenantStoreResolveMock.mockImplementation(
+        async (env: Env, input: { tenantId: string }) => {
+          if (tenantIds.includes(input.tenantId)) {
+            throw quarantined
+              ? new TenantDatabaseResolverError('quarantined_route', 'tenant is quarantined')
+              : new Error('tenant_store_unavailable');
+          }
+          return healthy(env, input);
+        }
+      );
+    }
+    function storeLookups(): string[] {
+      const calls = mocked.tenantStoreResolveMock.mock.calls as unknown as Array<
+        Array<{ tenantId: string }>
+      >;
+      return calls.map(([, input]) => input.tenantId);
+    }
+    const WAYF = {
+      'settings:platform:login-entry': JSON.stringify({
+        'login-entry.discovery_methods': '["wayf"]',
+      }),
+    };
+    async function commonConfig(settings: Record<string, string> = WAYF) {
+      const { app, env } = createDiscoveryApp({ SETTINGS: createMockKV(settings) });
+      const response = await app.request(
+        'https://login.example.com/api/auth/discovery',
+        { method: 'GET', headers: { 'X-Forwarded-Host': 'login.example.com' } },
+        env
+      );
+      const body: {
+        is_common_entry_host: boolean;
+        wayf_candidates?: Array<{ tenant_id: string }>;
+        single_active_tenant_candidate?: { tenant_id: string };
+      } = await response.json();
+      return { status: response.status, body };
+    }
+
+    it('skips an unresolvable tenant in the WAYF list instead of failing the page', async () => {
+      failStoreFor(['beta']);
+      const { status, body } = await commonConfig();
+      expect(status).toBe(200);
+      expect(body.is_common_entry_host).toBe(true);
+      expect(body.wayf_candidates?.map((candidate) => candidate.tenant_id)).toEqual([
+        'acme',
+        'default',
+      ]);
+    });
+
+    it('counts only tenants that resolved as active for "exactly one tenant"', async () => {
+      mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+        { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') },
+        { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
+      ]);
+      // acme is simply not an active row: only beta counts, and nothing is unknown.
+      const all = mocked.state.tenants;
+      mocked.state.tenants = all.filter((tenant) => tenant.id !== 'acme');
+      try {
+        const one = await commonConfig();
+        expect(one.status).toBe(200);
+        expect(one.body.single_active_tenant_candidate?.tenant_id).toBe('beta');
+      } finally {
+        mocked.state.tenants = all;
+      }
+
+      failStoreFor(['acme', 'beta']);
+      const none = await commonConfig();
+      expect(none.status).toBe(200);
+      expect(none.body.single_active_tenant_candidate).toBeUndefined();
+    });
+
+    it('a quarantined tenant is unknown, not absent: no single-tenant shortcut, page stays up', async () => {
+      mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+        { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') },
+        { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
+      ]);
+      failStoreFor(['acme'], true);
+      const { status, body } = await commonConfig();
+      expect(status).toBe(200);
+      expect(body.single_active_tenant_candidate).toBeUndefined();
+      expect(body.wayf_candidates?.map((candidate) => candidate.tenant_id)).toEqual(['beta']);
+    });
+
+    it('an alias route that is ahead of the store is left out, incomplete, no shortcut', async () => {
+      const ahead = discoveryRouteProjection('acme');
+      mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+        {
+          tenantId: 'acme',
+          routeProjection: { ...ahead, tenantRouteGeneration: 9 },
+        },
+        { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
+      ]);
+      const { status, body } = await commonConfig();
+      expect(status).toBe(200);
+      expect(body.single_active_tenant_candidate).toBeUndefined();
+      expect(body.wayf_candidates?.map((candidate) => candidate.tenant_id)).toEqual(['beta']);
+    });
+
+    it('any other failure keeps the page up but never offers "the only tenant"', async () => {
+      mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+        { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') },
+        { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
+      ]);
+      failStoreFor(['acme']);
+      const { status, body } = await commonConfig();
+      expect(status).toBe(200);
+      expect(body.single_active_tenant_candidate).toBeUndefined();
+      expect(body.wayf_candidates?.map((candidate) => candidate.tenant_id)).toEqual(['beta']);
+    });
+
+    it('treats a tenant whose row is gone as not active (its lookup still runs)', async () => {
+      // beta stays in the alias list; only its database row is gone.
+      const all = mocked.state.tenants;
+      mocked.state.tenants = all.filter((tenant) => tenant.id !== 'beta');
+      mocked.tenantAliasesResolveManyMock.mockResolvedValue(
+        ['acme', 'beta', 'default'].map((tenantId) => ({
+          tenantId,
+          routeProjection: discoveryRouteProjection(tenantId),
+        }))
+      );
+      try {
+        const { status, body } = await commonConfig();
+        expect(status).toBe(200);
+        expect(storeLookups()).toContain('beta');
+        expect(body.wayf_candidates?.map((candidate) => candidate.tenant_id)).toEqual([
+          'acme',
+          'default',
+        ]);
+      } finally {
+        mocked.state.tenants = all;
+      }
+    });
+
+    it('quarantine warnings never crowd out a later error log', async () => {
+      const lines: string[] = [];
+      const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+        lines.push(String(line));
+      });
+      const spyErr = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+        lines.push(String(line));
+      });
+      const spyWarn = vi.spyOn(console, 'warn').mockImplementation((line: unknown) => {
+        lines.push(String(line));
+      });
+      try {
+        const ids = Array.from({ length: 300 }, (_, index) => `gone-${index}`);
+        mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+          ...ids.map((tenantId) => ({
+            tenantId,
+            routeProjection: discoveryRouteProjection(tenantId),
+          })),
+          { tenantId: 'fresh-broken', routeProjection: discoveryRouteProjection('fresh-broken') },
+        ]);
+        failStoreFor(ids, true);
+        await commonConfig();
+
+        failStoreFor(['fresh-broken']);
+        const { status } = await commonConfig();
+        expect(status).toBe(200);
+        expect(
+          lines.some((line) => line.includes('"level":"error"') && line.includes('fresh-broken'))
+        ).toBe(true);
+      } finally {
+        spy.mockRestore();
+        spyErr.mockRestore();
+        spyWarn.mockRestore();
+      }
+    });
+
+    it('reads the environment once per request and shares it between the shortcut and the list', async () => {
+      mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+        { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
+      ]);
+      const { body } = await commonConfig();
+      expect(body.single_active_tenant_candidate?.tenant_id).toBe('beta');
+      expect(body.wayf_candidates?.map((candidate) => candidate.tenant_id)).toEqual(['beta']);
+      const aliasCalls = mocked.tenantAliasesResolveManyMock.mock.calls as unknown as Array<
+        Array<{ index?: { aliasKind?: string } }>
+      >;
+      expect(
+        aliasCalls.filter(([input]) => input?.index?.aliasKind === 'environment_tenant')
+      ).toHaveLength(1);
+      expect(storeLookups().filter((id) => id === 'beta')).toHaveLength(1);
+    });
+
+    it('a tenant dropped while building the list removes the single-tenant shortcut', async () => {
+      mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+        { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') },
+      ]);
+      mocked.state.failPresentationFor = 'acme';
+      try {
+        const { status, body } = await commonConfig();
+        expect(status).toBe(200);
+        expect(body.wayf_candidates).toEqual([]);
+        expect(body.single_active_tenant_candidate).toBeUndefined();
+      } finally {
+        mocked.state.failPresentationFor = null;
+      }
     });
   });
 

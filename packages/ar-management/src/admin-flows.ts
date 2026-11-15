@@ -38,7 +38,9 @@ import {
   PlatformProfileRepository,
   SessionProfileRepository,
   isPlatformProfileId,
+  buildLoginFlowEditor,
   buildRegistrationFlowEditor,
+  defaultLoginFlowSpec,
   defaultRegistrationFlowSpec,
   readFlowCompletion,
   readRegistrationPolicy,
@@ -1892,35 +1894,68 @@ export async function adminFlowAssignmentUpsertHandler(c: AdminContext) {
  * people can sign up as soon as it exists. Nothing is done when the tenant already has a
  * registration Flow assigned.
  */
-export async function seedDefaultRegistrationFlow(
+export function seedDefaultRegistrationFlow(
   db: DatabaseAdapter,
   tenantId: string,
   now: number = nowSeconds()
 ): Promise<{ flowId: string } | null> {
+  return seedDefaultTenantFlow(db, tenantId, now, {
+    kind: 'registration',
+    name: 'Standard sign-up',
+    slug: 'standard-sign-up',
+    editor: buildRegistrationFlowEditor(defaultRegistrationFlowSpec()),
+  });
+}
+
+/**
+ * A new tenant's sign-in: the default sign-in Flow (`defaultLoginFlowSpec`, the tenant's own
+ * methods and session settings, no consent), published and assigned to the tenant, so people can
+ * sign in as soon as it exists. Nothing is done when the tenant already has a sign-in Flow
+ * assigned.
+ */
+export function seedDefaultLoginFlow(
+  db: DatabaseAdapter,
+  tenantId: string,
+  now: number = nowSeconds()
+): Promise<{ flowId: string } | null> {
+  return seedDefaultTenantFlow(db, tenantId, now, {
+    kind: 'login',
+    name: 'Standard sign-in',
+    slug: 'standard-sign-in',
+    editor: buildLoginFlowEditor(defaultLoginFlowSpec()),
+  });
+}
+
+async function seedDefaultTenantFlow(
+  db: DatabaseAdapter,
+  tenantId: string,
+  now: number,
+  seed: { kind: 'registration' | 'login'; name: string; slug: string; editor: FlowEditorState }
+): Promise<{ flowId: string } | null> {
+  const { kind, name, slug, editor } = seed;
   const assigned = await db.queryOne<{ flow_id: string }>(
     `SELECT flow_id FROM flow_assignments
       WHERE tenant_id = ? AND target_type = ? AND target_id IS NULL AND flow_kind = ?`,
-    [tenantId, 'tenant', 'registration']
+    [tenantId, 'tenant', kind]
   );
   if (assigned) return null;
   const flowId = generateId();
   const versionId = generateId();
-  const editor = buildRegistrationFlowEditor(defaultRegistrationFlowSpec());
-  const runtime = buildRuntimeFromEditor(flowId, 'registration', editor);
+  const runtime = buildRuntimeFromEditor(flowId, kind, editor);
   const issues = validateDraft(editor, true);
   const validation = splitIssues([...issues, ...validateRuntimePackage(runtime, editor)]);
-  if (!validation.valid) throw new Error('default_registration_flow_invalid');
-  const name = 'Standard sign-up';
+  if (!validation.valid) throw new Error(`default_${kind}_flow_invalid`);
   // The same statements as a draft made and published through the API.
-  await db.transaction(async (tx) => {
-    await tx.execute(
-      `INSERT INTO flows (
+  // One batch: D1 applies it all or nothing, so a retry never finds half a Flow.
+  await db.batch([
+    {
+      sql: `INSERT INTO flows (
         id, tenant_id, client_id, profile_id, name, description, graph_definition,
         compiled_plan, version, is_active, is_builtin, created_by, created_at, updated_by,
         updated_at, slug, display_name, kind, status, draft_editor_json, draft_runtime_base_json,
         template_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
+      params: [
         flowId,
         tenantId,
         null,
@@ -1936,21 +1971,21 @@ export async function seedDefaultRegistrationFlow(
         now,
         'system',
         now,
-        'standard-sign-up',
+        slug,
         name,
-        'registration',
+        kind,
         'draft',
         JSON.stringify(editor),
         JSON.stringify(runtime),
         null,
-      ]
-    );
-    await tx.execute(
-      `INSERT INTO flow_versions (
+      ],
+    },
+    {
+      sql: `INSERT INTO flow_versions (
         id, tenant_id, flow_id, version_number, schema_version, runtime_snapshot_json,
         editor_snapshot_json, validation_result_json, published_by, published_at, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
+      params: [
         versionId,
         tenantId,
         flowId,
@@ -1962,20 +1997,20 @@ export async function seedDefaultRegistrationFlow(
         'system',
         now,
         now,
-      ]
-    );
-    await tx.execute(
-      `UPDATE flows
+      ],
+    },
+    {
+      sql: `UPDATE flows
        SET status = ?, is_active = 1, published_version_id = ?, updated_by = ?, updated_at = ?
        WHERE tenant_id = ? AND id = ?`,
-      ['published', versionId, 'system', now, tenantId, flowId]
-    );
-    await tx.execute(
-      `INSERT INTO flow_assignments (
+      params: ['published', versionId, 'system', now, tenantId, flowId],
+    },
+    {
+      sql: `INSERT INTO flow_assignments (
         id, tenant_id, target_type, target_id, flow_kind, flow_id, enabled, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [generateId(), tenantId, 'tenant', null, 'registration', flowId, 1, now, now]
-    );
-  });
+      params: [generateId(), tenantId, 'tenant', null, kind, flowId, 1, now, now],
+    },
+  ]);
   return { flowId };
 }

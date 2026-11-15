@@ -189,8 +189,8 @@ function buildApiBaseUrlCandidates(primary: string, candidates?: string[]): stri
 // =============================================================================
 
 /** Client name used for the Login UI */
-const LOGIN_UI_CLIENT_NAME = 'Login UI';
-const LOGIN_UI_CLIENT_DESCRIPTION =
+export const LOGIN_UI_CLIENT_NAME = 'Login UI';
+export const LOGIN_UI_CLIENT_DESCRIPTION =
   'System-managed public OAuth client used by the built-in Authrim Login UI.';
 
 function buildCreateIdempotencyKey(loginUiUrl: string, tenantId?: string, salt?: string): string {
@@ -215,7 +215,7 @@ function buildCreateIdempotencyKey(loginUiUrl: string, tenantId?: string, salt?:
 /**
  * Build the redirect URIs for the Login UI client
  */
-function buildRedirectUris(loginUiUrl: string): string[] {
+export function buildRedirectUris(loginUiUrl: string): string[] {
   // Remove trailing slash
   const baseUrl = loginUiUrl.replace(/\/$/, '');
 
@@ -225,6 +225,19 @@ function buildRedirectUris(loginUiUrl: string): string[] {
     `${baseUrl}/device/callback`,
     `${baseUrl}/ciba/callback`,
   ];
+}
+
+/**
+ * The body of both the create and the update request. ar-management registers the same client
+ * for tenants made through the Admin API; a test pins the two together.
+ */
+export function buildLoginUiClientRequestBody(loginUiUrl: string) {
+  return buildBrowserClientMetadata({
+    clientName: LOGIN_UI_CLIENT_NAME,
+    description: LOGIN_UI_CLIENT_DESCRIPTION,
+    redirectUris: buildRedirectUris(loginUiUrl),
+    sessionProfile: 'managed_browser_session',
+  });
 }
 
 export async function resolveAdminBearerToken(options: {
@@ -324,14 +337,7 @@ async function updateClientToPublic(
       Accept: 'application/json',
       ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
-    body: JSON.stringify(
-      buildBrowserClientMetadata({
-        clientName: LOGIN_UI_CLIENT_NAME,
-        description: LOGIN_UI_CLIENT_DESCRIPTION,
-        redirectUris: buildRedirectUris(loginUiUrl),
-        sessionProfile: 'managed_browser_session',
-      })
-    ),
+    body: JSON.stringify(buildLoginUiClientRequestBody(loginUiUrl)),
   });
 
   if (!response.ok) {
@@ -352,8 +358,6 @@ async function createClient(
   tenantId?: string,
   idempotencyKeySalt?: string
 ): Promise<string> {
-  const redirectUris = buildRedirectUris(loginUiUrl);
-
   const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients`, {
     method: 'POST',
     headers: {
@@ -363,14 +367,7 @@ async function createClient(
       'Idempotency-Key': buildCreateIdempotencyKey(loginUiUrl, tenantId, idempotencyKeySalt),
       ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
-    body: JSON.stringify(
-      buildBrowserClientMetadata({
-        clientName: LOGIN_UI_CLIENT_NAME,
-        description: LOGIN_UI_CLIENT_DESCRIPTION,
-        redirectUris,
-        sessionProfile: 'managed_browser_session',
-      })
-    ),
+    body: JSON.stringify(buildLoginUiClientRequestBody(loginUiUrl)),
   });
 
   if (!response.ok) {

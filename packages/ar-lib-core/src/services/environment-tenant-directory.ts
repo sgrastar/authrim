@@ -23,7 +23,7 @@ const log = createLogger().module('ENVIRONMENT-TENANT-DIRECTORY');
  */
 const UNSERVABLE_ROUTE_CODES: ReadonlySet<string> = new Set(['quarantined_route']);
 
-function isUnservableRouteError(error: unknown): boolean {
+export function isUnservableRouteError(error: unknown): boolean {
   return error instanceof TenantDatabaseResolverError && UNSERVABLE_ROUTE_CODES.has(error.code);
 }
 
