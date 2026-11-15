@@ -1,3 +1,7 @@
 /assets/gate/*
   Cache-Control: public, max-age=31536000, immutable
   X-Content-Type-Options: nosniff
+
+/robots.txt
+  Cache-Control: public, max-age=3600
+  X-Content-Type-Options: nosniff
