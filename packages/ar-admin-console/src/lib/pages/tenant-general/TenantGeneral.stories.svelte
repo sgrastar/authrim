@@ -161,6 +161,9 @@
 		await canvas.findAllByText(t(settingText('environment_banner.text').label));
 		await canvas.findAllByText(t(settingText('environment_banner.text_localizations').label));
 		await canvas.findAllByText(t(settingText('environment_banner.noindex').label));
+		// …and the login entry: whether a tenant's own address first asks to find the tenant.
+		await canvas.findByText(t('set.section.loginEntryPlatform'));
+		await canvas.findAllByText(t(settingText('login-entry.mode').label));
 	}}
 >
 	{#snippet template()}
@@ -181,6 +184,7 @@
 		await canvas.findByText('Acme Corporation');
 		// A deployment-wide setting: a tenant admin never sees it.
 		await expect(canvas.queryByText(t('set.section.environmentBanner'))).toBeNull();
+		await expect(canvas.queryByText(t('set.section.loginEntryPlatform'))).toBeNull();
 	}}
 >
 	{#snippet template()}

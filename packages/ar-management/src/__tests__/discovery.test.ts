@@ -682,6 +682,115 @@ describe('discovery API', () => {
     expect(body.config.selection_policy).toBe('manual_only');
   });
 
+  describe('login entry mode on a tenant host', () => {
+    async function tenantConfig(
+      envOverrides: Partial<Env>,
+      host = 'acme.auth.example.com'
+    ): Promise<{ is_common_entry_host: boolean; config: Record<string, unknown> }> {
+      const { app, env } = createDiscoveryApp(envOverrides);
+      const response = await app.request(
+        `https://${host}/api/auth/discovery`,
+        { method: 'GET', headers: { 'X-Forwarded-Host': host } },
+        env
+      );
+      expect(response.status).toBe(200);
+      return response.json();
+    }
+
+    it('keeps today’s defaults when nothing is set', async () => {
+      const body = await tenantConfig({});
+      expect(body.is_common_entry_host).toBe(false);
+      expect(body.config.mode).toBe('discovery_optional');
+      expect(body.config.require_common_discovery_before_login).toBe(true);
+    });
+
+    it('gives a tenant without an override the platform value, a tenant created later too', async () => {
+      const SETTINGS = createMockKV({
+        'settings:platform:login-entry': JSON.stringify({ 'login-entry.mode': 'tenant_only' }),
+        // The empty record a new tenant is seeded with.
+        'settings:tenant:acme:login-entry': JSON.stringify({}),
+      });
+      expect((await tenantConfig({ SETTINGS })).config.mode).toBe('tenant_only');
+      expect((await tenantConfig({ SETTINGS }, 'beta.auth.example.com')).config.mode).toBe(
+        'tenant_only'
+      );
+    });
+
+    it('falls back to the environment variables, and a stored platform value overrides them', async () => {
+      const fromEnv = await tenantConfig({
+        LOGIN_ENTRY_MODE: 'tenant_only',
+        LOGIN_ENTRY_REQUIRE_COMMON_DISCOVERY_BEFORE_LOGIN: 'false',
+      } as Partial<Env>);
+      expect(fromEnv.config.mode).toBe('tenant_only');
+      expect(fromEnv.config.require_common_discovery_before_login).toBe(false);
+
+      const overridden = await tenantConfig({
+        LOGIN_ENTRY_MODE: 'tenant_only',
+        SETTINGS: createMockKV({
+          'settings:platform:login-entry': JSON.stringify({
+            'login-entry.mode': 'discovery_optional',
+          }),
+        }),
+      } as Partial<Env>);
+      expect(overridden.config.mode).toBe('discovery_optional');
+    });
+
+    it('reads the boolean environment variables strictly: only true/1/false/0, else the default', async () => {
+      const cases: [string, boolean][] = [
+        ['treu', true],
+        ['yes', true],
+        ['', true],
+        ['FALSE', false],
+        [' 1 ', true],
+        [' 0 ', false],
+        ['TRUE', true],
+      ];
+      for (const [value, expected] of cases) {
+        for (const [envKey, field] of [
+          [
+            'LOGIN_ENTRY_REQUIRE_COMMON_DISCOVERY_BEFORE_LOGIN',
+            'require_common_discovery_before_login',
+          ],
+          [
+            'LOGIN_ENTRY_REDIRECT_TENANT_DISCOVER_TO_COMMON_ENTRY',
+            'redirect_tenant_discover_to_common_entry',
+          ],
+          [
+            'LOGIN_ENTRY_REDIRECT_DEFAULT_LOGIN_TO_DISCOVERY',
+            'redirect_default_login_to_discovery',
+          ],
+        ] as const) {
+          const body = await tenantConfig(Object.fromEntries([[envKey, value]]));
+          expect(body.config[field], `${envKey}=${JSON.stringify(value)}`).toBe(expected);
+        }
+      }
+    });
+
+    it('lets a tenant with override_enabled use its own record; keys it does not set follow the environment', async () => {
+      const SETTINGS = createMockKV({
+        'settings:platform:login-entry': JSON.stringify({ 'login-entry.mode': 'tenant_only' }),
+        'settings:tenant:acme:login-entry': JSON.stringify({
+          'login-entry.override_enabled': true,
+          'login-entry.mode': 'discovery_optional',
+        }),
+      });
+      const body = await tenantConfig({
+        SETTINGS,
+        LOGIN_ENTRY_MODE: 'tenant_only',
+        LOGIN_ENTRY_REQUIRE_COMMON_DISCOVERY_BEFORE_LOGIN: 'false',
+      } as Partial<Env>);
+      // The tenant's own mode wins over both the platform value and the variable...
+      expect(body.config.mode).toBe('discovery_optional');
+      // ...and a key it leaves unset falls to the variable (the platform record is not consulted).
+      expect(body.config.require_common_discovery_before_login).toBe(false);
+    });
+
+    it('ignores an invalid environment value', async () => {
+      const body = await tenantConfig({ LOGIN_ENTRY_MODE: 'everything' } as Partial<Env>);
+      expect(body.config.mode).toBe('discovery_optional');
+    });
+  });
+
   it('returns active tenant candidates when WAYF is enabled', async () => {
     const kv = createMockKV({
       'settings:platform:login-entry': JSON.stringify({
@@ -1318,5 +1427,46 @@ describe('discovery API', () => {
     expect(body.valid).toBe(true);
     expect(body.tenant_id).toBe('acme');
     expect(body.target_url).toBe('https://login.acme.example.com/login');
+  });
+
+  it('verifies a grant when the Login UI added the visitor’s language to the address', async () => {
+    const { app, env } = createDiscoveryApp();
+    const createResponse = await app.request(
+      'https://auth.example.com/api/auth/discovery/grant',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'auth.example.com' },
+        body: JSON.stringify({
+          tenant_id: 'acme',
+          expected_tenant_id: 'acme',
+          return_to: 'https://login.acme.example.com/login',
+        }),
+      },
+      env
+    );
+    const created: { grant: string } = await createResponse.json();
+
+    const verify = (currentUrl: string) =>
+      app.request(
+        'https://login.acme.example.com/api/auth/discovery/grant/verify',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Authrim-Original-Host': 'login.acme.example.com',
+          },
+          body: JSON.stringify({ grant: created.grant, current_url: currentUrl }),
+        },
+        env
+      );
+
+    expect((await verify('https://login.acme.example.com/login?lang=ja')).status).toBe(200);
+    // Duplicated and percent-encoded `lang` are ignored too; everything else must match exactly.
+    expect((await verify('https://login.acme.example.com/login?lang=ja&lang=fr')).status).toBe(200);
+    expect((await verify('https://login.acme.example.com/login?%6Cang=ja')).status).toBe(200);
+    expect((await verify('https://login.acme.example.com/login?lang=ja&x=1')).status).toBe(400);
+    expect((await verify('https://login.acme.example.com/login?lang%3Dja&x=1')).status).toBe(400);
+    // Any other change of the address is still refused.
+    expect((await verify('https://login.acme.example.com/login?x=1')).status).toBe(400);
   });
 });
