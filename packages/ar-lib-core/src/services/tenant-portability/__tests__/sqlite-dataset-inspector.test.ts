@@ -1,6 +1,10 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { beforeAll, expect, it } from 'vitest';
-import { createSqliteDatasetInspectorFactory } from '../sqlite-dataset-inspector';
+import {
+  createSqliteDatasetInspectorFactory,
+  cloneSqliteDatasetInspectionPolicy,
+} from '../sqlite-dataset-inspector';
+import { assertMappingGraphBackupShape } from '../phase3-sqlite-references';
 import { SQLITE_SNAPSHOT_SCHEMA, type CaptureSchema } from '../sqlite-snapshot';
 import { readSqliteSnapshotDataset } from '../sqlite-dataset-source';
 import {
@@ -307,4 +311,28 @@ it('records installed alternate identities for runtime references', async () => 
     expect.objectContaining({ id: '[["text","日本語😀"]]' }),
   ]);
   await inspector.finish();
+});
+
+it('reports legacy mapping graph columns before generic schema rejection, including cloned policies', async () => {
+  const policy = cloneSqliteDatasetInspectionPolicy({
+    dataset,
+    schema,
+    rowShape: {
+      id: 'mapping-graph-023',
+      assert: (row) => assertMappingGraphBackupShape('admin.mapping_transform_steps', row),
+    },
+    inspectRow: async () => [],
+  });
+  const inspector = await createSqliteDatasetInspectorFactory(policy)(dataset, manifest);
+  await expect(
+    inspector.chunk(
+      encode(
+        JSON.stringify({ id: ['text', 'a'], value: ['text', 'value'], edge_id: ['null', null] }) +
+          '\n'
+      ),
+      0
+    )
+  ).rejects.toThrow(
+    'backup_mapping_graph_legacy_shape: restore with the old release, run migration 023'
+  );
 });

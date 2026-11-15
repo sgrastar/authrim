@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import type { SAMLAttributeReleaseConfig, SAMLAttributeSubject } from '../attributes';
 import type { FieldCatalogEntry, TargetType } from '@authrim/ar-lib-field-mapping/contract';
 import type { SAMLIdentityMappingReleaseConfig } from '../attributes';
@@ -82,48 +83,51 @@ type MappingSpec = [
 ];
 
 export function buildIdentityMappingConfig(specs: MappingSpec[]): SAMLIdentityMappingReleaseConfig {
-  return {
-    catalog: {
-      identity: {
-        id: 'major-preset-test-catalog',
-        version: '1',
-        contentHash: 'major-preset-test-catalog',
-        compatibilityRange: '^0.3.0',
-      },
-      entries: [
-        ...specs.map(([, namespace, path]) =>
-          entry(`source.${namespace}.${path}`, namespace, path, 'canonical')
-        ),
-        ...specs.map(([, , , friendlyName, path]) =>
-          entry(`target.${friendlyName}`, 'saml.attribute', path, 'destination-only')
-        ),
-      ],
-    },
-    edges: specs.map(([id, sourceNamespace, sourcePath, friendlyName, targetPath]) => ({
-      id: `edge.${id}`,
-      sourceRef: {
-        side: 'source' as const,
-        namespace: sourceNamespace,
-        path: sourcePath,
-      },
-      targetRef: {
-        side: 'destination' as const,
-        namespace: 'saml.attribute',
-        path: targetPath,
-        catalogEntryId: `target.${friendlyName}`,
-      },
-      edgeKind: 'direct',
-    })),
-    attributeDescriptors: Object.fromEntries(
-      specs.map(([, , , friendlyName]) => [
-        `target.${friendlyName}`,
-        {
-          friendlyName,
-          nameFormat: SAML_ATTRIBUTE_NAME_FORMAT_URI,
+  return withExplicitMappingGraphs(
+    {
+      catalog: {
+        identity: {
+          id: 'major-preset-test-catalog',
+          version: '1',
+          contentHash: 'major-preset-test-catalog',
+          compatibilityRange: '^0.3.0',
         },
-      ])
-    ),
-  };
+        entries: [
+          ...specs.map(([, namespace, path]) =>
+            entry(`source.${namespace}.${path}`, namespace, path, 'canonical')
+          ),
+          ...specs.map(([, , , friendlyName, path]) =>
+            entry(`target.${friendlyName}`, 'saml.attribute', path, 'destination-only')
+          ),
+        ],
+      },
+      edges: specs.map(([id, sourceNamespace, sourcePath, friendlyName, targetPath]) => ({
+        id: `edge.${id}`,
+        sourceRef: {
+          side: 'source' as const,
+          namespace: sourceNamespace,
+          path: sourcePath,
+        },
+        targetRef: {
+          side: 'destination' as const,
+          namespace: 'saml.attribute',
+          path: targetPath,
+          catalogEntryId: `target.${friendlyName}`,
+        },
+        edgeKind: 'direct',
+      })),
+      attributeDescriptors: Object.fromEntries(
+        specs.map(([, , , friendlyName]) => [
+          `target.${friendlyName}`,
+          {
+            friendlyName,
+            nameFormat: SAML_ATTRIBUTE_NAME_FORMAT_URI,
+          },
+        ])
+      ),
+    },
+    true
+  );
 }
 
 function entry(

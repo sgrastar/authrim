@@ -1,3 +1,4 @@
+import { graphFixture } from '../../test-support/graph-fixture';
 import { describe, expect, it } from 'vitest';
 import { dryRunMapping } from '../../core/dry-run';
 import { executeRuntimeMapping } from '../../core/runtime';
@@ -36,11 +37,15 @@ function withIdentifier(
 }
 
 const released = (input: MappingInput) =>
-  executeRuntimeMapping(input).values.filter((value) => value.sourceRef.namespace === 'oidc.claim');
+  executeRuntimeMapping(graphFixture(input)).values.filter(
+    (value) => value.sourceRef.namespace === 'oidc.claim'
+  );
 
 describe('persistent_identifier', () => {
   it('releases the prepared identifier, with no value it was made from in the result', () => {
-    const result = executeRuntimeMapping(withIdentifier({ 'step.identifier': 'PAIRWISE-1' }));
+    const result = executeRuntimeMapping(
+      graphFixture(withIdentifier({ 'step.identifier': 'PAIRWISE-1' }))
+    );
 
     expect(result.status).toBe('success');
     expect(
@@ -52,7 +57,7 @@ describe('persistent_identifier', () => {
   });
 
   it('fails the whole mapping when no identifier was prepared', () => {
-    const result = executeRuntimeMapping(withIdentifier(undefined));
+    const result = executeRuntimeMapping(graphFixture(withIdentifier(undefined)));
 
     expect(result.status).toBe('failed');
     expect(result.reasons.map((reason) => reason.code)).toContain(
@@ -62,16 +67,18 @@ describe('persistent_identifier', () => {
   });
 
   it('fails when the identifier is empty or not text', () => {
-    expect(executeRuntimeMapping(withIdentifier({ 'step.identifier': '' })).status).toBe('failed');
-    expect(executeRuntimeMapping(withIdentifier({ 'step.identifier': ['a'] })).status).toBe(
-      'failed'
-    );
+    expect(
+      executeRuntimeMapping(graphFixture(withIdentifier({ 'step.identifier': '' }))).status
+    ).toBe('failed');
+    expect(
+      executeRuntimeMapping(graphFixture(withIdentifier({ 'step.identifier': ['a'] }))).status
+    ).toBe('failed');
   });
 
   it('refuses a step that still has an input edge', () => {
     const input = withIdentifier({ 'step.identifier': 'PAIRWISE-1' });
     input.transforms![0].inputEdgeIds = [input.edges[0].id];
-    expect(executeRuntimeMapping(input).status).toBe('failed');
+    expect(executeRuntimeMapping(graphFixture(input)).status).toBe('failed');
     expect(released(input)).toEqual([]);
   });
 
@@ -98,7 +105,7 @@ describe('persistent_identifier', () => {
       { ...BASE, input: 'account', source: 'employee-ids' },
     ]) {
       const result = executeRuntimeMapping(
-        withIdentifier({ 'step.identifier': 'PAIRWISE-1' }, { parameters })
+        graphFixture(withIdentifier({ 'step.identifier': 'PAIRWISE-1' }, { parameters }))
       );
       expect(result.status, JSON.stringify(parameters)).toBe('failed');
       expect(released(withIdentifier({ 'step.identifier': 'PAIRWISE-1' }, { parameters }))).toEqual(
@@ -130,13 +137,13 @@ describe('persistent_identifier', () => {
         },
       },
     ];
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
     expect(result.status).toBe('failed');
     expect(result.values).toEqual([]);
   });
 
   it('runs in a dry run as well', () => {
-    const result = dryRunMapping(withIdentifier({ 'step.identifier': 'PAIRWISE-1' }));
+    const result = dryRunMapping(graphFixture(withIdentifier({ 'step.identifier': 'PAIRWISE-1' })));
     expect(result.summary.mappedCount).toBeGreaterThanOrEqual(1);
   });
 
@@ -186,7 +193,7 @@ describe('persistent_identifier', () => {
   it('releases nothing, and does not fail, for a step an exception suppressed', () => {
     const input = withIdentifier(undefined);
     input.runtimeContext = { suppressedIdentifiers: { 'step.identifier': true } };
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
 
     expect(result.status).toBe('success');
     expect(result.reasons.map((reason) => reason.code)).not.toContain(
@@ -198,41 +205,25 @@ describe('persistent_identifier', () => {
   it('still fails a step that was neither made nor suppressed', () => {
     const input = withIdentifier(undefined);
     input.runtimeContext = { suppressedIdentifiers: { 'another.step': true } };
-    expect(executeRuntimeMapping(input).status).toBe('failed');
+    expect(executeRuntimeMapping(graphFixture(input)).status).toBe('failed');
   });
 
-  it('reports the same for a dry run as the runtime does, when another step writes a suppressed target', () => {
-    const outputTargetRef = {
-      side: 'destination' as const,
-      namespace: 'oidc.claim',
-      path: 'email',
-      catalogEntryId: 'field.oidc.email',
-    };
-    const step = (id: string): MappingTransformStep => ({
-      id,
-      operation: 'persistent_identifier',
-      inputEdgeIds: [],
-      parameters: BASE,
-      outputTargetRef,
-    });
+  it('refuses multiple identifier writers even when one is suppressed', () => {
     const input = withIdentifier(undefined);
-    input.transforms = [step('blocked'), step('made')];
-    const withoutSteps = { ...input, transforms: [] };
+    const step = input.transforms?.[0];
+    if (!step) throw new Error('identifier fixture missing');
+    input.transforms = [
+      { ...step, id: 'blocked' },
+      { ...step, id: 'made' },
+    ];
     input.runtimeContext = {
-      identifiers: { made: 'MADE-FOR-ANOTHER-RULE' },
+      identifiers: { made: 'other' },
       suppressedIdentifiers: { blocked: true },
     };
-
-    expect(released(input)).toEqual([]);
-    // The dry run counts what the mapping's own edges made, and nothing for the suppressed target.
-    expect(dryRunMapping(input).summary.mappedCount).toBe(
-      dryRunMapping(withoutSteps).summary.mappedCount
-    );
-    // Not suppressed: both make the value.
-    input.runtimeContext = { identifiers: { made: 'MADE', blocked: 'BLOCKED' } };
-    expect(released(input)).not.toEqual([]);
-    expect(dryRunMapping(input).summary.mappedCount).toBe(
-      dryRunMapping(withoutSteps).summary.mappedCount + 2
-    );
+    expect(executeRuntimeMapping(graphFixture(input))).toMatchObject({
+      status: 'failed',
+      values: [],
+    });
+    expect(dryRunMapping(graphFixture(input)).status).toBe('failed');
   });
 });

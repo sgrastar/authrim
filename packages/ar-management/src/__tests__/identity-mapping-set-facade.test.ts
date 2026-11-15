@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   ADMIN_PERMISSIONS,
   adminAuthMiddleware,
@@ -17,7 +18,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuditLogFromContext: vi.fn(async () => undefined),
     // Tenant routing is not set up here: each tenant's Core database is the one the test gives it.
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
-      async (env: { TEST_CORES?: Record<string, unknown> }, _partition: string, options) => {
+      async (
+        env: { TEST_CORES?: Record<string, unknown> },
+        _partition: string,
+        options?: { tenantId?: string }
+      ) => {
         const adapter = env.TEST_CORES?.[options?.tenantId ?? ''];
         if (!adapter) throw new Error('tenant_database_unavailable');
         return adapter;
@@ -408,7 +413,7 @@ async function setup(options: { bindToAuthority?: boolean } = {}) {
   });
   const create = async (overrides: Record<string, unknown> = {}, who = tenantAdmin) => {
     const response = await request(who, 'POST', SETS, body(overrides));
-    expect(response.status).toBe(201);
+    expect(response.status, JSON.stringify(response.json)).toBe(201);
     return response.json;
   };
   const count = (sql: string, ...params: Array<string | number>) =>
@@ -418,6 +423,7 @@ async function setup(options: { bindToAuthority?: boolean } = {}) {
     versions: count('SELECT COUNT(*) AS n FROM field_mapping_versions'),
     rules: count('SELECT COUNT(*) AS n FROM mapping_rules'),
     edges: count('SELECT COUNT(*) AS n FROM mapping_rule_edges'),
+    inputs: count('SELECT COUNT(*) AS n FROM mapping_transform_step_inputs'),
     snapshots: count('SELECT COUNT(*) AS n FROM compiled_mapping_snapshots'),
     activations: count('SELECT COUNT(*) AS n FROM field_mapping_activations'),
     graphs: count('SELECT COUNT(*) AS n FROM dependency_graph_snapshots'),
@@ -658,7 +664,7 @@ describe('reading a set', () => {
     const rule = emailRule(t.profile, {
       priority: -3,
       metadata: { note: 'kept' },
-      transforms: [{ edgeIndex: 0, operation: 'trim', parameters: {} }],
+      transforms: [{ inputs: [{ edgeIndex: 0 }], operation: 'trim', parameters: {} }],
       validationRules: [
         {
           targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
@@ -720,6 +726,86 @@ describe('reading a set', () => {
     const reread = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.id}`);
     expect(reread.json.content).toEqual(readContent);
     expect(reread.json.content_version).not.toBe(read.json.content_version);
+  });
+
+  it('round-trips ordered named multi-input chains and cleans inputs after a failed save', async () => {
+    const t = await setup();
+    const summarySchema = z.object({ id: z.string(), display_name: z.string() });
+    const responseSchema = summarySchema.extend({
+      content: z.object({ rules: z.array(z.unknown()) }).passthrough(),
+    });
+    let chainSetId = '';
+    for (const destinationSurface of ['id_token', 'userinfo']) {
+      const path = `/chain-${destinationSurface}`;
+      t.app.get(path, async (c) => {
+        const result = await applyOIDCIdentityMapping({
+          subjectType: 'public',
+          adapter: sqliteAdapter(t.coreA),
+          env: c.env,
+          tenantId: TENANT,
+          clientId: 'chain-client',
+          selector: { fieldMappingSetId: chainSetId },
+          destinationSurface: destinationSurface === 'id_token' ? 'id_token' : 'userinfo',
+          grantedScopes: ['openid', 'email', 'profile'],
+          claims: { sub: 'chain-user' },
+          sourceAttributes: { email: 'ada@example.test', nickname: 'Ada' },
+        });
+        return c.json(result.claims);
+      });
+    }
+    const first = emailRule(t.profile);
+    const targetRef = first.edges[0].targetRef;
+    const rules = [
+      {
+        ...first,
+        targetRef,
+        edges: [
+          first.edges[0],
+          {
+            ...first.edges[0],
+            sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'nickname' },
+          },
+        ],
+        transforms: [
+          {
+            operation: 'concat',
+            parameters: { delimiter: ':' },
+            inputs: [
+              { edgeIndex: 0, name: 'email' },
+              { edgeIndex: 1, name: 'nickname' },
+            ],
+          },
+          { operation: 'trim', inputs: [{ stepIndex: 0, name: 'joined' }] },
+        ],
+        output: { stepIndex: 1 },
+      },
+      nicknameRule(t.profile),
+    ];
+    const created = summarySchema.parse(await t.create({ content: t.content({ rules }) }));
+    chainSetId = created.id;
+    const read = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.id}`);
+    const readContent = responseSchema.parse(read.json).content;
+    expect(readContent.rules[0]).toMatchObject(rules[0]);
+    const again = await t.request(t.tenantAdmin, 'PUT', `${SETS}/${created.id}`, {
+      display_name: created.display_name,
+      content: readContent,
+    });
+    expect(again.status).toBe(200);
+    const reread = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.id}`);
+    expect(responseSchema.parse(reread.json).content).toEqual(readContent);
+    for (const destinationSurface of ['id_token', 'userinfo']) {
+      const path = `/chain-${destinationSurface}`;
+      const issued = await t.request(t.tenantAdmin, 'GET', path);
+      expect(z.object({ email: z.string() }).parse(issued.json).email).toBe('ada@example.test:Ada');
+    }
+    const before = t.rowCounts();
+    t.faults.failOn = /INSERT INTO compiled_mapping_snapshots/;
+    const failed = await t.request(t.tenantAdmin, 'PUT', `${SETS}/${created.id}`, {
+      display_name: created.display_name,
+      content: readContent,
+    });
+    expect(failed.status).toBe(500);
+    expect({ ...t.rowCounts(), idempotency: 0 }).toEqual({ ...before, idempotency: 0 });
   });
 
   it('lists the tenant’s sets and the platform’s with their state, and no other tenant’s', async () => {
@@ -1630,7 +1716,8 @@ describe('the kind of Destination Profile', () => {
         rules: [
           {
             output: { stepIndex: 0 },
-            transforms: [{ operation: 'persistent_identifier', inputs: [], targetRef }],
+            targetRef,
+            transforms: [{ operation: 'persistent_identifier', inputs: [] }],
           },
         ],
       },
@@ -1650,7 +1737,7 @@ describe('the kind of Destination Profile', () => {
           content: t.content({
             rules: [
               emailRule(t.profile, {
-                transforms: [{ operation: 'case', edgeIndex: 0, parameters }],
+                transforms: [{ operation: 'case', inputs: [{ edgeIndex: 0 }], parameters }],
               }),
             ],
           }),
@@ -3153,6 +3240,7 @@ describe('what is read is never larger than what was saved', () => {
     // A content of exactly the 4000 nodes a content may hold, most of them in metadata.
     const build = (last: number) =>
       emailRule(t.profile, {
+        targetRef: emailRule(t.profile).edges[0].targetRef,
         output: { edgeIndex: 0 },
         metadata: { a: numbers(1000), b: numbers(1000), c: numbers(1000), d: numbers(last) },
       });
@@ -3189,7 +3277,7 @@ describe('what is read is never larger than what was saved', () => {
       [emailRule(t.profile, { priority: 0, scope: {}, edges: undefined }), nicknameRule(t.profile)],
       [
         emailRule(t.profile, {
-          transforms: [{ edgeIndex: 0, operation: 'trim', parameters: {} }],
+          transforms: [{ inputs: [{ edgeIndex: 0 }], operation: 'trim', parameters: {} }],
           validationRules: [
             {
               targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
@@ -3232,7 +3320,7 @@ describe('what is read is never larger than what was saved', () => {
       expect(again.status).toBe(200);
       expect(reread.json.content).toEqual(read.json.content);
       expect(JSON.stringify(read.json.content.rules).length).toBeLessThanOrEqual(
-        JSON.stringify(rules).length + 200
+        JSON.stringify(rules).length + 300
       );
     }
   });

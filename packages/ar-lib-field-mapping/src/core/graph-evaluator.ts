@@ -1,8 +1,9 @@
+import { buildTraceEntry } from './trace';
+import { reason } from './reason-registry';
 /**
  * Evaluation is synchronous. Async operations use a caller-owned pre-pass, like identifiers:
  * await preparation once, then pass per-step results in preparedSteps. No promises or secrets
  * enter an operation. W2 can prepare keyed hashes through this hook without changing callers.
- * W1b will replace the legacy flattened persistence adapter with MappingRuleGraph loading.
  */
 import { analyzeMappingDependencies } from './graph';
 import { validateMappingRuleGraph } from './graph-validation';
@@ -54,6 +55,19 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
         }
       : { kind: 'absent' };
   };
+  for (const index of dependencies.edgeIndexes) {
+    const edge = rule.edges[index];
+    if (findSourceValue(input.sourceValues, edge))
+      trace.push(
+        buildTraceEntry({
+          reason: reason('trace.mapping_evaluated'),
+          action: 'mapped',
+          fieldRef: rule.targetRef,
+          edgeId: edge.id,
+          ruleId: rule.id,
+        })
+      );
+  }
   for (const index of dependencies.stepIndexes) {
     const step = rule.transforms[index];
     const values = step.inputs.map(read);

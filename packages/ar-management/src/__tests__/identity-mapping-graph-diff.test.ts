@@ -57,8 +57,8 @@ describe('dependency-based content diff', () => {
         },
       ],
       transforms: [
-        { operation: 'case', parameters: { mode: 'upper' }, edgeIndex: 0 },
-        { operation: 'trim', edgeIndex: 0 },
+        { operation: 'case', parameters: { mode: 'upper' }, inputs: [{ edgeIndex: 0 }] },
+        { operation: 'trim', inputs: [{ edgeIndex: 0 }] },
       ],
     };
     const before = claimShapes({ rules: [canonicalMappingRule(legacy)] }, NO_CATALOG);

@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 /**
  * SAML 2.0 Integration Tests
  * Tests HTTP-level behavior for SAML ACS and SLO endpoints
@@ -301,59 +302,65 @@ function createTestSAMLInboundMappingBinding() {
       ),
     ],
   };
-  return {
-    id: 'test-saml-inbound-activation',
-    tenantId: 'default',
-    fieldMappingSetId: 'test-saml-inbound',
-    fieldMappingVersionId: 'test-saml-inbound-v1',
-    catalog,
-    edges: [
-      mappingEdge('edge.nameId.email', 'saml.subject', 'nameId', 'authrim.profile', 'email'),
-      mappingEdge('edge.attribute.email', 'saml.attribute', 'email', 'authrim.profile', 'email'),
-      mappingEdge(
-        'edge.displayName.name',
-        'saml.attribute',
-        'displayName',
-        'authrim.profile',
-        'name'
-      ),
-      mappingEdge(
-        'edge.givenName.given_name',
-        'saml.attribute',
-        'givenName',
-        'authrim.profile',
-        'given_name'
-      ),
-      mappingEdge('edge.locale.locale', 'saml.attribute', 'locale', 'authrim.profile', 'locale'),
-      mappingEdge(
-        'edge.photo.picture_url',
-        'saml.attribute',
-        'photo',
-        'authrim.profile',
-        'picture_url'
-      ),
-      mappingEdge(
-        'edge.department.customClaim',
-        'saml.attribute',
-        'department',
-        'authrim.custom_claims',
-        'department'
-      ),
-    ],
-    transforms: [],
-    validationRules: [],
-    fieldMappingSet: {
-      id: 'test-saml-inbound-v1',
-      rules: [],
+  return withExplicitMappingGraphs(
+    {
+      id: 'test-saml-inbound-activation',
+      tenantId: 'default',
+      fieldMappingSetId: 'test-saml-inbound',
+      fieldMappingVersionId: 'test-saml-inbound-v1',
+      catalog,
+      edges: [
+        mappingEdge('edge.nameId.email', 'saml.subject', 'nameId', 'authrim.profile', 'email'),
+        mappingEdge('edge.attribute.email', 'saml.attribute', 'email', 'authrim.profile', 'email'),
+        mappingEdge(
+          'edge.displayName.name',
+          'saml.attribute',
+          'displayName',
+          'authrim.profile',
+          'name'
+        ),
+        mappingEdge(
+          'edge.givenName.given_name',
+          'saml.attribute',
+          'givenName',
+          'authrim.profile',
+          'given_name'
+        ),
+        mappingEdge('edge.locale.locale', 'saml.attribute', 'locale', 'authrim.profile', 'locale'),
+        mappingEdge(
+          'edge.photo.picture_url',
+          'saml.attribute',
+          'photo',
+          'authrim.profile',
+          'picture_url'
+        ),
+        mappingEdge(
+          'edge.department.customClaim',
+          'saml.attribute',
+          'department',
+          'authrim.custom_claims',
+          'department'
+        ),
+      ],
+      transforms: [],
+      validationRules: [],
+      fieldMappingSet: {
+        id: 'test-saml-inbound-v1',
+        rules: [],
+      },
     },
-  };
+    true
+  );
 }
 
 function createTestSAMLInboundNoEmailMappingBinding() {
-  return {
-    ...createTestSAMLInboundMappingBinding(),
-    edges: [],
-  };
+  return withExplicitMappingGraphs(
+    {
+      ...createTestSAMLInboundMappingBinding(),
+      edges: [],
+    },
+    true
+  );
 }
 
 function fieldCatalogEntry(id: string, namespace: string, path: string, targetType: string) {

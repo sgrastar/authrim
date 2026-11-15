@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
 
@@ -712,14 +713,19 @@ describe('SAML provider CRUD boundaries', () => {
 
   describe('an attribute descriptor that renames an attribute', () => {
     const create = (attributeDescriptors: Record<string, unknown>) => {
-      mocks.runtimeBinding = {
-        ...mocks.runtimeBinding,
-        edges: [
-          { targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'mail' } },
-          { targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'displayName' } },
-        ],
-        transforms: [],
-      };
+      mocks.runtimeBinding = withExplicitMappingGraphs(
+        {
+          ...mocks.runtimeBinding,
+          edges: [
+            { targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'mail' } },
+            {
+              targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'displayName' },
+            },
+          ],
+          transforms: [],
+        },
+        true
+      );
       return handleCreateProvider(
         context({
           body: {

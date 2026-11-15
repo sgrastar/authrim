@@ -258,6 +258,9 @@ describe('the destination of a platform-owned Mapping Set that names a catalog e
   /** The edge reads email and releases it under `claim`, naming `catalogEntryId` for the claim. */
   function seedClaim(claim: string, catalogEntryId: string): Database {
     const db = seed(P, { namespace: 'authrim.profile', path: 'email' });
+    db.prepare('UPDATE mapping_rules SET target_ref_json = ?').run(
+      JSON.stringify({ side: 'destination', namespace: 'oidc.claim', path: claim, catalogEntryId })
+    );
     db.prepare('UPDATE mapping_rule_edges SET target_ref_json = ?').run(
       JSON.stringify({
         side: 'destination',
@@ -295,6 +298,7 @@ describe('the destination of a platform-owned Mapping Set that names a catalog e
 
     const result = executeRuntimeMapping({
       catalog: binding.catalog,
+      graphRules: binding.graphRules,
       sourceValues: [
         {
           sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'email' },

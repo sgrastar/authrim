@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from './test-sqlite';
 import { fileURLToPath } from 'node:url';
 import { resolveRuntimeIdentityMappingBinding, type DatabaseAdapter } from '@authrim/ar-lib-core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -86,7 +85,8 @@ describe('identity mapping implicit-application runbook SQL', () => {
     // With the step's own output target, which the resolver reads.
     admin = baseline(
       'migrations/admin/d1/001_0_4_0_admin_baseline.sql',
-      'migrations/admin/d1/021_mapping_transform_step_target.sql'
+      'migrations/admin/d1/021_mapping_transform_step_target.sql',
+      'migrations/admin/d1/023_mapping_rule_graph.sql'
     );
     core = baseline('migrations/core/d1/001_0_4_0_core_baseline.sql');
   });
@@ -234,12 +234,31 @@ describe('identity mapping implicit-application runbook SQL', () => {
             path: 'email',
           })
         );
+      admin
+        .prepare(
+          `UPDATE mapping_rules SET output_edge_id =
+      (SELECT id FROM mapping_rule_edges WHERE rule_id=mapping_rules.id AND tenant_id=mapping_rules.tenant_id LIMIT 1),
+      target_ref_json=(SELECT target_ref_json FROM mapping_rule_edges WHERE rule_id=mapping_rules.id AND tenant_id=mapping_rules.tenant_id LIMIT 1)
+      WHERE tenant_id=? AND field_mapping_version_id=?`
+        )
+        .run(tenant, `ver-${id}`);
     }
   }
 
   /** The real resolver, on the same database: which activation does an app with no choice get? */
   async function runtimeWinner(clientId: string, tenant = 'tenant-a'): Promise<string | null> {
-    const bind = (params: unknown[] = []) => params.map((value) => value ?? null);
+    const bind = (params: unknown[] = []) =>
+      params.map((value) => {
+        if (value === undefined || value === null) return null;
+        if (
+          typeof value === 'string' ||
+          typeof value === 'number' ||
+          typeof value === 'bigint' ||
+          value instanceof Uint8Array
+        )
+          return value;
+        throw new Error('Unsupported SQLite input');
+      });
     const adapter = {
       query: async (sql: string, params?: unknown[]) => admin.prepare(sql).all(...bind(params)),
       queryOne: async (sql: string, params?: unknown[]) =>

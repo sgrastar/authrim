@@ -134,3 +134,5 @@ export function createTestFingerprintProvider(): FingerprintProvider {
     },
   };
 }
+
+export { withExplicitMappingGraphs } from './runtime-graph-fixture';

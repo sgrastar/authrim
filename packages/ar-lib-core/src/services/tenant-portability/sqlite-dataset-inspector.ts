@@ -89,6 +89,8 @@ export interface SqliteDatasetInspectionPolicy {
       identity: TenantPortableRecordIdentity
     ): readonly TenantPortableRecordIdentity[];
   };
+  /** Installed format refusals run before exact column validation, with an operator-facing reason. */
+  rowShape?: { id: string; assert(row: PortableSqliteRow): void };
   /** Business fields, secrets and non-ownership references require module-specific validation. */
   inspectRow: (
     row: PortableSqliteRow,
@@ -96,18 +98,31 @@ export interface SqliteDatasetInspectionPolicy {
   ) => Promise<readonly TenantPortableDependency[]>;
 }
 
+/** An installed format refusal with a static operator-facing explanation. */
+export class SqliteDatasetShapeRefusal extends Error {}
+
 /** Clone an installed policy without attempting to structured-clone executable callbacks. */
 export function cloneSqliteDatasetInspectionPolicy(
   policy: SqliteDatasetInspectionPolicy
 ): SqliteDatasetInspectionPolicy {
-  const { inspectRow, identityAliases, restoreTransform, restoreHold, admitRow, ...serializable } =
-    policy;
+  const {
+    inspectRow,
+    identityAliases,
+    rowShape,
+    restoreTransform,
+    restoreHold,
+    admitRow,
+    ...serializable
+  } = policy;
   const prepareTransformRows = restoreTransform?.prepareRows?.bind(restoreTransform);
   const assertPreparedTransformRows = restoreTransform?.assertPreparedRows?.bind(restoreTransform);
   const prepareAdmissionRows = admitRow?.prepareRows?.bind(admitRow);
   return {
     ...structuredClone(serializable),
     inspectRow,
+    ...(rowShape
+      ? { rowShape: { id: rowShape.id, assert: (row: PortableSqliteRow) => rowShape.assert(row) } }
+      : {}),
     ...(identityAliases
       ? {
           identityAliases: {
@@ -199,6 +214,7 @@ export function sqliteDatasetInspectionPolicyDescriptor(policy: SqliteDatasetIns
     restoreHoldId: policy.restoreHold?.id,
     admitRowId: policy.admitRow?.id,
     identityAliasesId: policy.identityAliases?.id,
+    ...(policy.rowShape ? { rowShapeId: policy.rowShape.id } : {}),
     restoreTenantKey: policy.restoreTenantKey,
   };
 }
@@ -232,7 +248,7 @@ function key(row: PortableSqliteRow, columns: readonly string[]): string {
 export function createSqliteDatasetInspectorFactory(
   policy: SqliteDatasetInspectionPolicy
 ): TenantBundleInspectorFactory {
-  const { inspectRow, identityAliases } = policy;
+  const { inspectRow, identityAliases, rowShape } = policy;
   const pinned = structuredClone(sqliteDatasetInspectionPolicyDescriptor(policy));
   return async (dataset, manifest) => {
     if (
@@ -409,9 +425,11 @@ export function createSqliteDatasetInspectorFactory(
             fragments = [];
             rowBytes = 0;
             // Validate every typed field against the installed column list before using values.
-            sqliteSnapshotRowInsert(schema.table, schema.columns, json);
             const parsed: unknown = JSON.parse(json);
             const row = parsed as PortableSqliteRow;
+            if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed))
+              rowShape?.assert(row);
+            sqliteSnapshotRowInsert(schema.table, schema.columns, json);
             if (schema.rowPartition) {
               const partition = row[schema.rowPartition.column];
               if (
@@ -475,10 +493,11 @@ export function createSqliteDatasetInspectorFactory(
           }
           nextOrdinal++;
           return { records, references };
-        } catch {
+        } catch (error) {
           failed = true;
           fragments = [];
           rowBytes = 0;
+          if (error instanceof SqliteDatasetShapeRefusal) throw error;
           return invalid();
         }
       },

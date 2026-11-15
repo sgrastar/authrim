@@ -7,7 +7,11 @@ import { DatabaseSync, type SQLInputValue } from './sqlite-history-fixture';
 /** Real dedicated Admin schema for failure accounting and protocol integration fixtures. */
 export function issuanceFailureDatabase() {
   const db = new DatabaseSync(':memory:');
-  for (const file of ['001_0_5_0_admin_baseline.sql', '021_mapping_transform_step_target.sql']) {
+  for (const file of [
+    '001_0_5_0_admin_baseline.sql',
+    '021_mapping_transform_step_target.sql',
+    '023_mapping_rule_graph.sql',
+  ]) {
     db.exec(
       readRenderedMigrationSql(
         new URL(`../../../../../migrations/admin/d1/`, import.meta.url),

@@ -164,6 +164,27 @@ describe('Phase 3 empty-environment roundtrip', () => {
         ) VALUES('group-a','tenant-a','tenant','oidc','custom','staff','Staff','["department"]',1,1);
       `);
 
+      sourceAdmin.exec(`
+        INSERT INTO field_mapping_sets (id,tenant_id,field_mapping_key,display_name,lifecycle_state,created_at,updated_at)
+          VALUES ('graph-set','tenant-a','graph','Graph','active',1,1);
+        INSERT INTO field_mapping_versions (id,tenant_id,field_mapping_set_id,version_label,lifecycle_state,field_mapping_hash,created_at,updated_at)
+          VALUES ('graph-version','tenant-a','graph-set','v1','published','graph-hash',1,1);
+        INSERT INTO mapping_rules (id,tenant_id,field_mapping_version_id,rule_key,rule_kind,action,created_at,updated_at,output_step_id,target_ref_json)
+          VALUES ('chain-rule','tenant-a','graph-version','chain','mapping','allow',1,1,'trim-step','{"side":"canonical","namespace":"authrim.profile","path":"display_name"}'),
+                 ('identifier-rule','tenant-a','graph-version','identifier','mapping','allow',1,1,'identifier-step','{"side":"destination","namespace":"oidc.claim","path":"sub"}');
+        INSERT INTO mapping_rule_edges (id,tenant_id,rule_id,source_ref_json,target_ref_json,display_order,created_at,updated_at)
+          VALUES ('given-edge','tenant-a','chain-rule','{"side":"source","namespace":"authrim.profile","path":"given_name"}','{"side":"canonical","namespace":"authrim.profile","path":"display_name"}',0,1,1),
+                 ('family-edge','tenant-a','chain-rule','{"side":"source","namespace":"authrim.profile","path":"family_name"}','{"side":"canonical","namespace":"authrim.profile","path":"display_name"}',1,1,1);
+        INSERT INTO mapping_transform_steps (id,tenant_id,rule_id,step_order,operation,parameters_json,created_at,updated_at)
+          VALUES ('concat-step','tenant-a','chain-rule',0,'concat','{"delimiter":" "}',1,1),
+                 ('trim-step','tenant-a','chain-rule',1,'trim','{}',1,1),
+                 ('identifier-step','tenant-a','identifier-rule',0,'persistent_identifier','{"input":"account","format":"plain","algorithm":"authrim_sha256"}',1,1);
+        INSERT INTO mapping_transform_step_inputs (tenant_id,step_id,position,edge_id,input_step_id,name)
+          VALUES ('tenant-a','concat-step',0,'given-edge',NULL,'given'),
+                 ('tenant-a','concat-step',1,'family-edge',NULL,'family'),
+                 ('tenant-a','trim-step',0,NULL,'concat-step','full');
+      `);
+
       const corePlan = planned.filter((entry) => entry.family === 'core');
       const adminPlan = planned.filter((entry) => entry.family === 'admin');
       applySnapshot(sourceCore, corePlan);
@@ -315,6 +336,40 @@ describe('Phase 3 empty-environment roundtrip', () => {
           admin: adapter(targetAdmin),
         })
       ).resolves.toBeUndefined();
+      expect(
+        targetAdmin
+          .prepare(
+            'SELECT step_id,position,edge_id,input_step_id,name FROM mapping_transform_step_inputs ORDER BY step_id,position'
+          )
+          .all()
+      ).toEqual([
+        {
+          step_id: 'concat-step',
+          position: 0,
+          edge_id: 'given-edge',
+          input_step_id: null,
+          name: 'given',
+        },
+        {
+          step_id: 'concat-step',
+          position: 1,
+          edge_id: 'family-edge',
+          input_step_id: null,
+          name: 'family',
+        },
+        {
+          step_id: 'trim-step',
+          position: 0,
+          edge_id: null,
+          input_step_id: 'concat-step',
+          name: 'full',
+        },
+      ]);
+      expect(
+        targetAdmin
+          .prepare("SELECT output_step_id FROM mapping_rules WHERE id='identifier-rule'")
+          .get()
+      ).toEqual({ output_step_id: 'identifier-step' });
       expect(targetCore.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
       expect(targetAdmin.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     } finally {

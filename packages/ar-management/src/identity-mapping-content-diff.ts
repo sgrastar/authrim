@@ -152,21 +152,7 @@ export function claimShapes(
   content: Pick<MappingSetContent, 'rules'>,
   catalog: CatalogTypes
 ): Map<string, ClaimShape> {
-  // GET translates representable stored rows to graphs. Compare legacy writes through the same
-  // output dependencies, so unused independent steps do not create a spurious change on resave.
-  const normalizedRules = content.rules.map((rule) => {
-    // Malformed historical steps were ignored by the legacy diff. They are not representable
-    // graph inputs; saves and runtime loads validate them separately.
-    if (
-      !rule.output &&
-      !rule.transforms?.some((step) => step.inputs !== undefined) &&
-      rule.transforms?.some(
-        (step) => !step.targetRef && (step.edgeIndex === undefined || !rule.edges?.[step.edgeIndex])
-      )
-    )
-      return rule;
-    return canonicalMappingRule(rule);
-  });
+  const normalizedRules = content.rules.map(canonicalMappingRule);
   // An edge that names no profile is released through the set's one profile, as the runtime
   // resolves a set to exactly one.
   const profiles = new Set<string>();
@@ -310,14 +296,6 @@ export function claimShapes(
       );
       continue;
     }
-    const edge = step.edgeIndex === undefined ? undefined : (rule.edges ?? [])[step.edgeIndex];
-    const at = edge ? placeOf.get(edge) : undefined;
-    if (!at) continue;
-    shapes
-      .get(at.key)
-      ?.transforms.push(
-        stable({ at: at.place, operation: step.operation, parameters: step.parameters ?? {} })
-      );
   }
   return new Map(
     [...shapes].map(([key, shape]) => {

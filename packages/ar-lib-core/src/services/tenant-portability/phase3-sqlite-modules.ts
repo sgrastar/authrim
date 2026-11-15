@@ -94,6 +94,7 @@ export const PHASE3_SQLITE_TABLE_GROUPS: readonly Phase3TableGroup[] = [
       'mapping_rules',
       'mapping_templates',
       'mapping_transform_steps',
+      'mapping_transform_step_inputs',
       'mapping_validation_rules',
       'protocol_schema_catalogs',
       'source_authority_contracts',

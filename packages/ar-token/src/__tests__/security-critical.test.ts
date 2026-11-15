@@ -10,6 +10,7 @@
  * - Token revocation
  */
 
+import type { RuntimeIdentityMappingBinding } from '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import { exportPKCS8, generateKeyPair } from 'jose';
@@ -1729,6 +1730,21 @@ describe('Security-Critical Tests', () => {
           created_at: '2026-01-01T00:00:00.000Z',
           updated_at: '2026-01-01T00:00:00.000Z',
         }));
+        const edge: RuntimeIdentityMappingBinding['edges'][number] = {
+          id: 'edge-preferred-username-to-sub',
+          sourceRef: {
+            side: 'source',
+            namespace: 'oidc.claim',
+            path: 'preferred_username',
+            catalogEntryId: 'field.oidc.preferred_username',
+          },
+          targetRef: {
+            side: 'destination',
+            namespace: 'oidc.claim',
+            path: 'sub',
+            catalogEntryId: 'field.oidc.sub',
+          },
+        };
         mappingFixture.binding = {
           id: 'binding-1',
           tenantId: 'default',
@@ -1747,21 +1763,14 @@ describe('Security-Critical Tests', () => {
               field('field.oidc.sub', 'sub'),
             ],
           },
-          edges: [
+          edges: [edge],
+          graphRules: [
             {
-              id: 'edge-preferred-username-to-sub',
-              sourceRef: {
-                side: 'source',
-                namespace: 'oidc.claim',
-                path: 'preferred_username',
-                catalogEntryId: 'field.oidc.preferred_username',
-              },
-              targetRef: {
-                side: 'destination',
-                namespace: 'oidc.claim',
-                path: 'sub',
-                catalogEntryId: 'field.oidc.sub',
-              },
+              id: 'rule-preferred-username-to-sub',
+              targetRef: edge.targetRef,
+              edges: [edge],
+              transforms: [],
+              output: { edgeIndex: 0 },
             },
           ],
           transforms: [],
@@ -1779,17 +1788,31 @@ describe('Security-Critical Tests', () => {
       });
 
       function subStep(parameters: Record<string, unknown>) {
-        const binding = mappingFixture.binding as { edges: unknown[]; transforms: unknown[] };
-        binding.edges = [];
-        binding.transforms = [
-          {
-            id: 'step-sub',
-            operation: 'persistent_identifier',
+        const binding = mappingFixture.binding;
+        if (typeof binding !== 'object' || binding === null) throw new Error('binding missing');
+        const graph: NonNullable<RuntimeIdentityMappingBinding['graphRules']>[number] = {
+          id: 'rule-sub',
+          targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+          edges: [],
+          transforms: [
+            {
+              id: 'step-sub',
+              operation: 'persistent_identifier',
+              inputs: [],
+              parameters: { input: 'account', format: 'plain', ...parameters },
+            },
+          ],
+          output: { stepIndex: 0 },
+        };
+        Object.assign(binding, {
+          edges: graph.edges,
+          graphRules: [graph],
+          transforms: graph.transforms.map((step) => ({
+            ...step,
             inputEdgeIds: [],
-            parameters: { input: 'account', format: 'plain', ...parameters },
-            outputTargetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
-          },
-        ];
+            outputTargetRef: graph.targetRef,
+          })),
+        });
       }
 
       it('answers invalid_grant (not invalid_client) when the mapping now cannot issue the sub', async () => {
@@ -1982,7 +2005,7 @@ describe('Security-Critical Tests', () => {
                 edges: unknown[];
                 validationRules: unknown[];
               };
-              binding.edges = [];
+              Object.assign(binding, { edges: [], graphRules: [] });
               // This mapping issues no sub: the family recorded the user's id.
               familyIssuedSubject = undefined;
               binding.validationRules = [

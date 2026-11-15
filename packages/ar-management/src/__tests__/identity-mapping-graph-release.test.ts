@@ -94,7 +94,7 @@ describe('saved competing graph outputs at SAML release', () => {
               {
                 operation: 'json_extract_text',
                 parameters: { path: 'public' },
-                inputs: [{ edgeIndex: 0 }],
+                inputs: [{ stepIndex: 0, name: 'json' }],
               },
             ],
             output: { stepIndex: 1 },

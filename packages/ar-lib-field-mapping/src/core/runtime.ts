@@ -1,13 +1,10 @@
-import { partitionStoredMappingGraph } from './stored-graph';
 import { sameFieldRef } from './validation';
-import { findSourceValue } from './source-values';
 export { findSourceValue } from './source-values';
 import { evaluateMappingRule, strongestMappingClassification } from './graph-evaluator';
 import { findCatalogEntry } from './catalog';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
-import { buildTraceEntry } from './trace';
-import { dropSuppressedTargets, executeTransformStep, sharesConsumedInput } from './transforms';
+import { dropSuppressedTargets } from './transforms';
 
 // What the hot path needs about persistent identifiers, through the runtime entrypoint.
 export {
@@ -42,104 +39,38 @@ export function lastWriterMappingValues(values: SourceValueEnvelope[]): SourceVa
 }
 
 export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult {
-  if (input.graphRules) return executeGraphMapping({ ...input, edges: [], transforms: [] });
-  const partition = partitionStoredMappingGraph(input.edges, input.transforms ?? []);
-  if (partition.graphRules.length) return executeGraphMapping({ ...input, ...partition }, input);
-  return executeLegacyMapping(input);
-}
-
-/** TODO(W1b): remove flattened raw-edge/last-value compatibility after graph migration. */
-function executeLegacyMapping(
-  input: MappingInput,
-  onValue?: (
-    value: SourceValueEnvelope,
-    writer: { edgeId: string } | { transformId: string }
-  ) => void
-): RuntimeMappingResult {
-  const validation = validateMappingInput(input);
-  const edgeValues = new Map<string, SourceValueEnvelope>();
-  const mappedValues: SourceValueEnvelope[] = [];
-  const transformReasons: ReasonCode[] = [];
-  const transformTrace: RuleTraceEntry[] = [];
-  const mappingTrace: RuleTraceEntry[] = [];
-
-  for (const edge of input.edges) {
-    const sourceValue = findSourceValue(input.sourceValues, edge);
-    if (!sourceValue) {
-      continue;
-    }
-    const targetValue: SourceValueEnvelope = {
-      ...sourceValue,
-      sourceRef: edge.targetRef,
+  const values: SourceValueEnvelope[] = [];
+  const reasons: ReasonCode[] = [];
+  const ruleTrace: RuleTraceEntry[] = [];
+  if (!input.graphRules && (input.edges.length || input.transforms?.length)) {
+    return {
+      status: 'failed',
+      values,
+      reasons: [reason('transform.invalid_reference')],
+      ruleTrace,
     };
-    edgeValues.set(edge.id, targetValue);
-    mappedValues.push(targetValue);
-    onValue?.(targetValue, { edgeId: edge.id });
-    mappingTrace.push(
-      buildTraceEntry({
-        reason: reason('trace.mapping_evaluated'),
-        action: 'mapped',
-        fieldRef: edge.targetRef,
-        edgeId: edge.id,
-      })
-    );
   }
-
-  const sharedInput = sharesConsumedInput(input.transforms, input.edges);
-  if (sharedInput) {
-    // What an identifier is made from would leave through the other step: nothing goes out.
-    transformReasons.push(reason('transform.identifier_unavailable'));
-  }
-  for (const step of input.transforms ?? []) {
-    const result = executeTransformStep({ step, edgeValues, runtimeContext: input.runtimeContext });
-    transformReasons.push(...result.reasons);
-    transformTrace.push(...result.trace);
-    if (result.value) {
-      mappedValues.push(result.value);
-      onValue?.(result.value, { transformId: step.id });
-    }
-  }
-
-  const remaining = dropSuppressedTargets(mappedValues, input.transforms, input.runtimeContext);
-
-  const reasons = [...validation.reasons, ...transformReasons];
-  return {
-    status: statusFromReasons(reasons),
-    reasons,
-    ruleTrace: [...validation.trace, ...mappingTrace, ...transformTrace],
-    values: sharedInput
-      ? []
-      : remaining.filter((value) => findCatalogEntry(input.catalog, value.sourceRef)),
-  };
-}
-
-function executeGraphMapping(
-  input: MappingInput,
-  storedOrder?: Pick<MappingInput, 'edges' | 'transforms'>
-): RuntimeMappingResult {
-  const edgeOrder = new Map(storedOrder?.edges.map((edge, index) => [edge.id, index]));
-  const transformOrder = new Map(
-    storedOrder?.transforms?.map((step, index) => [
-      step.id,
-      (storedOrder?.edges.length ?? 0) + index,
-    ])
+  const identifierRules = (input.graphRules ?? []).filter((rule) =>
+    rule.transforms.some((step) => step.operation === 'persistent_identifier')
   );
-  const positions = new Map<SourceValueEnvelope, number>();
-  const remember = (
-    value: SourceValueEnvelope,
-    writer: { edgeId: string } | { transformId: string }
-  ) => {
-    const position =
-      'edgeId' in writer ? edgeOrder.get(writer.edgeId) : transformOrder.get(writer.transformId);
-    if (position !== undefined) positions.set(value, position);
-  };
-  const legacy = executeLegacyMapping(
-    { ...input, graphRules: undefined, validationRules: [] },
-    remember
-  );
-  const values: SourceValueEnvelope[] = [...legacy.values];
-  const reasons: ReasonCode[] = [...legacy.reasons];
-  const ruleTrace: RuleTraceEntry[] = [...legacy.ruleTrace];
+  if (
+    identifierRules.some(
+      (rule) =>
+        rule.transforms.some(
+          (step) => step.operation === 'persistent_identifier' && step.inputs.length > 0
+        ) ||
+        input.graphRules?.some(
+          (other) => other !== rule && sameFieldRef(other.targetRef, rule.targetRef)
+        )
+    )
+  ) {
+    return {
+      status: 'failed',
+      values: [],
+      reasons: [reason('transform.identifier_unavailable')],
+      ruleTrace,
+    };
+  }
   const targets = new Set<string>();
   for (const rule of input.graphRules ?? []) {
     const target = JSON.stringify([
@@ -147,18 +78,11 @@ function executeGraphMapping(
       rule.targetRef.namespace,
       rule.targetRef.path,
     ]);
-    if (targets.has(target) && !storedOrder) {
+    if (targets.has(target) && rule.writerOrder === undefined) {
       reasons.push(reason('transform.duplicate_target'));
       return { status: 'failed', values: [], reasons, ruleTrace };
     }
     targets.add(target);
-    if (
-      !findCatalogEntry(input.catalog, rule.targetRef) ||
-      rule.edges.some((edge) => !findCatalogEntry(input.catalog, edge.sourceRef))
-    ) {
-      reasons.push(reason('catalog.invalid_entry'));
-      continue;
-    }
     const result = evaluateMappingRule({
       rule,
       sourceValues: input.sourceValues.map((value) => ({
@@ -170,23 +94,22 @@ function executeGraphMapping(
       })),
       runtimeContext: input.runtimeContext,
       preparedSteps: input.preparedSteps,
-      edgeValueReferences: storedOrder ? 'target' : 'source',
+      edgeValueReferences: rule.edgeValueReferences,
     });
     reasons.push(...result.reasons);
     ruleTrace.push(...result.trace);
+    if (
+      !findCatalogEntry(input.catalog, rule.targetRef) ||
+      (input.sourceCatalogValidation !== 'receiver' &&
+        rule.edges.some((edge) => !findCatalogEntry(input.catalog, edge.sourceRef)))
+    ) {
+      reasons.push(reason('catalog.invalid_entry'));
+      continue;
+    }
     if (result.output.kind === 'value') {
       values.push(result.output.envelope);
-      remember(
-        result.output.envelope,
-        'edgeIndex' in rule.output
-          ? { edgeId: rule.edges[rule.output.edgeIndex].id }
-          : { transformId: rule.transforms[rule.output.stepIndex].id }
-      );
     }
   }
-  // A stored graph replaces its edge/step writers with one writer at its declared output.
-  // Keep the original row order across graph and legacy rules; conflict consumers see only finals.
-  if (storedOrder) values.sort((a, b) => (positions.get(a) ?? 0) - (positions.get(b) ?? 0));
   const released = dropSuppressedTargets(
     values,
     input.transforms,

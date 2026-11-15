@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { describe, expect, it } from 'vitest';
 import type { MappingInput, ValidationRule } from '@authrim/ar-lib-field-mapping/contract';
 import { TEST_CATALOG } from '@authrim/ar-lib-field-mapping/test-support';
@@ -18,27 +19,33 @@ function binding(single = false): Partial<MappingInput> {
       defaultSeverity: 'critical',
       parameters: { cardinality: 'single' },
     });
-  return {
-    catalog: {
-      ...TEST_CATALOG,
-      entries: [
-        ...['first', 'second'].map((path) => ({
-          ...TEST_CATALOG.entries[0],
-          id: path,
-          namespace: 'authrim.profile',
-          path: `attributes.${path}`,
-        })),
-        { ...TEST_CATALOG.entries[4], cardinality: 'multi' },
-      ],
+  return withExplicitMappingGraphs(
+    {
+      catalog: {
+        ...TEST_CATALOG,
+        entries: [
+          ...['first', 'second'].map((path) => ({
+            ...TEST_CATALOG.entries[0],
+            id: path,
+            namespace: 'authrim.profile',
+            path: `attributes.${path}`,
+          })),
+          {
+            ...TEST_CATALOG.entries[4],
+            cardinality: 'multi',
+          } satisfies import('@authrim/ar-lib-field-mapping/contract').FieldCatalogEntry,
+        ],
+      },
+      edges: ['first', 'second'].map((id) => ({
+        id,
+        ruleId: id,
+        targetRef,
+        sourceRef: { side: 'source', namespace: 'authrim.profile', path: `attributes.${id}` },
+      })),
+      validationRules,
     },
-    edges: ['first', 'second'].map((id) => ({
-      id,
-      ruleId: id,
-      targetRef,
-      sourceRef: { side: 'source', namespace: 'authrim.profile', path: `attributes.${id}` },
-    })),
-    validationRules,
-  };
+    true
+  );
 }
 
 describe('SAML validation after attribute aggregation', () => {

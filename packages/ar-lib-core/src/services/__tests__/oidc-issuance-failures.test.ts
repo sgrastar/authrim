@@ -49,6 +49,7 @@ function seedReservedSubjectMapping() {
       VALUES('rule-a','tenant-a','version-a','rule','direct','allow',0,1,1);
     INSERT INTO mapping_rule_edges(id,tenant_id,rule_id,source_ref_json,target_ref_json,edge_kind,display_order,created_at,updated_at)
       VALUES('edge-a','tenant-a','rule-a','{"side":"source","namespace":"authrim.profile","path":"email"}','{"side":"destination","profileId":"profile-a","namespace":"oidc.claim","path":"sub"}','direct',0,1,1);
+    UPDATE mapping_rules SET output_edge_id='edge-a',target_ref_json=(SELECT target_ref_json FROM mapping_rule_edges WHERE id='edge-a') WHERE id='rule-a';
     INSERT INTO destination_profiles(id,tenant_id,destination_type,profile_key,display_name,owner_scope_type,lifecycle_state,active_version_id,created_at,updated_at)
       VALUES('profile-a','tenant-a','oidc','profile','Profile','tenant','active','profile-version',1,1);
     INSERT INTO destination_profile_versions(id,tenant_id,profile_id,version_label,lifecycle_state,schema_hash,schema_json,validation_summary_json,warning_summary_json,release_impact_json,created_at,updated_at)

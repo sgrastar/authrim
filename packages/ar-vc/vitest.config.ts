@@ -27,6 +27,10 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@authrim/ar-lib-core/test-support/mapping-graph': path.resolve(
+        __dirname,
+        '../ar-lib-core/src/services/__tests__/stored-vc-graph-fixture.ts'
+      ),
       'cloudflare:workers': path.resolve(__dirname, '../../test/mocks/cloudflare-workers.ts'),
       '@authrim/ar-lib-core': path.resolve(__dirname, '../ar-lib-core/src'),
     },

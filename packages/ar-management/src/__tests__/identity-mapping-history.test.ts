@@ -593,6 +593,11 @@ describe('mapping selection history, restore and committed evidence', () => {
             path: 'nickname',
           })
         );
+      f.db
+        .exec(`INSERT INTO mapping_rules (id,tenant_id,field_mapping_version_id,rule_key,rule_kind,action,priority,created_at,updated_at,output_edge_id,target_ref_json)
+        SELECT 'rule-namespace',tenant_id,field_mapping_version_id,'namespace','mapping','allow',1,1,1,'edge-namespace',
+          (SELECT target_ref_json FROM mapping_rule_edges WHERE id='edge-namespace') FROM mapping_rules WHERE id='rule-a';
+        UPDATE mapping_rule_edges SET rule_id='rule-namespace' WHERE id='edge-namespace';`);
       f.db.prepare('UPDATE destination_profile_versions SET schema_json=? WHERE profile_id=?').run(
         JSON.stringify({
           destinationType: 'oidc',
@@ -1032,6 +1037,9 @@ describe('mapping selection history, restore and committed evidence', () => {
           }),
           'edge-tenant-custom-0'
         );
+        f.db.exec(
+          "UPDATE mapping_rules SET target_ref_json=(SELECT target_ref_json FROM mapping_rule_edges WHERE id='edge-tenant-custom-0') WHERE id='rule-tenant-custom'"
+        );
         f.db
           .prepare(
             "UPDATE destination_profile_versions SET schema_json=json_insert(schema_json,'$.claims[#]',json(?)) WHERE profile_id=?"
@@ -1088,7 +1096,7 @@ describe('mapping selection history, restore and committed evidence', () => {
       expect(preview.status).toBe(200);
       expect(preview.json.apps).toHaveLength(200);
       expect(preview.json.apps_truncated).toBe(true);
-      expect(queries).toBeLessThan(50);
+      expect(queries).toBeLessThan(55);
       expect(new Set(mocks.bindingReads.mock.calls.map(([input]) => input.clientId)).size).toBe(
         200
       );

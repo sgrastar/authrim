@@ -1,4 +1,4 @@
-import { canRepresentStoredRuleGraph } from './identity-mapping-graph-contract';
+import type { MappingValueReference } from '@authrim/ar-lib-field-mapping/contract';
 /**
  * What the Mapping Set facade (`identity-mapping-set-facade.ts`) reads and writes: the shape of
  * its request, the content of a set as the version create takes it, and the content read back from
@@ -229,6 +229,8 @@ export interface StoredVersionForContent {
   compatibilityRange: string | null;
   latestSnapshot: { catalogVersionId: string | null } | null;
   rules: Array<{
+    targetRef?: Record<string, unknown>;
+    output?: MappingValueReference;
     ruleKey: string;
     ruleKind: string;
     action: string;
@@ -243,7 +245,7 @@ export interface StoredVersionForContent {
       edgeKind: string;
     }>;
     transforms: Array<{
-      edgeId: string | null;
+      inputs: MappingValueReference[];
       targetRef?: Record<string, unknown> | null;
       operation: string;
       parameters: Record<string, unknown>;
@@ -289,14 +291,8 @@ export function contentFromStoredVersion(version: StoredVersionForContent): Mapp
     ruleKey: rule.ruleKey,
     ruleKind: rule.ruleKind,
     action: rule.action,
-    ...(canRepresentStoredRuleGraph(rule)
-      ? {
-          output:
-            rule.transforms.length > 0
-              ? { stepIndex: rule.transforms.length - 1 }
-              : { edgeIndex: 0 },
-        }
-      : {}),
+    ...(rule.targetRef ? { targetRef: rule.targetRef } : {}),
+    ...(rule.output ? { output: rule.output } : {}),
     ...(rule.priority !== 0 ? { priority: rule.priority } : {}),
     ...(nonEmpty(rule.scope) ? { scope: rule.scope } : {}),
     ...(nonEmpty(rule.condition) ? { condition: rule.condition } : {}),
@@ -313,17 +309,8 @@ export function contentFromStoredVersion(version: StoredVersionForContent): Mapp
     ...(rule.transforms.length > 0
       ? {
           transforms: rule.transforms.map((transform) => {
-            const edgeIndex = transform.edgeId
-              ? rule.edges.findIndex((edge) => edge.id === transform.edgeId)
-              : -1;
-            if (transform.edgeId && edgeIndex < 0)
-              throw badRequest('invalid_reference: stored transform edge is missing');
             return {
-              ...(!canRepresentStoredRuleGraph(rule) && edgeIndex >= 0 ? { edgeIndex } : {}),
-              ...(canRepresentStoredRuleGraph(rule)
-                ? { inputs: edgeIndex >= 0 ? [{ edgeIndex }] : [] }
-                : {}),
-              ...(transform.targetRef ? { targetRef: transform.targetRef } : {}),
+              inputs: transform.inputs,
               operation: transform.operation,
               ...(nonEmpty(transform.parameters) ? { parameters: transform.parameters } : {}),
             };

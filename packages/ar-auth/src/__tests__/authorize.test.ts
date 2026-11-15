@@ -1,3 +1,4 @@
+import type { RuntimeIdentityMappingBinding } from '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import {
@@ -3867,6 +3868,21 @@ describe('Authorization Handler', () => {
         beforeEach(() => {
           mappingFixture.userLookups = [];
           mappingFixture.userRow = mappedUserRow();
+          const edge: RuntimeIdentityMappingBinding['edges'][number] = {
+            id: 'edge-preferred-username-to-sub',
+            sourceRef: {
+              side: 'source',
+              namespace: 'oidc.claim',
+              path: 'preferred_username',
+              catalogEntryId: 'field.oidc.preferred_username',
+            },
+            targetRef: {
+              side: 'destination',
+              namespace: 'oidc.claim',
+              path: 'sub',
+              catalogEntryId: 'field.oidc.sub',
+            },
+          };
           mappingFixture.binding = {
             id: 'binding-1',
             tenantId: 'default',
@@ -3885,21 +3901,14 @@ describe('Authorization Handler', () => {
                 field('field.oidc.sub', 'sub'),
               ],
             },
-            edges: [
+            edges: [edge],
+            graphRules: [
               {
-                id: 'edge-preferred-username-to-sub',
-                sourceRef: {
-                  side: 'source',
-                  namespace: 'oidc.claim',
-                  path: 'preferred_username',
-                  catalogEntryId: 'field.oidc.preferred_username',
-                },
-                targetRef: {
-                  side: 'destination',
-                  namespace: 'oidc.claim',
-                  path: 'sub',
-                  catalogEntryId: 'field.oidc.sub',
-                },
+                id: 'rule-preferred-username-to-sub',
+                targetRef: edge.targetRef,
+                edges: [edge],
+                transforms: [],
+                output: { edgeIndex: 0 },
               },
             ],
             transforms: [],
@@ -3997,7 +4006,7 @@ describe('Authorization Handler', () => {
               edges: unknown[];
               validationRules: unknown[];
             };
-            binding.edges = [];
+            Object.assign(binding, { edges: [], graphRules: [] });
             binding.validationRules = [
               {
                 id: 'rule-username-required',

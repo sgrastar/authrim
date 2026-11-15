@@ -97,6 +97,17 @@ export function seedMapping(db: SQLiteDatabase, input: SeedMappingInput): string
       JSON.stringify({ side: 'destination', profileId, namespace: 'oidc.claim', path: 'email' })
     );
   });
+  run(
+    `UPDATE mapping_rules SET output_edge_id = (SELECT id FROM mapping_rule_edges WHERE tenant_id = ? AND id = ?), target_ref_json =
+      (SELECT target_ref_json FROM mapping_rule_edges WHERE tenant_id = ? AND id = ?)
+      WHERE tenant_id = ? AND id = ?`,
+    owner,
+    `edge-${id}-0`,
+    owner,
+    `edge-${id}-0`,
+    owner,
+    `rule-${id}`
+  );
   return `set-${id}`;
 }
 
@@ -196,5 +207,16 @@ export function seedMappingVersion(
       JSON.stringify({ side: 'destination', profileId, namespace: 'oidc.claim', path: 'email' })
     );
   });
+  run(
+    `UPDATE mapping_rules SET output_edge_id = (SELECT id FROM mapping_rule_edges WHERE tenant_id = ? AND id = ?), target_ref_json =
+      (SELECT target_ref_json FROM mapping_rule_edges WHERE tenant_id = ? AND id = ?)
+      WHERE tenant_id = ? AND id = ?`,
+    owner,
+    `edge-${id}-0`,
+    owner,
+    `edge-${id}-0`,
+    owner,
+    `rule-${id}`
+  );
   return { versionId: `ver-${id}`, snapshotId: `snap-${id}` };
 }

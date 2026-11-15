@@ -56,6 +56,31 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
     ).toThrow(/must require at least one scope/i);
   });
 
+  it('loads only the selected snapshot format-migration equivalence', async () => {
+    const row = activationRow('activation-default', { protocol: 'saml', role: 'idp' });
+    const adapter = new ResolverAdapter({
+      activations: [
+        {
+          ...row,
+          snapshot_metadata_json: JSON.stringify({
+            graphMigration023: {
+              previousSnapshotHash: 'legacy-snapshot',
+              snapshotHash: row.snapshot_hash,
+            },
+          }),
+        },
+      ],
+    });
+    const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
+      tenantId: 'tenant_a',
+      protocol: 'saml',
+      role: 'idp',
+      fieldMappingSetId: row.field_mapping_set_id,
+      fieldMappingVersionId: row.field_mapping_version_id,
+    });
+    expect(binding?.equivalentMappingSnapshotHashes).toEqual(['legacy-snapshot']);
+  });
+
   it('selects a partner-specific activation before tenant default', async () => {
     const adapter = new ResolverAdapter({
       activations: [
@@ -92,6 +117,7 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
     expect(binding?.edges).toEqual([
       {
         id: 'edge_email',
+        ruleId: 'rule_1',
         sourceRef: {
           side: 'source',
           namespace: 'authrim.profile',
@@ -301,6 +327,7 @@ class ResolverAdapter implements DatabaseAdapter {
       return [
         {
           id: 'edge_email',
+          rule_id: 'rule_1',
           source_ref_json: JSON.stringify({
             side: 'source',
             namespace: 'authrim.profile',
@@ -329,6 +356,13 @@ class ResolverAdapter implements DatabaseAdapter {
       return [
         {
           id: 'rule_1',
+          output_edge_id: 'edge_email',
+          output_step_id: null,
+          target_ref_json: JSON.stringify({
+            side: 'destination',
+            namespace: 'saml.attribute',
+            path: 'urn:oid:0.9.2342.19200300.100.1.3',
+          }),
           action: 'allow',
           priority: 0,
           scope_json: JSON.stringify({ kind: 'tenant', id: 'tenant_a' }),

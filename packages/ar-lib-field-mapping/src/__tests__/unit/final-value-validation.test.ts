@@ -1,3 +1,4 @@
+import { graphFixture } from '../../test-support/graph-fixture';
 import { describe, expect, it } from 'vitest';
 import { executeRuntimeMapping } from '../../core/runtime';
 import { dryRunMapping } from '../../core/dry-run';
@@ -47,13 +48,13 @@ describe('validation after writer resolution and suppression', () => {
     { first: null, last: 'present', missing: false },
   ])('checks required on the last writer ($first -> $last)', ({ first, last, missing }) => {
     const input = competing(first, last, [{ id: 'required', kind: 'required', targetRef: target }]);
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
     expect(result.reasons.some((reason) => reason.code === 'validation.required_missing')).toBe(
       missing
     );
     expect(result.status).toBe(missing ? 'failed' : 'success');
     expect(result.values.map((value) => value.value)).toEqual([first, last]);
-    expect(dryRunMapping(input).reasons).toEqual(result.reasons);
+    expect(dryRunMapping(graphFixture(input)).reasons).toEqual(result.reasons);
   });
 
   it.each([
@@ -69,7 +70,7 @@ describe('validation after writer resolution and suppression', () => {
       },
     ]);
     expect(
-      executeRuntimeMapping(input).reasons.some(
+      executeRuntimeMapping(graphFixture(input)).reasons.some(
         (reason) => reason.code === 'validation.type_mismatch'
       )
     ).toBe(invalid);
@@ -88,17 +89,17 @@ describe('validation after writer resolution and suppression', () => {
       },
     ]);
     expect(
-      executeRuntimeMapping(input).reasons.some(
+      executeRuntimeMapping(graphFixture(input)).reasons.some(
         (reason) => reason.code === 'validation.cardinality_mismatch'
       )
     ).toBe(invalid);
   });
 
-  it('validates a suppressed target as absent, without a competing or original stand-in', () => {
+  it('validates a suppressed target as absent without an original stand-in', () => {
     const input = competing('stand-in', 'unused', [
       { id: 'required', kind: 'required', targetRef: target },
     ]);
-    input.edges = input.edges.slice(0, 1);
+    input.edges = [];
     input.sourceValues.push({ value: 'original-stand-in', sourceRef: target });
     input.transforms = [
       {
@@ -111,7 +112,7 @@ describe('validation after writer resolution and suppression', () => {
       },
     ];
     input.runtimeContext = { suppressedIdentifiers: { identifier: true } };
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
     expect(result.values).toEqual([]);
     expect(result.reasons).toContainEqual(
       expect.objectContaining({ code: 'validation.required_missing' })

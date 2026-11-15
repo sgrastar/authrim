@@ -613,16 +613,5 @@ export function mappedPairwiseSubject(input: {
     const made = input.identifiers[step.id];
     return made && input.finalSubject === made ? made : null;
   }
-  const writers = (input.transforms ?? []).filter(
-    (step) =>
-      step.outputTargetRef.side === 'destination' &&
-      step.outputTargetRef.namespace === input.destinationNamespace &&
-      step.outputTargetRef.path === 'sub'
-  );
-  if (writers.length !== 1) return null;
-  const [step] = writers;
-  if (step.operation !== 'persistent_identifier') return null;
-  if (step.parameters?.audience !== 'sector') return null;
-  const made = input.identifiers[step.id];
-  return made && input.finalSubject === made ? made : null;
+  return null;
 }

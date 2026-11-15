@@ -1,3 +1,4 @@
+import { storedVCGraphBinding } from '@authrim/ar-lib-core/test-support/mapping-graph';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../../types';
@@ -435,6 +436,20 @@ describe('attribute verification response', () => {
     mocks.sha256Base64url.mockResolvedValue('vp-fingerprint');
   });
 
+  it('completes an in-flight VP request pinned before the graph storage migration', async () => {
+    mocks.resolveMapping.mockResolvedValue({
+      ...mappingBinding,
+      mappingSnapshotHash: 'migrated-snapshot',
+      equivalentMappingSnapshotHashes: ['snapshot-1'],
+    });
+    useRequestState(pendingRequest());
+    const response = await attributeVerifyResponse(
+      createContext({ json: { vp_token: 'vp', state: REQUEST_ID } })
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.linkVerificationToUser).toHaveBeenCalled();
+  });
+
   it('rejects an inactive token before reading presentation state', async () => {
     mocks.introspectToken.mockResolvedValue({ valid: false });
     const response = await attributeVerifyResponse(
@@ -755,6 +770,38 @@ describe('attribute verification response', () => {
     );
   });
 
+  it('evaluates an explicit graph loaded from stored rule/output rows before persisting attributes', async () => {
+    const binding = await storedVCGraphBinding('authrim.verified_attribute');
+    mocks.resolveMapping.mockResolvedValue(binding);
+    const runtime = await vi.importActual<typeof import('@authrim/ar-lib-field-mapping/runtime')>(
+      '@authrim/ar-lib-field-mapping/runtime'
+    );
+    mocks.executeRuntimeMapping.mockImplementation(runtime.executeRuntimeMapping);
+    mocks.verifyVPToken.mockResolvedValue({
+      ...validVerificationResult,
+      disclosedClaims: { age_over_18: true },
+    });
+    useRequestState(pendingRequest());
+    const response = await attributeVerifyResponse(
+      createContext({ json: { vp_token: 'vp', state: REQUEST_ID } })
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.executeRuntimeMapping).toHaveBeenCalledWith(
+      expect.objectContaining({ graphRules: binding.graphRules })
+    );
+    expect(mocks.linkVerificationToUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      'user-1',
+      expect.objectContaining({
+        attributes: [{ name: 'age_over_18', value: 'true', originalClaim: 'age_over_18' }],
+      })
+    );
+    mocks.executeRuntimeMapping.mockReset();
+  });
+
   it('persists only mapped attributes and commits the state transition', async () => {
     const stub = createRequestStub();
     mocks.getStoreById.mockReturnValue({ stub });
@@ -824,6 +871,43 @@ describe('verified attribute reads', () => {
     const response = await getAttributes(createContext());
     expect(response.status).toBe(401);
     expect(mocks.invalidateStaleForUser).not.toHaveBeenCalled();
+  });
+
+  it('retains evidence pinned before the graph storage migration while rejecting policy changes', async () => {
+    mocks.resolveMapping.mockResolvedValue({
+      ...mappingBinding,
+      mappingSnapshotHash: 'migrated-snapshot',
+      equivalentMappingSnapshotHashes: ['snapshot-1'],
+    });
+    mocks.findVerificationsByUser.mockResolvedValue({
+      items: [
+        {
+          id: 'migrated-evidence',
+          invalidated_at: null,
+          credential_profile_id: 'profile-1',
+          mapping_version_id: 'mapping-version-1',
+          mapping_snapshot_hash: 'snapshot-1',
+        },
+        {
+          id: 'different-policy',
+          invalidated_at: null,
+          credential_profile_id: 'profile-1',
+          mapping_version_id: 'mapping-version-1',
+          mapping_snapshot_hash: 'unrelated',
+        },
+      ],
+    });
+    mocks.getUserVerifiedAttributes.mockResolvedValue([{ name: 'age_over_18', value: 'true' }]);
+    const response = await getAttributes(createContext());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      attributes: [{ name: 'age_over_18', value: 'true' }],
+    });
+    expect(mocks.invalidateVerification).toHaveBeenCalledExactlyOnceWith(
+      'tenant-1',
+      'different-policy',
+      'mapping_policy_changed'
+    );
   });
 
   it('invalidates stale, untrusted, and mapping-changed evidence before returning attributes', async () => {

@@ -42,7 +42,7 @@ function copyRule(graph: boolean, target: Record<string, unknown>): FieldMapping
     transforms: [
       graph
         ? { operation: 'copy', inputs: [{ edgeIndex: 0 }] }
-        : { operation: 'copy', edgeIndex: 0 },
+        : { operation: 'copy', inputs: [{ edgeIndex: 0 }] },
     ],
     conflictRules: [
       { targetRef: { ...target }, conflictStrategy: 'prefer_source', sourcePriority: [] },

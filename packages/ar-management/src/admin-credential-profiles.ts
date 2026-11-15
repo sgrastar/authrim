@@ -1,3 +1,4 @@
+import { hashCredentialProfileSnapshot } from '@authrim/ar-lib-core/services/credential-profile-snapshot';
 import type { Context } from 'hono';
 import type {
   AdminAuthContext,
@@ -118,25 +119,6 @@ function normalizeClaims(value: unknown): string[] {
   const claims = [...new Set(value.map((item) => requireKey(item, 'claim_name')))].sort();
   if (claims.length === 0 || claims.length > 128) throw new Error('invalid_claim_allowlist');
   return claims;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-async function hashSnapshot(value: unknown): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(stableJson(value)));
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/u, '');
 }
 
 async function signCredentialProfileContract(
@@ -530,7 +512,7 @@ export async function adminCredentialProfilePublishHandler(c: AdminContext) {
       maximumAttributeAgeSeconds: version.maximum_attribute_age_seconds,
       transactionCodeRequired: version.transaction_code_required === 1,
     };
-    const snapshotHash = await hashSnapshot(snapshot);
+    const snapshotHash = await hashCredentialProfileSnapshot(snapshot);
     const now = Math.floor(Date.now() / 1000);
     await adminDb(c).transaction(async (tx) => {
       await tx.execute(
@@ -702,6 +684,7 @@ export async function adminCredentialOfferCreateHandler(c: AdminContext) {
     >;
     const mapped = executeRuntimeMapping({
       catalog: binding.catalog,
+      graphRules: binding.graphRules,
       sourceValues: sourceValues(binding, canonicalClaims),
       edges: binding.edges,
       transforms: binding.transforms,
