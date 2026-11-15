@@ -1,3 +1,4 @@
+import { analyzeMappingDependencies } from '@authrim/ar-lib-field-mapping/authoring';
 import type {
   Cardinality,
   FieldCatalogBundle,
@@ -5,6 +6,7 @@ import type {
   FieldMappingSet,
   MappingRuleEdge,
   MappingTransformStep,
+  MappingRuleGraph,
   RedactionClassification,
   TargetType,
   TransformOperation,
@@ -72,6 +74,7 @@ export interface RuntimeIdentityMappingResolutionContext {
 }
 
 export interface RuntimeIdentityMappingBinding {
+  graphRules?: MappingRuleGraph[];
   id: string;
   /** The tenant ID that owns the activation (the calling tenant unless `ownerTenantId` was given). */
   tenantId: string;
@@ -124,11 +127,23 @@ export interface RuntimeIdentityMappingReleaseSafetyOptions {
 }
 
 export function assertRuntimeIdentityMappingReleaseSafety(
-  binding: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges'>,
+  binding: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges' | 'graphRules'>,
   destinationFields: RuntimeDestinationReleaseField[],
   requireSensitiveScopes: boolean,
   options: RuntimeIdentityMappingReleaseSafetyOptions = {}
 ): void {
+  if (binding.graphRules) {
+    binding = {
+      ...binding,
+      edges: binding.graphRules.flatMap((rule) => {
+        const dependencies = analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length });
+        return [...dependencies.edgeIndexes].map((index) => ({
+          ...rule.edges[index],
+          targetRef: rule.targetRef,
+        }));
+      }),
+    };
+  }
   const destinationByKey = new Map(destinationFields.map((field) => [field.key, field]));
   if (options.requireKnownSources) {
     assertKnownSourcesReleaseSafety(binding, destinationByKey, requireSensitiveScopes);
@@ -262,6 +277,7 @@ interface CatalogEntryRow {
 }
 
 interface EdgeRow {
+  rule_id?: string;
   id: string;
   source_ref_json: string;
   target_ref_json: string;
@@ -270,6 +286,7 @@ interface EdgeRow {
 }
 
 interface TransformRow {
+  rule_id?: string;
   id: string;
   edge_id: string | null;
   step_order: number;
@@ -746,7 +763,7 @@ async function loadEdges(
   fieldMappingVersionId: string
 ): Promise<EdgeRow[]> {
   return adapter.query<EdgeRow>(
-    `SELECT e.id, e.source_ref_json, e.target_ref_json, e.edge_kind, e.display_order
+    `SELECT e.id, e.rule_id, e.source_ref_json, e.target_ref_json, e.edge_kind, e.display_order
        FROM mapping_rules r
        JOIN mapping_rule_edges e
          ON e.tenant_id = r.tenant_id
@@ -763,7 +780,7 @@ async function loadTransforms(
   fieldMappingVersionId: string
 ): Promise<TransformRow[]> {
   return adapter.query<TransformRow>(
-    `SELECT t.id, t.edge_id, t.step_order, t.operation, t.parameters_json,
+    `SELECT t.id, t.rule_id, t.edge_id, t.step_order, t.operation, t.parameters_json,
             COALESCE(t.target_ref_json, e.target_ref_json) AS target_ref_json
        FROM mapping_rules r
        JOIN mapping_transform_steps t
@@ -841,6 +858,7 @@ function findCatalogEntry(catalog: FieldCatalogBundle, ref: FieldRef) {
 function toRuntimeEdges(edges: EdgeRow[]): MappingRuleEdge[] {
   return edges.map((edge) => ({
     id: edge.id,
+    ruleId: edge.rule_id,
     sourceRef: parseFieldRef(edge.source_ref_json),
     targetRef: parseFieldRef(edge.target_ref_json),
     edgeKind: edge.edge_kind ?? undefined,
@@ -848,8 +866,22 @@ function toRuntimeEdges(edges: EdgeRow[]): MappingRuleEdge[] {
 }
 
 function toRuntimeTransforms(transforms: TransformRow[], edges: EdgeRow[]): MappingTransformStep[] {
+  if (
+    transforms.some(
+      (step) =>
+        step.edge_id &&
+        !edges.some(
+          (edge) =>
+            edge.id === step.edge_id &&
+            (!step.rule_id || !edge.rule_id || step.rule_id === edge.rule_id)
+        )
+    )
+  ) {
+    throw new Error('invalid_reference: mapping transform has a dangling or cross-rule edge');
+  }
   return transforms.map((transform) => ({
     id: transform.id,
+    ruleId: transform.rule_id,
     inputEdgeIds: transform.edge_id ? [transform.edge_id] : [],
     operation: transform.operation as TransformOperation,
     parameters: parseJsonObject(transform.parameters_json ?? '{}'),

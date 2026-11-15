@@ -2,6 +2,34 @@ import type { ReasonCategory, ReasonCode, ReasonCodeName, ReasonRegistryEntry } 
 
 export const REASON_REGISTRY: ReasonRegistryEntry[] = [
   {
+    code: 'transform.invalid_arity',
+    category: 'transform',
+    severity: 'error',
+    stability: 'stable',
+    description: 'Transform input count does not match the operation schema.',
+  },
+  {
+    code: 'transform.invalid_reference',
+    category: 'transform',
+    severity: 'critical',
+    stability: 'stable',
+    description: 'A graph reference is dangling, forward, cyclic or outside its rule.',
+  },
+  {
+    code: 'transform.identifier_post_transform_not_allowed',
+    category: 'transform',
+    severity: 'critical',
+    stability: 'stable',
+    description: 'An identifier dependency uses a forbidden post-transform.',
+  },
+  {
+    code: 'transform.duplicate_target',
+    category: 'transform',
+    severity: 'critical',
+    stability: 'stable',
+    description: 'Several graph rules write the same output target.',
+  },
+  {
     code: 'adapter.malformed_record',
     category: 'adapter',
     severity: 'error',

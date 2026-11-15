@@ -7,7 +7,10 @@ import type {
   MappingRuleEdge,
   SourceValueEnvelope,
 } from '@authrim/ar-lib-field-mapping/contract';
-import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
+import {
+  executeRuntimeMapping,
+  lastWriterMappingValues,
+} from '@authrim/ar-lib-field-mapping/runtime';
 import {
   selectPrimaryScimObject,
   selectPrimaryScimValue,
@@ -76,11 +79,13 @@ export async function applyScimInboundIdentityMapping(input: {
   );
   const runtimeResult = executeRuntimeMapping({
     catalog: prepared.catalog,
+    graphRules: binding.graphRules,
     sourceValues: prepared.sourceValues,
     edges: prepared.edges,
     transforms: binding.transforms,
     validationRules: binding.validationRules,
     fieldMappingSet: binding.fieldMappingSet,
+    resolveValidationValues: scimValidationValues,
   });
   if (runtimeResult.status === 'failed') {
     throw new ScimIdentityMappingError('SCIM inbound identity mapping failed', 'mapping_failed');
@@ -258,7 +263,25 @@ function canonicalPath(path: string): string {
   return path.startsWith('field.canonical.') ? path.slice('field.canonical.'.length) : path;
 }
 
+/** Validate the same final strings that SCIM writes, including aliases of one user field. */
+function scimValidationValues(values: SourceValueEnvelope[]): SourceValueEnvelope[] {
+  const user = mappedValuesToInternalUser(values);
+  return lastWriterMappingValues(values).map((value) => {
+    const ref = value.sourceRef;
+    const field =
+      ref.side === 'destination' && CANONICAL_NAMESPACES.has(ref.namespace)
+        ? stringField(canonicalPath(ref.path))
+        : undefined;
+    return field ? { ...value, value: user[field] } : value;
+  });
+}
+
 function assignKnownField(user: Partial<InternalUser>, path: string, value: unknown): boolean {
+  const field = stringField(path);
+  if (field) {
+    user[field] = stringValue(value);
+    return true;
+  }
   switch (path) {
     case 'active':
     case 'scim_active':
@@ -274,16 +297,20 @@ function assignKnownField(user: Partial<InternalUser>, path: string, value: unkn
     case 'address_json':
       user.address_json = typeof value === 'string' ? value : JSON.stringify(value);
       return true;
+    default:
+      return false;
+  }
+}
+
+function stringField(path: string) {
+  switch (path) {
     case 'external_id':
     case 'scim_external_id':
-      user.external_id = stringValue(value);
-      return true;
+      return 'external_id';
     case 'display_name':
-      user.name = stringValue(value);
-      return true;
+      return 'name';
     case 'picture_url':
-      user.picture = stringValue(value);
-      return true;
+      return 'picture';
     case 'email':
     case 'phone_number':
     case 'name':
@@ -299,10 +326,9 @@ function assignKnownField(user: Partial<InternalUser>, path: string, value: unkn
     case 'birthdate':
     case 'zoneinfo':
     case 'locale':
-      user[path] = stringValue(value);
-      return true;
+      return path;
     default:
-      return false;
+      return undefined;
   }
 }
 

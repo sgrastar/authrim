@@ -341,6 +341,7 @@ async function assertOidcDestination(
 ): Promise<void> {
   const profileIds = mappingDestinationProfileIds(
     content.rules.flatMap((rule) => [
+      ...(rule.targetRef ? [rule.targetRef] : []),
       ...(rule.edges ?? []).map((edge) => edge.targetRef),
       // A step with no input edge (a persistent identifier) names its own output target.
       ...(rule.transforms ?? []).flatMap((step) => (step.targetRef ? [step.targetRef] : [])),

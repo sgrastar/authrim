@@ -317,6 +317,7 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
   const outputGraph = sliceOutputGraph({
     edges: binding.edges,
     transforms: binding.transforms,
+    graphRules: binding.graphRules,
     validationRules: binding.validationRules,
     destinationNamespace: destinationNamespace ?? DEFAULT_DESTINATION_NAMESPACE,
   });
@@ -325,6 +326,7 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
   const nameIdGraph = sliceOutputGraph({
     edges: binding.edges,
     transforms: binding.transforms,
+    graphRules: binding.graphRules,
     validationRules: binding.validationRules,
     destinationNamespace: SAML_NAMEID_NAMESPACE,
   });
@@ -385,6 +387,7 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
     localEntityId: idpEntityId,
     partnerEntityId: spConfig.entityId,
     catalog,
+    graphRules: outputGraph.graphRules,
     edges: outputGraph.edges,
     transforms: outputGraph.transforms,
     validationRules: outputGraph.validationRules,
@@ -399,6 +402,7 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
     ...(nameIdGraph.transforms.length > 0
       ? {
           nameId: {
+            graphRules: nameIdGraph.graphRules,
             edges: nameIdGraph.edges,
             transforms: nameIdGraph.transforms,
             validationRules: nameIdGraph.validationRules,

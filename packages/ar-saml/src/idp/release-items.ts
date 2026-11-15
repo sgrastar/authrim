@@ -1,3 +1,7 @@
+import {
+  analyzeMappingDependencies,
+  withMappingGraph,
+} from '@authrim/ar-lib-field-mapping/authoring';
 /**
  * The information a SAML SP would be given in an assertion, worked out in two steps so nothing is
  * made for a release the person has not approved:
@@ -314,9 +318,8 @@ async function prepareSAMLMappedIdentifiers(input: {
 }): Promise<{ identifiers: Record<string, string>; suppressed: Record<string, true> }> {
   let binding: SAMLIdentityMappingFieldMappingBinding;
   try {
-    binding = resolveSAMLIdentityMappingFieldMappingBinding(
-      input.identityMapping,
-      input.mappingContext
+    binding = withMappingGraph(
+      resolveSAMLIdentityMappingFieldMappingBinding(input.identityMapping, input.mappingContext)
     );
   } catch {
     // No binding applies: the release refuses for that reason, not for an identifier.
@@ -380,7 +383,7 @@ export async function resolveSAMLMappedNameID(input: {
     input.spConfig
   );
   const graph = identityMapping?.nameId;
-  if (!graph || graph.transforms.length === 0) return undefined;
+  if (!graph || (graph.transforms.length === 0 && !graph.graphRules?.length)) return undefined;
   const refuse = (): never => {
     throw new SAMLIdentityMappingRuntimeError([
       {
@@ -390,8 +393,23 @@ export async function resolveSAMLMappedNameID(input: {
       },
     ]);
   };
-  const [step, ...others] = graph.transforms;
+  const rules = graph.graphRules;
+  const rule = rules?.[0];
+  if (rules && (rules.length !== 1 || !rule || !('stepIndex' in rule.output))) refuse();
+  const dependencies = rule
+    ? analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length })
+    : undefined;
+  const steps =
+    rule && dependencies
+      ? dependencies.stepIndexes.map((index) => ({
+          ...rule.transforms[index],
+          inputEdgeIds: [],
+          outputTargetRef: rule.targetRef,
+        }))
+      : graph.transforms;
+  const [step, ...others] = steps;
   if (
+    !step ||
     others.length > 0 ||
     step.operation !== 'persistent_identifier' ||
     step.parameters?.format !== 'plain'
@@ -439,6 +457,7 @@ export async function resolveSAMLMappedNameID(input: {
     const checked = executeRuntimeMapping({
       catalog: identityMapping.catalog?.identity ? identityMapping.catalog : EMPTY_CATALOG,
       sourceValues,
+      graphRules: graph.graphRules,
       edges: graph.edges,
       transforms: [step],
       validationRules: graph.validationRules,

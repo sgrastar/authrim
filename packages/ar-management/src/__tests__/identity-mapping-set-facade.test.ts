@@ -704,7 +704,8 @@ describe('reading a set', () => {
       ruleKey: 'email',
       priority: -3,
       metadata: { note: 'kept' },
-      transforms: [{ edgeIndex: 0, operation: 'trim' }],
+      output: { stepIndex: 0 },
+      transforms: [{ inputs: [{ edgeIndex: 0 }], operation: 'trim' }],
       validationRules: [{ validationKind: 'required', severity: 'warning' }],
       releaseRules: [{ destinationType: 'oidc', releaseAction: 'allow', purpose: 'login' }],
       conflictRules: [{ conflictStrategy: 'prefer_source', sourcePriority: ['a'] }],
@@ -1588,6 +1589,80 @@ describe('the release safety check', () => {
 });
 
 describe('the kind of Destination Profile', () => {
+  it('saves and reads a generating graph whose only destination is the rule target', async () => {
+    const t = await setup();
+    const targetRef = {
+      side: 'destination',
+      namespace: 'oidc.claim',
+      path: 'sub',
+      profileId: t.profile,
+    };
+    const created = await t.request(
+      t.tenantAdmin,
+      'POST',
+      SETS,
+      t.body({
+        content: t.content({
+          rules: [
+            {
+              ruleKey: 'subject',
+              ruleKind: 'transform',
+              action: 'allow',
+              targetRef,
+              output: { stepIndex: 0 },
+              transforms: [
+                {
+                  operation: 'persistent_identifier',
+                  inputs: [],
+                  parameters: { input: 'account', format: 'plain', algorithm: 'authrim_sha256' },
+                },
+              ],
+            },
+          ],
+        }),
+      })
+    );
+    expect(created.status).toBe(201);
+    const read = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.json.id}`);
+    expect(read.status).toBe(200);
+    expect(read.json).toMatchObject({
+      content: {
+        rules: [
+          {
+            output: { stepIndex: 0 },
+            transforms: [{ operation: 'persistent_identifier', inputs: [], targetRef }],
+          },
+        ],
+      },
+    });
+  });
+
+  it.each([17, 'lower', null, [], true].map((parameters) => ({ parameters })))(
+    'rejects non-object transform parameters $parameters with 400 before saving',
+    async ({ parameters }) => {
+      const t = await setup();
+      const before = t.rowCounts();
+      const refused = await t.request(
+        t.tenantAdmin,
+        'POST',
+        SETS,
+        t.body({
+          content: t.content({
+            rules: [
+              emailRule(t.profile, {
+                transforms: [{ operation: 'case', edgeIndex: 0, parameters }],
+              }),
+            ],
+          }),
+        })
+      );
+      expect(refused.status).toBe(400);
+      expect(refused.json).toMatchObject({ error: 'invalid_request', stage_failed: 'validate' });
+      expect(refused.json.error_description).toContain('parameters must be an object');
+      expect({ ...t.rowCounts(), idempotency: 0 }).toEqual({ ...before, idempotency: 0 });
+    }
+  );
+
   it('refuses a set that releases into a SAML profile, and says to use the activation endpoints', async () => {
     const t = await setup();
     seedDestinationProfile(t.db, { owner: TENANT, id: 'profile-saml', destinationType: 'saml' });
@@ -3078,6 +3153,7 @@ describe('what is read is never larger than what was saved', () => {
     // A content of exactly the 4000 nodes a content may hold, most of them in metadata.
     const build = (last: number) =>
       emailRule(t.profile, {
+        output: { edgeIndex: 0 },
         metadata: { a: numbers(1000), b: numbers(1000), c: numbers(1000), d: numbers(last) },
       });
     const last =

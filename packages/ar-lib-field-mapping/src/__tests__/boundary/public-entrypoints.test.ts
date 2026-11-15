@@ -26,6 +26,7 @@ describe('public field-mapping entrypoints', () => {
       'executeRuntimeMapping',
       'findCatalogEntry',
       'findSourceValue',
+      'lastWriterMappingValues',
       'persistentIdentifierSettingsProblem',
     ]);
     expect(authoringPublic).not.toHaveProperty('executeRuntimeMapping');

@@ -1,4 +1,12 @@
 import {
+  canonicalMappingRule,
+  canRepresentStoredRuleGraph,
+  assertMappingGraphContract,
+  MappingGraphContractError,
+  persistentEdgeIndex,
+} from './identity-mapping-graph-contract';
+import type { MappingValueReference } from '@authrim/ar-lib-field-mapping/contract';
+import {
   emitLogIcebergRow,
   prepareLogIcebergRowWrite,
   type LogIcebergRowWrite,
@@ -113,6 +121,10 @@ const SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS = 15 * 60;
 const SAML_METADATA_POLLING_MAX_INTERVAL_SECONDS = 7 * 24 * 60 * 60;
 const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
   'copy',
+  'as_array',
+  'split',
+  'join',
+  'first',
   'concat',
   'fallback',
   'normalize',
@@ -932,6 +944,8 @@ interface CreateAttributeFieldRequest {
 }
 
 export interface FieldMappingVersionRuleInput {
+  targetRef?: Record<string, unknown>;
+  output?: MappingValueReference;
   ruleKey: string;
   ruleKind: string;
   action: string;
@@ -945,7 +959,9 @@ export interface FieldMappingVersionRuleInput {
     edgeKind?: string;
   }>;
   transforms?: Array<{
+    /** @deprecated Use inputs. */
     edgeIndex?: number;
+    inputs?: MappingValueReference[];
     /**
      * Where a step that takes no input edge (the persistent_identifier step) writes its value;
      * every other step writes where its edge does.
@@ -4059,6 +4075,7 @@ export class IdentityMappingControlPlaneRepository {
         rules: Map<
           string,
           {
+            output?: MappingValueReference;
             id: string;
             ruleKey: string;
             ruleKind: string;
@@ -4075,6 +4092,7 @@ export class IdentityMappingControlPlaneRepository {
               displayOrder: number;
             }>;
             transforms: Array<{
+              inputs?: MappingValueReference[];
               id: string;
               edgeId: string | null;
               /** The step's own output target (a step with no input edge), else null. */
@@ -4186,6 +4204,9 @@ export class IdentityMappingControlPlaneRepository {
           summary.destinationProfileIds.add(normalizeDestinationProfileReference(profileId));
         }
       }
+      const edgeIndex = row.edge_id ? rule.edges.findIndex((edge) => edge.id === row.edge_id) : -1;
+      if (row.edge_id && edgeIndex < 0)
+        throw badRequest('invalid_reference: stored transform edge is missing');
       rule.transforms.push({
         id: row.transform_id,
         edgeId: row.edge_id,
@@ -4237,6 +4258,19 @@ export class IdentityMappingControlPlaneRepository {
         sourcePriority: parseJsonUnknownArray(row.source_priority_json),
         condition: parseJsonObject(row.condition_json ?? '{}', {}),
       });
+    }
+    for (const summary of summariesByVersion.values()) {
+      for (const rule of summary.rules.values()) {
+        if (!canRepresentStoredRuleGraph(rule)) continue;
+        rule.output = rule.transforms.length
+          ? { stepIndex: rule.transforms.length - 1 }
+          : { edgeIndex: 0 };
+        for (const step of rule.transforms) {
+          step.inputs = step.edgeId
+            ? [{ edgeIndex: rule.edges.findIndex((edge) => edge.id === step.edgeId) }]
+            : [];
+        }
+      }
     }
     return rows.map((row) => ({
       id: row.id,
@@ -8267,11 +8301,15 @@ export class IdentityMappingControlPlaneRepository {
           createId('mapping_transform'),
           tenantId,
           ruleId,
-          transform.edgeIndex === undefined ? null : (edgeIds[transform.edgeIndex] ?? null),
+          // TODO(W1b): ordered inputs/output columns replace this single-edge translation.
+          edgeIds[persistentEdgeIndex(transform) ?? -1] ?? null,
           index,
           transform.operation,
           stableJson(transform.parameters ?? {}),
-          transform.targetRef ? stableJson(transform.targetRef) : null,
+          (transform.targetRef ??
+          (transform.operation === 'persistent_identifier' ? rule.targetRef : undefined))
+            ? stableJson(transform.targetRef ?? rule.targetRef)
+            : null,
           now,
           now,
         ]
@@ -10248,7 +10286,10 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
 }
 
 function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRequest): void {
-  assertProfileSchemaBudget(input, 'fieldMappingVersion');
+  assertProfileSchemaBudget(
+    { ...input, rules: input.rules.map(canonicalMappingRule) },
+    'fieldMappingVersion'
+  );
   assertNoSensitiveMetadata(input, 'fieldMappingVersion');
   if (input.rules.length > POLICY_VERSION_MAX_RULES) {
     throw badRequest(`rules must contain at most ${POLICY_VERSION_MAX_RULES} items`);
@@ -10264,16 +10305,17 @@ function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRe
   // A persistent identifier's target is written by that step alone, across the rules of the set as
   // well: another rule writing it would put a second value there, which goes out when the
   // identifier is suppressed, or stands next to it.
-  const key = (target: { namespace?: unknown; path?: unknown } | undefined) =>
-    `${String(target?.namespace)}\u0000${String(target?.path)}`;
+  const key = (target: Record<string, unknown> | undefined) =>
+    `${String(target?.namespace)}\u0000${target ? mappingReferencePath(target) : ''}`;
   const writers = new Map<string, number>();
   input.rules.forEach((rule) => {
     for (const edge of rule.edges ?? []) {
       writers.set(key(edge.targetRef), (writers.get(key(edge.targetRef)) ?? 0) + 1);
     }
     for (const transform of rule.transforms ?? []) {
-      if (transform.targetRef) {
-        writers.set(key(transform.targetRef), (writers.get(key(transform.targetRef)) ?? 0) + 1);
+      const target = transform.targetRef ?? rule.targetRef;
+      if (target) {
+        writers.set(key(target), (writers.get(key(target)) ?? 0) + 1);
       }
     }
   });
@@ -10281,7 +10323,7 @@ function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRe
     rule.transforms?.forEach((transform, index) => {
       if (
         transform.operation === 'persistent_identifier' &&
-        (writers.get(key(transform.targetRef)) ?? 0) > 1
+        (writers.get(key(transform.targetRef ?? rule.targetRef)) ?? 0) > 1
       ) {
         throw badRequest(
           `rules[${ruleIndex}].transforms[${index}] output is also written by another edge or step of the set`
@@ -10289,9 +10331,52 @@ function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRe
       }
     });
   });
+  // Legacy conflictRules explicitly choose among several writers. New graphs have one writer;
+  // the legacy conflict-policy use case remains supported until W1b migrates those policies.
+  const targetOwners = new Map<string, number>();
+  for (const [index, rule] of input.rules.entries()) {
+    const refs = rule.targetRef
+      ? [rule.targetRef]
+      : [
+          ...(rule.edges ?? []).map((edge) => edge.targetRef),
+          ...(rule.transforms ?? []).flatMap((step) => (step.targetRef ? [step.targetRef] : [])),
+        ];
+    for (const ref of refs) {
+      const target = key(ref);
+      const owner = targetOwners.get(target);
+      if (
+        owner !== undefined &&
+        owner !== index &&
+        !input.rules.some((candidate) =>
+          candidate.conflictRules?.some((conflict) => key(conflict.targetRef) === target)
+        )
+      ) {
+        throw new IdentityMappingControlPlaneError(
+          'Several rules write one target',
+          400,
+          'duplicate_target'
+        );
+      }
+      targetOwners.set(target, index);
+    }
+  }
 }
 
 function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: string): void {
+  try {
+    assertMappingGraphContract(rule, path);
+  } catch (error) {
+    if (error instanceof MappingGraphContractError) {
+      if (
+        error.reason === 'unsupported_until_w1b' ||
+        error.reason === 'identifier_post_transform_not_allowed'
+      ) {
+        throw new IdentityMappingControlPlaneError(error.message, 400, error.reason);
+      }
+      throw badRequest(error.message);
+    }
+    throw error;
+  }
   validatePolicySymbol(rule.ruleKey, `${path}.ruleKey`);
   validatePolicySymbol(rule.ruleKind, `${path}.ruleKind`);
   validatePolicySymbol(rule.action, `${path}.action`);
@@ -10348,10 +10433,10 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
       // Takes no input edge: it is made from the account's ID or an identifier source, which the
       // runtime reads. It says itself where its value goes, and its settings are checked as the
       // runtime checks them, so a set that could never make an identifier is not saved.
-      if (transform.edgeIndex !== undefined) {
+      if (persistentEdgeIndex(transform) !== undefined) {
         throw badRequest(`${path}.transforms[${index}] takes no input edge`);
       }
-      const target = transform.targetRef;
+      const target = transform.targetRef ?? rule.targetRef;
       if (!target || typeof target !== 'object' || Array.isArray(target)) {
         throw badRequest(`${path}.transforms[${index}].targetRef is required`);
       }

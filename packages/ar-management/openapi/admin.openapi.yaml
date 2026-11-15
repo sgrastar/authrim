@@ -67286,6 +67286,114 @@ components:
           description: >-
             The Admin database could not be read to look for the activations, so `warnings` is
             empty without the tenant having none.
+    MappingGraphReference:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [edgeIndex]
+          properties:
+            edgeIndex:
+              type: integer
+              minimum: 0
+            name:
+              type: string
+              minLength: 1
+        - type: object
+          additionalProperties: false
+          required: [stepIndex]
+          properties:
+            stepIndex:
+              type: integer
+              minimum: 0
+            name:
+              type: string
+              minLength: 1
+    MappingGraphRule:
+      type: object
+      additionalProperties: false
+      required: [ruleKey, ruleKind, action]
+      description: >-
+        One output target per rule. Inputs are ordered and may only reference earlier steps of
+        this rule. Legacy edgeIndex is translated to inputs and output defaults to the last
+        step (or the sole edge for copy). Until W1b, multi-input, chaining, named inputs and
+        non-last output return 400 unsupported_until_w1b; stored rows are unchanged.
+      properties:
+        ruleKey:
+          type: string
+        ruleKind:
+          type: string
+        action:
+          type: string
+        priority:
+          type: integer
+        targetRef:
+          type: object
+          additionalProperties: true
+        scope:
+          type: object
+          additionalProperties: true
+        condition:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+        output:
+          $ref: '#/components/schemas/MappingGraphReference'
+        edges:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [sourceRef, targetRef]
+            properties:
+              sourceRef:
+                type: object
+                additionalProperties: true
+              targetRef:
+                type: object
+                additionalProperties: true
+              edgeKind:
+                type: string
+        transforms:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [operation]
+            properties:
+              edgeIndex:
+                type: integer
+                minimum: 0
+                deprecated: true
+                description: Use inputs instead. Accepted for legacy requests.
+              inputs:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MappingGraphReference'
+              operation:
+                type: string
+              parameters:
+                type: object
+                additionalProperties: true
+              targetRef:
+                type: object
+                additionalProperties: true
+        validationRules:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        releaseRules:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        conflictRules:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
     MappingSetContent:
       type: object
       additionalProperties: false
@@ -67311,16 +67419,9 @@ components:
         rules:
           type: array
           maxItems: 250
-          description: >-
-            Rules with `ruleKey`, `ruleKind`, `action`, `priority`, `scope`, `condition`,
-            `metadata`, `edges` (`sourceRef`, `targetRef`, `edgeKind`), `transforms` (`edgeIndex`,
-            `operation`, `parameters`; a `persistent_identifier` step takes no `edgeIndex` and names
-            where its value goes in `targetRef`), `validationRules`, `releaseRules` and `conflictRules`, as
-            in `FieldMappingVersionCreateRequest`. The rules release into exactly one OIDC
-            Destination Profile (named by `targetRef.profileId`).
+          description: Rules in the shared graph contract, with a single released output.
           items:
-            type: object
-            additionalProperties: true
+            $ref: '#/components/schemas/MappingGraphRule'
     MappingSetSaveRequest:
       type: object
       additionalProperties: false
@@ -68232,8 +68333,7 @@ components:
         rules:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: '#/components/schemas/MappingGraphRule'
     FieldMappingVersion:
       type: object
       additionalProperties: true

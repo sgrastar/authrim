@@ -34,7 +34,10 @@ vi.mock('../identity-mapping-resolution', () => ({
       : { selection: { kind: 'none', reason: 'no_default', chain }, binding: null };
   },
 }));
-vi.mock('@authrim/ar-lib-field-mapping/runtime', () => ({ executeRuntimeMapping: executeMapping }));
+vi.mock('@authrim/ar-lib-field-mapping/runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-field-mapping/runtime')>()),
+  executeRuntimeMapping: executeMapping,
+}));
 vi.mock('../destination-profile-consent', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../destination-profile-consent')>()),
   filterOidcClaimsByDestinationConsent: filterClaims,

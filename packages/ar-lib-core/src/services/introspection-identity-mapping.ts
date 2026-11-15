@@ -87,6 +87,7 @@ export async function applyIntrospectionIdentityMapping(
   const sourceClaims = await loadMappedIntrospectionSources(input, binding);
   const runtimeResult = executeRuntimeMapping({
     catalog: binding.catalog,
+    graphRules: binding.graphRules,
     sourceValues: toIntrospectionSourceValues(sourceClaims, binding),
     edges: binding.edges,
     transforms: binding.transforms,

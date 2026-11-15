@@ -127,6 +127,8 @@ export interface SourceValueEnvelope {
   metadata?: Partial<Record<SafeMetadataKey, SafeMetadataValue>>;
   classificationHint?: RedactionClassification;
   provenanceHint?: ProvenanceHint;
+  /** Every dependency, retained by graph transforms rather than only input zero. */
+  provenanceHints?: ProvenanceHint[];
 }
 
 export interface FingerprintProvider {
@@ -177,18 +179,49 @@ export interface FieldCatalogBundle {
 }
 
 export interface MappingRuleEdge {
+  ruleId?: string;
   id: string;
   sourceRef: FieldRef;
   targetRef: FieldRef;
 }
 
 export interface MappingTransformStep {
+  ruleId?: string;
   id: string;
   inputEdgeIds: string[];
   operation: TransformOperation;
   parameters?: Record<string, unknown>;
   outputTargetRef: FieldRef;
 }
+
+/** Rule-local indexes; names reserve named inputs for conditional operations. */
+export type MappingValueReference =
+  | { edgeIndex: number; name?: string }
+  | { stepIndex: number; name?: string };
+
+export interface MappingGraphTransform {
+  id: string;
+  operation: TransformOperation;
+  parameters?: Record<string, unknown>;
+  inputs: MappingValueReference[];
+}
+
+/** Exactly one target is released, from the explicit output reference. */
+export interface MappingRuleGraph {
+  id: string;
+  targetRef: FieldRef;
+  edges: MappingRuleEdge[];
+  transforms: MappingGraphTransform[];
+  output: MappingValueReference;
+  /** Set by the caller from the recipient's subject type. */
+  pairwiseSubject?: boolean;
+}
+
+export type MappingEvaluationValue =
+  | { kind: 'value'; envelope: SourceValueEnvelope }
+  | { kind: 'absent' }
+  | { kind: 'failed' }
+  | { kind: 'suppressed' };
 
 export interface TransformParameterSchema {
   name: string;
@@ -200,6 +233,7 @@ export interface TransformParameterSchema {
 export interface TransformOperationSchema {
   operation: TransformOperation;
   parameters: TransformParameterSchema[];
+  inputArity: { min: number; max?: number };
   outputValueType?: string;
   outputCardinality?: Cardinality;
 }
@@ -326,6 +360,9 @@ export interface BatchDryRunResult {
 }
 
 export interface MappingInput {
+  /** W1b will load these rule boundaries from persistence. Omitted means legacy evaluation. */
+  graphRules?: MappingRuleGraph[];
+  preparedSteps?: ReadonlyMap<string, MappingEvaluationValue>;
   catalog: FieldCatalogBundle;
   sourceValues: SourceValueEnvelope[];
   edges: MappingRuleEdge[];
@@ -334,6 +371,8 @@ export interface MappingInput {
   fieldMappingSet?: FieldMappingSet;
   fingerprintProvider?: FingerprintProvider;
   runtimeContext?: Record<string, unknown>;
+  /** Receiver-specific aggregation for final-value validation; defaults to the last writer. */
+  resolveValidationValues?: (values: SourceValueEnvelope[]) => SourceValueEnvelope[];
 }
 
 export interface BatchMappingInput {

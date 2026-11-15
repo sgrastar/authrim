@@ -1,10 +1,19 @@
-import { executeRuntimeMapping, findCatalogEntry } from '@authrim/ar-lib-field-mapping/runtime';
+import {
+  analyzeMappingDependencies,
+  withMappingGraph,
+} from '@authrim/ar-lib-field-mapping/authoring';
+import {
+  executeRuntimeMapping,
+  findCatalogEntry,
+  lastWriterMappingValues,
+} from '@authrim/ar-lib-field-mapping/runtime';
 import type {
   FieldCatalogBundle,
   FieldRef,
   FieldMappingSet,
   MappingRuleEdge,
   MappingTransformStep,
+  MappingRuleGraph,
   ReasonCode,
   SourceValueEnvelope,
   ValidationRule,
@@ -116,6 +125,7 @@ export interface SAMLIdentityMappingRuntimeContext {
 }
 
 export interface SAMLIdentityMappingFieldMappingBinding {
+  graphRules?: MappingRuleGraph[];
   id?: string;
   role?: SAMLIdentityMappingRole;
   tenantId?: string;
@@ -141,6 +151,7 @@ export interface SAMLIdentityMappingReleaseConfig extends Partial<SAMLIdentityMa
   bindings?: SAMLIdentityMappingFieldMappingBinding[];
   /** The part of the mapping that makes the persistent NameID (output into `saml.nameid`). */
   nameId?: {
+    graphRules?: MappingRuleGraph[];
     edges: MappingRuleEdge[];
     transforms: MappingTransformStep[];
     /** The mapping's checks on what the NameID is made from. */
@@ -274,17 +285,19 @@ function buildSAMLAttributesFromIdentityMapping(
   institutionScope?: SAMLInstitutionScopePolicy,
   institutionNames?: readonly string[]
 ): SAMLAttributeReleaseResult {
-  const binding = resolveSAMLIdentityMappingFieldMappingBinding(config, context);
+  const binding = withMappingGraph(resolveSAMLIdentityMappingFieldMappingBinding(config, context));
   const destinationNamespace = binding.destinationNamespace ?? 'saml.attribute';
   const sourceValues = buildIdentityMappingSourceValues(subject, binding.edges);
   const result = executeRuntimeMapping({
     catalog: binding.catalog,
+    graphRules: binding.graphRules,
     sourceValues,
     edges: binding.edges,
     transforms: binding.transforms,
     validationRules: binding.validationRules,
     fieldMappingSet: binding.fieldMappingSet,
     runtimeContext: context.runtimeContext ?? binding.runtimeContext,
+    resolveValidationValues: (values) => resolveSAMLValidationValues(values, binding),
   });
 
   if (result.status === 'failed') {
@@ -418,11 +431,20 @@ function findSAMLSystemSourceNeeds<Name extends string>(
   if (!config || !hasSAMLIdentityMappingRuntimeConfig(config)) return needs;
   let binding: SAMLIdentityMappingFieldMappingBinding;
   try {
-    binding = resolveSAMLIdentityMappingFieldMappingBinding(config, context);
+    binding = withMappingGraph(resolveSAMLIdentityMappingFieldMappingBinding(config, context));
   } catch {
     return needs;
   }
-  for (const edge of binding.edges) {
+  const sourceEdges = binding.graphRules
+    ? binding.graphRules.flatMap((rule) => {
+        const dependencies = analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length });
+        return [...dependencies.edgeIndexes].map((index) => ({
+          ...rule.edges[index],
+          targetRef: rule.targetRef,
+        }));
+      })
+    : binding.edges;
+  for (const edge of sourceEdges) {
     const sourcePath = mappingSourceSubjectPath(edge.sourceRef);
     const key = (Object.keys(subjectKeys) as Name[]).find(
       (name) => subjectKeys[name] === sourcePath
@@ -575,6 +597,16 @@ function mappedProvenance(binding: SAMLIdentityMappingFieldMappingBinding): Map<
       ]);
     }
   }
+  for (const rule of binding.graphRules ?? []) {
+    const dependencies = analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length });
+    for (const index of dependencies.edgeIndexes) {
+      const edge = rule.edges[index];
+      add(provenanceKey(rule.targetRef), [
+        ...fieldHints(binding, edge.sourceRef, false),
+        ...fieldHints(binding, edge.targetRef, true),
+      ]);
+    }
+  }
   return new Map([...byPath].map(([path, hints]) => [path, [...hints]]));
 }
 
@@ -609,15 +641,65 @@ function buildAttributeFromMappedValue(
   if (values.length === 0) {
     return null;
   }
-  const descriptor = findMappedAttributeDescriptor(mappedValue.sourceRef, config);
-
   return {
-    name: descriptor?.name ?? mappedValue.sourceRef.path,
-    nameFormat: descriptor?.nameFormat,
-    friendlyName: descriptor?.friendlyName,
-    valueType: resolveMappedAttributeValueType(mappedValue.sourceRef, config, descriptor),
+    ...mappedAttributeShape(mappedValue.sourceRef, config),
     values,
   };
+}
+
+function mappedAttributeShape(
+  ref: FieldRef,
+  config: SAMLIdentityMappingFieldMappingBinding
+): Omit<SAMLAttribute, 'values'> {
+  const descriptor = findMappedAttributeDescriptor(ref, config);
+  return {
+    name: descriptor?.name ?? ref.path,
+    nameFormat: descriptor?.nameFormat,
+    friendlyName: descriptor?.friendlyName,
+    valueType: resolveMappedAttributeValueType(ref, config, descriptor),
+  };
+}
+
+/** Mirror attribute grouping and deduplication before lexical serialization, retaining value types. */
+function resolveSAMLValidationValues(
+  values: SourceValueEnvelope[],
+  binding: SAMLIdentityMappingFieldMappingBinding
+): SourceValueEnvelope[] {
+  const namespace = binding.destinationNamespace ?? 'saml.attribute';
+  const groups = new Map<
+    string,
+    {
+      refs: Map<string, SourceValueEnvelope>;
+      values: Map<string, AttributeValue>;
+      multi: boolean;
+    }
+  >();
+  for (const value of values) {
+    if (value.sourceRef.namespace !== namespace) continue;
+    const key = samlAttributeKey({ ...mappedAttributeShape(value.sourceRef, binding), values: [] });
+    const group = groups.get(key) ?? {
+      refs: new Map<string, SourceValueEnvelope>(),
+      values: new Map<string, AttributeValue>(),
+      multi: false,
+    };
+    group.refs.set(fieldRefKey(value.sourceRef), value);
+    const raw = rawAttributeValues(value.value);
+    if (raw.length && Array.isArray(value.value)) group.multi = true;
+    for (const item of raw) {
+      if (!group.values.has(String(item))) group.values.set(String(item), item);
+    }
+    groups.set(key, group);
+  }
+  return [
+    ...lastWriterMappingValues(values.filter((value) => value.sourceRef.namespace !== namespace)),
+    ...[...groups.values()].flatMap((group) => {
+      const raw = [...group.values.values()];
+      return [...group.refs.values()].map((ref) => ({
+        ...ref,
+        value: raw.length === 1 && !group.multi ? raw[0] : raw,
+      }));
+    }),
+  ];
 }
 
 function resolveMappedAttributeValueType(
@@ -822,13 +904,17 @@ function readNestedValue(record: Record<string, unknown>, path: string[]): unkno
 }
 
 function normalizeAttributeValues(value: unknown): string[] {
+  return rawAttributeValues(value).map(String);
+}
+
+function rawAttributeValues(value: unknown): AttributeValue[] {
   if (Array.isArray(value)) {
-    return value.flatMap((item) => normalizeAttributeValues(item));
+    return value.flatMap((item) => rawAttributeValues(item));
   }
 
   if (isAttributeValue(value)) {
     const stringValue = String(value);
-    return stringValue.length > 0 ? [stringValue] : [];
+    return stringValue.length > 0 ? [value] : [];
   }
 
   return [];

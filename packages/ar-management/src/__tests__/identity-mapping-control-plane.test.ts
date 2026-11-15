@@ -3324,6 +3324,47 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     }
   });
 
+  it('refuses duplicate output targets and unsupported graph persistence before any write', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    const edge = {
+      sourceRef: { side: 'source', namespace: 'csv', path: 'email' },
+      targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
+    };
+    const rule = {
+      ruleKey: 'a',
+      ruleKind: 'mapping',
+      action: 'allow',
+      edges: [edge],
+      output: { edgeIndex: 0 },
+    };
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        rules: [rule, structuredClone({ ...rule, ruleKey: 'b' })],
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'duplicate_target' });
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        rules: [
+          {
+            ...rule,
+            edges: [edge, structuredClone(edge)],
+            output: { stepIndex: 0 },
+            transforms: [
+              {
+                operation: 'concat',
+                inputs: [{ edgeIndex: 0 }, { edgeIndex: 1 }],
+              },
+            ],
+          },
+        ],
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'unsupported_until_w1b' });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
   it('rejects duplicate field mapping rule keys before persistence', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);

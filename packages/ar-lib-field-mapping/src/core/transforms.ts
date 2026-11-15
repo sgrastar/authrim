@@ -1,9 +1,11 @@
+import { analyzeMappingDependencies } from './graph';
 import { buildTraceEntry } from './trace';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
 import type {
   FieldRef,
   MappingRuleEdge,
+  MappingRuleGraph,
   MappingTransformStep,
   ReasonCode,
   SourceValueEnvelope,
@@ -165,9 +167,10 @@ function sameTarget(a: FieldRef, b: FieldRef): boolean {
 }
 
 export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
-  { operation: 'copy', parameters: [] },
+  { operation: 'copy', inputArity: { min: 1, max: 1 }, parameters: [] },
   {
     operation: 'as_array',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       { name: 'trimItems', kind: 'boolean', required: false },
       { name: 'omitEmpty', kind: 'boolean', required: false },
@@ -177,6 +180,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'split',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       { name: 'delimiter', kind: 'string', required: false },
       { name: 'trimItems', kind: 'boolean', required: false },
@@ -187,6 +191,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'join',
+    inputArity: { min: 1 },
     parameters: [
       { name: 'delimiter', kind: 'string', required: false },
       { name: 'trimItems', kind: 'boolean', required: false },
@@ -198,6 +203,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'first',
+    inputArity: { min: 1 },
     parameters: [
       { name: 'trimItems', kind: 'boolean', required: false },
       { name: 'omitEmpty', kind: 'boolean', required: false },
@@ -210,6 +216,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
     // takes no input edge: it is made from the account's ID, or from a value an administrator
     // imported for the account (`input` and `source`), which the runtime reads, not the mapping.
     operation: 'persistent_identifier',
+    inputArity: { min: 0, max: 0 },
     parameters: [
       {
         name: 'input',
@@ -263,6 +270,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'affix_text',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       { name: 'prefix', kind: 'string', required: false },
       { name: 'suffix', kind: 'string', required: false },
@@ -272,13 +280,15 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'concat',
+    inputArity: { min: 1 },
     parameters: [{ name: 'delimiter', kind: 'string', required: false }],
     outputValueType: 'string',
     outputCardinality: 'single',
   },
-  { operation: 'fallback', parameters: [] },
+  { operation: 'fallback', inputArity: { min: 1 }, parameters: [] },
   {
     operation: 'normalize',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       {
         name: 'mode',
@@ -292,6 +302,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'case',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       {
         name: 'mode',
@@ -305,12 +316,14 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'trim',
+    inputArity: { min: 1, max: 1 },
     parameters: [],
     outputValueType: 'string',
     outputCardinality: 'single',
   },
   {
     operation: 'text_to_boolean',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       { name: 'trueValues', kind: 'string', required: false },
       { name: 'falseValues', kind: 'string', required: false },
@@ -321,6 +334,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'json_build',
+    inputArity: { min: 1 },
     parameters: [
       { name: 'keyMap', kind: 'string', required: false },
       {
@@ -335,18 +349,21 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'json_extract_text',
+    inputArity: { min: 1, max: 1 },
     parameters: [{ name: 'path', kind: 'string', required: true }],
     outputValueType: 'string',
     outputCardinality: 'single',
   },
   {
     operation: 'json_extract_boolean',
+    inputArity: { min: 1, max: 1 },
     parameters: [{ name: 'path', kind: 'string', required: true }],
     outputValueType: 'boolean',
     outputCardinality: 'single',
   },
   {
     operation: 'json_extract_integer',
+    inputArity: { min: 1, max: 1 },
     parameters: [{ name: 'path', kind: 'string', required: true }],
     outputValueType: 'number',
     outputCardinality: 'single',
@@ -376,6 +393,12 @@ export function validateTransformStep(step: MappingTransformStep): ValidationRes
     return resultFromReasons(reasons);
   }
 
+  if (
+    step.inputEdgeIds.length < schema.inputArity.min ||
+    (schema.inputArity.max !== undefined && step.inputEdgeIds.length > schema.inputArity.max)
+  ) {
+    reasons.push(reason('transform.invalid_arity'));
+  }
   const parameters = step.parameters ?? {};
   const schemaParameters = new Map(
     schema.parameters.map((parameter) => [parameter.name, parameter])
@@ -522,9 +545,17 @@ function executeOperation(
     case 'split':
       return splitValue(rawValues[0], step.parameters);
     case 'join':
-      return normalizeArrayValue(rawValues, step.parameters).join(delimiter(step, ','));
+      return normalizeArrayValue(
+        rawValues.filter((value) => value !== undefined),
+        step.parameters
+      ).join(delimiter(step, ','));
     case 'first':
-      return normalizeArrayValue(rawValues, step.parameters)[0] ?? null;
+      return (
+        normalizeArrayValue(
+          rawValues.filter((value) => value !== undefined),
+          step.parameters
+        )[0] ?? null
+      );
     case 'persistent_identifier':
       return readPreparedIdentifier(step, runtimeContext);
     case 'affix_text':
@@ -762,7 +793,7 @@ function buildJsonValue(
   const seenKeys = new Set<string>();
   for (const source of values) {
     const rawValue = source.value;
-    if (!includeNulls && (rawValue === undefined || rawValue === null || rawValue === '')) {
+    if (rawValue === undefined || (!includeNulls && (rawValue === null || rawValue === ''))) {
       continue;
     }
     const key = uniqueJsonKey(jsonBuildKey(source, keyMap), seenKeys);
@@ -1056,7 +1087,8 @@ function jsonByteLength(value: unknown): number {
 export function dropSuppressedTargets(
   values: SourceValueEnvelope[],
   transforms: readonly MappingTransformStep[] | undefined,
-  runtimeContext: Record<string, unknown> | undefined
+  runtimeContext: Record<string, unknown> | undefined,
+  graphRules: readonly MappingRuleGraph[] = []
 ): SourceValueEnvelope[] {
   const suppressed = runtimeContext?.suppressedIdentifiers;
   if (typeof suppressed !== 'object' || suppressed === null) return values;
@@ -1064,14 +1096,32 @@ export function dropSuppressedTargets(
   const targets = (transforms ?? []).filter(
     (step) => step.operation === 'persistent_identifier' && flags[step.id] === true
   );
-  if (targets.length === 0) return values;
+  const graphTargets: FieldRef[] = [];
+  for (const rule of graphRules) {
+    try {
+      const dependencies = analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length });
+      if (
+        dependencies.stepIndexes.some(
+          (index) =>
+            rule.transforms[index].operation === 'persistent_identifier' &&
+            flags[rule.transforms[index].id] === true
+        )
+      ) {
+        graphTargets.push(rule.targetRef);
+      }
+    } catch {
+      // Invalid loaded graphs fail closed even when the context carries suppression flags.
+      return [];
+    }
+  }
+  if (targets.length === 0 && graphTargets.length === 0) return values;
   return values.filter(
     (value) =>
-      !targets.some(
-        (step) =>
-          step.outputTargetRef.side === value.sourceRef.side &&
-          step.outputTargetRef.namespace === value.sourceRef.namespace &&
-          step.outputTargetRef.path === value.sourceRef.path
+      ![...targets.map((step) => step.outputTargetRef), ...graphTargets].some(
+        (target) =>
+          target.side === value.sourceRef.side &&
+          target.namespace === value.sourceRef.namespace &&
+          target.path === value.sourceRef.path
       )
   );
 }

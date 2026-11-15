@@ -35,3 +35,15 @@ export type {
   CsvSourceProfileWarningCode,
 } from './source-profiles/csv';
 export { parseCsvSourceProfile } from './source-profiles/csv';
+
+export { evaluateMappingRule } from './core/graph-evaluator';
+export type { GraphEvaluationInput } from './core/graph-evaluator';
+export {
+  analyzeMappingDependencies,
+  withMappingGraph,
+  identifierGraphProblem,
+  IDENTIFIER_POST_TRANSFORM_OPERATIONS,
+} from './core/graph';
+
+export { validateMappingRuleGraph } from './core/graph-validation';
+export { partitionStoredMappingGraph } from './core/stored-graph';

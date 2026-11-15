@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RuntimeIdentityMappingBinding } from '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver';
+import type { MappingRuleEdge, MappingTransformStep } from '@authrim/ar-lib-field-mapping/contract';
 
 const mocks = vi.hoisted(() => ({
   resolveBinding: vi.fn(),
@@ -25,10 +27,58 @@ import {
 
 const enterpriseSchema = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
 
+const stringOutputCases: Array<{
+  label: string;
+  operation?: MappingTransformStep['operation'];
+  displayName: string;
+  expectedNickname?: string;
+  valueType?: string;
+  cardinality?: string;
+  fails?: boolean;
+}> = [
+  { label: 'camelCase enterprise attributes', displayName: 'Ada Lovelace' },
+  {
+    label: 'required nickname rejects an array containing only empty text',
+    operation: 'as_array',
+    displayName: '',
+    fails: true,
+  },
+  {
+    label: 'array output becomes one string before type and cardinality validation',
+    operation: 'as_array',
+    displayName: 'Ada',
+    expectedNickname: 'Ada',
+    valueType: 'string',
+    cardinality: 'single',
+  },
+  {
+    label: 'string output cannot satisfy multi cardinality',
+    operation: 'as_array',
+    displayName: 'Ada',
+    cardinality: 'multi',
+    fails: true,
+  },
+  {
+    label: 'boolean output becomes text before string type validation',
+    operation: 'text_to_boolean',
+    displayName: 'true',
+    expectedNickname: 'true',
+    valueType: 'string',
+  },
+  {
+    label: 'string output cannot satisfy boolean type validation',
+    operation: 'text_to_boolean',
+    displayName: 'true',
+    valueType: 'boolean',
+    fails: true,
+  },
+];
+
 describe('SCIM inbound identity mapping', () => {
+  let binding: RuntimeIdentityMappingBinding;
   beforeEach(() => {
     mocks.settings.mockReset().mockResolvedValue({ mappingSetId: 'mapping-scim' });
-    mocks.resolveBinding.mockReset().mockResolvedValue({
+    binding = {
       id: 'activation-scim',
       tenantId: 'tenant-a',
       fieldMappingSetId: 'mapping-scim',
@@ -54,15 +104,62 @@ describe('SCIM inbound identity mapping', () => {
       fieldMappingSet: { id: 'mapping-version-1', rules: [] },
       activationScope: { protocol: 'scim', role: 'receiver' },
       destinationProfileIds: [],
-    });
+    };
+    mocks.resolveBinding.mockReset().mockResolvedValue(binding);
   });
 
-  it('maps camelCase enterprise attributes to configured snake_case canonical fields', async () => {
-    const result = await applyScimInboundIdentityMapping({
+  it.each(stringOutputCases)('$label', async (scenario) => {
+    if (scenario.operation) {
+      const nickname = edge('nickname', 'displayName');
+      nickname.ruleId = 'nickname-rule';
+      binding.edges.push(nickname);
+      binding.catalog.entries.push({
+        id: 'field.canonical.nickname',
+        namespace: 'authrim.profile',
+        path: 'nickname',
+        aliases: [{ namespace: 'scim.attribute', path: 'displayName' }],
+        valueType: 'unknown',
+        cardinality: 'multi',
+        classification: 'internal',
+        targetType: 'canonical',
+      });
+      binding.transforms.push({
+        id: 'nickname-transform',
+        ruleId: nickname.ruleId,
+        operation: scenario.operation,
+        inputEdgeIds: [nickname.id],
+        outputTargetRef: nickname.targetRef,
+      });
+      binding.validationRules.push({
+        id: 'required',
+        kind: 'required',
+        targetRef: nickname.targetRef,
+      });
+      if (scenario.valueType) {
+        binding.validationRules.push({
+          id: 'type',
+          kind: 'type',
+          defaultSeverity: 'critical',
+          targetRef: nickname.targetRef,
+          parameters: { valueType: scenario.valueType },
+        });
+      }
+      if (scenario.cardinality) {
+        binding.validationRules.push({
+          id: 'cardinality',
+          kind: 'cardinality',
+          defaultSeverity: 'critical',
+          targetRef: nickname.targetRef,
+          parameters: { cardinality: scenario.cardinality },
+        });
+      }
+    }
+    const request = applyScimInboundIdentityMapping({
       env: { DB_ADMIN: {} } as never,
       tenantId: 'tenant-a',
       user: {
         userName: 'ada',
+        displayName: scenario.displayName,
         emails: [{ value: 'ada@example.test', primary: true }],
         [enterpriseSchema]: {
           employeeNumber: 'E-001',
@@ -71,8 +168,14 @@ describe('SCIM inbound identity mapping', () => {
       },
     });
 
+    if (scenario.fails) {
+      await expect(request).rejects.toMatchObject({ code: 'mapping_failed' });
+      return;
+    }
+    const result = await request;
     expect(result.email).toBe('ada@example.test');
     expect(result.preferred_username).toBe('ada');
+    expect(result.nickname).toBe(scenario.expectedNickname);
     expect(JSON.parse(result.custom_attributes_json ?? '{}')).toEqual({
       employee_number: 'E-001',
       cost_center: 'R&D-42',
@@ -204,12 +307,12 @@ describe('SCIM inbound identity mapping', () => {
   });
 });
 
-function edge(targetPath: string, sourcePath: string) {
+function edge(targetPath: string, sourcePath: string): MappingRuleEdge {
   return {
     id: `edge-${targetPath}`,
-    sourceRef: { side: 'source' as const, namespace: 'scim.attribute', path: sourcePath },
+    sourceRef: { side: 'source', namespace: 'scim.attribute', path: sourcePath },
     targetRef: {
-      side: 'destination' as const,
+      side: 'destination',
       namespace: 'authrim.profile',
       path: targetPath,
       catalogEntryId: `field.canonical.${targetPath}`,

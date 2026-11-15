@@ -9,8 +9,8 @@
  * edge left out of the cut makes no value, and an edge in it is judged.
  */
 
-import type { FieldRef } from '@authrim/ar-lib-field-mapping/contract';
-import { sameFieldRef } from '@authrim/ar-lib-field-mapping/authoring';
+import type { FieldRef, MappingRuleGraph } from '@authrim/ar-lib-field-mapping/contract';
+import { analyzeMappingDependencies, sameFieldRef } from '@authrim/ar-lib-field-mapping/authoring';
 
 /** A reference as far as telling its direction needs it. */
 export interface OutputGraphTarget {
@@ -56,8 +56,8 @@ export interface ComparableFieldReference {
  *
  * A validation rule names a field, not an edge, and finds its value the way the validator does
  * (`sameFieldRef` of the field mapping library: the same decision, not a copy of it). It is kept when the field is one the cut uses
- * (a source or a target of a kept edge), and dropped when it is a field only the dropped edges
- * use (a rule on the source profile's field would otherwise ask for a value the cut never
+ * (a source or a target of a kept edge, or a kept graph's final target), and dropped when only
+ * dropped edges or graphs use it (a rule on the source profile's field would ask for a value the cut never
  * reads). A rule that names neither is kept: what cannot be told is left to apply.
  */
 export function sliceOutputGraph<
@@ -66,22 +66,47 @@ export function sliceOutputGraph<
     sourceRef: ComparableFieldReference;
     targetRef: OutputGraphTarget & ComparableFieldReference;
   },
-  T extends { inputEdgeIds: readonly string[]; outputTargetRef: OutputGraphTarget },
+  T extends { id?: string; inputEdgeIds: readonly string[]; outputTargetRef: OutputGraphTarget },
   V extends { targetRef: ComparableFieldReference } = never,
 >(input: {
   edges: readonly E[];
   transforms: readonly T[];
   validationRules?: readonly V[];
   destinationNamespace: string;
-}): { edges: E[]; transforms: T[]; validationRules: V[] } {
-  const transforms = input.transforms.filter((transform) =>
-    isOutputGraphTarget(transform.outputTargetRef, input.destinationNamespace)
+  graphRules?: readonly MappingRuleGraph[];
+}): { edges: E[]; transforms: T[]; validationRules: V[]; graphRules?: MappingRuleGraph[] } {
+  const graphRules = input.graphRules?.filter((rule) =>
+    isOutputGraphTarget(rule.targetRef, input.destinationNamespace)
   );
-  const needed = new Set<string>(transforms.flatMap((transform) => transform.inputEdgeIds));
+  const ownedEdges = new Set(
+    input.graphRules?.flatMap((rule) => rule.edges.map((edge) => edge.id))
+  );
+  const ownedSteps = new Set(
+    input.graphRules?.flatMap((rule) => rule.transforms.map((step) => step.id))
+  );
+  const graphEdges = new Set<string>();
+  const graphSteps = new Set<string>();
+  for (const rule of graphRules ?? []) {
+    const dependencies = analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length });
+    for (const index of dependencies.edgeIndexes) graphEdges.add(rule.edges[index].id);
+    for (const index of dependencies.stepIndexes) graphSteps.add(rule.transforms[index].id);
+  }
+  const transforms = input.transforms.filter((transform) =>
+    transform.id !== undefined && ownedSteps.has(transform.id)
+      ? graphSteps.has(transform.id)
+      : isOutputGraphTarget(transform.outputTargetRef, input.destinationNamespace)
+  );
+  const needed = new Set<string>([
+    ...graphEdges,
+    ...transforms.flatMap((transform) => transform.inputEdgeIds),
+  ]);
   const kept: E[] = [];
   const dropped: E[] = [];
   for (const edge of input.edges) {
-    if (isOutputGraphTarget(edge.targetRef, input.destinationNamespace) || needed.has(edge.id)) {
+    if (
+      needed.has(edge.id) ||
+      (!ownedEdges.has(edge.id) && isOutputGraphTarget(edge.targetRef, input.destinationNamespace))
+    ) {
       kept.push(edge);
     } else {
       dropped.push(edge);
@@ -91,8 +116,15 @@ export function sliceOutputGraph<
     edges.some(
       (edge) => sameFieldRef(field, edge.sourceRef) || sameFieldRef(field, edge.targetRef)
     );
+  const graphUses = (rules: readonly MappingRuleGraph[], field: ComparableFieldReference) =>
+    rules.some((rule) => sameFieldRef(field, rule.targetRef));
+  const keptGraphs = new Set(graphRules);
+  const droppedGraphs = input.graphRules?.filter((rule) => !keptGraphs.has(rule)) ?? [];
   const validationRules = (input.validationRules ?? []).filter(
-    (rule) => usedBy(kept, rule.targetRef) || !usedBy(dropped, rule.targetRef)
+    (rule) =>
+      usedBy(kept, rule.targetRef) ||
+      graphUses(graphRules ?? [], rule.targetRef) ||
+      !(usedBy(dropped, rule.targetRef) || graphUses(droppedGraphs, rule.targetRef))
   );
-  return { edges: kept, transforms, validationRules };
+  return { edges: kept, transforms, validationRules, ...(graphRules ? { graphRules } : {}) };
 }
