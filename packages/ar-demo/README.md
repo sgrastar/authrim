@@ -95,13 +95,13 @@ their tenant.
 | `PORTAL_ORIGIN`             | Origin of this portal.                                                                                                                   | https, no path   |
 | `TURNSTILE_SITE_KEY`        | Public Turnstile key.                                                                                                                    |                  |
 | `MAX_ACTIVE_TENANTS`        | Rows not `deleted`.                                                                                                                      | 75, range 1..500 |
-| `MAX_STARTS_PER_IP_PER_DAY` | Rows per address hash in 24 hours.                                                                                                       | 3, range 1..20   |
+| `MAX_STARTS_PER_IP_PER_DAY` | Rows per address hash in 24 hours.                                                                                                       | 3, range 1..1000 |
 | `TENANT_TTL_HOURS`          | `expires_at` of a row; also shown on the start page.                                                                                     | 24, range 1..24  |
 | `ENVIRONMENT`               | `development` allows loopback http origins and a missing client address.                                                                 |                  |
 
 Values of `MAX_ACTIVE_TENANTS`, `MAX_STARTS_PER_IP_PER_DAY` and `TENANT_TTL_HOURS` outside their
-range are not rejected: they are clamped to the nearest limit (for example, 30 starts per address
-becomes 20). A value that is not an integer makes the portal refuse to run (HTTP 503).
+range are not rejected: they are clamped to the nearest limit (for example, 5000 starts per address
+becomes 1000). A value that is not an integer makes the portal refuse to run (HTTP 503).
 
 Secrets (`wrangler secret put`): `TURNSTILE_SECRET_KEY`, `MACHINE_CLIENT_ID`, `MACHINE_KEY_ID`,
 `MACHINE_PRIVATE_JWK` (the private ES256 key as JSON; other key types are refused), `IP_HASH_SECRET`
