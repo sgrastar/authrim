@@ -1,4 +1,5 @@
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
+import { ensureTenantLoginUiClient, resolveLoginUiClientId } from './tenant-login-ui-client';
 import type { Context } from 'hono';
 import { z } from './zod';
 import type { ControlTenantDefaultRouteAllocation, Env } from '@authrim/ar-lib-core';
@@ -1053,16 +1054,21 @@ async function cloneClients(
   sourceTenantId: string,
   targetTenantId: string,
   includeCredentials: boolean,
-  now: number
+  now: number,
+  loginUiClientId: string
 ): Promise<{ clients: number; clientIds: Set<string>; webOrigins: number; trustPolicies: number }> {
   const selectedColumns = OAUTH_CLIENT_CLONE_COLUMNS.map((column) =>
     !includeCredentials && CLIENT_CREDENTIAL_COLUMNS.has(column) ? `NULL AS ${column}` : column
   );
-  const clients = await source.query<Record<string, unknown>>(
-    `SELECT ${selectedColumns.join(', ')} FROM oauth_clients
+  // The source's Login UI client is never copied: it carries the source's redirect URIs and web
+  // origin. The target gets its own once the copy is done (ensureTenantLoginUiClient).
+  const clients = (
+    await source.query<Record<string, unknown>>(
+      `SELECT ${selectedColumns.join(', ')} FROM oauth_clients
       WHERE tenant_id = ? AND agent_access_registration_mode IS NULL`,
-    [sourceTenantId]
-  );
+      [sourceTenantId]
+    )
+  ).filter((client) => String(client.client_id) !== loginUiClientId);
   const clientIds = new Set(clients.map((client) => String(client.client_id)));
   const columns = ['tenant_id', ...OAUTH_CLIENT_CLONE_COLUMNS, 'created_at', 'updated_at'];
   const placeholders = columns.map(() => '?').join(', ');
@@ -1968,7 +1974,8 @@ async function executeTenantCloneHandler(
         sourceTenantId,
         targetTenantId,
         options.client_credentials,
-        now
+        now,
+        await resolveLoginUiClientId(c.env)
       );
       clonedClientIds = clonedClients.clientIds;
       for (const clientId of clonedClientIds) {
@@ -2340,6 +2347,9 @@ export async function prepareTenantCloneForProvisioning(
     db: targetAdapter,
     tenantId: operation.tenantId,
   });
+  // The cleanup above removed the seeded Login UI client and the copy leaves the source's out:
+  // the target ends with its own, for its own origin. A retry runs the same cleanup first.
+  await ensureTenantLoginUiClient(env, targetAdapter, operation.tenantId);
   const result = (await response.json()) as Record<string, unknown>;
   if (
     result.source_tenant_id !== operation.sourceTenantId ||

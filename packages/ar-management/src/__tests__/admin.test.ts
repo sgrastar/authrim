@@ -6343,6 +6343,23 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('ignores a client_id in the body: the server generates it', async () => {
+      const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_id: 'caller-chosen-id',
+          client_name: 'Chosen Id Client',
+          redirect_uris: ['https://example.com/callback'],
+        },
+        db: mockDB,
+      }) as never;
+
+      const response = await adminClientCreateHandler(c);
+
+      expect(await response.text()).not.toContain('caller-chosen-id');
+    });
+
     it('validates and persists the selected OIDC Mapping Set on create', async () => {
       const mockDB = createMockDB({
         firstResult: null,
