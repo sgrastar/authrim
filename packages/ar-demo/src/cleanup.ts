@@ -50,7 +50,7 @@ async function advance(config: Config, deps: Deps, row: RegistryRow): Promise<Ou
     const tenant = await getTenantLifecycle(config, deps, row.id);
     if (tenant.kind === 'absent' || tenant.lifecycle === 'deleted') return 'gone';
     // A registry row alone never authorises a write. An unconfirmed row (the core never accepted
-    // the creation) never reached the invitation step, so no visitor administered that tenant, and
+    // the creation: queued, in flight or lost) never reached the invitation step, so no visitor administered that tenant, and
     // nobody else could have set this exact name and description on a colliding id by accident.
     if (
       row.create_accepted_at === null &&

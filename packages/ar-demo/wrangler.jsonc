@@ -23,6 +23,8 @@
     "TENANT_TTL_HOURS": "24",
     "ENVIRONMENT": "production",
   },
+  // Static files (the gate photographs) served before the Worker runs.
+  "assets": { "directory": "./public" },
   "d1_databases": [
     {
       "binding": "DB",

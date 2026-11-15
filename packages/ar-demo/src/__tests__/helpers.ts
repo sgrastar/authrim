@@ -29,7 +29,7 @@ export interface TestDb {
 /** A tiny D1-like adapter over real SQLite, with the migration applied. */
 export function createTestDb(): TestDb {
   const sqlite = new DatabaseSync(':memory:');
-  for (const file of ['0001_tenant_registry.sql', '0002_cleanup.sql']) {
+  for (const file of ['0001_tenant_registry.sql', '0002_cleanup.sql', '0003_deferred_create.sql']) {
     sqlite.exec(
       readFileSync(fileURLToPath(new URL(`../../migrations/${file}`, import.meta.url)), 'utf8')
     );
@@ -286,4 +286,20 @@ export function allRows(testDb: TestDb): Array<Record<string, unknown>> {
   return testDb.sqlite.prepare('SELECT * FROM demo_tenants').all() as Array<
     Record<string, unknown>
   >;
+}
+
+/**
+ * A start followed by the first /status request, which is the one that creates the tenant. Returns
+ * both responses; `ticket` is the visitor's cookie value (null when the start was refused).
+ */
+export async function startAndCreate(
+  env: Env,
+  upstream: Upstream,
+  options: Parameters<typeof startRequest>[0] = {}
+): Promise<{ started: Response; status: Response | null; ticket: string | null }> {
+  const started = await start(env, upstream, options);
+  const ticket = cookieOf(started);
+  if (!ticket) return { started, status: null, ticket };
+  const status = await handleRequest(statusRequest(ticket), env, upstream.deps);
+  return { started, status, ticket };
 }
