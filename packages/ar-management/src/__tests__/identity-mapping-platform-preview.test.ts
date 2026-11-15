@@ -330,6 +330,9 @@ describe('platform default preview with real Admin and Core SQL', () => {
       }),
       'profile-old-v1'
     );
+    t.db.exec(
+      "UPDATE mapping_rules SET target_ref_json=(SELECT target_ref_json FROM mapping_rule_edges WHERE id='edge-new-0') WHERE id='rule-new'"
+    );
     const queries = vi.spyOn(t.adapter, 'query');
     const result = await t.preview();
     expect(result.status).toBe(200);

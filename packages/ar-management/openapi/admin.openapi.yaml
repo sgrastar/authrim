@@ -67308,15 +67308,30 @@ components:
             name:
               type: string
               minLength: 1
+    MappingGraphOutputReference:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [edgeIndex]
+          properties:
+            edgeIndex:
+              type: integer
+              minimum: 0
+        - type: object
+          additionalProperties: false
+          required: [stepIndex]
+          properties:
+            stepIndex:
+              type: integer
+              minimum: 0
     MappingGraphRule:
       type: object
       additionalProperties: false
       required: [ruleKey, ruleKind, action]
       description: >-
         One output target per rule. Inputs are ordered and may only reference earlier steps of
-        this rule. Legacy edgeIndex is translated to inputs and output defaults to the last
-        step (or the sole edge for copy). Until W1b, multi-input, chaining, named inputs and
-        non-last output return 400 unsupported_until_w1b; stored rows are unchanged.
+        this rule. Ordered edge/step inputs, optional input names and the explicit output are
+        persisted without translation. Legacy transform edgeIndex is refused.
       properties:
         ruleKey:
           type: string
@@ -67339,7 +67354,7 @@ components:
           type: object
           additionalProperties: true
         output:
-          $ref: '#/components/schemas/MappingGraphReference'
+          $ref: '#/components/schemas/MappingGraphOutputReference'
         edges:
           type: array
           items:
@@ -67362,11 +67377,6 @@ components:
             additionalProperties: false
             required: [operation]
             properties:
-              edgeIndex:
-                type: integer
-                minimum: 0
-                deprecated: true
-                description: Use inputs instead. Accepted for legacy requests.
               inputs:
                 type: array
                 items:

@@ -189,7 +189,7 @@ const TABLE_GROUPS: Partial<
       key_registries key_versions authentication_method_profiles session_profiles login_ui_themes logging_destination_overrides logging_fallback_policies
       logging_key_material_bodies logging_key_registry logging_key_versions logging_policy_snapshots
       logging_quota_policies mapping_conflict_rules mapping_release_rules mapping_rule_edges
-      mapping_rules mapping_templates mapping_transform_steps mapping_validation_rules
+      mapping_rules mapping_templates mapping_transform_steps mapping_transform_step_inputs mapping_validation_rules
       protocol_schema_catalogs source_authority_contracts source_profile_parse_drafts
       source_profile_versions source_profiles storage_destination_assignments tenant_settings_documents
     `,

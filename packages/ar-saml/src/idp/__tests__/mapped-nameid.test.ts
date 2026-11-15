@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
@@ -45,11 +46,11 @@ const mapping = (transforms: unknown[], extra: Record<string, unknown> = {}) => 
   catalog: { entries: [] },
   edges: [],
   transforms: [],
-  nameId: {
+  nameId: withExplicitMappingGraphs({
     edges: [],
     transforms,
     validationRules: [],
-  },
+  }),
   ...extra,
 });
 const keyManager = (salts: Record<string, string> = {}) => ({

@@ -215,6 +215,9 @@ export interface MappingRuleGraph {
   output: MappingValueReference;
   /** Set by the caller from the recipient's subject type. */
   pairwiseSubject?: boolean;
+  /** Runtime-only row order and input naming, loaded from persisted graphs. */
+  writerOrder?: number;
+  edgeValueReferences?: 'source' | 'target';
 }
 
 export type MappingEvaluationValue =
@@ -360,8 +363,10 @@ export interface BatchDryRunResult {
 }
 
 export interface MappingInput {
-  /** W1b will load these rule boundaries from persistence. Omitted means legacy evaluation. */
+  /** Explicit persisted or authored rule graphs. */
   graphRules?: MappingRuleGraph[];
+  /** Receivers with runtime-defined sources validate their source catalog before release. */
+  sourceCatalogValidation?: 'catalog' | 'receiver';
   preparedSteps?: ReadonlyMap<string, MappingEvaluationValue>;
   catalog: FieldCatalogBundle;
   sourceValues: SourceValueEnvelope[];

@@ -1,3 +1,4 @@
+import { graphFixture } from '../../test-support/graph-fixture';
 import { describe, expect, it } from 'vitest';
 import { dryRunMapping, dryRunMappingBatch } from '../../core/dry-run';
 import { executeRuntimeMapping } from '../../core/runtime';
@@ -5,10 +6,12 @@ import { createTestFingerprintProvider, mappingInput, sourceValue } from '../../
 
 describe('dry-run mapping', () => {
   it('returns redacted summaries without raw values', () => {
-    const result = dryRunMapping({
-      ...mappingInput([sourceValue('csv', 'email', 'user@example.test', 'pii')]),
-      fingerprintProvider: createTestFingerprintProvider(),
-    });
+    const result = dryRunMapping(
+      graphFixture({
+        ...mappingInput([sourceValue('csv', 'email', 'user@example.test', 'pii')]),
+        fingerprintProvider: createTestFingerprintProvider(),
+      })
+    );
 
     expect(result.status).toBe('success');
     expect(JSON.stringify(result.redactedValueSummaries)).not.toContain('user@example.test');
@@ -20,40 +23,44 @@ describe('dry-run mapping', () => {
 
   it('executes transform steps and records transformed traces', () => {
     const input = mappingInput([sourceValue('csv', 'email', ' USER@EXAMPLE.TEST ', 'pii')]);
-    const result = dryRunMapping({
-      ...input,
-      transforms: [
-        {
-          id: 'transform.email.trim',
-          inputEdgeIds: [input.edges[0]!.id],
-          operation: 'trim',
-          outputTargetRef: {
-            side: 'canonical',
-            namespace: 'authrim.profile',
-            path: 'email',
-            catalogEntryId: 'field.canonical.email',
+    const result = dryRunMapping(
+      graphFixture({
+        ...input,
+        transforms: [
+          {
+            id: 'transform.email.trim',
+            inputEdgeIds: [input.edges[0]!.id],
+            operation: 'trim',
+            outputTargetRef: {
+              side: 'canonical',
+              namespace: 'authrim.profile',
+              path: 'email',
+              catalogEntryId: 'field.canonical.email',
+            },
           },
-        },
-      ],
-    });
+        ],
+      })
+    );
 
     expect(result.status).toBe('success');
-    expect(result.summary.mappedCount).toBe(2);
+    expect(result.summary.mappedCount).toBe(1);
     expect(result.ruleTrace.some((entry) => entry.action === 'transformed')).toBe(true);
     expect(JSON.stringify(result.redactedValueSummaries)).not.toContain('USER@EXAMPLE.TEST');
   });
 
   it('escalates required missing to failed', () => {
-    const result = dryRunMapping({
-      ...mappingInput([sourceValue('csv', 'email', '', 'pii')]),
-      validationRules: [
-        {
-          id: 'validation.email.required',
-          kind: 'required',
-          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
-        },
-      ],
-    });
+    const result = dryRunMapping(
+      graphFixture({
+        ...mappingInput([sourceValue('csv', 'email', '', 'pii')]),
+        validationRules: [
+          {
+            id: 'validation.email.required',
+            kind: 'required',
+            targetRef: { side: 'source', namespace: 'csv', path: 'email' },
+          },
+        ],
+      })
+    );
 
     expect(result.status).toBe('failed');
     expect(result.reasons.map((item) => item.code)).toContain('validation.required_missing');
@@ -61,23 +68,26 @@ describe('dry-run mapping', () => {
 
   it('preserves repeated reasons so row-level evidence is not collapsed', () => {
     const input = mappingInput([sourceValue('csv', 'email', ['bad-email'], 'pii')]);
-    const result = dryRunMapping({
-      ...input,
-      validationRules: [
-        {
-          id: 'validation.email.cardinality',
-          kind: 'cardinality',
-          targetRef: { side: 'source', namespace: 'csv', path: 'email' },
-          parameters: { cardinality: 'single' },
-        },
-      ],
-    });
+    const result = dryRunMapping(
+      graphFixture({
+        ...input,
+        validationRules: [
+          {
+            id: 'validation.email.cardinality',
+            kind: 'cardinality',
+            targetRef: { side: 'source', namespace: 'csv', path: 'email' },
+            parameters: { cardinality: 'single' },
+          },
+        ],
+      })
+    );
 
     expect(result.reasons.map((item) => item.code)).toEqual([
       'validation.cardinality_mismatch',
       'validation.cardinality_mismatch',
+      'validation.cardinality_mismatch',
     ]);
-    expect(result.summary.errorCount).toBe(2);
+    expect(result.summary.errorCount).toBe(3);
   });
 
   it('uses batch aggregate status rules', () => {
@@ -93,7 +103,7 @@ describe('dry-run mapping', () => {
       ],
     };
 
-    const result = dryRunMappingBatch({ rows: [success, failed] });
+    const result = dryRunMappingBatch({ rows: [graphFixture(success), graphFixture(failed)] });
     expect(result.status).toBe('failed');
     expect(result.summary.totalRows).toBe(2);
     expect(result.criticalCount).toBe(1);
@@ -101,7 +111,7 @@ describe('dry-run mapping', () => {
 
   it('returns mapped runtime values for protocol release paths', () => {
     const input = mappingInput([sourceValue('csv', 'email', 'user@example.test', 'pii')]);
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
 
     expect(result.status).toBe('success');
     expect(result.values).toEqual([

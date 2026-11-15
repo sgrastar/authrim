@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 /**
  * A failed SAML sign-in is recorded against the Flow interaction its start checked.
  *
@@ -73,35 +74,38 @@ function mappingBinding() {
     classification: 'pii',
     targetType,
   });
-  return {
-    id: 'activation-1',
-    tenantId: 'default',
-    fieldMappingSetId: 'set-1',
-    fieldMappingVersionId: 'set-1-v1',
-    catalog: {
-      identity: {
-        id: 'catalog-1',
-        version: '1',
-        contentHash: 'catalog-1',
-        compatibilityRange: '^0.3.0',
+  return withExplicitMappingGraphs(
+    {
+      id: 'activation-1',
+      tenantId: 'default',
+      fieldMappingSetId: 'set-1',
+      fieldMappingVersionId: 'set-1-v1',
+      catalog: {
+        identity: {
+          id: 'catalog-1',
+          version: '1',
+          contentHash: 'catalog-1',
+          compatibilityRange: '^0.3.0',
+        },
+        entries: [
+          entry('field.saml.subject.nameId', 'saml.subject', 'nameId', 'source'),
+          entry('field.profile.email', 'authrim.profile', 'email', 'canonical'),
+        ],
       },
-      entries: [
-        entry('field.saml.subject.nameId', 'saml.subject', 'nameId', 'source'),
-        entry('field.profile.email', 'authrim.profile', 'email', 'canonical'),
+      edges: [
+        {
+          id: 'edge.nameId.email',
+          sourceRef: { side: 'source', namespace: 'saml.subject', path: 'nameId' },
+          targetRef: { side: 'destination', namespace: 'authrim.profile', path: 'email' },
+          edgeKind: 'direct',
+        },
       ],
+      transforms: [],
+      validationRules: [],
+      fieldMappingSet: { id: 'set-1-v1', rules: [] },
     },
-    edges: [
-      {
-        id: 'edge.nameId.email',
-        sourceRef: { side: 'source', namespace: 'saml.subject', path: 'nameId' },
-        targetRef: { side: 'destination', namespace: 'authrim.profile', path: 'email' },
-        edgeKind: 'direct',
-      },
-    ],
-    transforms: [],
-    validationRules: [],
-    fieldMappingSet: { id: 'set-1-v1', rules: [] },
-  };
+    true
+  );
 }
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {

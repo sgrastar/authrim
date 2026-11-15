@@ -165,28 +165,33 @@ describe('Phase 3 installed SQL reference graph', () => {
     ).toThrow('backup_phase3_reference_null');
   });
 
-  it('accepts a transform step that reads no edge, and still checks one that does', () => {
+  it('validates graph inputs and refuses legacy step columns', () => {
     const identity = {
       module: 'identity-mapping',
-      collection: 'admin.mapping_transform_steps',
-      id: 'step',
+      collection: 'admin.mapping_transform_step_inputs',
+      id: 'input',
       tenantId: 'tenant-a',
     };
-    const targets = (edgeId: string | null) =>
+    const dependencies = inspectPhase3SqliteReferences(
+      identity.collection,
+      row({
+        tenant_id: 'tenant-a',
+        step_id: 'step',
+        edge_id: 'edge',
+        input_step_id: null,
+        name: null,
+      }),
+      identity
+    );
+    expect(dependencies.map(({ to }) => to.collection)).toContain('admin.mapping_rule_edges');
+    expect(dependencies.map(({ to }) => to.collection)).toContain('admin.mapping_transform_steps');
+    expect(() =>
       inspectPhase3SqliteReferences(
-        identity.collection,
-        row({
-          tenant_id: 'tenant-a',
-          edge_id: edgeId,
-          rule_id: 'rule-1',
-          target_ref_json: null,
-        }),
-        identity
-      ).map(({ to }) => to.collection);
-    // A persistent identifier step stores no edge: nothing to resolve, no failure.
-    expect(targets(null)).not.toContain('admin.mapping_rule_edges');
-    expect(targets(null)).toContain('admin.mapping_rules');
-    expect(targets('edge-1')).toContain('admin.mapping_rule_edges');
+        'admin.mapping_transform_steps',
+        row({ tenant_id: 'tenant-a', rule_id: 'rule', edge_id: null }),
+        { ...identity, collection: 'admin.mapping_transform_steps' }
+      )
+    ).toThrow('backup_mapping_graph_legacy_shape');
   });
 
   it('accepts only the bundle-only form of an OAuth client environment secret', () => {

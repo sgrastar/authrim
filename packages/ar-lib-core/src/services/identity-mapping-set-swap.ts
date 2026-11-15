@@ -219,15 +219,11 @@ export async function findMappingVersionSwapViolation(
   const needs = swapRequirementsOf(references);
   if (needs.exactlyOneProfile) {
     const edges = await adapter.query<{ target_ref_json: string }>(
-      `SELECT e.target_ref_json
-         FROM mapping_rules r
-         JOIN mapping_rule_edges e ON e.tenant_id = r.tenant_id AND e.rule_id = r.id
-        WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?
-       UNION ALL
-       SELECT t.target_ref_json
-         FROM mapping_rules r
-         JOIN mapping_transform_steps t ON t.tenant_id = r.tenant_id AND t.rule_id = r.id
-        WHERE r.tenant_id = ? AND r.field_mapping_version_id = ? AND t.target_ref_json IS NOT NULL`,
+      `SELECT r.target_ref_json FROM mapping_rules r
+        WHERE r.tenant_id = ? AND r.field_mapping_version_id = ? AND r.target_ref_json IS NOT NULL
+        UNION ALL SELECT e.target_ref_json FROM mapping_rules r
+        JOIN mapping_rule_edges e ON e.tenant_id=r.tenant_id AND e.rule_id=r.id
+        WHERE r.tenant_id=? AND r.field_mapping_version_id=?`,
       [ownerTenantId, versionId, ownerTenantId, versionId]
     );
     const targetRefs = edges.map((edge) => parseObject(edge.target_ref_json));

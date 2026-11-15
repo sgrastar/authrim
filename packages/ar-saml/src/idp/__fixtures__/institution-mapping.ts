@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 /**
  * A mapping for an SP that is given the scoped attributes and, when the mapping chooses them, the
  * institution attributes, in the shape a deployed tenant has it (see production-shaped-mapping.ts).
@@ -86,18 +87,21 @@ export const INSTITUTION_DESTINATION_SCHEMA = {
 /** The active mapping version: mail, then the edges chosen. */
 export function institutionBinding(edges: readonly object[]) {
   const binding = productionBinding({ withInputEdges: false });
-  return {
-    ...binding,
-    catalog: {
-      ...binding.catalog,
-      entries: [
-        ...binding.catalog.entries,
-        customClaimEntry('eduPersonScopedAffiliation'),
-        customClaimEntry('eduPersonPrincipalName'),
-      ],
+  return withExplicitMappingGraphs(
+    {
+      ...binding,
+      catalog: {
+        ...binding.catalog,
+        entries: [
+          ...binding.catalog.entries,
+          customClaimEntry('eduPersonScopedAffiliation'),
+          customClaimEntry('eduPersonPrincipalName'),
+        ],
+      },
+      edges: [PRODUCTION_EDGES[0], ...edges],
     },
-    edges: [PRODUCTION_EDGES[0], ...edges],
-  };
+    true
+  );
 }
 
 /**

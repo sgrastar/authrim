@@ -66,8 +66,8 @@ describe('resolveRuntimeIdentityMappingBinding owner', () => {
     ).run();
     addEdge(db, 'tenant-a', 'decoy-rule', 'decoy-edge', 'profile-decoy');
     db.prepare(
-      `INSERT INTO mapping_transform_steps (id, tenant_id, rule_id, edge_id, step_order, operation, parameters_json, created_at, updated_at)
-       VALUES ('decoy-transform', 'tenant-a', 'decoy-rule', 'decoy-edge', 0, 'trim', '{}', 1, 1)`
+      `INSERT INTO mapping_transform_steps (id, tenant_id, rule_id, step_order, operation, parameters_json, created_at, updated_at)
+       VALUES ('decoy-transform', 'tenant-a', 'decoy-rule', 0, 'trim', '{}', 1, 1)`
     ).run();
     db.prepare(
       `INSERT INTO mapping_validation_rules (id, tenant_id, rule_id, target_ref_json, validation_kind, severity, created_at, updated_at)

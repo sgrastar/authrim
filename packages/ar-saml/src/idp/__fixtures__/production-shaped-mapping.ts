@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 /**
  * An SP and its Field Mapping Set as a deployed tenant holds them (shapes taken from an Admin UI
  * Flow Editor mapping set on the conformance environment, ids replaced): the SP names only the
@@ -215,34 +216,37 @@ export function productionBinding(
     validationRules?: unknown[];
   } = {}
 ) {
-  return {
-    id: 'activation_00000000',
-    tenantId: 'tenant-a',
-    fieldMappingSetId: 'field_mapping_00000000',
-    fieldMappingVersionId: 'field_mapping_version_00000000',
-    mappingSnapshotHash: 'snapshot-hash',
-    catalog: {
-      identity: {
-        id: 'system_default_canonical_catalog_schema_v1',
-        version: 'v1',
-        contentHash: 'hash',
-        compatibilityRange: '*',
+  return withExplicitMappingGraphs(
+    {
+      id: 'activation_00000000',
+      tenantId: 'tenant-a',
+      fieldMappingSetId: 'field_mapping_00000000',
+      fieldMappingVersionId: 'field_mapping_version_00000000',
+      mappingSnapshotHash: 'snapshot-hash',
+      catalog: {
+        identity: {
+          id: 'system_default_canonical_catalog_schema_v1',
+          version: 'v1',
+          contentHash: 'hash',
+          compatibilityRange: '*',
+        },
+        entries: options.catalog === 'empty' ? [] : seededCanonicalEntries(),
       },
-      entries: options.catalog === 'empty' ? [] : seededCanonicalEntries(),
+      edges:
+        options.withInputEdges === false
+          ? PRODUCTION_EDGES
+          : [...PRODUCTION_INPUT_EDGES, ...PRODUCTION_EDGES],
+      transforms: [],
+      validationRules: options.validationRules ?? [],
+      fieldMappingSet: { id: 'field_mapping_version_00000000', rules: [] },
+      activationScope: {},
+      destinationNamespace: undefined,
+      sourceProfileId: undefined,
+      destinationProfileId: PRODUCTION_DESTINATION_PROFILE_ID,
+      destinationProfileIds: [PRODUCTION_DESTINATION_PROFILE_ID],
     },
-    edges:
-      options.withInputEdges === false
-        ? PRODUCTION_EDGES
-        : [...PRODUCTION_INPUT_EDGES, ...PRODUCTION_EDGES],
-    transforms: [],
-    validationRules: options.validationRules ?? [],
-    fieldMappingSet: { id: 'field_mapping_version_00000000', rules: [] },
-    activationScope: {},
-    destinationNamespace: undefined,
-    sourceProfileId: undefined,
-    destinationProfileId: PRODUCTION_DESTINATION_PROFILE_ID,
-    destinationProfileIds: [PRODUCTION_DESTINATION_PROFILE_ID],
-  };
+    true
+  );
 }
 
 /** The admin adapter the destination profile is read through. */

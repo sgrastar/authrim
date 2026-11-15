@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from './mapping-graph-fixture';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { computeIdentifier } from '../identifier-algorithms';
@@ -11,7 +12,7 @@ vi.mock('../identity-mapping-runtime-resolver', () => ({
 vi.mock('../identity-mapping-resolution', () => ({
   resolveOidcIdentityMappingBinding: async () => ({
     selection: { kind: 'bound', tier: 'tenant_default', setId: 'set-1', chain: [] },
-    binding: (await resolveBinding()) as unknown,
+    binding: withExplicitMappingGraphs(await resolveBinding()),
   }),
 }));
 vi.mock('../destination-profile-consent', async (importOriginal) => ({

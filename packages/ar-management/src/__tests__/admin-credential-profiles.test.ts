@@ -1,3 +1,4 @@
+import { storedVCGraphBinding } from '@authrim/ar-lib-core/test-support/mapping-graph';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
@@ -16,18 +17,37 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: () => 'tenant-1',
     requireDedicatedAdminDatabaseAdapter: () => mocks.adminDb,
     createAuthContextFromHono: () => ({ coreAdapter: mocks.coreDb }),
+    createPIIContextFromHono: () => ({ defaultPiiAdapter: {} }),
+    CanonicalSensitiveValueResolver: class {},
+    CanonicalRuntimeUserProjectionRepository: class {
+      async findByLegacyUserId() {
+        return {};
+      }
+    },
+    canonicalProjectionToOIDCClaimsUser: () => ({ age_over_18: true }),
     resolveRuntimeIdentityMappingBinding: mocks.resolveMapping,
     createAuditLogFromContext: mocks.audit,
     getLogger: () => ({ module: () => ({ warn: vi.fn(), error: vi.fn() }) }),
   };
 });
 
-import { adminCredentialProfilePublishHandler } from '../admin-credential-profiles';
+vi.mock('../request-issuer', () => ({
+  getCanonicalTenantBaseUrlAsync: async () => 'https://issuer.example.test',
+}));
 
-function context(): Context<{ Bindings: Env }> {
+import {
+  adminCredentialOfferCreateHandler,
+  adminCredentialProfilePublishHandler,
+} from '../admin-credential-profiles';
+
+function context(
+  env: Record<string, unknown> = {},
+  body: Record<string, unknown> = {}
+): Context<{ Bindings: Env }> {
   return {
-    env: {},
+    env,
     req: {
+      json: async () => body,
       param: (name: string) => (name === 'id' ? 'profile-1' : 'version-1'),
     },
     get: () => ({ userId: 'admin-1' }),
@@ -163,6 +183,41 @@ describe('credential profile publication', () => {
       'credential_profile',
       'profile-1',
       expect.objectContaining({ version_id: 'version-1' })
+    );
+  });
+
+  it('issues claims from a graph decoded from stored output rows using the real evaluator', async () => {
+    const binding = await storedVCGraphBinding('vc.claims.AgeCredential');
+    mocks.resolveMapping.mockReset().mockResolvedValue(binding);
+    vi.mocked(mocks.adminDb.queryOne).mockImplementation(async (sql: string) =>
+      sql.includes('credential_profiles WHERE')
+        ? { ...profile, lifecycle_state: 'published', current_published_version_id: version.id }
+        : {
+            ...version,
+            lifecycle_state: 'published',
+            snapshot_hash: 'profile-snapshot',
+            issuance_flow_version_id: 'flow-version-issue',
+            issuance_mapping_version_id: binding.fieldMappingVersionId,
+            issuance_mapping_snapshot_hash: binding.mappingSnapshotHash,
+          }
+    );
+    const createCredentialOffer = vi.fn(async () => ({ offerId: 'offer-1' }));
+    const response = await adminCredentialOfferCreateHandler(
+      context(
+        {
+          VC_ISSUER: { createCredentialOffer },
+          VC_PROFILE_CONTRACT_HMAC_SECRET: 'test-profile-contract-secret-at-least-32-characters',
+        },
+        { user_id: 'user-1' }
+      )
+    );
+    expect(response.status).toBe(201);
+    expect(createCredentialOffer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        claims: { age_over_18: true },
+        mappingVersionId: binding.fieldMappingVersionId,
+        mappingSnapshotHash: binding.mappingSnapshotHash,
+      })
     );
   });
 

@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { BINDING_URIS, SAML_NAMESPACES } from '../../common/constants';
@@ -78,20 +79,25 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         sql.includes('mapped_identifier_exceptions') ? mocks.exceptionRows : []
       ),
     })),
-    resolveRuntimeIdentityMappingBinding: vi.fn(async () => ({
-      id: 'binding',
-      tenantId: 'tenant-a',
-      catalog: { entries: [] },
-      edges: mocks.runtimeEdges,
-      transforms: [],
-      validationRules: [],
-      fieldMappingSet: {},
-      fieldMappingSetId: 'set',
-      fieldMappingVersionId: 'version',
-      destinationNamespace: 'saml',
-      destinationProfileId: 'destination-profile-saml',
-      destinationProfileIds: ['destination-profile-saml'],
-    })),
+    resolveRuntimeIdentityMappingBinding: vi.fn(async () =>
+      withExplicitMappingGraphs(
+        {
+          id: 'binding',
+          tenantId: 'tenant-a',
+          catalog: { entries: [] },
+          edges: mocks.runtimeEdges,
+          transforms: [],
+          validationRules: [],
+          fieldMappingSet: {},
+          fieldMappingSetId: 'set',
+          fieldMappingVersionId: 'version',
+          destinationNamespace: 'saml',
+          destinationProfileId: 'destination-profile-saml',
+          destinationProfileIds: ['destination-profile-saml'],
+        },
+        true
+      )
+    ),
     // The Destination Profile offers every attribute, and requires the ones the test names
     // (all of them by default).
     filterSamlAttributesByDestinationProfile: vi.fn(
@@ -614,26 +620,29 @@ describe('IdP SSO handler policy boundaries', () => {
       path: 'urn:oasis:names:tc:SAML:attribute:pairwise-id',
     };
     mocks.sp = sp({
-      identityMapping: {
-        catalog: { entries: [] },
-        // The step takes no input edge: it is made from the account ID.
-        edges: [],
-        transforms: [
-          {
-            id: 'step-pairwise',
-            operation: 'persistent_identifier',
-            inputEdgeIds: [],
-            parameters: {
-              input: 'account',
-              format: 'saml_pairwise_id',
-              algorithm: 'shibboleth',
-              encoding: 'base32',
-              scope: 'example.test',
+      identityMapping: withExplicitMappingGraphs(
+        {
+          catalog: { entries: [] },
+          // The step takes no input edge: it is made from the account ID.
+          edges: [],
+          transforms: [
+            {
+              id: 'step-pairwise',
+              operation: 'persistent_identifier',
+              inputEdgeIds: [],
+              parameters: {
+                input: 'account',
+                format: 'saml_pairwise_id',
+                algorithm: 'shibboleth',
+                encoding: 'base32',
+                scope: 'example.test',
+              },
+              outputTargetRef: target,
             },
-            outputTargetRef: target,
-          },
-        ],
-      },
+          ],
+        },
+        true
+      ),
     });
     expect((await post(authnRequest())).status).toBe(200);
     const made = await computeIdentifier({
@@ -667,8 +676,8 @@ describe('IdP SSO handler policy boundaries', () => {
       },
     ];
     const mapping = pairwiseIdMapping();
-    mapping.transforms[0].parameters = {
-      ...mapping.transforms[0].parameters,
+    mapping.graphRules[0].transforms[0].parameters = {
+      ...mapping.graphRules[0].transforms[0].parameters,
       exceptions: 'list-a',
     };
     mocks.sp = sp({ identityMapping: mapping });
@@ -689,23 +698,26 @@ function pairwiseIdMapping() {
     namespace: 'saml.attribute',
     path: 'pairwise-id',
   };
-  return {
-    catalog: { entries: [] },
-    edges: [],
-    transforms: [
-      {
-        id: 'step-pairwise',
-        operation: 'persistent_identifier',
-        inputEdgeIds: [],
-        parameters: {
-          input: 'account',
-          format: 'plain',
-          algorithm: 'shibboleth',
-        } as Record<string, unknown>,
-        outputTargetRef: target,
-      },
-    ],
-  };
+  return withExplicitMappingGraphs(
+    {
+      catalog: { entries: [] },
+      edges: [],
+      transforms: [
+        {
+          id: 'step-pairwise',
+          operation: 'persistent_identifier',
+          inputEdgeIds: [],
+          parameters: {
+            input: 'account',
+            format: 'plain',
+            algorithm: 'shibboleth',
+          } as Record<string, unknown>,
+          outputTargetRef: target,
+        },
+      ],
+    },
+    true
+  );
 }
 
 function authenticateSession(data: Record<string, unknown> = {}) {

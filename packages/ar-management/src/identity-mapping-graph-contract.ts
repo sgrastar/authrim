@@ -1,9 +1,3 @@
-/**
- * W1a persistence seam: tables still store one edge_id per step and no output reference.
- * TODO(W1b): store ordered inputs and explicit outputs, then remove representability checks.
- * Existing conflict policies rely on several legacy rules writing a target. They remain readable;
- * new graph requests reject duplicate targets. No schema or stored JSON format changes here.
- */
 import {
   analyzeMappingDependencies,
   IDENTIFIER_POST_TRANSFORM_OPERATIONS,
@@ -25,7 +19,7 @@ export class MappingGraphContractError extends Error {
 export function transformInputs(
   step: NonNullable<FieldMappingVersionRuleInput['transforms']>[number]
 ): MappingValueReference[] {
-  return step.inputs ?? (step.edgeIndex === undefined ? [] : [{ edgeIndex: step.edgeIndex }]);
+  return step.inputs ?? [];
 }
 
 export function ruleOutput(rule: FieldMappingVersionRuleInput): MappingValueReference | undefined {
@@ -42,8 +36,7 @@ export function ruleOutput(rule: FieldMappingVersionRuleInput): MappingValueRefe
 export function assertMappingGraphContract(rule: FieldMappingVersionRuleInput, path: string): void {
   const transforms = rule.transforms ?? [];
   const edges = rule.edges ?? [];
-  const graphRequest =
-    rule.output !== undefined || transforms.some((step) => step.inputs !== undefined);
+  const graphRequest = edges.length > 0 || transforms.length > 0;
   const refuse = (reason: string, message: string): never => {
     throw new MappingGraphContractError(reason, `${path}: ${message}`);
   };
@@ -53,13 +46,7 @@ export function assertMappingGraphContract(rule: FieldMappingVersionRuleInput, p
     const inputs = transformInputs(step);
     if (inputs.some((ref) => ref === null || typeof ref !== 'object'))
       refuse('invalid_reference', 'inputs must contain references');
-    if (
-      step.inputs !== undefined &&
-      step.edgeIndex !== undefined &&
-      (inputs.length !== 1 || !('edgeIndex' in inputs[0]) || inputs[0].edgeIndex !== step.edgeIndex)
-    ) {
-      refuse('invalid_reference', 'edgeIndex disagrees with inputs');
-    }
+    if ('edgeIndex' in step) refuse('invalid_reference', 'use inputs instead of legacy edgeIndex');
     return { inputs };
   });
   if (
@@ -68,11 +55,9 @@ export function assertMappingGraphContract(rule: FieldMappingVersionRuleInput, p
   ) {
     refuse('invalid_reference', 'output must be a reference');
   }
-  if (transforms.some((step) => step.inputs !== undefined) && rule.output === undefined) {
-    refuse('invalid_reference', 'the inputs shape requires an explicit output');
-  }
   const output = ruleOutput(rule);
   if (graphRequest && !output) refuse('invalid_reference', 'output is required');
+  if (output?.name !== undefined) refuse('invalid_reference', 'names apply only to step inputs');
   if (output) {
     try {
       analyzeMappingDependencies({ edgeCount: edges.length, transforms: steps, output });
@@ -117,89 +102,32 @@ export function assertMappingGraphContract(rule: FieldMappingVersionRuleInput, p
     }
     tainted[index] = follows || step.operation === 'persistent_identifier';
   }
-  if (!graphRequest) return;
-  // Current rows can reconstruct only a single target, direct edge inputs, and last-step output.
-  // Named inputs also need W1b: silently dropping their names would change the contract.
-  const expected = transforms.length ? { stepIndex: transforms.length - 1 } : { edgeIndex: 0 };
-  if (
-    edges.length > 1 ||
-    steps.some(
-      (step) =>
-        step.inputs.length > 1 ||
-        step.inputs.some((ref) => 'stepIndex' in ref || ref.name !== undefined)
-    ) ||
-    JSON.stringify(output) !== JSON.stringify(expected)
-  ) {
-    refuse(
-      'unsupported_until_w1b',
-      'multi-input, chaining, named inputs and non-last output require W1b'
-    );
-  }
-  const target = rule.targetRef ?? transforms.at(-1)?.targetRef ?? edges[0]?.targetRef;
-  if (!target) refuse('invalid_reference', 'a rule needs one output target');
-  const key = (ref: Record<string, unknown> | undefined) =>
-    JSON.stringify([
-      ref?.side ?? 'source',
-      ref?.namespace,
-      ref?.catalogEntryId,
-      ref?.path ?? ref?.fieldKey ?? ref?.nodeId,
-      ref?.profileId,
-    ]);
-  if (
-    edges.some((edge) => key(edge.targetRef) !== key(target)) ||
-    transforms.some((step) => step.targetRef && key(step.targetRef) !== key(target))
-  ) {
-    refuse('unsupported_until_w1b', 'multiple output targets require W1b');
-  }
+  const target = rule.targetRef ?? edges[0]?.targetRef ?? transforms.at(-1)?.targetRef;
+  if ((edges.length || transforms.length) && !target)
+    refuse('invalid_reference', 'a rule needs one output target');
 }
 
-/** Translate only at the SQL boundary; never drop an unsupported input or output. */
-export function persistentEdgeIndex(
-  step: NonNullable<FieldMappingVersionRuleInput['transforms']>[number]
-): number | undefined {
-  const [input] = transformInputs(step);
-  return input && 'edgeIndex' in input ? input.edgeIndex : undefined;
-}
-
-/** Legacy multi-target groups cannot truthfully advertise one graph output before W1b. */
-export function canRepresentStoredRuleGraph(rule: {
-  edges?: ReadonlyArray<{ targetRef: Record<string, unknown> }>;
-  transforms?: ReadonlyArray<{ targetRef?: Record<string, unknown> | null }>;
-}): boolean {
-  if ((rule.edges?.length ?? 0) > 1) return false;
-  const targets = [
-    ...(rule.edges ?? []).map((edge) => edge.targetRef),
-    ...(rule.transforms ?? []).flatMap((step) => (step.targetRef ? [step.targetRef] : [])),
-  ];
-  const key = (ref: Record<string, unknown>) =>
-    JSON.stringify([
-      ref.side ?? 'source',
-      ref.namespace,
-      ref.path ?? ref.fieldKey ?? ref.nodeId,
-      ref.catalogEntryId,
-      ref.profileId,
-    ]);
-  return targets.length > 0 && targets.every((target) => key(target) === key(targets[0]));
-}
-
-/** Account for the new GET shape when checking request budgets, including legacy writes. */
 export function canonicalMappingRule(
   rule: FieldMappingVersionRuleInput
 ): FieldMappingVersionRuleInput {
-  if (!canRepresentStoredRuleGraph(rule) || !ruleOutput(rule)) return rule;
+  const targetRef = ruleTarget(rule);
   return {
     ...rule,
-    output: ruleOutput(rule),
+    ...(ruleOutput(rule) ? { output: ruleOutput(rule) } : {}),
+    ...(targetRef ? { targetRef: structuredClone(targetRef) } : {}),
     ...(rule.transforms
       ? {
-          transforms: rule.transforms.map((step) => {
-            const { edgeIndex, ...rest } = step;
-            return {
-              ...rest,
-              inputs: step.inputs ?? (edgeIndex === undefined ? [] : [{ edgeIndex }]),
-            };
-          }),
+          transforms: rule.transforms.map(({ targetRef: _targetRef, ...step }) => ({
+            ...step,
+            inputs: transformInputs(step),
+          })),
         }
       : {}),
   };
+}
+
+export function ruleTarget(
+  rule: FieldMappingVersionRuleInput
+): Record<string, unknown> | undefined {
+  return rule.targetRef ?? rule.edges?.[0]?.targetRef ?? rule.transforms?.at(-1)?.targetRef;
 }

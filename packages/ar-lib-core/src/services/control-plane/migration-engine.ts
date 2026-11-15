@@ -1,3 +1,4 @@
+import { mappingGraphMigrationStatements } from '../mapping-graph-migration';
 import {
   AUTHRIM_MIGRATIONS_TABLE_SQL,
   TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL,
@@ -321,6 +322,18 @@ export class ApiMigrationEngine {
       const statements = adoptFromSupersededHistory.has(file.path)
         ? []
         : splitMigrationSql(file.sql).map((sql) => ({ sql }));
+      if (
+        input.pin.streamId === 'admin-d1' &&
+        file.path === '023_mapping_rule_graph.sql' &&
+        !adoptFromSupersededHistory.has(file.path)
+      ) {
+        const suffix = await mappingGraphMigrationStatements(file.sql, async (sql) =>
+          resultRows<Record<string, unknown>>(await this.d1.queryD1(input.databaseId, sql))
+        );
+        statements.push(
+          ...suffix.flatMap((statement) => splitMigrationSql(statement).map((sql) => ({ sql })))
+        );
+      }
       const batch = [
         ...statements,
         recordMigrationQuery({

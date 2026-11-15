@@ -768,13 +768,17 @@ describe('findMappingVersionSwapViolation', () => {
     );
     expect(await check(two)).toMatchObject({ code: 'destination_profile_invalid' });
     const none = seeded();
-    none.exec('DELETE FROM mapping_rule_edges');
+    none.exec(
+      'DELETE FROM mapping_transform_step_inputs; DELETE FROM mapping_transform_steps; UPDATE mapping_rules SET output_edge_id=NULL,output_step_id=NULL,target_ref_json=NULL; DELETE FROM mapping_rule_edges'
+    );
     expect(await check(none)).toMatchObject({ code: 'destination_profile_invalid' });
   });
 
   it('asks nothing of the profile for what only reads what comes in or writes canonical attributes', async () => {
     const none = seeded();
-    none.exec('DELETE FROM mapping_rule_edges');
+    none.exec(
+      'DELETE FROM mapping_transform_step_inputs; DELETE FROM mapping_transform_steps; UPDATE mapping_rules SET output_edge_id=NULL,output_step_id=NULL,target_ref_json=NULL; DELETE FROM mapping_rule_edges'
+    );
     for (const reference of [
       { kind: 'scim', tenantId: 'tenant-a' },
       { kind: 'credential_profile', tenantId: 'tenant-a', role: 'issuance' },
@@ -1093,7 +1097,9 @@ describe('attribute names a SAML provider saved, in every spelling of a referenc
       destinationType: 'saml',
       attributes: ['mail', 'uid'],
     });
-    db.exec('DELETE FROM mapping_rule_edges');
+    db.exec(
+      'DELETE FROM mapping_transform_step_inputs; DELETE FROM mapping_transform_steps; UPDATE mapping_rules SET output_edge_id=NULL,output_step_id=NULL,target_ref_json=NULL; DELETE FROM mapping_rule_edges'
+    );
     db.prepare(
       `INSERT INTO mapping_rule_edges (id, tenant_id, rule_id, source_ref_json, target_ref_json, edge_kind, display_order, created_at, updated_at)
        VALUES ('e1', 'tenant-a', 'rule-a', ?, ?, 'direct', 0, 1, 1)`
@@ -1105,6 +1111,9 @@ describe('attribute names a SAML provider saved, in every spelling of a referenc
         namespace: 'saml.attribute',
         ...target,
       })
+    );
+    db.exec(
+      "UPDATE mapping_rules SET output_edge_id='e1',target_ref_json=(SELECT target_ref_json FROM mapping_rule_edges WHERE id='e1') WHERE id='rule-a'"
     );
     const adapter = sqliteAdapter(db);
     const provider: MappingSetReference = {

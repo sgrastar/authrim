@@ -46,4 +46,4 @@ export {
 } from './core/graph';
 
 export { validateMappingRuleGraph } from './core/graph-validation';
-export { partitionStoredMappingGraph } from './core/stored-graph';
+export { readMappingReference } from './core/stored-graph';

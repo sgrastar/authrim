@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { describe, expect, it } from 'vitest';
 import type { FieldCatalogBundle } from '@authrim/ar-lib-field-mapping/contract';
 import {
@@ -292,33 +293,36 @@ describe('buildSAMLAttributesFromMapping', () => {
             },
           ],
         },
-        identityMapping: {
-          catalog: identityMappingSamlCatalog(),
-          edges: [
-            {
-              id: 'edge.email.saml-mail',
-              sourceRef: {
-                side: 'source',
-                namespace: 'authrim.profile',
-                path: 'email',
-                catalogEntryId: 'field.profile.email',
+        identityMapping: withExplicitMappingGraphs(
+          {
+            catalog: identityMappingSamlCatalog(),
+            edges: [
+              {
+                id: 'edge.email.saml-mail',
+                sourceRef: {
+                  side: 'source',
+                  namespace: 'authrim.profile',
+                  path: 'email',
+                  catalogEntryId: 'field.profile.email',
+                },
+                targetRef: {
+                  side: 'destination',
+                  namespace: 'saml.attribute',
+                  path: 'urn:oid:0.9.2342.19200300.100.1.3',
+                  catalogEntryId: 'field.saml.mail',
+                },
               },
-              targetRef: {
-                side: 'destination',
-                namespace: 'saml.attribute',
-                path: 'urn:oid:0.9.2342.19200300.100.1.3',
-                catalogEntryId: 'field.saml.mail',
+            ],
+            attributeDescriptors: {
+              'field.saml.mail': {
+                friendlyName: 'mail',
+                nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
+                required: true,
               },
-            },
-          ],
-          attributeDescriptors: {
-            'field.saml.mail': {
-              friendlyName: 'mail',
-              nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri',
-              required: true,
             },
           },
-        },
+          true
+        ),
       }
     );
 
@@ -347,29 +351,35 @@ describe('buildSAMLAttributesFromMapping', () => {
       outputTargetRef: mail,
     });
     const release = (policies: Record<string, 'required' | 'optional'>) =>
-      buildSAMLAttributesForSP({ id: 'user-123' }, {
-        attributeMapping: {},
-        identityMapping: {
-          catalog: identityMappingSamlCatalog(),
-          destinationFieldPolicies: policies,
-          edges: [],
-          // Two steps (of different rules) write the same attribute: one is suppressed, the
-          // other made. Nothing goes out for the attribute.
-          transforms: [step('step-blocked'), step('step-made')],
-          runtimeContext: {
-            identifiers: { 'step-made': 'MADE-FOR-ANOTHER-RULE' },
-            suppressedIdentifiers: { 'step-blocked': true },
-          },
-        },
-      } as never);
+      buildSAMLAttributesForSP(
+        { id: 'user-123' },
+        {
+          attributeMapping: {},
+          identityMapping: withExplicitMappingGraphs(
+            {
+              catalog: identityMappingSamlCatalog(),
+              destinationFieldPolicies: policies,
+              edges: [],
+              // Two steps (of different rules) write the same attribute: one is suppressed, the
+              // other made. Nothing goes out for the attribute.
+              transforms: [step('step-blocked'), step('step-made')],
+              runtimeContext: {
+                identifiers: { 'step-made': 'MADE-FOR-ANOTHER-RULE' },
+                suppressedIdentifiers: { 'step-blocked': true },
+              },
+            },
+            true
+          ),
+        }
+      );
 
-    it('leaves the attribute out of the final release, whatever another step made for it', () => {
-      expect(release({})).toEqual([]);
+    it('refuses several identifier writers even when one is suppressed', () => {
+      expect(() => release({})).toThrow(SAMLIdentityMappingRuntimeError);
     });
 
     it('fails the release when that attribute is required', () => {
       expect(() => release({ 'urn:oid:0.9.2342.19200300.100.1.3': 'required' })).toThrow(
-        MissingRequiredSAMLAttributeError
+        SAMLIdentityMappingRuntimeError
       );
     });
   });
@@ -383,29 +393,32 @@ describe('buildSAMLAttributesFromMapping', () => {
         },
         {
           attributeMapping: {},
-          identityMapping: {
-            catalog: identityMappingSamlCatalog(),
-            destinationFieldPolicies: {
-              'urn:oid:0.9.2342.19200300.100.1.3': 'required',
-            },
-            edges: [
-              {
-                id: 'edge.email.saml-mail',
-                sourceRef: {
-                  side: 'source',
-                  namespace: 'authrim.profile',
-                  path: 'email',
-                  catalogEntryId: 'field.profile.email',
-                },
-                targetRef: {
-                  side: 'destination',
-                  namespace: 'saml.attribute',
-                  path: 'urn:oid:0.9.2342.19200300.100.1.3',
-                  catalogEntryId: 'field.saml.mail',
-                },
+          identityMapping: withExplicitMappingGraphs(
+            {
+              catalog: identityMappingSamlCatalog(),
+              destinationFieldPolicies: {
+                'urn:oid:0.9.2342.19200300.100.1.3': 'required',
               },
-            ],
-          },
+              edges: [
+                {
+                  id: 'edge.email.saml-mail',
+                  sourceRef: {
+                    side: 'source',
+                    namespace: 'authrim.profile',
+                    path: 'email',
+                    catalogEntryId: 'field.profile.email',
+                  },
+                  targetRef: {
+                    side: 'destination',
+                    namespace: 'saml.attribute',
+                    path: 'urn:oid:0.9.2342.19200300.100.1.3',
+                    catalogEntryId: 'field.saml.mail',
+                  },
+                },
+              ],
+            },
+            true
+          ),
         }
       );
     } catch (caught) {
@@ -429,26 +442,29 @@ describe('buildSAMLAttributesFromMapping', () => {
       },
       {
         attributeMapping: {},
-        identityMapping: {
-          catalog: identityMappingSamlCatalog({ mailRequired: false }),
-          edges: [
-            {
-              id: 'edge.email.saml-mail',
-              sourceRef: {
-                side: 'source',
-                namespace: 'authrim.profile',
-                path: 'email',
-                catalogEntryId: 'field.profile.email',
+        identityMapping: withExplicitMappingGraphs(
+          {
+            catalog: identityMappingSamlCatalog({ mailRequired: false }),
+            edges: [
+              {
+                id: 'edge.email.saml-mail',
+                sourceRef: {
+                  side: 'source',
+                  namespace: 'authrim.profile',
+                  path: 'email',
+                  catalogEntryId: 'field.profile.email',
+                },
+                targetRef: {
+                  side: 'destination',
+                  namespace: 'saml.attribute',
+                  path: 'urn:oid:0.9.2342.19200300.100.1.3',
+                  catalogEntryId: 'field.saml.mail',
+                },
               },
-              targetRef: {
-                side: 'destination',
-                namespace: 'saml.attribute',
-                path: 'urn:oid:0.9.2342.19200300.100.1.3',
-                catalogEntryId: 'field.saml.mail',
-              },
-            },
-          ],
-        },
+            ],
+          },
+          true
+        ),
       }
     );
 
@@ -461,7 +477,7 @@ describe('buildSAMLAttributesFromMapping', () => {
   it.each(['saml_edu_person_targeted_id', 'oidc_pairwise_sub'])(
     'refuses a saved mapping whose transform uses the removed operation %s',
     (operation) => {
-      const target = {
+      const target: import('@authrim/ar-lib-field-mapping/contract').FieldRef = {
         side: 'destination' as const,
         namespace: 'saml.attribute',
         path: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10',
@@ -485,12 +501,30 @@ describe('buildSAMLAttributesFromMapping', () => {
                   targetRef: target,
                 },
               ],
-              transforms: [
+              graphRules: [
                 {
-                  id: 'transform.removed',
-                  operation: operation as never,
-                  inputEdgeIds: ['edge.email.targeted'],
-                  outputTargetRef: target,
+                  id: 'removed-rule',
+                  targetRef: target,
+                  edges: [
+                    {
+                      id: 'edge.email.targeted',
+                      sourceRef: {
+                        side: 'source',
+                        namespace: 'authrim.profile',
+                        path: 'email',
+                        catalogEntryId: 'field.profile.email',
+                      },
+                      targetRef: target,
+                    },
+                  ],
+                  transforms: [
+                    {
+                      id: 'transform.removed',
+                      operation: operation as never,
+                      inputs: [{ edgeIndex: 0 }],
+                    },
+                  ],
+                  output: { stepIndex: 0 },
                 },
               ],
             },
@@ -506,48 +540,54 @@ describe('buildSAMLAttributesFromMapping', () => {
       entityId: 'https://sp.example.edu/saml',
       attributeMapping: {},
       identityMapping: {
-        defaultBinding: {
-          id: 'tenant-default',
-          role: 'idp' as const,
-          catalog,
-          edges: [
-            identityMappingEdge(
-              'field.profile.email',
-              'authrim.profile',
-              'email',
-              'field.saml.mail',
-              'urn:oid:0.9.2342.19200300.100.1.3'
-            ),
-          ],
-          attributeDescriptors: {
-            'field.saml.mail': {
-              friendlyName: 'mail',
-            },
-          },
-        },
-        bindings: [
+        defaultBinding: withExplicitMappingGraphs(
           {
-            id: 'sp-specific',
+            id: 'tenant-default',
             role: 'idp' as const,
-            partnerEntityId: 'https://sp.example.edu/saml',
-            fieldMappingSetId: 'policy-set-sp-example',
-            fieldMappingVersionId: 'policy-version-1',
             catalog,
             edges: [
               identityMappingEdge(
-                'field.profile.name',
+                'field.profile.email',
                 'authrim.profile',
-                'name',
-                'field.saml.displayName',
-                'urn:oid:2.16.840.1.113730.3.1.241'
+                'email',
+                'field.saml.mail',
+                'urn:oid:0.9.2342.19200300.100.1.3'
               ),
             ],
             attributeDescriptors: {
-              'field.saml.displayName': {
-                friendlyName: 'displayName',
+              'field.saml.mail': {
+                friendlyName: 'mail',
               },
             },
           },
+          true
+        ),
+        bindings: [
+          withExplicitMappingGraphs(
+            {
+              id: 'sp-specific',
+              role: 'idp' as const,
+              partnerEntityId: 'https://sp.example.edu/saml',
+              fieldMappingSetId: 'policy-set-sp-example',
+              fieldMappingVersionId: 'policy-version-1',
+              catalog,
+              edges: [
+                identityMappingEdge(
+                  'field.profile.name',
+                  'authrim.profile',
+                  'name',
+                  'field.saml.displayName',
+                  'urn:oid:2.16.840.1.113730.3.1.241'
+                ),
+              ],
+              attributeDescriptors: {
+                'field.saml.displayName': {
+                  friendlyName: 'displayName',
+                },
+              },
+            },
+            true
+          ),
         ],
       },
     };
@@ -603,21 +643,24 @@ describe('buildSAMLAttributesFromMapping', () => {
           attributeMapping: {},
           identityMapping: {
             bindings: [
-              {
-                id: 'sp-specific',
-                role: 'idp' as const,
-                partnerEntityId: 'https://sp.example.edu/saml',
-                catalog: identityMappingSamlCatalog({ mailRequired: false }),
-                edges: [
-                  identityMappingEdge(
-                    'field.profile.email',
-                    'authrim.profile',
-                    'email',
-                    'field.saml.mail',
-                    'urn:oid:0.9.2342.19200300.100.1.3'
-                  ),
-                ],
-              },
+              withExplicitMappingGraphs(
+                {
+                  id: 'sp-specific',
+                  role: 'idp' as const,
+                  partnerEntityId: 'https://sp.example.edu/saml',
+                  catalog: identityMappingSamlCatalog({ mailRequired: false }),
+                  edges: [
+                    identityMappingEdge(
+                      'field.profile.email',
+                      'authrim.profile',
+                      'email',
+                      'field.saml.mail',
+                      'urn:oid:0.9.2342.19200300.100.1.3'
+                    ),
+                  ],
+                },
+                true
+              ),
             ],
           },
         }
@@ -646,30 +689,33 @@ describe('buildSAMLAttributesFromMapping', () => {
       {
         entityId: 'https://sp.example.edu/saml',
         attributeMapping: {},
-        identityMapping: {
-          catalog: identityMappingSamlCatalog({ mailRequired: false }),
-          edges: [
-            identityMappingEdge(
-              'field.profile.email',
-              'authrim.profile',
-              'email',
-              'field.saml.mail',
-              'urn:oid:0.9.2342.19200300.100.1.3'
-            ),
-            identityMappingEdge(
-              'field.profile.name',
-              'authrim.profile',
-              'name',
-              'field.saml.mail',
-              'urn:oid:0.9.2342.19200300.100.1.3'
-            ),
-          ],
-          attributeDescriptors: {
-            'field.saml.mail': {
-              friendlyName: 'mail',
+        identityMapping: withExplicitMappingGraphs(
+          {
+            catalog: identityMappingSamlCatalog({ mailRequired: false }),
+            edges: [
+              identityMappingEdge(
+                'field.profile.email',
+                'authrim.profile',
+                'email',
+                'field.saml.mail',
+                'urn:oid:0.9.2342.19200300.100.1.3'
+              ),
+              identityMappingEdge(
+                'field.profile.name',
+                'authrim.profile',
+                'name',
+                'field.saml.mail',
+                'urn:oid:0.9.2342.19200300.100.1.3'
+              ),
+            ],
+            attributeDescriptors: {
+              'field.saml.mail': {
+                friendlyName: 'mail',
+              },
             },
           },
-        },
+          true
+        ),
       }
     );
 
@@ -698,47 +744,53 @@ describe('buildSAMLAttributesFromMapping', () => {
           attributeMapping: {},
           identityMapping: {
             bindings: [
-              {
-                id: 'global-sp-binding',
-                role: 'idp' as const,
-                partnerEntityId: 'https://sp.example.edu/saml',
-                catalog,
-                edges: [
-                  identityMappingEdge(
-                    'field.profile.email',
-                    'authrim.profile',
-                    'email',
-                    'field.saml.mail',
-                    'urn:oid:0.9.2342.19200300.100.1.3'
-                  ),
-                ],
-                attributeDescriptors: {
-                  'field.saml.mail': {
-                    friendlyName: 'mail',
+              withExplicitMappingGraphs(
+                {
+                  id: 'global-sp-binding',
+                  role: 'idp' as const,
+                  partnerEntityId: 'https://sp.example.edu/saml',
+                  catalog,
+                  edges: [
+                    identityMappingEdge(
+                      'field.profile.email',
+                      'authrim.profile',
+                      'email',
+                      'field.saml.mail',
+                      'urn:oid:0.9.2342.19200300.100.1.3'
+                    ),
+                  ],
+                  attributeDescriptors: {
+                    'field.saml.mail': {
+                      friendlyName: 'mail',
+                    },
                   },
                 },
-              },
-              {
-                id: 'local-idp-sp-binding',
-                role: 'idp' as const,
-                localEntityId: 'https://idp-a.example.edu/saml/idp',
-                partnerEntityId: 'https://sp.example.edu/saml',
-                catalog,
-                edges: [
-                  identityMappingEdge(
-                    'field.profile.name',
-                    'authrim.profile',
-                    'name',
-                    'field.saml.displayName',
-                    'urn:oid:2.16.840.1.113730.3.1.241'
-                  ),
-                ],
-                attributeDescriptors: {
-                  'field.saml.displayName': {
-                    friendlyName: 'displayName',
+                true
+              ),
+              withExplicitMappingGraphs(
+                {
+                  id: 'local-idp-sp-binding',
+                  role: 'idp' as const,
+                  localEntityId: 'https://idp-a.example.edu/saml/idp',
+                  partnerEntityId: 'https://sp.example.edu/saml',
+                  catalog,
+                  edges: [
+                    identityMappingEdge(
+                      'field.profile.name',
+                      'authrim.profile',
+                      'name',
+                      'field.saml.displayName',
+                      'urn:oid:2.16.840.1.113730.3.1.241'
+                    ),
+                  ],
+                  attributeDescriptors: {
+                    'field.saml.displayName': {
+                      friendlyName: 'displayName',
+                    },
                   },
                 },
-              },
+                true
+              ),
             ],
           },
         }
@@ -815,18 +867,21 @@ describe('buildSAMLAttributesFromMapping', () => {
       },
       {
         attributeMapping: {},
-        identityMapping: {
-          catalog: {
-            identity: {
-              id: 'namespace-matrix',
-              version: '1',
-              contentHash: 'namespace-matrix',
-              compatibilityRange: '^0.3.0',
+        identityMapping: withExplicitMappingGraphs(
+          {
+            catalog: {
+              identity: {
+                id: 'namespace-matrix',
+                version: '1',
+                contentHash: 'namespace-matrix',
+                compatibilityRange: '^0.3.0',
+              },
+              entries,
             },
-            entries,
+            edges,
           },
-          edges,
-        },
+          true
+        ),
       }
     );
     expect(attributes).toHaveLength(cases.length);
@@ -850,18 +905,21 @@ describe('buildSAMLAttributesFromMapping', () => {
       { id: 'user-123', email: 'user@example.test' },
       {
         attributeMapping: {},
-        identityMapping: {
-          catalog,
-          edges: [
-            identityMappingEdge(
-              'field.profile.email',
-              'authrim.profile',
-              'email',
-              'field.saml.mail',
-              'urn:oid:0.9.2342.19200300.100.1.3'
-            ),
-          ],
-        },
+        identityMapping: withExplicitMappingGraphs(
+          {
+            catalog,
+            edges: [
+              identityMappingEdge(
+                'field.profile.email',
+                'authrim.profile',
+                'email',
+                'field.saml.mail',
+                'urn:oid:0.9.2342.19200300.100.1.3'
+              ),
+            ],
+          },
+          true
+        ),
       }
     );
     expect(attributes[0]?.valueType).toBe(expected);
@@ -874,26 +932,29 @@ describe('buildSAMLAttributesFromMapping', () => {
         { id: 'user-123' },
         {
           attributeMapping: {},
-          identityMapping: {
-            catalog,
-            edges: [
-              identityMappingEdge(
-                'field.profile.email',
-                'authrim.profile',
-                'email',
-                'field.saml.mail',
-                'urn:oid:0.9.2342.19200300.100.1.3'
-              ),
-            ],
-            attributeDescriptors: {
-              'urn:oid:0.9.2342.19200300.100.1.3': { name: 'mail', required: true },
-              'saml.attribute:urn:oid:0.9.2342.19200300.100.1.3': {
-                name: 'mail',
-                required: true,
+          identityMapping: withExplicitMappingGraphs(
+            {
+              catalog,
+              edges: [
+                identityMappingEdge(
+                  'field.profile.email',
+                  'authrim.profile',
+                  'email',
+                  'field.saml.mail',
+                  'urn:oid:0.9.2342.19200300.100.1.3'
+                ),
+              ],
+              attributeDescriptors: {
+                'urn:oid:0.9.2342.19200300.100.1.3': { name: 'mail', required: true },
+                'saml.attribute:urn:oid:0.9.2342.19200300.100.1.3': {
+                  name: 'mail',
+                  required: true,
+                },
               },
+              destinationFieldPolicies: { mail: 'required' },
             },
-            destinationFieldPolicies: { mail: 'required' },
-          },
+            true
+          ),
         }
       )
     ).toThrow(MissingRequiredSAMLAttributeError);
@@ -904,21 +965,24 @@ describe('buildSAMLAttributesFromMapping', () => {
       { id: 'user-123', email: 'user@example.edu' },
       {
         attributeMapping: {},
-        identityMapping: {
-          catalog: identityMappingSamlCatalog(),
-          edges: [
-            identityMappingEdge(
-              'field.profile.email',
-              'authrim.profile',
-              'email',
-              'field.saml.mail',
-              'urn:oid:0.9.2342.19200300.100.1.3'
-            ),
-          ],
-          destinationFieldPolicies: {
-            'urn:oid:0.9.2342.19200300.100.1.3': 'hidden',
+        identityMapping: withExplicitMappingGraphs(
+          {
+            catalog: identityMappingSamlCatalog(),
+            edges: [
+              identityMappingEdge(
+                'field.profile.email',
+                'authrim.profile',
+                'email',
+                'field.saml.mail',
+                'urn:oid:0.9.2342.19200300.100.1.3'
+              ),
+            ],
+            destinationFieldPolicies: {
+              'urn:oid:0.9.2342.19200300.100.1.3': 'hidden',
+            },
           },
-        },
+          true
+        ),
       }
     );
 

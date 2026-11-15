@@ -494,11 +494,23 @@ describe('a change of a tenant’s set', () => {
       });
       return created.activeVersion.id;
     };
-    const content = t.tenantContent([['nickname', 'email']]);
-    content.rules[0].edges.push({
-      ...content.rules[0].edges[0],
-      sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'nickname' },
-    });
+    const base = t.tenantContent([['nickname', 'email']]);
+    const content = {
+      ...base,
+      rules: base.rules.map((rule) => ({
+        ...rule,
+        targetRef: rule.edges[0].targetRef,
+        edges: [
+          ...rule.edges,
+          {
+            ...rule.edges[0],
+            sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'nickname' },
+          },
+        ],
+        transforms: [{ operation: 'concat', inputs: [{ edgeIndex: 0 }, { edgeIndex: 1 }] }],
+        output: { stepIndex: 0 },
+      })),
+    };
     const oldContent = { ...content, catalogVersionId: await catalog(before, 'before') };
     const draft = { ...content, catalogVersionId: await catalog(after, 'after') };
     const setId = await t.createSet(oldContent);

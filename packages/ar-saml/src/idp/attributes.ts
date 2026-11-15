@@ -291,6 +291,7 @@ function buildSAMLAttributesFromIdentityMapping(
   const result = executeRuntimeMapping({
     catalog: binding.catalog,
     graphRules: binding.graphRules,
+    sourceCatalogValidation: 'receiver',
     sourceValues,
     edges: binding.edges,
     transforms: binding.transforms,

@@ -1,3 +1,4 @@
+import { scimRuleOutputShape, scimValueShape } from './scim-identity-mapping-catalog';
 import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { resolveRuntimeIdentityMappingBinding } from '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver';
@@ -5,10 +6,12 @@ import type {
   FieldCatalogBundle,
   FieldCatalogEntry,
   MappingRuleEdge,
+  MappingRuleGraph,
   SourceValueEnvelope,
 } from '@authrim/ar-lib-field-mapping/contract';
 import {
   executeRuntimeMapping,
+  findCatalogEntry,
   lastWriterMappingValues,
 } from '@authrim/ar-lib-field-mapping/runtime';
 import {
@@ -75,11 +78,12 @@ export async function applyScimInboundIdentityMapping(input: {
   const prepared = prepareRuntimeInput(
     binding.catalog,
     binding.edges,
+    binding.graphRules ?? [],
     scimSourceValues(input.user)
   );
   const runtimeResult = executeRuntimeMapping({
     catalog: prepared.catalog,
-    graphRules: binding.graphRules,
+    graphRules: prepared.graphRules,
     sourceValues: prepared.sourceValues,
     edges: prepared.edges,
     transforms: binding.transforms,
@@ -166,15 +170,19 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
 
 function prepareRuntimeInput(
   catalog: FieldCatalogBundle,
-  edges: MappingRuleEdge[],
+  requiredEdges: MappingRuleEdge[],
+  graphRules: MappingRuleGraph[],
   sourceValues: SourceValueEnvelope[]
 ): {
   catalog: FieldCatalogBundle;
   edges: MappingRuleEdge[];
+  graphRules: MappingRuleGraph[];
   sourceValues: SourceValueEnvelope[];
 } {
   const entries = new Map(catalog.entries.map((entry) => [entry.id, entry]));
-  const preparedEdges = edges.map((edge) => {
+  const declaredEntryIds = new Set(entries.keys());
+  const allEdges = graphRules.flatMap((rule) => rule.edges);
+  const preparedEdges = allEdges.map((edge) => {
     const catalogEntryId =
       edge.targetRef.catalogEntryId ??
       edge.sourceRef.catalogEntryId ??
@@ -183,14 +191,61 @@ function prepareRuntimeInput(
     if (!existing) {
       entries.set(catalogEntryId, catalogEntryForEdge(edge, catalogEntryId, sourceValues));
     }
+    const sourceCatalogEntryId = `scim.source:${edge.sourceRef.namespace}:${edge.sourceRef.path}`;
+    const source = sourceValues.find(
+      (value) =>
+        value.sourceRef.namespace === edge.sourceRef.namespace &&
+        value.sourceRef.path === edge.sourceRef.path
+    );
+    entries.set(sourceCatalogEntryId, {
+      id: sourceCatalogEntryId,
+      namespace: edge.sourceRef.namespace,
+      path: edge.sourceRef.path,
+      targetType: 'canonical',
+      ...scimValueShape(source?.value),
+      classification:
+        findCatalogEntry(catalog, edge.sourceRef)?.classification ??
+        existing?.classification ??
+        'internal',
+    });
     return {
       ...edge,
-      sourceRef: { ...edge.sourceRef, catalogEntryId },
+      sourceRef: { ...edge.sourceRef, catalogEntryId: sourceCatalogEntryId },
       targetRef: { ...edge.targetRef, catalogEntryId },
     };
   });
 
-  const preparedSourceValues = preparedEdges.flatMap((edge) => {
+  const requiredIds = new Set(requiredEdges.map((edge) => edge.id));
+  const readEdges = preparedEdges.filter((edge) => requiredIds.has(edge.id));
+  const preparedGraphRules = graphRules.map((rule) => {
+    const targetRef = rule.targetRef;
+    const catalogEntryId =
+      targetRef.catalogEntryId ??
+      findCatalogEntry({ ...catalog, entries: [...entries.values()] }, targetRef)?.id ??
+      `field.canonical.${targetRef.path}`;
+    // Edge targets name inputs; generated catalog entries must describe the released output.
+    if (!declaredEntryIds.has(catalogEntryId)) {
+      const outputShape = scimRuleOutputShape(rule, catalog, sourceValues);
+      const knownType = CANONICAL_NAMESPACES.has(targetRef.namespace)
+        ? canonicalFieldType(canonicalPath(targetRef.path))
+        : undefined;
+      entries.set(catalogEntryId, {
+        id: catalogEntryId,
+        namespace: targetRef.namespace,
+        path: targetRef.path,
+        targetType: 'canonical',
+        valueType: targetRef.valueType ?? knownType ?? outputShape.valueType,
+        cardinality: knownType ? 'single' : outputShape.cardinality,
+        classification: 'internal',
+      });
+    }
+    return {
+      ...rule,
+      targetRef: { ...targetRef, catalogEntryId },
+      edges: rule.edges.map((edge) => preparedEdges.find((item) => item.id === edge.id) ?? edge),
+    };
+  });
+  const preparedSourceValues = readEdges.flatMap((edge) => {
     const source = sourceValues.find(
       (value) =>
         value.sourceRef.namespace === edge.sourceRef.namespace &&
@@ -208,7 +263,8 @@ function prepareRuntimeInput(
 
   return {
     catalog: { ...catalog, entries: [...entries.values()] },
-    edges: preparedEdges,
+    edges: readEdges,
+    graphRules: preparedGraphRules,
     sourceValues: preparedSourceValues,
   };
 }
@@ -227,19 +283,18 @@ function catalogEntryForEdge(
     id,
     namespace: edge.targetRef.namespace,
     path: edge.targetRef.path,
-    aliases: [{ namespace: edge.sourceRef.namespace, path: edge.sourceRef.path }],
     targetType: 'canonical',
-    valueType: valueType(sourceValue),
-    cardinality: Array.isArray(sourceValue) ? 'multi' : 'single',
+    ...scimValueShape(sourceValue),
     classification: 'internal',
   };
 }
 
-function valueType(value: unknown): FieldCatalogEntry['valueType'] {
-  if (typeof value === 'boolean') return 'boolean';
-  if (typeof value === 'number') return 'number';
-  if (value !== null && typeof value === 'object') return 'json';
-  return 'string';
+/** SCIM validates string fields after projection, and boolean fields before integer storage. */
+function canonicalFieldType(path: string): string | undefined {
+  if (stringField(path)) return 'string';
+  if (['active', 'scim_active', 'email_verified', 'phone_number_verified'].includes(path))
+    return 'boolean';
+  return undefined;
 }
 
 function mappedValuesToInternalUser(values: SourceValueEnvelope[]): Partial<InternalUser> {

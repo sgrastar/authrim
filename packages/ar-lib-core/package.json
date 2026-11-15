@@ -5,6 +5,10 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./test-support/mapping-graph": {
+      "types": "./src/services/__tests__/stored-vc-graph-fixture.ts",
+      "default": "./src/services/__tests__/stored-vc-graph-fixture.ts"
+    },
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts",

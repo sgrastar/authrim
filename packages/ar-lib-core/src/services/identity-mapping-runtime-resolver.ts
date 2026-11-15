@@ -1,4 +1,10 @@
-import { analyzeMappingDependencies } from '@authrim/ar-lib-field-mapping/authoring';
+import { equivalentMappingSnapshotHashes } from './mapping-snapshot-equivalence';
+import {
+  readMappingReference,
+  TRANSFORM_OPERATION_SCHEMAS,
+  analyzeMappingDependencies,
+  withMappingGraph,
+} from '@authrim/ar-lib-field-mapping/authoring';
 import type {
   Cardinality,
   FieldCatalogBundle,
@@ -9,7 +15,6 @@ import type {
   MappingRuleGraph,
   RedactionClassification,
   TargetType,
-  TransformOperation,
   ValidationRule,
   ValidationRuleKind,
 } from '@authrim/ar-lib-field-mapping/contract';
@@ -81,6 +86,8 @@ export interface RuntimeIdentityMappingBinding {
   fieldMappingSetId: string;
   fieldMappingVersionId: string;
   mappingSnapshotHash: string;
+  /** Previous hashes of this exact snapshot, recorded by the format-only migration. */
+  equivalentMappingSnapshotHashes?: string[];
   catalog: FieldCatalogBundle;
   edges: MappingRuleEdge[];
   transforms: MappingTransformStep[];
@@ -261,6 +268,7 @@ interface ActiveActivationRow {
   catalog_bundle_hash: string | null;
   catalog_compatibility_range: string | null;
   snapshot_hash: string;
+  snapshot_metadata_json?: string | null;
 }
 
 interface CatalogEntryRow {
@@ -288,7 +296,6 @@ interface EdgeRow {
 interface TransformRow {
   rule_id?: string;
   id: string;
-  edge_id: string | null;
   step_order: number;
   operation: string;
   parameters_json: string | null;
@@ -309,6 +316,9 @@ interface FieldMappingRuleRow {
   priority: number;
   scope_json: string | null;
   metadata_json: string | null;
+  target_ref_json: string | null;
+  output_edge_id: string | null;
+  output_step_id: string | null;
 }
 
 /**
@@ -352,8 +362,21 @@ export async function resolveRuntimeIdentityMappingBinding(
         ownerTenantId,
         candidate.field_mapping_version_id
       );
+      const rules = await loadFieldMappingRules(
+        adapter,
+        ownerTenantId,
+        candidate.field_mapping_version_id
+      );
       if (
-        uniqueDestinationProfileIds(edges, stepTargets).some((profileId) =>
+        mappingDestinationProfileIds([
+          ...rules.flatMap((rule) =>
+            rule.target_ref_json ? [parseJsonObject(rule.target_ref_json)] : []
+          ),
+          ...edges.map((edge) => parseJsonObject(edge.target_ref_json)),
+          ...stepTargets.flatMap((step) =>
+            step.target_ref_json ? [parseJsonObject(step.target_ref_json)] : []
+          ),
+        ]).some((profileId) =>
           destinationProfileReferencesMatch(profileId, context.destinationProfileId as string)
         )
       ) {
@@ -402,11 +425,35 @@ export async function resolveRuntimeIdentityMappingBinding(
           ),
         }
       : ref;
+  const storedGraphs = await readRuntimeGraphs(
+    adapter,
+    ownerTenantId,
+    selected.field_mapping_version_id,
+    fieldMappingRules,
+    edges,
+    transforms
+  );
+  const graph = withMappingGraph({
+    edges: [],
+    transforms: [],
+    graphRules: storedGraphs.map((rule) => ({
+      ...rule,
+      targetRef: withCatalogReference(rule.targetRef),
+      edges: rule.edges.map((edge) => ({
+        ...edge,
+        sourceRef: withCatalogReference(edge.sourceRef),
+        targetRef: withCatalogReference(edge.targetRef),
+      })),
+    })),
+  });
   const activationScope = parseJsonObject(selected.activation_scope_json);
   const destinationProfileIds = runtimeDestinationProfileIds(
     [
+      ...fieldMappingRules.flatMap((rule) =>
+        rule.target_ref_json ? [parseJsonObject(rule.target_ref_json)] : []
+      ),
       ...edges.map((edge) => parseJsonObject(edge.target_ref_json)),
-      // A step with no input edge names its own output target.
+      // Rule targets are also exposed for zero-input generating steps.
       ...transforms.flatMap((step) =>
         step.target_ref_json ? [parseJsonObject(step.target_ref_json)] : []
       ),
@@ -421,6 +468,10 @@ export async function resolveRuntimeIdentityMappingBinding(
     fieldMappingSetId: selected.field_mapping_set_id,
     fieldMappingVersionId: selected.field_mapping_version_id,
     mappingSnapshotHash: selected.snapshot_hash,
+    equivalentMappingSnapshotHashes: equivalentMappingSnapshotHashes(
+      selected.snapshot_metadata_json,
+      selected.snapshot_hash
+    ),
     catalog: {
       identity: {
         id: selected.catalog_version_id,
@@ -433,15 +484,7 @@ export async function resolveRuntimeIdentityMappingBinding(
       },
       entries: catalogEntries.map(toCatalogEntry),
     },
-    edges: toRuntimeEdges(edges).map((edge) => ({
-      ...edge,
-      sourceRef: withCatalogReference(edge.sourceRef),
-      targetRef: withCatalogReference(edge.targetRef),
-    })),
-    transforms: toRuntimeTransforms(transforms, edges).map((transform) => ({
-      ...transform,
-      outputTargetRef: withCatalogReference(transform.outputTargetRef),
-    })),
+    ...graph,
     validationRules: validationRules.map((rule) => ({
       id: rule.id,
       kind: rule.validation_kind as ValidationRuleKind,
@@ -496,14 +539,6 @@ export function runtimeDestinationProfileIds(
  * The Destination Profiles a version releases into: those its edges name and those a step with no
  * input edge (a persistent identifier) names as its own output target.
  */
-function uniqueDestinationProfileIds(edges: EdgeRow[], transforms: TransformRow[] = []): string[] {
-  return mappingDestinationProfileIds([
-    ...edges.map((edge) => parseJsonObject(edge.target_ref_json)),
-    ...transforms.flatMap((step) =>
-      step.target_ref_json ? [parseJsonObject(step.target_ref_json)] : []
-    ),
-  ]);
-}
 
 async function loadActiveActivationRows(
   adapter: DatabaseAdapter,
@@ -532,6 +567,15 @@ async function loadActiveActivationRows(
             v.compatibility_range AS field_mapping_compatibility_range,
             s.catalog_version_id,
             s.snapshot_hash,
+            (SELECT migrated.metadata_json FROM compiled_mapping_snapshots migrated
+              WHERE migrated.tenant_id = s.tenant_id
+                AND migrated.field_mapping_version_id = s.field_mapping_version_id
+                AND migrated.snapshot_hash = s.snapshot_hash
+                AND CASE WHEN json_valid(migrated.metadata_json)
+                  THEN json_extract(migrated.metadata_json, '$.graphMigration023.snapshotHash') = s.snapshot_hash
+                    AND json_extract(migrated.metadata_json, '$.dependencyGraphId') = 'graph_023_' || migrated.id
+                  ELSE 0 END
+              ORDER BY migrated.compiled_at DESC LIMIT 1) AS snapshot_metadata_json,
             cv.version_label AS catalog_version_label,
             cv.bundle_hash AS catalog_bundle_hash,
             cv.compatibility_range AS catalog_compatibility_range
@@ -769,7 +813,7 @@ async function loadEdges(
          ON e.tenant_id = r.tenant_id
         AND e.rule_id = r.id
       WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?
-      ORDER BY r.priority ASC, r.created_at ASC, e.display_order ASC`,
+      ORDER BY r.priority ASC, r.created_at ASC, r.rowid ASC, e.display_order ASC`,
     [tenantId, fieldMappingVersionId]
   );
 }
@@ -780,17 +824,14 @@ async function loadTransforms(
   fieldMappingVersionId: string
 ): Promise<TransformRow[]> {
   return adapter.query<TransformRow>(
-    `SELECT t.id, t.rule_id, t.edge_id, t.step_order, t.operation, t.parameters_json,
-            COALESCE(t.target_ref_json, e.target_ref_json) AS target_ref_json
+    `SELECT t.id, t.rule_id, t.step_order, t.operation, t.parameters_json,
+            r.target_ref_json
        FROM mapping_rules r
        JOIN mapping_transform_steps t
          ON t.tenant_id = r.tenant_id
         AND t.rule_id = r.id
-       LEFT JOIN mapping_rule_edges e
-         ON e.tenant_id = t.tenant_id
-        AND e.id = t.edge_id
       WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?
-      ORDER BY r.priority ASC, t.step_order ASC`,
+      ORDER BY r.priority ASC, r.created_at ASC, r.rowid ASC, t.step_order ASC`,
     [tenantId, fieldMappingVersionId]
   );
 }
@@ -818,10 +859,10 @@ async function loadFieldMappingRules(
   fieldMappingVersionId: string
 ): Promise<FieldMappingRuleRow[]> {
   return adapter.query<FieldMappingRuleRow>(
-    `SELECT id, action, priority, scope_json, metadata_json
+    `SELECT id, action, priority, scope_json, metadata_json, target_ref_json, output_edge_id, output_step_id
        FROM mapping_rules
       WHERE tenant_id = ? AND field_mapping_version_id = ?
-      ORDER BY priority ASC, created_at ASC`,
+      ORDER BY priority ASC, created_at ASC, rowid ASC`,
     [tenantId, fieldMappingVersionId]
   );
 }
@@ -865,53 +906,107 @@ function toRuntimeEdges(edges: EdgeRow[]): MappingRuleEdge[] {
   }));
 }
 
-function toRuntimeTransforms(transforms: TransformRow[], edges: EdgeRow[]): MappingTransformStep[] {
-  if (
-    transforms.some(
-      (step) =>
-        step.edge_id &&
-        !edges.some(
-          (edge) =>
-            edge.id === step.edge_id &&
-            (!step.rule_id || !edge.rule_id || step.rule_id === edge.rule_id)
-        )
-    )
-  ) {
-    throw new Error('invalid_reference: mapping transform has a dangling or cross-rule edge');
-  }
-  return transforms.map((transform) => ({
-    id: transform.id,
-    ruleId: transform.rule_id,
-    inputEdgeIds: transform.edge_id ? [transform.edge_id] : [],
-    operation: transform.operation as TransformOperation,
-    parameters: parseJsonObject(transform.parameters_json ?? '{}'),
-    outputTargetRef: transform.target_ref_json
-      ? parseFieldRef(transform.target_ref_json)
-      : inferTransformOutputTargetRef(transform, edges),
-  }));
+/** Load explicit rule boundaries and references; no legacy row reconstruction is supported. */
+async function readRuntimeGraphs(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  versionId: string,
+  rules: FieldMappingRuleRow[],
+  edges: EdgeRow[],
+  transforms: TransformRow[]
+): Promise<MappingRuleGraph[]> {
+  const inputs = await adapter.query<{
+    step_id: string;
+    position: number;
+    edge_id: string | null;
+    input_step_id: string | null;
+    name: string | null;
+  }>(
+    `SELECT i.* FROM mapping_transform_step_inputs i
+      JOIN mapping_transform_steps t ON t.tenant_id = i.tenant_id AND t.id = i.step_id
+      JOIN mapping_rules r ON r.tenant_id = t.tenant_id AND r.id = t.rule_id
+      WHERE r.tenant_id = ? AND r.field_mapping_version_id = ? ORDER BY i.step_id, i.position`,
+    [tenantId, versionId]
+  );
+  return rules
+    .flatMap<MappingRuleGraph>((rule) => {
+      const ruleEdges = toRuntimeEdges(edges.filter((edge) => edge.rule_id === rule.id));
+      const steps = transforms.filter((step) => step.rule_id === rule.id);
+      if (
+        !ruleEdges.length &&
+        !steps.length &&
+        rule.output_edge_id === null &&
+        rule.output_step_id === null
+      )
+        return [];
+      if (!rule.target_ref_json)
+        throw new Error('invalid_reference: stored rule target is missing');
+      const edgeIds = ruleEdges.map((edge) => edge.id);
+      const stepIds = steps.map((step) => step.id);
+      return [
+        {
+          id: rule.id,
+          targetRef: parseFieldRef(rule.target_ref_json),
+          edges: ruleEdges,
+          // Legacy writer order was all direct outputs followed by transformed outputs.
+          writerOrder:
+            rule.output_edge_id !== null
+              ? edges.findIndex((edge) => edge.id === rule.output_edge_id)
+              : edges.length + transforms.findIndex((step) => step.id === rule.output_step_id),
+          edgeValueReferences: 'target',
+          transforms: steps.map((step, index) => {
+            const schema = TRANSFORM_OPERATION_SCHEMAS.find(
+              (item) => item.operation === step.operation
+            );
+            if (!schema) throw new Error('invalid_transform: stored operation is unknown');
+            return {
+              id: step.id,
+              operation: schema.operation,
+              parameters: parseJsonObject(step.parameters_json ?? '{}'),
+              inputs: inputs
+                .filter((ref) => ref.step_id === step.id)
+                .map((ref, position) => {
+                  if (ref.position !== position)
+                    throw new Error('invalid_reference: input positions must be contiguous');
+                  return readMappingReference(ref, edgeIds, stepIds, index);
+                }),
+            };
+          }),
+          output: readMappingReference(
+            { edge_id: rule.output_edge_id, input_step_id: rule.output_step_id },
+            edgeIds,
+            stepIds
+          ),
+        },
+      ];
+    })
+    .sort((a, b) => (a.writerOrder ?? 0) - (b.writerOrder ?? 0));
 }
 
-/**
- * The edges and transforms of a version as the runtime reads them (every spelling of a reference
- * resolved), for a check that must judge a version before it is in use.
- */
+/** The graph used by compile and protocol runtime, with dependency views for async preparation. */
 export async function loadRuntimeMappingGraph(
   adapter: DatabaseAdapter,
   ownerTenantId: string,
   fieldMappingVersionId: string
-): Promise<{ edges: MappingRuleEdge[]; transforms: MappingTransformStep[] }> {
-  const [edges, transforms] = await Promise.all([
+): Promise<{
+  edges: MappingRuleEdge[];
+  transforms: MappingTransformStep[];
+  graphRules: MappingRuleGraph[];
+}> {
+  const [edges, transforms, rules] = await Promise.all([
     loadEdges(adapter, ownerTenantId, fieldMappingVersionId),
     loadTransforms(adapter, ownerTenantId, fieldMappingVersionId),
+    loadFieldMappingRules(adapter, ownerTenantId, fieldMappingVersionId),
   ]);
-  return { edges: toRuntimeEdges(edges), transforms: toRuntimeTransforms(transforms, edges) };
-}
-
-function inferTransformOutputTargetRef(transform: TransformRow, edges: EdgeRow[]): FieldRef {
-  const edge = transform.edge_id ? edges.find((item) => item.id === transform.edge_id) : undefined;
-  return edge
-    ? parseFieldRef(edge.target_ref_json)
-    : { side: 'destination', namespace: 'unknown', path: transform.id };
+  const graphRules = await readRuntimeGraphs(
+    adapter,
+    ownerTenantId,
+    fieldMappingVersionId,
+    rules,
+    edges,
+    transforms
+  );
+  return withMappingGraph({ edges: [], transforms: [], graphRules });
 }
 
 function parseFieldMappingTargetRef(metadataJson: string | null): FieldRef | undefined {

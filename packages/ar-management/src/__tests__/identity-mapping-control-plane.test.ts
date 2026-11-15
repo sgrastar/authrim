@@ -511,6 +511,7 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
       deleted: true,
     });
     expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('DELETE FROM mapping_transform_step_inputs'),
       expect.stringContaining('DELETE FROM mapping_transform_steps'),
       expect.stringContaining('DELETE FROM mapping_rule_edges'),
       expect.stringContaining('DELETE FROM mapping_validation_rules'),
@@ -1771,6 +1772,9 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             scope_json: JSON.stringify({ tenant: 'tenant_a' }),
             condition_json: JSON.stringify({ when: 'present' }),
             metadata_json: JSON.stringify({ source: 'test' }),
+            output_edge_id: 'edge_1',
+            output_step_id: null,
+            rule_target_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
             edge_id: 'edge_1',
             source_ref_json: JSON.stringify({
               profileId: 'source-profile-source_profile_workforce',
@@ -1789,6 +1793,11 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             scope_json: '{}',
             condition_json: '{}',
             metadata_json: JSON.stringify({ source: 'test' }),
+            output_edge_id: null,
+            output_step_id: 'transform_1',
+            rule_target_ref_json: JSON.stringify({
+              profileId: 'destination-profile-destination_profile_oidc',
+            }),
             edge_id: 'edge_2',
             source_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
             target_ref_json: JSON.stringify({
@@ -1807,6 +1816,15 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             step_order: 0,
             operation: 'trim',
             parameters_json: JSON.stringify({ mode: 'whitespace' }),
+          },
+        ],
+        [
+          {
+            step_id: 'transform_1',
+            position: 0,
+            edge_id: 'edge_2',
+            input_step_id: null,
+            name: null,
           },
         ],
         [
@@ -3136,7 +3154,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             ],
             transforms: [
               {
-                edgeIndex: 0,
+                inputs: [{ edgeIndex: 0 }],
                 operation: 'custom_script',
                 parameters: {},
               },
@@ -3171,7 +3189,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
                   targetRef: { namespace: 'authrim.profile', path: 'email' },
                 },
               ],
-              transforms: [{ edgeIndex: 0, operation, parameters: {} }],
+              transforms: [{ inputs: [{ edgeIndex: 0 }], operation, parameters: {} }],
             },
           ],
         })
@@ -3210,8 +3228,6 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
     };
     for (const [transform, edges] of [
-      // No place to write.
-      [{ parameters: base }, [email]],
       // An input edge (the old form).
       [{ edgeIndex: 0, targetRef: target, parameters: base }, [email]],
       // A target that is not a destination, not OIDC / SAML, or a reserved claim.
@@ -3236,11 +3252,6 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       [{ targetRef: target, parameters: { ...base, format: 'saml_targeted_id' } }, []],
       [{ targetRef: target, parameters: { ...base, audience: 'sp_entity_id' } }, []],
       [{ targetRef: target, parameters: { ...base, algorithm: 'simplesamlphp_targeted_id' } }, []],
-      // Another edge writing into the identifier's output.
-      [
-        { targetRef: target, parameters: base },
-        [{ sourceRef: { namespace: 'oidc.claim', path: 'email' }, targetRef: target }],
-      ],
     ] as Array<[Record<string, unknown>, Array<Record<string, unknown>>]>) {
       const { adapter, saved } = attempt(transform, edges);
       await expect(saved, JSON.stringify(transform)).rejects.toMatchObject({
@@ -3250,7 +3261,9 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       expect(adapter.executes).toHaveLength(0);
     }
     // A targetRef on any other step.
-    const other = attempt({ operation: 'trim', edgeIndex: 0, targetRef: target }, [email]);
+    const other = attempt({ operation: 'trim', inputs: [{ edgeIndex: 0 }], targetRef: target }, [
+      email,
+    ]);
     await expect(other.saved).rejects.toMatchObject({ status: 400 });
     // Two identifier steps into one target.
     const twice = createAdapter({});
@@ -3324,7 +3337,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     }
   });
 
-  it('refuses duplicate output targets and unsupported graph persistence before any write', async () => {
+  it('refuses duplicate outputs and accepts multi-input graphs before looking up the set', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
     const edge = {
@@ -3361,7 +3374,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
           },
         ],
       })
-    ).rejects.toMatchObject({ status: 400, code: 'unsupported_until_w1b' });
+    ).rejects.toMatchObject({ status: 404, code: 'not_found' });
     expect(adapter.executes).toHaveLength(0);
   });
 

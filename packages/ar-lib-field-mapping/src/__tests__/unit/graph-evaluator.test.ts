@@ -388,37 +388,9 @@ describe('rule graph evaluation', () => {
     expect(dryRunMapping(input).reasons).toEqual(result.reasons);
   });
 
-  it('reconstructs single-edge stored rows and releases only their final output', () => {
+  it('refuses stored rows without an explicit graph', () => {
     const input = mappingInput([sourceValue('csv', 'email', ' a ')]);
-    const transforms = [
-      {
-        id: 'trim',
-        ruleId: 'stored-rule',
-        operation: trim.operation,
-        inputEdgeIds: [input.edges[0].id],
-        outputTargetRef: input.edges[0].targetRef,
-      },
-    ];
-    const stored = {
-      ...input,
-      edges: input.edges.map((edge) => ({ ...edge, ruleId: 'stored-rule' })),
-      transforms,
-    };
-    expect(executeRuntimeMapping(stored).values.map((value) => value.value)).toEqual(['a']);
-    expect(dryRunMapping(stored).summary.mappedCount).toBe(1);
-    expect(
-      executeRuntimeMapping({
-        ...stored,
-        transforms: [{ ...transforms[0], inputEdgeIds: ['missing'] }],
-      })
-    ).toMatchObject({ status: 'failed', values: [] });
-    // TODO(W1b): callers without row rule boundaries still use the isolated compatibility path.
-    expect(
-      executeRuntimeMapping({
-        ...input,
-        transforms: [{ ...transforms[0], ruleId: undefined }],
-      }).values.map((value) => value.value)
-    ).toEqual([' a ', 'a']);
+    expect(executeRuntimeMapping(input)).toMatchObject({ status: 'failed', values: [] });
   });
 
   it('never lowers catalog classification through a source hint', () => {
