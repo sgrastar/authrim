@@ -30,6 +30,7 @@ vi.mock('../tenant-alias-directory', () => ({
   activateTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
   ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
   disableTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  disableTenantDiscoveryAliasDirectoryIfPublished: vi.fn(async () => undefined),
 }));
 
 import { app } from '../index';
