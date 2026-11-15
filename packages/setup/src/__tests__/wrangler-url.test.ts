@@ -222,6 +222,22 @@ describe('generateEnvVars - ar-management', () => {
     }
   });
 
+  it('writes the deployment default login entry mode to ar-management only, on multi-tenant', () => {
+    const scenario = SCENARIOS.find((candidate) => candidate.config.baseDomain)!;
+    const config = buildAuthrimConfig(scenario) as AuthrimConfig;
+    expect(generateEnvVars('ar-management', config, WORKERS_SUBDOMAIN)['LOGIN_ENTRY_MODE']).toBe(
+      undefined
+    );
+
+    config.tenant.multiTenant = true;
+    config.tenant.loginEntryMode = 'tenant_only';
+    const managementVars = generateEnvVars('ar-management', config, WORKERS_SUBDOMAIN);
+    expect(managementVars['LOGIN_ENTRY_MODE']).toBe('tenant_only');
+    expect(generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN)['LOGIN_ENTRY_MODE']).toBe(
+      undefined
+    );
+  });
+
   it('keeps workers.dev single-tenant login discovery on the dedicated Login UI Worker', () => {
     const scenario = SCENARIOS.find((candidate) => candidate.id === 11)!;
     const config = buildAuthrimConfig(scenario) as AuthrimConfig;

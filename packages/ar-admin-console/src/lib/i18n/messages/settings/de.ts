@@ -20,6 +20,22 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.environment_banner.noindex': 'Anmeldeseiten aus Suchmaschinen heraushalten',
 	'set.k.environment_banner.noindex.desc':
 		'An: bittet Suchmaschinen, die Anmeldeseiten nicht zu indexieren. Wirkt unabhängig davon, ob der Hinweis angezeigt wird.',
+	'set.section.loginEntryPlatform': 'Aufruf der Adresse eines Mandanten',
+	'set.section.loginEntryPlatform.desc':
+		'Ob jemand, der die Adresse eines Mandanten aufruft, zuerst den Mandanten suchen muss. Gilt für alle Mandanten; nur Plattform-Administratoren können es ändern.',
+	'set.k.login-entry.mode': 'Einstieg in die Anmeldeseite',
+	'set.k.login-entry.mode.desc':
+		'„Nur Mandantenadresse“ schaltet die Mandantensuche ab: Jede Mandantenadresse, auch die später angelegter Mandanten, zeigt direkt die eigene Anmeldeseite. Die gemeinsame Anmeldeadresse behält ihre Mandantensuche. Eine Änderung erreicht die Anmeldeseiten innerhalb weniger Minuten.',
+	'set.k.login-entry.mode.tenant_only': 'Nur Mandantenadresse',
+	'set.k.login-entry.mode.discovery_optional': 'Mandantensuche optional',
+	'set.k.login-entry.mode.discovery_required': 'Mandantensuche erforderlich',
+	'set.k.login-entry.require_common_discovery_before_login': 'Zuerst den Mandanten suchen lassen',
+	'set.k.login-entry.require_common_discovery_before_login.desc':
+		'An: Wer die Anmeldeseite eines Mandanten öffnet, wird zuerst zur gemeinsamen Mandantensuche geschickt. Ohne Wirkung bei „Nur Mandantenadresse“.',
+	'set.k.login-entry.redirect_tenant_discover_to_common_entry':
+		'Mandantensuche auf die gemeinsame Seite umleiten',
+	'set.k.login-entry.redirect_tenant_discover_to_common_entry.desc':
+		'An: Die auf der Adresse eines Mandanten geöffnete Mandantensuche wechselt zur gemeinsamen Anmeldeadresse. Ohne Wirkung bei „Nur Mandantenadresse“.',
 	'set.section.adminSignIn': 'Anmeldung der Administratoren',
 	'set.section.adminSignIn.desc':
 		'Wie lange die Administratoren dieses Mandanten angemeldet bleiben und welche Prüfungen vor einem Vorgang verlangt werden.',

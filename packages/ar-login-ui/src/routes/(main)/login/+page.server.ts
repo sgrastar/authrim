@@ -7,6 +7,7 @@ import {
 	verifyLoginChallengeForCurrentTenant,
 	verifyDiscoveryGrant
 } from '../../../lib/discovery-entry';
+import type { DiscoveryConfigResponse } from '../../../lib/discovery-entry';
 import { fetchCachedLoginDiscoveryConfig } from '../../../lib/login-discovery-config-cache';
 import { shouldUseFastPlainLoginShell } from '../../../lib/server/login-entry-fast-path';
 
@@ -78,6 +79,20 @@ function consumeVerifiedGrantCookie(
 		path: '/login'
 	});
 	return true;
+}
+
+/**
+ * A tenant's own host while the login entry mode is tenant_only: the host names the tenant, so
+ * nothing is discovered and no grant is needed to open its sign-in page.
+ */
+function isTenantHostWithoutDiscovery(
+	config: Pick<DiscoveryConfigResponse, 'single_tenant_mode' | 'is_common_entry_host' | 'config'>
+): boolean {
+	return (
+		!config.single_tenant_mode &&
+		!config.is_common_entry_host &&
+		config.config.mode === 'tenant_only'
+	);
 }
 
 function getDiscoveryConfigCacheKey(
@@ -178,7 +193,10 @@ export const load: PageServerLoad = async (event) => {
 			return {};
 		}
 
-		if (config.common_discover_url) {
+		// Where discovery is off (tenant_only) this host is the tenant: a grant that does not verify
+		// (expired, reused) is dropped and the sign-in page opens, instead of a round trip to the
+		// common entry that would issue the next grant for the same URL.
+		if (config.common_discover_url && !isTenantHostWithoutDiscovery(config)) {
 			throw redirectExternal(
 				303,
 				buildCommonDiscoverRedirect(

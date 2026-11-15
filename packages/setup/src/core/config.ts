@@ -150,6 +150,12 @@ export const TenantConfigSchema = z.object({
    */
   // zod 3 never applied a default behind .optional(); an unset value stays unset.
   nakedDomain: z.boolean().optional(),
+  /**
+   * Deployment default of the platform setting `login-entry.mode` (env LOGIN_ENTRY_MODE on
+   * ar-management). `tenant_only` switches tenant discovery off: every tenant host shows its own
+   * sign-in page directly. Unset keeps the code default; the admin console value overrides it.
+   */
+  loginEntryMode: z.enum(['tenant_only', 'discovery_optional', 'discovery_required']).optional(),
 });
 
 // =============================================================================

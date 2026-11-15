@@ -155,8 +155,10 @@ export interface SettingMeta {
    * 'exactly-true': only the exact string `true` is true, as the older system settings read it.
    * 'unless-exactly-false': anything but the exact string `false` is true, for a protection that
    * only an explicit `false` turns off.
+   * 'strict': only true/1/false/0 (case-insensitive, trimmed) count; anything else is unset (so the
+   * default applies), for a switch whose default must not flip on a typo.
    */
-  envBoolean?: 'true-or-1' | 'unless-false' | 'exactly-true' | 'unless-exactly-false';
+  envBoolean?: 'true-or-1' | 'unless-false' | 'exactly-true' | 'unless-exactly-false' | 'strict';
   /**
    * 'false': a defined but empty boolean env value reads as false (not as unset), for settings
    * whose runtime treats any defined value as set. Implied by envBoolean 'exactly-true'.
@@ -466,6 +468,12 @@ function parseEnvValue(
       return parsing.step !== undefined && parsed % parsing.step !== 0 ? undefined : parsed;
     }
     case 'boolean':
+      if (envBoolean === 'strict') {
+        const word = value.trim().toLowerCase();
+        if (word === 'true' || word === '1') return true;
+        if (word === 'false' || word === '0') return false;
+        return undefined;
+      }
       if (envBoolean === 'unless-false') return value.toLowerCase() !== 'false' && value !== '0';
       if (envBoolean === 'exactly-true') return value === 'true';
       if (envBoolean === 'unless-exactly-false') return value !== 'false';

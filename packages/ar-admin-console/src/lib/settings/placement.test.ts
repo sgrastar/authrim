@@ -362,6 +362,37 @@ describe('where settings live', () => {
 		}
 	});
 
+	it('places the login entry mode and its two switches once, in a platform section of Settings → General', () => {
+		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'general');
+		const section = page?.sections.find((candidate) => candidate.id === 'login-entry-platform');
+		expect(section?.level).toBe('platform');
+		for (const [key, envKey, depth] of [
+			['login-entry.mode', 'LOGIN_ENTRY_MODE', 'primary'],
+			[
+				'login-entry.require_common_discovery_before_login',
+				'LOGIN_ENTRY_REQUIRE_COMMON_DISCOVERY_BEFORE_LOGIN',
+				'advanced'
+			],
+			[
+				'login-entry.redirect_tenant_discover_to_common_entry',
+				'LOGIN_ENTRY_REDIRECT_TENANT_DISCOVER_TO_COMMON_ENTRY',
+				'advanced'
+			]
+		] as const) {
+			const meta = ALL_CATEGORY_META['login-entry'].settings[key];
+			expect(categoryOf(key)).toBe('login-entry');
+			expect(meta.envKey).toBe(envKey);
+			expect(NOT_APPLIED.has(key)).toBe(false);
+			expect(drafted).not.toContain(key);
+			expect(section?.settings.filter((s) => s.key === key)).toEqual([{ key, depth }]);
+			expect(hasMessage(settingText(key).label)).toBe(true);
+			expect(settingText(key).description).toBeDefined();
+		}
+		for (const choice of ['tenant_only', 'discovery_optional', 'discovery_required']) {
+			expect(hasMessage(settingText('login-entry.mode').choice(choice)), choice).toBe(true);
+		}
+	});
+
 	it('places the tenant capability switches once, as applied platform-only booleans on the capabilities page', () => {
 		for (const capability of [
 			'webhooks',

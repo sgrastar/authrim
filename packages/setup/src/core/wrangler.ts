@@ -1654,6 +1654,11 @@ export function generateEnvVars(
         vars['PRIMARY_TENANT_ID'] = primaryTenantId;
       }
 
+      // Deployment default of the login entry mode (the discovery handler is in ar-management)
+      if (component === 'ar-management' && config.tenant.loginEntryMode) {
+        vars['LOGIN_ENTRY_MODE'] = config.tenant.loginEntryMode;
+      }
+
       // Naked domain as issuer (use naked domain instead of tenant subdomain)
       if (config.tenant.nakedDomain) {
         vars['NAKED_DOMAIN_AS_ISSUER'] = 'true';

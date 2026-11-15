@@ -54,8 +54,10 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     key: 'login-entry.mode',
     type: 'enum',
     default: 'discovery_optional',
+    envKey: 'LOGIN_ENTRY_MODE',
     label: 'Login Entry Mode',
-    description: 'Controls whether tenant discovery can be used before tenant login.',
+    description:
+      'Controls whether tenant discovery can be used before tenant login. tenant_only switches discovery off on every tenant host: each tenant host shows its own sign-in page directly.',
     enum: ['tenant_only', 'discovery_optional', 'discovery_required'],
     visibility: 'admin',
   },
@@ -106,6 +108,8 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     key: 'login-entry.redirect_default_login_to_discovery',
     type: 'boolean',
     default: true,
+    envKey: 'LOGIN_ENTRY_REDIRECT_DEFAULT_LOGIN_TO_DISCOVERY',
+    envBoolean: 'strict',
     label: 'Redirect Default Login To Discovery',
     description:
       'Redirect the common-entry /login page to /discover while keeping tenant-specific /login unchanged.',
@@ -115,6 +119,8 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     key: 'login-entry.require_common_discovery_before_login',
     type: 'boolean',
     default: true,
+    envKey: 'LOGIN_ENTRY_REQUIRE_COMMON_DISCOVERY_BEFORE_LOGIN',
+    envBoolean: 'strict',
     label: 'Require Common Discovery Before Login',
     description:
       'When enabled, direct tenant-host /login visits must pass through the shared /discover screen first. Challenge-based OIDC login remains unchanged.',
@@ -133,6 +139,8 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
     key: 'login-entry.redirect_tenant_discover_to_common_entry',
     type: 'boolean',
     default: true,
+    envKey: 'LOGIN_ENTRY_REDIRECT_TENANT_DISCOVER_TO_COMMON_ENTRY',
+    envBoolean: 'strict',
     label: 'Redirect Tenant Discover To Common Entry',
     description:
       'Redirect tenant-host /discover requests to the shared common-entry /discover page.',

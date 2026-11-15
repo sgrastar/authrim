@@ -234,6 +234,18 @@ export const load: PageServerLoad = async (event) => {
 		? { ...config, is_common_entry_host: true }
 		: config;
 
+	// Discovery is off (tenant_only): a tenant host has nothing to discover, so it goes to its own
+	// sign-in page rather than to the common entry. An invitation or app hint still resolves there.
+	if (
+		!effectiveConfig.single_tenant_mode &&
+		!effectiveConfig.is_common_entry_host &&
+		effectiveConfig.config.mode === 'tenant_only' &&
+		!inviteToken &&
+		!appHint
+	) {
+		throw redirect(303, '/login');
+	}
+
 	if (
 		!effectiveConfig.single_tenant_mode &&
 		!effectiveConfig.is_common_entry_host &&

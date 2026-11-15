@@ -3,6 +3,8 @@ import { legacyUrlString, z } from './zod';
 import type { Env, LoginEntrySettings } from '@authrim/ar-lib-core';
 import {
   LOGIN_ENTRY_DEFAULTS,
+  LOGIN_ENTRY_SETTINGS_META,
+  readSettingEnvValue,
   LOGIN_UI_DEFAULTS,
   TENANT_DISCOVERY_UI_DEFAULTS,
   createLookupAliasIndex,
@@ -19,7 +21,7 @@ import {
   type LookupAliasKind,
   type ResolvedLookupAlias,
 } from '@authrim/ar-lib-core';
-import { getLogger, getTenantSettingsDocument } from '@authrim/ar-lib-core';
+import { createLogger, getLogger, getTenantSettingsDocument } from '@authrim/ar-lib-core';
 import { invitationHasUsesLeft } from '@authrim/ar-lib-core/services/invitation-auth-core';
 import { SignJWT, jwtVerify } from 'jose';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
@@ -419,6 +421,35 @@ function normalizeDiscoveryMethods(raw: string | undefined): DiscoveryMethod[] {
   }
 }
 
+/**
+ * A login-entry setting not stored at the scope in use: the deployment's environment variable
+ * when it names one (and holds a valid value), else the code default.
+ */
+const warnedInvalidLoginEntryEnv = new Set<string>();
+
+function envLoginEntry<K extends keyof LoginEntrySettings>(
+  env: Env,
+  key: K
+): LoginEntrySettings[K] {
+  const meta = LOGIN_ENTRY_SETTINGS_META[key];
+  const fromEnv = readSettingEnvValue(env as unknown as Record<string, unknown>, meta);
+  const raw = meta.envKey ? (env as unknown as Record<string, unknown>)[meta.envKey] : undefined;
+  if (
+    fromEnv === undefined &&
+    meta.envKey &&
+    typeof raw === 'string' &&
+    raw.trim() !== '' &&
+    !warnedInvalidLoginEntryEnv.has(meta.envKey)
+  ) {
+    // An invalid value falls back to the default; the value itself is not logged.
+    warnedInvalidLoginEntryEnv.add(meta.envKey);
+    createLogger()
+      .module('DISCOVERY')
+      .warn(`${meta.envKey} holds an invalid value; using the default`);
+  }
+  return (fromEnv ?? LOGIN_ENTRY_DEFAULTS[key]) as LoginEntrySettings[K];
+}
+
 async function getDiscoverySettings(
   env: Env,
   scope: { type: 'platform' } | { type: 'tenant'; id: string }
@@ -451,7 +482,7 @@ async function getDiscoverySettings(
     tenant_id: scope.type === 'tenant' ? scope.id : getDefaultTenantId(env),
     mode:
       (stored?.['login-entry.mode'] as LoginEntrySettings['login-entry.mode'] | undefined) ??
-      LOGIN_ENTRY_DEFAULTS['login-entry.mode'],
+      envLoginEntry(env, 'login-entry.mode'),
     discovery_methods: discoveryMethods,
     email_resolution_policy: emailResolutionPolicy,
     selection_policy:
@@ -466,16 +497,16 @@ async function getDiscoverySettings(
       LOGIN_ENTRY_DEFAULTS['login-entry.remember_last_tenant'],
     redirect_default_login_to_discovery:
       (stored?.['login-entry.redirect_default_login_to_discovery'] as boolean | undefined) ??
-      LOGIN_ENTRY_DEFAULTS['login-entry.redirect_default_login_to_discovery'],
+      envLoginEntry(env, 'login-entry.redirect_default_login_to_discovery'),
     require_common_discovery_before_login:
       (stored?.['login-entry.require_common_discovery_before_login'] as boolean | undefined) ??
-      LOGIN_ENTRY_DEFAULTS['login-entry.require_common_discovery_before_login'],
+      envLoginEntry(env, 'login-entry.require_common_discovery_before_login'),
     skip_discovery_if_only_one_tenant:
       (stored?.['login-entry.skip_discovery_if_only_one_tenant'] as boolean | undefined) ??
       LOGIN_ENTRY_DEFAULTS['login-entry.skip_discovery_if_only_one_tenant'],
     redirect_tenant_discover_to_common_entry:
       (stored?.['login-entry.redirect_tenant_discover_to_common_entry'] as boolean | undefined) ??
-      LOGIN_ENTRY_DEFAULTS['login-entry.redirect_tenant_discover_to_common_entry'],
+      envLoginEntry(env, 'login-entry.redirect_tenant_discover_to_common_entry'),
   };
 }
 
@@ -537,6 +568,9 @@ function normalizeAbsoluteUrl(value: string): string | null {
   try {
     const url = new URL(value);
     url.hash = '';
+    // The Login UI adds the visitor's language to the grant's address after it is signed
+    // (`withPreferredLanguage`), so the language never counts when the address is compared.
+    url.searchParams.delete('lang');
     return url.toString();
   } catch {
     return null;

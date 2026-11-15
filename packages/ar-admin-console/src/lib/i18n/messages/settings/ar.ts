@@ -20,6 +20,22 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.environment_banner.noindex': 'إبعاد شاشات تسجيل الدخول عن محركات البحث',
 	'set.k.environment_banner.noindex.desc':
 		'عند التفعيل: يُطلب من محركات البحث عدم فهرسة شاشات تسجيل الدخول. يعمل سواء ظهر الشريط أم لا.',
+	'set.section.loginEntryPlatform': 'فتح عنوان المستأجر نفسه',
+	'set.section.loginEntryPlatform.desc':
+		'هل يُطلب أولاً ممن يفتح عنوان مستأجر أن يبحث عن المستأجر. ينطبق على كل المستأجرين، ولا يستطيع تغييره إلا مسؤولو المنصة.',
+	'set.k.login-entry.mode': 'مدخل صفحة تسجيل الدخول',
+	'set.k.login-entry.mode.desc':
+		'اختر «عنوان المستأجر فقط» لإيقاف البحث عن المستأجر: يعرض كل عنوان مستأجر، بما في ذلك المستأجرون الذين يُنشأون لاحقاً، صفحة تسجيل الدخول الخاصة به مباشرة. يحتفظ عنوان تسجيل الدخول المشترك بصفحة البحث. يصل التغيير إلى شاشات تسجيل الدخول خلال دقائق.',
+	'set.k.login-entry.mode.tenant_only': 'عنوان المستأجر فقط',
+	'set.k.login-entry.mode.discovery_optional': 'البحث عن المستأجر اختياري',
+	'set.k.login-entry.mode.discovery_required': 'البحث عن المستأجر إلزامي',
+	'set.k.login-entry.require_common_discovery_before_login': 'اطلب البحث عن المستأجر أولاً',
+	'set.k.login-entry.require_common_discovery_before_login.desc':
+		'عند التفعيل: من يفتح صفحة تسجيل دخول المستأجر يُرسل أولاً إلى صفحة البحث المشتركة. لا أثر له عندما يكون المدخل «عنوان المستأجر فقط».',
+	'set.k.login-entry.redirect_tenant_discover_to_common_entry':
+		'انقل صفحة البحث إلى العنوان المشترك',
+	'set.k.login-entry.redirect_tenant_discover_to_common_entry.desc':
+		'عند التفعيل: تنتقل صفحة البحث المفتوحة على عنوان المستأجر إلى عنوان تسجيل الدخول المشترك. لا أثر له عندما يكون المدخل «عنوان المستأجر فقط».',
 	'set.section.adminSignIn': 'تسجيل دخول المسؤولين',
 	'set.section.adminSignIn.desc':
 		'المدة التي يبقى فيها مسؤولو هذا المستأجر مسجّلين، والتحققات المطلوبة قبل أي عملية.',
