@@ -99,6 +99,7 @@ import {
   refreshTenantRuntimeRegistrySnapshots,
 } from './tenant-runtime-registry-snapshot-jobs';
 import { getAdminAuth, isTenantScopedAdminPath } from './admin-tenant-access';
+import { tenantAdminOpenDataContext } from './admin-tenant-open-context';
 import { authenticateAgentDownscopeBearer } from './agent-downscope-auth';
 import {
   isAgentElevationRecoveryCron,
@@ -1820,13 +1821,15 @@ const tenantManagementGuard = async (c: Context<{ Bindings: Env }>, next: Next) 
 };
 app.use('/api/admin/tenants', tenantManagementGuard);
 app.use('/api/admin/tenants/*', async (c, next) => {
-  const pathname = new URL(c.req.url).pathname;
-  if (isTenantScopedAdminPath(pathname)) {
+  // The router's own path, as the route table and the request context read it (not the raw URL).
+  if (isTenantScopedAdminPath(c.req.path)) {
     await next();
     return;
   }
   return tenantManagementGuard(c, next);
 });
+// After authentication and the guard above, before any route-level middleware (idempotency).
+app.use('/api/admin/tenants/*', tenantAdminOpenDataContext);
 app.use('/api/admin/tenants/:id', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:id/*', requireSupportedTenantParam('id'));
 app.use('/api/admin/tenants/:tenantId', requireSupportedTenantParam('tenantId'));

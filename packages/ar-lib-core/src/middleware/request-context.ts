@@ -24,8 +24,10 @@ import {
 import { validateTenantRequestBinding } from '../utils/tenant-binding-policy';
 import {
   classifyTenantRequestPath,
+  extractTenantAdminOpenPathTenantId,
   extractTenantScopedPathTenantId,
   isAdminTenantHeaderRequired,
+  isTenantAdminOpenInventoryPath,
   isValidTenantIdentifier,
 } from '../utils/tenant-request-policy';
 import { createLogger, type Logger } from '../utils/logger';
@@ -526,6 +528,18 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
 
     if (requestClass === 'tenant_scoped_admin' && requestedTenantId) {
       tenantId = requestedTenantId;
+    }
+
+    // A tenant administrator's own tenant routes that are classified as inventory (info,
+    // invitations, runtime-profiles) send no tenant header: the tenant of the path is the tenant
+    // the caller's roles are worked out for. Without this the request runs in the host's tenant
+    // and a non-default tenant's administrator holds no role there. The header is not read, so it
+    // cannot name a tenant other than the path's. The handlers still check the caller's own scope.
+    if (isMultiTenantEnabled(c.env) && isTenantAdminOpenInventoryPath(c.req.path)) {
+      const pathTenantId = extractTenantAdminOpenPathTenantId(c.req.path);
+      if (pathTenantId && isValidTenantIdentifier(pathTenantId)) {
+        tenantId = pathTenantId;
+      }
     }
 
     if (

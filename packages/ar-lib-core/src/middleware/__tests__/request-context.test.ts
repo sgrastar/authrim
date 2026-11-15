@@ -143,6 +143,21 @@ function buildApp(env: TestEnv, requireTenant = true) {
       ),
     });
   });
+  app.get('/api/admin/tenants/:tenantId/invitations', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.delete('/api/admin/tenants/:tenantId/invitations/:invId', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.get('/api/admin/tenants/:tenantId/runtime-profiles', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.put('/api/admin/tenants/:tenantId/runtime-profiles', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.post('/api/admin/tenants/:tenantId/set-default', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
   app.get('/api/admin/tenants/:tenantId/provisioning', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
@@ -591,6 +606,56 @@ describe('requestContextMiddleware – tenant existence check', () => {
       await expect(res.json()).resolves.toEqual({
         tenantId: 'first',
         hasTenantMetadataContext: false,
+      });
+    });
+
+    describe('tenant administrator routes classified as tenant inventory', () => {
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        PRIMARY_TENANT_ID: 'first',
+        DB: createMockDB({ tenantRow: { id: 'first' } }),
+        AUTHRIM_CONFIG: createMockKV(),
+      };
+
+      it.each([
+        ['GET', '/api/admin/tenants/t1/info'],
+        ['GET', '/api/admin/tenants/t1/invitations'],
+        ['DELETE', '/api/admin/tenants/t1/invitations/inv-1'],
+        ['GET', '/api/admin/tenants/t1/runtime-profiles'],
+        ['GET', '/api/admin/tenants/t%31/info'],
+      ])(
+        '%s %s runs in the tenant of the path, whatever the header names',
+        async (method, path) => {
+          for (const header of [undefined, 't1', 't2', 'first']) {
+            const res = await buildApp(env).request(
+              new Request(`https://${BASE_DOMAIN}${path}`, {
+                method,
+                headers: { Host: BASE_DOMAIN, ...(header ? { 'X-Tenant-Id': header } : {}) },
+              }),
+              undefined,
+              env
+            );
+            expect({ header, status: res.status }).toEqual({ header, status: 200 });
+            expect(await res.json()).toMatchObject({ tenantId: 't1' });
+          }
+        }
+      );
+
+      it.each([
+        ['POST', '/api/admin/tenants/t1/set-default'],
+        ['GET', '/api/admin/tenants/t1/provisioning'],
+      ])('%s %s (platform-only) keeps running in the host tenant', async (method, path) => {
+        const res = await buildApp(env).request(
+          new Request(`https://${BASE_DOMAIN}${path}`, {
+            method,
+            headers: { Host: BASE_DOMAIN, 'X-Tenant-Id': 't1' },
+          }),
+          undefined,
+          env
+        );
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ tenantId: 'first' });
       });
     });
 
