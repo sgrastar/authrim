@@ -705,7 +705,7 @@ function appendLoginHint(url: string, loginHint?: string): string {
   return nextUrl.toString();
 }
 
-// De-duplication memory only: tenant id -> when it was last logged. Warnings and errors have
+// De-duplication memory only: (tenant id, error code) -> when it was last logged. Warnings and errors have
 // separate memories so quarantine warnings can never crowd out errors; when a memory is full the
 // oldest entry is dropped, and a tenant that keeps failing is logged again after the interval.
 const loggedTenantProblems = { warn: new Map<string, number>(), error: new Map<string, number>() };
@@ -721,26 +721,28 @@ function describeDiscoveryError(error: unknown): { name: string; code: string; m
   };
 }
 
-/** Logs a tenant's problem once per tenant and level (bounded); no secrets, the error code only. */
+/** Logs a tenant's problem once per tenant, error and level (bounded); no secrets, the error code only. */
 function logTenantProblemOnce(
   level: 'warn' | 'error',
   tenantId: string,
   text: string,
   error: unknown
 ): void {
+  const { name, code, message } = describeDiscoveryError(error);
+  // A new failure mode of an already-logged tenant is a new entry.
+  const key = `${tenantId}\0${code === 'unknown' ? message : code}`;
   const memory = loggedTenantProblems[level];
   const now = Date.now();
-  const last = memory.get(tenantId);
+  const last = memory.get(key);
   if (last !== undefined && now - last < TENANT_PROBLEM_LOG_INTERVAL_MS) {
     return;
   }
-  memory.delete(tenantId);
-  memory.set(tenantId, now);
+  memory.delete(key);
+  memory.set(key, now);
   if (memory.size > MAX_LOGGED_TENANT_PROBLEMS) {
     const oldest = memory.keys().next().value;
     if (oldest !== undefined) memory.delete(oldest);
   }
-  const { name, code } = describeDiscoveryError(error);
   const log = createLogger().module('DISCOVERY');
   const fields = { skippedTenantId: tenantId, errorName: name, errorCode: code };
   if (level === 'error') log.error(text, fields);
@@ -749,27 +751,37 @@ function logTenantProblemOnce(
 
 /**
  * Every active tenant of the environment, for the common entry. A tenant whose route is
- * deliberately not servable (`quarantined_route`: being deleted or quarantined) is left out
- * (warn once) and does not make the listing incomplete. Any other failure (which may be tampering
- * or a platform fault, see environment-tenant-directory) also leaves that tenant out, so one broken
- * tenant cannot take the page down, but is logged as an error and marks the listing `incomplete`.
- * A failed resolution is never counted as an active tenant.
+ * deliberately not servable (`quarantined_route`: being deleted or quarantined) is left out of
+ * the list (warn once) and does not fail the page, but it is "unknown", not "absent": it sets
+ * `unservable`, so the single-tenant shortcut is not offered. Any other failure (which may be
+ * tampering or a platform fault, see environment-tenant-directory) also leaves that tenant out,
+ * is logged as an error and marks the listing `incomplete`. Swallowing these per tenant is
+ * deliberate (keeping the common entry up is the point) and differs from
+ * `listEnvironmentTenantDefaultStores`, which fails the whole listing. The alias route is
+ * revalidated as on the other discovery paths. A failed resolution is never an active tenant.
  */
 async function getActiveEnvironmentTenants(
   env: Env
-): Promise<{ tenants: TenantLookupRow[]; incomplete: boolean }> {
+): Promise<{ tenants: TenantLookupRow[]; incomplete: boolean; unservable: boolean }> {
   const aliases = await resolveDiscoveryAliasesFromLookup(
     env,
     'environment_tenant',
     env.AUTHRIM_ENVIRONMENT_NAME ?? ''
   );
   let incomplete = false;
+  let unservable = false;
   const tenants = await mapDiscoveryTenantsBounded(aliases, async (alias) => {
     try {
       const store = await resolveTenantDefaultStore(env, alias.tenantId);
-      return await queryActiveTenantFromStore(alias.tenantId, store.source);
+      assertDynamicAliasRouteNotAhead(alias, store);
+      const tenant = await queryActiveTenantFromStore(alias.tenantId, store.source);
+      if (tenant && tenant.id !== alias.tenantId) {
+        throw new Error('tenant_alias_destination_revalidation_failed');
+      }
+      return tenant;
     } catch (error) {
       if (isUnservableRouteError(error)) {
+        unservable = true;
         logTenantProblemOnce(
           'warn',
           alias.tenantId,
@@ -791,6 +803,7 @@ async function getActiveEnvironmentTenants(
   return {
     tenants: tenants.filter((tenant): tenant is TenantLookupRow => tenant !== null),
     incomplete,
+    unservable,
   };
 }
 
@@ -836,7 +849,13 @@ async function getCommonEntryTenantCandidates(
   const listing = await getActiveEnvironmentTenants(env);
   const wayf = want.wayf ? await buildWayfCandidates(env, listing.tenants) : undefined;
   let single: DiscoveryCandidate | undefined;
-  if (want.single && !listing.incomplete && !wayf?.dropped && listing.tenants.length === 1) {
+  if (
+    want.single &&
+    !listing.incomplete &&
+    !listing.unservable &&
+    !wayf?.dropped &&
+    listing.tenants.length === 1
+  ) {
     try {
       single = await buildCandidate(env, listing.tenants[0], 'tenant_slug');
     } catch (error) {

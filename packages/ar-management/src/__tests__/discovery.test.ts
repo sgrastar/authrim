@@ -895,10 +895,16 @@ describe('discovery API', () => {
         { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') },
         { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
       ]);
-      failStoreFor(['acme'], true);
-      const one = await commonConfig();
-      expect(one.status).toBe(200);
-      expect(one.body.single_active_tenant_candidate?.tenant_id).toBe('beta');
+      // acme is simply not an active row: only beta counts, and nothing is unknown.
+      const all = mocked.state.tenants;
+      mocked.state.tenants = all.filter((tenant) => tenant.id !== 'acme');
+      try {
+        const one = await commonConfig();
+        expect(one.status).toBe(200);
+        expect(one.body.single_active_tenant_candidate?.tenant_id).toBe('beta');
+      } finally {
+        mocked.state.tenants = all;
+      }
 
       failStoreFor(['acme', 'beta']);
       const none = await commonConfig();
@@ -906,7 +912,7 @@ describe('discovery API', () => {
       expect(none.body.single_active_tenant_candidate).toBeUndefined();
     });
 
-    it('a quarantined tenant does not stop the single-tenant shortcut', async () => {
+    it('a quarantined tenant is unknown, not absent: no single-tenant shortcut, page stays up', async () => {
       mocked.tenantAliasesResolveManyMock.mockResolvedValue([
         { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') },
         { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
@@ -914,7 +920,23 @@ describe('discovery API', () => {
       failStoreFor(['acme'], true);
       const { status, body } = await commonConfig();
       expect(status).toBe(200);
-      expect(body.single_active_tenant_candidate?.tenant_id).toBe('beta');
+      expect(body.single_active_tenant_candidate).toBeUndefined();
+      expect(body.wayf_candidates?.map((candidate) => candidate.tenant_id)).toEqual(['beta']);
+    });
+
+    it('an alias route that is ahead of the store is left out, incomplete, no shortcut', async () => {
+      const ahead = discoveryRouteProjection('acme');
+      mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+        {
+          tenantId: 'acme',
+          routeProjection: { ...ahead, tenantRouteGeneration: 9 },
+        },
+        { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
+      ]);
+      const { status, body } = await commonConfig();
+      expect(status).toBe(200);
+      expect(body.single_active_tenant_candidate).toBeUndefined();
+      expect(body.wayf_candidates?.map((candidate) => candidate.tenant_id)).toEqual(['beta']);
     });
 
     it('any other failure keeps the page up but never offers "the only tenant"', async () => {
