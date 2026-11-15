@@ -10780,6 +10780,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           nakedDomain: nakedDomain,
           userIdFormat: userIdFormat,
           primaryTenant: primaryTenant,
+          // Not editable in this screen: kept from the loaded configuration.
+          loginEntryMode: config.tenant?.loginEntryMode,
         },
         components: {
           api: true,
@@ -12261,6 +12263,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           nakedDomain: config.tenant?.nakedDomain ?? false,
           userIdFormat: config.tenant?.userIdFormat || 'nanoid',
           primaryTenant: config.tenant?.primaryTenant || undefined,
+          loginEntryMode: config.tenant?.loginEntryMode,
         },
         components: {
           api: true,

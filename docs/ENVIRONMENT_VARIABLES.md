@@ -201,6 +201,27 @@ Nothing is shown while the text is empty; an unreadable setting reads as off.
 
 On the plain sign-in entry (`/login` without a session or protocol context, which skips the tenant lookup for speed) the server only uses an answer that is already cached, so the noindex header is not guaranteed on the first request after a cold start (the page then adds the robots meta tag and the band after it loads). For a hard guarantee, add a Cloudflare or edge rule for `X-Robots-Tag` or a `robots.txt`.
 
+### Login Entry (tenant discovery)
+
+| Variable                                               | Type    | Default              | Description                                                                                                                   |
+| ------------------------------------------------------ | ------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `LOGIN_ENTRY_MODE`                                     | enum    | `discovery_optional` | `tenant_only`, `discovery_optional` or `discovery_required`. `tenant_only` switches tenant discovery off on every tenant host |
+| `LOGIN_ENTRY_REQUIRE_COMMON_DISCOVERY_BEFORE_LOGIN`    | boolean | `true`               | A tenant host's `/login` first goes through the common tenant finder (not applied when the mode is `tenant_only`)             |
+| `LOGIN_ENTRY_REDIRECT_TENANT_DISCOVER_TO_COMMON_ENTRY` | boolean | `true`               | A tenant host's `/discover` moves to the common entry's `/discover` (not applied when the mode is `tenant_only`)              |
+| `LOGIN_ENTRY_REDIRECT_DEFAULT_LOGIN_TO_DISCOVERY`      | boolean | `true`               | Reserved: read into the discovery answer, not used by the Login UI yet                                                        |
+
+These are the deployment defaults of the platform settings `login-entry.mode`,
+`login-entry.require_common_discovery_before_login`,
+`login-entry.redirect_tenant_discover_to_common_entry` and
+`login-entry.redirect_default_login_to_discovery` (Settings API, `login-entry` category). They are read by
+ar-management (the discovery answer the Login UI asks for). A value saved in the admin console
+(Settings → General, platform administrators) or through the Settings API overrides the variable. A
+tenant without a tenant-level override (`login-entry.override_enabled`) uses the platform value, tenants
+created later included. In `tenant_only` the common entry host (for example `login.example.com`) still
+shows its tenant finder; only tenant hosts skip discovery. With `@authrim/setup`, set `tenant.loginEntryMode`
+in `.authrim/{env}/config.json` to write `LOGIN_ENTRY_MODE` into ar-management's `wrangler.toml` on the next
+`setup update`.
+
 ### Tenant Capabilities
 
 | Variable                                          | Type    | Default | Description                                                            |

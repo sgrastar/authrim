@@ -20,6 +20,22 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.environment_banner.noindex': 'Keep the sign-in screens out of search engines',
 	'set.k.environment_banner.noindex.desc':
 		'On: asks search engines not to index the sign-in screens. Works whether or not the banner is shown.',
+	'set.section.loginEntryPlatform': 'Opening a tenant’s own address',
+	'set.section.loginEntryPlatform.desc':
+		'Whether a visitor who opens a tenant’s own address is first asked to find the tenant. It applies to every tenant, and only platform administrators can change it.',
+	'set.k.login-entry.mode': 'How the sign-in page is entered',
+	'set.k.login-entry.mode.desc':
+		'Choose “Tenant address only” to switch tenant discovery off: every tenant address, including tenants created later, shows its own sign-in page directly. The common sign-in address keeps its tenant finder. A change reaches the sign-in screens within a few minutes.',
+	'set.k.login-entry.mode.tenant_only': 'Tenant address only',
+	'set.k.login-entry.mode.discovery_optional': 'Discovery optional',
+	'set.k.login-entry.mode.discovery_required': 'Discovery required',
+	'set.k.login-entry.require_common_discovery_before_login': 'Ask to find the tenant first',
+	'set.k.login-entry.require_common_discovery_before_login.desc':
+		'On: opening a tenant’s sign-in page first sends the visitor to the common tenant finder. Has no effect when the entry is “Tenant address only”.',
+	'set.k.login-entry.redirect_tenant_discover_to_common_entry':
+		'Send the tenant’s finder page to the common one',
+	'set.k.login-entry.redirect_tenant_discover_to_common_entry.desc':
+		'On: the tenant finder opened on a tenant’s own address moves to the common sign-in address. Has no effect when the entry is “Tenant address only”.',
 	'set.section.adminSignIn': 'Admin sign-in',
 	'set.section.adminSignIn.desc':
 		'How long this tenant’s administrators stay signed in, and the checks asked before an operation.',

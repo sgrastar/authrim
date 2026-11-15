@@ -22,5 +22,6 @@ export function normalizeTenantConfigForApiDomain(
     userIdFormat: tenant?.userIdFormat || 'nanoid',
     primaryTenant: multiTenantEnabled ? primaryTenant : undefined,
     nakedDomain: multiTenantEnabled ? (tenant?.nakedDomain ?? false) : false,
+    loginEntryMode: multiTenantEnabled ? tenant?.loginEntryMode : undefined,
   };
 }

@@ -822,16 +822,16 @@ place('authentication/logout', 'Logout channels and webhook', {
 // Platform
 
 place('plat-tenants/discovery', 'Finding the tenant', {
-	primary: ['login-entry.mode', 'login-entry.discovery_methods', 'login-entry.selection_policy'],
+	// `login-entry.mode`, `…require_common_discovery_before_login` and
+	// `…redirect_tenant_discover_to_common_entry` are built: Settings → General (platform part).
+	primary: ['login-entry.discovery_methods', 'login-entry.selection_policy'],
 	advanced: [
 		'login-entry.override_enabled',
 		'login-entry.email_resolution_policy',
 		'login-entry.allow_manual_tenant_entry',
 		'login-entry.remember_last_tenant',
 		'login-entry.redirect_default_login_to_discovery',
-		'login-entry.require_common_discovery_before_login',
-		'login-entry.skip_discovery_if_only_one_tenant',
-		'login-entry.redirect_tenant_discover_to_common_entry'
+		'login-entry.skip_discovery_if_only_one_tenant'
 	]
 });
 place('plat-tenants/discovery', 'Discovery screen', {

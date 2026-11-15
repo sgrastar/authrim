@@ -414,7 +414,8 @@ export const TEAM: SettingsPageDef = {
 
 /**
  * Settings → General, platform part: the environment banner (a notice band at the top of the Login
- * UI and this console, and an optional noindex for the Login UI). Set for the whole deployment, so
+ * UI and this console, and an optional noindex for the Login UI), and how the sign-in screens are
+ * entered (whether a tenant's own address first asks the visitor to find the tenant). Set for the whole deployment, so
  * the section is read and saved at the platform and shown only to platform admins; the page's own
  * content (what the tenant is called, its addresses) is not a setting and is built apart.
  */
@@ -434,6 +435,17 @@ export const GENERAL: SettingsPageDef = {
 				{ key: 'environment_banner.text', depth: 'primary' },
 				{ key: 'environment_banner.text_localizations', depth: 'primary' },
 				{ key: 'environment_banner.noindex', depth: 'primary' }
+			]
+		},
+		{
+			id: 'login-entry-platform',
+			title: 'set.section.loginEntryPlatform',
+			description: 'set.section.loginEntryPlatform.desc',
+			level: 'platform',
+			settings: [
+				{ key: 'login-entry.mode', depth: 'primary' },
+				{ key: 'login-entry.require_common_discovery_before_login', depth: 'advanced' },
+				{ key: 'login-entry.redirect_tenant_discover_to_common_entry', depth: 'advanced' }
 			]
 		}
 	]
