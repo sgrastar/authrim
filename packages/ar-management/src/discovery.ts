@@ -21,7 +21,12 @@ import {
   type LookupAliasKind,
   type ResolvedLookupAlias,
 } from '@authrim/ar-lib-core';
-import { createLogger, getLogger, getTenantSettingsDocument } from '@authrim/ar-lib-core';
+import {
+  createLogger,
+  getLogger,
+  getTenantSettingsDocument,
+  isUnservableRouteError,
+} from '@authrim/ar-lib-core';
 import { invitationHasUsesLeft } from '@authrim/ar-lib-core/services/invitation-auth-core';
 import { SignJWT, jwtVerify } from 'jose';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
@@ -700,46 +705,150 @@ function appendLoginHint(url: string, loginHint?: string): string {
   return nextUrl.toString();
 }
 
-async function getSingleActiveTenantCandidate(env: Env): Promise<DiscoveryCandidate | null> {
-  const tenants = (
-    await mapDiscoveryTenantsBounded(
-      await resolveDiscoveryAliasesFromLookup(
-        env,
-        'environment_tenant',
-        env.AUTHRIM_ENVIRONMENT_NAME ?? ''
-      ),
-      async (alias) => {
-        const store = await resolveTenantDefaultStore(env, alias.tenantId);
-        return queryActiveTenantFromStore(alias.tenantId, store.source);
-      }
-    )
-  ).filter((tenant): tenant is TenantLookupRow => tenant !== null);
+// De-duplication memory only: tenant id -> when it was last logged. Warnings and errors have
+// separate memories so quarantine warnings can never crowd out errors; when a memory is full the
+// oldest entry is dropped, and a tenant that keeps failing is logged again after the interval.
+const loggedTenantProblems = { warn: new Map<string, number>(), error: new Map<string, number>() };
+const MAX_LOGGED_TENANT_PROBLEMS = 256;
+const TENANT_PROBLEM_LOG_INTERVAL_MS = 10 * 60 * 1000;
 
-  if (tenants.length !== 1) {
-    return null;
-  }
-
-  return buildCandidate(env, tenants[0], 'tenant_slug');
+function describeDiscoveryError(error: unknown): { name: string; code: string; message: string } {
+  const e = error as { name?: unknown; code?: unknown; message?: unknown } | null;
+  return {
+    name: typeof e?.name === 'string' ? e.name : 'Error',
+    code: typeof e?.code === 'string' ? e.code : 'unknown',
+    message: (typeof e?.message === 'string' ? e.message : String(error)).slice(0, 300),
+  };
 }
 
-async function getActiveTenantWayfCandidates(env: Env): Promise<DiscoveryCandidate[]> {
-  const tenants = (
-    await mapDiscoveryTenantsBounded(
-      await resolveDiscoveryAliasesFromLookup(
-        env,
-        'environment_tenant',
-        env.AUTHRIM_ENVIRONMENT_NAME ?? ''
-      ),
-      async (alias) => {
-        const store = await resolveTenantDefaultStore(env, alias.tenantId);
-        return queryActiveTenantFromStore(alias.tenantId, store.source);
-      }
-    )
-  )
-    .filter((tenant): tenant is TenantLookupRow => tenant !== null)
-    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+/** Logs a tenant's problem once per tenant and level (bounded); no secrets, the error code only. */
+function logTenantProblemOnce(
+  level: 'warn' | 'error',
+  tenantId: string,
+  text: string,
+  error: unknown
+): void {
+  const memory = loggedTenantProblems[level];
+  const now = Date.now();
+  const last = memory.get(tenantId);
+  if (last !== undefined && now - last < TENANT_PROBLEM_LOG_INTERVAL_MS) {
+    return;
+  }
+  memory.delete(tenantId);
+  memory.set(tenantId, now);
+  if (memory.size > MAX_LOGGED_TENANT_PROBLEMS) {
+    const oldest = memory.keys().next().value;
+    if (oldest !== undefined) memory.delete(oldest);
+  }
+  const { name, code } = describeDiscoveryError(error);
+  const log = createLogger().module('DISCOVERY');
+  const fields = { skippedTenantId: tenantId, errorName: name, errorCode: code };
+  if (level === 'error') log.error(text, fields);
+  else log.warn(text, fields);
+}
 
-  return mapDiscoveryTenantsBounded(tenants, (tenant) => buildCandidate(env, tenant, 'wayf'));
+/**
+ * Every active tenant of the environment, for the common entry. A tenant whose route is
+ * deliberately not servable (`quarantined_route`: being deleted or quarantined) is left out
+ * (warn once) and does not make the listing incomplete. Any other failure (which may be tampering
+ * or a platform fault, see environment-tenant-directory) also leaves that tenant out, so one broken
+ * tenant cannot take the page down, but is logged as an error and marks the listing `incomplete`.
+ * A failed resolution is never counted as an active tenant.
+ */
+async function getActiveEnvironmentTenants(
+  env: Env
+): Promise<{ tenants: TenantLookupRow[]; incomplete: boolean }> {
+  const aliases = await resolveDiscoveryAliasesFromLookup(
+    env,
+    'environment_tenant',
+    env.AUTHRIM_ENVIRONMENT_NAME ?? ''
+  );
+  let incomplete = false;
+  const tenants = await mapDiscoveryTenantsBounded(aliases, async (alias) => {
+    try {
+      const store = await resolveTenantDefaultStore(env, alias.tenantId);
+      return await queryActiveTenantFromStore(alias.tenantId, store.source);
+    } catch (error) {
+      if (isUnservableRouteError(error)) {
+        logTenantProblemOnce(
+          'warn',
+          alias.tenantId,
+          'Leaving a quarantined tenant out of the common entry',
+          error
+        );
+      } else {
+        incomplete = true;
+        logTenantProblemOnce(
+          'error',
+          alias.tenantId,
+          'A tenant could not be resolved for the common entry; it is left out',
+          error
+        );
+      }
+      return null;
+    }
+  });
+  return {
+    tenants: tenants.filter((tenant): tenant is TenantLookupRow => tenant !== null),
+    incomplete,
+  };
+}
+
+/** The WAYF list of an environment listing, and whether building it dropped a tenant. */
+async function buildWayfCandidates(
+  env: Env,
+  listed: TenantLookupRow[]
+): Promise<{ candidates: DiscoveryCandidate[]; dropped: boolean }> {
+  const tenants = [...listed].sort(
+    (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id)
+  );
+
+  const built = await mapDiscoveryTenantsBounded(tenants, async (tenant) => {
+    try {
+      return await buildCandidate(env, tenant, 'wayf');
+    } catch (error) {
+      // Its presentation cannot be read right now: left out of the list, not a failed page.
+      logTenantProblemOnce(
+        'error',
+        tenant.id,
+        'A tenant candidate could not be built for the common entry; it is left out',
+        error
+      );
+      return null;
+    }
+  });
+  const candidates = built.filter(
+    (candidate): candidate is DiscoveryCandidate => candidate !== null
+  );
+  return { candidates, dropped: candidates.length !== tenants.length };
+}
+
+/**
+ * The environment's tenants are read once per request: the single-tenant shortcut and the WAYF
+ * list come from the same reading, so they cannot disagree. The shortcut is offered only when
+ * every tenant could be read and built (nothing incomplete or dropped) and exactly one is active.
+ */
+async function getCommonEntryTenantCandidates(
+  env: Env,
+  want: { single: boolean; wayf: boolean }
+): Promise<{ single?: DiscoveryCandidate; wayf?: DiscoveryCandidate[] }> {
+  if (!want.single && !want.wayf) return {};
+  const listing = await getActiveEnvironmentTenants(env);
+  const wayf = want.wayf ? await buildWayfCandidates(env, listing.tenants) : undefined;
+  let single: DiscoveryCandidate | undefined;
+  if (want.single && !listing.incomplete && !wayf?.dropped && listing.tenants.length === 1) {
+    try {
+      single = await buildCandidate(env, listing.tenants[0], 'tenant_slug');
+    } catch (error) {
+      logTenantProblemOnce(
+        'error',
+        listing.tenants[0].id,
+        'The only tenant could not be built for the common entry',
+        error
+      );
+    }
+  }
+  return { single, wayf: wayf?.candidates };
 }
 
 function readSettingString(record: Record<string, unknown> | null, key: string): string | null {
@@ -1329,14 +1438,11 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
     const config = await getDiscoverySettings(c.env, settingsScope);
     const singleTenantMode = isSingleTenantMode(c.env);
     const defaultCandidate = singleTenantMode ? await getSingleTenantCandidate(c.env) : undefined;
-    const singleActiveTenantCandidate =
-      !singleTenantMode && commonEntryHost && config.skip_discovery_if_only_one_tenant
-        ? await getSingleActiveTenantCandidate(c.env)
-        : undefined;
-    const wayfCandidates =
-      !singleTenantMode && config.discovery_methods.includes('wayf')
-        ? await getActiveTenantWayfCandidates(c.env)
-        : undefined;
+    const { single: singleActiveTenantCandidate, wayf: wayfCandidates } =
+      await getCommonEntryTenantCandidates(c.env, {
+        single: !singleTenantMode && commonEntryHost && config.skip_discovery_if_only_one_tenant,
+        wayf: !singleTenantMode && config.discovery_methods.includes('wayf'),
+      });
     const commonDiscoverUrl = await getCommonDiscoverUrl(c.env);
     const tenantId = settingsScope.type === 'tenant' ? settingsScope.id : getDefaultTenantId(c.env);
     const ui = await getDiscoveryUiConfig(
@@ -1356,7 +1462,12 @@ export async function getDiscoveryConfigHandler(c: Context<{ Bindings: Env }>) {
       default_candidate: defaultCandidate ?? undefined,
     } satisfies DiscoveryConfigResponse);
   } catch (error) {
-    log.error('Failed to load discovery config', { error: String(error) });
+    const cause = describeDiscoveryError(error);
+    log.error('Failed to load discovery config', {
+      errorName: cause.name,
+      errorCode: cause.code,
+      errorMessage: cause.message,
+    });
     return c.json({ error: 'server_error', message: 'Failed to load discovery config' }, 500);
   }
 }
