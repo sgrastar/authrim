@@ -238,7 +238,7 @@ if (root) {
       sealBtn.setAttribute('data-shown', '1');
       var active = document.activeElement;
       if (!active || active === document.body || active === skipBtn) openControl().focus();
-      if (document.hidden && texts.gateTitleReady) document.title = texts.gateTitleReady;
+      if (document.hidden && texts.gateTitleReady) document.title = texts.gateTitleReady.split(String.fromCharCode(8203)).join('');
       if (stage.scrollIntoView) stage.scrollIntoView({ block: 'nearest' });
     }
     if (!sealNow && !sealBtn.hidden && !snap.opening) {

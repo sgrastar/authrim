@@ -21,7 +21,8 @@ export type ConfigResult = { ok: true; config: Config } | { ok: false; problems:
 
 const LIMITS = {
   MAX_ACTIVE_TENANTS: { min: 1, max: 500, fallback: 75 },
-  MAX_STARTS_PER_IP_PER_DAY: { min: 1, max: 20, fallback: 3 },
+  // High ceiling on purpose: testing behind one address and shared networks need it; capacity limit and Turnstile are the real brakes.
+  MAX_STARTS_PER_IP_PER_DAY: { min: 1, max: 1000, fallback: 3 },
   TENANT_TTL_HOURS: { min: 1, max: 24, fallback: 24 },
 } as const;
 

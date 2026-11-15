@@ -28,7 +28,7 @@ mkdirSync(out, { recursive: true });
 const config = {
   consoleOrigin: 'https://console.preview.invalid',
   turnstileSiteKey: '1x00000000000000000000AA', // Cloudflare's published always-pass test key
-  tenantTtlHours: 12,
+  tenantTtlHours: 24,
 } as unknown as Config;
 
 const ERROR_KINDS: ErrorKind[] = [

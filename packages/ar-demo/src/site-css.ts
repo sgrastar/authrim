@@ -26,9 +26,9 @@ const AR = '"Geeza Pro","Noto Naskh Arabic","Traditional Arabic","Times New Roma
 
 /** One file, no inline style anywhere: every state is an attribute, every motion a keyframe. */
 export const SITE_CSS = `:root{--night-0:#05070b;--night-1:#0b1017;--stone-2:#151c26;--stone-3:#2a3441;--ink:#eef1f4;--ink-2:#c3cad3;--gold:#c9a45c;--gold-2:#f1d9a0;--ember:#f2a03d;--frost:#9fb6cc;--f-body:${BODY_LATIN};--f-head:${HEAD_LATIN};color-scheme:dark}
-html:lang(ja){--f-body:${JA};--f-head:${JA};line-break:strict}
+/* Japanese breaks only at the marked phrase boundaries (U+200B in the texts) and after punctuation. */
+html:lang(ja){--f-body:${JA};--f-head:${JA};line-break:strict;word-break:keep-all;overflow-wrap:anywhere}
 html:lang(ar){--f-body:${AR};--f-head:${AR};font-size:1.125rem}
-html:lang(ja){word-break:auto-phrase}
 *{box-sizing:border-box}
 html{background:var(--night-0)}
 body{margin:0;min-height:100vh;background:var(--night-0);color:var(--ink);font:1.0625rem/1.65 var(--f-body);-webkit-text-size-adjust:100%}
