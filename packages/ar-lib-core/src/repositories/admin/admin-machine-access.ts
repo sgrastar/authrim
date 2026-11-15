@@ -7,7 +7,11 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import { generateId, getCurrentTimestamp } from '../base';
 import { hasAdminPermission } from '../../types/admin-user';
-import { intersectMachinePermissionSets, resolveMachineTenantScope } from './admin-machine-grant';
+import {
+  intersectMachinePermissionSets,
+  resolveMachineExplicitTenantScope,
+  resolveMachineTenantScope,
+} from './admin-machine-grant';
 
 export type AdminMachinePrincipalType =
   | 'setup_tool'
@@ -96,6 +100,11 @@ export interface AdminMachineGrantSnapshot {
   credentialTenantScopes: AdminMachineTenantScope[];
   permissions: string[];
   tenantScope: string[];
+  /**
+   * The tenants named one by one by both the principal and the credential, even when `tenantScope`
+   * is `'*'` (an `allow` entry next to an `all` one). See `resolveMachineExplicitTenantScope`.
+   */
+  explicitTenantScope: string[];
 }
 
 export interface AdminMachinePrincipalCreateInput {
@@ -796,6 +805,10 @@ export class AdminMachineAccessRepository {
           ? intersectMachinePermissionSets(principalPermissions, credentialPermissions)
           : principalPermissions,
       tenantScope: resolveMachineTenantScope(principalTenantScopes, credentialTenantScopes),
+      explicitTenantScope: resolveMachineExplicitTenantScope(
+        principalTenantScopes,
+        credentialTenantScopes
+      ),
     };
   }
 
@@ -1015,13 +1028,29 @@ export class AdminMachineAccessRepository {
       owner === 'credential'
         ? " || '|' || COALESCE(p.not_before, '') || '|' || COALESCE(p.expires_at, '')"
         : '';
+    // A principal's revision also covers its credentials (their status, window, scopes and
+    // permissions, and its `updated_at`, which every write moves strictly up (`MAX(updated_at + 1, now)`),
+    // so a key revoked and revived does not return the revision to an old value): what a key reaches follows the principal's scope, so a decision made on the
+    // principal against one set of keys must not be saved after the set changed, and a key's own
+    // write is guarded on the principal's revision it read (the principal moving counts too).
+    const credentials =
+      owner === 'principal'
+        ? ` || '|' || COALESCE((SELECT group_concat(c.id || ':' || c.updated_at || ':' || c.status || ':' || COALESCE(c.not_before, '') || ':' || COALESCE(c.expires_at, '') || ':' ||
+              COALESCE((SELECT group_concat(scope_mode || ':' || COALESCE(tenant_id, ''), char(31)) FROM (
+                SELECT scope_mode, tenant_id FROM admin_machine_credential_tenant_scopes
+                 WHERE credential_id = c.id ORDER BY scope_mode, tenant_id)), '') || ':' ||
+              COALESCE((SELECT group_concat(permission, char(31)) FROM (
+                SELECT permission FROM admin_machine_credential_permissions
+                 WHERE credential_id = c.id ORDER BY permission)), ''), char(30))
+            FROM (SELECT * FROM admin_machine_credentials WHERE principal_id = p.id ORDER BY id) c), '')`
+        : '';
     return `(p.updated_at || '|' || p.status${window} || '|' ||
       COALESCE((SELECT group_concat(permission, char(31)) FROM (
         SELECT permission FROM admin_machine_${owner}_permissions
          WHERE ${column} = ? ORDER BY permission)), '') || '|' ||
       COALESCE((SELECT group_concat(scope_mode || ':' || COALESCE(tenant_id, ''), char(31)) FROM (
         SELECT scope_mode, tenant_id FROM admin_machine_${owner}_tenant_scopes
-         WHERE ${column} = ? ORDER BY scope_mode, tenant_id)), ''))`;
+         WHERE ${column} = ? ORDER BY scope_mode, tenant_id)), '')${credentials})`;
   }
 
   /**

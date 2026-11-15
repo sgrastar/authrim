@@ -1,7 +1,9 @@
 import {
   hasAdminPermission,
   hasGlobalAdminPermission,
+  machineReachesTenant,
   type AdminAuthContext,
+  type MachineExcludedTenants,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -16,8 +18,11 @@ export function actorReachesTenants(
   auth: AdminAuthContext,
   requestTenantId: string,
   tenantIds: readonly string[],
-  permission: string
+  permission: string,
+  /** What the platform excludes from an all-tenants machine scope (see `resolvedMachineExcluded`). */
+  excluded: MachineExcludedTenants = { kind: 'none' }
 ): boolean {
+  if (!tenantIds.every((tenantId) => machineReachesTenant(auth, excluded, tenantId))) return false;
   const scope = auth.tenantScope ?? [];
   if (!scope.includes('*')) {
     return tenantIds.every((tenantId) => scope.includes(tenantId));
@@ -37,8 +42,10 @@ export function actorHoldsOnTenants(
   auth: AdminAuthContext,
   requestTenantId: string,
   tenantIds: readonly string[],
-  permission: string
+  permission: string,
+  excluded: MachineExcludedTenants = { kind: 'none' }
 ): boolean {
+  if (!tenantIds.every((tenantId) => machineReachesTenant(auth, excluded, tenantId))) return false;
   return tenantIds.every((tenantId) => tenantId === requestTenantId)
     ? hasAdminPermission(auth.permissions ?? [], permission)
     : hasGlobalAdminPermission(auth, permission);

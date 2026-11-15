@@ -183,6 +183,12 @@ refuses.
 | ---------------------------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ADMIN_INVITATIONS_CODE_HANDOFF_ENABLED` | boolean | `false` | Deployment default of `admin_invitations.code_handoff_enabled`: hand an admin invitation's code over in the API response to a global machine principal holding `admin:admin_invitations:code_handoff` (see `docs/access-control.md`). A saved platform setting overrides it; turning the setting on needs a human step-up. |
 
+### Machine access
+
+| Variable                                    | Type   | Default | Description                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------- | ------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS` | string | empty   | Deployment default of `machine_access.all_scope_excluded_tenants`: comma-separated tenant IDs (for example `default`) that a machine principal's all-tenants scope does not include; it is accepted there only when its principal and credential name the tenant (see `docs/access-control.md`). A saved platform setting overrides it; removing a tenant from the saved list needs a human step-up. |
+
 ### Environment Banner
 
 | Variable                                | Type    | Default | Description                                                                                       |

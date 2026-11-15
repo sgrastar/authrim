@@ -56,6 +56,8 @@
 		await canvas.findAllByText(label('security.admin_keyring_dc_api'));
 		await canvas.findByText(t('set.section.adminInvitationsPlatform'));
 		await canvas.findAllByText(label('admin_invitations.code_handoff_enabled'));
+		await canvas.findByText(t('set.section.machineAccessPlatform'));
+		await canvas.findAllByText(label('machine_access.all_scope_excluded_tenants'));
 	}}
 >
 	{#snippet template()}
@@ -76,6 +78,7 @@
 		// The deployment-wide switches are the platform's: not shown to a tenant admin.
 		expect(canvas.queryByText(t('set.section.adminSignInPlatform'))).toBeNull();
 		expect(canvas.queryByText(t('set.section.adminInvitationsPlatform'))).toBeNull();
+		expect(canvas.queryByText(t('set.section.machineAccessPlatform'))).toBeNull();
 	}}
 >
 	{#snippet template()}

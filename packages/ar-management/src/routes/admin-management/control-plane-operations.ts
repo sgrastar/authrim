@@ -29,6 +29,8 @@ import {
   type ControlWorkerInventoryDriftFinding,
   type ControlWorkerInventoryDriftReviewRequest,
   type Env,
+  holdsStoredExactPermission,
+  refuseMachineOnExcludedTenant,
 } from '@authrim/ar-lib-core';
 import { LOOKUP_VIRTUAL_BUCKET_COUNT } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import { writeAdminAuditLog } from '../../admin-shared';
@@ -412,9 +414,16 @@ function hasControlPlanePermission(
   permission: 'read' | 'rotate' | 'provision'
 ): boolean {
   const holdsPermission = (permissions: string[]) =>
-    hasAdminPermission(permissions, `admin:control_plane:${permission}`) ||
-    hasAdminPermission(permissions, 'admin:control_plane:*') ||
-    hasAdminPermission(permissions, ADMIN_PERMISSIONS.ALL);
+    // While tenants are excluded from an all-tenants machine scope, such a machine holds this
+    // authority by the exact permission only, never through a wildcard.
+    (value.tenantExclusionActive === true
+      ? holdsStoredExactPermission(value, `admin:control_plane:${permission}`) &&
+        permissions.includes(`admin:control_plane:${permission}`)
+      : hasAdminPermission(permissions, `admin:control_plane:${permission}`)) ||
+    (value.tenantExclusionActive !== true &&
+      hasAdminPermission(permissions, 'admin:control_plane:*')) ||
+    (value.tenantExclusionActive !== true &&
+      hasAdminPermission(permissions, ADMIN_PERMISSIONS.ALL));
   if (value.actorType === 'machine' || value.authMethod === 'machine_access_token') {
     // The platform's control plane: a token holds the permission for it when its scope is global
     // (so its permissions are global ones), or when it is the setup tool the bootstrap wrote,
@@ -1869,9 +1878,11 @@ controlPlaneOperationsRouter.get('/tenant-recovery/:operationId', async (c) => {
   try {
     const value = await control.getTenantDisasterRecovery(operationId);
     if (!value) return error(c, 404, 'CONTROL_PLANE_TENANT_DR_NOT_FOUND');
-    return c.json({
-      recovery: parseTenantDisasterRecovery(value, environmentId(c.env), operationId),
-    });
+    // The record names its tenant: judged here, since the path names none.
+    const recovery = parseTenantDisasterRecovery(value, environmentId(c.env), operationId);
+    const refused = await refuseMachineOnExcludedTenant(c, recovery.tenantId);
+    if (refused) return refused;
+    return c.json({ recovery });
   } catch (cause) {
     return tenantDrControlError(c, cause);
   }
@@ -1923,6 +1934,10 @@ controlPlaneOperationsRouter.post('/tenant-recovery/:operationId/confirm-restore
     const currentValue = await control.getTenantDisasterRecovery(operationId);
     if (!currentValue) return error(c, 404, 'CONTROL_PLANE_TENANT_DR_NOT_FOUND');
     const current = parseTenantDisasterRecovery(currentValue, expectedEnvironmentId, operationId);
+    {
+      const refused = await refuseMachineOnExcludedTenant(c, current.tenantId);
+      if (refused) return refused;
+    }
     if (confirmation !== `RESTORE_COMPLETED:${current.tenantId}`) {
       return error(c, 400, 'CONTROL_PLANE_TENANT_DR_INVALID_REQUEST');
     }
@@ -1993,6 +2008,10 @@ controlPlaneOperationsRouter.post('/tenant-recovery/:operationId/verify', async 
     const currentValue = await control.getTenantDisasterRecovery(operationId);
     if (!currentValue) return error(c, 404, 'CONTROL_PLANE_TENANT_DR_NOT_FOUND');
     const current = parseTenantDisasterRecovery(currentValue, expectedEnvironmentId, operationId);
+    {
+      const refused = await refuseMachineOnExcludedTenant(c, current.tenantId);
+      if (refused) return refused;
+    }
     let auditId: string | null;
     try {
       auditId = await writeAdminAuditLog(c, {
@@ -2069,6 +2088,10 @@ controlPlaneOperationsRouter.post('/tenant-recovery/:operationId/reactivate', as
     const currentValue = await control.getTenantDisasterRecovery(operationId);
     if (!currentValue) return error(c, 404, 'CONTROL_PLANE_TENANT_DR_NOT_FOUND');
     const current = parseTenantDisasterRecovery(currentValue, expectedEnvironmentId, operationId);
+    {
+      const refused = await refuseMachineOnExcludedTenant(c, current.tenantId);
+      if (refused) return refused;
+    }
     if (confirmation !== `REACTIVATE_RECOVERED_TENANT:${current.tenantId}`) {
       return error(c, 400, 'CONTROL_PLANE_TENANT_DR_INVALID_REQUEST');
     }

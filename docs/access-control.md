@@ -263,6 +263,151 @@ stored; the audit entry records `code_delivery: response` and the machine princi
   (`email` or `response`) to `admin_invitations`; a handed-over invitation reads as `sent` in
   `last_delivery_status`.
 
+#### Tenants an all-tenants machine scope does not include
+
+A machine principal's tenant scope is `all` or an allow-list of tenant IDs. An integration that has
+to work on tenants created at runtime must be given `all`, and `all` includes the deployment's
+primary tenant (`default`), where the platform's own administration lives: a stolen key of such a
+principal, holding for example `admin:admin_users:write`, `admin:admin_roles:write` and the
+enrollment code handoff permission, could enrol a tenant administrator of the primary tenant. The
+platform setting `machine_access.all_scope_excluded_tenants` (category `machine-access`, platform
+scope only, environment variable `MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS`) names tenants that an
+all-tenants scope does not reach. Default: empty, which changes nothing.
+
+- **Value.** A comma-separated list of at most 50 distinct lowercase tenant IDs, for example
+  `default`. A malformed value is refused when saved (a wildcard, an uppercase or empty entry, a
+  repeat, more than 50), with a message naming the setting.
+- **What is refused.** For a listed tenant, a machine access token whose scope is all tenants gets
+  `403 access_denied` ("Admin machine credential is not valid for this tenant.", the answer of a
+  tenant outside the token's scope, so it reveals nothing more) unless **both its principal and its
+  credential name that tenant in an `allow` scope entry of their own** (an `allow` entry next to the
+  `all` one counts; a credential without a scope of its own follows its principal). The Admin API
+  authentication refuses on every request, judging by the router's path (`c.req.path`, never the raw
+  URL):
+  - the **request tenant** (`X-Tenant-Id`) of every route that runs in a tenant: the
+    tenant-scoped Admin API (users, apps, settings, admin users, admin invitations including the
+    code handoff, and so on) and the protocol-style routes that use the same authentication (for
+    example the ReBAC write routes);
+  - the **tenant the path names** (`/api/admin/tenants/{id}/...`,
+    `/api/admin/settings/logging/tenant/{id}`), whatever the class of the route, so a tenant
+    inventory operation on a listed tenant (delete, provisioning clean-up or retry, lifecycle,
+    clone, set-default) is refused too;
+  - **tenants the request names elsewhere**, for every route: the query keys `tenant_id`,
+    `tenantId`, `filter[tenant_id]` and `tenant` (comma lists included), the `X-Tenant-Id` header
+    of a platform route, and the top-level `tenant_id`, `tenantId`, `tenant_ids` and `tenantIds` of
+    a JSON body (a JSON body over 1 MiB is not read and is refused for such a token, so padding
+    cannot hide a tenant).
+  - Ids are compared after percent-decoding (repeatedly), NFKC and case folding; a path segment
+    that cannot be read counts as naming every listed tenant.
+  - Handlers that take a tenant from a stored row, a nested field or a cross-tenant list judge it
+    themselves with the same decision (`refuseMachineOnExcludedTenant`,
+    `filterTenantsReachableByMachine`): domain mappings (create by body, read, change, delete and
+    verify by the stored row's tenant, lists filtered), platform tombstones, platform plugin
+    configuration and enablement, the PII partition statistics, the identity mapping set change
+    preview, the list of every tenant's mapping settings (filtered in the query, so pages and the
+    cursor stay right), last-resort recovery (an administrator of a listed tenant is not found), the
+    agent baselines and bulk plans, and the settings bulk apply (each target tenant).
+  - **Machine access management.** These stricter rules come into force **together with the list**:
+    while it is empty, machine access management behaves exactly as before (for example a
+    non-platform `admin:*` machine can still read and rotate a platform principal). Final rules:
+    - _What a non-platform all-tenants machine sees and manages_ (list not empty, or unreadable):
+      only what it reaches after the exclusion. It does not see, change, disable, delete or revoke
+      a principal or credential that reaches a listed tenant, nor one that reaches every tenant
+      (while any tenant is listed, "every tenant" includes a listed one, so such a principal is
+      beyond its reach, itself included), nor a platform principal; and it cannot hand out such a
+      reach.
+    - _What counts as a grant to a protected tenant_: a request that GRANTS or WIDENS access to a
+      listed tenant, or creates, enables or widens a platform principal (the setup tool, the Admin
+      console relay, an internal service): a new principal or credential, a rotated key (a new key
+      is a new grant), an added permission, an added or widened tenant scope, a disabled principal
+      or revoked key brought back. What a tenant is named as is what authentication will accept:
+      the principal's scope narrowed by the credential's, plus the tenants named explicitly next to
+      an `all` entry, compared key by key. Renaming, changing a description, narrowing, disabling,
+      revoking and deleting are never grants and never ask for more than before, so taking access
+      away stays easy, for a tenant administrator of a listed tenant too.
+    - _A wildcard replaced by an exact name_ (`admin:users:*` to `admin:users:read`) is treated as a
+      grant although it looks like narrowing: while a list is in force, a permission held by its
+      exact stored name is what gives an all-scope machine cross-tenant authority, and a wildcard
+      does not.
+    - _Who may grant it_: only a signed-in platform administrator (global machine-access write),
+      with an L2 step-up `machine.protected_grant` that the enforcement switch cannot turn off and
+      no exemption covers. A machine token is refused before the step-up
+      (`403 step_up_human_required`), whatever it holds; a tenant administrator who is not a
+      platform administrator is refused. When the request also needs the grant's own step-up
+      (`machine.permission.grant`), it takes ONE receipt covering both operations (`alsoCovers`),
+      with the parameters bound as before.
+    - _Races_: a principal's revision covers its keys (status, window, scopes, permissions), and a
+      key's write is guarded on the principal's revision it read, so a principal change decided
+      against one set of keys, or a key change decided against an older principal scope, is refused
+      with the existing 409 and has to be retried.
+    - _Unreadable setting_: it is read only where a decision needs it (a machine caller's view, a
+      granting operation), once per request. It never fails a human's non-granting operation. For
+      a human's granting operation it makes the always-enforced step-up required for any named
+      tenant and any platform grant, and never an outright refusal: a platform administrator can
+      always work (a human who is not a platform administrator is not refused either, the step-up
+      is what they need). For a machine, an unreadable setting is a listed list (fail closed).
+
+  - **A tenant that is not named.** An operation that names no tenant (a platform-wide plugin list,
+    configuration read or update, enable) is not judged by this check; one that names a listed
+    tenant, or names a tenant that cannot be resolved, is.
+
+- **What is not refused.** Operations on the platform or on another tenant that run on the primary
+  tenant's host and name no listed tenant: creating a tenant, listing tenants, reading provisioning
+  of or deleting another tenant, and the `/api/admin/platform/*` operations that are not about a
+  tenant (the trial start portal keeps working). Tokens limited to named tenants; agent and
+  delegated grants (they already name their tenant); signed-in humans; and the **platform principal
+  types** `setup_tool`, `admin_ui_bff` and `internal_service` (and the bootstrap principals by their
+  fixed ids), which are created only by a platform administrator and whose type never changes. The
+  setup tool, the Admin console relay and last-resort recovery therefore cannot be locked out by
+  this setting.
+- **A wildcard is no cross-tenant authority while tenants are listed.** While the list is in force
+  (not empty, or the setting cannot be read), a non-platform all-tenants machine does not get
+  platform authority from a wildcard (`*`, `admin:*`, any `x:*`). The Admin API authentication marks
+  such a caller (`tenantExclusionActive`), and the one function every platform-authority check goes
+  through (`hasGlobalAdminPermission`, hence `hasGlobalMachinePermission`,
+  `hasGlobalPlatformAuthority`, `requireSystemAdmin` and the handlers' own "platform authority"
+  wrappers) then accepts only a permission the machine holds **by its exact name**, and asked for a
+  wildcard pattern it says no. The control plane's permission check, the cross-tenant machine
+  shortcut of `canAccessTenantResource` and the platform-owner scope of the identity mapping
+  routes follow the same rule. So a handler's "platform authority, skip the tenant comparison"
+  shortcut stops applying and the machine is confined to the request's tenant (already judged),
+  unless the route names an exact permission it holds (`admin:tenants:provision`,
+  `admin:tenants:delete`, `admin:admin_users:write`, `admin:admin_invitations:code_handoff`, ...).
+  Nothing changes while the list is empty, for humans, or for the platform principal types.
+- **What it does not protect against.** A machine that holds an exact platform-wide permission
+  (for example `admin:settings:write` for every tenant) keeps what that permission gives: the
+  operations that act on the whole platform (writing a platform setting, the control plane with its
+  exact permission, platform profiles) are not narrowed to a tenant. The list of tenants is not
+  filtered from `GET /api/admin/tenants`. Give an integration the specific permissions it needs,
+  never a wildcard. `packages/ar-management/src/__tests__/platform-route-tenant-targets.test.ts`
+  forces review of new files and new route prefixes that read a tenant from the query or the body,
+  and checks that every tenant resolution in the plugin and tombstone handlers is followed by the
+  shared check; it does not force review of every new call site elsewhere or of a new child route
+  under a listed prefix.
+- **Request bodies.** A body is read for these tokens whatever its Content-Type says (a handler's
+  `c.req.json()` parses any body), up to 1 MiB, counting bytes; a larger body is refused. No admin
+  handler reads a tenant ID from form data (the two that read forms take the tenant from the
+  request context), so a form body is covered by the same JSON attempt and is otherwise left alone.
+- **Recommended value** for a deployment that lets an automation create tenants (a provisioning
+  portal with scope `all`): the primary tenant, `default`. The automation then keeps creating and
+  reading other tenants, and cannot act inside the primary tenant.
+- **When it takes effect.** The value is read at each request of an all-tenants non-platform
+  machine token without the per-isolate settings cache, and the grants are read from the database
+  on every use, so a saved change applies to the next request, with the token it already holds
+  (tokens are not reissued); the only delay is the propagation of the settings store itself.
+- **If it cannot be read.** A value that cannot be read, or that is not a valid list (a stored
+  `null` included, which never reads as "not set"), counts as every tenant listed: an all-tenants
+  machine token of a non-platform principal that does not name its tenants is refused until the
+  setting is readable again, **even when no list was ever saved**. Humans, platform principals and
+  tokens naming their tenants keep working, so the operator can always repair the setting. The
+  setting is read at most once per request.
+- **Changing it.** Adding a tenant is free. Removing a tenant, emptying the list or replacing it
+  with one that drops a tenant needs a signed-in human with an L2 step-up
+  (`machine_access.excluded_tenants.relax`); a machine can never do it, exemption or not, through
+  the platform PATCH or any other settings write. It cannot be set for a tenant or in a bulk apply.
+  In the Admin console it is under Settings > Administrators > Sign-in settings > Machine access
+  to protected tenants, shown to platform administrators.
+
 #### Preset roles of the service's users
 
 Only two roles are preset. Business roles (billing, support, per-department roles) are created by

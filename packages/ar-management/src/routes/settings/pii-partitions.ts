@@ -19,6 +19,7 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   resolveOptionalCoreAdapterFromHono,
+  refuseMachineOnExcludedTenant,
   type PartitionSettings,
   type PartitionRule,
   type UserPartitionAttributes,
@@ -312,6 +313,8 @@ export async function getPartitionStats(c: Context<{ Bindings: Env }>) {
 export async function getPlatformPartitionStats(c: Context<{ Bindings: Env }>) {
   const tenantId = c.req.query('tenant_id');
   if (tenantId) {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
     return getPartitionStatsForTenant(c, tenantId);
   }
 

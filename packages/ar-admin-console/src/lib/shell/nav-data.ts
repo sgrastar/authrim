@@ -487,7 +487,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				platform: 'tenant',
 				// The administrators (their read permission) or how they sign in (those settings).
 				requires: {
-					settings: ['session', 'security', 'admin-invitations'],
+					settings: ['session', 'security', 'admin-invitations', 'machine-access'],
 					permission: 'admin:admin_users:read'
 				},
 				// …/team/invite (later, an administrator's page).

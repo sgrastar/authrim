@@ -31,6 +31,8 @@ import {
   resolveTenantDatabaseSourceFromRegistry,
   type AdminAuthContext,
   type Env,
+  loadMachineExcludedTenants,
+  resolvedMachineExcluded,
 } from '@authrim/ar-lib-core';
 import type { AgentManagementEnv } from '../../agent-downscope-auth';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
@@ -63,6 +65,10 @@ export const agentBulkPlansRouter = new Hono<{
 }>();
 
 agentBulkPlansRouter.use('*', adminAuthMiddleware());
+agentBulkPlansRouter.use('*', async (c, next) => {
+  await loadMachineExcludedTenants(c as never);
+  await next();
+});
 
 function current(c: BulkContext): AdminAuthContext {
   return c.get('adminAuth') as AdminAuthContext;
@@ -82,7 +88,13 @@ function human(c: BulkContext): boolean {
 }
 
 function tenantScoped(c: BulkContext, tenantIds: readonly string[], permission: string): boolean {
-  return actorReachesTenants(current(c), controlTenant(c), tenantIds, permission);
+  return actorReachesTenants(
+    current(c),
+    controlTenant(c),
+    tenantIds,
+    permission,
+    resolvedMachineExcluded(c)
+  );
 }
 
 function permitted(c: BulkContext, permission: string): boolean {
@@ -357,7 +369,13 @@ agentBulkPlansRouter.post('/', async (c) => {
         !hasAdminPermission(machinePermissions, permission) ||
         // A plan that reaches other tenants needs the caller to hold the permissions for them, and
         // `permissions` only says so for the request's tenant.
-        !actorHoldsOnTenants(current(c), controlTenant(c), targetTenants, permission)
+        !actorHoldsOnTenants(
+          current(c),
+          controlTenant(c),
+          targetTenants,
+          permission,
+          resolvedMachineExcluded(c)
+        )
     )
   ) {
     return error(c, 403, 'AGENT_BULK_PLAN_BASE_PERMISSION_REQUIRED');
@@ -398,7 +416,13 @@ agentBulkPlansRouter.post('/', async (c) => {
       ) ||
       tool.requiredPermissions.some(
         (permission) =>
-          !actorHoldsOnTenants(current(c), controlTenant(c), targetTenants, permission) ||
+          !actorHoldsOnTenants(
+            current(c),
+            controlTenant(c),
+            targetTenants,
+            permission,
+            resolvedMachineExcluded(c)
+          ) ||
           !hasAdminPermission(grant.permissions, permission) ||
           !hasAdminPermission(machinePermissions, permission) ||
           targetDelegatorPermissions.some(

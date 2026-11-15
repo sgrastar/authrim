@@ -1316,6 +1316,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'machine-access',
+      'string',
+      'value',
+      `
+    machine_access.all_scope_excluded_tenants
+  `,
+    ],
+    [
       'environment-banner',
       'boolean',
       'value',

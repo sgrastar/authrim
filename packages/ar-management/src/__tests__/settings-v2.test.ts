@@ -5785,6 +5785,131 @@ describe('Settings API v2', () => {
     });
   });
 
+  describe('machine access: tenants an all-tenants scope does not include', () => {
+    const URL_ = '/api/admin/platform/settings/machine-access';
+    const KEY = 'machine_access.all_scope_excluded_tenants';
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 });
+    type Fixture = ReturnType<typeof createTestApp>;
+    const read = async (f: Fixture) =>
+      await (await f.app.request(URL_, { method: 'GET' }, f.mockEnv)).json<SettingsGetResult>();
+    const patch = async (
+      f: Fixture,
+      change: { set?: Record<string, unknown>; clear?: string[]; disable?: string[] }
+    ) => {
+      const current = await read(f);
+      return f.app.request(
+        URL_,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ifMatch: current.version, ...change }),
+        },
+        f.mockEnv
+      );
+    };
+
+    it('is empty by default, reads the environment variable, and is platform only', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      expect((await read(f)).values[KEY]).toBe('');
+      const fromEnv = createTestApp({
+        kv: createMockKV(),
+        env: { MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS: 'default' },
+      });
+      expect((await read(fromEnv)).values[KEY]).toBe('default');
+      for (const method of ['GET', 'PATCH']) {
+        const tenant = await f.app.request(
+          '/api/admin/tenants/tenant_123/settings/machine-access',
+          {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            ...(method === 'PATCH'
+              ? { body: JSON.stringify({ ifMatch: 'x', set: { [KEY]: 'default' } }) }
+              : {}),
+          },
+          f.mockEnv
+        );
+        expect(tenant.status).toBeGreaterThanOrEqual(400);
+      }
+    });
+
+    it('saves and reads back a list, and adding a tenant needs no step-up', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      expect((await patch(f, { set: { [KEY]: 'default' } })).status).toBe(200);
+      expect((await read(f)).values[KEY]).toBe('default');
+      expect((await patch(f, { set: { [KEY]: 'default,acme' } })).status).toBe(200);
+      expect((await read(f)).values[KEY]).toBe('default,acme');
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an uppercase tenant', 'Default'],
+      ['a wildcard', '*'],
+      ['an empty entry', 'default,'],
+      ['a repeated tenant', 'default,default'],
+      ['a value that is not text', true],
+      ['a list of 51 tenants', Array.from({ length: 51 }, (_, i) => `t${i}`).join(',')],
+    ])('refuses %s with a clear message, and saves nothing', async (_name, value) => {
+      const f = createTestApp({ kv: createMockKV() });
+      const response = await patch(f, { set: { [KEY]: value } });
+      expect(response.status).toBe(400);
+      expect(JSON.stringify(await response.json())).toContain(KEY);
+      expect((await read(f)).values[KEY]).toBe('');
+    });
+
+    it('refuses disabling it, and an unknown key of the category', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      expect((await patch(f, { disable: [KEY] })).status).toBe(400);
+      expect((await patch(f, { set: { 'machine_access.other': 'x' } })).status).toBe(400);
+    });
+
+    it('removing a tenant, or emptying the list, needs the step-up and is not saved when it refuses', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      expect((await patch(f, { set: { [KEY]: 'default,acme' } })).status).toBe(200);
+      mockRequireAdminStepUp.mockResolvedValue(refusal());
+      for (const change of [
+        { set: { [KEY]: 'default' } },
+        { set: { [KEY]: '' } },
+        { set: { [KEY]: 'other' } },
+        { clear: [KEY] },
+      ]) {
+        mockRequireAdminStepUp.mockClear();
+        expect((await patch(f, change)).status, JSON.stringify(change)).toBe(403);
+        expect(mockRequireAdminStepUp.mock.calls[0][1]).toMatchObject({
+          operation: 'machine_access.excluded_tenants.relax',
+          params: { category: 'machine-access', scope: 'platform' },
+        });
+        expect((await read(f)).values[KEY]).toBe('default,acme');
+      }
+      mockRequireAdminStepUp.mockReset();
+      mockRequireAdminStepUp.mockResolvedValue(null);
+      expect((await patch(f, { set: { [KEY]: 'default' } })).status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats clearing a saved list under an environment that lists a tenant as removing it', async () => {
+      const f = createTestApp({
+        kv: createMockKV(),
+        env: { MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS: 'default' },
+      });
+      mockRequireAdminStepUp.mockResolvedValue(null);
+      // A saved empty list wins over the environment: that lifts the protection.
+      expect((await patch(f, { set: { [KEY]: '' } })).status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      mockRequireAdminStepUp.mockClear();
+      // Clearing the saved value goes back to the environment's list: tighter, so it is free.
+      expect((await patch(f, { clear: [KEY] })).status).toBe(200);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+
+    it('is a step-up no machine can be exempted from', async () => {
+      const { ADMIN_STEP_UP_ALWAYS_ENFORCED, ADMIN_STEP_UP_OPERATIONS } =
+        await import('@authrim/ar-lib-core');
+      expect(ADMIN_STEP_UP_OPERATIONS['machine_access.excluded_tenants.relax']).toBe('L2');
+      expect(ADMIN_STEP_UP_ALWAYS_ENFORCED.has('machine_access.excluded_tenants.relax')).toBe(true);
+    });
+  });
+
   describe('admin step-up on settings that weaken a protection', () => {
     const TENANT_SECURITY = '/api/admin/tenants/tenant_123/settings/security';
     const PLATFORM_SECURITY = '/api/admin/platform/settings/security';
