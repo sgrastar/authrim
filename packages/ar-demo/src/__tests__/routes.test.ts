@@ -243,6 +243,13 @@ describe('configuration', () => {
     expect(nonLoopback).toContain('ADMIN_API_ORIGIN');
   });
 
+  it('accepts 300 starts per address as is and clamps 5000 to 1000', async () => {
+    const ok = loadConfig(await makeEnv(testDb, { MAX_STARTS_PER_IP_PER_DAY: '300' }));
+    expect(ok).toMatchObject({ ok: true, config: { maxStartsPerIpPerDay: 300 } });
+    const high = loadConfig(await makeEnv(testDb, { MAX_STARTS_PER_IP_PER_DAY: '5000' }));
+    expect(high).toMatchObject({ ok: true, config: { maxStartsPerIpPerDay: 1000 } });
+  });
+
   it('clamps numeric limits into their ranges', async () => {
     const result = loadConfig(
       await makeEnv(testDb, {
