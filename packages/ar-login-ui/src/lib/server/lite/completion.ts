@@ -42,6 +42,16 @@ export function liteCompletionDestination(
 		output && typeof output.protocol_continuation === 'object' && output.protocol_continuation
 			? (output.protocol_continuation as Record<string, unknown>)
 			: undefined;
+	// A sign-in of the Login UI's own: the checked return target comes before the server's
+	// destination for it.
+	if (output?.action === 'complete') {
+		return (
+			sameOriginUrl(bound.returnTo, bound.publicOrigin) ??
+			sameOriginUrl(output.redirect_url, bound.publicOrigin) ??
+			sameOriginUrl(bound.fallback, bound.publicOrigin) ??
+			new URL('/', bound.publicOrigin).toString()
+		);
+	}
 	return (
 		sameOriginUrl(output?.redirect_url, bound.publicOrigin) ??
 		sameOriginUrl(

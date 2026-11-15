@@ -86,7 +86,7 @@ export function defaultLoginFlowSpec(): LoginFlowSpec {
   return {
     profileRef: 'default',
     sessionProfileRef: 'default',
-    completion: null,
+    completion: { behavior: 'account' },
     unregistered: 'generic',
     onCancel: 'stay',
     consents: [],
