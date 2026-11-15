@@ -13,6 +13,7 @@
 	import { newGroup, type ConditionField, type ConditionGroup } from './condition-model';
 	import type { IconName } from '../icons/icons';
 	import PickerDialog, { type PickerGroup, type PickerItem } from './PickerDialog.svelte';
+	import PersistentIdentifierParams from './PersistentIdentifierParams.svelte';
 	import StepDemo from './StepDemo.svelte';
 	import { DEMOS } from './step-demos';
 	import RequiredBadge from '../primitives/RequiredBadge.svelte';
@@ -277,7 +278,6 @@
 
 	/** A line of help under a setting. */
 	const PARAM_HINTS: Record<string, MessageKey> = {
-		persistentIdentifierProfileId: 'map.p.profileHint',
 		keyMap: 'map.p.keyMapHint',
 		path: 'map.p.pathHint',
 		pattern: 'map.p.patternHint',
@@ -394,6 +394,13 @@
 
 	/** Taking away the only source attribute removes the mapping; back to the closed line. */
 	async function unassign(key: string) {
+		// A step that makes the value itself (a fixed value, an identifier) keeps the mapping: only
+		// the source goes, so the step and its settings are not lost.
+		const current = mappingFor(key);
+		if (current && generates(current)) {
+			update(key, { sources: [''] });
+			return;
+		}
 		put(key, null);
 		toggle(key);
 		await tick();
@@ -406,6 +413,16 @@
 			(mappingFor(key)?.steps ?? []).map((s, i) => (i === index ? next : s))
 		);
 	}
+
+	/** What the runtime says is wrong with a persistent identifier step, in the console's words. */
+	const IDENTIFIER_PROBLEMS: Record<string, MessageKey> = {
+		source: 'map.x.pid.source',
+		store: 'map.x.pid.store',
+		scope: 'map.x.pid.scope',
+		format_algorithm: 'map.x.pid.formatAlgorithm',
+		salt: 'map.x.pid.salt',
+		exceptions: 'map.x.pid.exceptions'
+	};
 
 	function message(problem: MappingProblem): string {
 		switch (problem.kind) {
@@ -426,6 +443,10 @@
 					n: problem.step,
 					param: t(`map.p.${problem.param}` as MessageKey)
 				});
+			case 'identifierSettings':
+				return t(IDENTIFIER_PROBLEMS[problem.reason] ?? 'map.x.pid.other', { n: problem.step });
+			case 'identifierWithSource':
+				return t('map.x.pid.withSource', { n: problem.step });
 			case 'manyIntoOne':
 				return t('map.x.manyIntoOne');
 			case 'typeMismatch':
@@ -456,6 +477,12 @@
 				p.mode === 'upper' ? 'map.s.upper' : p.mode === 'title' ? 'map.s.title' : 'map.s.lower'
 			);
 		if (step.transform === 'text_to_boolean') return name;
+		// Makes its value itself, but is read as what it makes it with, not as a fixed value.
+		if (step.transform === 'persistent_identifier')
+			return t('map.withDetail', {
+				name,
+				detail: t(`pid.o.algorithm.${p.algorithm ?? ''}` as MessageKey)
+			});
 		// A fixed value reads as what goes in ("true を入れる"), not as the step's name.
 		if (transformDef(step.transform).generates) {
 			const value = String(p.value ?? '');
@@ -519,7 +546,11 @@
 			<p>{t('map.pick.settings')}</p>
 			<ul>
 				{#each settings as param (param.key)}
-					<li>{t(`map.p.${param.key}` as MessageKey)}</li>
+					<li>
+						{t(
+							`${item.value === 'persistent_identifier' ? 'pid' : 'map'}.p.${param.key}` as MessageKey
+						)}
+					</li>
 				{/each}
 			</ul>
 		</div>
@@ -814,92 +845,100 @@
 															]}
 														/>
 													</span>
-													{#each def.params.filter( (param) => paramApplies(param, step.params) ) as param (param.key)}
-														{#if param.condition}
-															<ConditionBuilder
-																label={t(`map.p.${param.key}` as MessageKey)}
-																fields={conditionFields}
-																maxDepth={2}
-																bind:value={
-																	() => conditionOf(step.params[param.key]),
-																	(group) =>
-																		setParam(
-																			target.key,
-																			index,
-																			step,
-																			param.key,
-																			JSON.stringify(group)
-																		)
-																}
-															/>
-														{:else if param.zone}
-															<Select
-																label={t(`map.p.${param.key}` as MessageKey)}
-																size="sm"
-																value={String(step.params[param.key] || 'UTC')}
-																options={timeZones}
-																onchange={(v) => setParam(target.key, index, step, param.key, v)}
-															/>
-														{:else if param.pairs}
-															<KeyValueField
-																label={t(`map.p.${param.key}` as MessageKey)}
-																keyLabel={t('map.p.entryFrom')}
-																valueLabel={t('map.p.entryTo')}
-																bind:entries={
-																	() => pairsOf(step.params[param.key]),
-																	(list) =>
-																		setParam(target.key, index, step, param.key, pairsText(list))
-																}
-															/>
-														{:else if param.options}
-															<Select
-																label={t(`map.p.${param.key}` as MessageKey)}
-																size="sm"
-																value={String(step.params[param.key] ?? param.options[0])}
-																options={param.options.map((o) => ({
-																	value: o,
-																	label: t(`map.p.${o}` as MessageKey)
-																}))}
-																onchange={(v) => setParam(target.key, index, step, param.key, v)}
-															/>
-														{:else if param.flag}
-															<Checkbox
-																checked={step.params[param.key] === true}
-																onchange={(event) =>
-																	setParam(
-																		target.key,
-																		index,
-																		step,
-																		param.key,
-																		event.currentTarget.checked
-																	)}>{t(`map.p.${param.key}` as MessageKey)}</Checkbox
-															>
-														{:else}
-															<label class="ed__param">
-																<span>{t(`map.p.${param.key}` as MessageKey)}</span>
-																{#if param.list || PARAM_HINTS[param.key]}<small
-																		class="ed__param-hint"
-																		>{t(PARAM_HINTS[param.key] ?? 'map.p.listHint')}</small
-																	>{/if}
-																<input
-																	class:is-code={param.code}
-																	dir={param.code ? 'ltr' : undefined}
-																	value={String(step.params[param.key] ?? '')}
-																	spellcheck="false"
-																	autocomplete="off"
-																	readonly={busy()}
-																	oninput={(event) =>
-																		setParam(
-																			target.key,
-																			index,
-																			step,
-																			param.key,
-																			event.currentTarget.value
-																		)}
+													{#if step.transform === 'persistent_identifier'}
+														<PersistentIdentifierParams
+															{step}
+															onchange={(name, value) =>
+																setParam(target.key, index, step, name, value)}
+														/>
+													{:else}
+														{#each def.params.filter( (param) => paramApplies(param, step.params) ) as param (param.key)}
+															{#if param.condition}
+																<ConditionBuilder
+																	label={t(`map.p.${param.key}` as MessageKey)}
+																	fields={conditionFields}
+																	maxDepth={2}
+																	bind:value={
+																		() => conditionOf(step.params[param.key]),
+																		(group) =>
+																			setParam(
+																				target.key,
+																				index,
+																				step,
+																				param.key,
+																				JSON.stringify(group)
+																			)
+																	}
 																/>
-															</label>
-														{/if}
-													{/each}
+															{:else if param.zone}
+																<Select
+																	label={t(`map.p.${param.key}` as MessageKey)}
+																	size="sm"
+																	value={String(step.params[param.key] || 'UTC')}
+																	options={timeZones}
+																	onchange={(v) => setParam(target.key, index, step, param.key, v)}
+																/>
+															{:else if param.pairs}
+																<KeyValueField
+																	label={t(`map.p.${param.key}` as MessageKey)}
+																	keyLabel={t('map.p.entryFrom')}
+																	valueLabel={t('map.p.entryTo')}
+																	bind:entries={
+																		() => pairsOf(step.params[param.key]),
+																		(list) =>
+																			setParam(target.key, index, step, param.key, pairsText(list))
+																	}
+																/>
+															{:else if param.options}
+																<Select
+																	label={t(`map.p.${param.key}` as MessageKey)}
+																	size="sm"
+																	value={String(step.params[param.key] ?? param.options[0])}
+																	options={param.options.map((o) => ({
+																		value: o,
+																		label: t(`map.p.${o}` as MessageKey)
+																	}))}
+																	onchange={(v) => setParam(target.key, index, step, param.key, v)}
+																/>
+															{:else if param.flag}
+																<Checkbox
+																	checked={step.params[param.key] === true}
+																	onchange={(event) =>
+																		setParam(
+																			target.key,
+																			index,
+																			step,
+																			param.key,
+																			event.currentTarget.checked
+																		)}>{t(`map.p.${param.key}` as MessageKey)}</Checkbox
+																>
+															{:else}
+																<label class="ed__param">
+																	<span>{t(`map.p.${param.key}` as MessageKey)}</span>
+																	{#if param.list || PARAM_HINTS[param.key]}<small
+																			class="ed__param-hint"
+																			>{t(PARAM_HINTS[param.key] ?? 'map.p.listHint')}</small
+																		>{/if}
+																	<input
+																		class:is-code={param.code}
+																		dir={param.code ? 'ltr' : undefined}
+																		value={String(step.params[param.key] ?? '')}
+																		spellcheck="false"
+																		autocomplete="off"
+																		readonly={busy()}
+																		oninput={(event) =>
+																			setParam(
+																				target.key,
+																				index,
+																				step,
+																				param.key,
+																				event.currentTarget.value
+																			)}
+																	/>
+																</label>
+															{/if}
+														{/each}
+													{/if}
 													{#if last && mapping.steps.length > 1}
 														<p class="ed__hint">{t('map.stepsHint')}</p>
 													{/if}

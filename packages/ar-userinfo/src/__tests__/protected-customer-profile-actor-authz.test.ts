@@ -163,6 +163,35 @@ describe('customer profile delegated write: actor–subject authorization', () =
     expect(mocks.syncUser).not.toHaveBeenCalled();
   });
 
+  securityRegressionIt(
+    'refuses a token that carries a sealed account reference: the profile is addressed by the internal id, which an app given another sub has no business with',
+    async () => {
+      const { env, challengeStore } = createEnv();
+      // The introspection refuses it for this API (it does not allow subject references), as it
+      // does the sub it was given: the sub is not a local account id.
+      mocks.introspectTokenFromContext.mockResolvedValue({
+        valid: false,
+        error: {
+          error: 'invalid_token',
+          error_description: 'Invalid or expired token',
+          wwwAuthenticate: 'Bearer error="invalid_token"',
+          statusCode: 401,
+        },
+      });
+      const response = await patch(createApp(), env, {
+        userId: 'user-self',
+        idempotencyKey: 'reference-carrying-token',
+        body: { input: { name: 'x' } },
+      });
+
+      expect(response.status).toBe(401);
+      // Asked without allowing a subject reference.
+      expect(mocks.introspectTokenFromContext.mock.calls.at(-1)?.[1]).toBeUndefined();
+      expect(challengeStore.challenges.size).toBe(0);
+      expect(mocks.syncUser).not.toHaveBeenCalled();
+    }
+  );
+
   securityRegressionIt('refuses a client principal whose sub is used as the path id', async () => {
     const { env, challengeStore } = createEnv();
     mocks.introspectTokenFromContext.mockResolvedValue({

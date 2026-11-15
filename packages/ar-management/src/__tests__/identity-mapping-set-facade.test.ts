@@ -562,6 +562,7 @@ describe('creating a set with its content', () => {
       for (const destinationSurface of ['id_token', 'userinfo'] as const) {
         results.push(
           await applyOIDCIdentityMapping({
+            subjectType: 'public',
             adapter: core,
             env: { DB_ADMIN: t.adapter, ...env } as never,
             tenantId: TENANT,
@@ -916,6 +917,7 @@ describe('replacing the content of a set', () => {
     const core = sqliteAdapter(openCoreDatabase());
     await expect(
       applyOIDCIdentityMapping({
+        subjectType: 'public',
         adapter: core,
         env: { DB_ADMIN: t.adapter, SETTINGS: { get: async () => null } } as never,
         tenantId: TENANT,

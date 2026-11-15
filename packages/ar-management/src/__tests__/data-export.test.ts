@@ -78,12 +78,17 @@ const {
   };
 });
 
+const mockTokenClient = vi.hoisted(() =>
+  vi.fn(async (): Promise<{ subject_type?: string } | null> => ({ subject_type: 'public' }))
+);
+
 // Mock the shared module
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
     introspectTokenFromContext: mockIntrospectTokenFromContext,
+    introspectedTokenClient: mockTokenClient,
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAccountAuthContextFromHono: mockCreateAccountAuthContextFromHono,
@@ -230,6 +235,7 @@ function createMockR2ObjectStore(
 describe('Data Export API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTokenClient.mockResolvedValue({ subject_type: 'public' });
     vi.spyOn(crypto, 'randomUUID').mockReturnValue('export-uuid-12345');
     // Reset adapter mocks
     mockCoreAdapter.query.mockReset();
@@ -336,11 +342,31 @@ describe('Data Export API', () => {
       expect(foreignTenant.status).toBe(401);
     });
 
-    it('should reject bearer tokens without data export scope', async () => {
-      mockIntrospectTokenFromContext.mockResolvedValue({
-        valid: true,
-        claims: { sub: 'user-123', scope: 'openid profile' },
-      });
+    it.each([
+      ['without the data export scope', { sub: 'user-123', scope: 'openid profile' }, 'public'],
+      [
+        'that names the user by a sealed reference',
+        {
+          sub: 'pairwise-abc',
+          scope: 'data_export',
+          authrim_subject_ref: 'sealed',
+          client_id: 'app',
+        },
+        'public',
+      ],
+      [
+        'of a pairwise app that carries no reference',
+        { sub: 'user-123', scope: 'data_export', client_id: 'app', token_use: 'access', jti: 'j1' },
+        'pairwise',
+      ],
+      [
+        'with no reference whose client cannot be read',
+        { sub: 'user-123', scope: 'data_export', client_id: 'gone' },
+        null,
+      ],
+    ])('should reject a bearer token %s', async (_name, claims, clientKind) => {
+      mockIntrospectTokenFromContext.mockResolvedValue({ valid: true, claims });
+      mockTokenClient.mockResolvedValue(clientKind ? { subject_type: clientKind } : null);
 
       const c = createMockContext({
         method: 'POST',

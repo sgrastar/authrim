@@ -402,6 +402,7 @@ describe('a change of a tenant’s set', () => {
     const setId = await t.createSet(content);
     t.app(TENANT, 'app', { fieldMappingSetId: setId }, 'openid');
     const input = {
+      subjectType: 'public' as const,
       adapter: sqliteAdapter(t.cores[TENANT]),
       env: { DB_ADMIN: d1OverSqlite(t.db), SETTINGS: t.settings.namespace },
       tenantId: TENANT,

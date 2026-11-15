@@ -1,4 +1,8 @@
-import { IMPORTED_IDENTIFIER_SALT_PREFIX } from '../services/identifier-salt-refs';
+import {
+  IDENTIFIER_SALT_FINGERPRINT_KEY_REF,
+  IDENTIFIER_VALUE_HMAC_KEY_REF,
+  IMPORTED_IDENTIFIER_SALT_PREFIX,
+} from '../services/identifier-salt-refs';
 import { runSamlDrCoveredOperation } from '../services/tenant-portability/saml-dr-writer';
 /**
  * KeyManager Durable Object
@@ -51,6 +55,22 @@ class InvalidSecretRefError extends Error {
 
 function validateSecretRef(secretRef: string): void {
   if (!SECRET_REF_PATTERN.test(secretRef) || FORBIDDEN_SECRET_REFS.has(secretRef)) {
+    throw new InvalidSecretRefError();
+  }
+}
+
+/**
+ * The refs the private create / rotate paths (RPC and internal HTTP) never take: imported salts
+ * are written only by `importSecretRpc` (a made-up secret must not stand in for one), and the
+ * salt fingerprint key only by the import path itself.
+ */
+function validatePublicSecretRef(secretRef: string): void {
+  validateSecretRef(secretRef);
+  if (
+    secretRef.startsWith(IMPORTED_IDENTIFIER_SALT_PREFIX) ||
+    secretRef === IDENTIFIER_SALT_FINGERPRINT_KEY_REF ||
+    secretRef === IDENTIFIER_VALUE_HMAC_KEY_REF
+  ) {
     throw new InvalidSecretRefError();
   }
 }
@@ -242,12 +262,39 @@ const MAX_IMPORTED_SALTS = 32;
 /** What a portable key manager state carries at most (key-manager-portability MAX_SECRETS). */
 const MAX_PORTABLE_SECRETS = 256;
 
-/** A short, stable fingerprint of a secret value (SHA-256, first 16 hex characters). */
-async function secretFingerprint(value: string): Promise<string> {
-  const digest = new Uint8Array(
-    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+/** The bytes of a base64 (or base64url) secret value; null when it is not base64. */
+function decodeSecretBytes(value: string): Uint8Array | null {
+  try {
+    const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A short, stable fingerprint of an imported salt: the first 16 hex characters of HMAC-SHA-256
+ * over the salt's bytes, keyed with this key manager's own fingerprint key. A bare hash would let
+ * a weak salt be guessed offline from a fingerprint seen in the list or the audit log.
+ */
+async function saltFingerprint(keyValue: string, saltBase64: string): Promise<string> {
+  // The importer sends base64; anything else is taken as the text it is.
+  const salt = decodeSecretBytes(saltBase64) ?? new TextEncoder().encode(saltBase64);
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(keyValue),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
   );
-  return Array.from(digest.slice(0, 8), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, salt));
+  return Array.from(mac.slice(0, 8), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function readFingerprintKey(secrets: Record<string, StoredSecret>): StoredSecret | undefined {
+  return Object.getOwnPropertyDescriptor(secrets, IDENTIFIER_SALT_FINGERPRINT_KEY_REF)?.value as
+    | StoredSecret
+    | undefined;
 }
 
 interface StoredSecretVersion {
@@ -510,6 +557,7 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
     'getOrCreateSecretRpc',
     'rotateSecretRpc',
     'importSecretRpc',
+    'identifierValueHmacsRpc',
     'storeCertificateForKey',
     'importKey',
     'generateNewECKey',
@@ -2119,6 +2167,7 @@ export class KeyManager extends DurableObject<Env> {
 
   async getOrCreateSecretRpc(secretRef: string): Promise<StoredSecret> {
     return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      validatePublicSecretRef(secretRef);
       await this.#initializeState();
       return this.#getOrCreateSecret(secretRef);
     });
@@ -2155,6 +2204,24 @@ export class KeyManager extends DurableObject<Env> {
     value: string;
     replaceFingerprint?: string;
   }): Promise<{ fingerprint: string; outcome: 'created' | 'unchanged' | 'replaced' }> {
+    // One import at a time: the first one makes the fingerprint key, and a second that began
+    // before it was saved would make (and save) another, leaving the first salt's fingerprint
+    // different from the one listed.
+    const run = this.#importQueue.then(() => this.#importSecret(input));
+    this.#importQueue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  #importQueue: Promise<void> = Promise.resolve();
+
+  async #importSecret(input: {
+    secretRef: string;
+    value: string;
+    replaceFingerprint?: string;
+  }): Promise<{ fingerprint: string; outcome: 'created' | 'unchanged' | 'replaced' }> {
     return runSamlDrCoveredOperation(this.env, undefined, async () => {
       validateSecretRef(input.secretRef);
       if (!input.secretRef.startsWith(IMPORTED_IDENTIFIER_SALT_PREFIX)) {
@@ -2166,23 +2233,39 @@ export class KeyManager extends DurableObject<Env> {
       await this.#initializeState();
       const state = this.#getState();
       state.secrets ??= {};
-      const fingerprint = await secretFingerprint(input.value);
+      const existingKey = readFingerprintKey(state.secrets);
+      // The fingerprint key is made here, with the import that first needs it (never by the list,
+      // which is a read path of the backup): it is saved together with the import.
+      const fingerprintKey: StoredSecret = existingKey ?? {
+        secretRef: IDENTIFIER_SALT_FINGERPRINT_KEY_REF,
+        active: this.#generateSecretVersion(),
+        updatedAt: Date.now(),
+      };
+      const fingerprint = await saltFingerprint(fingerprintKey.active.value, input.value);
       const existing = Object.getOwnPropertyDescriptor(state.secrets, input.secretRef)?.value as
         | StoredSecret
         | undefined;
-      if (existing) {
-        const current = await secretFingerprint(existing.active.value);
-        if (current === fingerprint) return { fingerprint, outcome: 'unchanged' };
-        if (input.replaceFingerprint !== current) {
-          throw new Error('imported_secret_replace_mismatch');
+      const refs = Object.keys(state.secrets);
+      if (!existing) {
+        // One more secret (and the key, when it is not there yet) must still fit what a backup of
+        // this key manager can carry.
+        const imported = refs.filter((ref) => ref.startsWith(IMPORTED_IDENTIFIER_SALT_PREFIX));
+        if (
+          imported.length >= MAX_IMPORTED_SALTS ||
+          refs.length + (existingKey ? 1 : 2) > MAX_PORTABLE_SECRETS
+        ) {
+          throw new Error('imported_secret_limit');
         }
       }
-      if (!existing) {
-        // One more secret must still fit what a backup of this key manager can carry.
-        const refs = Object.keys(state.secrets);
-        const imported = refs.filter((ref) => ref.startsWith(IMPORTED_IDENTIFIER_SALT_PREFIX));
-        if (imported.length >= MAX_IMPORTED_SALTS || refs.length >= MAX_PORTABLE_SECRETS) {
-          throw new Error('imported_secret_limit');
+      if (existing) {
+        const current = await saltFingerprint(fingerprintKey.active.value, existing.active.value);
+        if (current === fingerprint) {
+          if (!existingKey) await this.#storeFingerprintKey(state.secrets, fingerprintKey);
+          return { fingerprint, outcome: 'unchanged' };
+        }
+        if (input.replaceFingerprint !== current) {
+          if (!existingKey) await this.#storeFingerprintKey(state.secrets, fingerprintKey);
+          throw new Error('imported_secret_replace_mismatch');
         }
       }
       const now = Date.now();
@@ -2192,29 +2275,115 @@ export class KeyManager extends DurableObject<Env> {
         // The replaced salt is not kept: identifiers made with it are not made again.
         updatedAt: now,
       };
-      Object.defineProperty(state.secrets, input.secretRef, {
-        value: secret,
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
+      const define = (ref: string, value: StoredSecret) =>
+        Object.defineProperty(state.secrets, ref, {
+          value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      define(input.secretRef, secret);
+      if (!existingKey) define(IDENTIFIER_SALT_FINGERPRINT_KEY_REF, fingerprintKey);
       try {
         await this.#saveState();
       } catch (error) {
         // Not saved: the salt in use stays the one that is stored, here as after a restart.
-        if (existing) {
-          Object.defineProperty(state.secrets, input.secretRef, {
-            value: existing,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-        } else {
-          delete state.secrets[input.secretRef];
-        }
+        if (existing) define(input.secretRef, existing);
+        else delete state.secrets[input.secretRef];
+        if (!existingKey) delete state.secrets[IDENTIFIER_SALT_FINGERPRINT_KEY_REF];
         throw error;
       }
       return { fingerprint, outcome: existing ? 'replaced' : 'created' };
+    });
+  }
+
+  async #storeFingerprintKey(
+    secrets: Record<string, StoredSecret>,
+    key: StoredSecret
+  ): Promise<void> {
+    Object.defineProperty(secrets, IDENTIFIER_SALT_FINGERPRINT_KEY_REF, {
+      value: key,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    try {
+      await this.#saveState();
+    } catch (error) {
+      delete secrets[IDENTIFIER_SALT_FINGERPRINT_KEY_REF];
+      throw error;
+    }
+  }
+
+  /**
+   * HMAC-SHA-256 (hex) of each value under this key manager's own value key, with the key's id
+   * (the first 16 hex of an HMAC of a fixed text under it, so records made under another key are
+   * told apart). The key is made only when the caller says `create` (a tenant with no retired
+   * record and no value that could be retired): a missing key with `create` unset is refused, so
+   * a backup restored without its key never gets a fresh one that no record matches. It is saved
+   * with the state, so a restore of the key manager carries it; it never leaves.
+   */
+  async identifierValueHmacsRpc(
+    values: string[],
+    options: { create?: boolean } = {}
+  ): Promise<{ keyId: string; hmacs: string[] }> {
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      if (
+        !Array.isArray(values) ||
+        values.length > 1000 ||
+        values.some((value) => typeof value !== 'string')
+      ) {
+        throw new Error('identifier_value_hmac_input_invalid');
+      }
+      await this.#initializeState();
+      const state = this.#getState();
+      state.secrets ??= {};
+      let key = Object.getOwnPropertyDescriptor(state.secrets, IDENTIFIER_VALUE_HMAC_KEY_REF)
+        ?.value as StoredSecret | undefined;
+      if (!key) {
+        if (options.create !== true) throw new Error('identifier_value_key_missing');
+        if (Object.keys(state.secrets).length >= MAX_PORTABLE_SECRETS) {
+          throw new Error('imported_secret_limit');
+        }
+        key = {
+          secretRef: IDENTIFIER_VALUE_HMAC_KEY_REF,
+          active: this.#generateSecretVersion(),
+          updatedAt: Date.now(),
+        };
+        Object.defineProperty(state.secrets, IDENTIFIER_VALUE_HMAC_KEY_REF, {
+          value: key,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        try {
+          await this.#saveState();
+        } catch (error) {
+          delete state.secrets[IDENTIFIER_VALUE_HMAC_KEY_REF];
+          throw error;
+        }
+      }
+      const hmacKey = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(key.active.value),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+      );
+      const hex = (mac: ArrayBuffer) =>
+        Array.from(new Uint8Array(mac), (byte) => byte.toString(16).padStart(2, '0')).join('');
+      const hmacs: string[] = [];
+      for (const value of values) {
+        hmacs.push(hex(await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(value))));
+      }
+      const keyId = hex(
+        await crypto.subtle.sign(
+          'HMAC',
+          hmacKey,
+          new TextEncoder().encode('authrim:identifier-value-key-id')
+        )
+      ).slice(0, 16);
+      return { keyId, hmacs };
     });
   }
 
@@ -2229,11 +2398,15 @@ export class KeyManager extends DurableObject<Env> {
         ? await this.ctx.storage.get<KeyManagerState>('state')
         : this.keyManagerState;
     const out: Array<{ secretRef: string; fingerprint: string; updatedAt: number }> = [];
+    // Read only: the key is never made here (this is a read path of the backup). Salts without
+    // their key cannot be told apart, so they are not listed with a made-up fingerprint.
+    const key = readFingerprintKey(state?.secrets ?? {});
     for (const [secretRef, secret] of Object.entries(state?.secrets ?? {})) {
       if (!secretRef.startsWith(IMPORTED_IDENTIFIER_SALT_PREFIX)) continue;
+      if (!key) throw new Error('imported_secret_fingerprint_key_missing');
       out.push({
         secretRef,
-        fingerprint: await secretFingerprint(secret.active.value),
+        fingerprint: await saltFingerprint(key.active.value, secret.active.value),
         updatedAt: secret.updatedAt,
       });
     }
@@ -2242,6 +2415,7 @@ export class KeyManager extends DurableObject<Env> {
 
   async rotateSecretRpc(secretRef: string): Promise<StoredSecret> {
     return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      validatePublicSecretRef(secretRef);
       await this.#initializeState();
       return this.#rotateSecret(secretRef);
     });
@@ -2925,6 +3099,7 @@ export class KeyManager extends DurableObject<Env> {
             ? secretPath.slice(0, -'/rotate'.length)
             : secretPath;
           const secretRef = decodeURIComponent(secretRefPath);
+          validatePublicSecretRef(secretRef);
 
           if (request.method === 'GET' && !isSecretRotation) {
             const secret = await this.#getOrCreateSecret(secretRef);
@@ -2943,7 +3118,9 @@ export class KeyManager extends DurableObject<Env> {
 
         const internalSecretMatch = path.match(/^\/internal\/secrets\/([^/]+)$/);
         if (internalSecretMatch && request.method === 'GET') {
-          const secret = await this.#getOrCreateSecret(decodeURIComponent(internalSecretMatch[1]));
+          const secretRef = decodeURIComponent(internalSecretMatch[1]);
+          validatePublicSecretRef(secretRef);
+          const secret = await this.#getOrCreateSecret(secretRef);
           return new Response(JSON.stringify(secret), {
             headers: { 'Content-Type': 'application/json' },
           });
@@ -2951,7 +3128,9 @@ export class KeyManager extends DurableObject<Env> {
 
         const internalSecretRotateMatch = path.match(/^\/internal\/secrets\/([^/]+)\/rotate$/);
         if (internalSecretRotateMatch && request.method === 'POST') {
-          const secret = await this.#rotateSecret(decodeURIComponent(internalSecretRotateMatch[1]));
+          const secretRef = decodeURIComponent(internalSecretRotateMatch[1]);
+          validatePublicSecretRef(secretRef);
+          const secret = await this.#rotateSecret(secretRef);
           return new Response(JSON.stringify(secret), {
             headers: { 'Content-Type': 'application/json' },
           });

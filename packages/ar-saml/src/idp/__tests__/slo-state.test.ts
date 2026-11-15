@@ -252,6 +252,8 @@ describe('SAML SLO state', () => {
       relayState: 'relay',
       transactionId: 'txn-1',
       targets: ['https://sp-a.example/saml', 'https://sp-b.example/saml'],
+      // Each sign-in gets its own index; SP B's is kept with its target.
+      targetSessionIndexes: { 'https://sp-b.example/saml': 'sidx_b' },
       ttlSeconds: 120,
     });
 
@@ -287,8 +289,10 @@ describe('SAML SLO state', () => {
     });
     expect(getNextPendingSAMLIdPLogoutFanoutTarget(updated!)).toMatchObject({
       spEntityId: 'https://sp-b.example/saml',
+      sessionIndex: 'sidx_b',
       status: 'pending',
     });
+    expect(updated?.targets[0]?.sessionIndex).toBeUndefined();
     expect(isSAMLIdPLogoutFanoutTransactionComplete(updated!)).toBe(false);
   });
 

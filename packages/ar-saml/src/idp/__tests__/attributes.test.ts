@@ -332,6 +332,48 @@ describe('buildSAMLAttributesFromMapping', () => {
     ]);
   });
 
+  describe('an identifier an exception suppressed', () => {
+    const mail = {
+      side: 'destination',
+      namespace: 'saml.attribute',
+      path: 'urn:oid:0.9.2342.19200300.100.1.3',
+      catalogEntryId: 'field.saml.mail',
+    };
+    const step = (id: string) => ({
+      id,
+      operation: 'persistent_identifier',
+      inputEdgeIds: [],
+      parameters: { input: 'account', format: 'plain', algorithm: 'shibboleth' },
+      outputTargetRef: mail,
+    });
+    const release = (policies: Record<string, 'required' | 'optional'>) =>
+      buildSAMLAttributesForSP({ id: 'user-123' }, {
+        attributeMapping: {},
+        identityMapping: {
+          catalog: identityMappingSamlCatalog(),
+          destinationFieldPolicies: policies,
+          edges: [],
+          // Two steps (of different rules) write the same attribute: one is suppressed, the
+          // other made. Nothing goes out for the attribute.
+          transforms: [step('step-blocked'), step('step-made')],
+          runtimeContext: {
+            identifiers: { 'step-made': 'MADE-FOR-ANOTHER-RULE' },
+            suppressedIdentifiers: { 'step-blocked': true },
+          },
+        },
+      } as never);
+
+    it('leaves the attribute out of the final release, whatever another step made for it', () => {
+      expect(release({})).toEqual([]);
+    });
+
+    it('fails the release when that attribute is required', () => {
+      expect(() => release({ 'urn:oid:0.9.2342.19200300.100.1.3': 'required' })).toThrow(
+        MissingRequiredSAMLAttributeError
+      );
+    });
+  });
+
   it('treats missing required field mapping destinations as SAML release failures', () => {
     let error: unknown;
     try {
@@ -415,6 +457,48 @@ describe('buildSAMLAttributesFromMapping', () => {
       optionalMissingAttributes: [],
     });
   });
+
+  it.each(['saml_edu_person_targeted_id', 'oidc_pairwise_sub'])(
+    'refuses a saved mapping whose transform uses the removed operation %s',
+    (operation) => {
+      const target = {
+        side: 'destination' as const,
+        namespace: 'saml.attribute',
+        path: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10',
+      };
+      expect(() =>
+        buildSAMLAttributesForSPWithDiagnostics(
+          { id: 'user-a', email: 'user@example.test' },
+          {
+            attributeMapping: {},
+            identityMapping: {
+              catalog: identityMappingSamlCatalog({ mailRequired: false }),
+              edges: [
+                {
+                  id: 'edge.email.targeted',
+                  sourceRef: {
+                    side: 'source',
+                    namespace: 'authrim.profile',
+                    path: 'email',
+                    catalogEntryId: 'field.profile.email',
+                  },
+                  targetRef: target,
+                },
+              ],
+              transforms: [
+                {
+                  id: 'transform.removed',
+                  operation: operation as never,
+                  inputEdgeIds: ['edge.email.targeted'],
+                  outputTargetRef: target,
+                },
+              ],
+            },
+          }
+        )
+      ).toThrow(SAMLIdentityMappingRuntimeError);
+    }
+  );
 
   it('selects the SAML field mapping set binding by IdP role and SP entityID', () => {
     const catalog = identityMappingSamlCatalog({ mailRequired: false });

@@ -6,6 +6,7 @@ import {
   verifyClientSecretHash,
   deleteRefreshToken,
   getRefreshToken,
+  resolveIssuedTokenAccount,
   revokeToken,
   parseToken,
   verifyToken,
@@ -293,8 +294,8 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   const jti = tokenPayload.jti as string;
   const tokenClientId = tokenPayload.client_id as string;
-  // V2: Extract userId and version for refresh token operations
-  const userId = tokenPayload.sub as string;
+  // V2: Extract the version for refresh token operations (the account is resolved below, after the
+  // signature and the client are verified: a sub may be the one the app was given)
   const version = typeof tokenPayload.rtv === 'number' ? tokenPayload.rtv : 1;
   // Extract audience for signature verification
   const aud = tokenPayload.aud as string;
@@ -364,6 +365,24 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     // Per RFC 7009: Return success even if client doesn't own the token
     return c.body(null, 200);
   }
+
+  // The account the token is for: its sealed reference opened for its client (verified above), else
+  // its sub.
+  const revokedAccount = await resolveIssuedTokenAccount(
+    c.env,
+    tenantId,
+    tokenClientId,
+    tokenPayload,
+    false
+  );
+  if (!revokedAccount.ok && revokedAccount.reason === 'unavailable') {
+    return c.json({ error: 'temporarily_unavailable' }, 503);
+  }
+  const userId = revokedAccount.ok
+    ? revokedAccount.userId
+    : tokenPayload.authrim_subject_ref === undefined && typeof tokenPayload.sub === 'string'
+      ? tokenPayload.sub
+      : '';
 
   // =========================================================================
   // Token Revocation with Cascade Support (RFC 7009 Section 2.1)
@@ -672,7 +691,6 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
         const tokenPayload = parseToken(item.token);
         const jti = tokenPayload.jti as string;
         const tokenClientId = tokenPayload.client_id as string;
-        const userId = tokenPayload.sub as string;
         const version = typeof tokenPayload.rtv === 'number' ? tokenPayload.rtv : 1;
         const aud = tokenPayload.aud as string;
         const expiresIn = revocationLifetime(tokenPayload, accessLifetime);
@@ -729,7 +747,23 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
         } else if (item.token_type_hint === 'access_token') {
           await revokeToken(c.env, jti, expiresIn, undefined, tenantId);
         } else {
-          // No hint - check if refresh token first
+          // No hint - check if refresh token first. The family is kept by the account's id: opened
+          // from the token's sealed reference (verified above), else its sub.
+          const batchAccount = await resolveIssuedTokenAccount(
+            c.env,
+            tenantId,
+            tokenClientId,
+            tokenPayload,
+            false
+          );
+          if (!batchAccount.ok && batchAccount.reason === 'unavailable') {
+            return { token_hint: tokenHint, status: 'invalid' };
+          }
+          const userId = batchAccount.ok
+            ? batchAccount.userId
+            : tokenPayload.authrim_subject_ref === undefined && typeof tokenPayload.sub === 'string'
+              ? tokenPayload.sub
+              : '';
           const refreshTokenData = userId
             ? await getRefreshToken(c.env, userId, version, tokenClientId, jti, tenantId)
             : null;

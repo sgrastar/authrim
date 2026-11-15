@@ -45,6 +45,10 @@
 /** Attribute types as the catalogs name them; "[]" marks multi-valued. */
 export type MappingType = 'string' | 'string[]' | 'number' | 'boolean' | 'date' | 'object';
 
+import {
+	TRANSFORM_OPERATION_SCHEMAS,
+	persistentIdentifierSettingsProblem
+} from '@authrim/ar-lib-field-mapping/authoring';
 import type { ConditionGroup } from './condition-model';
 
 export interface MappingField {
@@ -81,6 +85,7 @@ export type TransformId =
 	| 'date_format'
 	| 'filter_values'
 	| 'hash'
+	| 'persistent_identifier'
 	| 'default_if_empty'
 	| 'as_array'
 	| 'split'
@@ -88,8 +93,6 @@ export type TransformId =
 	| 'first'
 	| 'concat'
 	| 'fallback'
-	| 'oidc_pairwise_sub'
-	| 'saml_edu_person_targeted_id'
 	| 'json_build'
 	| 'json_extract_text'
 	| 'json_extract_boolean'
@@ -167,7 +170,17 @@ export interface TransformParam {
 	condition?: boolean;
 	/** An IANA time zone ("Asia/Tokyo"), chosen from the browser's list. */
 	zone?: boolean;
+	/** Shown only while this holds, for rules a single `when` cannot say ("either of two settings"). */
+	applies?: (params: TransformStep['params']) => boolean;
+	/**
+	 * A name chosen from what an administrator imported (identifier sources, salts, stores of
+	 * identifiers, exception lists), with the import beside it. Saved as the name.
+	 */
+	material?: IdentifierMaterialKind;
 }
+
+/** What a persistent identifier step reads by name; see identifier-materials.ts. */
+export type IdentifierMaterialKind = 'source' | 'salt' | 'store' | 'exceptions';
 
 export interface TransformDef {
 	id: TransformId;
@@ -187,6 +200,26 @@ const LIST_FLAGS: readonly TransformParam[] = [
 	{ key: 'omitEmpty', flag: true },
 	{ key: 'unique', flag: true }
 ];
+
+/**
+ * The persistent_identifier step's choices come from the runtime's own registry, so a value the
+ * console offers is one the runtime accepts.
+ */
+const PID_SCHEMA = TRANSFORM_OPERATION_SCHEMAS.find(
+	(schema) => schema.operation === 'persistent_identifier'
+);
+const pidOptions = (name: string): readonly string[] =>
+	PID_SCHEMA?.parameters.find((parameter) => parameter.name === name)?.allowedValues ?? [];
+const PID_INPUTS = pidOptions('input');
+const PID_FORMATS = pidOptions('format');
+const PID_ALGORITHMS = pidOptions('algorithm');
+
+/** A scope (the domain after the "@") is for the identifiers that are the same for every recipient. */
+const pidScoped = (params: TransformStep['params']) =>
+	params.format === 'saml_pairwise_id' ||
+	params.format === 'saml_subject_id' ||
+	params.algorithm === 'simplesamlphp_pairwise_id' ||
+	params.algorithm === 'simplesamlphp_subject_id';
 
 export const TRANSFORMS: readonly TransformDef[] = [
 	{ id: 'trim', category: 'clean', params: [] },
@@ -372,22 +405,40 @@ export const TRANSFORMS: readonly TransformDef[] = [
 			{ key: 'unique', flag: true }
 		]
 	},
-	// TODO(api): choose from the tenant's persistent identifier profiles; empty = the default.
-	{
-		id: 'oidc_pairwise_sub',
-		category: 'identifier',
-		params: [{ key: 'persistentIdentifierProfileId', code: true }]
-	},
-	{
-		id: 'saml_edu_person_targeted_id',
-		category: 'identifier',
-		params: [{ key: 'persistentIdentifierProfileId', code: true }]
-	},
 	{
 		// A pseudonymous ID that cannot be turned back (keyed by the tenant).
 		id: 'hash',
 		category: 'identifier',
 		params: [{ key: 'encoding', options: ['hex', 'base64url'], required: true }]
+	},
+	{
+		// Made from the account's ID, or from a value imported for the account; never from the
+		// person's own attributes, so the step reads no source attribute (`generates`).
+		id: 'persistent_identifier',
+		category: 'identifier',
+		generates: true,
+		params: [
+			{ key: 'input', options: PID_INPUTS, required: true },
+			{ key: 'source', material: 'source', when: { key: 'input', is: 'source' } },
+			{ key: 'format', options: PID_FORMATS, required: true },
+			{ key: 'algorithm', options: PID_ALGORITHMS, required: true },
+			{
+				key: 'digest',
+				options: pidOptions('digest'),
+				when: { key: 'algorithm', is: 'shibboleth' }
+			},
+			{
+				key: 'encoding',
+				options: pidOptions('encoding'),
+				when: { key: 'algorithm', is: 'shibboleth' }
+			},
+			{ key: 'audience', options: pidOptions('audience'), required: true },
+			{ key: 'scope', applies: pidScoped },
+			{ key: 'salt', material: 'salt' },
+			{ key: 'stored', options: pidOptions('stored'), required: true },
+			{ key: 'store', material: 'store', when: { key: 'stored', is: ['prefer', 'require'] } },
+			{ key: 'exceptions', material: 'exceptions' }
+		]
 	},
 	{
 		id: 'json_build',
@@ -468,6 +519,7 @@ export function parsePairs(text: unknown): [string, string][] {
 
 /** Whether a setting applies now (its `when` is met). */
 export function paramApplies(param: TransformParam, params: TransformStep['params']): boolean {
+	if (param.applies && !param.applies(params)) return false;
 	if (!param.when) return true;
 	const all: readonly ParamWhen[] = 'key' in param.when ? [param.when] : param.when;
 	return all.every(({ key, is }) => {
@@ -534,6 +586,29 @@ export function newStep(transform: TransformId, id: string): TransformStep {
 	return { id, transform, params };
 }
 
+/**
+ * A persistent_identifier step's settings as the runtime takes them: only those that apply, and
+ * nothing for a setting left empty. The runtime refuses a step that carries a setting that does
+ * not apply to it (a digest for an algorithm that has none, a store with stored off), so this is
+ * what the console checks with `persistentIdentifierSettingsProblem` today.
+ *
+ * SERIALIZATION SEAM: the console's editor does not yet compile to the runtime's steps and
+ * edges (see the TODO(api) at the top). When it does, a step's `parameters` must be built from
+ * this function, never from `step.params` as they are: the editor keeps what was typed for a
+ * setting that has stopped applying (the digest of a former algorithm), and it must not be sent.
+ * The step has no input edge (it is made from the account's ID or an identifier source).
+ */
+export function identifierRuntimeParams(params: TransformStep['params']): Record<string, string> {
+	const def = transformDef('persistent_identifier');
+	const out: Record<string, string> = {};
+	for (const param of def.params) {
+		if (!paramApplies(param, params)) continue;
+		const value = params[param.key];
+		if (typeof value === 'string' && value !== '') out[param.key] = value;
+	}
+	return out;
+}
+
 const isMulti = (type: MappingType) => type.endsWith('[]');
 const single = (type: MappingType): MappingType => (isMulti(type) ? 'string' : type);
 
@@ -549,6 +624,7 @@ export function outputType(
 		case 'array_build':
 			return 'string[]';
 		case 'hash':
+		case 'persistent_identifier':
 			return 'string';
 		case 'conditional':
 			return params.valueType === 'as_boolean'
@@ -577,8 +653,6 @@ export function outputType(
 		case 'normalize':
 		case 'case':
 		case 'affix_text':
-		case 'oidc_pairwise_sub':
-		case 'saml_edu_person_targeted_id':
 		case 'json_extract_text':
 		case 'constant_text':
 			return 'string';
@@ -635,6 +709,10 @@ export type MappingProblem =
 	| { kind: 'missingParam'; step: number; param: string }
 	| { kind: 'notNumber'; step: number }
 	| { kind: 'badPattern'; step: number }
+	/** A persistent identifier step the runtime would refuse; `reason` is the runtime's own word. */
+	| { kind: 'identifierSettings'; step: number; reason: string }
+	/** The identifier step makes the value itself, so a source attribute beside it is left over. */
+	| { kind: 'identifierWithSource'; step: number }
 	| { kind: 'manyIntoOne' }
 	| { kind: 'typeMismatch'; from: MappingType; to: MappingType };
 
@@ -709,6 +787,11 @@ export function mappingProblems(
 				numbers.some((n) => typeof n === 'string' && n.trim() && !Number.isFinite(Number(n.trim())))
 			)
 				found.push({ kind: 'notNumber', step: index + 1 });
+		}
+		if (step.transform === 'persistent_identifier') {
+			const reason = persistentIdentifierSettingsProblem(identifierRuntimeParams(step.params));
+			if (reason) found.push({ kind: 'identifierSettings', step: index + 1, reason });
+			if (picked.length > 0) found.push({ kind: 'identifierWithSource', step: index + 1 });
 		}
 		const pattern = step.params.pattern;
 		if (step.transform === 'regex_replace' && typeof pattern === 'string' && pattern) {

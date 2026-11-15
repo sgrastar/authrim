@@ -250,7 +250,7 @@ describe('previewMapping (run by the runtime engine)', () => {
 	});
 
 	it('leaves identifiers to sign-in, and shows nothing without sample data', () => {
-		const pairwise = previewMapping(map(['mail'], [step('oidc_pairwise_sub')]), sources);
+		const pairwise = previewMapping(map(['mail'], [step('hash')]), sources);
 		expect(pairwise?.output).toEqual({ known: false });
 		expect(previewMapping(map(['plain'], [step('trim')]), sources)).toBeNull();
 	});

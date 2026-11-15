@@ -210,6 +210,9 @@ async function countPiiFieldAcrossStores(
 /** Reserved OIDC claim names that cannot be used as field_key */
 const RESERVED_CLAIM_NAMES = new Set([
   ...BUILTIN_PROFILE_CLAIM_KEYS,
+  // The account's ID, which the runtime supplies to the persistent_identifier step itself: a
+  // custom field of this name must never stand in for it.
+  'account_id',
   'sub',
   'iss',
   'aud',

@@ -69,4 +69,24 @@ describe('runtime field mapping identity boundaries', () => {
     expect(result.reasons.map((item) => item.code)).toContain('transform.missing_input');
     expect(result.ruleTrace.map((item) => item.action)).not.toContain('mapped');
   });
+
+  it.each(['oidc_pairwise_sub', 'saml_edu_person_targeted_id'])(
+    'fails the whole mapping, not partially, for the removed operation %s',
+    (operation) => {
+      const input = mappingInput([sourceValue('csv', 'email', 'user@example.test', 'pii')]);
+      input.transforms = [
+        {
+          id: 'transform.removed',
+          operation: operation as never,
+          inputEdgeIds: [input.edges[0].id],
+          outputTargetRef: input.edges[0].targetRef,
+        },
+      ];
+
+      const result = executeRuntimeMapping(input);
+
+      expect(result.status).toBe('failed');
+      expect(result.reasons.map((item) => item.code)).toContain('transform.unsupported_operation');
+    }
+  );
 });

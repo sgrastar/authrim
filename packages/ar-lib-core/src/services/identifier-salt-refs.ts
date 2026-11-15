@@ -6,6 +6,19 @@
 export const DEFAULT_IDENTIFIER_SALT_REF = 'identifier-salt:default';
 export const IMPORTED_IDENTIFIER_SALT_PREFIX = 'identifier-salt:import:';
 
+/**
+ * The key the imported salts' fingerprints are an HMAC under. Internal: made by the first salt
+ * import (never by a read), never returned, and refused by the private create / rotate paths.
+ */
+export const IDENTIFIER_SALT_FINGERPRINT_KEY_REF = 'identifier-salt:fingerprint-key';
+
+/**
+ * The key the retired identifier values are kept under as an HMAC: a value that was replaced or
+ * erased is kept only as this HMAC, so it can be refused for any other account without the value
+ * itself (personal data) being kept. Internal like the fingerprint key.
+ */
+export const IDENTIFIER_VALUE_HMAC_KEY_REF = 'identifier-salt:value-hmac-key';
+
 export const importedIdentifierSaltRef = (name: string): string =>
   `${IMPORTED_IDENTIFIER_SALT_PREFIX}${name}`;
 

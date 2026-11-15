@@ -40,6 +40,10 @@ const state = vi.hoisted(
   })
 );
 
+// No Admin database here: the identifier material it holds is erased through this one call.
+vi.mock('../account-identifier-erasure', () => ({
+  eraseAccountIdentifierValues: async () => undefined,
+}));
 vi.mock('../account-legal-hold-guard', () => ({ findActiveAccountLegalHold: async () => null }));
 vi.mock('../account-tombstone-write', () => ({
   prepareAccountTombstone: async () => ({}),

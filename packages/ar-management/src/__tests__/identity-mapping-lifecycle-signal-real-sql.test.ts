@@ -569,7 +569,7 @@ describe.each(['scheduled', 'pipeline'] as const)(
       const db = new DatabaseSync(':memory:');
       dispose.push(() => db.close());
       const directory = new URL('../../../../migrations/admin/d1/', import.meta.url);
-      for (const name of [`001_0_5_0_admin_baseline.sql`])
+      for (const name of [`001_0_5_0_admin_baseline.sql`, `021_mapping_transform_step_target.sql`])
         db.exec(
           renderPortableMigrationSql(readFileSync(new URL(name, directory), 'utf8'), 'sqlite')
         );

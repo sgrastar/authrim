@@ -12,6 +12,7 @@ import { authorizeHandler } from '../authorize';
 import { createHash } from 'node:crypto';
 import {
   buildPolicyConstrainedRegionShardConfig,
+  computeIdentifier,
   OIDCIdentityMappingRuntimeError,
   openSubjectReference,
 } from '@authrim/ar-lib-core';
@@ -2883,6 +2884,22 @@ describe('Authorization Handler', () => {
         );
       });
 
+      it("does not match the user's raw id when this app's ID tokens carry another sub", async () => {
+        const sign = await hintSigner();
+        mockDeriveOIDCSubject.mockResolvedValueOnce('pairwise-for-test-client');
+        const redirect = await authorizeWithHint(await sign('test-user'));
+        expect(redirect.searchParams.get('error')).toBe('login_required');
+        expect(redirect.searchParams.get('code')).toBeNull();
+      });
+
+      it('treats a sub that cannot be derived as a mismatch, never the raw id', async () => {
+        const sign = await hintSigner();
+        mockDeriveOIDCSubject.mockRejectedValueOnce(new Error('pairwise sub unavailable'));
+        const redirect = await authorizeWithHint(await sign('test-user'));
+        expect(redirect.searchParams.get('error')).toBe('login_required');
+        expect(redirect.searchParams.get('code')).toBeNull();
+      });
+
       it('refuses a hint this server did not issue, even with a session', async () => {
         const sign = await hintSigner();
         for (const hint of [
@@ -3260,6 +3277,8 @@ describe('Authorization Handler', () => {
               kid: 'mapped-signing-key',
               privatePEM,
             }),
+            // The tenant's default identifier salt (a pairwise app's sub).
+            getOrCreateSecretRpc: vi.fn().mockResolvedValue({ active: { value: 'tenant-salt' } }),
           }),
         } as unknown as Env['KEY_MANAGER'];
         if (options.mapping) {
@@ -3395,7 +3414,9 @@ describe('Authorization Handler', () => {
         const accessToken = decodeJwt(fragment.get('access_token')!);
         expect(idToken.sub).toBe(PAIRWISE_SUB);
         expect(idToken.department).toBe('research');
-        // The access token names the user, as the token endpoint's does for a code grant.
+        // (This test stands in for the mapping of the ID token alone: the sub the access token
+        // carries is derived by the real engine, which has no mapping bound here, so it is the
+        // user's id. The cases below with a bound mapping show the access token's pairwise sub.)
         expect(accessToken.sub).toBe('mapped-user');
         expect(accessToken).not.toHaveProperty('authrim_subject_ref');
         // The ID token's grant claims: the consent generation, and the account its sub stands for.
@@ -3408,6 +3429,36 @@ describe('Authorization Handler', () => {
           )
         ).resolves.toBe('mapped-user');
       });
+
+      it.each(['id_token token', 'code id_token token'])(
+        'gives a pairwise app the same pairwise sub in the access token (%s), with the account reference',
+        async (responseType) => {
+          const fragment = await authorizeFor(responseType, {
+            client: { subject_type: 'pairwise' },
+            scope: 'openid',
+          });
+
+          const accessToken = decodeJwt(fragment.get('access_token')!);
+          const expected = await computeIdentifier({
+            algorithm: 'authrim_sha256',
+            value: 'mapped-user',
+            audience: 'example.com',
+            salt: new TextEncoder().encode('tenant-salt'),
+          });
+          expect(accessToken.sub).toBe(expected);
+          if (fragment.get('id_token')) {
+            expect(decodeJwt(fragment.get('id_token')!).sub).toBe(expected);
+          }
+          await expect(
+            openSubjectReference(
+              env as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+              { tenantId: 'default', clientId: 'test-client' },
+              accessToken.authrim_subject_ref as string
+            )
+          ).resolves.toBe('mapped-user');
+          expect(JSON.stringify(accessToken)).not.toContain('mapped-user');
+        }
+      );
 
       it('hands the mapping the ID token claims, for the destination surface and granted scopes', async () => {
         await authorizeFor('id_token', { mapping: (input) => input.claims });
@@ -3912,9 +3963,9 @@ describe('Authorization Handler', () => {
             }
             expect(idToken).not.toHaveProperty('phone_number');
             expect(idToken).not.toHaveProperty('email');
-            // The user's id stays the access token's sub, and the ID token's sealed account.
+            // The access token carries the sub the mapping derives too (and the account reference).
             if (fragment.get('access_token')) {
-              expect(decodeJwt(fragment.get('access_token')!).sub).toBe('mapped-user');
+              expect(decodeJwt(fragment.get('access_token')!).sub).toBe('alice');
             }
             await expect(
               openSubjectReference(

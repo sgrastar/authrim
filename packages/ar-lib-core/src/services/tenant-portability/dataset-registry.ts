@@ -163,8 +163,15 @@ const TABLE_GROUPS: Partial<
     `,
     // Anonymous deletion denial is business state, independent of log selection.
     // The restore adapter discards source physical cursors and starts target GC anew.
-    // Per-person identifiers kept from another IdP: user data, never in a settings-only backup.
-    users: 'log_iceberg_subject_erasures mapped_identifier_values',
+    // Per-person identifiers kept from another IdP, and the values imported for accounts into
+    // identifier sources (both bound to an account and erased with it), the exceptions to a step
+    // (per account and recipient; the account's rows erased with it), and the HMACs of values
+    // retired from them: user data, never in a settings-only backup. The retired HMACs are made
+    // under a key the tenant's key manager holds (a settings-kind secret): the registry cannot
+    // declare that dependency, so each retired row carries the key's id and an import refuses to
+    // run when the key it finds is missing or another (ar-management identifier-retired-values).
+    users:
+      'identifier_source_values log_iceberg_subject_erasures mapped_identifier_exceptions mapped_identifier_values retired_identifier_values',
     settings: `
       identity_mapping_level_history
       admin_destination_capabilities admin_destinations admin_ip_allowlist admin_logging_critical_policies
@@ -183,7 +190,7 @@ const TABLE_GROUPS: Partial<
       logging_key_material_bodies logging_key_registry logging_key_versions logging_policy_snapshots
       logging_quota_policies mapping_conflict_rules mapping_release_rules mapping_rule_edges
       mapping_rules mapping_templates mapping_transform_steps mapping_validation_rules
-      persistent_identifier_profiles protocol_schema_catalogs source_authority_contracts source_profile_parse_drafts
+      protocol_schema_catalogs source_authority_contracts source_profile_parse_drafts
       source_profile_versions source_profiles storage_destination_assignments tenant_settings_documents
     `,
     audit: `

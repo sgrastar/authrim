@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { introspectToken } from '../token-introspection';
+import { introspectToken, resolveIntrospectedAccountUserId } from '../token-introspection';
 import { createAccessToken } from '../jwt';
 import { SignJWT, generateKeyPair, exportJWK } from 'jose';
 import type { Env } from '../../types/env';
@@ -581,5 +581,51 @@ describe('Token Introspection Utility', () => {
       expect(result.valid).toBe(true);
       expect(result.claims?.sub).toBe('user-1');
     });
+  });
+});
+
+describe('resolveIntrospectedAccountUserId', () => {
+  const valid = (claims: Record<string, unknown>, accountUserId?: string) => ({
+    valid: true,
+    claims,
+    ...(accountUserId ? { accountUserId } : {}),
+  });
+  const token = { sub: 'user-1', token_use: 'access', jti: 'jti-1', client_id: 'app' };
+
+  it('is the account the sealed reference opened, never the sub the app was given', () => {
+    expect(
+      resolveIntrospectedAccountUserId(
+        valid({ ...token, sub: 'given-sub', authrim_subject_ref: 'sr1.a.b' }, 'user-real'),
+        { subject_type: 'pairwise' }
+      )
+    ).toBe('user-real');
+  });
+
+  it('is the sub of a token without a reference (the user’s id)', () => {
+    expect(resolveIntrospectedAccountUserId(valid(token), { subject_type: 'public' })).toBe(
+      'user-1'
+    );
+  });
+
+  it('refuses a token with no reference whose client could not be read (never trusted as the user’s id)', () => {
+    expect(resolveIntrospectedAccountUserId(valid(token), null)).toBeNull();
+    expect(resolveIntrospectedAccountUserId(valid(token))).toBeNull();
+  });
+
+  it.each([
+    ['access', 'access'],
+    ['refresh', 'refresh'],
+    ['no token_use (an older token)', undefined],
+  ])('refuses a pairwise app’s %s token with no reference', (_name, tokenUse) => {
+    expect(
+      resolveIntrospectedAccountUserId(valid({ ...token, token_use: tokenUse }), {
+        subject_type: 'pairwise',
+      })
+    ).toBeNull();
+  });
+
+  it('is none for a token that is not valid or has no sub', () => {
+    expect(resolveIntrospectedAccountUserId({ valid: false }, null)).toBeNull();
+    expect(resolveIntrospectedAccountUserId(valid({ ...token, sub: '' }), null)).toBeNull();
   });
 });

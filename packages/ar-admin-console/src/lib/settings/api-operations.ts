@@ -1127,6 +1127,29 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 		'Create a group membership.',
 		'admin'
 	],
+	['GET', '/api/admin/field-mapping/identifier-exceptions', 'List identifier exception lists.', 'admin'],
+	[
+		'POST',
+		'/api/admin/field-mapping/identifier-exceptions/{name}/import',
+		'Replace an identifier exception list.',
+		'admin'
+	],
+	['GET', '/api/admin/field-mapping/identifier-salts', 'List imported identifier salts.', 'admin'],
+	['PUT', '/api/admin/field-mapping/identifier-salts/{name}', 'Import an identifier salt.', 'admin'],
+	['GET', '/api/admin/field-mapping/identifier-sources', 'List identifier sources.', 'admin'],
+	[
+		'POST',
+		'/api/admin/field-mapping/identifier-sources/{name}/import',
+		'Import values into an identifier source.',
+		'admin'
+	],
+	['GET', '/api/admin/field-mapping/identifier-stores', 'List identifier stores.', 'admin'],
+	[
+		'POST',
+		'/api/admin/field-mapping/identifier-stores/{name}/import',
+		'Import identifiers into a store.',
+		'admin'
+	],
 	['GET', '/api/admin/field-mapping/key-registries', 'List key registries.', 'admin'],
 	['POST', '/api/admin/field-mapping/key-registries', 'Create a key registry.', 'admin'],
 	[
@@ -1167,42 +1190,6 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 		'POST',
 		'/api/admin/field-mapping/operational-notifications',
 		'Create an operational notification.',
-		'admin'
-	],
-	[
-		'GET',
-		'/api/admin/field-mapping/persistent-identifier-profiles',
-		'List persistent identifier profiles.',
-		'admin'
-	],
-	[
-		'POST',
-		'/api/admin/field-mapping/persistent-identifier-profiles',
-		'Create a persistent identifier profile.',
-		'admin'
-	],
-	[
-		'POST',
-		'/api/admin/field-mapping/persistent-identifier-profiles/preview',
-		'Preview a persistent identifier value.',
-		'admin'
-	],
-	[
-		'GET',
-		'/api/admin/field-mapping/persistent-identifier-profiles/{profileId}',
-		'Get a persistent identifier profile.',
-		'admin'
-	],
-	[
-		'PUT',
-		'/api/admin/field-mapping/persistent-identifier-profiles/{profileId}',
-		'Replace a persistent identifier profile.',
-		'admin'
-	],
-	[
-		'DELETE',
-		'/api/admin/field-mapping/persistent-identifier-profiles/{profileId}',
-		'Delete a persistent identifier profile.',
 		'admin'
 	],
 	['POST', '/api/admin/field-mapping/preview/csv', 'Preview CSV field mapping.', 'admin'],

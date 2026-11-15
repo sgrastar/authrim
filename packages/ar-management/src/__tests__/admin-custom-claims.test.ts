@@ -1015,12 +1015,19 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(200);
       expect(body.reserved_names).toBeInstanceOf(Array);
-      expect(body.reserved_names).toContain('sub');
-      expect(body.reserved_names).toContain('email');
-      expect(body.reserved_names).toContain('display_name');
-      expect(body.reserved_names).toContain('picture_url');
-      expect(body.reserved_names).toContain('ial');
-      expect(body.reserved_names).toContain('ial_verified_at');
+      expect(body.reserved_names).toEqual(
+        // `account_id`: the account's ID, which the persistent_identifier step is given by the
+        // runtime, never read from a custom field.
+        expect.arrayContaining([
+          'sub',
+          'account_id',
+          'email',
+          'display_name',
+          'picture_url',
+          'ial',
+          'ial_verified_at',
+        ])
+      );
       // Verify sorted
       const sorted = [...body.reserved_names].sort();
       expect(body.reserved_names).toEqual(sorted);

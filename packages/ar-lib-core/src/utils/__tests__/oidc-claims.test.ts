@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  claimsRequestRestrictsSub,
   evaluateClaimsForTarget,
   parseClaimsRequest,
   PREDEFINED_TRANSFORMED_CLAIMS,
@@ -7,6 +8,56 @@ import {
 } from '../oidc-claims';
 
 describe('OIDC claims parameter and ASC utilities', () => {
+  it('checks a sub value or values constraint against the sub the app receives, not the account id', () => {
+    for (const constraint of [{ value: 'pairwise-sub' }, { values: ['pairwise-sub'] }]) {
+      const request = parseClaimsRequest(JSON.stringify({ id_token: { sub: constraint } })).request;
+      expect(claimsRequestRestrictsSub(request, 'id_token')).toBe(true);
+      expect(claimsRequestRestrictsSub(request, 'userinfo')).toBe(false);
+      const base = {
+        target: 'id_token' as const,
+        claimsRequest: request,
+        initialClaims: { sub: 'user-1' },
+        availableClaims: { sub: 'user-1' },
+        grantedScopes: ['openid'],
+      };
+      expect(evaluateClaimsForTarget({ ...base, subjectValue: 'pairwise-sub' })).toMatchObject({
+        ok: true,
+      });
+      // The raw account id no longer satisfies it, and the claims keep the account id.
+      expect(evaluateClaimsForTarget(base)).toMatchObject({ ok: false, error: 'invalid_request' });
+      const accepted = evaluateClaimsForTarget({ ...base, subjectValue: 'pairwise-sub' });
+      expect(accepted.ok && accepted.claims.sub).toBe('user-1');
+    }
+  });
+
+  it('evaluates an ASC SAO rule on /sub against the sub the app receives, keeping the account id', () => {
+    const parsed = parseClaimsRequest(
+      JSON.stringify({
+        id_token: { sub: null },
+        _asc: {
+          sao: {
+            id_token: [{ loc: '/sub', method: 'simple', value: 'pairwise-sub', else: 'abort' }],
+          },
+        },
+      })
+    );
+    expect(claimsRequestRestrictsSub(parsed.request, 'id_token')).toBe(true);
+    const base = {
+      target: 'id_token' as const,
+      claimsRequest: parsed.request,
+      initialClaims: { sub: 'user-1' },
+      availableClaims: { sub: 'user-1' },
+      grantedScopes: ['openid'],
+      clientPolicy: {},
+      requestIntegrityProtected: true,
+    };
+    const accepted = evaluateClaimsForTarget({ ...base, subjectValue: 'pairwise-sub' });
+    expect(accepted.ok && accepted.claims.sub).toBe('user-1');
+    // The raw account id aborts.
+    expect(evaluateClaimsForTarget(base)).toMatchObject({ ok: false, error: 'invalid_request' });
+    expect(evaluateClaimsForTarget({ ...base, subjectValue: 'user-1x' }).ok).toBe(false);
+  });
+
   it('accepts _asc as a top-level claims key', () => {
     const result = parseClaimsRequest(
       JSON.stringify({

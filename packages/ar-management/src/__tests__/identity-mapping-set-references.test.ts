@@ -590,7 +590,7 @@ describe('putting another version in use', () => {
       id: 'plat2',
     });
     t.db.exec(
-      "INSERT INTO mapping_transform_steps (id, tenant_id, rule_id, edge_id, step_order, operation, parameters_json, created_at, updated_at) VALUES ('t1', 'platform', 'rule-plat2', 'edge-plat2-0', 0, 'oidc_pairwise_sub', '{}', 1, 1)"
+      "INSERT INTO mapping_transform_steps (id, tenant_id, rule_id, edge_id, step_order, operation, parameters_json, created_at, updated_at) VALUES ('t1', 'platform', 'rule-plat2', 'edge-plat2-0', 0, 'persistent_identifier', '{}', 1, 1)"
     );
     t.refs.client(t.coreA, 'set-plat');
     const refused = await t.mutate(

@@ -113,10 +113,10 @@ export const DEMOS: Record<TransformId, Demo> = {
 	constant_number: one(drop('—'), add('100')),
 	default_if_empty: one(drop('—'), add('en')),
 
-	// Identifiers: the user's ID becomes one only this app (or SP) sees
-	oidc_pairwise_sub: one(swap('usr_01J8Z4', '7f3a9c2e1b04')),
-	saml_edu_person_targeted_id: one(swap('usr_01J8Z4', 'idp!sp!9b2e41')),
+	// Identifiers: a pseudonymous ID
 	hash: one(swap('john@example.com', '5e884898da28')),
+	// Made from the account, not from the value that comes in
+	persistent_identifier: one(drop('—'), add('Xk3pQ9aL7mT2')),
 
 	// JSON
 	json_build: chips(

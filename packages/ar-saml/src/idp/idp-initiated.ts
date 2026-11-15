@@ -28,7 +28,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { base64Encode, generateSAMLId } from '../common/xml-utils';
-import { NAMEID_FORMATS, DEFAULTS } from '../common/constants';
+import { DEFAULTS, NAMEID_FORMATS } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
 import { getSamlUserInfoById } from '../common/user-store';
@@ -38,6 +38,7 @@ import { MissingRequiredSAMLAttributeError, SAMLIdentityMappingRuntimeError } fr
 import { applySAMLResponseSigningPolicy } from './signing';
 import {
   createSAMLSessionIndex,
+  resolveEffectiveSAMLNameIDFormat,
   resolveSAMLNameIDValue,
   resolveSAMLPairwiseSecret,
   resolveSAMLPersistentNameIDRegistryStore,
@@ -224,7 +225,19 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
 
     let responseXml: string;
     try {
-      const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
+      // The same decision as for an AuthnRequest (an SP whose mapping makes its NameID is given a
+      // persistent one), with no NameID policy to ask for another.
+      const mappedNameID = await resolveSAMLMappedNameID({
+        env,
+        tenantId,
+        idpEntityId,
+        spConfig,
+        userInfo,
+      });
+      const nameIdFormat = resolveEffectiveSAMLNameIDFormat({
+        spConfig,
+        mappedNameID: Boolean(mappedNameID),
+      });
       const releaseInput = {
         env,
         tenantId,
@@ -308,6 +321,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         authSession: authenticatedSession,
         attributes: approved.attributes,
         nameIdFormat,
+        mappedNameID,
         log,
         assurance: authnAssurance.outcome === 'met' ? authnAssurance : undefined,
       });
@@ -530,6 +544,7 @@ async function generateIdPInitiatedResponse(input: {
   };
   attributes: Awaited<ReturnType<typeof computeSAMLAttributeRelease>>['attributes'];
   nameIdFormat: SAMLSPConfig['nameIdFormat'];
+  mappedNameID?: Awaited<ReturnType<typeof resolveSAMLMappedNameID>>;
   log: { debug?(message: string, context?: Record<string, unknown>): void };
   assurance?: Parameters<typeof chooseSAMLAuthnContextClassRef>[2];
 }): Promise<string> {
@@ -550,16 +565,7 @@ async function generateIdPInitiatedResponse(input: {
     tenantId,
     spEntityId: spConfig.entityId,
     // The NameID the SP's mapping makes, if it makes one (e.g. the one an earlier IdP issued).
-    mappedNameID:
-      input.nameIdFormat === NAMEID_FORMATS.PERSISTENT
-        ? await resolveSAMLMappedNameID({
-            env,
-            tenantId,
-            idpEntityId: input.idpEntityId,
-            spConfig,
-            userInfo: input.userInfo,
-          })
-        : undefined,
+    mappedNameID: input.mappedNameID,
     pairwiseSalt: await resolveSAMLPairwiseSecret(env, tenantId),
     persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
     allowCreate: true,
@@ -609,6 +615,13 @@ async function generateIdPInitiatedResponse(input: {
       spEntityId: spConfig.entityId,
       sessionId: authSession.sessionId,
       ttlSeconds: DEFAULTS.SESSION_VALIDITY_SECONDS,
+      nameId: {
+        format: input.nameIdFormat,
+        ...(input.nameIdFormat !== NAMEID_FORMATS.EMAIL &&
+        input.nameIdFormat !== NAMEID_FORMATS.UNSPECIFIED
+          ? { value: nameIdValue }
+          : {}),
+      },
     }),
     notBefore: timing.notBefore,
     notOnOrAfter: timing.notOnOrAfter,

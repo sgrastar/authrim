@@ -181,7 +181,10 @@ export const PHASE3_SQLITE_REFERENCE_RULES: readonly Phase3SqliteReferenceRule[]
     'admin',
     'field_mapping_versions'
   ),
-  relation('admin', 'mapping_transform_steps', ['edge_id'], 'admin', 'mapping_rule_edges'),
+  // Null for a step that reads no edge (a persistent identifier is made from the account).
+  relation('admin', 'mapping_transform_steps', ['edge_id'], 'admin', 'mapping_rule_edges', {
+    nullable: true,
+  }),
   relation('admin', 'mapping_transform_steps', ['rule_id'], 'admin', 'mapping_rules'),
   relation('admin', 'mapping_validation_rules', ['rule_id'], 'admin', 'mapping_rules'),
   relation('admin', 'source_profile_versions', ['profile_id'], 'admin', 'source_profiles'),
@@ -438,13 +441,6 @@ function inspectStructuredReferences(
 
   if (datasetId === 'admin.attribute_group_registry') {
     stringArray(row, 'field_keys_json', { maxItems: 1024 });
-    return [];
-  }
-
-  if (datasetId === 'admin.persistent_identifier_profiles') {
-    optionalJsonObject(row, 'source_ref_json');
-    stringArray(row, 'usage_json', { maxItems: 64 });
-    jsonObject(row, 'format_json');
     return [];
   }
 

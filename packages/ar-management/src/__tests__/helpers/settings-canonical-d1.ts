@@ -10,7 +10,7 @@ type StatementSync = ReturnType<SQLiteDatabase['prepare']>;
 
 type SqlValue = string | number | null | Uint8Array;
 
-const MIGRATIONS = ['001_0_5_0_admin_baseline.sql'];
+const MIGRATIONS = ['001_0_5_0_admin_baseline.sql', '021_mapping_transform_step_target.sql'];
 
 class BoundStatement {
   constructor(

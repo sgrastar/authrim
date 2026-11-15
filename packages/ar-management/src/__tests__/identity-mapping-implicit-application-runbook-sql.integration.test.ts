@@ -29,10 +29,12 @@ function runbook(name: string): string {
   return match[1];
 }
 
-function baseline(path: string): InstanceType<typeof DatabaseSync> {
+function baseline(...paths: string[]): InstanceType<typeof DatabaseSync> {
   const db = new DatabaseSync(':memory:');
   db.exec(
-    readFileSync(resolve(REPO_ROOT, path), 'utf8')
+    paths
+      .map((path) => readFileSync(resolve(REPO_ROOT, path), 'utf8'))
+      .join('\n')
       .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
   );
@@ -81,7 +83,11 @@ describe('identity mapping implicit-application runbook SQL', () => {
   let core: InstanceType<typeof DatabaseSync>;
 
   beforeEach(() => {
-    admin = baseline('migrations/admin/d1/001_0_4_0_admin_baseline.sql');
+    // With the step's own output target, which the resolver reads.
+    admin = baseline(
+      'migrations/admin/d1/001_0_4_0_admin_baseline.sql',
+      'migrations/admin/d1/021_mapping_transform_step_target.sql'
+    );
     core = baseline('migrations/core/d1/001_0_4_0_core_baseline.sql');
   });
 

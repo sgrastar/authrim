@@ -181,6 +181,24 @@ describe('portable imported SAML release boundary', () => {
     ).toThrow('saml_idp_runtime_imported_release_invalid');
   });
 
+  it('refuses a persistent_identifier step in any graph of an imported release', () => {
+    const step = { id: 's', operation: 'persistent_identifier', inputEdgeIds: [], parameters: {} };
+    for (const place of ['transforms', 'nameId', 'otherGraph']) {
+      const release = importedRelease();
+      const binding = release.binding as Record<string, unknown>;
+      if (place === 'transforms') binding.transforms = [step];
+      else binding[place] = { edges: [], transforms: [step], validationRules: [] };
+      expect(
+        () =>
+          assertSAMLImportedSPRelease(release, {
+            ...context,
+            sourceSelector: release.sourceSelector ?? undefined,
+          }),
+        place
+      ).toThrow('saml_idp_runtime_imported_release_invalid');
+    }
+  });
+
   it('rejects incomplete release policy and output attribute renaming', () => {
     const incomplete = importedRelease();
     const selector = incomplete.sourceSelector as NonNullable<typeof incomplete.sourceSelector>;

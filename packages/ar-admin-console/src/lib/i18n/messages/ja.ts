@@ -1,3 +1,4 @@
+import { jaIdentifierStep } from './identifier-step/ja';
 import { jaSettings } from './settings/ja';
 import { jaCompliance } from './compliance/ja';
 import { jaMappingConsole } from './mapping-console/ja';
@@ -32,6 +33,7 @@ export const ja = {
 	...jaSettings,
 	...jaCompliance,
 	...jaMappingConsole,
+	...jaIdentifierStep,
 	...jaServiceFlows,
 	...jaConnectionSettings,
 	...jaAccountFlows,
@@ -139,7 +141,6 @@ export const ja = {
 	'nav.custom.statements': '同意文',
 	'nav.data.profiles': 'Source / Destination',
 	'nav.data.mappingSets': 'マッピングセット',
-	'nav.data.identifiers': '永続識別子',
 	'nav.data.federationTrust': 'フェデレーション信頼',
 	'nav.data.readiness': 'スキーマ準備状況',
 	'nav.mon.adminLogging': '管理ログ運用',
@@ -697,8 +698,6 @@ export const ja = {
 	'map.c.identifier': '識別子',
 	'map.c.json': 'JSON',
 	'map.t.normalize': '空白・文字の形をそろえる',
-	'map.t.oidc_pairwise_sub': 'OIDC のペアワイズ ID',
-	'map.t.saml_edu_person_targeted_id': 'SAML の eduPersonTargetedID',
 	'map.t.json_build': 'JSON にまとめる',
 	'map.t.json_extract_text': 'JSON から文字を取り出す',
 	'map.t.json_extract_boolean': 'JSON から true／false を取り出す',
@@ -715,8 +714,6 @@ export const ja = {
 	'map.d.first': '複数の値のうち、最初の値だけを使います。',
 	'map.d.concat': '複数の属性の値を、1つの文字列につなげます。',
 	'map.d.fallback': '上から順に見て、最初に値のある属性を使います。',
-	'map.d.oidc_pairwise_sub': 'このアプリ向けのペアワイズ識別子（sub）を使います。',
-	'map.d.saml_edu_person_targeted_id': 'この SP 向けの eduPersonTargetedID を作ります。',
 	'map.d.json_build': '属性の値を JSON のオブジェクトにまとめます。JSON の文字列なら読み取ります。',
 	'map.d.json_extract_text': 'JSON の中の値を、文字として取り出します。',
 	'map.d.json_extract_boolean': 'JSON の中の値を、true か false として取り出します。',
@@ -727,8 +724,6 @@ export const ja = {
 	'map.p.omitEmpty': '空の値を除く',
 	'map.p.unique': '重複を除く',
 	'map.p.nullValues': '「値なし」とみなす値',
-	'map.p.persistentIdentifierProfileId': '識別子のプロファイル',
-	'map.p.profileHint': '空欄ならテナントの既定を使います。',
 	'map.p.keyMap': 'キーの対応',
 	'map.p.keyMapHint': 'JSON で書きます。例: {"mail": "email"}',
 	'map.p.nullHandling': '値がない属性',

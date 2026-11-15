@@ -20,6 +20,8 @@ import {
   type JWEEncryption,
   parseClaimsRequest,
   evaluateClaimsForTarget,
+  claimsRequestRestrictsSub,
+  pairwiseTokenLacksReference,
   buildStandardUserClaims,
   canonicalProjectionToOIDCClaimsUser,
   canServeUserInfoWithPIIStatus,
@@ -136,6 +138,9 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   // resource indicator while retaining issuer-scoped access tokens for compatibility.
   const introspection = await introspectTokenFromContext(c, {
     audience: [requestIssuer, `${requestIssuer.replace(/\/$/u, '')}/userinfo`],
+    // An app that is given a pairwise sub holds a token whose sub is not the user's id: the account
+    // is opened from its sealed reference.
+    allowSubjectReference: true,
   });
 
   if (!introspection.valid) {
@@ -162,7 +167,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     return c.json({ error: 'server_error', error_description: 'Missing claims' }, 500);
   }
   const tokenClaims = introspection.claims;
-  const sub = tokenClaims.sub as string;
+  // The sub recorded in the token (the one the app was given: never derived again here), and the
+  // account it is for (every lookup is by the account's id, never by the recorded sub).
+  const recordedSub = tokenClaims.sub as string;
+  const sub = introspection.accountUserId ?? recordedSub;
   const scope = (tokenClaims.scope as string) || '';
   const claimsParam = (tokenClaims.claims as string) || undefined;
   const scopes = scope.split(' ');
@@ -312,6 +320,25 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   // Extract client_id from token claims
   const client_id = tokenClaims.client_id as string;
   const clientMetadata = client_id ? await getClientCached(c, c.env, client_id) : null;
+  if (pairwiseTokenLacksReference(tokenClaims, clientMetadata)) {
+    // A pairwise app's token issued before its tokens carried the account reference.
+    return c.json(
+      { error: 'invalid_token', error_description: 'The access token is invalid' },
+      401
+    );
+  }
+
+  // The app's identity mapping decides the sub (a pairwise app's included) and what is released:
+  // a token with no client, or one whose client is gone, is never answered with unmapped claims.
+  if (!client_id || !clientMetadata) {
+    return c.json(
+      {
+        error: 'invalid_token',
+        error_description: 'The access token is invalid',
+      },
+      401
+    );
+  }
 
   // eduperson_assurance comes from the person's evidence, read now and only when the request asks
   // for it and the tenant has values to release. A failed read releases nothing (and is logged).
@@ -343,8 +370,14 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       })
     : {};
 
+  // A `sub` value the claims request names is the sub the app was given, as recorded in the token
+  // (never derived again: the app's configuration may have changed since), never the account's id.
+  const subjectValue = claimsRequestRestrictsSub(claimsRequest, 'userinfo')
+    ? recordedSub
+    : undefined;
   const claimEvaluation = evaluateClaimsForTarget({
     target: 'userinfo',
+    ...(subjectValue !== undefined ? { subjectValue } : {}),
     claimsRequest,
     initialClaims: { sub },
     availableClaims: {
@@ -384,6 +417,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         tenantId,
         clientId: client_id,
         failureContext,
+        subjectType: clientMetadata.subject_type ?? 'public',
+        // The sub recorded in the token is not derived again (a failed salt or sector read must not
+        // fail a valid token's UserInfo); the claims name the account for every lookup.
+        fixedSubject: recordedSub,
         sectorIdentifier: clientMetadata.sector_identifier_uri,
         redirectUris: clientMetadata.redirect_uris,
         selector: clientMetadata.identity_mapping,
@@ -407,6 +444,9 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         });
         Object.assign(userClaims, mapped.claims);
       }
+      // The response names the user as the token does: the mapping, given the account, derives
+      // today's sub, which a later change of the app's configuration may have moved.
+      if ('sub' in userClaims) userClaims.sub = recordedSub;
     } catch (mappingError) {
       failureContext.code ??=
         mappingError instanceof OIDCIdentityMappingRuntimeError

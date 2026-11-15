@@ -983,17 +983,17 @@ import {
 } from './identity-mapping-preview';
 import { adminIdentifierSaltPutHandler, adminIdentifierSaltsListHandler } from './identifier-salts';
 import {
+  adminIdentifierSourceImportHandler,
+  adminIdentifierSourcesListHandler,
+} from './identifier-sources';
+import {
+  adminIdentifierExceptionsImportHandler,
+  adminIdentifierExceptionsListHandler,
+} from './identifier-exceptions';
+import {
   adminIdentifierStoreImportHandler,
   adminIdentifierStoresListHandler,
 } from './identifier-stores';
-import {
-  adminPersistentIdentifierProfileCreateHandler,
-  adminPersistentIdentifierProfileDeleteHandler,
-  adminPersistentIdentifierProfileGetHandler,
-  adminPersistentIdentifierProfilesListHandler,
-  adminPersistentIdentifierProfileUpdateHandler,
-  adminPersistentIdentifierPreviewHandler,
-} from './persistent-identifier-profiles';
 import {
   adminIdentityMappingCatalogCreateHandler,
   adminIdentityMappingCatalogsListHandler,
@@ -3051,6 +3051,26 @@ app.post(
   adminIdentifierStoreImportHandler
 );
 app.get(
+  '/api/admin/field-mapping/identifier-sources',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentifierSourcesListHandler
+);
+app.post(
+  '/api/admin/field-mapping/identifier-sources/:name/import',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentifierSourceImportHandler
+);
+app.get(
+  '/api/admin/field-mapping/identifier-exceptions',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentifierExceptionsListHandler
+);
+app.post(
+  '/api/admin/field-mapping/identifier-exceptions/:name/import',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentifierExceptionsImportHandler
+);
+app.get(
   '/api/admin/field-mapping/identifier-salts',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentifierSaltsListHandler
@@ -3059,36 +3079,6 @@ app.put(
   '/api/admin/field-mapping/identifier-salts/:name',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentifierSaltPutHandler
-);
-app.get(
-  '/api/admin/field-mapping/persistent-identifier-profiles',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminPersistentIdentifierProfilesListHandler
-);
-app.get(
-  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminPersistentIdentifierProfileGetHandler
-);
-app.post(
-  '/api/admin/field-mapping/persistent-identifier-profiles',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminPersistentIdentifierProfileCreateHandler
-);
-app.put(
-  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminPersistentIdentifierProfileUpdateHandler
-);
-app.delete(
-  '/api/admin/field-mapping/persistent-identifier-profiles/:profileId',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminPersistentIdentifierProfileDeleteHandler
-);
-app.post(
-  '/api/admin/field-mapping/persistent-identifier-profiles/preview',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminPersistentIdentifierPreviewHandler
 );
 app.get(
   '/api/admin/field-mapping/catalogs',

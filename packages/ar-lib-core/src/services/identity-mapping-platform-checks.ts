@@ -34,11 +34,7 @@ export interface PlatformCheckedRule {
 }
 
 /** Operations that make a persistent identifier from a tenant's secret. */
-const PERSISTENT_IDENTIFIER_OPERATIONS: ReadonlySet<string> = new Set([
-  'oidc_pairwise_sub',
-  'saml_edu_person_targeted_id',
-  'persistent_identifier',
-]);
+const PERSISTENT_IDENTIFIER_OPERATIONS: ReadonlySet<string> = new Set(['persistent_identifier']);
 
 /**
  * The side of a reference that names none. The runtime resolver reads a missing `side` as
@@ -84,10 +80,7 @@ function transformViolation(transform: {
   operation: string;
   parameters?: Record<string, unknown> | null;
 }): string | null {
-  if (
-    PERSISTENT_IDENTIFIER_OPERATIONS.has(transform.operation) ||
-    str(transform.parameters?.persistentIdentifierProfileId) !== null
-  ) {
+  if (PERSISTENT_IDENTIFIER_OPERATIONS.has(transform.operation)) {
     return `platform mapping cannot make a persistent identifier (${transform.operation})`;
   }
   return null;

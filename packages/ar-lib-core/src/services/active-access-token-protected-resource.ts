@@ -1,6 +1,10 @@
 import type { Context, Env as HonoEnv, MiddlewareHandler } from 'hono';
 import type { Env as AuthrimEnv } from '../types/env';
-import { introspectTokenFromContext } from '../utils/token-introspection';
+import {
+  introspectedTokenClient,
+  introspectTokenFromContext,
+  resolveIntrospectedAccountUserId,
+} from '../utils/token-introspection';
 
 const CONTEXT_KEY = 'activeAccessTokenProtectedResource';
 
@@ -38,10 +42,17 @@ export function createActiveAccessTokenProtectedResourceMiddleware(
         : options.audience;
     const result = await introspectTokenFromContext(
       c as unknown as Context<{ Bindings: AuthrimEnv }>,
-      { audience: expectedAudience }
+      // A pairwise app's token carries the sealed account reference: the account is opened from it.
+      { audience: expectedAudience, allowSubjectReference: true }
     );
     const claims = result.claims;
-    const subject = typeof claims?.sub === 'string' ? claims.sub : '';
+    // The account the token is for (never the sub an app was given); empty for a token that has
+    // none, or a pairwise app's token without the reference.
+    const subject =
+      resolveIntrospectedAccountUserId(
+        result,
+        await introspectedTokenClient(c as unknown as Context<{ Bindings: AuthrimEnv }>, result)
+      ) ?? '';
     const tenantId = typeof claims?.tenant_id === 'string' ? claims.tenant_id : '';
     const audiences = Array.isArray(claims?.aud) ? claims.aud : [claims?.aud];
     const scopes = typeof claims?.scope === 'string' ? claims.scope.split(/\s+/u) : [];

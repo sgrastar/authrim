@@ -13,7 +13,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import { exportPKCS8, generateKeyPair } from 'jose';
-import { openSubjectReference, type DatabaseAdapter } from '@authrim/ar-lib-core';
+import {
+  computeIdentifier,
+  openSubjectReference,
+  sealSubjectReference,
+  type DatabaseAdapter,
+} from '@authrim/ar-lib-core';
 import {
   createMockEnv,
   createMockContext,
@@ -1147,6 +1152,14 @@ describe('Security-Critical Tests', () => {
     // `family_release_approval`), and what the mapping puts in the ID token: an optional claim
     // and a required one, as the app's Destination Profile would classify them.
     let grantApproval: string[] | null;
+    // Extra metadata of the app the grant is for (a pairwise app, ...).
+    let clientOverrides: Record<string, unknown>;
+    // The claims parameter the authorization request carried (JSON), if any.
+    let codeClaims: string | undefined;
+    // The sub the family recorded at the original authentication, if any.
+    let familyIssuedSubject: string | undefined;
+    // A pairwise app's refresh token presented without the sealed reference (issued before it).
+    let refreshWithoutReference: boolean;
     let mappedExtraClaims: Record<string, unknown>;
     let releaseRequestContext: ReturnType<typeof createMockContext>;
 
@@ -1164,6 +1177,10 @@ describe('Security-Critical Tests', () => {
 
     beforeEach(() => {
       grantApproval = ['*'];
+      clientOverrides = {};
+      codeClaims = undefined;
+      familyIssuedSubject = undefined;
+      refreshWithoutReference = false;
       mappedExtraClaims = {};
       (mockEnv as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = ROOT_KEY;
     });
@@ -1177,6 +1194,7 @@ describe('Security-Critical Tests', () => {
       mocks.mockGetClientCached.mockResolvedValue({
         ...client,
         information_release_consent: { enabled: true, ask: 'once' },
+        ...clientOverrides,
       });
       return client;
     }
@@ -1187,6 +1205,7 @@ describe('Security-Critical Tests', () => {
         userId: USER_ID,
         scope,
         releaseApproval: grantApproval ?? undefined,
+        ...(codeClaims ? { claims: codeClaims } : {}),
       });
       if (grantApproval === null) delete authCodeData.releaseApproval;
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
@@ -1214,9 +1233,22 @@ describe('Security-Critical Tests', () => {
         sub: USER_ID,
         scope,
       });
+      // A pairwise app's refresh token carries the sub the app was given and the sealed account
+      // reference (the family is kept by the account's id).
+      if (clientOverrides.subject_type === 'pairwise' && !refreshWithoutReference) {
+        Object.assign(refreshTokenPayload, {
+          sub: 'sub-the-app-was-given',
+          authrim_subject_ref: await sealSubjectReference(
+            mockEnv as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+            { tenantId: 'default', clientId: client.client_id },
+            USER_ID
+          ),
+        });
+      }
       mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
       mocks.mockGetRefreshToken.mockResolvedValue({
         family_release_approval: grantApproval,
+        ...(familyIssuedSubject ? { family_issued_subject: familyIssuedSubject } : {}),
         sub: USER_ID,
         scope: refreshTokenPayload.scope,
         client_id: refreshTokenPayload.client_id,
@@ -1262,6 +1294,151 @@ describe('Security-Critical Tests', () => {
         (mockEnv as unknown as { DB_ADMIN: unknown }).DB_ADMIN = createMockD1();
       });
 
+      describe('the sub of a refresh of a pairwise app (OIDC Core 12.2)', () => {
+        const SALT = 'tenant-pairwise-salt';
+        const subFor = (audience: string) =>
+          computeIdentifier({
+            algorithm: 'authrim_sha256',
+            value: USER_ID,
+            audience,
+            salt: new TextEncoder().encode(SALT),
+          });
+        beforeEach(() => {
+          clientOverrides = { subject_type: 'pairwise' };
+          const keyManagerStub = mockEnv.KEY_MANAGER.get(
+            mockEnv.KEY_MANAGER.idFromName('default-v3')
+          ) as unknown as Record<string, unknown>;
+          Object.assign(keyManagerStub, {
+            getOrCreateSecretRpc: vi.fn().mockResolvedValue({ active: { value: SALT } }),
+          });
+        });
+
+        it('records the sub the ID token carried on the family the code grant begins', async () => {
+          const createFamilyRpc = vi.fn().mockResolvedValue({
+            version: 1,
+            newJti: 'mock-refresh-jti',
+            expiresIn: 2592000,
+            allowedScope: 'openid offline_access',
+          });
+          mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({ createFamilyRpc });
+
+          const response = await exchangeCodeForUser('openid offline_access');
+
+          expect(response.status).toBe(200);
+          expect(createFamilyRpc).toHaveBeenCalledWith(
+            expect.objectContaining({ issuedSubject: await subFor('app.example.com') })
+          );
+        });
+
+        it('gives the sub the family recorded when the client is unchanged', async () => {
+          familyIssuedSubject = await subFor('app.example.com');
+          const response = await refreshForUser('openid');
+          expect(response.status).toBe(200);
+          expect(mocks.mockCreateIDToken.mock.calls.at(-1)?.[0]).toMatchObject({
+            sub: familyIssuedSubject,
+          });
+        });
+
+        it('refuses with invalid_grant when the sector changed since the original authentication', async () => {
+          familyIssuedSubject = await subFor('app.example.com');
+          clientOverrides = {
+            subject_type: 'pairwise',
+            redirect_uris: ['https://other.example.org/callback'],
+          };
+          mocks.mockCreateIDToken.mockClear();
+          const response = await refreshForUser('openid');
+          expect(response.status).toBe(400);
+          expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_grant' });
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
+
+        it('refuses a pairwise refresh token without the account reference, before the family is read', async () => {
+          familyIssuedSubject = await subFor('app.example.com');
+          refreshWithoutReference = true;
+          mocks.mockGetRefreshToken.mockClear();
+          const response = await refreshForUser('openid');
+          expect(response.status).toBe(400);
+          expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_grant' });
+          expect(mocks.mockGetRefreshToken).not.toHaveBeenCalled();
+        });
+
+        it('opens the account from the reference: the family is read by the account id, never the presented sub', async () => {
+          familyIssuedSubject = await subFor('app.example.com');
+          const response = await refreshForUser('openid');
+          expect(response.status).toBe(200);
+          expect(mocks.mockGetRefreshToken.mock.calls.at(-1)?.[1]).toBe(USER_ID);
+          // The new access and refresh tokens carry the recorded sub and the reference.
+          const access = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<
+            string,
+            unknown
+          >;
+          expect(access.sub).toBe(familyIssuedSubject);
+          expect(JSON.stringify(access)).not.toContain(USER_ID);
+          await expect(
+            openSubjectReference(
+              mockEnv as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+              { tenantId: 'default', clientId: 'confidential-client-001' },
+              access.authrim_subject_ref as string
+            )
+          ).resolves.toBe(USER_ID);
+          const refresh = mocks.mockCreateRefreshToken.mock.calls.at(-1)?.[0] as Record<
+            string,
+            unknown
+          >;
+          expect(refresh.sub).toBe(familyIssuedSubject);
+          expect(JSON.stringify(refresh)).not.toContain(USER_ID);
+        });
+
+        it('refuses a pairwise family that recorded no sub', async () => {
+          mocks.mockCreateIDToken.mockClear();
+          const response = await refreshForUser('openid');
+          expect(response.status).toBe(400);
+          expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_grant' });
+        });
+      });
+
+      describe('a claims parameter sub value on the code grant of a pairwise app', () => {
+        const SALT = 'tenant-pairwise-salt';
+        const claimsWith = (sub: unknown) =>
+          JSON.stringify({
+            id_token: { sub: Array.isArray(sub) ? { values: sub } : { value: sub } },
+          });
+        async function expectedSub() {
+          return computeIdentifier({
+            algorithm: 'authrim_sha256',
+            value: USER_ID,
+            audience: 'app.example.com',
+            salt: new TextEncoder().encode(SALT),
+          });
+        }
+        beforeEach(() => {
+          clientOverrides = { subject_type: 'pairwise' };
+          const keyManagerStub = mockEnv.KEY_MANAGER.get(
+            mockEnv.KEY_MANAGER.idFromName('default-v3')
+          ) as unknown as Record<string, unknown>;
+          Object.assign(keyManagerStub, {
+            getOrCreateSecretRpc: vi.fn().mockResolvedValue({ active: { value: SALT } }),
+          });
+        });
+
+        it.each([['value'], ['values']])('accepts the issued pairwise sub (%s)', async (kind) => {
+          const sub = await expectedSub();
+          codeClaims = claimsWith(kind === 'values' ? [sub] : sub);
+          const response = await exchangeCodeForUser();
+          expect(response.status).toBe(200);
+          expect(mocks.mockCreateIDToken.mock.calls.at(-1)?.[0]).toMatchObject({ sub });
+        });
+
+        it.each([['value'], ['values']])('refuses the raw account id (%s)', async (kind) => {
+          codeClaims = claimsWith(kind === 'values' ? [USER_ID] : USER_ID);
+          mocks.mockCreateIDToken.mockClear();
+          const response = await exchangeCodeForUser();
+          expect(response.status).toBe(400);
+          expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_request' });
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
+      });
+
       describe.each(flows)('on the %s grant', (_grant, exchange) => {
         it('records one scalar failure on the real dedicated Admin database', async () => {
           const store = issuanceFailureDatabase();
@@ -1305,6 +1482,70 @@ describe('Security-Critical Tests', () => {
           }
         });
 
+        it('issues a pairwise app the built-in pairwise sub with no Mapping Set, never the user id', async () => {
+          clientOverrides = { subject_type: 'pairwise' };
+          const salt = 'tenant-pairwise-salt';
+          const keyManagerStub = mockEnv.KEY_MANAGER.get(
+            mockEnv.KEY_MANAGER.idFromName('default-v3')
+          ) as unknown as Record<string, unknown>;
+          Object.assign(keyManagerStub, {
+            getOrCreateSecretRpc: vi.fn().mockResolvedValue({ active: { value: salt } }),
+          });
+          // What a persistent_identifier step (authrim_sha256, the sector, the account) makes.
+          const expected = await computeIdentifier({
+            algorithm: 'authrim_sha256',
+            value: USER_ID,
+            audience: 'app.example.com',
+            salt: new TextEncoder().encode(salt),
+          });
+
+          // The sub the family recorded at the original authentication (read on a refresh).
+          familyIssuedSubject = expected;
+
+          const response = await exchange();
+
+          expect(response.status).toBe(200);
+          const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<
+            string,
+            unknown
+          >;
+          expect(idClaims.sub).toBe(expected);
+          expect(idClaims.sub).not.toBe(USER_ID);
+          await expect(
+            openSubjectReference(
+              mockEnv as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+              { tenantId: 'default', clientId: 'confidential-client-001' },
+              idClaims.authrim_subject_ref as string
+            )
+          ).resolves.toBe(USER_ID);
+          // The access token carries the same sub and the sealed account reference, never the id.
+          const accessClaims = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<
+            string,
+            unknown
+          >;
+          expect(accessClaims.sub).toBe(expected);
+          await expect(
+            openSubjectReference(
+              mockEnv as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+              { tenantId: 'default', clientId: 'confidential-client-001' },
+              accessClaims.authrim_subject_ref as string
+            )
+          ).resolves.toBe(USER_ID);
+          expect(JSON.stringify(accessClaims)).not.toContain(USER_ID);
+        });
+
+        it('refuses to issue a pairwise app any ID token when its sector or salt is unavailable', async () => {
+          clientOverrides = {
+            subject_type: 'pairwise',
+            redirect_uris: ['https://a.example/cb', 'https://b.example/cb'],
+          };
+          // (A refresh of a family that recorded the sub it began with.)
+          familyIssuedSubject = 'recorded-sub';
+          const response = await exchange();
+          expect(response.status).toBe(500);
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
+
         it.each([
           ['a tenant default naming a Mapping Set that does not exist', 'set-gone'],
           ['a tenant default that is not a Mapping Set ID', 'not a set id'],
@@ -1315,8 +1556,10 @@ describe('Security-Critical Tests', () => {
           const response = await exchange();
 
           expect(response.status).toBe(400);
+          // A refresh whose mapping cannot be applied ends the grant (the user authenticates
+          // again); the code grant says the app's configuration is invalid.
           expect(await parseJsonResponse<{ error: string }>(response)).toMatchObject({
-            error: 'invalid_client',
+            error: _grant === 'refresh_token' ? 'invalid_grant' : 'invalid_client',
           });
           expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
         });
@@ -1449,6 +1692,8 @@ describe('Security-Critical Tests', () => {
       });
 
       beforeEach(() => {
+        // A refresh of a family that recorded the sub the mapping issued at the original grant.
+        familyIssuedSubject = 'alice';
         // The Admin database: the Mapping Set the app is bound to is read from it.
         (mockEnv as unknown as { DB_ADMIN: unknown }).DB_ADMIN = createMockD1();
         mocks.mockFindCanonicalRuntimeUserProjection.mockImplementation(async (userId: string) => ({
@@ -1533,6 +1778,168 @@ describe('Security-Critical Tests', () => {
         mappingFixture.binding = null;
       });
 
+      function subStep(parameters: Record<string, unknown>) {
+        const binding = mappingFixture.binding as { edges: unknown[]; transforms: unknown[] };
+        binding.edges = [];
+        binding.transforms = [
+          {
+            id: 'step-sub',
+            operation: 'persistent_identifier',
+            inputEdgeIds: [],
+            parameters: { input: 'account', format: 'plain', ...parameters },
+            outputTargetRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+          },
+        ];
+      }
+
+      it('answers invalid_grant (not invalid_client) when the mapping now cannot issue the sub', async () => {
+        familyIssuedSubject = 'alice';
+        // A setting no identifier is made from: a fault of the mapping, which ends the grant.
+        subStep({ algorithm: 'no_such_algorithm' });
+        mocks.mockCreateAccessToken.mockClear();
+
+        const response = await refreshForUser('profile');
+
+        expect(response.status).toBe(400);
+        expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_grant' });
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      describe('when the infrastructure fails under the real derivation', () => {
+        const failures: Array<[string, () => void, Record<string, unknown>]> = [
+          [
+            'the salt cannot be read (key manager RPC fails)',
+            () => {
+              const stub = mockEnv.KEY_MANAGER.get(
+                mockEnv.KEY_MANAGER.idFromName('default-v3')
+              ) as unknown as Record<string, unknown>;
+              Object.assign(stub, {
+                getOrCreateSecretRpc: vi.fn().mockRejectedValue(new Error('key manager down')),
+              });
+            },
+            { algorithm: 'authrim_sha256' },
+          ],
+          [
+            'the exceptions cannot be read (database read fails)',
+            () => {
+              const stub = mockEnv.KEY_MANAGER.get(
+                mockEnv.KEY_MANAGER.idFromName('default-v3')
+              ) as unknown as Record<string, unknown>;
+              Object.assign(stub, {
+                getOrCreateSecretRpc: vi.fn().mockResolvedValue({ active: { value: 'salt' } }),
+              });
+              // Only the read of the exception list fails; the rest of the database answers.
+              const healthy = createMockD1();
+              const prepare = healthy.prepare.bind(healthy);
+              healthy.prepare = ((query: string) => {
+                if (query.includes('mapped_identifier_exceptions')) {
+                  throw new Error('d1 down');
+                }
+                return prepare(query);
+              }) as typeof healthy.prepare;
+              (mockEnv as unknown as { DB_ADMIN: unknown }).DB_ADMIN = healthy;
+            },
+            { algorithm: 'authrim_sha256', exceptions: 'blocked-apps' },
+          ],
+        ];
+
+        it.each(failures)('answers server_error on a refresh when %s', async (_n, inject, step) => {
+          familyIssuedSubject = 'alice';
+          subStep(step);
+          inject();
+          mocks.mockCreateAccessToken.mockClear();
+
+          const response = await refreshForUser('profile');
+
+          expect(response.status).toBe(500);
+          expect(await parseJsonResponse(response)).toMatchObject({ error: 'server_error' });
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        });
+
+        describe('on the second evaluation of a refresh with openid (the ID token reissue)', () => {
+          const SALT = 'second-evaluation-salt';
+          function keyManagerStub() {
+            return mockEnv.KEY_MANAGER.get(
+              mockEnv.KEY_MANAGER.idFromName('default-v3')
+            ) as unknown as Record<string, unknown>;
+          }
+          async function arrange(second: () => unknown) {
+            // The family recorded what the first evaluation derives (the app's own ID).
+            familyIssuedSubject = await computeIdentifier({
+              algorithm: 'authrim_sha256',
+              value: USER_ID,
+              audience: 'confidential-client-001',
+              salt: new TextEncoder().encode(SALT),
+            });
+            subStep({ algorithm: 'authrim_sha256' });
+            let calls = 0;
+            Object.assign(keyManagerStub(), {
+              getOrCreateSecretRpc: vi.fn().mockImplementation(async () => {
+                calls += 1;
+                if (calls === 1) return { active: { value: SALT } };
+                return second();
+              }),
+            });
+            mocks.mockCreateAccessToken.mockClear();
+            mocks.mockCreateIDToken.mockClear();
+          }
+
+          it('answers server_error when the salt cannot be read the second time', async () => {
+            await arrange(() => {
+              throw new Error('key manager down');
+            });
+
+            const response = await refreshForUser('openid profile');
+
+            expect(response.status).toBe(500);
+            expect(await parseJsonResponse(response)).toMatchObject({ error: 'server_error' });
+            expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+          });
+
+          it('answers invalid_grant when the mapping fails for a reason of its own the second time', async () => {
+            await arrange(() => {
+              // The mapping no longer makes an identifier from these settings.
+              subStep({ algorithm: 'no_such_algorithm' });
+              return { active: { value: SALT } };
+            });
+
+            const response = await refreshForUser('openid profile');
+
+            expect(response.status).toBe(400);
+            expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_grant' });
+            expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+          });
+        });
+
+        it.each(failures)('keeps the code grant answer when %s', async (_n, inject, step) => {
+          subStep(step);
+          inject();
+
+          const response = await exchangeCodeForUser('profile');
+
+          // As before: the app's mapping could not be applied (unchanged by the refresh rule).
+          expect(response.status).toBe(400);
+          expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_client' });
+        });
+      });
+
+      it.each([['profile'], ['api:read offline_access'], ['openid profile']])(
+        'refuses a refresh of a family that began before this mapping, with no ID token or any (%s)',
+        async (scope) => {
+          // The family recorded the user's id (no mapping then); the app's mapping now issues
+          // another sub, so the refresh is refused whatever it asks for: no access token names
+          // the user by their id in its place.
+          familyIssuedSubject = undefined;
+          mocks.mockCreateAccessToken.mockClear();
+
+          const response = await refreshForUser(scope);
+
+          expect(response.status).toBe(400);
+          expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_grant' });
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        }
+      );
+
       describe.each(flows)('on the %s grant', (_grant, exchange) => {
         it.each(['openid', 'openid profile'])(
           'issues the sub the mapping derives whatever the scope (%s), and releases no more',
@@ -1553,8 +1960,9 @@ describe('Security-Critical Tests', () => {
             expect(idClaims).not.toHaveProperty('preferred_username');
             expect(idClaims).not.toHaveProperty('email');
             expect(idClaims).not.toHaveProperty('phone_number');
+            // The access token carries the sub the mapping derives and the account reference.
             expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
-              sub: USER_ID,
+              sub: 'alice',
             });
             await expect(
               openSubjectReference(
@@ -1575,6 +1983,8 @@ describe('Security-Critical Tests', () => {
                 validationRules: unknown[];
               };
               binding.edges = [];
+              // This mapping issues no sub: the family recorded the user's id.
+              familyIssuedSubject = undefined;
               binding.validationRules = [
                 {
                   id: 'rule-username-required',
@@ -1613,6 +2023,8 @@ describe('Security-Critical Tests', () => {
           'on the %s grant with a mapping that reads only a custom attribute',
           (_grant, exchange) => {
             it('looks up no profile or contact value for it', async () => {
+              // The sub is not the mapping's here (its attribute is not available): the user's id.
+              familyIssuedSubject = undefined;
               const binding = mappingFixture.binding as {
                 catalog: { entries: Array<{ id: string; path: string }> };
                 edges: Array<{ sourceRef: { path: string } }>;

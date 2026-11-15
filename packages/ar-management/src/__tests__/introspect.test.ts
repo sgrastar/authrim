@@ -28,6 +28,7 @@ const {
   mockResolveAccountDataContextFromHono,
   mockAccountAdapter,
   mockResolveDeviceSecretRouteHint,
+  mockDeriveIssuedSubject,
 } = vi.hoisted(() => {
   const clientRepo = {
     findByClientId: vi.fn(),
@@ -37,6 +38,11 @@ const {
   };
   return {
     mockClientRepository: clientRepo,
+    // The sub a client is given for a user: the user's id unless a test says otherwise.
+    mockDeriveIssuedSubject: vi.fn(async (_ctx: unknown, userId: string) => ({
+      ok: true as const,
+      sub: userId,
+    })),
     mockValidateClientId: vi.fn(),
     mockTimingSafeEqual: vi.fn((a: string, b: string) => a === b),
     mockVerifyClientSecretHash: vi.fn(async (secret: string, hash: string) => {
@@ -96,6 +102,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     verifyToken: mockVerifyToken,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    getClientCached: async (_c: unknown, _e: unknown, id: string): Promise<unknown> =>
+      (await mockClientRepository.findByClientId(id)) as unknown,
+    deriveIssuedSubject: mockDeriveIssuedSubject,
     validateClientAssertion: mockValidateClientAssertion,
     // JWKS cache utility
     getKeyByKid: mockGetKeyByKid,
@@ -1304,6 +1313,90 @@ describe('Token Introspection Endpoint', () => {
       expect(body.iat).toBe(Math.floor(createdAt / 1000));
       expect(body).not.toHaveProperty('aud');
       expect(body).not.toHaveProperty('last_seen_at');
+    });
+
+    describe('the user’s id is named only to the app the secret was issued to, when that app’s sub is the id', () => {
+      async function introspectSecretOf(issuerClientId: string, issuer: Record<string, unknown>) {
+        const c = createMockContext({
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: {
+            token: 'raw-device-secret',
+            token_type_hint: 'device_secret',
+            client_id: 'client-123',
+            client_secret: 'client-secret',
+          },
+        }) as never;
+        vi.mocked(validateClientId).mockReturnValue({ valid: true });
+        mockClientRepository.findByClientId.mockImplementation(async (id: string) =>
+          id === 'client-123'
+            ? { client_id: 'client-123', client_secret_hash: 'hash_client-secret', ...issuer }
+            : { client_id: id, client_name: 'Other' }
+        );
+        mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+          id: 'ds-001',
+          installation_id: 'inst-001',
+          tenant_id: 'default',
+          user_id: 'user-123',
+          client_id: issuerClientId,
+          trust_group_id: 'group-1',
+          secret_hash: 'hash',
+          device_platform: 'ios',
+          created_at: Date.now() - 60_000,
+          updated_at: Date.now() - 60_000,
+          expires_at: Date.now() + 3_600_000,
+          last_used_at: Date.now() - 60_000,
+          use_count: 1,
+          is_active: 1,
+        });
+        const response = await introspectHandler(c);
+        return {
+          status: response.status,
+          body: await response.json(),
+        };
+      }
+
+      it('names it to the app that owns the secret', async () => {
+        const { body } = await introspectSecretOf('client-123', {});
+        expect(body).toMatchObject({ active: true, sub: 'user-123' });
+      });
+
+      it('omits the sub when the owner’s mapping needs the user’s attributes, which are not read here', async () => {
+        // As the real derivation does for a sub copied from preferred_username: it reads the
+        // attribute through the loader it is given, and fails when that fails.
+        mockDeriveIssuedSubject.mockImplementationOnce(async (ctx: unknown, _userId: string) => {
+          const { loadUserAttributes } = ctx as {
+            loadUserAttributes: (id: string, names: string[]) => Promise<unknown>;
+          };
+          await loadUserAttributes('user-123', ['preferred_username']);
+          return { ok: true as const, sub: 'alice' };
+        });
+        const { body } = await introspectSecretOf('client-123', {});
+        expect(body).toMatchObject({ active: true });
+        expect(body).not.toHaveProperty('sub');
+        expect(JSON.stringify(body)).not.toContain('user-123');
+      });
+
+      it.each([
+        [
+          'another app of the group introspects it',
+          'other-client',
+          { trust_group: 'group-1', device_secret_introspection_trust_groups: ['group-1'] },
+          undefined,
+        ],
+        ['the owner is a pairwise app', 'client-123', { subject_type: 'pairwise' }, 'derive-fails'],
+        ['the owner’s mapping issues another sub', 'client-123', {}, 'mapped-sub'],
+      ])('omits the sub when %s', async (_name, issuerClientId, issuer, derived) => {
+        if (derived === 'derive-fails') {
+          mockDeriveIssuedSubject.mockResolvedValueOnce({ ok: false } as never);
+        } else if (derived) {
+          mockDeriveIssuedSubject.mockResolvedValueOnce({ ok: true, sub: derived });
+        }
+        const { status, body } = await introspectSecretOf(issuerClientId, issuer);
+        expect(status).toBe(200);
+        expect(body).toMatchObject({ active: true, token_type: 'device_secret' });
+        expect(body).not.toHaveProperty('sub');
+        expect(JSON.stringify(body)).not.toContain('user-123');
+      });
     });
 
     it('omits fallback_display_name when the device has a user display name', async () => {

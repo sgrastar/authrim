@@ -32,6 +32,8 @@ import {
   listObjectCatalogObjects,
   getTenantIdFromContext,
   introspectTokenFromContext,
+  introspectedTokenClient,
+  resolveIntrospectedAccountUserId,
   getSessionStoreBySessionId,
   getSessionRevocationStore,
   isShardedSessionId,
@@ -372,7 +374,13 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
       introspection.claims?.sub &&
       (scopes.includes('data_export') || scopes.includes('authrim:data_export'))
     ) {
-      return introspection.claims.sub;
+      // Not a token that names the user by a sealed reference or by an app's pairwise sub: an
+      // export names the user by their id, which such an app must not be given (a client that
+      // cannot be read is not trusted either).
+      return resolveIntrospectedAccountUserId(
+        introspection,
+        await introspectedTokenClient(c, introspection)
+      );
     }
     return null;
   }

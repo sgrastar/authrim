@@ -120,6 +120,9 @@ export async function getRefreshToken(
       ...(Array.isArray(result.family.release_approval) && {
         family_release_approval: result.family.release_approval,
       }),
+      ...(typeof result.family.issued_subject === 'string' && {
+        family_issued_subject: result.family.issued_subject,
+      }),
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor((result.family.expires_at || Date.now()) / 1000),
       familyId: `${userId}:${clientId}`,

@@ -142,10 +142,16 @@ vi.mock('../attributes', async (importOriginal) => {
 });
 vi.mock('../subject', () => ({
   createSAMLSessionIndex: vi.fn(async () => 'session-index'),
+  resolveEffectiveSAMLNameIDFormat: (input: {
+    spConfig: { nameIdFormat?: string };
+    mappedNameID: boolean;
+  }) =>
+    input.mappedNameID
+      ? 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent'
+      : input.spConfig.nameIdFormat || 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
   resolveSAMLNameIDValue: mocks.resolveNameId,
   resolveSAMLPairwiseSecret: vi.fn(async () => 'pairwise-secret'),
   resolveSAMLPairwiseSecretForRef: vi.fn(async () => 'referenced-secret'),
-  resolveSAMLEduPersonTargetedIDOpaque: vi.fn(async () => 'targeted-id'),
   resolveSAMLPersistentNameIDRegistryStore: vi.fn(() => undefined),
   resolveSAMLTransientNameIDStore: vi.fn(() => undefined),
 }));

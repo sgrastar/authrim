@@ -1,3 +1,4 @@
+import { deIdentifierStep } from './identifier-step/de';
 import type { Messages } from './ja';
 import { deSettings } from './settings/de';
 import { deCompliance } from './compliance/de';
@@ -29,6 +30,7 @@ export const de = {
 	...deSettings,
 	...deCompliance,
 	...deMappingConsole,
+	...deIdentifierStep,
 	...deServiceFlows,
 	...deConnectionSettings,
 	...deAccountFlows,
@@ -136,7 +138,6 @@ export const de = {
 	'nav.custom.statements': 'Einwilligungstexte',
 	'nav.data.profiles': 'Quelle / Ziel',
 	'nav.data.mappingSets': 'Zuordnungssätze',
-	'nav.data.identifiers': 'Dauerhafte Kennungen',
 	'nav.data.federationTrust': 'Föderationsvertrauen',
 	'nav.data.readiness': 'Schemabereitschaft',
 	'nav.mon.adminLogging': 'Administratorprotokollierung',
@@ -704,8 +705,6 @@ export const de = {
 	'map.c.identifier': 'Kennungen',
 	'map.c.json': 'JSON',
 	'map.t.normalize': 'Leerzeichen oder Zeichen vereinheitlichen',
-	'map.t.oidc_pairwise_sub': 'OIDC-Pairwise-ID',
-	'map.t.saml_edu_person_targeted_id': 'SAML eduPersonTargetedID',
 	'map.t.json_build': 'JSON erstellen',
 	'map.t.json_extract_text': 'Text aus JSON',
 	'map.t.json_extract_boolean': 'true/false aus JSON',
@@ -723,8 +722,6 @@ export const de = {
 	'map.d.first': 'Verwendet nur den ersten von mehreren Werten.',
 	'map.d.concat': 'Verbindet die Werte mehrerer Attribute zu einem Text.',
 	'map.d.fallback': 'Verwendet von oben das erste Attribut mit einem Wert.',
-	'map.d.oidc_pairwise_sub': 'Verwendet die Pairwise-Kennung (sub) für diese App.',
-	'map.d.saml_edu_person_targeted_id': 'Erstellt die eduPersonTargetedID für diesen SP.',
 	'map.d.json_build':
 		'Fasst Attributwerte zu einem JSON-Objekt zusammen oder liest einen Wert, der JSON-Text ist.',
 	'map.d.json_extract_text': 'Liest einen Wert aus JSON als Text.',
@@ -736,8 +733,6 @@ export const de = {
 	'map.p.omitEmpty': 'Leere Werte weglassen',
 	'map.p.unique': 'Doppelte weglassen',
 	'map.p.nullValues': 'Werte, die als kein Wert gelten',
-	'map.p.persistentIdentifierProfileId': 'Kennungsprofil',
-	'map.p.profileHint': 'Leer: Standard des Mandanten.',
 	'map.p.keyMap': 'Schlüsselnamen',
 	'map.p.keyMapHint': 'Als JSON, z. B. {"mail": "email"}',
 	'map.p.nullHandling': 'Attribute ohne Wert',

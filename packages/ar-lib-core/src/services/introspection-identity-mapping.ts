@@ -95,7 +95,6 @@ export async function applyIntrospectionIdentityMapping(
     runtimeContext: {
       oidc: {
         clientId: input.resourceServerId,
-        pairwiseSubject: typeof input.claims.sub === 'string' ? input.claims.sub : undefined,
       },
     },
   });

@@ -856,6 +856,48 @@ describe('Token Revocation Endpoint', () => {
       expect(c.body).toHaveBeenCalledWith(null, 200);
     });
 
+    it('finds the refresh token family by the account its sealed reference opens when no hint is given', async () => {
+      const rootKey = 'ab'.repeat(32);
+      const { sealSubjectReference } = await import('@authrim/ar-lib-core');
+      const reference = await sealSubjectReference(
+        { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+        { tenantId: String(mockGetTenantIdFromContext()), clientId: 'client-123' },
+        'user-123'
+      );
+      const c = createMockContext({
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: {
+          token: 'unknown.token.type',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+        env: { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+      }) as never;
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      // A pairwise app's refresh token: the sub it was given, never the account's id.
+      vi.mocked(parseToken).mockReturnValue({
+        jti: 'token-jti-123',
+        client_id: 'client-123',
+        sub: 'sub-the-app-was-given',
+        authrim_subject_ref: reference,
+        token_use: 'refresh',
+        rtv: 1,
+      });
+      vi.mocked(getRefreshToken).mockClear();
+      vi.mocked(deleteRefreshToken).mockClear();
+      mockGetRefreshToken.mockResolvedValue({ familyId: 'family-123' });
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await revokeHandler(c);
+
+      expect(mockGetRefreshToken.mock.calls[0]?.[1]).toBe('user-123');
+      expect(deleteRefreshToken).toHaveBeenCalled();
+      expect((c as { body: unknown }).body).toHaveBeenCalledWith(null, 200);
+    });
+
     it('should treat as access token when not found as refresh token', async () => {
       const c = createMockContext({
         headers: {

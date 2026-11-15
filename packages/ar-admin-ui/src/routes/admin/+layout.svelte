@@ -246,10 +246,6 @@
 				},
 
 				{
-					href: '/admin/field-mapping/persistent-identifiers',
-					label: $LL.admin_nav_persistent_identifiers()
-				},
-				{
 					href: '/admin/field-mapping/field-mapping-sets',
 					label: $LL.admin_nav_mapping_policies(),
 					activePaths: ['/admin/field-mapping/edit']

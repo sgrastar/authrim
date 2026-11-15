@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { adminSession } from '#lib/auth/session.svelte.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+	import { identifierMaterialsClient } from '#lib/api/identifier-materials.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AppShell from '#lib/shell/AppShell.svelte';
 	import EnvironmentBanner from '#lib/shell/EnvironmentBanner.svelte';
@@ -13,10 +14,14 @@
 	import type { ScopeOption } from '#lib/shell/ScopeSwitcher.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import { provideIdentifierMaterials } from '#lib/ui/patterns/identifier-materials-context.js';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 
 	let { children } = $props();
+
+	// What the mapping editor's persistent identifier step chooses from and imports into.
+	provideIdentifierMaterials(identifierMaterialsClient);
 
 	// The pages built so far (every other address in the navigation shows a placeholder): the
 	// left nav marks the rest as under construction.
