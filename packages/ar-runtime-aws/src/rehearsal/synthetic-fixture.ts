@@ -15,7 +15,7 @@ import { renderPortableMigrationSql } from '../../../ar-lib-core/src/migrations/
 import { generateSelfSignedCertificate } from '../../../ar-saml/src/common/key-utils';
 import { POSTGRES_RESTORE_TABLE_CONTRACTS } from '../import/postgres-restore-table-contract';
 import { restoreEvidenceDigest, canonicalRestoreJson } from '../import/restore-evidence';
-import { SNAPSHOT_ADMIN_MAPPING_TABLES } from '../import/snapshot-admin-db';
+import type { SnapshotAdminMappingTable } from '../import/snapshot-admin-db';
 import { awsStateSupplementPayloadSha256 } from '../import/state-restore';
 import type { VerifiedAwsSamlSupplement } from '../import/runtime-assembly-input';
 
@@ -487,12 +487,34 @@ async function portableTableRows(
   );
 }
 
-function sourceAdminRows(profile: ReturnType<typeof resolveSyntheticFixtureProfile>) {
-  const rows: Record<string, PortableSqliteRow[]> = Object.fromEntries(
-    [...SNAPSHOT_ADMIN_MAPPING_TABLES, 'tenant_settings_documents'].map((table) => [table, []])
-  );
-  const put = (table: string, values: Record<string, string | number | null>) =>
+export function sourceAdminRows(profile: ReturnType<typeof resolveSyntheticFixtureProfile>) {
+  const rows: Record<SnapshotAdminMappingTable | 'tenant_settings_documents', PortableSqliteRow[]> =
+    {
+      field_mapping_sets: [],
+      field_mapping_versions: [],
+      field_mapping_activations: [],
+      compiled_mapping_snapshots: [],
+      field_catalogs: [],
+      field_catalog_versions: [],
+      field_catalog_entries: [],
+      mapping_rules: [],
+      mapping_rule_edges: [],
+      mapping_transform_steps: [],
+      mapping_transform_step_inputs: [],
+      mapping_validation_rules: [],
+      destination_profiles: [],
+      destination_profile_versions: [],
+      tenant_settings_documents: [],
+    };
+  const put = (table: keyof typeof rows, values: Record<string, string | number | null>) =>
     rows[table].push(row(values));
+  const targetRef = {
+    side: 'destination',
+    namespace: 'saml.attribute',
+    path: MAIL,
+    catalogEntryId: 'destination.mail',
+    profileId: 'profile-mail',
+  };
   const profileSchema = {
     destinationType: 'saml',
     attributes: [
@@ -584,6 +606,9 @@ function sourceAdminRows(profile: ReturnType<typeof resolveSyntheticFixtureProfi
     tenant_id: TENANT,
     field_mapping_version_id: 'version-mail',
     action: 'allow',
+    target_ref_json: JSON.stringify(targetRef),
+    output_edge_id: 'edge-mail',
+    output_step_id: null,
     priority: 0,
     created_at: NOW,
     scope_json: '{}',
@@ -601,13 +626,7 @@ function sourceAdminRows(profile: ReturnType<typeof resolveSyntheticFixtureProfi
       path: 'email',
       catalogEntryId: 'source.email',
     }),
-    target_ref_json: JSON.stringify({
-      side: 'destination',
-      namespace: 'saml.attribute',
-      path: MAIL,
-      catalogEntryId: 'destination.mail',
-      profileId: 'profile-mail',
-    }),
+    target_ref_json: JSON.stringify(targetRef),
   });
   put('destination_profiles', {
     id: 'profile-mail',

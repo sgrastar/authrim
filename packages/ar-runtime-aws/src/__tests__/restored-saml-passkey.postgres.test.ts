@@ -12,7 +12,6 @@ import {
   passkeyCredentialLookupSubject,
   type LookupIdentifierRow,
 } from '@authrim/ar-lib-core';
-import type { SAMLRuntimeImportedSPRelease } from '@authrim/ar-lib-core/types/saml-runtime-ports';
 import { generateSelfSignedCertificate } from '../../../ar-saml/src/common/key-utils';
 import { verifyXmlSignatureAndGetReferences } from '../../../ar-saml/src/common/signature';
 import { SAML_NAMESPACES } from '../../../ar-saml/src/common/constants';
@@ -23,12 +22,11 @@ import { createAwsSamlRuntime } from '../http-runtime';
 import { bootstrapFreshAwsRuntimeSchema } from '../import/aws-schema-bootstrap';
 import { createPostgresAuditRuntimePorts } from '../storage/postgres-audit';
 import { PostgresAccountAuthStateStore } from '../storage/postgres-account-auth-state';
+import { importedMailRelease, MAIL_ATTRIBUTE, SP } from './imported-mail-release-fixture';
 
 const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
 const useBundledRuntime = process.env.AUTHRIM_AWS_TEST_BUNDLE === 'true';
 const postgresIt = databaseUrl ? it : it.skip;
-const SP = 'https://sp.example.test/entity';
-const MAIL_ATTRIBUTE = 'urn:oid:0.9.2342.19200300.100.1.3';
 const now = () => Date.now();
 const lookupReadKey = { generation: 1, secret: 'lookup-secret-with-at-least-thirty-two-bytes' };
 
@@ -298,113 +296,6 @@ function settingsReader(tenantIds: string[]) {
     );
   }
   return { get: async (key: string) => values.get(key) ?? null };
-}
-
-function importedMailRelease(tenantId: string, origin: string): SAMLRuntimeImportedSPRelease {
-  const fieldMappingSetId = `mapping-set-${tenantId}`;
-  const fieldMappingVersionId = `mapping-version-${tenantId}`;
-  const destinationProfileId = `destination-profile-${tenantId}`;
-  const destinationProfileVersionId = `destination-version-${tenantId}`;
-  const sourceSelector = {
-    fieldMappingSetId,
-    fieldMappingVersionId,
-    destinationProfileId,
-    destinationFieldPolicies: { [MAIL_ATTRIBUTE]: 'required' as const },
-  };
-  return {
-    tenantId,
-    entityId: SP,
-    sourceSelector,
-    sourceBindingRef: {
-      activationId: `activation-${tenantId}`,
-      fieldMappingSetId,
-      fieldMappingVersionId,
-      mappingSnapshotHash: `snapshot-hash-${tenantId}`,
-      destinationProfileId,
-      destinationProfileVersionId,
-    },
-    binding: {
-      id: `activation-${tenantId}`,
-      role: 'idp',
-      tenantId,
-      localEntityId: `${origin}/saml/idp/metadata`,
-      partnerEntityId: SP,
-      fieldMappingSetId,
-      fieldMappingVersionId,
-      mappingSnapshotHash: `snapshot-hash-${tenantId}`,
-      destinationProfileId,
-      destinationProfileIds: [destinationProfileId],
-      destinationFieldPolicies: sourceSelector.destinationFieldPolicies,
-      catalog: {
-        identity: {
-          id: `catalog-${tenantId}`,
-          version: '1',
-          contentHash: `catalog-hash-${tenantId}`,
-          compatibilityRange: '*',
-        },
-        entries: [
-          {
-            id: 'source.email',
-            namespace: 'authrim.profile',
-            path: 'email',
-            valueType: 'string',
-            cardinality: 'single',
-            classification: 'pii',
-            targetType: 'canonical',
-          },
-          {
-            id: 'destination.mail',
-            namespace: 'saml.attribute',
-            path: MAIL_ATTRIBUTE,
-            valueType: 'string',
-            cardinality: 'single',
-            classification: 'pii',
-            targetType: 'destination-only',
-          },
-        ],
-      },
-      edges: [
-        {
-          id: `edge-mail-${tenantId}`,
-          sourceRef: {
-            side: 'source',
-            namespace: 'authrim.profile',
-            path: 'email',
-            catalogEntryId: 'source.email',
-          },
-          targetRef: {
-            side: 'destination',
-            namespace: 'saml.attribute',
-            path: MAIL_ATTRIBUTE,
-            catalogEntryId: 'destination.mail',
-          },
-          edgeKind: 'direct',
-        },
-      ],
-      transforms: [],
-      validationRules: [],
-      fieldMappingSet: { id: fieldMappingVersionId, rules: [] },
-    },
-    destinationProfile: {
-      profileId: destinationProfileId,
-      profileVersionId: destinationProfileVersionId,
-      destinationType: 'saml',
-      fields: [
-        {
-          key: MAIL_ATTRIBUTE,
-          label: 'mail',
-          required: false,
-          nullable: false,
-          classification: 'pii',
-          surfaces: [],
-          requiredScopes: [],
-          valueType: 'string',
-          valueMultiplicity: 'single',
-          allowedValues: [],
-        },
-      ],
-    },
-  };
 }
 
 async function seedMetadata(core: Client, tenantId: string, origin: string): Promise<void> {
