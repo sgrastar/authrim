@@ -148,7 +148,14 @@ describe('synthetic SAML mapping graph fixtures', () => {
           coreAdapter: adapter,
           tenantId: TENANT,
           idpEntityId: `${ORIGIN}/saml/idp/metadata`,
-          spConfig: spConfig(SP, 'https://sp.example.test/acs'),
+          spConfig: {
+            ...spConfig(SP, 'https://sp.example.test/acs'),
+            identityMapping: {
+              fieldMappingSetId: 'set-mail',
+              destinationProfileId: 'profile-mail',
+              destinationFieldPolicies: { [MAIL_ATTRIBUTE]: 'required' },
+            },
+          },
         })
       ).rejects.toThrow('invalid_reference: stored rule target is missing');
     } finally {
