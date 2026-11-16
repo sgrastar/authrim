@@ -1,5 +1,8 @@
 import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../../mapping-set-owner', () => ({
+  resolveSAMLMappingSetOwner: vi.fn(async (_adapter: unknown, tenantId: string) => tenantId),
+}));
 import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
 import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
 import { createChallengeStoreFake } from './helpers/challenge-store-fake';

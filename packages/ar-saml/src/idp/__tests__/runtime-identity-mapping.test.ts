@@ -1,4 +1,9 @@
 import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
+
+// These runtime tests supply the binding directly; owner lookup is covered with real Admin rows.
+vi.mock('../../mapping-set-owner', () => ({
+  resolveSAMLMappingSetOwner: vi.fn(async (_adapter: unknown, tenantId: string) => tenantId),
+}));
 /**
  * The identity mapping of an SP as a deployed tenant has it: only the Field Mapping Set is named,
  * and the runtime catalog (the compiled snapshot's virtual canonical catalog) has no entry for the

@@ -255,15 +255,17 @@ export function productionAdminAdapter(
 ) {
   return {
     query: async () => [],
-    queryOne: async (sql: string) =>
-      sql.includes('destination_profiles')
+    queryOne: async (sql: string) => {
+      if (sql.includes('FROM field_mapping_sets')) return { tenant_id: 'tenant-a' };
+      return sql.includes('destination_profiles')
         ? {
             profile_id: PRODUCTION_DESTINATION_PROFILE_ID,
             destination_type: 'saml',
             version_id: 'destination_profile_version_00000000',
             schema_json: JSON.stringify(schema),
           }
-        : null,
+        : null;
+    },
     execute: async () => ({ rowsAffected: 0 }),
   };
 }

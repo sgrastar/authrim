@@ -99,11 +99,13 @@ export async function withSAMLAssuranceAttributes(
     mappingContext: SAMLIdentityMappingRuntimeContext;
     onError: (message: string, error: unknown) => void;
     now?: number;
+    fixture?: boolean;
   }
 ): Promise<SAMLAttributeSubject> {
   const base = { ...subject };
   delete base[SAML_ASSURANCE_SUBJECT_KEYS.ial];
   delete base[SAML_ASSURANCE_SUBJECT_KEYS.eduPersonAssurance];
+  if (input.fixture) return base;
   const needs = findSAMLAssuranceSourceNeeds(input.identityMapping, input.mappingContext);
   if (!needs.ial && !needs.eduPersonAssurance) return base;
 

@@ -1,4 +1,6 @@
 import { emitLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
+import { resolveSAMLMappingSetOwner } from '../mapping-set-owner';
+import { hasNonSAMLMappingOutput } from './mapping-output-validation';
 /**
  * SAML Provider Admin API
  *
@@ -50,6 +52,9 @@ import {
   requireAdminDatabaseAdapter,
   requireDedicatedAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
+  isVirtualCanonicalCatalogVersion,
+  loadCustomClaimSchemaCatalogEntries,
+  mergeCanonicalCatalogEntries,
   loadDestinationProfileConsentDescriptor,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -63,6 +68,7 @@ import {
   isAAL,
   isIAL,
   samlDestinationPolicyCoversProfile,
+  PLATFORM_MAPPING_TENANT_ID,
   findRenamedOutputAttributes,
   tenantCapabilityRefusal,
   carriesMetadataUrl,
@@ -507,7 +513,7 @@ async function isFederationLinkedProviderSourceActive(
   }
 }
 
-async function validateSAMLSPMappingConfig(
+export async function validateSAMLSPMappingConfig(
   env: Env,
   tenantId: string,
   config: SAMLSPConfig
@@ -517,8 +523,18 @@ async function validateSAMLSPMappingConfig(
 
   try {
     const adminAdapter = requireAdminDatabaseAdapter(env, 'saml-sp-identity-mapping');
+    const ownerTenantId = await resolveSAMLMappingSetOwner(
+      adminAdapter,
+      tenantId,
+      fieldMappingSetId
+    );
+    if (!ownerTenantId) return { field: 'identityMapping.fieldMappingSetId' };
     const binding = await resolveRuntimeIdentityMappingBinding(adminAdapter, {
       tenantId,
+      ownerTenantId,
+      normalizeCatalogEntryIds: ownerTenantId === PLATFORM_MAPPING_TENANT_ID,
+      resolveCanonicalCatalog: true,
+      includeStoredProfileTargets: true,
       protocol: 'saml',
       role: 'idp',
       fieldMappingSetId,
@@ -526,6 +542,23 @@ async function validateSAMLSPMappingConfig(
       partnerEntityId: config.entityId,
     });
     if (!binding || binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+      return { field: 'identityMapping.fieldMappingSetId' };
+    }
+    if (isVirtualCanonicalCatalogVersion(binding.catalog?.identity.id ?? '')) {
+      const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+        env,
+        'saml-sp-canonical-catalog',
+        { tenantId }
+      );
+      binding.catalog = {
+        ...binding.catalog,
+        entries: mergeCanonicalCatalogEntries(
+          binding.catalog.entries,
+          await loadCustomClaimSchemaCatalogEntries(coreAdapter, tenantId)
+        ),
+      };
+    }
+    if (hasNonSAMLMappingOutput(binding)) {
       return { field: 'identityMapping.fieldMappingSetId' };
     }
     // The release policy and the classification check are by Destination Profile field, so an
@@ -543,7 +576,7 @@ async function validateSAMLSPMappingConfig(
     }
     const descriptor = await loadDestinationProfileConsentDescriptor(
       adminAdapter,
-      tenantId,
+      ownerTenantId,
       binding.destinationProfileId
     );
     if (!descriptor || descriptor.destinationType !== 'saml') {
