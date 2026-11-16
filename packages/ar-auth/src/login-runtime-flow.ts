@@ -2811,11 +2811,74 @@ async function resolveAutoAdvanceForStep(input: {
     return { selectedHandle };
   }
 
+  if (
+    input.step.component === 'email_verification' &&
+    input.runtime.flow_kind === 'registration' &&
+    input.interaction.user_id &&
+    (await signedInUserHasNoEmail(input.c, input.tenantId, input.interaction.user_id))
+  ) {
+    // An email check of a sign-up whose account has no address: there is nothing to prove, so it
+    // goes on by the check's own `verified` edge. Decided here, while the server advances; a
+    // handle a client submits at that step is judged as before.
+    return { selectedHandle: 'verified' };
+  }
+
   if (input.step.render === false && input.step.component !== 'email_verification') {
     return { selectedHandle: null };
   }
 
   return null;
+}
+
+/**
+ * Whether the person signed in on this request is `userId`, and their stored account has no email
+ * address at all. Read from the server's records (the session, the account), never from the
+ * request. An account with an address (verified or not), no session, another person's session or
+ * anything unreadable is false.
+ */
+async function signedInUserHasNoEmail(
+  c: AuthContext,
+  tenantId: string,
+  userId: string
+): Promise<boolean> {
+  try {
+    const session = await getCurrentSession(c, tenantId);
+    if (!session || session.userId !== userId) return false;
+    await resolveAccountDataContextFromHono(c, userId);
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    const runtimeUsers = new CanonicalRuntimeUserStore({
+      coreAdapter: authCtx.coreAdapter,
+      piiAdapter: piiCtx.defaultPiiAdapter,
+      tenantId,
+    });
+    const user = await runtimeUsers.findById(userId, { includeInactive: true });
+    if (!user || user.active !== 1 || user.email !== null) return false;
+    if (!user.account_id || !user.subject_id) return false;
+
+    // A missing or unreadable sensitive value can project as `email: null` even while an email
+    // record still exists. In that case the address is not known to be absent, so keep the check.
+    const contact = await authCtx.coreAdapter.queryOne<{ present: number }>(
+      `SELECT 1 AS present FROM contact_points
+        WHERE tenant_id = ? AND contact_type = 'email' AND lifecycle_state = 'active'
+          AND (account_id = ? OR (account_id IS NULL AND subject_id = ?))
+        LIMIT 1`,
+      [tenantId, user.account_id, user.subject_id]
+    );
+    if (contact) return false;
+    const attribute = await authCtx.coreAdapter.queryOne<{ present: number }>(
+      `SELECT 1 AS present FROM profiles p
+        JOIN profile_attribute_values v ON v.profile_id = p.id AND v.tenant_id = p.tenant_id
+       WHERE p.tenant_id = ? AND p.subject_id = ? AND p.lifecycle_state = 'active'
+         AND v.lifecycle_state = 'active'
+         AND v.catalog_entry_id IN ('email', 'field.canonical.email')
+       LIMIT 1`,
+      [tenantId, user.subject_id]
+    );
+    return !attribute;
+  } catch {
+    return false;
+  }
 }
 
 function buildCompletedRuntimeOutput(input: {

@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   defaultLoginFlowSpec,
+  loadTenantLoginFlowCompletion,
   readLoginFlowEditor,
   type DatabaseAdapter,
   type FlowEditorState,
@@ -138,5 +139,51 @@ describe('seedDefaultLoginFlow', () => {
     const registration = await seedDefaultRegistrationFlow(db, TENANT, 1000);
     expect((await resolveTenantAssignment(db, 'registration'))?.flow_id).toBe(registration?.flowId);
     expect((await resolveTenantAssignment(db, 'login'))?.flow_id).toBe(login?.flowId);
+  });
+
+  it("reads the seeded sign-in's own destination for a person who is already signed in", async () => {
+    const db = open();
+    expect(await loadTenantLoginFlowCompletion(db, TENANT)).toBeNull();
+    await seedDefaultLoginFlow(db, TENANT, 1000);
+    expect(await loadTenantLoginFlowCompletion(db, TENANT)).toEqual(
+      defaultLoginFlowSpec().completion
+    );
+    expect(defaultLoginFlowSpec().completion).toMatchObject({ behavior: 'account' });
+  });
+
+  it("does not read another tenant's sign-in destination", async () => {
+    const db = open();
+    await seedDefaultLoginFlow(db, TENANT, 1000);
+    expect(await loadTenantLoginFlowCompletion(db, 'other-tenant')).toBeNull();
+  });
+
+  it.each([
+    ['disabled assignment', 'UPDATE flow_assignments SET enabled = FALSE WHERE tenant_id = ?'],
+    ['unpublished Flow', "UPDATE flows SET status = 'draft' WHERE tenant_id = ?"],
+    ['deleted Flow', 'UPDATE flows SET deleted_at = 1001 WHERE tenant_id = ?'],
+  ])('does not read the destination of a %s', async (_label, sql) => {
+    const db = open();
+    await seedDefaultLoginFlow(db, TENANT, 1000);
+    await db.execute(sql, [TENANT]);
+    expect(await loadTenantLoginFlowCompletion(db, TENANT)).toBeNull();
+  });
+
+  it('seeds a sign-up whose email check has no screen of its own (the pages draw none for it)', async () => {
+    const db = open();
+    const seeded = await seedDefaultRegistrationFlow(db, TENANT, 1000);
+    const assignment = await resolveTenantAssignment(db, 'registration');
+    expect(assignment?.flow_id).toBe(seeded?.flowId);
+    const version = await db.queryOne<{
+      runtime_snapshot_json: string;
+      validation_result_json: string;
+    }>('SELECT * FROM flow_versions WHERE tenant_id = ? AND id = ?', [
+      TENANT,
+      assignment?.published_version_id,
+    ]);
+    expect(JSON.parse(version?.validation_result_json ?? '{}')).toMatchObject({ valid: true });
+    const runtime = JSON.parse(version?.runtime_snapshot_json ?? '{}') as FlowRuntimeContract;
+    const emailCheck = runtime.ui.steps.find((step) => step.component === 'email_verification');
+    expect(emailCheck).toBeDefined();
+    expect(emailCheck?.config?.screen_ref).toBeUndefined();
   });
 });

@@ -1,9 +1,9 @@
 import { redirect } from '@sveltejs/kit';
-import { redirectExternal } from '#lib/server/external-redirect.js';
+import { redirectExternal, redirectSignedIn } from '#lib/server/external-redirect.js';
 import type { Actions, PageServerLoad } from './$types';
 import {
 	getDiscoveryRequestHeaders,
-	isCurrentSessionActive,
+	fetchSignedInDestination,
 	verifyLoginChallengeForCurrentTenant,
 	verifyDiscoveryGrant
 } from '../../../lib/discovery-entry';
@@ -132,11 +132,12 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	if (!hasProtocolLoginContext && event.cookies.get('authrim_session')) {
-		const sessionActive = await isCurrentSessionActive(event.fetch, discoveryHeaders).catch(
-			() => false
+		const destination = await fetchSignedInDestination(event.fetch, discoveryHeaders).catch(
+			() => null
 		);
-		if (sessionActive) {
-			throw redirect(303, '/');
+		if (destination !== null) {
+			// Where the sign-in Flow's completion says (the server's answer, not a request value).
+			throw redirectSignedIn(destination);
 		}
 	}
 

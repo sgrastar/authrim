@@ -1084,8 +1084,23 @@ paths:
       tags:
         - Sessions
       summary: Return current browser session status.
+      description: >-
+        Returns an inactive status when the browser session is absent or expired. With
+        include=post_login, an active session also receives the server-resolved destination
+        configured by the tenant's published sign-in Flow or tenant settings.
       security:
         - sessionCookie: []
+      parameters:
+        - name: include
+          in: query
+          required: false
+          description: >-
+            Comma-separated response sections. basic excludes profile fields; profile includes
+            them; post_login requests the server-resolved post-sign-in destination for an active
+            session. When omitted, profile fields are included.
+          schema:
+            type: string
+          example: basic,post_login
       responses:
         '200':
           $ref: '#/components/responses/SessionStatus'
@@ -5650,6 +5665,13 @@ components:
             type: string
           example:
             - pwd
+        post_login_redirect:
+          type: string
+          description: >-
+            Server-resolved destination for an active session when include=post_login is
+            requested and resolution succeeds. A path on the current origin or a configured
+            absolute HTTP(S) URL.
+          example: /account
         error:
           type: string
           example: no_session

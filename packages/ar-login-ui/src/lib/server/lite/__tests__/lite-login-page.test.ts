@@ -189,6 +189,25 @@ describe('a page view of the lite sign-in page', () => {
 		);
 	});
 
+	it('does not send a signed-in direct visit to the home page: the Flow decides where it goes', async () => {
+		routes['/api/v1/login/interactions/start'] = () =>
+			json(
+				startAnswer({ id: 'r', source_node_id: 'n', component: 'session_check', render: false })
+			);
+		const result = await run(
+			event({ cookies: { authrim_session: 's', '__Host-authrim_lite': 'b'.repeat(43) } })
+		).then(
+			(value) => ({ value }),
+			(thrown: unknown) => ({ thrown })
+		);
+		// No redirect of the page's own (to `/` or anywhere): the Flow is started and drawn, and
+		// where it ends is the server's destination (see "where a direct sign-in goes").
+		expect(result).not.toHaveProperty('thrown');
+		expect(backendCalls.map((call) => new URL(call.url).pathname)).toContain(
+			'/api/v1/login/interactions/start'
+		);
+	});
+
 	it('sends the browser to the canonical issuer origin before anything else', async () => {
 		txnState.create = {
 			ok: false,

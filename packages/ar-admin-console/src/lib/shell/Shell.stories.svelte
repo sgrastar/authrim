@@ -130,7 +130,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const nav = canvas.getAllByRole('navigation')[0];
-		await userEvent.click(within(nav).getAllByRole('link')[2]);
+		await userEvent.click(within(nav).getAllByRole('link')[3]);
 		// The category lands on its first item, and the left nav now lists its items.
 		await waitFor(() =>
 			expect(
@@ -146,7 +146,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const nav = canvas.getAllByRole('navigation')[0];
-		const [, users, access] = within(nav).getAllByRole('link');
+		const [, , users, access] = within(nav).getAllByRole('link');
 		const expanded = () => nav.querySelector('button[aria-expanded="true"]');
 		const menuOf = (link: HTMLElement) =>
 			canvas.queryByRole('group', { name: link.textContent!.trim() });

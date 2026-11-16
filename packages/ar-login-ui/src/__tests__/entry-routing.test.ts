@@ -1029,29 +1029,57 @@ describe('common-entry routing', () => {
 		expect(result).toEqual({});
 	});
 
-	it('redirects direct /login visits to root when the browser has an active session', async () => {
-		const fetch = vi.fn().mockResolvedValueOnce(
-			jsonResponse({
-				active: true,
-				user_id: 'user-123'
-			})
-		);
+	it('sends a signed-in direct /login visit where the server says, the home page by default', async () => {
+		const open = async (statusBody: Record<string, unknown>) => {
+			const fetch = vi.fn().mockResolvedValueOnce(jsonResponse(statusBody));
+			const result = await (async () => {
+				try {
+					await loginLoad({
+						cookies: createCookies({ authrim_session: '0_session_active' }),
+						fetch,
+						request: new Request('https://auth.example.com/login'),
+						url: new URL('https://auth.example.com/login')
+					} as never);
+					return null;
+				} catch (thrown) {
+					return thrown;
+				}
+			})();
+			expect(fetch).toHaveBeenCalledWith('/api/sessions/status?include=basic,post_login', {
+				headers: { 'x-authrim-original-host': 'auth.example.com' }
+			});
+			return result;
+		};
 
-		await expect(
-			loginLoad({
-				cookies: createCookies({ authrim_session: '0_session_active' }),
-				fetch,
-				request: new Request('https://auth.example.com/login'),
-				url: new URL('https://auth.example.com/login')
-			} as never)
-		).rejects.toMatchObject({
+		// The sign-in Flow's own destination (the seeded default: the account page).
+		expect(
+			await open({ active: true, user_id: 'user-123', post_login_redirect: '/account' })
+		).toMatchObject({ status: 303, location: '/account' });
+		// A trusted absolute destination is followed as an external redirect.
+		expect(
+			await open({
+				active: true,
+				user_id: 'user-123',
+				post_login_redirect: 'https://app.example.com/start'
+			})
+		).toMatchObject({ status: 303, location: 'https://app.example.com/start' });
+		// An explicit home destination from the server is followed.
+		expect(
+			await open({ active: true, user_id: 'user-123', post_login_redirect: '/' })
+		).toMatchObject({
 			status: 303,
 			location: '/'
 		});
-
-		expect(fetch).toHaveBeenCalledWith('/api/sessions/status?include=basic', {
-			headers: { 'x-authrim-original-host': 'auth.example.com' }
-		});
+		// With no server-resolved destination, the page continues to its normal Flow route.
+		expect(await open({ active: true, user_id: 'user-123' })).toBeNull();
+		expect(await open({ active: false, user_id: 'user-123' })).toBeNull();
+		// An invalid destination is rejected by the redirect helper.
+		expect(
+			await open({ active: true, user_id: 'user-123', post_login_redirect: '//evil.example' })
+		).toMatchObject({ status: 303, location: '/' });
+		expect(
+			await open({ active: true, user_id: 'user-123', post_login_redirect: 'javascript:alert(1)' })
+		).toMatchObject({ status: 303, location: '/' });
 	});
 
 	it('keeps protocol login requests on /login even when a session cookie is present', async () => {
@@ -1068,6 +1096,25 @@ describe('common-entry routing', () => {
 		expect(fetch).toHaveBeenCalledWith('/auth/login-challenge?challenge_id=login_challenge', {
 			headers: { 'x-authrim-original-host': 'auth.example.com' }
 		});
+	});
+
+	it.each([
+		['a SAML request', '?saml_request_id=req_1&saml_sp_entity_id=https%3A%2F%2Fsp.example'],
+		['the SAML continuation', '?return_to=saml_sso']
+	])('does not take the signed-in redirect for %s', async (_label, query) => {
+		const fetch = vi.fn().mockRejectedValue(new Error('unreachable'));
+
+		const result = await loginLoad({
+			cookies: createCookies({ authrim_session: '0_session_active' }),
+			fetch,
+			request: new Request(`https://auth.example.com/login${query}`),
+			url: new URL(`https://auth.example.com/login${query}`)
+		} as never);
+
+		expect(result).toEqual({});
+		for (const [url] of fetch.mock.calls) {
+			expect(String(url)).not.toContain('/api/sessions/status');
+		}
 	});
 
 	it('does not redirect single-tenant signup pages', async () => {

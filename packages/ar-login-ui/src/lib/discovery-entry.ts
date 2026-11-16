@@ -180,6 +180,30 @@ export async function isCurrentSessionActive(
 	return data.active === true && typeof data.user_id === 'string' && data.user_id.length > 0;
 }
 
+/**
+ * Where a signed-in person goes when they open the sign-in page: what the server resolves for the
+ * tenant (its sign-in Flow's destination, else the tenant's), never a value from the request.
+ * `null` when there is no active session or the server cannot name a destination.
+ */
+export async function fetchSignedInDestination(
+	fetchFn: typeof fetch,
+	headers?: HeadersInit
+): Promise<string | null> {
+	const response = await fetchFn(
+		'/api/sessions/status?include=basic,post_login',
+		headers ? { headers } : undefined
+	);
+	if (!response.ok) return null;
+	const data = (await response.json()) as SessionStatusResponse & {
+		post_login_redirect?: unknown;
+	};
+	if (data.active !== true || typeof data.user_id !== 'string' || data.user_id.length === 0) {
+		return null;
+	}
+	const destination = data.post_login_redirect;
+	return typeof destination === 'string' && destination ? destination : null;
+}
+
 export async function verifyLoginChallengeForCurrentTenant(
 	fetchFn: typeof fetch,
 	challengeId: string,

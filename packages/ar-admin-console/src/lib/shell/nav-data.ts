@@ -710,6 +710,9 @@ export const TENANT_TOPNAV: readonly TopEntry[] = [
 		id: 'overview'
 	},
 	{
+		id: 'applications'
+	},
+	{
 		id: 'users'
 	},
 	{
@@ -717,9 +720,6 @@ export const TENANT_TOPNAV: readonly TopEntry[] = [
 	},
 	{
 		id: 'authentication'
-	},
-	{
-		id: 'applications'
 	},
 	{
 		id: 'customization'
@@ -757,15 +757,15 @@ export const PLATFORM_TOPNAV: readonly TopEntry[] = [
 		id: 'plat-approvals'
 	},
 	{
+		id: 'applications',
+		inherited: true
+	},
+	{
 		id: 'users',
 		inherited: true
 	},
 	{
 		id: 'access',
-		inherited: true
-	},
-	{
-		id: 'applications',
 		inherited: true
 	},
 	{
