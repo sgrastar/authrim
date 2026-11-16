@@ -28,9 +28,13 @@ import { createFakeSchemaSetting } from '#lib/api/fake/schema-setting-fake.js';
 import { loadSchemas } from '#lib/pages/customization/screens/schema-choices.svelte.js';
 import { MOCK_SCREENS } from '#lib/mock/fixtures/screens.js';
 
+import type { ConnectionCreationResources } from './connection-creation';
+
 const FLOW_RESOURCES = Symbol('flow-resources');
 
 export interface FlowResources {
+	/** Real connection creation, absent in prototype pages and list-only fakes. */
+	connectionCreation?: ConnectionCreationResources;
 	methodProfiles: AuthenticationMethodProfilesClient;
 	/** The tenant's session profiles (how long a session the flow makes lasts, single sign-on). */
 	sessionProfiles: SessionProfilesClient;

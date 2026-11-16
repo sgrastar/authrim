@@ -8,6 +8,7 @@
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import AccountFlowDetail from './AccountFlowDetail.svelte';
 	import AccountFlowStatus from './AccountFlowStatus.svelte';
+	import LiveAddConnection from './LiveAddConnection.svelte';
 	import AddConnection from './AddConnection.svelte';
 	import {
 		ACCOUNT_FLOW_IDS,
@@ -22,6 +23,8 @@
 	import LeaveGuard from './LeaveGuard.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import type { ExternalProvider } from '#lib/api/external-providers.js';
+	import type { SamlIdentityProvider } from '#lib/api/saml-providers.js';
 	import type { ClientOption } from '#lib/api/clients.js';
 	import type { SamlServiceProviderOption } from '#lib/api/saml-providers.js';
 	import {
@@ -50,6 +53,8 @@
 	let { showConnections = false }: { showConnections?: boolean } = $props();
 	let clients = $state<ClientOption[]>([]);
 	let serviceProviders = $state<SamlServiceProviderOption[]>([]);
+	let externalProviders = $state<ExternalProvider[]>([]);
+	let identityProviders = $state<SamlIdentityProvider[]>([]);
 	let connectionsFailed = $state(false);
 	let connectionsLoading = $state(false);
 	const resources = useFlowResources();
@@ -58,9 +63,16 @@
 		connectionsLoading = true;
 		connectionsFailed = false;
 		try {
-			[clients, serviceProviders] = await Promise.all([
-				resources.clients.list(),
-				resources.samlProviders.listServiceProviders()
+			const creation = resources.connectionCreation;
+			[clients, serviceProviders, externalProviders, identityProviders] = await Promise.all([
+				creation?.canList?.('rp') === false ? [] : resources.clients.list(),
+				creation?.canList?.('sp') === false ? [] : resources.samlProviders.listServiceProviders(),
+				creation?.externalProviders && creation.canList?.('op') !== false
+					? creation.externalProviders.list()
+					: [],
+				creation?.samlIdentityProviders && creation.canList?.('idp') !== false
+					? creation.samlIdentityProviders.listIdentityProviders()
+					: []
 			]);
 		} catch {
 			connectionsFailed = true;
@@ -80,6 +92,18 @@
 			id: provider.id,
 			kind: 'sp',
 			protocol: 'SAML SP',
+			name: provider.name
+		})),
+		...externalProviders.map((provider) => ({
+			id: provider.id,
+			kind: 'op',
+			protocol: 'OIDC OP',
+			name: provider.name
+		})),
+		...identityProviders.map((provider) => ({
+			id: provider.id,
+			kind: 'idp',
+			protocol: 'SAML IdP',
 			name: provider.name
 		}))
 	]);
@@ -258,7 +282,16 @@
 				!canSetSignInConsent(saved.login.editor)}
 		/>
 	{:else if adding}
-		<AddConnection accountOnly bind:dirty oncancel={leaveWizard} ondone={leaveWizard} />
+		{#if resources.connectionCreation}
+			<LiveAddConnection
+				resources={resources.connectionCreation}
+				bind:dirty
+				oncancel={leaveWizard}
+				ondone={leaveWizard}
+			/>
+		{:else}
+			<AddConnection accountOnly bind:dirty oncancel={leaveWizard} ondone={leaveWizard} />
+		{/if}
 	{:else}
 		<PageHeader title={t('sf.mock.title')} description={t('sf.mock.description')}>
 			{#snippet actions()}

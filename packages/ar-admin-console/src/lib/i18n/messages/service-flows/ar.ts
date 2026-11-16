@@ -5,6 +5,26 @@
 import type { jaServiceFlows } from './ja';
 
 export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.live.accountOptions': 'خيارات الحساب',
+	'sf.live.requireVerified': 'اشتراط عنوان بريد إلكتروني موثّق',
+	'sf.live.issuerMismatch': 'لا يتطابق المُصدِر المكتشف مع المُصدِر الذي أدخلته.',
+	'sf.live.discoveryFailed': 'تعذرت قراءة إعدادات المزوّد. حاول مرة أخرى.',
+	'sf.live.inboundMapping':
+		'تتيح هذه الصفحة تعديل الإعدادات الواردة الأساسية فقط. يظل مزوّدو هوية SAML الجدد معطّلين؛ التعيين الوارد والتفعيل غير متاحين هنا.',
+	'sf.live.enabled': 'مفعّل',
+	'sf.live.disabled': 'معطّل',
+	'sf.live.saved': 'تم حفظ التغييرات.',
+	'sf.live.settings': 'إعدادات المزوّد',
+
+	'sf.create.invalid': 'تحقق من حقول الاتصال المطلوبة.',
+	'sf.create.unavailable': 'ليس لديك إذن لإنشاء هذا الاتصال.',
+	'sf.create.failed': 'تعذر إنشاء الاتصال. تم الاحتفاظ بإجاباتك. حاول مرة أخرى.',
+	'sf.create.navigationFailed': 'تم حفظ الاتصال. حاول فتح إعداداته مرة أخرى.',
+	'sf.create.saved': 'تم حفظ الاتصال',
+	'sf.create.save': 'حفظ ومتابعة إلى الإعدادات',
+	'sf.create.spDraft':
+		'يُحفظ معطلاً. اضبط التعيين في الشاشة التالية. يستخدم NameID إعدادات المستأجر الافتراضية.',
+
 	'cm.releaseFailed': 'لم تُستوفَ متطلبات الإرسال. لن تُصدر استجابة SAML.',
 	'cm.otherConnections': 'اتصالات أخرى تستخدم هذه المجموعة: {names}.',
 	'cm.connections': 'التطبيقات والخدمات',

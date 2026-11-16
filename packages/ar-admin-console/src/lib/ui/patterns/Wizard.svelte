@@ -64,7 +64,7 @@
 
 <div class="wizard">
 	<div class="wizard__side">
-		<WizardSteps {steps} {current} onselect={go} note={stepsNote} />
+		<WizardSteps {steps} {current} onselect={busy ? undefined : go} note={stepsNote} />
 	</div>
 	<div class="wizard__main">
 		<div class="wizard__head">

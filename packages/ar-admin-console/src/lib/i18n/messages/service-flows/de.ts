@@ -2,6 +2,29 @@
 import type { jaServiceFlows } from './ja';
 
 export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.live.accountOptions': 'Kontooptionen',
+	'sf.live.requireVerified': 'Verifizierte E-Mail-Adresse erforderlich',
+	'sf.live.issuerMismatch': 'Der ermittelte Issuer stimmt nicht mit Ihrer Eingabe überein.',
+	'sf.live.discoveryFailed':
+		'Die Anbieterkonfiguration konnte nicht gelesen werden. Versuchen Sie es erneut.',
+	'sf.live.inboundMapping':
+		'Diese Seite bearbeitet nur grundlegende eingehende Einstellungen. Neue SAML-Identitätsanbieter bleiben deaktiviert; eingehendes Mapping und Aktivierung sind hier nicht verfügbar.',
+	'sf.live.enabled': 'Aktiviert',
+	'sf.live.disabled': 'Deaktiviert',
+	'sf.live.saved': 'Änderungen gespeichert.',
+	'sf.live.settings': 'Anbietereinstellungen',
+
+	'sf.create.invalid': 'Prüfen Sie die erforderlichen Verbindungsfelder.',
+	'sf.create.unavailable': 'Sie dürfen diese Verbindung nicht erstellen.',
+	'sf.create.failed':
+		'Verbindung konnte nicht erstellt werden. Ihre Eingaben bleiben erhalten. Versuchen Sie es erneut.',
+	'sf.create.navigationFailed':
+		'Die Verbindung wurde gespeichert. Öffnen Sie die Einstellungen erneut.',
+	'sf.create.saved': 'Verbindung gespeichert',
+	'sf.create.save': 'Speichern und Einstellungen öffnen',
+	'sf.create.spDraft':
+		'Wird deaktiviert gespeichert. Konfigurieren Sie das Mapping im nächsten Schritt. NameID verwendet die Mandantenstandardwerte.',
+
 	'cm.releaseFailed':
 		'Die Freigabeanforderungen wurden nicht erfüllt. Es würde keine SAML-Antwort ausgestellt.',
 	'cm.otherConnections': 'Weitere Verbindungen mit diesem Set: {names}.',
