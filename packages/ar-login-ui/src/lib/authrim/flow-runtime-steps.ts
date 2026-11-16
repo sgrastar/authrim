@@ -1,4 +1,5 @@
 import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
+import { isRuntimeAuthStep } from './runtime-auth-handles.js';
 import { SCREEN_INPUT_BLOCK_TYPES } from '@authrim/ar-lib-core/types/screens';
 
 /**
@@ -151,4 +152,29 @@ export function runtimeSamlContinuationPath(
 	});
 	if (fallback.samlLoginNonce) params.set('saml_login_nonce', fallback.samlLoginNonce);
 	return `/saml/idp/sso?${params.toString()}`;
+}
+
+/** The screen a step carries (its own config's, or its content's), or null. */
+export function runtimeStepScreen(step: FlowRuntimeStep | null): Record<string, unknown> | null {
+	const screen = step?.config?.screen ?? step?.content?.screen;
+	return isRecord(screen) ? screen : null;
+}
+
+/**
+ * Whether a step is an email check with no screen of its own: the Flow waits for the address to be
+ * proven by the emailed code, which the /verify-email-code page asks for (and submits `verified`
+ * on). The sign-in and sign-up pages draw nothing for it: its only exits are `verified` and
+ * `failed`, so a "Continue" (`completed`) is a handle the server refuses.
+ */
+export function runtimeStepIsEmailCheckWithoutScreen(step: FlowRuntimeStep | null): boolean {
+	return step?.component === 'email_verification' && runtimeStepScreen(step) === null;
+}
+
+/**
+ * Whether the page draws a step: a method selector only with its screen, an email check only with
+ * its screen, any other step (a consent, a more screen, a completion shown) as it is.
+ */
+export function shouldRenderRuntimeStep(step: FlowRuntimeStep): boolean {
+	if (runtimeStepIsEmailCheckWithoutScreen(step)) return false;
+	return !isRuntimeAuthStep(step) || runtimeStepScreen(step) !== null;
 }

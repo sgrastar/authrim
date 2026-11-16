@@ -26,6 +26,10 @@ const mocks = vi.hoisted(() => {
       (issuerUrl: string, nonce: string) =>
         `<html><script nonce="${nonce}">window.issuer=${JSON.stringify(issuerUrl)}</script></html>`
     ),
+    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+    loadTenantLoginFlowCompletion: vi.fn(),
+    resolveRegistrationCompletionRedirectUrl: vi.fn(),
+    resolvePostLoginRedirectUrl: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   };
@@ -45,6 +49,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isShardedSessionId: mocks.isShardedSessionId,
     getTenantIdFromContext: mocks.getTenantIdFromContext,
     hasPIIDatabase: mocks.hasPIIDatabase,
+    createAuthContextFromHono: mocks.createAuthContextFromHono,
+    loadTenantLoginFlowCompletion: mocks.loadTenantLoginFlowCompletion,
+    resolveRegistrationCompletionRedirectUrl: mocks.resolveRegistrationCompletionRedirectUrl,
+    resolvePostLoginRedirectUrl: mocks.resolvePostLoginRedirectUrl,
     createPIIContextFromHono: mocks.createPIIContextFromHono,
     generateCheckSessionIframeHtml: mocks.generateCheckSessionIframeHtml,
     getLogger: vi.fn(() => ({
@@ -155,6 +163,107 @@ describe('session status OIDC assurance metadata', () => {
     expect(body).not.toHaveProperty('name');
     expect(mocks.createPIIContextFromHono).not.toHaveBeenCalled();
     expect(mocks.warn).not.toHaveBeenCalled();
+  });
+
+  describe('post sign-in destination (include=post_login)', () => {
+    const activeSession = {
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: Date.now() + 60_000,
+      data: { authTime: 1700000123 },
+    };
+    const statusUrl = 'https://issuer.example.com/session/status?include=basic,post_login';
+
+    async function statusOf(url: string) {
+      const { sessionStatusHandler } = await import('../session-management');
+      return sessionStatusHandler(createContext({ url }) as never);
+    }
+
+    beforeEach(() => {
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(activeSession);
+      mocks.loadTenantLoginFlowCompletion.mockReset();
+      mocks.resolveRegistrationCompletionRedirectUrl.mockReset();
+      mocks.resolvePostLoginRedirectUrl.mockReset();
+    });
+
+    it("returns the sign-in Flow's own destination", async () => {
+      mocks.loadTenantLoginFlowCompletion.mockResolvedValue({ behavior: 'account' });
+      mocks.resolveRegistrationCompletionRedirectUrl.mockResolvedValue({
+        redirectUrl: '/account',
+        behavior: 'account',
+      });
+      const response = await statusOf(statusUrl);
+      const body: Record<string, unknown> = await response.json();
+
+      expect(body.post_login_redirect).toBe('/account');
+      expect(mocks.resolvePostLoginRedirectUrl).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the tenant's destination when the Flow sets none", async () => {
+      mocks.loadTenantLoginFlowCompletion.mockResolvedValue(null);
+      mocks.resolvePostLoginRedirectUrl.mockResolvedValue({ redirectUrl: '/', behavior: 'home' });
+      const response = await statusOf(statusUrl);
+      const body: Record<string, unknown> = await response.json();
+
+      expect(body.post_login_redirect).toBe('/');
+    });
+
+    it('is not resolved unless asked for', async () => {
+      const response = await statusOf('https://issuer.example.com/session/status?include=basic');
+      const body: Record<string, unknown> = await response.json();
+
+      expect(body).not.toHaveProperty('post_login_redirect');
+      expect(mocks.loadTenantLoginFlowCompletion).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an expired session', { ...activeSession, expiresAt: Date.now() - 1 }],
+      ['a session that is gone', null],
+    ])('answers no destination for %s', async (_label, stored) => {
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(stored);
+      mocks.loadTenantLoginFlowCompletion.mockResolvedValue({ behavior: 'account' });
+      const response = await statusOf(statusUrl);
+      const body: Record<string, unknown> = await response.json();
+
+      expect(body).toMatchObject({ active: false });
+      expect(body).not.toHaveProperty('post_login_redirect');
+      expect(mocks.loadTenantLoginFlowCompletion).not.toHaveBeenCalled();
+    });
+
+    it('answers no destination for a session id of the wrong form, or none', async () => {
+      for (const cookie of ['not-a-sharded-id', undefined]) {
+        mocks.getCookie.mockReturnValue(cookie);
+        const response = await statusOf(statusUrl);
+        const body: Record<string, unknown> = await response.json();
+        expect(body).toMatchObject({ active: false });
+        expect(body).not.toHaveProperty('post_login_redirect');
+      }
+      expect(mocks.loadTenantLoginFlowCompletion).not.toHaveBeenCalled();
+    });
+
+    it('adds no header of its own: the CORS of the route stays the app middleware', async () => {
+      // The handler never sets or reads CORS or cookies, with the destination or without it, so
+      // asking for the destination changes nothing for a cross-origin caller (the app-level
+      // middleware in index.ts answers for both).
+      mocks.loadTenantLoginFlowCompletion.mockResolvedValue(null);
+      mocks.resolvePostLoginRedirectUrl.mockResolvedValue({ redirectUrl: '/', behavior: 'home' });
+      const headersOf = async (url: string) => [...(await statusOf(url)).headers.entries()].sort();
+
+      expect(await headersOf(statusUrl)).toEqual(
+        await headersOf('https://issuer.example.com/session/status?include=basic')
+      );
+      expect(mocks.setCookie).not.toHaveBeenCalled();
+    });
+
+    it('still reports the session when the destination cannot be resolved', async () => {
+      mocks.loadTenantLoginFlowCompletion.mockRejectedValue(new Error('db down'));
+      const response = await statusOf(statusUrl);
+      const body: Record<string, unknown> = await response.json();
+
+      expect(body).toMatchObject({ active: true, user_id: 'user_123' });
+      expect(body).not.toHaveProperty('post_login_redirect');
+    });
   });
 
   it('returns inactive no_session without touching the session store when the cookie is absent', async () => {

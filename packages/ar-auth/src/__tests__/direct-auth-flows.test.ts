@@ -3303,6 +3303,32 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       ).toEqual([]);
     });
 
+    it('refuses a passkey sign-up that carries no address where the Flow lists domains', async () => {
+      // The runtime goes past a sign-up email check for an account with no address, which relies on
+      // this: a Flow that only takes some domains never makes an address-less account.
+      withTenantFlow({
+        eligibility: 'domain',
+        allowed_domains: ['example.com'],
+        denied_response: 'reason',
+      });
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+      const refused = await directPasskeySignupStartHandler(
+        createContext(
+          {
+            client_id: 'web-client',
+            code_challenge: 'signup-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        ) as never
+      );
+      expect(refused.status).toBe(403);
+      expect(JSON.stringify(await refused.json())).toContain('email_domain_not_allowed');
+      expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    });
+
     it('answers one refusal for every reason when it says none', async () => {
       withTenantFlow({ eligibility: 'domain', allowed_domains: ['example.com'] });
       const refused = await signUp('someone@elsewhere.test');

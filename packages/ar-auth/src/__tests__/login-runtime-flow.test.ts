@@ -237,6 +237,7 @@ const mocks = vi.hoisted(() => {
     resolveOidcIdentityMappingBinding: vi.fn(),
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
+    flowCompletionRedirect: vi.fn(async (..._args: unknown[]): Promise<string | null> => null),
     readAuthorizationChallengeFreshness: vi.fn(),
     getFeatureFlag: vi.fn(),
     resolveAccountCoreDataContext: vi.fn(),
@@ -314,6 +315,11 @@ vi.mock('../direct-auth', async (importOriginal) => {
     isProofOlderThanChallengeRequirement: actual.isProofOlderThanChallengeRequirement,
     reauthProofFromRecord: actual.reauthProofFromRecord,
   };
+});
+
+vi.mock('../registration-policy-gate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../registration-policy-gate')>();
+  return { ...actual, flowCompletionRedirect: mocks.flowCompletionRedirect };
 });
 
 type RuntimeContext = Context<{ Bindings: Env }>;
@@ -2715,6 +2721,351 @@ describe('LoginUI runtime Flow handlers', () => {
       expect(response.status).toBe(200);
       expect(data.completed).toBe(true);
     });
+  });
+
+  describe("a sign-up's email check, for an account that has no address", () => {
+    /** The sign-up a new tenant is given: method step, email check, account creation, completion. */
+    const registrationRuntime: FlowRuntimeContract = {
+      flow_kind: 'registration',
+      ui: {
+        steps: [
+          {
+            id: 'entry:step',
+            source_node_id: 'entry',
+            component: 'interaction_context',
+            render: false,
+          },
+          {
+            id: 'reg:step',
+            source_node_id: 'reg',
+            component: 'registration_method_selector',
+            render: true,
+          },
+          {
+            id: 'email-check:step',
+            source_node_id: 'email-check',
+            component: 'email_verification',
+            render: true,
+          },
+          {
+            id: 'account-create:step',
+            source_node_id: 'account-create',
+            component: 'account_action',
+            render: false,
+          },
+          { id: 'output:step', source_node_id: 'output', component: 'completion', render: true },
+        ],
+      },
+    };
+    const registrationEditor = {
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        { id: 'reg', type: 'registration' },
+        { id: 'email-check', type: 'email_verification' },
+        { id: 'account-create', type: 'account_action' },
+        { id: 'output', type: 'complete' },
+      ],
+      edges: [
+        { id: 'e1', source: 'entry', target: 'reg', source_handle: 'next' },
+        { id: 'e2', source: 'email-check', target: 'account-create', source_handle: 'verified' },
+        { id: 'e3', source: 'account-create', target: 'output', source_handle: 'completed' },
+      ],
+    };
+    /** The same steps as a sign-in Flow. */
+    const loginWithCheckRuntime: FlowRuntimeContract = {
+      ...registrationRuntime,
+      flow_kind: 'login',
+      ui: {
+        steps: registrationRuntime.ui.steps.map((step) =>
+          step.id === 'reg:step'
+            ? {
+                ...step,
+                id: 'auth:step',
+                source_node_id: 'auth',
+                component: 'authentication_method_selector' as const,
+              }
+            : step
+        ),
+      },
+    };
+    const loginWithCheckEditor = {
+      nodes: registrationEditor.nodes.map((node) =>
+        node.id === 'reg' ? { id: 'auth', type: 'authentication' } : node
+      ),
+      edges: registrationEditor.edges.map((edge) =>
+        edge.target === 'reg' ? { ...edge, target: 'auth' } : edge
+      ),
+    };
+
+    function settingsEnv(settings: Record<string, Record<string, unknown>>): Partial<Env> {
+      return {
+        SETTINGS: {
+          get: async (key: string) => {
+            const group = key.split(':').pop() ?? '';
+            return settings[group] ? JSON.stringify(settings[group]) : null;
+          },
+        },
+      } as unknown as Partial<Env>;
+    }
+    const accountPageOn = settingsEnv({
+      'self-service': {
+        'self-service.account_page_enabled': true,
+        'self-service.account_page_path': '/my-account',
+      },
+    });
+
+    async function submit(options: {
+      kind: 'registration' | 'login';
+      user: { email: string | null; email_verified?: 0 | 1; active?: 0 | 1 } | null;
+      session?: boolean;
+      sessionUserId?: string;
+      interactionUserId?: string;
+      handle?: string;
+      stepOn?: 'method' | 'check';
+      env?: Partial<Env>;
+      requestInput?: Record<string, unknown>;
+      emailRecord?: 'contact' | 'profile';
+    }) {
+      const runtimeSnapshot =
+        options.kind === 'login' ? loginWithCheckRuntime : registrationRuntime;
+      const editorSnapshot = options.kind === 'login' ? loginWithCheckEditor : registrationEditor;
+      const methodNode = options.kind === 'login' ? 'auth' : 'reg';
+      const startedAt = Date.UTC(2026, 10, 11);
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(startedAt);
+      try {
+        const { data: startData } = await startInteraction(
+          { flow_kind: options.kind },
+          runtimeSnapshot,
+          editorSnapshot
+        );
+        clock.mockReturnValue(startedAt + 5000);
+        resetAdapter();
+        mocks.flowCompletionRedirect.mockImplementation(async (c: unknown, tenantId: unknown) => {
+          const { resolveRegistrationCompletionRedirectUrl } = await import('@authrim/ar-lib-core');
+          return (
+            await resolveRegistrationCompletionRedirectUrl(
+              (c as { env: Env }).env,
+              tenantId as string,
+              { behavior: 'account' }
+            )
+          ).redirectUrl;
+        });
+        const onCheck = options.stepOn === 'check';
+        mockSubmitQueries({
+          expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+          contractHash: String(startData.contract_hash),
+          signature: String(startData.signature),
+          currentNodeId: onCheck ? 'email-check' : methodNode,
+          currentStepId: onCheck ? 'email-check:step' : `${methodNode}:step`,
+          stepState: 'waiting_input',
+          runtimeSnapshot,
+          editorSnapshot,
+          context: { protocol: 'direct', target_type: 'tenant', started_at_ms: startedAt },
+          userId: options.interactionUserId ?? (onCheck ? 'user_1' : null),
+        });
+        mocks.coreAdapter.queryOne.mockImplementation(async (sql: string) => {
+          if (
+            options.emailRecord === 'contact' &&
+            sql.includes('SELECT 1 AS present FROM contact_points')
+          ) {
+            return { present: 1 };
+          }
+          if (
+            options.emailRecord === 'profile' &&
+            sql.includes('SELECT 1 AS present FROM profiles')
+          ) {
+            return { present: 1 };
+          }
+          return null;
+        });
+        if (options.session !== false) {
+          mocks.sessionStore.getSessionRpc.mockResolvedValue({
+            userId: options.sessionUserId ?? 'user_1',
+            expiresAt: startedAt + 60_000,
+            createdAt: startedAt + 2000,
+            data: {
+              authTime: Math.floor(startedAt / 1000),
+              amr: ['passkey'],
+              runtime_interaction_id: 'interaction_1',
+            },
+          });
+        }
+        if (options.user) {
+          mocks.runtimeUsers.findById.mockResolvedValue({
+            id: 'user_1',
+            account_id: 'account_1',
+            subject_id: 'subject_1',
+            active: 1,
+            email_verified: 0,
+            ...options.user,
+          });
+        }
+        const response = await loginRuntimeInteractionSubmitHandler(
+          createContext({
+            params: { interaction_id: 'interaction_1' },
+            headers: options.session === false ? {} : { Cookie: 'authrim_session=sess_runtime_1' },
+            env: options.env,
+            body: {
+              step_id: onCheck ? 'email-check:step' : `${methodNode}:step`,
+              node_id: onCheck ? 'email-check' : methodNode,
+              selected_handle: options.handle ?? 'passkey',
+              ...(options.requestInput && { input: options.requestInput }),
+              contract_hash: startData.contract_hash,
+              signature: startData.signature,
+            },
+          })
+        );
+        return { response, data: await readJson(response) };
+      } finally {
+        clock.mockRestore();
+      }
+    }
+
+    it("completes at the registration's destination: the account page when it is enabled", async () => {
+      const { response, data } = await submit({
+        kind: 'registration',
+        user: { email: null },
+        env: accountPageOn,
+      });
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+      expect(data.output).toMatchObject({ action: 'complete', redirect_url: '/my-account' });
+      expect(mocks.coreAdapter.queryOne).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT 1 AS present FROM contact_points'),
+        ['tenant_test', 'account_1', 'subject_1']
+      );
+      expect(mocks.coreAdapter.queryOne).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT 1 AS present FROM profiles'),
+        ['tenant_test', 'subject_1']
+      );
+    });
+
+    it('completes at the home page when the account page is disabled', async () => {
+      const { data } = await submit({
+        kind: 'registration',
+        user: { email: null },
+        env: settingsEnv({ 'self-service': { 'self-service.account_page_enabled': false } }),
+      });
+      expect(data.completed).toBe(true);
+      expect(data.output).toMatchObject({ action: 'complete', redirect_url: '/' });
+    });
+
+    it('does not mark an address verified or write a proof it did not earn', async () => {
+      await submit({ kind: 'registration', user: { email: null }, env: accountPageOn });
+      const statements = txExecuteCalls.map(([sql]) => sql).join('\n');
+      expect(statements).not.toMatch(/email_verified|amr/u);
+      expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
+    });
+
+    it('holds an account that has an address that is not verified, as before', async () => {
+      const { response, data } = await submit({
+        kind: 'registration',
+        user: { email: 'person@example.com', email_verified: 0 },
+        env: accountPageOn,
+      });
+      expect(response.status).toBe(200);
+      expect(data.completed).not.toBe(true);
+      expect((data.step as Record<string, unknown>).id).toBe('email-check:step');
+    });
+
+    it('uses the stored address even when the request claims there is none', async () => {
+      const { data } = await submit({
+        kind: 'registration',
+        user: { email: 'person@example.com', email_verified: 0 },
+        requestInput: { email: null },
+        env: accountPageOn,
+      });
+      expect(data.completed).not.toBe(true);
+      expect((data.step as Record<string, unknown>).id).toBe('email-check:step');
+    });
+
+    it.each(['contact', 'profile'] as const)(
+      'holds an account with an unreadable email %s record',
+      async (emailRecord) => {
+        const { data } = await submit({
+          kind: 'registration',
+          user: { email: null },
+          emailRecord,
+          env: accountPageOn,
+        });
+        expect(data.completed).not.toBe(true);
+        expect((data.step as Record<string, unknown>).id).toBe('email-check:step');
+      }
+    );
+
+    it('holds a sign-up with no session', async () => {
+      const { data } = await submit({
+        kind: 'registration',
+        user: { email: null },
+        session: false,
+        env: accountPageOn,
+      });
+      expect(data.completed).not.toBe(true);
+    });
+
+    it('holds a sign-up when the session belongs to another account', async () => {
+      const { data } = await submit({
+        kind: 'registration',
+        user: { email: null },
+        sessionUserId: 'user_2',
+        interactionUserId: 'user_1',
+        env: accountPageOn,
+      });
+      expect(data.completed).not.toBe(true);
+      expect((data.step as Record<string, unknown>).id).toBe('email-check:step');
+    });
+
+    it('holds a sign-up when the stored account is inactive', async () => {
+      const { data } = await submit({
+        kind: 'registration',
+        user: { email: null, active: 0 },
+        env: accountPageOn,
+      });
+      expect(data.completed).not.toBe(true);
+      expect((data.step as Record<string, unknown>).id).toBe('email-check:step');
+    });
+
+    it('never skips the email check of a sign-in Flow', async () => {
+      const { data } = await submit({
+        kind: 'login',
+        user: { email: null },
+        env: accountPageOn,
+      });
+      expect(data.completed).not.toBe(true);
+      expect((data.step as Record<string, unknown>)?.id).toBe('email-check:step');
+    });
+
+    it.each(['completed', 'verified', 'failed', 'passkey'])(
+      'refuses %s posted at the email check by a person who does not qualify',
+      async (handle) => {
+        const { response, data } = await submit({
+          kind: 'registration',
+          user: { email: 'person@example.com', email_verified: 0 },
+          stepOn: 'check',
+          handle,
+          env: accountPageOn,
+        });
+        expect(data.completed).not.toBe(true);
+        expect(response.status).toBeGreaterThanOrEqual(400);
+      }
+    );
+
+    it.each(['completed', 'verified'])(
+      'judges %s posted at the check by the existing rule even when there is no address',
+      async (handle) => {
+        // The skip is the server's own decision while it advances, never a handle a client posts:
+        // `completed` is not an edge of the check, and `verified` needs a verified address.
+        const { response, data } = await submit({
+          kind: 'registration',
+          user: { email: null },
+          stepOn: 'check',
+          handle,
+          env: accountPageOn,
+        });
+        expect(data.completed).not.toBe(true);
+        expect(response.status).toBeGreaterThanOrEqual(400);
+      }
+    );
   });
 
   it('skips implicit account action nodes instead of returning a Continue step', async () => {
