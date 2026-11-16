@@ -114,7 +114,7 @@ export const DEMOS: Record<TransformId, Demo> = {
 	default_if_empty: one(drop('—'), add('en')),
 
 	// Identifiers: a pseudonymous ID
-	hash: one(swap('john@example.com', '5e884898da28')),
+	hash: one(drop('john@example.com'), add('Decided at sign-in')),
 	// Made from the account, not from the value that comes in
 	persistent_identifier: one(drop('—'), add('Xk3pQ9aL7mT2')),
 

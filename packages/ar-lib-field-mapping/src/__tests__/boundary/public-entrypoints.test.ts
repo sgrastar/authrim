@@ -24,6 +24,7 @@ describe('public field-mapping entrypoints', () => {
     expect(Object.keys(runtimePublic).sort()).toEqual([
       'PERSISTENT_IDENTIFIER_ALGORITHMS',
       'PERSISTENT_IDENTIFIER_FORMATS',
+      'executePreparedRuntimeMapping',
       'executeRuntimeMapping',
       'findCatalogEntry',
       'findSourceValue',

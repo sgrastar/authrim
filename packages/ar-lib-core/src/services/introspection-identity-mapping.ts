@@ -1,4 +1,4 @@
-import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
+import { executeTenantMapping } from './mapping-hash';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
@@ -85,7 +85,7 @@ export async function applyIntrospectionIdentityMapping(
   assertRuntimeIdentityMappingReleaseSafety(binding, descriptor.fields, true);
 
   const sourceClaims = await loadMappedIntrospectionSources(input, binding);
-  const runtimeResult = executeRuntimeMapping({
+  const runtimeResult = await executeTenantMapping(input.env, input.tenantId, {
     catalog: binding.catalog,
     graphRules: binding.graphRules,
     sourceValues: toIntrospectionSourceValues(sourceClaims, binding),

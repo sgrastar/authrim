@@ -5,6 +5,9 @@
  * does not mention it.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../../mapping-set-owner', () => ({
+  resolveSAMLMappingSetOwner: vi.fn(async (_adapter: unknown, tenantId: string) => tenantId),
+}));
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({

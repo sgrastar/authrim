@@ -1,3 +1,4 @@
+import { MAPPING_HASH_SECRET_REF } from '../services/mapping-hash-ref';
 import {
   IDENTIFIER_SALT_FINGERPRINT_KEY_REF,
   IDENTIFIER_VALUE_HMAC_KEY_REF,
@@ -69,6 +70,7 @@ function validatePublicSecretRef(secretRef: string): void {
   if (
     secretRef.startsWith(IMPORTED_IDENTIFIER_SALT_PREFIX) ||
     secretRef === IDENTIFIER_SALT_FINGERPRINT_KEY_REF ||
+    secretRef === MAPPING_HASH_SECRET_REF ||
     secretRef === IDENTIFIER_VALUE_HMAC_KEY_REF
   ) {
     throw new InvalidSecretRefError();
@@ -554,6 +556,8 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
     'shouldRotateKeys',
     'updateConfig',
     'getConfig',
+    'provisionMappingHashKeyRpc',
+    'rotateMappingHashKeyRpc',
     'getOrCreateSecretRpc',
     'rotateSecretRpc',
     'importSecretRpc',
@@ -2165,6 +2169,42 @@ export class KeyManager extends DurableObject<Env> {
     });
   }
 
+  /** Idempotent enrollment on the authorized Mapping Set write path; metadata only. */
+  async provisionMappingHashKeyRpc(): Promise<{ kid: string }> {
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const secret = await this.#getOrCreateSecret(MAPPING_HASH_SECRET_REF);
+      return { kid: secret.active.kid };
+    });
+  }
+
+  /** Compare-and-swap rotation; retrying the previous kid returns the completed rotation. */
+  async rotateMappingHashKeyRpc(expectedKid: string): Promise<{ kid: string }> {
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      if (typeof expectedKid !== 'string' || !expectedKid || expectedKid.length > 256)
+        throw new Error('mapping_hash_key_conflict');
+      if (!(await this.getExistingSecretRpc(MAPPING_HASH_SECRET_REF)))
+        throw new Error('mapping_hash_key_missing');
+      // Refresh an admitted instance after snapshot/restore boundaries, without enrolling a missing key.
+      await this.#initializeState();
+      const state = this.#getState();
+      const current: StoredSecret | undefined = state.secrets?.[MAPPING_HASH_SECRET_REF];
+      if (!current) throw new Error('mapping_hash_key_missing');
+      if (current.previous?.kid === expectedKid) return { kid: current.active.kid };
+      if (current.active.kid !== expectedKid) throw new Error('mapping_hash_key_conflict');
+      const next: StoredSecret = {
+        secretRef: MAPPING_HASH_SECRET_REF,
+        active: this.#generateSecretVersion(),
+        previous: current.active,
+        updatedAt: Date.now(),
+      };
+      const secrets = { ...state.secrets, [MAPPING_HASH_SECRET_REF]: next };
+      await this.ctx.storage.put('state', { ...state, secrets });
+      state.secrets = secrets;
+      return { kid: next.active.kid };
+    });
+  }
+
   async getOrCreateSecretRpc(secretRef: string): Promise<StoredSecret> {
     return runSamlDrCoveredOperation(this.env, undefined, async () => {
       validatePublicSecretRef(secretRef);
@@ -2444,6 +2484,7 @@ export class KeyManager extends DurableObject<Env> {
       return existing;
     }
 
+    if (Object.keys(state.secrets).length >= MAX_PORTABLE_SECRETS) throw new Error('secret_limit');
     const secret: StoredSecret = {
       secretRef,
       active: this.#generateSecretVersion(),
@@ -2455,7 +2496,12 @@ export class KeyManager extends DurableObject<Env> {
       configurable: true,
       writable: true,
     });
-    await this.#saveState();
+    try {
+      await this.#saveState();
+    } catch (error) {
+      delete state.secrets[secretRef];
+      throw error;
+    }
     return secret;
   }
 

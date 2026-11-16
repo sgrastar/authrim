@@ -1,3 +1,4 @@
+import { executeTenantMapping } from '@authrim/ar-lib-core/services/mapping-hash';
 import { scimRuleOutputShape, scimValueShape } from './scim-identity-mapping-catalog';
 import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
@@ -9,11 +10,7 @@ import type {
   MappingRuleGraph,
   SourceValueEnvelope,
 } from '@authrim/ar-lib-field-mapping/contract';
-import {
-  executeRuntimeMapping,
-  findCatalogEntry,
-  lastWriterMappingValues,
-} from '@authrim/ar-lib-field-mapping/runtime';
+import { findCatalogEntry, lastWriterMappingValues } from '@authrim/ar-lib-field-mapping/runtime';
 import {
   selectPrimaryScimObject,
   selectPrimaryScimValue,
@@ -81,7 +78,7 @@ export async function applyScimInboundIdentityMapping(input: {
     binding.graphRules ?? [],
     scimSourceValues(input.user)
   );
-  const runtimeResult = executeRuntimeMapping({
+  const runtimeResult = await executeTenantMapping(input.env, input.tenantId, {
     catalog: prepared.catalog,
     graphRules: prepared.graphRules,
     sourceValues: prepared.sourceValues,

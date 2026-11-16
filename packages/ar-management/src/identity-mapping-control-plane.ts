@@ -1,3 +1,4 @@
+import { provisionMappingHashKey } from '@authrim/ar-lib-core/services/mapping-hash';
 import { mappingGraphMaterialSql } from '@authrim/ar-lib-core/services/mapping-graph-snapshot';
 import { readMappingReference } from '@authrim/ar-lib-field-mapping/authoring';
 import {
@@ -41,6 +42,7 @@ import {
   findPlatformMappingVersionViolation,
   getTenantIdFromContext,
   isOutputGraphTarget,
+  loadRuntimeMappingGraph,
   mappingReferencePath,
   mappingReferenceProfileId,
   normalizePlatformActivationScope,
@@ -52,6 +54,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   resolveSourceClassification,
   sensitiveClassificationRank,
+  sliceOutputGraph,
   toMappingSourceReference,
   validateExternalUrl,
   ADMIN_ROLES,
@@ -75,6 +78,7 @@ import {
 } from './identity-provisioning-assignment';
 import {
   TRANSFORM_LIMITS,
+  TRANSFORM_OPERATION_SCHEMAS,
   parseCsvSourceProfile,
   persistentIdentifierSettingsProblem,
   validateCatalogBundle,
@@ -123,41 +127,9 @@ const POLICY_SYMBOL_MAX_CHARS = 128;
 const POLICY_SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$/;
 const SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS = 15 * 60;
 const SAML_METADATA_POLLING_MAX_INTERVAL_SECONDS = 7 * 24 * 60 * 60;
-const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
-  'keep_part',
-  'remove_text',
-  'replace_text',
-  'regex_replace',
-  'to_halfwidth',
-  'to_fullwidth',
-  'strip_accents',
-  'ascii_digits',
-  'value_map',
-  'text_to_number',
-  'date_format',
-  'filter_values',
-  'normalize_empty',
-  'default_if_empty',
-  'has_value',
-
-  'copy',
-  'as_array',
-  'split',
-  'join',
-  'first',
-  'concat',
-  'fallback',
-  'normalize',
-  'case',
-  'trim',
-  'affix_text',
-  'persistent_identifier',
-  'text_to_boolean',
-  'json_build',
-  'json_extract_text',
-  'json_extract_boolean',
-  'json_extract_integer',
-]);
+const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set<string>(
+  TRANSFORM_OPERATION_SCHEMAS.map((schema) => schema.operation)
+);
 const DEFAULT_CANONICAL_CATALOG_ID = 'system_default_canonical_catalog';
 const DEFAULT_CANONICAL_CATALOG_KEY = 'authrim.default_canonical';
 const DEFAULT_CANONICAL_CATALOG_DISPLAY_NAME = 'Authrim Default Canonical Catalog';
@@ -584,6 +556,7 @@ interface FieldMappingConflictSummaryRow {
 }
 
 interface SensitiveReleaseMappingEdgeRow {
+  id: string;
   source_ref_json: string;
   target_ref_json: string;
 }
@@ -4325,6 +4298,26 @@ export class IdentityMappingControlPlaneRepository {
             return readMappingReference(ref, edgeIds, stepIds, index);
           });
         });
+        try {
+          assertMappingGraphContract(
+            {
+              ruleKey: rule.ruleKey,
+              ruleKind: rule.ruleKind,
+              action: rule.action,
+              targetRef: rule.targetRef,
+              edges: rule.edges,
+              transforms: rule.transforms.map(({ operation, parameters, inputs }) => ({
+                operation,
+                parameters,
+                inputs,
+              })),
+              output: rule.output,
+            },
+            'stored_rule'
+          );
+        } catch {
+          throw badRequest('invalid_transform: stored graph is invalid');
+        }
       }
     }
     return rows.map((row) => ({
@@ -4383,6 +4376,9 @@ export class IdentityMappingControlPlaneRepository {
       throw conflict('field mapping version label already exists');
     }
 
+    if (input.rules.some((rule) => rule.transforms?.some((step) => step.operation === 'hash'))) {
+      await provisionMappingHashKey(this.requireLogEnvironment(), tenantId, input.rules);
+    }
     const now = this.now();
     const versionId = options.versionId ?? createId('field_mapping_version');
     const fieldMappingHash = await hashStableJson({
@@ -4453,7 +4449,7 @@ export class IdentityMappingControlPlaneRepository {
     if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
       const violation = findPlatformMappingVersionViolation(input.rules, input.sourceProfileIds);
       if (violation) throw badRequest(violation);
-      await this.assertPlatformOidcDestinationProfile(
+      await this.assertPlatformReleaseDestinationProfile(
         tenantId,
         input.rules.flatMap((rule) => (rule.edges ?? []).map((edge) => edge.targetRef)),
         false
@@ -4829,8 +4825,15 @@ export class IdentityMappingControlPlaneRepository {
   ) {
     validateRequiredString(input.snapshotId, 'snapshotId');
     let activationScope = input.activationScope;
-    if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
-      // Written empty, so it applies to every calling tenant (see normalizePlatformActivationScope).
+    const sharedSamlFacadeScope =
+      options.expectedActiveVersionId !== undefined &&
+      isRecord(activationScope) &&
+      Object.keys(activationScope).length === 2 &&
+      activationScope.protocol === 'saml' &&
+      activationScope.role === 'idp';
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID && !sharedSamlFacadeScope) {
+      // Legacy platform OIDC activations stay empty. The facade's SAML scope still applies to
+      // every tenant and SP; only the protocol and release role are constrained.
       const normalized = normalizePlatformActivationScope(input.activationScope, tenantId);
       if ('violation' in normalized) throw badRequest(normalized.violation);
       activationScope = normalized.scope;
@@ -7925,7 +7928,7 @@ export class IdentityMappingControlPlaneRepository {
     catalogVersionId: string | null
   ): Promise<void> {
     const edgeRows = await this.adapter.query<SensitiveReleaseMappingEdgeRow>(
-      `SELECT e.source_ref_json, e.target_ref_json
+      `SELECT e.id, e.source_ref_json, e.target_ref_json
          FROM mapping_rules r
          JOIN mapping_rule_edges e
            ON e.tenant_id = r.tenant_id
@@ -7934,12 +7937,38 @@ export class IdentityMappingControlPlaneRepository {
           AND r.field_mapping_version_id = ?`,
       [tenantId, fieldMappingVersionId]
     );
+    const edges = edgeRows.map((row) => ({
+      id: row.id,
+      sourceRef: parseJsonObject(row.source_ref_json, {}),
+      targetRef: parseJsonObject(row.target_ref_json, {}),
+    }));
+    const needsSamlGraph =
+      tenantId !== PLATFORM_MAPPING_TENANT_ID &&
+      edges.some(
+        ({ targetRef }) =>
+          (targetRef.namespace === 'saml.attribute' || targetRef.namespace === 'saml.nameid') &&
+          !isOutputGraphTarget({ profileId: mappingReferenceProfileId(targetRef) })
+      );
+    const samlOutputEdgeIds = new Set<string>();
+    if (needsSamlGraph) {
+      // Read path/fieldKey/nodeId and catalog-entry aliases through the runtime resolver, then
+      // use its output cut. An edge in a rule for another destination is not a SAML release.
+      const graph = await loadRuntimeMappingGraph(this.adapter, tenantId, fieldMappingVersionId);
+      for (const destinationNamespace of ['saml.attribute', 'saml.nameid']) {
+        for (const edge of sliceOutputGraph({ ...graph, destinationNamespace }).edges) {
+          samlOutputEdgeIds.add(edge.id);
+        }
+      }
+    }
     await this.assertSensitiveEdgesReleaseSafety(
       tenantId,
-      edgeRows.map((row) => ({
-        sourceRef: parseJsonObject(row.source_ref_json, {}),
-        targetRef: parseJsonObject(row.target_ref_json, {}),
-      })),
+      edges.filter(
+        ({ id, targetRef }) =>
+          !needsSamlGraph ||
+          (targetRef.namespace !== 'saml.attribute' && targetRef.namespace !== 'saml.nameid') ||
+          isOutputGraphTarget({ profileId: mappingReferenceProfileId(targetRef) }) ||
+          samlOutputEdgeIds.has(id)
+      ),
       catalogVersionId
     );
   }
@@ -7957,17 +7986,20 @@ export class IdentityMappingControlPlaneRepository {
     }>,
     catalogVersionId: string | null
   ): Promise<void> {
-    const releaseEdges = edges.filter(({ targetRef }) =>
-      // The edges that release to a destination (the cut the SAML IdP runs); the rules that
-      // bring a source profile's fields into the canonical ones are not judged here.
-      isOutputGraphTarget({
-        namespace: readStringValue(targetRef.namespace) ?? undefined,
-        profileId: mappingReferenceProfileId(targetRef),
-      })
+    const releaseEdges = edges.filter(
+      ({ targetRef }) =>
+        // The edges that release to a destination (the cut the SAML IdP runs); the rules that
+        // bring a source profile's fields into the canonical ones are not judged here.
+        isOutputGraphTarget({
+          namespace: readStringValue(targetRef.namespace) ?? undefined,
+          profileId: mappingReferenceProfileId(targetRef),
+        }) ||
+        targetRef.namespace === 'saml.attribute' ||
+        targetRef.namespace === 'saml.nameid'
     );
     if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
       // The runtime counts the profile of every edge, not only the ones judged below.
-      await this.assertPlatformOidcDestinationProfile(
+      await this.assertPlatformReleaseDestinationProfile(
         tenantId,
         edges.map((edge) => edge.targetRef),
         true
@@ -8071,7 +8103,8 @@ export class IdentityMappingControlPlaneRepository {
       const targetField = findDestinationProfileField(
         profile.destination_type,
         parseJsonObject(profile.schema_json, {}),
-        targetPath
+        targetPath,
+        readStringValue(targetRef.namespace) ?? undefined
       );
       if (!targetField) {
         throw badRequest(`sensitive destination profile field is unavailable: ${targetPath}`);
@@ -8100,7 +8133,7 @@ export class IdentityMappingControlPlaneRepository {
    * `profileId` or `profile_id`). While a version is being written the profile may not be active
    * yet; at activation it must be.
    */
-  private async assertPlatformOidcDestinationProfile(
+  private async assertPlatformReleaseDestinationProfile(
     platformTenantId: string,
     targetRefs: Array<Record<string, unknown>>,
     requireActive: boolean
@@ -8129,9 +8162,9 @@ export class IdentityMappingControlPlaneRepository {
         `platform mapping must reference ${requireActive ? 'an active ' : 'a '}platform-owned Destination Profile: ${profileRef}`
       );
     }
-    if (destinationType !== 'oidc') {
+    if (destinationType !== 'oidc' && destinationType !== 'saml') {
       throw badRequest(
-        `platform mapping must reference an OIDC Destination Profile: ${profileRef}`
+        `platform mapping must reference an OIDC or SAML Destination Profile: ${profileRef}`
       );
     }
   }
@@ -8207,7 +8240,7 @@ export class IdentityMappingControlPlaneRepository {
       }))
     );
     if (violation) throw badRequest(violation);
-    await this.assertPlatformOidcDestinationProfile(
+    await this.assertPlatformReleaseDestinationProfile(
       platformTenantId,
       mapping.edges.map((edge) => edge.targetRef),
       false
@@ -10285,8 +10318,12 @@ function normalizeDestinationProfileReference(profileId: string): string {
 function findDestinationProfileField(
   destinationType: string,
   schema: Record<string, unknown>,
-  path: string
+  path: string,
+  namespace?: string
 ): Record<string, unknown> | null {
+  if (destinationType === 'saml' && namespace === 'saml.nameid' && isRecord(schema.nameId)) {
+    return schema.nameId;
+  }
   const definitions =
     destinationType === 'saml'
       ? schema.attributes
@@ -10387,9 +10424,9 @@ function assertProfileSchemaBudget(value: unknown, path: string, allowMappingTab
             ? 'transforms'
             : context === 'transform' &&
                 key === 'parameters' &&
-                Reflect.get(item, 'operation') === 'value_map'
+                ['value_map', 'conditional'].includes(String(Reflect.get(item, 'operation')))
               ? 'valueMapParameters'
-              : context === 'valueMapParameters' && key === 'entries'
+              : context === 'valueMapParameters' && (key === 'entries' || key === 'condition')
                 ? 'valueMapEntries'
                 : undefined;
       visit(child, `${currentPath}.${key}`, depth + 1, childContext);
@@ -10492,6 +10529,21 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
       )
     ) {
       throw badRequest(`${path}.targetRef targets a claim reserved by the protocol envelope`);
+    }
+  }
+  if (outputTarget?.namespace === 'saml.nameid') {
+    const output = ruleOutput(rule);
+    const plainCopy = output && 'edgeIndex' in output && (rule.transforms?.length ?? 0) === 0;
+    const identifier =
+      output &&
+      'stepIndex' in output &&
+      rule.transforms?.length === 1 &&
+      rule.transforms[output.stepIndex]?.operation === 'persistent_identifier' &&
+      rule.transforms[output.stepIndex]?.parameters?.format === 'plain';
+    if (!plainCopy && !identifier) {
+      throw badRequest(
+        `${path}: saml.nameid requires a plain copy or a plain persistent identifier`
+      );
     }
   }
   validatePolicySymbol(rule.ruleKey, `${path}.ruleKey`);

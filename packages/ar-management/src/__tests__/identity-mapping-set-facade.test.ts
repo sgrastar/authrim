@@ -1750,7 +1750,94 @@ describe('the kind of Destination Profile', () => {
     }
   );
 
-  it('refuses a set that releases into a SAML profile, and says to use the activation endpoints', async () => {
+  it('refuses a profile change when a reference arrives while compiling', async () => {
+    const t = await setup();
+    const created = z
+      .object({ id: z.string(), version_id: z.string(), field_mapping_key: z.string() })
+      .parse(await t.create());
+    seedDestinationProfile(t.db, { owner: TENANT, id: 'arriving-profile' });
+    t.faults.afterWrite = {
+      match: /INSERT INTO compiled_mapping_snapshots/,
+      run: () =>
+        insertOAuthClient(t.coreA, {
+          tenantId: TENANT,
+          clientId: 'arriving-client',
+          identityMapping: { fieldMappingSetId: created.id },
+        }),
+    };
+    const refused = await t.request(
+      t.tenantAdmin,
+      'PUT',
+      `${SETS}/${created.id}`,
+      t.body({
+        field_mapping_key: created.field_mapping_key,
+        content: t.content({ profileId: 'arriving-profile' }),
+        confirm_impact: 1,
+      })
+    );
+    expect(refused.status, JSON.stringify(refused.json)).toBe(409);
+    expect(refused.json).toMatchObject({ error: 'conflict', stage_failed: 'activate' });
+    expect(refused.json.references).toMatchObject({ count: 1 });
+    const read = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.id}`);
+    expect(read.json.content_version).toBe(created.version_id);
+    expect(read.json.destination_profile_id).toBe(t.profile);
+  });
+
+  it('saves a platform SAML release with the shared IdP scope', async () => {
+    const t = await setup();
+    seedDestinationProfile(t.db, {
+      owner: 'platform',
+      id: 'platform-saml',
+      destinationType: 'saml',
+      attributes: ['email'],
+    });
+    t.db
+      .prepare('UPDATE destination_profile_versions SET schema_json = ? WHERE profile_id = ?')
+      .run(
+        JSON.stringify({
+          destinationType: 'saml',
+          attributes: [{ name: 'email', classification: 'pii' }],
+        }),
+        'platform-saml'
+      );
+    const target = {
+      side: 'destination',
+      namespace: 'saml.attribute',
+      path: 'email',
+      profileId: 'platform-saml',
+    };
+    const created = z.object({ id: z.string(), version_id: z.string() }).parse(
+      await t.create(
+        {
+          owner_scope_type: 'platform',
+          content: t.content({
+            catalogVersionId: PLATFORM_CATALOG_VERSION,
+            rules: [
+              {
+                ruleKey: 'mail',
+                ruleKind: 'direct',
+                action: 'allow',
+                targetRef: target,
+                edges: [
+                  {
+                    sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'email' },
+                    targetRef: target,
+                  },
+                ],
+                output: { edgeIndex: 0 },
+              },
+            ],
+          }),
+        },
+        t.platformAdmin
+      )
+    );
+    expect(t.activeVersions(created.id)).toEqual([
+      { version: created.version_id, scope: { protocol: 'saml', role: 'idp' } },
+    ]);
+  });
+
+  it('refuses OIDC targets in a SAML Destination Profile', async () => {
     const t = await setup();
     seedDestinationProfile(t.db, { owner: TENANT, id: 'profile-saml', destinationType: 'saml' });
 
@@ -1763,10 +1850,10 @@ describe('the kind of Destination Profile', () => {
 
     expect(refused.status).toBe(400);
     expect(refused.json).toMatchObject({
-      error: 'unsupported_destination',
+      error: 'invalid_request',
       stage_failed: 'validate',
     });
-    expect(refused.json.error_description).toContain('activation endpoints');
+    expect(refused.json.error_description).toContain('protocol');
     expect(t.rowCounts().sets).toBe(0);
   });
 

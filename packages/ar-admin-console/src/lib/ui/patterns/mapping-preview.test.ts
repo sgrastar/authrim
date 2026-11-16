@@ -146,7 +146,8 @@ describe('previewMapping (run by the runtime engine)', () => {
 		});
 		expect(out(['profile'], [step('json_extract_array', { path: 'user.name' })])).toEqual({
 			known: true,
-			value: null
+			value: undefined,
+			state: 'absent'
 		});
 		expect(
 			out(

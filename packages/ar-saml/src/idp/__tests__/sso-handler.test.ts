@@ -6,6 +6,9 @@ import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
 import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
 import { createChallengeStoreFake } from './helpers/challenge-store-fake';
 import { completeStoredAuthnRequest } from '../sso-stored-request';
+import { createHmac } from 'node:crypto';
+import { MAPPING_HASH_SECRET_REF } from '@authrim/ar-lib-core/services/mapping-hash';
+import type { MappingRuleGraph } from '@authrim/ar-lib-field-mapping/contract';
 
 const store = createSamlRequestStoreFake();
 const challenges = createChallengeStoreFake();
@@ -26,6 +29,10 @@ const mocks = vi.hoisted(() => ({
   sessionThrows: false,
   user: null as Record<string, unknown> | null,
   attributeError: null as Error | null,
+  realAttributes: false,
+  hashReader: vi.fn(),
+  hashProvision: vi.fn(),
+  hashTenant: vi.fn(),
   /** The attributes the mapping would release, and the ones the Destination Profile requires. */
   attributes: [{ name: 'mail', values: ['user@example.test'] }] as Array<{
     name: string;
@@ -164,10 +171,21 @@ vi.mock('../attributes', async (importOriginal) => {
     ...actual,
     buildSAMLAttributesForSPWithDiagnostics: vi.fn(
       (
-        _subject: unknown,
-        config?: { identityMapping?: { runtimeContext?: Record<string, unknown> } }
+        subject: Parameters<typeof actual.buildSAMLAttributesForSPWithDiagnostics>[0],
+        config: Parameters<typeof actual.buildSAMLAttributesForSPWithDiagnostics>[1]
       ) => {
+        if (mocks.realAttributes)
+          return actual.buildSAMLAttributesForSPWithDiagnostics(subject, config);
         if (mocks.attributeError) throw mocks.attributeError;
+        const prepared = config.identityMapping?.runtimeContext?.mappingPreparedSteps;
+        const deferred =
+          prepared instanceof Map &&
+          [...prepared.values()].some(
+            (value: unknown) =>
+              value !== null &&
+              typeof value === 'object' &&
+              Reflect.get(value, 'kind') === 'deferred'
+          );
         mocks.runtimeContexts.push(
           (config?.identityMapping as { runtimeContext?: Record<string, unknown> } | undefined)
             ?.runtimeContext
@@ -175,6 +193,7 @@ vi.mock('../attributes', async (importOriginal) => {
         return {
           attributes: [
             ...mocks.attributes.map((attribute) => ({ ...attribute })),
+            ...(deferred ? [{ name: 'pairwise-id', values: [] }] : []),
             // A persistent_identifier step's value goes out the same way.
             ...Object.values(
               ((config?.identityMapping as { runtimeContext?: { identifiers?: object } })
@@ -182,6 +201,7 @@ vi.mock('../attributes', async (importOriginal) => {
             ).map((value) => ({ name: 'pairwise-id', values: [value] })),
           ],
           optionalMissingAttributes: [],
+          ...(deferred ? { deferredAttributes: ['pairwise-id'] } : {}),
         };
       }
     ),
@@ -277,6 +297,13 @@ function app() {
 
 function environment() {
   return {
+    KEY_MANAGER: {
+      idFromName: mocks.hashTenant,
+      get: vi.fn(() => ({
+        getExistingSecretRpc: mocks.hashReader,
+        provisionMappingHashKeyRpc: mocks.hashProvision,
+      })),
+    },
     SETTINGS: {
       get: vi.fn(async (key: string) =>
         key === 'settings:tenant:tenant-a:federation' && mocks.federationSettings
@@ -345,6 +372,10 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  mocks.realAttributes = false;
+  mocks.hashReader.mockReset();
+  mocks.hashProvision.mockReset();
+  mocks.hashTenant.mockReset();
   consentDb.clearConsent();
   consentDb.failEvidenceReads(null);
   mocks.evidenceAdapter = consentDb.adapter;
@@ -1848,6 +1879,132 @@ describe('information release consent on the shared consent screen (SP-initiated
       ).attributes.flatMap((attribute) => attribute.values)
     ).not.toContain('authrim-deferred-identifier');
   });
+
+  it.each([true, false])(
+    'computes an approved hash after the real consent challenge (key installed: %s)',
+    async (installed) => {
+      mocks.realAttributes = true;
+      const bytes = new Uint8Array(32).fill(1);
+      mocks.hashReader.mockResolvedValue(
+        installed
+          ? {
+              secretRef: MAPPING_HASH_SECRET_REF,
+              active: { value: btoa(String.fromCharCode(...bytes)).replace(/=+$/u, '') },
+            }
+          : null
+      );
+      const rule: MappingRuleGraph = {
+        id: 'hash-consent',
+        targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'syntheticDigest' },
+        edges: [
+          {
+            id: 'synthetic-input',
+            sourceRef: { side: 'source', namespace: 'authrim.custom_claims', path: 'synthetic' },
+            targetRef: {
+              side: 'destination',
+              namespace: 'saml.attribute',
+              path: 'syntheticDigest',
+            },
+          },
+        ],
+        transforms: [
+          {
+            id: 'hash',
+            operation: 'hash',
+            parameters: { encoding: 'hex' },
+            inputs: [{ edgeIndex: 0 }],
+          },
+          {
+            id: 'upper',
+            operation: 'case',
+            parameters: { mode: 'upper' },
+            inputs: [{ stepIndex: 0 }],
+          },
+        ],
+        output: { stepIndex: 1 },
+      };
+      mocks.sp = sp({
+        informationReleaseConsent: { ...asks, show_values: true },
+        identityMapping: {
+          catalog: {
+            identity: {
+              id: 'synthetic',
+              version: '1',
+              contentHash: 'synthetic',
+              compatibilityRange: '*',
+            },
+            entries: [
+              {
+                id: 'digest',
+                namespace: 'saml.attribute',
+                path: 'syntheticDigest',
+                valueType: 'string',
+                cardinality: 'single',
+                classification: 'public',
+              },
+            ],
+          },
+          edges: rule.edges,
+          graphRules: [rule],
+          destinationFieldPolicies: { syntheticDigest: 'required' },
+        },
+      });
+      mocks.user = {
+        id: 'user-a',
+        email: 'synthetic@example.test',
+        customClaims: { synthetic: 'synthetic' },
+      };
+      const { challengeId, challenge } = await sentToTheScreen();
+      const hashKey = samlAttributeItemKey({ name: 'syntheticDigest' });
+      expect(challenge).toHaveProperty(
+        'metadata.release.items',
+        expect.arrayContaining([
+          expect.objectContaining({ key: hashKey, required: true, deferred: true }),
+        ])
+      );
+      const presented: unknown = challenge?.metadata?.release;
+      expect(presented).not.toHaveProperty('items.1.values');
+      expect(mocks.hashTenant).not.toHaveBeenCalled();
+      expect(mocks.hashReader).not.toHaveBeenCalled();
+      expect(mocks.hashProvision).not.toHaveBeenCalled();
+      nothingMade();
+
+      const approved = [NAMEID_KEY, hashKey];
+      consentDb.saveReleaseDecision({
+        spEntityId: SP,
+        presented: approved,
+        approved,
+        declined: [],
+        revision: 1,
+      });
+      challenges.decide(challengeId, {
+        approved: true,
+        approved_items: approved,
+        declined_items: [],
+        decision_revision: 1,
+        decided_at: Date.now(),
+      });
+      expect((await resume()).status).toBe(200);
+      expect(challenges.challenges.get(challengeId)?.consumed).toBe(true);
+      expect(mocks.hashTenant).toHaveBeenCalledExactlyOnceWith('tenant-a-v3');
+      expect(mocks.hashReader).toHaveBeenCalledExactlyOnceWith(MAPPING_HASH_SECRET_REF);
+      expect(mocks.hashProvision).not.toHaveBeenCalled();
+      if (installed) {
+        const digest = createHmac('sha256', bytes).update('synthetic').digest('hex').toUpperCase();
+        expect(mocks.buildResponse).toHaveBeenCalledOnce();
+        expect(mocks.buildResponse.mock.calls.at(-1)?.[0]).toHaveProperty('attributes', [
+          expect.objectContaining({ name: 'syntheticDigest', values: [digest] }),
+        ]);
+      } else {
+        expect(mocks.buildResponse).not.toHaveBeenCalled();
+        expect(mocks.buildErrorResponse).toHaveBeenCalledOnce();
+        expect(applySAMLErrorResponseOverride).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ failureKind: 'identity_mapping_failed' })
+        );
+      }
+    }
+  );
 
   it('answers nothing when the consent state cannot be read', async () => {
     mocks.coreAdapterError = new Error('account_data_route_not_found');

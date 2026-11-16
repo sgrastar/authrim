@@ -8,9 +8,9 @@
 		AppSummary,
 		ExplainConsent,
 		ExplainSurface,
-		IdentityMappingClient,
+		IdentityMappingStoryClient,
 		MappingSetSummary,
-		SetContentDraft
+		StoryMappingDraft
 	} from '#lib/api/identity-mapping.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -35,7 +35,7 @@
 	 * Service-flow integration and links across Shell destinations are designed separately.
 	 */
 	interface Props {
-		client: IdentityMappingClient;
+		client: IdentityMappingStoryClient;
 		tenantId?: string;
 		tenantName?: string;
 		page?: MappingPage;
@@ -46,7 +46,7 @@
 		surface?: ExplainSurface;
 		consent?: ExplainConsent;
 		autorun?: boolean;
-		edits?: SetContentDraft;
+		edits?: StoryMappingDraft;
 		sampleUserId?: string;
 	}
 	let {

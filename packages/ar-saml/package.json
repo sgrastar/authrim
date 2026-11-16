@@ -7,7 +7,17 @@
     ".": "./src/index.ts",
     "./idp-app": "./src/idp-app.ts",
     "./idp-readiness": "./src/idp-readiness.ts",
-    "./src/*": "./src/*.ts"
+    "./src/*": "./src/*.ts",
+    "./admin-providers": {
+      "types": "./src/admin-providers.d.ts",
+      "import": "./src/admin/providers.ts",
+      "default": "./src/admin/providers.ts"
+    },
+    "./release-explain": {
+      "types": "./src/release-explain.d.ts",
+      "import": "./src/idp/explain-release.ts",
+      "default": "./src/idp/explain-release.ts"
+    }
   },
   "scripts": {
     "dev": "wrangler dev",

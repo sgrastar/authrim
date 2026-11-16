@@ -15,7 +15,7 @@ describe('a transform step that takes no input edge', () => {
       VALUES ('identifier-rule','tenant-a','ver-a','identifier','mapping','allow',1,1,'step-identifier',?)`
     ).run(JSON.stringify(target));
     db.exec(`INSERT INTO mapping_transform_steps (id,tenant_id,rule_id,step_order,operation,parameters_json,created_at,updated_at)
-      VALUES ('step-identifier','tenant-a','identifier-rule',0,'persistent_identifier','{}',1,1)`);
+      VALUES ('step-identifier','tenant-a','identifier-rule',0,'persistent_identifier','{"input":"account","format":"plain","algorithm":"authrim_sha256"}',1,1)`);
 
     const graph = await loadRuntimeMappingGraph(sqliteAdapter(db), 'tenant-a', 'ver-a');
     const identifier = graph.transforms.find((step) => step.id === 'step-identifier');
@@ -47,7 +47,7 @@ describe('a transform step that takes no input edge', () => {
       `UPDATE mapping_rules SET output_edge_id=NULL,output_step_id='step-identifier',target_ref_json=? WHERE id='rule-a'`
     ).run(JSON.stringify(target));
     db.exec(`INSERT INTO mapping_transform_steps (id,tenant_id,rule_id,step_order,operation,parameters_json,created_at,updated_at)
-      VALUES ('step-identifier','tenant-a','rule-a',0,'persistent_identifier','{}',1,1)`);
+      VALUES ('step-identifier','tenant-a','rule-a',0,'persistent_identifier','{"input":"account","format":"plain","algorithm":"authrim_sha256"}',1,1)`);
     const adapter = sqliteAdapter(db);
     const base = { tenantId: 'tenant-a', protocol: 'oidc', role: 'op' } as const;
     // Found by the profile it releases into, and the profile is the one binding the release.

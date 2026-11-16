@@ -1,3 +1,4 @@
+import { conditionRegexWork, readMappingCondition } from './conditions';
 import type { MappingTransformStep, ReasonCodeName, SourceValueEnvelope } from './types';
 
 /** Shared by every operation, preview and graph evaluation. Units bound scanning/allocation work. */
@@ -11,6 +12,8 @@ export const TRANSFORM_LIMITS = Object.freeze({
   tableBytes: 16 * 1024,
   patternChars: 512,
   regexInputChars: 1024,
+  conditionDepth: 3,
+  conditionNodes: 64,
   ruleWork: 8 * 1024 * 1024,
 });
 
@@ -132,7 +135,17 @@ export function transformWork(step: MappingTransformStep, value: unknown, bytes:
         ? p.match
         : undefined;
   const items = Array.isArray(value) ? value : [value];
-  const baseWork = (bytes + 1) * (measureTransformValue(p) + 1);
+  let baseWork = (bytes + 1) * (measureTransformValue(p) + 1);
+  if (step.operation === 'conditional') {
+    const condition = readMappingCondition(p.condition);
+    const values =
+      step.inputEdgeIds.length === 1 ? [value] : Array.isArray(value) ? value : [value];
+    if (condition)
+      baseWork += conditionRegexWork(
+        condition,
+        new Map(step.inputNames?.map((name, index) => [name ?? '', values[index]]))
+      );
+  }
   if (typeof pattern === 'string') {
     let work = 0;
     for (const item of items) {

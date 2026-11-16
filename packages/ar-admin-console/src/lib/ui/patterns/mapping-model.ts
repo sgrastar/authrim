@@ -12,27 +12,11 @@
  * Operations, parameter names and defaults follow the runtime engine
  * (@authrim/ar-lib-field-mapping, core/transforms.ts), which evaluates what is saved here.
  *
- * TODO(api): read and write through the field-mapping versions API. The runtime runs
- * `transforms: MappingTransformStep[]`, each step reading `inputEdgeIds` (source values or
- * earlier steps' outputs). Compile these steps into that graph: a step before the combining
- * step becomes one runtime step per source edge; the combining step reads all of their
- * outputs; later steps chain on its output. Positions on a canvas are not needed any more.
+ * The Mapping Set facade reads/writes persisted rules through mapping-codec.ts. A step before
+ * combining expands per source; combining reads those ordered outputs; later steps chain.
  * The sample output is computed by the engine itself (mapping-preview.ts), so the console
  * never shows a result the runtime would not produce.
- * TODO(runtime): the "Generate a value" steps (constant_text / _boolean / _number) have no
- * runtime operation yet. Add one `constant` operation to TRANSFORM_OPERATION_SCHEMAS —
- * parameters `value` and `valueType` (string | boolean | number), no input edges — and
- * compile these three to it. A mapping made only of such a step has no source edge.
- * TODO(runtime): json_extract_array, array_build, conditional, json_extract_or and hash
- * remain local to the console preview until the runtime supports them.
- * - hash is HMAC-SHA-256 with a per-tenant key (add it to scripts/setup-keys.sh), hex or
- *   base64url.
- * - Tables (value_map) are saved as JSON text: [["from", "to"], …].
- * - conditional saves its condition as the console's ConditionGroup (JSON text); the
- *   attributes it reads become extra input edges of the step, besides the value it changes.
- * Text shaping, regex safety and table validation are shared with the runtime engine.
- * TODO(api): boolean settings (trimItems, omitEmpty, unique) are saved as booleans, as the
- * runtime expects; the key map of "Build JSON" is JSON text ({"mail": "email"}).
+ * Structure, conditions and constants share the backend engine. Hash preview stays deferred.
  */
 
 /** Attribute types as the catalogs name them; "[]" marks multi-valued. */
@@ -40,20 +24,24 @@ export type MappingType = 'string' | 'string[]' | 'number' | 'boolean' | 'date' 
 
 import {
 	TRANSFORM_OPERATION_SCHEMAS,
+	readMappingCondition,
 	persistentIdentifierSettingsProblem,
 	safeTransformPattern,
 	TRANSFORM_LIMITS
 } from '@authrim/ar-lib-field-mapping/authoring';
 import type { ConditionGroup } from './condition-model';
+import type { FieldRef } from '@authrim/ar-lib-field-mapping/contract';
 
 export interface MappingField {
+	/** Persisted field identity supplied by the HTTP editor adapter. Stories may use keys alone. */
+	ref?: FieldRef & { profileId?: string };
 	key: string;
 	label?: string;
 	type: MappingType;
 	/** Receiving side: must be filled. */
 	required?: boolean;
 	/** Sending side: a sample value (a recent sign-in, a test user), for the sample output. */
-	example?: string | readonly string[];
+	example?: unknown;
 }
 
 /**
@@ -539,11 +527,6 @@ export function parseCondition(text: unknown): ConditionGroup | null {
 	}
 }
 
-/** Whether a condition has at least one rule on an attribute. */
-const conditionSet = (group: ConditionGroup | null): boolean =>
-	!!group &&
-	group.children.some((child) => (child.kind === 'rule' ? !!child.field : conditionSet(child)));
-
 /** The fixed value that suits a receiving attribute of this type. */
 export function generatorFor(type: MappingType | undefined): TransformId {
 	if (type === 'boolean') return 'constant_boolean';
@@ -592,11 +575,8 @@ export function newStep(transform: TransformId, id: string): TransformStep {
  * not apply to it (a digest for an algorithm that has none, a store with stored off), so this is
  * what the console checks with `persistentIdentifierSettingsProblem` today.
  *
- * SERIALIZATION SEAM: the console's editor does not yet compile to the runtime's steps and
- * edges (see the TODO(api) at the top). When it does, a step's `parameters` must be built from
- * this function, never from `step.params` as they are: the editor keeps what was typed for a
- * setting that has stopped applying (the digest of a former algorithm), and it must not be sent.
- * The step has no input edge (it is made from the account's ID or an identifier source).
+ * mapping-codec.ts uses this function when compiling both parameters and owned editor metadata.
+ * The step has no input edge: it is made from the account ID or an identifier source.
  */
 export function identifierRuntimeParams(params: TransformStep['params']): Record<string, string> {
 	const def = transformDef('persistent_identifier');
@@ -757,8 +737,13 @@ export function mappingProblems(
 			const empty = param.pairs
 				? parsePairs(step.params[param.key]).length === 0
 				: param.condition
-					? !conditionSet(parseCondition(step.params[param.key]))
-					: !step.params[param.key];
+					? !readMappingCondition(step.params[param.key])
+					: step.transform.startsWith('constant_') && param.key === 'value'
+						? step.params.value === undefined ||
+							(step.transform === 'constant_number' &&
+								typeof step.params.value === 'string' &&
+								!step.params.value.trim())
+						: !step.params[param.key];
 			if (param.required && empty) {
 				found.push({ kind: 'missingParam', step: index + 1, param: param.key });
 			}
@@ -830,4 +815,26 @@ export function fixesFor(
 		default:
 			return [];
 	}
+}
+
+/** Console text controls become safe typed constant parameters at the API/engine seam. */
+export function runtimeTransformParams(step: TransformStep): Record<string, unknown> {
+	if (step.transform === 'persistent_identifier') return identifierRuntimeParams(step.params);
+	if (step.transform === 'constant_boolean')
+		return {
+			value:
+				step.params.value === true || step.params.value === 'true'
+					? true
+					: step.params.value === false || step.params.value === 'false'
+						? false
+						: undefined
+		};
+	if (step.transform === 'constant_number')
+		return {
+			value:
+				typeof step.params.value === 'string' && step.params.value.trim()
+					? Number(step.params.value)
+					: NaN
+		};
+	return step.params;
 }

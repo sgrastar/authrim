@@ -1,6 +1,13 @@
 import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
+import { PRODUCTION_INPUT_EDGES } from '../../idp/__fixtures__/production-shaped-mapping';
+import type { FieldCatalogBundle } from '@authrim/ar-lib-field-mapping/contract';
+
+// Binding resolution is mocked below; its selected set belongs to the calling tenant.
+vi.mock('../../mapping-set-owner', () => ({
+  resolveSAMLMappingSetOwner: vi.fn(async (_adapter: unknown, tenantId: string) => tenantId),
+}));
 
 const mocks = vi.hoisted(() => ({
   stepUp: vi.fn(async (..._args: unknown[]): Promise<Response | null> => null),
@@ -709,6 +716,240 @@ describe('SAML provider CRUD boundaries', () => {
 
     expect(invalidResponse.status).toBe(400);
     expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+  });
+
+  describe('a shared set containing canonical input and release rules', () => {
+    const catalog: FieldCatalogBundle = {
+      identity: {
+        id: 'canonical',
+        version: '1',
+        contentHash: 'canonical-1',
+        compatibilityRange: '*',
+      },
+      entries: [
+        {
+          id: 'field.canonical.preferred_username',
+          namespace: 'authrim.canonical',
+          path: 'preferred_username',
+          targetType: 'canonical',
+          valueType: 'string',
+          cardinality: 'single',
+          classification: 'internal',
+        },
+        {
+          id: 'field.canonical.employee_code',
+          namespace: 'authrim.custom_fields',
+          path: 'employee_code',
+          aliases: [{ namespace: 'custom_fields', path: 'employeeCode' }],
+          targetType: 'canonical',
+          valueType: 'string',
+          cardinality: 'single',
+          classification: 'internal',
+        },
+        {
+          id: 'field.destination.external_code',
+          namespace: 'authrim.custom_fields',
+          path: 'external_code',
+          targetType: 'destination-only',
+          valueType: 'string',
+          cardinality: 'single',
+          classification: 'internal',
+        },
+        {
+          id: 'field.oidc.email',
+          namespace: 'oidc.claim',
+          path: 'email',
+          targetType: 'destination-only',
+          valueType: 'string',
+          cardinality: 'single',
+          classification: 'internal',
+        },
+      ],
+    };
+    const config = {
+      entityId: 'https://sp.example.test',
+      acsUrl: 'https://sp.example.test/acs',
+      identityMapping: {
+        fieldMappingSetId: 'saml-sp',
+        destinationFieldPolicies: {
+          mail: 'optional',
+          displayName: 'optional',
+          eduPersonAffiliation: 'optional',
+        },
+      },
+    };
+    const save = (operation: string) => {
+      if (operation === 'create') {
+        return handleCreateProvider(
+          context({ body: { name: 'Provider', providerType: 'saml_sp', config } })
+        );
+      }
+      mocks.adapter?.queryOne.mockResolvedValue(providerRow());
+      return handleUpdateProvider(
+        context({
+          id: 'provider-a',
+          body: { expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(), config },
+        })
+      );
+    };
+    const bind = (
+      namespace: string,
+      projectionOnly = false,
+      inputTarget: Record<string, unknown> = PRODUCTION_INPUT_EDGES[0].targetRef
+    ) => {
+      const binding = withExplicitMappingGraphs({
+        ...mocks.runtimeBinding,
+        catalog,
+        edges: [
+          ...PRODUCTION_INPUT_EDGES.map((edge) => ({ ...edge, targetRef: inputTarget })),
+          {
+            id: 'release-mail',
+            sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'email' },
+            targetRef: { side: 'destination', namespace, path: 'mail' },
+          },
+        ],
+        transforms: [],
+      });
+      mocks.runtimeBinding = projectionOnly ? { ...binding, graphRules: [] } : binding;
+      return binding;
+    };
+
+    it.each(['create', 'update'])('accepts canonical input rules on SP %s', async (operation) => {
+      bind('saml.attribute');
+      const response = await save(operation);
+      expect(response.status).toBe(operation === 'create' ? 201 : 200);
+      expect(mocks.adapter?.execute).toHaveBeenCalled();
+    });
+
+    describe.each(['create', 'update'])('custom canonical fields on SP %s', (operation) => {
+      it.each([
+        {
+          label: 'catalog ID',
+          namespace: 'authrim.custom_fields',
+          path: 'employee_code',
+          catalogEntryId: 'field.canonical.employee_code',
+        },
+        { label: 'catalog path', namespace: 'authrim.custom_fields', path: 'employee_code' },
+        { label: 'catalog alias', namespace: 'custom_fields', path: 'employeeCode' },
+        {
+          label: 'catalog ID and alias',
+          namespace: 'custom_fields',
+          path: 'employeeCode',
+          catalogEntryId: 'field.canonical.employee_code',
+        },
+      ])('accepts a canonical input identified by $label', async ({ label: _label, ...ref }) => {
+        bind('saml.attribute', false, { side: 'destination', ...ref });
+        expect((await save(operation)).status).toBe(operation === 'create' ? 201 : 200);
+        expect(mocks.adapter?.execute).toHaveBeenCalled();
+      });
+
+      it.each([
+        {
+          label: 'an uncatalogued custom field',
+          namespace: 'authrim.custom_fields',
+          path: 'missing',
+        },
+        { label: 'an uncatalogued profile field', namespace: 'authrim.profile', path: 'missing' },
+        {
+          label: 'an unknown catalog ID',
+          namespace: 'authrim.custom_fields',
+          path: 'employee_code',
+          catalogEntryId: 'unknown-entry',
+        },
+        {
+          label: 'a conflicting catalog ID',
+          namespace: 'authrim.custom_fields',
+          path: 'employee_code',
+          catalogEntryId: 'field.canonical.preferred_username',
+        },
+        {
+          label: 'an OIDC output with a borrowed canonical ID',
+          namespace: 'oidc.claim',
+          path: 'employee_code',
+          catalogEntryId: 'field.canonical.employee_code',
+        },
+        {
+          label: 'an unknown output with a borrowed canonical ID',
+          namespace: 'unknown.output',
+          path: 'employee_code',
+          catalogEntryId: 'field.canonical.employee_code',
+        },
+        {
+          label: 'a destination-only catalog entry',
+          namespace: 'authrim.custom_fields',
+          path: 'external_code',
+          catalogEntryId: 'field.destination.external_code',
+        },
+        {
+          label: 'a custom input carrying a Destination Profile reference',
+          namespace: 'authrim.custom_fields',
+          path: 'employee_code',
+          profileId: 'destination-profile-saml',
+        },
+        {
+          label: 'an alias carrying a stored Destination Profile reference',
+          namespace: 'custom_fields',
+          path: 'employeeCode',
+          profile_id: 'destination-profile-saml',
+        },
+      ])('rejects $label', async ({ label: _label, ...ref }) => {
+        bind('saml.attribute', false, { side: 'destination', ...ref });
+        expect((await save(operation)).status).toBe(400);
+        expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+      });
+    });
+
+    it.each([
+      ['create', false],
+      ['update', false],
+      ['create', true],
+      ['update', true],
+    ])(
+      'rejects an OIDC output on SP %s (projection only: %s)',
+      async (operation, projectionOnly) => {
+        bind('oidc.claim', projectionOnly);
+        const response = await save(operation);
+        expect(response.status).toBe(400);
+        expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+      }
+    );
+
+    it('rejects an unknown output namespace rather than treating it as an input rule', async () => {
+      bind('unknown.output');
+      expect((await save('create')).status).toBe(400);
+      expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+    });
+
+    it('judges the final graph target even when its projected edge targets SAML', async () => {
+      const binding = bind('saml.attribute');
+      mocks.runtimeBinding = {
+        ...binding,
+        graphRules: binding.graphRules.map((rule) =>
+          rule.id === 'release-mail'
+            ? { ...rule, targetRef: { ...rule.targetRef, namespace: 'oidc.claim' } }
+            : rule
+        ),
+      };
+      expect((await save('update')).status).toBe(400);
+      expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+    });
+
+    it('accepts an unused canonical input edge inside a SAML output graph', async () => {
+      const binding = bind('saml.attribute');
+      const input = binding.graphRules[0];
+      const output = binding.graphRules[1];
+      mocks.runtimeBinding = {
+        ...binding,
+        graphRules: [
+          {
+            ...output,
+            edges: [...input.edges, ...output.edges],
+            output: { edgeIndex: input.edges.length },
+          },
+        ],
+      };
+      expect((await save('update')).status).toBe(200);
+    });
   });
 
   describe('an attribute descriptor that renames an attribute', () => {

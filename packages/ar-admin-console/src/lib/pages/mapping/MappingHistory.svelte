@@ -2,7 +2,7 @@
 	import { ApiError } from '#lib/api/api-error.js';
 	import type {
 		HistoryEntry,
-		IdentityMappingClient,
+		IdentityMappingStoryClient,
 		RestorePreview
 	} from '#lib/api/identity-mapping.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -26,7 +26,7 @@
 	 * set is gone or switched off cannot be restored, and says why.
 	 */
 	interface Props {
-		client: IdentityMappingClient;
+		client: IdentityMappingStoryClient;
 		tenantId: string;
 		clientId?: string;
 		onbusy?: (busy: boolean) => void;

@@ -83,6 +83,7 @@ export function assertMappingGraphContract(rule: FieldMappingVersionRuleInput, p
         operation: schema.operation,
         inputEdgeIds: steps[index].inputs.map((_, i) => String(i)),
         parameters: step.parameters,
+        inputNames: steps[index].inputs.map((ref) => ref.name),
         outputTargetRef: { side: 'destination', namespace: 'check', path: 'check' },
       });
       if (checked.reasons.length)

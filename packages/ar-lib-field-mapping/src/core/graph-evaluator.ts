@@ -17,6 +17,7 @@ import { executeTransformStep } from './transforms';
 import { findSourceValue } from './source-values';
 import type {
   MappingRuleGraph,
+  MappingGraphTransform,
   MappingEvaluationValue,
   MappingValueReference,
   SourceValueEnvelope,
@@ -28,6 +29,8 @@ import type {
 export interface GraphEvaluationInput {
   rule: MappingRuleGraph;
   sourceValues: SourceValueEnvelope[];
+  /** Catalog classifications also apply to absent dependencies (presence can be sensitive). */
+  sourceClassifications?: ReadonlyMap<number, RedactionClassification>;
   runtimeContext?: Record<string, unknown>;
   preparedSteps?: ReadonlyMap<string, MappingEvaluationValue>;
   /** Trusted synchronous preparers consume cached dependency results after input budget checks. */
@@ -41,14 +44,53 @@ export interface GraphEvaluationInput {
   edgeValueReferences?: 'source' | 'target';
 }
 
-export function evaluateMappingRule(input: GraphEvaluationInput): {
+export interface MappingStepPreparation {
+  step: MappingGraphTransform;
+  inputs: readonly MappingEvaluationValue[];
+}
+export type MappingStepPreparer = (
+  request: MappingStepPreparation
+) => Promise<MappingEvaluationValue>;
+export interface GraphEvaluationResult {
   output: MappingEvaluationValue;
   steps: ReadonlyMap<number, MappingEvaluationValue>;
   reasons: ReasonCode[];
   trace: RuleTraceEntry[];
-} {
+}
+
+export function evaluateMappingRule(input: GraphEvaluationInput): GraphEvaluationResult {
+  const evaluation = evaluateRuleSteps(input, false);
+  let next = evaluation.next();
+  while (!next.done) next = evaluation.next({ kind: 'failed' });
+  return next.value;
+}
+
+/** Resume the same evaluation after each asynchronous preparation: no dependency replay. */
+export async function evaluatePreparedMappingRule(
+  input: GraphEvaluationInput,
+  prepare: MappingStepPreparer
+): Promise<GraphEvaluationResult> {
+  const evaluation = evaluateRuleSteps(input, true);
+  let next = evaluation.next();
+  while (!next.done) {
+    let prepared: MappingEvaluationValue;
+    try {
+      prepared = await prepare(next.value);
+    } catch {
+      prepared = { kind: 'failed' };
+    }
+    next = evaluation.next(prepared);
+  }
+  return next.value;
+}
+
+function* evaluateRuleSteps(
+  input: GraphEvaluationInput,
+  prepareAsync: boolean
+): Generator<MappingStepPreparation, GraphEvaluationResult, MappingEvaluationValue> {
   const { rule } = input;
   const steps = new Map<number, MappingEvaluationValue>();
+  const stepClassifications = new Map<number, RedactionClassification | undefined>();
   const reasons: ReasonCode[] = [];
   const trace: RuleTraceEntry[] = [];
   reasons.push(...validateMappingRuleGraph(rule));
@@ -95,6 +137,15 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
   for (const index of dependencies.stepIndexes) {
     const step = rule.transforms[index];
     const values = step.inputs.map(read);
+    const classification = strongestMappingClassification(
+      dependencyClassification(values),
+      ...step.inputs.map((ref) =>
+        'edgeIndex' in ref
+          ? input.sourceClassifications?.get(ref.edgeIndex)
+          : stepClassifications.get(ref.stepIndex)
+      )
+    );
+    stepClassifications.set(index, classification);
     if (values.some((value) => value.kind === 'suppressed')) {
       steps.set(index, { kind: 'suppressed' });
       continue;
@@ -114,6 +165,12 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
       steps.set(index, { kind: 'suppressed' });
       continue;
     }
+    // Unknown consent dependencies cannot drive conditions, conversions, deletion or another hash.
+    // Keep the output pending even if a branch might later omit it; failure/suppression win above.
+    if (values.some((value) => value.kind === 'deferred')) {
+      steps.set(index, { kind: 'deferred' });
+      continue;
+    }
     // Missing attributes are values, not broken references. Only combining operations consume
     // absence, as do default_if_empty and has_value; other operations propagate it.
     if (
@@ -124,6 +181,9 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
         'concat',
         'join',
         'json_build',
+        'array_build',
+        'conditional',
+        'json_extract_or',
         'default_if_empty',
         'has_value',
       ].includes(step.operation)
@@ -139,12 +199,13 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
       continue;
     }
     const preparation = input.preparedSteps?.get(step.id) ?? input.stepPreparers?.get(step.id);
-    if (preparation) {
+    if (preparation || (step.operation === 'hash' && prepareAsync)) {
       let prepared: MappingEvaluationValue;
       try {
         chargeTransformInput(
           {
             ...step,
+            inputNames: step.inputs.map((ref) => ref.name),
             inputEdgeIds: step.inputs.map((_, i) => String(i)),
             outputTargetRef: rule.targetRef,
           },
@@ -152,7 +213,20 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
           workBudget,
           values.flatMap((value) => (value.kind === 'value' ? [value.envelope] : []))
         );
-        prepared = typeof preparation === 'function' ? preparation(values) : preparation;
+        prepared = preparation
+          ? typeof preparation === 'function'
+            ? preparation(values)
+            : preparation
+          : yield { step, inputs: values };
+        if (prepared.kind === 'failed' && step.operation === 'hash') {
+          reasons.push(reason('transform.hash_unavailable'));
+          trace.push(
+            buildTraceEntry({
+              reason: reason('transform.hash_unavailable'),
+              transformStepId: step.id,
+            })
+          );
+        }
         if (prepared.kind === 'value') chargeTransformOutput(prepared.envelope.value, workBudget);
       } catch (error) {
         const issue = reason(
@@ -170,11 +244,29 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
               kind: 'value',
               envelope: {
                 ...prepared.envelope,
-                classificationHint: dependencyClassification([...values, prepared]),
+                classificationHint: strongestMappingClassification(
+                  classification,
+                  prepared.envelope.classificationHint
+                ),
+                provenanceHints: values.flatMap((value) =>
+                  value.kind === 'value'
+                    ? (value.envelope.provenanceHints ??
+                      (value.envelope.provenanceHint ? [value.envelope.provenanceHint] : []))
+                    : []
+                ),
               },
             }
           : prepared
       );
+      if (prepared.kind !== 'failed')
+        trace.push(
+          buildTraceEntry({
+            reason: reason('trace.transform_evaluated'),
+            action: 'transformed',
+            transformStepId: step.id,
+            fieldRef: rule.targetRef,
+          })
+        );
       continue;
     }
     const edgeValues = new Map<string, SourceValueEnvelope>();
@@ -185,7 +277,12 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
       )
     );
     const result = executeTransformStep({
-      step: { ...step, inputEdgeIds: [...edgeValues.keys()], outputTargetRef: rule.targetRef },
+      step: {
+        ...step,
+        inputNames: step.inputs.map((ref) => ref.name),
+        inputEdgeIds: [...edgeValues.keys()],
+        outputTargetRef: rule.targetRef,
+      },
       edgeValues,
       runtimeContext: input.runtimeContext,
       workBudget,
@@ -205,7 +302,7 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
             values.length === 1 && values[0].kind === 'value'
               ? values[0].envelope.sourceRef
               : result.value.sourceRef,
-          classificationHint: dependencyClassification(values),
+          classificationHint: classification,
           provenanceHints: values.flatMap((value) =>
             value.kind === 'value'
               ? (value.envelope.provenanceHints ??

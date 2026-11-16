@@ -1,3 +1,4 @@
+import { executeTenantMapping } from '@authrim/ar-lib-core/services/mapping-hash';
 import { hashCredentialProfileSnapshot } from '@authrim/ar-lib-core/services/credential-profile-snapshot';
 import type { Context } from 'hono';
 import type {
@@ -21,7 +22,6 @@ import {
   executeServerFlow,
   ADMIN_CREDENTIAL_CONFIGURATION_ID,
 } from '@authrim/ar-lib-core';
-import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
 
@@ -690,7 +690,7 @@ export async function adminCredentialOfferCreateHandler(c: AdminContext) {
       string,
       unknown
     >;
-    const mapped = executeRuntimeMapping({
+    const mapped = await executeTenantMapping(c.env, tenantId, {
       catalog: binding.catalog,
       graphRules: binding.graphRules,
       sourceValues: sourceValues(binding, canonicalClaims),

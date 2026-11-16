@@ -27,6 +27,14 @@ export type TransformOperation =
   | 'normalize_empty'
   | 'default_if_empty'
   | 'has_value'
+  | 'json_extract_array'
+  | 'json_extract_or'
+  | 'array_build'
+  | 'conditional'
+  | 'constant_text'
+  | 'constant_boolean'
+  | 'constant_number'
+  | 'hash'
   | 'copy'
   | 'as_array'
   | 'split'
@@ -204,6 +212,7 @@ export interface MappingTransformStep {
   ruleId?: string;
   id: string;
   inputEdgeIds: string[];
+  inputNames?: (string | undefined)[];
   operation: TransformOperation;
   parameters?: Record<string, unknown>;
   outputTargetRef: FieldRef;
@@ -237,6 +246,8 @@ export interface MappingRuleGraph {
 
 export type MappingEvaluationValue =
   | { kind: 'value'; envelope: SourceValueEnvelope }
+  /** Trusted consent preparation: unknown until approved, never an operation input value. */
+  | { kind: 'deferred' }
   | { kind: 'absent' }
   | { kind: 'failed' }
   | { kind: 'suppressed' };
@@ -385,6 +396,8 @@ export interface MappingInput {
   /** Receivers with runtime-defined sources validate their source catalog before release. */
   sourceCatalogValidation?: 'catalog' | 'receiver';
   preparedSteps?: ReadonlyMap<string, MappingEvaluationValue>;
+  /** Consent-only receiver opt-in. Deferred targets have no values and await final validation. */
+  allowDeferredOutputs?: boolean;
   catalog: FieldCatalogBundle;
   sourceValues: SourceValueEnvelope[];
   edges: MappingRuleEdge[];

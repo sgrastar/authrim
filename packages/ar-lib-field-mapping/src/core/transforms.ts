@@ -1,7 +1,14 @@
+import {
+  STRUCTURE_TRANSFORM_SCHEMAS,
+  structureSettingsProblem,
+  executeConditional,
+  buildArray,
+} from './structure-transforms';
 import { TEXT_TRANSFORM_SCHEMAS } from './text-transform-schemas';
 import { executeTextTransform, isTextTransform, textSettingsProblem } from './text-transforms';
 import {
   chargeTransformInput,
+  measureTransformValue,
   jsonBuildSourceKeys,
   chargeTransformOutput,
   TransformFailure,
@@ -177,6 +184,7 @@ function sameTarget(a: FieldRef, b: FieldRef): boolean {
 
 export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   ...TEXT_TRANSFORM_SCHEMAS,
+  ...STRUCTURE_TRANSFORM_SCHEMAS,
   { operation: 'copy', inputArity: { min: 1, max: 1 }, parameters: [] },
   {
     operation: 'as_array',
@@ -437,6 +445,7 @@ export function validateTransformStep(step: MappingTransformStep): ValidationRes
     }
   }
 
+  if (structureSettingsProblem(step)) reasons.push(reason('transform.invalid_parameter'));
   const problem = textSettingsProblem(step);
   if (problem) reasons.push(reason(problem));
   return resultFromReasons(reasons);
@@ -572,6 +581,29 @@ function executeOperation(
   if (isTextTransform(step.operation)) return executeTextTransform(step, rawValues[0]);
 
   switch (step.operation) {
+    case 'constant_text':
+    case 'constant_boolean':
+    case 'constant_number':
+      return step.parameters?.value;
+    case 'conditional':
+      return executeConditional(step, rawValues);
+    case 'array_build':
+      return buildArray(rawValues, step.parameters);
+    case 'hash':
+      throw new TransformFailure('transform.hash_unavailable');
+    case 'json_extract_array': {
+      const found = extractJsonValue(rawValues[0], step.parameters?.path);
+      return Array.isArray(found) ? found : found === undefined ? undefined : null;
+    }
+    case 'json_extract_or': {
+      const found = extractJsonValue(rawValues[0], step.parameters?.path);
+      if (found === undefined || (found === null && step.parameters?.nullAsMissing === true))
+        return step.parameters?.defaultValue;
+      if (found === null) return null;
+      if (typeof found === 'string') return found;
+      if (typeof found === 'number' || typeof found === 'boolean') return String(found);
+      return JSON.stringify(found);
+    }
     case 'copy':
       return rawValues[0];
     case 'as_array':
@@ -902,27 +934,24 @@ function uniqueJsonKey(key: string, seenKeys: Set<string>): string {
 }
 
 function parseJsonText(value: unknown): Record<string, unknown> | unknown[] | undefined {
-  if (value && typeof value === 'object') {
-    return isJsonWithinBudget(value) ? (value as Record<string, unknown> | unknown[]) : undefined;
+  if (isRecord(value) || Array.isArray(value)) {
+    measureTransformValue(value);
+    return value;
   }
-  if (typeof value !== 'string') {
-    return undefined;
-  }
+  if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-    return undefined;
-  }
-  if (jsonByteLength(trimmed) > TRANSFORM_JSON_MAX_BYTES) {
-    return undefined;
-  }
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+  if (jsonByteLength(trimmed) > TRANSFORM_JSON_MAX_BYTES)
+    throw new TransformFailure('transform.limit_exceeded');
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    return parsed && typeof parsed === 'object' && isJsonWithinBudget(parsed)
-      ? (parsed as Record<string, unknown> | unknown[])
-      : undefined;
+    parsed = JSON.parse(trimmed);
   } catch {
     return undefined;
   }
+  if (!isRecord(parsed) && !Array.isArray(parsed)) return undefined;
+  measureTransformValue(parsed);
+  return parsed;
 }
 
 function extractTextValue(value: unknown, path: unknown): string | null {
@@ -977,7 +1006,7 @@ function extractJsonValue(value: unknown, path: unknown): unknown {
     }
     current =
       typeof current === 'object' && !Array.isArray(current)
-        ? (current as Record<string, unknown>)[segment]
+        ? Object.getOwnPropertyDescriptor(current, segment)?.value
         : undefined;
   }
   return current;
@@ -988,14 +1017,21 @@ function parseJsonPath(path: string): Array<string | number> | null {
     return null;
   }
   const segments: Array<string | number> = [];
+  if (
+    !path.trim() ||
+    !/^(?:[^.[\]\s]+)?(?:\[\d+\])*(?:\.[^.[\]\s]+(?:\[\d+\])*)*$/u.test(path.trim())
+  )
+    return null;
   for (const part of path.trim().split('.')) {
-    const keyMatch = part.match(/^[^[]+/u);
-    if (keyMatch?.[0]) {
-      segments.push(keyMatch[0]);
+    const key = part.match(/^[^[]+/u)?.[0];
+    if (key) {
+      if (['__proto__', 'prototype', 'constructor'].includes(key)) return null;
+      segments.push(key);
     }
-    const indexMatches = part.matchAll(/\[(\d+)\]/gu);
-    for (const match of indexMatches) {
-      segments.push(Number.parseInt(match[1] ?? '0', 10));
+    for (const match of part.matchAll(/\[(\d+)\]/gu)) {
+      const index = Number(match[1]);
+      if (!Number.isSafeInteger(index) || index >= TRANSFORM_LIMITS.arrayItems) return null;
+      segments.push(index);
     }
   }
   return segments.length <= TRANSFORM_JSON_PATH_MAX_SEGMENTS ? segments : null;
@@ -1048,6 +1084,8 @@ function isParameterValueValid(
       if (typeof value !== 'string') {
         return false;
       }
+      if (parameter.name === 'condition')
+        return new TextEncoder().encode(value).length <= TRANSFORM_LIMITS.tableBytes;
       if (parameter.name === 'entries') return value.length <= TRANSFORM_LIMITS.tableBytes;
       if (parameter.name === 'path') {
         return value.length <= TRANSFORM_JSON_PATH_MAX_CHARS && parseJsonPath(value) !== null;
@@ -1057,7 +1095,11 @@ function isParameterValueValid(
       }
       return value.length <= TRANSFORM_PARAMETER_MAX_CHARS;
     case 'number':
-      return typeof value === 'number';
+      return (
+        typeof value === 'number' &&
+        Number.isFinite(value) &&
+        Math.abs(value) <= Number.MAX_SAFE_INTEGER
+      );
     case 'boolean':
       return typeof value === 'boolean';
     case 'string-array':

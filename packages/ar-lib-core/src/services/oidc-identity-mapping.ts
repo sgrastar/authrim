@@ -1,11 +1,9 @@
+import { executeTenantMapping } from './mapping-hash';
 import {
   analyzeMappingDependencies,
   withMappingGraph,
 } from '@authrim/ar-lib-field-mapping/authoring';
-import {
-  executeRuntimeMapping,
-  lastWriterMappingValues,
-} from '@authrim/ar-lib-field-mapping/runtime';
+import { lastWriterMappingValues } from '@authrim/ar-lib-field-mapping/runtime';
 import type { FieldRef, SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import {
   computeBuiltInPairwiseSubject,
@@ -423,7 +421,7 @@ export async function applyOIDCIdentityMapping(
       if (isSubjectStep(step)) mappedIdentifiers.identifiers[step.id] = input.fixedSubject;
     }
   }
-  const runtimeResult = executeRuntimeMapping({
+  const runtimeResult = await executeTenantMapping(input.env, input.tenantId, {
     catalog: binding.catalog,
     graphRules: binding.graphRules,
     sourceValues,

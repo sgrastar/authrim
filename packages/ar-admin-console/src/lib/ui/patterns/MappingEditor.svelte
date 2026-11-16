@@ -745,7 +745,11 @@
 
 					<!-- The target again, with its name in words, why it needs attention, and the sample
 					     output: what the steps make of the source's sample values (see mapping-preview). -->
-					{@const trace = mapping ? previewMapping(mapping, sources) : null}
+					{@const trace = mapping
+						? previewMapping(mapping, sources, {
+								targetRef: targets.find((target) => target.key === mapping.target)?.ref
+							})
+						: null}
 					<div class="mrow__target-edit" transition:slide={{ duration: SLIDE_MS }}>
 						<span class="mrow__target" class:is-set={isSet} aria-hidden="true">
 							<code>{target.key}</code>
