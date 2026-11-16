@@ -1,3 +1,4 @@
+import { foreignKeyGroups } from './foreign-key-groups';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { inventoryBackupSchemas } from '../../../../../../scripts/tenant-backup/schema-inventory';
@@ -79,12 +80,23 @@ describe('Phase 3 installed SQL reference graph', () => {
       for (const table of stream.tables) {
         const from = registrations.get(`${family}:${table.name}`);
         if (!from) continue;
-        const grouped = Map.groupBy(table.foreignKeys, (foreignKey) => foreignKey.id);
-        for (const foreignKeys of grouped.values()) {
+        for (const foreignKeys of foreignKeyGroups(table.foreignKeys)) {
           const target = registrations.get(`${family}:${foreignKeys[0].parentTable}`);
           if (!target) continue;
+          const parent = stream.tables.find(
+            (candidate) => candidate.name === foreignKeys[0].parentTable
+          );
+          // Tenant ownership is validated separately. A redundant tenant column on an id-keyed
+          // parent does not become part of that dataset's record identity.
+          const tenantIsIdentity = parent?.columns.some(
+            (column) => column.name === 'tenant_id' && column.primaryKeyPosition > 0
+          );
           const localColumns = [...foreignKeys]
             .sort((left, right) => left.position - right.position)
+            .filter(
+              (key) =>
+                key.parentColumn !== 'tenant_id' || tenantIsIdentity || foreignKeys.length === 1
+            )
             .map((foreignKey) => foreignKey.column);
           expect(
             PHASE3_SQLITE_REFERENCE_RULES.some(
@@ -581,9 +593,7 @@ describe('Phase 3 installed SQL reference graph', () => {
         ).toBe(true);
       }
       if (rule.restoreOrdering === 'validation-only') {
-        const matchingForeignKey = [
-          ...Map.groupBy(sourceTable?.foreignKeys ?? [], (foreignKey) => foreignKey.id).values(),
-        ].some(
+        const matchingForeignKey = foreignKeyGroups(sourceTable?.foreignKeys ?? []).some(
           (foreignKeys) =>
             foreignKeys[0]?.parentTable === targetTable?.name &&
             JSON.stringify(

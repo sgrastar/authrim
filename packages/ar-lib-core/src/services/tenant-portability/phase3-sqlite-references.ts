@@ -1,3 +1,7 @@
+import {
+  restoreMappingSnapshotRow,
+  restoreMappingVersionRow,
+} from '../mapping-snapshot-equivalence.js';
 import { SqliteDatasetShapeRefusal } from './sqlite-dataset-inspector.js';
 import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector.js';
 import type { PlannedInstalledSqliteDataset } from './installed-sqlite-datasets.js';
@@ -635,7 +639,19 @@ export function phase3SqliteRestoreTransform(
 ): SqliteDatasetInspectionPolicy['restoreTransform'] {
   if (!PHASE3_SQLITE_DATASET_REGISTRATIONS.some(({ dataset }) => dataset.id === datasetId))
     throw new Error('backup_phase3_reference_dataset');
-  return datasetId === 'core.organizations' ? ORGANIZATION_TYPE_RESTORE_TRANSFORM : undefined;
+  return datasetId === 'core.organizations'
+    ? ORGANIZATION_TYPE_RESTORE_TRANSFORM
+    : datasetId === 'admin.compiled_mapping_snapshots'
+      ? {
+          id: 'mapping-snapshot-local-authority-v2',
+          transform: restoreMappingSnapshotRow,
+        }
+      : datasetId === 'admin.field_mapping_versions'
+        ? {
+            id: 'mapping-version-local-restore-id-v1',
+            transform: restoreMappingVersionRow,
+          }
+        : undefined;
 }
 
 /** Build import inspectors only from the sealed SQL plan and the installed Phase 3 registry. */

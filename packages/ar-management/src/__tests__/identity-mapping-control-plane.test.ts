@@ -1985,6 +1985,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     ]);
     const snapshotMetadata = String(adapter.executes[1].params[11]);
     expect(snapshotMetadata).toContain('"loadTimeHashVerified":true');
+    expect(snapshotMetadata).toContain('"snapshotPinState":"compiled"');
     expect(snapshotMetadata).toContain('"dependencyGraphId"');
   });
 

@@ -48,6 +48,9 @@ DROP VIEW __mapping_graph_refusals;
 ALTER TABLE mapping_rules ADD COLUMN output_edge_id TEXT;
 ALTER TABLE mapping_rules ADD COLUMN output_step_id TEXT;
 ALTER TABLE mapping_rules ADD COLUMN target_ref_json TEXT;
+-- Destination-owned provenance survives even when a bundle omits every compiled snapshot.
+ALTER TABLE field_mapping_versions ADD COLUMN restore_id TEXT
+  CHECK (restore_id IS NULL OR length(restore_id) > 0);
 
 UPDATE mapping_rules SET
   output_step_id = (SELECT t.id FROM mapping_transform_steps t WHERE t.tenant_id = mapping_rules.tenant_id AND t.rule_id = mapping_rules.id),
@@ -57,21 +60,9 @@ UPDATE mapping_rules SET
     (SELECT t.target_ref_json FROM mapping_transform_steps t WHERE t.tenant_id = mapping_rules.tenant_id AND t.rule_id = mapping_rules.id),
     (SELECT e.target_ref_json FROM mapping_rule_edges e WHERE e.tenant_id = mapping_rules.tenant_id AND e.rule_id = mapping_rules.id));
 
-CREATE TABLE mapping_transform_step_inputs (
-  tenant_id TEXT NOT NULL,
-  step_id TEXT NOT NULL,
-  position INTEGER NOT NULL CHECK (position >= 0),
-  edge_id TEXT,
-  input_step_id TEXT,
-  name TEXT CHECK (name IS NULL OR length(trim(name)) > 0),
-  CHECK ((edge_id IS NOT NULL) <> (input_step_id IS NOT NULL)),
-  PRIMARY KEY (tenant_id, step_id, position)
-);
-INSERT INTO mapping_transform_step_inputs (tenant_id, step_id, position, edge_id)
-  SELECT tenant_id, id, 0, edge_id FROM mapping_transform_steps WHERE edge_id IS NOT NULL;
-
--- Rebuild to remove the legacy UNIQUE/FK on edge_id. Input ownership is checked at both SQL
--- boundaries by the control plane/runtime and by tenant portability reference validation.
+-- Rebuild before creating the input FK, so dropping the legacy table cannot cascade inputs.
+CREATE TABLE __mapping_step_inputs_legacy AS
+  SELECT tenant_id, id AS step_id, edge_id FROM mapping_transform_steps WHERE edge_id IS NOT NULL;
 CREATE TABLE __mapping_transform_steps_graph (
   id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -81,6 +72,7 @@ CREATE TABLE __mapping_transform_steps_graph (
   parameters_json TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  UNIQUE (tenant_id, id),
   UNIQUE (tenant_id, rule_id, step_order),
   FOREIGN KEY (rule_id) REFERENCES mapping_rules(id) ON DELETE CASCADE
 );
@@ -89,6 +81,45 @@ INSERT INTO __mapping_transform_steps_graph
 DROP TABLE mapping_transform_steps;
 ALTER TABLE __mapping_transform_steps_graph RENAME TO mapping_transform_steps;
 CREATE INDEX idx_mapping_transform_steps_rule ON mapping_transform_steps(tenant_id, rule_id);
+
+CREATE TABLE mapping_transform_step_inputs (
+  tenant_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  edge_id TEXT,
+  input_step_id TEXT,
+  name TEXT CHECK (name IS NULL OR length(trim(name)) > 0),
+  CHECK ((edge_id IS NOT NULL) <> (input_step_id IS NOT NULL)),
+  PRIMARY KEY (tenant_id, step_id, position),
+  FOREIGN KEY (tenant_id, step_id) REFERENCES mapping_transform_steps(tenant_id, id) ON DELETE CASCADE
+);
+INSERT INTO mapping_transform_step_inputs (tenant_id, step_id, position, edge_id)
+  SELECT tenant_id, step_id, 0, edge_id FROM __mapping_step_inputs_legacy;
+DROP TABLE __mapping_step_inputs_legacy;
+
+-- Imported inputs cannot reference a different rule, including when SQLite FKs are disabled.
+CREATE TRIGGER mapping_step_inputs_owner_insert BEFORE INSERT ON mapping_transform_step_inputs
+WHEN NOT EXISTS (
+  SELECT 1 FROM mapping_transform_steps owner
+  WHERE owner.tenant_id = NEW.tenant_id AND owner.id = NEW.step_id
+    AND ((NEW.edge_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM mapping_rule_edges e WHERE e.tenant_id = owner.tenant_id
+        AND e.rule_id = owner.rule_id AND e.id = NEW.edge_id))
+      OR (NEW.input_step_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM mapping_transform_steps input WHERE input.tenant_id = owner.tenant_id
+          AND input.rule_id = owner.rule_id AND input.id = NEW.input_step_id))))
+BEGIN SELECT RAISE(ABORT, 'invalid_reference: step inputs must belong to the same tenant and rule'); END;
+CREATE TRIGGER mapping_step_inputs_owner_update BEFORE UPDATE ON mapping_transform_step_inputs
+WHEN NOT EXISTS (
+  SELECT 1 FROM mapping_transform_steps owner
+  WHERE owner.tenant_id = NEW.tenant_id AND owner.id = NEW.step_id
+    AND ((NEW.edge_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM mapping_rule_edges e WHERE e.tenant_id = owner.tenant_id
+        AND e.rule_id = owner.rule_id AND e.id = NEW.edge_id))
+      OR (NEW.input_step_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM mapping_transform_steps input WHERE input.tenant_id = owner.tenant_id
+          AND input.rule_id = owner.rule_id AND input.id = NEW.input_step_id))))
+BEGIN SELECT RAISE(ABORT, 'invalid_reference: step inputs must belong to the same tenant and rule'); END;
 
 -- A policy-only rule has no value graph. Value graphs always carry exactly one output and target.
 CREATE TRIGGER mapping_rules_graph_insert BEFORE INSERT ON mapping_rules

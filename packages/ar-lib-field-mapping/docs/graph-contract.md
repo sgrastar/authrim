@@ -36,7 +36,10 @@ Each value-producing `mapping_rules` row owns one `target_ref_json` and exactly 
 for operations such as `json_build`; only the rule target is released. `mapping_transform_steps`
 holds the operation, parameters and rule-local `step_order`. It has no `edge_id` or target column.
 `mapping_transform_step_inputs` stores `(tenant_id, step_id, position)` with exactly one of `edge_id`
-or `input_step_id` and an optional `name`. Positions start at zero and are contiguous.
+or `input_step_id` and an optional `name`. Positions start at zero and are contiguous. A composite
+tenant/step foreign key cascades input deletion when its step (or parent rule/version/set) is deleted.
+Insert/update triggers reject edges and input steps belonging to another tenant or rule, including
+on restore connections with foreign key enforcement disabled.
 
 Saving resolves API indexes to newly allocated IDs inside the version transaction. Reading resolves
 IDs back to indexes, checking tenant and rule ownership, input positions and earlier-step ordering.
@@ -62,15 +65,15 @@ both replacement mapping hashes and the corresponding profile contract hash in t
 Missing or ambiguous pins and invalid profile contracts are refused with a tenant/profile/version
 inventory before mutation. Concurrent profile edits also abort the transaction.
 Migration 023 also records the exact previous/new hash pair in each compiled snapshot's
-`metadata_json.graphMigration023`. This equivalence commits atomically with the recompiled snapshot
-and survives DR with that snapshot. Runtime resolution also requires the migration-generated
-`graph_023_<snapshot id>` dependency graph ID; metadata supplied to normal compilation cannot forge
-an equivalence record. Core DB `attribute_verifications` and Durable Object `vp_requests`
-keep their original pins: verification and evidence reads accept the previous hash only when the
-resolved tenant/version snapshot still has the recorded new hash. A same-content recompile retains equivalence by tenant/version/hash, even if its snapshot row changes.
-A later policy recompile does not inherit equivalence to its different hash. Ambiguous previous/new pairs are refused with a snapshot
-inventory. Credential offers also persist mapping hashes, but their claims and signed issuance
-contract are already fixed; redemption does not resolve or compare a live mapping snapshot.
+`metadata_json.graphMigration023`. This equivalence commits atomically with the recompiled snapshot.
+Runtime accepts it only on that exact active snapshot row, whose dependency graph ID must be
+`graph_023_<snapshot id>`. A different snapshot row, including a same-content recompile, does not
+inherit equivalence. Normal compilation cannot supply the migration dependency graph ID.
+Core DB `attribute_verifications` and Durable Object `vp_requests` keep their original pins;
+verification initiation, pending requests and evidence reads use the same comparison helper.
+Ambiguous previous/new pairs are refused with a snapshot inventory. Credential offers also persist
+mapping hashes, but their claims and signed issuance contract are already fixed; redemption does not
+resolve or compare a live mapping snapshot.
 Uncompiled draft versions use the normal compile workflow.
 A failed batch commits neither schema changes, snapshots nor migration history; retry normally.
 
@@ -93,6 +96,29 @@ The input table is a settings dataset. Restore rules before edges/steps, then st
 references are validated without inverting this insertion order. Edge and earlier-step references are
 nullable individually; exactly one is required per input. Graph ownership and ordering are checked
 again when loading the restored version.
+Snapshot equivalence is deployment-local migration authority, not portable tenant data. Both the
+installed D1 restore transform (also used for verification) and AWS snapshot importer remove
+`metadata_json.graphMigration023` and force `snapshotPinState: 'requires_recompile'`, preserving
+other metadata. The importer's supplied `snapshot_hash` remains inventory data and cannot authorize
+historical pins, including direct equality. This applies even to missing/null metadata and a forged
+`compiled` marker. Graphs remain available for normal protocol mapping, but evidence, pending VP
+requests, Credential Profile publication and issuance reject their pins until the server recompiles
+and activates a fresh snapshot. Normal compilation always writes `snapshotPinState: 'compiled'`.
+Every restored `field_mapping_versions` row receives a destination-owned `restore_id`, even when
+the bundle's compiled/dependency snapshot datasets are empty. D1 uses the destination operation ID
+for idempotent writes and verification; AWS generates a fresh import ID. Both overwrite any uploaded
+restore ID. Normal authoring and publication cannot set or clear this dedicated column. Every later
+compilation reads this record from the primary and binds both the restore ID and a fresh compilation
+ID into the hash. Deleting snapshot history does not remove version provenance, and unbound policy
+changes such as `rule.action` cannot revive old pins through retained authoring/catalog hashes.
+Activate the new snapshot, republish profiles against its new
+pin, and verify evidence again. Both unchanged legitimate bundles and modified graphs follow this rule.
+
+Recomputing the old snapshot formula is insufficient: it binds graph material plus supplied version
+and catalog hashes, while some rule policy and catalog fields are not directly in that material.
+Original authoring hashes cannot be reliably reconstructed after persistence normalizes omitted
+values, and source rowid writer ordering is not portable. Import therefore never promotes an uploaded
+hash into historical-pin authority. Preserve the original deployment when pin continuity is required.
 Old backups containing step `edge_id` / `target_ref_json`, or rules without explicit output columns,
 are refused with `backup_mapping_graph_legacy_shape`. Restore such a backup using its original
 release, apply migration 023 through the supported runner, and export a new backup before restoring

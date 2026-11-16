@@ -489,6 +489,7 @@ interface FieldMappingVersionRow {
   version_label: string;
   lifecycle_state: LifecycleState;
   field_mapping_hash: string;
+  restore_id: string | null;
   compatibility_range: string | null;
   author_id: string | null;
   published_at: number | null;
@@ -4557,10 +4558,12 @@ export class IdentityMappingControlPlaneRepository {
     input: CompileFieldMappingRequest
   ) {
     validateRequiredString(input.catalogVersionId, 'catalogVersionId');
-    const version = await this.getFieldMappingVersion(
-      tenantId,
-      fieldMappingSetId,
-      fieldMappingVersionId
+    // Read destination-owned restore provenance from the primary, never from uploaded snapshots.
+    const version = await this.adapter.queryOne<FieldMappingVersionRow>(
+      `SELECT * FROM field_mapping_versions
+        WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
+      [tenantId, fieldMappingSetId, fieldMappingVersionId],
+      { consistencyClass: 'primary_required' }
     );
     if (!version) {
       throw notFound('field mapping version not found');
@@ -4584,7 +4587,14 @@ export class IdentityMappingControlPlaneRepository {
       [tenantId, fieldMappingVersionId]
     );
     const mappingGraph: unknown = JSON.parse(material?.graph_json ?? '[]');
+    // Imported authoring/catalog hashes cannot prove the original policy. Keep the restore
+    // boundary permanent for this version and issue a fresh pin on every subsequent compile.
+    const snapshotId = createId('mapping_snapshot');
+    const graphId = createId('dependency_graph');
     const dependencyGraph = {
+      ...(version.restore_id
+        ? { restoreId: version.restore_id, restoredCompilationId: snapshotId }
+        : {}),
       mappingGraph,
       fieldMappingVersionId,
       fieldMappingHash: version.field_mapping_hash,
@@ -4601,9 +4611,6 @@ export class IdentityMappingControlPlaneRepository {
         version.compatibility_range ??
         catalogVersion.compatibility_range,
     });
-    const snapshotId = createId('mapping_snapshot');
-    const graphId = createId('dependency_graph');
-
     await this.adapter.execute(
       `INSERT INTO dependency_graph_snapshots (
         id, tenant_id, field_mapping_version_id, snapshot_hash, graph_json, created_at
@@ -4633,6 +4640,7 @@ export class IdentityMappingControlPlaneRepository {
           ...(input.metadata ?? {}),
           dependencyGraphId: graphId,
           loadTimeHashVerified: true,
+          snapshotPinState: 'compiled',
         }),
       ]
     );

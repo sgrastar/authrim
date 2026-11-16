@@ -1,3 +1,4 @@
+import { foreignKeyGroups } from './foreign-key-groups';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { inventoryBackupSchemas } from '../../../../../../scripts/tenant-backup/schema-inventory';
@@ -81,14 +82,22 @@ describe('Phase 4 installed SQL reference graph', () => {
       for (const table of stream(family).tables) {
         const from = registrations.get(`${family}:${table.name}`);
         if (!from) continue;
-        for (const foreignKeys of Map.groupBy(
-          table.foreignKeys,
-          (foreignKey) => foreignKey.id
-        ).values()) {
+        for (const foreignKeys of foreignKeyGroups(table.foreignKeys)) {
           const target = registrations.get(`${family}:${foreignKeys[0].parentTable}`);
           if (!target) continue;
+          const parent = stream(family).tables.find(
+            (candidate) => candidate.name === foreignKeys[0].parentTable
+          );
+          // Tenant ownership is checked separately for parents whose record identity is just id.
+          const tenantIsIdentity = parent?.columns.some(
+            (column) => column.name === 'tenant_id' && column.primaryKeyPosition > 0
+          );
           const localColumns = [...foreignKeys]
             .sort((left, right) => left.position - right.position)
+            .filter(
+              (key) =>
+                key.parentColumn !== 'tenant_id' || tenantIsIdentity || foreignKeys.length === 1
+            )
             .map((foreignKey) => foreignKey.column);
           expect(
             rules.some(

@@ -86,6 +86,8 @@ export interface RuntimeIdentityMappingBinding {
   fieldMappingSetId: string;
   fieldMappingVersionId: string;
   mappingSnapshotHash: string;
+  /** Restored snapshots cannot authorize historical pins until compiled by this server. */
+  mappingSnapshotPinTrusted?: boolean;
   /** Previous hashes of this exact snapshot, recorded by the format-only migration. */
   equivalentMappingSnapshotHashes?: string[];
   catalog: FieldCatalogBundle;
@@ -269,6 +271,7 @@ interface ActiveActivationRow {
   catalog_compatibility_range: string | null;
   snapshot_hash: string;
   snapshot_metadata_json?: string | null;
+  snapshot_pin_state?: string;
 }
 
 interface CatalogEntryRow {
@@ -468,6 +471,7 @@ export async function resolveRuntimeIdentityMappingBinding(
     fieldMappingSetId: selected.field_mapping_set_id,
     fieldMappingVersionId: selected.field_mapping_version_id,
     mappingSnapshotHash: selected.snapshot_hash,
+    mappingSnapshotPinTrusted: selected.snapshot_pin_state !== 'requires_recompile',
     equivalentMappingSnapshotHashes: equivalentMappingSnapshotHashes(
       selected.snapshot_metadata_json,
       selected.snapshot_hash
@@ -567,15 +571,14 @@ async function loadActiveActivationRows(
             v.compatibility_range AS field_mapping_compatibility_range,
             s.catalog_version_id,
             s.snapshot_hash,
-            (SELECT migrated.metadata_json FROM compiled_mapping_snapshots migrated
-              WHERE migrated.tenant_id = s.tenant_id
-                AND migrated.field_mapping_version_id = s.field_mapping_version_id
-                AND migrated.snapshot_hash = s.snapshot_hash
-                AND CASE WHEN json_valid(migrated.metadata_json)
-                  THEN json_extract(migrated.metadata_json, '$.graphMigration023.snapshotHash') = s.snapshot_hash
-                    AND json_extract(migrated.metadata_json, '$.dependencyGraphId') = 'graph_023_' || migrated.id
-                  ELSE 0 END
-              ORDER BY migrated.compiled_at DESC LIMIT 1) AS snapshot_metadata_json,
+            CASE WHEN json_valid(s.metadata_json) THEN
+              json_extract(s.metadata_json, '$.snapshotPinState')
+              ELSE NULL END AS snapshot_pin_state,
+            CASE WHEN json_valid(s.metadata_json)
+              AND s.lifecycle_state = 'active'
+              AND json_extract(s.metadata_json, '$.graphMigration023.snapshotHash') = s.snapshot_hash
+              AND json_extract(s.metadata_json, '$.dependencyGraphId') = 'graph_023_' || s.id
+              THEN s.metadata_json ELSE NULL END AS snapshot_metadata_json,
             cv.version_label AS catalog_version_label,
             cv.bundle_hash AS catalog_bundle_hash,
             cv.compatibility_range AS catalog_compatibility_range

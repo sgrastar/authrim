@@ -186,40 +186,68 @@ describe('credential profile publication', () => {
     );
   });
 
-  it('issues claims from a graph decoded from stored output rows using the real evaluator', async () => {
-    const binding = await storedVCGraphBinding('vc.claims.AgeCredential');
-    mocks.resolveMapping.mockReset().mockResolvedValue(binding);
-    vi.mocked(mocks.adminDb.queryOne).mockImplementation(async (sql: string) =>
-      sql.includes('credential_profiles WHERE')
-        ? { ...profile, lifecycle_state: 'published', current_published_version_id: version.id }
-        : {
-            ...version,
-            lifecycle_state: 'published',
-            snapshot_hash: 'profile-snapshot',
-            issuance_flow_version_id: 'flow-version-issue',
-            issuance_mapping_version_id: binding.fieldMappingVersionId,
-            issuance_mapping_snapshot_hash: binding.mappingSnapshotHash,
-          }
-    );
-    const createCredentialOffer = vi.fn(async () => ({ offerId: 'offer-1' }));
-    const response = await adminCredentialOfferCreateHandler(
-      context(
-        {
-          VC_ISSUER: { createCredentialOffer },
-          VC_PROFILE_CONTRACT_HMAC_SECRET: 'test-profile-contract-secret-at-least-32-characters',
-        },
-        { user_id: 'user-1' }
-      )
-    );
-    expect(response.status).toBe(201);
-    expect(createCredentialOffer).toHaveBeenCalledWith(
-      expect.objectContaining({
-        claims: { age_over_18: true },
-        mappingVersionId: binding.fieldMappingVersionId,
-        mappingSnapshotHash: binding.mappingSnapshotHash,
-      })
-    );
-  });
+  it.each([true, false])(
+    'requires trusted pins when issuing from stored graphs (trusted=%s)',
+    async (trusted) => {
+      const binding = {
+        ...(await storedVCGraphBinding('vc.claims.AgeCredential')),
+        mappingSnapshotPinTrusted: trusted,
+      };
+      mocks.resolveMapping.mockReset().mockResolvedValue(binding);
+      vi.mocked(mocks.adminDb.queryOne).mockImplementation(async (sql: string) =>
+        sql.includes('credential_profiles WHERE')
+          ? { ...profile, lifecycle_state: 'published', current_published_version_id: version.id }
+          : {
+              ...version,
+              lifecycle_state: 'published',
+              snapshot_hash: 'profile-snapshot',
+              issuance_flow_version_id: 'flow-version-issue',
+              issuance_mapping_version_id: binding.fieldMappingVersionId,
+              issuance_mapping_snapshot_hash: binding.mappingSnapshotHash,
+            }
+      );
+      const createCredentialOffer = vi.fn(async () => ({ offerId: 'offer-1' }));
+      const response = await adminCredentialOfferCreateHandler(
+        context(
+          {
+            VC_ISSUER: { createCredentialOffer },
+            VC_PROFILE_CONTRACT_HMAC_SECRET: 'test-profile-contract-secret-at-least-32-characters',
+          },
+          { user_id: 'user-1' }
+        )
+      );
+      if (!trusted) {
+        expect(response.status).toBe(409);
+        expect(createCredentialOffer).not.toHaveBeenCalled();
+        return;
+      }
+      expect(response.status).toBe(201);
+      expect(createCredentialOffer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          claims: { age_over_18: true },
+          mappingVersionId: binding.fieldMappingVersionId,
+          mappingSnapshotHash: binding.mappingSnapshotHash,
+        })
+      );
+    }
+  );
+
+  it.each(['issuance', 'verification'])(
+    'refuses publishing an imported %s mapping before recompilation',
+    async (direction) => {
+      const binding = await storedVCGraphBinding('vc.claims.AgeCredential');
+      mocks.resolveMapping
+        .mockReset()
+        .mockResolvedValueOnce({ ...binding, mappingSnapshotPinTrusted: direction !== 'issuance' })
+        .mockResolvedValueOnce({
+          ...binding,
+          mappingSnapshotPinTrusted: direction !== 'verification',
+        });
+      const response = await adminCredentialProfilePublishHandler(context());
+      expect(response.status).toBe(409);
+      expect(mocks.adminDb.transaction).not.toHaveBeenCalled();
+    }
+  );
 
   it('fails closed without mutating state when an issuance Flow is not published', async () => {
     vi.mocked(mocks.coreDb.queryOne).mockImplementation(async (sql: string) => {
