@@ -48,6 +48,13 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.admin_invitations.code_handoff_enabled': 'Hand the invitation code to a trusted machine',
 	'set.k.admin_invitations.code_handoff_enabled.desc':
 		'On lets a machine credential that holds the dedicated permission create an admin invitation and receive its code in the API response instead of by e-mail. The invitee’s e-mail address is then not treated as verified. Invitations made from this console are still e-mailed. Turning it on asks for an extra identity check (step-up); turning it off does not.',
+	'set.section.machineAccessPlatform': 'Machine access to protected tenants',
+	'set.section.machineAccessPlatform.desc':
+		'Tenants that a machine credential with access to all tenants does not reach on its own. Applies to every tenant. Only platform administrators can change it.',
+	'set.k.machine_access.all_scope_excluded_tenants':
+		'Tenants an all-tenants machine credential does not reach',
+	'set.k.machine_access.all_scope_excluded_tenants.desc':
+		'Tenant IDs separated by commas, for example the main tenant: default. A machine credential that reaches all tenants is refused for these tenants, unless the credential itself lists the tenant by name. Creating or deleting other tenants, the setup tool, this console and signed-in admins are not affected. Empty (the default) changes nothing. Taking a tenant off the list asks for an extra identity check (step-up); adding one does not. Machine access management gets stricter (platform principals are out of reach of such machines) from the moment a tenant is listed.',
 	'settings.notice.codeHandoff.title': 'Codes are handed over without e-mail',
 	'settings.notice.codeHandoff.body':
 		'A machine with the permission receives the enrollment code directly. Turn this off when no automation needs it.',

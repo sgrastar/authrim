@@ -1585,6 +1585,11 @@ describe('an apply', () => {
         'admin-invitations',
         'category_not_at_tenant_scope',
       ],
+      [
+        'the tenants an all-tenants machine scope does not include',
+        'machine-access',
+        'category_not_at_tenant_scope',
+      ],
     ])('rejects %s', async (_name, category, reason) => {
       const t = await setup();
       const response = await t.bulk(
@@ -3028,5 +3033,66 @@ describe('the platform capability switches in the bulk apply', () => {
     const token = await t.principal(['admin:settings:write'], 'all');
     const response = await t.bulkAsToken(token, request());
     expect(resultFor(response.json, 'tenant-a').status).toBe('applied');
+  });
+});
+
+describe('the tenants an all-tenants machine scope does not include, in the bulk apply', () => {
+  const MACHINE_ACCESS = 'settings:platform:machine-access';
+  const KEY = 'machine_access.all_scope_excluded_tenants';
+  const exclude = (t: Awaited<ReturnType<typeof setup>>, value: string) =>
+    t.settings.store.set(MACHINE_ACCESS, JSON.stringify({ [KEY]: value }));
+
+  it('refuses a request that names a listed target tenant for a token for every tenant, and writes nothing', async () => {
+    const t = await setup();
+    exclude(t, 'tenant-b');
+    const token = await t.principal(['admin:settings:write'], 'all');
+    await t.versions();
+    // The authentication reads the tenants the body names: the whole request is refused.
+    for (const mode of ['preview', 'apply']) {
+      const response = await t.bulkAsToken(token, request({ mode }));
+      expect(response.status, mode).toBe(403);
+      expect(response.json.error, mode).toBe('access_denied');
+    }
+    expect(await t.own('tenant-b', 'session', TTL)).toBeUndefined();
+    expect(await t.own('tenant-a', 'session', TTL)).toBeUndefined();
+    // A request that names only tenants that are not listed is as before.
+    const ok = await t.bulkAsToken(token, request({ tenant_ids: ['tenant-a'] }));
+    expect(ok.status).toBe(200);
+    expect(await t.own('tenant-a', 'session', TTL)).toBe(7200000);
+  });
+
+  it('accepts the listed tenant when the principal names it next to the all scope', async () => {
+    const t = await setup();
+    exclude(t, 'tenant-b');
+    const token = await t.principal(['admin:settings:write'], 'all');
+    t.db
+      .prepare(
+        `INSERT INTO admin_machine_principal_tenant_scopes (principal_id, scope_mode, tenant_id, created_at)
+         SELECT id, 'allow', 'tenant-b', ? FROM admin_machine_principals`
+      )
+      .run(Date.now());
+    const response = await t.bulkAsToken(token, request());
+    expect(response.status).toBe(200);
+    expect(resultFor(response.json, 'tenant-b').status).toBe('applied');
+    expect(await t.own('tenant-b', 'session', TTL)).toBe(7200000);
+  });
+
+  it('refuses such a token everywhere while the saved value is not valid (fails closed)', async () => {
+    const t = await setup();
+    exclude(t, 'NOT A TENANT');
+    const token = await t.principal(['admin:settings:write'], 'all');
+    // The Admin API authentication already refuses it, on the tenant the request arrived on.
+    const response = await t.bulkAsToken(token, request());
+    expect(response.status).toBe(403);
+    expect(await t.own('tenant-a', 'session', TTL)).toBeUndefined();
+    expect(await t.own('tenant-b', 'session', TTL)).toBeUndefined();
+  });
+
+  it('does not change what a signed-in platform admin may do', async () => {
+    const t = await setup();
+    exclude(t, 'tenant-b');
+    const response = await t.bulk(t.admin, request());
+    expect(response.status).toBe(200);
+    expect(resultFor(response.json, 'tenant-b').status).toBe('applied');
   });
 });

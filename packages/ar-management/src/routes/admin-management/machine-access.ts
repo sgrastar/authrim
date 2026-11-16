@@ -23,7 +23,14 @@ import {
   hasGlobalAdminPermission,
   hasGlobalAdminRole,
   isAdminStepUpOperation,
+  isAllScopeNonPlatformMachine,
+  isPlatformMachinePrincipal,
+  machineReachesTenant,
+  machineExcludedTenantsSetting,
+  resolveMachineExplicitTenantScope,
+  type MachineExcludedTenants,
   intersectMachinePermissionSets,
+  PLATFORM_MACHINE_PRINCIPAL_TYPES,
   requireDedicatedAdminDatabaseAdapter,
   resolveMachineTenantScope,
 } from '@authrim/ar-lib-core';
@@ -45,15 +52,12 @@ const PRINCIPAL_TYPES = new Set<AdminMachinePrincipalType>([
   'integration',
 ]);
 
-/** Principal types that act for the platform; creating one is for a platform administrator. */
-const PLATFORM_PRINCIPAL_TYPES = new Set<AdminMachinePrincipalType>([
-  'setup_tool',
-  'admin_ui_bff',
-  'internal_service',
-]);
-
-/** The principals the bootstrap writes, by their fixed IDs. */
-const PLATFORM_PRINCIPAL_IDS = new Set(['amp_authrim_setup', 'amp_authrim_admin_ui_bff']);
+/**
+ * Principal types that act for the platform; creating one is for a platform administrator. The
+ * same set exempts a principal from the platform's list of tenants an all-tenants machine scope
+ * does not include (`machine_access.all_scope_excluded_tenants`), so it lives in ar-lib-core.
+ */
+const PLATFORM_PRINCIPAL_TYPES: ReadonlySet<string> = PLATFORM_MACHINE_PRINCIPAL_TYPES;
 
 /**
  * Whether the principal acts for the platform (the setup tool, the Admin UI, an internal service).
@@ -65,11 +69,7 @@ function isPlatformPrincipal(principal: {
   clientId: string;
   principalType: AdminMachinePrincipalType;
 }): boolean {
-  return (
-    PLATFORM_PRINCIPAL_IDS.has(principal.id) ||
-    PLATFORM_PRINCIPAL_TYPES.has(principal.principalType) ||
-    principal.clientId === 'authrim-setup'
-  );
+  return isPlatformMachinePrincipal(principal);
 }
 
 const CREDENTIAL_ALGORITHMS = new Set<AdminMachineCredentialAlgorithm>(['ES256', 'PS256', 'RS256']);
@@ -87,6 +87,247 @@ machineAccessRouter.use(
     requirePermissions: [ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_READ],
   })
 );
+
+// The tenants the platform excludes from an all-tenants machine scope
+// (`machine_access.all_scope_excluded_tenants`), read once per request before any handler runs.
+// A non-platform all-tenants machine actor manages only what it reaches AFTER that exclusion, so
+// it cannot read, change, disable, delete or revoke a principal or credential that reaches a
+// protected tenant, nor hand out such a reach (including to itself).
+const EXCLUDED_KEY = 'machineAccessExcludedTenants';
+
+// Read only for a machine caller (whose reach and view it decides), through the per-request memo.
+// A human's requests read it only where a granting operation needs it (`machineGrantGate`).
+machineAccessRouter.use('*', async (c, next) => {
+  if (c.get('adminAuth')?.authMethod === 'machine_access_token') {
+    (c as unknown as { set(k: string, v: unknown): void }).set(
+      EXCLUDED_KEY,
+      await machineExcludedTenantsSetting(c as never)
+    );
+  }
+  await next();
+});
+
+/**
+ * Whether a tenant (or `'*'`, every tenant) is within the actor's reach once the exclusion applies.
+ * Only a non-platform machine with an all-tenants scope is limited by it; while any tenant is
+ * excluded, "every tenant" is beyond that actor's reach (it would include the protected one).
+ */
+function reachableAfterExclusion(c: AdminContext, tenant: string): boolean {
+  const auth = getAuth(c);
+  if (!isAllScopeNonPlatformMachine(auth)) return true;
+  const excluded = (c as unknown as { get(k: string): unknown }).get(EXCLUDED_KEY) as
+    | MachineExcludedTenants
+    | undefined;
+  if (!excluded) return false;
+  if (excluded.kind === 'none') return true;
+  if (tenant === '*') return false;
+  return machineReachesTenant(auth, excluded, tenant);
+}
+
+/** Whether `tenant` is one the platform protects (listed, or any tenant while the list is unreadable). */
+function isProtectedIn(excluded: MachineExcludedTenants, tenant: string): boolean {
+  if (excluded.kind === 'none') return false;
+  if (excluded.kind === 'all') return true;
+  return excluded.tenants.has(tenant.normalize('NFKC').trim().toLowerCase());
+}
+
+/**
+ * Whether the stricter rules for a MACHINE caller are in force: only while the list is not empty
+ * (or cannot be read). Loaded for machine callers by the router's first middleware.
+ */
+function restrictionsActive(c: AdminContext): boolean {
+  const excluded = (c as unknown as { get(k: string): unknown }).get(EXCLUDED_KEY) as
+    | MachineExcludedTenants
+    | undefined;
+  return !excluded || excluded.kind !== 'none';
+}
+
+/** The tenants a principal names in its own `allow` entries. */
+function principalNamed(scopes: readonly AdminMachineTenantScope[]): string[] {
+  return scopes
+    .filter((scope) => scope.scopeMode === 'allow' && !!scope.tenantId)
+    .map((scope) => scope.tenantId as string);
+}
+
+/**
+ * What authentication will accept for a credential on its principal: the tenants of its effective
+ * scope, and the tenants it names explicitly next to an `all` (the intersection of the principal's
+ * and the credential's own `allow` entries, the function authentication uses). The effective scope
+ * alone loses a tenant named next to `all`.
+ */
+function namedFor(
+  principalScopes: AdminMachineTenantScope[],
+  credentialScopes: AdminMachineTenantScope[]
+): string[] {
+  return [
+    ...new Set([
+      ...resolveMachineTenantScope(principalScopes, credentialScopes).filter((t) => t !== '*'),
+      ...resolveMachineExplicitTenantScope(principalScopes, credentialScopes),
+    ]),
+  ];
+}
+
+async function credentialNamed(
+  repo: AdminMachineAccessRepository,
+  principalId: string,
+  credentialScopes: AdminMachineTenantScope[]
+): Promise<string[]> {
+  return namedFor(await repo.getPrincipalTenantScopes(principalId), credentialScopes);
+}
+
+/**
+ * What each subject reaches when the principal has `principalScopes`: the principal's own named
+ * tenants, and, one by one, what each of its usable credentials reaches on them (a credential's
+ * reach follows the principal's scope, so changing the principal changes what its existing keys
+ * reach). Kept per subject, never merged: a tenant reached by the principal and by a key are two
+ * facts, and a key can start to reach a tenant the principal already names.
+ */
+type Reach = Map<string, string[]>;
+
+async function principalReach(
+  repo: AdminMachineAccessRepository,
+  principalId: string,
+  principalScopes: AdminMachineTenantScope[]
+): Promise<Reach> {
+  const reach: Reach = new Map([['principal', principalNamed(principalScopes)]]);
+  for (const credential of await repo.listCredentials(principalId)) {
+    if (credential.status !== 'active' && credential.status !== 'rotating') continue;
+    const own = await repo.getCredentialTenantScopes(credential.id);
+    reach.set(`credential:${credential.id}`, namedFor(principalScopes, own));
+  }
+  return reach;
+}
+
+/** The tenants some subject reaches after the change that it did not reach before. */
+function newlyReached(before: Reach, after: Reach): string[] {
+  const added = new Set<string>();
+  for (const [subject, tenants] of after) {
+    const previous = before.get(subject) ?? [];
+    for (const tenant of tenants) if (!previous.includes(tenant)) added.add(tenant);
+  }
+  return [...added];
+}
+
+const reachUnion = (reach: Reach): string[] => [...new Set([...reach.values()].flat())];
+
+/**
+ * The one step-up of a request that grants machine access. Taking access away (renaming,
+ * narrowing, disabling, revoking, deleting) never asks for more than it did before. The grant's
+ * own step-up (`machine.permission.grant`) is asked as before when the request needs one.
+ *
+ * Besides, while the list of protected tenants is not empty, or cannot be read, a request that
+ * GRANTS or WIDENS access to a protected tenant (a tenant named after the change that was not
+ * named before, as authentication will read it) or creates, enables or widens a platform
+ * principal (the setup tool, the Admin console relay, an internal service) is done by a signed-in
+ * human only, with an L2 step-up `machine.protected_grant` that the enforcement switch cannot
+ * turn off:
+ * - a machine token is refused before the step-up (`403 step_up_human_required`), whatever it
+ *   holds (a platform principal such as the setup tool may still change platform principals
+ *   itself);
+ * - a human who holds no global machine-access write is refused (the platform administrator
+ *   grants access to a protected tenant), except while the setting cannot be read: then the human
+ *   is never refused outright, the always-enforced step-up is what they need;
+ * - the request takes ONE receipt for everything it needs: the grant's step-up covers
+ *   `machine.protected_grant` too (`alsoCovers`), and the parameters are bound as before.
+ * The setting is read only when a decision needs it (through the per-request memo). Null when the
+ * request may go ahead.
+ */
+async function machineGrantGate(
+  c: AdminContext,
+  input: {
+    kind: string;
+    targetIds: string[];
+    /** The parameters the grant's receipt is bound to. */
+    extra: Record<string, unknown>;
+    /** Whether the request needs the grant's own step-up. */
+    grant: boolean;
+    /** The tenants named after the change, as authentication will read them. */
+    named: readonly string[];
+    /** The tenants named before it (empty for something new). */
+    namedBefore: readonly string[];
+    /** When given, the tenants some subject newly reaches (used instead of `named` minus `namedBefore`). */
+    newlyReached?: readonly string[];
+    /** Whether the request creates, enables or widens a platform principal. */
+    platformGrant: boolean;
+    /**
+     * Whether the request widens what the principal or credential can do or for how long (a
+     * permission added, an expiry extended or removed, a key rotated, a revoked key revived, a
+     * disabled principal enabled): judged separately from newly reached tenants, on what it
+     * reaches after the change.
+     */
+    widening: boolean;
+  }
+): Promise<Response | null> {
+  const auth = getAuth(c);
+  const grantOnly = () =>
+    input.grant
+      ? requireMachineGrantStepUp(c, input.kind, input.targetIds, input.extra)
+      : Promise.resolve(null);
+  // Two things are judged separately: tenants newly reached, and a widening of something that
+  // reaches a tenant after the change. Either one on a protected tenant asks for the protected grant.
+  const widened =
+    input.newlyReached ?? input.named.filter((tenant) => !input.namedBefore.includes(tenant));
+  const widenedReach = input.widening ? input.named : [];
+  if (widened.length === 0 && widenedReach.length === 0 && !input.platformGrant) {
+    return grantOnly();
+  }
+  const excluded = await machineExcludedTenantsSetting(c as never);
+  (c as unknown as { set(k: string, v: unknown): void }).set(EXCLUDED_KEY, excluded);
+  if (excluded.kind === 'none') return grantOnly();
+  const reachedProtected = [...new Set([...widened, ...widenedReach])].filter((tenant) =>
+    isProtectedIn(excluded, tenant)
+  );
+  const namesProtected = reachedProtected.length > 0;
+  const platform = input.platformGrant;
+  if (!namesProtected && !platform) return grantOnly();
+  if (auth.authMethod === 'machine_access_token') {
+    const platformActor = isPlatformMachinePrincipal({
+      id: auth.actorId ?? auth.userId,
+      clientId: auth.clientId,
+      principalType: auth.principalType,
+    });
+    // The setup tool and the like may change platform principals; no machine names a protected tenant.
+    if (!(platformActor && platform && !namesProtected)) {
+      return c.json(
+        {
+          error: 'step_up_human_required',
+          error_description: 'This operation needs a signed-in platform administrator',
+        },
+        403
+      );
+    }
+    return grantOnly();
+  }
+  if (
+    excluded.kind !== 'all' &&
+    !hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE)
+  ) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  const params = {
+    kind: input.kind,
+    ...input.extra,
+    platform_principal: platform,
+    protected_reach: reachedProtected.sort(),
+  };
+  const targetTenantId = getTenantIdFromContext(c);
+  if (!input.grant) {
+    return requireAdminStepUp(c, {
+      operation: 'machine.protected_grant',
+      targetTenantId,
+      targetIds: input.targetIds,
+      params,
+    });
+  }
+  // One receipt for the whole request: the grant's step-up also covers the protected grant.
+  return requireAdminStepUp(c, {
+    operation: 'machine.permission.grant',
+    alsoCovers: ['machine.protected_grant'],
+    targetTenantId,
+    targetIds: input.targetIds,
+    params,
+  });
+}
 
 const STEP_UP_EXEMPT_PREFIX = 'admin:step_up_exempt:';
 
@@ -406,6 +647,7 @@ function actorMayGrant(
   const auth = getAuth(c);
   // A platform principal is never the tenant's own, whichever tenants it is limited to.
   const reach = platform ? ['*', ...reachGiven] : reachGiven;
+  if (!reach.every((tenant) => reachableAfterExclusion(c, tenant))) return false;
   if (reach.length === 0) {
     return permissionsWithin(auth, auth.permissions, requested);
   }
@@ -428,6 +670,14 @@ function scopesWithinActorReach(
   scopes: AdminMachineTenantScope[],
   permission: string
 ): boolean {
+  const reachable = scopes.every((scope) =>
+    scope.scopeMode === 'all'
+      ? reachableAfterExclusion(c, '*')
+      : scope.scopeMode === 'allow' && scope.tenantId
+        ? reachableAfterExclusion(c, scope.tenantId)
+        : true
+  );
+  if (!reachable) return false;
   if (hasGlobalAdminPermission(getAuth(c), permission)) {
     return true;
   }
@@ -441,8 +691,22 @@ function scopesWithinActorReach(
   );
 }
 
+/** Whether the actor is a machine token of a principal that is not a platform principal. */
+function isNonPlatformMachineActor(c: AdminContext): boolean {
+  const auth = getAuth(c);
+  return (
+    auth.authMethod === 'machine_access_token' &&
+    !isPlatformMachinePrincipal({
+      id: auth.actorId ?? auth.userId,
+      clientId: auth.clientId,
+      principalType: auth.principalType,
+    })
+  );
+}
+
 /** Whether everything in `reach` (tenant IDs, or '*') is within what the actor manages. */
 function reachWithinActor(c: AdminContext, reach: readonly string[], permission: string): boolean {
+  if (!reach.every((tenant) => reachableAfterExclusion(c, tenant))) return false;
   if (hasGlobalAdminPermission(getAuth(c), permission)) {
     return true;
   }
@@ -461,7 +725,8 @@ async function getVisiblePrincipalResponse(
   }
   if (
     isPlatformPrincipal(principal) &&
-    !hasGlobalAdminPermission(getAuth(c), ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_READ)
+    (!hasGlobalAdminPermission(getAuth(c), ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_READ) ||
+      (restrictionsActive(c) && isNonPlatformMachineActor(c)))
   ) {
     return null;
   }
@@ -487,7 +752,8 @@ async function principalIsWithinActorScope(
   if (
     principal &&
     isPlatformPrincipal(principal) &&
-    !hasGlobalAdminPermission(getAuth(c), permission)
+    (!hasGlobalAdminPermission(getAuth(c), permission) ||
+      (restrictionsActive(c) && isNonPlatformMachineActor(c)))
   ) {
     return false;
   }
@@ -743,8 +1009,7 @@ machineAccessRouter.post('/principals', async (c) => {
   // The setup tool, the Admin UI and the internal services act for the platform, not for a
   // tenant: only a platform administrator creates one, and with global permissions at most.
   if (
-    (PLATFORM_PRINCIPAL_TYPES.has(principalType as AdminMachinePrincipalType) ||
-      clientId === 'authrim-setup') &&
+    (PLATFORM_PRINCIPAL_TYPES.has(principalType) || clientId === 'authrim-setup') &&
     !(
       hasGlobalAdminPermission(getAuth(c), ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE) &&
       permissionsWithin(getAuth(c), getAuth(c).globalPermissions, permissions)
@@ -756,11 +1021,20 @@ machineAccessRouter.post('/principals', async (c) => {
   if (await getRepo(c).findPrincipalByClientId(clientId)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
   }
-  if (permissions.length > 0) {
-    const refused = await requireMachineGrantStepUp(c, 'principal.create', [], {
-      client_id: clientId,
-      principal_type: principalType,
-      ...grantParams({ permissions, tenantScopes }),
+  {
+    const refused = await machineGrantGate(c, {
+      kind: 'principal.create',
+      targetIds: [],
+      extra: {
+        client_id: clientId,
+        principal_type: principalType,
+        ...grantParams({ permissions, tenantScopes }),
+      },
+      grant: permissions.length > 0,
+      named: principalNamed(tenantScopes),
+      namedBefore: [],
+      platformGrant: PLATFORM_PRINCIPAL_TYPES.has(principalType) || clientId === 'authrim-setup',
+      widening: true,
     });
     if (refused) return refused;
   }
@@ -869,11 +1143,31 @@ machineAccessRouter.patch('/principals/:id', async (c) => {
     }
   }
 
+  let patchGrant = false;
+  let patchExtra: Record<string, unknown> = {};
+  let patchWidens = false;
+  let reachBefore: Reach = new Map();
+  let reachAfter: Reach = new Map();
   if (newPermissions !== undefined || newTenantScopes !== undefined) {
     const [currentPermissions, currentTenantScopes] = await Promise.all([
       repo.getPrincipalPermissions(principalId),
       repo.getPrincipalTenantScopes(principalId),
     ]);
+    // What the principal and its existing keys reach, before and after: a key's reach follows the
+    // principal's scope, so widening the principal can make an existing key reach a protected tenant.
+    reachBefore = await principalReach(repo, principalId, currentTenantScopes);
+    reachAfter = newTenantScopes
+      ? await principalReach(repo, principalId, newTenantScopes)
+      : reachBefore;
+    // A permission added counts as widening, and so does replacing a wildcard by an exact name
+    // (`admin:users:*` -> `admin:users:read`) although it looks like narrowing: while a list is in
+    // force, a permission held by its exact stored name is what gives an all-scope machine
+    // cross-tenant authority and a wildcard does not, so this is not a pure narrowing and is
+    // treated as a grant on purpose.
+    patchWidens =
+      (newPermissions !== undefined && adds(currentPermissions, newPermissions)) ||
+      (newTenantScopes !== undefined &&
+        adds(currentTenantScopes.map(scopeKey), newTenantScopes.map(scopeKey)));
     const permissionsChanged =
       newPermissions !== undefined &&
       (adds(currentPermissions, newPermissions) || adds(newPermissions, currentPermissions));
@@ -882,14 +1176,29 @@ machineAccessRouter.patch('/principals/:id', async (c) => {
       (adds(currentTenantScopes.map(scopeKey), newTenantScopes.map(scopeKey)) ||
         adds(newTenantScopes.map(scopeKey), currentTenantScopes.map(scopeKey)));
     if (permissionsChanged || scopesChanged) {
-      const refused = await requireMachineGrantStepUp(c, 'principal.update', [principalId], {
+      patchGrant = true;
+      patchExtra = {
         ...grantParams({
           permissions: permissionsChanged ? newPermissions : undefined,
           tenantScopes: scopesChanged ? newTenantScopes : undefined,
         }),
-      });
-      if (refused) return refused;
+      };
     }
+  }
+
+  {
+    const refused = await machineGrantGate(c, {
+      kind: 'principal.update',
+      targetIds: [principalId],
+      extra: patchExtra,
+      grant: patchGrant,
+      named: reachUnion(reachAfter),
+      namedBefore: [],
+      newlyReached: newlyReached(reachBefore, reachAfter),
+      platformGrant: isPlatformPrincipal(existing) && patchWidens,
+      widening: patchWidens,
+    });
+    if (refused) return refused;
   }
 
   const actor = actorRef(c);
@@ -1016,13 +1325,22 @@ machineAccessRouter.post('/principals/:id/credentials', async (c) => {
 
   // A new key acts with its principal's permissions (narrowed only by a list of its own).
   {
-    const refused = await requireMachineGrantStepUp(c, 'credential.create', [principalId], {
-      kid,
-      alg,
-      public_jwk_sha256: await jwkDigest(publicJwkJson),
-      not_before: asOptionalEpochMs(body?.not_before) ?? null,
-      expires_at: asOptionalEpochMs(body?.expires_at) ?? null,
-      ...grantParams({ permissions, tenantScopes }),
+    const refused = await machineGrantGate(c, {
+      kind: 'credential.create',
+      targetIds: [principalId],
+      extra: {
+        kid,
+        alg,
+        public_jwk_sha256: await jwkDigest(publicJwkJson),
+        not_before: asOptionalEpochMs(body?.not_before) ?? null,
+        expires_at: asOptionalEpochMs(body?.expires_at) ?? null,
+        ...grantParams({ permissions, tenantScopes }),
+      },
+      grant: true,
+      named: await credentialNamed(repo, principalId, tenantScopes),
+      namedBefore: [],
+      platformGrant: isPlatformPrincipal(principal),
+      widening: true,
     });
     if (refused) return refused;
   }
@@ -1170,11 +1488,14 @@ machineAccessRouter.patch('/principals/:id/credentials/:credentialId', async (c)
         notBefore: asOptionalEpochMs(body?.not_before),
         expiresAt: asOptionalEpochMs(body?.expires_at),
       });
-    if (widensPermissions || widensScopes || revives || widensWindow) {
-      // Bound to what the key ends up as, whatever made the change need a step-up: its status,
-      // window (an omitted bound keeps its current value, so leaving a bound out and lifting it
-      // do not share a receipt), permissions and tenants.
-      const refused = await requireMachineGrantStepUp(c, 'credential.update', [credentialId], {
+    // Bound to what the key ends up as, whatever made the change need a step-up: its status,
+    // window (an omitted bound keeps its current value, so leaving a bound out and lifting it
+    // do not share a receipt), permissions and tenants.
+    const owner = await repo.findPrincipalById(credential.principalId);
+    const refused = await machineGrantGate(c, {
+      kind: 'credential.update',
+      targetIds: [credentialId],
+      extra: {
         principal_id: credential.principalId,
         status: status ?? credential.status,
         not_before: resultingBound(asOptionalEpochMs(body?.not_before), credential.notBefore),
@@ -1183,9 +1504,25 @@ machineAccessRouter.patch('/principals/:id/credentials/:credentialId', async (c)
           permissions: newPermissions ?? currentPermissions,
           tenantScopes: newTenantScopes ?? currentTenantScopes,
         }),
-      });
-      if (refused) return refused;
-    }
+      },
+      grant: widensPermissions || widensScopes || revives || widensWindow,
+      named: await credentialNamed(
+        repo,
+        credential.principalId,
+        newTenantScopes ?? currentTenantScopes
+      ),
+      // Reviving a revoked or expired key grants it again; anything else compares with what it was.
+      namedBefore: revives
+        ? []
+        : await credentialNamed(repo, credential.principalId, currentTenantScopes),
+      platformGrant:
+        owner !== null &&
+        isPlatformPrincipal(owner) &&
+        (widensPermissions || widensScopes || revives || widensWindow),
+      // A permission added, a scope widened, an expiry extended or removed, a key revived.
+      widening: widensPermissions || widensScopes || revives || widensWindow,
+    });
+    if (refused) return refused;
   }
 
   const actor = actorRef(c);
@@ -1309,19 +1646,29 @@ machineAccessRouter.post('/principals/:id/credentials/:credentialId/rotate', asy
   // Rotation always registers a new public key, which can act with the principal's permissions, so
   // it is always gated; the new key's digest and window are bound into the receipt.
   {
-    const refused = await requireMachineGrantStepUp(c, 'credential.rotate', [oldCredentialId], {
-      principal_id: principalId,
-      kid,
-      alg,
-      public_jwk_sha256: await jwkDigest(publicJwkJson),
-      not_before: asOptionalEpochMs(body?.not_before) ?? null,
-      expires_at: asOptionalEpochMs(body?.expires_at) ?? null,
-      // How long the old key keeps working; the seconds asked for, not the absolute end.
-      overlap_seconds: overlapSeconds,
-      ...grantParams({
-        permissions: newCredentialPermissions,
-        tenantScopes: newCredentialTenantScopes,
-      }),
+    const refused = await machineGrantGate(c, {
+      kind: 'credential.rotate',
+      targetIds: [oldCredentialId],
+      extra: {
+        principal_id: principalId,
+        kid,
+        alg,
+        public_jwk_sha256: await jwkDigest(publicJwkJson),
+        not_before: asOptionalEpochMs(body?.not_before) ?? null,
+        expires_at: asOptionalEpochMs(body?.expires_at) ?? null,
+        // How long the old key keeps working; the seconds asked for, not the absolute end.
+        overlap_seconds: overlapSeconds,
+        ...grantParams({
+          permissions: newCredentialPermissions,
+          tenantScopes: newCredentialTenantScopes,
+        }),
+      },
+      grant: true,
+      // A new key is a new grant.
+      named: await credentialNamed(repo, principalId, newCredentialTenantScopes),
+      namedBefore: [],
+      platformGrant: isPlatformPrincipal(principal),
+      widening: true,
     });
     if (refused) return refused;
   }
@@ -1469,10 +1816,24 @@ machineAccessRouter.post('/principals/:id/enable', async (c) => {
   }
   // Bringing a disabled principal back puts its credentials to work again with everything it
   // holds: handing out machine access, as when it was made. An active one is left as it is.
-  if (principal.status !== 'active') {
-    const refused = await requireMachineGrantStepUp(c, 'principal.enable', [principalId], {
-      permissions: [...new Set(heldPermissions)].sort(),
-      tenant_scopes: heldTenantScopes.map((scope) => JSON.stringify(scope)).sort(),
+  {
+    const refused = await machineGrantGate(c, {
+      kind: 'principal.enable',
+      targetIds: [principalId],
+      extra: {
+        permissions: [...new Set(heldPermissions)].sort(),
+        tenant_scopes: heldTenantScopes.map((scope) => JSON.stringify(scope)).sort(),
+      },
+      grant: principal.status !== 'active',
+      // Enabling a disabled principal puts its access back to work; an active one changes nothing.
+      // The principal's own reach and what each of its keys reaches on it.
+      named:
+        principal.status !== 'active'
+          ? reachUnion(await principalReach(repo, principalId, heldTenantScopes))
+          : [],
+      namedBefore: [],
+      platformGrant: principal.status !== 'active' && isPlatformPrincipal(principal),
+      widening: principal.status !== 'active',
     });
     if (refused) return refused;
   }

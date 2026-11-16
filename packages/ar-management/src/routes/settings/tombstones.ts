@@ -26,6 +26,7 @@ import {
   findActiveEmailTombstone,
   getLogger,
   getTenantIdFromContext,
+  refuseMachineOnExcludedTenant,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   type DatabaseSource,
   type Env,
@@ -98,6 +99,10 @@ async function listTombstonesForScope(
   scope: TombstoneTenantScope = 'tenant'
 ) {
   const tenantId = resolveTombstoneTenantId(c, scope);
+  if (tenantId) {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },
@@ -225,6 +230,10 @@ async function getTombstoneForScope(
 ) {
   const log = getLogger(c).module('TombstonesAPI');
   const tenantId = resolveTombstoneTenantId(c, scope);
+  if (tenantId) {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },
@@ -305,6 +314,10 @@ async function getTombstoneStatsForScope(
   scope: TombstoneTenantScope = 'tenant'
 ) {
   const tenantId = resolveTombstoneTenantId(c, scope);
+  if (tenantId) {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },
@@ -418,6 +431,10 @@ async function cleanupTombstonesForScope(
   }
 
   const tenantId = resolveTombstoneTenantId(c, scope, body.tenant_id);
+  if (tenantId) {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },
@@ -495,6 +512,10 @@ async function deleteTombstoneForScope(
 ) {
   const log = getLogger(c).module('TombstonesAPI');
   const tenantId = resolveTombstoneTenantId(c, scope);
+  if (tenantId) {
+    const refused = await refuseMachineOnExcludedTenant(c as never, tenantId);
+    if (refused) return refused;
+  }
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant_id' },

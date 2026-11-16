@@ -74,3 +74,61 @@ export function resolveMachineTenantScope(
 
   return Array.from(principalTenants).filter((tenantId) => credentialTenants.has(tenantId));
 }
+
+/**
+ * The tenants a machine credential names one by one, as an `allow` entry of both the principal and
+ * the credential (or of the principal alone when the credential has no scope of its own). An `all`
+ * entry next to them does not hide them: `resolveMachineTenantScope` says `'*'`, and this says
+ * which tenants were also named. Platform settings that exclude tenants from an all-tenants scope
+ * accept a credential for such a tenant only when it is in this list.
+ */
+export function resolveMachineExplicitTenantScope(
+  principalScopes: AdminMachineTenantScopeEntry[],
+  credentialScopes: AdminMachineTenantScopeEntry[]
+): string[] {
+  const allowed = (scopes: AdminMachineTenantScopeEntry[]): Set<string> =>
+    new Set(
+      scopes
+        .filter((scope) => scope.scopeMode === 'allow' && scope.tenantId)
+        .map((scope) => scope.tenantId as string)
+    );
+  const principalTenants = allowed(principalScopes);
+  const credentialTenants = allowed(
+    credentialScopes.length > 0 ? credentialScopes : principalScopes
+  );
+  return Array.from(principalTenants).filter((tenantId) => credentialTenants.has(tenantId));
+}
+
+/** The principal types that act for the platform (see `isPlatformMachinePrincipal`). */
+export const PLATFORM_MACHINE_PRINCIPAL_TYPES: ReadonlySet<string> = new Set([
+  'setup_tool',
+  'admin_ui_bff',
+  'internal_service',
+]);
+
+/** The principals the setup bootstrap writes, by their fixed IDs. */
+export const PLATFORM_MACHINE_PRINCIPAL_IDS: ReadonlySet<string> = new Set([
+  'amp_authrim_setup',
+  'amp_authrim_admin_ui_bff',
+]);
+
+const SETUP_TOOL_CLIENT_ID = 'authrim-setup';
+
+/**
+ * Whether the principal acts for the platform (the setup tool, the Admin console relay, an
+ * internal service). Only a platform administrator can create one (the machine access routes
+ * refuse it to anyone else) and its type is never changed afterwards, so what a principal is, is
+ * not something a stolen key of another principal can change.
+ */
+export function isPlatformMachinePrincipal(principal: {
+  id?: string | null;
+  clientId?: string | null;
+  principalType?: string | null;
+}): boolean {
+  return (
+    (principal.id != null && PLATFORM_MACHINE_PRINCIPAL_IDS.has(principal.id)) ||
+    (principal.principalType != null &&
+      PLATFORM_MACHINE_PRINCIPAL_TYPES.has(principal.principalType)) ||
+    principal.clientId === SETUP_TOOL_CLIENT_ID
+  );
+}

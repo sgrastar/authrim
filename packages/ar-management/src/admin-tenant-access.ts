@@ -45,7 +45,11 @@ export function hasPlatformTenantManagementAuthority(
 
 function isGlobalMachineToken(adminAuth: AdminAuthContext): boolean {
   return (
-    adminAuth.authMethod === 'machine_access_token' && adminAuth.tenantScope?.includes('*') === true
+    adminAuth.authMethod === 'machine_access_token' &&
+    adminAuth.tenantScope?.includes('*') === true &&
+    // While tenants are excluded from the machine's all-tenants scope, it is confined to the
+    // request's tenant (`canAccessTenantResource` still lets it act there).
+    adminAuth.tenantExclusionActive !== true
   );
 }
 

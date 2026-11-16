@@ -49,6 +49,13 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 		'Einladungscode an eine vertrauenswürdige Maschine übergeben',
 	'set.k.admin_invitations.code_handoff_enabled.desc':
 		'Eingeschaltet kann eine Maschinenidentität mit der dafür vorgesehenen Berechtigung eine Administratoreinladung erstellen und ihren Code in der API-Antwort statt per E-Mail erhalten. Die E-Mail-Adresse der eingeladenen Person gilt dann nicht als bestätigt. Einladungen aus dieser Konsole werden weiterhin per E-Mail gesendet. Das Einschalten verlangt eine zusätzliche Identitätsprüfung (Step-up), das Ausschalten nicht.',
+	'set.section.machineAccessPlatform': 'Maschinenzugriff auf geschützte Mandanten',
+	'set.section.machineAccessPlatform.desc':
+		'Mandanten, die eine Maschinenidentität mit Zugriff auf alle Mandanten nicht von sich aus erreicht. Gilt für alle Mandanten. Nur Plattformadministratoren können das ändern.',
+	'set.k.machine_access.all_scope_excluded_tenants':
+		'Mandanten, die eine Maschinenidentität für alle Mandanten nicht erreicht',
+	'set.k.machine_access.all_scope_excluded_tenants.desc':
+		'Mandanten-IDs, durch Kommas getrennt, zum Beispiel der Hauptmandant: default. Eine Maschinenidentität, die alle Mandanten erreicht, wird für diese Mandanten abgewiesen, es sei denn, die Identität nennt den Mandanten selbst ausdrücklich. Das Anlegen oder Löschen anderer Mandanten, das Setup-Werkzeug, diese Konsole und angemeldete Administratoren sind nicht betroffen. Leer (Standard) ändert nichts. Das Entfernen eines Mandanten aus der Liste verlangt eine zusätzliche Identitätsprüfung (Step-up), das Hinzufügen nicht. Sobald ein Mandant aufgeführt ist, wird auch die Verwaltung des Maschinenzugriffs strenger (Plattform-Prinzipale sind für solche Maschinen nicht mehr erreichbar).',
 	'settings.notice.codeHandoff.title': 'Codes werden ohne E-Mail übergeben',
 	'settings.notice.codeHandoff.body':
 		'Eine Maschine mit der Berechtigung erhält den Registrierungscode direkt. Schalten Sie das aus, wenn keine Automatisierung es braucht.',

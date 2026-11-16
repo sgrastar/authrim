@@ -369,3 +369,80 @@ describe('last-resort second-factor recovery', () => {
     expect(await response.json()).toMatchObject({ error: 'admin_not_active' });
   });
 });
+
+describe('last-resort second-factor recovery: tenants an all-tenants machine does not reach', () => {
+  let db: Database;
+  const automation = () =>
+    setupMachine({
+      userId: 'amp_auto',
+      actorId: 'amp_auto',
+      principalType: 'automation',
+      clientId: 'auto-client',
+    });
+  const postWithEnv = (body: unknown, env: Record<string, unknown>) =>
+    app.request(
+      PATH,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      env
+    );
+  const seed = () => {
+    const next = database();
+    next.db.exec(`
+      INSERT INTO admin_users (id, tenant_id, email, created_at, updated_at) VALUES
+        ('solo', 'default', 'solo@example.com', 1, 1);
+      INSERT INTO admin_second_factors (id, admin_user_id, kind, credential_id, public_key,
+        created_at) VALUES ('sf-1', 'solo', 'webauthn_credential', 'cred-1', 'cGs=', 1);
+    `);
+    db = next.db;
+    mocks.state.adapter = next.adapter;
+  };
+
+  beforeEach(() => {
+    mocks.state.settings = {};
+    mocks.state.deliveryAvailable = true;
+    mocks.writeAdminAuditLog.mockReset().mockResolvedValue('audit-1');
+    mocks.produceNotificationDelivery
+      .mockReset()
+      .mockResolvedValue({ reference: 'r', bindingRef: 'b', delivery: 'pending' });
+    seed();
+  });
+
+  const untouched = () =>
+    db.prepare('SELECT COUNT(*) AS n FROM admin_second_factors WHERE revoked_at IS NULL').get();
+
+  it('does not find an administrator of an excluded tenant, with the answer for no such e-mail', async () => {
+    mocks.state.auth = automation();
+    const env = { MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS: 'default' };
+    for (const payload of [
+      { email: 'solo@example.com' },
+      { email: 'solo@example.com', tenant_id: 'default' },
+    ]) {
+      const response = await postWithEnv(payload, env);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ error: 'not_found' });
+    }
+    expect(untouched()).toEqual({ n: 1 });
+  });
+
+  it('still recovers an administrator of an unlisted tenant', async () => {
+    mocks.state.auth = automation();
+    const response = await postWithEnv(
+      { email: 'solo@example.com' },
+      { MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS: 'tenant-b' }
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it('is not limited for the setup principal', async () => {
+    mocks.state.auth = setupMachine();
+    const response = await postWithEnv(
+      { email: 'solo@example.com' },
+      { MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS: 'default' }
+    );
+    expect(response.status).toBe(200);
+  });
+});

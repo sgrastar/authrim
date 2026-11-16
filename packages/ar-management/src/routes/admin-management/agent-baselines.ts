@@ -31,6 +31,8 @@ import {
   type AdminAuthContext,
   chunkForBoundParameters,
   sqlPlaceholders,
+  loadMachineExcludedTenants,
+  resolvedMachineExcluded,
 } from '@authrim/ar-lib-core';
 import { isAgentMcpEnabled, type AgentManagementEnv } from '../../agent-downscope-auth';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
@@ -57,6 +59,10 @@ export const agentBaselinesRouter = new Hono<{
 
 agentTemplatesRouter.use('*', adminAuthMiddleware());
 agentBaselinesRouter.use('*', adminAuthMiddleware());
+agentBaselinesRouter.use('*', async (c, next) => {
+  await loadMachineExcludedTenants(c as never);
+  await next();
+});
 
 function auth(c: BaselineContext): AdminAuthContext {
   return c.get('adminAuth') as AdminAuthContext;
@@ -84,7 +90,13 @@ function tenantScoped(
   tenantIds: readonly string[],
   permission: string
 ): boolean {
-  return actorReachesTenants(auth(c), controlTenant(c), tenantIds, permission);
+  return actorReachesTenants(
+    auth(c),
+    controlTenant(c),
+    tenantIds,
+    permission,
+    resolvedMachineExcluded(c as never)
+  );
 }
 
 function error(c: BaselineContext, status: 400 | 403 | 404 | 409 | 503, code: string) {
