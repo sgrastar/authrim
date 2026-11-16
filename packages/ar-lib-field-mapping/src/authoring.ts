@@ -47,3 +47,7 @@ export {
 
 export { validateMappingRuleGraph } from './core/graph-validation';
 export { readMappingReference } from './core/stored-graph';
+
+export { TRANSFORM_LIMITS, safeTransformPattern, safeRegexTest } from './core/transform-safety';
+export { asciiDigits, stripAccents } from './core/text-fold';
+export { toFullwidth, toHalfwidth } from './core/text-width';

@@ -144,7 +144,7 @@ describe('JSON transform safety limits', () => {
     for (const value of [circular, deep, Array.from({ length: 501 }, () => 1)]) {
       const result = run('json_build', [value], { nullHandling: 'omit' });
       expect(result.value).toBeUndefined();
-      expect(result.reasons.map((item) => item.code)).toContain('transform.invalid_output');
+      expect(result.reasons.map((item) => item.code)).toContain('transform.limit_exceeded');
     }
   });
 

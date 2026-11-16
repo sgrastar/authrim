@@ -1,6 +1,6 @@
 import type { MappingValueReference, MappingRuleGraph } from './types';
 
-/** Data includes operations W2 will register; registration does not expand identifier permissions. */
+/** Only these text operations may depend on a persistent identifier. */
 export const IDENTIFIER_POST_TRANSFORM_OPERATIONS: readonly string[] = [
   'affix_text',
   'case',

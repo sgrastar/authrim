@@ -1,12 +1,18 @@
-import { executeTransformStep } from '@authrim/ar-lib-field-mapping/authoring';
-import type { FieldRef, SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
-import { holds } from './condition-model';
-import { asciiDigits, stripAccents } from './text-fold';
-import { toFullwidth, toHalfwidth } from './text-width';
 import {
+	evaluateMappingRule,
+	TRANSFORM_OPERATION_SCHEMAS
+} from '@authrim/ar-lib-field-mapping/authoring';
+import type {
+	FieldRef,
+	MappingEvaluationValue,
+	MappingRuleGraph,
+	MappingValueReference,
+	SourceValueEnvelope
+} from '@authrim/ar-lib-field-mapping/contract';
+import { holds } from './condition-model';
+import {
+	identifierRuntimeParams,
 	parseCondition,
-	parsePairs,
-	patternWorks,
 	transformDef,
 	type Mapping,
 	type MappingField,
@@ -30,7 +36,41 @@ import {
  */
 
 /** A value at one point, or "decided at sign-in". */
-export type SampleValue = { known: true; value: unknown } | { known: false };
+export type SampleValue =
+	| { known: true; value: unknown; state?: Exclude<MappingEvaluationValue['kind'], 'value'> }
+	| { known: false };
+
+/** Keep runtime states explicit at the display boundary; null remains an ordinary value. */
+function sampleValue(value: MappingEvaluationValue): SampleValue {
+	if (value.kind === 'value') return { known: true, value: value.envelope.value };
+	return { known: true, value: value.kind === 'absent' ? undefined : null, state: value.kind };
+}
+
+/** Distinct display labels for runtime states; ordinary values use their own text. */
+export function sampleStateKey(
+	sample: SampleValue
+):
+	| 'map.sample.atSignIn'
+	| 'map.sample.failed'
+	| 'map.sample.suppressed'
+	| 'map.sample.absent'
+	| 'map.sample.null'
+	| 'map.sample.empty'
+	| undefined {
+	if (!sample.known) return 'map.sample.atSignIn';
+	if (sample.state === 'failed') return 'map.sample.failed';
+	if (sample.state === 'suppressed') return 'map.sample.suppressed';
+	if (sample.state === 'absent' || sample.value === undefined) return 'map.sample.absent';
+	if (sample.value === null) return 'map.sample.null';
+	if (sample.value === '') return 'map.sample.empty';
+	return undefined;
+}
+
+function evaluationValue(value: unknown): MappingEvaluationValue {
+	return value === undefined
+		? { kind: 'absent' }
+		: { kind: 'value', envelope: { value, sourceRef: REF } };
+}
 
 export interface SampleTrace {
 	/** The sample values of the source attributes, in order. */
@@ -43,84 +83,11 @@ export interface SampleTrace {
 const REF: FieldRef = { side: 'derived', namespace: 'preview', path: 'value' };
 const AT_SIGN_IN: SampleValue = { known: false };
 
-function runStep(step: TransformStep, values: unknown[]): unknown {
-	const edgeValues = new Map<string, SourceValueEnvelope>(
-		values.map((value, index) => [`in${index}`, { value, sourceRef: REF }])
-	);
-	const result = executeTransformStep({
-		step: {
-			id: step.id,
-			inputEdgeIds: [...edgeValues.keys()],
-			operation: step.transform as never,
-			parameters: step.params,
-			outputTargetRef: REF
-		},
-		edgeValues
-	});
-	return result.value?.value ?? null;
-}
-
 function fixedValue(step: TransformStep): unknown {
 	const text = String(step.params.value ?? '');
 	if (step.transform === 'constant_boolean') return text === 'true';
 	if (step.transform === 'constant_number') return text.trim() === '' ? null : Number(text);
 	return text;
-}
-
-/** The text steps the engine does not have yet, on one string. */
-function textOn(step: TransformStep, text: string): string | null {
-	const p = step.params;
-	const str = (key: string) => (typeof p[key] === 'string' ? (p[key] as string) : '');
-	switch (step.transform) {
-		case 'keep_part': {
-			const mark = str('delimiter');
-			if (!mark) return text;
-			const at = p.occurrence === 'last' ? text.lastIndexOf(mark) : text.indexOf(mark);
-			// Without the character there is nothing to cut: the value stays as it is.
-			if (at < 0) return text;
-			return p.keep === 'after' ? text.slice(at + mark.length) : text.slice(0, at);
-		}
-		case 'remove_text':
-			return str('text') ? text.split(str('text')).join('') : text;
-		case 'replace_text': {
-			const find = str('find');
-			if (!find) return text;
-			if (p.ignoreCase !== true) return text.split(find).join(str('replacement'));
-			const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			return text.replace(new RegExp(escaped, 'giu'), () => str('replacement'));
-		}
-		case 'to_halfwidth':
-			return toHalfwidth(text, p.katakana === true);
-		case 'to_fullwidth':
-			return toFullwidth(text, p.katakana === true);
-		case 'strip_accents':
-			return stripAccents(text);
-		case 'ascii_digits':
-			return asciiDigits(text);
-		case 'value_map': {
-			const same = (a: string) =>
-				p.ignoreCase === true ? a.toLowerCase() === text.toLowerCase() : a === text;
-			const hit = parsePairs(p.entries).find(([from]) => same(from));
-			if (hit) return hit[1];
-			return p.otherwise === 'none' ? null : p.otherwise === 'fixed' ? str('fallbackValue') : text;
-		}
-		case 'regex_replace': {
-			const pattern = str('pattern');
-			if (!pattern || !patternWorks(pattern)) return null;
-			const flags = p.ignoreCase === true ? 'giu' : 'gu';
-			return text.replace(new RegExp(pattern, flags), str('replacement'));
-		}
-		default:
-			return text;
-	}
-}
-
-/** Strings, and each string of a list; anything else passes through. */
-function textStep(step: TransformStep, value: unknown): unknown {
-	if (typeof value === 'string') return textOn(step, value);
-	if (Array.isArray(value))
-		return value.map((item) => (typeof item === 'string' ? textOn(step, item) : item));
-	return value;
 }
 
 const isEmpty = (value: unknown) =>
@@ -136,90 +103,12 @@ function toNumber(value: unknown): number | null {
 	return Number(value.trim());
 }
 
-/** A date from ISO 8601 or Unix time; UTC throughout. */
-function toDate(value: unknown, from: unknown): Date | null {
-	const digits = typeof value === 'number' || /^\s*-?\d+(\.\d+)?\s*$/u.test(String(value));
-	let ms: number;
-	if (from === 'unix_s' || from === 'unix_ms' || (from === 'auto' && digits)) {
-		const n = Number(value);
-		const millis = from === 'unix_ms' || (from === 'auto' && Math.abs(n) >= 1e11);
-		ms = millis ? n : n * 1000;
-	} else {
-		ms = Date.parse(String(value));
-	}
-	return Number.isFinite(ms) ? new Date(ms) : null;
-}
-
-const pad = (n: number) => String(n).padStart(2, '0');
-
-/** The date and time as a clock in `zone` shows them, with that zone's offset then. */
-function inZone(date: Date, zone: string): { day: string; iso: string } | null {
-	let parts: Record<string, string>;
-	try {
-		parts = Object.fromEntries(
-			new Intl.DateTimeFormat('en-US', {
-				timeZone: zone,
-				hourCycle: 'h23',
-				year: 'numeric',
-				month: '2-digit',
-				day: '2-digit',
-				hour: '2-digit',
-				minute: '2-digit',
-				second: '2-digit'
-			})
-				.formatToParts(date)
-				.map((part) => [part.type, part.value])
-		);
-	} catch {
-		return null;
-	}
-	const day = `${parts.year}-${parts.month}-${parts.day}`;
-	const wall = Date.UTC(
-		+parts.year,
-		+parts.month - 1,
-		+parts.day,
-		+parts.hour,
-		+parts.minute,
-		+parts.second
-	);
-	const minutes = Math.round((wall - Math.floor(date.getTime() / 1000) * 1000) / 60000);
-	const offset =
-		minutes === 0
-			? 'Z'
-			: `${minutes > 0 ? '+' : '-'}${pad(Math.floor(Math.abs(minutes) / 60))}:${pad(Math.abs(minutes) % 60)}`;
-	return { day, iso: `${day}T${parts.hour}:${parts.minute}:${parts.second}${offset}` };
-}
-
-function formatDate(date: Date, to: unknown, zone: unknown): unknown {
-	if (to === 'unix_s') return Math.floor(date.getTime() / 1000);
-	if (to === 'unix_ms') return date.getTime();
-	const local = inZone(date, typeof zone === 'string' && zone ? zone : 'UTC');
-	if (!local) return null;
-	return to === 'date' ? local.day : local.iso;
-}
-
-function matches(step: TransformStep, item: string): boolean {
-	const p = step.params;
-	const match = typeof p.match === 'string' ? p.match : '';
-	if (p.how === 'regex') {
-		if (!patternWorks(match)) return false;
-		return new RegExp(match, p.ignoreCase === true ? 'iu' : 'u').test(item);
-	}
-	const [a, b] = p.ignoreCase === true ? [item.toLowerCase(), match.toLowerCase()] : [item, match];
-	if (p.how === 'starts_with') return a.startsWith(b);
-	if (p.how === 'ends_with') return a.endsWith(b);
-	if (p.how === 'equals') return a === b;
-	return a.includes(b);
-}
-
 /** The steps the engine does not have yet, on one value (a list: each item where it applies). */
 function localStep(
 	step: TransformStep,
 	value: unknown,
 	record: Readonly<Record<string, unknown>>
 ): unknown {
-	const each = (fn: (item: unknown) => unknown) =>
-		Array.isArray(value) ? value.map(fn) : fn(value);
 	switch (step.transform) {
 		case 'conditional': {
 			const p = step.params;
@@ -236,16 +125,6 @@ function localStep(
 			if (p.elseMode === 'fixed') return typed(p.elseValue, p.elseBool);
 			return value;
 		}
-		case 'has_value':
-			return isEmpty(value) === (step.params.invert === true);
-		case 'normalize_empty': {
-			const p = step.params;
-			// \s covers the full-width space (U+3000) too.
-			const blank =
-				isEmpty(value) || (p.spaces === true && typeof value === 'string' && /^\s*$/u.test(value));
-			if (!blank) return value;
-			return p.emptyAs === 'empty' ? '' : p.emptyAs === 'fixed' ? String(p.emptyValue ?? '') : null;
-		}
 		case 'json_extract_or': {
 			const path = typeof step.params.path === 'string' ? step.params.path : '';
 			const found = path ? readPath(value, path) : undefined;
@@ -254,29 +133,13 @@ function localStep(
 			if (found === null) return null;
 			return typeof found === 'object' && found !== null ? JSON.stringify(found) : String(found);
 		}
-		case 'default_if_empty':
-			return isEmpty(value) ? String(step.params.value ?? '') : value;
-		case 'text_to_number':
-			return each(toNumber);
-		case 'date_format':
-			return each((item) => {
-				if (isEmpty(item)) return null;
-				const date = toDate(item, step.params.from);
-				return date ? formatDate(date, step.params.to, step.params.timeZone) : null;
-			});
 		case 'json_extract_array': {
 			const path = typeof step.params.path === 'string' ? step.params.path : '';
 			const found = path ? readPath(value, path) : undefined;
 			return Array.isArray(found) ? found : null;
 		}
-		case 'filter_values': {
-			const list = Array.isArray(value) ? value : isEmpty(value) ? [] : [value];
-			return list.filter(
-				(item) => typeof item === 'string' && matches(step, item) !== (step.params.exclude === true)
-			);
-		}
 		default:
-			return textStep(step, value);
+			return value;
 	}
 }
 
@@ -308,66 +171,134 @@ function localCombine(step: TransformStep, values: unknown[]): unknown {
 }
 
 const LOCAL_STEPS = new Set([
-	'keep_part',
-	'remove_text',
-	'replace_text',
-	'regex_replace',
-	'to_halfwidth',
-	'to_fullwidth',
-	'strip_accents',
-	'ascii_digits',
-	'value_map',
-	'text_to_number',
-	'date_format',
-	'filter_values',
 	'json_extract_array',
 	'array_build',
 	'conditional',
-	'has_value',
-	'normalize_empty',
-	'json_extract_or',
-	'default_if_empty'
+	'json_extract_or'
 ]);
 /** Decided when the mapping runs: by the app and the user, the tenant's key, or the account and the salt. */
 const AT_RUN_TIME = new Set(['hash', 'persistent_identifier']);
 
-/** Null when there is nothing to show: no source has a sample and no step makes a value. */
+/** Null when no source has a sample and evaluation leaves every step and the output absent. */
 export function previewMapping(
 	mapping: Mapping,
-	sources: readonly MappingField[]
+	sources: readonly MappingField[],
+	options: { runtimeContext?: Record<string, unknown> } = {}
 ): SampleTrace | null {
 	const input = mapping.sources
 		.filter(Boolean)
 		.map((key) => sources.find((field) => field.key === key)?.example);
 	const makesValue = mapping.steps.some((step) => transformDef(step.transform).generates);
-	if (!makesValue && input.every((value) => value === undefined)) return null;
 
-	// What conditions read: every source attribute's sample value.
 	const record = Object.fromEntries(sources.map((field) => [field.key, field.example]));
-	let state: SampleValue[] = input.map((value) => ({ known: true, value: value ?? null }));
-	const steps: SampleValue[][] = [];
-	for (const step of mapping.steps) {
+	const graph: MappingRuleGraph = {
+		id: mapping.id,
+		targetRef: REF,
+		edges: [],
+		transforms: [],
+		output: { edgeIndex: 0 }
+	};
+	const sourceValues: SourceValueEnvelope[] = [];
+	const sourceSamples: MappingEvaluationValue[] = [];
+	const stepPreparers = new Map<
+		string,
+		(inputs: readonly MappingEvaluationValue[]) => MappingEvaluationValue
+	>();
+	const addSource = (value: unknown): MappingValueReference => {
+		const edgeIndex = graph.edges.length;
+		const sourceRef: FieldRef = { ...REF, side: 'source', path: `input${edgeIndex}` };
+		graph.edges.push({ id: `input${edgeIndex}`, sourceRef, targetRef: REF });
+		sourceSamples.push(evaluationValue(value));
+		if (value !== undefined) sourceValues.push({ value, sourceRef });
+		return { edgeIndex };
+	};
+	let refs = input.map(addSource);
+	const inputSamples = input.map((value) => sampleValue(evaluationValue(value)));
+	const rows: (MappingValueReference[] | undefined)[] = [];
+	let atSignIn = false;
+
+	for (const [index, step] of mapping.steps.entries()) {
 		const def = transformDef(step.transform);
-		if (state.some((value) => !value.known) || AT_RUN_TIME.has(step.transform)) {
-			state = [AT_SIGN_IN];
-		} else if (def.generates) {
-			state = [{ known: true, value: fixedValue(step) }];
-		} else {
-			const values = state.map((value) => (value.known ? value.value : null));
-			state = LOCAL_STEPS.has(step.transform)
-				? def.combines
-					? [{ known: true, value: localCombine(step, values) }]
-					: values.map((value) => ({ known: true, value: localStep(step, value, record) }))
-				: def.combines
-					? [{ known: true, value: runStep(step, values) }]
-					: values.map((value) => ({ known: true, value: runStep(step, [value]) }));
+		const schema = TRANSFORM_OPERATION_SCHEMAS.find(
+			(schema) => schema.operation === step.transform
+		);
+		if (
+			atSignIn ||
+			(AT_RUN_TIME.has(step.transform) &&
+				!(step.transform === 'persistent_identifier' && options.runtimeContext))
+		) {
+			atSignIn = true;
+			rows.push(undefined);
+			continue;
 		}
-		steps.push(state);
+		if (def.generates && !schema) {
+			refs = [addSource(fixedValue(step))];
+		} else {
+			const inputs = def.generates ? [[]] : def.combines ? [refs] : refs.map((ref) => [ref]);
+			refs = inputs.map((inputs, lane): MappingValueReference => {
+				const id = def.generates ? step.id : `step${index}:${lane}`;
+				if (!schema) {
+					// The evaluator invokes preview-only operations once, using cached dependency
+					// values and the same failure/suppression propagation and budget as native steps.
+					stepPreparers.set(id, (inputs) => {
+						if (!LOCAL_STEPS.has(step.transform)) return { kind: 'failed' };
+						const values = inputs.map((input) =>
+							input.kind === 'value' ? input.envelope.value : undefined
+						);
+						return evaluationValue(
+							def.combines ? localCombine(step, values) : localStep(step, values[0], record)
+						);
+					});
+				}
+				const stepIndex = graph.transforms.length;
+				graph.transforms.push({
+					id,
+					// concat accepts ordered inputs and absence; only preview-local prepared values use it.
+					operation: schema?.operation ?? 'concat',
+					parameters: schema
+						? step.transform === 'persistent_identifier'
+							? identifierRuntimeParams(step.params)
+							: step.params
+						: {},
+					inputs
+				});
+				return { stepIndex };
+			});
+		}
+		rows.push(refs);
 	}
-	// With several source attributes and no combining step, the first one is what arrives.
+	// Evaluate once for the entire preview, including otherwise disconnected intermediate lanes.
+	// Local operation boundaries never reset the budget or replay an upstream transform.
+	const result = refs[0]
+		? evaluateMappingRule({
+				rule: { ...graph, output: refs[0] },
+				sourceValues,
+				stepPreparers,
+				evaluateAllSteps: true,
+				runtimeContext: options.runtimeContext
+			})
+		: undefined;
+	// Absence-consuming operations must run before deciding there is no sample to display.
+	if (
+		!makesValue &&
+		input.every((value) => value === undefined) &&
+		!atSignIn &&
+		(!result ||
+			(result.output.kind === 'absent' &&
+				[...result.steps.values()].every((value) => value.kind === 'absent')))
+	)
+		return null;
+	const read = (ref: MappingValueReference): MappingEvaluationValue =>
+		('stepIndex' in ref ? result?.steps.get(ref.stepIndex) : sourceSamples[ref.edgeIndex]) ?? {
+			kind: 'failed'
+		};
 	return {
-		input: input.map((value) => ({ known: true, value: value ?? null })),
-		steps,
-		output: state[0] ?? { known: true, value: null }
+		input: inputSamples,
+		steps: rows.map((row) => (row ? row.map((ref) => sampleValue(read(ref))) : [AT_SIGN_IN])),
+		output: atSignIn
+			? AT_SIGN_IN
+			: result
+				? sampleValue(result.output)
+				: sampleValue({ kind: 'absent' })
 	};
 }

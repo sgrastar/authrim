@@ -12,6 +12,21 @@ export type MappingDecisionAction =
   | 'transformed';
 
 export type TransformOperation =
+  | 'keep_part'
+  | 'remove_text'
+  | 'replace_text'
+  | 'regex_replace'
+  | 'to_halfwidth'
+  | 'to_fullwidth'
+  | 'strip_accents'
+  | 'ascii_digits'
+  | 'value_map'
+  | 'text_to_number'
+  | 'date_format'
+  | 'filter_values'
+  | 'normalize_empty'
+  | 'default_if_empty'
+  | 'has_value'
   | 'copy'
   | 'as_array'
   | 'split'
@@ -316,6 +331,8 @@ export interface RuleTraceEntry extends TraceBuilderInput {
 }
 
 export interface TransformExecutionInput {
+  /** Caller-owned per-rule budget, shared by dependent steps; omitted for a single step. */
+  workBudget?: { remaining: number };
   step: MappingTransformStep;
   edgeValues: Map<string, SourceValueEnvelope>;
   runtimeContext?: Record<string, unknown>;

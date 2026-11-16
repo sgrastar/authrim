@@ -1,3 +1,9 @@
+import {
+  TRANSFORM_LIMITS,
+  chargeTransformInput,
+  chargeTransformOutput,
+  TransformFailure,
+} from './transform-safety';
 import { buildTraceEntry } from './trace';
 import { reason } from './reason-registry';
 /**
@@ -24,6 +30,13 @@ export interface GraphEvaluationInput {
   sourceValues: SourceValueEnvelope[];
   runtimeContext?: Record<string, unknown>;
   preparedSteps?: ReadonlyMap<string, MappingEvaluationValue>;
+  /** Trusted synchronous preparers consume cached dependency results after input budget checks. */
+  stepPreparers?: ReadonlyMap<
+    string,
+    (inputs: readonly MappingEvaluationValue[]) => MappingEvaluationValue
+  >;
+  /** Authoring traces may need disconnected steps too; all share the same rule work budget. */
+  evaluateAllSteps?: boolean;
   /** Stored-row compatibility: json_build historically keys values by their edge target. */
   edgeValueReferences?: 'source' | 'target';
 }
@@ -41,6 +54,16 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
   reasons.push(...validateMappingRuleGraph(rule));
   if (reasons.length) return { output: { kind: 'failed' }, steps, reasons, trace };
   const dependencies = analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length });
+  if (input.evaluateAllSteps) {
+    // Preserve runtime output semantics: spend its dependency budget first, then use the
+    // remaining budget for disconnected trace rows. Backwards references make index order
+    // topological for those remaining steps, and cached output dependencies are never replayed.
+    const selected = new Set(dependencies.stepIndexes);
+    rule.transforms.forEach((_, index) => {
+      if (!selected.has(index)) dependencies.stepIndexes.push(index);
+    });
+    rule.edges.forEach((_, index) => dependencies.edgeIndexes.add(index));
+  }
   const read = (ref: MappingValueReference): MappingEvaluationValue => {
     if ('stepIndex' in ref) return steps.get(ref.stepIndex) ?? { kind: 'failed' };
     const edge = rule.edges[ref.edgeIndex];
@@ -68,6 +91,7 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
         })
       );
   }
+  const workBudget = { remaining: TRANSFORM_LIMITS.ruleWork };
   for (const index of dependencies.stepIndexes) {
     const step = rule.transforms[index];
     const values = step.inputs.map(read);
@@ -91,10 +115,18 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
       continue;
     }
     // Missing attributes are values, not broken references. Only combining operations consume
-    // absence; other operations propagate it without fabricating null, text or a failure.
+    // absence, as do default_if_empty and has_value; other operations propagate it.
     if (
       values.some((value) => value.kind === 'absent') &&
-      !['fallback', 'first', 'concat', 'join', 'json_build'].includes(step.operation)
+      ![
+        'fallback',
+        'first',
+        'concat',
+        'join',
+        'json_build',
+        'default_if_empty',
+        'has_value',
+      ].includes(step.operation)
     ) {
       steps.set(index, { kind: 'absent' });
       continue;
@@ -106,8 +138,31 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
       steps.set(index, { kind: 'absent' });
       continue;
     }
-    const prepared = input.preparedSteps?.get(step.id);
-    if (prepared) {
+    const preparation = input.preparedSteps?.get(step.id) ?? input.stepPreparers?.get(step.id);
+    if (preparation) {
+      let prepared: MappingEvaluationValue;
+      try {
+        chargeTransformInput(
+          {
+            ...step,
+            inputEdgeIds: step.inputs.map((_, i) => String(i)),
+            outputTargetRef: rule.targetRef,
+          },
+          values.map((value) => (value.kind === 'value' ? value.envelope.value : undefined)),
+          workBudget,
+          values.flatMap((value) => (value.kind === 'value' ? [value.envelope] : []))
+        );
+        prepared = typeof preparation === 'function' ? preparation(values) : preparation;
+        if (prepared.kind === 'value') chargeTransformOutput(prepared.envelope.value, workBudget);
+      } catch (error) {
+        const issue = reason(
+          error instanceof TransformFailure ? error.code : 'transform.invalid_output'
+        );
+        reasons.push(issue);
+        trace.push(buildTraceEntry({ reason: issue, transformStepId: step.id }));
+        steps.set(index, { kind: 'failed' });
+        continue;
+      }
       steps.set(
         index,
         prepared.kind === 'value'
@@ -133,6 +188,7 @@ export function evaluateMappingRule(input: GraphEvaluationInput): {
       step: { ...step, inputEdgeIds: [...edgeValues.keys()], outputTargetRef: rule.targetRef },
       edgeValues,
       runtimeContext: input.runtimeContext,
+      workBudget,
     });
     reasons.push(...result.reasons);
     trace.push(...result.trace);

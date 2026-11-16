@@ -79,7 +79,10 @@ describe('previewMapping (run by the runtime engine)', () => {
 			value: ['sles', 'dmins']
 		});
 		expect(
-			out([...mail, step('regex_replace', { pattern: '^(.+)@.+$', replacement: '$1' })])
+			out([
+				...mail,
+				step('regex_replace', { pattern: '^(.+)@[Ee]xample[.]com$', replacement: '$1' })
+			])
 		).toEqual({ known: true, value: 'John' });
 		expect(
 			out([

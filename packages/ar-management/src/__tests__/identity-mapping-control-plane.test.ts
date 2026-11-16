@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
+import { TRANSFORM_LIMITS, executeTransformStep } from '@authrim/ar-lib-field-mapping/authoring';
 import type {
   DatabaseAdapter,
   ExecuteResult,
@@ -83,6 +84,15 @@ interface RecordedExecute {
 interface RecordedQuery {
   sql: string;
   params: unknown[];
+}
+
+// Vitest types asymmetric matcher results as any; expected values can remain opaque.
+function stringContaining(value: string): unknown {
+  return expect.stringContaining(value);
+}
+
+function objectContaining(value: Record<string, unknown>): unknown {
+  return expect.objectContaining(value);
 }
 
 function createAdapter(options: {
@@ -756,7 +766,7 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
     ).rejects.toMatchObject({
       status: 400,
       code: 'invalid_request',
-      message: expect.stringContaining('mappingRequired must be boolean'),
+      message: stringContaining('mappingRequired must be boolean'),
     });
     expect(adapter.executes).toHaveLength(0);
   });
@@ -1197,7 +1207,7 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     ).rejects.toMatchObject({
       status: 400,
       code: 'invalid_request',
-      message: expect.stringContaining('email must require at least one scope'),
+      message: stringContaining('email must require at least one scope'),
     });
     expect(adapter.executes).toHaveLength(0);
   });
@@ -1226,7 +1236,7 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     ).rejects.toMatchObject({
       status: 409,
       code: 'conflict',
-      message: expect.stringContaining('already owns this client'),
+      message: stringContaining('already owns this client'),
     });
     expect(adapter.executes).toHaveLength(0);
   });
@@ -1935,7 +1945,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             condition: { when: 'different' },
           }),
         ],
-        latestSnapshot: expect.objectContaining({
+        latestSnapshot: objectContaining({
           id: 'snapshot_1',
           catalogVersionId: 'catalog_version_1',
           lifecycleState: 'draft',
@@ -2149,7 +2159,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     ).rejects.toMatchObject({
       status: 400,
       code: 'invalid_request',
-      message: expect.stringContaining('cannot lower classification'),
+      message: stringContaining('cannot lower classification'),
     });
     expect(adapter.executes).toHaveLength(0);
   });
@@ -2330,7 +2340,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     ).rejects.toMatchObject({
       status: 400,
       code: 'invalid_request',
-      message: expect.stringContaining('mapping source field is missing from compiled catalog'),
+      message: stringContaining('mapping source field is missing from compiled catalog'),
     });
     expect(adapter.executes).toHaveLength(0);
   });
@@ -2448,7 +2458,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       });
       await expect(activate(repository)).rejects.toMatchObject({
         status: 400,
-        message: expect.stringContaining('cannot lower classification'),
+        message: stringContaining('cannot lower classification'),
       });
     }
   );
@@ -2474,7 +2484,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     });
     await expect(activate(repository)).rejects.toMatchObject({
       status: 400,
-      message: expect.stringContaining('mapping source classification is unknown'),
+      message: stringContaining('mapping source classification is unknown'),
     });
   });
 
@@ -2506,7 +2516,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     });
     await expect(activate(repository)).rejects.toMatchObject({
       status: 400,
-      message: expect.stringContaining('must be a source and a destination'),
+      message: stringContaining('must be a source and a destination'),
     });
   });
 
@@ -2520,7 +2530,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     });
     await expect(activate(repository)).rejects.toMatchObject({
       status: 400,
-      message: expect.stringContaining('missing from compiled catalog'),
+      message: stringContaining('missing from compiled catalog'),
     });
   });
 
@@ -2535,7 +2545,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     });
     await expect(activate(repository)).rejects.toMatchObject({
       status: 400,
-      message: expect.stringContaining('different sources'),
+      message: stringContaining('different sources'),
     });
   });
 
@@ -2568,7 +2578,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     });
     await expect(activate(repository)).rejects.toMatchObject({
       status: 400,
-      message: expect.stringContaining('cannot lower classification'),
+      message: stringContaining('cannot lower classification'),
     });
   });
 
@@ -2622,7 +2632,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     });
     await expect(activate(repository)).rejects.toMatchObject({
       status: 400,
-      message: expect.stringContaining('cannot lower classification'),
+      message: stringContaining('cannot lower classification'),
     });
   });
 
@@ -2636,7 +2646,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     });
     await expect(activate(repository)).rejects.toMatchObject({
       status: 400,
-      message: expect.stringContaining('cannot lower classification'),
+      message: stringContaining('cannot lower classification'),
     });
   });
 
@@ -3007,6 +3017,149 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(
       adapter.executes.some((item) => item.sql.includes('INSERT INTO field_mapping_versions'))
     ).toBe(true);
+  });
+
+  describe('value_map table persistence bounds', () => {
+    const save = (
+      entries: string,
+      extraParameters: Record<string, unknown> = {},
+      metadata?: Record<string, unknown>
+    ) => {
+      const adapter = createAdapter({
+        queryOneRows: [
+          {
+            id: 'policy_1',
+            tenant_id: 'tenant_a',
+            field_mapping_key: 'default',
+            display_name: 'Default',
+            description: null,
+            lifecycle_state: 'draft',
+          },
+          null,
+        ],
+      });
+      const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+      const targetRef = { side: 'destination', namespace: 'oidc.claim', path: 'name' };
+      return {
+        adapter,
+        result: repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+          versionLabel: 'v1',
+          rules: [
+            {
+              metadata,
+              ruleKey: 'mapped-name',
+              ruleKind: 'mapping',
+              action: 'allow',
+              targetRef,
+              edges: [{ sourceRef: { side: 'source', namespace: 'csv', path: 'name' }, targetRef }],
+              transforms: [
+                {
+                  operation: 'value_map',
+                  parameters: { entries, otherwise: 'as_is', ...extraParameters },
+                  inputs: [{ edgeIndex: 0 }],
+                },
+              ],
+              output: { stepIndex: 0 },
+            },
+          ],
+        }),
+      };
+    };
+    const table = (bytes: number, character = 'x') => {
+      const framing = JSON.stringify([['a', '']]).length;
+      return JSON.stringify([
+        ['a', character.repeat((bytes - framing) / new TextEncoder().encode(character).byteLength)],
+      ]);
+    };
+
+    it('persists the reproduced 80-row, 5111-byte table through the complete save path', async () => {
+      const pairs = Array.from({ length: 80 }, (_, i) => [String(i), 'x'.repeat(50)]);
+      pairs[0][1] += 'x'.repeat(5111 - JSON.stringify(pairs).length);
+      const entries = JSON.stringify(pairs);
+      expect(new TextEncoder().encode(entries).byteLength).toBe(5111);
+      const { result, adapter } = save(entries);
+      await expect(result).resolves.toMatchObject({ fieldMappingSetId: 'policy_1' });
+      const written = adapter.executes.find((item) =>
+        item.sql.includes('INSERT INTO mapping_transform_steps')
+      );
+      expect(written?.params[5]).toBe(JSON.stringify({ entries, otherwise: 'as_is' }));
+    });
+
+    it.each(['x', 'é'])('persists the exact shared UTF-8 byte limit (%s)', async (character) => {
+      const entries = table(TRANSFORM_LIMITS.tableBytes, character);
+      expect(new TextEncoder().encode(entries).byteLength).toBe(TRANSFORM_LIMITS.tableBytes);
+      const sourceRef = {
+        side: 'source',
+        namespace: 'csv',
+        path: 'name',
+      } satisfies import('@authrim/ar-lib-field-mapping/contract').FieldRef;
+      expect(
+        executeTransformStep({
+          step: {
+            id: 'map',
+            operation: 'value_map',
+            inputEdgeIds: ['in'],
+            outputTargetRef: sourceRef,
+            parameters: { entries, otherwise: 'as_is' },
+          },
+          edgeValues: new Map([['in', { sourceRef, value: 'a' }]]),
+        }).value
+      ).toBeDefined();
+      const { result, adapter } = save(entries);
+      await expect(result).resolves.toMatchObject({ fieldMappingSetId: 'policy_1' });
+      expect(
+        adapter.executes.some((item) => item.sql.includes('INSERT INTO mapping_transform_steps'))
+      ).toBe(true);
+    });
+
+    it('rejects one byte over the shared limit before persistence', async () => {
+      const { result, adapter } = save(table(TRANSFORM_LIMITS.tableBytes) + ' ');
+      await expect(result).rejects.toMatchObject({
+        status: 400,
+        message: stringContaining('16384 bytes'),
+      });
+      expect(adapter.executes).toHaveLength(0);
+    });
+
+    it('enforces the shared row limit through the complete save path', async () => {
+      for (const rows of [TRANSFORM_LIMITS.tableRows, TRANSFORM_LIMITS.tableRows + 1]) {
+        const entries = JSON.stringify(Array.from({ length: rows }, (_, i) => [String(i), 'x']));
+        const { result, adapter } = save(entries);
+        if (rows === TRANSFORM_LIMITS.tableRows) await expect(result).resolves.toBeDefined();
+        else {
+          await expect(result).rejects.toMatchObject({ status: 400 });
+          expect(adapter.executes).toHaveLength(0);
+        }
+      }
+    });
+
+    it('does not grant the table budget to table-shaped policy metadata', async () => {
+      const { result, adapter } = save(
+        '[]',
+        {},
+        {
+          operation: 'value_map',
+          parameters: { entries: table(TRANSFORM_LIMITS.tableBytes) },
+        }
+      );
+      await expect(result).rejects.toMatchObject({
+        status: 400,
+        message: stringContaining('4096 characters'),
+      });
+      expect(adapter.executes).toHaveLength(0);
+    });
+
+    it('keeps the ordinary 4096-character limit for other transform settings', async () => {
+      const { result, adapter } = save('[]', {
+        fallbackValue: 'x'.repeat(4097),
+        otherwise: 'fixed',
+      });
+      await expect(result).rejects.toMatchObject({
+        status: 400,
+        message: stringContaining('4096 characters'),
+      });
+      expect(adapter.executes).toHaveLength(0);
+    });
   });
 
   it('saves a destination-only mapping without validating an unrelated SCIM source profile', async () => {
@@ -3638,13 +3791,13 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
         status: 'open',
         priority: 30,
         assignedTo: 'admin-1',
-        payload: expect.objectContaining({
+        payload: objectContaining({
           title: 'Department conflict needs review',
         }),
       }),
     ]);
     expect(adapter.queries[0]).toEqual({
-      sql: expect.stringContaining('FROM review_tasks'),
+      sql: stringContaining('FROM review_tasks'),
       params: ['tenant_a', 'open', 'mapping_conflict', 'admin-1', 200],
     });
   });

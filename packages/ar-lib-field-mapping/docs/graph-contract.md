@@ -26,6 +26,15 @@ map of step IDs to tagged results, or the existing prepared identifier runtime c
 steps still apply failure/suppression checks before reading prepared results. W2 can prepare tenant
 keyed hashes with this hook. No caller needs to become asynchronous just to execute a graph.
 OIDC rebuilds its graph view from the selected binding after the pre-pass awaits external reads.
+Authoring previews can supply trusted synchronous `stepPreparers` for preview-only operations.
+Each preparer receives already evaluated dependencies, runs once after input budget checks, and
+has its output checked against the same per-rule budget. Failure, suppression and absence are
+handled before invoking a preparer, just as for native operations. `evaluateAllSteps` additionally
+fills the `steps` map for disconnected intermediate values using the remaining budget after output
+dependencies, so trace-only work cannot change the runtime output. Normal runtime evaluation
+continues to execute only output dependencies. The console compiles the
+whole preview before evaluating once and reads every intermediate row from the returned map.
+
 Replaced settings are validated at evaluation, so a prepared identifier cannot mask invalid settings.
 
 ## Stored graphs
@@ -123,3 +132,77 @@ Old backups containing step `edge_id` / `target_ref_json`, or rules without expl
 are refused with `backup_mapping_graph_legacy_shape`. Restore such a backup using its original
 release, apply migration 023 through the supported runner, and export a new backup before restoring
 into a current deployment. The importer never executes legacy migration SQL from a backup.
+
+## Text and value transforms
+
+The runtime and console preview share `TRANSFORM_OPERATION_SCHEMAS`, settings validation and
+execution for keep_part, remove_text, replace_text, regex_replace, to_halfwidth, to_fullwidth,
+strip_accents, ascii_digits, value_map, text_to_number, date_format, filter_values,
+normalize_empty, default_if_empty and has_value. Every operation takes one input edge.
+Text edits affect only strings and string elements of arrays; other elements pass through.
+Value maps store JSON text `[ ["from", "to"] ]`, require exactly two strings per row, and use
+the first matching row. Flags are booleans. Literal replacements treat replacement dollars
+literally; regex replacements use JavaScript capture substitutions. Empty literals are no-ops.
+
+Empty means absent, null, empty string or empty array; false, zero and whitespace have values.
+Only normalize_empty's spaces flag treats whitespace (including U+3000) as empty. Empty handling
+is whole-value, not recursive. default_if_empty and has_value consume graph absence; other text
+operations propagate absence. Failure and identifier suppression always propagate, including
+through defaults. Text-to-number accepts signed-minus integer or decimal text, optionally padded
+with whitespace, or finite numbers; there is no console integer/decimal mode parameter. It rejects
+hex, exponent notation, booleans, non-finite numbers and integers outside the safe integer range.
+Invalid numeric/date input fails the whole step, including an invalid array element.
+
+Dates accept YYYY-MM-DD, or YYYY-MM-DDTHH:mm:ss with optional 1–3 millisecond digits and optional
+Z or ±HH:mm offset. Dates and times without an offset mean UTC; calendar rollovers, leap seconds,
+24:00, year zero and informal date strings are refused. Epoch input accepts seconds or milliseconds;
+auto uses milliseconds at absolute values >= 1e11, otherwise seconds. Decimal seconds are converted
+from decimal digits exactly: 1.001 seconds is 1001 milliseconds, and trailing zeroes are accepted;
+actual sub-millisecond precision is refused without rounding. The computed milliseconds
+must be safe integers and the UTC year must be 1–9999. timeZone defaults to UTC and must be an
+Intl-recognized IANA zone (including UTC aliases), never a numeric offset. It changes output only;
+explicit input offsets determine the instant, including during repeated DST hours. ISO output has
+second precision and the zone's offset at that instant, date output has its calendar day, unix_s floors
+seconds and unix_ms retains milliseconds. Numeric output also validates a supplied time zone. Historical second-based zone offsets fail
+ISO output because the offered ±HH:mm output format cannot represent them exactly.
+
+Width conversion changes ASCII U+0021–007E ↔ U+FF01–FF5E and U+0020 ↔ U+3000. With katakana
+true, an explicit half-kana table (U+FF61–FF9F) and its NFKC-derived full forms handle voiced and
+semi-voiced kana, including decomposed full-width kana composed with NFC first; other compatibility
+characters are preserved. Accent folding uses NFD, removes
+marks in U+0300–036F, U+1AB0–1AFF, U+1DC0–1DFF, U+20D0–20FF and U+FE20–FE2F, recomposes NFC,
+and applies the explicit Latin letter table (ß→ss, æ→ae, etc.). Japanese/Arabic/Hebrew/Indic marks
+outside these ranges remain. ascii_digits maps Unicode Decimal_Number (Nd) runs of ten codepoints
+to ASCII, including Arabic-Indic U+0660–0669, extended Arabic-Indic U+06F0–06F9, Devanagari
+U+0966–096F and full-width U+FF10–FF19. Adjacent ten-digit runs use position modulo ten.
+
+### Bounded synchronous execution
+
+`TRANSFORM_LIMITS` centralizes the limits for **all** operations: 32 KiB UTF-8 input and output
+(including conservative JSON framing), 500 array/object entries per container, 1000 visited nodes,
+12 nesting levels, 256 value-map rows and 16 KiB table text. The complete mapping-version save
+path uses this same UTF-8 table limit for value_map entries; other profile strings keep their
+4096-character save budget. json_build additionally caps each source key string (catalog ID,
+column/header name, metadata field path and reference path) at 4 KiB UTF-8. Those strings count
+alongside values toward the 32 KiB aggregate input cap and the rule work charge, before key lookup
+or shaping; underscore trimming uses linear boundary scans. Ordinary string settings retain the
+2048-character limit. Cycles, oversized collections and outputs fail with transform.limit_exceeded.
+Invalid settings fail validation on save and again on load/execution, before using a regex or table.
+
+Regexes have at most 512 characters and 1024 input UTF-16 code units per string. Plain captures,
+classes, anchors, top-level alternatives and a **single quantified atom** (_, + or ?) are supported.
+Backreferences, lookaround, special groups, group alternation, quantified groups, repeated quantifiers,
+bounded repetition, Unicode/hex/control escapes and a second quantifier are refused. This intentionally
+conservative subset prevents combinatorial backtracking without adding a regex dependency. A remaining
+unanchored single repetition can be quadratic; execution charges (input length + 1)^2 × (pattern
+length + 1) plus ordinary work before running it. Conditions in the console use the same validator
+and input cap. For example, replace unsafe ^(.+)@.+$ with ^(.+)@example[.]com$ for a known domain,
+or use keep_part for general address splitting. The email display-name demo uses ^._<|>$.
+
+Each rule receives 8,388,608 work units shared across its steps. Every operation charges input bytes
+× setting bytes (with one added to each) plus output bytes, bounding replacements, table scanning
+and normalization as well as regex work. Exhaustion fails with transform.work_limit_exceeded.
+The standalone step API uses the same budget, or accepts a caller-owned workBudget. Neither values
+nor patterns appear in failure reasons. No new dependency, asynchronous operation or ambient state
+is required. Identifier post-transforms remain the data allow-list in graph.ts; value_map,
+default_if_empty and has_value are deliberately refused after a persistent identifier.

@@ -23,21 +23,14 @@
  * runtime operation yet. Add one `constant` operation to TRANSFORM_OPERATION_SCHEMAS —
  * parameters `value` and `valueType` (string | boolean | number), no input edges — and
  * compile these three to it. A mapping made only of such a step has no source edge.
- * TODO(runtime): these steps have no runtime operation yet either: keep_part, remove_text,
- * replace_text, regex_replace, to_halfwidth, to_fullwidth, strip_accents, ascii_digits,
- * value_map, text_to_number, date_format (with its time zone), filter_values, json_extract_array,
- * array_build, conditional, has_value, normalize_empty, json_extract_or, default_if_empty
- * and hash. The console computes all but hash for the sample
- * (mapping-preview.ts, localStep / localCombine), which is the behaviour to implement:
- * strings only (each item of a list), anything else passes through.
+ * TODO(runtime): json_extract_array, array_build, conditional, json_extract_or and hash
+ * remain local to the console preview until the runtime supports them.
  * - hash is HMAC-SHA-256 with a per-tenant key (add it to scripts/setup-keys.sh), hex or
  *   base64url.
  * - Tables (value_map) are saved as JSON text: [["from", "to"], …].
  * - conditional saves its condition as the console's ConditionGroup (JSON text); the
  *   attributes it reads become extra input edges of the step, besides the value it changes.
- * - Regular expressions run on the server, so bound them there: at most REGEX_MAX
- *   characters, a length limit on the input, and preferably a linear-time engine (RE2-like)
- *   so no pattern can hang a worker.
+ * Text shaping, regex safety and table validation are shared with the runtime engine.
  * TODO(api): boolean settings (trimItems, omitEmpty, unique) are saved as booleans, as the
  * runtime expects; the key map of "Build JSON" is JSON text ({"mail": "email"}).
  */
@@ -47,7 +40,9 @@ export type MappingType = 'string' | 'string[]' | 'number' | 'boolean' | 'date' 
 
 import {
 	TRANSFORM_OPERATION_SCHEMAS,
-	persistentIdentifierSettingsProblem
+	persistentIdentifierSettingsProblem,
+	safeTransformPattern,
+	TRANSFORM_LIMITS
 } from '@authrim/ar-lib-field-mapping/authoring';
 import type { ConditionGroup } from './condition-model';
 
@@ -221,6 +216,11 @@ const pidScoped = (params: TransformStep['params']) =>
 	params.algorithm === 'simplesamlphp_pairwise_id' ||
 	params.algorithm === 'simplesamlphp_subject_id';
 
+const runtimeOptions = (operation: string, name: string): readonly string[] =>
+	TRANSFORM_OPERATION_SCHEMAS.find((schema) => schema.operation === operation)?.parameters.find(
+		(parameter) => parameter.name === name
+	)?.allowedValues ?? [];
+
 export const TRANSFORMS: readonly TransformDef[] = [
 	{ id: 'trim', category: 'clean', params: [] },
 	{
@@ -240,8 +240,8 @@ export const TRANSFORMS: readonly TransformDef[] = [
 		category: 'edit',
 		params: [
 			{ key: 'delimiter', required: true, initial: '@' },
-			{ key: 'keep', options: ['before', 'after'], required: true },
-			{ key: 'occurrence', options: ['first', 'last'], required: true }
+			{ key: 'keep', options: runtimeOptions('keep_part', 'keep'), required: true },
+			{ key: 'occurrence', options: runtimeOptions('keep_part', 'occurrence'), required: true }
 		]
 	},
 	{ id: 'remove_text', category: 'edit', params: [{ key: 'text', required: true }] },
@@ -277,7 +277,7 @@ export const TRANSFORMS: readonly TransformDef[] = [
 		category: 'clean',
 		params: [
 			{ key: 'spaces', flag: true, initial: 'true' },
-			{ key: 'emptyAs', options: ['none', 'empty', 'fixed'], required: true },
+			{ key: 'emptyAs', options: runtimeOptions('normalize_empty', 'emptyAs'), required: true },
 			{ key: 'emptyValue', required: true, when: { key: 'emptyAs', is: 'fixed' } }
 		]
 	},
@@ -290,7 +290,7 @@ export const TRANSFORMS: readonly TransformDef[] = [
 		params: [
 			{ key: 'entries', pairs: true, required: true },
 			{ key: 'ignoreCase', flag: true },
-			{ key: 'otherwise', options: ['as_is', 'none', 'fixed'], required: true },
+			{ key: 'otherwise', options: runtimeOptions('value_map', 'otherwise'), required: true },
 			{ key: 'fallbackValue', required: true, when: { key: 'otherwise', is: 'fixed' } }
 		]
 	},
@@ -308,8 +308,8 @@ export const TRANSFORMS: readonly TransformDef[] = [
 		id: 'date_format',
 		category: 'convert',
 		params: [
-			{ key: 'from', options: ['auto', 'iso', 'unix_s', 'unix_ms'], required: true },
-			{ key: 'to', options: ['iso', 'date', 'unix_s', 'unix_ms'], required: true },
+			{ key: 'from', options: runtimeOptions('date_format', 'from'), required: true },
+			{ key: 'to', options: runtimeOptions('date_format', 'to'), required: true },
 			// Unix time has no zone; ISO 8601 gets the zone's offset (+09:00), a date its day.
 			{ key: 'timeZone', zone: true, initial: 'UTC', when: { key: 'to', is: ['iso', 'date'] } }
 		]
@@ -380,7 +380,7 @@ export const TRANSFORMS: readonly TransformDef[] = [
 		params: [
 			{
 				key: 'how',
-				options: ['starts_with', 'ends_with', 'contains', 'equals', 'regex'],
+				options: runtimeOptions('filter_values', 'how'),
 				required: true
 			},
 			{ key: 'match', required: true },
@@ -683,19 +683,9 @@ export function outputType(
 	}
 }
 
-/** Longest regular expression accepted (the runtime's JSON path limit). */
-export const REGEX_MAX = 512;
-
-/** Whether a pattern can be used: it compiles and is not too long. */
-export function patternWorks(pattern: string): boolean {
-	if (pattern.length > REGEX_MAX) return false;
-	try {
-		new RegExp(pattern, 'u');
-		return true;
-	} catch {
-		return false;
-	}
-}
+/** Shared server-side regex subset and limits. */
+export const REGEX_MAX = TRANSFORM_LIMITS.patternChars;
+export const patternWorks = safeTransformPattern;
 
 /** A date may go into a text attribute (written as ISO 8601); the reverse needs a step. */
 const datesAsText = (out: MappingType, target: MappingType) =>

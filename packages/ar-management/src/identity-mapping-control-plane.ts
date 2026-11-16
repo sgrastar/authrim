@@ -74,6 +74,7 @@ import {
   evaluateProvisioningAssignmentRule,
 } from './identity-provisioning-assignment';
 import {
+  TRANSFORM_LIMITS,
   parseCsvSourceProfile,
   persistentIdentifierSettingsProblem,
   validateCatalogBundle,
@@ -123,6 +124,22 @@ const POLICY_SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$/;
 const SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS = 15 * 60;
 const SAML_METADATA_POLLING_MAX_INTERVAL_SECONDS = 7 * 24 * 60 * 60;
 const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
+  'keep_part',
+  'remove_text',
+  'replace_text',
+  'regex_replace',
+  'to_halfwidth',
+  'to_fullwidth',
+  'strip_accents',
+  'ascii_digits',
+  'value_map',
+  'text_to_number',
+  'date_format',
+  'filter_values',
+  'normalize_empty',
+  'default_if_empty',
+  'has_value',
+
   'copy',
   'as_array',
   'split',
@@ -10298,11 +10315,23 @@ function readStringArrayValue(value: unknown): string[] {
     : [];
 }
 
-function assertProfileSchemaBudget(value: unknown, path: string): void {
+function assertProfileSchemaBudget(value: unknown, path: string, allowMappingTables = false): void {
   const seen = new WeakSet<object>();
   let nodeCount = 0;
 
-  const visit = (item: unknown, currentPath: string, depth: number): void => {
+  const visit = (
+    item: unknown,
+    currentPath: string,
+    depth: number,
+    context?:
+      | 'mappingVersion'
+      | 'rules'
+      | 'rule'
+      | 'transforms'
+      | 'transform'
+      | 'valueMapParameters'
+      | 'valueMapEntries'
+  ): void => {
     nodeCount += 1;
     if (nodeCount > PROFILE_SCHEMA_MAX_NODES) {
       throw badRequest(`${path} must contain at most ${PROFILE_SCHEMA_MAX_NODES} JSON nodes`);
@@ -10310,7 +10339,14 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
     if (depth > PROFILE_SCHEMA_MAX_DEPTH) {
       throw badRequest(`${currentPath} exceeds maximum depth ${PROFILE_SCHEMA_MAX_DEPTH}`);
     }
-    if (typeof item === 'string' && item.length > PROFILE_SCHEMA_MAX_STRING_CHARS) {
+    if (typeof item === 'string' && context === 'valueMapEntries') {
+      if (
+        item.length > TRANSFORM_LIMITS.tableBytes ||
+        new TextEncoder().encode(item).byteLength > TRANSFORM_LIMITS.tableBytes
+      ) {
+        throw badRequest(`${currentPath} must be at most ${TRANSFORM_LIMITS.tableBytes} bytes`);
+      }
+    } else if (typeof item === 'string' && item.length > PROFILE_SCHEMA_MAX_STRING_CHARS) {
       throw badRequest(
         `${currentPath} string value must be at most ${PROFILE_SCHEMA_MAX_STRING_CHARS} characters`
       );
@@ -10329,7 +10365,11 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
           `${currentPath} array must contain at most ${PROFILE_SCHEMA_MAX_ARRAY_ITEMS} items`
         );
       }
-      item.forEach((child, index) => visit(child, `${currentPath}[${index}]`, depth + 1));
+      const childContext =
+        context === 'rules' ? 'rule' : context === 'transforms' ? 'transform' : undefined;
+      item.forEach((child, index) =>
+        visit(child, `${currentPath}[${index}]`, depth + 1, childContext)
+      );
       return;
     }
 
@@ -10339,10 +10379,24 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
         `${currentPath} object must contain at most ${PROFILE_SCHEMA_MAX_OBJECT_KEYS} keys`
       );
     }
-    entries.forEach(([key, child]) => visit(child, `${currentPath}.${key}`, depth + 1));
+    entries.forEach(([key, child]) => {
+      const childContext =
+        context === 'mappingVersion' && key === 'rules'
+          ? 'rules'
+          : context === 'rule' && key === 'transforms'
+            ? 'transforms'
+            : context === 'transform' &&
+                key === 'parameters' &&
+                Reflect.get(item, 'operation') === 'value_map'
+              ? 'valueMapParameters'
+              : context === 'valueMapParameters' && key === 'entries'
+                ? 'valueMapEntries'
+                : undefined;
+      visit(child, `${currentPath}.${key}`, depth + 1, childContext);
+    });
   };
 
-  visit(value, path, 0);
+  visit(value, path, 0, allowMappingTables ? 'mappingVersion' : undefined);
   const bytes = new TextEncoder().encode(JSON.stringify(value)).length;
   if (bytes > PROFILE_SCHEMA_MAX_JSON_BYTES) {
     throw badRequest(`${path} JSON must be at most ${PROFILE_SCHEMA_MAX_JSON_BYTES} bytes`);
@@ -10352,7 +10406,8 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
 function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRequest): void {
   assertProfileSchemaBudget(
     { ...input, rules: input.rules.map(canonicalMappingRule) },
-    'fieldMappingVersion'
+    'fieldMappingVersion',
+    true
   );
   assertNoSensitiveMetadata(input, 'fieldMappingVersion');
   if (input.rules.length > POLICY_VERSION_MAX_RULES) {

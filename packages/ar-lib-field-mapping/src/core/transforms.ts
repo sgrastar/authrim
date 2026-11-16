@@ -1,3 +1,12 @@
+import { TEXT_TRANSFORM_SCHEMAS } from './text-transform-schemas';
+import { executeTextTransform, isTextTransform, textSettingsProblem } from './text-transforms';
+import {
+  chargeTransformInput,
+  jsonBuildSourceKeys,
+  chargeTransformOutput,
+  TransformFailure,
+  TRANSFORM_LIMITS,
+} from './transform-safety';
 import { analyzeMappingDependencies } from './graph';
 import { buildTraceEntry } from './trace';
 import { reason } from './reason-registry';
@@ -167,6 +176,7 @@ function sameTarget(a: FieldRef, b: FieldRef): boolean {
 }
 
 export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
+  ...TEXT_TRANSFORM_SCHEMAS,
   { operation: 'copy', inputArity: { min: 1, max: 1 }, parameters: [] },
   {
     operation: 'as_array',
@@ -376,10 +386,10 @@ const transformSchemas = new Map(
 
 const TRANSFORM_PARAMETER_MAX_CHARS = 2048;
 const TRANSFORM_KEY_MAP_MAX_CHARS = 4096;
-const TRANSFORM_JSON_MAX_BYTES = 32 * 1024;
-const TRANSFORM_JSON_MAX_DEPTH = 12;
-const TRANSFORM_JSON_MAX_NODES = 1000;
-const TRANSFORM_JSON_MAX_ARRAY_ITEMS = 500;
+const TRANSFORM_JSON_MAX_BYTES = TRANSFORM_LIMITS.valueBytes;
+const TRANSFORM_JSON_MAX_DEPTH = TRANSFORM_LIMITS.depth;
+const TRANSFORM_JSON_MAX_NODES = TRANSFORM_LIMITS.nodes;
+const TRANSFORM_JSON_MAX_ARRAY_ITEMS = TRANSFORM_LIMITS.arrayItems;
 const TRANSFORM_JSON_MAX_OBJECT_KEYS = 200;
 const TRANSFORM_JSON_PATH_MAX_CHARS = 512;
 const TRANSFORM_JSON_PATH_MAX_SEGMENTS = 32;
@@ -400,6 +410,10 @@ export function validateTransformStep(step: MappingTransformStep): ValidationRes
     reasons.push(reason('transform.invalid_arity'));
   }
   const parameters = step.parameters ?? {};
+  if (typeof parameters !== 'object' || Array.isArray(parameters)) {
+    reasons.push(reason('transform.invalid_parameter'));
+    return resultFromReasons(reasons);
+  }
   const schemaParameters = new Map(
     schema.parameters.map((parameter) => [parameter.name, parameter])
   );
@@ -423,6 +437,8 @@ export function validateTransformStep(step: MappingTransformStep): ValidationRes
     }
   }
 
+  const problem = textSettingsProblem(step);
+  if (problem) reasons.push(reason(problem));
   return resultFromReasons(reasons);
 }
 
@@ -471,7 +487,23 @@ export function executeTransformStep(input: TransformExecutionInput): TransformE
   }
 
   const sourceValues = values.filter(Boolean) as SourceValueEnvelope[];
-  const output = executeOperation(input.step, sourceValues, input.runtimeContext);
+  let output: unknown;
+  try {
+    const budget = input.workBudget ?? { remaining: TRANSFORM_LIMITS.ruleWork };
+    chargeTransformInput(
+      input.step,
+      sourceValues.map((source) => source.value),
+      budget,
+      sourceValues
+    );
+    output = executeOperation(input.step, sourceValues, input.runtimeContext);
+    chargeTransformOutput(output, budget);
+  } catch (error) {
+    reasons.push(
+      reason(error instanceof TransformFailure ? error.code : 'transform.invalid_output')
+    );
+    return transformResult(input, reasons);
+  }
 
   if (!isTransformOutputValid(input.step.operation, output)) {
     reasons.push(reason('transform.invalid_output'));
@@ -536,6 +568,8 @@ function executeOperation(
   runtimeContext?: Record<string, unknown>
 ): unknown {
   const rawValues = values.map((item) => item.value);
+
+  if (isTextTransform(step.operation)) return executeTextTransform(step, rawValues[0]);
 
   switch (step.operation) {
     case 'copy':
@@ -831,13 +865,7 @@ function parseKeyMap(value: unknown): Record<string, string> {
 }
 
 function jsonBuildKey(source: SourceValueEnvelope, keyMap: Record<string, string>): string {
-  const sourceKeys = [
-    source.sourceRef.catalogEntryId,
-    source.metadata?.columnName,
-    source.metadata?.csvHeaderName,
-    source.metadata?.fieldPath,
-    source.sourceRef.path,
-  ];
+  const sourceKeys = jsonBuildSourceKeys(source);
   for (const sourceKey of sourceKeys) {
     if (typeof sourceKey === 'string' && keyMap[sourceKey]) {
       return keyMap[sourceKey];
@@ -846,16 +874,20 @@ function jsonBuildKey(source: SourceValueEnvelope, keyMap: Record<string, string
   const fallback =
     typeof source.metadata?.columnName === 'string'
       ? source.metadata.columnName
-      : source.sourceRef.path.split('.').at(-1) || source.sourceRef.path;
+      : source.sourceRef.path.slice(source.sourceRef.path.lastIndexOf('.') + 1) ||
+        source.sourceRef.path;
   return sanitizeJsonKey(fallback);
 }
 
 function sanitizeJsonKey(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^A-Za-z0-9_$]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return normalized || 'value';
+  const normalized = value.trim().replace(/[^A-Za-z0-9_$]+/g, '_');
+  // Anchored alternatives with a trailing greedy run can retry at every underscore. Scan the
+  // boundaries once instead, preserving interior underscores and the existing key semantics.
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === '_') start++;
+  while (end > start && normalized[end - 1] === '_') end--;
+  return normalized.slice(start, end) || 'value';
 }
 
 function uniqueJsonKey(key: string, seenKeys: Set<string>): string {
@@ -1016,6 +1048,7 @@ function isParameterValueValid(
       if (typeof value !== 'string') {
         return false;
       }
+      if (parameter.name === 'entries') return value.length <= TRANSFORM_LIMITS.tableBytes;
       if (parameter.name === 'path') {
         return value.length <= TRANSFORM_JSON_PATH_MAX_CHARS && parseJsonPath(value) !== null;
       }

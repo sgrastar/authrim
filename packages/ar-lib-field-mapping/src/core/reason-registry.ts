@@ -2,6 +2,27 @@ import type { ReasonCategory, ReasonCode, ReasonCodeName, ReasonRegistryEntry } 
 
 export const REASON_REGISTRY: ReasonRegistryEntry[] = [
   {
+    code: 'transform.limit_exceeded',
+    description: 'Transform input, output or collection exceeds its safety limit.',
+    category: 'transform',
+    severity: 'error',
+    stability: 'stable',
+  },
+  {
+    code: 'transform.work_limit_exceeded',
+    description: 'The mapping rule exhausted its work budget.',
+    category: 'transform',
+    severity: 'error',
+    stability: 'stable',
+  },
+  {
+    code: 'transform.unsafe_regex',
+    description: 'Pattern is outside the bounded regular expression subset.',
+    category: 'transform',
+    severity: 'error',
+    stability: 'stable',
+  },
+  {
     code: 'transform.invalid_arity',
     category: 'transform',
     severity: 'error',
