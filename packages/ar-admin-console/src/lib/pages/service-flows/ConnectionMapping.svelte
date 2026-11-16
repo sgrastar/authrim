@@ -1,24 +1,79 @@
 <script lang="ts">
+	import { onMount, untrack } from 'svelte';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import MappingEditor from '#lib/ui/patterns/MappingEditor.svelte';
 	import { provideSaveScope } from '#lib/ui/save/save-scope.js';
 	import type { ConnectionMapping } from './connection-mapping.sample';
+	import {
+		ConnectionMappingState,
+		type ConnectionMappingResources
+	} from './connection-mapping.svelte.js';
+	import ConnectionMappingExplain from './ConnectionMappingExplain.svelte';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
+	import Disclosure from '#lib/ui/patterns/Disclosure.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import BusyScope from '#lib/ui/busy/BusyScope.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import RequiredBadge from '#lib/ui/primitives/RequiredBadge.svelte';
+	import Select from '#lib/ui/primitives/Select.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
+	import TextArea from '#lib/ui/primitives/TextArea.svelte';
+	import LeaveGuard from './LeaveGuard.svelte';
 
 	/**
 	 * A connection's one mapping, on its service flow's main screen: a provider's attributes into
-	 * Authrim's (inbound), or Authrim's into what an app receives (outbound). Shown only for
-	 * now: nothing is saved.
+	 * Authrim's (inbound), or Authrim's into what an app receives (outbound). Live RP/SP connections
+	 * receive the facade and binding clients; existing prototype stories keep their local mapping.
 	 */
 	interface Props {
-		mapping: ConnectionMapping;
+		mapping?: ConnectionMapping;
+		resources?: ConnectionMappingResources;
+		dirty?: boolean;
+		bound?: string;
 	}
 
-	let { mapping = $bindable() }: Props = $props();
+	let {
+		mapping = $bindable(),
+		resources,
+		dirty = $bindable(false),
+		bound = $bindable('')
+	}: Props = $props();
+	const shared = untrack(() => (resources ? new ConnectionMappingState(resources) : null));
+	let invalid = $state(false);
+	let changeTo = $state<string | null>(null);
+	let metadataOpen = $state(false);
+	let explainError = $state(false);
+	$effect(() => {
+		dirty = shared?.dirty ?? false;
+		bound = shared?.bound ?? '';
+	});
+	onMount(() => {
+		if (shared) void shared.load();
+	});
+	function choose(value: string) {
+		if (!shared) return;
+		if (shared.dirty) changeTo = value;
+		else if (value === '__new') {
+			shared.create();
+			metadataOpen = true;
+		} else void shared.select(value);
+	}
+	function applyChoice() {
+		const value = changeTo;
+		changeTo = null;
+		if (value === null || !shared) return;
+		if (value === '__new') {
+			shared.create();
+			metadataOpen = true;
+		} else if (value === '__inspect') void shared.inspectUnknown();
+		else void shared.select(value);
+	}
 
-	// Not part of the connection's draft yet: what is typed here (a problem in it too) must not
-	// mark the page changed or stop the connection's own settings from saving.
-	provideSaveScope({ original: () => undefined });
+	// Mapping content has its own save operation, separate from connection settings.
+	provideSaveScope({ original: (field) => shared?.form.original(field) });
 	const COPY = {
 		inbound: {
 			title: 'sf.maps.in.title',
@@ -31,15 +86,187 @@
 			label: 'sf.maps.out.label'
 		}
 	} as const;
-	const copy = $derived(COPY[mapping.direction]);
+	const copy = $derived(COPY[mapping?.direction ?? 'outbound']);
 </script>
 
 <Card title={t(copy.title)} description={t(copy.description)}>
-	<MappingEditor
-		label={t(copy.label)}
-		direction={mapping.direction}
-		sources={mapping.sources}
-		targets={mapping.targets}
-		bind:mappings={mapping.mappings}
-	/>
+	{#if shared}
+		<LeaveGuard dirty={shared.dirty} />
+		<div class="mapping">
+			{#if shared.phase === 'loading'}<LoadingState label={t('common.loading')} />{/if}
+			<Select
+				label={t('sf.row.mappingSet')}
+				placeholder={t('mc.ro.choose')}
+				options={shared.sets.map((set) => ({
+					value: set.id,
+					label: set.display_name ?? set.field_mapping_key
+				}))}
+				value={shared.selected}
+				onchange={choose}
+				disabled={shared.locked || shared.phase === 'loading' || shared.pinned}
+				changed={shared.selected !== shared.bound}
+			/>
+			<div>
+				<Button
+					variant="secondary"
+					size="sm"
+					onclick={() => choose('__new')}
+					disabled={shared.locked || shared.pinned}>{t('cm.create')}</Button
+				>
+			</div>
+			{#if shared.dirty}<Badge tone="changed">{t('common.changed')}</Badge>{/if}
+			{#if shared.readonlyReason}<Callout tone="warning">{t('cm.readonly')}</Callout>{/if}
+			{#if shared.phase === 'failed'}<Callout tone="warning" live
+					>{t('mc.actionFailed')}
+					<Button
+						size="sm"
+						onclick={() => (shared.sets.length ? choose(shared.selected) : shared.load())}
+						>{t('common.retry')}</Button
+					></Callout
+				>{/if}
+			{#if shared.phase === 'conflict'}<Callout tone="warning" live
+					>{t('cm.conflict')}
+					<Button size="sm" onclick={() => choose(shared.selected)}>{t('cm.reload')}</Button
+					></Callout
+				>{/if}
+			{#if shared.phase === 'stage_failed'}<Callout tone="warning" live
+					>{t('cm.stageFailed', { stage: shared.stage })}
+					<Button size="sm" onclick={() => choose(shared.selected)}>{t('cm.reload')}</Button
+					></Callout
+				>{/if}
+			{#if shared.phase === 'outcome_unknown'}<Callout tone="warning" live
+					>{t('cm.unknown')}
+					<Button size="sm" onclick={() => shared.write()}>{t('common.retry')}</Button>
+					<Button size="sm" onclick={() => choose('__inspect')}>{t('cm.reload')}</Button></Callout
+				>{/if}
+			{#if shared.phase === 'binding_failed'}<Callout tone="warning" live
+					>{t('cm.bindingFailed')}
+					<Button size="sm" onclick={() => shared.retryBinding()}>{t('cm.retryBinding')}</Button
+					></Callout
+				>{/if}
+			{#if shared.phase === 'saved' && !shared.dirty}<Callout tone="info" live
+					>{t('cm.saved')}</Callout
+				>{/if}
+			{#if shared.detail || shared.newKey}
+				<BusyScope busy={shared.locked || shared.readonlyReason}>
+					<Disclosure title={t('cm.options')} bind:open={metadataOpen}>
+						{#snippet meta()}{#if !shared.form.value.name.trim() || !shared.form.value.profileId || !shared.form.value.catalogVersionId}<RequiredBadge
+								/>{/if}{/snippet}
+						<TextField
+							label={t('sf.row.name')}
+							bind:value={shared.form.value.name}
+							field="name"
+							required
+						/>
+						<TextArea
+							label={t('cm.description')}
+							bind:value={shared.form.value.description}
+							field="description"
+						/>
+						<Select
+							label={t('cm.profile')}
+							options={shared.profiles.map((profile) => ({
+								value: profile.id,
+								label: profile.displayName
+							}))}
+							placeholder={shared.detail?.destination_profile_id ?? t('mc.ro.choose')}
+							value={shared.form.value.profileId}
+							onchange={(value) => {
+								shared.form.value.profileId = value;
+								shared.configure();
+							}}
+							disabled={!!shared.detail}
+							field="profileId"
+						/>
+						<Select
+							label={t('cm.catalog')}
+							options={shared.catalogs.flatMap((catalog) =>
+								catalog.versionId ? [{ value: catalog.versionId, label: catalog.displayName }] : []
+							)}
+							placeholder={shared.detail?.content?.catalogVersionId ?? t('mc.ro.choose')}
+							value={shared.form.value.catalogVersionId}
+							onchange={(value) => {
+								shared.form.value.catalogVersionId = value;
+								shared.configure();
+							}}
+							disabled={!!shared.detail}
+							field="catalogVersionId"
+						/>
+					</Disclosure>
+					{#if shared.context && !shared.readonlyReason}
+						<MappingEditor
+							label={t(copy.label)}
+							direction="outbound"
+							sources={shared.context.sources}
+							targets={shared.context.targets}
+							bind:mappings={shared.form.value.mappings}
+							bind:invalid
+							field="mappings"
+						/>
+					{/if}
+					{#if !shared.readonlyReason}
+						<div>
+							<Button
+								onclick={() => shared.save()}
+								loading={shared.phase === 'saving'}
+								disabled={invalid ||
+									!shared.context ||
+									((shared.form.dirty || !shared.detail) && !shared.form.value.name.trim()) ||
+									!shared.form.value.mappings.length ||
+									(!shared.form.dirty && shared.selected === shared.bound)}
+								>{t('cm.saveBind')}</Button
+							>
+						</div>
+					{/if}
+				</BusyScope>
+			{/if}
+			{#if resources}<Disclosure title={t('mc.ex.form')}
+					>{#snippet meta()}{#if explainError}<Badge tone="warning">{t('map.sample.failed')}</Badge
+							>{/if}{/snippet}<ConnectionMappingExplain
+						{resources}
+						bind:error={explainError}
+						changed={shared.dirty}
+						revision={`${shared.bound}:${shared.detail?.content_version ?? ''}`}
+					/></Disclosure
+				>{/if}
+		</div>
+		<ConfirmDialog
+			open={shared.phase === 'impact'}
+			title={t('cm.impactTitle')}
+			body={t(shared.impact?.incomplete ? 'cm.impactIncomplete' : 'cm.impact', {
+				count: shared.impact?.count ?? 0
+			}) +
+				(shared.impact?.connections.length
+					? ' ' + t('cm.otherConnections', { names: shared.impact.connections.join(', ') })
+					: '')}
+			confirmLabel={t('cm.confirmImpact')}
+			onconfirm={() => shared.confirmImpact()}
+			oncancel={() => shared.cancelImpact()}
+		/>
+		<ConfirmDialog
+			open={changeTo !== null}
+			title={t('cm.discardTitle')}
+			body={t('cm.discardBody')}
+			confirmLabel={t('common.discard')}
+			onconfirm={applyChoice}
+			oncancel={() => (changeTo = null)}
+		/>
+	{:else if mapping}
+		<MappingEditor
+			label={t(copy.label)}
+			direction={mapping.direction}
+			sources={mapping.sources}
+			targets={mapping.targets}
+			bind:mappings={mapping.mappings}
+		/>
+	{/if}
 </Card>
+
+<style>
+	.mapping {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: var(--space-field);
+	}
+</style>

@@ -54,5 +54,5 @@
 </svelte:head>
 
 {#key tenantScope.tenantId}
-	<AccountServiceFlowsPage />
+	<AccountServiceFlowsPage showConnections />
 {/key}

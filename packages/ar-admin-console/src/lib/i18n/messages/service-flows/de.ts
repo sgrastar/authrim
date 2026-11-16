@@ -2,6 +2,46 @@
 import type { jaServiceFlows } from './ja';
 
 export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'cm.releaseFailed':
+		'Die Freigabeanforderungen wurden nicht erfüllt. Es würde keine SAML-Antwort ausgestellt.',
+	'cm.otherConnections': 'Weitere Verbindungen mit diesem Set: {names}.',
+	'cm.connections': 'Apps und Dienste',
+	'cm.create': 'Mapping Set erstellen',
+	'cm.options': 'Mapping-Set-Einstellungen',
+	'cm.description': 'Beschreibung',
+	'cm.profile': 'Zielprofil',
+	'cm.catalog': 'Quellkatalog',
+	'cm.saveBind': 'Speichern und für diese Verbindung verwenden',
+	'cm.saved': 'Mapping Set gespeichert und mit dieser Verbindung verknüpft.',
+	'cm.readonly':
+		'Dieses Set oder diese Verknüpfung kann hier nicht bearbeitet werden. Protokoll, Profil oder gespeicherte Einstellungen werden nicht unterstützt. Die Prüfung mit einem Testbenutzer ist weiterhin möglich.',
+	'cm.conflict':
+		'Das Set wurde auf dem Server geändert. Vor dem nächsten Speichern neu laden; Ihre Änderungen bleiben hier sichtbar.',
+	'cm.reload': 'Gespeichertes Set neu laden',
+	'cm.stageFailed':
+		'Die Aktivierung wurde nicht abgeschlossen (Schritt: {stage}). Die Verbindung wurde nicht neu verknüpft. Laden Sie das gespeicherte Set neu.',
+	'cm.unknown':
+		'Das Speicherergebnis ist unbekannt. Wiederholen Sie dieselbe Anfrage. Die Verbindung wurde noch nicht neu verknüpft.',
+	'cm.bindingFailed':
+		'Das Set ist gespeichert, aber die Verknüpfung ist fehlgeschlagen. Wiederholen Sie nur die Verknüpfung.',
+	'cm.retryBinding': 'Nur Verknüpfung wiederholen',
+	'cm.impactTitle': 'Gemeinsames Mapping Set aktualisieren?',
+	'cm.impact':
+		'Dieses Set hat {count} Verweise, einschließlich Verbindungen und Standardwerten. Speichern ändert den Inhalt für alle Verbindungen, die es verwenden.',
+	'cm.impactIncomplete':
+		'Mindestens {count} Verweise verwenden dieses Set. Die Prüfung ist unvollständig; weitere Verbindungen können betroffen sein. Speichern aktualisiert den gemeinsamen Inhalt.',
+	'cm.confirmImpact': 'Gemeinsames Set aktualisieren',
+	'cm.discardTitle': 'Mapping-Änderungen verwerfen?',
+	'cm.discardBody':
+		'Wechseln oder Neuladen verwirft die aktuellen Änderungen und eine ausstehende Verknüpfungswiederholung.',
+	'cm.beforeConsent': 'Vor der Einwilligung',
+	'cm.afterConsent': 'Nach der Einwilligung',
+	'cm.deferred': 'Auswertung bei der Anmeldung',
+	'cm.explainSaved':
+		'Diese Erklärung verwendet die gespeicherte Verbindung. Speichern und erneut prüfen, um aktuelle Änderungen zu sehen.',
+	'cm.awaitingConsent': 'Die Freigabe wartet auf Einwilligung.',
+	'cm.identifierDeferred':
+		'Kennungen, die Kontomaterial benötigen, werden für Testbenutzer nicht erzeugt. Die Anmeldung wertet sie nach der Einwilligung aus.',
 	'sf.part.where': 'Was hinzugefügt werden soll',
 	'sf.part.kind': 'Art',
 	'sf.part.rp-app': 'App-Details',
