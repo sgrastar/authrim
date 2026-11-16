@@ -77,6 +77,8 @@ import {
 } from './identity-mapping-set-reference-guard';
 import { hasPlatformIdentityMappingRead } from './identity-mapping-tenants';
 import { mapWithConcurrency } from './map-with-concurrency';
+import { samlChangePreview } from './identity-mapping-saml-change-preview';
+import { mappingSetDestination } from './identity-mapping-set-destination';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
 
 const PARTITION = 'identity-mapping-set-change-preview';
@@ -138,7 +140,7 @@ export async function readProfileFields(
       profileId
     );
     const byClaim = new Map<string, DestinationProfileConsentField[]>();
-    for (const field of descriptor?.destinationType === 'oidc' ? descriptor.fields : []) {
+    for (const field of descriptor ? descriptor.fields : []) {
       byClaim.set(field.key, [...(byClaim.get(field.key) ?? []), field]);
     }
     profiles.set(profileId, byClaim);
@@ -158,7 +160,8 @@ export function profileFieldChanges(
   profiles: ProfileFields,
   before: string | null,
   after: string | null,
-  afterProfiles: ProfileFields = profiles
+  afterProfiles: ProfileFields = profiles,
+  protocol: 'oidc' | 'saml' = 'oidc'
 ): ClaimChange[] {
   if (!before || !after || (before === after && profiles === afterProfiles)) return [];
   const was = profiles.get(before) ?? new Map<string, DestinationProfileConsentField[]>();
@@ -178,10 +181,10 @@ export function profileFieldChanges(
     );
   const fieldChanges: ClaimChange[] = [];
   for (const claim of [...new Set([...was.keys(), ...now.keys()])].sort()) {
-    if (claim === 'sub') continue;
+    if (protocol === 'oidc' && claim === 'sub') continue;
     const base = {
       claim,
-      namespace: RELEASE_NAMESPACE,
+      namespace: protocol === 'saml' ? 'saml.attribute' : RELEASE_NAMESPACE,
       profile_id: after,
       previous_profile_id: before,
     };
@@ -403,6 +406,7 @@ export async function adminIdentityMappingSetChangePreviewHandler(c: AdminContex
     const admin = ensureAdminDatabaseAdapter(c.env, PARTITION);
     if (!admin) throw new Error('admin_database_unavailable');
     const current = await readCurrentContent(repository, ownerTenantId, state);
+    const destination = await mappingSetDestination(repository, ownerTenantId, draft);
     const [typesBefore, typesAfter] = await Promise.all([
       readCatalogTypes(admin, ownerTenantId, current?.catalogVersionId ?? null),
       readCatalogTypes(admin, ownerTenantId, draft.catalogVersionId),
@@ -420,21 +424,19 @@ export async function adminIdentityMappingSetChangePreviewHandler(c: AdminContex
     const changes = [
       ...claimChanges,
       ...diffValidationRules(current, draft, profileBefore, profileAfter),
-      ...profileFieldChanges(profiles, profileBefore, profileAfter),
+      ...profileFieldChanges(profiles, profileBefore, profileAfter, profiles, destination.protocol),
     ].sort((a, b) => a.claim.localeCompare(b.claim) || a.kind.localeCompare(b.kind));
 
     // Counted as the save counts it (other tenants too, for a platform set: the count a save
     // asks to confirm is the whole one, so it is counted even for one tenant's apps), and without
     // a trace: a preview reports a tenant it cannot route, it does not repair it.
-    const summary = summarizeForRequest(
-      c,
-      await scanMappingSetReferences(c, {
-        setId,
-        ownerTenantId,
-        purpose: 'change',
-        sideEffects: 'none',
-      })
-    );
+    const scan = await scanMappingSetReferences(c, {
+      setId,
+      ownerTenantId,
+      purpose: 'change',
+      sideEffects: 'none',
+    });
+    const summary = summarizeForRequest(c, scan);
 
     const requestCache: TenantDatabaseRequestCache = new Map();
     const sampleUnavailable =
@@ -446,6 +448,26 @@ export async function adminIdentityMappingSetChangePreviewHandler(c: AdminContex
       references: referenceCount(summary),
       usage_complete: summary.scanComplete,
     };
+
+    if (destination.protocol === 'saml') {
+      if (tenantParam !== undefined && !(await tenantExists(c, tenantParam)))
+        throw notFound('tenant not found');
+      const result = await samlChangePreview(
+        c,
+        scan,
+        changes,
+        platformSet ? tenantParam : ownerTenantId
+      );
+      return c.json({
+        ...base,
+        protocol: 'saml',
+        ...result,
+        apps: [],
+        apps_truncated: false,
+        sample: null,
+        ...sampleUnavailable,
+      });
+    }
 
     if (platformSet && tenantParam === undefined) {
       const tenantIds = await listTenantIds(c, TENANTS_SUMMARY_LIMIT + 1);

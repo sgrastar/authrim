@@ -5,9 +5,15 @@ const state = vi.hoisted(() => ({
   mapping: undefined as Record<string, unknown> | undefined,
   exceptionRows: [] as Array<Record<string, unknown>>,
   exceptionsFail: false,
+  institutionSettings: new Map<string, unknown>(),
+  settingsReads: 0,
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  resolveEffectiveSettings: async () => {
+    state.settingsReads += 1;
+    return Object.fromEntries(state.institutionSettings);
+  },
   // The Admin database: only the exceptions are read here.
   requireAdminDatabaseAdapter: () => ({
     query: async (sql: string) => {
@@ -78,6 +84,55 @@ describe('a persistent NameID the mapping makes', () => {
     state.mapping = undefined;
     state.exceptionRows = [];
     state.exceptionsFail = false;
+    state.institutionSettings.clear();
+    state.settingsReads = 0;
+  });
+
+  it('enriches a plain NameID copy from institution settings only after approval', async () => {
+    state.institutionSettings.set('institution.scopes', 'example.ac.jp');
+    const sourceRef = {
+      side: 'source',
+      namespace: 'authrim.profile',
+      path: 'schac_home_organization',
+    };
+    state.mapping = mapping([], {
+      catalog: {
+        identity: {
+          id: 'institution',
+          version: '1',
+          contentHash: 'institution',
+          compatibilityRange: '*',
+        },
+        entries: [
+          {
+            id: 'institution.home',
+            namespace: sourceRef.namespace,
+            path: sourceRef.path,
+            valueType: 'string',
+            cardinality: 'single',
+            classification: 'internal',
+          },
+          {
+            id: 'destination.nameid',
+            namespace: nameid.namespace,
+            path: nameid.path,
+            valueType: 'string',
+            cardinality: 'single',
+            classification: 'internal',
+            targetType: 'destination-only',
+          },
+        ],
+      },
+      nameId: withExplicitMappingGraphs({
+        edges: [{ id: 'copy-institution', sourceRef, targetRef: nameid }],
+        transforms: [],
+        validationRules: [],
+      }),
+    });
+    const make = await resolve();
+    expect(state.settingsReads).toBe(0);
+    await expect(make?.()).resolves.toEqual({ value: 'example.ac.jp', kept: false });
+    expect(state.settingsReads).toBeGreaterThan(0);
   });
 
   it('is none when the mapping makes no NameID', async () => {
@@ -168,7 +223,9 @@ describe('a persistent NameID the mapping makes', () => {
       state.mapping = withList();
       state.exceptionRows = [{ account_id: '*', audience: '*', ...entry }];
       const make = await resolve();
-      await expect(make?.()).rejects.toThrow('persistent_identifier_unavailable');
+      await expect(make?.()).rejects.toThrow(
+        entry.action === 'block' ? 'identifier_suppressed' : 'persistent_identifier_unavailable'
+      );
     });
 
     it('is refused (not suppressed) when the exceptions cannot be read', async () => {

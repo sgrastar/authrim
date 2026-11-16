@@ -31,6 +31,7 @@ import {
   mappingDestinationProfileIds,
   mappingReferenceCatalogEntryId,
   mappingReferencePath,
+  mappingReferenceProfileId,
   normalizeDestinationProfileReference,
   resolveSourceClassification,
   sensitiveClassificationRank,
@@ -77,10 +78,14 @@ export interface RuntimeIdentityMappingResolutionContext {
    * turns it on.
    */
   normalizeCatalogEntryIds?: boolean;
+  /** Include stored profile-tagged targets for administrative binding validation. */
+  includeStoredProfileTargets?: boolean;
 }
 
 export interface RuntimeIdentityMappingBinding {
   graphRules?: MappingRuleGraph[];
+  /** Stored target profile references for binding validation, separate from executable FieldRefs. */
+  storedProfileTargets?: Array<FieldRef & { profileId: string }>;
   id: string;
   /** The tenant ID that owns the activation (the calling tenant unless `ownerTenantId` was given). */
   tenantId: string;
@@ -467,8 +472,25 @@ export async function resolveRuntimeIdentityMappingBinding(
     activationScope
   );
   const scopedDestinationProfileId = readString(activationScope.destinationProfileId);
+  // FieldRef deliberately describes executable value references, not authoring profiles. Keep
+  // these separately so protocol binding checks can also judge profile-tagged canonical targets.
+  const storedProfileTargets = context.includeStoredProfileTargets
+    ? [
+        ...fieldMappingRules.flatMap((rule) =>
+          rule.target_ref_json ? [parseJsonObject(rule.target_ref_json)] : []
+        ),
+        ...edges.map((edge) => parseJsonObject(edge.target_ref_json)),
+        ...transforms.flatMap((step) =>
+          step.target_ref_json ? [parseJsonObject(step.target_ref_json)] : []
+        ),
+      ].flatMap((target) => {
+        const profileId = mappingReferenceProfileId(target);
+        return profileId ? [{ ...withCatalogReference(normalizeFieldRef(target)), profileId }] : [];
+      })
+    : undefined;
 
   return {
+    ...(storedProfileTargets ? { storedProfileTargets } : {}),
     id: selected.activation_id,
     tenantId: selected.tenant_id,
     fieldMappingSetId: selected.field_mapping_set_id,

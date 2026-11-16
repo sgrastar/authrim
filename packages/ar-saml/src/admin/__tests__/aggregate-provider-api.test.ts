@@ -1,5 +1,8 @@
 import type { Env } from '@authrim/ar-lib-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../../mapping-set-owner', () => ({
+  resolveSAMLMappingSetOwner: vi.fn(async (_adapter: unknown, tenantId: string) => tenantId),
+}));
 import {
   handleCreateProvider,
   handleGetAggregateBatchStatus,
